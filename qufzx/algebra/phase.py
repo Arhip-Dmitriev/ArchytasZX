@@ -74,7 +74,15 @@ def _normalize_turns(expr: sp.Expr) -> sp.Expr:
     after simplification of numeric structure -- in particular any expression carrying
     a free symbol, even something as simple as ``j/d`` with symbolic ``d`` -- is
     returned unchanged.
+
+    Before any of that: an expression containing an ``sp.Float`` atom anywhere in its
+    tree (not just at the top level) is rejected outright, since this module tracks
+    phases exactly, never approximately.
     """
+    if expr.atoms(sp.Float):
+        raise PhaseGrammarError(
+            f"Phase requires an exact turns-expression, got a float in {expr!r}"
+        )
     if expr.free_symbols:
         return expr
     if expr.is_Rational:

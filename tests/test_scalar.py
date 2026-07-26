@@ -182,6 +182,43 @@ class TestFloatRejection:
         with pytest.raises(ScalarGrammarError):
             Scalar.rational(1.5, 1)  # type: ignore[arg-type]
 
+    def test_gaussian_rational_rejects_float_real(self) -> None:
+        with pytest.raises(ScalarGrammarError):
+            Scalar.gaussian_rational(0.5, 1)
+
+    def test_gaussian_rational_rejects_float_imag(self) -> None:
+        with pytest.raises(ScalarGrammarError):
+            Scalar.gaussian_rational(1, 0.25)
+
+    def test_gaussian_rational_rejects_bool(self) -> None:
+        with pytest.raises(ScalarGrammarError):
+            Scalar.gaussian_rational(True, 1)
+
+    def test_bare_constructor_rejects_float(self) -> None:
+        with pytest.raises(ScalarGrammarError):
+            Scalar(1.5)
+
+    def test_bare_constructor_rejects_float_buried_in_expression(self) -> None:
+        with pytest.raises(ScalarGrammarError):
+            Scalar(sp.Symbol("a") + sp.Float(0.5))
+
+    def test_bare_constructor_accepts_exact_rational(self) -> None:
+        s = Scalar(sp.Rational(1, 3))
+        assert s.is_concrete
+
+    def test_bare_constructor_accepts_integer(self) -> None:
+        s = Scalar(sp.Integer(2))
+        assert s.is_concrete
+
+    def test_bare_constructor_accepts_bare_symbol(self) -> None:
+        s = Scalar(sp.Symbol("a", complex=True))
+        assert not s.is_concrete
+
+    def test_bare_constructor_accepts_symbolic_omega(self) -> None:
+        d = Dim.symbol("d")
+        s = Scalar.omega(d, sp.Symbol("j"))
+        assert not s.is_concrete
+
 
 class TestNoGlobalFactorQuotientAPI:
     def test_no_method_named_normalize_or_quotient(self) -> None:

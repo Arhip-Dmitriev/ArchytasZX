@@ -78,7 +78,15 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     unconditionally, with no branch-cut subtlety, since ``exp`` is entire) -- this is
     not the kind of number-theoretic reasoning about a symbolic ``d`` that Phase 9's
     character-sum simplifier is reserved for.
+
+    Before any of that: an expression containing an ``sp.Float`` atom anywhere in its
+    tree (not just at the top level) is rejected outright, since this module tracks
+    scalars exactly, never approximately.
     """
+    if expr.atoms(sp.Float):
+        raise ScalarGrammarError(
+            f"Scalar requires an exact expression, got a float in {expr!r}"
+        )
     return sp.powsimp(sp.expand(expr), force=True)
 
 
@@ -119,7 +127,18 @@ class Scalar:
 
     @classmethod
     def gaussian_rational(cls, real: sp.Rational | int, imag: sp.Rational | int) -> Scalar:
-        """Build an exact Gaussian rational real + imag*i, both parts exact."""
+        """Build an exact Gaussian rational real + imag*i, both parts exact.
+
+        Both ``real`` and ``imag`` must be an int or sympy Rational; floats are
+        rejected because this module tracks scalars exactly, never approximately.
+        """
+        if isinstance(real, bool) or isinstance(imag, bool):
+            raise ScalarGrammarError("gaussian_rational() does not accept bool")
+        if not isinstance(real, (int, sp.Rational)) or not isinstance(imag, (int, sp.Rational)):
+            raise ScalarGrammarError(
+                "gaussian_rational() requires int or sympy Rational for both real and imag parts, "
+                f"got {type(real).__name__} and {type(imag).__name__}"
+            )
         return cls(sp.sympify(real) + sp.sympify(imag) * sp.I)
 
     @classmethod

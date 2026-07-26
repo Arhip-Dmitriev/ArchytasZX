@@ -111,6 +111,34 @@ class TestModOneTurnNormalization:
         assert p.to_sympy_turns() == sp.Symbol("theta", real=True)
 
 
+class TestFloatRejection:
+    def test_bare_constructor_rejects_float(self) -> None:
+        with pytest.raises(PhaseGrammarError):
+            Phase(0.5)
+
+    def test_bare_constructor_rejects_float_buried_in_expression(self) -> None:
+        with pytest.raises(PhaseGrammarError):
+            Phase(sp.Symbol("a") + sp.Float(0.5))
+
+    def test_bare_constructor_accepts_exact_rational(self) -> None:
+        p = Phase(sp.Rational(1, 3))
+        assert p.is_concrete
+
+    def test_bare_constructor_accepts_integer(self) -> None:
+        p = Phase(sp.Integer(2))
+        assert p.is_concrete
+
+    def test_bare_constructor_accepts_bare_symbol(self) -> None:
+        p = Phase(sp.Symbol("theta", real=True))
+        assert not p.is_concrete
+
+    def test_bare_constructor_accepts_symbolic_root_of_unity(self) -> None:
+        d = Dim.symbol("d")
+        j = sp.Symbol("j", integer=True)
+        p = Phase.root_of_unity(j, d)
+        assert not p.is_concrete
+
+
 class TestSubstitution:
     def test_partial_substitution(self) -> None:
         a, b = Phase.symbol("alpha"), Phase.symbol("beta")
