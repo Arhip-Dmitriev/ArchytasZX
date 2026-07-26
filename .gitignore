@@ -1,0 +1,23 @@
+# venv
+venv/
+.venv/
+env/
+
+# python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# os and editor
+.DS_Store
+.idea/
+.vscode/
