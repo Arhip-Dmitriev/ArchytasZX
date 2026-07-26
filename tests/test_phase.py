@@ -29,7 +29,7 @@ class TestPhaseConstruction:
 
     def test_turns_rejects_float(self) -> None:
         with pytest.raises(PhaseGrammarError):
-            Phase.turns(0.5)  # type: ignore[arg-type]
+            Phase.turns(0.5)
 
     def test_root_of_unity_concrete(self) -> None:
         p = Phase.root_of_unity(1, Dim.concrete(4))
@@ -259,6 +259,56 @@ class TestPhaseVectorSubstitution:
         result = pv.substitute({"d": 3, "a": sp.Rational(1, 4)})
         assert result.is_concrete
         assert result.length == 2
+
+    def test_sp_integer_dim_substitution_concretizes_dim(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {1: Phase.symbol("a")})
+        result = pv.substitute({"d": sp.Integer(3)})
+        assert result.dim == Dim.concrete(3)
+        assert result.length == 2
+
+    def test_sp_integer_dim_substitution_raises_on_out_of_range_index(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {5: Phase.turns(sp.Rational(1, 3))})
+        # Matches the int case: 5 is out of range for a concretized dim of 3.
+        with pytest.raises(PhaseDomainError):
+            pv.substitute({"d": 3})
+        with pytest.raises(PhaseDomainError):
+            pv.substitute({"d": sp.Integer(3)})
+
+    def test_integral_rational_dim_substitution_concretizes_dim(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {1: Phase.symbol("a")})
+        result = pv.substitute({"d": sp.Rational(3, 1)})
+        assert result.dim == Dim.concrete(3)
+
+    def test_non_integral_dim_substitution_rejected(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {1: Phase.symbol("a")})
+        with pytest.raises(PhaseDomainError):
+            pv.substitute({"d": sp.Rational(3, 2)})
+
+    def test_phase_value_for_dim_symbol_rejected(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {1: Phase.symbol("a")})
+        with pytest.raises(PhaseDomainError):
+            pv.substitute({"d": Phase.turns(sp.Rational(1, 2))})
+
+    def test_non_integral_dim_substitution_does_not_desync_or_mutate(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {5: Phase.turns(sp.Rational(1, 3))})
+        with pytest.raises(PhaseDomainError):
+            pv.substitute({"d": sp.Rational(3, 2)})
+        # Original vector is untouched: dim still symbolic, entry still present.
+        assert not pv.dim.is_concrete
+        assert pv.get(5) == Phase.turns(sp.Rational(1, 3))
+
+    def test_partial_substitution_leaves_unmentioned_phase_symbols_symbolic(self) -> None:
+        d = Dim.symbol("d")
+        pv = PhaseVector(d, {1: Phase.symbol("a"), 2: Phase.symbol("b")})
+        result = pv.substitute({"d": 4, "a": sp.Rational(1, 4)})
+        assert result.get(1) == Phase.turns(sp.Rational(1, 4))
+        assert result.get(2).free_symbols == frozenset({"b"})
 
 
 class TestPhaseVectorEqualityAndHashing:

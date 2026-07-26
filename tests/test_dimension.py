@@ -43,7 +43,7 @@ class TestConstruction:
 
     def test_non_integer_exponent_rejected(self) -> None:
         with pytest.raises(TypeError):
-            Dim.symbol("d") ** 2.5  # type: ignore[arg-type]
+            Dim.symbol("d") ** 2.5  # type: ignore[operator]
 
     def test_negative_exponent_rejected(self) -> None:
         with pytest.raises(DimensionDomainError):

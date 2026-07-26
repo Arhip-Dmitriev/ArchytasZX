@@ -388,19 +388,52 @@ class PhaseVector:
         """Return a new PhaseVector with symbols substituted into both dim and entries.
 
         Dimension symbols and phase symbols are substituted through the same mapping
-        (dimension symbol names are looked up as plain string keys). Substituting the
+        (a key, str or bare-symbol Phase, is recognized as targeting the dimension by
+        name whenever that name is one of ``self.dim``'s free symbols). Substituting the
         dimension can turn a symbolic-length vector into a concrete-length one; any
         index bound that could not previously be checked (because dim was symbolic) is
         checked now, against the newly concrete dim, and raises PhaseDomainError if
-        violated. This PhaseVector is never mutated.
+        violated.
+
+        A value substituted for a dimension symbol must be an exact integral quantity:
+        a Python int, an ``sp.Integer``, or an ``sp.Rational`` whose denominator is 1
+        (all reach :meth:`Dim.substitute`, which further enforces positivity). A
+        non-integral ``sp.Rational`` (e.g. ``3/2``) or a ``Phase`` value for a
+        dimension symbol is mathematically incoherent -- a dimension is a positive
+        integer, not an angle -- and raises PhaseDomainError rather than silently
+        substituting into the entries while leaving ``self.dim`` desynced from them.
+
+        Symbols that are not among the dimension's free symbols are treated purely as
+        phase symbols: substitution reaches only the entries, unmentioned symbols are
+        left symbolic, and this PhaseVector is never mutated.
         """
+        dim_symbols = self._dim.free_symbols
         dim_mapping: dict[str | Dim, int | Dim] = {}
         for key, value in mapping.items():
-            name = key if isinstance(key, str) else None
-            if name is None:
+            name = key if isinstance(key, str) else Phase._phase_symbol_name(key)
+            if name not in dim_symbols:
                 continue
-            if isinstance(value, int) and not isinstance(value, bool):
+            if isinstance(value, bool):
+                raise PhaseGrammarError(f"substitution value for {name!r} does not accept bool")
+            if isinstance(value, Phase):
+                raise PhaseDomainError(
+                    f"dimension symbol {name!r} cannot be substituted with a Phase "
+                    "value (a dimension is a positive integer, not an angle)"
+                )
+            if isinstance(value, int):
                 dim_mapping[name] = value
+            elif isinstance(value, sp.Rational):
+                if value.q != 1:
+                    raise PhaseDomainError(
+                        f"dimension symbol {name!r} requires an exact integer value, "
+                        f"got non-integral rational {value}"
+                    )
+                dim_mapping[name] = int(value)
+            else:
+                raise PhaseGrammarError(
+                    f"substitution value for dimension symbol {name!r} must be int or "
+                    f"sympy Rational, got {type(value).__name__}"
+                )
         new_dim = self._dim.substitute(dim_mapping) if dim_mapping else self._dim
         new_entries = {index: phase.substitute(mapping) for index, phase in self._entries.items()}
         return PhaseVector(new_dim, new_entries)

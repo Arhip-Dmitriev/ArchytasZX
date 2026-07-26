@@ -66,7 +66,7 @@ class TestConstruction:
 
     def test_omega_index_rejects_bool(self) -> None:
         with pytest.raises(ScalarGrammarError):
-            Scalar.omega(Dim.concrete(4), True)  # type: ignore[arg-type]
+            Scalar.omega(Dim.concrete(4), True)
 
 
 class TestOmegaModDReduction:
