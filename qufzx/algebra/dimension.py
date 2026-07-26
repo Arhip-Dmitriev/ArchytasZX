@@ -334,10 +334,15 @@ class Dim:
         Resolves only the cases that can be decided without guessing:
         concrete-vs-concrete (definite success or definite failure),
         syntactically-equal-after-normalization (success, no constraints),
-        and a bare symbol against anything (a binding). Everything else is
-        reported as deferred with the pair recorded as a residual
-        constraint -- it is never guessed at, partially factored, or
-        silently reported as equal.
+        and a bare symbol against anything that does not contain it (a
+        binding). If a symbol occurs in the other side as a proper subterm
+        (e.g. d against d*e, or d against d**n), it is deferred rather than
+        bound: such an equation is satisfiable only in degenerate cases
+        (d = d*e holds at e == 1; d = d**n holds at n == 1, or at d == 1 for
+        any n), so neither binding it as success nor reporting failure would
+        be honest. Everything else is reported as deferred with the pair
+        recorded as a residual constraint -- it is never guessed at,
+        partially factored, or silently reported as equal.
         """
         if not isinstance(other, Dim):
             raise TypeError(f"unify() requires a Dim, got {type(other).__name__}")
@@ -347,8 +352,12 @@ class Dim:
         if self._expr == other._expr:
             return UnifyResult(status=UnifyStatus.SUCCESS)
         if self._expr.is_Symbol:
+            if str(self._expr.name) in other.free_symbols:
+                return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
             return UnifyResult(status=UnifyStatus.SUCCESS, bindings={str(self._expr.name): other})
         if other._expr.is_Symbol:
+            if str(other._expr.name) in self.free_symbols:
+                return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
             return UnifyResult(status=UnifyStatus.SUCCESS, bindings={str(other._expr.name): self})
         return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
 

@@ -228,6 +228,38 @@ class TestUnifyPlaceholder:
         assert not result.is_success
         assert not result.is_failure
 
+    def test_occurs_check_defers_symbol_in_product(self) -> None:
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        result = d.unify(d * e)
+        assert result.is_deferred
+        assert result.bindings == {}
+        assert result.constraints == ((d, d * e),)
+
+    def test_occurs_check_defers_symmetrically(self) -> None:
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        result = (d * e).unify(d)
+        assert result.is_deferred
+        assert result.bindings == {}
+        assert result.constraints == ((d * e, d),)
+
+    def test_occurs_check_defers_symbol_in_power(self) -> None:
+        d, n = Dim.symbol("d"), Dim.symbol("n")
+        result = d.unify(d**n)
+        assert result.is_deferred
+
+    def test_occurs_check_does_not_regress_plain_self_unify(self) -> None:
+        d = Dim.symbol("d")
+        result = d.unify(d)
+        assert result.is_success
+        assert result.bindings == {}
+        assert result.constraints == ()
+
+    def test_occurs_check_not_over_broad(self) -> None:
+        d, e, f = Dim.symbol("d"), Dim.symbol("e"), Dim.symbol("f")
+        result = d.unify(e * f)
+        assert result.is_success
+        assert result.bindings == {"d": e * f}
+
 
 class TestCompletionCondition:
     """The Phase 1 stand-in for the numeric oracle: fully substituted Dims
