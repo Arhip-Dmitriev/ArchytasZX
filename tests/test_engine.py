@@ -82,6 +82,39 @@ class TestApplyRemapsThirdNodeWiring:
         assert expected_wire_endpoints in actual_endpoints
 
 
+class TestApplyRejectsAnUnmappedSurvivingPort:
+    def test_raises_when_builder_omits_a_surviving_port_a_wire_references(self) -> None:
+        def _drop_b_output_mapping_builder(working_diagram: Diagram, match_obj: object) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            b_output_ref = PortRef(match_obj.b_id, Direction.OUTPUT, 0)  # type: ignore[attr-defined]
+            incomplete_mapping = {
+                k: v for k, v in result.port_mapping.items() if k != b_output_ref
+            }
+            return dataclasses.replace(result, port_mapping=incomplete_mapping)
+
+        incomplete_rule = Rule(
+            name="spider_fusion_incomplete",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_drop_b_output_mapping_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, incomplete_rule, match)
+
+
 class TestApplyMultipliesScalar:
     def test_scalar_multiplied_by_the_introduced_factor(self) -> None:
         d = Dim.symbol("d")

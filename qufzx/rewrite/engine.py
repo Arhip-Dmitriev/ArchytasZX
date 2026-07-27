@@ -29,7 +29,12 @@ Algorithm.
    without replacement (it has been absorbed into the merged node). Otherwise, if either
    endpoint's node id is in ``build_result.consumed_node_ids``, remove the wire and re-add
    it with that endpoint replaced via ``build_result.port_mapping`` (an endpoint on a node
-   *not* being consumed is left untouched). This single rule, applied uniformly, handles
+   *not* being consumed is left untouched). An endpoint on a node that *is* being consumed
+   must appear in ``port_mapping``; if it does not, the builder forgot to map a surviving
+   port, and this step raises :class:`~qufzx.rewrite.rule.RewriteDomainError` naming the
+   rule and the unmapped port rather than silently leaving a wire pointing at a node step 5
+   is about to remove (whose removal cascade would then silently drop that wire). This
+   single rule, applied uniformly, handles
    every case the build plan calls out: a wire to a third node, a pre-existing self-loop on
    one of the consumed nodes (both endpoints get remapped, yielding a self-loop on the
    merged node), and the consumed wire itself (dropped, never remapped). The two ordered
@@ -105,6 +110,31 @@ class RewriteResult:
     step: RewriteStep
 
 
+def _remap_endpoint(
+    ref: PortRef,
+    consumed_node_ids: frozenset[NodeId],
+    port_mapping: Mapping[PortRef, PortRef],
+    rule_name: str,
+) -> PortRef:
+    """Remap a wire endpoint, raising if a consumed node's surviving port was left unmapped.
+
+    An endpoint on a node *not* being consumed is passed through unchanged -- that fallback
+    is correct and required. An endpoint on a *consumed* node must appear in ``port_mapping``;
+    if it does not, the builder forgot to map a surviving port, and leaving the fallback in
+    place would silently point the wire at a node step 5 is about to remove (whose removal
+    cascade then silently drops the wire) instead of surfacing the builder's bug.
+    """
+    if ref.node_id not in consumed_node_ids:
+        return ref
+    if ref not in port_mapping:
+        raise RewriteDomainError(
+            f"rule {rule_name!r}: port {ref!r} is on a consumed node but is absent from "
+            f"the builder's port_mapping; a builder must map every surviving port of every "
+            f"consumed node"
+        )
+    return port_mapping[ref]
+
+
 def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
@@ -139,8 +169,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         )
         if not touches_consumed:
             continue
-        new_a = port_mapping.get(wire.a, wire.a)
-        new_b = port_mapping.get(wire.b, wire.b)
+        new_a = _remap_endpoint(wire.a, consumed_node_ids, port_mapping, rule.name)
+        new_b = _remap_endpoint(wire.b, consumed_node_ids, port_mapping, rule.name)
         working.remove_wire(wire.a, wire.b)
         working.add_wire(new_a, new_b)
 
