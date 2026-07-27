@@ -115,6 +115,84 @@ class TestApplyRejectsAnUnmappedSurvivingPort:
             apply(diagram, incomplete_rule, match)
 
 
+class TestApplyRejectsAnUnmappedSurvivingBoundaryPort:
+    """Mirrors ``TestApplyRejectsAnUnmappedSurvivingPort`` for the boundary rebuild.
+
+    Before the fix, step 4's boundary rebuild used the silent ``port_mapping.get(ref, ref)``
+    fallback unconditionally, so an unmapped ref on a consumed node would survive the
+    rebuild unchanged and then be silently deleted by step 5's ``remove_node`` cascade --
+    shrinking the returned diagram's boundary arity with no exception. These two tests
+    (output and input) are the direct boundary-side mirror of
+    ``test_raises_when_builder_omits_a_surviving_port_a_wire_references`` above.
+    """
+
+    def test_raises_when_builder_omits_a_surviving_port_a_boundary_output_references(
+        self,
+    ) -> None:
+        def _drop_a_output_1_mapping_builder(
+            working_diagram: Diagram, match_obj: object
+        ) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            a_output_1_ref = PortRef(match_obj.a_id, Direction.OUTPUT, 1)  # type: ignore[attr-defined]
+            incomplete_mapping = {
+                k: v for k, v in result.port_mapping.items() if k != a_output_1_ref
+            }
+            return dataclasses.replace(result, port_mapping=incomplete_mapping)
+
+        incomplete_rule = Rule(
+            name="spider_fusion_incomplete_boundary_output",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_drop_a_output_1_mapping_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.concrete(2)
+        diagram, a_id, _b_id = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+
+        # A's output 1 is referenced only by the boundary output list, not by any wire --
+        # this is the case the pre-fix silent fallback let through unnoticed.
+        assert PortRef(a_id, Direction.OUTPUT, 1) in diagram.boundary_outputs
+
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, incomplete_rule, match)
+
+    def test_raises_when_builder_omits_a_surviving_port_a_boundary_input_references(
+        self,
+    ) -> None:
+        def _drop_a_input_0_mapping_builder(
+            working_diagram: Diagram, match_obj: object
+        ) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            a_input_0_ref = PortRef(match_obj.a_id, Direction.INPUT, 0)  # type: ignore[attr-defined]
+            incomplete_mapping = {
+                k: v for k, v in result.port_mapping.items() if k != a_input_0_ref
+            }
+            return dataclasses.replace(result, port_mapping=incomplete_mapping)
+
+        incomplete_rule = Rule(
+            name="spider_fusion_incomplete_boundary_input",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_drop_a_input_0_mapping_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, incomplete_rule, match)
+
+
 class TestApplyMultipliesScalar:
     def test_scalar_multiplied_by_the_introduced_factor(self) -> None:
         d = Dim.symbol("d")

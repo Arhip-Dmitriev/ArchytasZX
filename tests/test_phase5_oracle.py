@@ -21,7 +21,7 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, PortRef
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import validate
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
@@ -158,6 +158,142 @@ class TestSpiderFusionOracleAllLegsConsumed:
     def test_x_exact_equality_at_several_concrete_d(self) -> None:
         pre = _build_all_legs_consumed(Dim.symbol("d"), X_SPIDER)
         post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
+def _build_preexisting_self_loop_on_a(dim: Dim) -> tuple[Diagram, NodeId]:
+    """A carries its own self-loop (two distinct ports wired to each other) plus the fusion wire.
+
+    A: 1 input, 3 outputs. ``A_in0`` is wired to ``A_out2`` -- a self-loop entirely on A,
+    pre-existing before any rewrite. ``A_out0`` is the fusion wire into B. ``A_out1`` and
+    B's own output are the boundary. Both self-loop endpoints are on A, a consumed node, and
+    neither is the fusion pattern's own wire, so this exercises exactly the case the engine
+    module docstring calls out ("a pre-existing self-loop on one of the consumed nodes, both
+    endpoints get remapped, yielding a self-loop on the merged node") without any test ever
+    having built it.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim, dim])
+    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    diagram.add_wire(PortRef(a_id, Direction.INPUT, 0), PortRef(a_id, Direction.OUTPUT, 2))
+    diagram.set_boundary_outputs(
+        [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+    )
+    return diagram, a_id
+
+
+class TestSpiderFusionPreservesAPreexistingSelfLoop:
+    """The self-loop case the engine docstring claims works, tested for the first time."""
+
+    def test_self_loop_survives_as_a_self_loop_on_the_merged_node(self) -> None:
+        pre, a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"))
+        post = _fuse(pre)
+        self_loops = [wire for wire in post.wires if wire.a.node_id == wire.b.node_id]
+        assert len(self_loops) == 1
+        (loop,) = self_loops
+        assert loop.a.node_id in post.nodes
+        assert a_id not in post.nodes
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.concrete(3))
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_exact_equality_at_several_concrete_d(self) -> None:
+        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"))
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
+def _build_boundary_input_and_output(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:
+    """A's only input is a boundary input; every other engine/oracle test uses output-only.
+
+    A: 1 input, 1 output. B: 1 input, 0 outputs. ``A_out0 -> B_in0`` is the fusion wire;
+    ``A_in0`` survives fusion and is the sole boundary input.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+    return diagram, a_id, b_id
+
+
+class TestSpiderFusionRemapsABoundaryInput:
+    """Every prior engine/oracle test used output-only boundaries; this covers an input."""
+
+    def test_boundary_input_is_remapped_to_the_merged_node(self) -> None:
+        pre, a_id, _b_id = _build_boundary_input_and_output(Dim.concrete(2))
+        post = _fuse(pre)
+        assert len(post.boundary_inputs) == 1
+        (remapped_ref,) = post.boundary_inputs
+        assert a_id not in post.nodes
+        assert remapped_ref.node_id in post.nodes
+        assert remapped_ref.direction is Direction.INPUT
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre, _a_id, _b_id = _build_boundary_input_and_output(Dim.concrete(3))
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_exact_equality_at_several_concrete_d(self) -> None:
+        pre, _a_id, _b_id = _build_boundary_input_and_output(Dim.symbol("d"))
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
+class TestRepeatedApplicationReachesAFixpointOnAChain:
+    """Fuse a three-node chain A->B->C to a fixpoint: two applications, one surviving node."""
+
+    def _build_chain(self, dim: Dim) -> Diagram:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+        return diagram
+
+    def _fuse_to_fixpoint(self, diagram: Diagram) -> tuple[Diagram, int]:
+        working = diagram
+        steps = 0
+        while True:
+            matches = find_matches(working)
+            if not matches:
+                return working, steps
+            working = apply(working, SPIDER_FUSION, matches[0]).diagram
+            steps += 1
+
+    def test_two_steps_and_one_surviving_node(self) -> None:
+        pre = self._build_chain(Dim.symbol("d"))
+        post, steps = self._fuse_to_fixpoint(pre)
+        assert steps == 2
+        assert len(post.nodes) == 1
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre = self._build_chain(Dim.concrete(3))
+        post, _steps = self._fuse_to_fixpoint(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_exact_equality_at_several_concrete_d(self) -> None:
+        pre = self._build_chain(Dim.symbol("d"))
+        post, _steps = self._fuse_to_fixpoint(pre)
         for d_value in _CONCRETE_DS:
             result = compare(pre, post, {"d": d_value})
             assert result.mode is EqualityMode.EXACT

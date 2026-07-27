@@ -38,8 +38,20 @@ Algorithm.
    every case the build plan calls out: a wire to a third node, a pre-existing self-loop on
    one of the consumed nodes (both endpoints get remapped, yielding a self-loop on the
    merged node), and the consumed wire itself (dropped, never remapped). The two ordered
-   boundary lists are rebuilt the same way -- ``port_mapping.get(ref, ref)`` for every
-   entry, in place, so position is preserved exactly.
+   boundary lists are rebuilt through this exact same ``_remap_endpoint`` helper, one entry
+   at a time, in place, so position is preserved exactly and a boundary ref is held to the
+   identical standard as a wire endpoint: a ref on a node *not* being consumed passes
+   through unchanged (the fallback is correct there -- that node survives, so the ref still
+   names a live port), but a ref on a *consumed* node must appear in ``port_mapping``, or
+   this step raises :class:`~qufzx.rewrite.rule.RewriteDomainError` naming the rule and the
+   unmapped port. Boundaries and wires used to diverge here -- an early version silently
+   fell back to ``port_mapping.get(ref, ref)`` for boundary entries even when the referenced
+   node was being consumed, so a builder that forgot to map a surviving boundary port would
+   not raise; the ref would survive the rebuild unchanged, still naming a soon-to-be-removed
+   node, and step 5's ``remove_node`` cascade would then delete it from the boundary with no
+   exception, silently shrinking the returned diagram's boundary arity below the input's.
+   That silent-drop path is exactly what step 4 exists to rule out for wires; it is now
+   ruled out identically for boundaries.
 5. Remove the consumed nodes. Only after every wire and boundary entry that referenced them
    has already been replaced. :meth:`~qufzx.diagram.graph.Diagram.remove_node`'s cascade
    (see that module's docstring) is therefore a no-op on wires and boundary entries at this
@@ -175,10 +187,16 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         working.add_wire(new_a, new_b)
 
     working.set_boundary_inputs(
-        tuple(port_mapping.get(ref, ref) for ref in working.boundary_inputs)
+        tuple(
+            _remap_endpoint(ref, consumed_node_ids, port_mapping, rule.name)
+            for ref in working.boundary_inputs
+        )
     )
     working.set_boundary_outputs(
-        tuple(port_mapping.get(ref, ref) for ref in working.boundary_outputs)
+        tuple(
+            _remap_endpoint(ref, consumed_node_ids, port_mapping, rule.name)
+            for ref in working.boundary_outputs
+        )
     )
 
     for node_id in build_result.consumed_node_ids:
