@@ -9,6 +9,8 @@ import sympy as sp  # type: ignore[import-untyped]
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
+from qufzx.diagram.generators import Z_SPIDER
+from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.semantics.check import (
     CheckGrammarError,
     ComparisonResult,
@@ -182,3 +184,73 @@ class TestUnknownMode:
         b = np.array([1.0])
         with pytest.raises(CheckGrammarError):
             compare_tensors(a, b, mode="bogus")  # type: ignore[arg-type]
+
+
+class TestCompareInterfaceMismatch:
+    def test_different_output_input_split_does_not_match(self) -> None:
+        d = Dim.concrete(2)
+        two_out_one_in = Diagram()
+        node_id = two_out_one_in.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
+        two_out_one_in.set_boundary_outputs(
+            [PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.OUTPUT, 1)]
+        )
+        two_out_one_in.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
+
+        one_out_two_in = Diagram()
+        node_id2 = one_out_two_in.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[d])
+        one_out_two_in.set_boundary_outputs([PortRef(node_id2, Direction.OUTPUT, 0)])
+        one_out_two_in.set_boundary_inputs(
+            [PortRef(node_id2, Direction.INPUT, 0), PortRef(node_id2, Direction.INPUT, 1)]
+        )
+
+        result = compare(two_out_one_in, one_out_two_in, {})
+        assert not result.matched
+        assert "arity" in result.reason
+        assert "deviation" not in result.reason
+
+    def test_same_arity_different_dimensions_does_not_match(self) -> None:
+        diagram_a = Diagram()
+        node_a1 = diagram_a.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        node_a2 = diagram_a.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        diagram_a.set_boundary_outputs(
+            [PortRef(node_a1, Direction.OUTPUT, 0), PortRef(node_a2, Direction.OUTPUT, 0)]
+        )
+
+        diagram_b = Diagram()
+        node_b1 = diagram_b.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        node_b2 = diagram_b.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(3)])
+        diagram_b.set_boundary_outputs(
+            [PortRef(node_b1, Direction.OUTPUT, 0), PortRef(node_b2, Direction.OUTPUT, 0)]
+        )
+
+        result = compare(diagram_a, diagram_b, {})
+        assert not result.matched
+        assert "dimension" in result.reason
+
+    def test_reordered_symmetric_boundary_does_not_spuriously_match(self) -> None:
+        d = Dim.concrete(2)
+
+        forward = Diagram()
+        node_id = forward.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        forward.set_boundary_outputs(
+            [PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.OUTPUT, 1)]
+        )
+
+        reversed_ = Diagram()
+        node_id2 = reversed_.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        reversed_.set_boundary_outputs(
+            [PortRef(node_id2, Direction.OUTPUT, 1), PortRef(node_id2, Direction.OUTPUT, 0)]
+        )
+
+        result = compare(forward, reversed_, {})
+        assert not result.matched
+        assert "order" in result.reason
+
+    def test_independently_built_ghz_copies_still_match(self) -> None:
+        d = Dim.concrete(3)
+        diagram_a, _a1, _b1 = build_ghz_with_copy(d)
+        diagram_b, _a2, _b2 = build_ghz_with_copy(d)
+
+        result = compare(diagram_a, diagram_b, {})
+        assert result.matched
+        assert result.reason != ""

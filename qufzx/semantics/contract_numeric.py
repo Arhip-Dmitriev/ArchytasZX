@@ -49,12 +49,16 @@ each node's own tensor, before it is denoted, and the size of the final output t
 before contraction runs, raising :class:`ContractSizeError` with a clear message rather
 than exhausting memory silently.
 
-Return type. :func:`contract` returns a :class:`ContractionResult` -- the tensor plus the
-ordered tuple of :class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes -- rather
-than a bare array, matching this codebase's preference for structured returns
-(``ValidationReport``, ``UnifyResult``): a bare array cannot answer "which axis is which
-boundary port", which :mod:`qufzx.semantics.check` and any future caller comparing two
-contractions need in order to interpret the result at all.
+Return type. :func:`contract` returns a :class:`ContractionResult` -- the tensor, the
+ordered tuple of :class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the
+count of leading axes that are boundary outputs -- rather than a bare array, matching this
+codebase's preference for structured returns (``ValidationReport``, ``UnifyResult``): a
+bare array cannot answer "which axis is which boundary port" or "where does the
+output/input split fall", which :mod:`qufzx.semantics.check` and any future caller
+comparing two contractions need in order to interpret the result at all. The split count
+is carried on the result rather than recomputed from ``len(diagram.boundary_outputs)`` at
+each call site, since the diagram itself may no longer be at hand (or may have been
+mutated) by the time a caller wants to interpret ``axis_refs``.
 """
 
 from __future__ import annotations
@@ -121,10 +125,15 @@ class ContractionResult:
     ``axis_refs[i]`` is the :class:`~qufzx.diagram.graph.PortRef` that ``tensor``'s axis
     ``i`` came from, in ``diagram.boundary_outputs`` then ``diagram.boundary_inputs``
     order (the axis convention fixed in :mod:`qufzx.semantics.denote`).
+    ``num_boundary_outputs`` records where that split falls: ``axis_refs[:num_boundary_outputs]``
+    are the boundary outputs and ``axis_refs[num_boundary_outputs:]`` are the boundary
+    inputs, so a caller can recover the output/input arity split without re-deriving it
+    from a diagram it may not still have on hand.
     """
 
     tensor: np.ndarray
     axis_refs: tuple[PortRef, ...]
+    num_boundary_outputs: int
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -195,10 +204,13 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
     _check_concrete(diagram)
 
     axis_refs = (*diagram.boundary_outputs, *diagram.boundary_inputs)
+    num_boundary_outputs = len(diagram.boundary_outputs)
 
     if not diagram.nodes:
         tensor = np.array(diagram.scalar.to_complex(), dtype=np.complex128)
-        return ContractionResult(tensor=tensor, axis_refs=axis_refs)
+        return ContractionResult(
+            tensor=tensor, axis_refs=axis_refs, num_boundary_outputs=num_boundary_outputs
+        )
 
     labels = _assign_labels(diagram)
 
@@ -235,4 +247,6 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
 
     raw_tensor = np.einsum(*einsum_args, output_labels)
     tensor = np.asarray(raw_tensor, dtype=np.complex128) * diagram.scalar.to_complex()
-    return ContractionResult(tensor=tensor, axis_refs=axis_refs)
+    return ContractionResult(
+        tensor=tensor, axis_refs=axis_refs, num_boundary_outputs=num_boundary_outputs
+    )
