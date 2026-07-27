@@ -49,37 +49,26 @@ therefore checks, before calling :func:`compare_tensors` at all, that the two
 contractions' interfaces correspond: the same number of boundary outputs, the same number
 of boundary inputs (not just the same total axis count -- a 2-output/1-input diagram must
 never match a 1-output/2-input one just because both have three free legs), and, per axis,
-the same local port index and dimension. A mismatch here is reported as its own
-:class:`ComparisonResult`, with a reason naming the interface problem, instead of being
-handed to :func:`compare_tensors` where it would either raise a shape error or -- worse,
-if the two axis counts coincide -- get silently compared position-by-position and
-misreported as a numeric deviation when the real cause is axis order. This check cannot
-compare the two contractions' ``axis_refs`` (the actual :class:`~qufzx.diagram.graph.PortRef`\\ s)
-for equality outright: a rewrite legitimately changes node ids, so two diagrams that
-denote the same map will generally carry different ``PortRef``\\ s for "the same" leg.
-What is compared, per axis, is the *local port index within its node* together with the
-dimension -- deliberately excluding ``node_id``, the one component a rewrite is expected
-to change, while keeping the index, which a deterministic diagram builder assigns
-identically to two independently constructed copies of "the same" diagram even though
-their node ids differ. Dimension alone is not enough: a bare spider's legs of equal
-dimension are interchangeable in dimension but not identity, so a silently reordered
-boundary (``[leg 0, leg 1]`` vs ``[leg 1, leg 0]``) would otherwise be invisible whenever
-the underlying tensor happens to be symmetric under that reordering -- which every bare
-spider, GHZ included, is. See :func:`_interface_mismatch` for the full reasoning.
+the same dimension. A mismatch here is reported as its own :class:`ComparisonResult`, with
+a reason naming the interface problem, instead of being handed to :func:`compare_tensors`
+where it would either raise a shape error or -- worse, if the two axis counts coincide --
+get silently compared position-by-position and misreported as a numeric deviation when the
+real cause is arity or dimension. See :func:`_interface_mismatch` for the full reasoning.
 
-Known limitation, left for Phase 5 (do not fix here). The interface check above catches a
-boundary reordering only when it can see both the pre- and post-reordering port indices on
-what is recognizably the same node -- e.g. two hand-built diagrams compared directly. It
-cannot verify that a *rewrite* preserved the intended leg correspondence: a rewrite like
-spider fusion replaces several nodes with a freshly built one, whose port indices are
-assigned anew by the rewrite's own code and carry no inherent relationship to the
-pre-rewrite indices, so nothing here can tell a correct fusion from one whose leg union
-silently swapped two legs -- if the resulting tensor is symmetric under that swap (GHZ and
-every bare spider are), the bug is invisible to this oracle no matter how the interface
-check is strengthened. Ruling that out requires a rewrite rule to declare, and the engine
-to assert, the correspondence between its input and output boundaries; that is a
-:mod:`qufzx.rewrite.engine` concern feeding Phase 6's certificates, not something this
-numeric oracle can supply on its own.
+What this check cannot do -- and is not trying to do. Genuine leg correspondence --
+knowing that boundary axis ``i`` of diagram A and boundary axis ``j`` of diagram B denote
+"the same" leg, as opposed to merely having the same dimension -- cannot be established by
+this module at all. Two diagrams that denote the same map may distribute their boundary
+legs across an entirely different number and shape of nodes (a fused spider vs. several
+unfused ones), so there is no per-axis identity available to compare that survives a
+rewrite: a leg's local index within its node reflects only how that particular diagram
+happened to be built, not a correspondence with any other diagram's legs. Consequently a
+silently reordered boundary is invisible to this check whenever the two tensors agree
+regardless of order (e.g. any two diagrams whose contraction happens to be symmetric under
+the swap) -- this module has no way to catch that, at any arity. Establishing genuine leg
+correspondence requires a rewrite rule to declare the map between its input and output
+boundaries, and the engine to assert it; that is a :mod:`qufzx.rewrite.engine` concern
+feeding Phase 6's certificates, not something this numeric oracle can supply on its own.
 """
 
 from __future__ import annotations
@@ -257,21 +246,20 @@ def _compare_up_to_global_phase(a: np.ndarray, b: np.ndarray, *, tolerance: floa
     )
 
 
-def _axis_descriptors(diagram: Diagram, result: ContractionResult) -> tuple[tuple[int, int], ...]:
-    """The ``(local port index, concrete dimension)`` of each axis in ``result``.
+def _axis_dimensions(diagram: Diagram, result: ContractionResult) -> tuple[int, ...]:
+    """The concrete dimension of each axis in ``result``, in ``axis_refs`` order.
 
     Resolves each :class:`~qufzx.diagram.graph.PortRef` against ``diagram``, following the
     same ``node.legs(ref.direction)[ref.index]`` pattern
     :mod:`qufzx.semantics.contract_numeric` uses for its own output-size guard, rather than
-    inventing a second way to resolve a ``PortRef`` against its node. See
-    :func:`_interface_mismatch` for why the index is included alongside the dimension.
+    inventing a second way to resolve a ``PortRef`` against its node.
     """
-    descriptors = []
+    dimensions = []
     for ref in result.axis_refs:
         node = diagram.nodes[ref.node_id]
         port = node.legs(ref.direction)[ref.index]
-        descriptors.append((ref.index, port.dim.to_int()))
-    return tuple(descriptors)
+        dimensions.append(port.dim.to_int())
+    return tuple(dimensions)
 
 
 def _interface_mismatch(
@@ -286,31 +274,19 @@ def _interface_mismatch(
 
     Returns ``None`` when the interfaces correspond; otherwise a non-matching
     :class:`ComparisonResult` naming the mismatch, so a caller never mistakes an interface
-    problem for a numeric deviation. Three things are checked, in order:
+    problem for a numeric deviation. Two things are checked, in order:
 
     1. The boundary output/input split (``result.num_boundary_outputs`` and the
        remainder) -- a diagram with 2 outputs and 1 input must never match one with 1
        output and 2 inputs just because both have three free legs.
-    2. Per axis, the *local port descriptor* -- ``(ref.index, dimension)`` -- of the port
-       that produced it. The dimension alone is not enough: a bare spider's two output
-       legs of equal dimension are interchangeable in *dimension* but not in *identity*,
-       so a boundary that has been silently reordered (``[leg 0, leg 1]`` vs
-       ``[leg 1, leg 0]``) would otherwise be invisible whenever the underlying tensor
-       happens to be symmetric under that reordering (every bare spider is). Including
-       ``ref.index`` catches that reordering while still comparing two independently
-       built, structurally identical diagrams as matching, since deterministic
-       construction gives both copies the same index sequence even though their node ids
-       differ.
+    2. Per axis, the concrete dimension of the port that produced it, position by
+       position.
 
-    Deliberately excluded: ``ref.node_id``. A rewrite legitimately changes node ids, so
-    two diagrams that denote the same map will generally carry different ids for "the
-    same" leg; comparing ids directly would reject every correct rewrite. ``ref.index``
-    does not have this problem for the diagrams this module is asked to compare, since it
-    reflects a leg's position within its own node rather than an identity assigned by the
-    diagram builder.
-
-    This still cannot catch every symmetric-boundary permutation problem -- see the
-    module docstring's note on the Phase 5 rewrite-correspondence gap.
+    This module has no way to establish genuine leg correspondence beyond that -- see the
+    module docstring's "What this check cannot do" paragraph. In particular this check
+    does not catch a silently reordered boundary when the reordering leaves the tensor
+    unchanged (e.g. any diagram symmetric under that swap); that is out of scope for a
+    numeric oracle and belongs to the rewrite engine's own certificates instead.
     """
     outputs_a = result_a.num_boundary_outputs
     outputs_b = result_b.num_boundary_outputs
@@ -327,20 +303,15 @@ def _interface_mismatch(
             max_abs_deviation=float("inf"),
         )
 
-    descriptors_a = _axis_descriptors(diagram_a, result_a)
-    descriptors_b = _axis_descriptors(diagram_b, result_b)
-    if descriptors_a != descriptors_b:
-        dims_a = tuple(dim for _index, dim in descriptors_a)
-        dims_b = tuple(dim for _index, dim in descriptors_b)
-        if dims_a != dims_b:
-            reason = f"boundary axis dimension mismatch: {dims_a} vs {dims_b}"
-        else:
-            reason = (
-                f"boundary axis order mismatch: same dimensions {dims_a} but different "
-                f"port positions {[i for i, _dim in descriptors_a]} vs "
-                f"{[i for i, _dim in descriptors_b]}"
-            )
-        return ComparisonResult(mode=mode, matched=False, reason=reason, max_abs_deviation=float("inf"))
+    dims_a = _axis_dimensions(diagram_a, result_a)
+    dims_b = _axis_dimensions(diagram_b, result_b)
+    if dims_a != dims_b:
+        return ComparisonResult(
+            mode=mode,
+            matched=False,
+            reason=f"boundary axis dimension mismatch: {dims_a} vs {dims_b}",
+            max_abs_deviation=float("inf"),
+        )
 
     return None
 

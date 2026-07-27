@@ -227,30 +227,31 @@ class TestCompareInterfaceMismatch:
         assert not result.matched
         assert "dimension" in result.reason
 
-    def test_reordered_symmetric_boundary_does_not_spuriously_match(self) -> None:
-        d = Dim.concrete(2)
-
-        forward = Diagram()
-        node_id = forward.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
-        forward.set_boundary_outputs(
-            [PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.OUTPUT, 1)]
-        )
-
-        reversed_ = Diagram()
-        node_id2 = reversed_.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
-        reversed_.set_boundary_outputs(
-            [PortRef(node_id2, Direction.OUTPUT, 1), PortRef(node_id2, Direction.OUTPUT, 0)]
-        )
-
-        result = compare(forward, reversed_, {})
-        assert not result.matched
-        assert "order" in result.reason
-
     def test_independently_built_ghz_copies_still_match(self) -> None:
         d = Dim.concrete(3)
         diagram_a, _a1, _b1 = build_ghz_with_copy(d)
         diagram_b, _a2, _b2 = build_ghz_with_copy(d)
 
         result = compare(diagram_a, diagram_b, {})
+        assert result.matched
+        assert result.reason != ""
+
+    @pytest.mark.parametrize("d_value", [2, 3, 5])
+    def test_ghz_with_copy_matches_equivalent_single_spider(self, d_value: int) -> None:
+        d = Dim.symbol("d")
+
+        fused = Diagram()
+        node_id = fused.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d, d])
+        fused.set_boundary_outputs(
+            [
+                PortRef(node_id, Direction.OUTPUT, 0),
+                PortRef(node_id, Direction.OUTPUT, 1),
+                PortRef(node_id, Direction.OUTPUT, 2),
+            ]
+        )
+
+        unfused, _a, _b = build_ghz_with_copy(d)
+
+        result = compare(unfused, fused, {"d": d_value})
         assert result.matched
         assert result.reason != ""
