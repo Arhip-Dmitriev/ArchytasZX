@@ -1,5 +1,5 @@
 """Diagram well-formedness checks: per-port dimension agreement, boundary consistency,
-and generator policy conformance.
+port usage, and generator policy conformance.
 
 :func:`validate` never mutates the diagram it is given -- it is a pure read function
 from a :class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`. This is
@@ -10,14 +10,30 @@ typed issues rather than a bare pass/fail bool. Phase 5's rewrite matcher and Ph
 certificates both need that structure (which port, which node, which wire, and why) to
 do their own work, not just a yes/no.
 
+Every port of every node must be exactly one of: an endpoint of exactly one wire, or an
+entry in the matching boundary list. Ports that are wired or claimed by the boundary
+more than once are reported by the existing over-use kinds
+(:class:`IssueKind.PORT_WIRED_TWICE`, :class:`IssueKind.PORT_WIRED_AND_BOUNDARY`,
+:class:`IssueKind.DUPLICATE_BOUNDARY_ENTRY`); a port claimed by neither is
+:class:`IssueKind.PORT_UNUSED`, a hard error, since a dangling port has no meaning to
+give the diagram. This under-use check is skipped for a port on a node already
+implicated in an :class:`IssueKind.UNKNOWN_NODE` or
+:class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue, so one structural mistake (e.g. a wire
+naming an out-of-range index) is reported once rather than cascading into spurious
+PORT_UNUSED findings for that node's real legs.
+
 Dimension checking is layered exactly the way :meth:`~qufzx.algebra.dimension.Dim.unify`
-is layered. A wire whose two ports carry unequal, non-unifiable dimensions is a hard
-:class:`IssueKind.DIMENSION_MISMATCH` error. A wire whose dimensions cannot yet be
-resolved (``unify`` returns ``DEFERRED``, e.g. ``Dim("d")`` against ``Dim("e")``) is
-recorded as :class:`IssueKind.DIMENSION_DEFERRED`, an *assumed* constraint, not silently
-accepted as valid and not reported as an error either -- this is exactly the seam Phase
-10's real unifier is meant to drop into: replacing the placeholder in ``Dim.unify``
-changes what gets deferred here without this module changing at all.
+is layered, and this layering applies uniformly whether the two dimensions being
+compared are joined by a wire or shared by one node's legs (or its phase). A pair of
+dimensions that are unequal and non-unifiable is a hard error --
+:class:`IssueKind.DIMENSION_MISMATCH` for a wire, :class:`IssueKind.DIMENSION_POLICY_VIOLATION`
+for a node's legs, :class:`IssueKind.PHASE_DIMENSION_MISMATCH` for a node's phase. A pair
+whose dimensions cannot yet be resolved (``unify`` returns ``DEFERRED``, e.g. ``Dim("d")``
+against ``Dim("e")``) is recorded as :class:`IssueKind.DIMENSION_DEFERRED` in every one of
+these cases, an *assumed* constraint, not silently accepted as valid and not reported as
+an error either -- this is exactly the seam Phase 10's real unifier is meant to drop
+into: replacing the placeholder in ``Dim.unify`` changes what gets deferred here without
+this module changing at all.
 
 What this module does not do. It does not contract, evaluate, or attach any numeric
 meaning to a diagram (that is Phase 4's oracle); it does not attempt to fix or rewrite
@@ -62,6 +78,7 @@ class IssueKind(enum.Enum):
     DIMENSION_DEFERRED = "dimension_deferred"
     PORT_WIRED_TWICE = "port_wired_twice"
     PORT_WIRED_AND_BOUNDARY = "port_wired_and_boundary"
+    PORT_UNUSED = "port_unused"
     DUPLICATE_BOUNDARY_ENTRY = "duplicate_boundary_entry"
     BOUNDARY_DIRECTION_MISMATCH = "boundary_direction_mismatch"
     LEG_POLICY_VIOLATION = "leg_policy_violation"
@@ -227,6 +244,31 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     for ref in (*diagram.boundary_inputs, *diagram.boundary_outputs):
         _resolve(diagram, ref, issues)
 
+    broken_node_ids = {
+        issue.port_ref.node_id
+        for issue in issues
+        if issue.kind in (IssueKind.UNKNOWN_NODE, IssueKind.PORT_INDEX_OUT_OF_RANGE)
+        and issue.port_ref is not None
+    }
+    boundary_set = set(boundary_counts)
+    for node_id, node in diagram.nodes.items():
+        if node_id in broken_node_ids:
+            continue
+        for direction in (Direction.INPUT, Direction.OUTPUT):
+            for index in range(len(node.legs(direction))):
+                ref = PortRef(node_id, direction, index)
+                if ref in wired_set or ref in boundary_set:
+                    continue
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.PORT_UNUSED,
+                        message=(
+                            f"{ref} is neither wired nor present on the boundary"
+                        ),
+                        port_ref=ref,
+                    )
+                )
+
 
 def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
@@ -246,19 +288,33 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     shared_dim: Dim | None = all_ports[0].dim if all_ports else None
 
     if gen.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL and shared_dim is not None:
+        strongest: ValidationIssue | None = None
         for port in all_ports:
-            if port.dim != shared_dim:
-                issues.append(
-                    ValidationIssue(
-                        kind=IssueKind.DIMENSION_POLICY_VIOLATION,
-                        message=(
-                            f"node {node.id!r} ({gen.name}) requires all legs to share one "
-                            f"dimension, but found {shared_dim} and {port.dim}"
-                        ),
-                        node_id=node.id,
-                    )
+            if port.dim == shared_dim:
+                continue
+            result = port.dim.unify(shared_dim)
+            if result.is_failure:
+                strongest = ValidationIssue(
+                    kind=IssueKind.DIMENSION_POLICY_VIOLATION,
+                    message=(
+                        f"node {node.id!r} ({gen.name}) requires all legs to share one "
+                        f"dimension, but found {shared_dim} and {port.dim}"
+                    ),
+                    node_id=node.id,
                 )
                 break
+            if result.is_deferred and strongest is None:
+                strongest = ValidationIssue(
+                    kind=IssueKind.DIMENSION_DEFERRED,
+                    message=(
+                        f"node {node.id!r} ({gen.name}) assumes {shared_dim} == {port.dim} "
+                        "across its legs (deferred, not yet decided)"
+                    ),
+                    node_id=node.id,
+                    deferred=True,
+                )
+        if strongest is not None:
+            issues.append(strongest)
 
     if node.phase is not None:
         if gen.phase_schema is PhaseSchema.NONE:
@@ -274,16 +330,31 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             and shared_dim is not None
             and node.phase.dim != shared_dim
         ):
-            issues.append(
-                ValidationIssue(
-                    kind=IssueKind.PHASE_DIMENSION_MISMATCH,
-                    message=(
-                        f"node {node.id!r} ({gen.name}) phase vector is over "
-                        f"{node.phase.dim}, but its legs share dimension {shared_dim}"
-                    ),
-                    node_id=node.id,
+            result = node.phase.dim.unify(shared_dim)
+            if result.is_failure:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.PHASE_DIMENSION_MISMATCH,
+                        message=(
+                            f"node {node.id!r} ({gen.name}) phase vector is over "
+                            f"{node.phase.dim}, but its legs share dimension {shared_dim}"
+                        ),
+                        node_id=node.id,
+                    )
                 )
-            )
+            elif result.is_deferred:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.DIMENSION_DEFERRED,
+                        message=(
+                            f"node {node.id!r} ({gen.name}) assumes phase dimension "
+                            f"{node.phase.dim} == leg dimension {shared_dim} "
+                            "(deferred, not yet decided)"
+                        ),
+                        node_id=node.id,
+                        deferred=True,
+                    )
+                )
 
 
 def validate(diagram: Diagram) -> ValidationReport:

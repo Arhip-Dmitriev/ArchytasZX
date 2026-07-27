@@ -149,6 +149,94 @@ class TestGeneratorPolicyConformance:
         assert not report.is_valid
         assert any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
 
+    def test_symbolic_leg_dims_deferred_not_hard_error(self) -> None:
+        # d occurs as a proper subterm of d * e, so Dim.unify defers this pair rather
+        # than binding or failing it (see its docstring) -- this must land as
+        # DIMENSION_DEFERRED, not DIMENSION_POLICY_VIOLATION, mirroring the wire-level
+        # case in TestDeferredDimensionConstraint.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d * e])
+        report = validate(diagram)
+        assert not any(issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id is not None
+            for issue in report.deferred
+        )
+
+    def test_concrete_leg_dims_still_hard_error(self) -> None:
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[Dim.concrete(3)])
+        report = validate(diagram)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION and not issue.deferred
+            for issue in report.errors
+        )
+
+    def test_symbolic_phase_dim_deferred_not_hard_error(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        phase = PhaseVector(d * e, {1: Phase.symbol("alpha")})
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d], phase=phase)
+        report = validate(diagram)
+        assert not any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id is not None
+            for issue in report.deferred
+        )
+
+    def test_concrete_phase_dim_still_hard_error(self) -> None:
+        diagram = Diagram()
+        mismatched_phase = PhaseVector(Dim.concrete(3), {1: Phase.turns(1)})
+        diagram.add_node(
+            Z_SPIDER,
+            input_dims=[Dim.concrete(2)],
+            output_dims=[Dim.concrete(2)],
+            phase=mismatched_phase,
+        )
+        report = validate(diagram)
+        assert any(
+            issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH and not issue.deferred
+            for issue in report.errors
+        )
+
+
+class TestDanglingPorts:
+    def test_dangling_output_port(self) -> None:
+        diagram, a_id, _b = build_ghz_with_copy(Dim.concrete(2))
+        # A's output 1 is on the boundary by default; strip it so it dangles.
+        diagram.set_boundary_outputs(
+            [ref for ref in diagram.boundary_outputs if ref != PortRef(a_id, Direction.OUTPUT, 1)]
+        )
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(
+            issue.kind is IssueKind.PORT_UNUSED
+            and issue.port_ref == PortRef(a_id, Direction.OUTPUT, 1)
+            for issue in report.errors
+        )
+
+    def test_dangling_input_port(self) -> None:
+        diagram = Diagram()
+        b = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(
+            issue.kind is IssueKind.PORT_UNUSED and issue.port_ref == PortRef(b, Direction.INPUT, 0)
+            for issue in report.errors
+        )
+
+    def test_dangling_port_suppressed_when_node_reference_already_broken(self) -> None:
+        diagram = Diagram()
+        a = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        diagram.set_boundary_outputs([PortRef(a, Direction.OUTPUT, 5)])
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(issue.kind is IssueKind.PORT_INDEX_OUT_OF_RANGE for issue in report.errors)
+        assert not any(issue.kind is IssueKind.PORT_UNUSED for issue in report.errors)
+
 
 class TestValidationIsPure:
     def test_validate_does_not_mutate_diagram(self) -> None:
