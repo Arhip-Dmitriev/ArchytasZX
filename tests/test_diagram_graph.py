@@ -1,6 +1,7 @@
 """Tests for qufzx.diagram.graph: Port, Node, and Diagram."""
 
 import pytest
+import sympy as sp  # type: ignore[import-untyped]
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
@@ -229,3 +230,47 @@ class TestNodeValueChecks:
     def test_port_rejects_non_dim(self) -> None:
         with pytest.raises(GraphGrammarError):
             Port(dim=2)  # type: ignore[arg-type]
+
+
+class TestSubstitute:
+    def test_preserves_node_ids_wires_and_boundary(self) -> None:
+        d = Dim.symbol("d")
+        diagram, a_id, b_id = build_ghz_with_copy(d)
+        substituted = diagram.substitute({"d": 3})
+        assert set(substituted.nodes.keys()) == {a_id, b_id}
+        assert substituted.wires == diagram.wires
+        assert substituted.boundary_outputs == diagram.boundary_outputs
+        assert substituted.boundary_inputs == diagram.boundary_inputs
+
+    def test_substitutes_port_dims_phase_and_scalar(self) -> None:
+        d = Dim.symbol("d")
+        phase = PhaseVector(d, {1: Phase.symbol("alpha")})
+        diagram, a_id, b_id = build_ghz_with_copy(d, phase_on_b=phase)
+        diagram.multiply_scalar(Scalar.symbol("s"))
+
+        substituted = diagram.substitute({"d": 3, "alpha": sp.Rational(1, 6), "s": 2})
+
+        for node_id in (a_id, b_id):
+            node = substituted.nodes[node_id]
+            for port in (*node.inputs, *node.outputs):
+                assert port.dim == Dim.concrete(3)
+        b_phase = substituted.nodes[b_id].phase
+        assert b_phase is not None
+        assert b_phase.get(1) == Phase.turns(sp.Rational(1, 6))
+        assert substituted.scalar == Scalar.rational(2)
+
+    def test_does_not_mutate_original(self) -> None:
+        d = Dim.symbol("d")
+        diagram, a_id, _b_id = build_ghz_with_copy(d)
+        diagram.substitute({"d": 3})
+        assert not diagram.nodes[a_id].outputs[0].dim.is_concrete
+
+    def test_partial_substitution_leaves_other_symbols(self) -> None:
+        d = Dim.symbol("d")
+        phase = PhaseVector(d, {1: Phase.symbol("alpha")})
+        diagram, _a_id, b_id = build_ghz_with_copy(d, phase_on_b=phase)
+        substituted = diagram.substitute({"d": 3})
+        b_phase = substituted.nodes[b_id].phase
+        assert b_phase is not None
+        assert not b_phase.is_concrete
+        assert b_phase.dim == Dim.concrete(3)

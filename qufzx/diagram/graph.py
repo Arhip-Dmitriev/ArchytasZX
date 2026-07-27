@@ -45,6 +45,18 @@ integrity standpoint (though not necessarily "valid" in the sense of
 :mod:`qufzx.diagram.validate` -- e.g. the remaining boundary may now have a different
 arity than a caller expected).
 
+Symbol substitution. :meth:`Diagram.substitute` (added for Phase 4's
+:mod:`qufzx.semantics.check`, which needs to instantiate a diagram's symbols to concrete
+values before contracting it) is node-id-preserving: the returned ``Diagram`` has
+identical :class:`NodeId`\\ s, an identical wire set, identical boundary lists, and the
+same ``_next_id`` counter, with only each port's ``Dim``, each node's ``PhaseVector``,
+and the diagram's ``Scalar`` substituted. This could not be expressed by rebuilding the
+diagram through :meth:`add_node` -- that allocates fresh ids, and every ``Wire`` and
+boundary ``PortRef`` addresses a node by id, so a rebuild would silently detach every
+wire and boundary entry from the diagram it was meant to describe. Like every other
+method here, :meth:`substitute` performs no well-formedness validation (that stays
+:mod:`qufzx.diagram.validate`'s job) and never mutates the receiver.
+
 Diagram equality. :class:`Diagram` does not define ``__eq__``. Diagram equality --
 "do these two diagrams denote the same map, possibly after rewriting" -- is a decision
 procedure that belongs to Phase 13's normal form and is checked by Phase 4's oracle; a
@@ -60,14 +72,16 @@ throughout this module.
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import NewType
+from typing import NewType, cast
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.algebra.scalar import Scalar
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from qufzx.algebra.phase import Phase, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
+from qufzx.algebra.scalar import Scalar, ScalarSubstituteValue, ScalarSymbolKey
 from qufzx.diagram.generators import GeneratorType
 
 
@@ -372,6 +386,84 @@ class Diagram:
         if not isinstance(factor, Scalar):
             raise GraphGrammarError(f"multiply_scalar requires a Scalar, got {factor!r}")
         self._scalar = self._scalar * factor
+
+    # -- substitution -----------------------------------------------------------------
+
+    def substitute(
+        self, mapping: Mapping[str, DimSubstituteValue | PhaseSubstituteValue | ScalarSubstituteValue]
+    ) -> Diagram:
+        """Return a new Diagram with symbols substituted, preserving every NodeId.
+
+        ``mapping`` is a single symbol-name -> value mapping shared across every port's
+        ``Dim``, every node's ``PhaseVector``, and the diagram's ``Scalar``. Unlike a
+        single call to one of those three ``substitute()`` methods, this method must
+        first split ``mapping`` by each value's *type* before dispatching: each of
+        ``Dim.substitute``, ``PhaseVector.substitute``, and ``Scalar.substitute``
+        validates every entry of the mapping it is given up front (not only the entries
+        that name one of its own free symbols), so a mapping entry meant only for a
+        phase symbol -- e.g. an ``sp.Rational`` turns value -- would make
+        ``Dim.substitute`` raise even though no ``Dim`` here ever mentions that symbol.
+        Splitting by value type (``int`` goes to all three; ``sp.Rational`` goes to the
+        phase and scalar mappings; ``Dim``, ``Phase``, and ``Scalar`` values go only to
+        their own matching mapping) avoids that false conflict. See the module docstring
+        for why this preserves node ids (and thus every ``Wire`` and boundary
+        ``PortRef``) rather than being expressible via :meth:`add_node`. This Diagram is
+        never mutated.
+        """
+        dim_mapping: dict[str, DimSubstituteValue] = {}
+        phase_mapping: dict[str, PhaseSubstituteValue] = {}
+        scalar_mapping: dict[str, ScalarSubstituteValue] = {}
+        for name, value in mapping.items():
+            if isinstance(value, Dim):
+                dim_mapping[name] = value
+            elif isinstance(value, Phase):
+                phase_mapping[name] = value
+            elif isinstance(value, Scalar):
+                scalar_mapping[name] = value
+            elif isinstance(value, (int, sp.Rational)):
+                # int is valid for all three targets; a non-integral sympy Rational is
+                # valid only for phase/scalar targets (each downstream substitute()
+                # still re-validates and raises its own typed error if inappropriate,
+                # e.g. a non-integral Rational reaching a dimension symbol).
+                if isinstance(value, int):
+                    dim_mapping[name] = value
+                phase_mapping[name] = value
+                scalar_mapping[name] = value
+            else:
+                raise GraphGrammarError(
+                    f"substitution value for {name!r} must be int, sympy Rational, Dim, "
+                    f"Phase, or Scalar, got {type(value).__name__}"
+                )
+
+        # Each dict above has str-only keys, a subtype of the corresponding
+        # str-or-value-object SymbolKey union every substitute() accepts; Mapping's key
+        # type is invariant in the typing sense, so this narrowing needs an explicit
+        # (and sound) cast rather than passing the dicts directly.
+        typed_dim_mapping = cast(Mapping[DimSymbolKey, DimSubstituteValue], dim_mapping)
+        typed_phase_mapping = cast(Mapping[PhaseSymbolKey, PhaseSubstituteValue], phase_mapping)
+        typed_scalar_mapping = cast(Mapping[ScalarSymbolKey, ScalarSubstituteValue], scalar_mapping)
+
+        clone = Diagram()
+        clone._next_id = self._next_id
+        clone._nodes = {
+            node_id: Node(
+                id=node.id,
+                generator_type=node.generator_type,
+                inputs=tuple(Port(port.dim.substitute(typed_dim_mapping)) for port in node.inputs),
+                outputs=tuple(
+                    Port(port.dim.substitute(typed_dim_mapping)) for port in node.outputs
+                ),
+                phase=(
+                    node.phase.substitute(typed_phase_mapping) if node.phase is not None else None
+                ),
+            )
+            for node_id, node in self._nodes.items()
+        }
+        clone._wires = set(self._wires)
+        clone._boundary_inputs = list(self._boundary_inputs)
+        clone._boundary_outputs = list(self._boundary_outputs)
+        clone._scalar = self._scalar.substitute(typed_scalar_mapping)
+        return clone
 
     # -- copying --------------------------------------------------------------------------
 
