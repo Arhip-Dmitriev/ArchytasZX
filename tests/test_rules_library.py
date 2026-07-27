@@ -125,6 +125,33 @@ class TestPhaseAddition:
         assert merged_phase.get(1) == phase_a.get(1) + phase_b.get(1)
 
 
+class TestAllLegsConsumedPhase:
+    """The legless-merge corner case: dimension must survive via an explicit zero phase."""
+
+    def test_legless_merge_gets_explicit_zero_phase(self) -> None:
+        d = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match = find_matches(diagram)[0]
+        result = spider_fusion_builder(diagram, match)
+        merged = result.diagram.nodes[result.new_node_id]
+        assert merged.num_inputs == 0
+        assert merged.num_outputs == 0
+        assert merged.phase == PhaseVector(d, {})
+
+    def test_surviving_legs_still_stay_none(self) -> None:
+        # Same shape as TestPhaseAddition.test_both_none_stays_none, restated here so a
+        # future refactor of _merged_phase's any_legs_survive branch cannot regress this
+        # half while fixing the legless case above.
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        result = spider_fusion_builder(diagram, match)
+        assert result.diagram.nodes[result.new_node_id].phase is None
+
+
 class TestBuilderTypedErrors:
     def test_rejects_a_non_fusion_match(self) -> None:
         d = Dim.symbol("d")

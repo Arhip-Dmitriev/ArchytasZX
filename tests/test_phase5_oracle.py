@@ -99,6 +99,71 @@ class TestSpiderFusionOracleX:
         assert not report.deferred
 
 
+def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram:
+    """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
+
+    The corner case from the module docstring's "Corner case: no legs survive at all"
+    note in :mod:`qufzx.rewrite.rules_library`: the merged node ends up with zero inputs
+    and zero outputs, so its dimension can only survive via an explicit zero phase.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim])
+    b_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    return diagram
+
+
+class TestSpiderFusionOracleAllLegsConsumed:
+    """The all-legs-consumed corner case, for both colors: the fix under test."""
+
+    def test_z_merged_node_has_no_legs(self) -> None:
+        pre = _build_all_legs_consumed(Dim.symbol("d"), Z_SPIDER)
+        post = _fuse(pre)
+        assert len(post.nodes) == 1
+        (merged,) = post.nodes.values()
+        assert merged.num_inputs == 0
+        assert merged.num_outputs == 0
+
+    def test_z_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre = _build_all_legs_consumed(Dim.concrete(3), Z_SPIDER)
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_z_exact_equality_at_several_concrete_d(self) -> None:
+        pre = _build_all_legs_consumed(Dim.symbol("d"), Z_SPIDER)
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+    def test_x_merged_node_has_no_legs(self) -> None:
+        pre = _build_all_legs_consumed(Dim.symbol("d"), X_SPIDER)
+        post = _fuse(pre)
+        assert len(post.nodes) == 1
+        (merged,) = post.nodes.values()
+        assert merged.generator_type is X_SPIDER
+        assert merged.num_inputs == 0
+        assert merged.num_outputs == 0
+
+    def test_x_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre = _build_all_legs_consumed(Dim.concrete(3), X_SPIDER)
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_x_exact_equality_at_several_concrete_d(self) -> None:
+        pre = _build_all_legs_consumed(Dim.symbol("d"), X_SPIDER)
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
 def _phase_vector(dim: Dim, index: int, turns: sp.Expr) -> PhaseVector:
     return PhaseVector(dim, {index: Phase.turns(turns)})
 

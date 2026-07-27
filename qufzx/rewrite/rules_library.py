@@ -42,6 +42,17 @@ outputs followed by B's surviving outputs, under the same rule. "A" and "B" here
 by :class:`~qufzx.rewrite.match.FusionMatch`'s own convention -- A is always the lower
 :class:`~qufzx.diagram.graph.NodeId` of the matched pair. "Surviving" means every leg
 except the single one consumed by the matched wire.
+
+Corner case: no legs survive at all. When A is ``0->1`` and B is ``1->0``, wired
+output-to-input, fusion consumes every leg of both spiders and the merged node ends up
+with zero inputs and zero outputs. Because this codebase stores dimension per port and
+nowhere else (see ``claude.md``), such a node would otherwise carry no record of
+``shared_dim`` whatsoever -- not lost precision, but lost information, since the
+legless spider denotes the scalar ``sum_k 1 = d``. :func:`_merged_phase` handles this by
+returning an explicit ``PhaseVector(shared_dim, {})`` instead of `None` in that one case,
+giving the dimension a port-shaped home even though the phase itself is zero either way.
+Every other phaseless fusion (any node with at least one surviving leg) keeps returning
+`None`, unchanged.
 """
 
 from __future__ import annotations
@@ -75,12 +86,21 @@ def _surviving_legs(
     return surviving
 
 
-def _merged_phase(node_a: Node, node_b: Node, shared_dim: Dim) -> PhaseVector | None:
+def _merged_phase(
+    node_a: Node, node_b: Node, shared_dim: Dim, *, any_legs_survive: bool
+) -> PhaseVector | None:
     """The merged node's phase: the componentwise sum, treating an absent phase as zero.
 
     A `None` phase on both sides stays `None` (rather than becoming an explicit
     all-zero :class:`~qufzx.algebra.phase.PhaseVector`), matching the phase-free
-    convention every other diagram-building helper in this codebase uses.
+    convention every other diagram-building helper in this codebase uses -- *except*
+    when ``any_legs_survive`` is `False`. Since dimension is stored per port and nowhere
+    else (see ``claude.md``), a merged node with no surviving legs at all has no port to
+    carry ``shared_dim``; leaving its phase `None` would silently drop the dimension,
+    and :func:`qufzx.semantics.denote.resolve_dimension` would then have no way to
+    recover it. So in that one case this returns an explicit
+    ``PhaseVector(shared_dim, {})`` -- an all-zero phase, mathematically equivalent to no
+    phase at all -- purely to give the dimension a place to live on the legless node.
 
     Defensive check, not a normal path: :mod:`qufzx.rewrite.match`'s
     ``phase_dimension_agreement`` side condition already guarantees every phase present
@@ -92,6 +112,8 @@ def _merged_phase(node_a: Node, node_b: Node, shared_dim: Dim) -> PhaseVector | 
     hierarchy entirely -- escape through this builder.
     """
     if node_a.phase is None and node_b.phase is None:
+        if not any_legs_survive:
+            return PhaseVector(shared_dim, {})
         return None
     phase_a = node_a.phase if node_a.phase is not None else PhaseVector(shared_dim, {})
     phase_b = node_b.phase if node_b.phase is not None else PhaseVector(shared_dim, {})
@@ -140,7 +162,10 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     merged_inputs = surviving_inputs_a + surviving_inputs_b
     merged_outputs = surviving_outputs_a + surviving_outputs_b
 
-    merged_phase = _merged_phase(node_a, node_b, match.shared_dim)
+    any_legs_survive = bool(merged_inputs or merged_outputs)
+    merged_phase = _merged_phase(
+        node_a, node_b, match.shared_dim, any_legs_survive=any_legs_survive
+    )
 
     new_node_id = diagram.add_node(
         node_a.generator_type,
