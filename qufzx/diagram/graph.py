@@ -1,1 +1,393 @@
-"""Core graph data model: Port, Node, and Diagram, with deep copy and controlled mutation."""
+"""Core graph data model: Port, Node, and Diagram, with deep copy and controlled mutation.
+
+A :class:`Diagram` is an open graph: a set of :class:`Node` objects joined by
+:class:`Wire`\\ s, plus two ordered boundary lists (unwired ports of ordinary nodes)
+and an exact :class:`~qufzx.algebra.scalar.Scalar` accumulator. Dimension lives on each
+:class:`Port` individually -- there is no global or per-diagram dimension field
+anywhere in this module, not even as a default, per the ``CLAUDE.md`` invariant that
+dimension is stored per port.
+
+What this representation cannot express. A boundary list entry is a :class:`PortRef`
+pointing at a port of some :class:`Node`; there is deliberately no way to express a bare
+identity wire running directly from a boundary input to a boundary output with no node
+on it at all. Representing that would require either a synthetic "boundary node" type
+(which this module declines to invent, since it is not a real generator and would need
+its own policy, denotation, and validation carve-outs) or a third kind of boundary-to-
+boundary edge alongside node-to-node wires (which would break the invariant that every
+wire has exactly two ports drawn from actual nodes). This gap is out of scope until
+either an explicit identity/wire generator is registered (a node whose sole job is to
+be transparent) or the Phase 18 parser needs to round-trip a bare wire and forces the
+issue. Callers who need "pass this boundary value straight through" today should use an
+explicit identity-flavored node once one exists, not attempt to fake it with two
+boundary entries.
+
+Validation ownership. Construction and mutation here are deliberately permissive:
+methods perform only the checks that are properties of the data structure itself (an
+index must be a non-negative int, a wire cannot join a port to itself, you cannot
+mutate a node that does not exist). Cross-cutting well-formedness -- dimension
+agreement across a wire, double-wired ports, boundary/wire conflicts, out-of-range
+port indices in wires or boundary lists, generator policy conformance -- is
+deliberately left unchecked here and is entirely :mod:`qufzx.diagram.validate`'s
+responsibility. This lets that module's report carry every problem in one pass
+(including problems that span multiple mutation calls) rather than having them
+surface as scattered exceptions from whichever mutator happened to introduce them.
+
+Node removal. :meth:`Diagram.remove_node` cascades: it also removes every wire
+incident to the node and every boundary entry referencing it. This is the one
+invariant this module *does* enforce eagerly, because the alternative -- leaving a
+:class:`PortRef` that resolves to nothing -- would silently corrupt every other wire
+and boundary entry that still references the removed node, with no single later
+validation pass able to distinguish "dangling because of a stale reference" from "just
+never wired". Rejecting the removal instead (requiring the caller to detach first) was
+the other option considered; cascading was chosen so that "delete a node" always
+succeeds and always leaves the diagram internally consistent from a referential-
+integrity standpoint (though not necessarily "valid" in the sense of
+:mod:`qufzx.diagram.validate` -- e.g. the remaining boundary may now have a different
+arity than a caller expected).
+
+Diagram equality. :class:`Diagram` does not define ``__eq__``. Diagram equality --
+"do these two diagrams denote the same map, possibly after rewriting" -- is a decision
+procedure that belongs to Phase 13's normal form and is checked by Phase 4's oracle; a
+naive structural ``__eq__`` here (e.g. comparing node dicts and wire sets) would be a
+different, weaker notion that later code could come to rely on by accident. Diagram
+therefore uses ordinary identity semantics (``is``), inherited from ``object``, and
+this file defines no override. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
+:class:`~qufzx.diagram.generators.GeneratorType` are value objects and remain
+value-equal and hashable, since they are looked up and de-duplicated by value
+throughout this module.
+"""
+
+from __future__ import annotations
+
+import enum
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import NewType
+
+from qufzx.algebra.dimension import Dim
+from qufzx.algebra.phase import PhaseVector
+from qufzx.algebra.scalar import Scalar
+from qufzx.diagram.generators import GeneratorType
+
+
+class GraphError(Exception):
+    """Base class for all errors raised by this module."""
+
+
+class GraphDomainError(GraphError):
+    """A value or operation is outside the mathematical domain this module accepts.
+
+    Raised for a negative port index and for a wire that would connect a port to
+    itself.
+    """
+
+
+class GraphGrammarError(GraphError):
+    """A request is malformed: wrong type, or a reference to something absent.
+
+    Raised for non-Port/non-PhaseVector arguments, and for operating on a node id or
+    wire that the diagram does not currently hold.
+    """
+
+
+class Direction(enum.Enum):
+    """Which ordered leg list of a node a :class:`PortRef` or :class:`Port` belongs to."""
+
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+NodeId = NewType("NodeId", int)
+"""An opaque node identifier, allocated by :meth:`Diagram.add_node`.
+
+A distinct type over bare ``int`` so that a node id is never accidentally used where a
+port index or a leg count is expected, and vice versa.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class PortRef:
+    """An address for one port: which node, which side, and which position in that side's list."""
+
+    node_id: NodeId
+    direction: Direction
+    index: int
+
+    def __post_init__(self) -> None:
+        """Validate that ``index`` is a non-negative int."""
+        if not isinstance(self.direction, Direction):
+            raise GraphGrammarError(f"PortRef direction must be a Direction, got {self.direction!r}")
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise GraphGrammarError(f"PortRef index must be an int, got {self.index!r}")
+        if self.index < 0:
+            raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
+
+    def __repr__(self) -> str:
+        return f"PortRef(node_id={self.node_id!r}, direction={self.direction.value}, index={self.index})"
+
+
+@dataclass(frozen=True, slots=True)
+class Port:
+    """A single port, carrying its own dimension. See the module docstring for why."""
+
+    dim: Dim
+
+    def __post_init__(self) -> None:
+        """Validate that ``dim`` is a Dim."""
+        if not isinstance(self.dim, Dim):
+            raise GraphGrammarError(f"Port dim must be a Dim, got {self.dim!r}")
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Wire:
+    """An unordered pair of ports: ``Wire(a, b) == Wire(b, a)``.
+
+    A self-loop through two *distinct* ports of the same node is legal ZX and is not
+    rejected here; only a wire naming the exact same port twice is malformed, since it
+    cannot be given any meaning as a connection between two things.
+    """
+
+    a: PortRef
+    b: PortRef
+
+    def __post_init__(self) -> None:
+        """Reject a wire that names the same port at both ends."""
+        if self.a == self.b:
+            raise GraphDomainError(f"a wire cannot connect port {self.a} to itself")
+
+    def endpoints(self) -> frozenset[PortRef]:
+        """The two ports this wire joins, as an unordered pair."""
+        return frozenset((self.a, self.b))
+
+    def __eq__(self, other: object) -> bool:
+        """Equal iff the same two ports, regardless of stored order."""
+        if not isinstance(other, Wire):
+            return NotImplemented
+        return self.endpoints() == other.endpoints()
+
+    def __hash__(self) -> int:
+        """Hash agrees with __eq__: order-independent."""
+        return hash(self.endpoints())
+
+    def __repr__(self) -> str:
+        return f"Wire({self.a!r}, {self.b!r})"
+
+
+@dataclass(frozen=True, slots=True)
+class Node:
+    """One diagram node: a generator type, ordered input/output ports, and a phase slot.
+
+    Immutable: :meth:`Diagram.set_phase` builds a replacement ``Node`` via
+    :meth:`with_phase` rather than mutating one in place, so a ``Node`` handed out by a
+    read-only view can never be corrupted by a later mutation elsewhere.
+    """
+
+    id: NodeId
+    generator_type: GeneratorType
+    inputs: tuple[Port, ...]
+    outputs: tuple[Port, ...]
+    phase: PhaseVector | None = None
+
+    def __post_init__(self) -> None:
+        """Validate field types: GeneratorType, tuples of Port, and an optional PhaseVector."""
+        if not isinstance(self.generator_type, GeneratorType):
+            raise GraphGrammarError(
+                f"Node generator_type must be a GeneratorType, got {self.generator_type!r}"
+            )
+        if not isinstance(self.inputs, tuple) or not isinstance(self.outputs, tuple):
+            raise GraphGrammarError("Node inputs and outputs must be tuples of Port")
+        for port in (*self.inputs, *self.outputs):
+            if not isinstance(port, Port):
+                raise GraphGrammarError(f"Node ports must be Port instances, got {port!r}")
+        if self.phase is not None and not isinstance(self.phase, PhaseVector):
+            raise GraphGrammarError(f"Node phase must be a PhaseVector or None, got {self.phase!r}")
+
+    @property
+    def num_inputs(self) -> int:
+        """The number of input ports."""
+        return len(self.inputs)
+
+    @property
+    def num_outputs(self) -> int:
+        """The number of output ports."""
+        return len(self.outputs)
+
+    def legs(self, direction: Direction) -> tuple[Port, ...]:
+        """The ordered port tuple for the given direction."""
+        return self.inputs if direction is Direction.INPUT else self.outputs
+
+    def with_phase(self, phase: PhaseVector | None) -> Node:
+        """Return a new Node identical to this one but with its phase slot replaced."""
+        return Node(
+            id=self.id,
+            generator_type=self.generator_type,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            phase=phase,
+        )
+
+
+class Diagram:
+    """An open ZX diagram: nodes, wires, ordered boundaries, and an exact scalar factor.
+
+    All state is private. Callers observe it only through read-only views (tuples,
+    ``MappingProxyType``) exposed as properties, and mutate it only through the
+    explicit methods below -- never by reaching into a container a getter returned.
+    See the module docstring for what construction does and does not validate, for the
+    node-removal cascade, and for why this class has no ``__eq__``.
+    """
+
+    __slots__ = ("_boundary_inputs", "_boundary_outputs", "_next_id", "_nodes", "_scalar", "_wires")
+
+    def __init__(self) -> None:
+        """Build an empty diagram: no nodes, no wires, empty boundaries, scalar 1."""
+        self._nodes: dict[NodeId, Node] = {}
+        self._wires: set[Wire] = set()
+        self._boundary_inputs: list[PortRef] = []
+        self._boundary_outputs: list[PortRef] = []
+        self._scalar: Scalar = Scalar.one()
+        self._next_id: int = 0
+
+    # -- read-only views -----------------------------------------------------------
+
+    @property
+    def nodes(self) -> MappingProxyType[NodeId, Node]:
+        """A read-only view of every node, keyed by id. Node values are themselves immutable."""
+        return MappingProxyType(self._nodes)
+
+    @property
+    def wires(self) -> frozenset[Wire]:
+        """A read-only snapshot of every wire."""
+        return frozenset(self._wires)
+
+    @property
+    def boundary_inputs(self) -> tuple[PortRef, ...]:
+        """A read-only, ordered snapshot of the boundary-input port references."""
+        return tuple(self._boundary_inputs)
+
+    @property
+    def boundary_outputs(self) -> tuple[PortRef, ...]:
+        """A read-only, ordered snapshot of the boundary-output port references."""
+        return tuple(self._boundary_outputs)
+
+    @property
+    def scalar(self) -> Scalar:
+        """The exact scalar accumulator (Scalar is itself immutable)."""
+        return self._scalar
+
+    def __iter__(self) -> Iterator[NodeId]:
+        """Iterate over node ids, mirroring dict-like iteration over the node keys."""
+        return iter(self._nodes)
+
+    # -- node mutation --------------------------------------------------------------
+
+    def add_node(
+        self,
+        generator_type: GeneratorType,
+        input_dims: Sequence[Dim],
+        output_dims: Sequence[Dim],
+        phase: PhaseVector | None = None,
+    ) -> NodeId:
+        """Allocate a fresh NodeId and add a node with the given ports and phase.
+
+        Does not check the generator type's leg policy, dimension policy, or phase
+        schema -- that conformance check is :mod:`qufzx.diagram.validate`'s job, so
+        that a caller assembling a diagram step by step is never blocked mid-
+        construction (e.g. before a phase is attached).
+        """
+        node_id = NodeId(self._next_id)
+        self._next_id += 1
+        node = Node(
+            id=node_id,
+            generator_type=generator_type,
+            inputs=tuple(Port(d) for d in input_dims),
+            outputs=tuple(Port(d) for d in output_dims),
+            phase=phase,
+        )
+        self._nodes[node_id] = node
+        return node_id
+
+    def remove_node(self, node_id: NodeId) -> None:
+        """Remove a node, cascading to drop every incident wire and boundary entry.
+
+        Raises GraphGrammarError if ``node_id`` is not present. See the module
+        docstring for why removal cascades rather than rejecting nodes with incident
+        wires.
+        """
+        if node_id not in self._nodes:
+            raise GraphGrammarError(f"no such node: {node_id!r}")
+        del self._nodes[node_id]
+        self._wires = {
+            wire
+            for wire in self._wires
+            if wire.a.node_id != node_id and wire.b.node_id != node_id
+        }
+        self._boundary_inputs = [ref for ref in self._boundary_inputs if ref.node_id != node_id]
+        self._boundary_outputs = [ref for ref in self._boundary_outputs if ref.node_id != node_id]
+
+    def set_phase(self, node_id: NodeId, phase: PhaseVector | None) -> None:
+        """Replace a node's phase slot. Raises GraphGrammarError if node_id is absent."""
+        if node_id not in self._nodes:
+            raise GraphGrammarError(f"no such node: {node_id!r}")
+        self._nodes[node_id] = self._nodes[node_id].with_phase(phase)
+
+    # -- wire mutation ----------------------------------------------------------------
+
+    def add_wire(self, a: PortRef, b: PortRef) -> None:
+        """Add a wire between two ports. Order does not matter.
+
+        Raises GraphDomainError if ``a == b``. Does not check that the referenced
+        nodes or port indices exist, that dimensions agree, or that either port is
+        already wired or on the boundary -- see the module docstring on validation
+        ownership.
+        """
+        self._wires.add(Wire(a, b))
+
+    def remove_wire(self, a: PortRef, b: PortRef) -> None:
+        """Remove the wire between two ports. Raises GraphGrammarError if it is absent."""
+        wire = Wire(a, b)
+        if wire not in self._wires:
+            raise GraphGrammarError(f"no such wire: {wire!r}")
+        self._wires.discard(wire)
+
+    # -- boundary mutation ------------------------------------------------------------
+
+    def set_boundary_inputs(self, refs: Sequence[PortRef]) -> None:
+        """Replace the ordered boundary-input list wholesale.
+
+        Does not check for duplicates, wire conflicts, or direction consistency --
+        see :mod:`qufzx.diagram.validate`.
+        """
+        self._boundary_inputs = list(refs)
+
+    def set_boundary_outputs(self, refs: Sequence[PortRef]) -> None:
+        """Replace the ordered boundary-output list wholesale. See :meth:`set_boundary_inputs`."""
+        self._boundary_outputs = list(refs)
+
+    # -- scalar mutation ----------------------------------------------------------------
+
+    def multiply_scalar(self, factor: Scalar) -> None:
+        """Multiply the scalar accumulator by ``factor`` in place (Scalar itself is immutable)."""
+        if not isinstance(factor, Scalar):
+            raise GraphGrammarError(f"multiply_scalar requires a Scalar, got {factor!r}")
+        self._scalar = self._scalar * factor
+
+    # -- copying --------------------------------------------------------------------------
+
+    def copy(self) -> Diagram:
+        """Return a fully independent deep copy, preserving node ids.
+
+        Every value stored (Node, Wire, PortRef, PhaseVector, Dim, Scalar) is itself
+        immutable, so independence only requires that the *containers* -- the node
+        dict, the wire set, and the two boundary lists -- are fresh objects, not that
+        their elements be recursively cloned.
+        """
+        clone = Diagram()
+        clone._nodes = dict(self._nodes)
+        clone._wires = set(self._wires)
+        clone._boundary_inputs = list(self._boundary_inputs)
+        clone._boundary_outputs = list(self._boundary_outputs)
+        clone._scalar = self._scalar
+        clone._next_id = self._next_id
+        return clone
