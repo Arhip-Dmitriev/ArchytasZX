@@ -13,55 +13,40 @@ generic over any future rule, per its own module docstring) never needs to impor
 specific rule module itself.
 
 Scalar derivation (not assertion). Same-color, single-wire, output-to-input fusion
-introduces no scalar factor at all -- the merged node's denotation, read directly off
-:mod:`qufzx.semantics.denote`'s formulas, already equals the pre-fusion diagram's
-contraction with no leftover coefficient:
+introduces no scalar factor -- read directly off :mod:`qufzx.semantics.denote`'s formulas,
+the merged node's denotation already equals the pre-fusion diagram's contraction with no
+leftover coefficient:
 
-* Z spider. Both ``Z_a`` and ``Z_b`` are diagonal in the computational basis: entry
-  ``e^{i*angle_a(k)}`` (resp. ``e^{i*angle_b(k)}``) sits at the all-axes-equal-``k``
-  position, zero elsewhere. Contracting an output leg of one against an input leg of the
-  other identifies the two spiders' ``k`` in the sum: the contraction is
-  ``sum_k e^{i*angle_a(k)} e^{i*angle_b(k)} |k>^{ox (surviving outputs)} <k|^{ox (surviving inputs)}``,
-  i.e. exactly the merged spider's tensor with phase vector ``alpha + beta`` (componentwise
-  addition, per :meth:`~qufzx.algebra.phase.PhaseVector.__add__`) and no extra factor:
-  ``e^{i*angle_a(k)} * e^{i*angle_b(k)} = e^{i*(angle_a(k) + angle_b(k))}`` is an exact
-  identity of complex exponentials, not an approximation.
-* X spider. ``X_{m->n} = F^{ox n} . Z_{m->n} . (conj(F))^{ox m}``. An output-to-input wire
-  contracts an ``F`` (applied to the OUTPUT-side spider's leg) against a ``conj(F)``
-  (applied to the INPUT-side spider's leg) on the shared axis -- this is exactly why the
-  ``wire_direction_output_to_input`` side condition in :mod:`qufzx.rewrite.match` is
-  checked uniformly for both colors. Since ``F`` is unitary, ``F^dagger . F = conj(F)^T . F
-  = I`` (``F`` is symmetric, so ``F^dagger = conj(F)``), so the two Fourier factors on the
-  contracted leg cancel to the identity, leaving exactly the Z-spider fusion argument above
-  sandwiched between the surviving ``F``/``conj(F)`` factors on every other leg -- which is
-  precisely the merged X spider's own denotation. Again no leftover factor.
+* Z spider. Both spiders are diagonal, entry ``e^{i*angle(k)}`` at the all-axes-``k``
+  position. Contracting an output leg of one against an input leg of the other identifies
+  their ``k`` in the sum, giving exactly the merged spider's tensor with phase vector
+  ``alpha + beta`` (:meth:`~qufzx.algebra.phase.PhaseVector.__add__`) and no extra factor.
+* X spider. ``X_{m->n} = F^{ox n} . Z_{m->n} . (conj(F))^{ox m}``; an output-to-input wire
+  contracts an ``F`` against a ``conj(F)`` on the shared axis -- why
+  ``wire_direction_output_to_input`` in :mod:`qufzx.rewrite.match` is checked uniformly for
+  both colors -- and since ``F`` is unitary and symmetric these cancel to the identity,
+  leaving exactly the Z-spider argument above sandwiched between the surviving Fourier
+  factors on every other leg.
 
-Both derivations independently land on the scalar :meth:`~qufzx.algebra.scalar.Scalar.one`,
-which is what :data:`SPIDER_FUSION` declares and what :func:`spider_fusion_builder` returns
-per application -- this was derived from the denotation formulas above, not asserted by
-fiat, and it agrees with the Phase 4 oracle in ``tests/test_phase5_oracle.py``. Had the two
-disagreed, this docstring would say so explicitly rather than quietly matching one to the
-other; they do not.
+Both derivations land on :meth:`~qufzx.algebra.scalar.Scalar.one`, which is what
+:data:`SPIDER_FUSION` declares and what :func:`spider_fusion_builder` returns per
+application, agreeing with the Phase 4 oracle in ``tests/test_phase5_oracle.py``.
 
-Merged leg-ordering convention. A choice, stated once here, not a derivation (matching how
-:mod:`qufzx.semantics.denote` states its outputs-before-inputs axis convention as a choice):
-the merged node's inputs are A's surviving inputs, in their original index order, followed
-by B's surviving inputs, in their original index order; its outputs are A's surviving
-outputs followed by B's surviving outputs, under the same rule. "A" and "B" here are fixed
-by :class:`~qufzx.rewrite.match.FusionMatch`'s own convention -- A is always the lower
-:class:`~qufzx.diagram.graph.NodeId` of the matched pair. "Surviving" means every leg
-except the single one consumed by the matched wire.
+Merged leg-ordering convention. A choice, stated once here, not a derivation: the merged
+node's inputs are A's surviving inputs, original index order, then B's; its outputs follow
+the same rule. "A" and "B" are :class:`~qufzx.rewrite.match.FusionMatch`'s own convention
+(A is always the lower :class:`~qufzx.diagram.graph.NodeId`); "surviving" means every leg
+except the one consumed by the matched wire.
 
-Corner case: no legs survive at all. When A is ``0->1`` and B is ``1->0``, wired
-output-to-input, fusion consumes every leg of both spiders and the merged node ends up
-with zero inputs and zero outputs. Because this codebase stores dimension per port and
-nowhere else (see ``claude.md``), such a node would otherwise carry no record of
-``shared_dim`` whatsoever -- not lost precision, but lost information, since the
-legless spider denotes the scalar ``sum_k 1 = d``. :func:`_merged_phase` handles this by
-returning an explicit ``PhaseVector(shared_dim, {})`` instead of `None` in that one case,
-giving the dimension a port-shaped home even though the phase itself is zero either way.
-Every other phaseless fusion (any node with at least one surviving leg) keeps returning
-`None`, unchanged.
+Dimension of the merged node. Every surviving port -- A's and B's alike -- is built at
+exactly :attr:`~qufzx.rewrite.match.FusionMatch.shared_dim`, never each leg's own original
+``Dim``; Z and X are ``ALL_LEGS_EQUAL`` (:mod:`qufzx.diagram.generators`), so collapsing
+every surviving leg onto one canonical dimension is sound under the generator's own
+policy. When the matched wire's ``dimension_agreement`` only deferred, ``shared_dim`` is
+A's own raw, unbound dim, and forcing it onto B's survivors carries that assumed equality
+into the diagram -- a neighbouring wire that was an exact match before this fusion may
+become merely deferred after it. That is expected, not a defect. See :func:`_merged_phase`
+for the legless corner case, where dimension can only survive via the phase slot.
 """
 
 from __future__ import annotations
@@ -70,7 +55,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
+from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
 from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, FusionPattern
@@ -99,44 +84,46 @@ def _surviving_legs(
     return surviving
 
 
+def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim) -> PhaseVector:
+    """``phase``'s entries reattached to ``shared_dim`` unchanged, or an all-zero vector if absent.
+
+    Only the container's ``Dim`` is replaced -- entries carry over as-is, mirroring exactly
+    what :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement`` condition itself
+    verifies, never a deeper substitution into the entries. Raises
+    :class:`RewriteDomainError`, not :class:`~qufzx.algebra.phase.PhaseDomainError`, if an
+    entry index falls outside ``shared_dim``'s valid range -- this builder is reachable
+    directly, not only through :func:`qufzx.rewrite.engine.apply`, so a foreign or
+    hand-built match must not leak a different module's exception hierarchy through it.
+    """
+    if phase is None:
+        return PhaseVector(shared_dim, {})
+    try:
+        return PhaseVector(shared_dim, phase.entries())
+    except PhaseDomainError as exc:
+        raise RewriteDomainError(
+            f"spider_fusion cannot reattach a phase vector to shared dimension "
+            f"{shared_dim}: {exc}"
+        ) from exc
+
+
 def _merged_phase(
     node_a: Node, node_b: Node, shared_dim: Dim, *, any_legs_survive: bool
 ) -> PhaseVector | None:
-    """The merged node's phase: the componentwise sum, treating an absent phase as zero.
+    """The merged node's phase: componentwise sum, both operands read over ``shared_dim``.
 
-    A `None` phase on both sides stays `None` (rather than becoming an explicit
-    all-zero :class:`~qufzx.algebra.phase.PhaseVector`), matching the phase-free
-    convention every other diagram-building helper in this codebase uses -- *except*
-    when ``any_legs_survive`` is `False`. Since dimension is stored per port and nowhere
-    else (see ``claude.md``), a merged node with no surviving legs at all has no port to
-    carry ``shared_dim``; leaving its phase `None` would silently drop the dimension,
-    and :func:`qufzx.semantics.denote.resolve_dimension` would then have no way to
-    recover it. So in that one case this returns an explicit
-    ``PhaseVector(shared_dim, {})`` -- an all-zero phase, mathematically equivalent to no
-    phase at all -- purely to give the dimension a place to live on the legless node.
-
-    Defensive check, not a normal path: :mod:`qufzx.rewrite.match`'s
-    ``phase_dimension_agreement`` side condition already guarantees every phase present
-    carries a ``Dim`` exactly equal to ``shared_dim`` before a match is ever returned, so
-    ``phase_a.dim == phase_b.dim`` should always hold here. If it is somehow violated
-    anyway (a hand-built match bypassing the matcher), raise :class:`RewriteDomainError`
-    rather than let :meth:`~qufzx.algebra.phase.PhaseVector.__add__`'s
-    :class:`~qufzx.algebra.phase.PhaseDomainError` -- a different module's exception
-    hierarchy entirely -- escape through this builder.
+    A `None` phase on both sides stays `None` -- *except* when ``any_legs_survive`` is
+    `False`: a merged node with no surviving legs has no port left to carry ``shared_dim``
+    (dimension lives per port and nowhere else, see ``claude.md``), so this returns an
+    explicit all-zero ``PhaseVector(shared_dim, {})`` purely to give it a place to live.
+    Otherwise, both operands are read via :func:`_over_shared_dim` before adding, since
+    :meth:`~qufzx.algebra.phase.PhaseVector.__add__` demands its two operands' ``Dim``\\ s
+    be exactly equal.
     """
     if node_a.phase is None and node_b.phase is None:
         if not any_legs_survive:
             return PhaseVector(shared_dim, {})
         return None
-    phase_a = node_a.phase if node_a.phase is not None else PhaseVector(shared_dim, {})
-    phase_b = node_b.phase if node_b.phase is not None else PhaseVector(shared_dim, {})
-    if phase_a.dim != phase_b.dim:
-        raise RewriteDomainError(
-            f"spider_fusion cannot merge phases over mismatched dimensions "
-            f"{phase_a.dim} and {phase_b.dim}; the matcher should never hand this "
-            "builder such a match"
-        )
-    return phase_a + phase_b
+    return _over_shared_dim(node_a.phase, shared_dim) + _over_shared_dim(node_b.phase, shared_dim)
 
 
 def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
@@ -185,8 +172,8 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     new_node_id = diagram.add_node(
         node_a.generator_type,
-        input_dims=[port.dim for _, port in merged_inputs],
-        output_dims=[port.dim for _, port in merged_outputs],
+        input_dims=[match.shared_dim] * len(merged_inputs),
+        output_dims=[match.shared_dim] * len(merged_outputs),
         phase=merged_phase,
     )
 
