@@ -170,9 +170,17 @@ class Match(Protocol):
 
         A pattern must never include a candidate with a failing side condition in its
         returned matches at all (see :mod:`qufzx.rewrite.match`'s module docstring), so
-        this is expected to always be True for a match a pattern actually returned; it
-        exists as an explicit, checkable invariant :mod:`qufzx.rewrite.engine` asserts
-        before applying a rule, rather than a trust-by-construction assumption.
+        this is expected to always be True for a match a pattern actually returned. This
+        alone is *not* the full side-condition invariant, though: ``all(...)`` over an
+        empty (or merely incomplete) :attr:`side_condition_outcomes` is vacuously True, so
+        this property cannot by itself catch a hand-built or foreign match that is simply
+        missing outcomes for some -- or all -- of a rule's declared
+        :class:`SideCondition`\\ s. Verifying full coverage (that the outcome names exactly
+        match the rule's declared side conditions, with no duplicates and no gaps) is a
+        separate, explicit check performed by :func:`check_side_condition_coverage` below,
+        which :mod:`qufzx.rewrite.engine`'s ``apply`` and each rule's own builder (e.g.
+        :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`) both call before doing
+        any work -- not by this property, and not implicitly.
         """
         ...
 
@@ -251,3 +259,51 @@ class Rule:
         """Validate that ``name`` is a non-empty string."""
         if not isinstance(self.name, str) or not self.name:
             raise RewriteGrammarError(f"rule name must be a non-empty str, got {self.name!r}")
+
+
+def check_side_condition_coverage(
+    match: Match, side_conditions: tuple[SideCondition, ...], context: str
+) -> None:
+    """Verify ``match`` carries a complete, all-passing outcome for every declared condition.
+
+    :attr:`Match.all_side_conditions_passed` alone cannot catch a match whose
+    ``side_condition_outcomes`` is empty or merely incomplete -- ``all()`` over ``()`` is
+    vacuously True (see that property's docstring). This function closes that hole: it
+    requires the set of ``outcome.name`` in ``match.side_condition_outcomes`` to equal
+    exactly the set of ``condition.name`` in ``side_conditions`` (no missing name, no
+    unexpected name), requires no duplicate outcome names, and only then checks that every
+    outcome passed. ``context`` (typically a rule name, e.g. ``"spider_fusion"``) is folded
+    into the raised message so a certificate-adjacent caller can tell which rule rejected
+    the match.
+
+    Both :func:`qufzx.rewrite.engine.apply` and each rule's own builder (e.g.
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`) call this before doing any
+    work, since a builder is reachable directly and not only through ``apply``. Raises
+    :class:`RewriteDomainError` -- a coverage or passedness failure is a match outside the
+    mathematical domain a rewrite requires, the same category as a single failed side
+    condition, not a malformed request.
+    """
+    outcomes = match.side_condition_outcomes
+    outcome_names = [outcome.name for outcome in outcomes]
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for name in outcome_names:
+        if name in seen:
+            duplicates.add(name)
+        else:
+            seen.add(name)
+
+    declared_names = {condition.name for condition in side_conditions}
+    reported_names = set(outcome_names)
+    missing = declared_names - reported_names
+    unexpected = reported_names - declared_names
+    if duplicates or missing or unexpected:
+        raise RewriteDomainError(
+            f"{context}: side_condition_outcomes do not exactly cover the declared side "
+            f"conditions (duplicate={sorted(duplicates)}, missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)})"
+        )
+
+    failed = [outcome.name for outcome in outcomes if not outcome.passed]
+    if failed:
+        raise RewriteDomainError(f"{context}: match has failing side condition(s) {failed}")

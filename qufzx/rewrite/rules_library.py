@@ -3,6 +3,15 @@
 Phase 5 registers exactly one rule, :data:`SPIDER_FUSION`, built from
 :class:`~qufzx.rewrite.match.FusionPattern` and :func:`spider_fusion_builder` below.
 
+Rule registry. A :class:`~qufzx.rewrite.engine.RewriteStep` records only a rule's
+``name`` (a plain string), not the :class:`~qufzx.rewrite.rule.Rule` object itself, so
+Phase 6's certificate replay needs a way to resolve that name back to the actual rule it
+names before it can re-apply anything. :data:`RULES` and :func:`lookup_rule` are that
+resolution path: every rule this module defines is registered there, keyed by
+:attr:`~qufzx.rewrite.rule.Rule.name`, so :mod:`qufzx.rewrite.engine` (which must stay
+generic over any future rule, per its own module docstring) never needs to import a
+specific rule module itself.
+
 Scalar derivation (not assertion). Same-color, single-wire, output-to-input fusion
 introduces no scalar factor at all -- the merged node's denotation, read directly off
 :mod:`qufzx.semantics.denote`'s formulas, already equals the pre-fusion diagram's
@@ -57,6 +66,9 @@ Every other phaseless fusion (any node with at least one surviving leg) keeps re
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseVector
 from qufzx.algebra.scalar import Scalar
@@ -69,6 +81,7 @@ from qufzx.rewrite.rule import (
     RewriteDomainError,
     RewriteGrammarError,
     Rule,
+    check_side_condition_coverage,
 )
 
 
@@ -133,15 +146,18 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     the leg-ordering and scalar conventions) and returns the :class:`BuildResult`
     :mod:`qufzx.rewrite.engine` needs to splice it in; never removes the matched nodes or
     touches any wire or boundary entry itself -- see :class:`~qufzx.rewrite.rule.BuildResult`.
+    Verifies ``match``'s ``side_condition_outcomes`` exactly covers
+    :data:`~qufzx.rewrite.match.FUSION_SIDE_CONDITIONS`, with every outcome passed (via
+    :func:`~qufzx.rewrite.rule.check_side_condition_coverage`), before doing any graph
+    surgery -- this builder is reachable directly, not only through
+    :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having already
+    checked this.
     """
     if not isinstance(match, FusionMatch):
         raise RewriteGrammarError(
             f"spider_fusion requires a FusionMatch, got {type(match).__name__}"
         )
-    if not match.all_side_conditions_passed:
-        raise RewriteDomainError(
-            "spider_fusion received a match with at least one failed side condition"
-        )
+    check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, "spider_fusion")
 
     node_a = diagram.nodes.get(match.a_id)
     node_b = diagram.nodes.get(match.b_id)
@@ -202,3 +218,25 @@ SPIDER_FUSION = Rule(
     scalar_introduced=Scalar.one(),
 )
 """Same-color, single-wire spider fusion. See the module docstring for the scalar derivation."""
+
+
+RULES: Mapping[str, Rule] = MappingProxyType({SPIDER_FUSION.name: SPIDER_FUSION})
+"""Every rule this module registers, keyed by :attr:`~qufzx.rewrite.rule.Rule.name`.
+
+See the module docstring's "Rule registry" paragraph for why this exists. A
+``MappingProxyType`` so a caller cannot mutate the registry through the reference
+:func:`lookup_rule` or this constant hands out.
+"""
+
+
+def lookup_rule(name: str) -> Rule:
+    """Resolve a rule name (e.g. ``"spider_fusion"``) back to its :class:`Rule` object.
+
+    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` if ``name`` is not registered
+    in :data:`RULES` -- an unknown rule name is a malformed replay request, not a
+    mathematical domain violation.
+    """
+    try:
+        return RULES[name]
+    except KeyError:
+        raise RewriteGrammarError(f"no such rule: {name!r}") from None

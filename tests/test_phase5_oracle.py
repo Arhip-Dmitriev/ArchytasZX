@@ -164,7 +164,9 @@ class TestSpiderFusionOracleAllLegsConsumed:
             assert result.matched, result.reason
 
 
-def _build_preexisting_self_loop_on_a(dim: Dim) -> tuple[Diagram, NodeId]:
+def _build_preexisting_self_loop_on_a(
+    dim: Dim, generator_type: GeneratorType = Z_SPIDER
+) -> tuple[Diagram, NodeId]:
     """A carries its own self-loop (two distinct ports wired to each other) plus the fusion wire.
 
     A: 1 input, 3 outputs. ``A_in0`` is wired to ``A_out2`` -- a self-loop entirely on A,
@@ -173,11 +175,13 @@ def _build_preexisting_self_loop_on_a(dim: Dim) -> tuple[Diagram, NodeId]:
     neither is the fusion pattern's own wire, so this exercises exactly the case the engine
     module docstring calls out ("a pre-existing self-loop on one of the consumed nodes, both
     endpoints get remapped, yielding a self-loop on the merged node") without any test ever
-    having built it.
+    having built it. ``generator_type`` defaults to ``Z_SPIDER``; the X-color subclass below
+    passes ``X_SPIDER`` to exercise the same shape through the wire_direction_output_to_input
+    side condition.
     """
     diagram = Diagram()
-    a_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim, dim])
-    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+    a_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[dim, dim, dim])
+    b_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[dim])
     diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
     diagram.add_wire(PortRef(a_id, Direction.INPUT, 0), PortRef(a_id, Direction.OUTPUT, 2))
     diagram.set_boundary_outputs(
@@ -186,11 +190,13 @@ def _build_preexisting_self_loop_on_a(dim: Dim) -> tuple[Diagram, NodeId]:
     return diagram, a_id
 
 
-class TestSpiderFusionPreservesAPreexistingSelfLoop:
-    """The self-loop case the engine docstring claims works, tested for the first time."""
+class _PreexistingSelfLoopCases:
+    """The self-loop case the engine docstring claims works, shared across both colors."""
+
+    generator_type: GeneratorType
 
     def test_self_loop_survives_as_a_self_loop_on_the_merged_node(self) -> None:
-        pre, a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"))
+        pre, a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"), self.generator_type)
         post = _fuse(pre)
         self_loops = [wire for wire in post.wires if wire.a.node_id == wire.b.node_id]
         assert len(self_loops) == 1
@@ -199,19 +205,27 @@ class TestSpiderFusionPreservesAPreexistingSelfLoop:
         assert a_id not in post.nodes
 
     def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
-        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.concrete(3))
+        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.concrete(3), self.generator_type)
         post = _fuse(pre)
         report = validate(post)
         assert report.is_valid
         assert not report.deferred
 
     def test_exact_equality_at_several_concrete_d(self) -> None:
-        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"))
+        pre, _a_id = _build_preexisting_self_loop_on_a(Dim.symbol("d"), self.generator_type)
         post = _fuse(pre)
         for d_value in _CONCRETE_DS:
             result = compare(pre, post, {"d": d_value})
             assert result.mode is EqualityMode.EXACT
             assert result.matched, result.reason
+
+
+class TestSpiderFusionPreservesAPreexistingSelfLoopZ(_PreexistingSelfLoopCases):
+    generator_type = Z_SPIDER
+
+
+class TestSpiderFusionPreservesAPreexistingSelfLoopX(_PreexistingSelfLoopCases):
+    generator_type = X_SPIDER
 
 
 def _build_boundary_input_and_output(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:
@@ -254,6 +268,116 @@ class TestSpiderFusionRemapsABoundaryInput:
             result = compare(pre, post, {"d": d_value})
             assert result.mode is EqualityMode.EXACT
             assert result.matched, result.reason
+
+
+def _build_multiple_boundary_inputs(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:
+    """A and B each contribute two surviving boundary inputs, interleaved in the list.
+
+    A: 2 inputs (indices 0, 1), 1 output (the fusion wire). B: 3 inputs (index 0 is the
+    fusion wire; indices 1, 2 survive), 0 outputs. The ordered boundary-input list is
+    ``[A_in0, A_in1, B_in1, B_in2]`` -- A's survivors in original order, then B's, matching
+    the merged leg-ordering convention documented in :mod:`qufzx.rewrite.rules_library`.
+    Every prior boundary-input test in this suite used a single boundary input, so order
+    preservation across several, interleaved from both matched nodes, was untested.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(Z_SPIDER, input_dims=[dim, dim], output_dims=[dim])
+    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim, dim, dim], output_dims=[])
+    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    diagram.set_boundary_inputs(
+        [
+            PortRef(a_id, Direction.INPUT, 0),
+            PortRef(a_id, Direction.INPUT, 1),
+            PortRef(b_id, Direction.INPUT, 1),
+            PortRef(b_id, Direction.INPUT, 2),
+        ]
+    )
+    return diagram, a_id, b_id
+
+
+class TestSpiderFusionPreservesBoundaryInputOrder:
+    def test_boundary_input_order_matches_the_leg_ordering_convention(self) -> None:
+        pre, _a_id, _b_id = _build_multiple_boundary_inputs(Dim.concrete(2))
+        post = _fuse(pre)
+        assert len(post.boundary_inputs) == 4
+        (merged,) = post.nodes.values()
+        assert post.boundary_inputs == (
+            PortRef(merged.id, Direction.INPUT, 0),
+            PortRef(merged.id, Direction.INPUT, 1),
+            PortRef(merged.id, Direction.INPUT, 2),
+            PortRef(merged.id, Direction.INPUT, 3),
+        )
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre, _a_id, _b_id = _build_multiple_boundary_inputs(Dim.concrete(3))
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_exact_equality_at_several_concrete_d(self) -> None:
+        pre, _a_id, _b_id = _build_multiple_boundary_inputs(Dim.symbol("d"))
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
+def _build_b_output_into_a_input(
+    dim: Dim, generator_type: GeneratorType = Z_SPIDER
+) -> tuple[Diagram, NodeId, NodeId]:
+    """The fusion wire runs from the higher-id node's output into the lower-id node's input.
+
+    Every other fixture in this suite has the lower-id node (by construction order) as the
+    wire's OUTPUT side; ``FusionMatch.a_id`` is always the lower ``NodeId`` regardless of
+    which side of the wire it sits on (see that class's docstring), so this is the mirror
+    case: ``a_id`` (added first, lower id) sits on the wire's INPUT side, ``b_id`` (added
+    second, higher id) on the OUTPUT side. A: 1 input (the fusion wire), 1 output
+    (survives). B: 0 inputs, 2 outputs (index 0 is the fusion wire; index 1 survives).
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[dim])
+    b_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim, dim])
+    diagram.add_wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(a_id, Direction.INPUT, 0))
+    diagram.set_boundary_outputs(
+        [PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.OUTPUT, 1)]
+    )
+    return diagram, a_id, b_id
+
+
+class _BOutputIntoAInputCases:
+    """Wire runs B.out -> A.in with a_id < b_id, shared across both colors."""
+
+    generator_type: GeneratorType
+
+    def test_fuses_to_a_single_spider(self) -> None:
+        pre, _a_id, _b_id = _build_b_output_into_a_input(Dim.symbol("d"), self.generator_type)
+        post = _fuse(pre)
+        assert len(post.nodes) == 1
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        pre, _a_id, _b_id = _build_b_output_into_a_input(Dim.concrete(3), self.generator_type)
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_exact_equality_at_several_concrete_d(self) -> None:
+        pre, _a_id, _b_id = _build_b_output_into_a_input(Dim.symbol("d"), self.generator_type)
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+
+class TestBOutputIntoAInputZ(_BOutputIntoAInputCases):
+    generator_type = Z_SPIDER
+
+
+class TestBOutputIntoAInputX(_BOutputIntoAInputCases):
+    generator_type = X_SPIDER
 
 
 class TestRepeatedApplicationReachesAFixpointOnAChain:

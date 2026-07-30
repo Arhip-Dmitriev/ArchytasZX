@@ -17,11 +17,24 @@ Algorithm.
 2. Build. Call ``rule.builder(working, match)``. Per :class:`~qufzx.rewrite.rule.BuildResult`'s
    contract, this mutates ``working`` by adding the replacement node(s) only -- it does not
    touch any wire, any boundary entry, or remove the consumed nodes.
-3. Verify the match and the introduced scalar. Reject (raise
-   :class:`~qufzx.rewrite.rule.RewriteDomainError`) a match with a failing side condition,
-   or a builder whose ``scalar_introduced`` disagrees with the rule's declared
-   ``scalar_introduced`` -- both are checked here, once, rather than trusted from the
-   builder or duplicated in every rule's own builder code.
+3. Verify the match belongs to this diagram and carries a complete, passing certificate.
+   Before the builder is even called,
+   :func:`~qufzx.rewrite.rule.check_side_condition_coverage` rejects (raising
+   :class:`~qufzx.rewrite.rule.RewriteDomainError`) a match whose ``side_condition_outcomes``
+   do not name exactly ``rule.side_conditions`` -- no fewer, no more, no duplicates -- or
+   whose named outcomes are not all ``passed``; a bare
+   ``all(outcome.passed for outcome in ())`` is vacuously True, so checking coverage, not
+   only passedness, is what actually closes that hole (see that function's docstring for
+   the full account). The identical check is applied by each rule's own builder against
+   its own declared conditions (see ``spider_fusion_builder`` in
+   :mod:`qufzx.rewrite.rules_library`), since a builder is reachable directly and not only
+   through this function. After the builder returns, this step also verifies the builder's
+   introduced scalar agrees with the rule's declared ``scalar_introduced``, and that every
+   one of ``build_result.consumed_wires`` and ``build_result.consumed_node_ids`` is
+   actually present in the working diagram -- raising
+   :class:`~qufzx.rewrite.rule.RewriteGrammarError` for the latter, since a match (or a
+   builder) naming a wire or node the diagram does not have is a malformed request, not a
+   domain violation a builder computed correctly and then this step rejected.
 4. Remap every reference. This is the single most failure-prone part of a rewrite (see
    :mod:`qufzx.semantics.check`'s interface check, which fails on a boundary that lost its
    order or its entries before ever comparing a tensor). For every wire in ``working``
@@ -60,15 +73,19 @@ Algorithm.
 6. Multiply the scalar. ``working.multiply_scalar(build_result.scalar_introduced)``, after
    every structural change, so the returned diagram's scalar accumulator is exactly the
    input's times the rule's introduced factor.
-7. Record provenance. A :class:`RewriteStep` carrying the rule name, the match location
+7. Record provenance. A :class:`RewriteStep` carrying the rule name, the located ``match``
+   exactly as it was applied (stored verbatim, so Phase 6 replays directly from it rather
+   than re-running the matcher and re-selecting a candidate by node id), the match location
    (``build_result.consumed_node_ids`` and ``consumed_wires``, *as they were in the input
    diagram* -- these are read from ``build_result``, not re-derived from ``working`` after
    mutation), every side condition the match checked with its outcome, every dimension
    constraint the match assumed, the scalar introduced, and the full old-port -> new-port
    remapping. Phase 6's certificate module must be able to replay a rewrite from this record
-   alone (rebuild the match, look up the same rule by name, and confirm the replay reproduces
-   ``diagram`` and passes the oracle) -- these fields are shaped for that consumer. This
-   module does not implement replay or verification itself; that is Phase 6's job.
+   alone (look the rule up by name via
+   :func:`~qufzx.rewrite.rules_library.lookup_rule`, re-apply it at the stored ``match``,
+   and confirm the replay reproduces ``diagram`` and passes the oracle) -- these fields are
+   shaped for that consumer. This module does not implement replay or verification itself;
+   that is Phase 6's job.
 
 What this module deliberately does not do. It does not search for matches (that is
 :mod:`qufzx.rewrite.match`'s job -- callers pass an already-located ``Match`` in); it does
@@ -89,8 +106,10 @@ from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
     Match,
     RewriteDomainError,
+    RewriteGrammarError,
     Rule,
     SideConditionOutcome,
+    check_side_condition_coverage,
 )
 
 
@@ -101,9 +120,15 @@ class RewriteStep:
     Every field is drawn either from the ``Match`` that was applied or from the
     ``BuildResult`` its rule's builder produced, never re-derived from the mutated working
     diagram, so this record describes the rewrite *as it was applied to the input*.
+    ``match`` is the field Phase 6 replays from: the exact ``Match`` object ``apply`` was
+    given, stored verbatim rather than re-derived, so a replayer never needs to re-run the
+    matcher and re-select a candidate by node id -- it can look ``rule_name`` up (via
+    :func:`~qufzx.rewrite.rules_library.lookup_rule`) and re-apply it at this stored match
+    directly.
     """
 
     rule_name: str
+    match: Match
     matched_node_ids: tuple[NodeId, ...]
     consumed_wires: tuple[Wire, ...]
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
@@ -151,14 +176,14 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
     Never mutates ``diagram`` -- see the module docstring for the full algorithm. Raises
-    :class:`~qufzx.rewrite.rule.RewriteDomainError` if ``match`` carries a failed side
-    condition, or if the builder's introduced scalar disagrees with ``rule.scalar_introduced``.
+    :class:`~qufzx.rewrite.rule.RewriteDomainError` if ``match``'s side-condition outcomes
+    do not exactly cover ``rule.side_conditions`` or include a failed one, or if the
+    builder's introduced scalar disagrees with ``rule.scalar_introduced``. Raises
+    :class:`~qufzx.rewrite.rule.RewriteGrammarError` if the match does not belong to
+    ``diagram`` -- i.e. a consumed wire or node the builder reported is not actually
+    present.
     """
-    if not match.all_side_conditions_passed:
-        failed = tuple(o.name for o in match.side_condition_outcomes if not o.passed)
-        raise RewriteDomainError(
-            f"cannot apply rule {rule.name!r}: match has failing side condition(s) {failed}"
-        )
+    check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
     working = diagram.copy()
     build_result = rule.builder(working, match)
@@ -167,6 +192,17 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         raise RewriteDomainError(
             f"rule {rule.name!r} declares scalar_introduced={rule.scalar_introduced!r}, "
             f"but its builder returned {build_result.scalar_introduced!r} for this match"
+        )
+
+    missing_wires = [wire for wire in build_result.consumed_wires if wire not in working.wires]
+    missing_node_ids = [
+        node_id for node_id in build_result.consumed_node_ids if node_id not in working.nodes
+    ]
+    if missing_wires or missing_node_ids:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: match does not belong to the diagram it is applied to "
+            f"(consumed wire(s) absent: {missing_wires!r}; consumed node id(s) absent: "
+            f"{missing_node_ids!r})"
         )
 
     consumed_wire_set = frozenset(build_result.consumed_wires)
@@ -206,6 +242,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     step = RewriteStep(
         rule_name=rule.name,
+        match=match,
         matched_node_ids=build_result.consumed_node_ids,
         consumed_wires=build_result.consumed_wires,
         side_condition_outcomes=match.side_condition_outcomes,

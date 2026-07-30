@@ -8,11 +8,11 @@ import pytest
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
+from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rule import RewriteDomainError, Rule
+from qufzx.rewrite.match import FusionMatch, find_matches
+from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, Rule
 from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
@@ -255,3 +255,85 @@ class TestApplyRejectsAScalarMismatch:
         match = find_matches(diagram)[0]
         with pytest.raises(RewriteDomainError):
             apply(diagram, mismatched_rule, match)
+
+
+class TestApplyEnforcesSideConditionCoverage:
+    """Fix 1's audit proof, exercised through apply(): an empty outcomes tuple must not
+    silently bypass the side-condition invariant.
+
+    Before the fix, a hand-built FusionMatch(side_condition_outcomes=()) naming a Z
+    spider wired into an X spider was accepted by apply(): it merged the two into one Z
+    node, produced a diagram validate() called well-formed, and oracle-compared against
+    the input with a nonzero deviation -- while the emitted RewriteStep recorded zero
+    side conditions.
+    """
+
+    def test_empty_outcomes_on_a_z_into_x_pair_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        match = FusionMatch(
+            a_id=a_id,
+            b_id=b_id,
+            wire=wire,
+            shared_dim=d,
+            side_condition_outcomes=(),
+        )
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, SPIDER_FUSION, match)
+
+
+class TestApplyRejectsAForeignMatch:
+    """Fix 4: apply() must verify the match actually belongs to the diagram it is applied to."""
+
+    def test_raises_when_the_matched_wire_is_absent_from_the_diagram(self) -> None:
+        d = Dim.concrete(2)
+        diagram, a_id, b_id = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+
+        # Same node shapes and ids, but the fusion wire itself was never added -- an
+        # already-invalid, dangling-port diagram the match does not actually belong to.
+        foreign_diagram = Diagram()
+        foreign_diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        foreign_diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
+        assert a_id in foreign_diagram.nodes
+        assert b_id in foreign_diagram.nodes
+
+        with pytest.raises(RewriteGrammarError):
+            apply(foreign_diagram, SPIDER_FUSION, match)
+
+    def test_raises_when_the_build_result_names_a_missing_node_id(self) -> None:
+        def _phantom_node_builder(working_diagram: Diagram, match_obj: object) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            return dataclasses.replace(
+                result, consumed_node_ids=result.consumed_node_ids + (NodeId(999_999),)
+            )
+
+        phantom_rule = Rule(
+            name="spider_fusion_phantom",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_phantom_node_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteGrammarError):
+            apply(diagram, phantom_rule, match)
+
+
+class TestRewriteStepRecordsTheMatch:
+    """Fix 6: RewriteStep must carry the located match Phase 6 replays from."""
+
+    def test_step_match_is_the_applied_match(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.match == match

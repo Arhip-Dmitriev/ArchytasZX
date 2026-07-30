@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern, find_matches
+from qufzx.rewrite.rule import RewriteGrammarError
 
 from .helpers import build_ghz_with_copy
 
@@ -186,6 +189,94 @@ class TestDimensionConstraintsRecording:
             o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
         )
         assert not agreement.deferred
+
+
+class TestOutOfRangeWireEndpointRaises:
+    """graph.py is deliberately permissive about wire port indices; find_matches must not be.
+
+    Fix 2: an out-of-range index in a wire endpoint used to escape as a bare IndexError
+    from ``node.legs(direction)[index]``; it must now raise RewriteGrammarError instead,
+    for either endpoint, before any dimension work is attempted.
+    """
+
+    def test_out_of_range_index_on_the_a_side_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 5), PortRef(b_id, Direction.INPUT, 0))
+        with pytest.raises(RewriteGrammarError):
+            find_matches(diagram)
+
+    def test_out_of_range_index_on_the_b_side_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 3))
+        with pytest.raises(RewriteGrammarError):
+            find_matches(diagram)
+
+
+class TestSharedDimResolvesThroughBinding:
+    """Fix 3: shared_dim must be resolved by substituting a unify binding, not taken raw from A.
+
+    Before the fix, ``shared_dim`` was unconditionally ``port_a.dim`` even when ``unify``
+    only succeeded by binding a symbol -- e.g. leg dims ``d`` and ``3`` bind ``d := 3``, but
+    ``shared_dim`` stayed the still-unbound ``d``.
+    """
+
+    def test_shared_dim_is_the_bound_concrete_value_not_the_symbol(self) -> None:
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[three], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].shared_dim == three
+
+    def test_a_legitimate_phase_stated_over_the_bound_dim_now_matches(self) -> None:
+        # This is the proof scenario from the Fix 3(a) audit finding: B's phase is
+        # legitimately stated over Dim(3), the concrete value d unifies to, not over the
+        # still-symbolic leg dim d itself. Before the fix this was wrongly dropped as a
+        # non-match because phase_dimension_agreement compared it against raw d.
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[three],
+            output_dims=[],
+            phase=PhaseVector(three, {1: Phase.turns(1)}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].shared_dim == three
+
+    def test_phases_agreeing_only_after_substitution_but_not_raw_is_a_non_match(self) -> None:
+        # Node A's phase is stated over the symbolic leg dim d, node B's over the bound
+        # concrete value 3 -- both individually resolve to shared_dim=3, but their raw,
+        # unsubstituted Dims differ. spider_fusion_builder adds the two stored phase
+        # vectors directly via PhaseVector.__add__ with no substitution of its own, so
+        # this must be rejected as a non-match rather than crash the builder later.
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {1: Phase.turns(1)})
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[three],
+            output_dims=[],
+            phase=PhaseVector(three, {1: Phase.turns(1)}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        assert find_matches(diagram) == ()
 
 
 class TestDeterministicOrder:

@@ -35,22 +35,40 @@ per-candidate outcomes are recorded):
 5. ``dimension_agreement`` -- the two connected legs' :class:`~qufzx.algebra.dimension.Dim`
    are equal, or :meth:`~qufzx.algebra.dimension.Dim.unify` defers or succeeds only by
    binding a symbol (both recorded as a :class:`FusionMatch` dimension constraint -- see
-   below -- not silently accepted). A ``FAILURE`` from ``unify`` is a non-match.
+   below -- not silently accepted). A ``FAILURE`` from ``unify`` is a non-match. The
+   match's ``shared_dim`` is *not* simply the A-side leg's raw ``Dim``: when ``unify``
+   succeeds by binding a symbol (e.g. leg dims ``d`` and ``3`` bind ``d := 3``), the
+   binding is substituted into the A-side leg's ``Dim`` (see
+   :meth:`~qufzx.algebra.dimension.Dim.substitute`) to produce ``shared_dim``, so it is
+   ``3`` in that example, not the still-unbound ``d``. When ``unify`` only defers, or
+   succeeds with no binding at all (a bare syntactic identity), ``shared_dim`` is the
+   A-side leg's raw ``Dim``, unchanged.
 6. ``phase_dimension_agreement`` -- every phase vector actually present (on either node,
-   or both) must carry a :class:`~qufzx.algebra.dimension.Dim` *exactly* equal to the
-   match's ``shared_dim`` (the connected legs' dimension), checked with plain ``Dim``
-   equality, never :meth:`~qufzx.algebra.dimension.Dim.unify`. This mirrors
-   :meth:`~qufzx.algebra.phase.PhaseVector.__add__`'s own requirement (exact ``Dim``
-   equality, not a unify success-with-binding) -- :func:`spider_fusion_builder` in
-   :mod:`qufzx.rewrite.rules_library` calls that ``__add__`` directly once a match is
-   built, and has no unifier of its own to bind a symbol first. A unify ``DEFERRED`` or a
-   unify ``SUCCESS`` that only holds via a binding is therefore *not* good enough here,
-   unlike condition 5: there is no way to honor a deferred phase-dimension equality until
-   a real unifier (Phase 10) exists to bind the symbols before the vectors are added, so
-   any such candidate is dropped as a non-match rather than reported with a constraint. A
-   `None` phase on either or both sides trivially satisfies this condition --
+   or both), after substituting condition 5's binding (if any) into its own
+   :class:`~qufzx.algebra.dimension.Dim`, must equal the resolved ``shared_dim`` from
+   condition 5, checked with plain ``Dim`` equality, never a fresh call to
+   :meth:`~qufzx.algebra.dimension.Dim.unify`. If a phase is present on *both* nodes,
+   their two raw (unsubstituted) ``Dim``\\ s must *additionally* be exactly equal to each
+   other -- not merely each equal to ``shared_dim`` after substitution. This second,
+   stricter check exists because :func:`spider_fusion_builder` in
+   :mod:`qufzx.rewrite.rules_library` calls :meth:`~qufzx.algebra.phase.PhaseVector.__add__`
+   directly on the two nodes' *stored* phase vectors, with no substitution of its own;
+   that method demands its two operands' raw ``Dim``\\ s be exactly equal, so two phases
+   that agree only after a binding substitution the builder never applies would otherwise
+   reach ``__add__`` and raise :class:`~qufzx.algebra.phase.PhaseDomainError` -- a
+   different module's exception hierarchy entirely -- instead of being caught here as a
+   non-match. A `None` phase on either or both sides trivially satisfies this condition --
    :mod:`qufzx.rewrite.rules_library` treats a missing phase as the zero vector over the
    shared dimension when it builds the merged node.
+
+Malformed wire references. :mod:`qufzx.diagram.graph` is deliberately permissive about
+port indices carried by a :class:`~qufzx.diagram.graph.Wire` (see that module's docstring
+on validation ownership), so an un-validated diagram can hold a wire endpoint whose index
+is out of range for the referenced node's leg list on that side. :func:`find_matches`
+bounds-checks both endpoints of a candidate wire, before any dimension work, and raises
+:class:`~qufzx.rewrite.rule.RewriteGrammarError` naming the offending
+:class:`~qufzx.diagram.graph.PortRef` and the node's actual leg count, rather than letting
+a bare ``IndexError`` escape this module's declared error hierarchy.
 
 Dimension constraints. A :class:`FusionMatch`'s ``dimension_constraints`` records every
 leg-dimension pair that :func:`find_matches` did not verify as a syntactic identity but
@@ -83,12 +101,20 @@ certificates and Phase 12's cache tests will compare match lists directly.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
-from qufzx.algebra.dimension import Dim
+from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, NodeId, Wire
-from qufzx.rewrite.rule import Match, Pattern, SideCondition, SideConditionOutcome
+from qufzx.rewrite.rule import (
+    Match,
+    Pattern,
+    RewriteGrammarError,
+    SideCondition,
+    SideConditionOutcome,
+)
 
 FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("distinct_nodes", "the two matched nodes are not the same node"),
@@ -136,6 +162,19 @@ class FusionMatch:
 _FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name, X_SPIDER.name))
 
 
+def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
+    """Substitute ``bindings`` into ``dim``, or return it unchanged if there are none.
+
+    ``bindings`` is empty both when :meth:`Dim.unify` deferred and when it succeeded via a
+    bare syntactic identity with nothing bound -- in both cases this is the identity
+    function, which is exactly the "keep the raw Dim unchanged" behavior condition 5 in
+    the module docstring calls for.
+    """
+    if not bindings:
+        return dim
+    return dim.substitute(cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings))
+
+
 def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
@@ -170,8 +209,20 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         if ref_a.direction == ref_b.direction:
             continue
 
-        port_a = node_a.legs(ref_a.direction)[ref_a.index]
-        port_b = node_b.legs(ref_b.direction)[ref_b.index]
+        legs_a = node_a.legs(ref_a.direction)
+        if ref_a.index >= len(legs_a):
+            raise RewriteGrammarError(
+                f"wire endpoint {ref_a!r} is out of range for node {a_id!r}: it has only "
+                f"{len(legs_a)} {ref_a.direction.value} leg(s)"
+            )
+        legs_b = node_b.legs(ref_b.direction)
+        if ref_b.index >= len(legs_b):
+            raise RewriteGrammarError(
+                f"wire endpoint {ref_b!r} is out of range for node {b_id!r}: it has only "
+                f"{len(legs_b)} {ref_b.direction.value} leg(s)"
+            )
+        port_a = legs_a[ref_a.index]
+        port_b = legs_b[ref_b.index]
         leg_unify = port_a.dim.unify(port_b.dim)
         if leg_unify.is_failure:
             continue
@@ -191,10 +242,18 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         else:
             leg_detail = f"{port_a.dim} == {port_b.dim}"
 
-        phase_dims_present = tuple(
-            p.dim for p in (node_a.phase, node_b.phase) if p is not None
+        shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
+
+        phase_a_dim = node_a.phase.dim if node_a.phase is not None else None
+        phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
+        phase_dims_present = tuple(d for d in (phase_a_dim, phase_b_dim) if d is not None)
+        phase_dims_agree = all(
+            _resolve_with_bindings(phase_dim, leg_unify.bindings) == shared_dim
+            for phase_dim in phase_dims_present
         )
-        if any(phase_dim != port_a.dim for phase_dim in phase_dims_present):
+        if phase_dims_agree and phase_a_dim is not None and phase_b_dim is not None:
+            phase_dims_agree = phase_a_dim == phase_b_dim
+        if not phase_dims_agree:
             continue
 
         outcomes = (
@@ -225,7 +284,10 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 (
                     "no phase present on either node"
                     if not phase_dims_present
-                    else f"present phase dimension(s) equal the shared leg dimension {port_a.dim}"
+                    else (
+                        "present phase dimension(s), after any leg-unify binding, equal "
+                        f"the resolved shared leg dimension {shared_dim}"
+                    )
                 ),
             ),
         )
@@ -235,7 +297,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 a_id=a_id,
                 b_id=b_id,
                 wire=wire,
-                shared_dim=port_a.dim,
+                shared_dim=shared_dim,
                 side_condition_outcomes=outcomes,
                 dimension_constraints=tuple(dimension_constraints),
             )
