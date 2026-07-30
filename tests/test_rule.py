@@ -58,14 +58,14 @@ class TestBuildResult:
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
         result = BuildResult(
             diagram=diagram,
-            new_node_id=node_id,
+            new_node_ids=(node_id,),
             consumed_node_ids=(),
             consumed_wires=(),
             port_mapping={},
             scalar_introduced=Scalar.one(),
         )
         assert result.diagram is diagram
-        assert result.new_node_id == node_id
+        assert result.new_node_ids == (node_id,)
         assert result.consumed_node_ids == ()
         assert result.scalar_introduced == Scalar.one()
 
@@ -74,14 +74,14 @@ class TestBuildResult:
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
         result = BuildResult(
             diagram=diagram,
-            new_node_id=node_id,
+            new_node_ids=(node_id,),
             consumed_node_ids=(),
             consumed_wires=(),
             port_mapping={},
             scalar_introduced=Scalar.one(),
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            result.new_node_id = node_id  # type: ignore[misc]
+            result.new_node_ids = (node_id,)  # type: ignore[misc]
 
 
 class TestRule:

@@ -25,7 +25,7 @@ class TestSpiderFusionMergesGhzWithCopy:
         diagram, _a, _b = build_ghz_with_copy(d)
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        merged = result.diagram.nodes[result.new_node_id]
+        merged = result.diagram.nodes[result.new_node_ids[0]]
         assert merged.generator_type is Z_SPIDER
         assert merged.num_inputs == 0
         assert merged.num_outputs == 3
@@ -79,19 +79,19 @@ class TestLegOrderingConvention:
         )
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        merged = result.diagram.nodes[result.new_node_id]
+        merged = result.diagram.nodes[result.new_node_ids[0]]
         assert merged.num_inputs == 4
         assert result.port_mapping[PortRef(a_id, Direction.INPUT, 0)] == PortRef(
-            result.new_node_id, Direction.INPUT, 0
+            result.new_node_ids[0], Direction.INPUT, 0
         )
         assert result.port_mapping[PortRef(a_id, Direction.INPUT, 1)] == PortRef(
-            result.new_node_id, Direction.INPUT, 1
+            result.new_node_ids[0], Direction.INPUT, 1
         )
         assert result.port_mapping[PortRef(b_id, Direction.INPUT, 1)] == PortRef(
-            result.new_node_id, Direction.INPUT, 2
+            result.new_node_ids[0], Direction.INPUT, 2
         )
         assert result.port_mapping[PortRef(b_id, Direction.INPUT, 2)] == PortRef(
-            result.new_node_id, Direction.INPUT, 3
+            result.new_node_ids[0], Direction.INPUT, 3
         )
 
 
@@ -101,7 +101,7 @@ class TestPhaseAddition:
         diagram, _a, _b = build_ghz_with_copy(d)
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        assert result.diagram.nodes[result.new_node_id].phase is None
+        assert result.diagram.nodes[result.new_node_ids[0]].phase is None
 
     def test_missing_phase_treated_as_zero(self) -> None:
         d = Dim.concrete(3)
@@ -109,7 +109,7 @@ class TestPhaseAddition:
         diagram, _a, _b = build_ghz_with_copy(d, phase_on_b=phase_b)
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        merged_phase = result.diagram.nodes[result.new_node_id].phase
+        merged_phase = result.diagram.nodes[result.new_node_ids[0]].phase
         assert merged_phase is not None
         assert merged_phase.get(1) == phase_b.get(1)
 
@@ -120,7 +120,7 @@ class TestPhaseAddition:
         diagram, _a, _b = build_ghz_with_copy(d, phase_on_a=phase_a, phase_on_b=phase_b)
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        merged_phase = result.diagram.nodes[result.new_node_id].phase
+        merged_phase = result.diagram.nodes[result.new_node_ids[0]].phase
         assert merged_phase is not None
         assert merged_phase.get(1) == phase_a.get(1) + phase_b.get(1)
 
@@ -136,7 +136,7 @@ class TestAllLegsConsumedPhase:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        merged = result.diagram.nodes[result.new_node_id]
+        merged = result.diagram.nodes[result.new_node_ids[0]]
         assert merged.num_inputs == 0
         assert merged.num_outputs == 0
         assert merged.phase == PhaseVector(d, {})
@@ -149,7 +149,7 @@ class TestAllLegsConsumedPhase:
         diagram, _a, _b = build_ghz_with_copy(d)
         match = find_matches(diagram)[0]
         result = spider_fusion_builder(diagram, match)
-        assert result.diagram.nodes[result.new_node_id].phase is None
+        assert result.diagram.nodes[result.new_node_ids[0]].phase is None
 
 
 class TestBuilderTypedErrors:

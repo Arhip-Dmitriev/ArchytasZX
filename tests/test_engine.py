@@ -46,7 +46,7 @@ class TestApplyRemapsBoundaryOrder:
         diagram, _a, _b = build_ghz_with_copy(d)
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
-        new_id = result.new_node_id
+        new_id = result.new_node_ids[0]
         assert result.diagram.boundary_outputs == (
             PortRef(new_id, Direction.OUTPUT, 0),
             PortRef(new_id, Direction.OUTPUT, 1),
@@ -69,7 +69,7 @@ class TestApplyRemapsThirdNodeWiring:
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
         post = result.diagram
-        new_id = result.new_node_id
+        new_id = result.new_node_ids[0]
 
         assert c_id in post.nodes
         assert a_id not in post.nodes
@@ -217,7 +217,7 @@ class TestRewriteStepProvenance:
         assert step.matched_node_ids == (min(a_id, b_id), max(a_id, b_id))
         assert step.consumed_wires == (match.wire,)
         assert step.scalar_introduced == Scalar.one()
-        assert step.new_node_ids == (result.new_node_id,)
+        assert step.new_node_ids == result.new_node_ids
         assert step.side_condition_outcomes == match.side_condition_outcomes
         assert step.dimension_constraints == match.dimension_constraints
         assert len(step.port_mapping) == 3

@@ -115,10 +115,10 @@ class RewriteStep:
 
 @dataclass(frozen=True, slots=True)
 class RewriteResult:
-    """The outcome of :func:`apply`: the new diagram, its new node, and the step provenance."""
+    """The outcome of :func:`apply`: the new diagram, its new node(s), and the step provenance."""
 
     diagram: Diagram
-    new_node_id: NodeId
+    new_node_ids: tuple[NodeId, ...]
     step: RewriteStep
 
 
@@ -212,6 +212,6 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         dimension_constraints=match.dimension_constraints,
         scalar_introduced=build_result.scalar_introduced,
         port_mapping=MappingProxyType(dict(port_mapping)),
-        new_node_ids=(build_result.new_node_id,),
+        new_node_ids=build_result.new_node_ids,
     )
-    return RewriteResult(diagram=working, new_node_id=build_result.new_node_id, step=step)
+    return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)

@@ -187,10 +187,14 @@ class BuildResult:
     wire or boundary entry beyond that; splicing the replacement into the rest of the
     diagram (remapping wires and boundaries, then removing ``consumed_node_ids``) is
     :mod:`qufzx.rewrite.engine`'s job, done generically from these fields alone.
+
+    ``new_node_ids`` reports every node the builder created, in a deterministic order --
+    one for spider fusion, but a rule such as Phase 11's bialgebra (which creates m*n
+    nodes) or Hopf/copy (which create several) reports all of them here, not just one.
     """
 
     diagram: Diagram
-    new_node_id: NodeId
+    new_node_ids: tuple[NodeId, ...]
     consumed_node_ids: tuple[NodeId, ...]
     consumed_wires: tuple[Wire, ...]
     port_mapping: Mapping[PortRef, PortRef]

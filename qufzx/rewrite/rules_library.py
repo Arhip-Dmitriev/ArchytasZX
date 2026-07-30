@@ -182,7 +182,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     return BuildResult(
         diagram=diagram,
-        new_node_id=new_node_id,
+        new_node_ids=(new_node_id,),
         consumed_node_ids=(match.a_id, match.b_id),
         consumed_wires=(wire,),
         port_mapping=port_mapping,
