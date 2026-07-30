@@ -124,7 +124,7 @@ mixed dimensions and the full qufinite generator set · the broader rule library
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
 saturation · tactics and proof search · scalable notation · the entire REPL.
 
-## References
+## References (Highly Incomplete List)
 
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi* —
   [arXiv:2104.06429](https://arxiv.org/abs/2104.06429)
