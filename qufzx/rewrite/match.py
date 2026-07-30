@@ -49,26 +49,25 @@ per-candidate outcomes are recorded):
    condition 5, checked with plain ``Dim`` equality, never a fresh call to
    :meth:`~qufzx.algebra.dimension.Dim.unify`. If a phase is present on *both* nodes,
    their two raw (unsubstituted) ``Dim``\\ s must *additionally* be exactly equal to each
-   other -- not merely each equal to ``shared_dim`` after substitution. This second,
-   stricter check exists because :func:`spider_fusion_builder` in
-   :mod:`qufzx.rewrite.rules_library` calls :meth:`~qufzx.algebra.phase.PhaseVector.__add__`
-   directly on the two nodes' *stored* phase vectors, with no substitution of its own;
-   that method demands its two operands' raw ``Dim``\\ s be exactly equal, so two phases
-   that agree only after a binding substitution the builder never applies would otherwise
-   reach ``__add__`` and raise :class:`~qufzx.algebra.phase.PhaseDomainError` -- a
-   different module's exception hierarchy entirely -- instead of being caught here as a
-   non-match. A `None` phase on either or both sides trivially satisfies this condition --
-   :mod:`qufzx.rewrite.rules_library` treats a missing phase as the zero vector over the
-   shared dimension when it builds the merged node.
+   other -- not merely each equal to ``shared_dim`` after substitution. :func:`spider_fusion_builder`
+   in :mod:`qufzx.rewrite.rules_library` reattaches each present phase vector's entries to
+   ``shared_dim`` unchanged, without substituting into the entries themselves, so this
+   second check keeps two *actual* phase vectors from combining unless they already agreed
+   before any resolution; a phase absent on one or both sides needs no such check, since
+   the builder synthesizes a zero-entry vector directly at ``shared_dim`` and an all-zero
+   vector has no entries that could reference a stale symbol.
 
 Malformed wire references. :mod:`qufzx.diagram.graph` is deliberately permissive about
-port indices carried by a :class:`~qufzx.diagram.graph.Wire` (see that module's docstring
-on validation ownership), so an un-validated diagram can hold a wire endpoint whose index
-is out of range for the referenced node's leg list on that side. :func:`find_matches`
-bounds-checks both endpoints of a candidate wire, before any dimension work, and raises
-:class:`~qufzx.rewrite.rule.RewriteGrammarError` naming the offending
-:class:`~qufzx.diagram.graph.PortRef` and the node's actual leg count, rather than letting
-a bare ``IndexError`` escape this module's declared error hierarchy.
+what a :class:`~qufzx.diagram.graph.Wire` may name (see that module's docstring on
+validation ownership), so an un-validated diagram can hold a wire endpoint naming a node
+id absent from the diagram, or one present but with an out-of-range port index for that
+side. :func:`find_matches` checks both endpoints of every candidate wire for both faults,
+before any dimension work, and raises :class:`~qufzx.rewrite.rule.RewriteGrammarError`
+naming the offending :class:`~qufzx.diagram.graph.PortRef` (and, for the index case, the
+node's actual leg count) -- the same treatment :mod:`qufzx.diagram.validate` gives both as
+hard errors (``UNKNOWN_NODE``, ``PORT_INDEX_OUT_OF_RANGE``), rather than letting either
+escape this module's declared error hierarchy as a bare ``KeyError``/``IndexError`` or, for
+the node case, passing silently as a non-match.
 
 Dimension constraints. A :class:`FusionMatch`'s ``dimension_constraints`` records every
 leg-dimension pair that :func:`find_matches` did not verify as a syntactic identity but
@@ -163,16 +162,22 @@ _FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name, X_SPIDER.name))
 
 
 def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
-    """Substitute ``bindings`` into ``dim``, or return it unchanged if there are none.
+    """Substitute ``bindings`` into ``dim``, or return it unchanged if none apply.
 
     ``bindings`` is empty both when :meth:`Dim.unify` deferred and when it succeeded via a
     bare syntactic identity with nothing bound -- in both cases this is the identity
     function, which is exactly the "keep the raw Dim unchanged" behavior condition 5 in
-    the module docstring calls for.
+    the module docstring calls for. A bare symbol can also unify by binding to *another*
+    still-symbolic ``Dim`` (e.g. ``d`` against ``e`` binds ``d := e``); :meth:`Dim.substitute`
+    only ever accepts a concrete replacement value, so such a binding is dropped here rather
+    than resolving through it -- ``dim`` stays raw and unchanged for that symbol, the same
+    treatment a deferred pair gets, rather than crashing on a substitution ``Dim`` was never
+    built to perform.
     """
-    if not bindings:
+    concrete_bindings = {name: value for name, value in bindings.items() if value.is_concrete}
+    if not concrete_bindings:
         return dim
-    return dim.substitute(cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings))
+    return dim.substitute(cast(Mapping[DimSymbolKey, DimSubstituteValue], concrete_bindings))
 
 
 def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
@@ -197,7 +202,12 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         node_a = diagram.nodes.get(a_id)
         node_b = diagram.nodes.get(b_id)
         if node_a is None or node_b is None:
-            continue
+            missing = [nid for nid, node in ((a_id, node_a), (b_id, node_b)) if node is None]
+            raise RewriteGrammarError(
+                f"wire {wire!r} references node id(s) {missing!r} absent from the diagram; "
+                "Diagram.remove_node cascades, so a live wire can never legitimately name a "
+                "removed node"
+            )
 
         if node_a.generator_type != node_b.generator_type:
             continue

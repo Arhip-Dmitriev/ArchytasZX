@@ -12,6 +12,7 @@ from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
+from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, SideConditionOutcome
 from qufzx.rewrite.rules_library import RULES, SPIDER_FUSION, lookup_rule, spider_fusion_builder
@@ -265,6 +266,114 @@ class TestSideConditionCoverageEnforced:
         broken_match = dataclasses.replace(match, side_condition_outcomes=duplicated_outcomes)
         with pytest.raises(RewriteDomainError):
             spider_fusion_builder(diagram, broken_match)
+
+
+class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
+    """Defect 1 reproducer: a phase stated over the still-symbolic side of a bound leg
+    must not crash the builder. Before the fix, the absent phase was synthesized at the
+    resolved ``shared_dim`` while the present phase kept its own raw, unbound ``Dim``, so
+    ``PhaseVector.__add__`` raised ``PhaseDomainError`` -- a phase on one side only, over
+    the still-unbound symbol, passed the matcher and raised in the builder.
+    """
+
+    def test_phase_on_the_symbolic_side_no_longer_raises(self) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d, d],
+            phase=PhaseVector(d, {1: Phase.turns(sp.Rational(1, 3))}),
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[Dim.concrete(3)]
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        match = find_matches(diagram)[0]
+        three = Dim.concrete(3)
+        assert match.shared_dim == three
+
+        result = apply(diagram, SPIDER_FUSION, match)
+        merged = result.diagram.nodes[result.new_node_ids[0]]
+        assert all(port.dim == three for port in (*merged.inputs, *merged.outputs))
+        assert merged.phase is not None
+        assert merged.phase.dim == three
+
+    def test_the_mirror_orientation_phase_on_the_already_resolved_side_still_works(self) -> None:
+        # The pre-fix code already handled this orientation (phase on the side the
+        # binding resolves *to*); restated here so a future change to _over_shared_dim
+        # cannot regress this half while touching the other.
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[Dim.concrete(3)],
+            output_dims=[Dim.concrete(3)],
+            phase=PhaseVector(Dim.concrete(3), {1: Phase.turns(sp.Rational(1, 5))}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        merged = result.diagram.nodes[result.new_node_ids[0]]
+        three = Dim.concrete(3)
+        assert all(port.dim == three for port in (*merged.inputs, *merged.outputs))
+        assert merged.phase is not None
+        assert merged.phase.dim == three
+
+
+class TestSharedDimPropagatesToEverySurvivingPort:
+    """Defect 2 reproducer: a resolved ``shared_dim`` used to be computed and then
+    discarded -- the merged node's ports kept each leg's own raw ``Dim``, so a fusion
+    whose match resolved ``d := 3`` could still leave a surviving leg carrying the
+    unbound symbol ``d``, and the same symbol could be bound to contradictory values
+    across independent fusion steps with no error anywhere.
+    """
+
+    def test_a_surviving_leg_with_a_different_raw_dim_is_forced_to_shared_dim(self) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        match = find_matches(diagram)[0]
+        assert match.shared_dim == Dim.concrete(3)
+
+        result = apply(diagram, SPIDER_FUSION, match)
+        merged = result.diagram.nodes[result.new_node_ids[0]]
+        assert merged.outputs[0].dim == Dim.concrete(3)
+
+    def test_contradictory_chain_does_not_silently_fuse_twice(self) -> None:
+        """A(3) -- B(d) -- C(7): fusing A into B commits ``d := 3`` and propagates that
+        onto B's other, surviving leg -- which is wired to C's dim 7, an unresolvable
+        concrete mismatch. Before the fix, B's surviving leg kept its own raw, never-
+        forced ``d``, so a second, independent fusion could just as freely bind
+        ``d := 7``, silently producing one legless node whose ``PhaseVector`` claimed
+        dimension 7 with nothing left in the diagram to say it also assumed dimension 3,
+        and a validate() report that came back clean. With the dimension propagated,
+        apply()'s relative post-condition (see qufzx.rewrite.engine) catches the
+        resulting conflict against the still-unfused third node immediately.
+        """
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(3)])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(7)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+
+        matches = find_matches(diagram)
+        assert len(matches) == 2  # each wire looks independently fusable in isolation
+
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, SPIDER_FUSION, matches[0])
 
 
 class TestRuleRegistry:
