@@ -95,21 +95,6 @@ A parser for a small input DSL (spiders, wires, symbolic phases, nested and mult
 bang boxes, dimensions, and simple Dirac kets), a printer that renders diagrams textually
 and back to Dirac where possible, and an interactive command loop.
 
-## Non-negotiable design rules
-
-These are invariants, not preferences. They are the tie-breaker whenever a design decision
-looks ambiguous.
-
-- **The diagram is the single source of truth.** Never construct a matrix or dense tensor
-  while any dimension or count in scope is symbolic.
-- **Rewriting never contracts.** Contraction lives only in the semantics oracle.
-- **Dimension is stored per port**, not as one global parameter.
-- **Scalars are tracked exactly.** Comparison is exact by default; quotienting a global
-  factor is opt-in only, never the default.
-- **Phases are first-class symbolic objects.**
-- **Every rewrite emits a certificate step.**
-- **Every build phase ends with a numeric oracle check** and a stated completion condition.
-
 ## Current state
 
 Implemented and under test:
@@ -131,24 +116,13 @@ Implemented and under test:
   spider fusion, the spider-fusion rule itself with its exact scalar, and an engine that
   applies a rule at a match and records step provenance.
 
-Not yet implemented — these modules exist as documented stubs only:
+Not yet implemented:
 
 certificates and replayable derivations · bang boxes and free `n` · induction over
 multiplicities · symbolic contraction with `d` formal · the character-sum simplifier ·
 mixed dimensions and the full qufinite generator set · the broader rule library and
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
 saturation · tactics and proof search · scalable notation · the entire REPL.
-
-The current milestone is the first end-to-end vertical slice: build the GHZ-with-copy
-example, fuse its two spiders, and have the oracle confirm the pre- and post-rewrite
-diagrams are exactly equal at several concrete dimensions, for both colours, with and
-without symbolic phases.
-
-## Development
-
-The test suite runs under `pytest`; linting is `ruff` and type checking is `mypy` in strict
-mode. Every phase of the build plan carries its own oracle-check test module, and a phase
-is not considered done until that check passes.
 
 ## References
 
