@@ -26,7 +26,11 @@ Algorithm.
    byte-for-byte unchanged (same nodes, wires, boundaries, scalar) after a rewrite.
 3. Build. Call ``rule.builder(working, match)``. Per :class:`~qufzx.rewrite.rule.BuildResult`'s
    contract, this mutates ``working`` by adding the replacement node(s) only -- it does not
-   touch any wire, any boundary entry, or remove the consumed nodes.
+   touch any wire, any boundary entry, or remove the consumed nodes. ``build_result.diagram``
+   is the engine/builder contract field for *which* diagram was mutated: this step verifies
+   it ``is`` (identity, not just equality) ``working``, raising
+   :class:`~qufzx.rewrite.rule.RewriteGrammarError` otherwise, rather than declaring the
+   field and never reading it.
 4. Verify the build result belongs to this diagram. The builder's introduced scalar must
    agree with the rule's declared ``scalar_introduced``, and every one of
    ``build_result.consumed_wires`` and ``build_result.consumed_node_ids`` must actually be
@@ -197,6 +201,13 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     working = diagram.copy()
     build_result = rule.builder(working, match)
+
+    if build_result.diagram is not working:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder returned a BuildResult.diagram that is not the "
+            "working diagram it was given; a builder must mutate and return that same "
+            "object, never substitute a different one (see BuildResult's docstring)"
+        )
 
     if build_result.scalar_introduced != rule.scalar_introduced:
         raise RewriteDomainError(
