@@ -29,11 +29,16 @@ dimensions that are unequal and non-unifiable is a hard error --
 :class:`IssueKind.DIMENSION_MISMATCH` for a wire, :class:`IssueKind.DIMENSION_POLICY_VIOLATION`
 for a node's legs, :class:`IssueKind.PHASE_DIMENSION_MISMATCH` for a node's phase. A pair
 whose dimensions cannot yet be resolved (``unify`` returns ``DEFERRED``, e.g. ``Dim("d")``
-against ``Dim("e")``) is recorded as :class:`IssueKind.DIMENSION_DEFERRED` in every one of
-these cases, an *assumed* constraint, not silently accepted as valid and not reported as
-an error either -- this is exactly the seam Phase 10's real unifier is meant to drop
-into: replacing the placeholder in ``Dim.unify`` changes what gets deferred here without
-this module changing at all.
+against ``Dim("d") * Dim("e")``, where ``d`` occurs as a proper subterm of the other side
+and is therefore not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED` in every
+one of these cases, an *assumed* constraint, not silently accepted as valid and not
+reported as an error either -- this is exactly the seam Phase 10's real unifier is meant
+to drop into: replacing the placeholder in ``Dim.unify`` changes what gets deferred here
+without this module changing at all. A bare symbol against an unrelated symbol or
+concrete value -- e.g. ``Dim("d")`` against ``Dim("e")``, or against ``Dim(3)`` -- is not
+this case: ``unify`` reports ``SUCCESS`` with a binding (``d := e``, or ``d := 3``), and
+this module records no issue at all for it, the same as any other syntactic-identity
+success; only the *unresolved* residual shape above reaches ``DIMENSION_DEFERRED``.
 
 What this module does not do. It does not contract, evaluate, or attach any numeric
 meaning to a diagram (that is Phase 4's oracle); it does not attempt to fix or rewrite

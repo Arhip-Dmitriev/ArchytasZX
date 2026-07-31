@@ -102,9 +102,11 @@ class TestSpiderFusionOracleX:
 def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram:
     """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
 
-    The corner case from the module docstring's "Corner case: no legs survive at all"
-    note in :mod:`qufzx.rewrite.rules_library`: the merged node ends up with zero inputs
-    and zero outputs, so its dimension can only survive via an explicit zero phase.
+    The corner case from :mod:`qufzx.rewrite.rules_library`'s module docstring ("See
+    :func:`_merged_phase` for the legless corner case, where dimension can only survive
+    via the phase slot") and from :func:`~qufzx.rewrite.rules_library._merged_phase`'s own
+    docstring: the merged node ends up with zero inputs and zero outputs, so its
+    dimension can only survive via an explicit zero phase.
     """
     diagram = Diagram()
     a_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim])

@@ -55,19 +55,40 @@ per-candidate outcomes are recorded):
    second check keeps two *actual* phase vectors from combining unless they already agreed
    before any resolution; a phase absent on one or both sides needs no such check, since
    the builder synthesizes a zero-entry vector directly at ``shared_dim`` and an all-zero
-   vector has no entries that could reference a stale symbol.
+   vector has no entries that could reference a stale symbol. Agreement on the container
+   ``Dim`` alone is not sufficient: condition 5 can resolve ``shared_dim`` to something more
+   concrete than a present phase's own (unsubstituted) ``Dim`` by binding a symbol (e.g. a
+   phase legally stated over symbolic ``d`` with an entry at index 5 has ``Dim`` equal to
+   ``d``, which matches a ``shared_dim`` of ``2`` under a binding ``d := 2`` -- yet index 5
+   is out of range once ``d`` is actually ``2``). This condition therefore also verifies,
+   for every phase actually present, that reattaching its unchanged entries to
+   ``shared_dim`` is itself legal -- literally by attempting the same construction
+   :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`'s ``_over_shared_dim`` performs
+   (``PhaseVector(shared_dim, phase.entries())``) and treating a
+   :class:`~qufzx.algebra.phase.PhaseDomainError` as a failed condition (non-match) rather
+   than letting it escape from the builder later. This makes match-approval and
+   build-applicability the same predicate by construction, not two predicates kept in sync
+   by hand: the invariant is that every match this function returns can be applied by
+   :func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8 relative-
+   postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
 
 Malformed wire references. :mod:`qufzx.diagram.graph` is deliberately permissive about
 what a :class:`~qufzx.diagram.graph.Wire` may name (see that module's docstring on
 validation ownership), so an un-validated diagram can hold a wire endpoint naming a node
 id absent from the diagram, or one present but with an out-of-range port index for that
-side. :func:`find_matches` checks both endpoints of every candidate wire for both faults,
-before any dimension work, and raises :class:`~qufzx.rewrite.rule.RewriteGrammarError`
-naming the offending :class:`~qufzx.diagram.graph.PortRef` (and, for the index case, the
-node's actual leg count) -- the same treatment :mod:`qufzx.diagram.validate` gives both as
-hard errors (``UNKNOWN_NODE``, ``PORT_INDEX_OUT_OF_RANGE``), rather than letting either
-escape this module's declared error hierarchy as a bare ``KeyError``/``IndexError`` or, for
-the node case, passing silently as a non-match.
+side. :func:`find_matches` checks both endpoints of every candidate wire for both faults
+before checking any other candidate property -- generator color, fusable-color-ness, and
+wire direction alike -- and raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` naming
+the offending :class:`~qufzx.diagram.graph.PortRef` (and, for the index case, the node's
+actual leg count) -- the same treatment :mod:`qufzx.diagram.validate` gives both as hard
+errors (``UNKNOWN_NODE``, ``PORT_INDEX_OUT_OF_RANGE``), rather than letting either escape
+this module's declared error hierarchy as a bare ``KeyError``/``IndexError`` or, for the
+node case, passing silently as a non-match. This ordering is deliberate and load-bearing:
+detection of a malformed wire must not depend on unrelated properties of the candidate
+pair it happens to sit on, so a wire with an out-of-range port index is rejected
+identically whether it joins two Z spiders, a Z and an X, or a pair with matching wire
+directions -- not only for the shapes that happen to survive far enough through the other
+side conditions to reach the check.
 
 Dimension constraints. A :class:`FusionMatch`'s ``dimension_constraints`` records every
 leg-dimension pair that :func:`find_matches` did not verify as a syntactic identity but
@@ -105,6 +126,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, NodeId, Wire
 from qufzx.rewrite.rule import (
@@ -209,16 +231,18 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 "removed node"
             )
 
-        if node_a.generator_type != node_b.generator_type:
-            continue
-        if node_a.generator_type.name not in _FUSABLE_GENERATOR_NAMES:
-            continue
-
         ref_a = wire.a if wire.a.node_id == a_id else wire.b
         ref_b = wire.b if wire.a.node_id == a_id else wire.a
-        if ref_a.direction == ref_b.direction:
-            continue
 
+        # Malformed-wire detection (an out-of-range port index) must be independent of
+        # every other candidate property -- generator color, fusable-color-ness, and
+        # wire direction alike -- so it is checked here, before any of those can drop
+        # the candidate via `continue`. Checking it only after those side conditions
+        # (as an earlier version did) made a malformed wire raise when it happened to
+        # join two same-color, opposite-direction spiders, but silently pass through
+        # as a non-match for a Z/X pair, a same-direction pair, or any other candidate
+        # shape that gets dropped first -- masking the same structural defect
+        # differently depending on unrelated properties of the pair.
         legs_a = node_a.legs(ref_a.direction)
         if ref_a.index >= len(legs_a):
             raise RewriteGrammarError(
@@ -231,6 +255,14 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 f"wire endpoint {ref_b!r} is out of range for node {b_id!r}: it has only "
                 f"{len(legs_b)} {ref_b.direction.value} leg(s)"
             )
+
+        if node_a.generator_type != node_b.generator_type:
+            continue
+        if node_a.generator_type.name not in _FUSABLE_GENERATOR_NAMES:
+            continue
+        if ref_a.direction == ref_b.direction:
+            continue
+
         port_a = legs_a[ref_a.index]
         port_b = legs_b[ref_b.index]
         leg_unify = port_a.dim.unify(port_b.dim)
@@ -263,6 +295,15 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         )
         if phase_dims_agree and phase_a_dim is not None and phase_b_dim is not None:
             phase_dims_agree = phase_a_dim == phase_b_dim
+        if phase_dims_agree:
+            for phase in (node_a.phase, node_b.phase):
+                if phase is None:
+                    continue
+                try:
+                    PhaseVector(shared_dim, phase.entries())
+                except PhaseDomainError:
+                    phase_dims_agree = False
+                    break
         if not phase_dims_agree:
             continue
 

@@ -94,6 +94,11 @@ def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim) -> PhaseVector:
     entry index falls outside ``shared_dim``'s valid range -- this builder is reachable
     directly, not only through :func:`qufzx.rewrite.engine.apply`, so a foreign or
     hand-built match must not leak a different module's exception hierarchy through it.
+    ``phase_dimension_agreement`` now performs this exact same construction as part of
+    matching (see that condition's entry in :mod:`qufzx.rewrite.match`'s module docstring),
+    so for any match ``find_matches`` actually returned, this call cannot raise -- the
+    ``except`` branch below is unreachable from such a match and exists only to keep this
+    function safe against a foreign or hand-built one.
     """
     if phase is None:
         return PhaseVector(shared_dim, {})
