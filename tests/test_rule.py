@@ -121,3 +121,53 @@ class TestRule:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             rule.name = "renamed"  # type: ignore[misc]
+
+
+class TestRuleValidatesEveryField:
+    """Defect 4 (Phase 5 audit): __post_init__ used to check only ``name``, so
+    ``Rule(name="x", pattern="not a pattern", builder="not callable", side_conditions=(),
+    quantifiers=Quantifiers(), scalar_introduced=1.0)`` constructed successfully -- including
+    a bare float ``scalar_introduced``, banned everywhere else in this codebase by the
+    exact-scalars rule. Every field must now be validated the way every other value object
+    here validates its own constructor arguments.
+    """
+
+    def _kwargs(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "name": "spider_fusion",
+            "pattern": FusionPattern(),
+            "builder": spider_fusion_builder,
+            "side_conditions": (),
+            "quantifiers": Quantifiers(),
+            "scalar_introduced": Scalar.one(),
+        }
+        base.update(overrides)
+        return base
+
+    def test_rejects_non_pattern_pattern(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(pattern="not a pattern"))  # type: ignore[arg-type]
+
+    def test_rejects_non_callable_builder(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(builder="not callable"))  # type: ignore[arg-type]
+
+    def test_rejects_side_conditions_not_a_tuple_of_side_condition(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(side_conditions=["not", "side", "conditions"]))  # type: ignore[arg-type]
+
+    def test_rejects_side_conditions_tuple_with_wrong_element_type(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(side_conditions=("not a SideCondition",)))  # type: ignore[arg-type]
+
+    def test_rejects_non_quantifiers_quantifiers(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(quantifiers="not quantifiers"))  # type: ignore[arg-type]
+
+    def test_rejects_float_scalar_introduced(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(**self._kwargs(scalar_introduced=1.0))  # type: ignore[arg-type]
+
+    def test_all_valid_fields_still_construct(self) -> None:
+        rule = Rule(**self._kwargs())  # type: ignore[arg-type]
+        assert rule.name == "spider_fusion"

@@ -39,10 +39,25 @@ per-candidate outcomes are recorded):
    match's ``shared_dim`` is *not* simply the A-side leg's raw ``Dim``: when ``unify``
    succeeds by binding a symbol (e.g. leg dims ``d`` and ``3`` bind ``d := 3``), the
    binding is substituted into the A-side leg's ``Dim`` (see
-   :meth:`~qufzx.algebra.dimension.Dim.substitute`) to produce ``shared_dim``, so it is
-   ``3`` in that example, not the still-unbound ``d``. When ``unify`` only defers, or
-   succeeds with no binding at all (a bare syntactic identity), ``shared_dim`` is the
-   A-side leg's raw ``Dim``, unchanged.
+   :meth:`~qufzx.algebra.dimension.Dim.substitute`) to produce a provisional ``shared_dim``,
+   so it is ``3`` in that example, not the still-unbound ``d``. When ``unify`` only defers,
+   or succeeds with no binding at all (a bare syntactic identity), the provisional
+   ``shared_dim`` is the A-side leg's raw ``Dim``, unchanged. This condition does not stop
+   at the connecting pair: every *surviving* leg of both nodes (every leg other than the
+   one consumed by the matched wire) is then unified against the provisional
+   ``shared_dim``, in turn, in the same per-node order (inputs, then outputs, original
+   index order) :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` uses to build
+   the merged node's ports -- a later leg is checked against whatever ``shared_dim`` an
+   earlier leg's binding refined it to, so a chain such as leg dims ``d``, ``d``, ``2``
+   resolves to a final ``shared_dim`` of ``2`` and every step along the way is recorded. A
+   ``FAILURE`` on any surviving leg makes the whole candidate a non-match, exactly like a
+   ``FAILURE`` on the connecting pair itself: forcing a genuinely non-unifiable surviving
+   leg onto ``shared_dim`` anyway would silently rewrite that leg's dimension (or erase a
+   pre-existing hard dimension conflict on it) rather than report the conflict. A
+   ``DEFERRED`` or binding-only ``SUCCESS`` on a surviving leg is recorded as a dimension
+   constraint exactly like the connecting pair's own (see "Dimension constraints" below),
+   and, if it binds, the newly-refined ``shared_dim`` carries forward to every leg checked
+   after it. Only once every surviving leg has been checked is ``shared_dim`` final.
 6. ``phase_dimension_agreement`` -- every phase vector actually present (on either node,
    or both), after substituting condition 5's binding (if any) into its own
    :class:`~qufzx.algebra.dimension.Dim`, must equal the resolved ``shared_dim`` from
@@ -76,33 +91,63 @@ Malformed wire references. :mod:`qufzx.diagram.graph` is deliberately permissive
 what a :class:`~qufzx.diagram.graph.Wire` may name (see that module's docstring on
 validation ownership), so an un-validated diagram can hold a wire endpoint naming a node
 id absent from the diagram, or one present but with an out-of-range port index for that
-side. :func:`find_matches` checks both endpoints of every candidate wire for both faults
-before checking any other candidate property -- generator color, fusable-color-ness, and
-wire direction alike -- and raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` naming
-the offending :class:`~qufzx.diagram.graph.PortRef` (and, for the index case, the node's
+side. :func:`find_matches` checks both endpoints of *every* wire in the diagram for both
+faults -- via :func:`_validate_wire_endpoint` -- in a first pass that runs before any
+candidate grouping or filtering: before the self-loop skip, before wires are grouped by
+node pair, before the parallel-wire-pair (``len(connecting_wires) != 1``) filter, and
+before any other candidate property (generator color, fusable-color-ness, wire direction)
+is even reached. It raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` naming the
+offending :class:`~qufzx.diagram.graph.PortRef` (and, for the index case, the node's
 actual leg count) -- the same treatment :mod:`qufzx.diagram.validate` gives both as hard
 errors (``UNKNOWN_NODE``, ``PORT_INDEX_OUT_OF_RANGE``), rather than letting either escape
-this module's declared error hierarchy as a bare ``KeyError``/``IndexError`` or, for the
-node case, passing silently as a non-match. This ordering is deliberate and load-bearing:
-detection of a malformed wire must not depend on unrelated properties of the candidate
-pair it happens to sit on, so a wire with an out-of-range port index is rejected
-identically whether it joins two Z spiders, a Z and an X, or a pair with matching wire
-directions -- not only for the shapes that happen to survive far enough through the other
-side conditions to reach the check.
+this module's declared error hierarchy as a bare ``KeyError``/``IndexError`` or passing
+silently as a non-match. This ordering is deliberate and load-bearing: detection of a
+malformed wire must not depend on any other property of the wire or the candidate pair it
+happens to sit on, so a wire with an out-of-range port index (or an unknown node id) is
+rejected identically whether it joins two Z spiders, a Z and an X, a pair with matching
+wire directions, a pair also joined by a second parallel wire, or even both of its own
+endpoints on the very same node (a self-loop) -- every one of those shapes used to make
+the malformed-wire check unreachable for that wire specifically, since each is dropped
+(via `continue`, without ever raising) by a filter that used to run first.
+
+Match-implies-applicable and multiply-claimed ports. A port that is claimed by more than
+one wire (:class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`), or that is both
+wired and listed on a boundary
+(:class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_AND_BOUNDARY`), is not treated as a
+fusion occurrence even when it happens to be the port a candidate wire would consume.
+:mod:`qufzx.rewrite.engine`'s ``apply`` requires every consumed port to appear in the
+builder's ``port_mapping``, but a builder only ever maps *surviving* ports -- the consumed
+port itself is deliberately absent, since it no longer exists on the merged node. If that
+same port is also named by a second wire (to a third node) or a boundary entry, ``apply``
+would need to remap that second reference too, and cannot: the port is gone, and nothing
+in the match or the builder says what it should become. :func:`find_matches` rejects any
+candidate whose consumed port (on either side) is claimed by more than one wire in the
+whole diagram, or is on either boundary list, before constructing a
+:class:`FusionMatch` at all -- the same structural, no-``FusionMatch``-object treatment
+given self-loops and parallel-wire pairs above. This is what makes "every match this
+function returns can be applied by :func:`~qufzx.rewrite.engine.apply` without raising
+anything except the step-8 relative-postcondition" (see condition 6 below) true without
+qualification: :mod:`qufzx.rewrite.engine`'s own docstring states the matching half of
+this resolution on its side.
 
 Dimension constraints. A :class:`FusionMatch`'s ``dimension_constraints`` records every
 leg-dimension pair that :func:`find_matches` did not verify as a syntactic identity but
 still accepted: both a ``DEFERRED`` outcome from :meth:`Dim.unify` (truly undecided, per
 that method's contract) and a ``SUCCESS`` outcome that only holds because ``unify`` bound
 a free symbol (decided, but only under that binding -- e.g. leg dims ``d`` and ``3``
-unify by binding ``d := 3``, and the fusion is valid only at that value). Both provenances
-are assumed equalities a diagram-level unifier must eventually justify, so both belong in
-the certificate Phase 6 will read from this field; only a unify outcome that is a bare
-syntactic identity (no binding, nothing deferred) is left out, since nothing was assumed.
-The corresponding ``SideConditionOutcome.deferred`` flag is ``True`` only for the
-``DEFERRED`` case -- it continues to mean "``Dim.unify`` could not decide this at all",
-not "some assumption was recorded" -- so a binding-based ``SUCCESS`` is reported with
-``deferred=False`` even though it, too, appends to ``dimension_constraints``.
+unify by binding ``d := 3``, and the fusion is valid only at that value). This applies
+uniformly to the connecting pair (recorded as ``(port_a.dim, port_b.dim)``) and to every
+surviving leg condition 5 checks against the running ``shared_dim`` (recorded as
+``(leg.dim, shared_dim)`` at the point that leg was checked): both are assumed equalities
+a diagram-level unifier must eventually justify, so both belong in the certificate Phase 6
+will read from this field; only a unify outcome that is a bare syntactic identity (no
+binding, nothing deferred) is left out, since nothing was assumed. The corresponding
+``SideConditionOutcome.deferred`` flag on ``dimension_agreement`` is ``True`` if *any* of
+these checks -- the connecting pair's or any surviving leg's -- returned ``DEFERRED``; it
+continues to mean "``Dim.unify`` could not decide this at all" for at least one of them,
+not "some assumption was recorded" -- so a check that only ever bound symbols, with none
+deferred, is reported with ``deferred=False`` even though it, too, appends to
+``dimension_constraints``.
 
 A candidate that fails condition 1, 2, or 3 is dropped before any :class:`FusionMatch` is
 constructed at all -- there is no "failed match" object for those, since they gate whether
@@ -128,7 +173,7 @@ from typing import cast
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, NodeId, Wire
+from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
     Match,
     Pattern,
@@ -202,11 +247,105 @@ def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
     return dim.substitute(cast(Mapping[DimSymbolKey, DimSubstituteValue], concrete_bindings))
 
 
+def _unify_surviving_legs(
+    node: Node, node_id: NodeId, consumed_ref: PortRef, shared_dim: Dim
+) -> tuple[Dim, list[tuple[Dim, Dim]], bool] | None:
+    """Unify every surviving leg of ``node`` (both directions) against ``shared_dim`` in turn.
+
+    "Surviving" means every leg of ``node`` except ``consumed_ref``, checked in the same
+    per-node order (inputs, then outputs, original index order) that
+    :mod:`qufzx.rewrite.rules_library`'s ``_surviving_legs`` uses to build the merged
+    node's ports, so the constraint list this returns lines up with that ordering.
+
+    Returns ``(resolved_shared_dim, new_dimension_constraints, any_deferred)`` on success.
+    Returns ``None`` if any surviving leg's dim is non-unifiable with the (possibly
+    already-refined-by-an-earlier-leg) ``shared_dim`` -- a ``FAILURE`` here makes the whole
+    candidate a non-match, exactly like a ``FAILURE`` on the connecting-leg pair itself,
+    since forcing that leg onto ``shared_dim`` anyway (as the pre-fix builder silently did)
+    would destroy a real dimension conflict rather than report it. Each surviving leg whose
+    unify only deferred, or only succeeded by binding a symbol, is recorded as a dimension
+    constraint pair ``(leg.dim, shared_dim)`` -- the same provenance and shape the
+    connecting-leg pair itself is recorded under (see the module docstring) -- and, if that
+    binding makes ``shared_dim`` more concrete, every leg checked afterward (including on
+    the other node) is checked against the refined value.
+    """
+    constraints: list[tuple[Dim, Dim]] = []
+    any_deferred = False
+    for direction in (Direction.INPUT, Direction.OUTPUT):
+        for index, port in enumerate(node.legs(direction)):
+            ref = PortRef(node_id, direction, index)
+            if ref == consumed_ref:
+                continue
+            result = port.dim.unify(shared_dim)
+            if result.is_failure:
+                return None
+            deferred_here = result.is_deferred
+            bound_here = result.is_success and bool(result.bindings)
+            if deferred_here or bound_here:
+                constraints.append((port.dim, shared_dim))
+            if deferred_here:
+                any_deferred = True
+            if bound_here:
+                shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
+    return shared_dim, constraints, any_deferred
+
+
+def _validate_wire_endpoint(diagram: Diagram, wire: Wire, ref: PortRef) -> None:
+    """Raise ``RewriteGrammarError`` if ``ref`` names an unknown node or out-of-range index.
+
+    Called for both endpoints of every wire in the diagram, unconditionally -- see
+    "Malformed wire references" in the module docstring for why this must not depend on
+    any other property of the wire or the candidate pair it might otherwise sit on.
+    """
+    node = diagram.nodes.get(ref.node_id)
+    if node is None:
+        raise RewriteGrammarError(
+            f"wire {wire!r} references node id {ref.node_id!r} absent from the diagram; "
+            "Diagram.remove_node cascades, so a live wire can never legitimately name a "
+            "removed node"
+        )
+    legs = node.legs(ref.direction)
+    if ref.index >= len(legs):
+        raise RewriteGrammarError(
+            f"wire endpoint {ref!r} is out of range for node {ref.node_id!r}: it has only "
+            f"{len(legs)} {ref.direction.value} leg(s)"
+        )
+
+
 def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
-    Never mutates ``diagram``. Returns matches sorted by ``(a_id, b_id)``.
+    Never mutates ``diagram``, and does not require ``diagram`` to be well-formed --
+    :func:`~qufzx.diagram.validate.validate` is never called here. Returns matches sorted
+    by ``(a_id, b_id)``.
     """
+    # Malformed-wire detection (an unknown node id or an out-of-range port index) must be
+    # independent of every other property of the wire or the candidate pair it happens to
+    # sit on -- generator color, fusable-color-ness, wire direction, single-vs-parallel
+    # wiring, and self-loop-ness alike -- so every wire's both endpoints are checked here,
+    # before any grouping or filtering. Checking this only after grouping (as an earlier
+    # version did) let a malformed wire escape undetected as a bare non-match whenever it
+    # happened to be dropped first by the self-loop skip or the parallel-wire-pair filter
+    # below, masking the same structural defect differently depending on unrelated shape.
+    for wire in diagram.wires:
+        _validate_wire_endpoint(diagram, wire, wire.a)
+        _validate_wire_endpoint(diagram, wire, wire.b)
+
+    # Defect 2 (match-implies-applicable): a port that is claimed by more than one wire, or
+    # that is both wired and listed on a boundary, is not a legitimate fusion occurrence at
+    # all -- fusing across it would ask the builder to remap a consumed port that a *third*
+    # reference (another wire, or a boundary entry) also still names, which
+    # qufzx.rewrite.engine.apply's port_mapping coverage check (step 5) correctly refuses to
+    # do silently. Rejecting the candidate here, structurally, keeps every match this
+    # function returns applicable by construction, the same invariant condition 5 already
+    # gives dimension_agreement -- see the module docstring's account of this resolution and
+    # qufzx.rewrite.engine's docstring for the matching statement on its side.
+    wired_ref_counts: dict[PortRef, int] = {}
+    for wire in diagram.wires:
+        wired_ref_counts[wire.a] = wired_ref_counts.get(wire.a, 0) + 1
+        wired_ref_counts[wire.b] = wired_ref_counts.get(wire.b, 0) + 1
+    boundary_ref_set = frozenset(diagram.boundary_inputs) | frozenset(diagram.boundary_outputs)
+
     candidates_by_pair: dict[frozenset[NodeId], list[Wire]] = {}
     for wire in diagram.wires:
         if wire.a.node_id == wire.b.node_id:
@@ -221,40 +360,19 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         wire = connecting_wires[0]
         a_id, b_id = _ordered_pair(wire)
 
-        node_a = diagram.nodes.get(a_id)
-        node_b = diagram.nodes.get(b_id)
-        if node_a is None or node_b is None:
-            missing = [nid for nid, node in ((a_id, node_a), (b_id, node_b)) if node is None]
-            raise RewriteGrammarError(
-                f"wire {wire!r} references node id(s) {missing!r} absent from the diagram; "
-                "Diagram.remove_node cascades, so a live wire can never legitimately name a "
-                "removed node"
-            )
+        node_a = diagram.nodes[a_id]
+        node_b = diagram.nodes[b_id]
 
         ref_a = wire.a if wire.a.node_id == a_id else wire.b
         ref_b = wire.b if wire.a.node_id == a_id else wire.a
 
-        # Malformed-wire detection (an out-of-range port index) must be independent of
-        # every other candidate property -- generator color, fusable-color-ness, and
-        # wire direction alike -- so it is checked here, before any of those can drop
-        # the candidate via `continue`. Checking it only after those side conditions
-        # (as an earlier version did) made a malformed wire raise when it happened to
-        # join two same-color, opposite-direction spiders, but silently pass through
-        # as a non-match for a Z/X pair, a same-direction pair, or any other candidate
-        # shape that gets dropped first -- masking the same structural defect
-        # differently depending on unrelated properties of the pair.
+        if wired_ref_counts[ref_a] > 1 or wired_ref_counts[ref_b] > 1:
+            continue
+        if ref_a in boundary_ref_set or ref_b in boundary_ref_set:
+            continue
+
         legs_a = node_a.legs(ref_a.direction)
-        if ref_a.index >= len(legs_a):
-            raise RewriteGrammarError(
-                f"wire endpoint {ref_a!r} is out of range for node {a_id!r}: it has only "
-                f"{len(legs_a)} {ref_a.direction.value} leg(s)"
-            )
         legs_b = node_b.legs(ref_b.direction)
-        if ref_b.index >= len(legs_b):
-            raise RewriteGrammarError(
-                f"wire endpoint {ref_b!r} is out of range for node {b_id!r}: it has only "
-                f"{len(legs_b)} {ref_b.direction.value} leg(s)"
-            )
 
         if node_a.generator_type != node_b.generator_type:
             continue
@@ -285,6 +403,20 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
             leg_detail = f"{port_a.dim} == {port_b.dim}"
 
         shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
+
+        survive_a = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim)
+        if survive_a is None:
+            continue
+        shared_dim, extra_constraints_a, deferred_a = survive_a
+
+        survive_b = _unify_surviving_legs(node_b, b_id, ref_b, shared_dim)
+        if survive_b is None:
+            continue
+        shared_dim, extra_constraints_b, deferred_b = survive_b
+
+        dimension_constraints.extend(extra_constraints_a)
+        dimension_constraints.extend(extra_constraints_b)
+        leg_deferred = leg_deferred or deferred_a or deferred_b
 
         phase_a_dim = node_a.phase.dim if node_a.phase is not None else None
         phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
@@ -326,7 +458,16 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
             SideConditionOutcome(
                 "dimension_agreement",
                 True,
-                leg_detail,
+                leg_detail
+                + (
+                    ""
+                    if not (extra_constraints_a or extra_constraints_b)
+                    else (
+                        f"; surviving leg(s) resolved to shared_dim={shared_dim} with "
+                        f"{len(extra_constraints_a) + len(extra_constraints_b)} additional "
+                        "assumed dimension equality/ies"
+                    )
+                ),
                 deferred=leg_deferred,
             ),
             SideConditionOutcome(

@@ -90,7 +90,18 @@ def _random_phase(rng: random.Random, dim: Dim, node_index: int) -> PhaseVector 
 
 
 def _build_random_diagram(rng: random.Random) -> Diagram:
-    """2-4 nodes, 0-3 legs per side, colour Z/X, one dim per node, a random wiring."""
+    """2-4 nodes, 0-3 legs per side, colour Z/X, mostly one dim per node, a random wiring.
+
+    Roughly a third of nodes instead draw each leg's dimension independently from
+    ``_DIM_PALETTE`` (see the ``mixed`` branch below), so a single node can legitimately
+    carry mixed leg dims -- e.g. two concrete dims that plainly disagree (already a hard
+    ``DIMENSION_POLICY_VIOLATION`` on that node alone), or a concrete leg beside a symbolic
+    one that only unifies by binding. Before this, every node had exactly one dim shared by
+    every one of its legs, so a fusion's surviving legs were always already equal to
+    ``shared_dim`` by construction -- Defect 1 (Phase 5 audit), an un-unified overwrite of a
+    surviving leg's dim, could never be observed disagreeing with anything, since nothing
+    generated here ever gave it the chance to disagree.
+    """
     diagram = Diagram()
     all_ports: list[PortRef] = []
     for node_index in range(rng.randint(2, 4)):
@@ -98,6 +109,13 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
         dim = rng.choice(_DIM_PALETTE)
         n_in = rng.randint(0, 3)
         n_out = rng.randint(0, 3)
+        mixed = rng.random() < 0.35
+        if mixed:
+            input_dims = [rng.choice(_DIM_PALETTE) for _ in range(n_in)]
+            output_dims = [rng.choice(_DIM_PALETTE) for _ in range(n_out)]
+        else:
+            input_dims = [dim] * n_in
+            output_dims = [dim] * n_out
         phase = _random_phase(rng, dim, node_index)
         if n_in == 0 and n_out == 0 and phase is None:
             # A node with no legs and no phase has no port or slot left to carry its
@@ -107,8 +125,8 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
             phase = PhaseVector(dim, {})
         node_id = diagram.add_node(
             color,
-            input_dims=[dim] * n_in,
-            output_dims=[dim] * n_out,
+            input_dims=input_dims,
+            output_dims=output_dims,
             phase=phase,
         )
         all_ports.extend(PortRef(node_id, Direction.INPUT, i) for i in range(n_in))
@@ -215,15 +233,20 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
     return oracle_runs
 
 
-_MIN_ORACLE_COMPARISONS = 150
+_MIN_ORACLE_COMPARISONS = 100
 """Floor for the total oracle comparisons summed across every checked match.
 
 Without this, an always-skipped oracle arm (e.g. every substitution failing
 ``_is_cleanly_contractible`` or raising ``PhaseDomainError``) would let the test pass
 while never actually calling :func:`~qufzx.semantics.check.compare` -- see the module
 docstring and this file's Task 2 history. The actual count on the current seed list and
-generator is around 260; 150 leaves headroom against incidental generator changes while
-still failing hard if the oracle arm silently stops running.
+generator was around 260 before the Phase 5 audit's Defect 1 fix added mixed per-node leg
+dims to the generator (see ``_build_random_diagram``); mixed legs make more candidates
+fail ``_is_cleanly_contractible`` pre-rewrite (a node with a hard
+``DIMENSION_POLICY_VIOLATION`` already on it is exactly the case that check is meant to
+skip), so fewer oracle comparisons actually run -- around 130 now. 100 leaves headroom
+against incidental generator changes while still failing hard if the oracle arm silently
+stops running.
 """
 
 

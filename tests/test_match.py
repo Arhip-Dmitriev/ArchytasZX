@@ -295,3 +295,101 @@ class TestDeterministicOrder:
         assert len(matches) == 2
         keys = [(int(m.a_id), int(m.b_id)) for m in matches]
         assert keys == sorted(keys)
+
+
+class TestSurvivingLegDimensionUnification:
+    """Defect 1 (Phase 5 audit): surviving-leg dims used to be forced onto ``shared_dim`` by
+    the builder with no unification check at all, so a surviving leg that plainly conflicted
+    with ``shared_dim`` was silently overwritten (destroying a real dimension, or laundering
+    a pre-existing hard error) instead of making the candidate a non-match.
+    """
+
+    def test_a_surviving_leg_that_conflicts_with_shared_dim_is_a_non_match(self) -> None:
+        # A already carries a hard dimension_policy_violation (outputs 3 and 5 disagree on
+        # a Z spider, which is ALL_LEGS_EQUAL). Before the fix, fusing across out0 (dim 3)
+        # forced the surviving out1 (dim 5) onto shared_dim=3, silently erasing that
+        # pre-existing error with validate() reporting nothing wrong afterward.
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(3), Dim.concrete(5)]
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+        assert find_matches(diagram) == ()
+
+    def test_a_surviving_concrete_leg_downgrades_shared_dim_and_is_recorded(self) -> None:
+        # A's connecting leg is symbolic d, but A's surviving leg is the concrete Dim(2).
+        # Before the fix, shared_dim stayed the unbound d and the builder just overwrote
+        # the concrete surviving leg with it, discarding the concrete value with nothing
+        # recorded. The fix must unify the surviving leg against shared_dim too, refining
+        # it to the concrete value and recording the assumed equality.
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, two])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        match = matches[0]
+        assert match.shared_dim == two
+        assert (two, d) in match.dimension_constraints
+
+
+class TestConsumedPortClaimedElsewhereIsNonMatch:
+    """Defect 2 (Phase 5 audit): a consumed port also named by a second wire, or also on a
+    boundary list, used to still be returned as a match -- apply() then raised
+    RewriteDomainError (unmapped consumed port), breaking the documented "every match this
+    function returns can be applied" invariant. find_matches must reject such candidates
+    itself, since a port claimed twice like this is not a genuine fusion occurrence.
+    """
+
+    def test_consumed_port_also_wired_to_a_third_node_is_a_non_match(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        # A malformed second wire claiming the same consumed port (A.out0) a third time.
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+        assert find_matches(diagram) == ()
+
+    def test_consumed_port_also_on_the_boundary_is_a_non_match(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 0)])
+        assert find_matches(diagram) == ()
+
+
+class TestMalformedWireDetectionIsFullyUnconditional:
+    """Defect 3 (Phase 5 audit): the out-of-range-index check used to run only per-candidate,
+    after grouping and filtering, so a malformed wire dropped by the parallel-wire-pair
+    filter or the self-loop skip escaped detection entirely and returned () instead of
+    raising. The check must now run over every wire before any grouping or filtering.
+    """
+
+    def test_malformed_wire_inside_a_parallel_pair_still_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        # A second, parallel wire (so single_connecting_wire would drop this pair via
+        # `continue`) whose B-side index is out of range.
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 7))
+        with pytest.raises(RewriteGrammarError):
+            find_matches(diagram)
+
+    def test_malformed_self_loop_wire_still_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        # A self-loop wire (skipped by the self-loop filter) whose input index is out of range.
+        diagram.add_wire(PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 9))
+        with pytest.raises(RewriteGrammarError):
+            find_matches(diagram)

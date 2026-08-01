@@ -40,13 +40,32 @@ except the one consumed by the matched wire.
 
 Dimension of the merged node. Every surviving port -- A's and B's alike -- is built at
 exactly :attr:`~qufzx.rewrite.match.FusionMatch.shared_dim`, never each leg's own original
-``Dim``; Z and X are ``ALL_LEGS_EQUAL`` (:mod:`qufzx.diagram.generators`), so collapsing
-every surviving leg onto one canonical dimension is sound under the generator's own
-policy. When the matched wire's ``dimension_agreement`` only deferred, ``shared_dim`` is
-A's own raw, unbound dim, and forcing it onto B's survivors carries that assumed equality
-into the diagram -- a neighbouring wire that was an exact match before this fusion may
-become merely deferred after it. That is expected, not a defect. See :func:`_merged_phase`
-for the legless corner case, where dimension can only survive via the phase slot.
+``Dim``. This is *not* sound merely because Z and X are ``ALL_LEGS_EQUAL``
+(:mod:`qufzx.diagram.generators`): ``ALL_LEGS_EQUAL`` is enforced by
+:mod:`qufzx.diagram.validate` via :meth:`~qufzx.algebra.dimension.Dim.unify`, and
+``validate`` reports no issue at all -- not even a deferred one -- for two leg dims that
+unify by binding a free symbol (e.g. a leg stated over ``Dim(2)`` sitting beside a leg
+stated over the still-free symbol ``Dim("d")``); forcing every surviving leg onto
+``shared_dim`` without first checking it against each leg's own dim would silently
+overwrite such a leg -- or, worse, a leg whose dim plainly does not unify with
+``shared_dim`` at all -- with no record and no rejected match. What actually makes this
+construction sound is that :mod:`qufzx.rewrite.match`'s ``dimension_agreement`` condition
+(condition 5 in that module's docstring) itself unifies every surviving leg of both nodes
+against the resolved ``shared_dim`` before a :class:`~qufzx.rewrite.match.FusionMatch` is
+ever returned: a leg that fails to unify makes the candidate a non-match, and a leg that
+only unifies by deferring or binding a symbol is recorded in
+:attr:`~qufzx.rewrite.match.FusionMatch.dimension_constraints`, with ``shared_dim`` itself
+possibly refined further by that leg's binding. By the time this builder runs, every
+surviving port this loop assigns ``shared_dim`` to has therefore already been verified (or
+assumed, with the assumption on record) to agree with it -- match-approval and
+build-applicability are the same predicate by construction (see
+:mod:`qufzx.rewrite.match`'s module docstring), not a policy this builder re-derives on
+its own. When the matched wire's ``dimension_agreement`` only deferred (on the connecting
+pair or on some surviving leg), the affected leg's assumed equality with ``shared_dim`` is
+carried into the diagram -- a neighbouring wire that was an exact match before this fusion
+may become merely deferred after it. That is expected, not a defect. See
+:func:`_merged_phase` for the legless corner case, where dimension can only survive via
+the phase slot.
 """
 
 from __future__ import annotations
