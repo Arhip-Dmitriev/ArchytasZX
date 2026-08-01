@@ -12,18 +12,20 @@ manual fix rounds are meant to replace; see ``CLAUDE.md`` and ``FULL_PLAN.md`` P
 from __future__ import annotations
 
 import random
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from unittest.mock import patch
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseDomainError, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import IssueKind, validate
-from qufzx.rewrite.engine import apply
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from qufzx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
+from qufzx.rewrite.engine import RewriteResult, apply
 from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import RewriteDomainError, RewriteError
+from qufzx.rewrite.rule import Match, RewriteDomainError, RewriteError, Rule
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError
@@ -177,6 +179,73 @@ def _is_cleanly_contractible(diagram: Diagram) -> bool:
     return report.is_valid and not report.deferred
 
 
+def _apply_ignoring_step8(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
+    """Re-run ``apply`` with its step-8 relative post-condition disarmed, for re-derivation.
+
+    Patches ``qufzx.rewrite.engine.validate`` (the name ``apply`` actually calls, per its
+    module-level import) to report no issues at all for the duration of this one call, so
+    ``input_hard_counts`` and ``result_hard_counts`` are both empty and their difference can
+    never be non-empty -- ``apply`` runs every other step exactly as normal and returns its
+    result unconditionally. This exists solely so ``_check_one_match`` can independently
+    re-derive, via the real (unpatched) ``validate``, whether a step-8 raise from the normal
+    call was actually justified -- see that function and Defect 1 (Phase 5 round-7 audit),
+    which is exactly the class of bug a message-substring whitelist alone cannot catch.
+    """
+    with patch("qufzx.rewrite.engine.validate", return_value=ValidationReport(())):
+        return apply(diagram, rule, match)
+
+
+def _independent_issue_key(
+    issue: ValidationIssue,
+    consumed_node_ids: frozenset[NodeId],
+    port_mapping: Mapping[PortRef, PortRef],
+) -> tuple[IssueKind, object]:
+    """A ``(kind, ref)`` key for one *input*-diagram hard-error issue, in post-rewrite terms.
+
+    A from-scratch reimplementation of the same idea
+    :func:`qufzx.rewrite.engine._translate_input_issue_key` embodies -- written
+    independently here (not by importing and calling that private function) so this
+    harness gives real cross-check value against a regression in ``apply``'s own step-8
+    bookkeeping, rather than trivially agreeing with it by construction. A ``port_ref`` or
+    wire endpoint on a node *not* being consumed passes through unchanged; one on a
+    consumed node is looked up in ``port_mapping`` (falling back to itself -- the matched
+    port itself is never in ``port_mapping`` and has no post-rewrite counterpart, so it is
+    left as something that will correctly match nothing on the result side). A wire's two
+    endpoints are compared as an unordered ``frozenset`` pair, matching
+    :class:`~qufzx.diagram.graph.Wire`'s own order-independent equality. A ``node_id`` on a
+    consumed node has no principled translation from only this function's inputs (spider
+    fusion always merges into exactly one new node, but nothing here is told which) and is
+    left unchanged -- the same fail-closed posture the module under test documents for that
+    case; it deliberately then cannot match anything in :func:`_post_issue_key`'s output.
+    """
+
+    def _translate(ref: PortRef) -> PortRef:
+        if ref.node_id not in consumed_node_ids:
+            return ref
+        return port_mapping.get(ref, ref)
+
+    if issue.port_ref is not None:
+        return (issue.kind, _translate(issue.port_ref))
+    if issue.wire is not None:
+        wire = issue.wire
+        return (issue.kind, frozenset((_translate(wire.a), _translate(wire.b))))
+    if issue.node_id is not None:
+        return (issue.kind, issue.node_id)
+    return (issue.kind, None)
+
+
+def _post_issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
+    """The post-rewrite-diagram counterpart of :func:`_independent_issue_key`'s keying."""
+    if issue.port_ref is not None:
+        return (issue.kind, issue.port_ref)
+    if issue.wire is not None:
+        wire = issue.wire
+        return (issue.kind, frozenset((wire.a, wire.b)))
+    if issue.node_id is not None:
+        return (issue.kind, issue.node_id)
+    return (issue.kind, None)
+
+
 def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
     """Apply ``match`` and check it soundly; returns how many oracle comparisons actually ran.
 
@@ -191,6 +260,32 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
         assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
             f"seed {seed}: apply() raised a RewriteDomainError that is not the relative "
             f"post-condition, for a match find_matches() itself returned: {exc}"
+        )
+        # Re-derive whether the block was actually justified, independently of apply()'s
+        # own step-8 bookkeeping, instead of trusting the message alone (a message-substring
+        # whitelist here is exactly what let Defect 1 -- a false-positive step-8 block --
+        # survive three prior audit rounds undetected). ``_apply_ignoring_step8`` forces the
+        # rewrite through regardless of step 8; ``_independent_issue_key`` /
+        # ``_post_issue_key`` then build the same *multiset* comparison ``apply`` itself
+        # makes (not merely a set-of-kinds one -- a coarser check cannot tell a false-
+        # positive block apart from a second, independent issue of a kind the input already
+        # carried once, which is a real regression apply() is right to catch), computed
+        # from scratch rather than by calling apply()'s own private helpers, so this is a
+        # genuine cross-check and not a tautology.
+        forced = _apply_ignoring_step8(diagram, SPIDER_FUSION, match)
+        pre_counts = Counter(
+            _independent_issue_key(
+                issue, frozenset(forced.step.matched_node_ids), forced.step.port_mapping
+            )
+            for issue in validate(diagram).errors
+        )
+        post_counts = Counter(_post_issue_key(issue) for issue in validate(forced.diagram).errors)
+        introduced_issues = post_counts - pre_counts
+        assert introduced_issues, (
+            f"seed {seed}: apply() raised the step-8 relative post-condition, but "
+            f"re-deriving independently found no hard-error issue introduced that was not "
+            f"already present (in translated form) in the input diagram -- apply() blocked "
+            f"a rewrite that introduced nothing: {exc}"
         )
         return 0
     except RewriteError as exc:  # pragma: no cover - documents the intended failure mode
@@ -240,13 +335,24 @@ Without this, an always-skipped oracle arm (e.g. every substitution failing
 ``_is_cleanly_contractible`` or raising ``PhaseDomainError``) would let the test pass
 while never actually calling :func:`~qufzx.semantics.check.compare` -- see the module
 docstring and this file's Task 2 history. The actual count on the current seed list and
-generator was around 260 before the Phase 5 audit's Defect 1 fix added mixed per-node leg
-dims to the generator (see ``_build_random_diagram``); mixed legs make more candidates
-fail ``_is_cleanly_contractible`` pre-rewrite (a node with a hard
+generator was around 260 before an earlier Phase 5 audit round's Defect 1 fix added mixed
+per-node leg dims to the generator (see ``_build_random_diagram``); mixed legs make more
+candidates fail ``_is_cleanly_contractible`` pre-rewrite (a node with a hard
 ``DIMENSION_POLICY_VIOLATION`` already on it is exactly the case that check is meant to
-skip), so fewer oracle comparisons actually run -- around 130 now. 100 leaves headroom
-against incidental generator changes while still failing hard if the oracle arm silently
-stops running.
+skip), so fewer oracle comparisons actually run -- around 130 since.
+
+The Phase 5 round-7 audit's Defect 1 (a different bug, in ``engine.py`` step 8's issue-key
+comparison -- see that module's docstring) unblocked roughly 10 of the 123 matches this
+seed list produces that used to be wrongly raised as a false-positive
+``RewriteDomainError``, but did *not* raise the measured total above: every one of those
+newly-unblocked matches has a diagram that already carries the very hard-error issue step
+8's fix now correctly recognises as carried-over rather than introduced, and
+``_is_cleanly_contractible`` already excludes any diagram with a pre-existing hard error
+from the oracle arm for an unrelated reason (the pre-substituted diagram must be fully
+valid to run through :func:`~qufzx.semantics.check.compare` at all) -- so those matches
+were never going to contribute an oracle comparison, blocked or not. The measured total
+after the round-7 fixes is still around 130. 100 leaves headroom against incidental
+generator changes while still failing hard if the oracle arm silently stops running.
 """
 
 

@@ -162,7 +162,13 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     :func:`~qufzx.rewrite.rule.check_side_condition_coverage`), before doing any graph
     surgery -- this builder is reachable directly, not only through
     :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having already
-    checked this.
+    checked this. Also verifies ``match.wire`` actually joins ``match.a_id`` and
+    ``match.b_id`` (raising :class:`~qufzx.rewrite.rule.RewriteGrammarError` naming the
+    wire and both node ids if not), for the same reason: any match ``find_matches`` itself
+    produced satisfies this by construction, but a hand-built or foreign ``FusionMatch``
+    whose wire names some other pair would otherwise make the consumed-ref selection just
+    below silently pick the wrong port(s) on ``node_a``/``node_b``, and fail much later
+    with a step-8 relative-postcondition error that names the wrong defect entirely.
     """
     if not isinstance(match, FusionMatch):
         raise RewriteGrammarError(
@@ -178,6 +184,15 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         )
 
     wire = match.wire
+    wire_node_ids = {wire.a.node_id, wire.b.node_id}
+    if wire_node_ids != {match.a_id, match.b_id}:
+        raise RewriteGrammarError(
+            f"spider_fusion: match's wire {wire!r} is not incident on both matched nodes "
+            f"{match.a_id!r} and {match.b_id!r} (wire connects {sorted(wire_node_ids)!r}); "
+            "a hand-built or foreign FusionMatch whose wire does not actually join a_id "
+            "and b_id would otherwise have its consumed-ref selection below silently pick "
+            "the wrong port(s), failing much later with an unrelated error"
+        )
     consumed_ref_a = wire.a if wire.a.node_id == match.a_id else wire.b
     consumed_ref_b = wire.b if wire.a.node_id == match.a_id else wire.a
 

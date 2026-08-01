@@ -96,11 +96,30 @@ Algorithm.
    :mod:`qufzx.rewrite.rules_library`'s module docstring for a worked example). Never
    compared by message (a node id embedded in an issue's message legitimately changes across
    a rewrite, e.g. because a merged node gets a fresh id) -- ``_issue_key`` reads the issue's
-   actual offending reference (``port_ref``, ``wire``, or ``node_id``) instead. Still relative
-   to the input, never absolute -- a diagram that already carries a hard error (e.g. an
-   unwired non-boundary leg) is legitimately rewritable, and this step must not block that;
-   it only catches a rewrite that made things *worse*, now counted precisely rather than
-   merely by kind. One check, independent of steps 5 and 6 getting their own bookkeeping
+   actual offending reference (``port_ref``, ``wire``, or ``node_id``) instead.
+
+   The input side of the comparison is not simply ``_issue_key`` of each of ``diagram``'s
+   own issues, though: a reference anchored on a *consumed* node -- its node id, or any of
+   its ports -- is guaranteed to differ from anything ``working`` could possibly carry,
+   since that node id and those port indices are gone once the match is applied (the merged
+   node gets a fresh id and fresh port indices). Comparing such a reference's raw
+   ``_issue_key`` against ``working``'s post-rewrite keys would therefore *always* read as
+   "introduced", regardless of whether the rewrite actually carried the underlying defect
+   forward -- which is exactly the false-positive failure mode this step exists to avoid,
+   not to cause (Phase 5 round-7 audit's Defect 1). :func:`_translate_input_issue_key`
+   closes this: it maps each of ``diagram``'s hard-error issues into the coordinate space
+   ``working`` actually uses, via ``build_result.port_mapping`` for a port on a consumed
+   node (falling back to the original, now-nonexistent port when the port is the matched
+   one itself and so absent from ``port_mapping`` -- deliberately left untranslated, since
+   there is nothing to translate it to and it correctly then matches nothing on the result
+   side) and via ``build_result.new_node_ids`` for a node id on a consumed node, but only
+   when that tuple has exactly one entry (true for spider fusion's two-consumed-into-one
+   shape; see that function's docstring for the fail-closed policy a future rule with a
+   different consumed-to-new node cardinality would hit). Still relative to the input, never
+   absolute -- a diagram that already carries a hard error (e.g. an unwired non-boundary leg)
+   is legitimately rewritable, and this step must not block that; it only catches a rewrite
+   that made things *worse*, now counted precisely, in the right coordinate space, rather
+   than merely by kind. One check, independent of steps 5 and 6 getting their own bookkeeping
    right, standing in for the whole family of structural regressions a rewrite could
    otherwise introduce (a dropped wire, a shrunk boundary, a mixed-dimension leg, a lost
    dimension) instead of guarding each one individually.
@@ -170,6 +189,35 @@ class RewriteStep:
     port_mapping: Mapping[PortRef, PortRef]
     new_node_ids: tuple[NodeId, ...]
 
+    def __hash__(self) -> int:
+        """Explicit, since the dataclass-generated one would raise on ``port_mapping``.
+
+        ``@dataclass(frozen=True)`` with the default ``eq=True`` would otherwise generate a
+        ``__hash__`` that hashes every field verbatim, including ``port_mapping`` -- a
+        :class:`~types.MappingProxyType`, which is unhashable (its backing ``dict`` is
+        mutable even though the proxy itself is read-only). Defining ``__hash__`` here
+        explicitly, in the class body, makes ``dataclass`` leave it alone rather than
+        overwrite it with the broken auto-generated one. Every other field is hashed as-is;
+        ``port_mapping`` is hashed as ``frozenset(port_mapping.items())`` -- order-independent,
+        matching the dataclass-generated ``__eq__``, which compares ``port_mapping`` via
+        plain mapping equality (also order-independent) -- so ``a == b`` still implies
+        ``hash(a) == hash(b)``, the contract Phase 12's cache (which will key on
+        ``RewriteStep``) needs.
+        """
+        return hash(
+            (
+                self.rule_name,
+                self.match,
+                self.matched_node_ids,
+                self.consumed_wires,
+                self.side_condition_outcomes,
+                self.dimension_constraints,
+                self.scalar_introduced,
+                frozenset(self.port_mapping.items()),
+                self.new_node_ids,
+            )
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RewriteResult:
@@ -197,6 +245,73 @@ def _issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
     if ref is None:
         ref = issue.node_id
     return (issue.kind, ref)
+
+
+def _translate_input_issue_key(
+    issue: ValidationIssue,
+    consumed_node_ids: frozenset[NodeId],
+    port_mapping: Mapping[PortRef, PortRef],
+    new_node_ids: tuple[NodeId, ...],
+) -> tuple[IssueKind, object]:
+    """``_issue_key`` of an *input*-diagram issue, translated into post-rewrite coordinates.
+
+    Step 8 must compare like with like: ``result_hard_counts`` is already keyed on
+    references as they exist in ``working`` (the post-rewrite diagram), but a naive
+    ``_issue_key`` of an input-diagram issue is keyed on references as they existed
+    *before* the rewrite. A consumed node's ports and node id are gone from ``working``
+    entirely -- the merged node gets a fresh :class:`NodeId` and fresh port indices -- so
+    an issue anchored on one of them would silently never match its post-rewrite
+    counterpart even when the rewrite carried it over faithfully, making step 8 flag a
+    rewrite that introduced nothing (see the module docstring, step 8).
+
+    A ``port_ref`` or a ``wire`` endpoint on a node *not* being consumed passes through
+    unchanged -- that node survives with the same id and the same port indices. A
+    ``port_ref`` or wire endpoint on a *consumed* node is translated via ``port_mapping``
+    when present there (a surviving leg the builder remapped); a consumed port that is
+    *not* in ``port_mapping`` is the matched port itself (or a foreign match's malformed
+    port) -- it has no post-rewrite counterpart at all, so it is left unchanged, which
+    correctly makes it match nothing in ``result_hard_counts`` (the issue did not carry
+    over because the port it was anchored on no longer exists) rather than being dropped
+    silently.
+
+    A ``node_id`` on a consumed node is translated to the sole entry of ``new_node_ids``
+    when there is exactly one -- true for every Phase 5 rule (spider fusion always merges
+    its two consumed nodes into exactly one new node) -- since that is the only node the
+    identity could plausibly have carried over to. When ``new_node_ids`` has zero or more
+    than one entries, which new node (if any) a consumed node's identity maps to is
+    genuinely undecidable from the information ``apply`` has, so the id is left unchanged
+    rather than guessed at: this deliberately makes the translated key impossible to match
+    against anything in ``result_hard_counts`` (no node in ``working`` carries the
+    original, now-removed id), so a node-id-anchored input issue on a consumed node is
+    conservatively treated as *not* carried over whenever the mapping is ambiguous -- the
+    same fail-closed posture step 8 already takes toward every other unrecognised case,
+    at the cost (for a future multi-new-node rule only; no Phase 5 rule triggers this) of
+    occasionally blocking a rewrite that did carry the issue over faithfully.
+    """
+
+    def _translate_ref(ref: PortRef) -> PortRef:
+        if ref.node_id not in consumed_node_ids:
+            return ref
+        return port_mapping.get(ref, ref)
+
+    if issue.port_ref is not None:
+        return (issue.kind, _translate_ref(issue.port_ref))
+    if issue.wire is not None:
+        translated_a = _translate_ref(issue.wire.a)
+        translated_b = _translate_ref(issue.wire.b)
+        if translated_a == translated_b:
+            # A malformed self-loop-after-translation cannot occur for any wire actually
+            # possible in a valid input diagram (a builder never maps two distinct
+            # surviving ports to the same new port); fall back to the untranslated wire
+            # so this never raises constructing a same-port Wire.
+            return (issue.kind, issue.wire)
+        return (issue.kind, Wire(translated_a, translated_b))
+    if issue.node_id is not None:
+        node_id = issue.node_id
+        if node_id in consumed_node_ids and len(new_node_ids) == 1:
+            node_id = new_node_ids[0]
+        return (issue.kind, node_id)
+    return (issue.kind, None)
 
 
 def _remap_endpoint(
@@ -260,7 +375,12 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"but its builder returned {build_result.scalar_introduced!r} for this match"
         )
 
-    missing_wires = [wire for wire in build_result.consumed_wires if wire not in working.wires]
+    # Snapshotted once, as a set, rather than testing membership against ``working.wires``
+    # (whatever collection backs that property) once per consumed wire -- the latter
+    # re-materialises the full wire collection on every ``in`` test, making this check
+    # quadratic in the number of consumed wires times the diagram's wire count.
+    working_wire_set = frozenset(working.wires)
+    missing_wires = [wire for wire in build_result.consumed_wires if wire not in working_wire_set]
     missing_node_ids = [
         node_id for node_id in build_result.consumed_node_ids if node_id not in working.nodes
     ]
@@ -306,7 +426,10 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     working.multiply_scalar(build_result.scalar_introduced)
 
-    input_hard_counts = Counter(_issue_key(issue) for issue in validate(diagram).errors)
+    input_hard_counts = Counter(
+        _translate_input_issue_key(issue, consumed_node_ids, port_mapping, build_result.new_node_ids)
+        for issue in validate(diagram).errors
+    )
     result_hard_counts = Counter(_issue_key(issue) for issue in validate(working).errors)
     introduced_counts = result_hard_counts - input_hard_counts
     if introduced_counts:
