@@ -249,7 +249,13 @@ class Rule:
     scalar this rule is declared to introduce on every application; :mod:`qufzx.rewrite.engine`
     checks a builder's :attr:`BuildResult.scalar_introduced` against this declared value and
     raises :class:`RewriteDomainError` on disagreement, rather than silently trusting
-    whichever value the builder happened to compute.
+    whichever value the builder happened to compute. ``__post_init__`` validates every
+    field's type (not only ``name``) -- a ``Pattern`` for ``pattern``, a callable for
+    ``builder``, a tuple of ``SideCondition`` for ``side_conditions``, a ``Quantifiers`` for
+    ``quantifiers``, and a ``Scalar`` (never a bare ``float``, per the exact-scalars rule in
+    ``CLAUDE.md``) for ``scalar_introduced`` -- the same posture every other value object in
+    this codebase (``Port``, ``Node``, ``PortRef``, ``PhaseVector``, ``Scalar`` itself) takes
+    toward its own constructor arguments.
     """
 
     name: str
@@ -260,9 +266,45 @@ class Rule:
     scalar_introduced: Scalar
 
     def __post_init__(self) -> None:
-        """Validate that ``name`` is a non-empty string."""
+        """Validate every field's type, the same way every other value object here does.
+
+        :class:`Port`, :class:`~qufzx.diagram.graph.Node`, :class:`PortRef`,
+        :class:`~qufzx.algebra.phase.PhaseVector`, and :class:`~qufzx.algebra.scalar.Scalar`
+        all reject a wrong-typed constructor argument outright rather than accepting it and
+        failing later, further from the mistake; a ``Rule`` that only checked ``name`` broke
+        that pattern and let a nonsense rule -- an unrelated string as ``pattern``, a
+        non-callable ``builder``, or (banned from every other constructor in this codebase
+        since the exact-scalars rule in ``CLAUDE.md``) a bare ``float`` as
+        ``scalar_introduced`` -- construct successfully.
+        """
         if not isinstance(self.name, str) or not self.name:
             raise RewriteGrammarError(f"rule name must be a non-empty str, got {self.name!r}")
+        if not isinstance(self.pattern, Pattern):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: pattern must be a Pattern, got {type(self.pattern).__name__}"
+            )
+        if not callable(self.builder):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: builder must be callable, "
+                f"got {type(self.builder).__name__}"
+            )
+        if not isinstance(self.side_conditions, tuple) or not all(
+            isinstance(condition, SideCondition) for condition in self.side_conditions
+        ):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: side_conditions must be a tuple of SideCondition, "
+                f"got {self.side_conditions!r}"
+            )
+        if not isinstance(self.quantifiers, Quantifiers):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: quantifiers must be a Quantifiers, "
+                f"got {type(self.quantifiers).__name__}"
+            )
+        if not isinstance(self.scalar_introduced, Scalar):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: scalar_introduced must be a Scalar, "
+                f"got {type(self.scalar_introduced).__name__}"
+            )
 
 
 def check_side_condition_coverage(

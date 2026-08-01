@@ -63,7 +63,17 @@ Algorithm.
    raise -- the ref would survive the rebuild unchanged, still naming a soon-to-be-removed
    node, and step 6's ``remove_node`` cascade would then delete it from the boundary with no
    exception, silently shrinking the returned diagram's boundary arity below the input's);
-   that silent-drop path is now ruled out identically for both.
+   that silent-drop path is now ruled out identically for both. ``_remap_endpoint``'s raise is
+   also the failure mode a *consumed* (not surviving) port would hit if it were still named by
+   a second wire or a boundary entry -- a builder never maps a consumed port, since it no
+   longer exists once the match is applied. :mod:`qufzx.rewrite.match`'s ``find_matches``
+   resolves this on its side: it rejects any candidate whose consumed port is claimed by more
+   than one wire or is on a boundary list before ever returning it as a match (see that
+   module's docstring, "Match-implies-applicable and multiply-claimed ports"), so this branch
+   of ``_remap_endpoint`` is unreachable for any match ``find_matches`` actually returned -- it
+   remains here only as a defensive check against a hand-built or foreign ``Match``, the same
+   posture every other coverage check in this module and in
+   :mod:`qufzx.rewrite.rules_library` takes toward inputs it did not itself produce.
 6. Remove the consumed nodes. Only after every wire and boundary entry that referenced them
    has already been replaced. :meth:`~qufzx.diagram.graph.Diagram.remove_node`'s cascade
    (see that module's docstring) is therefore a no-op on wires and boundary entries at this
@@ -74,16 +84,26 @@ Algorithm.
    input's times the rule's introduced factor.
 8. Verify the rewrite is not a relative regression. :func:`~qufzx.diagram.validate.validate`
    runs on both the original ``diagram`` and the finished ``working``; if ``working`` carries
-   a hard-failure :class:`~qufzx.diagram.validate.IssueKind` that ``diagram`` did not already
-   carry, this raises :class:`~qufzx.rewrite.rule.RewriteDomainError`. Compared by kind, not
-   by message (a node id embedded in an issue's message legitimately changes across a
-   rewrite), and relative to the input, never absolute -- a diagram that already carries a
-   hard error (e.g. an unwired non-boundary leg) is legitimately rewritable, and this step
-   must not block that; it only catches a rewrite that made things *worse*. One check,
-   independent of steps 5 and 6 getting their own bookkeeping right, standing in for the
-   whole family of structural regressions a rewrite could otherwise introduce (a dropped
-   wire, a shrunk boundary, a mixed-dimension leg, a lost dimension) instead of guarding each
-   one individually.
+   a hard-failure issue this step cannot account for as already present in ``diagram``, this
+   raises :class:`~qufzx.rewrite.rule.RewriteDomainError`. The comparison is a *multiset*
+   over ``(kind, offending ref)`` pairs (via :func:`_issue_key`), not a set of bare
+   :class:`~qufzx.diagram.validate.IssueKind`\\ s: a set comparison cannot see a second,
+   independent issue of a kind the input already carried once (it would vanish into the same
+   set element), and cannot see an issue the rewrite *removed* either, since set difference in
+   the wrong direction hides exactly that -- both blind spots let a rewrite launder a
+   pre-existing hard error into a *different* one of the same kind with nothing to show for
+   it (see the "Dimension of the merged node" paragraph in
+   :mod:`qufzx.rewrite.rules_library`'s module docstring for a worked example). Never
+   compared by message (a node id embedded in an issue's message legitimately changes across
+   a rewrite, e.g. because a merged node gets a fresh id) -- ``_issue_key`` reads the issue's
+   actual offending reference (``port_ref``, ``wire``, or ``node_id``) instead. Still relative
+   to the input, never absolute -- a diagram that already carries a hard error (e.g. an
+   unwired non-boundary leg) is legitimately rewritable, and this step must not block that;
+   it only catches a rewrite that made things *worse*, now counted precisely rather than
+   merely by kind. One check, independent of steps 5 and 6 getting their own bookkeeping
+   right, standing in for the whole family of structural regressions a rewrite could
+   otherwise introduce (a dropped wire, a shrunk boundary, a mixed-dimension leg, a lost
+   dimension) instead of guarding each one individually.
 9. Record provenance. A :class:`RewriteStep` carrying the rule name, the located ``match``
    exactly as it was applied (stored verbatim, so Phase 6 replays directly from it rather
    than re-running the matcher and re-selecting a candidate by node id), the match location
@@ -107,6 +127,7 @@ numerically -- nothing in this module imports :mod:`qufzx.semantics`.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -114,7 +135,7 @@ from types import MappingProxyType
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
-from qufzx.diagram.validate import validate
+from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
 from qufzx.rewrite.rule import (
     Match,
     RewriteDomainError,
@@ -159,6 +180,25 @@ class RewriteResult:
     step: RewriteStep
 
 
+def _issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
+    """A ``(kind, offending ref)`` key identifying one hard-error issue for step 8's compare.
+
+    Never the issue's ``message``: a node id embedded in a message legitimately changes
+    across a rewrite (a merged node gets a fresh id), so comparing messages would flag
+    every rewrite as introducing a "new" issue merely because its wording mentions a
+    different id, even when the underlying defect is the pre-existing one carried over
+    unchanged. ``port_ref``, ``wire``, and ``node_id`` are checked in that order -- per
+    :class:`~qufzx.diagram.validate.ValidationIssue`'s own docstring, at most one is set
+    for a given issue in practice, so the order only matters as a deterministic tie-break.
+    """
+    ref: object = issue.port_ref
+    if ref is None:
+        ref = issue.wire
+    if ref is None:
+        ref = issue.node_id
+    return (issue.kind, ref)
+
+
 def _remap_endpoint(
     ref: PortRef,
     consumed_node_ids: frozenset[NodeId],
@@ -171,7 +211,12 @@ def _remap_endpoint(
     is correct and required. An endpoint on a *consumed* node must appear in ``port_mapping``;
     if it does not, leaving the fallback in place would silently point the wire at a node
     step 6 is about to remove (whose removal cascade then silently drops the wire) instead of
-    surfacing the problem.
+    surfacing the problem. This also fires for a *consumed* port that a second wire or a
+    boundary entry still names alongside the matched wire that consumed it -- a builder never
+    maps a consumed port -- but :mod:`qufzx.rewrite.match`'s ``find_matches`` now rejects such
+    candidates before returning them as matches (see that module's docstring), so this branch
+    is unreachable for any match it actually produced; it remains only as a defensive check
+    against a hand-built or foreign ``Match``.
     """
     if ref.node_id not in consumed_node_ids:
         return ref
@@ -261,14 +306,14 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     working.multiply_scalar(build_result.scalar_introduced)
 
-    input_hard_kinds = {issue.kind for issue in validate(diagram).errors}
-    result_hard_kinds = {issue.kind for issue in validate(working).errors}
-    introduced_kinds = result_hard_kinds - input_hard_kinds
-    if introduced_kinds:
+    input_hard_counts = Counter(_issue_key(issue) for issue in validate(diagram).errors)
+    result_hard_counts = Counter(_issue_key(issue) for issue in validate(working).errors)
+    introduced_counts = result_hard_counts - input_hard_counts
+    if introduced_counts:
+        introduced_kinds = sorted({key[0].value for key in introduced_counts})
         raise RewriteDomainError(
             f"rule {rule.name!r}: rewrite introduced hard-error issue kind(s) "
-            f"{sorted(kind.value for kind in introduced_kinds)} not present in the input "
-            "diagram"
+            f"{introduced_kinds} not present in the input diagram"
         )
 
     step = RewriteStep(

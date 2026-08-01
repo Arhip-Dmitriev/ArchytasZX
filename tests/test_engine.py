@@ -337,3 +337,56 @@ class TestRewriteStepRecordsTheMatch:
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
         assert result.step.match == match
+
+
+class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
+    """Defect 5 (Phase 5 audit): step 8's relative post-condition used to compare hard-error
+    IssueKinds as a *set*. A set comparison cannot see a second, independent issue of a kind
+    the input diagram already carried once (both collapse to the same set element), so a
+    builder that left the input's pre-existing violation untouched but introduced a brand
+    new, unrelated one of the *same* kind on a fresh node used to slip through undetected.
+    The comparison must be a multiset keyed by (kind, offending ref) instead.
+    """
+
+    def test_a_second_dimension_policy_violation_on_a_new_node_is_caught(self) -> None:
+        def _builder_with_a_second_violation(working_diagram: Diagram, match_obj: object) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            extra_id = working_diagram.add_node(
+                Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2), Dim.concrete(3)]
+            )
+            working_diagram.set_boundary_outputs(
+                working_diagram.boundary_outputs
+                + (
+                    PortRef(extra_id, Direction.OUTPUT, 0),
+                    PortRef(extra_id, Direction.OUTPUT, 1),
+                )
+            )
+            return result
+
+        rule_with_extra_violation = Rule(
+            name="spider_fusion_extra_violation",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_builder_with_a_second_violation,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        # A pre-existing DIMENSION_POLICY_VIOLATION, unrelated to the fused pair, that the
+        # rewrite carries over untouched -- a set-of-kinds comparison already tolerates this
+        # part correctly on its own.
+        c_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2), Dim.concrete(3)]
+        )
+        diagram.set_boundary_outputs(
+            [PortRef(c_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 1)]
+        )
+
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteDomainError, match="dimension_policy_violation"):
+            apply(diagram, rule_with_extra_violation, match)
