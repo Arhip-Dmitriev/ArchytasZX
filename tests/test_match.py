@@ -279,6 +279,40 @@ class TestSharedDimResolvesThroughBinding:
         assert find_matches(diagram) == ()
 
 
+class TestPhaseDimensionAgreementSeesSurvivingLegBindings:
+    """Defect 2 (Phase 5 round-7 audit): phase_dimension_agreement used to resolve a present
+    phase's Dim using only the connecting pair's own unify bindings (``leg_unify.bindings``),
+    never a binding a *surviving* leg produced -- even though condition 5's own ``shared_dim``
+    is refined by exactly that binding. A phase legally stated over a symbol only a surviving
+    leg happens to bind was therefore compared unsubstituted against the refined shared_dim
+    and wrongly dropped as a non-match.
+    """
+
+    def test_a_phase_over_a_symbol_bound_only_by_a_surviving_leg_now_matches(self) -> None:
+        # A's connecting leg (output 0) and B's connecting leg (input 0) are both the
+        # symbol d -- unifying them binds nothing. A's *surviving* input leg is a
+        # concrete Dim(2), which binds d := 2 once condition 5 unifies it against
+        # shared_dim. A's phase, stated over the still-symbolic d, is legal only because
+        # it resolves through that surviving-leg binding, not the connecting pair's own.
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[two],
+            output_dims=[d],
+            phase=PhaseVector(d, {1: Phase.turns(1)}),
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].shared_dim == two
+
+
 class TestDeterministicOrder:
     def test_matches_sorted_by_node_ids(self) -> None:
         d = Dim.concrete(2)

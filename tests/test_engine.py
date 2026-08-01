@@ -10,6 +10,8 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
+from qufzx.rewrite import engine as engine_module
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, Rule
@@ -390,3 +392,134 @@ class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
         match = find_matches(diagram)[0]
         with pytest.raises(RewriteDomainError, match="dimension_policy_violation"):
             apply(diagram, rule_with_extra_violation, match)
+
+
+class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
+    """Defect 1 (Phase 5 round-7 audit): step 8 compared a pre-existing hard-error issue's
+    key in its *input*-diagram coordinates against post-rewrite keys, which are always in
+    *post*-rewrite coordinates. A consumed node's ports and node id do not survive a
+    rewrite -- the merged node gets a fresh id and fresh port indices -- so an issue
+    anchored on one of them (e.g. an unwired, non-boundary leg) always looked "introduced"
+    even when the rewrite carried it over faithfully, wrongly raising
+    ``RewriteDomainError`` for a rewrite that introduced nothing. See the module docstring,
+    step 8, and :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
+    """
+
+    def test_port_unused_on_a_consumed_nodes_surviving_leg_does_not_block_the_rewrite(
+        self,
+    ) -> None:
+        # The exact reproduction from the audit: A.in0 is left neither wired nor on a
+        # boundary (a pre-existing PORT_UNUSED), and is not the leg the fusion consumes
+        # (that's A.out0) -- it survives onto the merged node.
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        # A.in0 is deliberately left off every boundary and every wire.
+
+        pre_report = validate(diagram)
+        assert IssueKind.PORT_UNUSED in {issue.kind for issue in pre_report.errors}
+
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+
+        result = apply(diagram, SPIDER_FUSION, matches[0])
+
+        post_errors = validate(result.diagram).errors
+        assert any(issue.kind is IssueKind.PORT_UNUSED for issue in post_errors), (
+            "the pre-existing PORT_UNUSED issue should carry over onto the merged node's "
+            "corresponding surviving port, not vanish or (as under the defect) block apply()"
+        )
+
+
+class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
+    """Direct unit coverage of :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
+
+    A hard-error issue's ``node_id`` or ``port_ref`` anchor cannot, by construction,
+    survive a fusion on the very node it names without :meth:`Dim.unify` also failing
+    somewhere the matcher checks (see the DIMENSION_POLICY_VIOLATION / PHASE_DIMENSION_
+    MISMATCH cases: any real conflict the merge's leg-dim normalization would erase, the
+    matcher's own surviving-leg or phase check already refuses to match). Both branches of
+    the translation are therefore exercised directly here, independent of what
+    ``find_matches`` can organically produce end-to-end -- this is the same class covered,
+    end-to-end, by ``TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode`` above for the
+    ``port_ref``-in-``port_mapping`` case.
+    """
+
+    def test_node_id_on_a_consumed_node_maps_to_the_sole_new_node_id(self) -> None:
+        old_id = NodeId(7)
+        new_id = NodeId(99)
+        issue = ValidationIssue(
+            kind=IssueKind.DIMENSION_POLICY_VIOLATION, message="x", node_id=old_id
+        )
+        key = engine_module._translate_input_issue_key(
+            issue,
+            consumed_node_ids=frozenset({old_id, NodeId(8)}),
+            port_mapping={},
+            new_node_ids=(new_id,),
+        )
+        assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, new_id)
+
+    def test_node_id_on_a_consumed_node_is_left_unmapped_when_ambiguous(self) -> None:
+        # A future rule that consumes N nodes into M != 1 new ones has no principled way
+        # to say which new node a consumed node's identity maps to -- see the function's
+        # docstring for why this is deliberately fail-closed rather than guessed at.
+        old_id = NodeId(7)
+        issue = ValidationIssue(
+            kind=IssueKind.DIMENSION_POLICY_VIOLATION, message="x", node_id=old_id
+        )
+        key = engine_module._translate_input_issue_key(
+            issue,
+            consumed_node_ids=frozenset({old_id}),
+            port_mapping={},
+            new_node_ids=(),
+        )
+        assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, old_id)
+
+    def test_port_ref_on_a_consumed_node_maps_through_port_mapping(self) -> None:
+        old_ref = PortRef(NodeId(7), Direction.INPUT, 0)
+        new_ref = PortRef(NodeId(99), Direction.INPUT, 3)
+        issue = ValidationIssue(
+            kind=IssueKind.DIMENSION_POLICY_VIOLATION, message="x", port_ref=old_ref
+        )
+        key = engine_module._translate_input_issue_key(
+            issue,
+            consumed_node_ids=frozenset({NodeId(7)}),
+            port_mapping={old_ref: new_ref},
+            new_node_ids=(NodeId(99),),
+        )
+        assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, new_ref)
+
+    def test_port_ref_on_a_consumed_node_absent_from_port_mapping_is_left_unchanged(
+        self,
+    ) -> None:
+        # The consumed port itself (the matched wire's own endpoint) is never in
+        # port_mapping -- a builder only maps surviving ports. Left untranslated, this
+        # correctly matches nothing in the post-rewrite diagram's own issue keys, since
+        # that port no longer exists at all.
+        old_ref = PortRef(NodeId(7), Direction.OUTPUT, 0)
+        issue = ValidationIssue(
+            kind=IssueKind.DIMENSION_POLICY_VIOLATION, message="x", port_ref=old_ref
+        )
+        key = engine_module._translate_input_issue_key(
+            issue,
+            consumed_node_ids=frozenset({NodeId(7)}),
+            port_mapping={},
+            new_node_ids=(NodeId(99),),
+        )
+        assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, old_ref)
+
+    def test_reference_on_a_surviving_node_passes_through_unchanged(self) -> None:
+        surviving_id = NodeId(3)
+        issue = ValidationIssue(
+            kind=IssueKind.DIMENSION_POLICY_VIOLATION, message="x", node_id=surviving_id
+        )
+        key = engine_module._translate_input_issue_key(
+            issue,
+            consumed_node_ids=frozenset({NodeId(7), NodeId(8)}),
+            port_mapping={},
+            new_node_ids=(NodeId(99),),
+        )
+        assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, surviving_id)

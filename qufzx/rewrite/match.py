@@ -59,10 +59,20 @@ per-candidate outcomes are recorded):
    and, if it binds, the newly-refined ``shared_dim`` carries forward to every leg checked
    after it. Only once every surviving leg has been checked is ``shared_dim`` final.
 6. ``phase_dimension_agreement`` -- every phase vector actually present (on either node,
-   or both), after substituting condition 5's binding (if any) into its own
+   or both), after substituting condition 5's bindings (if any) into its own
    :class:`~qufzx.algebra.dimension.Dim`, must equal the resolved ``shared_dim`` from
    condition 5, checked with plain ``Dim`` equality, never a fresh call to
-   :meth:`~qufzx.algebra.dimension.Dim.unify`. If a phase is present on *both* nodes,
+   :meth:`~qufzx.algebra.dimension.Dim.unify`. "Condition 5's bindings" is every concrete
+   symbol binding produced anywhere in condition 5 -- the connecting pair's own
+   (``leg_unify.bindings``) *and* every surviving leg's, on either node, accumulated as
+   condition 5 proceeds (see :func:`_unify_surviving_legs`) -- not only the connecting
+   pair's; a phase's ``Dim`` can reference a symbol that only a *surviving* leg happens to
+   bind (e.g. a phase stated over symbolic ``d`` on a node whose connecting leg is also
+   ``d`` but whose surviving leg is a concrete ``2``, binding ``d := 2`` only once the
+   surviving leg is unified against ``shared_dim``), and condition 5's own ``shared_dim``
+   is already refined by exactly that binding by the time this condition runs -- resolving
+   the phase's ``Dim`` against a narrower set would compare it, unsubstituted, against a
+   ``shared_dim`` it was in fact refined to agree with. If a phase is present on *both* nodes,
    their two raw (unsubstituted) ``Dim``\\ s must *additionally* be exactly equal to each
    other -- not merely each equal to ``shared_dim`` after substitution. :func:`spider_fusion_builder`
    in :mod:`qufzx.rewrite.rules_library` reattaches each present phase vector's entries to
@@ -248,7 +258,11 @@ def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
 
 
 def _unify_surviving_legs(
-    node: Node, node_id: NodeId, consumed_ref: PortRef, shared_dim: Dim
+    node: Node,
+    node_id: NodeId,
+    consumed_ref: PortRef,
+    shared_dim: Dim,
+    bindings: dict[str, Dim],
 ) -> tuple[Dim, list[tuple[Dim, Dim]], bool] | None:
     """Unify every surviving leg of ``node`` (both directions) against ``shared_dim`` in turn.
 
@@ -256,6 +270,15 @@ def _unify_surviving_legs(
     per-node order (inputs, then outputs, original index order) that
     :mod:`qufzx.rewrite.rules_library`'s ``_surviving_legs`` uses to build the merged
     node's ports, so the constraint list this returns lines up with that ordering.
+
+    ``bindings`` is the running, whole-candidate accumulator of every concrete symbol
+    binding seen so far (starting with the connecting pair's own, from ``leg_unify``) --
+    this function updates it in place with each surviving leg's own concrete binding, on
+    top of using it (via :func:`_resolve_with_bindings`) to refine ``shared_dim`` as it
+    goes. Condition 6 (``phase_dimension_agreement``) resolves each present phase's ``Dim``
+    against this same accumulator, not only against the connecting pair's bindings -- see
+    the module docstring's account of why a phase's ``Dim`` can depend on a symbol a
+    *surviving* leg bound, not just the one the connecting pair bound.
 
     Returns ``(resolved_shared_dim, new_dimension_constraints, any_deferred)`` on success.
     Returns ``None`` if any surviving leg's dim is non-unifiable with the (possibly
@@ -286,6 +309,9 @@ def _unify_surviving_legs(
             if deferred_here:
                 any_deferred = True
             if bound_here:
+                bindings.update(
+                    {name: value for name, value in result.bindings.items() if value.is_concrete}
+                )
                 shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
     return shared_dim, constraints, any_deferred
 
@@ -327,7 +353,14 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     # version did) let a malformed wire escape undetected as a bare non-match whenever it
     # happened to be dropped first by the self-loop skip or the parallel-wire-pair filter
     # below, masking the same structural defect differently depending on unrelated shape.
-    for wire in diagram.wires:
+    # Snapshotted once, not re-read from ``diagram.wires`` on every pass below: the three
+    # passes over the wire set (malformed-endpoint check, wired-ref counting, pair grouping)
+    # used to each re-materialise ``diagram.wires`` independently, tripling the cost of
+    # building whatever collection backs that property for no reason -- none of the three
+    # passes needs a live view, and none of them mutates ``diagram``.
+    wires = diagram.wires
+
+    for wire in wires:
         _validate_wire_endpoint(diagram, wire, wire.a)
         _validate_wire_endpoint(diagram, wire, wire.b)
 
@@ -341,13 +374,13 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     # gives dimension_agreement -- see the module docstring's account of this resolution and
     # qufzx.rewrite.engine's docstring for the matching statement on its side.
     wired_ref_counts: dict[PortRef, int] = {}
-    for wire in diagram.wires:
+    for wire in wires:
         wired_ref_counts[wire.a] = wired_ref_counts.get(wire.a, 0) + 1
         wired_ref_counts[wire.b] = wired_ref_counts.get(wire.b, 0) + 1
     boundary_ref_set = frozenset(diagram.boundary_inputs) | frozenset(diagram.boundary_outputs)
 
     candidates_by_pair: dict[frozenset[NodeId], list[Wire]] = {}
-    for wire in diagram.wires:
+    for wire in wires:
         if wire.a.node_id == wire.b.node_id:
             continue
         key = frozenset((wire.a.node_id, wire.b.node_id))
@@ -404,12 +437,22 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
 
         shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
 
-        survive_a = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim)
+        # Defect 2 (Phase 5 round-7 audit): the whole-candidate accumulator of every
+        # concrete symbol binding seen so far, starting with the connecting pair's own.
+        # ``_unify_surviving_legs`` below updates this in place with each surviving leg's
+        # own binding, so a present phase's Dim (resolved against this same accumulator
+        # further down) sees a binding a *surviving* leg produced, not only one the
+        # connecting pair produced -- see the module docstring, condition 6.
+        bindings: dict[str, Dim] = {
+            name: value for name, value in leg_unify.bindings.items() if value.is_concrete
+        }
+
+        survive_a = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim, bindings)
         if survive_a is None:
             continue
         shared_dim, extra_constraints_a, deferred_a = survive_a
 
-        survive_b = _unify_surviving_legs(node_b, b_id, ref_b, shared_dim)
+        survive_b = _unify_surviving_legs(node_b, b_id, ref_b, shared_dim, bindings)
         if survive_b is None:
             continue
         shared_dim, extra_constraints_b, deferred_b = survive_b
@@ -422,7 +465,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
         phase_dims_present = tuple(d for d in (phase_a_dim, phase_b_dim) if d is not None)
         phase_dims_agree = all(
-            _resolve_with_bindings(phase_dim, leg_unify.bindings) == shared_dim
+            _resolve_with_bindings(phase_dim, bindings) == shared_dim
             for phase_dim in phase_dims_present
         )
         if phase_dims_agree and phase_a_dim is not None and phase_b_dim is not None:
