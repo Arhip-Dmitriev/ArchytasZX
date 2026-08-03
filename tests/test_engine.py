@@ -329,6 +329,70 @@ class TestApplyRejectsAForeignMatch:
         with pytest.raises(RewriteGrammarError):
             apply(diagram, phantom_rule, match)
 
+    def test_raises_when_new_node_ids_names_a_node_never_added(self) -> None:
+        """A builder that reports a ``new_node_ids`` entry it never actually created.
+
+        Neither step 5 (which never reads ``new_node_ids``) nor the pre-fix step 8/9 would
+        have caught this: step 9 would have published a phantom id into the ``RewriteStep``
+        for Phase 6's certificate to choke on much later, far from the builder bug that
+        produced it.
+        """
+
+        def _phantom_new_node_builder(working_diagram: Diagram, match_obj: object) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            return dataclasses.replace(
+                result, new_node_ids=result.new_node_ids + (NodeId(999_999),)
+            )
+
+        phantom_rule = Rule(
+            name="spider_fusion_phantom_new_node",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_phantom_new_node_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteGrammarError, match="new_node_ids"):
+            apply(diagram, phantom_rule, match)
+
+    def test_raises_when_port_mapping_names_an_out_of_range_port(self) -> None:
+        """A builder that reports a ``port_mapping`` value naming a nonexistent port.
+
+        Undetected, step 5 would have fed this value straight into ``add_wire`` for every
+        surviving wire or boundary entry that used to point at the corresponding consumed
+        port -- either raising a confusing, unrelated error deep in wire remapping, or (if
+        the bogus index happened to be in range for some other leg) silently splicing the
+        wire onto the wrong port instead.
+        """
+
+        def _phantom_port_mapping_builder(working_diagram: Diagram, match_obj: object) -> object:
+            result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
+            bogus_mapping = dict(result.port_mapping)
+            new_node_id = result.new_node_ids[0]
+            some_old_ref = next(iter(bogus_mapping))
+            # An index far out of range for the merged node's actual leg count.
+            bogus_mapping[some_old_ref] = PortRef(new_node_id, Direction.OUTPUT, 999)
+            return dataclasses.replace(result, port_mapping=bogus_mapping)
+
+        phantom_rule = Rule(
+            name="spider_fusion_phantom_port_mapping",
+            pattern=SPIDER_FUSION.pattern,
+            builder=_phantom_port_mapping_builder,  # type: ignore[arg-type]
+            side_conditions=SPIDER_FUSION.side_conditions,
+            quantifiers=SPIDER_FUSION.quantifiers,
+            scalar_introduced=SPIDER_FUSION.scalar_introduced,
+        )
+
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        with pytest.raises(RewriteGrammarError, match="port_mapping"):
+            apply(diagram, phantom_rule, match)
+
 
 class TestRewriteStepRecordsTheMatch:
     """Fix 6: RewriteStep must carry the located match Phase 6 replays from."""

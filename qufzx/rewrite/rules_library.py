@@ -77,7 +77,7 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, FusionPattern
+from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, FusionPattern, _reattach_phase
 from qufzx.rewrite.rule import (
     BuildResult,
     Match,
@@ -103,26 +103,34 @@ def _surviving_legs(
     return surviving
 
 
-def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim) -> PhaseVector:
-    """``phase``'s entries reattached to ``shared_dim`` unchanged, or an all-zero vector if absent.
+def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
+    """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``.
 
-    Only the container's ``Dim`` is replaced -- entries carry over as-is, mirroring exactly
-    what :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement`` condition itself
-    verifies, never a deeper substitution into the entries. Raises
-    :class:`RewriteDomainError`, not :class:`~qufzx.algebra.phase.PhaseDomainError`, if an
-    entry index falls outside ``shared_dim``'s valid range -- this builder is reachable
-    directly, not only through :func:`qufzx.rewrite.engine.apply`, so a foreign or
+    Or an all-zero vector if ``phase`` is absent. Delegates to
+    :func:`qufzx.rewrite.match._reattach_phase` -- the same function
+    ``phase_dimension_agreement`` uses as its own trial construction while matching -- so
+    that match-approval and build-applicability are the same predicate by construction, not
+    two similar-looking computations kept in sync by hand. See that function's docstring for
+    the full account of why substituting ``bindings`` into the entries (rather than
+    reattaching them unchanged, the pre-fix behavior) is the correct resolution of the
+    ``_over_shared_dim`` defect family: an entry stated in terms of a dimension symbol that
+    ``shared_dim`` resolution has since bound (e.g. ``1/d turns`` once ``d := 2``) denotes a
+    different, and wrong, angle if left unsubstituted once the container ``Dim`` becomes the
+    concrete ``2``.
+
+    Raises :class:`RewriteDomainError`, not :class:`~qufzx.algebra.phase.PhaseDomainError`,
+    if an entry index falls outside ``shared_dim``'s valid range -- this builder is
+    reachable directly, not only through :func:`qufzx.rewrite.engine.apply`, so a foreign or
     hand-built match must not leak a different module's exception hierarchy through it.
-    ``phase_dimension_agreement`` now performs this exact same construction as part of
-    matching (see that condition's entry in :mod:`qufzx.rewrite.match`'s module docstring),
-    so for any match ``find_matches`` actually returned, this call cannot raise -- the
-    ``except`` branch below is unreachable from such a match and exists only to keep this
-    function safe against a foreign or hand-built one.
+    ``phase_dimension_agreement`` performs this exact same construction (with the same
+    ``bindings``) as part of matching, so for any match ``find_matches`` actually returned,
+    this call cannot raise -- the ``except`` branch below is unreachable from such a match
+    and exists only to keep this function safe against a foreign or hand-built one.
     """
     if phase is None:
         return PhaseVector(shared_dim, {})
     try:
-        return PhaseVector(shared_dim, phase.entries())
+        return _reattach_phase(phase, shared_dim, bindings)
     except PhaseDomainError as exc:
         raise RewriteDomainError(
             f"spider_fusion cannot reattach a phase vector to shared dimension "
@@ -131,7 +139,12 @@ def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim) -> PhaseVector:
 
 
 def _merged_phase(
-    node_a: Node, node_b: Node, shared_dim: Dim, *, any_legs_survive: bool
+    node_a: Node,
+    node_b: Node,
+    shared_dim: Dim,
+    bindings: Mapping[str, Dim],
+    *,
+    any_legs_survive: bool,
 ) -> PhaseVector | None:
     """The merged node's phase: componentwise sum, both operands read over ``shared_dim``.
 
@@ -139,7 +152,9 @@ def _merged_phase(
     `False`: a merged node with no surviving legs has no port left to carry ``shared_dim``
     (dimension lives per port and nowhere else, see ``claude.md``), so this returns an
     explicit all-zero ``PhaseVector(shared_dim, {})`` purely to give it a place to live.
-    Otherwise, both operands are read via :func:`_over_shared_dim` before adding, since
+    Otherwise, both operands are read via :func:`_over_shared_dim` (which substitutes
+    ``bindings`` into each operand's entries before reattaching to ``shared_dim`` -- see
+    that function's docstring) before adding, since
     :meth:`~qufzx.algebra.phase.PhaseVector.__add__` demands its two operands' ``Dim``\\ s
     be exactly equal.
     """
@@ -147,7 +162,9 @@ def _merged_phase(
         if not any_legs_survive:
             return PhaseVector(shared_dim, {})
         return None
-    return _over_shared_dim(node_a.phase, shared_dim) + _over_shared_dim(node_b.phase, shared_dim)
+    return _over_shared_dim(node_a.phase, shared_dim, bindings) + _over_shared_dim(
+        node_b.phase, shared_dim, bindings
+    )
 
 
 def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
@@ -206,7 +223,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     any_legs_survive = bool(merged_inputs or merged_outputs)
     merged_phase = _merged_phase(
-        node_a, node_b, match.shared_dim, any_legs_survive=any_legs_survive
+        node_a, node_b, match.shared_dim, match.bindings, any_legs_survive=any_legs_survive
     )
 
     new_node_id = diagram.add_node(

@@ -37,7 +37,15 @@ Algorithm.
    present in the working diagram -- raising :class:`~qufzx.rewrite.rule.RewriteGrammarError`
    for the latter, since a match (or a builder) naming a wire or node the diagram does not
    have is a malformed request, not a domain violation a builder computed correctly and then
-   this step rejected.
+   this step rejected. This step also validates the two remaining builder-reported fields
+   step 5 and step 9 otherwise take on faith: every id in ``build_result.new_node_ids`` must
+   actually exist in the working diagram, and every value in ``build_result.port_mapping``
+   must name a real port (a node that exists, at an in-range index for its direction) --
+   step 5 feeds ``port_mapping`` values directly into every surviving wire and boundary
+   entry with no check of its own, and step 9 publishes ``new_node_ids`` verbatim for Phase
+   6 to replay against, so an unvalidated bad value from either field would otherwise surface
+   far from its cause (a confusing failure deep in remapping, or in a certificate replay), or
+   -- if it happens to alias a real port by coincidence -- not surface at all.
 5. Remap every reference. This is the single most failure-prone part of a rewrite (see
    :mod:`qufzx.semantics.check`'s interface check, which fails on a boundary that lost its
    order or its entries before ever comparing a tensor). For every wire in ``working``
@@ -391,6 +399,35 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"{missing_node_ids!r})"
         )
 
+    # Every id the builder claims to have created must actually exist in ``working``, and
+    # every port_mapping *value* (a builder-reported "new" port) must name a real port on a
+    # node that is actually there -- these two fields are otherwise taken on faith: step 5
+    # below feeds port_mapping values straight into every surviving wire and boundary entry
+    # without ever checking they name anything real, and step 9's ``RewriteStep`` publishes
+    # ``new_node_ids`` verbatim for Phase 6's certificate to replay against. An unvalidated
+    # builder bug here (an id that was never added, or a port_mapping value with a stale or
+    # out-of-range index) would otherwise surface much later as a confusing KeyError/mismatch
+    # deep in remapping or certificate replay, or -- if the corrupted ref happens to alias a
+    # real port by coincidence -- not surface at all, silently splicing a wire onto the wrong
+    # port. Checked the same way every other ``BuildResult`` field already is in this
+    # function: fail fast, close to the builder that produced the bad value.
+    missing_new_node_ids = tuple(
+        node_id for node_id in build_result.new_node_ids if node_id not in working.nodes
+    )
+    invalid_port_mapping_values = tuple(
+        ref
+        for ref in build_result.port_mapping.values()
+        if ref.node_id not in working.nodes
+        or ref.index >= len(working.nodes[ref.node_id].legs(ref.direction))
+    )
+    if missing_new_node_ids or invalid_port_mapping_values:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder-reported BuildResult fields do not name real "
+            f"nodes/ports in the working diagram (new_node_ids absent: "
+            f"{missing_new_node_ids!r}; port_mapping value(s) naming no real port: "
+            f"{invalid_port_mapping_values!r})"
+        )
+
     consumed_wire_set = frozenset(build_result.consumed_wires)
     consumed_node_ids = frozenset(build_result.consumed_node_ids)
     port_mapping = build_result.port_mapping
@@ -433,10 +470,23 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     result_hard_counts = Counter(_issue_key(issue) for issue in validate(working).errors)
     introduced_counts = result_hard_counts - input_hard_counts
     if introduced_counts:
-        introduced_kinds = sorted({key[0].value for key in introduced_counts})
+        # Name the actual offending (kind, ref) pairs, not merely the set of kinds -- a bare
+        # kind (e.g. "dimension_policy_violation") does not say *where*, which is exactly
+        # the information a user hitting this needs to find the offending node/port/wire in
+        # ``working``. Sorted by ``(kind.value, repr(ref))`` for determinism, since ``ref``
+        # is a heterogeneous mix of ``PortRef | Wire | NodeId | None`` with no natural order
+        # of its own.
+        offending = sorted(
+            ((kind.value, ref, count) for (kind, ref), count in introduced_counts.items()),
+            key=lambda item: (item[0], repr(item[1])),
+        )
+        detail = "; ".join(
+            f"{kind} at {ref!r}" + (f" (x{count})" if count > 1 else "")
+            for kind, ref, count in offending
+        )
         raise RewriteDomainError(
-            f"rule {rule.name!r}: rewrite introduced hard-error issue kind(s) "
-            f"{introduced_kinds} not present in the input diagram"
+            f"rule {rule.name!r}: rewrite introduced hard-error issue kind(s) not present "
+            f"in the input diagram: {detail}"
         )
 
     step = RewriteStep(

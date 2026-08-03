@@ -91,13 +91,45 @@ class TestDimensionMismatchIsNonMatch:
 
 
 class TestWireDirectionMustBeOutputToInput:
-    def test_output_to_output_wire_refuses_to_match(self) -> None:
+    """See match.py's module docstring, condition 4, for the Step 4 color-conditioned rule."""
+
+    def test_x_output_to_output_wire_refuses_to_match(self) -> None:
+        """X is still direction-strict: a same-direction wire pairs F with F, not F^dagger."""
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.OUTPUT, 0))
+        assert find_matches(diagram) == ()
+
+    def test_x_input_to_input_wire_refuses_to_match(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.INPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        assert find_matches(diagram) == ()
+
+    def test_z_output_to_output_wire_matches(self) -> None:
+        """Z's tensor is diagonal in every axis, so a same-direction wire is valid fusion too."""
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.OUTPUT, 0))
-        assert find_matches(diagram) == ()
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].all_side_conditions_passed
+
+    def test_z_input_to_input_wire_matches(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.INPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].all_side_conditions_passed
 
 
 class TestMatchSurvivesThirdNodeWiring:
