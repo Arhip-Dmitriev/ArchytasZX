@@ -15,12 +15,18 @@ per-candidate outcomes are recorded):
    self-loop is not a joining wire between two nodes at all.
 2. ``same_generator_type`` -- both nodes carry the identical, registered
    :class:`~qufzx.diagram.generators.GeneratorType` (Z/Z or X/X; Z/X never matches).
-3. ``single_connecting_wire`` -- exactly one wire joins the candidate pair. Two or more
-   wires between the same pair is refused outright (not matched at all): fusing across one
-   of them would leave the others as self-loops on the merged spider, which is Hopf/copy
-   territory (Phase 11), with a different scalar than plain fusion.
-4. ``wire_direction_output_to_input`` -- color-conditioned, per the Phase 5 final fix
-   round's Step 4 decision. For X, the consumed wire must run from an OUTPUT port of one
+3. ``parallel_wires_become_self_loops`` -- a pair joined by k wires yields up to k
+   candidates, one per wire: each fuses across that one (consumed) wire, leaving the other
+   k-1 as self-loops on the merged node. Both endpoints of a leftover wire are on the two
+   consumed nodes, hence both land in the builder's ``port_mapping``, so ``apply``'s step-5
+   remap turns it into an ordinary self-loop -- verified against the oracle at d = 2, 3, 5
+   for both colors, with ``Scalar.one()``. Every other condition still applies per
+   candidate, independently, to that candidate's own consumed wire only -- condition 4 in
+   particular, so a pair joined by wires of different directions can yield fewer candidates
+   than wires (e.g. an X pair with one OUTPUT-INPUT and one OUTPUT-OUTPUT wire matches once,
+   not twice).
+4. ``consumed_wire_direction_permitted_for_color`` -- color-conditioned, per the Phase 5
+   final fix round's Step 4 decision. For X, the consumed wire must run from an OUTPUT port of one
    node to an INPUT port of the other; a same-direction (OUTPUT-OUTPUT or INPUT-INPUT)
    wire between two X spiders is refused outright (not matched). This half is load-bearing,
    not cosmetic: per :mod:`qufzx.semantics.denote`'s axis convention, X applies the Fourier
@@ -58,10 +64,14 @@ per-candidate outcomes are recorded):
    ``shared_dim`` is the A-side leg's raw ``Dim``, unchanged. This condition does not stop
    at the connecting pair: every *surviving* leg of both nodes (every leg other than the
    one consumed by the matched wire) is then unified against the provisional
-   ``shared_dim``, in turn, in the same per-node order (inputs, then outputs, original
-   index order) :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` uses to build
-   the merged node's ports -- a later leg is checked against whatever ``shared_dim`` an
-   earlier leg's binding refined it to, so a chain such as leg dims ``d``, ``d``, ``2``
+   ``shared_dim``, in turn, per node in input-then-output, original-index order (A's legs,
+   then B's) -- not the same global order
+   :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` builds the merged node's
+   ports in (A's inputs, B's inputs, then A's outputs, B's outputs); the difference is
+   confined to the recorded order of ``dimension_constraints`` and which symbol in a chain
+   binds first, both already deterministic, never to a match/non-match decision. A later
+   leg is checked against whatever ``shared_dim`` an earlier leg's binding refined it to, so
+   a chain such as leg dims ``d``, ``d``, ``2``
    resolves to a final ``shared_dim`` of ``2`` and every step along the way is recorded. A
    ``FAILURE`` on any surviving leg makes the whole candidate a non-match, exactly like a
    ``FAILURE`` on the connecting pair itself: forcing a genuinely non-unifiable surviving
@@ -209,10 +219,11 @@ outcome; every :class:`FusionMatch` this module returns therefore has
 ``all_side_conditions_passed`` True by construction. This mirrors
 :mod:`qufzx.diagram.validate`'s existing deferred/hard-failure split for dimension issues.
 
-Determinism. :func:`find_matches` sorts its result by node ids (the two matched nodes
-uniquely determine at most one fusion candidate under condition 3, so no further tiebreak
-is mathematically necessary here) -- never by set or dict iteration order, since
-certificates and Phase 12's cache tests will compare match lists directly.
+Determinism. :func:`find_matches` sorts its result by node ids, then -- since a pair's node
+ids no longer uniquely determine a candidate once condition 3 permits several parallel
+wires -- by the consumed wire's own (direction, index) on each side, never by set or dict
+iteration order, since certificates and Phase 12's cache tests will compare match lists
+directly.
 """
 
 from __future__ import annotations
@@ -237,9 +248,12 @@ from qufzx.rewrite.rule import (
 FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("distinct_nodes", "the two matched nodes are not the same node"),
     SideCondition("same_generator_type", "both nodes are the same registered spider color"),
-    SideCondition("single_connecting_wire", "exactly one wire joins the two nodes"),
     SideCondition(
-        "wire_direction_output_to_input",
+        "parallel_wires_become_self_loops",
+        "every other wire joining the two nodes survives as a self-loop on the merged spider",
+    ),
+    SideCondition(
+        "consumed_wire_direction_permitted_for_color",
         "for X, the consumed wire runs OUTPUT to INPUT; for Z, any direction combination "
         "is valid fusion",
     ),
@@ -321,7 +335,7 @@ class FusionMatch:
 _FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name, X_SPIDER.name))
 _SAME_DIRECTION_FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name,))
 """Generator names for which a same-direction (OUTPUT-OUTPUT or INPUT-INPUT) connecting
-wire is still valid fusion -- see condition 4 (``wire_direction_output_to_input``) in the
+wire is still valid fusion -- see condition 4 (``consumed_wire_direction_permitted_for_color``) in the
 module docstring. Z only: X's Fourier-conjugate structure makes a same-direction wire a
 different, unimplemented rule, not fusion."""
 
@@ -354,10 +368,11 @@ def _unify_surviving_legs(
 ) -> tuple[Dim, list[tuple[Dim, Dim]], bool] | None:
     """Unify every surviving leg of ``node`` (both directions) against ``shared_dim`` in turn.
 
-    "Surviving" means every leg of ``node`` except ``consumed_ref``, checked in the same
-    per-node order (inputs, then outputs, original index order) that
-    :mod:`qufzx.rewrite.rules_library`'s ``_surviving_legs`` uses to build the merged
-    node's ports, so the constraint list this returns lines up with that ordering.
+    "Surviving" means every leg of ``node`` except ``consumed_ref``, checked in
+    input-then-output, original-index order for this one node -- the same per-node order
+    :mod:`qufzx.rewrite.rules_library`'s ``_surviving_legs`` uses, though the two callers
+    (this function for A, then again for B) do not combine into the same global order the
+    builder assembles the merged node's ports in; see the module docstring, condition 5.
 
     ``bindings`` is the running, whole-candidate accumulator of every concrete symbol
     binding seen so far (starting with the connecting pair's own, from ``leg_unify``) --
@@ -479,7 +494,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
 
     Never mutates ``diagram``, and does not require ``diagram`` to be well-formed --
     :func:`~qufzx.diagram.validate.validate` is never called here. Returns matches sorted
-    by ``(a_id, b_id)``.
+    by ``(a_id, b_id)``, tiebroken by the consumed wire's own per-side (direction, index).
     """
     # Malformed-wire detection (an unknown node id or an out-of-range port index) must be
     # independent of every other property of the wire or the candidate pair it happens to
@@ -522,11 +537,18 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         key = frozenset((wire.a.node_id, wire.b.node_id))
         candidates_by_pair.setdefault(key, []).append(wire)
 
+    # Flattened once so the loop below stays single-level: (wire, other_wire_count) for
+    # every wire in every candidate pair, where other_wire_count is how many other wires
+    # join that same pair (and so would survive fusing across `wire` as self-loops -- see
+    # condition 3, `parallel_wires_become_self_loops`, in the module docstring).
+    wire_candidates = [
+        (wire, len(connecting_wires) - 1)
+        for connecting_wires in candidates_by_pair.values()
+        for wire in connecting_wires
+    ]
+
     matches: list[FusionMatch] = []
-    for connecting_wires in candidates_by_pair.values():
-        if len(connecting_wires) != 1:
-            continue
-        wire = connecting_wires[0]
+    for wire, other_wire_count in wire_candidates:
         a_id, b_id = _ordered_pair(wire)
 
         node_a = diagram.nodes[a_id]
@@ -653,10 +675,13 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 f"both nodes are {node_a.generator_type.name!r}",
             ),
             SideConditionOutcome(
-                "single_connecting_wire", True, "exactly one wire joins the two nodes"
+                "parallel_wires_become_self_loops",
+                True,
+                f"{other_wire_count} other wire(s) join the two nodes, surviving as "
+                "self-loop(s) on the merged spider",
             ),
             SideConditionOutcome(
-                "wire_direction_output_to_input",
+                "consumed_wire_direction_permitted_for_color",
                 True,
                 f"{ref_a} (direction={ref_a.direction.value}) -> "
                 f"{ref_b} (direction={ref_b.direction.value})"
@@ -718,7 +743,16 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
             )
         )
 
-    matches.sort(key=lambda m: (int(m.a_id), int(m.b_id)))
+    matches.sort(
+        key=lambda m: (
+            int(m.a_id),
+            int(m.b_id),
+            (m.wire.a if m.wire.a.node_id == m.a_id else m.wire.b).direction.value,
+            (m.wire.a if m.wire.a.node_id == m.a_id else m.wire.b).index,
+            (m.wire.b if m.wire.a.node_id == m.a_id else m.wire.a).direction.value,
+            (m.wire.b if m.wire.a.node_id == m.a_id else m.wire.a).index,
+        )
+    )
     return tuple(matches)
 
 

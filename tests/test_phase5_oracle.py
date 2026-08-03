@@ -7,7 +7,7 @@ exactly that: build "A into B" via ``build_ghz_with_copy``, find the fusion matc
 it, and confirm the oracle (:mod:`qufzx.semantics.check`) reports the pre- and post-fusion
 diagrams exactly equal at several concrete ``d``, with no symbolic phase, with a symbolic
 phase on A, on B, and on both, and for both the Z and X spider colors -- the X case exists
-specifically to exercise the ``wire_direction_output_to_input`` side condition documented
+specifically to exercise the ``consumed_wire_direction_permitted_for_color`` side condition documented
 in :mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
 fusion apart from a wrongly-wired one. It also carries the negative controls and import-
 boundary check the build plan calls out explicitly.
@@ -21,7 +21,7 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.diagram.validate import validate
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
@@ -159,6 +159,72 @@ class TestSpiderFusionOracleZSameDirection:
         assert not report.deferred
 
 
+def _build_parallel_wire_pair(
+    dim: Dim, generator_type: GeneratorType, *, same_direction_leftover: bool
+) -> tuple[Diagram, Wire]:
+    """A: ``0->2``, B fusable to it by one consumed OUTPUT-INPUT wire plus a leftover wire.
+
+    The leftover wire is alternating (OUTPUT-INPUT) when ``same_direction_leftover`` is
+    False, or same-direction (OUTPUT-OUTPUT) when True -- condition 4 restricts only the
+    *consumed* wire (always OUTPUT-INPUT here, so this shape is legal fusion for X too).
+    Returns the diagram and the consumed wire, so a caller can pick out (of the two matches
+    this pair now yields) the one that fuses across it.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim, dim])
+    if same_direction_leftover:
+        b_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[dim])
+        leftover = (PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0))
+    else:
+        b_id = diagram.add_node(generator_type, input_dims=[dim, dim], output_dims=[])
+        leftover = (PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 1))
+    consumed = (PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    diagram.add_wire(*consumed)
+    diagram.add_wire(*leftover)
+    return diagram, Wire(*consumed)
+
+
+class TestParallelWireFusionOracle:
+    """Fix 1(f): parallel-wire fusion is exactly equal pre/post at d = 2, 3, 5, for both
+    colors and both leftover-wire shapes, and the merged node actually carries the
+    leftover wire as a self-loop.
+    """
+
+    def _run(self, generator_type: GeneratorType, *, same_direction_leftover: bool) -> None:
+        d = Dim.symbol("d")
+        pre, consumed_wire = _build_parallel_wire_pair(
+            d, generator_type, same_direction_leftover=same_direction_leftover
+        )
+        matches = find_matches(pre)
+        # X's leftover wire is itself a candidate consumed wire too -- unless it is
+        # same-direction, which condition 4 refuses as a *consumed* wire for X (it is
+        # still fine as a mere self-loop leftover of the other candidate).
+        expected = 1 if generator_type is X_SPIDER and same_direction_leftover else 2
+        assert len(matches) == expected
+        match = next(m for m in matches if m.wire == consumed_wire)
+        post = apply(pre, SPIDER_FUSION, match).diagram
+        (merged_id,) = post.nodes.keys()
+        assert any(
+            wire.a.node_id == merged_id and wire.b.node_id == merged_id for wire in post.wires
+        ), "the leftover wire must survive as a self-loop on the merged node"
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+    def test_z_alternating_leftover(self) -> None:
+        self._run(Z_SPIDER, same_direction_leftover=False)
+
+    def test_z_same_direction_leftover(self) -> None:
+        self._run(Z_SPIDER, same_direction_leftover=True)
+
+    def test_x_alternating_leftover(self) -> None:
+        self._run(X_SPIDER, same_direction_leftover=False)
+
+    def test_x_same_direction_leftover(self) -> None:
+        self._run(X_SPIDER, same_direction_leftover=True)
+
+
 def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram:
     """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
 
@@ -238,8 +304,8 @@ def _build_preexisting_self_loop_on_a(
     module docstring calls out ("a pre-existing self-loop on one of the consumed nodes, both
     endpoints get remapped, yielding a self-loop on the merged node") without any test ever
     having built it. ``generator_type`` defaults to ``Z_SPIDER``; the X-color subclass below
-    passes ``X_SPIDER`` to exercise the same shape through the wire_direction_output_to_input
-    side condition.
+    passes ``X_SPIDER`` to exercise the same shape through the
+    consumed_wire_direction_permitted_for_color side condition.
     """
     diagram = Diagram()
     a_id = diagram.add_node(generator_type, input_dims=[dim], output_dims=[dim, dim, dim])
@@ -597,14 +663,18 @@ class TestFusionMatchNegativeControls:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         assert find_matches(diagram) == ()
 
-    def test_no_match_across_two_parallel_wires(self) -> None:
+    def test_two_wires_between_same_pair_now_yield_two_matches(self) -> None:
+        """Fix 1: a node pair joined by k wires now yields up to k candidates, one per
+        wire, each leaving the others as self-loops -- see match.py's module docstring,
+        condition 3. See :class:`TestParallelWireFusionOracle` for the oracle coverage.
+        """
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 1))
-        assert find_matches(diagram) == ()
+        assert len(find_matches(diagram)) == 2
 
     def test_no_match_for_a_self_loop_on_one_spider(self) -> None:
         d = Dim.concrete(2)
