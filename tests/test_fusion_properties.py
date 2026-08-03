@@ -31,7 +31,15 @@ from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError
 
 _SEEDS: tuple[int, ...] = tuple(range(2500))
-_DIM_PALETTE = (Dim.concrete(2), Dim.concrete(3), Dim.symbol("d"), Dim.symbol("e"))
+_DIM_D = Dim.symbol("d")
+_DIM_E = Dim.symbol("e")
+# ``d*e`` and ``d**2`` are here so Dim.unify's DEFERRED branch (a symbol occurring as a
+# proper subterm of the other side, e.g. ``d`` against ``d*e``) is actually exercised by
+# the generator -- previously only bare symbols and concrete ints appeared in the palette,
+# so a leg dim could unify with another leg dim only via the concrete/concrete,
+# syntactic-identity, or bare-symbol-binding branches, never the deferred one, even though
+# ``_unify_surviving_legs`` has a dedicated code path for exactly this case.
+_DIM_PALETTE = (Dim.concrete(2), Dim.concrete(3), _DIM_D, _DIM_E, _DIM_D * _DIM_E, _DIM_D**2)
 _DIM_SYMBOL_NAMES = frozenset({"d", "e"})
 _CONCRETE_TURNS = (sp.Integer(0), sp.Rational(1, 3), sp.Rational(2, 5))
 # (d, e) oracle substitution pairs -- see _substitution_for. d and e are substituted
@@ -79,16 +87,40 @@ def _random_phase_index(rng: random.Random, phase_dim: Dim) -> int:
 
 
 def _random_phase(rng: random.Random, dim: Dim, node_index: int) -> PhaseVector | None:
-    """Sometimes absent, sometimes concrete, sometimes symbolic; always over ``dim`` --
-    or, when ``dim`` is symbolic, sometimes over a concrete value it could unify to."""
+    """Sometimes absent, sometimes concrete, sometimes symbolic, sometimes root-of-unity;
+    always over ``dim`` -- or, when ``dim`` is symbolic, sometimes over a concrete value it
+    could unify to.
+
+    The root-of-unity branch (``Phase.root_of_unity(index, phase_dim)``, turns
+    ``index / phase_dim``) is the only one whose entry's free symbols can include a
+    *dimension* symbol rather than a pure phase parameter -- before it existed, every entry
+    this generator produced was built from :meth:`Phase.turns` (no free symbols at all) or
+    :meth:`Phase.symbol` (a ``theta_i`` phase parameter, never a dimension name), so a phase
+    entry referencing ``d`` or ``e`` directly (as opposed to only via its container ``Dim``)
+    was never generated at all, and the defect family in
+    :func:`~qufzx.rewrite.rules_library._over_shared_dim` (which reattaches entries to a
+    resolved ``shared_dim`` verbatim, without substituting a binding into them) could never
+    be observed disagreeing with anything.
+    """
     choice = rng.random()
-    if choice < 0.3:
+    if choice < 0.2:
         return None
-    phase_dim = dim if dim.is_concrete else rng.choice((dim, Dim.concrete(2), Dim.concrete(3)))
+    # Weighted 60/20/20 towards keeping ``dim`` itself (rather than overriding to a fixed
+    # concrete value) when ``dim`` is symbolic, so a root-of-unity entry over ``dim`` is
+    # common enough that a later leg-unify binding of that same symbol (see below) actually
+    # collides with it within the fixed seed list, rather than needing an implausibly long
+    # one to find a single occurrence.
+    phase_dim = (
+        dim
+        if dim.is_concrete
+        else rng.choices((dim, Dim.concrete(2), Dim.concrete(3)), weights=(3, 1, 1))[0]
+    )
     index = _random_phase_index(rng, phase_dim)
-    if choice < 0.65:
+    if choice < 0.45:
         return PhaseVector(phase_dim, {index: Phase.turns(rng.choice(_CONCRETE_TURNS))})
-    return PhaseVector(phase_dim, {index: Phase.symbol(f"theta_{node_index}")})
+    if choice < 0.65:
+        return PhaseVector(phase_dim, {index: Phase.symbol(f"theta_{node_index}")})
+    return PhaseVector(phase_dim, {index: Phase.root_of_unity(index, phase_dim)})
 
 
 def _build_random_diagram(rng: random.Random) -> Diagram:
@@ -168,6 +200,40 @@ def _substitution_for(
         name: (dim_values[name] if name in _DIM_SYMBOL_NAMES else _PHASE_SUBSTITUTE_TURNS)
         for name in names
     }
+
+
+def _assert_phase_entries_consistent_with_dim(diagram: Diagram, seed: int) -> None:
+    """Every node's phase entries reference only its own dim's symbols or a phase parameter.
+
+    A free symbol appearing in a phase entry's turns-expression is legitimate in exactly
+    two cases: it is one of that phase vector's own container ``dim``'s free symbols (e.g.
+    a root-of-unity entry ``index / d`` sitting on a ``PhaseVector`` whose ``dim`` is still
+    ``d``), or it is a genuine phase parameter (a ``theta_i`` symbol from
+    :meth:`Phase.symbol`, which never denotes a dimension at all). What must never happen is
+    a *dimension* symbol (one of ``_DIM_SYMBOL_NAMES``) surviving in an entry after the
+    container ``dim`` has already been resolved past it -- e.g. an entry ``1/d`` sitting on
+    a ``PhaseVector`` whose ``dim`` is the concrete ``2`` (because a fusion's shared_dim
+    resolution bound ``d := 2`` and the merged phase's container dim was updated to match,
+    while the pre-fusion entry that still says ``1/d`` was carried over unchanged). This is
+    exactly the shape of the ``_over_shared_dim`` defect family (see
+    ``rules_library.py``'s module docstring, "Dimension of the merged node", and Task 2 of
+    the Phase 5 final fix round): a phase entry frozen in terms of a symbol its own
+    container dimension no longer mentions denotes a different (and wrong) angle once that
+    symbol's binding is substituted in.
+    """
+    for node_id, node in diagram.nodes.items():
+        phase = node.phase
+        if phase is None:
+            continue
+        dim_symbols = phase.dim.free_symbols
+        for index, entry in phase.entries().items():
+            stale_dim_symbols = (entry.free_symbols & _DIM_SYMBOL_NAMES) - dim_symbols
+            assert not stale_dim_symbols, (
+                f"seed {seed}: node {node_id!r} phase entry at index {index} references "
+                f"dimension symbol(s) {sorted(stale_dim_symbols)} not present in its own "
+                f"PhaseVector's dim {phase.dim} -- the container dimension has already been "
+                "resolved past a symbol the entry itself still depends on"
+            )
 
 
 def _hard_error_kinds(diagram: Diagram) -> frozenset[IssueKind]:
@@ -292,6 +358,7 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
         raise AssertionError(f"seed {seed}: unexpected {type(exc).__name__}: {exc}") from exc
 
     post = result.diagram
+    _assert_phase_entries_consistent_with_dim(post, seed)
 
     introduced = _hard_error_kinds(post) - _hard_error_kinds(diagram)
     assert not introduced, (
@@ -328,7 +395,7 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
     return oracle_runs
 
 
-_MIN_ORACLE_COMPARISONS = 100
+_MIN_ORACLE_COMPARISONS = 40
 """Floor for the total oracle comparisons summed across every checked match.
 
 Without this, an always-skipped oracle arm (e.g. every substitution failing
@@ -339,20 +406,23 @@ generator was around 260 before an earlier Phase 5 audit round's Defect 1 fix ad
 per-node leg dims to the generator (see ``_build_random_diagram``); mixed legs make more
 candidates fail ``_is_cleanly_contractible`` pre-rewrite (a node with a hard
 ``DIMENSION_POLICY_VIOLATION`` already on it is exactly the case that check is meant to
-skip), so fewer oracle comparisons actually run -- around 130 since.
+skip), so fewer oracle comparisons actually run -- around 130 since, and still around 130
+after the Phase 5 round-7 audit's Defect 1 fix in ``engine.py`` (see that module's
+docstring; that fix unblocked matches that were never going to contribute an oracle
+comparison regardless, blocked or not).
 
-The Phase 5 round-7 audit's Defect 1 (a different bug, in ``engine.py`` step 8's issue-key
-comparison -- see that module's docstring) unblocked roughly 10 of the 123 matches this
-seed list produces that used to be wrongly raised as a false-positive
-``RewriteDomainError``, but did *not* raise the measured total above: every one of those
-newly-unblocked matches has a diagram that already carries the very hard-error issue step
-8's fix now correctly recognises as carried-over rather than introduced, and
-``_is_cleanly_contractible`` already excludes any diagram with a pre-existing hard error
-from the oracle arm for an unrelated reason (the pre-substituted diagram must be fully
-valid to run through :func:`~qufzx.semantics.check.compare` at all) -- so those matches
-were never going to contribute an oracle comparison, blocked or not. The measured total
-after the round-7 fixes is still around 130. 100 leaves headroom against incidental
-generator changes while still failing hard if the oracle arm silently stops running.
+The Phase 5 final fix round's Step 1 harness extension (``d*e`` and ``d**2`` added to
+``_DIM_PALETTE``, and ``_random_phase`` reweighted towards symbolic-dim root-of-unity
+entries -- both needed to actually reach the ``_over_shared_dim`` defect family; see this
+module's docstring and ``_random_phase``'s) dropped the measured total further, to around
+57: a product or power dim more often fails to unify with a bare symbol or a mismatched
+concrete value under ``Dim.unify``'s deliberately weak placeholder (deferring rather than
+solving), which makes more nodes carry a hard ``DIMENSION_POLICY_VIOLATION`` that
+``_is_cleanly_contractible`` is meant to skip, and a root-of-unity phase entry more often
+has an index that some ``(d_value, e_value)`` substitution puts out of range, raising
+``PhaseDomainError`` before ``compare`` is ever reached. 40 leaves headroom against
+incidental generator changes while still failing hard if the oracle arm silently stops
+running.
 """
 
 
@@ -400,3 +470,40 @@ class TestSpiderFusionProperties:
             "a phase entry out of range under the leg-unify binding must be excluded as a "
             f"non-match, not returned and left for apply() to fail on later; got {matches!r}"
         )
+
+    def test_phase_entry_over_bound_symbol_is_substituted_not_left_stale(self) -> None:
+        """Regression test for the Task 2 defect: see rules_library.py's ``_over_shared_dim``.
+
+        A phase legally stated over symbolic ``d`` (``1/d`` turns, from
+        ``Phase.root_of_unity``) fuses against a spider whose leg is the concrete ``2``,
+        binding ``d := 2``. Before the fix, ``_over_shared_dim`` reattached the entry
+        unchanged onto the resolved (now concrete) ``shared_dim``, producing
+        ``PhaseVector[2]({1: 1/d turns})`` -- a phase vector whose container dimension no
+        longer mentions the symbol its own entry still depends on, silently discarding the
+        ``d := 2`` constraint that made the fusion well-formed in the first place. The fixed
+        builder substitutes the accumulated binding into the entry before reattaching it, so
+        the merged phase is the concrete ``1/2`` turns the binding actually implies, and the
+        oracle agrees exactly at ``d = 2``.
+        """
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a = diagram.add_node(
+            Z_SPIDER,
+            [],
+            [d, d],
+            phase=PhaseVector(d, {1: Phase.root_of_unity(1, d)}),
+        )
+        b = diagram.add_node(Z_SPIDER, [Dim.concrete(2)], [])
+        diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a, Direction.OUTPUT, 1)])
+
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        result = apply(diagram, SPIDER_FUSION, matches[0])
+        merged = result.diagram.nodes[result.new_node_ids[0]]
+        assert merged.phase == PhaseVector(
+            Dim.concrete(2), {1: Phase.turns(sp.Rational(1, 2))}
+        ), f"expected the binding d := 2 substituted into the entry, got {merged.phase!r}"
+
+        comparison = compare(diagram, result.diagram, {"d": 2})
+        assert comparison.matched, f"oracle mismatch at d=2: {comparison.reason}"

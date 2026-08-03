@@ -99,6 +99,66 @@ class TestSpiderFusionOracleX:
         assert not report.deferred
 
 
+def _build_z_output_to_output(dim: Dim) -> Diagram:
+    """Two Z spiders joined by an OUTPUT-OUTPUT wire, with one surviving boundary output.
+
+    Regression coverage for the Phase 5 final fix round's Step 4 decision (see match.py's
+    module docstring, condition 4): a Z-Z wire of any direction is valid fusion, since Z's
+    tensor is diagonal in every axis and contraction never conjugates -- unlike X, where
+    only an OUTPUT-to-INPUT wire is fusion (see :class:`TestSpiderFusionOracleX`).
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim, dim])
+    b_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim])
+    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.OUTPUT, 0))
+    diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+    return diagram
+
+
+def _build_z_input_to_input(dim: Dim) -> Diagram:
+    """Two single-leg Z spiders joined by an INPUT-INPUT wire; both legs are consumed.
+
+    No leg survives, so the merged node is legless (a bare scalar diagram, per
+    :func:`qufzx.semantics.denote._z_tensor`'s ``rank == 0`` reading) and there is no
+    boundary at all, before or after fusion.
+    """
+    diagram = Diagram()
+    a_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[])
+    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[])
+    diagram.add_wire(PortRef(a_id, Direction.INPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+    return diagram
+
+
+class TestSpiderFusionOracleZSameDirection:
+    """Z-Z fusion across a same-direction wire -- see the ``_build_z_*`` helpers above."""
+
+    def test_output_to_output_exact_equality_at_several_concrete_d(self) -> None:
+        d = Dim.symbol("d")
+        pre = _build_z_output_to_output(d)
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+    def test_input_to_input_exact_equality_at_several_concrete_d(self) -> None:
+        d = Dim.symbol("d")
+        pre = _build_z_input_to_input(d)
+        post = _fuse(pre)
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.mode is EqualityMode.EXACT
+            assert result.matched, result.reason
+
+    def test_post_diagram_is_valid_with_no_deferred_issues(self) -> None:
+        d = Dim.concrete(3)
+        pre = _build_z_output_to_output(d)
+        post = _fuse(pre)
+        report = validate(post)
+        assert report.is_valid
+        assert not report.deferred
+
+
 def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram:
     """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
 

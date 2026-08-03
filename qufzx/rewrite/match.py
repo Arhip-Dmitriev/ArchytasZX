@@ -19,19 +19,32 @@ per-candidate outcomes are recorded):
    wires between the same pair is refused outright (not matched at all): fusing across one
    of them would leave the others as self-loops on the merged spider, which is Hopf/copy
    territory (Phase 11), with a different scalar than plain fusion.
-4. ``wire_direction_output_to_input`` -- the consumed wire runs from an OUTPUT port of one
-   node to an INPUT port of the other. This is load-bearing, not cosmetic, and is checked
-   uniformly for both Z and X even though it only bites for X. The graph model in
-   :mod:`qufzx.diagram.graph` permits an OUTPUT-OUTPUT (or INPUT-INPUT) wire; per
-   :mod:`qufzx.semantics.denote`'s axis convention, X applies the Fourier matrix ``F`` to
-   output axes and ``conj(F)`` to input axes. An output-to-input contraction pairs one
-   ``F`` with one ``conj(F)`` on the shared leg, giving ``F^dagger F = I`` -- fusion is
-   scalar-free. An output-to-output (or input-to-input) contraction instead pairs ``F``
-   with ``F``, giving ``F^T F``, which is a nontrivial permutation matrix, not the
-   identity -- that is a different (and, for Phase 5, unimplemented) rule, not fusion. For
-   Z the tensor is diagonal so both wirings coincide numerically, but this condition is
-   applied identically regardless of color, so the matcher is correct for X without a
-   color-specific carve-out.
+4. ``wire_direction_output_to_input`` -- color-conditioned, per the Phase 5 final fix
+   round's Step 4 decision. For X, the consumed wire must run from an OUTPUT port of one
+   node to an INPUT port of the other; a same-direction (OUTPUT-OUTPUT or INPUT-INPUT)
+   wire between two X spiders is refused outright (not matched). This half is load-bearing,
+   not cosmetic: per :mod:`qufzx.semantics.denote`'s axis convention, X applies the Fourier
+   matrix ``F`` to output axes and ``conj(F)`` to input axes. An output-to-input
+   contraction pairs one ``F`` with one ``conj(F)`` on the shared leg, giving
+   ``F^dagger F = I`` -- fusion is scalar-free. An output-to-output (or input-to-input)
+   contraction instead pairs ``F`` with ``F``, giving ``F^T F``, a nontrivial permutation
+   matrix, not the identity -- that is a different (and, for Phase 5, unimplemented) rule,
+   not fusion. For Z, by contrast, the spider tensor is diagonal in every axis (see
+   :func:`~qufzx.semantics.denote._z_tensor`) and :mod:`qufzx.semantics.contract_numeric`
+   contracts a wire by assigning its two endpoints the same einsum axis label regardless of
+   direction -- no conjugation is ever applied at contraction time, only at ``denote()``
+   time, and only for X. A Z-Z wire of *any* direction (OUTPUT-OUTPUT, INPUT-INPUT, or
+   OUTPUT-INPUT) therefore identifies the same basis index ``k`` on both sides and is
+   genuinely, numerically valid fusion -- verified against the oracle at ``d = 2`` and
+   ``d = 3`` -- so this condition permits any direction combination for Z. Before this
+   decision, the condition was applied uniformly to both colors (a same-direction Z-Z wire
+   was silently never matched), which was sound but incomplete relative to FULL_PLAN.md's
+   Phase 5 spec ("two same-color spiders joined by a wire and sharing a dimension" states
+   no direction restriction). :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`
+   needed no change for this widening: it selects the consumed ref by identity against
+   ``match.wire``, never by direction, so it already builds the correct merged node
+   (correct surviving legs, correct phase, ``Scalar.one()``) for a same-direction Z-Z match
+   exactly as it does for an alternating one.
 5. ``dimension_agreement`` -- the two connected legs' :class:`~qufzx.algebra.dimension.Dim`
    are equal, or :meth:`~qufzx.algebra.dimension.Dim.unify` defers or succeeds only by
    binding a symbol (both recorded as a :class:`FusionMatch` dimension constraint -- see
@@ -74,26 +87,30 @@ per-candidate outcomes are recorded):
    the phase's ``Dim`` against a narrower set would compare it, unsubstituted, against a
    ``shared_dim`` it was in fact refined to agree with. If a phase is present on *both* nodes,
    their two raw (unsubstituted) ``Dim``\\ s must *additionally* be exactly equal to each
-   other -- not merely each equal to ``shared_dim`` after substitution. :func:`spider_fusion_builder`
-   in :mod:`qufzx.rewrite.rules_library` reattaches each present phase vector's entries to
-   ``shared_dim`` unchanged, without substituting into the entries themselves, so this
-   second check keeps two *actual* phase vectors from combining unless they already agreed
-   before any resolution; a phase absent on one or both sides needs no such check, since
-   the builder synthesizes a zero-entry vector directly at ``shared_dim`` and an all-zero
-   vector has no entries that could reference a stale symbol. Agreement on the container
-   ``Dim`` alone is not sufficient: condition 5 can resolve ``shared_dim`` to something more
+   other -- not merely each equal to ``shared_dim`` after substitution -- so this second
+   check keeps two *actual* phase vectors from combining unless they already agreed before
+   any resolution; a phase absent on one or both sides needs no such check, since the
+   builder synthesizes a zero-entry vector directly at ``shared_dim`` and an all-zero vector
+   has no entries that could reference a stale symbol. Agreement on the container ``Dim``
+   alone is not sufficient: condition 5 can resolve ``shared_dim`` to something more
    concrete than a present phase's own (unsubstituted) ``Dim`` by binding a symbol (e.g. a
    phase legally stated over symbolic ``d`` with an entry at index 5 has ``Dim`` equal to
    ``d``, which matches a ``shared_dim`` of ``2`` under a binding ``d := 2`` -- yet index 5
    is out of range once ``d`` is actually ``2``). This condition therefore also verifies,
-   for every phase actually present, that reattaching its unchanged entries to
-   ``shared_dim`` is itself legal -- literally by attempting the same construction
-   :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`'s ``_over_shared_dim`` performs
-   (``PhaseVector(shared_dim, phase.entries())``) and treating a
-   :class:`~qufzx.algebra.phase.PhaseDomainError` as a failed condition (non-match) rather
-   than letting it escape from the builder later. This makes match-approval and
-   build-applicability the same predicate by construction, not two predicates kept in sync
-   by hand: the invariant is that every match this function returns can be applied by
+   for every phase actually present, that :func:`_reattach_phase` -- substituting condition
+   5's accumulated concrete bindings into the phase's entries (via
+   :meth:`~qufzx.algebra.phase.PhaseVector.substitute`, never leaving a stale dimension
+   symbol baked into an entry once its own binding has resolved ``shared_dim`` past it; see
+   that function's docstring for why a substituting builder, not a stricter matcher, is the
+   chosen resolution of the ``_over_shared_dim`` defect family) then reattaching the result
+   to ``shared_dim`` -- succeeds; substitution changes only an entry's *value*, never its
+   index, so this is exactly the same index-bound check either caller would hit reattaching
+   the original entries. A :class:`~qufzx.algebra.phase.PhaseDomainError` here is a failed
+   condition (non-match), never let escape from the builder later.
+   :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls the very same
+   :func:`_reattach_phase` to actually build the merged phase, so this makes match-approval
+   and build-applicability the same predicate by construction, not two predicates kept in
+   sync by hand: the invariant is that every match this function returns can be applied by
    :func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8 relative-
    postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
 
@@ -178,10 +195,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import cast
 
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
-from qufzx.algebra.phase import PhaseDomainError, PhaseVector
+from qufzx.algebra.phase import PhaseDomainError, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
@@ -198,7 +216,8 @@ FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("single_connecting_wire", "exactly one wire joins the two nodes"),
     SideCondition(
         "wire_direction_output_to_input",
-        "the consumed wire runs from an OUTPUT port of one node to an INPUT port of the other",
+        "for X, the consumed wire runs OUTPUT to INPUT; for Z, any direction combination "
+        "is valid fusion",
     ),
     SideCondition(
         "dimension_agreement",
@@ -220,6 +239,15 @@ class FusionMatch:
     ``b_id`` the higher -- a fixed, deterministic convention (not a claim about which node
     was "created first") that :mod:`qufzx.rewrite.rules_library` reuses as its merged-leg
     ordering convention ("A's surviving legs, then B's").
+
+    ``bindings`` is the whole-candidate accumulator of every concrete symbol binding
+    condition 5 (``dimension_agreement``) produced while resolving ``shared_dim`` -- the
+    connecting pair's own and every surviving leg's, on either node (see
+    :func:`find_matches`'s local ``bindings`` dict, which this field is built from
+    verbatim). :mod:`qufzx.rewrite.rules_library`'s builder substitutes it into a present
+    phase's entries, via :func:`_reattach_phase`, before reattaching them to ``shared_dim``
+    -- see that function's docstring for why this, not a stricter matcher, is the
+    resolution of the ``_over_shared_dim`` defect family.
     """
 
     a_id: NodeId
@@ -228,6 +256,7 @@ class FusionMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[tuple[Dim, Dim], ...] = ()
+    bindings: Mapping[str, Dim] = MappingProxyType({})
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -236,6 +265,11 @@ class FusionMatch:
 
 
 _FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name, X_SPIDER.name))
+_SAME_DIRECTION_FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name,))
+"""Generator names for which a same-direction (OUTPUT-OUTPUT or INPUT-INPUT) connecting
+wire is still valid fusion -- see condition 4 (``wire_direction_output_to_input``) in the
+module docstring. Z only: X's Fourier-conjugate structure makes a same-direction wire a
+different, unimplemented rule, not fusion."""
 
 
 def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
@@ -314,6 +348,54 @@ def _unify_surviving_legs(
                 )
                 shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
     return shared_dim, constraints, any_deferred
+
+
+def _reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
+    """Substitute ``bindings`` into ``phase``'s entries, then reattach the result to ``shared_dim``.
+
+    This is the one, shared resolution -- used identically here (as a trial construction
+    ``dimension_agreement`` performs to decide whether a candidate is a match at all) and by
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` (to actually build the merged
+    node's phase) -- of the ``_over_shared_dim`` defect family documented at length in that
+    module's docstring, "Dimension of the merged node": a phase legally stated over a
+    symbolic dimension (e.g. ``PhaseVector(d, {1: Phase.root_of_unity(1, d)})``) that
+    condition 5 resolves ``shared_dim`` past via a binding (e.g. ``d := 2``) must not be
+    reattached to that concrete ``shared_dim`` with its entries left verbatim -- an entry
+    ``1/d turns`` sitting on a container dimension of concrete ``2`` denotes a different
+    (and wrong) angle once ``d``'s binding is substituted in, and silently keeps citing a
+    symbol its own container dimension has already been resolved past.
+
+    The alternative considered was to make ``dimension_agreement`` itself refuse any
+    candidate whose phase entries reference a dimension symbol shared_dim resolution has
+    bound, rather than have the builder substitute through it. That would satisfy
+    ``claude.md``'s "phases are first-class symbolic objects" only in the thinnest sense
+    (never touching them), at the cost of rejecting a fusion that is, in fact, perfectly
+    well-defined at the assumed binding -- exactly the binding :attr:`FusionMatch.bindings`
+    already records as an assumption the certificate carries forward. Substituting is the
+    behavior :meth:`~qufzx.algebra.phase.PhaseVector.substitute` already exists to perform
+    (see that method's docstring: dimension and phase symbols are substituted through the
+    same mapping, and it re-checks each entry's index bound against the newly-concrete
+    dimension), and it is what keeps scalars and phases exact rather than merely refusing to
+    look at them: the resulting phase is the actual angle implied by the binding, not an
+    approximation or a discarded one. This also keeps match-approval and build-applicability
+    the same predicate by construction (this function's return value, or the
+    :class:`~qufzx.algebra.phase.PhaseDomainError` it raises, is identical whether called
+    from here or from the builder), rather than two similar-looking checks kept in sync by
+    hand.
+
+    Raises :class:`~qufzx.algebra.phase.PhaseDomainError` if, after substitution, an entry's
+    index falls outside ``shared_dim``'s valid range (substitution only changes an entry's
+    *value*, never its index, so this is exactly the same index-bound check either caller
+    would hit reattaching the original, unsubstituted entries -- substituting first does not
+    change which candidates this can reject).
+    """
+    concrete_bindings = {name: dim.to_int() for name, dim in bindings.items() if dim.is_concrete}
+    substituted = (
+        phase.substitute(cast(Mapping[PhaseSymbolKey, PhaseSubstituteValue], concrete_bindings))
+        if concrete_bindings
+        else phase
+    )
+    return PhaseVector(shared_dim, substituted.entries())
 
 
 def _validate_wire_endpoint(diagram: Diagram, wire: Wire, ref: PortRef) -> None:
@@ -411,7 +493,10 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
             continue
         if node_a.generator_type.name not in _FUSABLE_GENERATOR_NAMES:
             continue
-        if ref_a.direction == ref_b.direction:
+        if (
+            ref_a.direction == ref_b.direction
+            and node_a.generator_type.name not in _SAME_DIRECTION_FUSABLE_GENERATOR_NAMES
+        ):
             continue
 
         port_a = legs_a[ref_a.index]
@@ -475,12 +560,26 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 if phase is None:
                     continue
                 try:
-                    PhaseVector(shared_dim, phase.entries())
+                    _reattach_phase(phase, shared_dim, bindings)
                 except PhaseDomainError:
                     phase_dims_agree = False
                     break
         if not phase_dims_agree:
             continue
+
+        # Names (sorted for determinism) of every binding in ``bindings`` that a present
+        # phase's own dim actually references -- named in the phase_dimension_agreement
+        # outcome's detail below so Phase 6's certificate reads exactly which assumption
+        # phase agreement rests on, not only that shared_dim itself does (see the module
+        # docstring, condition 6, and this outcome's ``deferred`` flag just below).
+        phase_binding_names = sorted(
+            {
+                name
+                for phase_dim in phase_dims_present
+                for name in phase_dim.free_symbols
+                if name in bindings
+            }
+        )
 
         outcomes = (
             SideConditionOutcome("distinct_nodes", True, f"{a_id!r} != {b_id!r}"),
@@ -496,7 +595,16 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 "wire_direction_output_to_input",
                 True,
                 f"{ref_a} (direction={ref_a.direction.value}) -> "
-                f"{ref_b} (direction={ref_b.direction.value})",
+                f"{ref_b} (direction={ref_b.direction.value})"
+                + (
+                    ""
+                    if ref_a.direction != ref_b.direction
+                    else (
+                        f" (same-direction {ref_a.direction.value}-{ref_b.direction.value} "
+                        f"wire, permitted for {node_a.generator_type.name!r} only -- see the "
+                        "module docstring, condition 4)"
+                    )
+                ),
             ),
             SideConditionOutcome(
                 "dimension_agreement",
@@ -522,8 +630,15 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                     else (
                         "present phase dimension(s), after any leg-unify binding, equal "
                         f"the resolved shared leg dimension {shared_dim}"
+                        + (
+                            "; assuming "
+                            + ", ".join(f"{name} := {bindings[name]}" for name in phase_binding_names)
+                            if phase_binding_names
+                            else ""
+                        )
                     )
                 ),
+                deferred=leg_deferred,
             ),
         )
 
@@ -535,6 +650,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 shared_dim=shared_dim,
                 side_condition_outcomes=outcomes,
                 dimension_constraints=tuple(dimension_constraints),
+                bindings=MappingProxyType(dict(bindings)),
             )
         )
 
