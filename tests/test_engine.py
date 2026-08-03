@@ -587,3 +587,42 @@ class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
             new_node_ids=(NodeId(99),),
         )
         assert key == (IssueKind.DIMENSION_POLICY_VIOLATION, surviving_id)
+
+
+class TestRewriteStepIsHashable:
+    """Task 1 (Phase 5 closing round): the explicit ``__hash__`` this class already declared
+    (to work around ``port_mapping`` being an unhashable ``MappingProxyType``) hashed
+    ``self.match`` verbatim -- and every ``FusionMatch`` was itself unhashable for the same
+    reason (its own ``bindings`` field), so ``hash(step)`` raised for every step ``apply``
+    ever produced, including the empty-``bindings`` default. See ``test_match.py``'s
+    ``TestFusionMatchIsHashable`` for the root-cause fix this depends on.
+    """
+
+    def test_hash_succeeds_with_empty_bindings(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert match.bindings == {}
+        hash(result.step)  # must not raise
+
+    def test_hash_succeeds_with_non_empty_bindings(self) -> None:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.symbol("d")])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert dict(match.bindings) == {"d": Dim.concrete(2)}
+        hash(result.step)  # must not raise
+
+    def test_equal_steps_hash_equal_and_are_usable_as_dict_keys(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        step_one = apply(diagram, SPIDER_FUSION, match).step
+        step_two = apply(diagram, SPIDER_FUSION, match).step
+        assert step_one == step_two
+        assert hash(step_one) == hash(step_two)
+        assert {step_one, step_two} == {step_one}
+        assert {step_one: "a value"}[step_two] == "a value"

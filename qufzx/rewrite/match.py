@@ -114,6 +114,30 @@ per-candidate outcomes are recorded):
    :func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8 relative-
    postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
 
+   This condition's own ``SideConditionOutcome.deferred`` is *not* ``leg_deferred``
+   (condition 5's flag), even though an earlier version reused it unconditionally: this
+   condition never calls :meth:`Dim.unify` at all, only plain ``Dim`` equality, so it can
+   never itself be genuinely ``DEFERRED`` in that method's sense -- reusing ``leg_deferred``
+   reported an assumption on every candidate where *some* leg elsewhere happened to defer,
+   even when this condition's own equality was a bare syntactic identity (or there was no
+   phase present to check at all). The one real assumption this condition *can* rest on is
+   ``phase_binding_names`` above: a present phase's dim agreeing with ``shared_dim`` only
+   because a concrete symbol binding condition 5 produced was substituted in first. So
+   ``deferred`` is ``False`` when no phase is present on either node (nothing was checked,
+   let alone assumed), and otherwise exactly ``bool(phase_binding_names)`` -- ``True`` iff
+   agreement genuinely rested on such a binding, ``False`` when the phase's raw dim already
+   equalled ``shared_dim`` outright.
+
+   Sound but incomplete, by design (Phase 5 judgement call, see ``rules_library.py``'s
+   corresponding note and ``FULL_PLAN.md``): because this condition checks plain ``Dim``
+   equality and never calls :meth:`Dim.unify`, a diagram :mod:`qufzx.diagram.validate`
+   itself accepts -- legs stated over ``d``, a phase stated over ``e``, where ``unify``
+   would bind ``e := d`` and report no issue -- is silently *not* matched here, since ``e``
+   and ``d`` are not equal as raw expressions. This misses a legal fusion; it never
+   approves an illegal one, since every candidate this condition does approve is verified by
+   the same plain-equality check the builder itself relies on. Closing this gap needs a real
+   diagram-level unifier, which is Phase 10's job, not a change to this placeholder.
+
 Malformed wire references. :mod:`qufzx.diagram.graph` is deliberately permissive about
 what a :class:`~qufzx.diagram.graph.Wire` may name (see that module's docstring on
 validation ownership), so an un-validated diagram can hold a wire endpoint naming a node
@@ -257,6 +281,36 @@ class FusionMatch:
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[tuple[Dim, Dim], ...] = ()
     bindings: Mapping[str, Dim] = MappingProxyType({})
+
+    def __hash__(self) -> int:
+        """Explicit, mirroring :meth:`~qufzx.rewrite.engine.RewriteStep.__hash__` exactly.
+
+        ``@dataclass(frozen=True)`` with the default ``eq=True`` would otherwise generate a
+        ``__hash__`` that hashes every field verbatim, including ``bindings`` -- a
+        :class:`~types.MappingProxyType`, which is unhashable (its backing ``dict`` is
+        mutable even though the proxy itself is read-only). Defining ``__hash__`` here
+        explicitly, in the class body, makes ``dataclass`` leave it alone rather than
+        overwrite it with the broken auto-generated one. Every other field is hashed as-is
+        (``Dim``, ``Wire``, ``NodeId``, and the generated-``__hash__`` ``SideConditionOutcome``
+        and its tuple are all already hashable); ``bindings`` is hashed as
+        ``frozenset(bindings.items())`` -- order-independent, matching the dataclass-generated
+        ``__eq__``, which compares ``bindings`` via plain mapping equality (also
+        order-independent) -- so ``a == b`` still implies ``hash(a) == hash(b)``, the same
+        contract :class:`~qufzx.rewrite.engine.RewriteStep` needs for Phase 12's cache, which
+        embeds a ``FusionMatch`` in its own ``match`` field and therefore needs this to hold
+        transitively.
+        """
+        return hash(
+            (
+                self.a_id,
+                self.b_id,
+                self.wire,
+                self.shared_dim,
+                self.side_condition_outcomes,
+                self.dimension_constraints,
+                frozenset(self.bindings.items()),
+            )
+        )
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -580,6 +634,16 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                 if name in bindings
             }
         )
+        # phase_dimension_agreement is a plain Dim equality (never a call to Dim.unify), so it
+        # can never itself be DEFERRED -- unlike dimension_agreement, whose own deferred flag
+        # genuinely means "Dim.unify could not decide this". Reusing leg_deferred here would
+        # report an assumption that was never made whenever this condition's own equality was
+        # a bare syntactic identity, merely because some unrelated leg elsewhere happened to
+        # defer. The one real assumption this condition *can* rest on is a present phase's dim
+        # agreeing with shared_dim only after substituting a concrete symbol binding condition
+        # 5 produced (phase_binding_names, computed just above) -- with no phase present at
+        # all, there is nothing to assume. See the module docstring, condition 6.
+        phase_deferred = bool(phase_dims_present) and bool(phase_binding_names)
 
         outcomes = (
             SideConditionOutcome("distinct_nodes", True, f"{a_id!r} != {b_id!r}"),
@@ -638,7 +702,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
                         )
                     )
                 ),
-                deferred=leg_deferred,
+                deferred=phase_deferred,
             ),
         )
 

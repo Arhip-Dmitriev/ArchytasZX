@@ -459,3 +459,104 @@ class TestMalformedWireDetectionIsFullyUnconditional:
         diagram.add_wire(PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 9))
         with pytest.raises(RewriteGrammarError):
             find_matches(diagram)
+
+
+class TestFusionMatchIsHashable:
+    """Task 1 (Phase 5 closing round): ``FusionMatch`` was unhashable because the
+    dataclass-generated ``__hash__`` hashed ``bindings`` -- a ``MappingProxyType`` -- verbatim.
+    This fired even for the empty default, so no ``FusionMatch`` was ever hashable, and
+    ``RewriteStep.__hash__`` (which embeds ``match`` unchanged) inherited the same failure.
+    """
+
+    def test_hash_succeeds_with_empty_bindings(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        assert match.bindings == {}
+        hash(match)  # must not raise
+
+    def test_hash_succeeds_with_non_empty_bindings(self) -> None:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.symbol("d")])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match = find_matches(diagram)[0]
+        assert dict(match.bindings) == {"d": Dim.concrete(2)}
+        hash(match)  # must not raise
+
+    def test_equal_matches_hash_equal_and_are_usable_as_set_members(self) -> None:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.symbol("d")])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match_one = find_matches(diagram)[0]
+        match_two = find_matches(diagram)[0]
+        assert match_one == match_two
+        assert hash(match_one) == hash(match_two)
+        assert {match_one, match_two} == {match_one}
+        assert {match_one: "a value"}[match_two] == "a value"
+
+
+class TestPhaseDimensionAgreementDeferredFidelity:
+    """Task 2 (Phase 5 closing round): ``phase_dimension_agreement`` is a plain ``Dim``
+    equality that never calls ``Dim.unify``, so it can never be genuinely ``DEFERRED`` --
+    yet it used to report ``deferred=leg_deferred`` unconditionally, borrowing condition 5's
+    flag even when no phase was present at all (nothing was checked, let alone assumed) or
+    when the phase's own dim already agreed with ``shared_dim`` outright (no assumption was
+    made). See the module docstring, condition 6.
+    """
+
+    def test_deferred_is_false_when_no_phase_present_on_either_node(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        outcome = next(
+            o for o in match.side_condition_outcomes if o.name == "phase_dimension_agreement"
+        )
+        assert outcome.passed
+        assert outcome.deferred is False
+
+    def test_deferred_is_true_when_phase_agreement_rests_on_a_binding(self) -> None:
+        # A's phase is stated over the still-symbolic d; the connecting leg binds d := 3,
+        # so phase agreement holds only because that binding is substituted in first.
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {1: Phase.turns(1)})
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[three], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match = find_matches(diagram)[0]
+        outcome = next(
+            o for o in match.side_condition_outcomes if o.name == "phase_dimension_agreement"
+        )
+        assert outcome.passed
+        assert outcome.deferred is True
+
+    def test_deferred_is_false_when_phase_agrees_outright_despite_an_unrelated_defer(
+        self,
+    ) -> None:
+        # The connecting pair's own leg dims are both the bare symbol d (syntactic
+        # identity, no defer, no binding); A carries an extra surviving leg over d*e,
+        # which defers against shared_dim=d (a symbol occurring as a proper subterm of the
+        # other side). B's phase is stated directly over d, agreeing with shared_dim
+        # outright -- this must not inherit the unrelated surviving leg's defer.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[d])
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[d], output_dims=[], phase=PhaseVector(d, {1: Phase.turns(1)})
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        match = find_matches(diagram)[0]
+        dimension_outcome = next(
+            o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
+        )
+        assert dimension_outcome.deferred is True
+        phase_outcome = next(
+            o for o in match.side_condition_outcomes if o.name == "phase_dimension_agreement"
+        )
+        assert phase_outcome.passed
+        assert phase_outcome.deferred is False
