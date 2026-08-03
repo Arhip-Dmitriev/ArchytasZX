@@ -12,25 +12,46 @@ resolution path: every rule this module defines is registered there, keyed by
 generic over any future rule, per its own module docstring) never needs to import a
 specific rule module itself.
 
-Scalar derivation (not assertion). Same-color, single-wire, output-to-input fusion
-introduces no scalar factor -- read directly off :mod:`qufzx.semantics.denote`'s formulas,
-the merged node's denotation already equals the pre-fusion diagram's contraction with no
-leftover coefficient:
+Scalar derivation (not assertion). Same-color, single-wire fusion introduces no scalar
+factor in either shape the rule matches -- read directly off
+:mod:`qufzx.semantics.denote`'s formulas, the merged node's denotation already equals the
+pre-fusion diagram's contraction with no leftover coefficient. Two distinct wire shapes are
+possible, gated by :mod:`qufzx.rewrite.match`'s condition 4
+(``wire_direction_output_to_input`` -- see that module's docstring for the full account of
+exactly which direction combinations each color permits, and why): an alternating
+output-to-input wire, valid fusion for both colors, and a same-direction (output-output or
+input-input) wire, valid fusion for Z only.
 
-* Z spider. Both spiders are diagonal, entry ``e^{i*angle(k)}`` at the all-axes-``k``
-  position. Contracting an output leg of one against an input leg of the other identifies
-  their ``k`` in the sum, giving exactly the merged spider's tensor with phase vector
-  ``alpha + beta`` (:meth:`~qufzx.algebra.phase.PhaseVector.__add__`) and no extra factor.
-* X spider. ``X_{m->n} = F^{ox n} . Z_{m->n} . (conj(F))^{ox m}``; an output-to-input wire
-  contracts an ``F`` against a ``conj(F)`` on the shared axis -- why
-  ``wire_direction_output_to_input`` in :mod:`qufzx.rewrite.match` is checked uniformly for
-  both colors -- and since ``F`` is unitary and symmetric these cancel to the identity,
-  leaving exactly the Z-spider argument above sandwiched between the surviving Fourier
-  factors on every other leg.
+* Alternating output-to-input, either color. Z: both spiders are diagonal, entry
+  ``e^{i*angle(k)}`` at the all-axes-``k`` position; contracting an output leg of one
+  against an input leg of the other identifies their ``k`` in the sum, giving exactly the
+  merged spider's tensor with phase vector ``alpha + beta``
+  (:meth:`~qufzx.algebra.phase.PhaseVector.__add__`) and no extra factor. X:
+  ``X_{m->n} = F^{ox n} . Z_{m->n} . (conj(F))^{ox m}``; an output-to-input wire contracts
+  an ``F`` against a ``conj(F)`` on the shared axis, and since ``F`` is unitary and
+  symmetric these cancel to the identity, leaving exactly the Z-spider argument above
+  sandwiched between the surviving Fourier factors on every other leg.
+* Same-direction, Z only. ``_z_tensor`` is diagonal in every axis regardless of direction,
+  and :mod:`qufzx.semantics.contract_numeric` contracts a wire by assigning its two
+  endpoints the same einsum axis label unconditionally, applying no conjugation at
+  contraction time at all (for X, conjugation is applied only at ``denote()`` time, when an
+  input axis's Fourier factor is built as ``conj(F)`` rather than ``F`` -- it plays no part
+  in contraction itself). A same-direction Z-Z wire therefore identifies the same basis
+  index ``k`` on both endpoints exactly as the alternating case does, yielding the merged
+  spider's tensor with phase ``alpha + beta`` and no leftover coefficient -- the identical
+  derivation to the Z case above, merely without requiring one endpoint to be an input and
+  the other an output. This argument does not carry over to X: X's own tensor is not
+  diagonal (its diagonal Z core sits sandwiched between Fourier factors), so a
+  same-direction X-X wire would contract ``F`` against ``F`` (or ``conj(F)`` against
+  ``conj(F)``) on the shared axis rather than ``F`` against ``conj(F)`` -- giving
+  ``F^T F`` (or its conjugate), a nontrivial permutation matrix, not the identity. That is a
+  different (and, for Phase 5, unimplemented) rule, which is exactly why condition 4
+  restricts same-direction fusion to Z.
 
-Both derivations land on :meth:`~qufzx.algebra.scalar.Scalar.one`, which is what
+Both shapes land on :meth:`~qufzx.algebra.scalar.Scalar.one`, which is what
 :data:`SPIDER_FUSION` declares and what :func:`spider_fusion_builder` returns per
-application, agreeing with the Phase 4 oracle in ``tests/test_phase5_oracle.py``.
+application, agreeing with the Phase 4 oracle in ``tests/test_phase5_oracle.py`` and with
+the fuzz-tested oracle comparisons in ``tests/test_fusion_properties.py``.
 
 Merged leg-ordering convention. A choice, stated once here, not a derivation: the merged
 node's inputs are A's surviving inputs, original index order, then B's; its outputs follow
@@ -66,6 +87,26 @@ carried into the diagram -- a neighbouring wire that was an exact match before t
 may become merely deferred after it. That is expected, not a defect. See
 :func:`_merged_phase` for the legless corner case, where dimension can only survive via
 the phase slot.
+
+Phase 5 judgement call (deliberate, not a defect): fusion is permitted to fire on a
+``DEFERRED`` dimension pair at all, even though FULL_PLAN.md's Phase 5 item (ii) states the
+pattern as "two same-color spiders joined by a wire and sharing a dimension" -- a
+``DEFERRED`` unify means it is not actually known that the two legs share one, only that
+:meth:`~qufzx.algebra.dimension.Dim.unify`'s deliberately weak placeholder could not decide
+either way. Concretely, a node with legs ``[d, d*e]`` fused against a node with leg ``d``
+produces a merged node whose surviving port is ``Dim(d)``; the ``d*e`` label is gone from
+the diagram entirely, surviving only as a ``dimension_constraints`` entry on the
+:class:`~qufzx.rewrite.engine.RewriteStep` certificate. This is consistent with
+:mod:`qufzx.diagram.validate`'s own deferral posture (a ``DEFERRED`` unify is not a hard
+error there either), and is fully argued in both this module's account above and
+:mod:`qufzx.rewrite.match`'s module docstring ("Dimension constraints"). But it is worth
+naming plainly: the assumption a diagram-level unifier must eventually justify is recorded
+only on the certificate, not in the diagram itself, which is in tension with ``CLAUDE.md``'s
+"the diagram is the single source of truth" -- a diagram inspected on its own, without its
+certificate history, cannot recover that a surviving leg's dimension was ever anything other
+than what it now says. This is flagged here as a known, accepted Phase 5 limitation; closing
+it properly needs Phase 10's real unifier (which can resolve a ``DEFERRED`` pair outright
+instead of assuming it), not a change to this builder.
 """
 
 from __future__ import annotations
@@ -260,7 +301,11 @@ SPIDER_FUSION = Rule(
     ),
     scalar_introduced=Scalar.one(),
 )
-"""Same-color, single-wire spider fusion. See the module docstring for the scalar derivation."""
+"""Same-color, single-wire spider fusion -- any direction for Z, output-to-input only for X.
+
+See the module docstring for the scalar derivation (both wire shapes) and condition 4 in
+:mod:`qufzx.rewrite.match` for exactly which direction combinations each color permits.
+"""
 
 
 RULES: Mapping[str, Rule] = MappingProxyType({SPIDER_FUSION.name: SPIDER_FUSION})

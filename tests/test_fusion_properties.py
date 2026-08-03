@@ -31,6 +31,7 @@ from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError
 
 _SEEDS: tuple[int, ...] = tuple(range(2500))
+_CLEAN_SEEDS: tuple[int, ...] = tuple(range(20000))
 _DIM_D = Dim.symbol("d")
 _DIM_E = Dim.symbol("e")
 # ``d*e`` and ``d**2`` are here so Dim.unify's DEFERRED branch (a symbol occurring as a
@@ -176,6 +177,108 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
     diagram.set_boundary_inputs([ref for ref in unwired if ref.direction is Direction.INPUT])
     diagram.set_boundary_outputs([ref for ref in unwired if ref.direction is Direction.OUTPUT])
     return diagram
+
+
+_CLEAN_DIM_VALUES = (2, 3, 4, 5)
+
+
+def _random_clean_phase(rng: random.Random, dim: Dim, node_index: int) -> PhaseVector | None:
+    """A phase for a cleanly-contractible node: always fully concrete, entry always in range.
+
+    Unlike :func:`_random_phase`, this never produces an entry over a dimension symbol or a
+    phase parameter (``Phase.symbol``) -- every free symbol in the diagram would otherwise
+    need to appear in the oracle's ``assignment``, and the whole point of this generator is
+    a diagram with *no* free symbols at all, so :func:`~qufzx.semantics.check.compare` can be
+    called with an empty assignment and never raise ``CheckGrammarError`` for a missing one.
+    """
+    if rng.random() < 0.2:
+        return None
+    max_index = dim.to_int() - 1
+    if max_index < 1:
+        return PhaseVector(dim, {})
+    index = rng.randint(1, max_index)
+    return PhaseVector(dim, {index: Phase.turns(rng.choice(_CONCRETE_TURNS))})
+
+
+def _build_clean_diagram(rng: random.Random) -> Diagram:
+    """2-3 nodes, 0-2 legs per side, colour Z/X, *one* concrete dim shared by every leg of
+    every node in the whole diagram, a fully concrete phase (or none) per node, and random
+    wiring drawn from the flat shuffled port pool -- so a self-loop (two ports of the same
+    node landing adjacent in the shuffle) or a same-direction wire (two output ports, or two
+    input ports, landing adjacent) arises freely, exactly like :func:`_build_random_diagram`'s
+    own wiring mechanism, just never blocked by a mismatched dimension since there is only
+    ever one dimension in play. Every diagram this produces is cleanly contractible by
+    construction: :mod:`qufzx.diagram.validate` reports no issue at all (hard or deferred),
+    since every leg agrees syntactically (not merely by unification) and nothing is
+    symbolic -- there is no draw from ``_DIM_PALETTE``'s mixed, unify-only, or deferred-unify
+    dimensions the way :func:`_build_random_diagram` deliberately includes.
+
+    The leg-count and node-count ranges are deliberately smaller than
+    :func:`_build_random_diagram`'s (which mostly never reaches ``compare`` at all, so its
+    own boundary size barely matters for wall time): since here essentially every match
+    *does* reach :func:`~qufzx.semantics.check.compare`, an unconstrained boundary size
+    would let the free (unwired) leg count -- and so the dense contracted tensor's element
+    count, ``dim ** boundary_legs`` -- grow large enough to dominate this test's runtime
+    (measured: 0-3 legs per side across up to 4 nodes occasionally left enough boundary legs
+    that a single ``compare()`` call took over 100ms, and a few tripped
+    :class:`~qufzx.semantics.contract_numeric.ContractSizeError` outright). This tighter
+    range keeps typical boundaries small while still leaving plenty of room for a
+    fusion-eligible pair (each node needs only one spare leg on the wired side to become a
+    fusion candidate), and still produces self-loops, same-direction wires, and all six
+    colour/direction combinations freely.
+
+    This is the generator Task 4 (Phase 5 closing round) adds to give the oracle-equality
+    arm of this harness a diagram population that actually reaches ``compare()`` on (almost)
+    every match, rather than being dropped by :func:`_is_cleanly_contractible` before the
+    oracle ever runs -- see ``_MIN_CLEAN_ORACLE_COMPARISONS``'s docstring for why the
+    existing generator cannot be widened to do this instead without losing its own (still
+    needed) mixed-dimension coverage.
+    """
+    diagram = Diagram()
+    dim = Dim.concrete(rng.choice(_CLEAN_DIM_VALUES))
+    all_ports: list[PortRef] = []
+    for node_index in range(rng.randint(2, 3)):
+        color = rng.choice(_COLORS)
+        n_in = rng.randint(0, 2)
+        n_out = rng.randint(0, 2)
+        phase = _random_clean_phase(rng, dim, node_index)
+        if n_in == 0 and n_out == 0 and phase is None:
+            phase = PhaseVector(dim, {})
+        node_id = diagram.add_node(
+            color,
+            input_dims=[dim] * n_in,
+            output_dims=[dim] * n_out,
+            phase=phase,
+        )
+        all_ports.extend(PortRef(node_id, Direction.INPUT, i) for i in range(n_in))
+        all_ports.extend(PortRef(node_id, Direction.OUTPUT, i) for i in range(n_out))
+
+    rng.shuffle(all_ports)
+    unwired = list(all_ports)
+    # A higher continue-probability than _build_random_diagram's 0.7: since this generator's
+    # matches overwhelmingly reach compare(), keeping the leftover boundary small keeps the
+    # dense contracted tensor (dim ** boundary_legs) small too -- see the docstring above.
+    while len(unwired) >= 2 and rng.random() < 0.85:
+        a = unwired.pop()
+        b = unwired.pop(rng.randrange(len(unwired)))
+        diagram.add_wire(a, b)
+
+    diagram.set_boundary_inputs([ref for ref in unwired if ref.direction is Direction.INPUT])
+    diagram.set_boundary_outputs([ref for ref in unwired if ref.direction is Direction.OUTPUT])
+    return diagram
+
+
+def _match_color_direction(diagram: Diagram, match: FusionMatch) -> tuple[str, str, str]:
+    """``(generator name, a-side direction, b-side direction)`` for one located match.
+
+    Read directly off the diagram and the match's own wire, not off any side-condition
+    outcome's free-text detail -- so the coverage assertion in
+    ``test_clean_diagrams_fuse_soundly`` checks the actual located structure, not a string.
+    """
+    node_a = diagram.nodes[match.a_id]
+    ref_a = match.wire.a if match.wire.a.node_id == match.a_id else match.wire.b
+    ref_b = match.wire.b if match.wire.a.node_id == match.a_id else match.wire.a
+    return (node_a.generator_type.name, ref_a.direction.value, ref_b.direction.value)
 
 
 def _free_symbol_names(diagram: Diagram) -> frozenset[str]:
@@ -395,6 +498,58 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
     return oracle_runs
 
 
+def _check_one_clean_match(diagram: Diagram, match: FusionMatch, seed: int) -> tuple[int, int]:
+    """Apply ``match``, assert oracle equality, and return ``(comparisons_ran, size_skips)``.
+
+    Unlike :func:`_check_one_match`, ``diagram`` here is already fully concrete (one
+    dimension, concrete phases only, no symbols anywhere per :func:`_build_clean_diagram`),
+    so there is exactly one substitution to try -- the empty one -- rather than a sweep over
+    ``_ORACLE_DIM_PAIRS``, and no ``PhaseDomainError`` branch is needed (an out-of-range
+    phase entry cannot arise: every entry was drawn in range for its node's one fixed
+    concrete dim to begin with). ``ContractSizeError`` is still a genuine oracle scale
+    limit, not a defect, so it is skipped -- but counted in the returned ``size_skips`` so a
+    generator change that started tripping it on every match could not silently masquerade
+    as "no failures" the way an uncounted skip would.
+    """
+    result = apply(diagram, SPIDER_FUSION, match)
+    post = result.diagram
+    _assert_phase_entries_consistent_with_dim(post, seed)
+
+    introduced = _hard_error_kinds(post) - _hard_error_kinds(diagram)
+    assert not introduced, (
+        f"seed {seed}: rewrite introduced hard-error issue kind(s) "
+        f"{sorted(k.value for k in introduced)} not present in the input diagram"
+    )
+
+    try:
+        comparison = compare(diagram, post, {})
+    except ContractSizeError:
+        return 0, 1
+    assert comparison.matched, f"seed {seed}: oracle mismatch: {comparison.reason}"
+    return 1, 0
+
+
+_MIN_CLEAN_ORACLE_COMPARISONS = 3000
+"""Floor for the total oracle comparisons summed across every checked clean-diagram match.
+
+Set well above what :class:`TestSpiderFusionProperties`'s own reference run actually
+achieves (a few thousand over ``_CLEAN_SEEDS``), the same margin-for-safety posture as
+``_MIN_ORACLE_COMPARISONS`` above but at a scale that means something for *this* arm: the
+existing generator's floor was walked down from 260 to 130 to 57 across prior audit rounds
+because its deliberately mixed, deferred-unify, and product/power dimensions make almost
+every candidate fail :func:`_is_cleanly_contractible` before the oracle ever runs (~57 out
+of 2,500 seeds' worth of matches), so a low floor there says nothing about whether the
+oracle-equality property -- Phase 5's stated completion condition -- is actually being
+exercised at scale. ``_build_clean_diagram`` is cleanly contractible *by construction* (one
+concrete dim, no symbols anywhere), so essentially every match this generator produces
+reaches :func:`~qufzx.semantics.check.compare` -- measured at ~4,500 comparisons over
+``_CLEAN_SEEDS``'s 20,000 seeds, in about 20s wall time (well within the existing test's own
+~65s), with zero ``ContractSizeError`` skips at the current leg-count/wiring-probability
+tuning (see :func:`_build_clean_diagram`'s docstring for why those are kept small). 3,000
+leaves comfortable headroom against incidental generator tuning while still failing hard if
+this arm's oracle calls silently stopped running.
+"""
+
 _MIN_ORACLE_COMPARISONS = 40
 """Floor for the total oracle comparisons summed across every checked match.
 
@@ -441,6 +596,53 @@ class TestSpiderFusionProperties:
             f"only {total_oracle_comparisons} oracle comparisons actually executed "
             f"(floor is {_MIN_ORACLE_COMPARISONS}); the oracle arm may be silently "
             "skipping every substitution instead of exercising compare()"
+        )
+
+    def test_clean_diagrams_fuse_soundly(self) -> None:
+        """Task 4 (Phase 5 closing round): the oracle-equality arm, at real scale.
+
+        Uses :func:`_build_clean_diagram` (cleanly contractible by construction, unlike
+        ``_build_random_diagram``'s deliberately mixed-dimension population) so that
+        essentially every match reaches :func:`~qufzx.semantics.check.compare`, not just the
+        ~57-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
+        six colour/direction shapes ``wire_direction_output_to_input`` actually permits (see
+        ``match.py``'s condition 4) are all still being generated -- so a future change to
+        this generator that stopped producing, say, same-direction Z-Z wires would fail this
+        test directly, rather than silently losing coverage of the Z-widening commit.
+        """
+        checked_any_match = False
+        total_oracle_comparisons = 0
+        total_size_skips = 0
+        seen_combinations: set[tuple[str, str, str]] = set()
+        for seed in _CLEAN_SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_clean_diagram(rng)
+            for match in find_matches(diagram):
+                checked_any_match = True
+                seen_combinations.add(_match_color_direction(diagram, match))
+                comparisons, size_skips = _check_one_clean_match(diagram, match, seed)
+                total_oracle_comparisons += comparisons
+                total_size_skips += size_skips
+        assert checked_any_match, "the clean generator never produced a single fusion match"
+        assert total_oracle_comparisons >= _MIN_CLEAN_ORACLE_COMPARISONS, (
+            f"only {total_oracle_comparisons} oracle comparisons actually executed "
+            f"(floor is {_MIN_CLEAN_ORACLE_COMPARISONS}, {total_size_skips} skipped for "
+            "ContractSizeError); the oracle arm may be silently skipping every match "
+            "instead of exercising compare()"
+        )
+        expected_combinations = {
+            (Z_SPIDER.name, "input", "input"),
+            (Z_SPIDER.name, "input", "output"),
+            (Z_SPIDER.name, "output", "input"),
+            (Z_SPIDER.name, "output", "output"),
+            (X_SPIDER.name, "input", "output"),
+            (X_SPIDER.name, "output", "input"),
+        }
+        missing_combinations = expected_combinations - seen_combinations
+        assert not missing_combinations, (
+            f"the clean generator never produced these colour/direction combinations: "
+            f"{sorted(missing_combinations)} -- coverage of the Z same-direction widening "
+            "(or the X alternating-only restriction) may have silently regressed"
         )
 
     def test_phase_index_out_of_range_under_binding_is_not_a_match(self) -> None:
