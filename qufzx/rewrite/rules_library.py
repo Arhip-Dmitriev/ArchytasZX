@@ -17,7 +17,7 @@ factor in either shape the rule matches -- read directly off
 :mod:`qufzx.semantics.denote`'s formulas, the merged node's denotation already equals the
 pre-fusion diagram's contraction with no leftover coefficient. Two distinct wire shapes are
 possible, gated by :mod:`qufzx.rewrite.match`'s condition 4
-(``wire_direction_output_to_input`` -- see that module's docstring for the full account of
+(``consumed_wire_direction_permitted_for_color`` -- see that module's docstring for the full account of
 exactly which direction combinations each color permits, and why): an alternating
 output-to-input wire, valid fusion for both colors, and a same-direction (output-output or
 input-input) wire, valid fusion for Z only.

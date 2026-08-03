@@ -7,7 +7,7 @@ import pytest
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
+from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
 from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern, find_matches
 from qufzx.rewrite.rule import RewriteGrammarError
 
@@ -61,15 +61,93 @@ class TestNoMatchBetweenDifferentColors:
         assert find_matches(diagram) == ()
 
 
-class TestNoMatchAcrossTwoParallelWires:
-    def test_two_wires_between_same_pair_refuses_to_match(self) -> None:
+class TestParallelWiresYieldOneCandidatePerWire:
+    """A node pair joined by k wires now yields up to k candidates -- one per wire, each
+    fusing across that wire and leaving the other k-1 as self-loops on the merged node.
+    See match.py's module docstring, condition 3 (``parallel_wires_become_self_loops``).
+    """
+
+    def test_two_wires_between_same_pair_now_matches_twice(self) -> None:
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 1))
-        assert find_matches(diagram) == ()
+        matches = find_matches(diagram)
+        assert len(matches) == 2
+        consumed_wires = {m.wire for m in matches}
+        assert len(consumed_wires) == 2
+        assert all(m.all_side_conditions_passed for m in matches)
+
+    def test_x_pair_with_one_alternating_and_one_same_direction_wire_yields_one_match(
+        self,
+    ) -> None:
+        """The colour/direction condition applies to the CONSUMED wire only: an X pair
+        joined by one OUTPUT->INPUT wire and one OUTPUT->OUTPUT wire yields exactly one
+        match (the OUTPUT->INPUT one), never two.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        ref_a = matches[0].wire.a if matches[0].wire.a.node_id == a_id else matches[0].wire.b
+        ref_b = matches[0].wire.b if matches[0].wire.a.node_id == a_id else matches[0].wire.a
+        assert ref_a == PortRef(a_id, Direction.OUTPUT, 0)
+        assert ref_b == PortRef(b_id, Direction.INPUT, 0)
+
+    def test_leftover_wire_leg_binding_resolves_shared_dim(self) -> None:
+        """Fix 1(d): ``_unify_surviving_legs`` needs no change for parallel wires -- the
+        leftover wire's endpoints are ordinary surviving legs, already unified against
+        ``shared_dim``. Here the leftover leg on A is a concrete dim that only unifies
+        with the (symbolic) connecting-pair's shared_dim by binding.
+        """
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, three])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 1))
+        matches = find_matches(diagram)
+        consuming_wire0 = next(
+            m
+            for m in matches
+            if m.wire
+            == Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        )
+        assert consuming_wire0.shared_dim == three
+
+    def test_stable_order_regardless_of_wire_insertion_order(self) -> None:
+        """Fix 1(c): ``(a_id, b_id)`` is no longer a unique key for a candidate, so
+        ``find_matches``'s sort must tiebreak deterministically on the consumed wire, not
+        on whatever order the parallel wires happened to be added to the diagram.
+        """
+        d = Dim.concrete(2)
+
+        def _build(reverse_wire_order: bool) -> Diagram:
+            diagram = Diagram()
+            a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+            b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
+            pairs = [
+                (PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0)),
+                (PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 1)),
+            ]
+            if reverse_wire_order:
+                pairs = list(reversed(pairs))
+            for ref_a, ref_b in pairs:
+                diagram.add_wire(ref_a, ref_b)
+            return diagram
+
+        forward = find_matches(_build(False))
+        backward = find_matches(_build(True))
+        forward_order = [(m.a_id, m.b_id, m.wire) for m in forward]
+        backward_order = [(m.a_id, m.b_id, m.wire) for m in backward]
+        assert forward_order == backward_order
 
 
 class TestNoMatchForSelfLoop:
@@ -445,8 +523,9 @@ class TestMalformedWireDetectionIsFullyUnconditional:
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
-        # A second, parallel wire (so single_connecting_wire would drop this pair via
-        # `continue`) whose B-side index is out of range.
+        # A second, parallel wire (a pair a fusion candidate now matches across, once per
+        # wire -- see TestParallelWiresYieldOneCandidatePerWire) whose B-side index is out
+        # of range; malformed-wire detection must still fire unconditionally regardless.
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.INPUT, 7))
         with pytest.raises(RewriteGrammarError):
             find_matches(diagram)

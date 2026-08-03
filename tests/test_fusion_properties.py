@@ -40,15 +40,34 @@ _DIM_E = Dim.symbol("e")
 # so a leg dim could unify with another leg dim only via the concrete/concrete,
 # syntactic-identity, or bare-symbol-binding branches, never the deferred one, even though
 # ``_unify_surviving_legs`` has a dedicated code path for exactly this case.
-_DIM_PALETTE = (Dim.concrete(2), Dim.concrete(3), _DIM_D, _DIM_E, _DIM_D * _DIM_E, _DIM_D**2)
+_DIM_PALETTE = (
+    Dim.concrete(2),
+    Dim.concrete(3),
+    Dim.concrete(4),
+    Dim.concrete(6),
+    _DIM_D,
+    _DIM_E,
+    _DIM_D * _DIM_E,
+    _DIM_D**2,
+)
 _DIM_SYMBOL_NAMES = frozenset({"d", "e"})
 _CONCRETE_TURNS = (sp.Integer(0), sp.Rational(1, 3), sp.Rational(2, 5))
 # (d, e) oracle substitution pairs -- see _substitution_for. d and e are substituted
 # independently (never collapsed to the same value): three pairs hold d == e (at each of
-# 2, 3, 5, matching the old single-value coverage) and two hold d != e, so mixed-symbolic-
-# dimension diagrams are actually exercised at both equal and unequal bindings, without
-# the combinatorial (and dense-tensor-size) blowup of a full cross product.
-_ORACLE_DIM_PAIRS: tuple[tuple[int, int], ...] = ((2, 2), (3, 3), (5, 5), (2, 3), (3, 2))
+# 2, 3, 5, matching the old single-value coverage), two hold d != e, and (2, 1)/(3, 1) let
+# a ``d*e`` or ``d**2`` leg agree with a concrete 2/3 leg at e=1 (Fix 4(a): without these,
+# ``_DIM_PALETTE``'s product/power dims almost never landed on a value any concrete leg
+# in the palette could also take, so a candidate carrying one almost always failed
+# ``_is_cleanly_contractible`` before the oracle ran).
+_ORACLE_DIM_PAIRS: tuple[tuple[int, int], ...] = (
+    (2, 2),
+    (3, 3),
+    (5, 5),
+    (2, 3),
+    (3, 2),
+    (2, 1),
+    (3, 1),
+)
 _PHASE_SUBSTITUTE_TURNS = sp.Rational(1, 3)
 _COLORS = (Z_SPIDER, X_SPIDER)
 # Entry indices used for randomly generated phase vectors. Deliberately includes indices
@@ -266,6 +285,109 @@ def _build_clean_diagram(rng: random.Random) -> Diagram:
     diagram.set_boundary_inputs([ref for ref in unwired if ref.direction is Direction.INPUT])
     diagram.set_boundary_outputs([ref for ref in unwired if ref.direction is Direction.OUTPUT])
     return diagram
+
+
+_MIXED_DIM_PALETTE = (_DIM_D, Dim.concrete(2), Dim.concrete(3))
+_MIXED_ORACLE_D_VALUES = (2, 3, 4, 5)
+
+
+def _build_mixed_diagram(rng: random.Random) -> Diagram:
+    """Fix 4(b): 2-4 nodes, Z/X mix, one dim per node from ``(d, 2, 3)``, phases only from
+    ``Phase.turns`` or ``Phase.root_of_unity(1, pdim)`` over a palette member, wiring from a
+    shuffled flat port pool (so self-loops and same-direction wires arise freely). Unlike
+    :func:`_build_random_diagram`'s deliberately hard-to-contract ``d*e``/``d**2`` legs (see
+    ``_MIN_ORACLE_COMPARISONS``'s docstring), every leg here is drawn from a 3-member
+    palette small enough that a symbolic leg and a concrete one frequently coexist on a
+    fusable pair, exercising a ``shared_dim`` refined by a leg-unify *binding* -- the region
+    the last several audit rounds' defects lived in -- while still reaching the oracle at
+    d in {2, 3, 4, 5} on most matches.
+    """
+    diagram = Diagram()
+    all_ports: list[PortRef] = []
+    for node_index in range(rng.randint(2, 4)):
+        color = rng.choice(_COLORS)
+        dim = rng.choice(_MIXED_DIM_PALETTE)
+        n_in = rng.randint(0, 3)
+        n_out = rng.randint(0, 3)
+        phase = None
+        if rng.random() >= 0.2:
+            pdim = rng.choice(_MIXED_DIM_PALETTE)
+            entry = (
+                Phase.turns(rng.choice(_CONCRETE_TURNS))
+                if rng.random() < 0.5
+                else Phase.root_of_unity(1, pdim)
+            )
+            phase = PhaseVector(pdim, {1: entry})
+        if n_in == 0 and n_out == 0 and phase is None:
+            phase = PhaseVector(dim, {})
+        node_id = diagram.add_node(
+            color, input_dims=[dim] * n_in, output_dims=[dim] * n_out, phase=phase
+        )
+        all_ports.extend(PortRef(node_id, Direction.INPUT, i) for i in range(n_in))
+        all_ports.extend(PortRef(node_id, Direction.OUTPUT, i) for i in range(n_out))
+
+    rng.shuffle(all_ports)
+    unwired = list(all_ports)
+    while len(unwired) >= 2 and rng.random() < 0.7:
+        a = unwired.pop()
+        b = unwired.pop(rng.randrange(len(unwired)))
+        diagram.add_wire(a, b)
+
+    diagram.set_boundary_inputs([ref for ref in unwired if ref.direction is Direction.INPUT])
+    diagram.set_boundary_outputs([ref for ref in unwired if ref.direction is Direction.OUTPUT])
+    return diagram
+
+
+def _check_mixed_diagram_chain(rng: random.Random, seed: int) -> tuple[int, int]:
+    """Fix 4(c): repeatedly find-and-apply a match on a fresh mixed diagram, to a fixpoint
+    (up to 10 steps), oracle-checking each step at every d in ``_MIXED_ORACLE_D_VALUES`` --
+    skipping a (diagram, d) where either the substituted pre- or post-diagram is not
+    cleanly contractible, and any ``ContractSizeError`` -- so a defect that only appears on
+    the second (or later) fusion of a chain is exercised, not only a single fusion against
+    a fresh diagram. Returns ``(comparisons_ran, chain_steps)``.
+    """
+    diagram = _build_mixed_diagram(rng)
+    comparisons = 0
+    steps = 0
+    for _ in range(10):
+        matches = find_matches(diagram)
+        if not matches:
+            break
+        match = rng.choice(matches)
+        try:
+            result = apply(diagram, SPIDER_FUSION, match)
+        except RewriteDomainError as exc:
+            assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
+                f"seed {seed}, step {steps}: unexpected RewriteDomainError: {exc}"
+            )
+            break
+        post = result.diagram
+        _assert_phase_entries_consistent_with_dim(post, seed)
+        introduced = _hard_error_kinds(post) - _hard_error_kinds(diagram)
+        assert not introduced, (
+            f"seed {seed}, step {steps}: rewrite introduced hard-error issue kind(s) "
+            f"{sorted(k.value for k in introduced)} not present in the input diagram"
+        )
+        for d_value in _MIXED_ORACLE_D_VALUES:
+            subs = {"d": d_value}
+            try:
+                pre_concrete = diagram.substitute(subs)
+                post_concrete = post.substitute(subs)
+            except PhaseDomainError:
+                continue
+            if not (_is_cleanly_contractible(pre_concrete) and _is_cleanly_contractible(post_concrete)):
+                continue
+            try:
+                comparison = compare(diagram, post, subs)
+            except ContractSizeError:
+                continue
+            assert comparison.matched, (
+                f"seed {seed}, step {steps}, d={d_value}: oracle mismatch: {comparison.reason}"
+            )
+            comparisons += 1
+        diagram = post
+        steps += 1
+    return comparisons, steps
 
 
 def _match_color_direction(diagram: Diagram, match: FusionMatch) -> tuple[str, str, str]:
@@ -550,34 +672,18 @@ leaves comfortable headroom against incidental generator tuning while still fail
 this arm's oracle calls silently stopped running.
 """
 
-_MIN_ORACLE_COMPARISONS = 40
+_MIN_ORACLE_COMPARISONS = 82
 """Floor for the total oracle comparisons summed across every checked match.
 
 Without this, an always-skipped oracle arm (e.g. every substitution failing
 ``_is_cleanly_contractible`` or raising ``PhaseDomainError``) would let the test pass
-while never actually calling :func:`~qufzx.semantics.check.compare` -- see the module
-docstring and this file's Task 2 history. The actual count on the current seed list and
-generator was around 260 before an earlier Phase 5 audit round's Defect 1 fix added mixed
-per-node leg dims to the generator (see ``_build_random_diagram``); mixed legs make more
-candidates fail ``_is_cleanly_contractible`` pre-rewrite (a node with a hard
-``DIMENSION_POLICY_VIOLATION`` already on it is exactly the case that check is meant to
-skip), so fewer oracle comparisons actually run -- around 130 since, and still around 130
-after the Phase 5 round-7 audit's Defect 1 fix in ``engine.py`` (see that module's
-docstring; that fix unblocked matches that were never going to contribute an oracle
-comparison regardless, blocked or not).
-
-The Phase 5 final fix round's Step 1 harness extension (``d*e`` and ``d**2`` added to
-``_DIM_PALETTE``, and ``_random_phase`` reweighted towards symbolic-dim root-of-unity
-entries -- both needed to actually reach the ``_over_shared_dim`` defect family; see this
-module's docstring and ``_random_phase``'s) dropped the measured total further, to around
-57: a product or power dim more often fails to unify with a bare symbol or a mismatched
-concrete value under ``Dim.unify``'s deliberately weak placeholder (deferring rather than
-solving), which makes more nodes carry a hard ``DIMENSION_POLICY_VIOLATION`` that
-``_is_cleanly_contractible`` is meant to skip, and a root-of-unity phase entry more often
-has an index that some ``(d_value, e_value)`` substitution puts out of range, raising
-``PhaseDomainError`` before ``compare`` is ever reached. 40 leaves headroom against
-incidental generator changes while still failing hard if the oracle arm silently stops
-running.
+while never actually calling :func:`~qufzx.semantics.check.compare`. Fix 4(a) (Phase 5
+post-closing audit) added ``Dim.concrete(4)``/``Dim.concrete(6)`` to ``_DIM_PALETTE`` and
+``(2, 1)``/``(3, 1)`` to ``_ORACLE_DIM_PAIRS`` so a ``d*e`` or ``d**2`` leg can actually
+agree with a concrete leg at some oracle substitution instead of almost always failing
+``_is_cleanly_contractible`` first; this measured 118 comparisons over ``_SEEDS`` (up from
+~57 before). 82 is roughly 70% of that measurement, leaving headroom against incidental
+generator changes while still failing hard if the oracle arm silently stops running.
 """
 
 
@@ -605,7 +711,7 @@ class TestSpiderFusionProperties:
         ``_build_random_diagram``'s deliberately mixed-dimension population) so that
         essentially every match reaches :func:`~qufzx.semantics.check.compare`, not just the
         ~57-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
-        six colour/direction shapes ``wire_direction_output_to_input`` actually permits (see
+        six colour/direction shapes ``consumed_wire_direction_permitted_for_color`` actually permits (see
         ``match.py``'s condition 4) are all still being generated -- so a future change to
         this generator that stopped producing, say, same-direction Z-Z wires would fail this
         test directly, rather than silently losing coverage of the Z-widening commit.
@@ -709,3 +815,36 @@ class TestSpiderFusionProperties:
 
         comparison = compare(diagram, result.diagram, {"d": 2})
         assert comparison.matched, f"oracle mismatch at d=2: {comparison.reason}"
+
+
+_MIXED_SEEDS: tuple[int, ...] = tuple(range(40000))
+_MIN_MIXED_ORACLE_COMPARISONS = 2200
+"""Floor for the total oracle comparisons summed across every checked step of every chain.
+
+Fix 4(b)/(c) (Phase 5 post-closing audit): :func:`_build_mixed_diagram`'s small
+``(d, 2, 3)`` palette is chosen so a symbolic and a concrete leg frequently coexist on a
+fusable pair, reaching a ``shared_dim`` refined by a leg-unify binding -- unlike
+``_build_random_diagram``'s ``d*e``/``d**2`` legs, which mostly fail
+``_is_cleanly_contractible`` before the oracle runs (see ``_MIN_ORACLE_COMPARISONS``'s
+docstring). Measured 3,154 comparisons over 3,103 fixpoint-chain steps across
+``_MIXED_SEEDS``'s 40,000 seeds, in about 27s wall time. 2,200 is roughly 70% of that
+measurement, leaving headroom against incidental generator tuning while still failing hard
+if this arm's oracle calls silently stopped running.
+"""
+
+
+class TestMixedSymbolicConcreteFusionProperties:
+    def test_mixed_diagrams_fuse_soundly_to_a_fixpoint(self) -> None:
+        total_oracle_comparisons = 0
+        total_chain_steps = 0
+        for seed in _MIXED_SEEDS:
+            rng = random.Random(seed)
+            comparisons, steps = _check_mixed_diagram_chain(rng, seed)
+            total_oracle_comparisons += comparisons
+            total_chain_steps += steps
+        assert total_chain_steps > 0, "the mixed generator never produced a single fusion match"
+        assert total_oracle_comparisons >= _MIN_MIXED_ORACLE_COMPARISONS, (
+            f"only {total_oracle_comparisons} oracle comparisons actually executed "
+            f"(floor is {_MIN_MIXED_ORACLE_COMPARISONS}); the oracle arm may be silently "
+            "skipping every substitution instead of exercising compare()"
+        )
