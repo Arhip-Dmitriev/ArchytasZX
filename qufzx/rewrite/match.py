@@ -43,10 +43,11 @@ per-candidate outcomes are recorded):
    direction -- no conjugation is ever applied at contraction time, only at ``denote()``
    time, and only for X. A Z-Z wire of *any* direction (OUTPUT-OUTPUT, INPUT-INPUT, or
    OUTPUT-INPUT) therefore identifies the same basis index ``k`` on both sides and is
-   genuinely, numerically valid fusion -- verified against the oracle at ``d = 2`` and
-   ``d = 3`` -- so this condition permits any direction combination for Z. Before this
-   decision, the condition was applied uniformly to both colors (a same-direction Z-Z wire
-   was silently never matched), which was sound but incomplete relative to FULL_PLAN.md's
+   genuinely, numerically valid fusion -- verified against the oracle at ``d = 2``,
+   ``d = 3``, and ``d = 5`` -- so this condition permits any direction combination for Z.
+   Before this decision, the condition was applied uniformly to both colors (a
+   same-direction Z-Z wire was silently never matched), which was sound but incomplete
+   relative to FULL_PLAN.md's
    Phase 5 spec ("two same-color spiders joined by a wire and sharing a dimension" states
    no direction restriction). :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`
    needed no change for this widening: it selects the consumed ref by identity against
