@@ -1,9 +1,11 @@
 """The fusion matcher: finds occurrences of same-color spider fusion, and only that pattern.
 
 Phase 5 implements exactly one :class:`~qufzx.rewrite.rule.Pattern`: two spiders of the
-same generator type (both Z or both X), joined by exactly one wire, whose connected legs
-agree on dimension. Every other pattern shape (bialgebra, Hopf, copy, identity removal,
-...) is out of scope until Phase 11.
+same generator type (both Z or both X), joined by a wire whose connected legs agree on
+dimension -- not necessarily by only that wire: a pair joined by k wires yields one
+candidate per wire, each fusing across its own and leaving the rest as self-loops on the
+merged node (condition 3 below). Every other pattern shape (bialgebra, Hopf, copy,
+identity removal, ...) is out of scope until Phase 11.
 
 Side conditions checked, in the order applied below (see ``FUSION_SIDE_CONDITIONS`` for
 their declared names and one-line descriptions, and :class:`FusionMatch` for where their

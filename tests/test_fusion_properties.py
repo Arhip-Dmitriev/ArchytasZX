@@ -664,7 +664,7 @@ of 2,500 seeds' worth of matches), so a low floor there says nothing about wheth
 oracle-equality property -- Phase 5's stated completion condition -- is actually being
 exercised at scale. ``_build_clean_diagram`` is cleanly contractible *by construction* (one
 concrete dim, no symbols anywhere), so essentially every match this generator produces
-reaches :func:`~qufzx.semantics.check.compare` -- measured at ~4,500 comparisons over
+reaches :func:`~qufzx.semantics.check.compare` -- measured at 7,656 comparisons over
 ``_CLEAN_SEEDS``'s 20,000 seeds, in about 20s wall time (well within the existing test's own
 ~65s), with zero ``ContractSizeError`` skips at the current leg-count/wiring-probability
 tuning (see :func:`_build_clean_diagram`'s docstring for why those are kept small). 3,000
