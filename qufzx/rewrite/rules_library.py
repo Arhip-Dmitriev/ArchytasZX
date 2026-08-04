@@ -12,8 +12,8 @@ resolution path: every rule this module defines is registered there, keyed by
 generic over any future rule, per its own module docstring) never needs to import a
 specific rule module itself.
 
-Scalar derivation (not assertion). Same-color, single-wire fusion introduces no scalar
-factor in either shape the rule matches -- read directly off
+Scalar derivation (not assertion). Same-color fusion across one wire introduces no scalar
+factor in either shape that wire can take -- read directly off
 :mod:`qufzx.semantics.denote`'s formulas, the merged node's denotation already equals the
 pre-fusion diagram's contraction with no leftover coefficient. Two distinct wire shapes are
 possible, gated by :mod:`qufzx.rewrite.match`'s condition 4
@@ -47,6 +47,11 @@ input-input) wire, valid fusion for Z only.
   ``F^T F`` (or its conjugate), a nontrivial permutation matrix, not the identity. That is a
   different (and, for Phase 5, unimplemented) rule, which is exactly why condition 4
   restricts same-direction fusion to Z.
+
+Neither derivation depends on the consumed wire being the pair's only wire: a further wire
+between the same two nodes is never contracted by this rule -- both its endpoints are
+surviving legs, remapped onto the merged node as a self-loop, so it still contracts the
+images of those same two legs and contributes the same factor to both sides.
 
 Both shapes land on :meth:`~qufzx.algebra.scalar.Scalar.one`, which is what
 :data:`SPIDER_FUSION` declares and what :func:`spider_fusion_builder` returns per
@@ -301,10 +306,12 @@ SPIDER_FUSION = Rule(
     ),
     scalar_introduced=Scalar.one(),
 )
-"""Same-color, single-wire spider fusion -- any direction for Z, output-to-input only for X.
+"""Same-color spider fusion across one wire -- any direction for Z, output-to-input only for X.
 
-See the module docstring for the scalar derivation (both wire shapes) and condition 4 in
-:mod:`qufzx.rewrite.match` for exactly which direction combinations each color permits.
+Any further wire joining the same pair is not consumed: it survives as a self-loop on the
+merged spider (see condition 3 in :mod:`qufzx.rewrite.match`). See the module docstring for
+the scalar derivation and condition 4 there for exactly which direction combinations each
+color permits.
 """
 
 
