@@ -14,7 +14,16 @@ from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
 from qufzx.rewrite import engine as engine_module
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, Rule
+from qufzx.rewrite.rule import (
+    BuildResult,
+    Match,
+    Pattern,
+    Quantifiers,
+    RewriteDomainError,
+    RewriteGrammarError,
+    Rule,
+    SideConditionOutcome,
+)
 from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
@@ -626,3 +635,109 @@ class TestRewriteStepIsHashable:
         assert hash(step_one) == hash(step_two)
         assert {step_one, step_two} == {step_one}
         assert {step_one: "a value"}[step_two] == "a value"
+
+
+class _EmptyPattern(Pattern):
+    """A ``Pattern`` that finds nothing; the tests below drive ``apply()`` directly instead
+    of going through ``find_matches``."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        return ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ScriptedMatch:
+    """A minimal, hand-built ``Match`` for exercising ``apply()`` with an independent builder."""
+
+    side_condition_outcomes: tuple[SideConditionOutcome, ...] = ()
+    dimension_constraints: tuple[tuple[Dim, Dim], ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        return True
+
+
+class TestApplyWithAnIndependentlyScriptedBuilder:
+    """Every other test in this file drives ``apply()`` through ``spider_fusion_builder`` with
+    one field sabotaged. These exercise the generic splice path with a builder written from
+    scratch against the ``BuildResult`` contract alone.
+    """
+
+    def test_consumed_wire_between_surviving_nodes_is_dropped(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s1_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        s2_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+        w = Wire(PortRef(s1_id, Direction.OUTPUT, 0), PortRef(s2_id, Direction.INPUT, 0))
+        diagram.add_wire(w.a, w.b)
+        diagram.set_boundary_outputs([PortRef(s1_id, Direction.OUTPUT, 0)])
+        diagram.set_boundary_inputs([PortRef(s2_id, Direction.INPUT, 0)])
+
+        # Both endpoints of w are deliberately also on a boundary.
+        pre_errors = validate(diagram).errors
+        assert len(pre_errors) == 2
+        assert all(issue.kind is IssueKind.PORT_WIRED_AND_BOUNDARY for issue in pre_errors)
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            r_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(r_id,),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(w,),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_drop_consumed_wire",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        result = apply(diagram, rule, _ScriptedMatch())
+        post = result.diagram
+
+        assert w not in post.wires
+        assert c_id not in post.nodes
+        assert result.new_node_ids[0] in post.nodes
+        assert post.boundary_outputs == (PortRef(s1_id, Direction.OUTPUT, 0),)
+        assert post.boundary_inputs == (PortRef(s2_id, Direction.INPUT, 0),)
+        assert validate(post).errors == ()
+        assert result.step.consumed_wires == (w,)
+
+    def test_collapsing_port_mapping_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(s_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            collapsing_mapping = {
+                PortRef(c_id, Direction.INPUT, 0): PortRef(s_id, Direction.OUTPUT, 0),
+            }
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(),
+                port_mapping=collapsing_mapping,
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_collapsing_port_mapping",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="collapses"):
+            apply(diagram, rule, _ScriptedMatch())

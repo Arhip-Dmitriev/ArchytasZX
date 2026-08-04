@@ -42,10 +42,11 @@ Algorithm.
    actually exist in the working diagram, and every value in ``build_result.port_mapping``
    must name a real port (a node that exists, at an in-range index for its direction) --
    step 5 feeds ``port_mapping`` values directly into every surviving wire and boundary
-   entry with no check of its own, and step 9 publishes ``new_node_ids`` verbatim for Phase
-   6 to replay against, so an unvalidated bad value from either field would otherwise surface
-   far from its cause (a confusing failure deep in remapping, or in a certificate replay), or
-   -- if it happens to alias a real port by coincidence -- not surface at all.
+   entry with no existence check of its own, and step 9 publishes ``new_node_ids`` verbatim
+   for Phase 6 to replay against, so an unvalidated bad value from either field would
+   otherwise surface far from its cause (a confusing failure deep in remapping, or in a
+   certificate replay), or -- if it happens to alias a real port by coincidence -- not
+   surface at all.
 5. Remap every reference. This is the single most failure-prone part of a rewrite (see
    :mod:`qufzx.semantics.check`'s interface check, which fails on a boundary that lost its
    order or its entries before ever comparing a tensor). For every wire in ``working``
@@ -57,7 +58,10 @@ Algorithm.
    must appear in ``port_mapping``; if it does not, this step raises
    :class:`~qufzx.rewrite.rule.RewriteDomainError` naming the rule and the unmapped port
    rather than silently leaving a wire pointing at a node step 6 is about to remove (whose
-   removal cascade would then silently drop that wire). This single rule, applied uniformly,
+   removal cascade would then silently drop that wire). If ``port_mapping`` directs both
+   endpoints of a surviving wire to a single port, this step raises
+   :class:`~qufzx.rewrite.rule.RewriteGrammarError` rather than constructing a degenerate
+   wire. This single rule, applied uniformly,
    handles every case the build plan calls out: a wire to a third node, a pre-existing
    self-loop on one of the consumed nodes (both endpoints get remapped, yielding a self-loop
    on the merged node), and the consumed wire itself (dropped, never remapped). The two
@@ -308,10 +312,11 @@ def _translate_input_issue_key(
         translated_a = _translate_ref(issue.wire.a)
         translated_b = _translate_ref(issue.wire.b)
         if translated_a == translated_b:
-            # A malformed self-loop-after-translation cannot occur for any wire actually
-            # possible in a valid input diagram (a builder never maps two distinct
-            # surviving ports to the same new port); fall back to the untranslated wire
-            # so this never raises constructing a same-port Wire.
+            # Step 5 now rejects any collapsing remap of a live wire, so this branch is
+            # reachable only for an input-issue wire listed in consumed_wires (dropped,
+            # never spliced) whose endpoints a foreign builder mapped anyway; falling back
+            # to the untranslated wire is the fail-closed choice (it then matches nothing
+            # on the result side).
             return (issue.kind, issue.wire)
         return (issue.kind, Wire(translated_a, translated_b))
     if issue.node_id is not None:
@@ -363,7 +368,11 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     hard-failure validation issue kind ``diagram`` did not already carry (step 8). Raises
     :class:`~qufzx.rewrite.rule.RewriteGrammarError` if the match does not belong to
     ``diagram`` -- i.e. a consumed wire or node the builder reported is not actually
-    present.
+    present -- or if ``port_mapping`` collapses both endpoints of a surviving wire onto a
+    single port. Builder-output validation beyond these checks (e.g. a new_node_ids entry
+    naming a pre-existing node, or a builder that itself mutates wires, boundaries, or the
+    scalar) is deliberately deferred to Phase 11, when a second rule gives the generic
+    contract a real consumer.
     """
     check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
@@ -434,6 +443,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     for wire in tuple(working.wires):
         if wire in consumed_wire_set:
+            working.remove_wire(wire.a, wire.b)
             continue
         touches_consumed = (
             wire.a.node_id in consumed_node_ids or wire.b.node_id in consumed_node_ids
@@ -442,6 +452,12 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             continue
         new_a = _remap_endpoint(wire.a, consumed_node_ids, port_mapping, rule.name)
         new_b = _remap_endpoint(wire.b, consumed_node_ids, port_mapping, rule.name)
+        if new_a == new_b:
+            raise RewriteGrammarError(
+                f"rule {rule.name!r}: port_mapping collapses wire {wire!r} onto a "
+                f"single port {new_a!r}; a builder must map a surviving wire's two "
+                f"endpoints to two distinct ports"
+            )
         working.remove_wire(wire.a, wire.b)
         working.add_wire(new_a, new_b)
 
