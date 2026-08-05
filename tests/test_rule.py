@@ -23,9 +23,10 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram
-from qufzx.rewrite.match import FusionPattern
+from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern
 from qufzx.rewrite.rule import (
     BuildResult,
+    Match,
     Quantifiers,
     RewriteGrammarError,
     Rule,
@@ -33,6 +34,14 @@ from qufzx.rewrite.rule import (
     SideConditionOutcome,
 )
 from qufzx.rewrite.rules_library import spider_fusion_builder
+
+
+def _dummy_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """A builder with no ``side_conditions`` attribute, for tests that only need *some*
+    callable and must not trip the A5 (Phase 5 round-12 audit) builder/Rule
+    ``side_conditions`` agreement check that ``spider_fusion_builder`` (which does declare
+    one) would otherwise trigger."""
+    raise NotImplementedError
 
 
 class TestSideCondition:
@@ -114,7 +123,7 @@ class TestRule:
             name="spider_fusion",
             pattern=FusionPattern(),
             builder=spider_fusion_builder,
-            side_conditions=(SideCondition("distinct_nodes", "distinct"),),
+            side_conditions=FUSION_SIDE_CONDITIONS,
             quantifiers=Quantifiers(dimensions=("d",)),
             scalar_introduced=Scalar.one(),
         )
@@ -128,7 +137,7 @@ class TestRule:
             name="spider_fusion",
             pattern=FusionPattern(),
             builder=spider_fusion_builder,
-            side_conditions=(),
+            side_conditions=FUSION_SIDE_CONDITIONS,
             quantifiers=Quantifiers(),
             scalar_introduced=Scalar.one(),
         )
@@ -149,7 +158,7 @@ class TestRuleValidatesEveryField:
         base: dict[str, object] = {
             "name": "spider_fusion",
             "pattern": FusionPattern(),
-            "builder": spider_fusion_builder,
+            "builder": _dummy_builder,
             "side_conditions": (),
             "quantifiers": Quantifiers(),
             "scalar_introduced": Scalar.one(),
@@ -184,3 +193,48 @@ class TestRuleValidatesEveryField:
     def test_all_valid_fields_still_construct(self) -> None:
         rule = Rule(**self._kwargs())  # type: ignore[arg-type]
         assert rule.name == "spider_fusion"
+
+
+class TestRuleRejectsSideConditionsDisagreeingWithItsBuilder:
+    """A5 (Phase 5 round-12 audit): ``spider_fusion_builder`` declares its own
+    ``side_conditions`` (see its ``.side_conditions`` attribute) and checks a match's
+    coverage against exactly that tuple, since it is reachable directly and not only through
+    ``apply``. If a ``Rule`` wrapping it declared a *different* ``side_conditions`` tuple,
+    a match could pass one check and fail the other -- two contradictory verdicts on the
+    same match, with no single source of truth. ``Rule.__post_init__`` must reject that
+    combination outright, at construction time, rather than let it compile into an
+    inconsistent rule.
+    """
+
+    def test_mismatched_side_conditions_raises_at_construction(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            Rule(
+                name="spider_fusion",
+                pattern=FusionPattern(),
+                builder=spider_fusion_builder,
+                side_conditions=(SideCondition("distinct_nodes", "distinct"),),
+                quantifiers=Quantifiers(),
+                scalar_introduced=Scalar.one(),
+            )
+
+    def test_matching_side_conditions_construct_successfully(self) -> None:
+        rule = Rule(
+            name="spider_fusion",
+            pattern=FusionPattern(),
+            builder=spider_fusion_builder,
+            side_conditions=FUSION_SIDE_CONDITIONS,
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+        assert rule.side_conditions == FUSION_SIDE_CONDITIONS
+
+    def test_a_builder_with_no_declared_side_conditions_is_unconstrained(self) -> None:
+        rule = Rule(
+            name="x",
+            pattern=FusionPattern(),
+            builder=_dummy_builder,
+            side_conditions=(SideCondition("anything", "unrelated to the builder"),),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+        assert rule.side_conditions == (SideCondition("anything", "unrelated to the builder"),)

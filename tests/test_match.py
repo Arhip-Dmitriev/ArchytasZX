@@ -21,8 +21,14 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern, find_matches
+from qufzx.rewrite.match import (
+    FUSION_SIDE_CONDITIONS,
+    FusionPattern,
+    find_matches,
+    resolve_fusion_match,
+)
 from qufzx.rewrite.rule import RewriteGrammarError
+from qufzx.rewrite.rules_library import spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
 
@@ -652,3 +658,72 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         )
         assert phase_outcome.passed
         assert phase_outcome.deferred is False
+
+
+class TestResolveFusionMatchIsTheSharedPredicate:
+    """A1/A2/A4 (Phase 5 round-12 audit): ``find_matches`` and ``spider_fusion_builder`` must
+    call the exact same function object to decide/re-verify a candidate -- not two
+    similar-looking computations kept in sync by hand. See ``resolve_fusion_match``'s and the
+    module docstring's "One verification predicate" section.
+    """
+
+    def test_spider_fusion_builder_calls_the_same_function_object(self) -> None:
+        import inspect
+
+        source = inspect.getsource(spider_fusion_builder)
+        assert "resolve_fusion_match(" in source
+
+    def test_raises_grammar_error_for_the_same_node_twice(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(a_id, Direction.OUTPUT, 1))
+        with pytest.raises(RewriteGrammarError):
+            resolve_fusion_match(diagram, a_id, a_id, wire)
+
+    def test_raises_grammar_error_for_an_absent_node_id(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        from qufzx.diagram.graph import NodeId
+
+        with pytest.raises(RewriteGrammarError):
+            resolve_fusion_match(diagram, a_id, NodeId(9999), wire)
+
+    def test_raises_grammar_error_when_wire_does_not_join_the_given_pair(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        unrelated_wire = Wire(PortRef(c_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(unrelated_wire.a, unrelated_wire.b)
+        with pytest.raises(RewriteGrammarError):
+            resolve_fusion_match(diagram, a_id, b_id, unrelated_wire)
+
+    def test_returns_a_failed_resolution_with_six_outcomes_for_a_z_x_pair(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert not resolution.passed
+        assert len(resolution.outcomes) == len(FUSION_SIDE_CONDITIONS)
+        assert {o.name for o in resolution.outcomes} == {c.name for c in FUSION_SIDE_CONDITIONS}
+        same_type = next(o for o in resolution.outcomes if o.name == "same_generator_type")
+        assert not same_type.passed
+
+    def test_passing_resolution_agrees_with_find_matches_own_fields(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+        assert resolution.passed
+        assert resolution.shared_dim == match.shared_dim
+        assert dict(resolution.bindings) == dict(match.bindings)
+        assert resolution.outcomes == match.side_condition_outcomes

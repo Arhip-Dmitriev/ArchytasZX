@@ -234,6 +234,90 @@ class TestBuilderTypedErrors:
             spider_fusion_builder(diagram, match)
 
 
+def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
+    """A complete, all-``passed=True`` outcome tuple naming exactly every declared condition.
+
+    Used to construct a foreign/hand-built ``FusionMatch`` whose ``side_condition_outcomes``
+    lies about every condition having actually been checked -- so ``check_side_condition_coverage``
+    (which only compares outcome *names* and passedness, never re-evaluates a predicate) lets
+    it through, and the builder's own fresh re-verification (:func:`resolve_fusion_match`,
+    Phase 5 round-12 audit) is what has to catch the lie.
+    """
+    return tuple(
+        SideConditionOutcome(name, True, "fabricated: claims to pass without being checked")
+        for name in (
+            "distinct_nodes",
+            "same_generator_type",
+            "parallel_wires_become_self_loops",
+            "consumed_wire_direction_permitted_for_color",
+            "dimension_agreement",
+            "phase_dimension_agreement",
+        )
+    )
+
+
+class TestPhase5Round12AuditDefects:
+    """Regression coverage for A1/A2 (Phase 5 round-12 audit): the builder must not trust a
+    match's own claimed ``generator_type`` agreement or ``shared_dim``/``bindings`` -- it must
+    re-derive them fresh (via :func:`~qufzx.rewrite.match.resolve_fusion_match`) and reject any
+    disagreement, since a fabricated-passing ``side_condition_outcomes`` tuple alone (which
+    ``check_side_condition_coverage`` cannot catch -- it never re-evaluates a predicate) would
+    otherwise let a Z/X pair, or a nonsensical ``shared_dim``, through to graph surgery.
+    """
+
+    def test_a1_fabricated_same_generator_type_outcome_on_a_z_x_pair_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        match = FusionMatch(
+            a_id=a_id,
+            b_id=b_id,
+            wire=wire,
+            shared_dim=d,
+            side_condition_outcomes=_fabricated_passing_outcomes(),
+        )
+        with pytest.raises(RewriteDomainError):
+            spider_fusion_builder(diagram, match)
+
+    def test_a2_shared_dim_unrelated_to_the_matched_legs_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        match = FusionMatch(
+            a_id=a_id,
+            b_id=b_id,
+            wire=wire,
+            shared_dim=Dim.concrete(7),
+            side_condition_outcomes=_fabricated_passing_outcomes(),
+        )
+        with pytest.raises(RewriteDomainError):
+            spider_fusion_builder(diagram, match)
+
+    def test_a2_bindings_unrelated_to_the_matched_legs_is_rejected(self) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+        match = FusionMatch(
+            a_id=a_id,
+            b_id=b_id,
+            wire=wire,
+            shared_dim=Dim.concrete(2),
+            side_condition_outcomes=_fabricated_passing_outcomes(),
+            bindings={"d": Dim.concrete(999)},
+        )
+        with pytest.raises(RewriteDomainError):
+            spider_fusion_builder(diagram, match)
+
+
 class TestSideConditionCoverageEnforced:
     """Fix 1: an empty (or incomplete) side_condition_outcomes tuple must not be accepted.
 
