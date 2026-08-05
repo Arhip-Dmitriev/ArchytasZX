@@ -644,3 +644,18 @@ Application libraries. Prebuilt constructions for condensed-matter tensor networ
 
 Named catalog of states and gates. A library of standard qudit constructions, GHZ and W states, the qudit Fourier transform, Clifford and Clifford-plus-T generators, and common gadgets, each defined once as a diagram parameterized by n and d, so users assemble from known pieces rather than from raw spiders.
 Session provenance and replay. Persist a derivation, reload it, and replay or edit it, so long algorithm-development sessions are reproducible and shareable. The certificate format from the first version is the natural persistence unit.
+
+<!--
+Copyright 2026 Arkhip A. Dmitriev
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
