@@ -754,3 +754,41 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
         with pytest.raises(RewriteGrammarError, match="collapses"):
             apply(diagram, rule, _ScriptedMatch())
+
+    def test_a3_duplicate_consumed_node_ids_raises_rewrite_grammar_error(self) -> None:
+        """A3 (Phase 5 round-12 audit): a repeated entry in ``consumed_node_ids`` passes the
+        plain membership check (every entry, including the repeat, names a real node) but
+        would otherwise make step 6's removal loop call ``remove_node`` twice on the same,
+        by-then-already-removed id, raising ``qufzx.diagram.graph.GraphGrammarError`` -- a
+        different module's exception, escaping the ``RewriteError`` hierarchy ``apply``'s own
+        docstring promises. It must instead be rejected as a malformed request, before step 6
+        is ever reached, with the same ``RewriteGrammarError`` every other malformed
+        ``BuildResult`` field raises.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.set_boundary_outputs([PortRef(c_id, Direction.OUTPUT, 0)])
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            r_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(r_id,),
+                consumed_node_ids=(c_id, c_id),
+                consumed_wires=(),
+                port_mapping={PortRef(c_id, Direction.OUTPUT, 0): PortRef(r_id, Direction.OUTPUT, 0)},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_duplicate_consumed_node_ids",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="more than once"):
+            apply(diagram, rule, _ScriptedMatch())

@@ -59,7 +59,15 @@ Algorithm.
    for Phase 6 to replay against, so an unvalidated bad value from either field would
    otherwise surface far from its cause (a confusing failure deep in remapping, or in a
    certificate replay), or -- if it happens to alias a real port by coincidence -- not
-   surface at all.
+   surface at all. It also rejects a repeated entry in ``build_result.consumed_node_ids``
+   (Phase 5 round-12 audit, A3): every entry there names a real node individually, so the
+   membership check above would not catch a duplicate, but step 6's removal loop would call
+   :meth:`~qufzx.diagram.graph.Diagram.remove_node` twice on the same (by-then-already-
+   removed) id, raising :class:`~qufzx.diagram.graph.GraphGrammarError` -- a different
+   module's exception, escaping the ``RewriteError`` hierarchy this function's own docstring
+   promises. A duplicate is a malformed request (a match cannot legitimately consume the
+   same node twice), so it is rejected here, at the same point every other malformed
+   ``BuildResult`` field is.
 5. Remap every reference. This is the single most failure-prone part of a rewrite (see
    :mod:`qufzx.semantics.check`'s interface check, which fails on a boundary that lost its
    order or its entries before ever comparing a tensor). For every wire in ``working``
@@ -167,6 +175,128 @@ What this module deliberately does not do. It does not search for matches (that 
 not choose which rule or which match to apply, or iterate to a fixpoint (that is Phase 11's
 strategy layer); and, per ``CLAUDE.md``, it never contracts or evaluates a diagram
 numerically -- nothing in this module imports :mod:`qufzx.semantics`.
+
+The validation contract table (Phase 5 round-12 audit, B1).
+
+Rounds 4, 6, 7, and 9 of the Phase 5 audit each closed one hole in what ``apply()`` and
+``spider_fusion_builder`` check on an incoming :class:`~qufzx.rewrite.rule.Match` or an
+outgoing :class:`~qufzx.rewrite.rule.BuildResult`, without ever writing down the complete
+set of fields either one consumes. That let the same kind of hole (an untrusted field taken
+on faith) recur field-by-field across rounds instead of being closed once, for every field,
+in one pass. This table is that one pass: every field either function reads, who checks it,
+at which step (numbered per the Algorithm section above), with which error class, and the
+test that proves it. A row marked "not validated" says so explicitly and names the phase
+that owns closing it, rather than leaving the gap to be rediscovered as a "defect" later.
+
+Generic ``Match`` protocol fields (consumed by ``apply`` itself, for any future rule):
+
+======================================  =================================  ====  =================  ============================================================
+Field                                   Validated by                       Step  Error class          Proof
+======================================  =================================  ====  =================  ============================================================
+``side_condition_outcomes``             ``check_side_condition_coverage``  1     RewriteDomainError   test_engine.py::TestApplyEnforcesSideConditionCoverage,
+                                         (exact name-set coverage, no                                 test_engine.py::TestApplyRejectsAFailingMatch
+                                         dupes, all passed)
+``dimension_constraints``               Not validated -- recorded          9     n/a                  n/a (see below)
+                                         verbatim into ``RewriteStep`` for
+                                         the certificate; never used to
+                                         gate whether ``apply`` proceeds
+``all_side_conditions_passed``          Not read by ``apply`` at all --    n/a   n/a                  test_match.py (``all_side_conditions_passed`` is vacuously True
+                                         ``check_side_condition_coverage``                             over an empty tuple; superseded by explicit coverage checking,
+                                         is the real gate, precisely                                   never relied on as a gate)
+                                         because this property alone
+                                         cannot see a missing outcome
+======================================  =================================  ====  =================  ============================================================
+
+``dimension_constraints`` is deliberately unvalidated here: nothing in Phase 5 checks that
+a match's claimed constraints are the ones its own side conditions actually produced (a
+foreign match could report an empty tuple, or an unrelated one, without ``apply`` noticing,
+since these pairs only ever get *recorded*, never *acted on*, during graph surgery). This is
+intentional, not an oversight -- the field exists for Phase 6's certificate replay and
+Phase 10's real dimension unifier to consume, and *those* phases are the ones with a
+principled way to check a claimed constraint against a re-derived one (replay the rule at
+the stored match and compare, or re-run the unifier). Phase 5 has no unifier of its own to
+check it against yet. See ``FusionMatch.dimension_constraints``'s own docstring.
+
+``FusionMatch``-specific fields (consumed only by ``spider_fusion_builder``, which is
+reachable directly and not only through ``apply`` -- so it cannot rely on ``apply`` having
+already checked anything):
+
+======================================  =================================  ====  =================  ============================================================
+Field                                   Validated by                       Step  Error class          Proof
+======================================  =================================  ====  =================  ============================================================
+``isinstance(match, FusionMatch)``      ``spider_fusion_builder`` itself    B.1   RewriteGrammarError  test_rules_library.py::TestBuilderTypedErrors
+                                                                                                        ::test_rejects_a_non_fusion_match
+``side_condition_outcomes`` (again,     ``check_side_condition_coverage``   B.2   RewriteDomainError   test_rules_library.py::TestSideConditionCoverageEnforced
+against ``spider_fusion_builder``'s     against ``spider_fusion_builder``
+own declared side_conditions --         .side_conditions -- kept
+see A5 below)                           identical to ``SPIDER_FUSION``
+                                         .side_conditions by ``Rule``
+                                         .__post_init__ itself (A5)
+``a_id``, ``b_id``, ``wire``            ``resolve_fusion_match``, called    B.3   RewriteGrammarError  test_match.py::TestResolveFusionMatchIsTheSharedPredicate
+(structural: distinct, present in       fresh against ``diagram``                 (structural)         (distinct/absent/non-incident cases)
+``diagram``, wire incident on both)
+same_generator_type /                   ``resolve_fusion_match``, the       B.3   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
+parallel_wires_become_self_loops /      exact function ``find_matches``           (domain)             ::test_a1_fabricated_same_generator_type_outcome_on_a_z_x_pair
+consumed_wire_direction_permitted_      calls to decide a candidate in                                 _is_rejected
+for_color / dimension_agreement /       the first place -- not a second,
+phase_dimension_agreement (the six      independently-maintained copy of
+side conditions, re-verified fresh,     this logic (A1)
+not merely trusted from
+``side_condition_outcomes``)
+``shared_dim``                          Checked for exact agreement with    B.4   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
+                                         ``resolve_fusion_match``'s own                                 ::test_a2_shared_dim_unrelated_to_the_matched_legs_is_rejected
+                                         freshly-derived value (A2)
+``bindings``                            Checked for exact agreement with    B.4   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
+                                         ``resolve_fusion_match``'s own                                 ::test_a2_bindings_unrelated_to_the_matched_legs_is_rejected
+                                         freshly-derived value (A2)
+======================================  =================================  ====  =================  ============================================================
+
+``BuildResult`` fields (consumed by ``apply`` itself, for any future rule; step numbers per
+the Algorithm section above):
+
+======================================  =================================  ====  =================  ============================================================
+Field                                   Validated by                       Step  Error class          Proof
+======================================  =================================  ====  =================  ============================================================
+``diagram``                             ``is working`` identity check       3     RewriteGrammarError  (no dedicated regression test; every other engine test would
+                                                                                                        fail immediately if this check were removed, since a builder
+                                                                                                        that substituted a different diagram would desync every
+                                                                                                        later step from ``working``)
+``scalar_introduced``                   Exact equality against              4     RewriteDomainError   test_engine.py::TestApplyRejectsAScalarMismatch
+                                         ``rule.scalar_introduced``
+``consumed_wires`` (membership)         Every entry must be present in       4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
+                                         ``working.wires``                                                    ::test_raises_when_the_matched_wire_is_absent_from_the_diagram
+``consumed_wires`` (duplicates)         Not validated -- collapsed          n/a   n/a                  n/a (see below)
+                                         harmlessly by ``frozenset``
+``consumed_node_ids`` (membership)      Every entry must be present in       4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
+                                         ``working.nodes``                                                    ::test_raises_when_the_build_result_names_a_missing_node_id
+``consumed_node_ids`` (duplicates)      No entry may repeat (A3)             4     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
+                                                                                                        ::test_a3_duplicate_consumed_node_ids_raises_rewrite_grammar_error
+``new_node_ids``                        Every entry must be present in       4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
+                                         ``working.nodes``                                                    ::test_raises_when_new_node_ids_names_a_node_never_added
+``port_mapping`` (values)               Every value must name a real,        4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
+                                         in-range port in ``working``                                        ::test_raises_when_port_mapping_names_an_out_of_range_port
+``port_mapping`` (keys, existence)      Not validated -- an extra key       n/a   n/a                  n/a (see below)
+                                         naming a port nothing ever looks
+                                         up is silently unused
+``port_mapping`` (covers every          Every wire/boundary endpoint on a    5     RewriteDomainError   test_engine.py::TestApplyRejectsAnUnmappedSurvivingPort,
+consumed-node endpoint that             consumed node must appear as a                                 TestApplyRejectsAnUnmappedSurvivingBoundaryPort
+survives)                               key (``_remap_endpoint``)
+``port_mapping`` (no collapse)          Both endpoints of a surviving wire   5     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
+                                         must map to two distinct ports                                       ::test_collapsing_port_mapping_raises_rewrite_grammar_error
+Overall structural non-regression       Multiset ``(kind, ref)`` comparison  8     RewriteDomainError   test_engine.py::TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind,
+(not one field -- the combined          of ``validate(diagram)`` vs.                                   TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode
+effect of every field above)            ``validate(working)``
+======================================  =================================  ====  =================  ============================================================
+
+``consumed_wires`` duplicates and unused ``port_mapping`` keys are the two rows left
+deliberately open: a duplicate consumed wire is inert (``frozenset(build_result
+.consumed_wires)`` is used purely for set membership in the removal loop, so a repeat has
+no observable effect -- unlike a duplicate *node* id, which drives an imperative removal
+loop and so does have one, see A3), and an extra, unused ``port_mapping`` key can never
+corrupt a rewrite since nothing ever looks it up. Both are harmless-by-construction rather
+than silently-wrong-by-construction, which is the distinction that makes leaving them
+unchecked a deliberate choice rather than an oversight -- unlike A1/A2/A3, which were all
+silently wrong.
 """
 
 from __future__ import annotations
@@ -419,6 +549,28 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"rule {rule.name!r}: match does not belong to the diagram it is applied to "
             f"(consumed wire(s) absent: {missing_wires!r}; consumed node id(s) absent: "
             f"{missing_node_ids!r})"
+        )
+
+    # A3 (Phase 5 round-12 audit): a repeated entry in consumed_node_ids passes the
+    # membership check above (every entry, including the repeat, is a real node id) but
+    # would make step 6's ``working.remove_node(node_id)`` loop call ``remove_node`` twice
+    # on the same, by-then-already-removed id -- raising
+    # ``qufzx.diagram.graph.GraphGrammarError``, a different module's exception, escaping
+    # this function's declared ``RewriteError`` hierarchy entirely (``apply``'s own
+    # docstring promises only ``RewriteDomainError``/``RewriteGrammarError``). A duplicate
+    # is a malformed request -- the same node cannot legitimately be consumed twice by one
+    # match -- so it is rejected here, at the same point every other ``BuildResult`` field
+    # is validated, rather than left to surface as a foreign error class deep in step 6.
+    duplicate_node_ids = [
+        node_id
+        for node_id, count in Counter(build_result.consumed_node_ids).items()
+        if count > 1
+    ]
+    if duplicate_node_ids:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: build_result.consumed_node_ids names the same node id "
+            f"more than once: {sorted(duplicate_node_ids)!r} -- a match cannot legitimately "
+            "consume the same node twice"
         )
 
     # Every id the builder claims to have created must actually exist in ``working``, and

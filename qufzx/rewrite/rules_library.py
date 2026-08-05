@@ -94,12 +94,18 @@ against the resolved ``shared_dim`` before a :class:`~qufzx.rewrite.match.Fusion
 ever returned: a leg that fails to unify makes the candidate a non-match, and a leg that
 only unifies by deferring or binding a symbol is recorded in
 :attr:`~qufzx.rewrite.match.FusionMatch.dimension_constraints`, with ``shared_dim`` itself
-possibly refined further by that leg's binding. By the time this builder runs, every
-surviving port this loop assigns ``shared_dim`` to has therefore already been verified (or
-assumed, with the assumption on record) to agree with it -- match-approval and
-build-applicability are the same predicate by construction (see
-:mod:`qufzx.rewrite.match`'s module docstring), not a policy this builder re-derives on
-its own. When the matched wire's ``dimension_agreement`` only deferred (on the connecting
+possibly refined further by that leg's binding. This builder does not merely take that
+verification on faith, either (Phase 5 round-12 audit, A2): :func:`spider_fusion_builder`
+calls :func:`~qufzx.rewrite.match.resolve_fusion_match` -- the very same function
+:func:`~qufzx.rewrite.match.find_matches` calls to decide whether a candidate is a match at
+all -- fresh against the diagram it was actually handed, and builds from *its* returned
+``shared_dim`` only after confirming it agrees exactly with ``match.shared_dim``; a
+foreign or hand-built match whose ``shared_dim`` does not relate to the ports it names is
+rejected with :class:`~qufzx.rewrite.rule.RewriteDomainError` rather than trusted. This
+is what makes "match-approval and build-applicability are the same predicate by
+construction" (see :mod:`qufzx.rewrite.match`'s module docstring) literally true -- the
+same function object, called from both places, not a policy this builder re-derives
+independently and hopes stays in sync. When the matched wire's ``dimension_agreement`` only deferred (on the connecting
 pair or on some surviving leg), the affected leg's assumed equality with ``shared_dim`` is
 carried into the diagram -- a neighbouring wire that was an exact match before this fusion
 may become merely deferred after it. That is expected, not a defect. See
@@ -136,7 +142,13 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, FusionPattern, _reattach_phase
+from qufzx.rewrite.match import (
+    FUSION_SIDE_CONDITIONS,
+    FusionMatch,
+    FusionPattern,
+    reattach_phase,
+    resolve_fusion_match,
+)
 from qufzx.rewrite.rule import (
     BuildResult,
     Match,
@@ -166,7 +178,7 @@ def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim, bindings: Mappi
     """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``.
 
     Or an all-zero vector if ``phase`` is absent. Delegates to
-    :func:`qufzx.rewrite.match._reattach_phase` -- the same function
+    :func:`qufzx.rewrite.match.reattach_phase` -- the same function
     ``phase_dimension_agreement`` uses as its own trial construction while matching -- so
     that match-approval and build-applicability are the same predicate by construction, not
     two similar-looking computations kept in sync by hand. See that function's docstring for
@@ -189,7 +201,7 @@ def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim, bindings: Mappi
     if phase is None:
         return PhaseVector(shared_dim, {})
     try:
-        return _reattach_phase(phase, shared_dim, bindings)
+        return reattach_phase(phase, shared_dim, bindings)
     except PhaseDomainError as exc:
         raise RewriteDomainError(
             f"spider_fusion cannot reattach a phase vector to shared dimension "
@@ -233,42 +245,79 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     the leg-ordering and scalar conventions) and returns the :class:`BuildResult`
     :mod:`qufzx.rewrite.engine` needs to splice it in; never removes the matched nodes or
     touches any wire or boundary entry itself -- see :class:`~qufzx.rewrite.rule.BuildResult`.
-    Verifies ``match``'s ``side_condition_outcomes`` exactly covers
-    :data:`~qufzx.rewrite.match.FUSION_SIDE_CONDITIONS`, with every outcome passed (via
-    :func:`~qufzx.rewrite.rule.check_side_condition_coverage`), before doing any graph
-    surgery -- this builder is reachable directly, not only through
-    :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having already
-    checked this. Also verifies ``match.wire`` actually joins ``match.a_id`` and
-    ``match.b_id`` (raising :class:`~qufzx.rewrite.rule.RewriteGrammarError` naming the
-    wire and both node ids if not), for the same reason: any match ``find_matches`` itself
-    produced satisfies this by construction, but a hand-built or foreign ``FusionMatch``
-    whose wire names some other pair would otherwise make the consumed-ref selection just
-    below silently pick the wrong port(s) on ``node_a``/``node_b``, and fail much later
-    with a step-8 relative-postcondition error that names the wrong defect entirely.
+
+    Trusts nothing about ``match`` for graph surgery until it has been independently
+    re-derived (Phase 5 round-12 audit, defects A1/A2/A4). In order:
+
+    1. ``isinstance(match, FusionMatch)`` -- a foreign match type is a malformed request.
+    2. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against
+       ``spider_fusion_builder.side_conditions`` (the same object
+       :data:`SPIDER_FUSION.side_conditions <SPIDER_FUSION>` is built from -- see
+       :class:`~qufzx.rewrite.rule.Rule`'s constructor-time consistency check, which makes
+       two contradicting tuples impossible to wire up in the first place, not merely
+       undesirable). This builder is reachable directly, not only through
+       :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having
+       already checked this.
+    3. :func:`~qufzx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``
+       at ``match.a_id``, ``match.b_id``, ``match.wire`` -- the exact same function
+       :func:`~qufzx.rewrite.match.find_matches` calls to decide whether this is a fusion
+       candidate at all. This is what actually verifies ``node_a.generator_type ==
+       node_b.generator_type`` (A1: a match's ``side_condition_outcomes`` claiming
+       ``same_generator_type`` passed, for an actual Z/X pair, is caught here -- coverage
+       alone cannot catch a fabricated-passing outcome, only a missing or duplicate one)
+       and that ``match.shared_dim``/``match.bindings`` actually relate to the ports being
+       assigned them (A2: re-derived fresh, then checked for exact agreement with what
+       ``match`` itself claims, rather than the pre-fix behavior of assigning
+       ``match.shared_dim`` to every surviving port on faith). Any disagreement, or a
+       freshly-failing side condition, raises
+       :class:`~qufzx.rewrite.rule.RewriteDomainError` -- a match asserting something that
+       does not hold is a domain violation, the same category
+       :func:`check_side_condition_coverage` already uses for a failed or incomplete
+       outcome tuple, not a different error class for what is the same kind of defect.
+       Everything from here on builds from ``resolution``'s fields, never ``match.shared_dim``
+       or ``match.bindings`` directly, even though they are now known to agree.
+
+    A structurally malformed match -- ``match.a_id == match.b_id``, either node id absent
+    from ``diagram``, or ``match.wire`` not actually incident on both -- surfaces as
+    :class:`~qufzx.rewrite.rule.RewriteGrammarError` from step 3 itself (via
+    :func:`~qufzx.rewrite.match.resolve_fusion_match`), the same class this builder raised
+    for that case before this refactor.
     """
     if not isinstance(match, FusionMatch):
         raise RewriteGrammarError(
             f"spider_fusion requires a FusionMatch, got {type(match).__name__}"
         )
-    check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, "spider_fusion")
+    check_side_condition_coverage(
+        match, spider_fusion_builder.side_conditions, "spider_fusion"  # type: ignore[attr-defined]
+    )
 
-    node_a = diagram.nodes.get(match.a_id)
-    node_b = diagram.nodes.get(match.b_id)
-    if node_a is None or node_b is None:
-        raise RewriteGrammarError(
-            f"matched node(s) {match.a_id!r}, {match.b_id!r} not found in the given diagram"
+    resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+    if not resolution.passed:
+        failed = [outcome.name for outcome in resolution.outcomes if not outcome.passed]
+        raise RewriteDomainError(
+            f"spider_fusion: match at ({match.a_id!r}, {match.b_id!r}) over wire "
+            f"{match.wire!r} fails side condition(s) {failed} when re-verified fresh "
+            "against the diagram it is being applied to; match.side_condition_outcomes "
+            "claimed every condition passed, but a match's own outcomes are never taken "
+            "on faith for graph surgery -- see resolve_fusion_match"
+        )
+    if match.shared_dim != resolution.shared_dim:
+        raise RewriteDomainError(
+            f"spider_fusion: match.shared_dim {match.shared_dim!r} disagrees with the "
+            f"shared dimension {resolution.shared_dim!r} resolve_fusion_match derives "
+            "fresh from the diagram for this wire; a match's own shared_dim is never "
+            "trusted for graph surgery without this agreement"
+        )
+    if dict(match.bindings) != dict(resolution.bindings):
+        raise RewriteDomainError(
+            f"spider_fusion: match.bindings {dict(match.bindings)!r} disagrees with the "
+            f"bindings {dict(resolution.bindings)!r} resolve_fusion_match derives fresh "
+            "from the diagram for this wire"
         )
 
+    node_a = diagram.nodes[match.a_id]
+    node_b = diagram.nodes[match.b_id]
     wire = match.wire
-    wire_node_ids = {wire.a.node_id, wire.b.node_id}
-    if wire_node_ids != {match.a_id, match.b_id}:
-        raise RewriteGrammarError(
-            f"spider_fusion: match's wire {wire!r} is not incident on both matched nodes "
-            f"{match.a_id!r} and {match.b_id!r} (wire connects {sorted(wire_node_ids)!r}); "
-            "a hand-built or foreign FusionMatch whose wire does not actually join a_id "
-            "and b_id would otherwise have its consumed-ref selection below silently pick "
-            "the wrong port(s), failing much later with an unrelated error"
-        )
     consumed_ref_a = wire.a if wire.a.node_id == match.a_id else wire.b
     consumed_ref_b = wire.b if wire.a.node_id == match.a_id else wire.a
 
@@ -282,13 +331,20 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     any_legs_survive = bool(merged_inputs or merged_outputs)
     merged_phase = _merged_phase(
-        node_a, node_b, match.shared_dim, match.bindings, any_legs_survive=any_legs_survive
+        node_a,
+        node_b,
+        resolution.shared_dim,
+        resolution.bindings,
+        any_legs_survive=any_legs_survive,
     )
 
+    # node_a.generator_type is only safe to build the merged node from because
+    # ``resolution.passed`` above already confirmed node_a.generator_type ==
+    # node_b.generator_type (condition 2) -- see step 3 in this function's docstring.
     new_node_id = diagram.add_node(
         node_a.generator_type,
-        input_dims=[match.shared_dim] * len(merged_inputs),
-        output_dims=[match.shared_dim] * len(merged_outputs),
+        input_dims=[resolution.shared_dim] * len(merged_inputs),
+        output_dims=[resolution.shared_dim] * len(merged_outputs),
         phase=merged_phase,
     )
 
@@ -306,6 +362,19 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         port_mapping=port_mapping,
         scalar_introduced=Scalar.one(),
     )
+
+
+spider_fusion_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The single declared side-condition tuple this builder checks coverage against.
+
+Set on the function object itself (rather than reading the module-level
+``FUSION_SIDE_CONDITIONS`` constant directly inside the function body, which would make
+this attribute purely decorative) so :class:`~qufzx.rewrite.rule.Rule`'s constructor-time
+consistency check can compare it against whatever ``side_conditions`` a ``Rule`` wrapping
+this builder declares -- see that check's docstring and A5 in the Phase 5 round-12 audit
+brief: two contradicting tuples for the same builder must be impossible to construct, not
+merely undocumented.
+"""
 
 
 SPIDER_FUSION = Rule(

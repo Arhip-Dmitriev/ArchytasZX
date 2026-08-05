@@ -123,7 +123,7 @@ per-candidate outcomes are recorded):
    phase legally stated over symbolic ``d`` with an entry at index 5 has ``Dim`` equal to
    ``d``, which matches a ``shared_dim`` of ``2`` under a binding ``d := 2`` -- yet index 5
    is out of range once ``d`` is actually ``2``). This condition therefore also verifies,
-   for every phase actually present, that :func:`_reattach_phase` -- substituting condition
+   for every phase actually present, that :func:`reattach_phase` -- substituting condition
    5's accumulated concrete bindings into the phase's entries (via
    :meth:`~qufzx.algebra.phase.PhaseVector.substitute`, never leaving a stale dimension
    symbol baked into an entry once its own binding has resolved ``shared_dim`` past it; see
@@ -134,7 +134,7 @@ per-candidate outcomes are recorded):
    the original entries. A :class:`~qufzx.algebra.phase.PhaseDomainError` here is a failed
    condition (non-match), never let escape from the builder later.
    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls the very same
-   :func:`_reattach_phase` to actually build the merged phase, so this makes match-approval
+   :func:`reattach_phase` to actually build the merged phase, so this makes match-approval
    and build-applicability the same predicate by construction, not two predicates kept in
    sync by hand: the invariant is that every match this function returns can be applied by
    :func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8 relative-
@@ -240,6 +240,38 @@ ids no longer uniquely determine a candidate once condition 3 permits several pa
 wires -- by the consumed wire's own (direction, index) on each side, never by set or dict
 iteration order, since certificates and Phase 12's cache tests will compare match lists
 directly.
+
+One verification predicate, not two kept in sync by hand (Phase 5 round-12 audit). Prior
+rounds' claim that "match-approval and build-applicability are the same predicate by
+construction" (condition 6, above) was true of the phase check alone (both callers went
+through :func:`_reattach_phase`/:func:`reattach_phase`) but false of the rest of a
+candidate's legality: :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` built the
+merged node straight from ``node_a.generator_type`` and ``match.shared_dim`` with no check
+that ``node_a`` and ``node_b`` actually share a generator type, or that ``shared_dim``
+actually related to the ports it was about to be assigned to. A hand-built or foreign
+``FusionMatch`` carrying a fabricated-passing ``side_condition_outcomes`` tuple, a Z/X pair,
+or a ``shared_dim`` unrelated to the matched legs was applied anyway, producing a diagram
+:mod:`qufzx.diagram.validate` called clean and denoting something else entirely.
+:func:`resolve_fusion_match` closes this: it is the one function that decides conditions 2
+(``same_generator_type``) and 4-6 (``consumed_wire_direction_permitted_for_color``,
+``dimension_agreement``, ``phase_dimension_agreement``) from ``(diagram, a_id, b_id, wire)``
+alone, never from a pre-existing match's own fields. :func:`find_matches` calls it once per
+candidate wire to decide whether to return a match at all, and to populate that match's
+``shared_dim``/``bindings``/``dimension_constraints``/``side_condition_outcomes``.
+:func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, against
+the diagram it was actually handed, and uses *only* its return value -- never
+``match.shared_dim``, ``match.bindings``, or an unchecked ``node_a.generator_type`` -- for
+graph surgery, raising :class:`~qufzx.rewrite.rule.RewriteDomainError` if the match's own
+claimed ``shared_dim``/``bindings`` disagree with what this function independently derives.
+So "the same predicate by construction" is now literally the same function object called
+from both places, not a documented intention two similar-looking computations could drift
+out of sync with. Conditions 1 (``distinct_nodes``) and 3
+(``parallel_wires_become_self_loops``) remain :func:`find_matches`' own responsibility to
+report (though :func:`resolve_fusion_match` still recomputes and reports them itself, from
+``diagram`` alone, so a builder-side re-verify sees a complete, independently-derived
+six-outcome picture too) -- they gate whether a wire is a fusion candidate in the first
+place (a self-loop is excluded from candidate grouping entirely; the count of "other" wires
+joining a pair is a property of the pair, not of any one candidate wire's own legality).
 """
 
 from __future__ import annotations
@@ -299,7 +331,7 @@ class FusionMatch:
     connecting pair's own and every surviving leg's, on either node (see
     :func:`find_matches`'s local ``bindings`` dict, which this field is built from
     verbatim). :mod:`qufzx.rewrite.rules_library`'s builder substitutes it into a present
-    phase's entries, via :func:`_reattach_phase`, before reattaching them to ``shared_dim``
+    phase's entries, via :func:`reattach_phase`, before reattaching them to ``shared_dim``
     -- see that function's docstring for why this, not a stricter matcher, is the
     resolution of the ``_over_shared_dim`` defect family.
     """
@@ -435,8 +467,15 @@ def _unify_surviving_legs(
     return shared_dim, constraints, any_deferred
 
 
-def _reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
+def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
     """Substitute ``bindings`` into ``phase``'s entries, then reattach the result to ``shared_dim``.
+
+    Public (not ``_reattach_phase``, its pre-round-12 name): both this module's own
+    :func:`resolve_fusion_match` and :mod:`qufzx.rewrite.rules_library`'s
+    :func:`~qufzx.rewrite.rules_library._over_shared_dim` treat it as the shared
+    match-approval / build-applicability contract their own docstrings describe -- that
+    makes it public API in all but name, so a leading underscore claiming otherwise is
+    corrected here rather than left as a private name two modules quietly depend on.
 
     This is the one, shared resolution -- used identically here (as a trial construction
     ``dimension_agreement`` performs to decide whether a candidate is a match at all) and by
@@ -505,6 +544,304 @@ def _validate_wire_endpoint(diagram: Diagram, wire: Wire, ref: PortRef) -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FusionResolution:
+    """The one verification predicate behind every :data:`FUSION_SIDE_CONDITIONS` entry.
+
+    Returned by :func:`resolve_fusion_match`, computed fresh from ``(diagram, a_id, b_id,
+    wire)`` alone -- never from a pre-existing :class:`FusionMatch`'s own fields. See the
+    module docstring's "One verification predicate" paragraph for why this exists and who
+    calls it.
+
+    ``outcomes`` covers exactly the six :data:`FUSION_SIDE_CONDITIONS` names, in that order,
+    each independently derived. ``passed`` is ``True`` iff every one of them passed. When
+    ``True``, ``shared_dim``, ``bindings``, and ``dimension_constraints`` are the ground
+    truth to build a merged node from -- the only values
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` may use for graph surgery,
+    never a pre-existing match's own same-named fields, which a hand-built or foreign
+    ``FusionMatch`` could have fabricated. When ``False``, those three fields are
+    best-effort placeholders (computed only as far as resolution got before the first
+    failing condition) and must not be used for anything but diagnostics -- a condition
+    that was never reached because an earlier one already failed is still recorded, as a
+    failing outcome whose detail says so, so ``outcomes`` always has exactly six entries
+    regardless of where resolution stopped.
+    """
+
+    passed: bool
+    shared_dim: Dim
+    bindings: Mapping[str, Dim]
+    dimension_constraints: tuple[tuple[Dim, Dim], ...]
+    outcomes: tuple[SideConditionOutcome, ...]
+
+
+def resolve_fusion_match(diagram: Diagram, a_id: NodeId, b_id: NodeId, wire: Wire) -> FusionResolution:
+    """Decide, from ``diagram`` alone, whether ``wire`` is a legal fusion of ``a_id``/``b_id``.
+
+    The single shared predicate behind conditions 1-6 in the module docstring -- see "One
+    verification predicate" there for the full account of why this function exists and the
+    Phase 5 round-12 audit defect (A1/A2/A4) it closes. :func:`find_matches` calls this once
+    per candidate wire to decide whether to report a match at all, and to populate the
+    :class:`FusionMatch` it returns. :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`
+    calls it again, fresh, against the diagram it was actually handed, and trusts only this
+    function's return value for graph surgery -- never ``match.shared_dim``,
+    ``match.bindings``, or an unverified ``node_a.generator_type`` -- so a foreign or
+    hand-built match cannot smuggle a fabricated value past the builder by simply asserting
+    it in a passing-looking ``side_condition_outcomes`` tuple.
+
+    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` for a structurally malformed
+    request: ``a_id == b_id``, either node id absent from ``diagram``, ``wire`` not actually
+    incident on both ``a_id`` and ``b_id``, or either of ``wire``'s own endpoints naming an
+    unknown node id or an out-of-range port index (via :func:`_validate_wire_endpoint`).
+    These are requests that cannot even be evaluated, not candidates that evaluate to
+    "no" -- the same domain/grammar split :mod:`qufzx.rewrite.rule`'s module docstring
+    states for this package as a whole.
+
+    Never mutates ``diagram``.
+    """
+    if a_id == b_id:
+        raise RewriteGrammarError(
+            f"resolve_fusion_match: a_id and b_id must be distinct, both were {a_id!r}"
+        )
+    node_a = diagram.nodes.get(a_id)
+    node_b = diagram.nodes.get(b_id)
+    if node_a is None or node_b is None:
+        raise RewriteGrammarError(
+            f"resolve_fusion_match: node id(s) {a_id!r}, {b_id!r} not both present in the diagram"
+        )
+    wire_node_ids = {wire.a.node_id, wire.b.node_id}
+    if wire_node_ids != {a_id, b_id}:
+        raise RewriteGrammarError(
+            f"resolve_fusion_match: wire {wire!r} does not connect {a_id!r} and {b_id!r} "
+            f"(it connects {sorted(wire_node_ids)!r})"
+        )
+    _validate_wire_endpoint(diagram, wire, wire.a)
+    _validate_wire_endpoint(diagram, wire, wire.b)
+
+    ref_a = wire.a if wire.a.node_id == a_id else wire.b
+    ref_b = wire.b if wire.a.node_id == a_id else wire.a
+
+    other_wire_count = sum(
+        1
+        for other in diagram.wires
+        if other != wire and {other.a.node_id, other.b.node_id} == {a_id, b_id}
+    )
+
+    outcomes: list[SideConditionOutcome] = [
+        SideConditionOutcome("distinct_nodes", True, f"{a_id!r} != {b_id!r}"),
+    ]
+
+    same_type = node_a.generator_type == node_b.generator_type
+    outcomes.append(
+        SideConditionOutcome(
+            "same_generator_type",
+            same_type,
+            (
+                f"both nodes are {node_a.generator_type.name!r}"
+                if same_type
+                else f"{a_id!r} is {node_a.generator_type.name!r} but {b_id!r} is "
+                f"{node_b.generator_type.name!r}"
+            ),
+        )
+    )
+
+    outcomes.append(
+        SideConditionOutcome(
+            "parallel_wires_become_self_loops",
+            True,
+            f"{other_wire_count} other wire(s) join the two nodes, surviving as "
+            "self-loop(s) on the merged spider",
+        )
+    )
+
+    def _failed(remaining_names: tuple[str, ...], reason: str) -> FusionResolution:
+        for name in remaining_names:
+            outcomes.append(SideConditionOutcome(name, False, reason))
+        return FusionResolution(
+            passed=False,
+            shared_dim=Dim.concrete(1),
+            bindings=MappingProxyType({}),
+            dimension_constraints=(),
+            outcomes=tuple(outcomes),
+        )
+
+    if not same_type:
+        return _failed(
+            (
+                "consumed_wire_direction_permitted_for_color",
+                "dimension_agreement",
+                "phase_dimension_agreement",
+            ),
+            "not evaluated: same_generator_type failed first",
+        )
+
+    fusable = node_a.generator_type.name in _FUSABLE_GENERATOR_NAMES
+    same_direction = ref_a.direction == ref_b.direction
+    direction_ok = fusable and (
+        not same_direction or node_a.generator_type.name in _SAME_DIRECTION_FUSABLE_GENERATOR_NAMES
+    )
+
+    if not fusable:
+        direction_detail = f"{node_a.generator_type.name!r} is not a registered fusable generator type"
+    else:
+        direction_detail = (
+            f"{ref_a} (direction={ref_a.direction.value}) -> "
+            f"{ref_b} (direction={ref_b.direction.value})"
+        )
+        if same_direction:
+            direction_detail += (
+                f" (same-direction {ref_a.direction.value}-{ref_b.direction.value} wire, "
+                f"permitted for {node_a.generator_type.name!r} only -- see the module "
+                "docstring, condition 4)"
+                if direction_ok
+                else (
+                    f" (same-direction {ref_a.direction.value}-{ref_b.direction.value} wire "
+                    f"is not permitted for {node_a.generator_type.name!r} -- see the module "
+                    "docstring, condition 4)"
+                )
+            )
+    outcomes.append(
+        SideConditionOutcome(
+            "consumed_wire_direction_permitted_for_color", direction_ok, direction_detail
+        )
+    )
+
+    if not direction_ok:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            "not evaluated: consumed_wire_direction_permitted_for_color failed first",
+        )
+
+    legs_a = node_a.legs(ref_a.direction)
+    legs_b = node_b.legs(ref_b.direction)
+    port_a = legs_a[ref_a.index]
+    port_b = legs_b[ref_b.index]
+    leg_unify = port_a.dim.unify(port_b.dim)
+    if leg_unify.is_failure:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            f"{port_a.dim} != {port_b.dim}: unify failed",
+        )
+
+    dimension_constraints: list[tuple[Dim, Dim]] = []
+    leg_deferred = leg_unify.is_deferred
+    leg_bound = leg_unify.is_success and bool(leg_unify.bindings)
+    if leg_deferred or leg_bound:
+        dimension_constraints.append((port_a.dim, port_b.dim))
+    if leg_deferred:
+        leg_detail = f"{port_a.dim} == {port_b.dim} (deferred, assumed)"
+    elif leg_bound:
+        binding_desc = ", ".join(
+            f"{name} := {value}" for name, value in sorted(leg_unify.bindings.items())
+        )
+        leg_detail = f"{port_a.dim} == {port_b.dim} (bound: {binding_desc})"
+    else:
+        leg_detail = f"{port_a.dim} == {port_b.dim}"
+
+    shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
+    bindings: dict[str, Dim] = {
+        name: value for name, value in leg_unify.bindings.items() if value.is_concrete
+    }
+
+    survive_a = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim, bindings)
+    if survive_a is None:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            "a surviving leg of the A-side node does not unify with shared_dim",
+        )
+    shared_dim, extra_constraints_a, deferred_a = survive_a
+
+    survive_b = _unify_surviving_legs(node_b, b_id, ref_b, shared_dim, bindings)
+    if survive_b is None:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            "a surviving leg of the B-side node does not unify with shared_dim",
+        )
+    shared_dim, extra_constraints_b, deferred_b = survive_b
+
+    dimension_constraints.extend(extra_constraints_a)
+    dimension_constraints.extend(extra_constraints_b)
+    leg_deferred = leg_deferred or deferred_a or deferred_b
+
+    outcomes.append(
+        SideConditionOutcome(
+            "dimension_agreement",
+            True,
+            leg_detail
+            + (
+                ""
+                if not (extra_constraints_a or extra_constraints_b)
+                else (
+                    f"; surviving leg(s) resolved to shared_dim={shared_dim} with "
+                    f"{len(extra_constraints_a) + len(extra_constraints_b)} additional "
+                    "assumed dimension equality/ies"
+                )
+            ),
+            deferred=leg_deferred,
+        )
+    )
+
+    phase_a_dim = node_a.phase.dim if node_a.phase is not None else None
+    phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
+    phase_dims_present = tuple(d for d in (phase_a_dim, phase_b_dim) if d is not None)
+    phase_dims_agree = all(
+        _resolve_with_bindings(phase_dim, bindings) == shared_dim for phase_dim in phase_dims_present
+    )
+    if phase_dims_agree and phase_a_dim is not None and phase_b_dim is not None:
+        phase_dims_agree = phase_a_dim == phase_b_dim
+    if phase_dims_agree:
+        for phase in (node_a.phase, node_b.phase):
+            if phase is None:
+                continue
+            try:
+                reattach_phase(phase, shared_dim, bindings)
+            except PhaseDomainError:
+                phase_dims_agree = False
+                break
+
+    phase_binding_names = sorted(
+        {
+            name
+            for phase_dim in phase_dims_present
+            for name in phase_dim.free_symbols
+            if name in bindings
+        }
+    )
+    phase_deferred = phase_dims_agree and bool(phase_dims_present) and bool(phase_binding_names)
+    if phase_dims_agree:
+        phase_detail = (
+            "no phase present on either node"
+            if not phase_dims_present
+            else (
+                "present phase dimension(s), after any leg-unify binding, equal "
+                f"the resolved shared leg dimension {shared_dim}"
+                + (
+                    "; assuming "
+                    + ", ".join(f"{name} := {bindings[name]}" for name in phase_binding_names)
+                    if phase_binding_names
+                    else ""
+                )
+            )
+        )
+    else:
+        phase_detail = (
+            "present phase dimension(s) do not agree with the resolved shared leg dimension "
+            f"{shared_dim} -- either the (possibly bound) container Dim disagrees, the two "
+            "nodes' raw phase Dims disagree with each other, or an entry falls out of range "
+            "under the binding"
+        )
+    outcomes.append(
+        SideConditionOutcome("phase_dimension_agreement", phase_dims_agree, phase_detail, deferred=phase_deferred)
+    )
+
+    return FusionResolution(
+        passed=phase_dims_agree,
+        shared_dim=shared_dim,
+        bindings=MappingProxyType(dict(bindings)),
+        dimension_constraints=tuple(dimension_constraints),
+        outcomes=tuple(outcomes),
+    )
+
+
 def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
@@ -553,22 +890,17 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         key = frozenset((wire.a.node_id, wire.b.node_id))
         candidates_by_pair.setdefault(key, []).append(wire)
 
-    # Flattened once so the loop below stays single-level: (wire, other_wire_count) for
-    # every wire in every candidate pair, where other_wire_count is how many other wires
-    # join that same pair (and so would survive fusing across `wire` as self-loops -- see
-    # condition 3, `parallel_wires_become_self_loops`, in the module docstring).
-    wire_candidates = [
-        (wire, len(connecting_wires) - 1)
-        for connecting_wires in candidates_by_pair.values()
-        for wire in connecting_wires
-    ]
+    # Flattened once so the loop below stays single-level: every wire in every candidate
+    # pair. How many *other* wires join that same pair (condition 3,
+    # ``parallel_wires_become_self_loops``) is recomputed, from ``diagram`` alone, inside
+    # :func:`resolve_fusion_match` below -- not threaded through here -- so that function
+    # stays the single source of truth for every one of the six side conditions, not five
+    # of them plus one still assembled by this loop.
+    wire_candidates = [wire for connecting_wires in candidates_by_pair.values() for wire in connecting_wires]
 
     matches: list[FusionMatch] = []
-    for wire, other_wire_count in wire_candidates:
+    for wire in wire_candidates:
         a_id, b_id = _ordered_pair(wire)
-
-        node_a = diagram.nodes[a_id]
-        node_b = diagram.nodes[b_id]
 
         ref_a = wire.a if wire.a.node_id == a_id else wire.b
         ref_b = wire.b if wire.a.node_id == a_id else wire.a
@@ -578,184 +910,24 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
         if ref_a in boundary_ref_set or ref_b in boundary_ref_set:
             continue
 
-        legs_a = node_a.legs(ref_a.direction)
-        legs_b = node_b.legs(ref_b.direction)
-
-        if node_a.generator_type != node_b.generator_type:
+        # See the module docstring, "One verification predicate": conditions 2 and 4-6 are
+        # decided by exactly this call, the same function
+        # :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls again to
+        # re-verify the match before trusting any of its fields -- not a second,
+        # independently-maintained copy of this logic.
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        if not resolution.passed:
             continue
-        if node_a.generator_type.name not in _FUSABLE_GENERATOR_NAMES:
-            continue
-        if (
-            ref_a.direction == ref_b.direction
-            and node_a.generator_type.name not in _SAME_DIRECTION_FUSABLE_GENERATOR_NAMES
-        ):
-            continue
-
-        port_a = legs_a[ref_a.index]
-        port_b = legs_b[ref_b.index]
-        leg_unify = port_a.dim.unify(port_b.dim)
-        if leg_unify.is_failure:
-            continue
-
-        dimension_constraints: list[tuple[Dim, Dim]] = []
-        leg_deferred = leg_unify.is_deferred
-        leg_bound = leg_unify.is_success and bool(leg_unify.bindings)
-        if leg_deferred or leg_bound:
-            dimension_constraints.append((port_a.dim, port_b.dim))
-        if leg_deferred:
-            leg_detail = f"{port_a.dim} == {port_b.dim} (deferred, assumed)"
-        elif leg_bound:
-            binding_desc = ", ".join(
-                f"{name} := {value}" for name, value in sorted(leg_unify.bindings.items())
-            )
-            leg_detail = f"{port_a.dim} == {port_b.dim} (bound: {binding_desc})"
-        else:
-            leg_detail = f"{port_a.dim} == {port_b.dim}"
-
-        shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
-
-        # Defect 2 (Phase 5 round-7 audit): the whole-candidate accumulator of every
-        # concrete symbol binding seen so far, starting with the connecting pair's own.
-        # ``_unify_surviving_legs`` below updates this in place with each surviving leg's
-        # own binding, so a present phase's Dim (resolved against this same accumulator
-        # further down) sees a binding a *surviving* leg produced, not only one the
-        # connecting pair produced -- see the module docstring, condition 6.
-        bindings: dict[str, Dim] = {
-            name: value for name, value in leg_unify.bindings.items() if value.is_concrete
-        }
-
-        survive_a = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim, bindings)
-        if survive_a is None:
-            continue
-        shared_dim, extra_constraints_a, deferred_a = survive_a
-
-        survive_b = _unify_surviving_legs(node_b, b_id, ref_b, shared_dim, bindings)
-        if survive_b is None:
-            continue
-        shared_dim, extra_constraints_b, deferred_b = survive_b
-
-        dimension_constraints.extend(extra_constraints_a)
-        dimension_constraints.extend(extra_constraints_b)
-        leg_deferred = leg_deferred or deferred_a or deferred_b
-
-        phase_a_dim = node_a.phase.dim if node_a.phase is not None else None
-        phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
-        phase_dims_present = tuple(d for d in (phase_a_dim, phase_b_dim) if d is not None)
-        phase_dims_agree = all(
-            _resolve_with_bindings(phase_dim, bindings) == shared_dim
-            for phase_dim in phase_dims_present
-        )
-        if phase_dims_agree and phase_a_dim is not None and phase_b_dim is not None:
-            phase_dims_agree = phase_a_dim == phase_b_dim
-        if phase_dims_agree:
-            for phase in (node_a.phase, node_b.phase):
-                if phase is None:
-                    continue
-                try:
-                    _reattach_phase(phase, shared_dim, bindings)
-                except PhaseDomainError:
-                    phase_dims_agree = False
-                    break
-        if not phase_dims_agree:
-            continue
-
-        # Names (sorted for determinism) of every binding in ``bindings`` that a present
-        # phase's own dim actually references -- named in the phase_dimension_agreement
-        # outcome's detail below so Phase 6's certificate reads exactly which assumption
-        # phase agreement rests on, not only that shared_dim itself does (see the module
-        # docstring, condition 6, and this outcome's ``deferred`` flag just below).
-        phase_binding_names = sorted(
-            {
-                name
-                for phase_dim in phase_dims_present
-                for name in phase_dim.free_symbols
-                if name in bindings
-            }
-        )
-        # phase_dimension_agreement is a plain Dim equality (never a call to Dim.unify), so it
-        # can never itself be DEFERRED -- unlike dimension_agreement, whose own deferred flag
-        # genuinely means "Dim.unify could not decide this". Reusing leg_deferred here would
-        # report an assumption that was never made whenever this condition's own equality was
-        # a bare syntactic identity, merely because some unrelated leg elsewhere happened to
-        # defer. The one real assumption this condition *can* rest on is a present phase's dim
-        # agreeing with shared_dim only after substituting a concrete symbol binding condition
-        # 5 produced (phase_binding_names, computed just above) -- with no phase present at
-        # all, there is nothing to assume. See the module docstring, condition 6.
-        phase_deferred = bool(phase_dims_present) and bool(phase_binding_names)
-
-        outcomes = (
-            SideConditionOutcome("distinct_nodes", True, f"{a_id!r} != {b_id!r}"),
-            SideConditionOutcome(
-                "same_generator_type",
-                True,
-                f"both nodes are {node_a.generator_type.name!r}",
-            ),
-            SideConditionOutcome(
-                "parallel_wires_become_self_loops",
-                True,
-                f"{other_wire_count} other wire(s) join the two nodes, surviving as "
-                "self-loop(s) on the merged spider",
-            ),
-            SideConditionOutcome(
-                "consumed_wire_direction_permitted_for_color",
-                True,
-                f"{ref_a} (direction={ref_a.direction.value}) -> "
-                f"{ref_b} (direction={ref_b.direction.value})"
-                + (
-                    ""
-                    if ref_a.direction != ref_b.direction
-                    else (
-                        f" (same-direction {ref_a.direction.value}-{ref_b.direction.value} "
-                        f"wire, permitted for {node_a.generator_type.name!r} only -- see the "
-                        "module docstring, condition 4)"
-                    )
-                ),
-            ),
-            SideConditionOutcome(
-                "dimension_agreement",
-                True,
-                leg_detail
-                + (
-                    ""
-                    if not (extra_constraints_a or extra_constraints_b)
-                    else (
-                        f"; surviving leg(s) resolved to shared_dim={shared_dim} with "
-                        f"{len(extra_constraints_a) + len(extra_constraints_b)} additional "
-                        "assumed dimension equality/ies"
-                    )
-                ),
-                deferred=leg_deferred,
-            ),
-            SideConditionOutcome(
-                "phase_dimension_agreement",
-                True,
-                (
-                    "no phase present on either node"
-                    if not phase_dims_present
-                    else (
-                        "present phase dimension(s), after any leg-unify binding, equal "
-                        f"the resolved shared leg dimension {shared_dim}"
-                        + (
-                            "; assuming "
-                            + ", ".join(f"{name} := {bindings[name]}" for name in phase_binding_names)
-                            if phase_binding_names
-                            else ""
-                        )
-                    )
-                ),
-                deferred=phase_deferred,
-            ),
-        )
 
         matches.append(
             FusionMatch(
                 a_id=a_id,
                 b_id=b_id,
                 wire=wire,
-                shared_dim=shared_dim,
-                side_condition_outcomes=outcomes,
-                dimension_constraints=tuple(dimension_constraints),
-                bindings=MappingProxyType(dict(bindings)),
+                shared_dim=resolution.shared_dim,
+                side_condition_outcomes=resolution.outcomes,
+                dimension_constraints=resolution.dimension_constraints,
+                bindings=MappingProxyType(dict(resolution.bindings)),
             )
         )
 

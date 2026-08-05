@@ -318,6 +318,28 @@ class Rule:
                 f"rule {self.name!r}: scalar_introduced must be a Scalar, "
                 f"got {type(self.scalar_introduced).__name__}"
             )
+        # A5 (Phase 5 round-12 audit): a builder that itself calls
+        # ``check_side_condition_coverage`` (e.g. ``spider_fusion_builder``, since it is
+        # reachable directly and not only through ``apply``) must check coverage against
+        # exactly the same tuple this ``Rule`` declares -- otherwise a ``Rule`` built with a
+        # different ``side_conditions`` than its builder's own gives two contradictory
+        # verdicts on the same match, with no single source of truth for which conditions a
+        # match must cover. Enforced here, not merely documented: a builder declares its own
+        # expectation by setting a ``side_conditions`` attribute on the callable itself (see
+        # ``spider_fusion_builder.side_conditions`` in ``rules_library.py``); a builder with
+        # no such attribute (a future rule that never calls the coverage helper itself, or
+        # calls it only via ``apply``) is unconstrained by this check.
+        builder_side_conditions = getattr(self.builder, "side_conditions", None)
+        if builder_side_conditions is not None and tuple(builder_side_conditions) != self.side_conditions:
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: side_conditions {self.side_conditions!r} disagrees "
+                f"with its builder's own declared side_conditions "
+                f"{tuple(builder_side_conditions)!r} -- a builder that declares its own "
+                "side_conditions (see check_side_condition_coverage) must be wrapped in a "
+                "Rule that agrees with it exactly, so there is exactly one source of truth "
+                "for which conditions a match must cover, not two verdicts kept in sync by "
+                "hand"
+            )
 
 
 def check_side_condition_coverage(

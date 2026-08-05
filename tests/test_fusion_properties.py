@@ -24,11 +24,13 @@ manual fix rounds are meant to replace; see ``CLAUDE.md`` and ``FULL_PLAN.md`` P
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from unittest.mock import patch
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
@@ -38,8 +40,15 @@ from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
 from qufzx.rewrite.engine import RewriteResult, apply
 from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import Match, RewriteDomainError, RewriteError, Rule
-from qufzx.rewrite.rules_library import SPIDER_FUSION
+from qufzx.rewrite.rule import (
+    BuildResult,
+    Match,
+    RewriteDomainError,
+    RewriteError,
+    Rule,
+    SideConditionOutcome,
+)
+from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError
 
@@ -860,4 +869,155 @@ class TestMixedSymbolicConcreteFusionProperties:
             f"only {total_oracle_comparisons} oracle comparisons actually executed "
             f"(floor is {_MIN_MIXED_ORACLE_COMPARISONS}); the oracle arm may be silently "
             "skipping every substitution instead of exercising compare()"
+        )
+
+
+_FOREIGN_SEEDS: tuple[int, ...] = tuple(range(400))
+"""Seeds for :class:`TestForeignFusionMatchArm` (B4, Phase 5 round-12 audit).
+
+Reuses :func:`_build_clean_diagram` (fully concrete, cleanly contractible by construction --
+see that function's docstring) so every surviving leg of every match is guaranteed to be
+either wired or on a boundary, which in turn guarantees the "port_mapping entry removed"
+corruption below always has something to break -- a leg that were neither wired nor on a
+boundary would make an unmapped surviving port simply never get looked at, silently not
+raising anything. A smaller seed range than the other arms' (400, not thousands): this arm
+is one ``pytest.raises`` per match per corruption kind, not an oracle comparison, so it does
+not need anywhere near the same sample size to give real coverage across shapes/colours/
+directions -- and unlike the other arms, false-negative risk here is symmetric (a defect
+would show up on the very first match it can reach), not something that needs volume to
+surface rarely.
+"""
+
+
+def _all_claimed_passing(match: FusionMatch) -> tuple[SideConditionOutcome, ...]:
+    """``match``'s own outcome names, all claimed ``passed=True`` -- a fabricated-passing
+    ``side_condition_outcomes`` tuple (B4/A1/A2): this is what lets a corrupted ``shared_dim``,
+    ``bindings``, or diagram slip past ``check_side_condition_coverage`` (which only checks
+    outcome *names* and passedness, never re-evaluates a predicate) and reach the builder's
+    own re-verification via :func:`~qufzx.rewrite.match.resolve_fusion_match`.
+    """
+    return tuple(
+        dataclasses.replace(outcome, passed=True, detail="fabricated: claims to pass")
+        for outcome in match.side_condition_outcomes
+    )
+
+
+def _diagram_with_swapped_color(diagram: Diagram, node_id: NodeId) -> Diagram:
+    """A copy of ``diagram`` with ``node_id``'s ``generator_type`` flipped to the other colour.
+
+    ``Node`` is immutable (see ``graph.py``) and ``Diagram`` exposes no public API to change
+    a node's colour in place -- deliberately, since no legitimate rewrite ever does this.
+    Reaching into ``Diagram``'s private ``_nodes`` dict here is the same posture every other
+    "hand-built or foreign" test fixture in this suite takes: constructing a diagram no real
+    builder could ever produce, specifically to prove the untrusted-input path rejects it.
+    """
+    copied = diagram.copy()
+    node = copied.nodes[node_id]
+    swapped_color = X_SPIDER if node.generator_type is Z_SPIDER else Z_SPIDER
+    swapped_node = dataclasses.replace(node, generator_type=swapped_color)
+    copied._nodes[node_id] = swapped_node
+    return copied
+
+
+class TestForeignFusionMatchArm:
+    """B4 (Phase 5 round-12 audit): for every match a legitimate diagram produces, construct
+    corrupted variants of the match/diagram/BuildResult reaching ``spider_fusion_builder`` or
+    ``apply``, and assert every one raises a :class:`RewriteError` subclass rather than
+    silently producing a wrong diagram. A1-A3 existed because nothing before this ever
+    exercised this untrusted-input path -- the trusted (``find_matches``-produced) path has
+    been fuzzed to death elsewhere in this file.
+    """
+
+    def _matches(self) -> list[tuple[Diagram, FusionMatch]]:
+        pairs: list[tuple[Diagram, FusionMatch]] = []
+        for seed in _FOREIGN_SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_clean_diagram(rng)
+            for match in find_matches(diagram):
+                pairs.append((diagram, match))
+        return pairs
+
+    def test_wrong_shared_dim_is_rejected(self) -> None:
+        pairs = self._matches()
+        assert pairs, "the clean generator never produced a single fusion match"
+        for diagram, match in pairs:
+            bogus_dim = Dim.concrete(match.shared_dim.to_int() + 1)
+            corrupted = dataclasses.replace(
+                match, shared_dim=bogus_dim, side_condition_outcomes=_all_claimed_passing(match)
+            )
+            with pytest.raises(RewriteError):
+                spider_fusion_builder(diagram, corrupted)
+
+    def test_wrong_bindings_is_rejected(self) -> None:
+        pairs = self._matches()
+        assert pairs, "the clean generator never produced a single fusion match"
+        checked = 0
+        for diagram, match in pairs:
+            # Only meaningful when the fusion actually could carry a binding (a symbolic
+            # dimension participates) -- _build_clean_diagram is entirely concrete, so
+            # instead a bogus binding is *introduced* where none was assumed, which the
+            # builder must still catch since it disagrees with what resolve_fusion_match
+            # independently derives (empty, for an all-concrete diagram).
+            corrupted = dataclasses.replace(
+                match,
+                bindings={"d": Dim.concrete(999)},
+                side_condition_outcomes=_all_claimed_passing(match),
+            )
+            with pytest.raises(RewriteError):
+                spider_fusion_builder(diagram, corrupted)
+            checked += 1
+        assert checked > 0
+
+    def test_differing_generator_type_is_rejected(self) -> None:
+        pairs = self._matches()
+        assert pairs, "the clean generator never produced a single fusion match"
+        for diagram, match in pairs:
+            corrupted_diagram = _diagram_with_swapped_color(diagram, match.b_id)
+            corrupted_match = dataclasses.replace(
+                match, side_condition_outcomes=_all_claimed_passing(match)
+            )
+            with pytest.raises(RewriteError):
+                spider_fusion_builder(corrupted_diagram, corrupted_match)
+
+    def test_duplicated_consumed_node_ids_is_rejected(self) -> None:
+        pairs = self._matches()
+        assert pairs, "the clean generator never produced a single fusion match"
+        for diagram, match in pairs:
+            working = diagram.copy()
+            legitimate = spider_fusion_builder(working, match)
+            duplicated = dataclasses.replace(
+                legitimate, consumed_node_ids=(legitimate.consumed_node_ids[0],) * 2
+            )
+
+            def _builder(_working: Diagram, _match: Match, result: BuildResult = duplicated) -> BuildResult:
+                return result
+
+            rule = dataclasses.replace(SPIDER_FUSION, builder=_builder)
+            with pytest.raises(RewriteError):
+                apply(diagram, rule, match)
+
+    def test_removed_port_mapping_entry_is_rejected(self) -> None:
+        pairs = self._matches()
+        checked = 0
+        for diagram, match in pairs:
+            working = diagram.copy()
+            legitimate = spider_fusion_builder(working, match)
+            if not legitimate.port_mapping:
+                continue
+            removed_key = next(iter(legitimate.port_mapping))
+            shrunk_mapping = {
+                k: v for k, v in legitimate.port_mapping.items() if k != removed_key
+            }
+            corrupted = dataclasses.replace(legitimate, port_mapping=shrunk_mapping)
+
+            def _builder(_working: Diagram, _match: Match, result: BuildResult = corrupted) -> BuildResult:
+                return result
+
+            rule = dataclasses.replace(SPIDER_FUSION, builder=_builder)
+            with pytest.raises(RewriteError):
+                apply(diagram, rule, match)
+            checked += 1
+        assert checked > 0, (
+            "no match in the clean generator's sample had a non-empty port_mapping -- "
+            "this arm never actually exercised the removed-entry corruption"
         )
