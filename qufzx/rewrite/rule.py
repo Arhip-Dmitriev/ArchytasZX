@@ -47,7 +47,13 @@ carries exactly that: the (mutated) working diagram, the freshly created node id
 introduced by the builder, the node ids and wires the match consumed (to be removed once
 every reference to them has been remapped), the old-port -> new-port remapping for every
 surviving port, and the exact scalar introduced. See :mod:`qufzx.rewrite.engine` for how
-these fields are consumed.
+these fields are consumed. It also carries two optional provenance fields,
+``verified_side_condition_outcomes`` and ``verified_dimension_constraints`` (Phase 5
+post-closing audit, Defect 2): the channel through which a builder that independently
+re-derives its match's side conditions and dimension assumptions -- rather than merely
+trusting the match's own claims -- returns that ground truth for the certificate to record,
+instead of an unaudited claim a foreign or hand-built match could have fabricated. See
+:class:`BuildResult`'s own docstring for the full account.
 
 Quantifiers are declared metadata, not enforced machinery, in this phase. Every ZX rewrite
 rule is, mathematically, "for all leg counts n, for all dimensions d satisfying some
@@ -224,6 +230,35 @@ class BuildResult:
     consumed_wires: tuple[Wire, ...]
     port_mapping: Mapping[PortRef, PortRef]
     scalar_introduced: Scalar
+    verified_side_condition_outcomes: tuple[SideConditionOutcome, ...] | None = None
+    verified_dimension_constraints: tuple[tuple[Dim, Dim], ...] | None = None
+    """The facts a builder independently re-derived, for the certificate to record instead
+    of the match's own unverified claims (Phase 5 post-closing audit, Defect 2).
+
+    A builder that re-checks its match against the diagram it was actually handed (e.g.
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`, via
+    :func:`~qufzx.rewrite.match.resolve_fusion_match`) computes a fresh, ground-truth
+    ``side_condition_outcomes``/``dimension_constraints`` pair as a side effect of that
+    re-verification. Before this field existed, that fresh computation was used only to
+    decide whether to proceed with graph surgery and then discarded -- :mod:`qufzx.rewrite.engine`
+    had no channel to receive it, so ``RewriteStep`` populated its own same-named fields
+    from ``match``'s claims instead, even though a match's own fields are never trusted for
+    graph surgery precisely because they can be fabricated (see A1/A2 in this module's
+    audit history). A certificate built from the unverified claim can assert a dimension
+    binding the rewrite never actually assumed, or omit one it did.
+
+    ``None`` means "this rule re-derived nothing new" -- the correct value for any rule with
+    no verification step of its own, so a future rule is never forced to fabricate a
+    redundant recomputation just to populate this field. :func:`~qufzx.rewrite.engine.apply`
+    prefers these fields over ``match``'s own same-named ones whenever they are not ``None``;
+    when a builder populates them, it must be after independently checking (not merely
+    trusting) that the match's own claims agree -- :func:`spider_fusion_builder` raises
+    :class:`RewriteDomainError` on disagreement, the same policy already used for
+    ``shared_dim``/``bindings`` (A2), rather than silently preferring one value over the
+    other -- so by the time these fields reach ``apply``, they are known to equal whatever
+    ``match`` claimed, and the certificate's true source of truth is the builder's fresh
+    re-derivation, not the input's unaudited assertion.
+    """
 
 
 class Pattern(abc.ABC):
@@ -330,7 +365,10 @@ class Rule:
         # no such attribute (a future rule that never calls the coverage helper itself, or
         # calls it only via ``apply``) is unconstrained by this check.
         builder_side_conditions = getattr(self.builder, "side_conditions", None)
-        if builder_side_conditions is not None and tuple(builder_side_conditions) != self.side_conditions:
+        if (
+            builder_side_conditions is not None
+            and tuple(builder_side_conditions) != self.side_conditions
+        ):
             raise RewriteGrammarError(
                 f"rule {self.name!r}: side_conditions {self.side_conditions!r} disagrees "
                 f"with its builder's own declared side_conditions "

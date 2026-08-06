@@ -109,7 +109,9 @@ class LegPolicy:
             if isinstance(bound, bool) or not isinstance(bound, int):
                 raise GeneratorGrammarError(f"{name} must be an int or None, got {bound!r}")
             if bound < value:
-                raise GeneratorDomainError(f"{name} ({bound}) must be >= corresponding min ({value})")
+                raise GeneratorDomainError(
+                    f"{name} ({bound}) must be >= corresponding min ({value})"
+                )
 
     def allows(self, num_inputs: int, num_outputs: int) -> bool:
         """True iff the given input and output leg counts satisfy this policy."""
@@ -154,7 +156,9 @@ class GeneratorType:
     def __post_init__(self) -> None:
         """Validate that ``name`` is a non-empty string."""
         if not isinstance(self.name, str) or not self.name:
-            raise GeneratorGrammarError(f"generator name must be a non-empty str, got {self.name!r}")
+            raise GeneratorGrammarError(
+                f"generator name must be a non-empty str, got {self.name!r}"
+            )
 
 
 class GeneratorRegistry:
@@ -170,7 +174,9 @@ class GeneratorRegistry:
     def register(self, generator_type: GeneratorType) -> None:
         """Register a new generator type. Raises GeneratorGrammarError on a duplicate name."""
         if generator_type.name in self._types:
-            raise GeneratorGrammarError(f"generator type {generator_type.name!r} already registered")
+            raise GeneratorGrammarError(
+                f"generator type {generator_type.name!r} already registered"
+            )
         self._types[generator_type.name] = generator_type
 
     def get(self, name: str) -> GeneratorType:

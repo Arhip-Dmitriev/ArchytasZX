@@ -156,16 +156,40 @@ Algorithm.
    right, standing in for the whole family of structural regressions a rewrite could
    otherwise introduce (a dropped wire, a shrunk boundary, a mixed-dimension leg, a lost
    dimension) instead of guarding each one individually.
+
+   This step's multiset compare is over ``.errors`` (hard-failure issues) only, by design
+   -- ``.deferred`` issues (:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`)
+   are an assumed, non-hard-error diagram state, not a regression, so step 8 never blocks a
+   rewrite for changing them. That leaves a related but distinct question step 8's own
+   compare cannot answer: did a rewrite that fired across a deferred dimension assumption
+   (see :mod:`qufzx.rewrite.rules_library`'s module docstring, "Phase 5 judgement call")
+   silently make that assumption disappear from the diagram entirely, with nothing to show
+   for it? Immediately after step 8's compare, the same translation machinery
+   (:func:`_translate_input_issue_key`) is reused over ``validate(diagram).deferred`` and
+   ``validate(working).deferred`` instead of ``.errors`` -- not to raise (a rewrite is
+   allowed to resolve a deferred assumption; that is the entire point of firing across one),
+   but to populate :attr:`RewriteStep.removed_deferred_issues` with every input deferred
+   issue that has no counterpart in ``working``'s own deferred issues, so the certificate
+   records the fact even though nothing about applying the rewrite itself is illegal.
 9. Record provenance. A :class:`RewriteStep` carrying the rule name, the located ``match``
    exactly as it was applied (stored verbatim, so Phase 6 replays directly from it rather
    than re-running the matcher and re-selecting a candidate by node id), the match location
    (``build_result.consumed_node_ids`` and ``consumed_wires``, *as they were in the input
    diagram* -- these are read from ``build_result``, not re-derived from ``working`` after
-   mutation), every side condition the match checked with its outcome, every dimension
-   constraint the match assumed, the scalar introduced, and the full old-port -> new-port
-   remapping. Phase 6's certificate module must be able to replay a rewrite from this record
-   alone (look the rule up by name via
-   :func:`~qufzx.rewrite.rules_library.lookup_rule`, re-apply it at the stored ``match``,
+   mutation), every side condition checked with its outcome, every dimension constraint
+   assumed, the scalar introduced, and the full old-port -> new-port remapping. The side
+   condition outcomes and dimension constraints recorded are ``build_result
+   .verified_side_condition_outcomes``/``verified_dimension_constraints`` whenever the
+   builder supplied them (not ``None``), falling back to ``match``'s own same-named fields
+   otherwise (Phase 5 post-closing audit, Defect 2 -- see
+   :class:`~qufzx.rewrite.rule.BuildResult`'s docstring): a builder that independently
+   re-derives these facts (e.g. :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`,
+   via :func:`~qufzx.rewrite.match.resolve_fusion_match`) hands back the ground truth it
+   computed, not the match's own unaudited claim, so the certificate records what the
+   rewrite actually assumed even for a foreign or hand-built match whose claimed fields a
+   builder did not happen to check bit-for-bit before this fix existed. Phase 6's certificate
+   module must be able to replay a rewrite from this record alone (look the rule up by name
+   via :func:`~qufzx.rewrite.rules_library.lookup_rule`, re-apply it at the stored ``match``,
    and confirm the replay reproduces ``diagram`` and passes the oracle) -- these fields are
    shaped for that consumer. This module does not implement replay or verification itself;
    that is Phase 6's job.
@@ -194,12 +218,14 @@ Generic ``Match`` protocol fields (consumed by ``apply`` itself, for any future 
 Field                                   Validated by                       Step  Error class          Proof
 ======================================  =================================  ====  =================  ============================================================
 ``side_condition_outcomes``             ``check_side_condition_coverage``  1     RewriteDomainError   test_engine.py::TestApplyEnforcesSideConditionCoverage,
-                                         (exact name-set coverage, no                                 test_engine.py::TestApplyRejectsAFailingMatch
-                                         dupes, all passed)
-``dimension_constraints``               Not validated -- recorded          9     n/a                  n/a (see below)
-                                         verbatim into ``RewriteStep`` for
-                                         the certificate; never used to
-                                         gate whether ``apply`` proceeds
+(coverage: exact name-set, no dupes,    (exact name-set coverage, no                                 test_engine.py::TestApplyRejectsAFailingMatch
+all passed -- content is a              dupes, all passed)
+separate question, see below)
+``dimension_constraints``               Not validated by ``apply`` itself  9     n/a                  n/a (see below) -- but see the ``FusionMatch``-specific table:
+                                         -- recorded into ``RewriteStep``,                             for spider_fusion specifically, its *content* is checked
+                                         preferring ``build_result                                     against ``resolve_fusion_match``'s fresh derivation before
+                                         .verified_dimension_constraints``                             ``apply`` ever sees it (Defect 2)
+                                         when the builder supplied it
 ``all_side_conditions_passed``          Not read by ``apply`` at all --    n/a   n/a                  test_match.py (``all_side_conditions_passed`` is vacuously True
                                          ``check_side_condition_coverage``                             over an empty tuple; superseded by explicit coverage checking,
                                          is the real gate, precisely                                   never relied on as a gate)
@@ -207,15 +233,20 @@ Field                                   Validated by                       Step 
                                          cannot see a missing outcome
 ======================================  =================================  ====  =================  ============================================================
 
-``dimension_constraints`` is deliberately unvalidated here: nothing in Phase 5 checks that
-a match's claimed constraints are the ones its own side conditions actually produced (a
-foreign match could report an empty tuple, or an unrelated one, without ``apply`` noticing,
-since these pairs only ever get *recorded*, never *acted on*, during graph surgery). This is
-intentional, not an oversight -- the field exists for Phase 6's certificate replay and
-Phase 10's real dimension unifier to consume, and *those* phases are the ones with a
-principled way to check a claimed constraint against a re-derived one (replay the rule at
-the stored match and compare, or re-run the unifier). Phase 5 has no unifier of its own to
-check it against yet. See ``FusionMatch.dimension_constraints``'s own docstring.
+``apply`` itself still never checks a *generic* match's ``dimension_constraints`` against
+anything -- it has no rule-independent way to re-derive what a future, unknown rule should
+have assumed, so this stays a rule-local concern (as it is for spider_fusion, below) rather
+than something the generic engine can enforce. What changed (Defect 2, Phase 5 post-closing
+audit) is that ``apply`` no longer *automatically* records the match's own claimed
+``side_condition_outcomes``/``dimension_constraints`` onto the certificate verbatim: it
+prefers ``build_result.verified_side_condition_outcomes``/``verified_dimension_constraints``
+whenever the builder supplied them (see :class:`~qufzx.rewrite.rule.BuildResult`'s
+docstring), so a rule whose builder does independently verify these facts (spider_fusion
+does) gets its ground truth recorded instead of the match's unaudited claim, without
+``apply`` itself needing to know how that verification works. A future rule whose builder
+never re-derives anything is unaffected -- ``None`` falls back to the pre-fix behavior
+exactly. See ``FusionMatch.dimension_constraints``'s own docstring for the full account of
+why this field exists at all.
 
 ``FusionMatch``-specific fields (consumed only by ``spider_fusion_builder``, which is
 reachable directly and not only through ``apply`` -- so it cannot rely on ``apply`` having
@@ -226,15 +257,19 @@ Field                                   Validated by                       Step 
 ======================================  =================================  ====  =================  ============================================================
 ``isinstance(match, FusionMatch)``      ``spider_fusion_builder`` itself    B.1   RewriteGrammarError  test_rules_library.py::TestBuilderTypedErrors
                                                                                                         ::test_rejects_a_non_fusion_match
-``side_condition_outcomes`` (again,     ``check_side_condition_coverage``   B.2   RewriteDomainError   test_rules_library.py::TestSideConditionCoverageEnforced
-against ``spider_fusion_builder``'s     against ``spider_fusion_builder``
-own declared side_conditions --         .side_conditions -- kept
-see A5 below)                           identical to ``SPIDER_FUSION``
+``side_condition_outcomes`` (coverage,  ``check_side_condition_coverage``   B.2   RewriteDomainError   test_rules_library.py::TestSideConditionCoverageEnforced
+again, against ``spider_fusion          against ``spider_fusion_builder``
+_builder``'s own declared side_         .side_conditions -- kept
+conditions -- see A5 below)             identical to ``SPIDER_FUSION``
                                          .side_conditions by ``Rule``
                                          .__post_init__ itself (A5)
 ``a_id``, ``b_id``, ``wire``            ``resolve_fusion_match``, called    B.3   RewriteGrammarError  test_match.py::TestResolveFusionMatchIsTheSharedPredicate
-(structural: distinct, present in       fresh against ``diagram``                 (structural)         (distinct/absent/non-incident cases)
-``diagram``, wire incident on both)
+(structural: distinct, present in       fresh against ``diagram`` --              (structural)         (distinct/absent/non-incident/not-an-element-of-
+``diagram``, wire incident on both,     including, since the Phase 5                                   ``diagram.wires`` cases)
+and an actual element of                post-closing audit, that ``wire``
+``diagram.wires``)                      is actually in ``diagram.wires``,
+                                         not merely incident-looking
+                                         (Defect 1)
 same_generator_type /                   ``resolve_fusion_match``, the       B.3   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
 parallel_wires_become_self_loops /      exact function ``find_matches``           (domain)             ::test_a1_fabricated_same_generator_type_outcome_on_a_z_x_pair
 consumed_wire_direction_permitted_      calls to decide a candidate in                                 _is_rejected
@@ -249,6 +284,20 @@ not merely trusted from
 ``bindings``                            Checked for exact agreement with    B.4   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
                                          ``resolve_fusion_match``'s own                                 ::test_a2_bindings_unrelated_to_the_matched_legs_is_rejected
                                          freshly-derived value (A2)
+``dimension_constraints`` (content,     Checked for exact agreement with    B.5   RewriteDomainError   test_engine.py::TestCertificateRecordsTheReDerivedFacts
+not merely coverage of its own          ``resolve_fusion_match``'s own
+container field, which B.2 already      freshly-derived value; the
+checks)                                 agreeing value is then returned
+                                         as ``BuildResult
+                                         .verified_dimension_constraints``
+                                         for ``apply`` to record (Defect 2)
+``side_condition_outcomes`` (content,   Checked for exact agreement with    B.5   RewriteDomainError   test_engine.py::TestCertificateRecordsTheReDerivedFacts
+not merely coverage/passedness,         ``resolve_fusion_match``'s own
+which B.2 already checks)               freshly-derived value; the
+                                         agreeing value is then returned
+                                         as ``BuildResult
+                                         .verified_side_condition_outcomes``
+                                         for ``apply`` to record (Defect 2)
 ======================================  =================================  ====  =================  ============================================================
 
 ``BuildResult`` fields (consumed by ``apply`` itself, for any future rule; step numbers per
@@ -283,9 +332,25 @@ consumed-node endpoint that             consumed node must appear as a          
 survives)                               key (``_remap_endpoint``)
 ``port_mapping`` (no collapse)          Both endpoints of a surviving wire   5     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
                                          must map to two distinct ports                                       ::test_collapsing_port_mapping_raises_rewrite_grammar_error
+``verified_side_condition_outcomes`` /  Not validated by ``apply`` itself   9     n/a                  test_engine.py::TestCertificateRecordsTheReDerivedFacts
+``verified_dimension_constraints``      -- a builder that supplies these
+(Defect 2)                              is trusted to have done its own
+                                         checking (as spider_fusion_builder
+                                         does, against B.5 above) before
+                                         handing them back; ``apply`` only
+                                         chooses whether to prefer them
+                                         (not-``None``) over ``match``'s
+                                         own fields when recording the step
 Overall structural non-regression       Multiset ``(kind, ref)`` comparison  8     RewriteDomainError   test_engine.py::TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind,
 (not one field -- the combined          of ``validate(diagram)`` vs.                                   TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode
 effect of every field above)            ``validate(working)``
+Removed deferred issues (judgement      Not a gate -- ``.deferred`` issues   8     n/a (recorded,      test_engine.py::TestRemovedDeferredIssuesAreRecorded
+call 1, Phase 5 post-closing audit)     with no post-rewrite counterpart           never raised)
+                                         are recorded onto
+                                         ``RewriteStep
+                                         .removed_deferred_issues``, never
+                                         blocked -- see that field's
+                                         docstring
 ======================================  =================================  ====  =================  ============================================================
 
 ``consumed_wires`` duplicates and unused ``port_mapping`` keys are the two rows left
@@ -336,13 +401,30 @@ class RewriteStep:
 
     rule_name: str
     match: Match
-    matched_node_ids: tuple[NodeId, ...]
+    consumed_node_ids: tuple[NodeId, ...]
     consumed_wires: tuple[Wire, ...]
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[tuple[Dim, Dim], ...]
     scalar_introduced: Scalar
     port_mapping: Mapping[PortRef, PortRef]
     new_node_ids: tuple[NodeId, ...]
+    removed_deferred_issues: tuple[ValidationIssue, ...] = ()
+    """Every :attr:`~qufzx.diagram.validate.ValidationReport.deferred` issue ``diagram``
+    carried that has no counterpart anywhere in ``working``'s own deferred issues, in
+    ``diagram``'s own (pre-rewrite) coordinates (Phase 5 post-closing audit, judgement call
+    1). Step 8 already refuses to *introduce* a new hard-error issue kind, but it never
+    looked at deferred issues at all -- a diagram-level unify assumption
+    (:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`) that a rewrite silently
+    resolves (by consuming or overwriting the leg it was recorded against) simply vanished,
+    with nothing on the certificate to say a pre-existing assumption was ever there, let
+    alone that this rewrite is the one that made it disappear. This field closes that gap
+    without making it a new failure mode: an empty tuple is the overwhelmingly common case
+    (most rewrites carry every deferred issue over unchanged, or touch none at all), and a
+    non-empty one is not itself an error -- see :func:`~qufzx.rewrite.rules_library`'s
+    module docstring, "Phase 5 judgement call", for why spider_fusion is allowed to fire on
+    a ``DEFERRED`` dimension pair at all, and why silently dropping the resulting assumption
+    is still wrong even though the rewrite itself is legal.
+    """
 
     def __hash__(self) -> int:
         """Explicit, since the dataclass-generated one would raise on ``port_mapping``.
@@ -363,13 +445,14 @@ class RewriteStep:
             (
                 self.rule_name,
                 self.match,
-                self.matched_node_ids,
+                self.consumed_node_ids,
                 self.consumed_wires,
                 self.side_condition_outcomes,
                 self.dimension_constraints,
                 self.scalar_introduced,
                 frozenset(self.port_mapping.items()),
                 self.new_node_ids,
+                self.removed_deferred_issues,
             )
         )
 
@@ -645,7 +728,9 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     working.multiply_scalar(build_result.scalar_introduced)
 
     input_hard_counts = Counter(
-        _translate_input_issue_key(issue, consumed_node_ids, port_mapping, build_result.new_node_ids)
+        _translate_input_issue_key(
+            issue, consumed_node_ids, port_mapping, build_result.new_node_ids
+        )
         for issue in validate(diagram).errors
     )
     result_hard_counts = Counter(_issue_key(issue) for issue in validate(working).errors)
@@ -670,15 +755,51 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"in the input diagram: {detail}"
         )
 
+    # Judgement call 1 (Phase 5 post-closing audit): a rewrite is allowed to fire across a
+    # DEFERRED dimension pair (see rules_library.py's module docstring, "Phase 5 judgement
+    # call") -- this is not new here, and step 8 above does not change it. What step 8 never
+    # did is notice when firing silently drops the resulting deferred assumption from the
+    # diagram entirely (e.g. a d*e leg consumed by fusion, or overwritten onto shared_dim):
+    # not a hard-error regression (deferred issues are explicitly outside step 8's multiset
+    # compare, by design), but a loss of information the certificate should not paper over
+    # in silence. Same translation machinery as the hard-error compare, reused for the
+    # deferred set instead.
+    input_deferred_by_key = {
+        _translate_input_issue_key(
+            issue, consumed_node_ids, port_mapping, build_result.new_node_ids
+        ): issue
+        for issue in validate(diagram).deferred
+    }
+    result_deferred_keys = {_issue_key(issue) for issue in validate(working).deferred}
+    removed_deferred_issues = tuple(
+        issue for key, issue in input_deferred_by_key.items() if key not in result_deferred_keys
+    )
+
+    # Defect 2 (Phase 5 post-closing audit): prefer the builder's independently re-derived
+    # facts over the match's own claims whenever the builder supplied them -- see
+    # BuildResult's docstring. A builder that never re-verifies anything (leaves these
+    # fields None) falls back to match's own fields, the pre-fix behavior, unchanged.
+    step_side_condition_outcomes = (
+        build_result.verified_side_condition_outcomes
+        if build_result.verified_side_condition_outcomes is not None
+        else match.side_condition_outcomes
+    )
+    step_dimension_constraints = (
+        build_result.verified_dimension_constraints
+        if build_result.verified_dimension_constraints is not None
+        else match.dimension_constraints
+    )
+
     step = RewriteStep(
         rule_name=rule.name,
         match=match,
-        matched_node_ids=build_result.consumed_node_ids,
+        consumed_node_ids=build_result.consumed_node_ids,
         consumed_wires=build_result.consumed_wires,
-        side_condition_outcomes=match.side_condition_outcomes,
-        dimension_constraints=match.dimension_constraints,
+        side_condition_outcomes=step_side_condition_outcomes,
+        dimension_constraints=step_dimension_constraints,
         scalar_introduced=build_result.scalar_introduced,
         port_mapping=MappingProxyType(dict(port_mapping)),
         new_node_ids=build_result.new_node_ids,
+        removed_deferred_issues=removed_deferred_issues,
     )
     return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)

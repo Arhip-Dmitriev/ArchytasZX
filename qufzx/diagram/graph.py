@@ -144,14 +144,19 @@ class PortRef:
     def __post_init__(self) -> None:
         """Validate that ``index`` is a non-negative int."""
         if not isinstance(self.direction, Direction):
-            raise GraphGrammarError(f"PortRef direction must be a Direction, got {self.direction!r}")
+            raise GraphGrammarError(
+                f"PortRef direction must be a Direction, got {self.direction!r}"
+            )
         if isinstance(self.index, bool) or not isinstance(self.index, int):
             raise GraphGrammarError(f"PortRef index must be an int, got {self.index!r}")
         if self.index < 0:
             raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
 
     def __repr__(self) -> str:
-        return f"PortRef(node_id={self.node_id!r}, direction={self.direction.value}, index={self.index})"
+        return (
+            f"PortRef(node_id={self.node_id!r}, direction={self.direction.value}, "
+            f"index={self.index})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +408,8 @@ class Diagram:
     # -- substitution -----------------------------------------------------------------
 
     def substitute(
-        self, mapping: Mapping[str, DimSubstituteValue | PhaseSubstituteValue | ScalarSubstituteValue]
+        self,
+        mapping: Mapping[str, DimSubstituteValue | PhaseSubstituteValue | ScalarSubstituteValue],
     ) -> Diagram:
         """Return a new Diagram with symbols substituted, preserving every NodeId.
 

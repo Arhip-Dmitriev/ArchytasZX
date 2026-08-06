@@ -141,7 +141,8 @@ class ValidationReport:
 
     @property
     def is_valid(self) -> bool:
-        """True iff there are no hard-failure issues (deferred constraints do not fail validation)."""
+        """True iff there are no hard-failure issues (deferred constraints do not fail
+        validation)."""
         return not self.errors
 
 
@@ -186,7 +187,10 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.DIMENSION_MISMATCH,
-                    message=f"wire {wire!r} joins mismatched dimensions {port_a.dim} and {port_b.dim}",
+                    message=(
+                        f"wire {wire!r} joins mismatched dimensions {port_a.dim} and "
+                        f"{port_b.dim}"
+                    ),
                     wire=wire,
                 )
             )
@@ -339,7 +343,10 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.PHASE_NOT_PERMITTED,
-                    message=f"node {node.id!r} ({gen.name}) carries a phase but its type is phase-free",
+                    message=(
+                        f"node {node.id!r} ({gen.name}) carries a phase but its type is "
+                        "phase-free"
+                    ),
                     node_id=node.id,
                 )
             )

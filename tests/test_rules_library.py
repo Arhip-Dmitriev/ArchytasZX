@@ -29,6 +29,7 @@ from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, SideConditionOutcome
 from qufzx.rewrite.rules_library import RULES, SPIDER_FUSION, lookup_rule, spider_fusion_builder
+from qufzx.semantics.check import compare
 
 from .helpers import build_ghz_with_copy
 
@@ -190,6 +191,67 @@ class TestAllLegsConsumedPhase:
         assert result.diagram.nodes[result.new_node_ids[0]].phase is None
 
 
+class TestPhaseDimensionAgreementJudgementCall2:
+    """Judgement call 2 (Phase 5 post-closing audit), decided in
+    :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement``: a fusion whose two phase
+    dims unify only by a *concrete* binding is now matched (was previously silently
+    refused), and two present phases no longer need to agree raw before any resolution
+    (``reattach_phase`` already forces both onto the identical ``shared_dim``). Both are
+    exercised here all the way through the builder and the numeric oracle, not merely
+    matched.
+    """
+
+    def test_a_phase_binding_the_symbolic_shared_leg_dim_builds_and_matches_the_oracle(
+        self,
+    ) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[d],
+            output_dims=[],
+            phase=PhaseVector(Dim.concrete(3), {1: Phase.turns(sp.Rational(1, 3))}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert (Dim.concrete(3), d) in matches[0].dimension_constraints
+
+        result = apply(diagram, SPIDER_FUSION, matches[0])
+        report = compare(diagram, result.diagram, {"d": 3})
+        assert report.matched, report.reason
+
+    def test_two_present_phases_agreeing_only_after_substitution_build_and_match_the_oracle(
+        self,
+    ) -> None:
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d],
+            phase=PhaseVector(d, {1: Phase.turns(sp.Rational(1, 3))}),
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[three],
+            output_dims=[],
+            phase=PhaseVector(three, {1: Phase.turns(sp.Rational(1, 5))}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+
+        result = apply(diagram, SPIDER_FUSION, matches[0])
+        merged = result.diagram.nodes[result.new_node_ids[0]]
+        assert merged.phase is not None
+        assert merged.phase.dim == three
+        report = compare(diagram, result.diagram, {"d": 3})
+        assert report.matched, report.reason
+
+
 class TestBuilderTypedErrors:
     def test_rejects_a_non_fusion_match(self) -> None:
         d = Dim.symbol("d")
@@ -227,7 +289,9 @@ class TestBuilderTypedErrors:
             wire=wire,
             shared_dim=d,
             side_condition_outcomes=(
-                SideConditionOutcome("phase_dimension_agreement", True, "hand-built, bypassing find_matches"),
+                SideConditionOutcome(
+                    "phase_dimension_agreement", True, "hand-built, bypassing find_matches"
+                ),
             ),
         )
         with pytest.raises(RewriteDomainError):
@@ -316,6 +380,36 @@ class TestPhase5Round12AuditDefects:
         )
         with pytest.raises(RewriteDomainError):
             spider_fusion_builder(diagram, match)
+
+
+class TestGhostWireIsRejected:
+    """Defect 1 (Phase 5 post-closing audit): a match naming a wire that is structurally
+    incident on both nodes but was never actually added to the diagram used to be accepted
+    by ``resolve_fusion_match`` -- so the builder built a merged node consuming a wire the
+    diagram never had. Fixed in ``resolve_fusion_match`` itself; this proves the fix closes
+    the path all the way through the builder.
+    """
+
+    def test_builder_refuses_a_match_over_a_wire_absent_from_the_diagram(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, [d], [d])
+        b_id = diagram.add_node(Z_SPIDER, [d], [d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        ghost = Wire(PortRef(a_id, Direction.INPUT, 0), PortRef(b_id, Direction.OUTPUT, 0))
+        assert ghost not in diagram.wires
+        match = FusionMatch(
+            a_id=a_id,
+            b_id=b_id,
+            wire=ghost,
+            shared_dim=d,
+            side_condition_outcomes=_fabricated_passing_outcomes(),
+        )
+        with pytest.raises(RewriteGrammarError):
+            spider_fusion_builder(diagram.copy(), match)
 
 
 class TestSideConditionCoverageEnforced:

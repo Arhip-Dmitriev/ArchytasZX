@@ -99,7 +99,8 @@ from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionRe
 
 CheckAssignmentValue: TypeAlias = "int | sp.Rational"
 DEFAULT_TOLERANCE = 1e-9
-"""The default absolute entrywise tolerance used throughout this module. See the module docstring."""
+"""The default absolute entrywise tolerance used throughout this module. See the module
+docstring."""
 
 
 class CheckError(Exception):
@@ -151,7 +152,8 @@ def score(
     *,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
 ) -> ContractionResult:
-    """Instantiate ``diagram`` at ``assignment`` and contract it. The oracle's "evaluate" entry point."""
+    """Instantiate ``diagram`` at ``assignment`` and contract it. The oracle's "evaluate"
+    entry point."""
     instantiated = instantiate(diagram, assignment)
     return contract(instantiated, max_elements=max_elements)
 
@@ -165,7 +167,8 @@ class EqualityMode(enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class ComparisonResult:
-    """The outcome of one :func:`compare_tensors` or :func:`compare` call. See the module docstring."""
+    """The outcome of one :func:`compare_tensors` or :func:`compare` call. See the module
+    docstring."""
 
     mode: EqualityMode
     matched: bool
@@ -202,7 +205,9 @@ def compare_tensors(
             if matched
             else f"max abs deviation {deviation} exceeds tolerance {tolerance}"
         )
-        return ComparisonResult(mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation)
+        return ComparisonResult(
+            mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation
+        )
 
     if mode is EqualityMode.UP_TO_GLOBAL_PHASE:
         return _compare_up_to_global_phase(a, b, tolerance=tolerance)
@@ -210,17 +215,23 @@ def compare_tensors(
     raise CheckGrammarError(f"unknown equality mode {mode!r}")
 
 
-def _compare_up_to_global_phase(a: np.ndarray, b: np.ndarray, *, tolerance: float) -> ComparisonResult:
+def _compare_up_to_global_phase(
+    a: np.ndarray, b: np.ndarray, *, tolerance: float
+) -> ComparisonResult:
     mode = EqualityMode.UP_TO_GLOBAL_PHASE
     if a.size == 0:
-        return ComparisonResult(mode=mode, matched=True, reason="both tensors are empty", max_abs_deviation=0.0)
+        return ComparisonResult(
+            mode=mode, matched=True, reason="both tensors are empty", max_abs_deviation=0.0
+        )
 
     norm_a = float(np.max(np.abs(a)))
     norm_b = float(np.max(np.abs(b)))
     a_zero = norm_a <= tolerance
     b_zero = norm_b <= tolerance
     if a_zero and b_zero:
-        return ComparisonResult(mode=mode, matched=True, reason="both tensors are zero", max_abs_deviation=0.0)
+        return ComparisonResult(
+            mode=mode, matched=True, reason="both tensors are zero", max_abs_deviation=0.0
+        )
     if a_zero or b_zero:
         return ComparisonResult(
             mode=mode,
@@ -252,7 +263,10 @@ def _compare_up_to_global_phase(a: np.ndarray, b: np.ndarray, *, tolerance: floa
     reason = (
         f"tensors agree up to global phase {lam}"
         if matched
-        else f"max abs deviation {deviation} after removing global phase {lam} exceeds tolerance {tolerance}"
+        else (
+            f"max abs deviation {deviation} after removing global phase {lam} exceeds "
+            f"tolerance {tolerance}"
+        )
     )
     return ComparisonResult(
         mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation, recovered_lambda=lam
@@ -352,7 +366,9 @@ def compare(
     result_a = contract(instantiated_a, max_elements=max_elements)
     result_b = contract(instantiated_b, max_elements=max_elements)
 
-    interface_mismatch = _interface_mismatch(instantiated_a, result_a, instantiated_b, result_b, mode=mode)
+    interface_mismatch = _interface_mismatch(
+        instantiated_a, result_a, instantiated_b, result_b, mode=mode
+    )
     if interface_mismatch is not None:
         return interface_mismatch
 

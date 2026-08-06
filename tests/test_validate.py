@@ -172,7 +172,9 @@ class TestGeneratorPolicyConformance:
         diagram = Diagram()
         diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d * e])
         report = validate(diagram)
-        assert not any(issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors)
+        assert not any(
+            issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors
+        )
         assert any(
             issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id is not None
             for issue in report.deferred

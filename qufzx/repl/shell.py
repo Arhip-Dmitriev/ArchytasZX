@@ -11,4 +11,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive shell loop that wires REPL commands to the engine, with history and error handling."""
+"""Interactive shell loop that wires REPL commands to the engine, with history and error
+handling."""

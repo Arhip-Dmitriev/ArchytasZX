@@ -154,7 +154,9 @@ class TestReadOnlyViews:
 class TestDeepCopyIndependence:
     def _base_diagram(self) -> tuple[Diagram, NodeId, NodeId]:
         diagram = Diagram()
-        a = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2), Dim.concrete(2)])
+        a = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2), Dim.concrete(2)]
+        )
         b = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[Dim.concrete(2)])
         diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
         diagram.set_boundary_outputs(

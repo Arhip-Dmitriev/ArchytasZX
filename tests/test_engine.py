@@ -238,13 +238,73 @@ class TestRewriteStepProvenance:
         step = result.step
 
         assert step.rule_name == "spider_fusion"
-        assert step.matched_node_ids == (min(a_id, b_id), max(a_id, b_id))
+        assert step.consumed_node_ids == (min(a_id, b_id), max(a_id, b_id))
         assert step.consumed_wires == (match.wire,)
         assert step.scalar_introduced == Scalar.one()
         assert step.new_node_ids == result.new_node_ids
         assert step.side_condition_outcomes == match.side_condition_outcomes
         assert step.dimension_constraints == match.dimension_constraints
         assert len(step.port_mapping) == 3
+
+
+class TestCertificateRecordsTheReDerivedFacts:
+    """Defect 2 (Phase 5 post-closing audit): the certificate must record what
+    ``resolve_fusion_match`` independently re-derives, not a match's own unaudited claim --
+    ``spider_fusion_builder`` computes the real ``FusionResolution`` as a side effect of its
+    own re-verification (Phase 5 round-12 audit, A1/A2) but, before this fix, had no
+    ``BuildResult`` channel to return it, so ``apply`` fell back to recording ``match``'s own
+    ``side_condition_outcomes``/``dimension_constraints`` verbatim -- fields a foreign or
+    hand-built match can fabricate.
+    """
+
+    def test_fabricated_dimension_constraints_and_outcomes_are_rejected_not_silently_recorded(
+        self,
+    ) -> None:
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[three], output_dims=[three])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        match = find_matches(diagram)[0]
+        # The real fusion assumes d := 3 twice over: once for the connecting pair, once
+        # more when A's surviving input (also d) is unified against the refined shared_dim.
+        assert match.dimension_constraints == ((d, three), (d, three))
+
+        fake = dataclasses.replace(
+            match,
+            dimension_constraints=(),
+            side_condition_outcomes=tuple(
+                SideConditionOutcome(o.name, True, "fabricated", False)
+                for o in match.side_condition_outcomes
+            ),
+        )
+        # Before the fix: apply() recorded fake's claim of "no dimension assumption"
+        # verbatim onto the certificate. Now: spider_fusion_builder catches the
+        # disagreement against its own fresh resolve_fusion_match derivation and refuses
+        # to build at all, rather than let a laundered certificate through.
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, SPIDER_FUSION, fake)
+
+    def test_every_find_matches_result_has_a_step_matching_resolve_fusion_match_fresh(
+        self,
+    ) -> None:
+        """Positive arm: for every match ``find_matches`` returns, the recorded
+        ``step.dimension_constraints``/``side_condition_outcomes`` equal exactly what
+        ``resolve_fusion_match`` derives fresh for that wire.
+        """
+        from qufzx.rewrite.match import resolve_fusion_match
+
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        for match in find_matches(diagram):
+            resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+            result = apply(diagram, SPIDER_FUSION, match)
+            assert result.step.dimension_constraints == resolution.dimension_constraints
+            assert result.step.side_condition_outcomes == resolution.outcomes
 
 
 class TestApplyRejectsAFailingMatch:
@@ -520,6 +580,77 @@ class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
         )
 
 
+class TestRemovedDeferredIssuesAreRecorded:
+    """Judgement call 1 (Phase 5 post-closing audit): fusion is allowed to fire across a
+    ``DEFERRED`` dimension pair (see rules_library.py's module docstring, "Phase 5
+    judgement call"), but a rewrite that makes the resulting diagram-level
+    ``DIMENSION_DEFERRED`` finding disappear entirely must record that fact on the
+    certificate, not merely leave it inferable from ``dimension_constraints`` -- step 8's
+    own hard-error compare never looks at deferred issues at all, by design, so nothing
+    else in ``apply`` would otherwise ever mention this.
+    """
+
+    def test_a_consumed_deferred_leg_pair_is_recorded_as_removed(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        # a_id's own two legs (d, d*e) defer against each other under ALL_LEGS_EQUAL --
+        # a legal, non-hard-error diagram-level DIMENSION_DEFERRED finding.
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d * e])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+
+        pre_report = validate(diagram)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id == a_id
+            for issue in pre_report.deferred
+        )
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+
+        # The merged node has exactly one surviving leg (forced onto shared_dim=d) -- no
+        # second leg left to defer against, so the finding is gone from `working` entirely.
+        post_report = validate(result.diagram)
+        assert not any(issue.kind is IssueKind.DIMENSION_DEFERRED for issue in post_report.deferred)
+
+        assert len(result.step.removed_deferred_issues) == 1
+        removed = result.step.removed_deferred_issues[0]
+        assert removed.kind is IssueKind.DIMENSION_DEFERRED
+        assert removed.node_id == a_id  # recorded in the input diagram's own coordinates
+
+    def test_a_carried_over_deferred_leg_is_not_recorded_as_removed(self) -> None:
+        # Mirror case: the deferred pair survives fusion untouched (on the third,
+        # unrelated node c_id) -- removed_deferred_issues must stay empty.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d * e])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(c_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 1)]
+        )
+
+        pre_report = validate(diagram)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id == c_id
+            for issue in pre_report.deferred
+        )
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.removed_deferred_issues == ()
+
+        post_report = validate(result.diagram)
+        assert any(
+            issue.kind is IssueKind.DIMENSION_DEFERRED and issue.node_id == c_id
+            for issue in post_report.deferred
+        )
+
+
 class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
     """Direct unit coverage of :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
 
@@ -777,7 +908,9 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
                 new_node_ids=(r_id,),
                 consumed_node_ids=(c_id, c_id),
                 consumed_wires=(),
-                port_mapping={PortRef(c_id, Direction.OUTPUT, 0): PortRef(r_id, Direction.OUTPUT, 0)},
+                port_mapping={
+                    PortRef(c_id, Direction.OUTPUT, 0): PortRef(r_id, Direction.OUTPUT, 0)
+                },
                 scalar_introduced=Scalar.one(),
             )
 
