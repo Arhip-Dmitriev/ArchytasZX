@@ -397,7 +397,9 @@ def _check_mixed_diagram_chain(rng: random.Random, seed: int) -> tuple[int, int]
                 post_concrete = post.substitute(subs)
             except PhaseDomainError:
                 continue
-            if not (_is_cleanly_contractible(pre_concrete) and _is_cleanly_contractible(post_concrete)):
+            if not (
+                _is_cleanly_contractible(pre_concrete) and _is_cleanly_contractible(post_concrete)
+            ):
                 continue
             try:
                 comparison = compare(diagram, post, subs)
@@ -588,7 +590,7 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
         forced = _apply_ignoring_step8(diagram, SPIDER_FUSION, match)
         pre_counts = Counter(
             _independent_issue_key(
-                issue, frozenset(forced.step.matched_node_ids), forced.step.port_mapping
+                issue, frozenset(forced.step.consumed_node_ids), forced.step.port_mapping
             )
             for issue in validate(diagram).errors
         )
@@ -733,7 +735,8 @@ class TestSpiderFusionProperties:
         ``_build_random_diagram``'s deliberately mixed-dimension population) so that
         essentially every match reaches :func:`~qufzx.semantics.check.compare`, not just the
         ~57-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
-        six colour/direction shapes ``consumed_wire_direction_permitted_for_color`` actually permits (see
+        six colour/direction shapes ``consumed_wire_direction_permitted_for_color`` actually
+        permits (see
         ``match.py``'s condition 4) are all still being generated -- so a future change to
         this generator that stopped producing, say, same-direction Z-Z wires would fail this
         test directly, rather than silently losing coverage of the Z-widening commit.
@@ -989,7 +992,9 @@ class TestForeignFusionMatchArm:
                 legitimate, consumed_node_ids=(legitimate.consumed_node_ids[0],) * 2
             )
 
-            def _builder(_working: Diagram, _match: Match, result: BuildResult = duplicated) -> BuildResult:
+            def _builder(
+                _working: Diagram, _match: Match, result: BuildResult = duplicated
+            ) -> BuildResult:
                 return result
 
             rule = dataclasses.replace(SPIDER_FUSION, builder=_builder)
@@ -1010,7 +1015,9 @@ class TestForeignFusionMatchArm:
             }
             corrupted = dataclasses.replace(legitimate, port_mapping=shrunk_mapping)
 
-            def _builder(_working: Diagram, _match: Match, result: BuildResult = corrupted) -> BuildResult:
+            def _builder(
+                _working: Diagram, _match: Match, result: BuildResult = corrupted
+            ) -> BuildResult:
                 return result
 
             rule = dataclasses.replace(SPIDER_FUSION, builder=_builder)
@@ -1021,3 +1028,20 @@ class TestForeignFusionMatchArm:
             "no match in the clean generator's sample had a non-empty port_mapping -- "
             "this arm never actually exercised the removed-entry corruption"
         )
+
+    def test_fabricated_dimension_constraints_is_rejected(self) -> None:
+        """Defect 2 (Phase 5 post-closing audit): a match's own ``dimension_constraints``
+        is never trusted for the certificate -- it must agree exactly with what
+        ``resolve_fusion_match`` derives fresh, or the builder refuses outright.
+        """
+        pairs = self._matches()
+        assert pairs, "the clean generator never produced a single fusion match"
+        for diagram, match in pairs:
+            corrupted = dataclasses.replace(
+                match,
+                dimension_constraints=match.dimension_constraints
+                + ((Dim.concrete(2), Dim.concrete(3)),),
+                side_condition_outcomes=_all_claimed_passing(match),
+            )
+            with pytest.raises(RewriteError):
+                spider_fusion_builder(diagram, corrupted)

@@ -11,4 +11,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Textual pretty-printer for diagrams, and Dirac rendering when a diagram is in recognizable normal form."""
+"""Textual pretty-printer for diagrams, and Dirac rendering when a diagram is in recognizable
+normal form."""

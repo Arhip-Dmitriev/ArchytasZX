@@ -84,7 +84,9 @@ class TestDisconnectedComponents:
         b = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         phase_b = PhaseVector(d, {1: Phase.turns(sp.Rational(1, 2))})
         diagram.set_phase(b, phase_b)
-        diagram.set_boundary_outputs([PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.OUTPUT, 0)])
+        diagram.set_boundary_outputs(
+            [PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.OUTPUT, 0)]
+        )
         result = contract(diagram)
         expected = np.outer([1, 1], [1, -1])
         np.testing.assert_allclose(result.tensor, expected, atol=1e-10)

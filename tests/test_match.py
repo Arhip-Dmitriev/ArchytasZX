@@ -19,7 +19,14 @@ import pytest
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
+from qufzx.diagram.generators import (
+    X_SPIDER,
+    Z_SPIDER,
+    DimensionPolicy,
+    GeneratorType,
+    LegPolicy,
+    PhaseSchema,
+)
 from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
 from qufzx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
@@ -174,7 +181,9 @@ class TestNoMatchForSelfLoop:
         d = Dim.concrete(2)
         diagram = Diagram()
         node_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
-        diagram.add_wire(PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 0))
+        diagram.add_wire(
+            PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 0)
+        )
         assert find_matches(diagram) == ()
 
 
@@ -248,7 +257,16 @@ def _phase_at(dim: Dim, index: int) -> PhaseVector:
 
 
 class TestPhaseDimensionMismatchIsNonMatch:
-    def test_both_phases_present_with_mismatched_dims_is_non_match(self) -> None:
+    def test_both_phases_present_with_concrete_phase_dim_binding_the_symbolic_shared_dim(
+        self,
+    ) -> None:
+        # Judgement call 2 (Phase 5 post-closing audit): both legs share the still-symbolic
+        # d (shared_dim=d, unbound), A's phase already agrees outright (also over d), and
+        # B's phase over the concrete 3 now legitimately binds d := 3 through condition 6's
+        # own unify call -- exactly the completeness gap the pre-fix plain-equality version
+        # missed (see the module docstring, condition 6). Neither phase's entries reference
+        # a dimension symbol, so there is nothing to substitute and reattach_phase succeeds
+        # trivially either way.
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(
@@ -258,9 +276,13 @@ class TestPhaseDimensionMismatchIsNonMatch:
             Z_SPIDER, input_dims=[d], output_dims=[], phase=_phase_at(Dim.concrete(3), 1)
         )
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
-        assert find_matches(diagram) == ()
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert (Dim.concrete(3), d) in matches[0].dimension_constraints
 
-    def test_one_sided_phase_differing_from_shared_leg_dim_is_non_match(self) -> None:
+    def test_one_sided_phase_binding_the_symbolic_shared_leg_dim_now_matches(self) -> None:
+        # Mirror of the above with only one phase present: B has none, so only A's phase
+        # (over the concrete 3) needs to unify with shared_dim=d -- binds d := 3, accepted.
         shared = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(
@@ -270,6 +292,23 @@ class TestPhaseDimensionMismatchIsNonMatch:
             phase=_phase_at(Dim.concrete(3), 1),
         )
         b_id = diagram.add_node(Z_SPIDER, input_dims=[shared], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert (Dim.concrete(3), shared) in matches[0].dimension_constraints
+
+    def test_a_phase_dim_that_fails_to_unify_with_shared_dim_is_still_a_non_match(self) -> None:
+        # Two distinct concrete dims can never unify -- this remains a hard non-match,
+        # judgement call 2 only widened acceptance for a phase dim that unifies (bare
+        # identity or binding), never for one that outright fails to.
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[Dim.concrete(2)],
+            phase=_phase_at(Dim.concrete(3), 1),
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         assert find_matches(diagram) == ()
 
@@ -386,12 +425,19 @@ class TestSharedDimResolvesThroughBinding:
         assert len(matches) == 1
         assert matches[0].shared_dim == three
 
-    def test_phases_agreeing_only_after_substitution_but_not_raw_is_a_non_match(self) -> None:
-        # Node A's phase is stated over the symbolic leg dim d, node B's over the bound
-        # concrete value 3 -- both individually resolve to shared_dim=3, but their raw,
-        # unsubstituted Dims differ. spider_fusion_builder adds the two stored phase
-        # vectors directly via PhaseVector.__add__ with no substitution of its own, so
-        # this must be rejected as a non-match rather than crash the builder later.
+    def test_phases_agreeing_only_after_substitution_but_not_raw_now_matches(self) -> None:
+        # Judgement call 2 (Phase 5 post-closing audit), decided: node A's phase is stated
+        # over the symbolic leg dim d, node B's over the bound concrete value 3 -- both
+        # individually resolve to shared_dim=3 (A's via a binding condition 6 itself now
+        # derives, B's outright), but their raw, unsubstituted Dims differ. The pre-fix
+        # matcher additionally required two present phases' raw Dims to equal each other,
+        # rejecting this candidate on the theory that spider_fusion_builder's
+        # PhaseVector.__add__ would otherwise crash on unequal Dims -- but reattach_phase
+        # forces *both* operands' container Dim to the identical shared_dim regardless of
+        # their raw values (see that function's docstring), so the crash this guarded
+        # against was never actually reachable once reattach_phase existed. Removed as
+        # unneeded conservatism; the fused diagram is built and oracle-compared for real in
+        # TestPhase5Round12AuditDefects-style rules_library tests.
         d = Dim.symbol("d")
         three = Dim.concrete(3)
         diagram = Diagram()
@@ -405,7 +451,9 @@ class TestSharedDimResolvesThroughBinding:
             phase=PhaseVector(three, {1: Phase.turns(1)}),
         )
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
-        assert find_matches(diagram) == ()
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].shared_dim == three
 
 
 class TestPhaseDimensionAgreementSeesSurvivingLegBindings:
@@ -554,7 +602,9 @@ class TestMalformedWireDetectionIsFullyUnconditional:
         diagram = Diagram()
         node_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
         # A self-loop wire (skipped by the self-loop filter) whose input index is out of range.
-        diagram.add_wire(PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 9))
+        diagram.add_wire(
+            PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 9)
+        )
         with pytest.raises(RewriteGrammarError):
             find_matches(diagram)
 
@@ -596,12 +646,14 @@ class TestFusionMatchIsHashable:
 
 
 class TestPhaseDimensionAgreementDeferredFidelity:
-    """Task 2 (Phase 5 closing round): ``phase_dimension_agreement`` is a plain ``Dim``
-    equality that never calls ``Dim.unify``, so it can never be genuinely ``DEFERRED`` --
-    yet it used to report ``deferred=leg_deferred`` unconditionally, borrowing condition 5's
-    flag even when no phase was present at all (nothing was checked, let alone assumed) or
-    when the phase's own dim already agreed with ``shared_dim`` outright (no assumption was
-    made). See the module docstring, condition 6.
+    """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome
+    (Phase 5 post-closing audit, judgement call 2, decided): it now genuinely calls
+    :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 5 -- a genuinely
+    ``DEFERRED`` per-phase result is rejected outright (see the module docstring, condition
+    6, for why a phase cannot tolerate the same unproven assumption a leg can), so a
+    *passing* outcome is never itself resting on an undecided unify. A passing outcome can
+    still rest on a *binding* -- recorded in ``dimension_constraints`` -- but following
+    condition 5's own convention, a binding-only success does not set ``deferred`` either.
     """
 
     def test_deferred_is_false_when_no_phase_present_on_either_node(self) -> None:
@@ -614,9 +666,12 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         assert outcome.passed
         assert outcome.deferred is False
 
-    def test_deferred_is_true_when_phase_agreement_rests_on_a_binding(self) -> None:
+    def test_deferred_is_false_even_when_phase_agreement_rests_on_a_binding(self) -> None:
         # A's phase is stated over the still-symbolic d; the connecting leg binds d := 3,
-        # so phase agreement holds only because that binding is substituted in first.
+        # so phase agreement holds only because that binding is substituted in first -- an
+        # assumption, recorded in dimension_constraints, but not one that sets `deferred`
+        # (a binding-only success is not the same as a genuinely undecided DEFERRED result;
+        # see the class docstring).
         d = Dim.symbol("d")
         three = Dim.concrete(3)
         diagram = Diagram()
@@ -630,7 +685,23 @@ class TestPhaseDimensionAgreementDeferredFidelity:
             o for o in match.side_condition_outcomes if o.name == "phase_dimension_agreement"
         )
         assert outcome.passed
-        assert outcome.deferred is True
+        assert outcome.deferred is False
+        assert (d, three) in match.dimension_constraints
+
+    def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
+        # Judgement call 2 (Phase 5 post-closing audit): unlike a leg, a phase whose dim
+        # only DEFERS against shared_dim (never binds, never a bare identity) cannot be
+        # safely reattached -- there is no binding to substitute through its entries, so
+        # this must be a non-match, not an accepted-with-assumption pass.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d * e, {1: Phase.turns(1)})
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        assert find_matches(diagram) == ()
 
     def test_deferred_is_false_when_phase_agrees_outright_despite_an_unrelated_defer(
         self,
@@ -658,6 +729,46 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         )
         assert phase_outcome.passed
         assert phase_outcome.deferred is False
+
+
+class TestSameGeneratorTypeReportsUnregisteredFusabilityItself:
+    """Phase 5 post-closing audit spec/doc defect: a same-typed pair whose shared type is
+    not a registered fusable generator (i.e. not Z or X) must fail ``same_generator_type``
+    itself, with that as the reported reason -- not pass it (the two types genuinely are
+    equal) only to have the real cause surface as an aside buried inside
+    ``consumed_wire_direction_permitted_for_color``'s detail, a condition whose own
+    declared description is about wire direction, not fusability.
+    """
+
+    def test_same_unregistered_type_fails_same_generator_type_with_the_real_reason(self) -> None:
+        foreign = GeneratorType(
+            name="foreign",
+            leg_policy=LegPolicy(),
+            phase_schema=PhaseSchema.TIED_TO_LEG_DIM,
+            dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+        )
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(foreign, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(foreign, input_dims=[d], output_dims=[])
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert not resolution.passed
+        same_type = next(o for o in resolution.outcomes if o.name == "same_generator_type")
+        assert not same_type.passed
+        assert "not a registered fusable generator type" in same_type.detail
+
+        direction = next(
+            o
+            for o in resolution.outcomes
+            if o.name == "consumed_wire_direction_permitted_for_color"
+        )
+        assert not direction.passed
+        assert direction.detail == "not evaluated: same_generator_type failed first"
+
+        assert find_matches(diagram) == ()
 
 
 class TestResolveFusionMatchIsTheSharedPredicate:
@@ -717,6 +828,10 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         assert {o.name for o in resolution.outcomes} == {c.name for c in FUSION_SIDE_CONDITIONS}
         same_type = next(o for o in resolution.outcomes if o.name == "same_generator_type")
         assert not same_type.passed
+        # Phase 5 post-closing audit: a failed resolution's shared_dim is unrepresentable
+        # as a meaningful Dim, not a placeholder concrete value a caller ignoring `passed`
+        # could silently read as though it meant something.
+        assert resolution.shared_dim is None
 
     def test_passing_resolution_agrees_with_find_matches_own_fields(self) -> None:
         d = Dim.symbol("d")
@@ -727,3 +842,27 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         assert resolution.shared_dim == match.shared_dim
         assert dict(resolution.bindings) == dict(match.bindings)
         assert resolution.outcomes == match.side_condition_outcomes
+
+    def test_raises_grammar_error_for_a_wire_incident_on_both_but_not_in_the_diagram(
+        self,
+    ) -> None:
+        """Defect 1 (Phase 5 post-closing audit): a ``Wire`` naming two ports that are each
+        genuinely incident on ``a_id``/``b_id`` -- so it passes every earlier structural
+        check -- but that was never actually added to the diagram (a caller merely
+        constructed it to look like one) must still be refused, not treated as a legal
+        fusion occurrence.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        # Both endpoints are real, in-range ports on a_id/b_id respectively -- but this
+        # particular Wire object was never passed to diagram.add_wire.
+        ghost_wire = Wire(PortRef(a_id, Direction.INPUT, 0), PortRef(b_id, Direction.OUTPUT, 0))
+        assert ghost_wire not in diagram.wires
+        with pytest.raises(RewriteGrammarError):
+            resolve_fusion_match(diagram, a_id, b_id, ghost_wire)

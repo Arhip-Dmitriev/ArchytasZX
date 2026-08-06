@@ -87,7 +87,9 @@ def _build_node(
         # give it an explicit zero phase, mirroring every other generator in this suite and
         # rules_library.py's own "no legs survive" corner case for a merged node.
         phase = PhaseVector(dim, {})
-    node_id = diagram.add_node(color, input_dims=[dim] * n_in, output_dims=[dim] * n_out, phase=phase)
+    node_id = diagram.add_node(
+        color, input_dims=[dim] * n_in, output_dims=[dim] * n_out, phase=phase
+    )
     ports = [PortRef(node_id, Direction.INPUT, i) for i in range(n_in)]
     ports += [PortRef(node_id, Direction.OUTPUT, i) for i in range(n_out)]
     return ports
@@ -113,7 +115,9 @@ def _wiring_templates(
     ports_b = [PortRef(node_b_id, Direction.INPUT, i) for i in range(n_in_b)]
     ports_b += [PortRef(node_b_id, Direction.OUTPUT, i) for i in range(n_out_b)]
 
-    wirings: list[tuple[tuple[PortRef, PortRef], ...]] = [((a, b),) for a in ports_a for b in ports_b]
+    wirings: list[tuple[tuple[PortRef, PortRef], ...]] = [
+        ((a, b),) for a in ports_a for b in ports_b
+    ]
     if not skip_two_wire and len(ports_a) >= 2 and len(ports_b) >= 2:
         for pair_a in itertools.combinations(ports_a, 2):
             for pair_b in itertools.combinations(ports_b, 2):

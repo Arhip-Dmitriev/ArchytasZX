@@ -113,8 +113,11 @@ Implemented and under test:
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
   up-to-global-phase mode.
 - **Rewrite core** — the rule/pattern/builder abstraction, a matcher for same-colour
-  spider fusion, the spider-fusion rule itself with its exact scalar, and an engine that
-  applies a rule at a match and records step provenance.
+  spider fusion (including phase-dimension agreement resolved by unification, not merely
+  raw equality), the spider-fusion rule itself with its exact scalar, and an engine that
+  applies a rule at a match and records step provenance — re-derived independently by the
+  builder rather than trusted from the match, and including which pre-existing deferred
+  dimension assumptions a rewrite carried forward versus silently resolved.
 
 Not yet implemented:
 

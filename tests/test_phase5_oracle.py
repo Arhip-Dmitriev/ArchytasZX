@@ -20,8 +20,8 @@ exactly that: build "A into B" via ``build_ghz_with_copy``, find the fusion matc
 it, and confirm the oracle (:mod:`qufzx.semantics.check`) reports the pre- and post-fusion
 diagrams exactly equal at several concrete ``d``, with no symbolic phase, with a symbolic
 phase on A, on B, and on both, and for both the Z and X spider colors -- the X case exists
-specifically to exercise the ``consumed_wire_direction_permitted_for_color`` side condition documented
-in :mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
+specifically to exercise the ``consumed_wire_direction_permitted_for_color`` side condition
+documented in :mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
 fusion apart from a wrongly-wired one. It also carries the negative controls and import-
 boundary check the build plan calls out explicitly.
 """

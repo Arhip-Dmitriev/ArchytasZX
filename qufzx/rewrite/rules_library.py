@@ -30,8 +30,8 @@ factor in either shape that wire can take -- read directly off
 :mod:`qufzx.semantics.denote`'s formulas, the merged node's denotation already equals the
 pre-fusion diagram's contraction with no leftover coefficient. Two distinct wire shapes are
 possible, gated by :mod:`qufzx.rewrite.match`'s condition 4
-(``consumed_wire_direction_permitted_for_color`` -- see that module's docstring for the full account of
-exactly which direction combinations each color permits, and why): an alternating
+(``consumed_wire_direction_permitted_for_color`` -- see that module's docstring for the full
+account of exactly which direction combinations each color permits, and why): an alternating
 output-to-input wire, valid fusion for both colors, and a same-direction (output-output or
 input-input) wire, valid fusion for Z only.
 
@@ -105,32 +105,72 @@ rejected with :class:`~qufzx.rewrite.rule.RewriteDomainError` rather than truste
 is what makes "match-approval and build-applicability are the same predicate by
 construction" (see :mod:`qufzx.rewrite.match`'s module docstring) literally true -- the
 same function object, called from both places, not a policy this builder re-derives
-independently and hopes stays in sync. When the matched wire's ``dimension_agreement`` only deferred (on the connecting
-pair or on some surviving leg), the affected leg's assumed equality with ``shared_dim`` is
+independently and hopes stays in sync. When the matched wire's ``dimension_agreement`` only
+deferred (on the connecting pair or on some surviving leg), the affected leg's assumed
+equality with ``shared_dim`` is
 carried into the diagram -- a neighbouring wire that was an exact match before this fusion
 may become merely deferred after it. That is expected, not a defect. See
 :func:`_merged_phase` for the legless corner case, where dimension can only survive via
 the phase slot.
 
-Phase 5 judgement call (deliberate, not a defect): fusion is permitted to fire on a
-``DEFERRED`` dimension pair at all, even though FULL_PLAN.md's Phase 5 item (ii) states the
-pattern as "two same-color spiders joined by a wire and sharing a dimension" -- a
-``DEFERRED`` unify means it is not actually known that the two legs share one, only that
-:meth:`~qufzx.algebra.dimension.Dim.unify`'s deliberately weak placeholder could not decide
-either way. Concretely, a node with legs ``[d, d*e]`` fused against a node with leg ``d``
-produces a merged node whose surviving port is ``Dim(d)``; the ``d*e`` label is gone from
-the diagram entirely, surviving only as a ``dimension_constraints`` entry on the
-:class:`~qufzx.rewrite.engine.RewriteStep` certificate. This is consistent with
-:mod:`qufzx.diagram.validate`'s own deferral posture (a ``DEFERRED`` unify is not a hard
-error there either), and is fully argued in both this module's account above and
-:mod:`qufzx.rewrite.match`'s module docstring ("Dimension constraints"). But it is worth
-naming plainly: the assumption a diagram-level unifier must eventually justify is recorded
-only on the certificate, not in the diagram itself, which is in tension with ``CLAUDE.md``'s
-"the diagram is the single source of truth" -- a diagram inspected on its own, without its
-certificate history, cannot recover that a surviving leg's dimension was ever anything other
-than what it now says. This is flagged here as a known, accepted Phase 5 limitation; closing
-it properly needs Phase 10's real unifier (which can resolve a ``DEFERRED`` pair outright
-instead of assuming it), not a change to this builder.
+Phase 5 judgement call, decided (Phase 5 post-closing audit, judgement call 1): fusion is
+permitted to fire on a ``DEFERRED`` dimension pair at all, even though FULL_PLAN.md's Phase
+5 item (ii) states the pattern as "two same-color spiders joined by a wire and sharing a
+dimension" -- a ``DEFERRED`` unify means it is not actually known that the two legs share
+one, only that :meth:`~qufzx.algebra.dimension.Dim.unify`'s deliberately weak placeholder
+could not decide either way. Concretely, a node with legs ``[d, d*e]`` fused against a node
+with leg ``d`` produces a merged node whose surviving port is ``Dim(d)``; the ``d*e`` label
+is gone from the diagram entirely, surviving only as a ``dimension_constraints`` entry on
+the :class:`~qufzx.rewrite.engine.RewriteStep` certificate.
+
+The alternative (refuse to match on ``DEFERRED``, reading FULL_PLAN.md's "sharing a
+dimension" literally) was rejected, not merely left unexamined: ``DEFERRED`` is
+:mod:`qufzx.diagram.validate`'s own deferral posture too -- a ``d``/``d*e`` leg pair is
+already legal, non-hard-error input under ``ALL_LEGS_EQUAL`` before any rewrite touches it
+(:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`, not
+``DIMENSION_POLICY_VIOLATION``), so refusing to fuse across it would make this pattern
+*stricter* than the diagram format it operates on already accepts, for no soundness gain:
+the merged node's tensor is exactly as well-defined under the assumption as the pre-fusion
+diagram was, and the assumption is recorded either way (as a diagram-level
+``DIMENSION_DEFERRED`` finding before the rewrite, as a ``dimension_constraints`` certificate
+entry after it). Refusing would also invalidate a large, deliberate slice of existing
+coverage built specifically to exercise this path (:mod:`tests.test_fusion_properties`'s
+``d*e``/``d**2`` palette entries, added precisely so ``Dim.unify``'s ``DEFERRED`` branch --
+and :func:`_unify_surviving_legs`'s dedicated handling of it -- was exercised at all), for a
+literal reading of one phrase in a phase-level spec summary against a placeholder unifier
+that is explicitly provisional (see ``Dim.unify``'s own docstring) and superseded by Phase
+10 regardless of which choice Phase 5 makes now.
+
+What was a genuine, unaddressed gap -- not the firing itself -- is that the resulting
+assumption used to be recorded *only* on the certificate, never surfaced anywhere near the
+diagram-level bookkeeping that already tracks deferred assumptions
+(:class:`~qufzx.diagram.validate.ValidationReport.deferred`): a rewrite consuming or
+overwriting a ``d*e``-typed leg makes that diagram-level ``DIMENSION_DEFERRED`` finding
+vanish with nothing announcing that this specific rewrite is the one that made it disappear
+-- step 8 (see :mod:`qufzx.rewrite.engine`) never even looked at deferred issues, only hard
+ones, so a removed deferred issue was invisible by construction, not merely unblocked.
+:attr:`~qufzx.rewrite.engine.RewriteStep.removed_deferred_issues` closes this: every
+deferred issue ``diagram`` carried whose translated key finds no counterpart among
+``working``'s own deferred issues is now recorded there, not as a raised error (removing a
+deferred issue by resolving it is not itself wrong -- that is the entire point of allowing
+fusion to fire across one) but as an explicit, always-present certificate field a Phase 6
+reader can inspect rather than a silent gap :func:`~qufzx.rewrite.match.find_matches`'s
+``dimension_constraints`` only indirectly hinted at. See that field's own docstring, and
+:mod:`qufzx.rewrite.engine`'s module docstring, step 8, for the mechanism.
+
+Phase 5 judgement call 2, decided (Phase 5 post-closing audit): whether
+``phase_dimension_agreement``'s pre-fix plain-``Dim``-equality conservatism (never calling
+:meth:`~qufzx.algebra.dimension.Dim.unify`, and additionally requiring two present phases'
+raw ``Dim``\\ s to equal each other) was still wanted now that :func:`reattach_phase`
+substitutes bindings into a phase's entries before reattaching it to ``shared_dim``. Decided
+no, on both counts, and fixed in :mod:`qufzx.rewrite.match` rather than re-documented as an
+accepted limitation: the raw-dim-agreement check between two present phases was never
+actually load-bearing once ``reattach_phase`` forces both operands onto the identical
+``shared_dim`` regardless of their raw ``Dim``\\ s, and the plain-equality check (versus a
+real ``unify`` call) silently missed a phase whose ``Dim`` unifies with ``shared_dim`` only
+via a binding this condition itself would have to produce. See
+:mod:`qufzx.rewrite.match`'s module docstring, condition 6, for the full account of both
+retired checks and why neither bought any soundness.
 """
 
 from __future__ import annotations
@@ -174,7 +214,9 @@ def _surviving_legs(
     return surviving
 
 
-def _over_shared_dim(phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
+def _over_shared_dim(
+    phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]
+) -> PhaseVector:
     """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``.
 
     Or an all-zero vector if ``phase`` is absent. Delegates to
@@ -276,9 +318,23 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
        outcome tuple, not a different error class for what is the same kind of defect.
        Everything from here on builds from ``resolution``'s fields, never ``match.shared_dim``
        or ``match.bindings`` directly, even though they are now known to agree.
+    4. ``match.dimension_constraints`` and ``match.side_condition_outcomes`` themselves,
+       checked for exact agreement with ``resolution.dimension_constraints``/``resolution
+       .outcomes`` (Phase 5 post-closing audit, Defect 2) -- the same disagreement-is-
+       ``RewriteDomainError`` policy step 3 already applies to ``shared_dim``/``bindings``,
+       extended to the two fields :mod:`qufzx.rewrite.engine`'s certificate actually reads.
+       Before this check existed, a match could claim (via a fabricated
+       ``side_condition_outcomes`` tuple, or a hand-edited ``dimension_constraints``) to
+       have assumed nothing, or something different from what was actually assumed, and
+       ``apply`` would record that unaudited claim onto ``RewriteStep`` verbatim -- this
+       builder now returns ``resolution.outcomes``/``resolution.dimension_constraints`` as
+       :attr:`~qufzx.rewrite.rule.BuildResult.verified_side_condition_outcomes`/
+       :attr:`~qufzx.rewrite.rule.BuildResult.verified_dimension_constraints` instead, which
+       ``apply`` prefers over ``match``'s own fields when recording the certificate.
 
     A structurally malformed match -- ``match.a_id == match.b_id``, either node id absent
-    from ``diagram``, or ``match.wire`` not actually incident on both -- surfaces as
+    from ``diagram``, ``match.wire`` not actually incident on both, or ``match.wire`` not
+    actually an element of ``diagram.wires`` -- surfaces as
     :class:`~qufzx.rewrite.rule.RewriteGrammarError` from step 3 itself (via
     :func:`~qufzx.rewrite.match.resolve_fusion_match`), the same class this builder raised
     for that case before this refactor.
@@ -301,6 +357,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
             "claimed every condition passed, but a match's own outcomes are never taken "
             "on faith for graph surgery -- see resolve_fusion_match"
         )
+    assert resolution.shared_dim is not None  # invariant: passed implies shared_dim is set
     if match.shared_dim != resolution.shared_dim:
         raise RewriteDomainError(
             f"spider_fusion: match.shared_dim {match.shared_dim!r} disagrees with the "
@@ -313,6 +370,28 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
             f"spider_fusion: match.bindings {dict(match.bindings)!r} disagrees with the "
             f"bindings {dict(resolution.bindings)!r} resolve_fusion_match derives fresh "
             "from the diagram for this wire"
+        )
+    # Defect 2 (Phase 5 post-closing audit): the certificate must record what this rewrite
+    # actually assumed, not merely what the match claims it assumed -- the same class of gap
+    # A2 already closed for shared_dim/bindings. match.dimension_constraints and
+    # match.side_condition_outcomes are never trusted for the certificate either: they must
+    # agree exactly with what resolve_fusion_match just derived fresh, or this raises here,
+    # before graph surgery, rather than letting a fabricated pair of fields reach
+    # qufzx.rewrite.engine.apply and be recorded verbatim onto RewriteStep.
+    if match.dimension_constraints != resolution.dimension_constraints:
+        raise RewriteDomainError(
+            f"spider_fusion: match.dimension_constraints {match.dimension_constraints!r} "
+            f"disagrees with {resolution.dimension_constraints!r}, which "
+            "resolve_fusion_match derives fresh from the diagram for this wire -- a "
+            "match's own dimension_constraints is never trusted for the certificate "
+            "without this agreement"
+        )
+    if match.side_condition_outcomes != resolution.outcomes:
+        raise RewriteDomainError(
+            "spider_fusion: match.side_condition_outcomes disagrees with the outcomes "
+            "resolve_fusion_match derives fresh from the diagram for this wire -- a "
+            "match's own side_condition_outcomes is never trusted for the certificate "
+            "without this agreement"
         )
 
     node_a = diagram.nodes[match.a_id]
@@ -361,6 +440,8 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         consumed_wires=(wire,),
         port_mapping=port_mapping,
         scalar_introduced=Scalar.one(),
+        verified_side_condition_outcomes=resolution.outcomes,
+        verified_dimension_constraints=resolution.dimension_constraints,
     )
 
 
