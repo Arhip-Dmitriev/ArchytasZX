@@ -29,6 +29,9 @@ from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import (
     BuildResult,
+    ConstraintOutcome,
+    ConstraintSource,
+    DimensionConstraint,
     Match,
     Pattern,
     Quantifiers,
@@ -276,7 +279,14 @@ class TestCertificateRecordsTheReDerivedFacts:
         # arrives as concrete 3 against a shared_dim of 3 -- a bare syntactic identity,
         # which records nothing. Re-asserting an identical (d, 3) pair there would be the
         # same fact twice, not a second assumption the certificate must carry.
-        assert match.dimension_constraints == ((d, three),)
+        assert match.dimension_constraints == (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=three,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
 
         fake = dataclasses.replace(
             match,
@@ -683,8 +693,16 @@ class TestDimensionConstraintsExactContent:
 
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
-        assert result.step.dimension_constraints == ((d, two),)
-        assert match.dimension_constraints == ((d, two),)
+        expected = (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=two,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
+        assert result.step.dimension_constraints == expected
+        assert match.dimension_constraints == expected
 
     def test_a_surviving_leg_bound_by_an_earlier_leg_contributes_no_duplicate(self) -> None:
         # A: input dims [d, 2], output dim d (consumed). B: input dim d (consumed), output
@@ -704,8 +722,16 @@ class TestDimensionConstraintsExactContent:
 
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
-        assert result.step.dimension_constraints == ((two, d),)
-        assert match.dimension_constraints == ((two, d),)
+        expected = (
+            DimensionConstraint(
+                assumed=two,
+                equal_to=d,
+                source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.INPUT, 1)),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
+        assert result.step.dimension_constraints == expected
+        assert match.dimension_constraints == expected
 
     def test_two_independent_deferred_legs_are_both_recorded_not_collapsed(self) -> None:
         # A: input dim d*e (survives), output dim d (consumed). B: input dim d (consumed),
@@ -728,8 +754,22 @@ class TestDimensionConstraintsExactContent:
 
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
-        assert result.step.dimension_constraints == ((de, d), (de, d))
-        assert match.dimension_constraints == ((de, d), (de, d))
+        expected = (
+            DimensionConstraint(
+                assumed=de,
+                equal_to=d,
+                source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.INPUT, 0)),
+                outcome=ConstraintOutcome.DEFERRED,
+            ),
+            DimensionConstraint(
+                assumed=de,
+                equal_to=d,
+                source=ConstraintSource.surviving_leg(PortRef(b_id, Direction.OUTPUT, 0)),
+                outcome=ConstraintOutcome.DEFERRED,
+            ),
+        )
+        assert result.step.dimension_constraints == expected
+        assert match.dimension_constraints == expected
 
 
 class TestRemovedDeferredIssuesMultisetCompare:
@@ -776,6 +816,102 @@ class TestRemovedDeferredIssuesMultisetCompare:
         assert {issue.node_id for issue in removed} == {a_id, b_id}
         for issue in removed:
             assert issue.kind is IssueKind.DIMENSION_DEFERRED
+
+
+class TestDeferredIssueProvenanceIsSymmetric:
+    """D2/D3: a rewrite can introduce a deferred assumption as readily as it removes one, and
+    the identity contract on a colliding key is stated and pinned, not left implicit.
+    """
+
+    def test_introduced_deferred_issue_is_recorded_in_post_rewrite_coordinates(self) -> None:
+        # A: output dims [d, d*e] (d consumed by the fusion, d*e survives on A's own leg,
+        # forced onto shared_dim=d by the builder). Before the fusion, the *node* A itself
+        # carries a DIMENSION_DEFERRED (its own two legs disagree). After it, A's surviving
+        # leg is forced to the merged node's shared_dim=d, but the wire from there to C
+        # (whose own leg is still the untouched d*e) now assumes d == d*e at the *wire* --
+        # a brand new deferred assumption that did not exist before, on a piece of the
+        # diagram (the wire) that did not exist before either.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        de = d * e
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, de])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[de], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(c_id, Direction.INPUT, 0))
+
+        pre_report = validate(diagram)
+        assert len(pre_report.deferred) == 1
+        assert pre_report.deferred[0].node_id == a_id
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+
+        assert len(result.step.removed_deferred_issues) == 1
+        assert result.step.removed_deferred_issues[0] == pre_report.deferred[0]
+
+        post_report = validate(result.diagram)
+        assert len(post_report.deferred) == 1
+        assert post_report.deferred[0].wire is not None
+
+        assert len(result.step.introduced_deferred_issues) == 1
+        assert result.step.introduced_deferred_issues[0] == post_report.deferred[0]
+        assert not result.step.deferred_issue_identity_ambiguous
+
+    def test_neither_field_is_populated_when_nothing_changes(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.removed_deferred_issues == ()
+        assert result.step.introduced_deferred_issues == ()
+        assert not result.step.deferred_issue_identity_ambiguous
+
+    def test_colliding_keys_are_flagged_ambiguous_and_pinned_to_validate_order(self) -> None:
+        """Unit-level pin of :func:`~qufzx.rewrite.engine._select_by_key_surplus`'s own
+        contract (see :attr:`~qufzx.rewrite.engine.RewriteStep
+        .deferred_issue_identity_ambiguous`'s docstring): when several issues collide on one
+        translated key and only *some* of them have a surplus, the selection is arbitrary
+        but deterministic -- first in the given (``validate``) order -- and the ambiguity
+        flag says so. Exercised directly against the selector rather than by engineering a
+        diagram-level collision, since the routine is the one, shared implementation both
+        ``removed_deferred_issues`` and ``introduced_deferred_issues`` call, and its contract
+        is a property of the selection algorithm itself, not of any one diagram shape.
+        """
+        from collections import Counter
+
+        from qufzx.rewrite.engine import _select_by_key_surplus
+
+        key = (IssueKind.DIMENSION_DEFERRED, None)
+        first = ValidationIssue(
+            kind=IssueKind.DIMENSION_DEFERRED, message="first", node_id=NodeId(0), deferred=True
+        )
+        second = ValidationIssue(
+            kind=IssueKind.DIMENSION_DEFERRED, message="second", node_id=NodeId(1), deferred=True
+        )
+        keyed = ((key, first), (key, second))
+
+        # Full surplus (both lack a counterpart): every colliding issue is reported, and the
+        # selection -- though every issue happens to be included -- is not ambiguous, since
+        # nothing was left out to have been chosen over.
+        selected, ambiguous = _select_by_key_surplus(keyed, Counter({key: 2}))
+        assert selected == (first, second)
+        assert not ambiguous
+
+        # Partial surplus (only one of the two colliding issues has a counterpart): the
+        # selection takes the first in the given order and flags the result ambiguous,
+        # rather than silently implying `first` was chosen because it is somehow the "real"
+        # removed one.
+        selected, ambiguous = _select_by_key_surplus(keyed, Counter({key: 1}))
+        assert selected == (first,)
+        assert ambiguous
+
+        # Zero surplus: nothing selected, and correctly not ambiguous (there is no partial
+        # selection to be ambiguous about).
+        selected, ambiguous = _select_by_key_surplus(keyed, Counter())
+        assert selected == ()
+        assert not ambiguous
 
 
 class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
@@ -921,7 +1057,7 @@ class _ScriptedMatch:
     """A minimal, hand-built ``Match`` for exercising ``apply()`` with an independent builder."""
 
     side_condition_outcomes: tuple[SideConditionOutcome, ...] = ()
-    dimension_constraints: tuple[tuple[Dim, Dim], ...] = ()
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
 
     @property
     def all_side_conditions_passed(self) -> bool:

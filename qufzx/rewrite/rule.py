@@ -38,6 +38,15 @@ is a ``typing.Protocol``: any match object that exposes ``side_condition_outcome
 :mod:`qufzx.rewrite.match`'s ``FusionMatch`` is a plain dataclass that happens to expose
 those three members; it does not need to subclass anything here.
 
+Dimension constraints are source-keyed values, not bare pairs. :class:`DimensionConstraint`
+carries the assumed equality *plus* the :class:`ConstraintSource` that produced it and the
+:class:`ConstraintOutcome` (deferred, or decided only under a binding) it came from. That
+shape is what lets a pattern whose dimension resolution iterates to a fixpoint record each
+source exactly once, at its most-resolved form, by replacing the entry for a source it
+re-derives -- see :mod:`qufzx.rewrite.match`'s "Dimension constraints" section, and
+``tests/test_phase5_certificate_sweep.py`` for the exhaustive property sweep that enforces
+it (no duplicate sources, completeness, no invention, determinism, builder agreement).
+
 BuildResult as the generic engine/builder contract. :mod:`qufzx.rewrite.engine`'s
 ``apply()`` must remain generic over any future rule, so a builder cannot hand back only
 a Diagram and a scalar -- it must also tell the engine *which* nodes and wires the match
@@ -81,6 +90,7 @@ three classes rather than defining their own hierarchies.
 from __future__ import annotations
 
 import abc
+import enum
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -140,6 +150,140 @@ class SideConditionOutcome:
     deferred: bool = False
 
 
+class ConstraintSourceKind(enum.Enum):
+    """Which kind of check in a pattern's resolution produced a :class:`DimensionConstraint`.
+
+    The discriminator that makes :attr:`Match.dimension_constraints` a homogeneous,
+    uniformly-readable record. Before it existed the connecting pair was stored as a raw
+    ``(leg_a_dim, leg_b_dim)`` (a leg-to-leg relation) while every other entry was
+    ``(resolved_dim, shared_dim)`` (a leg-to-shared relation), with nothing in the entry
+    saying which shape it was.
+    """
+
+    CONNECTING_PAIR = "connecting_pair"
+    """The two legs the matched (consumed) wire joins, related to each other. This is the
+    only kind whose :attr:`DimensionConstraint.equal_to` is another leg's dimension rather
+    than the candidate's running shared dimension: it is what *starts* the resolution, so
+    there is no shared dimension yet to relate it to."""
+
+    SURVIVING_LEG = "surviving_leg"
+    """One specific surviving leg, identified by :attr:`ConstraintSource.port_ref`
+    (``(NodeId, Direction, index)``), related to the shared dimension as of the check."""
+
+    NODE_PHASE = "node_phase"
+    """One specific node's phase vector dimension, identified by
+    :attr:`ConstraintSource.node_id`, related to the shared dimension as of the check."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintSource:
+    """*Which* check produced a :class:`DimensionConstraint` -- the record's identity key.
+
+    A resolution that iterates to a fixpoint checks the same leg or phase several times,
+    each time against a more-resolved shared dimension. Keying the record by source (rather
+    than appending per check) is what makes "a source is checked many times but recorded
+    once, always at its most-resolved form" true structurally instead of by accident:
+    :mod:`qufzx.rewrite.match` replaces the entry for a source it re-derives, in place,
+    preserving first-derivation order.
+
+    Enforced by :meth:`__post_init__`: ``CONNECTING_PAIR`` carries neither reference
+    (there is exactly one connecting pair per candidate), ``SURVIVING_LEG`` carries exactly
+    ``port_ref``, and ``NODE_PHASE`` carries exactly ``node_id``. Build one through
+    :meth:`connecting_pair`, :meth:`surviving_leg`, or :meth:`node_phase` rather than by
+    hand.
+    """
+
+    kind: ConstraintSourceKind
+    port_ref: PortRef | None = None
+    node_id: NodeId | None = None
+
+    def __post_init__(self) -> None:
+        """Reject any (kind, reference) combination the kind's own contract forbids."""
+        if self.kind is ConstraintSourceKind.CONNECTING_PAIR:
+            expected = self.port_ref is None and self.node_id is None
+        elif self.kind is ConstraintSourceKind.SURVIVING_LEG:
+            expected = self.port_ref is not None and self.node_id is None
+        else:
+            expected = self.port_ref is None and self.node_id is not None
+        if not expected:
+            raise RewriteGrammarError(
+                f"ConstraintSource kind {self.kind.value!r} does not accept "
+                f"port_ref={self.port_ref!r}, node_id={self.node_id!r}"
+            )
+
+    @classmethod
+    def connecting_pair(cls) -> ConstraintSource:
+        """The consumed wire's own two legs, related to each other."""
+        return cls(ConstraintSourceKind.CONNECTING_PAIR)
+
+    @classmethod
+    def surviving_leg(cls, port_ref: PortRef) -> ConstraintSource:
+        """The surviving leg at ``port_ref`` (``(NodeId, Direction, index)``)."""
+        return cls(ConstraintSourceKind.SURVIVING_LEG, port_ref=port_ref)
+
+    @classmethod
+    def node_phase(cls, node_id: NodeId) -> ConstraintSource:
+        """The phase vector on node ``node_id``."""
+        return cls(ConstraintSourceKind.NODE_PHASE, node_id=node_id)
+
+    def __str__(self) -> str:
+        if self.kind is ConstraintSourceKind.CONNECTING_PAIR:
+            return "connecting pair"
+        if self.kind is ConstraintSourceKind.SURVIVING_LEG:
+            ref = self.port_ref
+            assert ref is not None  # invariant, enforced in __post_init__
+            return f"surviving leg {ref.node_id}.{ref.direction.value}[{ref.index}]"
+        return f"phase on node {self.node_id}"
+
+
+class ConstraintOutcome(enum.Enum):
+    """Why a :class:`DimensionConstraint` was recorded: the unify deferred, or it bound.
+
+    Both are assumptions a real unifier (Phase 10) must eventually justify, which is why
+    both are recorded; they are not the same assumption, though, which is why the record
+    says which one it is rather than flattening them together. A unify that was a bare
+    syntactic identity (nothing deferred, nothing bound) is never recorded at all -- there
+    is no third member here on purpose.
+    """
+
+    DEFERRED = "deferred"
+    """:meth:`~qufzx.algebra.dimension.Dim.unify` could not decide the equality at all."""
+
+    BOUND = "bound"
+    """:meth:`~qufzx.algebra.dimension.Dim.unify` succeeded, but only by binding a free
+    symbol -- decided, but only under that binding."""
+
+
+@dataclass(frozen=True, slots=True)
+class DimensionConstraint:
+    """One dimension equality a rewrite assumed rather than verified as a syntactic identity.
+
+    ``assumed == equal_to`` is the assumed equality, ``source`` says which check produced
+    it (and is the key a fixpoint re-derivation replaces in place -- see
+    :class:`ConstraintSource`), and ``outcome`` says whether the underlying
+    :meth:`~qufzx.algebra.dimension.Dim.unify` deferred or bound.
+
+    For ``SURVIVING_LEG`` and ``NODE_PHASE`` sources, ``assumed`` is the leg's or phase's
+    own ``Dim`` with every concrete binding accumulated so far already substituted in, and
+    ``equal_to`` is the candidate's shared dimension as of that check. For
+    ``CONNECTING_PAIR``, both are raw leg dims -- see
+    :attr:`ConstraintSourceKind.CONNECTING_PAIR`.
+    """
+
+    assumed: Dim
+    equal_to: Dim
+    source: ConstraintSource
+    outcome: ConstraintOutcome
+
+    @property
+    def deferred(self) -> bool:
+        """True iff ``unify`` could not decide this equality (as opposed to binding for it)."""
+        return self.outcome is ConstraintOutcome.DEFERRED
+
+    def __str__(self) -> str:
+        return f"{self.assumed} == {self.equal_to} ({self.outcome.value}, {self.source})"
+
+
 @dataclass(frozen=True, slots=True)
 class Quantifiers:
     """Declared quantifier metadata for a rule: which leg-count and dimension names it ranges over.
@@ -170,16 +314,13 @@ class Match(Protocol):
         ...
 
     @property
-    def dimension_constraints(self) -> tuple[tuple[Dim, Dim], ...]:
-        """Dimension pairs this match assumed rather than verified as a syntactic identity.
+    def dimension_constraints(self) -> tuple[DimensionConstraint, ...]:
+        """Every dimension equality this match assumed rather than verified as an identity.
 
-        Two distinct provenances land here (see :mod:`qufzx.rewrite.match`'s module
-        docstring for the full account): a pair :meth:`Dim.unify` deferred on
-        outright, and a pair it reported ``SUCCESS`` for only because it bound a free
-        symbol (e.g. ``d`` and ``3`` unify by binding ``d := 3`` -- decided, but only
-        under that binding). Both are assumptions a real unifier (Phase 10) must
-        eventually justify, so a certificate needs both; only a bare syntactic identity
-        (nothing bound, nothing deferred) is left out, since nothing was assumed there.
+        Source-keyed: at most one entry per :class:`ConstraintSource`, each carrying its
+        own :class:`ConstraintOutcome` (deferred, or decided only under a binding). See
+        :class:`DimensionConstraint` and :mod:`qufzx.rewrite.match`'s module docstring,
+        "Dimension constraints", for the recording contract and the tests that enforce it.
         """
         ...
 
@@ -231,7 +372,7 @@ class BuildResult:
     port_mapping: Mapping[PortRef, PortRef]
     scalar_introduced: Scalar
     verified_side_condition_outcomes: tuple[SideConditionOutcome, ...] | None = None
-    verified_dimension_constraints: tuple[tuple[Dim, Dim], ...] | None = None
+    verified_dimension_constraints: tuple[DimensionConstraint, ...] | None = None
     """The facts a builder independently re-derived, for the certificate to record instead
     of the match's own unverified claims (Phase 5 post-closing audit, Defect 2).
 

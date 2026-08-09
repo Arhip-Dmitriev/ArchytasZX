@@ -42,6 +42,9 @@ from qufzx.rewrite.engine import RewriteResult, apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import (
     BuildResult,
+    ConstraintOutcome,
+    ConstraintSource,
+    DimensionConstraint,
     Match,
     RewriteDomainError,
     RewriteError,
@@ -1037,10 +1040,15 @@ class TestForeignFusionMatchArm:
         pairs = self._matches()
         assert pairs, "the clean generator never produced a single fusion match"
         for diagram, match in pairs:
+            fabricated = DimensionConstraint(
+                assumed=Dim.concrete(2),
+                equal_to=Dim.concrete(3),
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            )
             corrupted = dataclasses.replace(
                 match,
-                dimension_constraints=match.dimension_constraints
-                + ((Dim.concrete(2), Dim.concrete(3)),),
+                dimension_constraints=match.dimension_constraints + (fabricated,),
                 side_condition_outcomes=_all_claimed_passing(match),
             )
             with pytest.raises(RewriteError):

@@ -27,7 +27,14 @@ from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import RewriteDomainError, RewriteGrammarError, SideConditionOutcome
+from qufzx.rewrite.rule import (
+    ConstraintOutcome,
+    ConstraintSource,
+    DimensionConstraint,
+    RewriteDomainError,
+    RewriteGrammarError,
+    SideConditionOutcome,
+)
 from qufzx.rewrite.rules_library import RULES, SPIDER_FUSION, lookup_rule, spider_fusion_builder
 from qufzx.semantics.check import compare
 
@@ -216,7 +223,12 @@ class TestPhaseDimensionAgreementJudgementCall2:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert (Dim.concrete(3), d) in matches[0].dimension_constraints
+        assert DimensionConstraint(
+            assumed=Dim.concrete(3),
+            equal_to=d,
+            source=ConstraintSource.node_phase(b_id),
+            outcome=ConstraintOutcome.BOUND,
+        ) in matches[0].dimension_constraints
 
         result = apply(diagram, SPIDER_FUSION, matches[0])
         report = compare(diagram, result.diagram, {"d": 3})

@@ -11,19 +11,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Phase 5 numeric-oracle check: the completion condition for this phase.
+"""Phase 5 numeric-oracle check: the graph-to-fuse-to-graph half of this phase's completion
+condition, verified.
 
 Per ``claude.md``, every build phase ends with a numeric oracle check, and per the build
 plan Phase 5 is done when "the full path Dirac to graph to fuse to graph runs and the
-oracle confirms exact equality" -- de-risking the whole project. This module exercises
-exactly that: build "A into B" via ``build_ghz_with_copy``, find the fusion match, apply
-it, and confirm the oracle (:mod:`qufzx.semantics.check`) reports the pre- and post-fusion
-diagrams exactly equal at several concrete ``d``, with no symbolic phase, with a symbolic
-phase on A, on B, and on both, and for both the Z and X spider colors -- the X case exists
-specifically to exercise the ``consumed_wire_direction_permitted_for_color`` side condition
-documented in :mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
+oracle confirms exact equality" -- de-risking the whole project. This module exercises the
+graph-to-fuse-to-graph half of that: build "A into B" via ``build_ghz_with_copy``, find the
+fusion match, apply it, and confirm the oracle (:mod:`qufzx.semantics.check`) reports the
+pre- and post-fusion diagrams exactly equal at several concrete ``d``, with no symbolic
+phase, with a symbolic phase on A, on B, and on both, and for both the Z and X spider
+colors -- the X case exists specifically to exercise the
+``consumed_wire_direction_permitted_for_color`` side condition documented in
+:mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
 fusion apart from a wrongly-wired one. It also carries the negative controls and import-
 boundary check the build plan calls out explicitly.
+
+The *Dirac* half of the phrase -- parsing a Dirac-notation expression into this graph in
+the first place -- is not exercised here, and cannot honestly be claimed done: there is no
+Dirac representation, parser, or printer in this codebase yet.
+:mod:`qufzx.repl.parser`/:mod:`qufzx.repl.printer` are license-header-only skeletons, owned
+by Phases 18 and 17 respectively, not this one. ``build_ghz_with_copy`` (in
+``tests/helpers.py``) builds the graph by hand, standing in for what a Dirac parser will
+one day produce. This is a deliberate, stated deferral to those later phases, not an
+oversight -- see ``README.md``'s "Current state" section for the same statement kept in
+sync.
 """
 
 from __future__ import annotations

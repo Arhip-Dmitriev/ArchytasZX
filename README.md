@@ -116,8 +116,16 @@ Implemented and under test:
   spider fusion (including phase-dimension agreement resolved by unification, not merely
   raw equality), the spider-fusion rule itself with its exact scalar, and an engine that
   applies a rule at a match and records step provenance — re-derived independently by the
-  builder rather than trusted from the match, and including which pre-existing deferred
-  dimension assumptions a rewrite carried forward versus silently resolved.
+  builder rather than trusted from the match. Dimension assumptions the matcher could not
+  verify as a syntactic identity are recorded as a source-keyed `DimensionConstraint` (one
+  entry per connecting-wire pair, surviving leg, or node phase, replaced in place across a
+  fixpoint pass rather than re-appended), and a rewrite's effect on pre-existing deferred
+  dimension assumptions is recorded symmetrically — both which ones it resolved
+  (`removed_deferred_issues`) and which new ones it introduced
+  (`introduced_deferred_issues`). Graph-to-fuse-to-graph is oracle-checked exactly,
+  including at substitutions where a recorded constraint only holds by assumption (not
+  merely the cleanly-contractible case); Dirac-in/Dirac-out is not — there is no Dirac
+  parser or printer yet (Phases 18 and 17 respectively).
 
 Not yet implemented:
 

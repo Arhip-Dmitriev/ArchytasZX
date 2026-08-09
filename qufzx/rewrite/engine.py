@@ -168,21 +168,34 @@ Algorithm.
    (:func:`_translate_input_issue_key`) is reused over ``validate(diagram).deferred`` and
    ``validate(working).deferred`` instead of ``.errors`` -- not to raise (a rewrite is
    allowed to resolve a deferred assumption; that is the entire point of firing across one),
-   but to populate :attr:`RewriteStep.removed_deferred_issues`. This compare is a *multiset*
-   over translated keys too, mirroring step 8's own discipline exactly rather than diverging
-   from it (Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision defect):
-   ``_translate_input_issue_key`` maps every consumed node's deferred issues onto the same
-   single surviving node id (:func:`_translate_input_issue_key`'s one-new-node-id fallback,
-   above), so two distinct, node-anchored deferred issues -- one on each of two fused
-   spiders, an ordinary shape -- legitimately translate to the *same* key; a plain
-   dict-by-key comparison silently drops one to last-write-wins, exactly the bug a Counter
-   difference (as step 8 already uses) does not have. The surviving count for each key,
-   ``Counter(input keys) - Counter(result keys)``, is then satisfied by walking the input
-   deferred issues in their original order and taking the first that-many occurrences of
-   each key, so every reported issue is the actual input diagram's own issue object, in its
-   own pre-rewrite coordinates -- never a translated stand-in -- and a rewrite that removes
-   two same-keyed deferred issues is reported as two, not one, so the certificate records the
-   fact even though nothing about applying the rewrite itself is illegal.
+   but to populate :attr:`RewriteStep.removed_deferred_issues` and, from the same
+   ``Counter`` difference read the other way, :attr:`RewriteStep.introduced_deferred_issues`
+   -- a rewrite can create a deferred assumption as readily as it resolves one (see
+   :mod:`qufzx.rewrite.rules_library`'s module docstring, "Dimension of the merged node"),
+   and the argument for recording removals applies equally to introductions, so both are
+   populated from :func:`_select_by_key_surplus`, the one selection routine shared by both
+   directions.
+
+   This compare is a *multiset* over translated keys, mirroring step 8's own discipline
+   rather than diverging from it: ``_translate_input_issue_key`` maps every consumed node's
+   deferred issues onto the same single surviving node id
+   (:func:`_translate_input_issue_key`'s one-new-node-id fallback, above), so two distinct,
+   node-anchored deferred issues -- one on each of two fused spiders, an ordinary shape --
+   legitimately translate to the *same* key; a plain dict-by-key comparison would silently
+   drop one to last-write-wins, exactly the bug a ``Counter`` difference (as step 8 already
+   uses) does not have. Each direction's surviving count per key,
+   ``Counter(keyed) - Counter(other side's keyed)``, is satisfied by walking that side's own
+   issues in their original order and taking the first that-many occurrences of each key, so
+   every reported issue is an actual issue object in its own (pre- or post-rewrite,
+   respectively) coordinates -- never a translated stand-in. When several issues collide on
+   one key and only *some* of them have a counterpart, the choice of which to report is
+   arbitrary but deterministic (first in that side's own order) and
+   :attr:`RewriteStep.deferred_issue_identity_ambiguous` says so explicitly rather than
+   leaving a reader to assume the reported one was chosen for a reason -- see that field's
+   own docstring for the contract, and
+   ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric`` /
+   ``TestRemovedDeferredIssuesMultisetCompare`` for the tests pinning both directions and
+   the collision behavior.
 9. Record provenance. A :class:`RewriteStep` carrying the rule name, the located ``match``
    exactly as it was applied (stored verbatim, so Phase 6 replays directly from it rather
    than re-running the matcher and re-selecting a candidate by node id), the match location
@@ -384,11 +397,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
 from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
 from qufzx.rewrite.rule import (
+    DimensionConstraint,
     Match,
     RewriteDomainError,
     RewriteGrammarError,
@@ -417,7 +430,7 @@ class RewriteStep:
     consumed_node_ids: tuple[NodeId, ...]
     consumed_wires: tuple[Wire, ...]
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
-    dimension_constraints: tuple[tuple[Dim, Dim], ...]
+    dimension_constraints: tuple[DimensionConstraint, ...]
     scalar_introduced: Scalar
     port_mapping: Mapping[PortRef, PortRef]
     new_node_ids: tuple[NodeId, ...]
@@ -425,24 +438,61 @@ class RewriteStep:
     """Every :attr:`~qufzx.diagram.validate.ValidationReport.deferred` issue ``diagram``
     carried that a *multiset* compare (translated key, via
     :func:`_translate_input_issue_key`) says has no surviving counterpart among ``working``'s
-    own deferred issues, in ``diagram``'s own (pre-rewrite) coordinates (Phase 5 post-closing
-    audit, judgement call 1). Step 8 already refuses to *introduce* a new hard-error issue
-    kind, but it never looked at deferred issues at all -- a diagram-level unify assumption
-    (:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`) that a rewrite silently
-    resolves (by consuming or overwriting the leg it was recorded against) simply vanished,
+    own deferred issues, in ``diagram``'s own (pre-rewrite) coordinates. Step 8 refuses to
+    introduce a new hard-error issue kind, but it never looks at deferred issues at all -- a
+    diagram-level unify assumption
+    (:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`) a rewrite resolves (by
+    consuming or overwriting the leg it was recorded against) would otherwise simply vanish,
     with nothing on the certificate to say a pre-existing assumption was ever there, let
-    alone that this rewrite is the one that made it disappear. This field closes that gap
-    without making it a new failure mode: an empty tuple is the overwhelmingly common case
-    (most rewrites carry every deferred issue over unchanged, or touch none at all), and a
-    non-empty one is not itself an error -- see :func:`~qufzx.rewrite.rules_library`'s
-    module docstring, "Phase 5 judgement call", for why spider_fusion is allowed to fire on
-    a ``DEFERRED`` dimension pair at all, and why silently dropping the resulting assumption
-    is still wrong even though the rewrite itself is legal. The compare is multiset, not
-    set/dict-keyed (Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision
-    defect): two distinct input issues that translate to the same key -- e.g. one
-    node-anchored ``DIMENSION_DEFERRED`` issue on each of two nodes a fusion consumes, both
-    mapped onto the same surviving node id -- are each counted and, if both lack a surviving
-    counterpart, both reported, never collapsed to one by a last-write-wins dict lookup.
+    alone that this rewrite is the one that made it disappear. A non-empty value is not an
+    error -- see :mod:`qufzx.rewrite.rules_library`'s module docstring, "Phase 5 judgement
+    call", for why spider_fusion is allowed to fire on a ``DEFERRED`` dimension pair at all.
+    Enforced by ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric``.
+
+    The compare is multiset, not set/dict-keyed: two distinct input issues that translate to
+    the same key -- e.g. one node-anchored ``DIMENSION_DEFERRED`` issue on each of two nodes
+    a fusion consumes, both mapped onto the same surviving node id -- are each counted and,
+    if both lack a surviving counterpart, both reported, never collapsed to one by a
+    last-write-wins dict lookup.
+    """
+
+    introduced_deferred_issues: tuple[ValidationIssue, ...] = ()
+    """The other direction of the same :class:`~collections.Counter` difference: every
+    deferred issue ``working`` carries that has no counterpart among ``diagram``'s own
+    (translated) deferred issues, in ``working``'s own post-rewrite coordinates.
+
+    A rewrite can *create* a deferred assumption as readily as it resolves one -- forcing a
+    surviving leg onto ``shared_dim`` can leave a neighbouring wire that was an exact match
+    before merely deferred after (see :mod:`qufzx.rewrite.rules_library`'s module docstring,
+    "Dimension of the merged node"). That is expected, not a defect; but the argument for
+    recording removals -- that a silently-changed assumption is a loss of information the
+    certificate should not paper over -- is direction-symmetric, so this field exists too.
+    Neither field is a gate; both are certificate facts.
+    Enforced by ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric``.
+    """
+
+    deferred_issue_identity_ambiguous: bool = False
+    """Whether the *identity* of the reported deferred issues above is meaningful, or only
+    their count.
+
+    The contract, stated rather than left to be inferred. Both fields are populated by
+    walking the source report's issues in :func:`~qufzx.diagram.validate.validate` order and
+    taking the first ``n`` occurrences of each translated key, where ``n`` is that key's
+    Counter surplus. When each key's surplus equals its total occurrence count, that
+    selection is forced and every reported issue is uniquely the one with no counterpart.
+    When several issues collide on one translated key and only *some* of them lack a
+    counterpart, which of the colliding issues to name is genuinely unrecoverable: the
+    collision arises because :func:`_translate_input_issue_key` maps every consumed node's
+    identity onto the one surviving merged node, and nothing in a
+    :class:`~qufzx.diagram.validate.ValidationIssue` distinguishes two issues that agree on
+    ``(kind, ref)`` beyond a message this comparison deliberately never reads (a message
+    embeds node ids that legitimately change across a rewrite). In that case the selection
+    is arbitrary but deterministic -- first in ``validate`` order -- the count is the
+    meaningful part, and this flag is ``True`` so a reader is told so in the data rather
+    than left to assume the named issue was chosen for a reason.
+    Enforced by
+    ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric``\\
+    ``::test_colliding_keys_are_flagged_ambiguous_and_pinned_to_validate_order``.
     """
 
     def __hash__(self) -> int:
@@ -472,6 +522,8 @@ class RewriteStep:
                 frozenset(self.port_mapping.items()),
                 self.new_node_ids,
                 self.removed_deferred_issues,
+                self.introduced_deferred_issues,
+                self.deferred_issue_identity_ambiguous,
             )
         )
 
@@ -570,6 +622,37 @@ def _translate_input_issue_key(
             node_id = new_node_ids[0]
         return (issue.kind, node_id)
     return (issue.kind, None)
+
+
+def _select_by_key_surplus(
+    keyed_issues: tuple[tuple[tuple[IssueKind, object], ValidationIssue], ...],
+    surplus: Counter[tuple[IssueKind, object]],
+) -> tuple[tuple[ValidationIssue, ...], bool]:
+    """Take ``surplus[key]`` issues per key from ``keyed_issues``, in the order given.
+
+    The one selection routine behind both :attr:`RewriteStep.removed_deferred_issues` (input
+    issues keyed into post-rewrite coordinates, surplus = input - result) and
+    :attr:`RewriteStep.introduced_deferred_issues` (result issues in their own coordinates,
+    surplus = result - input) -- the two directions of the same
+    :class:`~collections.Counter` difference, so they are computed by the same code rather
+    than by two similar-looking loops.
+
+    Returns the selected issues (always the actual issue objects from ``keyed_issues``,
+    never translated stand-ins) and whether the selection was *ambiguous* for any key: True
+    iff some key's surplus is non-zero but strictly smaller than how many issues carry that
+    key, i.e. several interchangeable issues collided and only some of them are being
+    reported. See :attr:`RewriteStep.deferred_issue_identity_ambiguous` for the contract
+    that flag states.
+    """
+    remaining = dict(surplus)
+    totals = Counter(key for key, _issue in keyed_issues)
+    selected: list[ValidationIssue] = []
+    for key, issue in keyed_issues:
+        if remaining.get(key, 0) > 0:
+            selected.append(issue)
+            remaining[key] -= 1
+    ambiguous = any(count > 0 and count < totals[key] for key, count in surplus.items())
+    return tuple(selected), ambiguous
 
 
 def _remap_endpoint(
@@ -783,7 +866,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     # compare, by design), but a loss of information the certificate should not paper over
     # in silence. Same translation machinery as the hard-error compare, reused for the
     # deferred set instead.
-    input_deferred_issues = tuple(
+    input_deferred_keyed = tuple(
         (
             _translate_input_issue_key(
                 issue, consumed_node_ids, port_mapping, build_result.new_node_ids
@@ -792,16 +875,17 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         )
         for issue in validate(diagram).deferred
     )
-    input_deferred_key_counts = Counter(key for key, _issue in input_deferred_issues)
-    result_deferred_key_counts = Counter(_issue_key(issue) for issue in validate(working).deferred)
-    removed_deferred_key_counts = input_deferred_key_counts - result_deferred_key_counts
-    remaining_removed_counts = dict(removed_deferred_key_counts)
-    removed_deferred_issues_list: list[ValidationIssue] = []
-    for key, issue in input_deferred_issues:
-        if remaining_removed_counts.get(key, 0) > 0:
-            removed_deferred_issues_list.append(issue)
-            remaining_removed_counts[key] -= 1
-    removed_deferred_issues = tuple(removed_deferred_issues_list)
+    result_deferred_keyed = tuple(
+        (_issue_key(issue), issue) for issue in validate(working).deferred
+    )
+    input_deferred_key_counts = Counter(key for key, _issue in input_deferred_keyed)
+    result_deferred_key_counts = Counter(key for key, _issue in result_deferred_keyed)
+    removed_deferred_issues, removed_ambiguous = _select_by_key_surplus(
+        input_deferred_keyed, input_deferred_key_counts - result_deferred_key_counts
+    )
+    introduced_deferred_issues, introduced_ambiguous = _select_by_key_surplus(
+        result_deferred_keyed, result_deferred_key_counts - input_deferred_key_counts
+    )
 
     # Defect 2 (Phase 5 post-closing audit): prefer the builder's independently re-derived
     # facts over the match's own claims whenever the builder supplied them -- see
@@ -829,5 +913,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         port_mapping=MappingProxyType(dict(port_mapping)),
         new_node_ids=build_result.new_node_ids,
         removed_deferred_issues=removed_deferred_issues,
+        introduced_deferred_issues=introduced_deferred_issues,
+        deferred_issue_identity_ambiguous=removed_ambiguous or introduced_ambiguous,
     )
     return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)

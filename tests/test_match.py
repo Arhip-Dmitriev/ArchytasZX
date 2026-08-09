@@ -34,7 +34,12 @@ from qufzx.rewrite.match import (
     find_matches,
     resolve_fusion_match,
 )
-from qufzx.rewrite.rule import RewriteGrammarError
+from qufzx.rewrite.rule import (
+    ConstraintOutcome,
+    ConstraintSource,
+    DimensionConstraint,
+    RewriteGrammarError,
+)
 from qufzx.rewrite.rules_library import spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
@@ -278,7 +283,12 @@ class TestPhaseDimensionMismatchIsNonMatch:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert (Dim.concrete(3), d) in matches[0].dimension_constraints
+        assert DimensionConstraint(
+            assumed=Dim.concrete(3),
+            equal_to=d,
+            source=ConstraintSource.node_phase(b_id),
+            outcome=ConstraintOutcome.BOUND,
+        ) in matches[0].dimension_constraints
 
     def test_one_sided_phase_binding_the_symbolic_shared_leg_dim_now_matches(self) -> None:
         # Mirror of the above with only one phase present: B has none, so only A's phase
@@ -295,7 +305,12 @@ class TestPhaseDimensionMismatchIsNonMatch:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert (Dim.concrete(3), shared) in matches[0].dimension_constraints
+        assert DimensionConstraint(
+            assumed=Dim.concrete(3),
+            equal_to=shared,
+            source=ConstraintSource.node_phase(a_id),
+            outcome=ConstraintOutcome.BOUND,
+        ) in matches[0].dimension_constraints
 
     def test_a_phase_dim_that_fails_to_unify_with_shared_dim_is_still_a_non_match(self) -> None:
         # Two distinct concrete dims can never unify -- this remains a hard non-match,
@@ -336,7 +351,14 @@ class TestDimensionConstraintsRecording:
         matches = find_matches(diagram)
         assert len(matches) == 1
         match = matches[0]
-        assert match.dimension_constraints == ((d, d * e),)
+        assert match.dimension_constraints == (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=d * e,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.DEFERRED,
+            ),
+        )
         agreement = next(
             o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
         )
@@ -352,7 +374,14 @@ class TestDimensionConstraintsRecording:
         matches = find_matches(diagram)
         assert len(matches) == 1
         match = matches[0]
-        assert match.dimension_constraints == ((d, three),)
+        assert match.dimension_constraints == (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=three,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
         agreement = next(
             o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
         )
@@ -375,7 +404,14 @@ class TestDimensionConstraintsRecording:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert matches[0].dimension_constraints == ((d, two),)
+        assert matches[0].dimension_constraints == (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=two,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
 
     def test_a_surviving_leg_bound_by_an_earlier_surviving_leg_is_not_recorded_again(
         self,
@@ -396,7 +432,14 @@ class TestDimensionConstraintsRecording:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert matches[0].dimension_constraints == ((two, d),)
+        assert matches[0].dimension_constraints == (
+            DimensionConstraint(
+                assumed=two,
+                equal_to=d,
+                source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.INPUT, 1)),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
 
 
 class TestOutOfRangeWireEndpointRaises:
@@ -585,7 +628,12 @@ class TestSurvivingLegDimensionUnification:
         assert len(matches) == 1
         match = matches[0]
         assert match.shared_dim == two
-        assert (two, d) in match.dimension_constraints
+        assert DimensionConstraint(
+            assumed=two,
+            equal_to=d,
+            source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.OUTPUT, 1)),
+            outcome=ConstraintOutcome.BOUND,
+        ) in match.dimension_constraints
 
 
 class TestConsumedPortClaimedElsewhereIsNonMatch:
@@ -726,7 +774,12 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         )
         assert outcome.passed
         assert outcome.deferred is False
-        assert (d, three) in match.dimension_constraints
+        assert DimensionConstraint(
+            assumed=d,
+            equal_to=three,
+            source=ConstraintSource.connecting_pair(),
+            outcome=ConstraintOutcome.BOUND,
+        ) in match.dimension_constraints
 
     def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
         # Judgement call 2 (Phase 5 post-closing audit): unlike a leg, a phase whose dim
@@ -906,3 +959,47 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         assert ghost_wire not in diagram.wires
         with pytest.raises(RewriteGrammarError):
             resolve_fusion_match(diagram, a_id, b_id, ghost_wire)
+
+
+class TestFixpointBudgetExhaustion:
+    """D4: cap exhaustion is a resolver *iteration budget*, never a dimension disagreement.
+
+    ``_MAX_FIXPOINT_PASSES`` is unreachable under ``Dim.unify``'s current contract for any
+    diagram with fewer distinct dimension symbols than the cap (see the module-level
+    constant's own docstring), so this test forces the cap artificially low -- to zero, so
+    even a diagram that would ordinarily match in a single pass now exhausts the budget
+    before ever stabilizing -- and checks the failure is reported honestly: both
+    ``dimension_agreement`` and ``phase_dimension_agreement`` fail with a detail naming the
+    iteration budget, never a detail claiming a phase or leg dimension disagreement that was
+    never actually checked.
+    """
+
+    def test_cap_exhaustion_reports_the_budget_not_a_phase_disagreement(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import qufzx.rewrite.match as match_module
+
+        monkeypatch.setattr(match_module, "_MAX_FIXPOINT_PASSES", 0)
+
+        d = Dim.symbol("d")
+        diagram, a_id, b_id = build_ghz_with_copy(d)
+        wire = next(
+            w
+            for w in diagram.wires
+            if {w.a.node_id, w.b.node_id} == {min(a_id, b_id), max(a_id, b_id)}
+        )
+        resolution = resolve_fusion_match(diagram, min(a_id, b_id), max(a_id, b_id), wire)
+
+        assert not resolution.passed
+        by_name = {outcome.name: outcome for outcome in resolution.outcomes}
+        assert by_name["dimension_agreement"].passed is False
+        assert by_name["phase_dimension_agreement"].passed is False
+        for name in ("dimension_agreement", "phase_dimension_agreement"):
+            detail = by_name[name].detail.lower()
+            assert "budget" in detail or "_max_fixpoint_passes" in detail
+            assert "phase dimension" not in detail
+            assert "does not unify" not in detail
+
+        # find_matches must not surface this candidate as a match at all -- an exhausted
+        # budget is a non-match, not a passing-with-a-caveat one.
+        assert find_matches(diagram) == ()
