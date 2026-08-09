@@ -1003,3 +1003,270 @@ class TestFixpointBudgetExhaustion:
         # find_matches must not surface this candidate as a match at all -- an exhausted
         # budget is a non-match, not a passing-with-a-caveat one.
         assert find_matches(diagram) == ()
+
+
+class TestD1FixpointTerminationSoundness:
+    """D1 (Phase 5 audit, round 15): the joint condition-5/6 fixpoint used to exit as soon as
+    ``shared_dim`` stopped changing, even when ``bindings`` had just grown -- e.g. by binding
+    a symbol that does not occur in ``shared_dim`` at all. Legs (and phases) checked earlier
+    in that same pass were then never re-checked against the newly accumulated binding, and
+    an unsatisfiable constraint set (recorded assumptions that cannot simultaneously hold)
+    was accepted as a match. Fixed by terminating only when a full pass leaves both
+    ``shared_dim`` and ``bindings`` unchanged, and by rejecting a contradictory rebind
+    outright (:func:`~qufzx.rewrite.match._merge_bindings`) rather than silently overwriting.
+    """
+
+    def test_d1_reproduction_e_times_f_e_f_against_2_is_not_a_match(self) -> None:
+        """The exact reproduction from the audit brief: A's legs [e*f, e, f] against B's
+        single leg 2 record the unsatisfiable set e*f == 2, e == 2, f == 2. Before the fix
+        this was silently accepted (the e*f leg overwritten with shared_dim=2, contradicting
+        its own recorded DEFERRED assumption)."""
+        e = Dim.symbol("e")
+        f = Dim.symbol("f")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[e * f, e, f], output_dims=[Dim.concrete(2)])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        assert find_matches(diagram) == ()
+
+    def test_legs_2_d_times_e_d_conn_e_is_not_a_match(self) -> None:
+        """['2', 'd*e', 'd'] conn e: shared_dim seeds at 'e' (bare identity vs the connecting
+        pair). '2' binds e := 2 (refining shared_dim to 2); 'd*e' defers against the
+        as-yet-unrefined shared_dim on the same pass, then on the next pass resolves (via
+        both e and d now bound) to the concrete 4, contradicting shared_dim=2. The bounded
+        'd' leg (d := 2) is independently consistent -- it is 'd*e', not 'd', whose deferral
+        must be re-checked once e is bound, not accepted on its first pass's outcome alone."""
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[Dim.concrete(2), d * e, d], output_dims=[e]
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[e], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
+        assert find_matches(diagram) == ()
+
+    def test_legs_d_d_times_e_e_conn_2_is_not_a_match(self) -> None:
+        """['d', 'd*e', 'e'] conn 2: the connecting pair binds nothing new (2 == 2 outright,
+        shared_dim=2 from the start). 'd' binds d := 2; 'd*e' defers (its own symbol e is
+        still free); 'e' independently binds e := 2. Once both are bound, 'd*e' resolves to
+        the concrete 4 on the next pass, contradicting shared_dim=2 -- unsatisfiable once
+        every leg is checked consistently against the fully-refined bindings."""
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[d, d * e, e], output_dims=[Dim.concrete(2)]
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
+        assert find_matches(diagram) == ()
+
+    def test_legs_d_squared_2_d_against_2_is_not_a_match(self) -> None:
+        """['d**2', '2', 'd'] conn 2: the 'd**2' leg deferred against shared_dim=2 (a proper
+        power, not a bare symbol, so Dim.unify cannot bind it), while the concrete '2' leg
+        confirms shared_dim=2 outright, and the final 'd' leg then binds d := 2 -- consistent
+        with 'd**2' only at d = sqrt(2), not an integer, so the deferred assumption d**2 == 2
+        and the bound assumption d == 2 cannot simultaneously hold. This shape is exactly why
+        the post-loop closure check re-verifies every source under the *final* bindings, not
+        only the bindings each source happened to see when it was itself last checked."""
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[d**2, Dim.concrete(2), d], output_dims=[Dim.concrete(2)]
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
+        assert find_matches(diagram) == ()
+
+    def test_leg_order_independence_of_match_and_final_state(self) -> None:
+        """Permuting a node's leg order (with its boundary entries permuted correspondingly)
+        must not change match-vs-non-match, nor the final shared_dim, nor the final bindings
+        set -- constraint order may differ, but the set of what was assumed must not. This is
+        the direct regression guard for D1's root cause: leg-order dependence was the
+        symptom that exposed it (``[e*f, e, f]`` was accepted, ``[e, f, e*f]`` correctly
+        rejected)."""
+        e = Dim.symbol("e")
+        f = Dim.symbol("f")
+        two = Dim.concrete(2)
+
+        def _shape(order: tuple[Dim, ...]) -> tuple[bool, Dim | None, frozenset[tuple[str, Dim]]]:
+            diagram = Diagram()
+            a_id = diagram.add_node(Z_SPIDER, input_dims=list(order), output_dims=[two])
+            b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[])
+            diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+            diagram.set_boundary_inputs(
+                [PortRef(a_id, Direction.INPUT, i) for i in range(len(order))]
+            )
+            matches = find_matches(diagram)
+            if not matches:
+                return False, None, frozenset()
+            m = matches[0]
+            return True, m.shared_dim, frozenset(dict(m.bindings).items())
+
+        # A satisfiable permutation family: connecting pair forces shared_dim=2 outright
+        # (both sides concrete), and surviving legs {e, f} independently bind e := 2, f := 2
+        # regardless of which is checked first.
+        satisfiable_orders = [(e, f), (f, e)]
+        results = [_shape(order) for order in satisfiable_orders]
+        assert all(r == results[0] for r in results)
+        assert results[0][0] is True
+        assert results[0][1] == two
+        assert results[0][2] == frozenset({("e", two), ("f", two)})
+
+        # The D1 reproduction family: [e*f, e, f] is unsatisfiable in every leg order, since
+        # the recorded constraint set is the same set regardless of check order.
+        unsatisfiable_orders = [
+            (e * f, e, f),
+            (e, f, e * f),
+            (f, e * f, e),
+        ]
+        for order in unsatisfiable_orders:
+            matched, _, _ = _shape(order)
+            assert matched is False, f"leg order {order} unexpectedly matched"
+
+
+class TestMergeBindingsRejectsContradiction:
+    """:func:`~qufzx.rewrite.match._merge_bindings` -- D1's second required fix: a would-be
+    rebind of an already-bound name to a *different* concrete value must be a hard non-match,
+    never a silent last-write-wins overwrite.
+    """
+
+    def test_rebinding_to_a_different_concrete_value_returns_false_and_does_not_mutate(
+        self,
+    ) -> None:
+        from qufzx.rewrite.match import _merge_bindings
+
+        bindings = {"d": Dim.concrete(2)}
+        ok = _merge_bindings(bindings, {"d": Dim.concrete(3)})
+        assert ok is False
+        assert bindings == {"d": Dim.concrete(2)}
+
+    def test_rebinding_to_the_same_concrete_value_succeeds(self) -> None:
+        from qufzx.rewrite.match import _merge_bindings
+
+        bindings = {"d": Dim.concrete(2)}
+        ok = _merge_bindings(bindings, {"d": Dim.concrete(2)})
+        assert ok is True
+        assert bindings == {"d": Dim.concrete(2)}
+
+    def test_non_concrete_bindings_are_dropped_not_merged(self) -> None:
+        from qufzx.rewrite.match import _merge_bindings
+
+        bindings: dict[str, Dim] = {}
+        ok = _merge_bindings(bindings, {"d": Dim.symbol("e")})
+        assert ok is True
+        assert bindings == {}
+
+
+class TestConnectingPairRederivedEachPass:
+    """D2 (Phase 5 audit, round 15): the connecting pair used to be recorded once, before the
+    fixpoint, and never revisited -- unlike every ``SURVIVING_LEG`` and ``NODE_PHASE`` source.
+    A phase-driven binding that refines the connecting pair's own legs must still show up in
+    the finished ``dimension_constraints`` record at its most-resolved form.
+    """
+
+    def test_connecting_pair_constraint_reflects_a_later_phase_driven_binding(self) -> None:
+        # Connecting pair: A's output (symbol d) vs B's input (symbol d) -- bare identity,
+        # nothing bound yet, shared_dim seeds at d. A's phase, stated over the concrete 3,
+        # binds d := 3 through condition 6. The connecting pair's own finished detail must
+        # reflect d := 3, not the pre-fixpoint bare-identity state it started in.
+        d = Dim.symbol("d")
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(three, {1: Phase.turns(1)})
+        )
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].shared_dim == three
+        assert dict(matches[0].bindings) == {"d": three}
+
+
+class TestStructuralSatisfiabilityOfEveryMatch:
+    """N1's required structural-satisfiability arm: for every match ``find_matches`` returns,
+    every surviving leg dim, the connecting pair's two dims, and every present phase dim --
+    resolved under ``match.bindings`` -- must unify with ``shared_dim`` without ``FAILURE``,
+    and the recorded ``dimension_constraints`` must be simultaneously satisfiable.
+    """
+
+    @staticmethod
+    def _resolved(dim: Dim, bindings: dict[str, Dim]) -> Dim:
+        concrete: dict[str | Dim, int | Dim] = {
+            name: value for name, value in bindings.items() if value.is_concrete
+        }
+        return dim.substitute(concrete) if concrete else dim
+
+    def _assert_match_is_structurally_satisfiable(self, diagram: Diagram) -> None:
+        for match in find_matches(diagram):
+            bindings = dict(match.bindings)
+            node_a = diagram.nodes[match.a_id]
+            node_b = diagram.nodes[match.b_id]
+            ref_a = match.wire.a if match.wire.a.node_id == match.a_id else match.wire.b
+            ref_b = match.wire.b if match.wire.a.node_id == match.a_id else match.wire.a
+
+            for node, node_id, consumed_ref in (
+                (node_a, match.a_id, ref_a),
+                (node_b, match.b_id, ref_b),
+            ):
+                for direction in (Direction.INPUT, Direction.OUTPUT):
+                    for index, port in enumerate(node.legs(direction)):
+                        ref = PortRef(node_id, direction, index)
+                        if ref == consumed_ref:
+                            continue
+                        resolved = self._resolved(port.dim, bindings)
+                        assert not resolved.unify(match.shared_dim).is_failure
+
+            legs_a = node_a.legs(ref_a.direction)
+            legs_b = node_b.legs(ref_b.direction)
+            for dim in (legs_a[ref_a.index].dim, legs_b[ref_b.index].dim):
+                resolved = self._resolved(dim, bindings)
+                assert not resolved.unify(match.shared_dim).is_failure
+
+            for node in (node_a, node_b):
+                if node.phase is None:
+                    continue
+                resolved = self._resolved(node.phase.dim, bindings)
+                assert not resolved.unify(match.shared_dim).is_failure
+
+            # The recorded constraint set is simultaneously satisfiable: every entry's own
+            # `assumed`, resolved through the final bindings, unifies with its `equal_to`.
+            for entry in match.dimension_constraints:
+                resolved_assumed = self._resolved(entry.assumed, bindings)
+                resolved_equal_to = self._resolved(entry.equal_to, bindings)
+                assert not resolved_assumed.unify(resolved_equal_to).is_failure
+
+    def test_ghz_with_copy(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        self._assert_match_is_structurally_satisfiable(diagram)
+
+    def test_a_binding_rich_shape(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[Dim.concrete(2), d],
+            output_dims=[d],
+            phase=PhaseVector(d, {1: Phase.turns(1)}),
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[d],
+            output_dims=[e],
+            phase=PhaseVector(Dim.concrete(2), {1: Phase.turns(1)}),
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs(
+            [PortRef(a_id, Direction.INPUT, 0), PortRef(a_id, Direction.INPUT, 1)]
+        )
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        self._assert_match_is_structurally_satisfiable(diagram)

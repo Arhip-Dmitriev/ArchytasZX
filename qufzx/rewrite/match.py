@@ -283,16 +283,19 @@ Each entry is a :class:`~qufzx.rewrite.rule.DimensionConstraint`, keyed by its
 :class:`~qufzx.rewrite.rule.ConstraintSourceKind` for the discriminator and why the record
 is source-keyed rather than one bare ``(Dim, Dim)`` pair per check. Conditions 5 and 6 run
 as one bounded fixpoint (see :func:`resolve_fusion_match`'s own inline commentary), so
-"every surviving leg" and "every present phase" above means every leg and phase check
-across *every* pass of that fixpoint, not only its first or its last -- but a source
-checked on more than one pass is recorded exactly once, at its most-resolved statement of
-itself: :class:`_ConstraintRecord` (see its own docstring) replaces the entry for a source
-a later pass re-derives, keyed by :class:`~qufzx.rewrite.rule.ConstraintSource`, rather than
-appending a second one. This holds for a source whose every re-check comes back a bound
-value (the entry is replaced with the same fact, harmlessly) and for one whose re-check
-comes back a bare identity once an earlier pass' binding has since discharged it (the entry
-is dropped -- see :meth:`_ConstraintRecord.record_identity`), so a duplicate-of-itself
-assumption is never double-counted either way. Enforced exhaustively, over the whole finite
+"the connecting pair", "every surviving leg", and "every present phase" above each mean
+every check across *every* pass of that fixpoint, not only its first or its last -- the
+connecting pair is re-derived every pass exactly like a surviving leg or phase (D2, Phase 5
+audit round 15; :func:`_unify_connecting_pair`), not recorded once up front and then never
+revisited. A source checked on more than one pass is recorded exactly once, at its
+most-resolved statement of itself: :class:`_ConstraintRecord` (see its own docstring)
+replaces the entry for a source a later pass re-derives, keyed by
+:class:`~qufzx.rewrite.rule.ConstraintSource`, rather than appending a second one. This
+holds for a source whose every re-check comes back a bound value (the entry is replaced with
+the same fact, harmlessly) and for one whose re-check comes back a bare identity once an
+earlier pass' binding has since discharged it (the entry is dropped -- see
+:meth:`_ConstraintRecord.record_identity`), so a duplicate-of-itself assumption is never
+double-counted either way. Enforced exhaustively, over the whole finite
 space this module's own hand-picked unit tests only sample a few shapes of, by
 ``tests/test_phase5_certificate_sweep.py::TestCertificateStructuralProperties`` (no
 duplicate sources, no bare-identity entries) and
@@ -313,6 +316,39 @@ bound symbols, with none deferred, is reported with ``deferred=False`` even thou
 is in ``dimension_constraints``. On ``phase_dimension_agreement`` (condition 6), by
 contrast, this flag is unconditionally ``False`` on a passing outcome -- see condition 6
 above.
+
+Non-concrete bindings. :meth:`~qufzx.algebra.dimension.Dim.unify` can succeed by binding a
+symbol to another still-symbolic ``Dim`` (e.g. ``d`` against ``e`` binds ``d := e``), not
+only to a concrete one. :meth:`~qufzx.algebra.dimension.Dim.substitute` accepts only a
+concrete replacement value (by contract, not merely by current limitation -- see that
+method's own docstring), and :class:`~qufzx.algebra.phase.PhaseVector.substitute`'s
+``PhaseSubstituteValue`` is likewise ``int | Rational | Phase``, so a symbol-to-symbol
+binding is not expressible through the Phase 1/2 substitution APIs at all; solving it is
+:meth:`Dim.unify`'s own docstring's explicit Phase 10 carve-out ("the real unifier ... must
+actually solve constraints such as d = d1 * d2"), not an oversight here. Every site in this
+module that consumes a binding -- :func:`_resolve_with_bindings`, :func:`_merge_bindings`,
+and (with one addition below) :func:`_unify_phase_dims` -- therefore treats a non-concrete
+binding identically: it is dropped from ``bindings``/``shared_dim`` and never substituted
+through, exactly as if nothing had been bound. This is silent only in the sense that it does
+not raise; it is not silent in the sense of "lost": whatever check produced the binding
+still records it as a :class:`~qufzx.rewrite.rule.DimensionConstraint` (``BOUND``,
+per source) in the same record every other assumption goes into, so the assumption is on
+the certificate even though it was conservatively left unused for shared-dimension
+resolution.
+
+For a surviving leg, that is the end of it: a leg is its own ``Dim`` and references no
+internal structure tied to it, so leaving a non-concrete binding unused costs completeness
+(condition 5 might resolve ``shared_dim`` less than a real solver could) but nothing more.
+For a phase (condition 6), :func:`_unify_phase_dims` goes one step further and rejects the
+whole candidate outright on a non-concrete binding, not merely on a ``DEFERRED`` unify --
+because a phase's own entries can directly reference its ``dim``'s free symbols (a
+root-of-unity entry ``index/d`` under a ``PhaseVector`` whose own ``dim`` is ``d``), so
+:func:`reattach_phase` reattaching such a phase to a *different*, more-resolved
+``shared_dim`` is only correct with an actual concrete binding to substitute through first;
+without one, silently reattaching would leave a stale symbol baked into an entry under a
+container ``dim`` that no longer mentions it. A leg carries no such entries, so it has
+nothing analogous to protect. This asymmetry is deliberate, not an inconsistency to be
+flattened: recorded as a Phase 10 item once, here, rather than as three separate asides.
 
 A candidate that fails condition 1, 2, or 3 is dropped before any :class:`FusionMatch` is
 constructed at all -- there is no "failed match" object for those, since they gate whether
@@ -406,7 +442,9 @@ FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition(
         "phase_dimension_agreement",
         "every phase vector present unifies with the resolved shared leg dimension -- equal "
-        "outright, or unify binds a symbol (never merely defers)",
+        "outright, or unify binds a symbol to a concrete value (never merely defers, and "
+        "never binds to another still-symbolic Dim -- see the module docstring's "
+        "'Non-concrete bindings' note)",
     ),
 )
 """The declared side-condition specs for :class:`FusionPattern`. See the module docstring."""
@@ -488,10 +526,21 @@ _MAX_FIXPOINT_PASSES = 32
 """Iteration budget for :func:`resolve_fusion_match`'s joint condition-5/6 fixpoint.
 
 Module-level, not a function local, so a test can patch it low and actually exercise the
-exhaustion path (``tests/test_match.py::TestFixpointBudgetExhaustion``) -- see that path's
-own comment for why exhaustion is reported as a budget, never as a phase-dimension
-disagreement, and why the guard is kept even though it is unreachable under
-:meth:`~qufzx.algebra.dimension.Dim.unify`'s current contract."""
+exhaustion path (``tests/test_match.py::TestFixpointBudgetExhaustion``).
+
+Unreachability argument (D1's fix restates this in terms of ``bindings``, not
+``shared_dim``'s own concretization -- the pre-fix version of this docstring argued from
+the latter, which is exactly the false converse D1 was): ``bindings`` is monotone -- a key
+is only ever added, never rebound to a different value, enforced by :func:`_merge_bindings`
+-- and every key it can ever hold is drawn from the finite set of free symbols appearing in
+node_a's legs and phase, node_b's legs and phase, and the connecting pair (equivalently,
+``shared_dim``'s own lineage, which starts at ``port_a.dim`` and is only ever refined by
+substituting members of that same finite set). A pass that does not stabilise therefore adds
+at least one fresh key to ``bindings``, so the number of non-stabilising passes is bounded by
+that finite symbol count -- unreachable for any diagram with fewer distinct dimension symbols
+in play than the cap. The guard is kept anyway, conservatively refusing the candidate rather
+than looping forever, because that bound rests on :meth:`~qufzx.algebra.dimension.Dim.unify`'s
+current placeholder contract, which Phase 10 replaces."""
 
 
 def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
@@ -511,6 +560,33 @@ def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
     if not concrete_bindings:
         return dim
     return dim.substitute(cast(Mapping[DimSymbolKey, DimSubstituteValue], concrete_bindings))
+
+
+def _merge_bindings(bindings: dict[str, Dim], new_bindings: Mapping[str, Dim]) -> bool:
+    """Merge the concrete entries of ``new_bindings`` into ``bindings``, in place.
+
+    Only concrete-valued bindings are ever stored (see :func:`_resolve_with_bindings` for why
+    a binding to a non-concrete ``Dim`` is dropped rather than resolved through). Returns
+    ``False``, leaving ``bindings`` completely unmodified, iff some name already bound to a
+    different concrete ``Dim`` would be rebound to a new one -- a contradictory assumption
+    (e.g. two surviving legs forcing the same symbol to two different concrete values). This
+    is D1's soundness fix: the pre-fix code merged with plain ``dict.update``, a silent
+    last-write-wins overwrite, which is exactly what let an unsatisfiable constraint set
+    (``e*f == 2 and e == 2 and f == 2``) through undetected. Returning ``False`` here makes
+    the whole candidate a non-match at the call site, exactly like a ``FAILURE`` from
+    ``Dim.unify`` itself.
+
+    This is also what makes ``bindings`` monotone -- keys are only ever added, an existing
+    key's value never changes -- which :func:`resolve_fusion_match`'s fixpoint termination
+    argument (see its own inline comment) depends on.
+    """
+    concrete = {name: value for name, value in new_bindings.items() if value.is_concrete}
+    for name, value in concrete.items():
+        existing = bindings.get(name)
+        if existing is not None and existing != value:
+            return False
+    bindings.update(concrete)
+    return True
 
 
 class _ConstraintRecord:
@@ -554,6 +630,10 @@ class _ConstraintRecord:
     def entries(self) -> tuple[DimensionConstraint, ...]:
         """Every recorded constraint, in first-derivation order."""
         return tuple(self._entries.values())
+
+    def entry_for(self, source: ConstraintSource) -> DimensionConstraint | None:
+        """The current entry for ``source``, or ``None`` if never recorded, or since discharged."""
+        return self._entries.get(source)
 
     def leg_count(self) -> int:
         """How many entries came from a surviving leg (not the connecting pair or a phase)."""
@@ -628,9 +708,8 @@ def _unify_surviving_legs(
             else:
                 record.record_identity(source)
             if bound_here:
-                bindings.update(
-                    {name: value for name, value in result.bindings.items() if value.is_concrete}
-                )
+                if not _merge_bindings(bindings, result.bindings):
+                    return None
                 shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
     return shared_dim
 
@@ -681,10 +760,127 @@ def _unify_phase_dims(
             return None
         record.record(source, phase_dim, shared_dim, ConstraintOutcome.BOUND)
         new_concrete = dict(phase_unify.bindings)
-        bindings.update(new_concrete)
+        if not _merge_bindings(bindings, new_concrete):
+            return None
         bound_names.extend(sorted(new_concrete))
         shared_dim = _resolve_with_bindings(shared_dim, phase_unify.bindings)
     return shared_dim, bound_names
+
+
+def _unify_connecting_pair(
+    port_a_dim: Dim,
+    port_b_dim: Dim,
+    shared_dim: Dim,
+    bindings: dict[str, Dim],
+    record: _ConstraintRecord,
+) -> Dim | None:
+    """Re-derive the connecting pair's own equality, at its most-resolved form, this pass.
+
+    Unlike every ``SURVIVING_LEG`` and ``NODE_PHASE`` check, the connecting pair relates its
+    own two legs to *each other*, not to ``shared_dim`` (see
+    :attr:`~qufzx.rewrite.rule.ConstraintSourceKind.CONNECTING_PAIR`): it is what seeds
+    ``shared_dim`` in the first place, on the fixpoint's first pass, when both ports are
+    still resolved through an empty ``bindings`` accumulator (so ``resolved_a`` there is
+    ``port_a_dim`` itself, unify-ing trivially against ``shared_dim``, which
+    :func:`resolve_fusion_match` also seeds at ``port_a_dim`` -- and ``resolved_b`` reduces
+    to exactly the pre-fixpoint ``port_a_dim.unify(port_b_dim)`` this replaces).
+
+    D2's fix: called once per pass, not once before the loop, so a later pass sees whatever
+    a leg or phase check elsewhere in this same fixpoint has since bound -- the same
+    treatment every other source already had. Both legs are resolved through the running
+    ``bindings`` first, then unified against each other; a ``FAILURE`` here is a non-match,
+    exactly like a leg's own. Returns the (possibly refined) shared dimension, or ``None`` on
+    ``FAILURE`` or a contradictory rebind (:func:`_merge_bindings`).
+    """
+    resolved_a = _resolve_with_bindings(port_a_dim, bindings)
+    resolved_b = _resolve_with_bindings(port_b_dim, bindings)
+    result = resolved_a.unify(resolved_b)
+    if result.is_failure:
+        return None
+    source = ConstraintSource.connecting_pair()
+    bound_here = result.is_success and bool(result.bindings)
+    if result.is_deferred:
+        record.record(source, resolved_a, resolved_b, ConstraintOutcome.DEFERRED)
+    elif bound_here:
+        record.record(source, resolved_a, resolved_b, ConstraintOutcome.BOUND)
+    else:
+        record.record_identity(source)
+    if bound_here:
+        if not _merge_bindings(bindings, result.bindings):
+            return None
+        shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
+    return shared_dim
+
+
+def _verify_fixpoint_closure(
+    node_a: Node,
+    node_b: Node,
+    a_id: NodeId,
+    b_id: NodeId,
+    ref_a: PortRef,
+    ref_b: PortRef,
+    port_a_dim: Dim,
+    port_b_dim: Dim,
+    shared_dim: Dim,
+    bindings: Mapping[str, Dim],
+) -> bool:
+    """Re-verify, from scratch, that the finished fixpoint's own claim actually holds.
+
+    The fixpoint's own definition made explicit, as a structural guarantee rather than a
+    property only tests assert (D1's required post-loop check): the connecting pair's two
+    legs, every surviving leg of both nodes, and every present phase -- each resolved under
+    the *final* ``bindings`` -- must unify with the *final* ``shared_dim`` without
+    ``FAILURE``. Given the fixpoint only exits once a full pass adds nothing (D1's fixed
+    termination signal) and every ``bindings`` update is contradiction-checked
+    (:func:`_merge_bindings`), this is unreachable: the loop's last pass already re-checked
+    every one of these against the state this function re-checks them against again. It is
+    called anyway, unconditionally, rather than left to be unreachable in principle only.
+    """
+    for dim in (port_a_dim, port_b_dim):
+        if _resolve_with_bindings(dim, bindings).unify(shared_dim).is_failure:
+            return False
+    for node, node_id, consumed_ref in ((node_a, a_id, ref_a), (node_b, b_id, ref_b)):
+        for direction in (Direction.INPUT, Direction.OUTPUT):
+            for index, port in enumerate(node.legs(direction)):
+                ref = PortRef(node_id, direction, index)
+                if ref == consumed_ref:
+                    continue
+                if _resolve_with_bindings(port.dim, bindings).unify(shared_dim).is_failure:
+                    return False
+    for phase in (node_a.phase, node_b.phase):
+        if phase is None:
+            continue
+        if _resolve_with_bindings(phase.dim, bindings).unify(shared_dim).is_failure:
+            return False
+    return True
+
+
+def _connecting_pair_detail(
+    port_a_dim: Dim, port_b_dim: Dim, bindings: Mapping[str, Dim], record: _ConstraintRecord
+) -> str:
+    """Human-readable summary of the connecting pair's *finished* record entry.
+
+    Built from the finished record, not the fixpoint's first pass alone (D2's knock-on fix):
+    since the connecting pair is now re-derived every pass, whether it ended up deferred,
+    bound, or (once a later pass's binding discharges it) a bare identity is only known once
+    the fixpoint itself has finished -- reading it off the first pass alone, as the pre-fix
+    code did, could contradict the finished ``dimension_constraints`` it sits beside in the
+    certificate.
+    """
+    resolved_a = _resolve_with_bindings(port_a_dim, bindings)
+    resolved_b = _resolve_with_bindings(port_b_dim, bindings)
+    entry = record.entry_for(ConstraintSource.connecting_pair())
+    if entry is None:
+        return f"{resolved_a} == {resolved_b}"
+    if entry.outcome is ConstraintOutcome.DEFERRED:
+        return f"{resolved_a} == {resolved_b} (deferred, assumed)"
+    relevant_names = sorted(
+        (port_a_dim.free_symbols | port_b_dim.free_symbols) & bindings.keys()
+    )
+    if not relevant_names:
+        return f"{resolved_a} == {resolved_b}"
+    binding_desc = ", ".join(f"{name} := {bindings[name]}" for name in relevant_names)
+    return f"{resolved_a} == {resolved_b} (bound: {binding_desc})"
 
 
 def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
@@ -988,56 +1184,54 @@ def resolve_fusion_match(
     legs_b = node_b.legs(ref_b.direction)
     port_a = legs_a[ref_a.index]
     port_b = legs_b[ref_b.index]
-    leg_unify = port_a.dim.unify(port_b.dim)
-    if leg_unify.is_failure:
-        return _failed(
-            ("dimension_agreement", "phase_dimension_agreement"),
-            f"{port_a.dim} != {port_b.dim}: unify failed",
-        )
 
     record = _ConstraintRecord()
-    leg_deferred = leg_unify.is_deferred
-    leg_bound = leg_unify.is_success and bool(leg_unify.bindings)
-    if leg_deferred or leg_bound:
-        record.record(
-            ConstraintSource.connecting_pair(),
-            port_a.dim,
-            port_b.dim,
-            ConstraintOutcome.DEFERRED if leg_deferred else ConstraintOutcome.BOUND,
-        )
-    if leg_deferred:
-        leg_detail = f"{port_a.dim} == {port_b.dim} (deferred, assumed)"
-    elif leg_bound:
-        binding_desc = ", ".join(
-            f"{name} := {value}" for name, value in sorted(leg_unify.bindings.items())
-        )
-        leg_detail = f"{port_a.dim} == {port_b.dim} (bound: {binding_desc})"
-    else:
-        leg_detail = f"{port_a.dim} == {port_b.dim}"
+    shared_dim = port_a.dim
+    bindings: dict[str, Dim] = {}
 
-    shared_dim = _resolve_with_bindings(port_a.dim, leg_unify.bindings)
-    bindings: dict[str, Dim] = {
-        name: value for name, value in leg_unify.bindings.items() if value.is_concrete
-    }
-
-    # Conditions 5 and 6 run as one bounded fixpoint: each pass re-unifies every surviving
-    # leg of both nodes, then every present phase's own Dim, against the shared_dim as of
-    # the *start* of that pass, refining it in place on any concrete binding; the pass
-    # repeats until shared_dim stops changing. That is what re-checks a leg condition 5's
-    # first pass validated against a value a later phase-driven binding has since
-    # superseded. `bindings` is not pass-scoped: it is the single whole-candidate
-    # accumulator every pass reads from and writes into, so each successive pass is strictly
-    # more informed than the last, and a pass that adds nothing new to it leaves shared_dim
-    # unchanged -- the fixpoint's own termination signal. Duplicate assumptions are ruled
-    # out by the *record*, not by this loop: `record` is keyed by ConstraintSource, so a
-    # source re-derived on a later pass replaces its own entry rather than appending a
-    # second one (see _ConstraintRecord).
+    # Conditions 5 and 6 run as one bounded fixpoint: each pass re-derives the connecting
+    # pair's own equality, then re-unifies every surviving leg of both nodes, then every
+    # present phase's own Dim -- each against shared_dim (or, for the connecting pair,
+    # against the other connected leg) as of the point reached *so far in that same pass*,
+    # refining `bindings` and shared_dim in place on any concrete binding. The pass repeats
+    # until a full pass adds nothing: both shared_dim and bindings are unchanged from the
+    # pass's own start (D1's fix -- see below for why shared_dim stopping alone is not a
+    # sound termination signal). `bindings` is not pass-scoped: it is the single
+    # whole-candidate accumulator every pass reads from and writes into, so each successive
+    # pass is strictly more informed than the last. It is also monotone -- a key is only
+    # ever added, never rebound to a different value -- enforced by _merge_bindings, which
+    # every binding site in this fixpoint (surviving legs, phases, the connecting pair) goes
+    # through instead of a bare dict.update; a would-be contradictory rebind makes the whole
+    # candidate a non-match immediately, the same as a FAILURE from Dim.unify itself.
+    # Duplicate assumptions are ruled out by the *record*, not by this loop: `record` is
+    # keyed by ConstraintSource, so a source re-derived on a later pass replaces its own
+    # entry rather than appending a second one (see _ConstraintRecord).
+    #
+    # D1's root cause: "shared_dim stopped changing" is not the same fact as "bindings
+    # stopped changing". bindings can grow on a pass whose new binding does not touch any
+    # symbol appearing in shared_dim itself (e.g. binding a symbol that occurs only in a
+    # surviving leg's own dim, or rebinding a symbol to the value it already holds) --
+    # exiting on shared_dim alone then leaves whatever was checked earlier in that very pass
+    # unre-checked against the newly accumulated bindings, which is exactly how an
+    # unsatisfiable constraint set (e.g. e*f == 2 and e == 2 and f == 2, from legs
+    # [e*f, e, f]) went undetected. Checking both signals closes this.
     phase_bound_names: list[str] = []
     phase_dims_agree = True
     fixpoint_budget_exhausted = False
 
     for _pass_index in range(_MAX_FIXPOINT_PASSES):
         pass_start_dim = shared_dim
+        pass_start_bindings = dict(bindings)
+
+        next_dim = _unify_connecting_pair(port_a.dim, port_b.dim, shared_dim, bindings, record)
+        if next_dim is None:
+            return _failed(
+                ("dimension_agreement", "phase_dimension_agreement"),
+                f"{_resolve_with_bindings(port_a.dim, bindings)} != "
+                f"{_resolve_with_bindings(port_b.dim, bindings)}: the connecting pair does "
+                "not unify",
+            )
+        shared_dim = next_dim
 
         next_dim = _unify_surviving_legs(node_a, a_id, ref_a, shared_dim, bindings, record)
         if next_dim is None:
@@ -1064,19 +1258,21 @@ def resolve_fusion_match(
         shared_dim, pass_phase_bound_names = phase_result
         phase_bound_names.extend(pass_phase_bound_names)
 
-        if shared_dim == pass_start_dim:
+        if shared_dim == pass_start_dim and bindings == pass_start_bindings:
             break
     else:
-        # D4: the cap is a resolver *iteration budget*, not a dimension disagreement, and it
-        # is reported as exactly that. Every pass that does not stabilize adds at least one
-        # new concrete binding (bindings only ever grows, never reverses) and so strictly
-        # concretizes shared_dim, which makes this unreachable for any diagram with fewer
-        # than _MAX_FIXPOINT_PASSES distinct dimension symbols in play. The guard is kept
-        # anyway, conservatively refusing the candidate rather than looping forever, because
-        # "unreachable" rests on Dim.unify's current contract and Phase 10 replaces its
-        # body. Both conditions 5 and 6 are reported failed, with the same detail: the
-        # fixpoint decides them jointly, so when it does not terminate neither one was
-        # decided, and blaming either alone would send a reader to the wrong place.
+        # The cap is a resolver *iteration budget*, not a dimension disagreement, and it is
+        # reported as exactly that. bindings is monotone (never shrinks, never rebinds --
+        # _merge_bindings) and is drawn from the finite free-symbol set of node_a's legs and
+        # phase, node_b's legs and phase, and shared_dim's own lineage from port_a.dim; a
+        # pass that does not stabilise therefore strictly grows bindings by at least one
+        # fresh key, which bounds the number of non-stabilising passes by that finite symbol
+        # count. The guard is kept anyway, conservatively refusing the candidate rather than
+        # looping forever, because that bound rests on Dim.unify's current contract and
+        # Phase 10 replaces its body. Both conditions 5 and 6 are reported failed, with the
+        # same detail: the fixpoint decides them jointly, so when it does not terminate
+        # neither one was decided, and blaming either alone would send a reader to the wrong
+        # place.
         fixpoint_budget_exhausted = True
         phase_dims_agree = False
 
@@ -1089,6 +1285,19 @@ def resolve_fusion_match(
             "condition was decided",
         )
 
+    if not _verify_fixpoint_closure(
+        node_a, node_b, a_id, b_id, ref_a, ref_b, port_a.dim, port_b.dim, shared_dim, bindings
+    ):
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            "post-loop closure check failed: a resolved leg, phase, or the connecting pair "
+            "does not unify with the final shared_dim under the final bindings -- see "
+            "_verify_fixpoint_closure; this is unreachable given the fixpoint's own "
+            "termination guarantee and is checked anyway as a structural guard, not a "
+            "property left to tests alone",
+        )
+
+    leg_detail = _connecting_pair_detail(port_a.dim, port_b.dim, bindings, record)
     leg_constraint_count = record.leg_count()
     outcomes.append(
         SideConditionOutcome(

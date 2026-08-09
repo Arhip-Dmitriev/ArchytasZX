@@ -94,7 +94,16 @@ against the resolved ``shared_dim`` before a :class:`~qufzx.rewrite.match.Fusion
 ever returned: a leg that fails to unify makes the candidate a non-match, and a leg that
 only unifies by deferring or binding a symbol is recorded in
 :attr:`~qufzx.rewrite.match.FusionMatch.dimension_constraints`, with ``shared_dim`` itself
-possibly refined further by that leg's binding. This builder does not merely take that
+possibly refined further by that leg's binding. This claim is only as sound as the fixpoint
+that resolves ``shared_dim``/``bindings`` in the first place: D1 (Phase 5 audit round 15)
+was exactly a case where every surviving leg individually passed this check against *some*
+value of ``shared_dim``, yet the recorded assumptions were jointly unsatisfiable, because the
+fixpoint exited before every leg had been re-checked against the fully-accumulated
+``bindings``. :func:`~qufzx.rewrite.match.resolve_fusion_match` now closes this structurally
+(terminate only when a full pass adds nothing to either ``shared_dim`` or ``bindings``, and a
+post-loop closure check that re-verifies every leg, phase, and the connecting pair against
+the *final* state) rather than this builder re-deriving its own separate guarantee -- see
+that function's own inline commentary. This builder does not merely take that
 verification on faith, either (Phase 5 round-12 audit, A2): :func:`spider_fusion_builder`
 calls :func:`~qufzx.rewrite.match.resolve_fusion_match` -- the very same function
 :func:`~qufzx.rewrite.match.find_matches` calls to decide whether a candidate is a match at

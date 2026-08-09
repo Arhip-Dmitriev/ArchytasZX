@@ -25,10 +25,16 @@ Two sweeps, deliberately split by cost:
 
 * :class:`TestCertificateStructuralProperties` -- cheap (no tensor contraction), so it runs
   over a broad cross product: both colours, alternating and same-direction (Z-only) wiring,
-  every combination of 0-2 surviving legs per side drawn from a two-entry palette (concrete /
-  bare symbol), and phase present/absent (concrete / symbolic / none) on each node. Checked
-  for every match this space produces: no duplicate constraint sources, determinism across
-  repeated ``find_matches`` calls, and builder agreement (``apply`` never raises
+  every combination of 0-1 surviving legs per side drawn from a five-entry palette (concrete,
+  two distinct bare symbols, a product, and a power -- see ``_SURVIVING_PALETTE``; widened
+  from a two-entry one, Phase 5 audit round 15, N1, so two distinct binding symbols and a
+  deferred-then-refuted leg are inside this sweep's own space, not only ``test_match.py``'s
+  hand-picked D1 regression shapes), and phase present/absent (concrete / symbolic / none) on
+  each node. Checked for every match this space produces: no duplicate constraint sources,
+  determinism across repeated ``find_matches`` calls, every constraint's own pair unifies in
+  isolation *and* the whole recorded set is simultaneously satisfiable under the match's
+  final bindings (not merely pairwise self-consistent -- exactly the distinction D1's own
+  contradictory constraint set exposed), and builder agreement (``apply`` never raises
   ``RewriteDomainError``, and the recorded ``RewriteStep.dimension_constraints`` equals the
   match's own).
 * :class:`TestOracleTiesBackToRecordedConstraints` -- expensive (one tensor contraction pair
@@ -66,7 +72,22 @@ from qufzx.semantics.contract_numeric import ContractDomainError
 
 _D = Dim.symbol("d")
 _E = Dim.symbol("e")
-_SURVIVING_PALETTE = (Dim.concrete(2), _D)
+_CONSUMED_DIM_PALETTE = (Dim.concrete(2), _D)
+"""Palette for the *consumed* (connecting) leg only -- kept small (unlike
+``_SURVIVING_PALETTE``) since it is crossed with everything else in this sweep; widening it
+too would blow up runtime for no coverage this module doesn't already get elsewhere (the
+connecting pair's own dimension-pair space is exhaustively covered by ``_DIM_PAIRS`` and
+``TestOracleTiesBackToRecordedConstraints`` below)."""
+_SURVIVING_PALETTE = (Dim.concrete(2), _D, _E, _D * _E, _D**2)
+"""Palette for *surviving* legs and phases. Widened (Phase 5 audit round 15, N1) from
+``(Dim.concrete(2), _D)`` to include a product (``d*e``), a power (``d**2``), and a second
+bare symbol (``e``) -- so two distinct binding symbols and a deferred-then-refuted leg are
+inside this structural sweep's space, not only ``test_match.py``'s hand-picked D1 regression
+shapes. ``_leg_shapes``' ``max_total`` is correspondingly lowered from 2 to 1 (see that
+function) to keep the resulting cross product's runtime bounded -- a 5-member palette at
+``max_total=2`` would multiply the previous (already six-figure) diagram count by roughly
+``(5/2)**2``, which is not worth paying for marginal extra shape coverage over what
+``max_total=1`` already reaches with the wider palette."""
 _COLOR_DIRECTION_COMBOS = (
     (Z_SPIDER, Direction.OUTPUT, Direction.INPUT),
     (Z_SPIDER, Direction.OUTPUT, Direction.OUTPUT),
@@ -76,7 +97,7 @@ _COLOR_DIRECTION_COMBOS = (
 see :mod:`qufzx.rewrite.match`'s condition 4."""
 
 
-def _leg_shapes(max_total: int = 2) -> tuple[tuple[int, int], ...]:
+def _leg_shapes(max_total: int = 1) -> tuple[tuple[int, int], ...]:
     return tuple(
         (n_in, n_out)
         for n_in in range(max_total + 1)
@@ -99,7 +120,7 @@ class TestCertificateStructuralProperties:
         shapes = _leg_shapes()
 
         for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
-            for consumed_dim in _SURVIVING_PALETTE:
+            for consumed_dim in _CONSUMED_DIM_PALETTE:
                 for (n_in_a, n_out_a), (n_in_b, n_out_b) in itertools.product(shapes, shapes):
                     for dims_in_a, dims_out_a in itertools.product(
                         _leg_contents(n_in_a), _leg_contents(n_out_a)
@@ -146,6 +167,50 @@ class TestCertificateStructuralProperties:
                                             constraint.equal_to
                                         )
                                         assert not unify_result.is_failure
+
+                                    # N1 (Phase 5 audit round 15): the recorded constraint
+                                    # set must be *simultaneously* satisfiable, not merely
+                                    # pairwise self-consistent (each constraint's own
+                                    # assumed/equal_to unifying in isolation, checked above,
+                                    # is exactly what let D1's contradictory set through:
+                                    # e*f == 2, e == 2, f == 2 each individually unify fine).
+                                    # Resolve every constraint's own pair through the
+                                    # match's *final* bindings and re-unify -- this is
+                                    # _verify_fixpoint_closure's own check, re-derived here
+                                    # independently as a genuine cross-check.
+                                    bindings = {
+                                        name: value
+                                        for name, value in match.bindings.items()
+                                        if value.is_concrete
+                                    }
+                                    for constraint in match.dimension_constraints:
+                                        resolved_assumed = (
+                                            constraint.assumed.substitute(
+                                                cast(
+                                                    Mapping[DimSymbolKey, DimSubstituteValue],
+                                                    bindings,
+                                                )
+                                            )
+                                            if bindings
+                                            else constraint.assumed
+                                        )
+                                        resolved_equal_to = (
+                                            constraint.equal_to.substitute(
+                                                cast(
+                                                    Mapping[DimSymbolKey, DimSubstituteValue],
+                                                    bindings,
+                                                )
+                                            )
+                                            if bindings
+                                            else constraint.equal_to
+                                        )
+                                        assert not resolved_assumed.unify(
+                                            resolved_equal_to
+                                        ).is_failure, (
+                                            f"constraint {constraint!r} is not "
+                                            f"simultaneously satisfiable with the rest of "
+                                            f"match.bindings={bindings!r}"
+                                        )
 
                                     working_diagram = diagram.copy()
                                     result = apply(working_diagram, SPIDER_FUSION, match)

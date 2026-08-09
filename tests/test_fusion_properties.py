@@ -699,6 +699,137 @@ leaves comfortable headroom against incidental generator tuning while still fail
 this arm's oracle calls silently stopped running.
 """
 
+def _resolved_dim(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
+    """``dim`` with every concrete entry of ``bindings`` substituted in, non-concrete dropped."""
+    concrete: dict[str | Dim, int | Dim] = {
+        name: value for name, value in bindings.items() if value.is_concrete
+    }
+    return dim.substitute(concrete) if concrete else dim
+
+
+def _assert_constraints_satisfiable(
+    constraints: Iterable[DimensionConstraint], bindings: Mapping[str, Dim]
+) -> None:
+    """Every recorded ``(assumed, equal_to)`` pair, resolved under ``bindings``, must unify."""
+    for entry in constraints:
+        resolved_assumed = _resolved_dim(entry.assumed, bindings)
+        resolved_equal_to = _resolved_dim(entry.equal_to, bindings)
+        assert not resolved_assumed.unify(resolved_equal_to).is_failure, (
+            f"recorded constraint {entry} is not simultaneously satisfiable with the rest "
+            f"of match.bindings={dict(bindings)!r}"
+        )
+
+
+def _assert_match_structurally_satisfiable(diagram: Diagram, match: FusionMatch) -> None:
+    """N1's required structural-satisfiability arm (cheap, broad, no oracle call).
+
+    Every surviving leg dim, the connecting pair's own two dims, and every present phase dim
+    -- each resolved under ``match.bindings`` -- must unify with ``match.shared_dim`` without
+    ``FAILURE``, and ``match.dimension_constraints`` must be simultaneously satisfiable. This
+    is exactly :func:`~qufzx.rewrite.match._verify_fixpoint_closure`'s own check, re-derived
+    independently here (not by importing and calling that private function) as a genuine
+    cross-check against a regression in the fixpoint's own termination or bindings-merge
+    logic (D1, Phase 5 audit round 15) -- not a tautological re-assertion of it.
+    """
+    bindings = dict(match.bindings)
+    node_a = diagram.nodes[match.a_id]
+    node_b = diagram.nodes[match.b_id]
+    ref_a = match.wire.a if match.wire.a.node_id == match.a_id else match.wire.b
+    ref_b = match.wire.b if match.wire.a.node_id == match.a_id else match.wire.a
+
+    for node, node_id, consumed_ref in (
+        (node_a, match.a_id, ref_a),
+        (node_b, match.b_id, ref_b),
+    ):
+        for direction in (Direction.INPUT, Direction.OUTPUT):
+            for index, port in enumerate(node.legs(direction)):
+                ref = PortRef(node_id, direction, index)
+                if ref == consumed_ref:
+                    continue
+                resolved = _resolved_dim(port.dim, bindings)
+                assert not resolved.unify(match.shared_dim).is_failure, (
+                    f"surviving leg {ref} (resolved {resolved}) does not unify with "
+                    f"shared_dim {match.shared_dim}"
+                )
+
+    legs_a = node_a.legs(ref_a.direction)
+    legs_b = node_b.legs(ref_b.direction)
+    for dim in (legs_a[ref_a.index].dim, legs_b[ref_b.index].dim):
+        resolved = _resolved_dim(dim, bindings)
+        assert not resolved.unify(match.shared_dim).is_failure, (
+            f"connecting-pair leg (resolved {resolved}) does not unify with shared_dim "
+            f"{match.shared_dim}"
+        )
+
+    for node in (node_a, node_b):
+        if node.phase is None:
+            continue
+        resolved = _resolved_dim(node.phase.dim, bindings)
+        assert not resolved.unify(match.shared_dim).is_failure, (
+            f"phase dim (resolved {resolved}) does not unify with shared_dim "
+            f"{match.shared_dim}"
+        )
+
+    _assert_constraints_satisfiable(match.dimension_constraints, bindings)
+
+
+def _bindings_as_int_subs(bindings: Mapping[str, Dim]) -> dict[str, int]:
+    return {name: dim.to_int() for name, dim in bindings.items() if dim.is_concrete}
+
+
+def _isolate_match_pair(diagram: Diagram, match: FusionMatch) -> Diagram:
+    """A fresh 2-node diagram containing only ``match``'s own pair, its connecting wire, and
+    every surviving leg as a boundary port.
+
+    :func:`~qufzx.rewrite.match.resolve_fusion_match` decides everything about a match from
+    ``(diagram, a_id, b_id, wire)`` alone (see that function's own docstring), so this
+    isolated diagram reproduces the identical match -- but with any unrelated third node
+    ``_build_random_diagram`` may also have generated (and any dimension symbol it happens
+    to share with this pair) removed entirely. This is what lets
+    ``TestBindingsSubstitutionIsCleanAndOracleEqual`` assert whole-diagram clean
+    contractibility under ``match.bindings`` without being confounded by some unrelated
+    node's own pre-existing conflict becoming concrete at the same substitution -- a false
+    positive this test found in its first draft (seed 508, 1266: an unrelated node's phase
+    legitimately disagreed with its own legs only once a symbol *this* match's bindings
+    happened to also use was forced concrete, which is `_build_random_diagram` sharing
+    symbols across unrelated nodes, not a defect in the fusion under test).
+    """
+    node_a = diagram.nodes[match.a_id]
+    node_b = diagram.nodes[match.b_id]
+    isolated = Diagram()
+    a_id = isolated.add_node(
+        node_a.generator_type,
+        input_dims=[p.dim for p in node_a.inputs],
+        output_dims=[p.dim for p in node_a.outputs],
+        phase=node_a.phase,
+    )
+    b_id = isolated.add_node(
+        node_b.generator_type,
+        input_dims=[p.dim for p in node_b.inputs],
+        output_dims=[p.dim for p in node_b.outputs],
+        phase=node_b.phase,
+    )
+    ref_a = match.wire.a if match.wire.a.node_id == match.a_id else match.wire.b
+    ref_b = match.wire.b if match.wire.a.node_id == match.a_id else match.wire.a
+    isolated.add_wire(
+        PortRef(a_id, ref_a.direction, ref_a.index), PortRef(b_id, ref_b.direction, ref_b.index)
+    )
+    boundary_inputs: list[PortRef] = []
+    boundary_outputs: list[PortRef] = []
+    for new_id, orig_node, consumed_ref in ((a_id, node_a, ref_a), (b_id, node_b, ref_b)):
+        for direction in (Direction.INPUT, Direction.OUTPUT):
+            for index in range(len(orig_node.legs(direction))):
+                if direction == consumed_ref.direction and index == consumed_ref.index:
+                    continue
+                ref = PortRef(new_id, direction, index)
+                (boundary_inputs if direction is Direction.INPUT else boundary_outputs).append(
+                    ref
+                )
+    isolated.set_boundary_inputs(boundary_inputs)
+    isolated.set_boundary_outputs(boundary_outputs)
+    return isolated
+
+
 _MIN_ORACLE_COMPARISONS = 82
 """Floor for the total oracle comparisons summed across every checked match.
 
@@ -1053,3 +1184,145 @@ class TestForeignFusionMatchArm:
             )
             with pytest.raises(RewriteError):
                 spider_fusion_builder(diagram, corrupted)
+
+
+class TestStructuralSatisfiabilityAtScale:
+    """N1's required structural-satisfiability arm, run broadly (cheap, no oracle call) over
+    the deliberately messy ``_build_random_diagram`` population -- this is what should have
+    caught D1 (Phase 5 audit round 15): every match ``find_matches`` returns must have every
+    surviving leg, the connecting pair, and every present phase resolve, under
+    ``match.bindings``, to something that unifies with ``match.shared_dim`` -- and the same
+    must hold of the *applied* ``RewriteStep.dimension_constraints``, not only the match's
+    own pre-apply fields, so a divergence introduced between matching and building would
+    still be caught.
+    """
+
+    def test_every_match_and_every_applied_step_is_structurally_satisfiable(self) -> None:
+        checked_any_match = False
+        for seed in _SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_random_diagram(rng)
+            for match in find_matches(diagram):
+                checked_any_match = True
+                _assert_match_structurally_satisfiable(diagram, match)
+                try:
+                    result = apply(diagram, SPIDER_FUSION, match)
+                except RewriteDomainError as exc:
+                    assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
+                        f"seed {seed}: unexpected RewriteDomainError: {exc}"
+                    )
+                    continue
+                _assert_constraints_satisfiable(
+                    result.step.dimension_constraints, dict(match.bindings)
+                )
+        assert checked_any_match, "the generator never produced a single fusion match"
+
+
+_MIN_BINDINGS_ORACLE_COMPARISONS = 55
+"""Floor for the total oracle comparisons run by substituting ``match.bindings`` itself.
+
+N1's required non-skippable invariant arm exists precisely because the fixed
+``_ORACLE_DIM_PAIRS`` palette used by :func:`_check_one_match` never tries the substitution
+that actually matters -- ``match.bindings`` itself -- so a D1-shaped defect (a match whose
+own recorded assumptions are jointly unsatisfiable) was invisible to it by construction: a
+diagram exhibiting D1 fails ``_is_cleanly_contractible`` at its own bindings and would, pre
+this arm, only ever be silently ``continue``d past. Measured over ``_SEEDS``'s 2,500 seeds
+(most matches either have all-symbolic bindings that don't fully concretize the diagram --
+counted as ``unconstrained_skips``, a legitimate skip per this arm's own contract -- or trip
+``ContractSizeError``). Set at roughly 70% of that measurement, leaving headroom against
+incidental generator tuning while still failing hard if this arm's oracle calls silently
+stopped running or its skip reasons silently widened to swallow everything.
+"""
+
+
+class TestBindingsSubstitutionIsCleanAndOracleEqual:
+    """N1's required non-skippable invariant arm: for every match ``find_matches`` returns,
+    substituting ``match.bindings`` into the input diagram must yield a cleanly contractible
+    diagram, and pre/post must be exactly oracle-equal there. A failure here is an ``assert``,
+    never a ``continue`` -- the only legitimate skips are a genuine oracle-scale limit
+    (``ContractSizeError``) or free symbols ``match.bindings`` does not constrain (both
+    counted, with a coverage floor on the oracle-comparison count so this arm cannot silently
+    degenerate to only ever skipping).
+    """
+
+    def test_every_match_bindings_substitution_is_clean_and_oracle_equal(self) -> None:
+        checked_any_match = False
+        oracle_runs = 0
+        unconstrained_skips = 0
+        size_skips = 0
+        for seed in _SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_random_diagram(rng)
+            for match in find_matches(diagram):
+                checked_any_match = True
+
+                # Isolate the pair before doing anything else: see _isolate_match_pair for
+                # why the full (possibly multi-node) generated diagram is not used directly.
+                isolated = _isolate_match_pair(diagram, match)
+                isolated_matches = find_matches(isolated)
+                assert len(isolated_matches) == 1, (
+                    f"seed {seed}: isolating the matched pair changed match count to "
+                    f"{len(isolated_matches)}"
+                )
+                isolated_match = isolated_matches[0]
+                assert isolated_match.shared_dim == match.shared_dim
+                assert dict(isolated_match.bindings) == dict(match.bindings)
+
+                try:
+                    result = apply(isolated, SPIDER_FUSION, isolated_match)
+                except RewriteDomainError as exc:
+                    assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
+                        f"seed {seed}: unexpected RewriteDomainError: {exc}"
+                    )
+                    continue
+                post = result.diagram
+
+                bindings_subs = _bindings_as_int_subs(isolated_match.bindings)
+                remaining = (_free_symbol_names(isolated) | _free_symbol_names(post)) - set(
+                    bindings_subs
+                )
+                if remaining:
+                    # A legitimate skip (per this arm's own declared contract, not a
+                    # silently-widened escape hatch): match.bindings alone did not fully
+                    # concretize the isolated pair, so there is no single substitution this
+                    # arm can both derive purely from the match and pass to compare()
+                    # unambiguously.
+                    unconstrained_skips += 1
+                    continue
+
+                try:
+                    pre_concrete = isolated.substitute(bindings_subs)
+                    post_concrete = post.substitute(bindings_subs)
+                except PhaseDomainError as exc:
+                    raise AssertionError(
+                        f"seed {seed}: match.bindings {bindings_subs!r} substituted into "
+                        f"the isolated pair itself produces an invalid phase entry: {exc}"
+                    ) from exc
+
+                assert _is_cleanly_contractible(pre_concrete), (
+                    f"seed {seed}: substituting match.bindings {bindings_subs!r} into the "
+                    "isolated pre-fusion pair is not cleanly contractible -- the match's own "
+                    "recorded assumptions do not actually make it well-formed (D1)"
+                )
+                assert _is_cleanly_contractible(post_concrete), (
+                    f"seed {seed}: substituting match.bindings {bindings_subs!r} into the "
+                    "isolated post-fusion pair is not cleanly contractible"
+                )
+
+                try:
+                    comparison = compare(isolated, post, bindings_subs)
+                except ContractSizeError:
+                    size_skips += 1
+                    continue
+                assert comparison.matched, (
+                    f"seed {seed}: oracle mismatch at match.bindings {bindings_subs!r}: "
+                    f"{comparison.reason}"
+                )
+                oracle_runs += 1
+        assert checked_any_match, "the generator never produced a single fusion match"
+        assert oracle_runs >= _MIN_BINDINGS_ORACLE_COMPARISONS, (
+            f"only {oracle_runs} bindings-substitution oracle comparisons ran (floor is "
+            f"{_MIN_BINDINGS_ORACLE_COMPARISONS}, {unconstrained_skips} skipped for "
+            f"unconstrained symbols, {size_skips} for ContractSizeError); this arm may be "
+            "silently degenerating to only ever skipping instead of exercising compare()"
+        )

@@ -33,6 +33,22 @@ subsampled away -- see ``_SKIP_TWO_WIRE_AT_D3`` below -- per this task's explici
 d=3 or the 2-wire arm if needed" allowance; the 1-wire arm still runs fully at every ``d``,
 and the 2-wire arm still runs fully at ``d = 2``. Do not "optimise" this into a random
 sample: the entire point is that it is not one.
+
+Scope boundary (Phase 5 audit round 15, N1): every node here is built at a single, shared
+*concrete* ``Dim.concrete(d_value)`` (see :func:`_build_node`) -- no symbol, no product, no
+power ever appears anywhere in this space, so :func:`_is_cleanly_contractible` holds
+trivially for every diagram this module constructs (asserted, never merely assumed) and
+every ``dimension_agreement``/``phase_dimension_agreement`` outcome this space can produce is
+a bare syntactic identity, never a ``DEFERRED`` or ``BOUND`` one. This sweep is therefore
+exhaustive over *leg/wire topology* at fixed concrete ``d``, not over the deferred/binding
+resolution path (the fixpoint in :func:`~qufzx.rewrite.match.resolve_fusion_match` that D1
+lived in) -- a defect confined to that path, such as D1, is structurally invisible here by
+this module's own design, not a gap introduced by an insufficiently wide palette the way the
+other two sweeps' had. See ``tests/test_match.py``'s ``TestD1FixpointTerminationSoundness``
+and ``TestStructuralSatisfiabilityOfEveryMatch``, ``tests/test_fusion_properties.py``'s
+``TestBindingsSubstitutionIsCleanAndOracleEqual``/``TestStructuralSatisfiabilityAtScale``, and
+``test_phase5_certificate_sweep.py``'s widened ``_SURVIVING_PALETTE`` for the harnesses that
+actually cover the symbolic/deferred/binding space this one does not.
 """
 
 from __future__ import annotations
