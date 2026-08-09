@@ -270,9 +270,13 @@ class TestCertificateRecordsTheReDerivedFacts:
         diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
 
         match = find_matches(diagram)[0]
-        # The real fusion assumes d := 3 twice over: once for the connecting pair, once
-        # more when A's surviving input (also d) is unified against the refined shared_dim.
-        assert match.dimension_constraints == ((d, three), (d, three))
+        # The real fusion assumes d := 3 exactly once, for the connecting pair. A's
+        # surviving input is also stated over d, but ``_unify_surviving_legs`` resolves a
+        # leg through the running ``bindings`` accumulator before unifying it, so that leg
+        # arrives as concrete 3 against a shared_dim of 3 -- a bare syntactic identity,
+        # which records nothing. Re-asserting an identical (d, 3) pair there would be the
+        # same fact twice, not a second assumption the certificate must carry.
+        assert match.dimension_constraints == ((d, three),)
 
         fake = dataclasses.replace(
             match,

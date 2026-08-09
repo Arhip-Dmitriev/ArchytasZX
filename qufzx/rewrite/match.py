@@ -265,9 +265,15 @@ accepted: both a ``DEFERRED`` outcome from :meth:`Dim.unify` (truly undecided, p
 method's contract) and a ``SUCCESS`` outcome that only holds because ``unify`` bound a free
 symbol (decided, but only under that binding -- e.g. leg dims ``d`` and ``3`` unify by
 binding ``d := 3``, and the fusion is valid only at that value). This applies uniformly to
-the connecting pair (recorded as ``(port_a.dim, port_b.dim)``), to every surviving leg
-condition 5 checks against the running ``shared_dim`` (recorded as ``(leg.dim,
-shared_dim)`` at the point that leg was checked), and, since the Phase 5 post-closing
+the connecting pair (recorded as ``(port_a.dim, port_b.dim)``, the two raw leg dims -- this
+pair is what *starts* the accumulator, so there is nothing yet to resolve it through), to
+every surviving leg condition 5 checks against the running ``shared_dim`` (recorded as
+``(resolved_leg_dim, shared_dim)`` at the point that leg was checked, where
+``resolved_leg_dim`` is the leg's own ``Dim`` with every concrete binding accumulated so far
+already substituted in -- see :func:`_resolve_with_bindings`, and note that a leg whose
+resolved dim is already syntactically identical to ``shared_dim`` records nothing at all,
+since the binding that made it so is already recorded by whichever check first produced
+it), and, since the Phase 5 post-closing
 audit's judgement call 2, to every present phase's own ``Dim`` condition 6 checks against
 the (by then final) ``shared_dim`` (recorded as ``(phase.dim, shared_dim)``, but -- unlike
 the connecting pair and every surviving leg -- only for a binding-only ``SUCCESS``, never
@@ -509,17 +515,26 @@ def _unify_surviving_legs(
     the module docstring's account of why a phase's ``Dim`` can depend on a symbol a
     *surviving* leg bound, not just the one the connecting pair bound.
 
+    Mirrors :func:`_unify_phase_dims`'s own accumulator discipline exactly (Phase 5
+    post-closing audit, dimension_constraints duplicate-assumption defect): each leg's own
+    ``Dim`` is first resolved through the running ``bindings`` accumulator via
+    :func:`_resolve_with_bindings`, then unified against ``shared_dim`` -- not the leg's raw,
+    unresolved ``Dim``. A leg still mentioning a symbol an earlier leg or phase already bound
+    concretely therefore comes back a bare, unrecorded syntactic identity here (the resolved
+    leg dim and ``shared_dim`` are already equal), rather than re-binding the same symbol
+    against the same fact and re-appending an identical constraint pair.
+
     Returns ``(resolved_shared_dim, new_dimension_constraints, any_deferred)`` on success.
-    Returns ``None`` if any surviving leg's dim is non-unifiable with the (possibly
-    already-refined-by-an-earlier-leg) ``shared_dim`` -- a ``FAILURE`` here makes the whole
-    candidate a non-match, exactly like a ``FAILURE`` on the connecting-leg pair itself,
-    since forcing that leg onto ``shared_dim`` anyway (as the pre-fix builder silently did)
-    would destroy a real dimension conflict rather than report it. Each surviving leg whose
-    unify only deferred, or only succeeded by binding a symbol, is recorded as a dimension
-    constraint pair ``(leg.dim, shared_dim)`` -- the same provenance and shape the
-    connecting-leg pair itself is recorded under (see the module docstring) -- and, if that
-    binding makes ``shared_dim`` more concrete, every leg checked afterward (including on
-    the other node) is checked against the refined value.
+    Returns ``None`` if any surviving leg's (bindings-resolved) dim is non-unifiable with the
+    (possibly already-refined-by-an-earlier-leg) ``shared_dim`` -- a ``FAILURE`` here makes
+    the whole candidate a non-match, exactly like a ``FAILURE`` on the connecting-leg pair
+    itself, since forcing that leg onto ``shared_dim`` anyway (as the pre-fix builder
+    silently did) would destroy a real dimension conflict rather than report it. Each
+    surviving leg whose unify only deferred, or only succeeded by binding a symbol, is
+    recorded as a dimension constraint pair ``(resolved_leg_dim, shared_dim)`` -- the same
+    provenance and shape the connecting-leg pair itself is recorded under (see the module
+    docstring) -- and, if that binding makes ``shared_dim`` more concrete, every leg checked
+    afterward (including on the other node) is checked against the refined value.
     """
     constraints: list[tuple[Dim, Dim]] = []
     any_deferred = False
@@ -528,13 +543,14 @@ def _unify_surviving_legs(
             ref = PortRef(node_id, direction, index)
             if ref == consumed_ref:
                 continue
-            result = port.dim.unify(shared_dim)
+            leg_dim = _resolve_with_bindings(port.dim, bindings)
+            result = leg_dim.unify(shared_dim)
             if result.is_failure:
                 return None
             deferred_here = result.is_deferred
             bound_here = result.is_success and bool(result.bindings)
             if deferred_here or bound_here:
-                constraints.append((port.dim, shared_dim))
+                constraints.append((leg_dim, shared_dim))
             if deferred_here:
                 any_deferred = True
             if bound_here:
