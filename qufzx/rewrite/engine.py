@@ -168,9 +168,21 @@ Algorithm.
    (:func:`_translate_input_issue_key`) is reused over ``validate(diagram).deferred`` and
    ``validate(working).deferred`` instead of ``.errors`` -- not to raise (a rewrite is
    allowed to resolve a deferred assumption; that is the entire point of firing across one),
-   but to populate :attr:`RewriteStep.removed_deferred_issues` with every input deferred
-   issue that has no counterpart in ``working``'s own deferred issues, so the certificate
-   records the fact even though nothing about applying the rewrite itself is illegal.
+   but to populate :attr:`RewriteStep.removed_deferred_issues`. This compare is a *multiset*
+   over translated keys too, mirroring step 8's own discipline exactly rather than diverging
+   from it (Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision defect):
+   ``_translate_input_issue_key`` maps every consumed node's deferred issues onto the same
+   single surviving node id (:func:`_translate_input_issue_key`'s one-new-node-id fallback,
+   above), so two distinct, node-anchored deferred issues -- one on each of two fused
+   spiders, an ordinary shape -- legitimately translate to the *same* key; a plain
+   dict-by-key comparison silently drops one to last-write-wins, exactly the bug a Counter
+   difference (as step 8 already uses) does not have. The surviving count for each key,
+   ``Counter(input keys) - Counter(result keys)``, is then satisfied by walking the input
+   deferred issues in their original order and taking the first that-many occurrences of
+   each key, so every reported issue is the actual input diagram's own issue object, in its
+   own pre-rewrite coordinates -- never a translated stand-in -- and a rewrite that removes
+   two same-keyed deferred issues is reported as two, not one, so the certificate records the
+   fact even though nothing about applying the rewrite itself is illegal.
 9. Record provenance. A :class:`RewriteStep` carrying the rule name, the located ``match``
    exactly as it was applied (stored verbatim, so Phase 6 replays directly from it rather
    than re-running the matcher and re-selecting a candidate by node id), the match location
@@ -344,10 +356,11 @@ survives)                               key (``_remap_endpoint``)
 Overall structural non-regression       Multiset ``(kind, ref)`` comparison  8     RewriteDomainError   test_engine.py::TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind,
 (not one field -- the combined          of ``validate(diagram)`` vs.                                   TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode
 effect of every field above)            ``validate(working)``
-Removed deferred issues (judgement      Not a gate -- ``.deferred`` issues   8     n/a (recorded,      test_engine.py::TestRemovedDeferredIssuesAreRecorded
-call 1, Phase 5 post-closing audit)     with no post-rewrite counterpart           never raised)
-                                         are recorded onto
-                                         ``RewriteStep
+Removed deferred issues (judgement      Not a gate -- multiset compare of    8     n/a (recorded,      test_engine.py::TestRemovedDeferredIssuesAreRecorded
+call 1, Phase 5 post-closing audit)     ``.deferred`` issue keys, mirroring        never raised)
+                                         step 8's own discipline; issues
+                                         with no surviving counterpart are
+                                         recorded onto ``RewriteStep
                                          .removed_deferred_issues``, never
                                          blocked -- see that field's
                                          docstring
@@ -410,10 +423,11 @@ class RewriteStep:
     new_node_ids: tuple[NodeId, ...]
     removed_deferred_issues: tuple[ValidationIssue, ...] = ()
     """Every :attr:`~qufzx.diagram.validate.ValidationReport.deferred` issue ``diagram``
-    carried that has no counterpart anywhere in ``working``'s own deferred issues, in
-    ``diagram``'s own (pre-rewrite) coordinates (Phase 5 post-closing audit, judgement call
-    1). Step 8 already refuses to *introduce* a new hard-error issue kind, but it never
-    looked at deferred issues at all -- a diagram-level unify assumption
+    carried that a *multiset* compare (translated key, via
+    :func:`_translate_input_issue_key`) says has no surviving counterpart among ``working``'s
+    own deferred issues, in ``diagram``'s own (pre-rewrite) coordinates (Phase 5 post-closing
+    audit, judgement call 1). Step 8 already refuses to *introduce* a new hard-error issue
+    kind, but it never looked at deferred issues at all -- a diagram-level unify assumption
     (:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`) that a rewrite silently
     resolves (by consuming or overwriting the leg it was recorded against) simply vanished,
     with nothing on the certificate to say a pre-existing assumption was ever there, let
@@ -423,7 +437,12 @@ class RewriteStep:
     non-empty one is not itself an error -- see :func:`~qufzx.rewrite.rules_library`'s
     module docstring, "Phase 5 judgement call", for why spider_fusion is allowed to fire on
     a ``DEFERRED`` dimension pair at all, and why silently dropping the resulting assumption
-    is still wrong even though the rewrite itself is legal.
+    is still wrong even though the rewrite itself is legal. The compare is multiset, not
+    set/dict-keyed (Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision
+    defect): two distinct input issues that translate to the same key -- e.g. one
+    node-anchored ``DIMENSION_DEFERRED`` issue on each of two nodes a fusion consumes, both
+    mapped onto the same surviving node id -- are each counted and, if both lack a surviving
+    counterpart, both reported, never collapsed to one by a last-write-wins dict lookup.
     """
 
     def __hash__(self) -> int:
@@ -764,16 +783,25 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     # compare, by design), but a loss of information the certificate should not paper over
     # in silence. Same translation machinery as the hard-error compare, reused for the
     # deferred set instead.
-    input_deferred_by_key = {
-        _translate_input_issue_key(
-            issue, consumed_node_ids, port_mapping, build_result.new_node_ids
-        ): issue
+    input_deferred_issues = tuple(
+        (
+            _translate_input_issue_key(
+                issue, consumed_node_ids, port_mapping, build_result.new_node_ids
+            ),
+            issue,
+        )
         for issue in validate(diagram).deferred
-    }
-    result_deferred_keys = {_issue_key(issue) for issue in validate(working).deferred}
-    removed_deferred_issues = tuple(
-        issue for key, issue in input_deferred_by_key.items() if key not in result_deferred_keys
     )
+    input_deferred_key_counts = Counter(key for key, _issue in input_deferred_issues)
+    result_deferred_key_counts = Counter(_issue_key(issue) for issue in validate(working).deferred)
+    removed_deferred_key_counts = input_deferred_key_counts - result_deferred_key_counts
+    remaining_removed_counts = dict(removed_deferred_key_counts)
+    removed_deferred_issues_list: list[ValidationIssue] = []
+    for key, issue in input_deferred_issues:
+        if remaining_removed_counts.get(key, 0) > 0:
+            removed_deferred_issues_list.append(issue)
+            remaining_removed_counts[key] -= 1
+    removed_deferred_issues = tuple(removed_deferred_issues_list)
 
     # Defect 2 (Phase 5 post-closing audit): prefer the builder's independently re-derived
     # facts over the match's own claims whenever the builder supplied them -- see

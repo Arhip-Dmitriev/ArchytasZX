@@ -655,6 +655,129 @@ class TestRemovedDeferredIssuesAreRecorded:
         )
 
 
+class TestDimensionConstraintsExactContent:
+    """Phase 5 post-closing audit, dimension_constraints duplicate-assumption defect.
+
+    Before the fix, ``_unify_surviving_legs`` (match.py) unified each surviving leg's raw,
+    unresolved ``Dim`` against ``shared_dim`` -- unlike its sibling ``_unify_phase_dims``,
+    which first resolves the checked ``Dim`` through the running ``bindings`` accumulator.
+    A leg still mentioning a symbol some earlier leg or phase had already bound concretely
+    was therefore re-unified and re-appended to ``dimension_constraints`` as though it were
+    a fresh fact, once per such leg and again on every fixpoint pass that left ``shared_dim``
+    unchanged. Asserts exact tuple content (not merely length) on ``RewriteStep
+    .dimension_constraints`` -- the field Phase 6 will read as the certificate -- for three
+    shapes, mirroring the accumulator discipline ``_unify_phase_dims`` already had.
+    """
+
+    def test_a_single_bound_leg_contributes_exactly_one_entry(self) -> None:
+        # A: output dim d (consumed). B: input dim 2 (consumed), output dim 2 (survives).
+        # The connecting pair (d, 2) is a bare syntactic identity only after unify binds
+        # d := 2 -- recorded once. B's one surviving leg (2) is then checked against the
+        # already-refined shared_dim (2): a bare identity, nothing new to record.
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.dimension_constraints == ((d, two),)
+        assert match.dimension_constraints == ((d, two),)
+
+    def test_a_surviving_leg_bound_by_an_earlier_leg_contributes_no_duplicate(self) -> None:
+        # A: input dims [d, 2], output dim d (consumed). B: input dim d (consumed), output
+        # dim d (survives). Connecting pair (d, d) is a bare identity, nothing recorded.
+        # A's own surviving input leg 2 unifies against shared_dim d, binding d := 2 --
+        # recorded once, as (2, d). Every other surviving leg (A's own d-leg, and B's
+        # surviving output d-leg) resolves through that same binding to a bare identity
+        # against the now-concrete shared_dim -- including B's leg, checked in the very same
+        # fixpoint pass, since bindings is one whole-candidate accumulator both nodes' leg
+        # sweeps read from and write into, not one scoped per node or per pass.
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d, two], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.dimension_constraints == ((two, d),)
+        assert match.dimension_constraints == ((two, d),)
+
+    def test_two_independent_deferred_legs_are_both_recorded_not_collapsed(self) -> None:
+        # A: input dim d*e (survives), output dim d (consumed). B: input dim d (consumed),
+        # output dim d*e (survives). shared_dim = d (connecting pair, bare identity). Both
+        # surviving legs (A's d*e, B's d*e) unify against d and defer -- neither resolves
+        # through bindings (unify(d*e, d) never binds a symbol, since there is no single
+        # substitution of d or e alone that equates a product to one of its own factors), so
+        # both are genuinely independent, undischarged assumptions and both are recorded --
+        # this is not the duplicate-assumption defect, since neither check could have been
+        # derived from the other's outcome.
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        de = d * e
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[de], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[de])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert result.step.dimension_constraints == ((de, d), (de, d))
+        assert match.dimension_constraints == ((de, d), (de, d))
+
+
+class TestRemovedDeferredIssuesMultisetCompare:
+    """Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision defect.
+
+    Before the fix, the deferred compare in ``apply`` (engine.py) keyed a plain dict
+    comprehension on ``_translate_input_issue_key(issue, ...)``. That function maps both
+    consumed node ids of a fusion onto the sole surviving ``new_node_ids[0]``, so two
+    distinct, node-anchored ``DIMENSION_DEFERRED`` issues -- one on each of the two fused
+    spiders -- translate to the *same* key and collapse to one dict entry, silently dropping
+    one to last-write-wins. The fix makes this compare multiset-aware (a ``Counter``
+    difference), mirroring step 8's own hard-error compare instead of diverging from it.
+    """
+
+    def test_two_node_anchored_deferred_issues_are_both_reported(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        de = d * e
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[de], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[de])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+
+        pre_report = validate(diagram)
+        assert len(pre_report.deferred) == 2
+        pre_by_node = {issue.node_id: issue for issue in pre_report.deferred}
+        assert set(pre_by_node) == {a_id, b_id}
+
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+
+        post_report = validate(result.diagram)
+        assert post_report.deferred == ()
+
+        removed = result.step.removed_deferred_issues
+        assert len(removed) == 2
+        # Not merely count: both are the input diagram's own pre-rewrite issues, anchored on
+        # a_id and b_id respectively (equal to -- not the same object as, since apply() reruns
+        # validate(diagram) itself -- pre_report's own issues), never a translated stand-in.
+        assert removed[0] == pre_by_node[a_id]
+        assert removed[1] == pre_by_node[b_id]
+        assert {issue.node_id for issue in removed} == {a_id, b_id}
+        for issue in removed:
+            assert issue.kind is IssueKind.DIMENSION_DEFERRED
+
+
 class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
     """Direct unit coverage of :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
 

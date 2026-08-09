@@ -358,6 +358,46 @@ class TestDimensionConstraintsRecording:
         )
         assert not agreement.deferred
 
+    def test_a_leg_already_bound_by_the_connecting_pair_is_not_recorded_again(self) -> None:
+        """Phase 5 post-closing audit, dimension_constraints duplicate-assumption defect.
+
+        A: output dim d (consumed). B: input dim 2 (consumed), output dim 2 (survives). The
+        connecting pair binds d := 2 and is recorded once; before the fix, B's surviving leg
+        (raw dim 2, unresolved through that binding) was unified against shared_dim again on
+        every fixpoint pass that left shared_dim unchanged, re-appending an identical
+        ``(d, 2)`` pair each time. Fixed: exactly one entry.
+        """
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].dimension_constraints == ((d, two),)
+
+    def test_a_surviving_leg_bound_by_an_earlier_surviving_leg_is_not_recorded_again(
+        self,
+    ) -> None:
+        """A: input dims [d, 2], output dim d (consumed). B: input dim d (consumed), output
+        dim d (survives). The connecting pair (d, d) is a bare identity, recording nothing.
+        A's own surviving leg (2) binds d := 2 and is recorded once, as ``(2, d)``; before
+        the fix, every leg checked afterward -- A's own d-leg and B's surviving d-leg, both
+        still mentioning the now-bound symbol d, and again on every further fixpoint pass --
+        was re-unified against its *raw*, unresolved dim and re-recorded as a duplicate
+        ``(d, 2)``. Fixed: exactly one entry total.
+        """
+        d = Dim.symbol("d")
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d, two], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert matches[0].dimension_constraints == ((two, d),)
+
 
 class TestOutOfRangeWireEndpointRaises:
     """graph.py is deliberately permissive about wire port indices; find_matches must not be.
