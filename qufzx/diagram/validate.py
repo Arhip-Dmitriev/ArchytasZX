@@ -57,6 +57,27 @@ What this module does not do. It does not contract, evaluate, or attach any nume
 meaning to a diagram (that is Phase 4's oracle); it does not attempt to fix or rewrite
 anything it finds wrong (that is Phase 5); and it does not yet know about bang boxes
 (Phase 7 extends this module's scoping checks when that generator arrives).
+
+Phase 5 audit round 18: process-independent issue ordering. The class of defect this round
+closed here: this module's issue-producing passes (:func:`_check_wire_dimensions`,
+:func:`_check_port_usage`) used to iterate ``diagram.wires``, a frozenset, directly. Any
+value whose hash is not a pure function of its own content -- concretely,
+:class:`~qufzx.diagram.graph.Direction`, an ``enum.Enum`` hashed by member name, and
+therefore ``PYTHONHASHSEED``-dependent, reached transitively through
+:class:`~qufzx.diagram.graph.PortRef` and :class:`~qufzx.diagram.graph.Wire`'s own hashes --
+makes a ``set``/``frozenset``'s iteration order vary by process, not merely by content. Every
+pass here whose issue-append order is observable (an exception raised partway through, or
+the order of :attr:`ValidationReport.issues` itself, which downstream consumers such as
+:mod:`qufzx.rewrite.engine`'s ``RewriteStep.removed_deferred_issues``/
+``introduced_deferred_issues`` selection explicitly rely on being deterministic) now iterates
+a snapshot sorted by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
+:meth:`~qufzx.diagram.graph.PortRef.sort_key` -- a plain tuple key with no ``Enum`` and no
+seed-dependent hash anywhere in its own comparison path -- instead. A future pass added to
+this module should default to the same discipline for any new set/frozenset it introduces,
+not merely for the two fixed here: the question to ask is not "does this look like it needs
+sorting" but "could this collection's construction ever route a value's own hash into
+something this function returns, raises, or appends to a list", since that is the actual
+condition that makes ordering observable rather than incidental.
 """
 
 from __future__ import annotations
@@ -175,7 +196,15 @@ def _resolve(diagram: Diagram, ref: PortRef, issues: list[ValidationIssue]) -> P
 
 
 def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    for wire in diagram.wires:
+    # Phase 5 post-closing audit round 18, Defect 1: ``diagram.wires`` is a frozenset, and
+    # PortRef's (and therefore Wire's) hash folds in Direction's member-name hash, which is
+    # PYTHONHASHSEED-dependent -- so iterating it directly here would append issues in a
+    # process-dependent order. ``validate()``'s own module docstring, and
+    # ``qufzx.rewrite.engine``'s ``RewriteStep.deferred_issue_identity_ambiguous``, both
+    # promise a deterministic "first in validate order" selection downstream; sorting by
+    # ``Wire.sort_key()`` (hash-independent) is what actually makes that promise true across
+    # processes, not merely within one. See ``tests/test_engine.py::TestCrossProcessDeterminism``.
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         port_a = _resolve(diagram, wire.a, issues)
         port_b = _resolve(diagram, wire.b, issues)
         if port_a is None or port_b is None:
@@ -210,12 +239,18 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
 
 
 def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    # Same fix as _check_wire_dimensions, and for the same reason: ``diagram.wires`` is a
+    # frozenset whose iteration order is PYTHONHASHSEED-dependent (Direction's member-name
+    # hash), so building ``wired_refs`` from an unsorted pass would make the *insertion*
+    # order into ``wired_counts`` below (a ``Counter``, itself a plain dict -- iteration
+    # order is insertion order, not hash order, once built) process-dependent, and with it
+    # the order PORT_WIRED_TWICE issues are appended in.
     wired_refs: list[PortRef] = []
-    for wire in diagram.wires:
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         wired_refs.append(wire.a)
         wired_refs.append(wire.b)
     wired_counts = Counter(wired_refs)
-    for ref, count in wired_counts.items():
+    for ref, count in sorted(wired_counts.items(), key=lambda item: item[0].sort_key()):
         if count > 1:
             issues.append(
                 ValidationIssue(
@@ -226,6 +261,10 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
             )
 
     wired_set = set(wired_refs)
+    # boundary_inputs/boundary_outputs are ordered tuples (Diagram.boundary_inputs/
+    # boundary_outputs), never a set/frozenset, and Counter/dict iteration order is
+    # insertion order, not hash order -- so this loop's order is already deterministic and
+    # process-independent without a sort, unlike the wire-derived loop above.
     boundary_counts = Counter(diagram.boundary_inputs) + Counter(diagram.boundary_outputs)
     for ref, count in boundary_counts.items():
         if count > 1:

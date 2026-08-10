@@ -38,6 +38,7 @@ from qufzx.algebra.phase import Phase, PhaseDomainError, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
+from qufzx.rewrite import match as match_module
 from qufzx.rewrite.engine import RewriteResult, apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import (
@@ -48,6 +49,7 @@ from qufzx.rewrite.rule import (
     Match,
     RewriteDomainError,
     RewriteError,
+    RewriteGrammarError,
     Rule,
     SideConditionOutcome,
 )
@@ -220,7 +222,51 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
 
     diagram.set_boundary_inputs([ref for ref in unwired if ref.direction is Direction.INPUT])
     diagram.set_boundary_outputs([ref for ref in unwired if ref.direction is Direction.OUTPUT])
+    _maybe_corrupt_a_boundary_ref(rng, diagram)
     return diagram
+
+
+_MALFORMED_BOUNDARY_PROBABILITY = 0.03
+"""Chance :func:`_maybe_corrupt_a_boundary_ref` replaces one boundary entry with a malformed
+``PortRef``. Low enough that this generator's existing oracle-comparison floors
+(``_MIN_ORACLE_COMPARISONS``) are not meaningfully eaten into (a corrupted diagram is
+rejected by ``find_matches`` before any match is ever returned, forfeiting that seed's
+comparisons entirely -- see ``test_random_diagrams_fuse_soundly``), while still being high
+enough that, summed over ``_SEEDS``' several thousand seeds, the malformed-boundary path is
+exercised many times over."""
+
+
+def _maybe_corrupt_a_boundary_ref(rng: random.Random, diagram: Diagram) -> bool:
+    """With low probability, replace one boundary entry in place with a malformed ``PortRef``.
+
+    Phase 5 post-closing audit round 18, Defect 2: :func:`~qufzx.rewrite.match.find_matches`
+    must reject a malformed boundary entry (an unknown node id, or an out-of-range index)
+    exactly as it already rejects a malformed wire endpoint -- see that module's docstring,
+    "Malformed boundary references". Widening this generator to sometimes produce one is
+    what lets :class:`TestSpiderFusionProperties` exercise that rejection at the property
+    harness's own scale and diagram variety, not only via the hand-picked unit tests in
+    ``test_match.py``'s ``TestOutOfRangeBoundaryRefRaises``. Returns whether a corruption was
+    actually made (there may be no boundary entry at all to corrupt), so the caller can track
+    how often this path is really exercised across the whole seed range.
+    """
+    if rng.random() >= _MALFORMED_BOUNDARY_PROBABILITY:
+        return False
+    inputs = list(diagram.boundary_inputs)
+    outputs = list(diagram.boundary_outputs)
+    pool: list[tuple[str, int]] = [("in", i) for i in range(len(inputs))]
+    pool += [("out", i) for i in range(len(outputs))]
+    if not pool:
+        return False
+    which, index = rng.choice(pool)
+    target_list = inputs if which == "in" else outputs
+    ref = target_list[index]
+    if rng.random() < 0.5:
+        target_list[index] = PortRef(NodeId(999999), ref.direction, ref.index)
+    else:
+        target_list[index] = PortRef(ref.node_id, ref.direction, ref.index + 50)
+    diagram.set_boundary_inputs(inputs)
+    diagram.set_boundary_outputs(outputs)
+    return True
 
 
 _CLEAN_DIM_VALUES = (2, 3, 4, 5)
@@ -845,21 +891,110 @@ generator changes while still failing hard if the oracle arm silently stops runn
 """
 
 
+_MIN_MALFORMED_BOUNDARY_HITS = 10
+"""Floor for how many seeds' diagrams actually got a malformed boundary ref and were
+correctly rejected by ``find_matches`` -- see :func:`_maybe_corrupt_a_boundary_ref`. Without
+this, a change that silently broke the corruption path (e.g. always corrupting into a
+still-valid ref) could leave ``test_random_diagrams_fuse_soundly`` passing vacuously on this
+arm. Set well below the ~ ``_MALFORMED_BOUNDARY_PROBABILITY * len(_SEEDS)`` expectation
+(~75 over 2,500 seeds), leaving headroom for seeds whose diagram has no boundary entry at
+all to corrupt."""
+
+
+def _find_matches_tolerating_malformed_boundary(
+    diagram: Diagram, seed: int
+) -> tuple[FusionMatch, ...] | None:
+    """``find_matches(diagram)``, or ``None`` if it raised for the malformed-boundary reason
+    :func:`_maybe_corrupt_a_boundary_ref` deliberately introduces.
+
+    Shared by every property-harness arm that iterates ``_build_random_diagram``'s output
+    (Phase 5 post-closing audit round 18, Defect 2): once that generator sometimes produces
+    a diagram with a malformed boundary entry, every consumer of it must handle
+    ``find_matches`` rejecting the whole diagram outright, not only the one arm
+    (``test_random_diagrams_fuse_soundly``) that motivated the widening. Re-raises any other
+    exception, and re-raises if the message does not match the expected malformed-reference
+    wording, so an unrelated regression is never mistaken for this deliberate corruption.
+    """
+    try:
+        return find_matches(diagram)
+    except RewriteGrammarError as exc:
+        assert "out of range" in str(exc) or "absent from the diagram" in str(exc), (
+            f"seed {seed}: find_matches raised RewriteGrammarError for an unexpected "
+            f"reason: {exc}"
+        )
+        return None
+
+
 class TestSpiderFusionProperties:
     def test_random_diagrams_fuse_soundly(self) -> None:
+        # Phase 5 post-closing audit round 18, Defect 3: prove _verify_fixpoint_closure's
+        # own "this is unreachable" claim actually holds, over this property harness's own
+        # (deliberately messy, mixed-dimension) diagram population -- not only over the
+        # exhaustive module's fully-concrete finite space (see
+        # test_phase5_exhaustive_oracle.py's identical instrumentation). This population
+        # exercises the deferred/binding fixpoint path the exhaustive sweep structurally
+        # cannot (see that module's own "Scope boundary" docstring section), so this is a
+        # genuinely different slice of coverage for the same claim, not a repeat of it.
+        closure_results: list[bool] = []
+        real_closure = match_module._verify_fixpoint_closure
+
+        def _wrapped_closure(*args: object, **kwargs: object) -> bool:
+            result = real_closure(*args, **kwargs)  # type: ignore[arg-type]
+            closure_results.append(result)
+            return result
+
+        with patch.object(match_module, "_verify_fixpoint_closure", _wrapped_closure):
+            self._run_random_diagrams_fuse_soundly()
+
+        assert closure_results, (
+            "_verify_fixpoint_closure was never called at all -- this instrumentation "
+            "would then be vacuously proving nothing"
+        )
+        assert all(closure_results), (
+            f"_verify_fixpoint_closure returned False {closure_results.count(False)} "
+            f"time(s) out of {len(closure_results)} calls across the random property "
+            "harness -- its own docstring's unreachability claim does not actually hold"
+        )
+
+    def _run_random_diagrams_fuse_soundly(self) -> None:
         checked_any_match = False
         total_oracle_comparisons = 0
+        malformed_boundary_hits = 0
         for seed in _SEEDS:
             rng = random.Random(seed)
             diagram = _build_random_diagram(rng)
-            for match in find_matches(diagram):
+            matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
+            if matches is None:
+                # Defect 2 (Phase 5 post-closing audit round 18): _build_random_diagram
+                # sometimes corrupts a boundary entry into a malformed PortRef (see
+                # _maybe_corrupt_a_boundary_ref); find_matches must reject the whole
+                # diagram outright, before ever returning a match, exactly as it already
+                # does for a malformed wire endpoint. This is the property-harness-scale
+                # counterpart of test_match.py's TestOutOfRangeBoundaryRefRaises.
+                malformed_boundary_hits += 1
+                continue
+            for match in matches:
                 checked_any_match = True
+                # The match-implies-applicable invariant, asserted directly (Phase 5
+                # post-closing audit round 18, Defect 2's acceptance test): for every match
+                # find_matches returns, apply() must either succeed outright or raise only
+                # the step-8 relative-postcondition marker -- never any other exception,
+                # and never a bare crash. _check_one_match already enforces exactly this
+                # (its `except RewriteError` branch turns anything else into a hard
+                # AssertionError, and its `except RewriteDomainError` branch requires the
+                # marker), so this call *is* that direct assertion, not a separate one
+                # layered on top of it.
                 total_oracle_comparisons += _check_one_match(diagram, match, seed)
         assert checked_any_match, "the generator never produced a single fusion match"
         assert total_oracle_comparisons >= _MIN_ORACLE_COMPARISONS, (
             f"only {total_oracle_comparisons} oracle comparisons actually executed "
             f"(floor is {_MIN_ORACLE_COMPARISONS}); the oracle arm may be silently "
             "skipping every substitution instead of exercising compare()"
+        )
+        assert malformed_boundary_hits >= _MIN_MALFORMED_BOUNDARY_HITS, (
+            f"only {malformed_boundary_hits} seed(s) produced a malformed boundary ref "
+            f"correctly rejected by find_matches (floor is {_MIN_MALFORMED_BOUNDARY_HITS}); "
+            "the corruption path may have silently stopped firing"
         )
 
     def test_clean_diagrams_fuse_soundly(self) -> None:
@@ -1202,7 +1337,12 @@ class TestStructuralSatisfiabilityAtScale:
         for seed in _SEEDS:
             rng = random.Random(seed)
             diagram = _build_random_diagram(rng)
-            for match in find_matches(diagram):
+            matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
+            if matches is None:
+                # See _find_matches_tolerating_malformed_boundary's docstring: Defect 2,
+                # Phase 5 post-closing audit round 18.
+                continue
+            for match in matches:
                 checked_any_match = True
                 _assert_match_structurally_satisfiable(diagram, match)
                 try:
@@ -1253,7 +1393,12 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
         for seed in _SEEDS:
             rng = random.Random(seed)
             diagram = _build_random_diagram(rng)
-            for match in find_matches(diagram):
+            matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
+            if matches is None:
+                # See _find_matches_tolerating_malformed_boundary's docstring: Defect 2,
+                # Phase 5 post-closing audit round 18.
+                continue
+            for match in matches:
                 checked_any_match = True
 
                 # Isolate the pair before doing anything else: see _isolate_match_pair for

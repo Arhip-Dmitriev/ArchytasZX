@@ -179,7 +179,15 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
     labels: dict[PortRef, int] = {}
     for ref in (*diagram.boundary_outputs, *diagram.boundary_inputs):
         labels.setdefault(ref, next(counter))
-    for wire in diagram.wires:
+    # Phase 5 post-closing audit round 18, Defect 1 sweep: ``diagram.wires`` is a frozenset
+    # whose iteration order is PYTHONHASHSEED-dependent (Wire/PortRef/Direction hashing).
+    # Unlike the rewrite-package sites this round fixed, this loop's order is provably
+    # irrelevant to the *returned* tensor: whichever specific integer ``next(counter)``
+    # assigns to a given wire's shared axis is a dummy label consumed only by
+    # ``einsum``-equivalent contraction below, which is invariant under any consistent
+    # relabeling of dummy axes. Sorted anyway, for hygiene and so a certificate or debug
+    # dump of ``labels`` itself (not merely the contraction result) is reproducible too.
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         a_label = labels.get(wire.a)
         b_label = labels.get(wire.b)
         if a_label is None and b_label is None:

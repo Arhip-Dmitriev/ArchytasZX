@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import functools
 import itertools
+from unittest.mock import patch
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -63,6 +64,7 @@ from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import validate
+from qufzx.rewrite import match as match_module
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
@@ -169,6 +171,38 @@ class TestExhaustiveSpiderFusionOracleSweep:
     """The full B3 sweep. One test, so a single wall-clock/comparison-count report covers it."""
 
     def test_every_match_in_the_finite_space_agrees_with_the_oracle(self) -> None:
+        # Phase 5 post-closing audit round 18, Defect 3: _verify_fixpoint_closure's own
+        # docstring claims the post-loop closure re-check it performs is unreachable (every
+        # one of its own checks was already verified, this same pass, by the time the loop
+        # reaches its convergence break) -- but a claim of unreachability is worth nothing
+        # if nothing ever actually confirms it holds at the scale this sweep exercises.
+        # Wrapping (not merely mocking away) the real function lets this test both count how
+        # many times it fires and assert every single call returned True, over the entire
+        # exhaustive finite space this module enumerates -- the guard is *not* a no-op here:
+        # every fusion match in the whole sweep runs through it, exactly the leg/wire
+        # topology space this module exists to cover exhaustively.
+        closure_results: list[bool] = []
+        real_closure = match_module._verify_fixpoint_closure
+
+        def _wrapped_closure(*args: object, **kwargs: object) -> bool:
+            result = real_closure(*args, **kwargs)  # type: ignore[arg-type]
+            closure_results.append(result)
+            return result
+
+        with patch.object(match_module, "_verify_fixpoint_closure", _wrapped_closure):
+            self._run_sweep()
+
+        assert closure_results, (
+            "_verify_fixpoint_closure was never called at all -- this instrumentation "
+            "would then be vacuously proving nothing"
+        )
+        assert all(closure_results), (
+            f"_verify_fixpoint_closure returned False {closure_results.count(False)} "
+            f"time(s) out of {len(closure_results)} calls across the exhaustive sweep -- "
+            "its own docstring's unreachability claim does not actually hold"
+        )
+
+    def _run_sweep(self) -> None:
         shapes = _node_shapes()
         total_diagrams = 0
         total_matches = 0

@@ -240,6 +240,48 @@ endpoints on the very same node (a self-loop) -- every one of those shapes used 
 the malformed-wire check unreachable for that wire specifically, since each is dropped
 (via `continue`, without ever raising) by a filter that used to run first.
 
+Malformed boundary references (Phase 5 post-closing audit round 18, Defect 2). The exact
+same permissiveness :mod:`qufzx.diagram.graph` extends to a wire endpoint applies equally
+to a ``boundary_inputs``/``boundary_outputs`` entry: nothing in that module stops a caller
+from listing a boundary ``PortRef`` naming an unknown node id or an out-of-range index.
+:mod:`qufzx.rewrite.engine`'s ``_remap_endpoint`` (see that module's docstring, step 5)
+holds a boundary entry to the identical standard as a wire endpoint -- both are ``PortRef``
+lookups against the same working diagram -- yet, before this fix, only the wire side of that
+symmetry was checked here; a malformed boundary entry reached ``apply`` unexamined unless it
+happened to sit on a port a match's builder was about to remap, in which case it surfaced
+late, as a *different* error (``RewriteDomainError`` from ``apply`` step 5, not
+``RewriteGrammarError`` from this module) than the one this module's own contract promises
+for a malformed reference. Fixed by extending the pre-pass above: every entry of both
+boundary lists is checked via the same :func:`_validate_wire_endpoint` (its
+``wire_or_boundary_ref`` parameter accepts a bare :class:`~qufzx.diagram.graph.PortRef` for
+exactly this call shape, not only a :class:`~qufzx.diagram.graph.Wire`) before any candidate
+grouping, so a malformed boundary entry is now structurally excluded the same way a
+malformed wire endpoint already was -- the same fix, applied to the other reference kind the
+"match-implies-applicable" contract below was silently narrower than it claimed to be.
+``_remap_endpoint``'s own raise remains the defensive check against a foreign or hand-built
+``Match`` that never went through this pre-pass at all -- see its docstring in
+:mod:`qufzx.rewrite.engine`.
+
+This is not in tension with :mod:`qufzx.rewrite.engine`'s own step 8, which says a diagram
+that already carries a hard-error *validation issue* (e.g. an unwired non-boundary leg,
+``IssueKind.PORT_UNUSED``) is legitimately rewritable and must not be blocked from firing --
+the two policies are about different failure categories entirely, and this module's own
+:mod:`qufzx.rewrite.rule` already draws exactly this line for the package as a whole
+(``RewriteDomainError`` for a value or state outside the mathematical domain a rewrite
+requires, ``RewriteGrammarError`` for a malformed request). A hard-error validation issue is
+a defect in an otherwise-coherent *request*: every reference involved still names a real
+port, so the request can be evaluated, and evaluating it (finding a match, or applying one)
+is exactly how a rewrite is allowed to carry a pre-existing defect forward, resolve it, or
+leave it alone -- step 8 is precisely the mechanism that lets that happen without blocking.
+A boundary entry (or wire endpoint) naming no real port at all is a different kind of thing:
+there is no diagram state to evaluate a request against, only a reference that resolves to
+nothing, so it cannot be "carried forward" by a rewrite in any sense -- it is not a
+mathematical fact about the diagram that a rewrite might legitimately act on or ignore, it is
+a malformed description of one. The wire-endpoint pass already drew this line (a malformed
+wire endpoint has always raised ``RewriteGrammarError`` here, never been treated as "a
+pre-existing issue to carry forward"); this fix is that same, already-settled call applied
+uniformly to the boundary case, not a new policy question.
+
 Match-implies-applicable and multiply-claimed ports. A port that is claimed by more than
 one wire (:class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`), or that is both
 wired and listed on a boundary
@@ -365,6 +407,28 @@ wires -- by the consumed wire's own (direction, index) on each side, never by se
 iteration order, since certificates and Phase 12's cache tests will compare match lists
 directly.
 
+This is one instance of a whole-certificate discipline, not an isolated concern of this
+function's own return value (Phase 5 post-closing audit round 18, Defect 1's sweep). Every
+set/frozenset iteration in this module whose order could reach a returned value, a recorded
+certificate field, or an exception message is sorted the same way, by the same
+hash-independent key (:meth:`~qufzx.diagram.graph.Wire.sort_key`,
+:meth:`~qufzx.diagram.graph.PortRef.sort_key`) -- never left to a frozenset's own iteration
+order, which is ``PYTHONHASHSEED``-dependent because :class:`~qufzx.diagram.graph.Direction`
+is an ``enum.Enum`` hashed by member name: :func:`find_matches`' own three internal passes
+over ``diagram.wires`` (malformed-endpoint check, wired-ref counting, pair grouping), and its
+new boundary-ref validation pass (Defect 2, below), all iterate a pre-sorted snapshot for
+exactly this reason -- see each site's own comment. This closes the same class of defect
+:mod:`qufzx.diagram.validate` closes on its side (see that module's docstring): before both
+fixes, the *value* of a fusion match's fields was always correct, but the *order* in which a
+malformed reference was detected (and, one layer further out, the order
+:mod:`qufzx.rewrite.engine`'s ``RewriteStep.removed_deferred_issues``/
+``introduced_deferred_issues`` select colliding issues in) could vary by process --
+contradicting :attr:`~qufzx.rewrite.engine.RewriteStep.deferred_issue_identity_ambiguous`'s
+own "first in validate order" promise. ``tests/test_engine.py::TestCrossProcessDeterminism``
+is the end-to-end regression test for the whole chain, comparing a full certificate's worth
+of fields, by value and order, across two subprocesses under two different
+``PYTHONHASHSEED`` values.
+
 One verification predicate, not two kept in sync by hand (Phase 5 round-12 audit). Prior
 rounds' claim that "match-approval and build-applicability are the same predicate by
 construction" (condition 6, above) was true of the phase check alone (both callers went
@@ -396,6 +460,37 @@ report (though :func:`resolve_fusion_match` still recomputes and reports them it
 six-outcome picture too) -- they gate whether a wire is a fusion candidate in the first
 place (a self-loop is excluded from candidate grouping entirely; the count of "other" wires
 joining a pair is a property of the pair, not of any one candidate wire's own legality).
+
+Phase 5 audit round 18 summary. Three classes of defect closed in this module, each
+described here at the class level so a hypothetical round 19 knows where to keep looking,
+not merely which three instances were fixed:
+
+* Process-dependent ordering (Defect 1). See :mod:`qufzx.diagram.validate`'s own "Phase 5
+  audit round 18" note for the general statement; this module's instance was its three
+  internal passes over ``diagram.wires``, now sorted (see :func:`find_matches`'s own
+  comment).
+* A stated invariant enforced on one reference kind but not a structurally identical other
+  (Defect 2). "Malformed wire references" was a load-bearing contract this module enforced
+  for wire endpoints alone; boundary entries are held to the identical
+  ``_remap_endpoint``/``apply`` standard downstream but were not checked here at all. The
+  general question for a future reference kind this package grows (e.g. a Phase 7 bang-box
+  scope boundary, or a Phase 11 rule's own new match-location fields): does something
+  downstream treat this reference the same way it treats one already validated here, and if
+  so, is it actually validated here too, or merely assumed to be?
+* A guard documented as unreachable that was reachable on a path its own reasoning did not
+  cover (Defect 3). :func:`_verify_fixpoint_closure`'s unreachability argument was sound for
+  the fixpoint's convergence exit but was invoked unconditionally on every exit, including a
+  phase-dim ``FAILURE`` that ``break``s out for an unrelated reason. The general lesson: an
+  "unreachable given X's own termination guarantee" claim is a claim about one specific exit
+  path, and every other exit from the same loop needs its own, separately-argued path to
+  whatever code runs after the loop -- never inherited by proximity.
+* A human-readable detail derived from a different source of truth than the machine-readable
+  record it describes (Defect 4). :func:`_connecting_pair_detail` intersected the raw legs'
+  free symbols with ``bindings`` -- a collection filtered for a *different* purpose (concrete
+  substitution) than what the detail needed to describe (whether an outcome was assumed at
+  all). The general question for any future detail string in this package: is it derived
+  from the same record its own docstring says it describes, or from some other collection
+  that happens to usually agree with that record?
 """
 
 from __future__ import annotations
@@ -495,6 +590,19 @@ class FusionMatch:
         contract :class:`~qufzx.rewrite.engine.RewriteStep` needs for Phase 12's cache, which
         embeds a ``FusionMatch`` in its own ``match`` field and therefore needs this to hold
         transitively.
+
+        Same cross-process disclaimer as :meth:`RewriteStep.__hash__` (Phase 5 post-closing
+        audit round 18, Defect 1): this contract is a within-process one. ``Wire`` (via
+        ``PortRef`` -> ``Direction``) and ``DimensionConstraint`` (via ``ConstraintSourceKind``
+        / ``ConstraintOutcome``) are reached transitively here, and every one of those is an
+        ``enum.Enum`` hashed by member name -- ``PYTHONHASHSEED``-dependent, so
+        ``hash(match)`` legitimately differs across processes for two values this module's own
+        ``find_matches`` would otherwise report identically. What round 18 actually fixed is
+        the *value and order* of every field this hash is computed over (in particular
+        ``dimension_constraints`` and ``side_condition_outcomes``, whose upstream inputs used
+        to depend on ``diagram.wires``' own hash-seed-dependent iteration order -- see
+        :mod:`qufzx.diagram.validate`'s docstring), not ``hash()`` stability itself, which was
+        never a promise this method could make and does not make now.
         """
         return hash(
             (
@@ -830,11 +938,33 @@ def _verify_fixpoint_closure(
     property only tests assert (D1's required post-loop check): the connecting pair's two
     legs, every surviving leg of both nodes, and every present phase -- each resolved under
     the *final* ``bindings`` -- must unify with the *final* ``shared_dim`` without
-    ``FAILURE``. Given the fixpoint only exits once a full pass adds nothing (D1's fixed
-    termination signal) and every ``bindings`` update is contradiction-checked
-    (:func:`_merge_bindings`), this is unreachable: the loop's last pass already re-checked
-    every one of these against the state this function re-checks them against again. It is
-    called anyway, unconditionally, rather than left to be unreachable in principle only.
+    ``FAILURE``. Given the fixpoint only exits *via its own convergence break* (a full pass
+    that adds nothing to either ``shared_dim`` or ``bindings`` -- D1's fixed termination
+    signal) and every ``bindings`` update is contradiction-checked (:func:`_merge_bindings`),
+    this is unreachable on that path: the loop's last pass already re-checked every one of
+    these against the state this function re-checks them against again. It is called anyway,
+    unconditionally on that path, rather than left to be unreachable in principle only.
+
+    Where this now runs (Phase 5 post-closing audit round 18, Defect 3 -- corrected from a
+    prior version of this docstring, which claimed unreachability unconditionally):
+    :func:`resolve_fusion_match` calls this function *only* on the stabilised-convergence
+    path just described. A phase-dim ``FAILURE`` inside the fixpoint loop, and the
+    ``_MAX_FIXPOINT_PASSES`` budget-exhaustion path, both ``return`` directly from within
+    the loop -- neither one reaches this call at all any more. Before this fix, every exit
+    from the loop (a genuine convergence break, *and* a phase-dim ``FAILURE`` that ``break``
+    out of the loop with ``phase_dims_agree = False``) fell through to this same
+    unconditional call; for the ``FAILURE`` case, that re-verified phases under the exact
+    unify contract that had just failed them, so this function necessarily returned
+    ``False`` -- which was not evidence of some new problem, but this function faithfully
+    reporting the failure that was already known and had already been given its own
+    dedicated report. Reaching it from that path was the defect (see
+    :func:`resolve_fusion_match`'s inline commentary at its phase-failure return for the
+    full account), not anything wrong with this function itself, whose own re-verification
+    logic is unchanged. Its unreachability claim is now proven, not merely asserted, by
+    ``tests/test_phase5_exhaustive_oracle.py`` and
+    ``tests/test_fusion_properties.py::TestSpiderFusionProperties
+    ::test_random_diagrams_fuse_soundly``, both of which wrap this function to assert it
+    returns ``True`` on every call across their respective sweeps.
     """
     for dim in (port_a_dim, port_b_dim):
         if _resolve_with_bindings(dim, bindings).unify(shared_dim).is_failure:
@@ -874,13 +1004,65 @@ def _connecting_pair_detail(
         return f"{resolved_a} == {resolved_b}"
     if entry.outcome is ConstraintOutcome.DEFERRED:
         return f"{resolved_a} == {resolved_b} (deferred, assumed)"
+    # entry.outcome is BOUND (Defect 4, Phase 5 post-closing audit round 18): derive the
+    # "bound to what" clause from the record entry itself -- the same single source of
+    # truth ``dimension_constraints`` reads from -- not from intersecting the raw legs'
+    # free symbols with ``bindings``. ``bindings`` (by design; see the module docstring,
+    # "Non-concrete bindings") never holds a binding to a non-concrete Dim at all --
+    # ``_merge_bindings`` filters those out before they ever reach this dict -- so a
+    # connecting pair recorded BOUND via, e.g., ``d := e`` (unify binding one symbol to
+    # another still-symbolic Dim) has no entry in ``bindings.keys()`` for either symbol.
+    # Before this fix, ``relevant_names`` was then empty and this function silently fell
+    # back to a bare "d == e" with no indication anything was assumed at all, even though
+    # ``entry.outcome`` -- and ``dimension_constraints`` beside it on the certificate --
+    # correctly recorded BOUND. The machine-readable record was always right; only this
+    # human-readable detail string, derived from a different (and, for this outcome,
+    # incomplete) source, was wrong.
     relevant_names = sorted(
         (port_a_dim.free_symbols | port_b_dim.free_symbols) & bindings.keys()
     )
-    if not relevant_names:
-        return f"{resolved_a} == {resolved_b}"
-    binding_desc = ", ".join(f"{name} := {bindings[name]}" for name in relevant_names)
-    return f"{resolved_a} == {resolved_b} (bound: {binding_desc})"
+    if relevant_names:
+        binding_desc = ", ".join(f"{name} := {bindings[name]}" for name in relevant_names)
+        return f"{resolved_a} == {resolved_b} (bound: {binding_desc})"
+    return (
+        f"{resolved_a} == {resolved_b} (bound to a non-concrete Dim; left unused for "
+        "shared-dimension resolution, see the module docstring's 'Non-concrete bindings')"
+    )
+
+
+def _dimension_agreement_outcome(
+    port_a_dim: Dim,
+    port_b_dim: Dim,
+    shared_dim: Dim,
+    bindings: Mapping[str, Dim],
+    record: _ConstraintRecord,
+) -> SideConditionOutcome:
+    """Build condition 5's (``dimension_agreement``) passing outcome from a leg-sweep state.
+
+    Shared by :func:`resolve_fusion_match`'s stabilised-success path and its phase-failure
+    path (Defect 3, Phase 5 post-closing audit round 18): both must report condition 5 from
+    the *leg* sweep's own state -- ``shared_dim``/``bindings`` exactly as the connecting
+    pair and every surviving leg were actually checked against -- never from a state a later
+    phase check has since advanced past what the legs saw. See ``resolve_fusion_match``'s
+    own inline commentary at its call sites for why the two states can differ within one
+    fixpoint pass.
+    """
+    leg_detail = _connecting_pair_detail(port_a_dim, port_b_dim, bindings, record)
+    leg_constraint_count = record.leg_count()
+    return SideConditionOutcome(
+        "dimension_agreement",
+        True,
+        leg_detail
+        + (
+            ""
+            if not leg_constraint_count
+            else (
+                f"; surviving leg(s) resolved to shared_dim={shared_dim} with "
+                f"{leg_constraint_count} additional assumed dimension equality/ies"
+            )
+        ),
+        deferred=record.any_leg_deferred(),
+    )
 
 
 def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
@@ -938,24 +1120,38 @@ def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, D
     return PhaseVector(shared_dim, substituted.entries())
 
 
-def _validate_wire_endpoint(diagram: Diagram, wire: Wire, ref: PortRef) -> None:
+def _validate_wire_endpoint(
+    diagram: Diagram, wire_or_boundary_ref: Wire | PortRef, ref: PortRef
+) -> None:
     """Raise ``RewriteGrammarError`` if ``ref`` names an unknown node or out-of-range index.
 
-    Called for both endpoints of every wire in the diagram, unconditionally -- see
-    "Malformed wire references" in the module docstring for why this must not depend on
-    any other property of the wire or the candidate pair it might otherwise sit on.
+    Called for both endpoints of every wire in the diagram, and (Phase 5 post-closing audit
+    round 18, Defect 2) for every ``boundary_inputs``/``boundary_outputs`` entry -- see
+    "Malformed wire references" in the module docstring for why this must not depend on any
+    other property of the wire (or, now, the boundary list) or the candidate pair it might
+    otherwise sit on. ``wire_or_boundary_ref`` is only used to phrase the raised message: a
+    ``Wire`` for the wire-endpoint call sites (``ref`` is one of its own two endpoints, so
+    the message can name the whole wire for context), or the bare ``PortRef`` itself for a
+    boundary entry (there is no enclosing ``Wire`` to name -- the ref *is* the reference,
+    passed as both parameters at the boundary call site).
     """
     node = diagram.nodes.get(ref.node_id)
     if node is None:
+        if isinstance(wire_or_boundary_ref, Wire):
+            context = f"wire {wire_or_boundary_ref!r}"
+            explanation = "a live wire can never legitimately name a removed node"
+        else:
+            context = f"boundary entry {wire_or_boundary_ref!r}"
+            explanation = "a live boundary entry can never legitimately name a removed node"
         raise RewriteGrammarError(
-            f"wire {wire!r} references node id {ref.node_id!r} absent from the diagram; "
-            "Diagram.remove_node cascades, so a live wire can never legitimately name a "
-            "removed node"
+            f"{context} references node id {ref.node_id!r} absent from the diagram; "
+            f"Diagram.remove_node cascades, so {explanation}"
         )
     legs = node.legs(ref.direction)
     if ref.index >= len(legs):
+        kind = "wire endpoint" if isinstance(wire_or_boundary_ref, Wire) else "boundary entry"
         raise RewriteGrammarError(
-            f"wire endpoint {ref!r} is out of range for node {ref.node_id!r}: it has only "
+            f"{kind} {ref!r} is out of range for node {ref.node_id!r}: it has only "
             f"{len(legs)} {ref.direction.value} leg(s)"
         )
 
@@ -1216,7 +1412,6 @@ def resolve_fusion_match(
     # unsatisfiable constraint set (e.g. e*f == 2 and e == 2 and f == 2, from legs
     # [e*f, e, f]) went undetected. Checking both signals closes this.
     phase_bound_names: list[str] = []
-    phase_dims_agree = True
     fixpoint_budget_exhausted = False
 
     for _pass_index in range(_MAX_FIXPOINT_PASSES):
@@ -1249,12 +1444,73 @@ def resolve_fusion_match(
             )
         shared_dim = next_dim
 
+        # Defect 3 (Phase 5 post-closing audit round 18): snapshotted *before* calling
+        # _unify_phase_dims, not read back out of `shared_dim`/`bindings` after it returns.
+        # This pass's leg sweep (connecting pair, A's surviving legs, B's surviving legs,
+        # all three just above) has, as of this point, been fully verified against exactly
+        # this shared_dim/bindings state -- that is what condition 5 (dimension_agreement)
+        # must be reported against if a phase now fails. _unify_phase_dims can bind phase
+        # A's own symbol -- refining both `bindings` and `shared_dim` in place -- before
+        # failing on phase B in that same call (see its own docstring); reporting condition
+        # 5 against the state *after* that call would claim the legs were verified against
+        # a shared_dim they were never actually checked against.
+        leg_verified_shared_dim = shared_dim
+        leg_verified_bindings = dict(bindings)
+
         phase_result = _unify_phase_dims(
             node_a, node_b, a_id, b_id, shared_dim, bindings, record
         )
         if phase_result is None:
-            phase_dims_agree = False
-            break
+            # Root cause (Defect 3): a phase-dim FAILURE is decided -- condition 6 does not
+            # hold -- and is reported as exactly that, directly, rather than falling through
+            # to _verify_fixpoint_closure. A prior version of this function let every break
+            # out of this loop (phase failure or genuine convergence alike) fall through to
+            # that post-loop closure check; closure re-verifies phases from scratch under
+            # the same unify contract that just failed, so it necessarily failed too,
+            # reporting BOTH dimension_agreement and phase_dimension_agreement as failed
+            # with the closure guard's own "this is unreachable" message -- which was false
+            # exactly here: the guard's unreachability argument (every check the closure
+            # re-verifies was already verified this same pass, against this same state) only
+            # holds when the loop reaches its termination condition below, never when it
+            # exits via a phase failure. See _verify_fixpoint_closure's own docstring, fixed
+            # to describe only the path it now actually runs on. dimension_agreement is
+            # reported True (from the leg-verified snapshot above, via
+            # _dimension_agreement_outcome -- a leg-sweep FAILURE already returned above,
+            # via _failed, so reaching here means every leg genuinely did unify) with a
+            # leg-accurate detail; phase_dimension_agreement is reported False with the
+            # dedicated per-phase detail below -- never the closure-guard string, which
+            # therefore appears in neither outcome for this path.
+            outcomes.append(
+                _dimension_agreement_outcome(
+                    port_a.dim, port_b.dim, leg_verified_shared_dim, leg_verified_bindings, record
+                )
+            )
+            phase_detail = (
+                "a present phase dimension does not unify with the resolved shared leg "
+                f"dimension {shared_dim} (a DEFERRED unify, or a binding to a non-concrete "
+                "Dim, is not accepted here -- see the module docstring, condition 6), or an "
+                "entry falls out of range once every binding this fixpoint accumulated is "
+                "substituted in"
+            )
+            outcomes.append(
+                SideConditionOutcome(
+                    "phase_dimension_agreement", False, phase_detail, deferred=False
+                )
+            )
+            # Same placeholder convention as _failed() (Phase 5 post-closing audit,
+            # pre-round-18 Defect 3): shared_dim=None, bindings/dimension_constraints empty
+            # on any failure -- see FusionResolution's own docstring. Not routed through
+            # _failed() itself since that helper always marks its ``remaining_names`` False
+            # and appends nothing for dimension_agreement; this path needs the opposite mix
+            # (dimension_agreement True, phase_dimension_agreement False), which _failed()
+            # cannot express.
+            return FusionResolution(
+                passed=False,
+                shared_dim=None,
+                bindings=MappingProxyType({}),
+                dimension_constraints=(),
+                outcomes=tuple(outcomes),
+            )
         shared_dim, pass_phase_bound_names = phase_result
         phase_bound_names.extend(pass_phase_bound_names)
 
@@ -1274,7 +1530,6 @@ def resolve_fusion_match(
         # neither one was decided, and blaming either alone would send a reader to the wrong
         # place.
         fixpoint_budget_exhausted = True
-        phase_dims_agree = False
 
     if fixpoint_budget_exhausted:
         return _failed(
@@ -1285,6 +1540,11 @@ def resolve_fusion_match(
             "condition was decided",
         )
 
+    # Reached only via the loop's own convergence break above (a phase failure returns
+    # directly, above; budget exhaustion returns directly, just above) -- see
+    # _verify_fixpoint_closure's own docstring for why its "unreachable" claim is actually
+    # true on exactly this path, and only this path (Defect 3, Phase 5 post-closing audit
+    # round 18).
     if not _verify_fixpoint_closure(
         node_a, node_b, a_id, b_id, ref_a, ref_b, port_a.dim, port_b.dim, shared_dim, bindings
     ):
@@ -1297,98 +1557,77 @@ def resolve_fusion_match(
             "property left to tests alone",
         )
 
-    leg_detail = _connecting_pair_detail(port_a.dim, port_b.dim, bindings, record)
-    leg_constraint_count = record.leg_count()
     outcomes.append(
-        SideConditionOutcome(
-            "dimension_agreement",
-            True,
-            leg_detail
-            + (
-                ""
-                if not leg_constraint_count
-                else (
-                    f"; surviving leg(s) resolved to shared_dim={shared_dim} with "
-                    f"{leg_constraint_count} additional assumed dimension equality/ies"
-                )
-            ),
-            deferred=record.any_leg_deferred(),
-        )
+        _dimension_agreement_outcome(port_a.dim, port_b.dim, shared_dim, bindings, record)
     )
 
     phase_a_dim = node_a.phase.dim if node_a.phase is not None else None
     phase_b_dim = node_b.phase.dim if node_b.phase is not None else None
     phase_dims_present = tuple(d for d in (phase_a_dim, phase_b_dim) if d is not None)
 
-    if phase_dims_agree:
-        # reattach_phase's own index-bound check must run against the FINAL shared_dim
-        # (post-fixpoint), not an intermediate one from an earlier pass: substitution only
-        # changes an entry's *value*, never its index, so an entry that falls out of range
-        # only once the fixpoint's own later bindings resolve is still caught here.
-        for phase in (node_a.phase, node_b.phase):
-            if phase is None:
-                continue
-            try:
-                reattach_phase(phase, shared_dim, bindings)
-            except PhaseDomainError:
-                phase_dims_agree = False
-                break
-
-    if phase_dims_agree:
-        # D6: a name bound on an early fixpoint pass is still in ``phase_bound_names`` when a
-        # later pass re-derives it, so the rendered list is de-duplicated here. Display only:
-        # ``bindings`` itself is a dict and was never able to hold a name twice.
-        unique_bound_names = list(dict.fromkeys(phase_bound_names))
-        phase_detail = (
-            "no phase present on either node"
-            if not phase_dims_present
-            else (
-                "present phase dimension(s) unify with the resolved shared leg dimension "
-                f"{shared_dim}"
-                + (
-                    "; assuming "
-                    + ", ".join(f"{name} := {bindings[name]}" for name in unique_bound_names)
-                    if unique_bound_names
-                    else ""
+    # reattach_phase's own index-bound check must run against the FINAL shared_dim
+    # (post-fixpoint), not an intermediate one from an earlier pass: substitution only
+    # changes an entry's *value*, never its index, so an entry that falls out of range only
+    # once the fixpoint's own later bindings resolve is still caught here. This is a
+    # different failure mode than a phase-dim FAILURE inside the loop above (that is a
+    # non-unifying Dim; this is a unifying Dim whose entries fall out of range once
+    # substituted) -- both are condition 6 failures, reported with the same dedicated
+    # detail below, but this one can only be discovered after the fixpoint has fully
+    # converged and reattach_phase can be tried for real.
+    for phase in (node_a.phase, node_b.phase):
+        if phase is None:
+            continue
+        try:
+            reattach_phase(phase, shared_dim, bindings)
+        except PhaseDomainError:
+            phase_detail = (
+                "a present phase dimension does not unify with the resolved shared leg "
+                f"dimension {shared_dim} (a DEFERRED unify, or a binding to a non-concrete "
+                "Dim, is not accepted here -- see the module docstring, condition 6), or an "
+                "entry falls out of range once every binding this fixpoint accumulated is "
+                "substituted in"
+            )
+            outcomes.append(
+                SideConditionOutcome(
+                    "phase_dimension_agreement", False, phase_detail, deferred=False
                 )
             )
-        )
-        outcomes.append(
-            # Always deferred=False: unlike condition 5, a genuinely DEFERRED phase-dim
-            # unify is rejected outright (see _unify_phase_dims) rather than
-            # accepted-and-flagged, so a *passing* phase_dimension_agreement outcome is
-            # never itself resting on an undecided unify -- only, at most, on a binding
-            # (which dimension_constraints records, but which this flag -- following
-            # condition 5's own convention -- does not count as "deferred").
-            SideConditionOutcome(
-                "phase_dimension_agreement", True, phase_detail, deferred=False
+            return _failed((), "phase_dimension_agreement failed; see the outcome detail above")
+
+    # D6: a name bound on an early fixpoint pass is still in ``phase_bound_names`` when a
+    # later pass re-derives it, so the rendered list is de-duplicated here. Display only:
+    # ``bindings`` itself is a dict and was never able to hold a name twice.
+    unique_bound_names = list(dict.fromkeys(phase_bound_names))
+    phase_detail = (
+        "no phase present on either node"
+        if not phase_dims_present
+        else (
+            "present phase dimension(s) unify with the resolved shared leg dimension "
+            f"{shared_dim}"
+            + (
+                "; assuming "
+                + ", ".join(f"{name} := {bindings[name]}" for name in unique_bound_names)
+                if unique_bound_names
+                else ""
             )
         )
-        return FusionResolution(
-            passed=True,
-            shared_dim=shared_dim,
-            bindings=MappingProxyType(dict(bindings)),
-            dimension_constraints=record.entries(),
-            outcomes=tuple(outcomes),
-        )
-
-    phase_detail = (
-        "a present phase dimension does not unify with the resolved shared leg "
-        f"dimension {shared_dim} (a DEFERRED unify, or a binding to a non-concrete Dim, is "
-        "not accepted here -- see the module docstring, condition 6), or an entry falls "
-        "out of range once every binding this fixpoint accumulated is substituted in"
     )
     outcomes.append(
-        SideConditionOutcome("phase_dimension_agreement", False, phase_detail, deferred=False)
+        # Always deferred=False: unlike condition 5, a genuinely DEFERRED phase-dim
+        # unify is rejected outright (see _unify_phase_dims) rather than
+        # accepted-and-flagged, so a *passing* phase_dimension_agreement outcome is
+        # never itself resting on an undecided unify -- only, at most, on a binding
+        # (which dimension_constraints records, but which this flag -- following
+        # condition 5's own convention -- does not count as "deferred").
+        SideConditionOutcome("phase_dimension_agreement", True, phase_detail, deferred=False)
     )
-    # Defect 3 (Phase 5 post-closing audit): a condition-6 failure must route through the
-    # same placeholder-producing path every other failure uses (_failed), not fall through
-    # to a bespoke return -- FusionResolution's own docstring states shared_dim is only ever
-    # non-None when passed is True, and bindings/dimension_constraints are empty placeholders
-    # on failure; returning the real, populated shared_dim/bindings/dimension_constraints
-    # here would violate both without a single caller ever depending on it (every reader is
-    # already downstream of its own `if not resolution.passed` guard).
-    return _failed((), "phase_dimension_agreement failed; see the outcome detail above")
+    return FusionResolution(
+        passed=True,
+        shared_dim=shared_dim,
+        bindings=MappingProxyType(dict(bindings)),
+        dimension_constraints=record.entries(),
+        outcomes=tuple(outcomes),
+    )
 
 
 def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
@@ -1411,11 +1650,55 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     # used to each re-materialise ``diagram.wires`` independently, tripling the cost of
     # building whatever collection backs that property for no reason -- none of the three
     # passes needs a live view, and none of them mutates ``diagram``.
-    wires = diagram.wires
+    #
+    # Sorted, not the raw frozenset (Phase 5 post-closing audit round 18, Defect 1):
+    # ``diagram.wires`` is a frozenset, and ``Wire``'s hash folds in ``Direction``'s
+    # member-name hash, which is PYTHONHASHSEED-dependent. The malformed-endpoint pass below
+    # raises on the *first* offending wire it finds -- with more than one malformed wire in
+    # the diagram, an unsorted iteration would report a different one (a different exception
+    # message) across processes. The later two passes (wired-ref counting, pair grouping)
+    # would still produce the same *matches* even unsorted, since ``find_matches`` sorts its
+    # returned tuple explicitly below regardless -- but sorting once, up front, keeps all
+    # three passes uniformly deterministic rather than leaving readers to work out which of
+    # the three needs it and which merely happens not to.
+    wires = tuple(sorted(diagram.wires, key=lambda w: w.sort_key()))
 
     for wire in wires:
         _validate_wire_endpoint(diagram, wire, wire.a)
         _validate_wire_endpoint(diagram, wire, wire.b)
+
+    # Defect 2 (Phase 5 post-closing audit round 18): a boundary entry naming an unknown
+    # node id or an out-of-range port index is held to the identical standard as a wire
+    # endpoint above -- both are references ``_remap_endpoint`` (in
+    # :mod:`qufzx.rewrite.engine`) treats identically once a match reaches ``apply``, so a
+    # malformed one of either kind must be caught here, before any candidate is even
+    # grouped, rather than only on the wire side. Before this fix, a boundary_inputs/
+    # boundary_outputs entry naming no real port at all (e.g. an out-of-range index on a
+    # node with fewer legs, or an unknown node id -- both legitimately constructible on an
+    # un-validated diagram, since :mod:`qufzx.diagram.graph` is deliberately permissive, see
+    # that module's docstring) reached ``apply`` unexamined as long as it did not happen to
+    # sit on a consumed port; when it did, ``apply``'s step 5 (via ``_remap_endpoint``)
+    # raised ``RewriteDomainError`` -- a *different* error, from a *different* step, than
+    # this module's own "malformed wire reference" contract promises, and one this module's
+    # own module docstring's "Match-implies-applicable" section did not cover at all,
+    # despite ``find_matches`` returning a match whose ``apply`` was not, in fact,
+    # guaranteed to succeed cleanly.
+    #
+    # Sorted for the same reason the wire pass above is (Phase 5 post-closing audit round
+    # 18, Defect 1): ``PortRef``'s hash is PYTHONHASHSEED-dependent (via ``Direction``), and
+    # ``boundary_inputs``/``boundary_outputs`` are already ordered tuples -- but a malformed
+    # entry on one list should not have its reported order interleaved arbitrarily with the
+    # other, so both lists are walked in their own declared order, boundary_inputs first
+    # (the same order ``Diagram.boundary_inputs``/``boundary_outputs`` themselves are always
+    # read in elsewhere in this codebase), each entry checked via the same
+    # :func:`_validate_wire_endpoint` machinery the wire pass uses -- reusing that function
+    # (renamed in spirit only; it validates *any* ``PortRef``, not just a wire's own) rather
+    # than a second, hand-duplicated existence/range check that could drift out of sync with
+    # it. ``wire`` is only used by :func:`_validate_wire_endpoint` to name the offending
+    # object in its raised message; passing the ref itself there (rather than a real
+    # ``Wire``) is what the ``wire_or_boundary_ref`` parameter name below documents.
+    for ref in (*diagram.boundary_inputs, *diagram.boundary_outputs):
+        _validate_wire_endpoint(diagram, ref, ref)
 
     # Defect 2 (match-implies-applicable): a port that is claimed by more than one wire, or
     # that is both wired and listed on a boundary, is not a legitimate fusion occurrence at

@@ -16,6 +16,10 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -1188,3 +1192,168 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
         with pytest.raises(RewriteGrammarError, match="more than once"):
             apply(diagram, rule, _ScriptedMatch())
+
+    def test_hardening_5_non_injective_port_mapping_raises_rewrite_grammar_error(self) -> None:
+        """Hardening 5 (Phase 5 post-closing audit round 18): port_mapping's injectivity is
+        load-bearing (step 5 relies on distinct surviving old ports remapping to distinct new
+        ports) but was previously unchecked. Two consumed ports mapped to the *same* new port
+        would, once both their wires are remapped, produce two ``Wire`` objects that could be
+        identical -- silently collapsing into one entry of ``Diagram``'s set-backed wire
+        storage, with no exception anywhere. ``spider_fusion_builder`` is injective by
+        construction, so this never fires for Phase 5's one registered rule; a foreign or
+        future builder need not be.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        diagram.set_boundary_outputs(
+            [PortRef(c_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 1)]
+        )
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            r_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+            non_injective_mapping = {
+                PortRef(c_id, Direction.OUTPUT, 0): PortRef(r_id, Direction.OUTPUT, 0),
+                PortRef(c_id, Direction.OUTPUT, 1): PortRef(r_id, Direction.OUTPUT, 0),
+            }
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(r_id,),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(),
+                port_mapping=non_injective_mapping,
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_non_injective_port_mapping",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="not injective"):
+            apply(diagram, rule, _ScriptedMatch())
+
+    def test_hardening_6_wire_count_postcondition_catches_a_silently_lost_wire(self) -> None:
+        """Hardening 6 (Phase 5 post-closing audit round 18): a cheap structural postcondition
+        on step 5's remapping as a whole -- ``len(working.wires) == len(pre_wires) -
+        len(set(consumed_wires))`` -- catching a wire lost by any mechanism, not only the two
+        step 5 (single-wire collapse) and hardening 5 (port_mapping injectivity) already
+        guard. This reproduction is injective (``port_mapping`` has exactly one entry, so
+        injectivity is trivially satisfied) and does not collapse *within* one wire's own two
+        endpoints (``new_a != new_b``) -- it aliases a consumed port onto an *already-live*
+        port that some other, untouched wire already uses, so the remapped wire silently
+        duplicates that pre-existing one once added to ``Diagram``'s set-backed wire storage,
+        losing a wire with neither of the other two checks ever firing.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        x_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        wire1 = Wire(PortRef(c_id, Direction.OUTPUT, 0), PortRef(x_id, Direction.INPUT, 0))
+        # A second, pre-existing wire onto the exact same (already-occupied) x_id port --
+        # permissive but weird, mirroring exactly what qufzx.diagram.graph documents as
+        # deliberately unchecked at construction time (well-formedness is validate()'s job,
+        # never this module's). Both wires exist in the diagram before apply() is ever
+        # called; only wire1's own node is reported as consumed.
+        wire2 = Wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(x_id, Direction.INPUT, 0))
+        diagram.add_wire(wire1.a, wire1.b)
+        diagram.add_wire(wire2.a, wire2.b)
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            # A builder bug: aliasing c_id's surviving port onto b_id's *existing* port,
+            # rather than a freshly created one. This single-entry port_mapping is
+            # trivially injective, so hardening 5 does not fire.
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(),
+                port_mapping={
+                    PortRef(c_id, Direction.OUTPUT, 0): PortRef(b_id, Direction.OUTPUT, 0),
+                },
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_wire_count_violation",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="wire-count postcondition"):
+            apply(diagram, rule, _ScriptedMatch())
+
+
+class TestCrossProcessDeterminism:
+    """Phase 5 post-closing audit round 18, Defect 1: certificate provenance must not vary
+    by ``PYTHONHASHSEED``.
+
+    Root cause: :meth:`~qufzx.diagram.validate._check_wire_dimensions` and
+    :meth:`~qufzx.diagram.validate._check_port_usage` used to iterate ``diagram.wires``, a
+    frozenset. ``PortRef``'s (and so ``Wire``'s) hash folds in ``Direction``, an
+    ``enum.Enum`` whose default hash is its member *name*'s string hash -- seed-dependent
+    under ``PYTHONHASHSEED`` (Python randomizes string hashing per process by default).
+    ``validate()``'s issue order therefore varied per process, and
+    :func:`~qufzx.rewrite.engine._select_by_key_surplus` (which walks that order to populate
+    :attr:`~qufzx.rewrite.engine.RewriteStep.removed_deferred_issues` /
+    ``introduced_deferred_issues`` when a translated key collides across several issues) made
+    those fields non-deterministic across processes, contradicting
+    :attr:`~qufzx.rewrite.engine.RewriteStep.deferred_issue_identity_ambiguous`'s own
+    docstring promise of "first in validate order".
+
+    Fixed by sorting every wire iteration whose order is observable
+    (``qufzx.diagram.graph.PortRef.sort_key`` / ``Wire.sort_key``, hash-independent) at every
+    site in :mod:`qufzx.diagram.validate`, :mod:`qufzx.rewrite.match`, and
+    :mod:`qufzx.rewrite.engine` where the order could reach a returned value, a recorded
+    certificate field, or an exception message -- see each site's own comment for why it, in
+    particular, needed the sort (or, at two sites, provably did not, and why).
+
+    This test runs the identical rewrite in two child processes with different
+    ``PYTHONHASHSEED`` values (rather than merely asserting something in-process, which
+    cannot observe seed-dependent hash ordering at all) and compares a full, stable
+    serialization of the fields the module docstrings promise are deterministic. It
+    deliberately never compares ``hash()`` of anything: ``IssueKind`` and ``Direction`` are
+    ``Enum``s hashed by member name, so ``hash(step)`` (or ``hash(issue)``, etc.)
+    legitimately -- and permanently -- differs across processes; that is a fact about
+    Python's ``Enum``/``str`` hashing this round does not change and could not soundly
+    change (``RewriteStep.__hash__``'s own docstring is corrected elsewhere in this round to
+    say so explicitly, rather than the pre-round-18 wording that implied more than
+    within-process stability).
+    """
+
+    SCRIPT = Path(__file__).parent / "_cross_process_determinism_script.py"
+
+    def _run_with_seed(self, seed: str) -> str:
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = seed
+        result = subprocess.run(
+            [sys.executable, str(self.SCRIPT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_certificate_and_validation_reports_are_byte_identical_across_hash_seeds(
+        self,
+    ) -> None:
+        # Two seeds, per the acceptance test as specified -- each subprocess pays sympy's
+        # import cost, so this stays at two rather than a larger sample to keep the suite's
+        # runtime reasonable; two distinct seeds already falsify "no sorting" (verified by
+        # hand while developing this fix: reverting the sort in validate.py makes this
+        # comparison flake across seeds within a handful of runs).
+        first = self._run_with_seed("0")
+        second = self._run_with_seed("2147483647")
+        assert first, "the driver script printed nothing"
+        assert second == first

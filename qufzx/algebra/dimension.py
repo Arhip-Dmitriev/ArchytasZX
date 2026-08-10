@@ -257,7 +257,14 @@ class Dim:
                 )
 
         subs_dict: dict[sp.Symbol, sp.Integer] = {}
-        for sym in self._expr.free_symbols:
+        # Sorted by name, not the raw sympy-returned set (Phase 5 post-closing audit round
+        # 18, Defect 1 sweep): sympy's ``free_symbols`` is a plain ``set``, and ``Symbol``
+        # hashing bottoms out in Python's string hash of its name, which is
+        # PYTHONHASHSEED-dependent. With more than one out-of-domain substitution value in
+        # one call, the DimensionDomainError raised below would otherwise name a different
+        # symbol first across processes. Sorting is cheap (this set is always small) and
+        # removes that nondeterminism without changing which single message is *possible*.
+        for sym in sorted(self._expr.free_symbols, key=lambda s: str(s.name)):
             sym_name = str(sym.name)
             if sym_name not in resolved:
                 continue

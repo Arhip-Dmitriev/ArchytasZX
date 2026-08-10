@@ -107,6 +107,17 @@ Algorithm.
    remains here only as a defensive check against a hand-built or foreign ``Match``, the same
    posture every other coverage check in this module and in
    :mod:`qufzx.rewrite.rules_library` takes toward inputs it did not itself produce.
+
+   Match-implies-applicable gains a boundary-ref leg (Phase 5 post-closing audit round 18,
+   Defect 2): the claim in the paragraph above -- and in ``qufzx.rewrite.match``'s own
+   "Match-implies-applicable and multiply-claimed ports" section -- used to hold for a
+   *malformed* reference (unknown node id, out-of-range index) only on the wire-endpoint
+   side; a boundary entry naming no real port at all could still reach this function
+   unexamined, surfacing here as ``RewriteDomainError`` rather than the
+   ``RewriteGrammarError`` a malformed reference should raise. ``find_matches`` now validates
+   every boundary entry the identical way it already validated every wire endpoint (see
+   ``qufzx.rewrite.match``'s "Malformed boundary references"), so this function's own
+   unreachability claim now covers both reference kinds, not only one.
 6. Remove the consumed nodes. Only after every wire and boundary entry that referenced them
    has already been replaced. :meth:`~qufzx.diagram.graph.Diagram.remove_node`'s cascade
    (see that module's docstring) is therefore a no-op on wires and boundary entries at this
@@ -225,6 +236,23 @@ not choose which rule or which match to apply, or iterate to a fixpoint (that is
 strategy layer); and, per ``CLAUDE.md``, it never contracts or evaluates a diagram
 numerically -- nothing in this module imports :mod:`qufzx.semantics`.
 
+Phase 5 audit round 18: two structural postconditions on step 5 as a whole, not one more
+field-by-field check. Hardening 5 (``port_mapping`` injectivity) and Hardening 6 (the
+wire-count postcondition) both close the same class of gap: step 5's own per-wire checks
+(the unmapped-port raise, the single-wire collapse raise) each reason about *one* wire or
+*one* port_mapping entry at a time, so neither can see a problem that only exists across
+several of them jointly -- two different old ports both mapping to the same new port, or a
+remapped wire silently aliasing an already-live one. The general lesson for a future
+per-field or per-entry validation check added to this function: ask whether the property it
+establishes is actually preserved in aggregate (injectivity, a conserved count, an invariant
+that only makes sense summed or compared across every entry), not only for each entry
+examined in isolation -- a check that is individually sound at every one of N points can
+still admit a defect only visible from the outside once all N are considered together.
+``spider_fusion_builder`` happens to satisfy both by construction (see :mod:`qufzx.rewrite
+.rules_library`'s module docstring, "Merged leg-ordering convention"), which is exactly why
+neither gap was ever observed in practice -- and exactly why a foreign or future builder
+cannot be trusted to share that property merely because the one rule tested so far does.
+
 The validation contract table (Phase 5 round-12 audit, B1).
 
 Rounds 4, 6, 7, and 9 of the Phase 5 audit each closed one hole in what ``apply()`` and
@@ -236,6 +264,20 @@ in one pass. This table is that one pass: every field either function reads, who
 at which step (numbered per the Algorithm section above), with which error class, and the
 test that proves it. A row marked "not validated" says so explicitly and names the phase
 that owns closing it, rather than leaving the gap to be rediscovered as a "defect" later.
+
+Reference-kind coverage (Phase 5 post-closing audit round 18, Defect 2's class sweep). Every
+reference kind :mod:`qufzx.rewrite` consumes, and who checks it before it can name nothing:
+wire endpoints and boundary entries are both checked by :func:`~qufzx.rewrite.match
+.find_matches` before a match is even constructed (via ``_validate_wire_endpoint``, held to
+the identical standard for both kinds since round 18 -- see that module's docstring,
+"Malformed wire references" / "Malformed boundary references"); ``port_mapping`` keys are
+never validated for existence (row below, re-justified there); ``port_mapping`` values,
+``consumed_node_ids``, and ``new_node_ids`` are all checked by ``apply`` itself, at step 4,
+in the ``BuildResult`` table below. Boundary entries were the one reference kind missing
+from this enumeration before round 18 -- held to a *different* (weaker) standard than wire
+endpoints despite ``_remap_endpoint`` treating the two identically once a match reaches
+``apply``; they are now structurally excluded at the same point and by the same mechanism
+wire endpoints already were.
 
 Generic ``Match`` protocol fields (consumed by ``apply`` itself, for any future rule):
 
@@ -352,11 +394,29 @@ Field                                   Validated by                       Step 
 ``port_mapping`` (keys, existence)      Not validated -- an extra key       n/a   n/a                  n/a (see below)
                                          naming a port nothing ever looks
                                          up is silently unused
+``port_mapping`` (injectivity)          ``len(set(values)) ==                4     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
+(Hardening 5, Phase 5 post-closing      len(port_mapping)`` -- two old                                      ::test_hardening_5_non_injective_port_mapping_raises_
+audit round 18)                         ports must never map to the                                         rewrite_grammar_error
+                                         same new port
 ``port_mapping`` (covers every          Every wire/boundary endpoint on a    5     RewriteDomainError   test_engine.py::TestApplyRejectsAnUnmappedSurvivingPort,
 consumed-node endpoint that             consumed node must appear as a                                 TestApplyRejectsAnUnmappedSurvivingBoundaryPort
-survives)                               key (``_remap_endpoint``)
+survives) -- boundary refs, too,        key (``_remap_endpoint``); the
+not only wire endpoints (Defect 2)      identical treatment now also
+                                         applies before a match is even
+                                         returned (see
+                                         :mod:`qufzx.rewrite.match`'s own
+                                         "Malformed boundary references")
 ``port_mapping`` (no collapse)          Both endpoints of a surviving wire   5     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
-                                         must map to two distinct ports                                       ::test_collapsing_port_mapping_raises_rewrite_grammar_error
+within one wire                         must map to two distinct ports                                       ::test_collapsing_port_mapping_raises_rewrite_grammar_error
+Wire-count postcondition (Hardening 6,  ``len(working.wires) ==              5     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
+Phase 5 post-closing audit round 18)    len(pre_wires) -                                                     ::test_hardening_6_wire_count_postcondition_catches_a_
+                                         len(set(consumed_wires))``,                                         silently_lost_wire
+                                         checked once after all of step 5's
+                                         per-wire remapping -- catches a
+                                         wire silently lost by any
+                                         mechanism, not only the two this
+                                         step's own per-wire checks and
+                                         injectivity above already guard
 ``verified_side_condition_outcomes`` /  Not validated by ``apply`` itself   9     n/a                  test_engine.py::TestCertificateRecordsTheReDerivedFacts
 ``verified_dimension_constraints``      -- a builder that supplies these
 (Defect 2)                              is trusted to have done its own
@@ -493,6 +553,22 @@ class RewriteStep:
     Enforced by
     ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric``\\
     ``::test_colliding_keys_are_flagged_ambiguous_and_pinned_to_validate_order``.
+
+    "First in ``validate`` order" is a value-and-order contract, and is now actually true
+    across processes, not merely within one (Phase 5 post-closing audit round 18, Defect 1):
+    :func:`~qufzx.diagram.validate.validate` used to iterate ``diagram.wires``, a frozenset
+    whose hash (via ``Wire`` -> ``PortRef`` -> ``Direction``, an ``Enum`` hashed by member
+    name) is ``PYTHONHASHSEED``-dependent, so which issue ``validate`` reported *first* --
+    and therefore which of several colliding issues this field names when ambiguous -- could
+    differ between two otherwise-identical runs in different processes, contradicting this
+    docstring's own promise. Fixed by sorting every such iteration in ``validate.py`` (see
+    that module's docstring); this field's selection is deterministic by *value and order*
+    across processes now, proven (not merely asserted) by
+    ``tests/test_engine.py::TestCrossProcessDeterminism``, which runs an identical rewrite in
+    two subprocesses under two different ``PYTHONHASHSEED`` values and compares this field
+    (among others) by ``repr()`` equality -- never by ``hash()``, which remains legitimately
+    process-dependent for reasons unrelated to this fix (see :meth:`RewriteStep.__hash__`'s
+    own docstring).
     """
 
     def __hash__(self) -> int:
@@ -509,6 +585,26 @@ class RewriteStep:
         plain mapping equality (also order-independent) -- so ``a == b`` still implies
         ``hash(a) == hash(b)``, the contract Phase 12's cache (which will key on
         ``RewriteStep``) needs.
+
+        Cross-process disclaimer, stated explicitly (Phase 5 post-closing audit round 18,
+        Defect 1 -- corrected from a prior version of this docstring, which cited Phase 12's
+        cache-keying need without qualification and thereby over-promised): the
+        ``a == b`` implies ``hash(a) == hash(b)`` contract above holds *within one process*,
+        but ``hash()`` itself is not guaranteed stable *across* processes, and this fix does
+        not and cannot change that. ``IssueKind`` and ``Direction`` (reached transitively
+        through ``consumed_wires``, ``port_mapping``, and the deferred-issue tuples, all of
+        which embed ``PortRef``/``Wire``/``ValidationIssue`` values) are ``enum.Enum``
+        subclasses hashed by member *name*, and Python randomizes string hashing per process
+        by default (``PYTHONHASHSEED``) -- so ``hash(step)`` computed for equal ``RewriteStep``
+        values in two different processes may legitimately differ, permanently, for reasons
+        that have nothing to do with this class's own hash implementation. What round 18 did
+        fix is a different property entirely: the *value and order* of every field this hash
+        is computed over (in particular ``removed_deferred_issues``/
+        ``introduced_deferred_issues``/``deferred_issue_identity_ambiguous``, populated from
+        :mod:`qufzx.diagram.validate`'s issue order) is now itself deterministic across
+        processes -- see that module's docstring and ``tests/test_engine.py
+        ::TestCrossProcessDeterminism``, which compares field values and order directly, by
+        ``repr()``, never by ``hash()``.
         """
         return hash(
             (
@@ -787,11 +883,41 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"{invalid_port_mapping_values!r})"
         )
 
+    # Hardening 5 (Phase 5 post-closing audit round 18): port_mapping's injectivity is
+    # load-bearing but was previously unchecked. Step 5 below rejects a *single* surviving
+    # wire whose two endpoints collapse onto one port (new_a == new_b), but says nothing
+    # about two *different* surviving wires whose four endpoints map onto only two distinct
+    # ports between them -- e.g. port_mapping sending both old_x and old_y to the same
+    # new_z. Diagram._wires is a Python set (Wire equality/hash is order-independent), so
+    # two such remapped wires that happen to produce the identical Wire object would
+    # silently collapse into one entry in that set at ``working.add_wire`` time in step 5,
+    # losing a wire with no exception anywhere -- step 5's own per-wire check cannot see
+    # this, since each wire is remapped and re-added independently, one at a time.
+    # ``spider_fusion_builder`` is injective by construction (each surviving old port maps
+    # to exactly one new port, and ``_surviving_legs`` never emits the same old port twice),
+    # so this never fires for Phase 5's one registered rule -- but a foreign or future
+    # builder need not be, and the engine's generic contract in this module's own docstring
+    # must not rely on every builder happening to get this right unchecked.
+    if len(set(build_result.port_mapping.values())) != len(build_result.port_mapping):
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder's port_mapping is not injective -- two or more "
+            "old ports map to the same new port, which would silently collapse two "
+            "distinct surviving wires into one once remapped"
+        )
+
     consumed_wire_set = frozenset(build_result.consumed_wires)
     consumed_node_ids = frozenset(build_result.consumed_node_ids)
     port_mapping = build_result.port_mapping
 
-    for wire in tuple(working.wires):
+    # Sorted, not the raw frozenset (Phase 5 post-closing audit round 18, Defect 1):
+    # ``working.wires`` is a frozenset whose hash (via Wire -> PortRef -> Direction) is
+    # PYTHONHASHSEED-dependent. This loop can raise (a collapsing port_mapping, or an
+    # unmapped surviving port via ``_remap_endpoint``); with more than one such wire in a
+    # diagram, an unsorted iteration would surface a different one -- a different exception
+    # message -- across processes. The final *set* of wires this loop leaves in ``working``
+    # is unaffected by order (each wire's own fate is independent of every other's), but the
+    # order in which a possible failure is reported is not, so it is sorted here too.
+    for wire in sorted(working.wires, key=lambda w: w.sort_key()):
         if wire in consumed_wire_set:
             working.remove_wire(wire.a, wire.b)
             continue
@@ -810,6 +936,28 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             )
         working.remove_wire(wire.a, wire.b)
         working.add_wire(new_a, new_b)
+
+    # Hardening 6 (Phase 5 post-closing audit round 18): a cheap structural postcondition
+    # on step 5 as a whole, the same posture step 8 already takes toward the *result*
+    # diagram's validation issues -- catch a silently-lost wire from any cause, not just
+    # the one path (a collapsing port_mapping) step 5's own per-wire check already guards.
+    # Every wire in ``working`` either survived untouched (not touching a consumed node),
+    # was dropped as one of ``consumed_wires`` (absorbed into the merged node, never
+    # replaced), or was removed and re-added exactly once (remapped) -- so the wire count
+    # can only ever shrink by exactly the number of *distinct* consumed wires, never more,
+    # never less. ``working_wire_set`` is the pre-step-5 snapshot (taken above, right after
+    # the builder ran and before any of steps 4-5's own mutations); distinct, not a bare
+    # ``len(build_result.consumed_wires)``, since a duplicate entry there is inert (see the
+    # validation contract table's own note on this) and must not be double-counted here.
+    expected_wire_count = len(working_wire_set) - len(consumed_wire_set)
+    actual_wire_count = len(working.wires)
+    if actual_wire_count != expected_wire_count:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: wire-count postcondition violated after remapping -- "
+            f"expected {expected_wire_count} wire(s) ({len(working_wire_set)} before this "
+            f"rewrite minus {len(consumed_wire_set)} distinct consumed), got "
+            f"{actual_wire_count}; a wire was silently lost or gained during remapping"
+        )
 
     working.set_boundary_inputs(
         tuple(

@@ -27,7 +27,7 @@ from qufzx.diagram.generators import (
     LegPolicy,
     PhaseSchema,
 )
-from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
     FusionPattern,
@@ -340,6 +340,102 @@ class TestPhaseDimensionMismatchIsNonMatch:
         assert len(find_matches(diagram)) == 1
 
 
+class TestPhaseFailureDoesNotMisreportDimensionAgreement:
+    """Defect 3 (Phase 5 post-closing audit round 18): a phase-dim FAILURE inside
+    :func:`resolve_fusion_match`'s fixpoint must not be reported as a ``dimension_agreement``
+    (condition 5) failure -- nothing about a leg's own dimension failed here, only a phase's.
+
+    Reproducer straight from the audit brief: a Z-Z pair, every leg ``Dim(2)``, node B's
+    phase stated over the concrete ``Dim(3)`` -- plainly non-unifiable with the legs' shared
+    ``Dim(2)``. Before the fix, this fell through to ``_verify_fixpoint_closure`` (which
+    re-checks phases too, under the identical contract that just failed them) and reported
+    BOTH ``dimension_agreement`` and ``phase_dimension_agreement`` as ``False``, both citing
+    the closure guard's own "this is unreachable" message -- false on two counts: the legs
+    plainly do agree exactly (``Dim(2) == Dim(2)``, no unify even needed), and the guard's
+    unreachability claim is not actually true on this path at all.
+    """
+
+    def test_phase_failure_reports_leg_accurate_dimension_agreement_and_dedicated_phase_detail(
+        self,
+    ) -> None:
+        two = Dim.concrete(2)
+        three = Dim.concrete(3)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[two])
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[two], output_dims=[], phase=_phase_at(three, 1)
+        )
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert not resolution.passed
+
+        by_name = {outcome.name: outcome for outcome in resolution.outcomes}
+        dimension_agreement = by_name["dimension_agreement"]
+        phase_dimension_agreement = by_name["phase_dimension_agreement"]
+
+        assert dimension_agreement.passed, (
+            "every leg here is exactly Dim(2) == Dim(2); condition 5 must pass, not be "
+            f"misreported as failed alongside the phase failure: {dimension_agreement!r}"
+        )
+        assert "2 == 2" in dimension_agreement.detail
+        assert not phase_dimension_agreement.passed
+        assert "does not unify with the resolved shared leg dimension" in (
+            phase_dimension_agreement.detail
+        )
+
+        closure_marker = "post-loop closure check failed"
+        assert closure_marker not in dimension_agreement.detail
+        assert closure_marker not in phase_dimension_agreement.detail
+
+        # find_matches must drop this candidate entirely (all_side_conditions_passed is
+        # False), not surface it as a match with a failing outcome.
+        assert find_matches(diagram) == ()
+
+    def test_phase_a_binding_before_phase_b_fails_does_not_leak_into_dimension_agreement(
+        self,
+    ) -> None:
+        """The subtlety the fix's docstring calls out: ``_unify_phase_dims`` can bind phase
+        A's own symbol before failing on phase B, in the very same call -- advancing
+        ``shared_dim``/``bindings`` past what the leg sweep last verified against.
+        ``dimension_agreement`` must be reported against the leg-verified snapshot (here:
+        the bare identity ``e == e``, nothing bound yet), never against the state
+        ``shared_dim`` is advanced to by A's own phase binding partway through the same
+        ``_unify_phase_dims`` call that then fails on B's phase.
+        """
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        # Both legs are the same bare symbol e: the connecting pair unifies as a bare
+        # identity, seeding shared_dim=e with nothing bound and no surviving legs on
+        # either side (each node's only leg is the one the wire consumes).
+        a_id = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[e], phase=_phase_at(Dim.concrete(3), 1)
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[e], output_dims=[], phase=_phase_at(Dim.concrete(4), 1)
+        )
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(wire.a, wire.b)
+
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert not resolution.passed
+        by_name = {outcome.name: outcome for outcome in resolution.outcomes}
+        dimension_agreement = by_name["dimension_agreement"]
+        # A's phase (3) unifies against the leg-seeded shared_dim=e by binding e := 3,
+        # advancing shared_dim to 3 -- all within the same _unify_phase_dims call that then
+        # fails B's phase (4) against that advanced 3. dimension_agreement must still be
+        # reported True, from the *leg*-verified state (e == e, nothing bound), not from the
+        # state a phase's own binding advanced shared_dim to afterwards.
+        assert dimension_agreement.passed
+        assert "e == e" in dimension_agreement.detail, dimension_agreement.detail
+        assert "3" not in dimension_agreement.detail, (
+            f"dimension_agreement leaked the phase-advanced shared_dim=3 into its own "
+            f"detail, which the leg sweep was never actually checked against: "
+            f"{dimension_agreement!r}"
+        )
+
+
 class TestDimensionConstraintsRecording:
     def test_deferred_leg_dims_are_recorded(self) -> None:
         d = Dim.symbol("d")
@@ -386,6 +482,55 @@ class TestDimensionConstraintsRecording:
             o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
         )
         assert not agreement.deferred
+
+    def test_non_concrete_binding_detail_says_something_was_assumed(self) -> None:
+        """Defect 4 (Phase 5 post-closing audit round 18): a connecting pair recorded BOUND
+        via a symbol-to-symbol binding (``d := e``, non-concrete -- see the module
+        docstring's "Non-concrete bindings") must not render as a bare "d == e" with no
+        indication anything was assumed.
+
+        Root cause: the pre-fix ``_connecting_pair_detail`` derived its "bound to what"
+        clause by intersecting the raw legs' free symbols with ``bindings`` -- but
+        ``bindings`` (by design) never holds a non-concrete value at all
+        (``_merge_bindings`` filters those out before they reach it), so that intersection
+        was always empty for exactly this case, even though ``entry.outcome`` -- and
+        ``dimension_constraints`` beside it -- correctly recorded BOUND. Fixed by deriving
+        the detail from the record entry itself (the single source of truth
+        ``dimension_constraints`` also reads from), not from a collection filtered for a
+        different purpose.
+        """
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[e], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        match = matches[0]
+
+        # The machine-readable record was always right: exactly one BOUND connecting-pair
+        # constraint, and match.bindings itself legitimately stays empty (the binding is
+        # non-concrete, so _merge_bindings never stores it -- see the module docstring).
+        assert match.dimension_constraints == (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=e,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+            ),
+        )
+        assert dict(match.bindings) == {}
+
+        # The human-readable detail must agree with that record: it must say a binding was
+        # assumed, not render as a bare, unqualified equality.
+        agreement = next(
+            o for o in match.side_condition_outcomes if o.name == "dimension_agreement"
+        )
+        assert "d == e" in agreement.detail
+        assert "bound" in agreement.detail, (
+            f"detail gives no indication a non-concrete binding was assumed: {agreement!r}"
+        )
 
     def test_a_leg_already_bound_by_the_connecting_pair_is_not_recorded_again(self) -> None:
         """Phase 5 post-closing audit, dimension_constraints duplicate-assumption defect.
@@ -466,6 +611,124 @@ class TestOutOfRangeWireEndpointRaises:
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 3))
         with pytest.raises(RewriteGrammarError):
+            find_matches(diagram)
+
+
+class TestOutOfRangeBoundaryRefRaises:
+    """Phase 5 post-closing audit round 18, Defect 2: a boundary entry is held to the
+    identical malformed-reference standard as a wire endpoint (see
+    :class:`TestOutOfRangeWireEndpointRaises` above, and the module docstring's "Malformed
+    boundary references" section).
+
+    Before this fix, an out-of-range or unknown-node boundary entry was not checked by
+    :func:`find_matches` at all; it reached :mod:`qufzx.rewrite.engine`'s ``apply`` step 5
+    unexamined, surfacing (if it ever did) as a *different* error class
+    (``RewriteDomainError`` from ``_remap_endpoint``, not ``RewriteGrammarError`` from this
+    module) and only when the ref happened to sit on a consumed port. Every combination
+    below is covered: out-of-range index and unknown node id, on each of
+    ``boundary_inputs``/``boundary_outputs``, on both a consumed node (one of the fusing
+    pair) and a non-consumed one -- eight cases, since nothing about this check may depend
+    on any of those properties.
+    """
+
+    @staticmethod
+    def _base_diagram() -> tuple[Diagram, PortRef, PortRef]:
+        """Two fusable Z spiders (A, B) joined by one wire, plus an unrelated bystander C
+        with one free output leg -- the "non-consumed node" boundary target below."""
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 0)]
+        )
+        return diagram, PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 0)
+
+    def test_out_of_range_index_on_boundary_outputs_on_a_consumed_node_raises(self) -> None:
+        diagram, consumed_ref, _bystander = self._base_diagram()
+        outs = list(diagram.boundary_outputs)
+        outs[outs.index(consumed_ref)] = PortRef(consumed_ref.node_id, Direction.OUTPUT, 9)
+        diagram.set_boundary_outputs(outs)
+        with pytest.raises(RewriteGrammarError, match="out of range"):
+            find_matches(diagram)
+
+    def test_out_of_range_index_on_boundary_outputs_on_a_non_consumed_node_raises(self) -> None:
+        diagram, _consumed_ref, bystander = self._base_diagram()
+        outs = list(diagram.boundary_outputs)
+        outs[outs.index(bystander)] = PortRef(bystander.node_id, Direction.OUTPUT, 9)
+        diagram.set_boundary_outputs(outs)
+        with pytest.raises(RewriteGrammarError, match="out of range"):
+            find_matches(diagram)
+
+    def test_unknown_node_id_on_boundary_outputs_on_a_consumed_node_position_raises(
+        self,
+    ) -> None:
+        diagram, consumed_ref, _bystander = self._base_diagram()
+        outs = list(diagram.boundary_outputs)
+        outs[outs.index(consumed_ref)] = PortRef(NodeId(999999), Direction.OUTPUT, 0)
+        diagram.set_boundary_outputs(outs)
+        with pytest.raises(RewriteGrammarError, match="absent from the diagram"):
+            find_matches(diagram)
+
+    def test_unknown_node_id_on_boundary_outputs_on_a_non_consumed_node_position_raises(
+        self,
+    ) -> None:
+        diagram, _consumed_ref, bystander = self._base_diagram()
+        outs = list(diagram.boundary_outputs)
+        outs[outs.index(bystander)] = PortRef(NodeId(999999), Direction.OUTPUT, 0)
+        diagram.set_boundary_outputs(outs)
+        with pytest.raises(RewriteGrammarError, match="absent from the diagram"):
+            find_matches(diagram)
+
+    def test_out_of_range_index_on_boundary_inputs_on_a_consumed_node_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, 4)])
+        with pytest.raises(RewriteGrammarError, match="out of range"):
+            find_matches(diagram)
+
+    def test_out_of_range_index_on_boundary_inputs_on_a_non_consumed_node_raises(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(c_id, Direction.INPUT, 4)])
+        with pytest.raises(RewriteGrammarError, match="out of range"):
+            find_matches(diagram)
+
+    def test_unknown_node_id_on_boundary_inputs_on_a_consumed_node_position_raises(
+        self,
+    ) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        # Overwrite what would otherwise be a's legitimate boundary input with an unknown
+        # node id -- "on a consumed node position" in the sense that the slot this boundary
+        # entry occupies is the one a's own surviving input would otherwise need.
+        diagram.set_boundary_inputs([PortRef(NodeId(999999), Direction.INPUT, 0)])
+        with pytest.raises(RewriteGrammarError, match="absent from the diagram"):
+            find_matches(diagram)
+
+    def test_unknown_node_id_on_boundary_inputs_on_a_non_consumed_node_position_raises(
+        self,
+    ) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(NodeId(999999), Direction.INPUT, 0)])
+        with pytest.raises(RewriteGrammarError, match="absent from the diagram"):
             find_matches(diagram)
 
 
@@ -1028,7 +1291,11 @@ class TestD1FixpointTerminationSoundness:
         b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
-        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        # b_id has zero output legs -- no boundary_outputs entry to declare for it. (Phase 5
+        # post-closing audit round 18: this fixture previously listed a nonexistent
+        # PortRef(b_id, OUTPUT, 0) here, which find_matches now correctly rejects as a
+        # malformed boundary reference -- Defect 2 -- rather than silently ignoring it the
+        # way the pre-fix matcher did.)
         assert find_matches(diagram) == ()
 
     def test_legs_2_d_times_e_d_conn_e_is_not_a_match(self) -> None:
