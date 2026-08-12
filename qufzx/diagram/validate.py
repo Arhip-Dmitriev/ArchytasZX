@@ -78,6 +78,27 @@ not merely for the two fixed here: the question to ask is not "does this look li
 sorting" but "could this collection's construction ever route a value's own hash into
 something this function returns, raises, or appends to a list", since that is the actual
 condition that makes ordering observable rather than incidental.
+
+Phase 5 post-closing audit round 20: a validator whose "valid" was weaker than the
+denotation it is meant to gate. A node with zero input legs, zero output legs, and no phase
+vector carries its dimension nowhere at all (per ``CLAUDE.md``, "dimension is stored per
+port, not as one global parameter") -- :mod:`qufzx.semantics.denote` already refused such a
+node (``DenoteGrammarError``, "has no legs and no phase vector; its dimension cannot be
+determined"), but this module accepted it as valid, resting :mod:`qufzx.rewrite.engine`'s
+``apply`` step 8 -- which uses this module as its sole structural postcondition on a
+rewritten diagram -- on one builder's (``rules_library``'s) good behaviour never producing
+such a node, rather than on a check. Closed by :class:`IssueKind.NODE_DIMENSION_UNDETERMINED`,
+a hard error (not deferred) for exactly this shape, worded to name the same fact ``denote``
+does. The invariant this establishes, and that ``tests/test_phase5_exhaustive_oracle.py``'s
+exhaustive sweep now checks directly rather than merely assumes: ``validate(d).is_valid``
+implies every node in ``d`` is denotable (at whatever concrete substitution makes every
+dimension in scope concrete -- ``validate`` itself still accepts a well-formed *symbolic*
+diagram, which is not yet denotable for an unrelated, expected reason; the invariant is about
+the shape gap this round closed, not about concreteness, which was never this module's job to
+enforce). The general question for a future check added to this module: does "valid" here
+actually imply everything a downstream consumer (a rewrite's postcondition, a certificate
+replay, an oracle contraction) assumes it does, or only the subset this module happened to
+check first?
 """
 
 from __future__ import annotations
@@ -124,6 +145,7 @@ class IssueKind(enum.Enum):
     DIMENSION_POLICY_VIOLATION = "dimension_policy_violation"
     PHASE_DIMENSION_MISMATCH = "phase_dimension_mismatch"
     PHASE_NOT_PERMITTED = "phase_not_permitted"
+    NODE_DIMENSION_UNDETERMINED = "node_dimension_undetermined"
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +355,32 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
 
 def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
+
+    # Round 20, Task 9: per CLAUDE.md, "dimension is stored per port, not as one global
+    # parameter" -- a node with zero legs and no phase vector carries its dimension nowhere
+    # at all, so it is not well-formed, yet this module accepted it as valid before this
+    # fix. :mod:`qufzx.semantics.denote` already refused such a node
+    # (``DenoteGrammarError``, "has no legs and no phase vector; its dimension cannot be
+    # determined") -- this check states the identical fact at validation time, as a hard
+    # error rather than a deferred one, so that ``validate(d).is_valid`` actually implies
+    # every node in ``d`` is denotable, which is the invariant :mod:`qufzx.rewrite.engine`'s
+    # ``apply`` step 8 depends on when it uses this module as its sole structural
+    # postcondition on a rewritten diagram. See ``tests/test_phase5_exhaustive_oracle.py``
+    # and ``tests/test_fusion_properties.py`` for the property sweep asserting this
+    # cross-module invariant holds over every diagram either generator produces, not merely
+    # over the one hand-built case that motivated the fix.
+    if node.num_inputs == 0 and node.num_outputs == 0 and node.phase is None:
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.NODE_DIMENSION_UNDETERMINED,
+                message=(
+                    f"node {node.id!r} ({gen.name}) has no legs and no phase vector; its "
+                    "dimension cannot be determined"
+                ),
+                node_id=node.id,
+            )
+        )
+
     if not gen.leg_policy.allows(node.num_inputs, node.num_outputs):
         issues.append(
             ValidationIssue(

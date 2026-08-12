@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import ast
 import dataclasses
+import inspect
 import os
 import subprocess
 import sys
@@ -24,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from qufzx.algebra.dimension import Dim
+from qufzx.algebra.phase import PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
@@ -599,6 +602,51 @@ class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
         )
 
 
+class TestStep8CarriesANodeDimensionUndeterminedIssueOnAThirdUntouchedNode:
+    """Round 20, Task 9: NODE_DIMENSION_UNDETERMINED is anchored on ``node_id``, with no
+    ``port_ref``/``wire`` -- the same reference shape ``_translate_input_issue_key`` already
+    routes through its single-``new_node_ids``-entry fallback for any other node-id-anchored
+    kind (see that function's docstring). This pins that routing for the new kind
+    specifically: a diagram already carrying this issue on a node the fusion match neither
+    consumes nor touches must have step 8 carry it across (translated key equals its own
+    untranslated key, since the node id is not in ``consumed_node_ids``), not misreport it as
+    "introduced" by the rewrite.
+    """
+
+    def test_pre_existing_issue_on_an_untouched_third_node_survives_the_rewrite(self) -> None:
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[two])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
+        # third_id is deliberately untouched by the a_id/b_id fusion match: no legs, no
+        # phase, neither consumed nor a new_node_ids entry.
+        third_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+
+        pre_report = validate(diagram)
+        assert any(
+            issue.kind is IssueKind.NODE_DIMENSION_UNDETERMINED and issue.node_id == third_id
+            for issue in pre_report.errors
+        )
+
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        assert third_id not in (matches[0].a_id, matches[0].b_id)
+
+        result = apply(diagram, SPIDER_FUSION, matches[0])
+
+        assert third_id in result.diagram.nodes
+        post_errors = validate(result.diagram).errors
+        assert any(
+            issue.kind is IssueKind.NODE_DIMENSION_UNDETERMINED and issue.node_id == third_id
+            for issue in post_errors
+        ), (
+            "the pre-existing NODE_DIMENSION_UNDETERMINED issue on the untouched third node "
+            "must carry over unchanged, not be misreported as introduced by the rewrite"
+        )
+
+
 class TestRemovedDeferredIssuesAreRecorded:
     """Judgement call 1 (Phase 5 post-closing audit): fusion is allowed to fire across a
     ``DEFERRED`` dimension pair (see rules_library.py's module docstring, "Phase 5
@@ -1082,7 +1130,13 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
         diagram = Diagram()
         s1_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         s2_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
-        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+        # c_id and (below) r_id are deliberately legless: this test is about a consumed
+        # wire between two *other* nodes being dropped, not about c_id/r_id's own shape.
+        # Each still needs *some* dimension-bearing content (a phase, here, since it has no
+        # legs to carry one) so it satisfies validate()'s NODE_DIMENSION_UNDETERMINED check
+        # (round 20, Task 9) and does not itself contribute a spurious pre/post error this
+        # test is not exercising.
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[], phase=PhaseVector(d, {}))
         w = Wire(PortRef(s1_id, Direction.OUTPUT, 0), PortRef(s2_id, Direction.INPUT, 0))
         diagram.add_wire(w.a, w.b)
         diagram.set_boundary_outputs([PortRef(s1_id, Direction.OUTPUT, 0)])
@@ -1094,7 +1148,9 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
         assert all(issue.kind is IssueKind.PORT_WIRED_AND_BOUNDARY for issue in pre_errors)
 
         def _builder(working: Diagram, match: Match) -> BuildResult:
-            r_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+            r_id = working.add_node(
+                Z_SPIDER, input_dims=[], output_dims=[], phase=PhaseVector(d, {})
+            )
             return BuildResult(
                 diagram=working,
                 new_node_ids=(r_id,),
@@ -1328,6 +1384,57 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
         with pytest.raises(RewriteGrammarError, match="wire-count postcondition"):
             apply(diagram, rule, _ScriptedMatch())
+
+
+class TestApplyDocstringMatchesRaiseSites:
+    """Round 20, Task 5: ``apply``'s docstring drifted out of date twice (rounds 18-19 each
+    added raise sites without updating the prose a caller actually reads), because nothing
+    checked the two stayed in sync. This pins the count of raise sites lexically inside
+    ``apply``'s own body so a future addition without a matching docstring update fails here,
+    naming the offending line, rather than silently drifting a third time.
+
+    Deliberately an *equality* pin on a count, not a semantic check of the docstring's
+    content -- the AST can enumerate raise sites cheaply and reliably, but "does the prose
+    accurately describe this raise site" is not a question ast.parse can answer. See
+    ``apply``'s own docstring for why one of the 11 total documented raise conditions (the
+    unmapped-surviving-port raise inside ``_remap_endpoint``, called from step 5) is not
+    counted here: it is not a literal ``raise`` statement lexically inside ``apply``'s body,
+    so the AST walk below -- by construction -- cannot see it and must not claim to.
+    """
+
+    #: Count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
+    #: statements lexically inside ``apply``'s own function body, as of round 20. Keep this
+    #: adjacent to ``apply``'s docstring (qufzx/rewrite/engine.py) so updating one without the
+    #: other is visibly wrong in review.
+    _EXPECTED_RAISE_SITE_COUNT = 10
+
+    def test_raise_site_count_matches_the_pinned_constant(self) -> None:
+        source = inspect.getsource(engine_module.apply)
+        # dedent not needed: inspect.getsource of a module-level function returns
+        # unindented source starting at "def apply(...)".
+        tree = ast.parse(source)
+        (func_node,) = tree.body
+        assert isinstance(func_node, ast.FunctionDef)
+
+        raise_sites = []
+        for node in ast.walk(func_node):
+            if not isinstance(node, ast.Raise):
+                continue
+            call = node.exc
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if name in ("RewriteGrammarError", "RewriteDomainError"):
+                raise_sites.append(node.lineno)
+
+        assert len(raise_sites) == self._EXPECTED_RAISE_SITE_COUNT, (
+            f"apply() now has {len(raise_sites)} RewriteGrammarError/RewriteDomainError "
+            f"raise site(s) at (function-relative) line(s) {raise_sites}, but "
+            f"_EXPECTED_RAISE_SITE_COUNT is still {self._EXPECTED_RAISE_SITE_COUNT} -- "
+            "update apply()'s docstring to document the new/removed raise condition, then "
+            "update this constant to match"
+        )
 
 
 class TestCrossProcessDeterminism:

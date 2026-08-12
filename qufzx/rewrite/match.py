@@ -528,6 +528,37 @@ module: ``consumed_node_ids`` has had a duplicate-entry check since Phase 5's ro
 the same rewrite -- never did, and was not even listed as a deliberately-open row the way
 ``consumed_wires`` duplicates and unused ``port_mapping`` keys are in that module's own
 ``BuildResult``-field table. Closed there; see that module's docstring table.
+
+Phase 5 post-closing audit round 20 summary. Three defect classes closed in this module:
+
+* A documented invariant with no structural enforcement.
+  :class:`~qufzx.rewrite.rule.DimensionConstraint.bound_here`'s docstring stated its
+  empty/non-empty contract against ``outcome`` since round 19, but nothing checked it --
+  exactly round 18's Defect 3 class (a guard whose correctness argument is asserted rather
+  than structural), recurring in the sibling class right next to the one round 18 already
+  fixed the same way (:class:`~qufzx.rewrite.rule.ConstraintSource.__post_init__`). Closed by
+  giving ``DimensionConstraint`` its own ``__post_init__``; see that class's docstring.
+* A rendered value derived from a different collection than the record it describes -- this
+  time the *keys*, not only the values. Round 19's Defect 4 fix made every detail string's
+  *values* read off :class:`_ConstraintRecord`; ``phase_dimension_agreement``'s "assuming
+  ..." clause still built the *names* it indexed that record with from a second, separately
+  threaded accumulator (``_unify_phase_dims``'s returned ``bound_names`` list), agreeing with
+  the record only because Phase 5's placeholder ``Dim.unify`` binds at most one symbol per
+  call and a phase binding is only ever recorded once fully concrete -- an accident of the
+  current unifier's contract, not a property this module's own certificate-fidelity
+  discipline should rest on. Closed by deleting the second accumulator entirely
+  (``_unify_phase_dims`` now returns ``Dim | None``, not ``tuple[Dim, list[str]] | None``)
+  and deriving both the names and their values from ``record.entries()`` alone. The general
+  question a future rendered-detail addition to this module should ask, sharpened from round
+  19's version: not just "does this value come from the record", but "does *every* collection
+  this detail iterates -- keys as well as values -- come from that same record"?
+* A validator whose "valid" was weaker than the denotation it is meant to gate. Not a defect
+  in this module itself, but :mod:`qufzx.diagram.validate`'s corresponding fix
+  (accepting a node with no legs and no phase, which :mod:`qufzx.semantics.denote` correctly
+  refuses) is recorded here too because this module's own fixpoint is exactly the kind of
+  caller that must not be able to hand :mod:`qufzx.rewrite.engine` a diagram ``validate``
+  calls clean but ``denote`` cannot handle -- see :mod:`qufzx.diagram.validate`'s module
+  docstring for the fix itself.
 """
 
 from __future__ import annotations
@@ -891,7 +922,7 @@ def _unify_phase_dims(
     shared_dim: Dim,
     bindings: dict[str, Dim],
     record: _ConstraintRecord,
-) -> tuple[Dim, list[str]] | None:
+) -> Dim | None:
     """Unify every phase vector actually present (A's, then B's) against ``shared_dim``, in turn.
 
     Mirrors :func:`_unify_surviving_legs`'s accumulator discipline exactly, extended to
@@ -908,12 +939,22 @@ def _unify_phase_dims(
     Unlike a leg, a genuinely ``DEFERRED`` result, or a result whose binding is not
     concrete, is never accepted here -- see the module docstring, condition 6, for why a
     phase's own entries make reattaching under an unproven or non-concrete assumption
-    unsafe. Returns ``None`` on either, making the whole candidate a non-match; returns
-    ``(resolved_shared_dim, bound_names)`` on success, having written each present phase's
-    binding-only success into ``record`` under its own
+    unsafe. Returns ``None`` on either, making the whole candidate a non-match; returns the
+    resolved ``shared_dim`` on success, having written each present phase's binding-only
+    success into ``record`` under its own
     :meth:`~qufzx.rewrite.rule.ConstraintSource.node_phase` key.
+
+    Round 20, Task 7: previously returned ``(resolved_shared_dim, bound_names)``, threading a
+    second, parallel accumulator of bound symbol names out to the caller alongside ``record``
+    itself. ``resolve_fusion_match`` then read the *values* for those names back out of
+    ``record.entries()`` while reading the *names* from this separately-threaded list --
+    two different collections that happened to agree only because ``Dim.unify`` (Phase 5's
+    placeholder) binds at most one symbol per call and a phase binding is always concrete, so
+    ``phase_bound_names`` could never name anything ``record`` had not *also* just bound. See
+    the module docstring's "Round 20" section for why that agreement is not something a
+    future ``Dim.unify`` (Phase 10's real unifier) can be trusted to preserve, and why
+    ``record`` is now the *only* source the caller reads for both.
     """
-    bound_names: list[str] = []
     for node_id, phase in ((a_id, node_a.phase), (b_id, node_b.phase)):
         if phase is None:
             continue
@@ -934,9 +975,8 @@ def _unify_phase_dims(
         new_concrete = dict(phase_unify.bindings)
         if not _merge_bindings(bindings, new_concrete):
             return None
-        bound_names.extend(sorted(new_concrete))
         shared_dim = _resolve_with_bindings(shared_dim, phase_unify.bindings)
-    return shared_dim, bound_names
+    return shared_dim
 
 
 def _unify_connecting_pair(
@@ -1087,6 +1127,19 @@ def _connecting_pair_detail(
         return f"{entry.assumed} == {entry.equal_to} (deferred, assumed)"
     # entry.outcome is BOUND: render exactly what this check's own unify bound
     # (entry.bound_here), not a value looked up by symbol coincidence.
+    #
+    # Round 20, Task 6: entry.bound_here being non-empty here is no longer merely assumed --
+    # DimensionConstraint.__post_init__ now enforces, structurally, that a BOUND outcome
+    # always carries a non-empty bound_here (see that class's docstring). This is exactly the
+    # class round 18's Defect 3 named: a guard whose correctness argument used to rest on
+    # every caller happening to get it right is now backed by a constructor that rejects the
+    # violating case outright. The `entry.bound_here and` half of the condition below is
+    # therefore dead in the sense that it can no longer be False for a BOUND entry -- kept
+    # anyway as a direct, readable mirror of the invariant it relies on, rather than deleted
+    # and replaced with an assert (which would just relocate the same trust one line up
+    # without making it any more visible). The fall-through branch's claim -- "bound to a
+    # non-concrete Dim" -- is therefore now provably reachable only for a genuine
+    # non-concrete binding, not for an unrelated bug that happened to leave bound_here empty.
     if entry.bound_here and all(value.is_concrete for _, value in entry.bound_here):
         binding_desc = ", ".join(f"{name} := {value}" for name, value in entry.bound_here)
         return f"{entry.assumed} == {entry.equal_to} (bound: {binding_desc})"
@@ -1477,7 +1530,6 @@ def resolve_fusion_match(
     # unre-checked against the newly accumulated bindings, which is exactly how an
     # unsatisfiable constraint set (e.g. e*f == 2 and e == 2 and f == 2, from legs
     # [e*f, e, f]) went undetected. Checking both signals closes this.
-    phase_bound_names: list[str] = []
     fixpoint_budget_exhausted = False
 
     for _pass_index in range(_MAX_FIXPOINT_PASSES):
@@ -1577,8 +1629,7 @@ def resolve_fusion_match(
                 dimension_constraints=(),
                 outcomes=tuple(outcomes),
             )
-        shared_dim, pass_phase_bound_names = phase_result
-        phase_bound_names.extend(pass_phase_bound_names)
+        shared_dim = phase_result
 
         if shared_dim == pass_start_dim and bindings == pass_start_bindings:
             break
@@ -1661,18 +1712,20 @@ def resolve_fusion_match(
             )
             return _failed((), "phase_dimension_agreement failed; see the outcome detail above")
 
-    # D6: a name bound on an early fixpoint pass is still in ``phase_bound_names`` when a
-    # later pass re-derives it, so the rendered list is de-duplicated here. Display only:
-    # ``bindings`` itself is a dict and was never able to hold a name twice.
-    unique_bound_names = list(dict.fromkeys(phase_bound_names))
-    # Values come from the record itself (Phase 5 post-closing audit round 19, Task 1
-    # sweep), not from ``bindings[name]``: reading a NODE_PHASE source's own ``bound_here``
-    # ties this detail to what that check actually bound rather than to the separately
-    # threaded ``bindings`` accumulator agreeing with it by the fixpoint's monotonicity
-    # invariant. (That invariant does hold here -- unlike the connecting pair, a phase
-    # binding is only ever recorded once every value in it is concrete, so it always does
-    # reach ``bindings`` -- but this detail should not be the thing that would silently
-    # go wrong first if it ever didn't.)
+    # Round 20, Task 7: both the rendered *names* and their *values* are now read off the
+    # single source this detail claims to describe -- ``record.entries()`` -- rather than
+    # names from one accumulator (the now-deleted ``phase_bound_names``, threaded out of
+    # ``_unify_phase_dims`` across passes) and values from another (``record`` itself). The
+    # two used to agree only because ``Dim.unify``'s current placeholder body binds at most
+    # one symbol per call and a phase binding is only ever recorded once fully concrete --
+    # true today, not a property this rendering step should depend on (see the module
+    # docstring's "Round 20" section, completing round 18's Defect 4 / round 19's Task 1
+    # class: a rendered detail must read every operand it prints off the same record it
+    # claims to describe, including the keys it iterates, not only the values it looks up).
+    # Walked in ``record.entries()``'s own first-derivation order (see that method's
+    # docstring) and de-duplicated with ``dict.fromkeys`` to preserve that order while
+    # dropping a name a later pass re-bound under the same key (D6's original concern,
+    # preserved here even though the accumulator it was patching over is gone).
     phase_bound_values: dict[str, Dim] = {}
     for phase_entry in record.entries():
         if (
@@ -1680,6 +1733,7 @@ def resolve_fusion_match(
             and phase_entry.outcome is ConstraintOutcome.BOUND
         ):
             phase_bound_values.update(phase_entry.bound_here)
+    unique_bound_names = list(dict.fromkeys(phase_bound_values))
     phase_detail = (
         "no phase present on either node"
         if not phase_dims_present

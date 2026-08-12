@@ -22,10 +22,13 @@ import pytest
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram
+from qufzx.diagram.graph import Diagram, NodeId
 from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern
 from qufzx.rewrite.rule import (
     BuildResult,
+    ConstraintOutcome,
+    ConstraintSource,
+    DimensionConstraint,
     Match,
     Quantifiers,
     RewriteGrammarError,
@@ -238,3 +241,64 @@ class TestRuleRejectsSideConditionsDisagreeingWithItsBuilder:
             scalar_introduced=Scalar.one(),
         )
         assert rule.side_conditions == (SideCondition("anything", "unrelated to the builder"),)
+
+
+class TestDimensionConstraintBoundHereInvariant:
+    """Round 20, Task 6: DimensionConstraint.__post_init__ now enforces structurally what its
+    docstring already claimed -- BOUND requires a non-empty bound_here, DEFERRED requires an
+    empty one -- the same way ConstraintSource.__post_init__ already rejects an illegal
+    (kind, reference) combination. Both rejections and both legal combinations are pinned
+    here so a future change cannot silently relax either half of the invariant.
+    """
+
+    def _source(self) -> ConstraintSource:
+        return ConstraintSource.node_phase(NodeId(0))
+
+    def test_bound_with_empty_bound_here_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="BOUND"):
+            DimensionConstraint(
+                assumed=Dim.concrete(2),
+                equal_to=Dim.concrete(2),
+                source=self._source(),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(),
+            )
+
+    def test_deferred_with_non_empty_bound_here_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="DEFERRED"):
+            DimensionConstraint(
+                assumed=Dim.symbol("d"),
+                equal_to=Dim.symbol("e"),
+                source=self._source(),
+                outcome=ConstraintOutcome.DEFERRED,
+                bound_here=(("d", Dim.concrete(2)),),
+            )
+
+    def test_bound_with_non_empty_bound_here_constructs(self) -> None:
+        constraint = DimensionConstraint(
+            assumed=Dim.symbol("d"),
+            equal_to=Dim.concrete(2),
+            source=self._source(),
+            outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", Dim.concrete(2)),),
+        )
+        assert constraint.bound_here == (("d", Dim.concrete(2)),)
+
+    def test_deferred_with_empty_bound_here_constructs(self) -> None:
+        constraint = DimensionConstraint(
+            assumed=Dim.symbol("d"),
+            equal_to=Dim.symbol("e"),
+            source=self._source(),
+            outcome=ConstraintOutcome.DEFERRED,
+        )
+        assert constraint.bound_here == ()
+
+    def test_malformed_bound_here_shape_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError):
+            DimensionConstraint(
+                assumed=Dim.concrete(2),
+                equal_to=Dim.concrete(2),
+                source=self._source(),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", "not a Dim"),),  # type: ignore[arg-type]
+            )

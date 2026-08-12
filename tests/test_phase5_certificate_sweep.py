@@ -361,6 +361,28 @@ def _build_two_node_diagram(
     return diagram, a_id, b_id
 
 
+_MIN_TIE_BACK_ORACLE_COMPARISONS = 2
+"""Floor for ``total_checked`` in :class:`TestOracleTiesBackToRecordedConstraints`, the same
+pattern (and the same purpose) as ``test_fusion_properties.py``'s ``_MIN_ORACLE_COMPARISONS``
+family: without a floor, this arm degenerating to "every case's satisfying/violating
+substitution search comes back infeasible or absent" would still pass on the bare ``> 0``
+check it replaces, silently exercising nothing.
+
+Round 20, Task 11: this arm was previously guarded only by ``total_checked > 0``, with no
+floor at all -- unlike every random-seed property harness in ``test_fusion_properties.py``,
+which each has one. This arm iterates a fully deterministic, fixed cross product (
+``_COLOR_DIRECTION_COMBOS`` x 3 source kinds x ``_DIM_PAIRS``, 36 cases total as of this
+measurement), not a random seed range, so its ``total_checked`` count is exactly
+reproducible rather than merely likely to land near some expected value -- measured directly
+by running the test body's own loop standalone: 36 cases, 3 actually checked (a satisfying
+*and* a violating small-integer assignment both found), 15 recognized as Diophantine-
+infeasible and skipped, the remainder producing no match or no entry of the targeted source
+kind at all. The floor is set to 2, one below that exact measurement, so an incidental
+generator change that removes one checked case does not spuriously fail this floor while an
+arm that stops checking almost everything still does.
+"""
+
+
 class TestOracleTiesBackToRecordedConstraints:
     """The highest-value check this sweep adds: a recorded constraint is load-bearing.
 
@@ -508,7 +530,12 @@ class TestOracleTiesBackToRecordedConstraints:
                     total_checked += 1
 
         assert total_cases > 0
-        assert total_checked > 0, "no case produced both a satisfying and a violating check"
+        assert total_checked >= _MIN_TIE_BACK_ORACLE_COMPARISONS, (
+            f"only {total_checked} case(s) actually produced both a satisfying and a "
+            f"violating check (floor is {_MIN_TIE_BACK_ORACLE_COMPARISONS}, "
+            f"{total_infeasible_skips} skipped as Diophantine-infeasible); this arm may be "
+            "silently degenerating to only ever skipping instead of exercising the oracle"
+        )
         # Every case either got checked or was recognized (and counted) as infeasible/absent
         # -- nothing silently fell through uncounted.
         assert total_checked + total_infeasible_skips <= total_cases * 3
@@ -675,3 +702,42 @@ class TestCertificateDetailFidelity:
                             _assert_dimension_agreement_detail_agrees(match)
                             _assert_phase_dimension_agreement_detail_agrees(match)
         assert total > 0, "the phase detail-fidelity sweep never produced a single fusion match"
+
+    def test_phase_bound_on_both_nodes_with_legs_surviving_on_both_sides_agrees(self) -> None:
+        """Round 20, Task 7: a phase-sourced binding on *each* node, with a surviving leg on
+        *each* side too, is exactly the shape where the deleted ``phase_bound_names``
+        accumulator and ``record`` itself could in principle have disagreed (see
+        ``_unify_phase_dims``'s module-docstring "Round 20" note) -- both nodes contribute a
+        NODE_PHASE entry to ``record``, and a surviving leg on each side means the shared
+        dimension is also being refined by a source ``_unify_phase_dims`` does not itself
+        touch. This does not (and, per that note, could not before the fix either) fail
+        under Phase 5's placeholder ``Dim.unify`` -- it exists so the shape is exercised at
+        all, pinning today's agreement so a future ``Dim.unify`` (Phase 10) that could
+        actually diverge the two collections has a regression test already in place rather
+        than discovering the gap the hard way.
+        """
+        total = 0
+        for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
+            diagram, _a_id, _b_id = _build_two_node_diagram(
+                color=color,
+                dir_a=dir_a,
+                dir_b=dir_b,
+                consumed_dim=Dim.concrete(3),
+                # Surviving legs must themselves unify with shared_dim (seeded from the
+                # consumed pair, concrete(3) here) to produce a match at all -- concrete(3),
+                # not an unrelated value, so this shape actually reaches the phase checks.
+                extra_in_a=(Dim.concrete(3),) if dir_a is Direction.OUTPUT else (),
+                extra_out_a=(Dim.concrete(3),) if dir_a is Direction.INPUT else (),
+                extra_in_b=(Dim.concrete(3),) if dir_b is Direction.OUTPUT else (),
+                extra_out_b=(Dim.concrete(3),) if dir_b is Direction.INPUT else (),
+                phase_a=_D,
+                phase_b=_E,
+            )
+            for match in find_matches(diagram):
+                total += 1
+                _assert_dimension_agreement_detail_agrees(match)
+                _assert_phase_dimension_agreement_detail_agrees(match)
+        assert total > 0, (
+            "the both-nodes-phase-bound-with-surviving-legs shape never produced a fusion "
+            "match"
+        )

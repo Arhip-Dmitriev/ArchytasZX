@@ -167,6 +167,27 @@ reader can inspect rather than a silent gap :func:`~qufzx.rewrite.match.find_mat
 ``dimension_constraints`` only indirectly hinted at. See that field's own docstring, and
 :mod:`qufzx.rewrite.engine`'s module docstring, step 8, for the mechanism.
 
+Round 20, Task 11 -- what judgement call 1 does *not* claim. Firing on a ``DEFERRED`` pair
+records an assumption, but "recorded" and "satisfiable" are different claims, and this
+module does not conflate them. A surviving leg of dimension ``d**2`` forced onto
+``shared_dim = d`` (a legal ``DEFERRED`` unify: ``d`` occurs as a proper subterm of ``d**2``)
+records the constraint ``d**2 == d``, which holds over the positive integers only at ``d =
+1`` -- the rewrite is sound in the narrow sense that it asserts equality under exactly the
+assumption it recorded, and the oracle can confirm that assumption at any concrete
+substitution satisfying it, but Phase 5's placeholder :meth:`~qufzx.algebra.dimension.Dim
+.unify` has no way to tell a recorded constraint that is satisfiable on an interesting
+(infinite, or large) subset of assignments from one that is satisfiable only at such a
+single degenerate point. A ``DEFERRED`` entry in
+:attr:`~qufzx.rewrite.engine.RewriteStep.dimension_constraints` is therefore always an
+assumption a real unifier (Phase 10) must eventually discharge -- not a claim this module
+can itself distinguish as "probably fine" versus "vacuous but technically not FAILURE". No
+machinery is added here to make that distinction: per ``Dim.unify``'s own docstring, that is
+explicitly Phase 10's job, and Phase 5 recording the assumption honestly (rather than
+silently accepting or rejecting based on a guess at its satisfiability) is the whole point of
+recording it as ``DEFERRED`` rather than as a bare pass.
+:class:`~qufzx.rewrite.rule.RewriteStep.dimension_constraints`'s own docstring states the
+identical caveat, so a reader who reaches it from either direction sees the same warning.
+
 Phase 5 judgement call 2, decided (Phase 5 post-closing audit): whether
 ``phase_dimension_agreement``'s pre-fix plain-``Dim``-equality conservatism (never calling
 :meth:`~qufzx.algebra.dimension.Dim.unify`, and additionally requiring two present phases'

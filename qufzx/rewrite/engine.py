@@ -452,6 +452,39 @@ corrupt a rewrite since nothing ever looks it up. Both are harmless-by-construct
 than silently-wrong-by-construction, which is the distinction that makes leaving them
 unchecked a deliberate choice rather than an oversight -- unlike A1/A2/A3, which were all
 silently wrong.
+
+Phase 5 post-closing audit round 20 summary. Two defect classes closed in this module (a
+third, shared with :mod:`qufzx.rewrite.match`, is recorded in that module's own docstring):
+
+* A documented contract drifted out of date against the code it describes, with nothing
+  checking the two stayed in sync. ``apply``'s own docstring (the prose an actual caller
+  reads, as opposed to the module-level validation contract table above, which stayed
+  current) named only 4 of its 11 real raise conditions -- rounds 18 and 19 each added raise
+  sites to the function body without updating it. Closed by rewriting the docstring complete
+  and grouped by error class, each entry naming its step, and by adding
+  ``test_engine.py::TestApplyDocstringMatchesRaiseSites``, which parses ``apply``'s own AST
+  and pins the count of ``RewriteGrammarError``/``RewriteDomainError`` raise sites lexically
+  inside its body -- a future raise site added without a docstring update now fails there,
+  naming the offending line, rather than drifting a third time. The general lesson: a
+  docstring is not "documentation that happens to describe the code" but a claim that needs
+  the same kind of enforcement as any other invariant this module cares about, once it has
+  drifted wrong twice.
+* Redundant work standing in for a correctness property nobody had stated. ``validate(diagram)``
+  and ``validate(working)`` were each called twice -- once for ``.errors`` (step 8's hard-error
+  compare), again for ``.deferred`` (the removed/introduced-deferred-issue compare) -- making
+  ``validate``, the single most expensive operation in ``apply``, run four times for two
+  logical inputs. Hoisted to one call per diagram (``input_report``/``result_report``), which
+  is also a correctness property and not merely a saving: the hard-error and deferred views
+  are now guaranteed to read off the very same validation snapshot of each diagram, rather
+  than two separately-timed (and, after a future concurrent-mutation change, potentially
+  different) re-validations of what is nominally "the same" diagram.
+
+Round 20 also closed a validator/denotation gap this module's own step 8 depends on
+(:mod:`qufzx.diagram.validate` accepting a node with no legs and no phase, which
+:mod:`qufzx.semantics.denote` correctly refuses) -- not a defect in this module, but recorded
+here because step 8 uses ``validate`` as its sole structural postcondition on a rewritten
+diagram, so a gap in what "valid" means is a gap in what step 8 actually guarantees. See
+:mod:`qufzx.diagram.validate`'s module docstring for the fix.
 """
 
 from __future__ import annotations
@@ -495,6 +528,23 @@ class RewriteStep:
     consumed_wires: tuple[Wire, ...]
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...]
+    """Every dimension equality this rewrite assumed rather than verified as a syntactic
+    identity -- see :attr:`~qufzx.rewrite.rule.Match.dimension_constraints` for the recording
+    contract itself (source-keyed, at most one entry per
+    :class:`~qufzx.rewrite.rule.ConstraintSource`).
+
+    Round 20, Task 11: a ``DEFERRED`` entry here is a recorded *assumption*, not a claim that
+    the assumption is satisfiable on anything but a single degenerate point -- e.g. a
+    surviving leg of dimension ``d**2`` forced onto a shared dimension ``d`` records ``d**2
+    == d``, true only at ``d = 1``. The rewrite is sound relative to what it recorded (the
+    oracle can confirm it at any substitution that actually satisfies the assumption), but
+    Phase 5's placeholder :meth:`~qufzx.algebra.dimension.Dim.unify` cannot itself distinguish
+    a constraint satisfiable broadly from one satisfiable only degenerately -- discharging
+    that distinction is explicitly Phase 10's job (see ``Dim.unify``'s own docstring), not
+    something this field or this phase's matcher fabricates a guess at. See
+    :mod:`qufzx.rewrite.rules_library`'s module docstring, "Round 20, Task 11", for the fuller
+    account and the worked example.
+    """
     scalar_introduced: Scalar
     port_mapping: Mapping[PortRef, PortRef]
     new_node_ids: tuple[NodeId, ...]
@@ -789,18 +839,59 @@ def _remap_endpoint(
 def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
-    Never mutates ``diagram`` -- see the module docstring for the full algorithm. Raises
-    :class:`~qufzx.rewrite.rule.RewriteDomainError` if ``match``'s side-condition outcomes
-    do not exactly cover ``rule.side_conditions`` or include a failed one, if the builder's
-    introduced scalar disagrees with ``rule.scalar_introduced``, or if the result carries a
-    hard-failure validation issue kind ``diagram`` did not already carry (step 8). Raises
-    :class:`~qufzx.rewrite.rule.RewriteGrammarError` if the match does not belong to
-    ``diagram`` -- i.e. a consumed wire or node the builder reported is not actually
-    present -- or if ``port_mapping`` collapses both endpoints of a surviving wire onto a
-    single port. Builder-output validation beyond these checks (e.g. a new_node_ids entry
-    naming a pre-existing node, or a builder that itself mutates wires, boundaries, or the
-    scalar) is deliberately deferred to Phase 11, when a second rule gives the generic
-    contract a real consumer.
+    Never mutates ``diagram`` -- see the module docstring for the full algorithm (step
+    numbers below cross-reference that Algorithm section). This list was found, round 20, to
+    have drifted badly out of date against the actual raise sites (it named 4 of the 11 real
+    ones); it is now complete, grouped by error class, and each entry names its step so the
+    two can be cross-checked by eye. A meta-test,
+    ``test_engine.py::TestApplyDocstringMatchesRaiseSites``, parses this function's AST and
+    pins the count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
+    statements lexically inside ``apply``'s own body, so a future raise site added here
+    without a matching docstring update fails loudly instead of drifting again.
+
+    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError`:
+
+    * Step 1: ``match``'s ``side_condition_outcomes`` do not exactly cover
+      ``rule.side_conditions``, or include a failed one
+      (:func:`~qufzx.rewrite.rule.check_side_condition_coverage`).
+    * Step 4: the builder's ``scalar_introduced`` disagrees with ``rule.scalar_introduced``.
+    * Step 5 (raised by :func:`_remap_endpoint`, called from this step; not a literal raise
+      site inside ``apply``'s own body, so not counted by the meta-test above): a wire or
+      boundary entry names a port on a consumed node that is absent from
+      ``build_result.port_mapping`` -- an unmapped surviving port.
+    * Step 8: the result carries a hard-failure validation issue kind ``diagram`` did not
+      already carry, relative to the input (the multiset compare over
+      :func:`_translate_input_issue_key`/:func:`_issue_key`).
+
+    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError`:
+
+    * Step 3: the builder returned a ``BuildResult.diagram`` that is not (by identity) the
+      working diagram it was given.
+    * Step 4: a consumed wire or consumed node the builder reported is not actually present
+      in the working diagram; ``build_result.consumed_node_ids`` names the same node id more
+      than once (Phase 5 round-12 audit, A3); ``build_result.new_node_ids`` names a node id
+      absent from the working diagram, or a ``port_mapping`` value names no real port
+      (existence/in-range checks on both fields, closed together since round 19's Task 4
+      sweep of the same reference-kind class); ``build_result.new_node_ids`` names the same
+      node id more than once (round 19); ``build_result.port_mapping`` is not injective --
+      two or more old ports map to the same new port (Hardening 5, round 18).
+    * Step 5: ``port_mapping`` collapses both endpoints of one surviving wire onto a single
+      port; or, as a postcondition on step 5 as a whole rather than any one wire, the working
+      diagram's wire count after remapping does not equal the expected count (Hardening 6,
+      round 18).
+
+    Builder-output validation beyond these checks is deliberately still deferred to Phase 11,
+    when a second rule gives the generic ``BuildResult`` contract a real second consumer to
+    validate against. As of round 20, what remains deferred (re-scoped from an earlier,
+    now-stale version of this sentence that named checks round 18-19 already closed) is: a
+    builder that mutates ``working``'s wires, boundaries, or scalar directly instead of
+    through the returned ``BuildResult`` fields (undetectable from ``BuildResult`` alone); a
+    ``new_node_ids`` entry naming a node that pre-existed the builder's call rather than one
+    it created (existence is checked; freshness is not); a duplicate entry in
+    ``consumed_wires`` (inert today -- ``working_wire_set`` membership and the frozenset
+    dedup in step 5 make a repeat harmless -- but not rejected as malformed); and an unused
+    key in ``port_mapping`` naming a port no surviving wire or boundary entry actually reads
+    (harmless today, since only values are consumed, but not rejected as extraneous input).
     """
     check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
@@ -1002,13 +1093,24 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     working.multiply_scalar(build_result.scalar_introduced)
 
+    # Round 20, Task 8: validate(diagram) and validate(working) each used to be called twice
+    # -- once for .errors here, again for .deferred below -- making validate, the single most
+    # expensive operation in apply, run four times total for two logical inputs. Hoisted to
+    # one call per diagram; .errors/.deferred are cheap tuple filters over the same
+    # ValidationReport. Also a correctness property, not only a saving: the hard-error and
+    # deferred views below are now guaranteed to read off the very same validation snapshot
+    # of each diagram, so they can never be computed against two differently-timed
+    # (im)possible re-validations of what is nominally "the same" diagram.
+    input_report = validate(diagram)
+    result_report = validate(working)
+
     input_hard_counts = Counter(
         _translate_input_issue_key(
             issue, consumed_node_ids, port_mapping, build_result.new_node_ids
         )
-        for issue in validate(diagram).errors
+        for issue in input_report.errors
     )
-    result_hard_counts = Counter(_issue_key(issue) for issue in validate(working).errors)
+    result_hard_counts = Counter(_issue_key(issue) for issue in result_report.errors)
     introduced_counts = result_hard_counts - input_hard_counts
     if introduced_counts:
         # Name the actual offending (kind, ref) pairs, not merely the set of kinds -- a bare
@@ -1046,10 +1148,10 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             ),
             issue,
         )
-        for issue in validate(diagram).deferred
+        for issue in input_report.deferred
     )
     result_deferred_keyed = tuple(
-        (_issue_key(issue), issue) for issue in validate(working).deferred
+        (_issue_key(issue), issue) for issue in result_report.deferred
     )
     input_deferred_key_counts = Counter(key for key, _issue in input_deferred_keyed)
     result_deferred_key_counts = Counter(key for key, _issue in result_deferred_keyed)

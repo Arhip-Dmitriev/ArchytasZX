@@ -107,7 +107,9 @@ Implemented and under test:
 - **Diagram data model** — ports, nodes, wires, ordered boundaries, exact scalar
   accumulator, deep copy and controlled mutation, a generator registry for the Z and X
   spiders, and validation of per-port dimension agreement, boundary consistency, port
-  usage, and generator policy.
+  usage, and generator policy — including that every node's dimension is determinable at
+  all (a node with no legs and no phase is rejected, matching the numeric oracle's own
+  refusal), so a valid diagram is always denotable.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
@@ -132,9 +134,11 @@ Implemented and under test:
   exactly the shape Phase 5's own worked example needs, oracle-checked end to end
   (source string → diagram → fusion match → post-diagram) against several concrete `d`,
   and pinned structurally to the same hand-built fixture the graph-to-fuse-to-graph tests
-  use. A general spider/wire/bang-box declaration syntax, bang boxes, multi-index families,
-  and the Dirac *printer* (the `Diagram`-to-Dirac direction) remain Phases 18/7/17's work,
-  not this slice's.
+  use. Every exception it raises is a `DiracError` (no foreign exception class escapes),
+  the bound summation index cannot be captured as a dimension symbol, and a tensor-power
+  leg count is bounded against unbounded eager allocation. A general spider/wire/bang-box
+  declaration syntax, bang boxes, multi-index families, and the Dirac *printer* (the
+  `Diagram`-to-Dirac direction) remain Phases 18/7/17's work, not this slice's.
 
 Not yet implemented:
 

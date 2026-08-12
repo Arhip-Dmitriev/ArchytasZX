@@ -70,6 +70,7 @@ from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import EqualityMode, compare
 from qufzx.semantics.contract_numeric import ContractSizeError
+from qufzx.semantics.denote import DenoteError, denote
 
 _LEG_COUNTS = (0, 1, 2)
 _COLORS = (Z_SPIDER, X_SPIDER)
@@ -245,6 +246,27 @@ class TestExhaustiveSpiderFusionOracleSweep:
                             "an exhaustively-constructed, fully concrete diagram must "
                             "always be cleanly contractible"
                         )
+
+                        # Round 20, Task 9: validate(d).is_valid must imply every node in d
+                        # is denotable -- qufzx.diagram.validate's NODE_DIMENSION_UNDETERMINED
+                        # check exists specifically so this holds, rather than resting on one
+                        # builder's (rules_library's) good behaviour never producing the gap.
+                        # Every diagram in this exhaustive space is already asserted valid
+                        # (via _is_cleanly_contractible, above) at fully concrete dimensions,
+                        # so this is the natural place to also confirm denote() never raises
+                        # for a node such a diagram contains -- covering every leg-count x
+                        # phase-presence x colour x d combination this module enumerates, not
+                        # a single hand-picked shape.
+                        for node in diagram.nodes.values():
+                            try:
+                                denote(node)
+                            except DenoteError as exc:  # pragma: no cover - invariant guard
+                                raise AssertionError(
+                                    f"validate(diagram).is_valid but denote() raised for "
+                                    f"node {node.id!r} ({node.generator_type.name}, "
+                                    f"{node.num_inputs} in / {node.num_outputs} out, "
+                                    f"phase={node.phase!r}): {exc}"
+                                ) from exc
 
                         for match in find_matches(diagram):
                             total_matches += 1

@@ -27,9 +27,12 @@ ground truth, not standing alone as a second, independently-trusted diagram buil
 
 from __future__ import annotations
 
+import pytest
+
+import qufzx.repl.parser as parser_module
 from qufzx.algebra.dimension import Dim
 from qufzx.diagram.validate import validate
-from qufzx.repl.parser import DiracDomainError, DiracGrammarError, parse_dirac_source
+from qufzx.repl.parser import DiracDomainError, DiracError, DiracGrammarError, parse_dirac_source
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
@@ -127,3 +130,74 @@ class TestDiracParserGrammar:
         except DiracGrammarError:
             return
         raise AssertionError("ambiguous body+power should have raised DiracGrammarError")
+
+    def test_every_malformed_or_out_of_domain_source_raises_only_dirac_error(self) -> None:
+        """Round 20, Task 1: no foreign exception (e.g. DimensionDomainError) may escape
+        parse_dirac_source. Swept over a table of distinct out-of-domain/malformed sources,
+        not just the one zero-dimension case that originally exposed the leak."""
+        bad_sources = (
+            "sum_{k=0}^{0-1} |k,k>",  # concrete dimension 0
+            "sum_{k=0}^{k-1} |k,k>",  # bound index used as a dimension symbol
+            f"sum_{{k=0}}^{{d-1}} |k>^{{{parser_module._MAX_KET_LEG_COUNT + 1}}}",  # too many legs
+            "sum_{k=0}^{d-1} |k>^{0}",  # zero legs
+            "sum_{k=0}^{d-1} |k,j>",  # grammar error, not domain
+            "not dirac at all",  # grammar error, not domain
+        )
+        for source in bad_sources:
+            try:
+                parse_dirac_source(source)
+            except DiracError as exc:
+                assert isinstance(exc, DiracError), (source, exc)
+                continue
+            raise AssertionError(f"{source!r} should have raised a DiracError")
+
+    def test_dimension_zero_is_a_dirac_domain_error_not_a_foreign_one(self) -> None:
+        try:
+            parse_dirac_source("sum_{k=0}^{0-1} |k,k>")
+        except DiracDomainError:
+            return
+        raise AssertionError("dimension 0 should have raised DiracDomainError")
+
+
+class TestDiracParserSummationIndexCapture:
+    def test_bound_index_as_dimension_is_rejected(self) -> None:
+        try:
+            parse_dirac_source("sum_{k=0}^{k-1} |k,k>")
+        except DiracDomainError:
+            return
+        raise AssertionError("'k' as a dimension symbol should have raised DiracDomainError")
+
+    def test_nearby_identifiers_are_still_accepted(self) -> None:
+        for name in ("k2", "kd"):
+            diagram = parse_dirac_source(f"sum_{{k=0}}^{{{name}-1}} |k,k>")
+            (node,) = diagram.nodes.values()
+            assert node.outputs[0].dim == Dim.symbol(name)
+
+
+class TestDiracParserLegCountBound:
+    def test_leg_count_above_bound_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(parser_module, "_MAX_KET_LEG_COUNT", 4)
+        try:
+            parse_dirac_source("sum_{k=0}^{d-1} |k>^{5}")
+        except DiracDomainError:
+            pass
+        else:
+            raise AssertionError("leg count above the patched bound should have been rejected")
+
+    def test_leg_count_at_bound_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(parser_module, "_MAX_KET_LEG_COUNT", 4)
+        diagram = parse_dirac_source("sum_{k=0}^{d-1} |k>^{4}")
+        (node,) = diagram.nodes.values()
+        assert node.num_outputs == 4
+
+
+class TestDiracParserErrorMessageRendering:
+    def test_body_and_power_message_renders_braces_not_doubled_literals(self) -> None:
+        try:
+            parse_dirac_source("sum_{k=0}^{d-1} |k,k>^{2}")
+        except DiracGrammarError as exc:
+            message = str(exc)
+            assert "{{" not in message and "}}" not in message
+            assert "'|k>^{n}'" in message
+        else:
+            raise AssertionError("expected DiracGrammarError")

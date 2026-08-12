@@ -42,19 +42,80 @@ direction, Phase 17). ``copy`` is a single recognized keyword standing in for th
 specific copy spider the worked example needs, not a general "declare an arbitrary
 generator" mechanism -- Phase 18 is expected to replace it with real declaration syntax,
 at which point this module's grammar is a strict subset of that one.
+
+Phase 5 post-closing audit round 20 closed four defect classes in this module, added in
+round 19 and never previously audited:
+
+* Foreign exception hierarchies escaping this module's boundary (Task 1) -- see
+  :class:`DiracError`'s docstring for the full outbound-call audit and the general question
+  it poses for a future reader. This is the third recurrence of the class: the first was
+  ``rules_library._over_shared_dim`` wrapping ``PhaseDomainError`` into ``RewriteDomainError``,
+  the second was A3's ``GraphGrammarError`` containment in ``engine.apply`` step 6.
+* The bound summation index leaking into a dimension slot as a free symbol (Task 2) --
+  ``_parse_dim`` now rejects :data:`_SUMMATION_INDEX` explicitly.
+* Unbounded eager allocation from a user-supplied tensor-power leg count (Task 3) --
+  bounded by :data:`_MAX_KET_LEG_COUNT`, the same pattern as ``match._MAX_FIXPOINT_PASSES``.
+* A doubled-brace error message rendered literally because a multi-line message was built
+  from an f-prefixed fragment adjacent to a plain (non-f) fragment, and brace-escaping rules
+  differ between the two (Task 4) -- fixed in :func:`_leg_count_from_body`. A repository-wide
+  sweep for the same pattern (an f-fragment and a non-f fragment immediately adjacent, either
+  containing a brace) and for the dual bug (a ``{var}`` placeholder stranded in a non-f
+  fragment, which renders the literal source text instead of a value) found no other live
+  instance: every other adjacent-fragment pair in the repository either has matching f-status
+  on both fragments, or the non-f fragment's braces are deliberately literal text (regex
+  group syntax, or Dirac/set notation quoted for a human reader, e.g. ``'sum_{k=0}^{D-1}'``
+  in this module's own grammar-error messages) rather than a stranded placeholder. The general
+  rule for a future reader: a multi-line message built by implicit string concatenation must
+  keep the same f-prefixing on every fragment, because ``{`` and ``}`` mean different things
+  in an f-fragment (interpolation, escaped by doubling) than in a plain fragment (literal
+  characters) -- mixing the two is *always* worth a second look even when today's instance of
+  the mismatch happens to be harmless.
 """
 
 from __future__ import annotations
 
 import re
 
-from qufzx.algebra.dimension import Dim
+from qufzx.algebra.dimension import Dim, DimensionDomainError
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 
 
 class DiracError(Exception):
-    """Base of every error :func:`parse_dirac_source` can raise."""
+    """Base of every error :func:`parse_dirac_source` can raise.
+
+    This is the same containment discipline :mod:`qufzx.rewrite` maintains for
+    :class:`~qufzx.rewrite.rule.RewriteError`: every exception that reaches a caller of this
+    module is a :class:`DiracError`, never a foreign exception class from a package this
+    module calls into. The general question for a future reader touching this file: does
+    every call this module makes into another package have its foreign exception hierarchy
+    contained at this boundary? As of round 20, the outbound calls and their answers are:
+
+    * ``Dim.concrete`` -- **not safe on its own**; raises
+      :class:`~qufzx.algebra.dimension.DimensionDomainError` for a non-positive integer.
+      :func:`_parse_dim` range-checks the token itself and additionally wraps the call in a
+      defensive ``except DimensionDomainError`` so a future change to ``Dim.concrete``'s own
+      domain cannot reopen this leak (Task 1, round 20; the same recurrence as
+      ``_over_shared_dim`` wrapping ``PhaseDomainError`` in ``rules_library.py`` and A3's
+      ``GraphGrammarError`` containment in ``engine.py`` -- this is the third instance of the
+      class).
+    * ``Dim.symbol`` -- safe. Every name this module ever passes has already matched
+      ``_KET_SUM_RE``'s ``[A-Za-z_]\\w*`` group, which is exactly the identifier shape
+      ``sympy.Symbol`` accepts, and this module always builds it with ``positive=True,
+      integer=True`` (via ``Dim.symbol``'s own construction), which is exactly the assumption
+      pair ``_check_dimension_domain`` requires of a dimension symbol. No input this module's
+      grammar admits can make ``Dim.symbol`` raise.
+    * ``Diagram.add_node`` -- safe; per its own docstring it never raises (leg-policy,
+      dimension-policy, and phase-schema conformance are :mod:`qufzx.diagram.validate`'s
+      job, not construction-time).
+    * ``Diagram.add_wire`` -- safe as used here; it raises ``GraphDomainError`` only for
+      ``a == b``, and every wire this module builds connects two distinct, freshly allocated
+      ports on different nodes.
+    * ``Diagram.set_boundary_outputs`` -- safe; it never raises.
+    * ``int(token)`` -- safe as used here; every call site first confirms the token matches
+      ``\\d+`` (either ``token.isdigit()`` in :func:`_parse_dim`, or the regex's own
+      ``(?P<power>\\d+)`` group), so ``int()`` cannot raise ``ValueError``.
+    """
 
 
 class DiracGrammarError(DiracError):
@@ -63,12 +124,26 @@ class DiracGrammarError(DiracError):
 
 class DiracDomainError(DiracError):
     """The source text parses, but names a value outside what this slice accepts (e.g. a
-    zero leg count)."""
+    zero leg count, a dimension of 0, the bound summation index used as a dimension symbol,
+    or a leg count above :data:`_MAX_KET_LEG_COUNT`)."""
 
+
+_SUMMATION_INDEX = "k"
+"""The (only) bound summation variable this slice's grammar recognizes. A single module-level
+constant so the regex (:data:`_KET_SUM_RE`) and the dimension-symbol exclusion in
+:func:`_parse_dim` are derived from the same source and cannot drift apart (Task 2, round 20)."""
+
+_MAX_KET_LEG_COUNT = 1024
+"""Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit -- nothing
+about ZX-calculus or this project caps a spider's leg count, and a large or symbolic ``n`` is
+Phase 7's bang boxes' answer, not this slice's. This bound exists only so a single malformed or
+adversarial source string cannot force this parser to eagerly allocate an unbounded number of
+ports before any later phase gets a chance to reject the diagram. Same role and shape as
+``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match` (Task 3, round 20)."""
 
 _KET_SUM_RE = re.compile(
-    r"^sum_\{k=0\}\^\{(?P<dim>[A-Za-z_]\w*|\d+)-1\}\s*"
-    r"\|(?P<body>[^>]*)>"
+    rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>[A-Za-z_]\w*|\d+)-1\}}\s*"
+    rf"\|(?P<body>[^>]*)>"
     r"(?:\^\{(?:\\otimes|⊗)?\s*(?P<power>\d+)\s*\})?$"
 )
 """Matches ``sum_{k=0}^{D-1} |BODY>`` with an optional ``^{n}`` (or ``^{\\otimes n}``/
@@ -93,7 +168,7 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
         if stripped != "k":
             raise DiracGrammarError(
                 f"ket body {body!r} combined with a tensor-power suffix ^{{{power}}} is "
-                "ambiguous: use either '|k>^{{n}}' or '|k,k,...>', not both"
+                f"ambiguous: use either '|k>^{{n}}' or '|k,k,...>', not both"
             )
         leg_count = int(power)
     else:
@@ -102,13 +177,41 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
         raise DiracDomainError(
             f"ket family declares {leg_count} output legs; at least 1 is required"
         )
+    if leg_count > _MAX_KET_LEG_COUNT:
+        raise DiracDomainError(
+            f"ket family declares {leg_count} output legs, above this parser's sanity bound "
+            f"of {_MAX_KET_LEG_COUNT} (see _MAX_KET_LEG_COUNT's docstring)"
+        )
     return leg_count
 
 
 def _parse_dim(token: str) -> Dim:
-    """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``."""
+    """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``.
+
+    Raises :class:`DiracDomainError` for a concrete value below 1, and for the bound
+    summation index (:data:`_SUMMATION_INDEX`) used as a dimension symbol -- the index is
+    bound by the enclosing sum, so a dimension named after it is always a capture error: a
+    later ``substitute`` on the returned ``Dim`` would bind that symbol independently of the
+    sum it lexically came from, silently detaching the dimension from its own index.
+    """
     if token.isdigit():
-        return Dim.concrete(int(token))
+        value = int(token)
+        if value < 1:
+            raise DiracDomainError(
+                f"dimension token {token!r} names {value}, but a concrete dimension must "
+                "be >= 1"
+            )
+        try:
+            return Dim.concrete(value)
+        except DimensionDomainError as exc:
+            raise DiracDomainError(
+                f"dimension token {token!r} is outside Dim's domain: {exc}"
+            ) from exc
+    if token == _SUMMATION_INDEX:
+        raise DiracDomainError(
+            f"dimension token {token!r} is the bound summation index; a dimension symbol "
+            "must be free, not the variable the enclosing sum binds"
+        )
     return Dim.symbol(token)
 
 

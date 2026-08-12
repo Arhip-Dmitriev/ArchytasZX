@@ -218,6 +218,48 @@ class TestGeneratorPolicyConformance:
         )
 
 
+class TestNodeDimensionUndetermined:
+    """Round 20, Task 9: a node with zero legs and no phase carries its dimension nowhere at
+    all (per CLAUDE.md, "dimension is stored per port, not as one global parameter"), so it
+    is not well-formed -- yet this module used to accept it as valid, while
+    :mod:`qufzx.semantics.denote` correctly refused it. The invariant this closes:
+    ``validate(d).is_valid`` implies every node in ``d`` is denotable (see
+    ``tests/test_phase5_exhaustive_oracle.py``'s exhaustive sweep, which now checks this
+    over its whole space, and ``denote.py``'s own "has no legs and no phase vector" message,
+    which this issue's message deliberately echoes).
+    """
+
+    def test_legless_phaseless_node_is_a_hard_error(self) -> None:
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[])
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(
+            issue.kind is IssueKind.NODE_DIMENSION_UNDETERMINED
+            and issue.node_id == node_id
+            and not issue.deferred
+            for issue in report.errors
+        )
+
+    def test_legless_node_with_a_phase_is_not_flagged(self) -> None:
+        diagram = Diagram()
+        diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[], phase=PhaseVector(Dim.concrete(2), {})
+        )
+        report = validate(diagram)
+        assert not any(
+            issue.kind is IssueKind.NODE_DIMENSION_UNDETERMINED for issue in report.issues
+        )
+
+    def test_node_with_a_leg_and_no_phase_is_not_flagged(self) -> None:
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        report = validate(diagram)
+        assert not any(
+            issue.kind is IssueKind.NODE_DIMENSION_UNDETERMINED for issue in report.issues
+        )
+
+
 class TestDanglingPorts:
     def test_dangling_output_port(self) -> None:
         diagram, a_id, _b = build_ghz_with_copy(Dim.concrete(2))

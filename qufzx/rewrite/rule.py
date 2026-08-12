@@ -288,6 +288,41 @@ class DimensionConstraint:
     outcome: ConstraintOutcome
     bound_here: tuple[tuple[str, Dim], ...] = ()
 
+    def __post_init__(self) -> None:
+        """Enforce ``bound_here``'s own documented invariant structurally.
+
+        Round 20, Task 6 (Phase 5 post-closing audit round 18's Defect 3 class: a guard whose
+        correctness argument is asserted rather than structural): this docstring already said
+        ``bound_here`` is "required (non-empty) when outcome is BOUND, omitted (empty)
+        otherwise", but nothing checked it -- :class:`ConstraintSource.__post_init__` rejects
+        an illegal ``(kind, reference)`` combination the same way, right next to this one, and
+        this field deserved the identical treatment rather than resting on every caller
+        happening to get it right. Also validates the field's shape (a tuple of ``(str,
+        Dim)`` pairs), since a malformed ``bound_here`` is exactly as unchecked as an
+        empty/non-empty mismatch would have been.
+        """
+        if self.outcome is ConstraintOutcome.BOUND and not self.bound_here:
+            raise RewriteGrammarError(
+                f"DimensionConstraint with outcome=BOUND must carry a non-empty "
+                f"bound_here, got {self.bound_here!r}"
+            )
+        if self.outcome is ConstraintOutcome.DEFERRED and self.bound_here:
+            raise RewriteGrammarError(
+                f"DimensionConstraint with outcome=DEFERRED must carry an empty "
+                f"bound_here, got {self.bound_here!r}"
+            )
+        if not isinstance(self.bound_here, tuple) or not all(
+            isinstance(entry, tuple)
+            and len(entry) == 2
+            and isinstance(entry[0], str)
+            and isinstance(entry[1], Dim)
+            for entry in self.bound_here
+        ):
+            raise RewriteGrammarError(
+                f"DimensionConstraint.bound_here must be a tuple of (str, Dim) pairs, "
+                f"got {self.bound_here!r}"
+            )
+
     @property
     def deferred(self) -> bool:
         """True iff ``unify`` could not decide this equality (as opposed to binding for it)."""

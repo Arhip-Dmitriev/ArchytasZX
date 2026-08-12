@@ -1311,6 +1311,13 @@ class TestForeignFusionMatchArm:
                 equal_to=Dim.concrete(3),
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                # Round 20, Task 6: DimensionConstraint.__post_init__ now structurally
+                # requires a non-empty bound_here for a BOUND outcome (this fixture
+                # previously relied on the unenforced invariant, constructing a BOUND entry
+                # with none). This binding is itself nonsensical (2 == 3 binds nothing real)
+                # -- fine, since the whole point of this fixture is that it is fabricated and
+                # must be rejected regardless of its content.
+                bound_here=(("d", Dim.concrete(3)),),
             )
             corrupted = dataclasses.replace(
                 match,
