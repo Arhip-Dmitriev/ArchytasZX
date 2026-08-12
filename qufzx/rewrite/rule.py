@@ -268,12 +268,25 @@ class DimensionConstraint:
     ``equal_to`` is the candidate's shared dimension as of that check. For
     ``CONNECTING_PAIR``, both are raw leg dims -- see
     :attr:`ConstraintSourceKind.CONNECTING_PAIR`.
+
+    ``bound_here`` is exactly what *this* check's own ``Dim.unify`` call bound -- empty for
+    a ``DEFERRED`` outcome, and for ``BOUND`` the raw ``UnifyResult.bindings`` that check
+    produced, name-sorted. It may include a binding to a non-concrete ``Dim`` (e.g. ``d :=
+    e``): unlike the running ``bindings`` accumulator (which never holds a non-concrete
+    binding at all -- see :mod:`qufzx.rewrite.match`'s module docstring, "Non-concrete
+    bindings"), this field is a record of what one specific check bound, not an input to
+    later resolution, so it has no reason to drop the non-concrete case. A human-readable
+    detail string must read the "what did this check bind" question off this field, never
+    by re-deriving it from symbol occurrence in ``assumed``/``equal_to`` intersected against
+    some other check's bindings (Phase 5 post-closing audit round 19, Defect 4 continued --
+    see :func:`~qufzx.rewrite.match._connecting_pair_detail`).
     """
 
     assumed: Dim
     equal_to: Dim
     source: ConstraintSource
     outcome: ConstraintOutcome
+    bound_here: tuple[tuple[str, Dim], ...] = ()
 
     @property
     def deferred(self) -> bool:

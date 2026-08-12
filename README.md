@@ -119,13 +119,22 @@ Implemented and under test:
   builder rather than trusted from the match. Dimension assumptions the matcher could not
   verify as a syntactic identity are recorded as a source-keyed `DimensionConstraint` (one
   entry per connecting-wire pair, surviving leg, or node phase, replaced in place across a
-  fixpoint pass rather than re-appended), and a rewrite's effect on pre-existing deferred
-  dimension assumptions is recorded symmetrically — both which ones it resolved
-  (`removed_deferred_issues`) and which new ones it introduced
-  (`introduced_deferred_issues`). Graph-to-fuse-to-graph is oracle-checked exactly,
-  including at substitutions where a recorded constraint only holds by assumption (not
-  merely the cleanly-contractible case); Dirac-in/Dirac-out is not — there is no Dirac
-  parser or printer yet (Phases 18 and 17 respectively).
+  fixpoint pass rather than re-appended, and carrying the exact binding the check that
+  recorded it produced — never re-derived from a later, possibly-diverged state), and a
+  rewrite's effect on pre-existing deferred dimension assumptions is recorded symmetrically
+  — both which ones it resolved (`removed_deferred_issues`) and which new ones it
+  introduced (`introduced_deferred_issues`). Graph-to-fuse-to-graph is oracle-checked
+  exactly, including at substitutions where a recorded constraint only holds by assumption
+  (not merely the cleanly-contractible case).
+- **Dirac parsing (Phase 5 slice only)** — `qufzx/repl/parser.py` parses one restricted
+  form, a summed ket family `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power
+  shorthand) optionally followed by `; copy` to feed the state into a fixed copy spider —
+  exactly the shape Phase 5's own worked example needs, oracle-checked end to end
+  (source string → diagram → fusion match → post-diagram) against several concrete `d`,
+  and pinned structurally to the same hand-built fixture the graph-to-fuse-to-graph tests
+  use. A general spider/wire/bang-box declaration syntax, bang boxes, multi-index families,
+  and the Dirac *printer* (the `Diagram`-to-Dirac direction) remain Phases 18/7/17's work,
+  not this slice's.
 
 Not yet implemented:
 
@@ -133,7 +142,8 @@ certificates and replayable derivations · bang boxes and free `n` · induction 
 multiplicities · symbolic contraction with `d` formal · the character-sum simplifier ·
 mixed dimensions and the full qufinite generator set · the broader rule library and
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
-saturation · tactics and proof search · scalable notation · the entire REPL.
+saturation · tactics and proof search · scalable notation · a Dirac printer and the general
+REPL declaration syntax/bang-box grammar.
 
 ## References (Highly Incomplete List)
 

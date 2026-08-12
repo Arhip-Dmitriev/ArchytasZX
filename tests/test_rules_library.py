@@ -228,6 +228,7 @@ class TestPhaseDimensionAgreementJudgementCall2:
             equal_to=d,
             source=ConstraintSource.node_phase(b_id),
             outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", Dim.concrete(3)),),
         ) in matches[0].dimension_constraints
 
         result = apply(diagram, SPIDER_FUSION, matches[0])

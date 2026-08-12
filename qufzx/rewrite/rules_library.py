@@ -352,9 +352,16 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         raise RewriteGrammarError(
             f"spider_fusion requires a FusionMatch, got {type(match).__name__}"
         )
-    check_side_condition_coverage(
-        match, spider_fusion_builder.side_conditions, "spider_fusion"  # type: ignore[attr-defined]
-    )
+    # Reads the module-level FUSION_SIDE_CONDITIONS constant directly, not
+    # spider_fusion_builder.side_conditions (Phase 5 post-closing audit round 19, Task 4):
+    # the latter is a self-reference to this function's own global name from inside its own
+    # body, which breaks under any rename/wrap of spider_fusion_builder that does not also
+    # update this call site -- a class of brittleness worth closing structurally rather
+    # than accepting. The function-object attribute itself is kept (see its own docstring,
+    # just below the function) purely for Rule.__post_init__'s constructor-time consistency
+    # check, which is a plain module-level assignment, not a self-reference, and so does
+    # not share this fragility.
+    check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, "spider_fusion")
 
     resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
     if not resolution.passed:
@@ -455,15 +462,18 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
 
 spider_fusion_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
-"""The single declared side-condition tuple this builder checks coverage against.
+"""The single declared side-condition tuple this builder is meant to be paired with.
 
-Set on the function object itself (rather than reading the module-level
-``FUSION_SIDE_CONDITIONS`` constant directly inside the function body, which would make
-this attribute purely decorative) so :class:`~qufzx.rewrite.rule.Rule`'s constructor-time
+Set on the function object itself so :class:`~qufzx.rewrite.rule.Rule`'s constructor-time
 consistency check can compare it against whatever ``side_conditions`` a ``Rule`` wrapping
 this builder declares -- see that check's docstring and A5 in the Phase 5 round-12 audit
 brief: two contradicting tuples for the same builder must be impossible to construct, not
-merely undocumented.
+merely undocumented. This is its only reader: :func:`spider_fusion_builder`'s own body
+checks coverage against the module-level ``FUSION_SIDE_CONDITIONS`` constant directly
+(Phase 5 post-closing audit round 19), not this attribute, so a rename of
+``spider_fusion_builder`` cannot silently desync the runtime check from this one -- only
+``Rule.__post_init__``'s already-enforced construction-time comparison depends on this
+attribute now.
 """
 
 

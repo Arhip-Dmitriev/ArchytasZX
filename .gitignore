@@ -21,6 +21,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+*.code-workspace
 
 claude.md
 CLAUDE.md

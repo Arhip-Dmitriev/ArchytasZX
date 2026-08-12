@@ -491,6 +491,43 @@ not merely which three instances were fixed:
   all). The general question for any future detail string in this package: is it derived
   from the same record its own docstring says it describes, or from some other collection
   that happens to usually agree with that record?
+
+Phase 5 post-closing audit round 19 summary. Round 18's Defect 4 fix routed only the
+``outcome`` discriminator through :class:`_ConstraintRecord`; ``assumed``/``equal_to`` and
+the "bound to what" clause were still recomputed from final state and from
+``free_symbols & bindings.keys()`` respectively -- the identical class of bug, still open in
+the same function its own round-18 fix docstring named. Closed by giving
+:class:`~qufzx.rewrite.rule.DimensionConstraint` a ``bound_here`` field (the raw
+``UnifyResult.bindings`` the recording check actually produced) so every detail string in
+this module (:func:`_connecting_pair_detail` and the passing ``phase_dimension_agreement``
+"assuming ..." clause, both audited; ``phase_detail``, ``direction_detail``, and
+``same_type_detail`` were also checked and derive from a single fresh computation each, not
+from a record a later step could disagree with) reads its operands and bindings directly off
+a :class:`DimensionConstraint` entry, never recomputes or symbol-matches them. A fifth class,
+this round's own meta-lesson: a regression test written at the shape that produced the bug
+rather than across the domain the fix's docstring claims to cover. Round 18's own
+regression test for Defect 4
+(``tests/test_match.py::TestDimensionConstraintsRecording::test_non_concrete_binding_detail_says_something_was_assumed``)
+used the one pair shape (no surviving legs at either node) where recomputation from final
+state coincidentally agrees with the record -- which is exactly why the recurrence went
+undetected for a whole round.
+``tests/test_phase5_certificate_sweep.py::TestCertificateDetailFidelity`` is the
+sweep, over a six-member concrete/symbolic/product/power palette crossed with consumed and
+surviving legs on both sides, that should have existed from the start. Two smaller items
+noted but not filed as defects in round 18 were also resolved this round:
+:func:`~qufzx.rewrite.rules_library.spider_fusion_builder` no longer reads its own
+``side_conditions`` back off its own function-object attribute from inside its own body (a
+rename-fragile self-reference; it now reads the module-level ``FUSION_SIDE_CONDITIONS``
+constant directly, leaving the attribute solely for :class:`~qufzx.rewrite.rule.Rule`'s
+construction-time consistency check), and :func:`_verify_fixpoint_closure`'s call-site
+failure message now names the specific convergence path it is unreachable on, rather than
+citing the termination guarantee unqualified. Class 2 (a structurally identical reference
+kind left unvalidated) was found once more, in :mod:`qufzx.rewrite.engine` rather than this
+module: ``consumed_node_ids`` has had a duplicate-entry check since Phase 5's round-12 audit
+(A3), but ``new_node_ids`` -- the same shape of field, reported by the same builder about
+the same rewrite -- never did, and was not even listed as a deliberately-open row the way
+``consumed_wires`` duplicates and unused ``port_mapping`` keys are in that module's own
+``BuildResult``-field table. Closed there; see that module's docstring table.
 """
 
 from __future__ import annotations
@@ -704,7 +741,14 @@ class _ConstraintRecord:
     leg/phase fixpoint re-checks the same source once per pass, and each re-check
     :meth:`record`\\ s over the previous entry *in place* (a ``dict`` assignment to an
     existing key keeps that key's original position), so the finished sequence is in
-    first-derivation order and holds every source's most-resolved statement of itself.
+    first-derivation order. What "most-resolved" means differs by outcome, deliberately (see
+    :meth:`record_identity` just below for why): a ``DEFERRED`` entry is genuinely replaced
+    or discharged by a later pass's re-check, so it does hold that source's most-resolved
+    statement; a ``BOUND`` entry is pinned at the pass that made the binding and is never
+    displaced by a later pass's bare-identity re-check of the same source, because the
+    binding *is* the assumption -- a later identity holds only because that binding was
+    made, and restating it as an unqualified identity would erase the very assumption that
+    makes it hold.
 
     :meth:`record_identity` is the third possible re-check outcome -- the source came back a
     bare syntactic identity this pass. It drops a previously recorded ``DEFERRED`` entry (the
@@ -722,11 +766,25 @@ class _ConstraintRecord:
         self._entries: dict[ConstraintSource, DimensionConstraint] = {}
 
     def record(
-        self, source: ConstraintSource, assumed: Dim, equal_to: Dim, outcome: ConstraintOutcome
+        self,
+        source: ConstraintSource,
+        assumed: Dim,
+        equal_to: Dim,
+        outcome: ConstraintOutcome,
+        bound_here: Mapping[str, Dim] | None = None,
     ) -> None:
-        """Record (or re-record, in place) ``source``'s assumed equality."""
+        """Record (or re-record, in place) ``source``'s assumed equality.
+
+        ``bound_here`` is the raw ``UnifyResult.bindings`` this specific check produced --
+        required (non-empty) when ``outcome`` is ``BOUND``, omitted (empty) otherwise. See
+        :attr:`~qufzx.rewrite.rule.DimensionConstraint.bound_here`.
+        """
         self._entries[source] = DimensionConstraint(
-            assumed=assumed, equal_to=equal_to, source=source, outcome=outcome
+            assumed=assumed,
+            equal_to=equal_to,
+            source=source,
+            outcome=outcome,
+            bound_here=tuple(sorted((bound_here or {}).items())),
         )
 
     def record_identity(self, source: ConstraintSource) -> None:
@@ -808,14 +866,17 @@ def _unify_surviving_legs(
             result = leg_dim.unify(shared_dim)
             if result.is_failure:
                 return None
-            bound_here = result.is_success and bool(result.bindings)
+            bound_this_pass = result.is_success and bool(result.bindings)
             if result.is_deferred:
                 record.record(source, leg_dim, shared_dim, ConstraintOutcome.DEFERRED)
-            elif bound_here:
-                record.record(source, leg_dim, shared_dim, ConstraintOutcome.BOUND)
+            elif bound_this_pass:
+                record.record(
+                    source, leg_dim, shared_dim, ConstraintOutcome.BOUND,
+                    bound_here=result.bindings,
+                )
             else:
                 record.record_identity(source)
-            if bound_here:
+            if bound_this_pass:
                 if not _merge_bindings(bindings, result.bindings):
                     return None
                 shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
@@ -866,7 +927,10 @@ def _unify_phase_dims(
             continue
         if not all(value.is_concrete for value in phase_unify.bindings.values()):
             return None
-        record.record(source, phase_dim, shared_dim, ConstraintOutcome.BOUND)
+        record.record(
+            source, phase_dim, shared_dim, ConstraintOutcome.BOUND,
+            bound_here=phase_unify.bindings,
+        )
         new_concrete = dict(phase_unify.bindings)
         if not _merge_bindings(bindings, new_concrete):
             return None
@@ -906,14 +970,17 @@ def _unify_connecting_pair(
     if result.is_failure:
         return None
     source = ConstraintSource.connecting_pair()
-    bound_here = result.is_success and bool(result.bindings)
+    bound_this_pass = result.is_success and bool(result.bindings)
     if result.is_deferred:
         record.record(source, resolved_a, resolved_b, ConstraintOutcome.DEFERRED)
-    elif bound_here:
-        record.record(source, resolved_a, resolved_b, ConstraintOutcome.BOUND)
+    elif bound_this_pass:
+        record.record(
+            source, resolved_a, resolved_b, ConstraintOutcome.BOUND,
+            bound_here=result.bindings,
+        )
     else:
         record.record_identity(source)
-    if bound_here:
+    if bound_this_pass:
         if not _merge_bindings(bindings, result.bindings):
             return None
         shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
@@ -996,36 +1063,35 @@ def _connecting_pair_detail(
     the fixpoint itself has finished -- reading it off the first pass alone, as the pre-fix
     code did, could contradict the finished ``dimension_constraints`` it sits beside in the
     certificate.
+
+    Every operand and binding rendered below is read directly off ``entry`` -- the same
+    :class:`~qufzx.rewrite.rule.DimensionConstraint` ``dimension_constraints`` itself is
+    built from -- never recomputed against the final ``port_a_dim``/``port_b_dim``/
+    ``bindings`` state (Phase 5 post-closing audit round 19, Defect 4 continued). Recomputing
+    was the round-18 fix's own residual bug: this pass's ``resolved_a == resolved_b`` need
+    not equal ``entry.assumed == entry.equal_to`` (a surviving leg elsewhere can concretize
+    both sides *after* the connecting pair's own check ran), and a symbol-occurrence
+    intersection against ``bindings`` can attribute a binding some other check made to this
+    entry, or drop a real one that never reached ``bindings`` because it was non-concrete.
+    ``port_a_dim``/``port_b_dim``/``bindings`` are used for exactly one case: no entry was
+    ever recorded at all, which only happens when the pair was a bare identity on every pass
+    -- there ``resolved_a`` and ``resolved_b`` are trivially equal, so there is no second
+    source of truth to diverge from.
     """
-    resolved_a = _resolve_with_bindings(port_a_dim, bindings)
-    resolved_b = _resolve_with_bindings(port_b_dim, bindings)
     entry = record.entry_for(ConstraintSource.connecting_pair())
     if entry is None:
+        resolved_a = _resolve_with_bindings(port_a_dim, bindings)
+        resolved_b = _resolve_with_bindings(port_b_dim, bindings)
         return f"{resolved_a} == {resolved_b}"
     if entry.outcome is ConstraintOutcome.DEFERRED:
-        return f"{resolved_a} == {resolved_b} (deferred, assumed)"
-    # entry.outcome is BOUND (Defect 4, Phase 5 post-closing audit round 18): derive the
-    # "bound to what" clause from the record entry itself -- the same single source of
-    # truth ``dimension_constraints`` reads from -- not from intersecting the raw legs'
-    # free symbols with ``bindings``. ``bindings`` (by design; see the module docstring,
-    # "Non-concrete bindings") never holds a binding to a non-concrete Dim at all --
-    # ``_merge_bindings`` filters those out before they ever reach this dict -- so a
-    # connecting pair recorded BOUND via, e.g., ``d := e`` (unify binding one symbol to
-    # another still-symbolic Dim) has no entry in ``bindings.keys()`` for either symbol.
-    # Before this fix, ``relevant_names`` was then empty and this function silently fell
-    # back to a bare "d == e" with no indication anything was assumed at all, even though
-    # ``entry.outcome`` -- and ``dimension_constraints`` beside it on the certificate --
-    # correctly recorded BOUND. The machine-readable record was always right; only this
-    # human-readable detail string, derived from a different (and, for this outcome,
-    # incomplete) source, was wrong.
-    relevant_names = sorted(
-        (port_a_dim.free_symbols | port_b_dim.free_symbols) & bindings.keys()
-    )
-    if relevant_names:
-        binding_desc = ", ".join(f"{name} := {bindings[name]}" for name in relevant_names)
-        return f"{resolved_a} == {resolved_b} (bound: {binding_desc})"
+        return f"{entry.assumed} == {entry.equal_to} (deferred, assumed)"
+    # entry.outcome is BOUND: render exactly what this check's own unify bound
+    # (entry.bound_here), not a value looked up by symbol coincidence.
+    if entry.bound_here and all(value.is_concrete for _, value in entry.bound_here):
+        binding_desc = ", ".join(f"{name} := {value}" for name, value in entry.bound_here)
+        return f"{entry.assumed} == {entry.equal_to} (bound: {binding_desc})"
     return (
-        f"{resolved_a} == {resolved_b} (bound to a non-concrete Dim; left unused for "
+        f"{entry.assumed} == {entry.equal_to} (bound to a non-concrete Dim; left unused for "
         "shared-dimension resolution, see the module docstring's 'Non-concrete bindings')"
     )
 
@@ -1552,9 +1618,10 @@ def resolve_fusion_match(
             ("dimension_agreement", "phase_dimension_agreement"),
             "post-loop closure check failed: a resolved leg, phase, or the connecting pair "
             "does not unify with the final shared_dim under the final bindings -- see "
-            "_verify_fixpoint_closure; this is unreachable given the fixpoint's own "
-            "termination guarantee and is checked anyway as a structural guard, not a "
-            "property left to tests alone",
+            "_verify_fixpoint_closure; this is unreachable on the convergence path this "
+            "call site is reached from (a phase failure or budget exhaustion both return "
+            "before reaching here) given the fixpoint's own termination guarantee, and is "
+            "checked anyway as a structural guard, not a property left to tests alone",
         )
 
     outcomes.append(
@@ -1598,6 +1665,21 @@ def resolve_fusion_match(
     # later pass re-derives it, so the rendered list is de-duplicated here. Display only:
     # ``bindings`` itself is a dict and was never able to hold a name twice.
     unique_bound_names = list(dict.fromkeys(phase_bound_names))
+    # Values come from the record itself (Phase 5 post-closing audit round 19, Task 1
+    # sweep), not from ``bindings[name]``: reading a NODE_PHASE source's own ``bound_here``
+    # ties this detail to what that check actually bound rather than to the separately
+    # threaded ``bindings`` accumulator agreeing with it by the fixpoint's monotonicity
+    # invariant. (That invariant does hold here -- unlike the connecting pair, a phase
+    # binding is only ever recorded once every value in it is concrete, so it always does
+    # reach ``bindings`` -- but this detail should not be the thing that would silently
+    # go wrong first if it ever didn't.)
+    phase_bound_values: dict[str, Dim] = {}
+    for phase_entry in record.entries():
+        if (
+            phase_entry.source.kind is ConstraintSourceKind.NODE_PHASE
+            and phase_entry.outcome is ConstraintOutcome.BOUND
+        ):
+            phase_bound_values.update(phase_entry.bound_here)
     phase_detail = (
         "no phase present on either node"
         if not phase_dims_present
@@ -1606,7 +1688,9 @@ def resolve_fusion_match(
             f"{shared_dim}"
             + (
                 "; assuming "
-                + ", ".join(f"{name} := {bindings[name]}" for name in unique_bound_names)
+                + ", ".join(
+                    f"{name} := {phase_bound_values[name]}" for name in unique_bound_names
+                )
                 if unique_bound_names
                 else ""
             )

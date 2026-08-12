@@ -49,6 +49,21 @@ Two sweeps, deliberately split by cost:
   load-bearing, not decorative. A case where no small satisfying substitution exists (e.g. the
   Diophantine-infeasible ``concrete(2) == d**2``) is skipped for the tie-back half only, not
   silently counted as passing; the structural properties above still cover it.
+* :class:`TestCertificateDetailFidelity` (Phase 5 post-closing audit round 19, Task 1) --
+  cheap, like the structural sweep. Exhaustively checks that every human-readable
+  ``SideConditionOutcome.detail`` string derived from ``dimension_constraints`` (the
+  ``dimension_agreement`` outcome's connecting-pair clause and leg count, and the passing
+  ``phase_dimension_agreement`` outcome's "assuming ..." clause) states exactly the same
+  operands, in the same order, and names exactly the bindings, as the
+  :class:`~qufzx.rewrite.rule.DimensionConstraint` record entry it describes -- never a
+  value recomputed from final state or attributed by symbol-occurrence coincidence. This is
+  the class of defect Defect 4 (round 18) and its round-19 recurrence both belonged to (see
+  :func:`~qufzx.rewrite.match._connecting_pair_detail`'s docstring); round 18's own
+  regression test for it (``test_match.py::TestDimensionConstraintsRecording::
+  test_non_concrete_binding_detail_says_something_was_assumed``) missed the recurrence
+  because it was written at the one shape that produced the original bug rather than across
+  the space the fix's docstring claimed to cover -- this class is the sweep that shape
+  should have been from the start.
 """
 
 from __future__ import annotations
@@ -65,7 +80,7 @@ from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rule import ConstraintSourceKind, DimensionConstraint
+from qufzx.rewrite.rule import ConstraintOutcome, ConstraintSourceKind, DimensionConstraint
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import EqualityMode, compare
 from qufzx.semantics.contract_numeric import ContractDomainError
@@ -280,6 +295,7 @@ def _build_two_node_diagram(
     dir_a: Direction,
     dir_b: Direction,
     consumed_dim: Dim,
+    consumed_dim_b: Dim | None = None,
     extra_in_a: tuple[Dim, ...] = (),
     extra_out_a: tuple[Dim, ...] = (),
     extra_in_b: tuple[Dim, ...] = (),
@@ -289,8 +305,12 @@ def _build_two_node_diagram(
 ) -> tuple[Diagram, int, int]:
     """A two-node diagram with the consumed wire at (``dir_a``, ``dir_b``) and the given
     extra (surviving) legs and phases. The consumed leg is always the first leg on its own
-    (node, direction)."""
+    (node, direction). ``consumed_dim`` is A's own consumed-leg ``Dim``; B's is the same
+    value unless ``consumed_dim_b`` is given separately -- most callers want the two legs to
+    already agree (a bare identity), but :class:`TestCertificateDetailFidelity` needs them
+    genuinely independent to produce a real ``CONNECTING_PAIR`` constraint."""
     diagram = Diagram()
+    consumed_dim_b = consumed_dim if consumed_dim_b is None else consumed_dim_b
 
     in_dims_a = [consumed_dim, *extra_in_a] if dir_a is Direction.INPUT else list(extra_in_a)
     out_dims_a = (
@@ -303,9 +323,11 @@ def _build_two_node_diagram(
         color, input_dims=in_dims_a, output_dims=out_dims_a, phase=phase_vector_a
     )
 
-    in_dims_b = [consumed_dim, *extra_in_b] if dir_b is Direction.INPUT else list(extra_in_b)
+    in_dims_b = (
+        [consumed_dim_b, *extra_in_b] if dir_b is Direction.INPUT else list(extra_in_b)
+    )
     out_dims_b = (
-        [consumed_dim, *extra_out_b] if dir_b is Direction.OUTPUT else list(extra_out_b)
+        [consumed_dim_b, *extra_out_b] if dir_b is Direction.OUTPUT else list(extra_out_b)
     )
     phase_vector_b = (
         PhaseVector(phase_b, {1: Phase.turns(sp.Rational(1, 3))}) if phase_b is not None else None
@@ -490,3 +512,166 @@ class TestOracleTiesBackToRecordedConstraints:
         # Every case either got checked or was recognized (and counted) as infeasible/absent
         # -- nothing silently fell through uncounted.
         assert total_checked + total_infeasible_skips <= total_cases * 3
+
+
+_DETAIL_PALETTE = (Dim.concrete(2), Dim.concrete(3), _D, _E, _D * _E, _D**2)
+"""Six-member palette named explicitly by the round-19 task: two concretes, two distinct bare
+symbols, a product, and a power -- crossed below over consumed-A, consumed-B, surviving-A,
+and surviving-B legs."""
+
+
+def _assert_dimension_agreement_detail_agrees(match: object) -> None:  # match: FusionMatch
+    """The heart of :class:`TestCertificateDetailFidelity`: check ``dimension_agreement``'s
+    detail states exactly the same operands and bindings as the ``CONNECTING_PAIR`` record
+    entry (or, if none was recorded, that its bare-identity fallback is genuinely an
+    identity), and that its leg-count suffix matches the recorded ``SURVIVING_LEG`` count.
+    """
+    entries = match.dimension_constraints  # type: ignore[attr-defined]
+    outcome = next(
+        o
+        for o in match.side_condition_outcomes  # type: ignore[attr-defined]
+        if o.name == "dimension_agreement"
+    )
+    detail = outcome.detail
+
+    cp_entries = [e for e in entries if e.source.kind is ConstraintSourceKind.CONNECTING_PAIR]
+    assert len(cp_entries) <= 1
+    leg_part = detail.split("; surviving leg(s)")[0]
+    if not cp_entries:
+        # No CONNECTING_PAIR entry was ever recorded: the pair was a bare identity on every
+        # pass, so the rendered "lhs == rhs" must actually be an identity -- no separate
+        # source of truth to diverge from (there is nothing else to check it against).
+        assert " (" not in leg_part, leg_part
+        lhs, rhs = leg_part.split(" == ")
+        assert lhs == rhs, (
+            f"no CONNECTING_PAIR entry recorded, but detail is not an identity: {detail!r}"
+        )
+    else:
+        entry = cp_entries[0]
+        operands = f"{entry.assumed} == {entry.equal_to}"
+        assert leg_part.startswith(operands), (
+            f"dimension_agreement detail {detail!r} does not start with the recorded "
+            f"CONNECTING_PAIR entry's own operands {operands!r}"
+        )
+        if entry.outcome is ConstraintOutcome.DEFERRED:
+            assert leg_part == f"{operands} (deferred, assumed)", leg_part
+        else:
+            assert entry.bound_here, "a BOUND entry must always carry what it bound"
+            if all(value.is_concrete for _, value in entry.bound_here):
+                for name, value in entry.bound_here:
+                    assert f"{name} := {value}" in leg_part, (
+                        f"detail {leg_part!r} does not name binding {name} := {value} that "
+                        f"the connecting pair's own check actually made"
+                    )
+                assert "non-concrete Dim" not in leg_part, leg_part
+            else:
+                assert "bound to a non-concrete Dim" in leg_part, leg_part
+                # No misattributed concrete binding must leak in for this outcome -- the
+                # exact Defect 4 (round 18) / round 19 failure mode.
+                assert "(bound: " not in leg_part, leg_part
+
+    leg_entries = [e for e in entries if e.source.kind is ConstraintSourceKind.SURVIVING_LEG]
+    if leg_entries:
+        suffix = (
+            f"; surviving leg(s) resolved to shared_dim={match.shared_dim} with "  # type: ignore[attr-defined]
+            f"{len(leg_entries)} additional assumed dimension equality/ies"
+        )
+        assert detail.endswith(suffix), f"detail {detail!r} missing/wrong leg-count suffix"
+    else:
+        assert "surviving leg(s)" not in detail, detail
+
+
+def _assert_phase_dimension_agreement_detail_agrees(match: object) -> None:  # FusionMatch
+    """Every name/value ``phase_dimension_agreement``'s "assuming ..." clause states must
+    come from a ``NODE_PHASE``/``BOUND`` record entry's own ``bound_here`` -- never from
+    ``match.bindings`` read by name alone (Task 1's audit of every detail string, not just
+    the connecting pair's)."""
+    entries = match.dimension_constraints  # type: ignore[attr-defined]
+    outcome = next(
+        o
+        for o in match.side_condition_outcomes  # type: ignore[attr-defined]
+        if o.name == "phase_dimension_agreement"
+    )
+    phase_bound: dict[str, Dim] = {}
+    for entry in entries:
+        if (
+            entry.source.kind is ConstraintSourceKind.NODE_PHASE
+            and entry.outcome is ConstraintOutcome.BOUND
+        ):
+            phase_bound.update(entry.bound_here)
+    if phase_bound:
+        assert "; assuming " in outcome.detail, outcome.detail
+        for name, value in phase_bound.items():
+            assert f"{name} := {value}" in outcome.detail, (
+                f"phase_dimension_agreement detail {outcome.detail!r} does not name "
+                f"binding {name} := {value} a NODE_PHASE check actually made"
+            )
+    else:
+        assert "assuming" not in outcome.detail, outcome.detail
+
+
+class TestCertificateDetailFidelity:
+    """Task 1 (Phase 5 post-closing audit round 19): an exhaustive sweep, not a hand-picked
+    case, asserting every ``dimension_agreement``/``phase_dimension_agreement`` detail string
+    states exactly the operands and bindings its own record entry does. See the module
+    docstring for why this class exists and what round 18's regression test missed.
+    """
+
+    def test_connecting_pair_and_surviving_leg_details_agree_with_the_record(self) -> None:
+        total = 0
+        for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
+            for dim_a in _DETAIL_PALETTE:
+                for dim_b in _DETAIL_PALETTE:
+                    for surv_a in _DETAIL_PALETTE:
+                        for surv_b in _DETAIL_PALETTE:
+                            extra_a = (
+                                {"extra_in_a": (surv_a,)}
+                                if dir_a is Direction.OUTPUT
+                                else {"extra_out_a": (surv_a,)}
+                            )
+                            extra_b = (
+                                {"extra_in_b": (surv_b,)}
+                                if dir_b is Direction.OUTPUT
+                                else {"extra_out_b": (surv_b,)}
+                            )
+                            diagram, _a_id, _b_id = _build_two_node_diagram(
+                                color=color,
+                                dir_a=dir_a,
+                                dir_b=dir_b,
+                                consumed_dim=dim_a,
+                                consumed_dim_b=dim_b,
+                                **extra_a,  # type: ignore[arg-type]
+                                **extra_b,  # type: ignore[arg-type]
+                            )
+                            for match in find_matches(diagram):
+                                total += 1
+                                _assert_dimension_agreement_detail_agrees(match)
+                                _assert_phase_dimension_agreement_detail_agrees(match)
+        assert total > 0, "the detail-fidelity sweep never produced a single fusion match"
+
+    def test_phase_binding_details_agree_with_the_record(self) -> None:
+        total = 0
+        phase_choices: tuple[Dim | None, ...] = (
+            None,
+            Dim.concrete(2),
+            Dim.concrete(3),
+            _D,
+            _E,
+        )
+        for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
+            for dim_a in _DETAIL_PALETTE:
+                for phase_a in phase_choices:
+                    for phase_b in phase_choices:
+                        diagram, _a_id, _b_id = _build_two_node_diagram(
+                            color=color,
+                            dir_a=dir_a,
+                            dir_b=dir_b,
+                            consumed_dim=dim_a,
+                            phase_a=phase_a,
+                            phase_b=phase_b,
+                        )
+                        for match in find_matches(diagram):
+                            total += 1
+                            _assert_dimension_agreement_detail_agrees(match)
+                            _assert_phase_dimension_agreement_detail_agrees(match)
+        assert total > 0, "the phase detail-fidelity sweep never produced a single fusion match"

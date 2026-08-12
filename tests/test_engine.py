@@ -289,6 +289,7 @@ class TestCertificateRecordsTheReDerivedFacts:
                 equal_to=three,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", three),),
             ),
         )
 
@@ -703,6 +704,7 @@ class TestDimensionConstraintsExactContent:
                 equal_to=two,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", two),),
             ),
         )
         assert result.step.dimension_constraints == expected
@@ -732,6 +734,7 @@ class TestDimensionConstraintsExactContent:
                 equal_to=d,
                 source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.INPUT, 1)),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", two),),
             ),
         )
         assert result.step.dimension_constraints == expected
@@ -1183,6 +1186,41 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
         rule = Rule(
             name="scripted_duplicate_consumed_node_ids",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="more than once"):
+            apply(diagram, rule, _ScriptedMatch())
+
+    def test_duplicate_new_node_ids_raises_rewrite_grammar_error(self) -> None:
+        """Class 2 sweep (Phase 5 post-closing audit round 19, Task 4): ``new_node_ids`` is a
+        structurally identical reference kind to ``consumed_node_ids`` (a tuple of ``NodeId``
+        the builder reports about this one rewrite), but only the latter had a duplicate
+        check (A3) before this fix. A repeat here drives no imperative loop into a crash --
+        unlike A3 -- but it would still misreport, to ``RewriteStep.new_node_ids`` and
+        Phase 6's certificate, that a rewrite created two new nodes when it created one.
+        """
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        diagram.set_boundary_outputs([])
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            r_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(r_id, r_id),
+                consumed_node_ids=(),
+                consumed_wires=(),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_duplicate_new_node_ids",
             pattern=_EmptyPattern(),
             builder=_builder,
             side_conditions=(),

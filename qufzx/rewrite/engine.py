@@ -387,8 +387,12 @@ Field                                   Validated by                       Step 
                                          ``working.nodes``                                                    ::test_raises_when_the_build_result_names_a_missing_node_id
 ``consumed_node_ids`` (duplicates)      No entry may repeat (A3)             4     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
                                                                                                         ::test_a3_duplicate_consumed_node_ids_raises_rewrite_grammar_error
-``new_node_ids``                        Every entry must be present in       4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
+``new_node_ids`` (membership)           Every entry must be present in       4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
                                          ``working.nodes``                                                    ::test_raises_when_new_node_ids_names_a_node_never_added
+``new_node_ids`` (duplicates, Phase 5   No entry may repeat -- would         4     RewriteGrammarError  test_engine.py::TestApplyWithAnIndependentlyScriptedBuilder
+post-closing audit round 19)            misreport how many new nodes                                         ::test_duplicate_new_node_ids_raises_rewrite_grammar_error
+                                         a rewrite actually created to
+                                         the certificate
 ``port_mapping`` (values)               Every value must name a real,        4     RewriteGrammarError  test_engine.py::TestApplyRejectsAForeignMatch
                                          in-range port in ``working``                                        ::test_raises_when_port_mapping_names_an_out_of_range_port
 ``port_mapping`` (keys, existence)      Not validated -- an extra key       n/a   n/a                  n/a (see below)
@@ -881,6 +885,27 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"nodes/ports in the working diagram (new_node_ids absent: "
             f"{missing_new_node_ids!r}; port_mapping value(s) naming no real port: "
             f"{invalid_port_mapping_values!r})"
+        )
+
+    # Class 2 sweep (Phase 5 post-closing audit round 19, Task 4): consumed_node_ids gets a
+    # duplicate check (A3, above) because a repeat there drives step 6's imperative removal
+    # loop into a crash. new_node_ids drives no imperative loop, so a repeat cannot crash
+    # apply() the same way -- but it is a structurally identical reference kind (a tuple of
+    # NodeId the builder reports about this one rewrite) left with no duplicate check of its
+    # own before this fix, and no entry in this module's own BuildResult-field table (see
+    # the module docstring) recording that as a deliberate choice the way consumed_wires
+    # duplicates and unused port_mapping keys are. It is not harmless: step 9 publishes
+    # new_node_ids verbatim for Phase 6's certificate to replay against, and a duplicate
+    # entry would misreport how many new nodes a rewrite actually created.
+    duplicate_new_node_ids = [
+        node_id for node_id, count in Counter(build_result.new_node_ids).items() if count > 1
+    ]
+    if duplicate_new_node_ids:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: build_result.new_node_ids names the same node id more "
+            f"than once: {sorted(duplicate_new_node_ids)!r} -- a builder creates each new "
+            "node once; a repeated id here would misreport how many new nodes exist to "
+            "the certificate"
         )
 
     # Hardening 5 (Phase 5 post-closing audit round 18): port_mapping's injectivity is

@@ -288,6 +288,7 @@ class TestPhaseDimensionMismatchIsNonMatch:
             equal_to=d,
             source=ConstraintSource.node_phase(b_id),
             outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", Dim.concrete(3)),),
         ) in matches[0].dimension_constraints
 
     def test_one_sided_phase_binding_the_symbolic_shared_leg_dim_now_matches(self) -> None:
@@ -310,6 +311,7 @@ class TestPhaseDimensionMismatchIsNonMatch:
             equal_to=shared,
             source=ConstraintSource.node_phase(a_id),
             outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", Dim.concrete(3)),),
         ) in matches[0].dimension_constraints
 
     def test_a_phase_dim_that_fails_to_unify_with_shared_dim_is_still_a_non_match(self) -> None:
@@ -476,6 +478,7 @@ class TestDimensionConstraintsRecording:
                 equal_to=three,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", three),),
             ),
         )
         agreement = next(
@@ -518,6 +521,7 @@ class TestDimensionConstraintsRecording:
                 equal_to=e,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", e),),
             ),
         )
         assert dict(match.bindings) == {}
@@ -555,6 +559,7 @@ class TestDimensionConstraintsRecording:
                 equal_to=two,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", two),),
             ),
         )
 
@@ -583,6 +588,7 @@ class TestDimensionConstraintsRecording:
                 equal_to=d,
                 source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.INPUT, 1)),
                 outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", two),),
             ),
         )
 
@@ -896,6 +902,7 @@ class TestSurvivingLegDimensionUnification:
             equal_to=d,
             source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.OUTPUT, 1)),
             outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", two),),
         ) in match.dimension_constraints
 
 
@@ -1042,6 +1049,7 @@ class TestPhaseDimensionAgreementDeferredFidelity:
             equal_to=three,
             source=ConstraintSource.connecting_pair(),
             outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", three),),
         ) in match.dimension_constraints
 
     def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
