@@ -56,6 +56,7 @@ from qufzx.rewrite.rule import (
 from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError
+from qufzx.semantics.denote import DenoteError, denote
 
 _SEEDS: tuple[int, ...] = tuple(range(2500))
 _CLEAN_SEEDS: tuple[int, ...] = tuple(range(20000))
@@ -678,6 +679,24 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
             continue
         if not _is_cleanly_contractible(pre_concrete):
             continue
+        # Phase 5 post-closing audit round 22: "validate(d).is_valid implies every node in
+        # d is denotable" (module docstrings of qufzx.diagram.validate and
+        # qufzx.semantics.denote) is asserted as a property here, not only in
+        # tests/test_phase5_exhaustive_oracle.py's exhaustive-but-single-dim-per-node sweep
+        # -- this harness's mixed-leg-dimension diagrams (see _build_random_diagram's
+        # ``mixed`` branch) are exactly the shape Defect 1 (a validator that let a jointly-
+        # unsatisfiable leg/phase disagreement through) needed to be observed at all, so this
+        # is where a future gap of that same shape would actually be caught.
+        for node in pre_concrete.nodes.values():
+            try:
+                denote(node)
+            except DenoteError as exc:  # pragma: no cover - invariant guard
+                raise AssertionError(
+                    f"seed {seed}, d={d_value}, e={e_value}: validate(pre_concrete).is_valid "
+                    f"but denote() raised for node {node.id!r} "
+                    f"({node.generator_type.name}, {node.num_inputs} in / "
+                    f"{node.num_outputs} out, phase={node.phase!r}): {exc}"
+                ) from exc
         try:
             comparison = compare(diagram, post, subs)
         except ContractSizeError:

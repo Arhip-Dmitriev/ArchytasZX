@@ -218,6 +218,112 @@ class TestGeneratorPolicyConformance:
         )
 
 
+class TestPhaseDimensionResolvedThroughLegBindings:
+    """D1, Phase 5 post-closing audit round 22: the TIED_TO_LEG_DIM phase check must compare
+    against the leg set's *jointly resolved* dimension (via unify_all), not the raw,
+    unresolved first leg -- see qufzx.diagram.validate._check_generator_policy. Before this
+    fix, the verdict depended on which leg the diagram happened to list first, and a
+    leg/phase disagreement masked by a leg/leg binding computed independently (and
+    discarded) could pass as valid even though no single substitution satisfies both.
+    """
+
+    def test_first_leg_binding_masking_a_phase_disagreement_is_rejected(self) -> None:
+        # legs [d, 2] bind d := 2 (independently satisfiable); phase dim 3 unifies against
+        # the raw first leg d, binding d := 3 -- discarded pre-fix, so nothing caught that
+        # d cannot be both 2 and 3 at once. This diagram is unsatisfiable at every
+        # substitution (apply d := 2 and phase dim 3 disagrees with leg dim 2).
+        d = Dim.symbol("d")
+        phase = PhaseVector(Dim.concrete(3), {})
+        diagram = Diagram()
+        diagram.add_node(
+            Z_SPIDER, input_dims=[d, Dim.concrete(2)], output_dims=[], phase=phase
+        )
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
+
+    def test_verdict_is_order_independent_across_leg_permutation(self) -> None:
+        d = Dim.symbol("d")
+        phase = PhaseVector(Dim.concrete(3), {})
+        for legs in ([d, Dim.concrete(2)], [Dim.concrete(2), d]):
+            diagram = Diagram()
+            diagram.add_node(Z_SPIDER, input_dims=list(legs), output_dims=[], phase=phase)
+            report = validate(diagram)
+            assert not report.is_valid
+            assert any(
+                issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors
+            ), f"legs={legs}: verdict must not depend on leg order"
+
+    def test_phase_agreeing_with_a_bound_leg_symbol_is_accepted(self) -> None:
+        # legs [d, 2] bind d := 2; a phase over d (not yet resolved) or over the concrete
+        # value 2 must both be accepted -- the resolved leg dimension is 2 either way.
+        d = Dim.symbol("d")
+        for phase_dim in (d, Dim.concrete(2)):
+            diagram = Diagram()
+            diagram.add_node(
+                Z_SPIDER,
+                input_dims=[d, Dim.concrete(2)],
+                output_dims=[],
+                phase=PhaseVector(phase_dim, {}),
+            )
+            report = validate(diagram)
+            assert not any(
+                issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors
+            ), f"phase_dim={phase_dim}: {report.errors}"
+
+    def test_failed_leg_set_does_not_also_report_a_phase_mismatch(self) -> None:
+        # Legs [2, 3] are already a DIMENSION_POLICY_VIOLATION on their own; the phase
+        # check must not additionally fire an arbitrary PHASE_DIMENSION_MISMATCH against
+        # whichever leg happens to be first -- the two are distinct findings, and a leg
+        # set with no coherent shared dimension has nothing well-defined for the phase to
+        # be checked against.
+        diagram = Diagram()
+        diagram.add_node(
+            Z_SPIDER,
+            input_dims=[Dim.concrete(2), Dim.concrete(3)],
+            output_dims=[],
+            phase=PhaseVector(Dim.concrete(5), {}),
+        )
+        report = validate(diagram)
+        assert not report.is_valid
+        kinds = {issue.kind for issue in report.errors}
+        assert IssueKind.DIMENSION_POLICY_VIOLATION in kinds
+        assert IssueKind.PHASE_DIMENSION_MISMATCH not in kinds
+
+    @pytest.mark.parametrize("seed", range(60))
+    def test_sweep_over_leg_palettes_permutations_and_phase_dims_is_order_independent(
+        self, seed: int
+    ) -> None:
+        # Domain sweep (not one hand-picked shape, per round 19's own meta-lesson): random
+        # leg-dimension palettes, every permutation of them, and a random phase dimension --
+        # asserting the verdict (is_valid, and specifically whether a
+        # PHASE_DIMENSION_MISMATCH fires) never depends on leg order.
+        import itertools
+        import random
+
+        rng = random.Random(seed)
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        palette = (Dim.concrete(2), Dim.concrete(3), Dim.concrete(5), d, e)
+        legs = [rng.choice(palette) for _ in range(rng.randint(1, 3))]
+        phase_dim = rng.choice(palette)
+        phase = PhaseVector(phase_dim, {})
+
+        verdicts: set[tuple[bool, bool]] = set()
+        for perm in itertools.permutations(legs):
+            diagram = Diagram()
+            diagram.add_node(Z_SPIDER, input_dims=list(perm), output_dims=[], phase=phase)
+            report = validate(diagram)
+            has_phase_mismatch = any(
+                issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors
+            )
+            verdicts.add((report.is_valid, has_phase_mismatch))
+
+        assert len(verdicts) == 1, (
+            f"seed {seed}: legs={legs}, phase_dim={phase_dim}: verdict depends on leg "
+            f"order across permutations: {verdicts}"
+        )
+
+
 class TestAllLegsEqualJointSatisfiability:
     """F1, Phase 5 post-closing audit round 21: leg dims must be *jointly* unifiable, not
     merely pairwise-unifiable against the first leg -- see qufzx.algebra.dimension.unify_all.
@@ -301,6 +407,78 @@ class TestSymbolRoleCollision:
         assert dim_symbol != phase_symbol
         assert dim_symbol != scalar_symbol
         assert phase_symbol != scalar_symbol
+
+    def test_exponent_symbol_dimension_collision_is_flagged_and_named_correctly(self) -> None:
+        # D2: a dimension symbol 'n' and an exponent symbol also named 'n' (d ** n) is a
+        # genuine collision -- differing domains under one name (positive vs. merely
+        # nonnegative integers) -- and must be reported as {'dimension', 'exponent'}, not
+        # mislabelled {'dimension', 'phase'} the way the pre-fix three-role classifier did
+        # (an exponent symbol, lacking 'positive', fell through into the "phase" branch).
+        from qufzx.diagram.validate import _classify_symbol_role
+
+        n_dim = Dim.symbol("n")
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[n_dim], output_dims=[d**n_dim])
+        report = validate(diagram)
+        assert not report.is_valid
+        collision_issues = [
+            issue for issue in report.errors if issue.kind is IssueKind.SYMBOL_ROLE_COLLISION
+        ]
+        assert collision_issues
+        assert "dimension" in collision_issues[0].message
+        assert "exponent" in collision_issues[0].message
+        assert "phase" not in collision_issues[0].message
+
+        # The classifier itself, directly: an exponent symbol built via Dim.__pow__ must
+        # read as "exponent", not "phase".
+        exponent_symbol = (d**n_dim).to_sympy().free_symbols - d.to_sympy().free_symbols
+        (exponent_sym,) = exponent_symbol
+        assert _classify_symbol_role(exponent_sym) == "exponent"
+
+    def test_exponent_and_phase_parameter_sharing_a_name_is_flagged(self) -> None:
+        # D2's false-negative case: pre-fix, both an exponent and a phase parameter
+        # (Phase.symbol) landed in the same "phase" bucket, so a name shared between them
+        # went completely unflagged.
+        d = Dim.symbol("d")
+        n = Dim.symbol("n")
+        phase = PhaseVector(Dim.concrete(2), {1: Phase.symbol("n")})
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d**n], phase=phase)
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(issue.kind is IssueKind.SYMBOL_ROLE_COLLISION for issue in report.errors)
+
+
+class TestSymbolConstructorRolesRoundTrip:
+    """D2 hardening: every symbol constructor in qufzx.algebra must round-trip to its own,
+    distinct role under _classify_symbol_role -- a test that fails loudly the day a fifth
+    constructor is added without updating the classifier to give it a role of its own
+    (silently aliasing into an existing one would otherwise only surface as a missed or
+    mislabelled SYMBOL_ROLE_COLLISION much later, the way the exponent gap did).
+    """
+
+    def test_every_constructor_round_trips_to_a_distinct_role(self) -> None:
+        from qufzx.algebra.scalar import Scalar
+        from qufzx.diagram.validate import _classify_symbol_role
+
+        d = Dim.symbol("d")
+        n = (d**Dim.symbol("n")).to_sympy().free_symbols - d.to_sympy().free_symbols
+        (exponent_symbol,) = n
+
+        constructors: dict[str, object] = {
+            "dimension": Dim.symbol("s").to_sympy(),
+            "exponent": exponent_symbol,
+            "phase": Phase.symbol("s").to_sympy_turns(),
+            "scalar": Scalar.symbol("s").to_sympy(),
+        }
+
+        roles = {name: _classify_symbol_role(symbol) for name, symbol in constructors.items()}
+        for name, role in roles.items():
+            assert role == name, f"{name} constructor classified as {role!r}, expected {name!r}"
+        assert len(set(roles.values())) == len(roles), (
+            f"two constructors mapped to the same role: {roles}"
+        )
 
 
 class TestNodeDimensionUndetermined:

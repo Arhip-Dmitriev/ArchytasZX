@@ -425,13 +425,37 @@ patch it low, mirroring :mod:`qufzx.rewrite.match`'s ``_MAX_FIXPOINT_PASSES``.""
 class UnifyAllResult:
     """The result of :func:`unify_all`: a status, accumulated bindings, and residual pairs.
 
-    ``residual_pairs`` holds every pair left ``DEFERRED`` once the fixpoint stabilised --
-    empty unless ``status`` is ``DEFERRED``.
+    ``residual_pairs`` holds every pair left unresolved once the loop stopped -- either
+    because the fixpoint genuinely stabilised with real residual constraints left (the
+    ordinary ``DEFERRED`` case), or because :data:`_MAX_UNIFY_ALL_PASSES` was exhausted
+    before it could stabilise, in which case ``residual_pairs`` holds whatever was still
+    unresolved on that final, non-converged pass -- a snapshot of an interrupted
+    computation, not a decided answer.
+
+    ``exhausted`` is the discriminator between those two cases: ``False`` for an ordinary,
+    converged ``DEFERRED`` (or ``SUCCESS``/``FAILURE``), ``True`` only when the pass budget
+    ran out first. Both are reported as ``status=DEFERRED`` (in neither case has this
+    function decided FAILURE or SUCCESS), but they are not the same finding and a caller
+    that treats them identically is silently trusting an interrupted computation as much as
+    a completed one -- see :mod:`qufzx.diagram.validate`'s ``_check_generator_policy`` for a
+    caller that fails closed on ``exhausted`` (a hard error) rather than folding it into the
+    ordinary deferred-constraint bookkeeping.
+
+    General rule for the next bounded fixpoint this codebase grows (this one mirrors
+    :mod:`qufzx.rewrite.match`'s ``_MAX_FIXPOINT_PASSES``, which already fails closed by
+    rejecting the match outright on exhaustion): a bounded fixpoint's exhaustion path must
+    be distinguishable from its success path at every call site, not just internally. A
+    ``return`` statement that produces the same shape of result on both paths -- as this
+    function's exhaustion return used to, before this field existed, always with
+    ``residual_pairs=()`` regardless of what was actually still outstanding -- lets an
+    undecided node read as decided-and-fine three calls away from where the budget was
+    actually exhausted.
     """
 
     status: UnifyStatus
     bindings: Mapping[str, Dim] = field(default_factory=dict)
     residual_pairs: tuple[tuple[Dim, Dim], ...] = ()
+    exhausted: bool = False
 
     @property
     def is_success(self) -> bool:
@@ -462,10 +486,11 @@ def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
         return UnifyAllResult(status=UnifyStatus.SUCCESS)
 
     bindings: dict[str, Dim] = {}
+    residual: dict[str, tuple[Dim, Dim]] = {}
 
     for _pass_index in range(_MAX_UNIFY_ALL_PASSES):
         pass_start_bindings = dict(bindings)
-        residual: dict[str, tuple[Dim, Dim]] = {}
+        residual = {}
         concrete_bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings)
         base = ordered[0].substitute(concrete_bindings) if bindings else ordered[0]
         for other in ordered[1:]:
@@ -498,4 +523,13 @@ def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
                 )
             return UnifyAllResult(status=UnifyStatus.SUCCESS, bindings=dict(bindings))
 
-    return UnifyAllResult(status=UnifyStatus.DEFERRED, bindings=dict(bindings), residual_pairs=())
+    # Budget exhausted without stabilising: report whatever the final, non-converged pass
+    # actually left unresolved, and mark it ``exhausted`` -- see UnifyAllResult's own
+    # docstring for why this must not be a bare, contentless DEFERRED indistinguishable from
+    # a genuinely converged one.
+    return UnifyAllResult(
+        status=UnifyStatus.DEFERRED,
+        bindings=dict(bindings),
+        residual_pairs=tuple(residual.values()),
+        exhausted=True,
+    )

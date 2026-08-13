@@ -132,17 +132,51 @@ in "valid implies denotable"/"valid implies well-formed" closed:
   the structural half of closing this; see :func:`~qufzx.rewrite.match.reattach_phase` for
   the certificate half (which bindings a rewrite actually substituted into a phase's
   entries, recorded rather than left implicit).
+
+Phase 5 post-closing audit round 22 (same class again -- the previous round's own fix,
+re-inspected, still carried the defect it was opened to close). Round 21's first bullet
+above fixed leg-order dependence for the ``ALL_LEGS_EQUAL`` leg/leg check (via
+``unify_all``) but left the ``TIED_TO_LEG_DIM`` phase/leg check in
+:func:`_check_generator_policy` reading ``all_ports[0].dim`` raw, unresolved by the very
+bindings ``unify_all`` had just computed a few lines above it -- so a node's phase-vs-legs
+verdict still depended on which leg the diagram happened to list first (legs
+``[Dim("d"), Dim(2)]`` with phase dim ``3`` validated clean; the same legs permuted did not),
+and the *jointly*-unsatisfiable case round 21's own leg/leg fix targeted could still slip
+through when a phase, not another leg, was the second half of the disagreement -- exactly
+the same shape of gap round 21 closed for legs, unclosed for phase. Also closed in this
+round: :func:`_classify_symbol_role` had three roles for ``qufzx.algebra``'s four symbol
+constructors (a dimension's exponent, built by :meth:`~qufzx.algebra.dimension.Dim.__pow__`,
+fell through into "phase"), which both mislabelled a genuine ``SYMBOL_ROLE_COLLISION`` and
+missed a real one (an exponent and a phase parameter sharing a name went unflagged); and
+:func:`~qufzx.algebra.dimension.unify_all` exhausting its pass budget reported ``DEFERRED``
+with an empty ``residual_pairs``, indistinguishable at this module's call site from an
+ordinary, fully-converged deferral, so an undecided node validated clean. See
+:func:`_check_generator_policy`, :func:`_classify_symbol_role`, and
+:class:`~qufzx.algebra.dimension.UnifyAllResult`'s own docstring for each fix's reasoning.
+
+The general question this round's own docstring puts to the next reader, since three
+rounds running have each found the next instance of the previous round's class rather than
+a genuinely new one: when a check here is fixed to resolve through accumulated bindings (or
+any other shared, mutable piece of state) instead of a raw, unresolved value, is *every*
+sibling check reading that same raw value fixed in the same pass, or does this module now
+contain another one, still unfixed, that merely was not this round's reproduction case?
+Do not take a docstring's claim that a class of defect is "closed" at face value, including
+this file's own; verify by grepping for the pattern the fix replaced (see the module-level
+sweep for ``all_ports[0]``/``ports[0].dim``/``[0].dim`` this round ran, which is the
+mechanical form of this question, not just the rhetorical one).
 """
 
 from __future__ import annotations
 
 import enum
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim, unify_all
+from qufzx.algebra.dimension import DimSubstituteValue, DimSymbolKey, unify_all
 from qufzx.diagram.generators import DimensionPolicy, PhaseSchema
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 
@@ -182,6 +216,7 @@ class IssueKind(enum.Enum):
     PHASE_NOT_PERMITTED = "phase_not_permitted"
     NODE_DIMENSION_UNDETERMINED = "node_dimension_undetermined"
     SYMBOL_ROLE_COLLISION = "symbol_role_collision"
+    DIMENSION_RESOLUTION_EXHAUSTED = "dimension_resolution_exhausted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,23 +425,88 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
 
 
 def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
-    """Which namespace ``symbol`` belongs to (dimension/phase/scalar), from its assumptions.
+    """Which namespace ``symbol`` belongs to, from its assumptions.
 
-    ``None`` for a symbol matching none of ``qufzx.algebra``'s three constructors.
+    ``qufzx.algebra`` has four symbol constructors, each stamping a distinct, exact
+    assumption signature (verified against sympy's own computed closure -- not merely the
+    kwargs each constructor passes in -- in ``tests/test_validate.py``'s
+    ``TestSymbolConstructorRolesRoundTrip``, which walks every constructor and asserts each
+    round-trips to its own role):
+
+    * :meth:`~qufzx.algebra.dimension.Dim.symbol` (``positive=True, integer=True``) --
+      "dimension". Signature: ``integer and positive``.
+    * a dimension's exponent, built internally by :meth:`~qufzx.algebra.dimension.Dim.__pow__`
+      via ``_exponent_symbol`` (``integer=True, nonnegative=True``, deliberately *not*
+      ``positive`` -- an exponent of 0 is legal, a dimension of 0 is not) -- "exponent".
+      Signature: ``integer and not positive`` (``nonnegative`` is always true for both
+      dimension and exponent symbols here, so it does not discriminate between them; the
+      presence or absence of ``positive`` is what does).
+    * :meth:`~qufzx.algebra.phase.Phase.symbol` (``real=True``) -- "phase". Signature:
+      ``real and not integer`` (a dimension or exponent symbol is also ``real`` --
+      sympy's assumption closure derives it from ``integer`` -- so ``not integer`` is
+      required to keep this branch from also catching those).
+    * :meth:`~qufzx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature:
+      ``complex and not real`` (a phase symbol, and both dimension/exponent symbols, are
+      also ``complex`` by closure, so ``not real`` is required here for the same reason).
+
+    Each branch below tests only the two assumption keys each constructor actually sets
+    (never a derived one sympy fills in as a side effect), so a fifth constructor that sets
+    a *different* pair (e.g. ``negative=True`` with no ``integer``) falls through every
+    branch and returns ``None`` -- unclassified, not silently aliased into an existing role
+    -- rather than being caught by an earlier, looser check meant for someone else's
+    symbols. ``None`` is also returned for any symbol with no assumptions recognized here at
+    all (e.g. a bare, assumption-free sympy ``Symbol`` this module never itself constructs).
+
+    See :func:`_check_symbol_role_collisions` for which pairs of these four roles, sharing
+    one name, are a genuine collision (a name-keyed substitution silently applying the wrong
+    domain/grammar) and which are not.
     """
     assumptions = symbol.assumptions0
-    if assumptions.get("integer") and assumptions.get("positive"):
+    is_integer = bool(assumptions.get("integer"))
+    is_positive = bool(assumptions.get("positive"))
+    is_real = bool(assumptions.get("real"))
+    is_complex = bool(assumptions.get("complex"))
+    if is_integer and is_positive:
         return "dimension"
-    if "real" in assumptions and assumptions.get("real"):
+    if is_integer and not is_positive:
+        return "exponent"
+    if is_real and not is_integer:
         return "phase"
-    if assumptions.get("complex"):
+    if is_complex and not is_real:
         return "scalar"
     return None
 
 
 def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    # A same-named dimension and phase symbol are distinct sympy Symbol objects, so a
+    # A same-named symbol of two different roles is two distinct sympy Symbol objects, so a
     # by-name substitution (every substitute() here is) silently rewrites both.
+    #
+    # The full 4x4 collision matrix over {dimension, exponent, phase, scalar} (Phase 5
+    # post-closing audit round 22, Defect 2): every one of the six unordered cross-role pairs
+    # is a genuine collision, none is benign --
+    #
+    #   dimension x exponent -- differing domains under one name (positive vs. merely
+    #     nonnegative integers): 0 is a legal exponent substitution but an illegal dimension
+    #     one, so Diagram.substitute({name: 0}) is one symbol's legal use and the other's
+    #     DimensionDomainError.
+    #   dimension x phase, exponent x phase -- an integer-only grammar (positive or
+    #     nonnegative) vs. phase's arbitrary-real, mod-one-turn grammar: a fractional or
+    #     negative substitution value is legal for the phase role and illegal for either
+    #     integer role.
+    #   dimension x scalar, exponent x scalar -- same integer-vs-arbitrary-complex gap, one
+    #     level further: a non-real complex substitution value is legal only for scalar.
+    #   phase x scalar -- both are "real-ish" continuous domains, but a phase's turns-value
+    #     is interpreted mod one turn and a scalar's is not; substituting the same value
+    #     through the two roles' own substitute() means two different things.
+    #
+    # The one *non*-collision this matrix has is not a pair at all: the same role used twice
+    # under the same name is one symbol legitimately reused (e.g. two ports sharing a
+    # dimension symbol, or a root-of-unity phase entry over its own node's dimension symbol,
+    # see tests/test_validate.py::TestSymbolRoleCollision::
+    # test_dimension_symbol_embedded_in_root_of_unity_phase_is_not_a_collision) --
+    # ``roles.setdefault(name, {}).setdefault(role, symbol)`` below never records a
+    # second entry for a role already seen under that name, so this case is not even
+    # represented as a "pair" for ``len(by_role) > 1`` to find.
     roles: dict[str, dict[str, sp.Symbol]] = {}
 
     def _note(expr: sp.Expr) -> None:
@@ -478,12 +578,18 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             )
         )
 
+    # Phase 5 post-closing audit round 22, Defect 1: ``leg_unify`` is the *only* place this
+    # function resolves "what dimension do this node's legs jointly agree on" -- both the
+    # DIMENSION_POLICY_VIOLATION/DEFERRED branch below and the phase-vs-legs branch after it
+    # read from it, so there is exactly one leg-resolution computation to keep in sync with
+    # match.py's own, not two that can drift apart (which is how this defect happened the
+    # first time: the DIMENSION_POLICY_VIOLATION branch was moved onto unify_all in round 21,
+    # but the phase branch below was left reading ``all_ports[0].dim`` raw).
     all_ports = (*node.inputs, *node.outputs)
-    shared_dim: Dim | None = all_ports[0].dim if all_ports else None
+    leg_unify = unify_all([port.dim for port in all_ports]) if all_ports else None
 
-    if gen.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL and shared_dim is not None:
-        all_result = unify_all([port.dim for port in all_ports])
-        if all_result.is_failure:
+    if gen.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL and leg_unify is not None:
+        if leg_unify.is_failure:
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.DIMENSION_POLICY_VIOLATION,
@@ -495,8 +601,33 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                     node_id=node.id,
                 )
             )
-        elif all_result.is_deferred:
-            for assumed, equal_to in all_result.residual_pairs:
+        elif leg_unify.exhausted:
+            # Phase 5 post-closing audit round 22, Defect 3: unify_all's own pass budget
+            # ran out before its bindings fixpoint stabilised -- an undecided node, not a
+            # decided-and-fine one. Failing open here (the pre-fix behaviour: reading
+            # ``residual_pairs`` -- always ``()`` on this path before UnifyAllResult grew
+            # ``exhausted`` -- and finding nothing to append) let an undecided node validate
+            # completely clean, which is the opposite posture to
+            # :mod:`qufzx.rewrite.match`'s own budget-exhaustion path
+            # (``resolve_fusion_match`` conservatively refuses the candidate). This is a hard
+            # error, not deferred: a deferred issue is this module's word that the *question
+            # itself* -- not the resolver's ability to answer it -- is genuinely open (e.g.
+            # ``Dim("d")`` against ``Dim("d") * Dim("e")``); an exhausted budget has not
+            # reached that question at all.
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.DIMENSION_RESOLUTION_EXHAUSTED,
+                    message=(
+                        f"node {node.id!r} ({gen.name}) leg-dimension resolution did not "
+                        "stabilise within unify_all's pass budget; "
+                        f"{len(leg_unify.residual_pairs)} pair(s) were still unresolved on "
+                        "the final pass -- nothing about this node's legs was decided"
+                    ),
+                    node_id=node.id,
+                )
+            )
+        elif leg_unify.is_deferred:
+            for assumed, equal_to in leg_unify.residual_pairs:
                 issues.append(
                     ValidationIssue(
                         kind=IssueKind.DIMENSION_DEFERRED,
@@ -523,34 +654,80 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             )
         elif (
             gen.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
-            and shared_dim is not None
-            and node.phase.dim != shared_dim
+            and leg_unify is not None
+            and not leg_unify.is_failure
+            and not leg_unify.exhausted
         ):
-            result = node.phase.dim.unify(shared_dim)
-            if result.is_failure:
-                issues.append(
-                    ValidationIssue(
-                        kind=IssueKind.PHASE_DIMENSION_MISMATCH,
-                        message=(
-                            f"node {node.id!r} ({gen.name}) phase vector is over "
-                            f"{node.phase.dim}, but its legs share dimension {shared_dim}"
-                        ),
-                        node_id=node.id,
+            # A FAILURE leg set already reports DIMENSION_POLICY_VIOLATION above, and an
+            # exhausted one already reports DIMENSION_RESOLUTION_EXHAUSTED above -- neither
+            # leaves a coherent "shared leg dimension" to check the phase against, so this
+            # branch is skipped in both cases rather than manufacturing a second, arbitrary
+            # finding from whichever leg happens to be first (an exhausted leg_unify's
+            # ``bindings`` are a partial, non-final snapshot -- substituting them in would
+            # report a phase/leg (dis)agreement that the next unify_all pass, had the budget
+            # allowed it, might have overturned). See the module docstring for why a
+            # phase/leg disagreement is deliberately kept a *distinct* finding
+            # (PHASE_DIMENSION_MISMATCH) from a leg/leg disagreement
+            # (DIMENSION_POLICY_VIOLATION) rather than merged into one unify_all call.
+            #
+            # ``resolved_leg_dim`` is the node's first leg (input-then-output, original port
+            # order -- an arbitrary but fixed choice, exactly the role ``shared_dim`` plays in
+            # match.py's ``resolve_fusion_match``: seeded from one starting point and then
+            # refined by whatever the fixpoint bound) with ``leg_unify``'s accumulated
+            # bindings substituted in. When ``leg_unify`` is SUCCESS this is, by construction
+            # of that status, equal to what substituting bindings into *any* leg would give;
+            # when it is DEFERRED it is one representative among a residual-equal set --
+            # sound to compare the phase against for the same reason match.py's ``shared_dim``
+            # is sound to check surviving legs against one at a time (module docstring,
+            # condition 5/6), not because the first leg is privileged.
+            resolved_leg_dim = all_ports[0].dim
+            resolved_phase_dim = node.phase.dim
+            if leg_unify.bindings:
+                bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], leg_unify.bindings)
+                resolved_leg_dim = resolved_leg_dim.substitute(bindings)
+                resolved_phase_dim = resolved_phase_dim.substitute(bindings)
+            if resolved_phase_dim != resolved_leg_dim:
+                result = resolved_phase_dim.unify(resolved_leg_dim)
+                if result.is_failure:
+                    issues.append(
+                        ValidationIssue(
+                            kind=IssueKind.PHASE_DIMENSION_MISMATCH,
+                            message=(
+                                f"node {node.id!r} ({gen.name}) phase vector is over "
+                                f"{resolved_phase_dim}, but its legs share dimension "
+                                f"{resolved_leg_dim}"
+                            ),
+                            node_id=node.id,
+                        )
                     )
-                )
-            elif result.is_deferred:
-                issues.append(
-                    ValidationIssue(
-                        kind=IssueKind.DIMENSION_DEFERRED,
-                        message=(
-                            f"node {node.id!r} ({gen.name}) assumes phase dimension "
-                            f"{node.phase.dim} == leg dimension {shared_dim} "
-                            "(deferred, not yet decided)"
-                        ),
-                        node_id=node.id,
-                        deferred=True,
+                elif result.is_deferred:
+                    issues.append(
+                        ValidationIssue(
+                            kind=IssueKind.DIMENSION_DEFERRED,
+                            message=(
+                                f"node {node.id!r} ({gen.name}) assumes phase dimension "
+                                f"{resolved_phase_dim} == leg dimension {resolved_leg_dim} "
+                                "(deferred, not yet decided)"
+                            ),
+                            node_id=node.id,
+                            deferred=True,
+                        )
                     )
-                )
+                # A binding this phase check itself produces (``result.bindings``) is
+                # deliberately *not* fed back into ``leg_unify``/``resolved_leg_dim``: unlike
+                # match.py's condition 6, which threads phase bindings back into ``shared_dim``
+                # because a fusion candidate's applicability genuinely depends on the
+                # most-resolved view of every leg and phase together, this function is not
+                # deciding applicability of anything -- it has already fully decided the legs'
+                # own question (FAILURE/DEFERRED/SUCCESS, via ``leg_unify``) before the phase
+                # is even examined, and no later check in this function re-reads
+                # ``resolved_leg_dim``. Feeding the phase's binding back could only sharpen the
+                # wording of an already-emitted DIMENSION_DEFERRED leg residual (turning "d ==
+                # e assumed" into "2 == e assumed" if the phase happens to bind d := 2); it
+                # cannot change any verdict. A validator computing one-shot node-local diagnostics
+                # is allowed to be weaker here than a matcher computing whether a fusion is
+                # applicable -- if a later change makes this function iterate node-local
+                # checks to a fixpoint for some other reason, revisit this.
 
 
 def validate(diagram: Diagram) -> ValidationReport:

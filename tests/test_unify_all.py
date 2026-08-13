@@ -140,3 +140,73 @@ class TestCrossNodePropagationDeferredToPhase10:
         # can see the other node's binding, so both bind silently and validate reports
         # nothing.
         assert report.is_valid
+
+
+class TestBudgetExhaustion:
+    """D3 (Phase 5 post-closing audit round 22, Defect 3): exhausting
+    ``_MAX_UNIFY_ALL_PASSES`` must be distinguishable from an ordinary, converged
+    ``DEFERRED`` -- see :class:`~qufzx.algebra.dimension.UnifyAllResult`'s own docstring for
+    the general rule this is an instance of, mirrored from
+    ``qufzx.rewrite.match``'s own ``_MAX_FIXPOINT_PASSES``, which already fails closed
+    (:mod:`tests.test_match`'s ``TestFixpointBudgetExhaustion``).
+    """
+
+    def test_exhaustion_is_flagged_and_reports_the_final_pass_residual(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import qufzx.algebra.dimension as dimension_module
+
+        monkeypatch.setattr(dimension_module, "_MAX_UNIFY_ALL_PASSES", 1)
+
+        a, b = Dim.symbol("a"), Dim.symbol("b")
+        # Reproduces the audit's own repro: with the budget capped at one pass, this leg set
+        # never reaches its fixpoint (a*b needs both a and b bound, which takes two passes to
+        # propagate), so pre-fix this returned DEFERRED with an empty residual_pairs --
+        # indistinguishable from a converged deferral that genuinely has nothing left to
+        # report.
+        result = unify_all([a * b, a, b, Dim.concrete(2)])
+
+        assert result.is_deferred
+        assert result.exhausted is True
+        assert result.residual_pairs, (
+            "an exhausted result must report what the final pass actually left "
+            "unresolved, not an empty tuple indistinguishable from a converged DEFERRED"
+        )
+
+    def test_converged_deferred_is_not_flagged_exhausted(self) -> None:
+        # Sanity check on the discriminator itself: an ordinary DEFERRED, reached well
+        # within the default budget, must not be mistaken for an exhausted one.
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        result = unify_all([d, e, d * e])
+
+        assert result.is_deferred
+        assert result.exhausted is False
+
+    def test_exhaustion_is_a_hard_error_at_the_validate_call_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import qufzx.algebra.dimension as dimension_module
+        from qufzx.diagram.validate import IssueKind, validate
+
+        monkeypatch.setattr(dimension_module, "_MAX_UNIFY_ALL_PASSES", 1)
+
+        a, b = Dim.symbol("a"), Dim.symbol("b")
+        diagram = Diagram()
+        node = diagram.add_node(
+            Z_SPIDER, input_dims=[a * b, a, b, Dim.concrete(2)], output_dims=[]
+        )
+        diagram.set_boundary_inputs(
+            [PortRef(node, Direction.INPUT, i) for i in range(4)]
+        )
+
+        report = validate(diagram)
+
+        # Failing open here (the pre-fix behaviour) reported this node completely clean --
+        # an undecided node read as valid. It must instead be a hard, non-deferred error.
+        assert not report.is_valid
+        assert any(
+            issue.kind is IssueKind.DIMENSION_RESOLUTION_EXHAUSTED
+            and issue.node_id == node
+            and not issue.deferred
+            for issue in report.errors
+        )

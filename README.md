@@ -109,10 +109,15 @@ Implemented and under test:
   spiders, and validation of per-port dimension agreement, boundary consistency, port
   usage, and generator policy — including that every node's dimension is determinable at
   all (a node with no legs and no phase is rejected, matching the numeric oracle's own
-  refusal) and that a node's legs are *jointly* unifiable to one shared dimension, not
-  merely pairwise unifiable against the first leg, so a valid diagram is always denotable.
-  A name may not serve as both a dimension symbol and a phase parameter within one
-  diagram, since substitution is name-keyed and would otherwise silently conflate the two.
+  refusal), that a node's legs are *jointly* unifiable to one shared dimension (not merely
+  pairwise unifiable against the first leg), and that a phase vector tied to its node's leg
+  dimension is checked against that same jointly-resolved dimension (not the raw, unresolved
+  first leg) — order-independently, at any concretizing substitution, in both cases. A name
+  may not serve as more than one of `qufzx.algebra`'s four symbol roles (a dimension, a
+  dimension's exponent, a phase parameter, or a scalar) within one diagram, since
+  substitution is name-keyed and would otherwise silently conflate two of them. Diagram-wide
+  (cross-node) dimension-constraint propagation is not yet implemented; each node's checks
+  are local to that node — this is deferred to a later phase, not a current gap.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
