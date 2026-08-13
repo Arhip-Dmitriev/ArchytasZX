@@ -922,7 +922,7 @@ def _unify_phase_dims(
     shared_dim: Dim,
     bindings: dict[str, Dim],
     record: _ConstraintRecord,
-) -> Dim | None:
+) -> tuple[Dim | None, Dim]:
     """Unify every phase vector actually present (A's, then B's) against ``shared_dim``, in turn.
 
     Mirrors :func:`_unify_surviving_legs`'s accumulator discipline exactly, extended to
@@ -939,10 +939,12 @@ def _unify_phase_dims(
     Unlike a leg, a genuinely ``DEFERRED`` result, or a result whose binding is not
     concrete, is never accepted here -- see the module docstring, condition 6, for why a
     phase's own entries make reattaching under an unproven or non-concrete assumption
-    unsafe. Returns ``None`` on either, making the whole candidate a non-match; returns the
-    resolved ``shared_dim`` on success, having written each present phase's binding-only
-    success into ``record`` under its own
-    :meth:`~qufzx.rewrite.rule.ConstraintSource.node_phase` key.
+    unsafe. Returns ``(None, shared_dim)`` on either, making the whole candidate a
+    non-match -- the second element is the value actually checked against the failing
+    phase, not necessarily the caller's pre-call ``shared_dim``. Returns ``(shared_dim,
+    shared_dim)`` on success, having written each present phase's binding-only success
+    into ``record`` under its own :meth:`~qufzx.rewrite.rule.ConstraintSource.node_phase`
+    key.
 
     Round 20, Task 7: previously returned ``(resolved_shared_dim, bound_names)``, threading a
     second, parallel accumulator of bound symbol names out to the caller alongside ``record``
@@ -962,21 +964,21 @@ def _unify_phase_dims(
         phase_dim = _resolve_with_bindings(phase.dim, bindings)
         phase_unify = phase_dim.unify(shared_dim)
         if phase_unify.is_failure or phase_unify.is_deferred:
-            return None
+            return None, shared_dim
         if not phase_unify.bindings:
             record.record_identity(source)
             continue
         if not all(value.is_concrete for value in phase_unify.bindings.values()):
-            return None
+            return None, shared_dim
         record.record(
             source, phase_dim, shared_dim, ConstraintOutcome.BOUND,
             bound_here=phase_unify.bindings,
         )
         new_concrete = dict(phase_unify.bindings)
         if not _merge_bindings(bindings, new_concrete):
-            return None
+            return None, shared_dim
         shared_dim = _resolve_with_bindings(shared_dim, phase_unify.bindings)
-    return shared_dim
+    return shared_dim, shared_dim
 
 
 def _unify_connecting_pair(
@@ -1184,8 +1186,14 @@ def _dimension_agreement_outcome(
     )
 
 
-def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]) -> PhaseVector:
+def reattach_phase(
+    phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, Dim]
+) -> tuple[PhaseVector, Mapping[str, Dim]]:
     """Substitute ``bindings`` into ``phase``'s entries, then reattach the result to ``shared_dim``.
+
+    Returns the reattached vector together with the subset of ``bindings`` that was
+    actually substituted into an entry's *value* -- distinct from ``shared_dim``, which
+    every caller reattaches to regardless of whether any entry mentioned it.
 
     Public (not ``_reattach_phase``, its pre-round-12 name): both this module's own
     :func:`resolve_fusion_match` and :mod:`qufzx.rewrite.rules_library`'s
@@ -1236,7 +1244,11 @@ def reattach_phase(phase: PhaseVector, shared_dim: Dim, bindings: Mapping[str, D
         if concrete_bindings
         else phase
     )
-    return PhaseVector(shared_dim, substituted.entries())
+    entry_symbols: set[str] = set()
+    for entry in phase.entries().values():
+        entry_symbols |= entry.free_symbols
+    applied = {name: bindings[name] for name in concrete_bindings if name in entry_symbols}
+    return PhaseVector(shared_dim, substituted.entries()), MappingProxyType(applied)
 
 
 def _validate_wire_endpoint(
@@ -1430,7 +1442,7 @@ def resolve_fusion_match(
         )
     )
 
-    def _failed(remaining_names: tuple[str, ...], reason: str) -> FusionResolution:
+    def _failed(remaining_names: tuple[str, ...], reason: str = "") -> FusionResolution:
         for name in remaining_names:
             outcomes.append(SideConditionOutcome(name, False, reason))
         return FusionResolution(
@@ -1575,7 +1587,7 @@ def resolve_fusion_match(
         leg_verified_shared_dim = shared_dim
         leg_verified_bindings = dict(bindings)
 
-        phase_result = _unify_phase_dims(
+        phase_result, phase_failed_at_dim = _unify_phase_dims(
             node_a, node_b, a_id, b_id, shared_dim, bindings, record
         )
         if phase_result is None:
@@ -1605,10 +1617,10 @@ def resolve_fusion_match(
             )
             phase_detail = (
                 "a present phase dimension does not unify with the resolved shared leg "
-                f"dimension {shared_dim} (a DEFERRED unify, or a binding to a non-concrete "
-                "Dim, is not accepted here -- see the module docstring, condition 6), or an "
-                "entry falls out of range once every binding this fixpoint accumulated is "
-                "substituted in"
+                f"dimension {phase_failed_at_dim} (a DEFERRED unify, or a binding to a "
+                "non-concrete Dim, is not accepted here -- see the module docstring, "
+                "condition 6), or an entry falls out of range once every binding this "
+                "fixpoint accumulated is substituted in"
             )
             outcomes.append(
                 SideConditionOutcome(
@@ -1710,7 +1722,7 @@ def resolve_fusion_match(
                     "phase_dimension_agreement", False, phase_detail, deferred=False
                 )
             )
-            return _failed((), "phase_dimension_agreement failed; see the outcome detail above")
+            return _failed(())
 
     # Round 20, Task 7: both the rendered *names* and their *values* are now read off the
     # single source this detail claims to describe -- ``record.entries()`` -- rather than

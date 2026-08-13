@@ -109,7 +109,10 @@ Implemented and under test:
   spiders, and validation of per-port dimension agreement, boundary consistency, port
   usage, and generator policy — including that every node's dimension is determinable at
   all (a node with no legs and no phase is rejected, matching the numeric oracle's own
-  refusal), so a valid diagram is always denotable.
+  refusal) and that a node's legs are *jointly* unifiable to one shared dimension, not
+  merely pairwise unifiable against the first leg, so a valid diagram is always denotable.
+  A name may not serve as both a dimension symbol and a phase parameter within one
+  diagram, since substitution is name-keyed and would otherwise silently conflate the two.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in

@@ -222,7 +222,10 @@ class Phase:
         symbol names, distinct from dimension symbol names -- a Phase built via
         :meth:`root_of_unity` at a symbolic Dim carries the *dimension's* symbol in its
         expression, and that symbol is substituted through the same mapping, since both
-        live in one shared sympy expression.
+        live in one shared sympy expression. This module trusts a caller not to reuse one
+        name for both roles in a way that is not the ``root_of_unity`` case above;
+        :class:`~qufzx.diagram.validate.IssueKind.SYMBOL_ROLE_COLLISION` is what makes a
+        diagram where a name actually is reused across roles invalid in the first place.
         """
         subs_dict: dict[sp.Symbol, sp.Expr] = {}
         by_name = {str(s.name): s for s in self._turns.free_symbols}

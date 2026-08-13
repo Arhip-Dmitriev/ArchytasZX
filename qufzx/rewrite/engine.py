@@ -430,6 +430,11 @@ Phase 5 post-closing audit round 18)    len(pre_wires) -                        
                                          chooses whether to prefer them
                                          (not-``None``) over ``match``'s
                                          own fields when recording the step
+``verified_phase_substitutions``        Not validated by ``apply`` itself   9     n/a                  test_rules_library.py::TestPhaseSubstitutionsCertificate
+(F2, Phase 5 post-closing audit         -- same trust posture as the row
+round 21)                               above; ``None`` falls back to an
+                                         empty mapping (see
+                                         ``RewriteStep.phase_substitutions``)
 Overall structural non-regression       Multiset ``(kind, ref)`` comparison  8     RewriteDomainError   test_engine.py::TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind,
 (not one field -- the combined          of ``validate(diagram)`` vs.                                   TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode
 effect of every field above)            ``validate(working)``
@@ -479,12 +484,12 @@ third, shared with :mod:`qufzx.rewrite.match`, is recorded in that module's own 
   than two separately-timed (and, after a future concurrent-mutation change, potentially
   different) re-validations of what is nominally "the same" diagram.
 
-Round 20 also closed a validator/denotation gap this module's own step 8 depends on
-(:mod:`qufzx.diagram.validate` accepting a node with no legs and no phase, which
-:mod:`qufzx.semantics.denote` correctly refuses) -- not a defect in this module, but recorded
-here because step 8 uses ``validate`` as its sole structural postcondition on a rewritten
-diagram, so a gap in what "valid" means is a gap in what step 8 actually guarantees. See
-:mod:`qufzx.diagram.validate`'s module docstring for the fix.
+Round 20, and round 21 again (a jointly-unsatisfiable ``ALL_LEGS_EQUAL`` leg set; a name
+colliding between a dimension symbol and a phase parameter), each closed a
+validator/denotation gap this module's own step 8 depends on -- not a defect in this
+module, but recorded here because step 8 uses ``validate`` as its sole structural
+postcondition on a rewritten diagram, so a gap in what "valid" means is a gap in what step
+8 actually guarantees. See :mod:`qufzx.diagram.validate`'s module docstring for both fixes.
 """
 
 from __future__ import annotations
@@ -494,6 +499,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
 from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
@@ -585,6 +591,12 @@ class RewriteStep:
     Enforced by ``tests/test_engine.py::TestDeferredIssueProvenanceIsSymmetric``.
     """
 
+    phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] = MappingProxyType({})
+    """Per-node bindings the builder actually substituted into a phase's entries -- see
+    :attr:`~qufzx.rewrite.rule.BuildResult.verified_phase_substitutions`. Empty when the
+    builder supplied ``None`` (nothing re-derived) or genuinely substituted nothing.
+    """
+
     deferred_issue_identity_ambiguous: bool = False
     """Whether the *identity* of the reported deferred issues above is meaningful, or only
     their count.
@@ -673,6 +685,10 @@ class RewriteStep:
                 self.new_node_ids,
                 self.removed_deferred_issues,
                 self.introduced_deferred_issues,
+                frozenset(
+                    (node_id, frozenset(subs.items()))
+                    for node_id, subs in self.phase_substitutions.items()
+                ),
                 self.deferred_issue_identity_ambiguous,
             )
         )
@@ -1176,6 +1192,11 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         if build_result.verified_dimension_constraints is not None
         else match.dimension_constraints
     )
+    step_phase_substitutions = (
+        build_result.verified_phase_substitutions
+        if build_result.verified_phase_substitutions is not None
+        else MappingProxyType({})
+    )
 
     step = RewriteStep(
         rule_name=rule.name,
@@ -1189,6 +1210,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         new_node_ids=build_result.new_node_ids,
         removed_deferred_issues=removed_deferred_issues,
         introduced_deferred_issues=introduced_deferred_issues,
+        phase_substitutions=step_phase_substitutions,
         deferred_issue_identity_ambiguous=removed_ambiguous or introduced_ambiguous,
     )
     return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)

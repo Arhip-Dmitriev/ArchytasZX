@@ -218,6 +218,91 @@ class TestGeneratorPolicyConformance:
         )
 
 
+class TestAllLegsEqualJointSatisfiability:
+    """F1, Phase 5 post-closing audit round 21: leg dims must be *jointly* unifiable, not
+    merely pairwise-unifiable against the first leg -- see qufzx.algebra.dimension.unify_all.
+    """
+
+    def test_jointly_unsatisfiable_bindings_are_rejected(self) -> None:
+        # d unifies with 2 (binds d := 2) and with 3 (binds d := 3) independently, but the
+        # two bindings contradict -- validate() must reject this, not silently discard both.
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        diagram.add_node(
+            Z_SPIDER, input_dims=[d, Dim.concrete(2), Dim.concrete(3)], output_dims=[]
+        )
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors)
+
+    def test_verdict_is_order_independent(self) -> None:
+        d = Dim.symbol("d")
+        for dims in ([d, Dim.concrete(2), Dim.concrete(3)], [Dim.concrete(2), d, Dim.concrete(3)]):
+            diagram = Diagram()
+            diagram.add_node(Z_SPIDER, input_dims=list(dims), output_dims=[])
+            report = validate(diagram)
+            assert not report.is_valid
+            assert any(
+                issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors
+            )
+
+    def test_multiple_residual_deferred_pairs_are_all_reported(self) -> None:
+        # R3: three legs, each pair deferred against the others -- one DIMENSION_DEFERRED
+        # issue per residual pair, not one collapsed "strongest" issue for the whole node.
+        d, e, f = Dim.symbol("d"), Dim.symbol("e"), Dim.symbol("f")
+        diagram = Diagram()
+        node = diagram.add_node(Z_SPIDER, input_dims=[d * e, d * f, e * f], output_dims=[])
+        diagram.set_boundary_inputs(
+            [PortRef(node, Direction.INPUT, i) for i in range(3)]
+        )
+        report = validate(diagram)
+        assert report.is_valid
+        deferred_on_node = [
+            issue for issue in report.deferred if issue.kind is IssueKind.DIMENSION_DEFERRED
+        ]
+        assert len(deferred_on_node) >= 2
+
+
+class TestSymbolRoleCollision:
+    """F2, Phase 5 post-closing audit round 21: a name cannot legally serve as both a
+    dimension symbol and a phase parameter within one diagram (see
+    qufzx.diagram.validate._classify_symbol_role)."""
+
+    def test_same_name_dimension_and_phase_symbol_is_rejected(self) -> None:
+        d = Dim.symbol("d")
+        phase = PhaseVector(d, {1: Phase.symbol("d")})
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[], phase=phase)
+        report = validate(diagram)
+        assert not report.is_valid
+        assert any(issue.kind is IssueKind.SYMBOL_ROLE_COLLISION for issue in report.errors)
+
+    def test_dimension_symbol_embedded_in_root_of_unity_phase_is_not_a_collision(self) -> None:
+        # A root-of-unity phase entry over the node's own symbolic dim legitimately embeds
+        # that same dimension symbol (not a distinct phase-role symbol of the same name) --
+        # this must not be flagged.
+        d = Dim.symbol("d")
+        phase = PhaseVector(d, {1: Phase.root_of_unity(1, d)})
+        diagram = Diagram()
+        diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[], phase=phase)
+        report = validate(diagram)
+        assert not any(
+            issue.kind is IssueKind.SYMBOL_ROLE_COLLISION for issue in report.errors
+        )
+
+    def test_distinct_symbols_of_the_same_name_are_never_equal(self) -> None:
+        # The discriminator itself: Dim.symbol/Phase.symbol/Scalar.symbol build distinct
+        # sympy Symbol objects for the same name string, via different assumptions.
+        from qufzx.algebra.scalar import Scalar
+
+        dim_symbol = Dim.symbol("d").to_sympy()
+        phase_symbol = Phase.symbol("d").to_sympy_turns()
+        scalar_symbol = Scalar.symbol("d").to_sympy()
+        assert dim_symbol != phase_symbol
+        assert dim_symbol != scalar_symbol
+        assert phase_symbol != scalar_symbol
+
+
 class TestNodeDimensionUndetermined:
     """Round 20, Task 9: a node with zero legs and no phase carries its dimension nowhere at
     all (per CLAUDE.md, "dimension is stored per port, not as one global parameter"), so it

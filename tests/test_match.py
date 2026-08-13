@@ -436,6 +436,17 @@ class TestPhaseFailureDoesNotMisreportDimensionAgreement:
             f"detail, which the leg sweep was never actually checked against: "
             f"{dimension_agreement!r}"
         )
+        # R1, Phase 5 post-closing audit round 21: phase_dimension_agreement's own detail
+        # must name the value B's phase was actually checked against (3, refined by A's own
+        # binding within this same _unify_phase_dims call), not the stale pre-call
+        # shared_dim (e) the caller held before making the call.
+        phase_dimension_agreement = by_name["phase_dimension_agreement"]
+        assert not phase_dimension_agreement.passed
+        assert "3" in phase_dimension_agreement.detail, phase_dimension_agreement.detail
+        assert "dimension e " not in phase_dimension_agreement.detail, (
+            f"phase_dimension_agreement reported a stale pre-call shared_dim: "
+            f"{phase_dimension_agreement!r}"
+        )
 
 
 class TestDimensionConstraintsRecording:

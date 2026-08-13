@@ -246,8 +246,12 @@ def _surviving_legs(
 
 def _over_shared_dim(
     phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]
-) -> PhaseVector:
+) -> tuple[PhaseVector, Mapping[str, Dim]]:
     """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``.
+
+    Returns the reattached vector together with the subset of ``bindings`` that
+    :func:`~qufzx.rewrite.match.reattach_phase` actually substituted into an entry's value
+    -- empty when ``phase`` is absent.
 
     Or an all-zero vector if ``phase`` is absent. Delegates to
     :func:`qufzx.rewrite.match.reattach_phase` -- the same function
@@ -271,7 +275,7 @@ def _over_shared_dim(
     and exists only to keep this function safe against a foreign or hand-built one.
     """
     if phase is None:
-        return PhaseVector(shared_dim, {})
+        return PhaseVector(shared_dim, {}), MappingProxyType({})
     try:
         return reattach_phase(phase, shared_dim, bindings)
     except PhaseDomainError as exc:
@@ -284,11 +288,13 @@ def _over_shared_dim(
 def _merged_phase(
     node_a: Node,
     node_b: Node,
+    a_id: NodeId,
+    b_id: NodeId,
     shared_dim: Dim,
     bindings: Mapping[str, Dim],
     *,
     any_legs_survive: bool,
-) -> PhaseVector | None:
+) -> tuple[PhaseVector | None, Mapping[NodeId, Mapping[str, Dim]]]:
     """The merged node's phase: componentwise sum, both operands read over ``shared_dim``.
 
     A `None` phase on both sides stays `None` -- *except* when ``any_legs_survive`` is
@@ -299,15 +305,22 @@ def _merged_phase(
     ``bindings`` into each operand's entries before reattaching to ``shared_dim`` -- see
     that function's docstring) before adding, since
     :meth:`~qufzx.algebra.phase.PhaseVector.__add__` demands its two operands' ``Dim``\\ s
-    be exactly equal.
+    be exactly equal. The second return value is every node whose phase actually had a
+    binding substituted into an entry, keyed by node id -- empty for a node with no phase
+    or whose phase entries mentioned no bound symbol.
     """
     if node_a.phase is None and node_b.phase is None:
         if not any_legs_survive:
-            return PhaseVector(shared_dim, {})
-        return None
-    return _over_shared_dim(node_a.phase, shared_dim, bindings) + _over_shared_dim(
-        node_b.phase, shared_dim, bindings
-    )
+            return PhaseVector(shared_dim, {}), {}
+        return None, {}
+    phase_a, applied_a = _over_shared_dim(node_a.phase, shared_dim, bindings)
+    phase_b, applied_b = _over_shared_dim(node_b.phase, shared_dim, bindings)
+    substitutions: dict[NodeId, Mapping[str, Dim]] = {}
+    if applied_a:
+        substitutions[a_id] = applied_a
+    if applied_b:
+        substitutions[b_id] = applied_b
+    return phase_a + phase_b, substitutions
 
 
 def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
@@ -446,9 +459,11 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     merged_outputs = surviving_outputs_a + surviving_outputs_b
 
     any_legs_survive = bool(merged_inputs or merged_outputs)
-    merged_phase = _merged_phase(
+    merged_phase, phase_substitutions = _merged_phase(
         node_a,
         node_b,
+        match.a_id,
+        match.b_id,
         resolution.shared_dim,
         resolution.bindings,
         any_legs_survive=any_legs_survive,
@@ -479,6 +494,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         scalar_introduced=Scalar.one(),
         verified_side_condition_outcomes=resolution.outcomes,
         verified_dimension_constraints=resolution.dimension_constraints,
+        verified_phase_substitutions=MappingProxyType(phase_substitutions),
     )
 
 

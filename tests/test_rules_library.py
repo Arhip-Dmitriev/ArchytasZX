@@ -532,6 +532,56 @@ class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
         assert merged.phase.dim == three
 
 
+class TestPhaseSubstitutionsCertificate:
+    """F2, Phase 5 post-closing audit round 21: which bindings were actually substituted
+    into a phase's *entries* is now recorded onto the certificate, distinct from the
+    container ``Dim`` every merge reattaches regardless.
+    """
+
+    def test_root_of_unity_entry_records_its_substituted_binding(self) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d, d],
+            phase=PhaseVector(d, {1: Phase.root_of_unity(1, d)}),
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[Dim.concrete(3)]
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert dict(result.step.phase_substitutions) == {a_id: {"d": Dim.concrete(3)}}
+
+    def test_a_concrete_phase_entry_substitutes_nothing(self) -> None:
+        # A concrete phase entry (no free symbols of its own) has nothing for a binding to
+        # touch, even though the container Dim is still reattached to shared_dim -- the two
+        # are genuinely distinct facts.
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d, d],
+            phase=PhaseVector(d, {1: Phase.turns(sp.Rational(1, 3))}),
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[Dim.concrete(3)]
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        match = find_matches(diagram)[0]
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert dict(result.step.phase_substitutions) == {}
+
+
 class TestSharedDimPropagatesToEverySurvivingPort:
     """Defect 2 reproducer: a resolved ``shared_dim`` used to be computed and then
     discarded -- the merged node's ports kept each leg's own raw ``Dim``, so a fusion

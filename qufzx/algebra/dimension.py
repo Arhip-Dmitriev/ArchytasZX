@@ -35,9 +35,9 @@ not verify.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -414,3 +414,88 @@ class UnifyResult:
     @property
     def is_deferred(self) -> bool:
         return self.status is UnifyStatus.DEFERRED
+
+
+_MAX_UNIFY_ALL_PASSES = 32
+"""Iteration budget for :func:`unify_all`'s bindings fixpoint. Module-level so a test can
+patch it low, mirroring :mod:`qufzx.rewrite.match`'s ``_MAX_FIXPOINT_PASSES``."""
+
+
+@dataclass(frozen=True)
+class UnifyAllResult:
+    """The result of :func:`unify_all`: a status, accumulated bindings, and residual pairs.
+
+    ``residual_pairs`` holds every pair left ``DEFERRED`` once the fixpoint stabilised --
+    empty unless ``status`` is ``DEFERRED``.
+    """
+
+    status: UnifyStatus
+    bindings: Mapping[str, Dim] = field(default_factory=dict)
+    residual_pairs: tuple[tuple[Dim, Dim], ...] = ()
+
+    @property
+    def is_success(self) -> bool:
+        return self.status is UnifyStatus.SUCCESS
+
+    @property
+    def is_failure(self) -> bool:
+        return self.status is UnifyStatus.FAILURE
+
+    @property
+    def is_deferred(self) -> bool:
+        return self.status is UnifyStatus.DEFERRED
+
+
+def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
+    """Resolve a multiset of Dims that must all be pairwise equal to one shared value.
+
+    Sorts ``dims`` by a canonical key before doing anything else, so the result depends
+    only on the multiset of dims given, never their input order. Runs :meth:`Dim.unify`
+    to a bounded fixpoint, accumulating concrete bindings monotonically (a name rebound to
+    a different concrete value is FAILURE); a binding to a non-concrete Dim is recorded on
+    no one and simply left unresolved. Returns FAILURE on any non-unifiable pair, DEFERRED
+    with every pair still unresolved once the fixpoint stabilises, or SUCCESS. Raises only
+    :class:`DimensionError` subclasses.
+    """
+    ordered = sorted(dims, key=lambda d: sp.srepr(d.to_sympy()))
+    if len(ordered) < 2:
+        return UnifyAllResult(status=UnifyStatus.SUCCESS)
+
+    bindings: dict[str, Dim] = {}
+
+    for _pass_index in range(_MAX_UNIFY_ALL_PASSES):
+        pass_start_bindings = dict(bindings)
+        residual: dict[str, tuple[Dim, Dim]] = {}
+        concrete_bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings)
+        base = ordered[0].substitute(concrete_bindings) if bindings else ordered[0]
+        for other in ordered[1:]:
+            concrete_bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings)
+            resolved_other = other.substitute(concrete_bindings) if bindings else other
+            result = base.unify(resolved_other)
+            if result.is_failure:
+                return UnifyAllResult(status=UnifyStatus.FAILURE)
+            if result.is_deferred:
+                key = f"{base!r}|{resolved_other!r}"
+                residual[key] = (base, resolved_other)
+                continue
+            new_concrete = {
+                name: value for name, value in result.bindings.items() if value.is_concrete
+            }
+            for name, value in new_concrete.items():
+                existing = bindings.get(name)
+                if existing is not None and existing != value:
+                    return UnifyAllResult(status=UnifyStatus.FAILURE)
+                bindings[name] = value
+            if new_concrete:
+                new_concrete_typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], new_concrete)
+                base = base.substitute(new_concrete_typed)
+        if bindings == pass_start_bindings:
+            if residual:
+                return UnifyAllResult(
+                    status=UnifyStatus.DEFERRED,
+                    bindings=dict(bindings),
+                    residual_pairs=tuple(residual.values()),
+                )
+            return UnifyAllResult(status=UnifyStatus.SUCCESS, bindings=dict(bindings))
+
+    return UnifyAllResult(status=UnifyStatus.DEFERRED, bindings=dict(bindings), residual_pairs=())

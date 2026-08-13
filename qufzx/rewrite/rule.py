@@ -421,6 +421,12 @@ class BuildResult:
     scalar_introduced: Scalar
     verified_side_condition_outcomes: tuple[SideConditionOutcome, ...] | None = None
     verified_dimension_constraints: tuple[DimensionConstraint, ...] | None = None
+    verified_phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
+    """Per-node bindings a builder actually substituted into a phase's entries (F2, Phase 5
+    post-closing audit round 21) -- via the same channel ``verified_dimension_constraints``
+    uses, i.e. the builder's own ground truth in preference to an unaudited claim.
+    ``None`` means "this rule re-derived nothing new", the same convention as its siblings.
+    """
     """The facts a builder independently re-derived, for the certificate to record instead
     of the match's own unverified claims (Phase 5 post-closing audit, Defect 2).
 

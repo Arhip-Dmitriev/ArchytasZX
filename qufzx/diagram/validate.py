@@ -99,6 +99,39 @@ enforce). The general question for a future check added to this module: does "va
 actually imply everything a downstream consumer (a rewrite's postcondition, a certificate
 replay, an oracle contraction) assumes it does, or only the subset this module happened to
 check first?
+
+Phase 5 post-closing audit round 21 (same class as round 20's, reopened). Two more gaps
+in "valid implies denotable"/"valid implies well-formed" closed:
+
+* ``DimensionPolicy.ALL_LEGS_EQUAL`` used to unify each leg against ``all_ports[0].dim``
+  independently and discard every binding, so a jointly-unsatisfiable leg set (e.g. one leg
+  binding a symbol to ``2``, another to ``3``) passed as valid, and the verdict depended on
+  leg order. Closed by :func:`~qufzx.algebra.dimension.unify_all`, which resolves the whole
+  leg set to one shared value via a monotone bindings fixpoint (mirroring
+  :mod:`qufzx.rewrite.match`'s own, but not sharing its implementation -- the two are
+  pinned to agree on the question they share, a lone connecting pair with no surviving
+  legs, by ``tests/test_unify_all.py::TestAgreesWithResolveFusionMatch``); FAILURE is now a
+  hard :class:`IssueKind.DIMENSION_POLICY_VIOLATION`, and every residual ``DEFERRED`` pair
+  gets its own :class:`IssueKind.DIMENSION_DEFERRED` rather than one collapsed
+  "strongest" issue for the whole node. What this still does not do: propagate a binding
+  from one node's legs to a *different* node's -- a ``d``-vs-``2`` wire on one node and a
+  ``d``-vs-``3`` wire on another is jointly unsatisfiable across the diagram but each
+  node's own check binds ``d`` independently and reports nothing, since diagram-global
+  dimension-constraint propagation is FULL_PLAN.md Phase 10 item (i)'s job, not this
+  module's local, per-node one; pinned by
+  ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
+* A name used as both a dimension symbol and a phase parameter in one diagram is a
+  different defect from a dimension disagreement: substitution in this codebase is keyed
+  by name, so :meth:`~qufzx.algebra.phase.PhaseVector.substitute` cannot tell such a
+  collision apart from the ordinary, legal case of a phase entry legitimately citing its
+  own container dimension's symbol (e.g. a root-of-unity entry over a symbolic dim).
+  :class:`IssueKind.SYMBOL_ROLE_COLLISION` (see :func:`_check_symbol_role_collisions`)
+  makes the ambiguous diagram itself invalid, using the distinguishing sympy assumptions
+  each of :mod:`qufzx.algebra.dimension`/:mod:`qufzx.algebra.phase`/
+  :mod:`qufzx.algebra.scalar`'s symbol constructors already stamps on its own symbols, as
+  the structural half of closing this; see :func:`~qufzx.rewrite.match.reattach_phase` for
+  the certificate half (which bindings a rewrite actually substituted into a phase's
+  entries, recorded rather than left implicit).
 """
 
 from __future__ import annotations
@@ -107,7 +140,9 @@ import enum
 from collections import Counter
 from dataclasses import dataclass, field
 
-from qufzx.algebra.dimension import Dim
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+from qufzx.algebra.dimension import Dim, unify_all
 from qufzx.diagram.generators import DimensionPolicy, PhaseSchema
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 
@@ -146,6 +181,7 @@ class IssueKind(enum.Enum):
     PHASE_DIMENSION_MISMATCH = "phase_dimension_mismatch"
     PHASE_NOT_PERMITTED = "phase_not_permitted"
     NODE_DIMENSION_UNDETERMINED = "node_dimension_undetermined"
+    SYMBOL_ROLE_COLLISION = "symbol_role_collision"
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +389,55 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                 )
 
 
+def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
+    """Which namespace ``symbol`` belongs to (dimension/phase/scalar), from its assumptions.
+
+    ``None`` for a symbol matching none of ``qufzx.algebra``'s three constructors.
+    """
+    assumptions = symbol.assumptions0
+    if assumptions.get("integer") and assumptions.get("positive"):
+        return "dimension"
+    if "real" in assumptions and assumptions.get("real"):
+        return "phase"
+    if assumptions.get("complex"):
+        return "scalar"
+    return None
+
+
+def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    # A same-named dimension and phase symbol are distinct sympy Symbol objects, so a
+    # by-name substitution (every substitute() here is) silently rewrites both.
+    roles: dict[str, dict[str, sp.Symbol]] = {}
+
+    def _note(expr: sp.Expr) -> None:
+        for symbol in expr.free_symbols:
+            role = _classify_symbol_role(symbol)
+            if role is None:
+                continue
+            roles.setdefault(str(symbol.name), {}).setdefault(role, symbol)
+
+    for node in diagram.nodes.values():
+        for port in (*node.inputs, *node.outputs):
+            _note(port.dim.to_sympy())
+        if node.phase is not None:
+            _note(node.phase.dim.to_sympy())
+            for entry in node.phase.entries().values():
+                _note(entry.to_sympy_turns())
+    _note(diagram.scalar.to_sympy())
+
+    for name, by_role in sorted(roles.items()):
+        if len(by_role) > 1:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.SYMBOL_ROLE_COLLISION,
+                    message=(
+                        f"symbol {name!r} is used as more than one role in this diagram: "
+                        f"{sorted(by_role)}"
+                    ),
+                )
+            )
+
+
 def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
 
@@ -397,33 +482,32 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     shared_dim: Dim | None = all_ports[0].dim if all_ports else None
 
     if gen.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL and shared_dim is not None:
-        strongest: ValidationIssue | None = None
-        for port in all_ports:
-            if port.dim == shared_dim:
-                continue
-            result = port.dim.unify(shared_dim)
-            if result.is_failure:
-                strongest = ValidationIssue(
+        all_result = unify_all([port.dim for port in all_ports])
+        if all_result.is_failure:
+            issues.append(
+                ValidationIssue(
                     kind=IssueKind.DIMENSION_POLICY_VIOLATION,
                     message=(
                         f"node {node.id!r} ({gen.name}) requires all legs to share one "
-                        f"dimension, but found {shared_dim} and {port.dim}"
+                        "dimension, but its leg dimensions do not jointly unify: "
+                        f"{sorted(str(port.dim) for port in all_ports)}"
                     ),
                     node_id=node.id,
                 )
-                break
-            if result.is_deferred and strongest is None:
-                strongest = ValidationIssue(
-                    kind=IssueKind.DIMENSION_DEFERRED,
-                    message=(
-                        f"node {node.id!r} ({gen.name}) assumes {shared_dim} == {port.dim} "
-                        "across its legs (deferred, not yet decided)"
-                    ),
-                    node_id=node.id,
-                    deferred=True,
+            )
+        elif all_result.is_deferred:
+            for assumed, equal_to in all_result.residual_pairs:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.DIMENSION_DEFERRED,
+                        message=(
+                            f"node {node.id!r} ({gen.name}) assumes {assumed} == {equal_to} "
+                            "across its legs (deferred, not yet decided)"
+                        ),
+                        node_id=node.id,
+                        deferred=True,
+                    )
                 )
-        if strongest is not None:
-            issues.append(strongest)
 
     if node.phase is not None:
         if gen.phase_schema is PhaseSchema.NONE:
@@ -480,6 +564,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_port_usage(diagram, issues)
     for node in diagram.nodes.values():
         _check_generator_policy(node, issues)
+    _check_symbol_role_collisions(diagram, issues)
     return ValidationReport(tuple(issues))
 
 
