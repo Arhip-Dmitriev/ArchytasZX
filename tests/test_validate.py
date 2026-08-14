@@ -120,6 +120,23 @@ class TestBoundaryViolations:
         assert not report.is_valid
         assert any(issue.kind is IssueKind.UNKNOWN_NODE for issue in report.errors)
 
+    def test_malformed_ref_on_both_boundary_lists_reported_once(self) -> None:
+        """A ref listed on both boundary lists resolves once, not twice (Phase 5 post-closing
+        audit round 23, Task 6): resolving it on each list separately used to append two
+        identical PORT_INDEX_OUT_OF_RANGE issues for one malformed reference."""
+        diagram = Diagram()
+        n = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
+        bad = PortRef(n, Direction.INPUT, 7)
+        diagram.set_boundary_inputs([bad])
+        diagram.set_boundary_outputs([bad])
+        report = validate(diagram)
+        out_of_range = [
+            issue for issue in report.errors if issue.kind is IssueKind.PORT_INDEX_OUT_OF_RANGE
+        ]
+        assert len(out_of_range) == 1
+        # The separate, legitimate DUPLICATE_BOUNDARY_ENTRY finding must still fire.
+        assert any(issue.kind is IssueKind.DUPLICATE_BOUNDARY_ENTRY for issue in report.errors)
+
     def test_wrong_direction_in_boundary_inputs(self) -> None:
         diagram = Diagram()
         a = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
@@ -322,6 +339,33 @@ class TestPhaseDimensionResolvedThroughLegBindings:
             f"seed {seed}: legs={legs}, phase_dim={phase_dim}: verdict depends on leg "
             f"order across permutations: {verdicts}"
         )
+
+
+class TestNonConcreteLegBindingIsSilentlyAccepted:
+    """Phase 5 post-closing audit round 23, Task 7b: a node whose legs unify only by binding
+    one bare symbol to another (e.g. legs ``d`` and ``e``, binding ``d := e``) reports no
+    issue at all -- a deliberate Phase 5 decision (see ``_check_generator_policy``'s own
+    inline comment), not an oversight, and asymmetric with the structurally identical
+    situation in :mod:`qufzx.rewrite.match`, which records it as a ``BOUND`` certificate
+    entry. ``UnifyAllResult.declined_bindings`` is populated regardless (so the assumption
+    is not lost, only not yet reported) -- pinned directly in ``test_dimension.py``. This
+    class pins today's silent behavior at the ``validate()`` level, so a future change to
+    surface ``declined_bindings`` here (left to Phase 10, per that comment) is a deliberate,
+    visible change to this test, not a silent behavior drift.
+    """
+
+    def test_two_bare_symbol_legs_report_no_issue(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=[d, e], output_dims=[])
+        diagram.set_boundary_inputs(
+            [PortRef(node_id, Direction.INPUT, 0), PortRef(node_id, Direction.INPUT, 1)]
+        )
+        report = validate(diagram)
+        assert report.is_valid
+        assert not report.deferred
+        assert not report.errors
 
 
 class TestAllLegsEqualJointSatisfiability:

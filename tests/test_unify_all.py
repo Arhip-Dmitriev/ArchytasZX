@@ -85,6 +85,24 @@ class TestBasicOutcomes:
         assert result.is_deferred
         assert len(result.residual_pairs) >= 1
 
+    def test_bare_symbol_pair_succeeds_via_a_declined_non_concrete_binding(self) -> None:
+        """Task 7b (Phase 5 post-closing audit round 23): two bare symbols (``d``, ``e``)
+        unify by binding one to the other -- a non-concrete binding, never folded into
+        ``bindings`` (see ``unify_all``'s own inline comment), but not simply dropped
+        either: it lands in ``declined_bindings``, so the assumption this SUCCESS actually
+        rests on is visible to any caller that looks, even though ``bindings`` itself is
+        empty.
+        """
+        result = unify_all([_D, _E])
+        assert result.is_success
+        assert result.bindings == {}
+        assert dict(result.declined_bindings) in ({"d": _E}, {"e": _D})
+
+    def test_declined_bindings_empty_when_every_leg_concrete(self) -> None:
+        result = unify_all([Dim.concrete(2), Dim.concrete(2)])
+        assert result.is_success
+        assert dict(result.declined_bindings) == {}
+
 
 class TestAgreesWithResolveFusionMatch:
     """This module's fixpoint and ``resolve_fusion_match``'s must never silently drift on

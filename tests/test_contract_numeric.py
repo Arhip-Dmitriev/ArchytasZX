@@ -28,6 +28,7 @@ from qufzx.semantics.contract_numeric import (
     ContractDomainError,
     ContractSizeError,
     ContractValidationError,
+    _assign_labels,
     contract,
 )
 
@@ -213,3 +214,34 @@ class TestOrderIndependence:
         result1 = contract(diagram1)
         result2 = contract(diagram2)
         np.testing.assert_allclose(result1.tensor, result2.tensor)
+
+
+class TestAssignLabelsUnionFind:
+    """Direct unit tests of ``_assign_labels``, targeting the helper rather than ``contract``.
+
+    The three-wire chain below (p1-p2, p3-p4, then p2-p3) wires p2 and p3 twice each --
+    a shape ``validate`` rejects as ``PORT_WIRED_TWICE``, so it is not ``contract()``-legal
+    and this bug is unreachable through ``contract`` itself. It is reachable directly
+    through ``_assign_labels``, which Phase 7's bang-box instantiation is expected to call
+    on wire sets it does not build (and therefore does not get to pre-validate) itself --
+    see that function's own docstring.
+    """
+
+    def test_chained_merge_unifies_all_four_ports(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        n1 = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        n2 = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        n3 = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        n4 = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        p1 = PortRef(n1, Direction.OUTPUT, 0)
+        p2 = PortRef(n2, Direction.OUTPUT, 0)
+        p3 = PortRef(n3, Direction.OUTPUT, 0)
+        p4 = PortRef(n4, Direction.OUTPUT, 0)
+        diagram.add_wire(p1, p2)
+        diagram.add_wire(p3, p4)
+        diagram.add_wire(p2, p3)
+
+        labels = _assign_labels(diagram)
+
+        assert labels[p1] == labels[p2] == labels[p3] == labels[p4]

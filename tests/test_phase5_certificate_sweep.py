@@ -69,21 +69,35 @@ Two sweeps, deliberately split by cost:
 from __future__ import annotations
 
 import itertools
+import random
 from collections.abc import Mapping
 from typing import cast
+from unittest.mock import patch
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+import qufzx.rewrite.match as match_module
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rule import ConstraintOutcome, ConstraintSourceKind, DimensionConstraint
+from qufzx.rewrite.rule import (
+    ConstraintOutcome,
+    ConstraintSourceKind,
+    DimensionConstraint,
+    RewriteGrammarError,
+)
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import EqualityMode, compare
 from qufzx.semantics.contract_numeric import ContractDomainError
+
+from .test_fusion_properties import (
+    _build_clean_diagram,
+    _build_mixed_diagram,
+    _build_random_diagram,
+)
 
 _D = Dim.symbol("d")
 _E = Dim.symbol("e")
@@ -740,4 +754,194 @@ class TestCertificateDetailFidelity:
         assert total > 0, (
             "the both-nodes-phase-bound-with-surviving-legs shape never produced a fusion "
             "match"
+        )
+
+
+_ADEQUACY_SEARCH_RANGE = range(1, 4)
+_MAX_ADEQUACY_FREE_SYMBOLS = 4
+"""Cap on how many free symbols one case's brute-force search covers, so a pathological
+shape with many distinct symbols cannot blow up this sweep's runtime; a case over the cap is
+skipped for the adequacy check (still counted, via ``skipped``, in the reported totals) --
+see :class:`TestConstraintRecordAdequacy`."""
+
+
+def _resolve_constraint_pair(
+    assumed: Dim, equal_to: Dim, substitution: Mapping[str, int]
+) -> bool:
+    typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], dict(substitution))
+    return assumed.substitute(typed).to_int() == equal_to.substitute(typed).to_int()
+
+
+def _check_adequacy(
+    resolution: match_module.FusionResolution,
+    asserted_pairs: list[tuple[Dim, Dim]],
+) -> str | None:
+    """Verify Task 1's adequacy invariant for one passed resolution.
+
+    Every satisfying assignment (within :data:`_ADEQUACY_SEARCH_RANGE`) of the finished
+    ``dimension_constraints`` plus the finished ``bindings`` must also satisfy every pair
+    ``_ConstraintRecord.record`` ever asserted during the resolution, including ones a later
+    pass displaced or overwrote. Returns ``None`` if the case was checked and adequacy held,
+    ``"skipped"`` if it exceeded :data:`_MAX_ADEQUACY_FREE_SYMBOLS` or had no satisfying
+    assignment in range, or raises ``AssertionError`` with a precise counterexample.
+    """
+    assert resolution.shared_dim is not None
+    fixed = {name: value for name, value in resolution.bindings.items() if value.is_concrete}
+    fixed_int = {name: value.to_int() for name, value in fixed.items()}
+    finished_pairs = [(c.assumed, c.equal_to) for c in resolution.dimension_constraints]
+    all_symbols: set[str] = set(fixed_int)
+    for assumed, equal_to in (*finished_pairs, *asserted_pairs):
+        all_symbols |= assumed.free_symbols | equal_to.free_symbols
+    free = sorted(all_symbols - set(fixed_int))
+    if len(free) > _MAX_ADEQUACY_FREE_SYMBOLS:
+        return "skipped"
+
+    any_satisfying = False
+    for values in itertools.product(_ADEQUACY_SEARCH_RANGE, repeat=len(free)):
+        candidate = {**fixed_int, **dict(zip(free, values, strict=True))}
+        if not all(_resolve_constraint_pair(a, b, candidate) for a, b in finished_pairs):
+            continue
+        any_satisfying = True
+        for assumed, equal_to in asserted_pairs:
+            assert _resolve_constraint_pair(assumed, equal_to, candidate), (
+                f"adequacy violated: finished record {finished_pairs!r} + bindings "
+                f"{fixed_int!r} is satisfied at {candidate!r}, but the asserted pair "
+                f"{assumed!r} == {equal_to!r} (recorded at some point during resolution, "
+                "possibly later displaced) does not hold there"
+            )
+    return None if any_satisfying else "skipped"
+
+
+def _find_matches_with_adequacy_instrumentation(
+    diagram: Diagram,
+) -> tuple[tuple[match_module.FusionMatch, ...], int, int]:
+    """``find_matches(diagram)``, checking Task 1's adequacy invariant for every candidate
+    ``resolve_fusion_match`` resolves along the way (not only the ones that end up returned
+    as matches -- a rejected candidate's own resolution is not checked here since it never
+    reaches ``passed``, but every *passed* one is, exactly like the returned matches
+    themselves, since a rejected resolve_fusion_match call never builds a record at all
+    worth checking). Returns ``(matches, checked_count, skipped_count)``.
+    """
+    checked = 0
+    skipped = 0
+    real_resolve = match_module.resolve_fusion_match
+
+    def wrapped_resolve_fusion_match(
+        diagram_: Diagram,
+        a_id: object,
+        b_id: object,
+        wire: object,
+    ) -> match_module.FusionResolution:
+        nonlocal checked, skipped
+        asserted_pairs: list[tuple[Dim, Dim]] = []
+        real_record = match_module._ConstraintRecord.record
+
+        def patched_record(
+            self: match_module._ConstraintRecord,
+            source: object,
+            assumed: Dim,
+            equal_to: Dim,
+            outcome: object,
+            bound_here: object = None,
+        ) -> None:
+            asserted_pairs.append((assumed, equal_to))
+            real_record(self, source, assumed, equal_to, outcome, bound_here=bound_here)  # type: ignore[arg-type]
+
+        with patch.object(match_module._ConstraintRecord, "record", patched_record):
+            resolution = real_resolve(diagram_, a_id, b_id, wire)  # type: ignore[arg-type]
+        if resolution.passed:
+            outcome_ = _check_adequacy(resolution, asserted_pairs)
+            if outcome_ == "skipped":
+                skipped += 1
+            else:
+                checked += 1
+        return resolution
+
+    with patch.object(match_module, "resolve_fusion_match", wrapped_resolve_fusion_match):
+        matches = find_matches(diagram)
+    return matches, checked, skipped
+
+
+class TestConstraintRecordAdequacy:
+    """Task 1 (Phase 5 post-closing audit round 23): the adequacy property from
+    ``_ConstraintRecord``'s own docstring, mechanically enforced rather than merely argued.
+
+    Every ``(assumed, equal_to)`` pair ``_ConstraintRecord.record`` ever asserts during a
+    resolution -- including one a later pass displaces or overwrites, which round 23 found
+    happens 43 times over the property harness's 15,000-seed sweep (16 BOUND -> DEFERRED, 27
+    BOUND -> a different BOUND) -- must be implied by the *finished* ``dimension_constraints``
+    plus the *finished* ``bindings``: at every small concrete substitution satisfying both,
+    every asserted pair must also hold. See ``_check_adequacy`` for the mechanics.
+    """
+
+    def test_structural_sweep_space_is_adequate(self) -> None:
+        total_matches = 0
+        total_checked = 0
+        total_skipped = 0
+        phase_choices: tuple[Dim | None, ...] = (None, Dim.concrete(2), _D)
+        shapes = _leg_shapes()
+        for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
+            for consumed_dim in _CONSUMED_DIM_PALETTE:
+                for (n_in_a, n_out_a), (n_in_b, n_out_b) in itertools.product(shapes, shapes):
+                    for dims_in_a, dims_out_a in itertools.product(
+                        _leg_contents(n_in_a), _leg_contents(n_out_a)
+                    ):
+                        for dims_in_b, dims_out_b in itertools.product(
+                            _leg_contents(n_in_b), _leg_contents(n_out_b)
+                        ):
+                            for phase_a, phase_b in itertools.product(
+                                phase_choices, phase_choices
+                            ):
+                                diagram, _a_id, _b_id = _build_two_node_diagram(
+                                    color=color,
+                                    dir_a=dir_a,
+                                    dir_b=dir_b,
+                                    consumed_dim=consumed_dim,
+                                    extra_in_a=dims_in_a,
+                                    extra_out_a=dims_out_a,
+                                    extra_in_b=dims_in_b,
+                                    extra_out_b=dims_out_b,
+                                    phase_a=phase_a,
+                                    phase_b=phase_b,
+                                )
+                                matches, checked, skipped = (
+                                    _find_matches_with_adequacy_instrumentation(diagram)
+                                )
+                                total_matches += len(matches)
+                                total_checked += checked
+                                total_skipped += skipped
+        assert total_matches > 0, "the adequacy sweep never produced a single fusion match"
+        assert total_checked > 50, (
+            f"only {total_checked} case(s) actually had their adequacy checked (with "
+            f"{total_skipped} skipped for being out of the search range/symbol cap); the "
+            "sweep collapsed to checking almost nothing"
+        )
+
+    def test_random_generators_are_adequate(self) -> None:
+        total_matches = 0
+        total_checked = 0
+        total_skipped = 0
+        for build_diagram in (_build_random_diagram, _build_clean_diagram, _build_mixed_diagram):
+            for seed in range(300):
+                rng = random.Random(seed)
+                diagram = build_diagram(rng)
+                try:
+                    matches, checked, skipped = _find_matches_with_adequacy_instrumentation(
+                        diagram
+                    )
+                except RewriteGrammarError:
+                    # A deliberately-corrupted boundary ref (see _build_random_diagram's own
+                    # docstring): find_matches rejects the whole diagram outright, before any
+                    # resolution runs -- nothing to check here.
+                    continue
+                total_matches += len(matches)
+                total_checked += checked
+                total_skipped += skipped
+        assert total_matches > 0, (
+            "the random-generator adequacy sweep never produced a single fusion match"
+        )
+        assert total_checked > 20, (
+            f"only {total_checked} case(s) actually had their adequacy checked across the "
+            f"three random generators (with {total_skipped} skipped); the sweep collapsed "
+            "to checking almost nothing"
         )

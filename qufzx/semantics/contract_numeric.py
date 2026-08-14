@@ -174,7 +174,23 @@ def _check_concrete(diagram: Diagram) -> None:
 
 
 def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
-    """Assign one integer axis label per port, unifying the two ends of every wire."""
+    """Assign one integer axis label per port, unifying the two ends of every wire.
+
+    A proper union-find over ports, not a per-wire two-endpoint patch: when a wire's two
+    ends already carry *different* labels, every port already wearing the higher-numbered
+    (absorbed) label is rewritten to the lower-numbered (surviving) one, not merely
+    ``wire.a``/``wire.b`` themselves. A third port already sharing the absorbed label would
+    otherwise keep a stale label after the merge, silently splitting one equivalence class
+    into two and producing a wrong contraction with no error (Phase 5 post-closing audit
+    round 23, Task 5). This path is unreachable from :func:`contract` today -- reaching it
+    needs a port wired twice or wired-and-boundary, both hard
+    :func:`~qufzx.diagram.validate.validate` errors that ``contract`` refuses before this
+    function ever runs -- but the function is
+    also called directly, unvalidated, by any future caller building its own wire set (Phase
+    7's bang-box instantiation is expected to be one), so it must be correct on its own
+    terms rather than merely unreachable today; see ``tests/test_contract_numeric.py``'s
+    direct unit test of this function for the three-wire chain that exposes the bug.
+    """
     counter = itertools.count()
     labels: dict[PortRef, int] = {}
     for ref in (*diagram.boundary_outputs, *diagram.boundary_inputs):
@@ -199,9 +215,18 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
             labels[wire.a] = b_label
         elif b_label is None:
             labels[wire.b] = a_label
-        else:
-            labels[wire.a] = a_label
-            labels[wire.b] = a_label
+        elif a_label != b_label:
+            # Both ends already carry a label, and the labels differ: this wire merges two
+            # equivalence classes that were built up independently by earlier wires. Every
+            # port already wearing either label must end up on the *same* label, not just
+            # wire.a and wire.b themselves, or a third port sharing one of the two classes
+            # is silently left in the wrong class (a broken union-find -- see this
+            # function's own docstring). Keep the lower integer so the result stays
+            # deterministic under the sorted iteration above.
+            survivor, absorbed = (a_label, b_label) if a_label < b_label else (b_label, a_label)
+            for port, label in labels.items():
+                if label == absorbed:
+                    labels[port] = survivor
     return labels
 
 

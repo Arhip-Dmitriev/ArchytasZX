@@ -340,11 +340,19 @@ and an actual element of                post-closing audit, that ``wire``
 same_generator_type /                   ``resolve_fusion_match``, the       B.3   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
 parallel_wires_become_self_loops /      exact function ``find_matches``           (domain)             ::test_a1_fabricated_same_generator_type_outcome_on_a_z_x_pair
 consumed_wire_direction_permitted_      calls to decide a candidate in                                 _is_rejected
-for_color / dimension_agreement /       the first place -- not a second,
-phase_dimension_agreement (the six      independently-maintained copy of
-side conditions, re-verified fresh,     this logic (A1)
-not merely trusted from
-``side_condition_outcomes``)
+for_color / consumed_ports_singly_      the first place -- not a second,
+claimed / dimension_agreement /         independently-maintained copy of
+phase_dimension_agreement (the seven    this logic (A1). The fifth of these
+side conditions, re-verified fresh,     (``consumed_ports_singly_claimed``)
+not merely trusted from                 was promoted from a bare filter
+``side_condition_outcomes``)            inside ``find_matches`` to a real,
+                                         re-verified side condition here in
+                                         Phase 5 post-closing audit round 23
+                                         (Task 2) -- see
+                                         ``qufzx.rewrite.match``'s module
+                                         docstring, "Match-implies-
+                                         applicable and multiply-claimed
+                                         ports"
 ``shared_dim``                          Checked for exact agreement with    B.4   RewriteDomainError   test_rules_library.py::TestPhase5Round12AuditDefects
                                          ``resolve_fusion_match``'s own                                 ::test_a2_shared_dim_unrelated_to_the_matched_legs_is_rejected
                                          freshly-derived value (A2)
@@ -490,6 +498,21 @@ validator/denotation gap this module's own step 8 depends on -- not a defect in 
 module, but recorded here because step 8 uses ``validate`` as its sole structural
 postcondition on a rewritten diagram, so a gap in what "valid" means is a gap in what step
 8 actually guarantees. See :mod:`qufzx.diagram.validate`'s module docstring for both fixes.
+
+Phase 5 post-closing audit round 23: a load-bearing check that existed in
+:mod:`qufzx.rewrite.match` but appeared nowhere in the certificate (a port claimed by a
+second wire, or also on a boundary list, was rejected by a bare filter inside
+``find_matches``, never a named, reported side condition). Not a defect in this module
+either, but the validation-contract table above named "the six side conditions" and this
+module's own :func:`_remap_endpoint` carried a defensive raise whose docstring described
+that filter as the reason it was unreachable -- both now updated to the seven-condition,
+one-decision-point picture: see :mod:`qufzx.rewrite.match`'s own module docstring,
+"Match-implies-applicable and multiply-claimed ports", for the fix itself. The general
+lesson, sharpened from round 20's "a documented contract drifted out of date": a
+cross-module table naming another module's own invariants ("the six side conditions") is
+exactly the kind of claim that drifts silently when that other module changes shape --
+worth a search for every place this module names a specific count or list belonging to
+another module's contract, not just its own, whenever that other module's shape changes.
 """
 
 from __future__ import annotations
@@ -835,10 +858,19 @@ def _remap_endpoint(
     step 6 is about to remove (whose removal cascade then silently drops the wire) instead of
     surfacing the problem. This also fires for a *consumed* port that a second wire or a
     boundary entry still names alongside the matched wire that consumed it -- a builder never
-    maps a consumed port -- but :mod:`qufzx.rewrite.match`'s ``find_matches`` now rejects such
-    candidates before returning them as matches (see that module's docstring), so this branch
-    is unreachable for any match it actually produced; it remains only as a defensive check
-    against a hand-built or foreign ``Match``.
+    maps a consumed port. Phase 5 post-closing audit round 23, Task 2: this used to be
+    guarded only by a bare ``continue`` filter inside :func:`~qufzx.rewrite.match.find_matches`
+    (a check that existed in code but appeared nowhere in the certificate); it is now
+    ``consumed_ports_singly_claimed``, a real, re-verified side condition
+    :func:`~qufzx.rewrite.match.resolve_fusion_match` decides and
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` re-checks before ever calling
+    this function -- so this branch is unreachable not merely for any match ``find_matches``
+    produces, but for any match the builder itself accepts at all, via either path (see
+    :mod:`qufzx.rewrite.match`'s module docstring, "Match-implies-applicable and
+    multiply-claimed ports"). It remains only as a defensive check against a hand-built or
+    foreign ``Match`` that bypasses the builder's own re-verification -- which is not
+    possible through ``spider_fusion_builder`` itself, but this function has no way to know
+    it was called from there rather than some future caller that skips that step.
     """
     if ref.node_id not in consumed_node_ids:
         return ref

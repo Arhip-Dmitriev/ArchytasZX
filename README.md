@@ -126,16 +126,29 @@ Implemented and under test:
   spider fusion (including phase-dimension agreement resolved by unification, not merely
   raw equality), the spider-fusion rule itself with its exact scalar, and an engine that
   applies a rule at a match and records step provenance — re-derived independently by the
-  builder rather than trusted from the match. Dimension assumptions the matcher could not
-  verify as a syntactic identity are recorded as a source-keyed `DimensionConstraint` (one
-  entry per connecting-wire pair, surviving leg, or node phase, replaced in place across a
-  fixpoint pass rather than re-appended, and carrying the exact binding the check that
-  recorded it produced — never re-derived from a later, possibly-diverged state), and a
-  rewrite's effect on pre-existing deferred dimension assumptions is recorded symmetrically
-  — both which ones it resolved (`removed_deferred_issues`) and which new ones it
-  introduced (`introduced_deferred_issues`). Graph-to-fuse-to-graph is oracle-checked
-  exactly, including at substitutions where a recorded constraint only holds by assumption
-  (not merely the cleanly-contractible case).
+  builder rather than trusted from the match. Seven side conditions are checked and
+  re-verified fresh by both the matcher and the builder, from the same one function: the
+  seventh, `consumed_ports_singly_claimed`, was promoted from a bare filter inside the
+  matcher to a real, certificate-visible side condition (Phase 5 post-closing audit round
+  23), closing the gap where a hand-built match claiming a multiply-claimed consumed port
+  used to be accepted by the builder and only fail deep inside the engine. Dimension
+  assumptions the matcher could not verify as a syntactic identity are recorded as a
+  source-keyed `DimensionConstraint` (one entry per connecting-wire pair, surviving leg, or
+  node phase, replaced in place across a fixpoint pass rather than re-appended, and carrying
+  the exact binding the check that recorded it produced — never re-derived from a later,
+  possibly-diverged state; the record's displacement policy and the adequacy invariant it
+  must satisfy are stated and mechanically checked, not merely asserted), and a rewrite's
+  effect on pre-existing deferred dimension assumptions is recorded symmetrically — both
+  which ones it resolved (`removed_deferred_issues`) and which new ones it introduced
+  (`introduced_deferred_issues`). A surviving leg forced onto the resolved shared dimension
+  can turn an exact match to a third node into a merely-deferred one — a routine outcome of
+  this pattern, not an edge case, permitted by the engine's own step-8 postcondition.
+  `unify_all` (used by the diagram-wide leg-dimension check) now also records, separately
+  from its verdict, every binding it declined to fold in because the bound-to value was
+  itself non-concrete — visible to a caller even though `validate` does not yet surface it
+  as a reported issue (a deliberate Phase 5 decision, left to Phase 10). Graph-to-fuse-to-graph
+  is oracle-checked exactly, including at substitutions where a recorded constraint only
+  holds by assumption (not merely the cleanly-contractible case).
 - **Dirac parsing (Phase 5 slice only)** — `qufzx/repl/parser.py` parses one restricted
   form, a summed ket family `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power
   shorthand) optionally followed by `; copy` to feed the state into a fixed copy spider —

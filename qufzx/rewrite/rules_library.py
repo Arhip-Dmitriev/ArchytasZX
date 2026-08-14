@@ -89,7 +89,7 @@ stated over the still-free symbol ``Dim("d")``); forcing every surviving leg ont
 overwrite such a leg -- or, worse, a leg whose dim plainly does not unify with
 ``shared_dim`` at all -- with no record and no rejected match. What actually makes this
 construction sound is that :mod:`qufzx.rewrite.match`'s ``dimension_agreement`` condition
-(condition 5 in that module's docstring) itself unifies every surviving leg of both nodes
+(condition 6 in that module's docstring) itself unifies every surviving leg of both nodes
 against the resolved ``shared_dim`` before a :class:`~qufzx.rewrite.match.FusionMatch` is
 ever returned: a leg that fails to unify makes the candidate a non-match, and a leg that
 only unifies by deferring or binding a symbol is recorded in
@@ -118,7 +118,14 @@ independently and hopes stays in sync. When the matched wire's ``dimension_agree
 deferred (on the connecting pair or on some surviving leg), the affected leg's assumed
 equality with ``shared_dim`` is
 carried into the diagram -- a neighbouring wire that was an exact match before this fusion
-may become merely deferred after it. That is expected, not a defect. See
+may become merely deferred after it. That is expected, not a defect, and not a marginal one
+either: instrumented over ``tests/test_fusion_properties.py``'s random property harness,
+roughly one in ten applications this module's matches produce trips exactly this path
+(measured: 22 of 193 applications over the harness's seed range), caught (and correctly
+permitted) by :mod:`qufzx.rewrite.engine`'s step-8 relative postcondition -- see
+:mod:`qufzx.rewrite.match`'s module docstring, condition 6, for the fuller account, and
+``tests/test_match.py::TestSurvivingLegOverwriteIntroducesDeferral`` for a deliberately
+constructed, named regression pinning the shape. See
 :func:`_merged_phase` for the legless corner case, where dimension can only survive via
 the phase slot.
 
@@ -199,7 +206,7 @@ actually load-bearing once ``reattach_phase`` forces both operands onto the iden
 ``shared_dim`` regardless of their raw ``Dim``\\ s, and the plain-equality check (versus a
 real ``unify`` call) silently missed a phase whose ``Dim`` unifies with ``shared_dim`` only
 via a binding this condition itself would have to produce. See
-:mod:`qufzx.rewrite.match`'s module docstring, condition 6, for the full account of both
+:mod:`qufzx.rewrite.match`'s module docstring, condition 7, for the full account of both
 retired checks and why neither bought any soundness.
 """
 

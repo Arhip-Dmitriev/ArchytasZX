@@ -395,7 +395,14 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                     port_ref=ref,
                 )
             )
-    for ref in (*diagram.boundary_inputs, *diagram.boundary_outputs):
+    # A ref listed on both boundary lists (already reported once above, as
+    # DUPLICATE_BOUNDARY_ENTRY) must still be resolved only once here: resolving it twice
+    # would append two identical UNKNOWN_NODE/PORT_INDEX_OUT_OF_RANGE issues for what is a
+    # single malformed reference, inflating counts that removed_deferred_issues/
+    # introduced_deferred_issues treat as load-bearing (Phase 5 post-closing audit round 23,
+    # Task 6). `dict.fromkeys` dedupes while preserving first-appearance order -- inputs
+    # before outputs, matching the order the two source lists are already given in.
+    for ref in dict.fromkeys((*diagram.boundary_inputs, *diagram.boundary_outputs)):
         _resolve(diagram, ref, issues)
 
     broken_node_ids = {
@@ -639,6 +646,24 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                         deferred=True,
                     )
                 )
+        # A SUCCESS whose ``leg_unify.declined_bindings`` is non-empty (e.g. legs stated as
+        # bare symbols ``d`` and ``e``, unifying only by binding ``d := e``) falls through
+        # here without an issue -- a deliberate Phase 5 decision, not an oversight (Phase 5
+        # post-closing audit round 23, Task 7b). The structurally identical situation in
+        # :mod:`qufzx.rewrite.match` is recorded on the certificate as a BOUND
+        # :class:`~qufzx.rewrite.rule.DimensionConstraint`, so this is a real, documented
+        # asymmetry: this module currently has no reporting path for "SUCCESS, but only
+        # under an assumption" the way it does for DEFERRED (which is exactly that same
+        # sentence for a *residual*, unresolved pair). Surfacing ``declined_bindings`` here
+        # (most likely as its own DIMENSION_DEFERRED finding) would make the two symmetric,
+        # but it ripples into :mod:`qufzx.rewrite.engine`'s step-8 deferred-issue bookkeeping
+        # (``RewriteStep.removed_deferred_issues``/``introduced_deferred_issues``, and every
+        # test asserting exact issue counts/lists across this module and that one) -- a
+        # certificate-shape change, not a Phase 5 bug fix, so it is left to Phase 10 rather
+        # than made here in passing. ``UnifyAllResult.declined_bindings`` is populated
+        # regardless (see that field's own docstring), so the assumption is not lost, only
+        # not yet reported; ``tests/test_symbolic_dimension_sweep.py`` pins today's silent
+        # behavior so this asymmetry is not rediscovered as a surprise later.
 
     if node.phase is not None:
         if gen.phase_schema is PhaseSchema.NONE:
@@ -679,7 +704,7 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             # when it is DEFERRED it is one representative among a residual-equal set --
             # sound to compare the phase against for the same reason match.py's ``shared_dim``
             # is sound to check surviving legs against one at a time (module docstring,
-            # condition 5/6), not because the first leg is privileged.
+            # condition 6/6), not because the first leg is privileged.
             resolved_leg_dim = all_ports[0].dim
             resolved_phase_dim = node.phase.dim
             if leg_unify.bindings:
@@ -715,7 +740,7 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                     )
                 # A binding this phase check itself produces (``result.bindings``) is
                 # deliberately *not* fed back into ``leg_unify``/``resolved_leg_dim``: unlike
-                # match.py's condition 6, which threads phase bindings back into ``shared_dim``
+                # match.py's condition 7, which threads phase bindings back into ``shared_dim``
                 # because a fusion candidate's applicability genuinely depends on the
                 # most-resolved view of every leg and phase together, this function is not
                 # deciding applicability of anything -- it has already fully decided the legs'

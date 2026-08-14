@@ -13,7 +13,7 @@
 
 """Permanent regression guard: the symbolic-dimension sweep (Phase 5 post-closing audit
 probe 2), extended (round-12 audit) to close two blind spots that let defects 1 and 2 (see
-:mod:`qufzx.rewrite.match`'s module docstring, condition 6) through undetected.
+:mod:`qufzx.rewrite.match`'s module docstring, condition 7) through undetected.
 
 1-in/1-out spider pairs (A, B), each leg dim drawn from ``{2, 3, d, e}`` (genuinely
 symbolic where ``d``/``e`` appear -- these diagrams are built once, symbolically, matched
@@ -68,7 +68,7 @@ audit brief's ~25,800 comparisons:
   purpose is specifically the ``d != e`` case a same-value substitution cannot exercise.
 * ``DEFERRED`` genuinely never arises from ``{2, 3, d, e}`` alone (it needs a symbol
   occurring as a proper subterm of the other side, e.g. ``d`` against ``d*e`` -- see
-  :mod:`qufzx.rewrite.match`'s module docstring, condition 5), so "clean" here means
+  :mod:`qufzx.rewrite.match`'s module docstring, condition 6), so "clean" here means
   ``validate(diagram).is_valid`` alone; every match this arm finds is a genuine
   syntactic-identity or single-binding case, never a deferred one (that shape is covered by
   the existing fuzz harness's ``d*e``/``d**2`` palette entries in

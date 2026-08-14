@@ -962,7 +962,29 @@ class TestSpiderFusionProperties:
             closure_results.append(result)
             return result
 
-        with patch.object(match_module, "_verify_fixpoint_closure", _wrapped_closure):
+        # Phase 5 post-closing audit round 23, Task 4: _merge_bindings' contradiction guard
+        # is claimed (in its own docstring) to be currently unreachable, for a structural
+        # reason (every operand is pre-resolved through _resolve_with_bindings before it
+        # ever reaches Dim.unify, so an already-bound symbol can never come back as a fresh
+        # binding key). Pinned here the same way _verify_fixpoint_closure's own
+        # unreachability claim is pinned just above: wrap the real function, assert it is
+        # actually exercised, and assert it never returns False across this sweep. A Phase
+        # 10 change to Dim.unify's contract that makes this reachable should fail this
+        # assertion rather than pass silently. _merge_bindings returns None on a clean
+        # merge, (name, existing, new) on a contradictory rebind (Task 3) -- "no hit" is
+        # `result is None`, not `result is truthy`.
+        merge_bindings_results: list[object] = []
+        real_merge_bindings = match_module._merge_bindings
+
+        def _wrapped_merge_bindings(*args: object, **kwargs: object) -> object:
+            result = real_merge_bindings(*args, **kwargs)  # type: ignore[arg-type]
+            merge_bindings_results.append(result)
+            return result
+
+        with (
+            patch.object(match_module, "_verify_fixpoint_closure", _wrapped_closure),
+            patch.object(match_module, "_merge_bindings", _wrapped_merge_bindings),
+        ):
             self._run_random_diagrams_fuse_soundly()
 
         assert closure_results, (
@@ -973,6 +995,17 @@ class TestSpiderFusionProperties:
             f"_verify_fixpoint_closure returned False {closure_results.count(False)} "
             f"time(s) out of {len(closure_results)} calls across the random property "
             "harness -- its own docstring's unreachability claim does not actually hold"
+        )
+        assert merge_bindings_results, (
+            "_merge_bindings was never called at all -- this instrumentation would then be "
+            "vacuously proving nothing"
+        )
+        conflicts = [r for r in merge_bindings_results if r is not None]
+        assert not conflicts, (
+            f"_merge_bindings reported a contradictory rebind {len(conflicts)} time(s) out "
+            f"of {len(merge_bindings_results)} calls across the random property harness "
+            f"({conflicts!r}) -- its own docstring's unreachability claim does not actually "
+            "hold"
         )
 
     def _run_random_diagrams_fuse_soundly(self) -> None:
@@ -1065,7 +1098,7 @@ class TestSpiderFusionProperties:
         )
 
     def test_phase_index_out_of_range_under_binding_is_not_a_match(self) -> None:
-        """Regression test for the Task 1 defect: see match.py's module docstring, condition 6.
+        """Regression test for the Task 1 defect: see match.py's module docstring, condition 7.
 
         A phase legally stated over symbolic ``d`` with an entry at index 5 must not be
         reported as a match once leg-unify binds ``d := 2`` -- index 5 is out of range at
@@ -1497,3 +1530,174 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
             f"unconstrained symbols, {size_skips} for ContractSizeError); this arm may be "
             "silently degenerating to only ever skipping instead of exercising compare()"
         )
+
+
+# Phase 5 post-closing audit round 23, Task 8: the two sweeps that verified round 23 (a
+# structural-invariant fuzz and a fresh-seed oracle differential) were written ad hoc and
+# thrown away. Promoted into permanent tests here so every future round has to clear them
+# too, not just the ones that happened to motivate this round's fixes.
+
+_STRUCTURAL_SEEDS: tuple[int, ...] = tuple(range(40000, 42000))
+"""Disjoint from every other seed pool in this module (``_SEEDS`` 0-2499, ``_CLEAN_SEEDS``
+0-19999, ``_MIXED_SEEDS`` 0-39999, ``_FOREIGN_SEEDS`` 0-399): starts at 40000, past the
+highest end of any of them, so this sweep is not merely re-confirming shapes the matcher and
+builder have already been tuned against."""
+
+_MIN_STRUCTURAL_APPLICATIONS = 100
+"""Floor for the number of applications actually checked by
+:class:`TestStructuralInvariants`, across all three generators over ``_STRUCTURAL_SEEDS`` --
+the same "a sweep that silently stops exercising the path is worse than no sweep" discipline
+as ``_MIN_ORACLE_COMPARISONS`` above."""
+
+
+def _check_structural_invariants(diagram: Diagram, match: FusionMatch, seed: int) -> int:
+    """Apply ``match`` and assert the structural postconditions Task 8a exists to pin.
+
+    Returns 1 if the application went through and was checked, 0 if it was legitimately
+    blocked by the step-8 relative postcondition (see ``_RELATIVE_POSTCONDITION_MARKER`` --
+    that carve-out is real and documented, not something this sweep should treat as a
+    failure; see ``TestSurvivingLegOverwriteIntroducesDeferral`` in ``test_match.py``).
+    """
+    node_a = diagram.nodes[match.a_id]
+    node_b = diagram.nodes[match.b_id]
+    ref_a = match.wire.a if match.wire.a.node_id == match.a_id else match.wire.b
+    ref_b = match.wire.b if match.wire.a.node_id == match.a_id else match.wire.a
+    expected_inputs = (
+        node_a.num_inputs
+        + node_b.num_inputs
+        - (1 if ref_a.direction is Direction.INPUT else 0)
+        - (1 if ref_b.direction is Direction.INPUT else 0)
+    )
+    expected_outputs = (
+        node_a.num_outputs
+        + node_b.num_outputs
+        - (1 if ref_a.direction is Direction.OUTPUT else 0)
+        - (1 if ref_b.direction is Direction.OUTPUT else 0)
+    )
+    before_node_count = len(diagram.nodes)
+    before_boundary_inputs = len(diagram.boundary_inputs)
+    before_boundary_outputs = len(diagram.boundary_outputs)
+    before_scalar = diagram.scalar
+
+    try:
+        result = apply(diagram, SPIDER_FUSION, match)
+    except RewriteDomainError as exc:
+        assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
+            f"seed {seed}: apply() raised a RewriteDomainError that is not the relative "
+            f"post-condition, for a match find_matches() itself returned: {exc}"
+        )
+        return 0
+
+    post = result.diagram
+    assert len(post.nodes) == before_node_count - 1, (
+        f"seed {seed}: expected exactly one node removed, got "
+        f"{before_node_count} -> {len(post.nodes)}"
+    )
+    assert len(post.boundary_inputs) == before_boundary_inputs, f"seed {seed}: boundary_inputs"
+    assert len(post.boundary_outputs) == before_boundary_outputs, f"seed {seed}: boundary_outputs"
+    assert post.scalar == before_scalar, (
+        f"seed {seed}: scalar changed by a rewrite that never claims to introduce one"
+    )
+
+    assert len(result.new_node_ids) == 1
+    merged = post.nodes[result.new_node_ids[0]]
+    assert merged.num_inputs == expected_inputs, (
+        f"seed {seed}: merged node has {merged.num_inputs} inputs, expected {expected_inputs}"
+    )
+    assert merged.num_outputs == expected_outputs, (
+        f"seed {seed}: merged node has {merged.num_outputs} outputs, expected {expected_outputs}"
+    )
+    for leg in (*merged.inputs, *merged.outputs):
+        assert leg.dim == match.shared_dim, (
+            f"seed {seed}: merged leg dim {leg.dim} != match.shared_dim {match.shared_dim}"
+        )
+
+    for node_id, consumed_ref in ((match.a_id, ref_a), (match.b_id, ref_b)):
+        node = diagram.nodes[node_id]
+        for direction in (Direction.INPUT, Direction.OUTPUT):
+            for index in range(len(node.legs(direction))):
+                ref = PortRef(node_id, direction, index)
+                if ref == consumed_ref:
+                    continue
+                assert ref in result.step.port_mapping, (
+                    f"seed {seed}: surviving port {ref!r} of a consumed node is missing "
+                    "from step.port_mapping"
+                )
+
+    # Must neither raise nor crash on the result -- a corrupted merged node (e.g. a leg
+    # count/dim mismatch this function's own asserts above did not already catch) could
+    # still trip an internal assertion inside find_matches itself.
+    find_matches(post)
+    return 1
+
+
+class TestStructuralInvariants:
+    """Task 8a: every match this module returns, once applied, must leave the diagram in a
+    structurally coherent state -- not merely "oracle-equal at some substitution" (already
+    covered by the oracle-differential arms above), but the graph-shape invariants a
+    certificate consumer (Phase 6) and a future strategy layer (Phase 11) both need to be
+    able to rely on without re-deriving them by hand each time.
+    """
+
+    def test_structural_invariants_hold_across_generators(self) -> None:
+        total_checked = 0
+        for build_diagram in (_build_random_diagram, _build_clean_diagram, _build_mixed_diagram):
+            for seed in _STRUCTURAL_SEEDS:
+                rng = random.Random(seed)
+                diagram = build_diagram(rng)
+                try:
+                    matches = find_matches(diagram)
+                except RewriteGrammarError:
+                    # _build_random_diagram sometimes deliberately corrupts a boundary ref
+                    # (see its own docstring); find_matches rejects the whole diagram
+                    # outright before returning any match, so there is nothing to check.
+                    continue
+                for match in matches:
+                    total_checked += _check_structural_invariants(diagram, match, seed)
+        assert total_checked >= _MIN_STRUCTURAL_APPLICATIONS, (
+            f"only {total_checked} application(s) were actually checked (floor is "
+            f"{_MIN_STRUCTURAL_APPLICATIONS}); the structural sweep may be silently "
+            "exercising almost nothing"
+        )
+
+
+_ORACLE_DIFF_SEEDS: tuple[int, ...] = tuple(range(42000, 44000))
+"""Disjoint from ``_STRUCTURAL_SEEDS`` too, and from every pinned pool this module already
+uses (see that constant's own docstring) -- a genuinely fresh range for Task 8b, not merely
+re-confirming seeds the matcher and builder have already been tuned against."""
+
+_MIN_ORACLE_DIFF_COMPARISONS = 500
+_MIN_ORACLE_DIFF_EXACT_MATCHES = 500
+"""Floors for :class:`TestFreshSeedOracleDifferential`: a comparison-count floor (the arm
+actually ran ``compare()``, not silently skipping every match) and an exact-match floor (the
+arm actually found agreement, not merely running comparisons that all happened to mismatch
+or get skipped for size) -- the same two-floor discipline
+``TestOracleTiesBackToRecordedConstraints`` in ``test_phase5_certificate_sweep.py`` uses."""
+
+
+class TestFreshSeedOracleDifferential:
+    """Task 8b: a fresh-seed oracle differential over a range disjoint from every existing
+    pinned pool in this module, so the suite is not merely re-confirming the seeds it was
+    tuned against. Uses :func:`_build_clean_diagram` (fully concrete by construction) so
+    every match reaches :func:`~qufzx.semantics.check.compare` directly, via
+    :func:`_check_one_clean_match` -- the same mechanics
+    ``TestSpiderFusionProperties::test_clean_diagrams_fuse_soundly_at_real_scale`` already
+    uses, over a disjoint seed range instead of a shared one.
+    """
+
+    def test_fresh_seeds_agree_with_the_oracle(self) -> None:
+        total_comparisons = 0
+        total_size_skips = 0
+        for seed in _ORACLE_DIFF_SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_clean_diagram(rng)
+            for match in find_matches(diagram):
+                comparisons, size_skips = _check_one_clean_match(diagram, match, seed)
+                total_comparisons += comparisons
+                total_size_skips += size_skips
+        assert total_comparisons >= _MIN_ORACLE_DIFF_EXACT_MATCHES, (
+            f"only {total_comparisons} exact oracle match(es) over the fresh seed range "
+            f"(floor is {_MIN_ORACLE_DIFF_EXACT_MATCHES}, {total_size_skips} skipped for "
+            "ContractSizeError); this arm may be silently exercising almost nothing"
+        )
+        assert total_comparisons >= _MIN_ORACLE_DIFF_COMPARISONS
