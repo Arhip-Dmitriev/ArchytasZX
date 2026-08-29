@@ -112,9 +112,25 @@ class DiracError(Exception):
       ``a == b``, and every wire this module builds connects two distinct, freshly allocated
       ports on different nodes.
     * ``Diagram.set_boundary_outputs`` -- safe; it never raises.
-    * ``int(token)`` -- safe as used here; every call site first confirms the token matches
-      ``\\d+`` (either ``token.isdigit()`` in :func:`_parse_dim`, or the regex's own
-      ``(?P<power>\\d+)`` group), so ``int()`` cannot raise ``ValueError``.
+    * ``int(token)`` -- safe as used here; every call site first confirms the token is a
+      non-empty run of ASCII ``0-9`` (:data:`_ASCII_DIGITS_RE` in :func:`_parse_dim`, or the
+      regex's own ``(?P<power>[0-9]+)`` group), so ``int()`` cannot raise ``ValueError``.
+
+      Round 24: this bullet used to justify the same conclusion via ``token.isdigit()``,
+      which is *not* the same predicate as ``\\d+`` and does not support it.
+      ``str.isdigit()`` is true for Unicode category ``No`` as well as ``Nd`` -- ``'\u00b2'``
+      and ``'\u2075'`` are both ``isdigit()``, match neither ``\\d+`` nor ``[0-9]+``, and
+      make ``int()`` raise ``ValueError`` -- so :func:`_parse_dim` called with such a token
+      leaked a bare ``ValueError`` straight through this module's own ``DiracError``
+      boundary, the Task 1 defect class round 20 closed everywhere else here. No *reachable*
+      input did that (``_KET_SUM_RE``'s own ``(?P<dim>...)`` group gated every real call
+      site, and its ``\\d+`` branch is ``Nd``-only), so the bullet's conclusion held -- but
+      it held because of the regex, not because of the ``isdigit()`` guard the bullet
+      credited, and this module's docstring says Phase 18 will replace that grammar. Fixed
+      structurally rather than re-documented: the guard is now literally the predicate this
+      bullet claims it is, so the two cannot diverge again. As a side effect this also stops
+      silently accepting a non-ASCII decimal digit (``'\u0663'`` is ``Nd``, so it *did*
+      match ``\\d+`` and parsed as ``Dim.concrete(3)``) as a concrete dimension.
     """
 
 
@@ -133,6 +149,38 @@ _SUMMATION_INDEX = "k"
 constant so the regex (:data:`_KET_SUM_RE`) and the dimension-symbol exclusion in
 :func:`_parse_dim` are derived from the same source and cannot drift apart (Task 2, round 20)."""
 
+_ASCII_DIGITS = "[0-9]+"
+"""The one decimal-literal shape this module's grammar admits, as a regex fragment.
+
+A single module-level constant so :data:`_KET_SUM_RE`'s two numeric groups and
+:func:`_parse_dim`'s own guard (:data:`_ASCII_DIGITS_RE`) are derived from the same source
+and cannot drift apart -- the same discipline :data:`_SUMMATION_INDEX` already applies to the
+bound index (Task 2, round 20).
+
+Deliberately ``[0-9]+``, not ``\\d+`` and emphatically not ``str.isdigit()`` (round 24).
+Python's ``\\d`` is Unicode-aware (category ``Nd``), so ``\\d+`` admits e.g. ``'\u0663'``
+and ``int()`` happily returns 3 for it -- a non-ASCII decimal digit silently accepted as a
+concrete dimension in a DSL whose every other token is ASCII. ``str.isdigit()`` is broader
+still, additionally admitting category ``No`` (``'\u00b2'``, ``'\u2075'``), for which
+``int()`` raises ``ValueError`` outright. See :class:`DiracError`'s docstring, ``int(token)``
+bullet, for the full account of what that divergence cost."""
+
+_ASCII_DIGITS_RE = re.compile(rf"^{_ASCII_DIGITS}$")
+"""Whole-token form of :data:`_ASCII_DIGITS`, for :func:`_parse_dim`'s guard."""
+
+_IDENTIFIER = r"[A-Za-z_]\w*"
+"""The one bare-identifier shape this module's grammar admits, as a regex fragment.
+
+Shared by :data:`_KET_SUM_RE`'s ``dim`` group and :func:`_parse_dim`'s own symbol branch
+(via :data:`_IDENTIFIER_RE`), for the same single-source-of-truth reason as
+:data:`_ASCII_DIGITS`. ``\\w`` is left Unicode-aware deliberately: ``sympy.Symbol`` accepts
+such a name, :meth:`~qufzx.algebra.dimension.Dim.symbol` builds it without complaint, and
+nothing downstream cares -- unlike the numeric branch, where Unicode-awareness was a real
+divergence between the guard and the conversion it guards."""
+
+_IDENTIFIER_RE = re.compile(rf"^{_IDENTIFIER}$")
+"""Whole-token form of :data:`_IDENTIFIER`, for :func:`_parse_dim`'s guard."""
+
 _MAX_KET_LEG_COUNT = 1024
 """Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit -- nothing
 about ZX-calculus or this project caps a spider's leg count, and a large or symbolic ``n`` is
@@ -142,9 +190,9 @@ ports before any later phase gets a chance to reject the diagram. Same role and 
 ``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match` (Task 3, round 20)."""
 
 _KET_SUM_RE = re.compile(
-    rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>[A-Za-z_]\w*|\d+)-1\}}\s*"
+    rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
     rf"\|(?P<body>[^>]*)>"
-    r"(?:\^\{(?:\\otimes|⊗)?\s*(?P<power>\d+)\s*\})?$"
+    rf"(?:\^\{{(?:\\otimes|⊗)?\s*(?P<power>{_ASCII_DIGITS})\s*\}})?$"
 )
 """Matches ``sum_{k=0}^{D-1} |BODY>`` with an optional ``^{n}`` (or ``^{\\otimes n}``/
 ``^{⊗n}``) tensor-power suffix on the ket. ``BODY`` is read by :func:`_leg_count_from_body`."""
@@ -188,13 +236,23 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
 def _parse_dim(token: str) -> Dim:
     """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``.
 
+    "Concrete positive integer" means a non-empty run of ASCII ``0-9`` and nothing else
+    (:data:`_ASCII_DIGITS_RE`, the same constant :data:`_KET_SUM_RE`'s own numeric groups are
+    built from). Round 24: this guard used to be ``token.isdigit()``, which is a strictly
+    broader predicate than the ``\\d+`` this function's contract is stated in terms of --
+    see :data:`_ASCII_DIGITS` and :class:`DiracError`'s ``int(token)`` bullet for what that
+    divergence cost and why the guard is now literally the predicate it is documented as.
+    A token matching neither branch never reaches this function through
+    :func:`parse_dirac_source` at all: :data:`_KET_SUM_RE` rejects it as a grammar error
+    first.
+
     Raises :class:`DiracDomainError` for a concrete value below 1, and for the bound
     summation index (:data:`_SUMMATION_INDEX`) used as a dimension symbol -- the index is
     bound by the enclosing sum, so a dimension named after it is always a capture error: a
     later ``substitute`` on the returned ``Dim`` would bind that symbol independently of the
     sum it lexically came from, silently detaching the dimension from its own index.
     """
-    if token.isdigit():
+    if _ASCII_DIGITS_RE.match(token):
         value = int(token)
         if value < 1:
             raise DiracDomainError(
@@ -211,6 +269,18 @@ def _parse_dim(token: str) -> Dim:
         raise DiracDomainError(
             f"dimension token {token!r} is the bound summation index; a dimension symbol "
             "must be free, not the variable the enclosing sum binds"
+        )
+    # Round 24: this function is total on its own terms, not merely on the tokens
+    # _KET_SUM_RE currently hands it. Without this branch a token matching neither shape
+    # fell through to Dim.symbol() and became a symbol *named* after it -- trading the bare
+    # ValueError this round removed for a silent wrong parse, which is strictly worse. The
+    # same "unreachable from every current caller is not the same claim as correct"
+    # principle _assign_labels' own fix is recorded under (see qufzx.rewrite.match's module
+    # docstring, round 23 summary).
+    if not _IDENTIFIER_RE.match(token):
+        raise DiracGrammarError(
+            f"dimension token {token!r} is neither a decimal literal ({_ASCII_DIGITS}) nor "
+            f"a bare identifier ({_IDENTIFIER})"
         )
     return Dim.symbol(token)
 

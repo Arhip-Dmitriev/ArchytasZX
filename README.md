@@ -155,9 +155,13 @@ Implemented and under test:
   exactly the shape Phase 5's own worked example needs, oracle-checked end to end
   (source string → diagram → fusion match → post-diagram) against several concrete `d`,
   and pinned structurally to the same hand-built fixture the graph-to-fuse-to-graph tests
-  use. Every exception it raises is a `DiracError` (no foreign exception class escapes),
-  the bound summation index cannot be captured as a dimension symbol, and a tensor-power
-  leg count is bounded against unbounded eager allocation. A general spider/wire/bang-box
+  use. Every exception it raises is a `DiracError` (no foreign exception class escapes —
+  including from its own internal helpers called directly, not only from the one public
+  entry point the grammar gates; round 24 closed a case where a token that was
+  `str.isdigit()` but not `[0-9]+` leaked a bare `ValueError` out of `_parse_dim`), the
+  bound summation index cannot be captured as a dimension symbol, numeric and identifier
+  tokens are ASCII by construction, and a tensor-power leg count is bounded against
+  unbounded eager allocation. A general spider/wire/bang-box
   declaration syntax, bang boxes, multi-index families, and the Dirac *printer* (the
   `Diagram`-to-Dirac direction) remain Phases 18/7/17's work, not this slice's.
 

@@ -27,6 +27,8 @@ ground truth, not standing alone as a second, independently-trusted diagram buil
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import qufzx.repl.parser as parser_module
@@ -157,6 +159,81 @@ class TestDiracParserGrammar:
         except DiracDomainError:
             return
         raise AssertionError("dimension 0 should have raised DiracDomainError")
+
+
+class TestDiracParserAsciiNumericTokens:
+    """Round 24: the numeric guard is the predicate its contract is written in terms of.
+
+    :func:`~qufzx.repl.parser._parse_dim` used to gate ``int(token)`` on
+    ``token.isdigit()`` while :class:`~qufzx.repl.parser.DiracError`'s own safety audit
+    justified the call as safe because "the token matches ``\\d+``". Those are three
+    different predicates, widening in this order: ``[0-9]+`` (ASCII), ``\\d+`` (Unicode
+    category ``Nd``), ``str.isdigit()`` (``Nd`` *and* ``No``). ``int()`` accepts the first
+    two and raises ``ValueError`` on the third, so ``_parse_dim`` called with a ``No``
+    character leaked a bare ``ValueError`` through this module's ``DiracError`` boundary --
+    the Task 1 defect class round 20 closed everywhere else here. Nothing reachable through
+    :func:`~qufzx.repl.parser.parse_dirac_source` did that, because ``_KET_SUM_RE`` gated
+    every real call site, so the audit's *conclusion* held while its stated *reason* did
+    not; the module docstring says Phase 18 replaces that grammar.
+
+    These tests pin the fixed contract at both levels -- the private helper standing alone,
+    and the public entry point -- so a future caller that does not go through the current
+    regex cannot silently reopen it.
+    """
+
+    def test_helper_rejects_non_ascii_digits_as_dirac_errors_not_value_errors(self) -> None:
+        """The regression proper: category ``No`` (isdigit, but int() raises)."""
+        for token in ("\u00b2", "\u2075"):  # superscript two, superscript five
+            assert token.isdigit(), f"{token!r} must be isdigit() or this pins nothing"
+            with pytest.raises(DiracError):
+                parser_module._parse_dim(token)
+
+    def test_helper_rejects_non_ascii_decimal_digits(self) -> None:
+        """Category ``Nd``: matched ``\\d+`` and parsed as a concrete dimension before."""
+        token = "\u0663"  # Arabic-Indic digit three
+        assert re.fullmatch(r"\d+", token), f"{token!r} must match \\d+ or this pins nothing"
+        with pytest.raises(DiracError):
+            parser_module._parse_dim(token)
+
+    def test_helper_is_total_rejecting_tokens_matching_neither_branch(self) -> None:
+        """A token that is neither a decimal literal nor an identifier must raise, not
+        silently become a symbol named after itself -- which is what dropping the
+        ``ValueError`` alone would have left behind."""
+        for token in ("", "1abc", "-3", "a b", "\u00b2"):
+            with pytest.raises(DiracGrammarError):
+                parser_module._parse_dim(token)
+
+    def test_helper_still_accepts_ascii_digits_and_identifiers(self) -> None:
+        assert parser_module._parse_dim("12") == Dim.concrete(12)
+        assert parser_module._parse_dim("d") == Dim.symbol("d")
+        assert parser_module._parse_dim("_d2") == Dim.symbol("_d2")
+
+    def test_source_with_non_ascii_dimension_digits_is_a_grammar_error(self) -> None:
+        """End to end: the public entry point rejects it as malformed source."""
+        with pytest.raises(DiracGrammarError):
+            parse_dirac_source("sum_{k=0}^{\u0663-1} |k,k>")
+
+    def test_source_with_non_ascii_power_digits_is_a_grammar_error(self) -> None:
+        """The tensor-power group is narrowed by the same shared constant."""
+        with pytest.raises(DiracGrammarError):
+            parse_dirac_source("sum_{k=0}^{d-1} |k>^{\u0663}")
+
+    def test_ascii_sources_are_unaffected(self) -> None:
+        """The narrowing must not have moved any legitimate source."""
+        assert len(parse_dirac_source("sum_{k=0}^{3-1} |k,k>").nodes) == 1
+        assert len(parse_dirac_source("sum_{k=0}^{d-1} |k,k>; copy").nodes) == 2
+        assert len(parse_dirac_source("sum_{k=0}^{d-1} |k>^{4}").nodes) == 1
+
+    def test_grammar_and_guard_share_one_source_of_truth(self) -> None:
+        """The guard cannot drift from the grammar again: both are built from the same
+        constants, which is what makes the docstring's claim structural rather than a
+        coincidence two separately-maintained predicates happen to agree on."""
+        assert parser_module._ASCII_DIGITS in parser_module._KET_SUM_RE.pattern
+        assert parser_module._IDENTIFIER in parser_module._KET_SUM_RE.pattern
+        assert parser_module._ASCII_DIGITS_RE.pattern == f"^{parser_module._ASCII_DIGITS}$"
+        assert parser_module._IDENTIFIER_RE.pattern == f"^{parser_module._IDENTIFIER}$"
+        # Both numeric groups in the grammar, not just the dimension one.
+        assert parser_module._KET_SUM_RE.pattern.count(parser_module._ASCII_DIGITS) == 2
 
 
 class TestDiracParserSummationIndexCapture:

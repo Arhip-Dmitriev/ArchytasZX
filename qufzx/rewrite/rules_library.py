@@ -342,14 +342,25 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     re-derived (Phase 5 round-12 audit, defects A1/A2/A4). In order:
 
     1. ``isinstance(match, FusionMatch)`` -- a foreign match type is a malformed request.
-    2. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against
-       ``spider_fusion_builder.side_conditions`` (the same object
-       :data:`SPIDER_FUSION.side_conditions <SPIDER_FUSION>` is built from -- see
+    2. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against the module-level
+       :data:`FUSION_SIDE_CONDITIONS` constant (the same object
+       :data:`SPIDER_FUSION.side_conditions <SPIDER_FUSION>` is built from, and the same one
+       ``spider_fusion_builder.side_conditions`` is assigned -- see
        :class:`~qufzx.rewrite.rule.Rule`'s constructor-time consistency check, which makes
        two contradicting tuples impossible to wire up in the first place, not merely
        undesirable). This builder is reachable directly, not only through
        :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having
        already checked this.
+
+       Round 24: this step used to say the runtime check reads
+       ``spider_fusion_builder.side_conditions``. It does not, and deliberately has not since
+       round 19 -- reading the function object's own attribute from inside that function's
+       body is a self-reference through its global name, which breaks under any rename or
+       wrapping of the function that does not also update the call site. The inline comment
+       at the actual call site already said so; this list had simply not been updated to
+       agree with it. The attribute survives for exactly one reader,
+       ``Rule.__post_init__``'s construction-time comparison (see its own docstring, just
+       below the function).
     3. :func:`~qufzx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``
        at ``match.a_id``, ``match.b_id``, ``match.wire`` -- the exact same function
        :func:`~qufzx.rewrite.match.find_matches` calls to decide whether this is a fusion

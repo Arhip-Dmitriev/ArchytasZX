@@ -703,8 +703,8 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             # of that status, equal to what substituting bindings into *any* leg would give;
             # when it is DEFERRED it is one representative among a residual-equal set --
             # sound to compare the phase against for the same reason match.py's ``shared_dim``
-            # is sound to check surviving legs against one at a time (module docstring,
-            # condition 6/6), not because the first leg is privileged.
+            # is sound to check surviving legs against one at a time (that module's docstring,
+            # conditions 6 and 7), not because the first leg is privileged.
             resolved_leg_dim = all_ports[0].dim
             resolved_phase_dim = node.phase.dim
             if leg_unify.bindings:

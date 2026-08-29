@@ -176,7 +176,7 @@ per-candidate outcomes are recorded):
    (:func:`_unify_phase_dims`: each present phase's ``Dim`` is resolved through the running
    ``bindings`` accumulator first, then unified against the *current* ``shared_dim``,
    refining both in place on a concrete binding before the next phase is examined), and by
-   folding conditions 5 and 6 into one bounded fixpoint that re-runs the surviving-leg sweep
+   folding conditions 6 and 7 into one bounded fixpoint that re-runs the surviving-leg sweep
    whenever a phase's binding has refined ``shared_dim`` past what the legs were last checked
    against -- see :func:`resolve_fusion_match`'s own inline commentary for the fixpoint's
    mechanics and termination argument.
@@ -214,7 +214,7 @@ per-candidate outcomes are recorded):
    rather than accepted-and-flagged (unlike condition 6's own ``leg_deferred``), a *passing*
    ``phase_dimension_agreement`` outcome is never itself resting on an undecided unify -- at
    most on a binding, which ``dimension_constraints`` records but which, following condition
-   5's own convention (a binding-only ``SUCCESS`` does not set ``leg_deferred`` either), this
+   6's own convention (a binding-only ``SUCCESS`` does not set ``leg_deferred`` either), this
    flag does not count as "deferred".
 
    Decided, not merely re-documented (Phase 5 post-closing audit, judgement call 2): the
@@ -451,14 +451,25 @@ container ``dim`` that no longer mentions it. A leg carries no such entries, so 
 nothing analogous to protect. This asymmetry is deliberate, not an inconsistency to be
 flattened: recorded as a Phase 10 item once, here, rather than as three separate asides.
 
-A candidate that fails condition 1, 2, or 3 is dropped before any :class:`FusionMatch` is
-constructed at all -- there is no "failed match" object for those, since they gate whether
-a pair is a fusion candidate in the first place, not a property of one. Conditions 4-7 are
-checked per surviving candidate and, when they fail, the candidate is likewise dropped
-(never included in the returned tuple) rather than reported as a match with a False
-outcome; every :class:`FusionMatch` this module returns therefore has
-``all_side_conditions_passed`` True by construction. This mirrors
+No :class:`FusionMatch` is ever constructed for a failing candidate. Conditions 1 and 3 are
+structural: :func:`find_matches` excludes a self-loop from candidate grouping entirely
+(condition 1), and condition 3 is a statement about what happens to the *other* wires
+joining an accepted pair, so neither can fail for a candidate that reaches
+:func:`resolve_fusion_match` at all -- both are reported unconditionally True. Conditions 2
+and 4-7 are decided per candidate by :func:`resolve_fusion_match`, which reports the failing
+one (and every condition after it, as "not evaluated") in its :class:`FusionResolution`;
+:func:`find_matches` then drops that candidate on ``resolution.passed`` being ``False``,
+never returning it as a match with a False outcome. Every :class:`FusionMatch` this module
+returns therefore has ``all_side_conditions_passed`` True by construction. This mirrors
 :mod:`qufzx.diagram.validate`'s existing deferred/hard-failure split for dimension issues.
+
+Round 24: this paragraph used to split the seven conditions as "1, 2, or 3 dropped before
+any FusionMatch is constructed" versus "4-7 checked per surviving candidate", which described
+the pre-round-23 code -- condition 2 (``same_generator_type``) has been decided by
+:func:`resolve_fusion_match`, and reported as an ordinary failing outcome, since that round
+folded every non-structural condition into the one predicate. The observable contract (a
+failing candidate is never returned) was and is unchanged; only the account of *where* each
+condition is decided had drifted.
 
 Determinism. :func:`find_matches` sorts its result by node ids, then -- since a pair's node
 ids no longer uniquely determine a candidate once condition 3 permits several parallel
@@ -677,6 +688,59 @@ keep looking:
   caller" is not the same claim as "correct", and a Phase 7 caller handed a wire set it did
   not validate itself is exactly the shape this repo's "strong foundations first" principle
   exists for.
+
+Phase 5 post-closing audit round 24 summary. A cold review (no prior context, largest
+adversarial sweeps this code has seen: 20,000 seeds of deliberately contended-port diagrams,
+plus 4,000 chained fusion sequences at 3-5 nodes oracle-checked at every step, on top of the
+existing suite) found **no functional defect in the rewrite core**. That is this round's
+primary result, and it is reported as a result rather than as an absence of one. What it did
+find, per rounds 18-23's own convention of naming the class rather than only the instance:
+
+* A safety lemma that is false, reaching a true conclusion for a different reason -- the same
+  class as round 23's ``_merge_bindings`` correction, recurring in
+  :mod:`qufzx.repl.parser`, the module round 20 declared closed out. ``_parse_dim`` gated
+  ``int(token)`` on ``token.isdigit()`` while the module's own outbound-call audit justified
+  it as "the token matches ``\\d+``". Those are different predicates -- ``str.isdigit()``
+  additionally admits Unicode category ``No``, on which ``int()`` raises -- so the guard
+  leaked a bare ``ValueError`` through that module's ``DiracError`` boundary, the Task 1 class
+  round 20 closed everywhere else there. Unreachable through the public entry point, because
+  the *regex* gated it; the conclusion held, the stated reason did not. Closed structurally:
+  guard and grammar are now built from one shared constant, so they cannot diverge again.
+  The general question: when a guard and its documented justification are stated as different
+  predicates, which one is actually load-bearing -- and would the other one still hold if the
+  caller changed?
+* One fact stated in two places and kept in sync by hand -- the class this history keeps
+  rediscovering, this time as *numbering*. Round 23 inserted ``consumed_ports_singly_claimed``
+  at position 5 and left seven references across three modules stating the pre-insertion
+  numbers, one degraded to the meaningless "condition 6/6" and one
+  ("condition 5's own convention ... ``leg_deferred``") that no plausible grep would have
+  surfaced. Also: ``_merge_bindings``' docstring naming the wrong test module and a return
+  convention two rounds stale, ``spider_fusion_builder``'s numbered contract contradicting
+  its own call-site comment, and this module's account of *where* each condition is decided
+  still describing the pre-round-23 code. Closed by fixing each, and -- since the numbering
+  is machine-readable -- by
+  ``tests/test_engine.py::TestConditionNumberingMatchesDeclaredOrder``, which pins the
+  authoritative list exactly and nets adjacent prose cross-references. It found the seventh
+  instance itself, after the other six had been fixed by hand.
+* A load-bearing condition with no property-scale coverage. Every diagram generator in
+  ``tests/test_fusion_properties.py`` wires ports by popping them out of a pool, so no port
+  is ever claimed twice and the boundaries are exactly the leftovers -- meaning round 23's
+  headline change, ``consumed_ports_singly_claimed``, could not fail for any candidate the
+  harness produced, and was pinned only by hand-picked unit tests. Closed by
+  ``_build_contended_diagram`` and its arm, which exercises the condition at 6,663 rejections
+  and 1,208 acceptances over 20,000 seeds, cross-checking each verdict against an
+  independently re-derived notion of contention. The general question: for each side
+  condition, does *some* generator here actually produce a diagram that fails it?
+
+Where this round did not go, and why it matters more than where it did. FULL_PLAN.md's Phase
+5 states its own exit criterion -- "the full path Dirac to graph to fuse to graph runs and the
+oracle confirms exact equality" -- and that criterion was not satisfiable at all until round
+19 added :mod:`qufzx.repl.parser`, because no Dirac front end existed (see that module's own
+docstring). Rounds 1-18 audited this phase against everything except its stated
+done-when. The criterion has been met since round 19. A reader arriving at round 25 should
+weigh a further pass over these four files against Phase 6, where the certificate fields
+these rounds refined finally acquire a consumer that can replay and check them -- which is
+evidence of a different and stronger kind than another reading of this docstring.
 """
 
 from __future__ import annotations
@@ -747,7 +811,7 @@ class FusionMatch:
     ordering convention ("A's surviving legs, then B's").
 
     ``bindings`` is the whole-candidate accumulator of every concrete symbol binding
-    conditions 5 and 6 (``dimension_agreement``, ``phase_dimension_agreement``) produced
+    conditions 6 and 7 (``dimension_agreement``, ``phase_dimension_agreement``) produced
     while resolving ``shared_dim`` -- the connecting pair's own, every surviving leg's on
     either node, and every present phase's own, across every pass of their shared fixpoint
     (see :func:`find_matches`'s local ``bindings`` dict, which this field is built from
@@ -961,9 +1025,16 @@ def _merge_bindings(
     also not an invariant this function itself can see or enforce), and :meth:`Dim.unify`'s
     contract is a Phase 5 placeholder Phase 10's real unifier replaces -- at which point the
     pre-resolution argument above may no longer hold and this guard becomes reachable.
-    ``tests/test_phase5_certificate_sweep.py`` wraps this function to assert it returns
-    ``True`` on every call across its sweeps, so a Phase 10 change that makes it reachable is
-    announced by a newly-failing assertion rather than discovered by accident.
+    ``tests/test_fusion_properties.py::TestSpiderFusionProperties
+    ::test_random_diagrams_fuse_soundly`` wraps this function to assert it returns ``None``
+    -- a clean merge -- on every call across its sweeps, so a Phase 10 change that makes it
+    reachable is announced by a newly-failing assertion rather than discovered by accident.
+    (Round 24: this sentence named the wrong test module and the wrong return convention. It
+    predates Task 3's change of this function's return type from a bare ``bool`` to
+    ``tuple[str, Dim, Dim] | None``, and survived the round-23 rewrite of the paragraphs
+    above it; the test itself already carried a comment correcting the convention, which is
+    exactly the "two statements of one fact kept in sync by hand" shape the record-keyed
+    constraint discipline elsewhere in this module exists to avoid.)
     """
     concrete = {name: value for name, value in new_bindings.items() if value.is_concrete}
     for name, value in concrete.items():
@@ -1713,7 +1784,7 @@ def resolve_fusion_match(
 ) -> FusionResolution:
     """Decide, from ``diagram`` alone, whether ``wire`` is a legal fusion of ``a_id``/``b_id``.
 
-    The single shared predicate behind conditions 1-6 in the module docstring -- see "One
+    The single shared predicate behind all seven conditions in the module docstring -- see "One
     verification predicate" there for the full account of why this function exists and the
     Phase 5 round-12 audit defect (A1/A2/A4) it closes. :func:`find_matches` calls this once
     per candidate wire to decide whether to report a match at all, and to populate the
@@ -1995,7 +2066,7 @@ def resolve_fusion_match(
         # must be reported against if a phase now fails. _unify_phase_dims can bind phase
         # A's own symbol -- refining both `bindings` and `shared_dim` in place -- before
         # failing on phase B in that same call (see its own docstring); reporting condition
-        # 5 against the state *after* that call would claim the legs were verified against
+        # 6 against the state *after* that call would claim the legs were verified against
         # a shared_dim they were never actually checked against.
         leg_verified_shared_dim = shared_dim
         leg_verified_bindings = dict(bindings)
@@ -2059,7 +2130,7 @@ def resolve_fusion_match(
         # fresh key, which bounds the number of non-stabilising passes by that finite symbol
         # count. The guard is kept anyway, conservatively refusing the candidate rather than
         # looping forever, because that bound rests on Dim.unify's current contract and
-        # Phase 10 replaces its body. Both conditions 5 and 6 are reported failed, with the
+        # Phase 10 replaces its body. Both conditions 6 and 7 are reported failed, with the
         # same detail: the fixpoint decides them jointly, so when it does not terminate
         # neither one was decided, and blaming either alone would send a reader to the wrong
         # place.

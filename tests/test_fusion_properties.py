@@ -36,7 +36,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseDomainError, PhaseVector
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
 from qufzx.rewrite import match as match_module
 from qufzx.rewrite.engine import RewriteResult, apply
@@ -55,7 +55,7 @@ from qufzx.rewrite.rule import (
 )
 from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 from qufzx.semantics.check import compare
-from qufzx.semantics.contract_numeric import ContractSizeError
+from qufzx.semantics.contract_numeric import ContractSizeError, ContractValidationError
 from qufzx.semantics.denote import DenoteError, denote
 
 _SEEDS: tuple[int, ...] = tuple(range(2500))
@@ -944,6 +944,160 @@ def _find_matches_tolerating_malformed_boundary(
         return None
 
 
+_CONTENDED_SEEDS: tuple[int, ...] = tuple(range(20000))
+"""Seeds for :func:`_build_contended_diagram`. See :data:`_MIN_CONDITION5_REJECTIONS`."""
+
+
+def _build_contended_diagram(rng: random.Random) -> Diagram:
+    """A clean diagram whose ports are deliberately *contended*: wired twice, or wired and
+    on a boundary.
+
+    Round 24. Every other generator in this module wires ports by popping them out of a
+    pool (:func:`_build_random_diagram`, :func:`_build_clean_diagram`,
+    :func:`_build_mixed_diagram` all do), so a port is claimed by at most one wire and the
+    boundary lists are exactly the leftovers. That is a perfectly reasonable shape for a
+    *well-formed* diagram -- and it means ``consumed_ports_singly_claimed``, the seventh
+    side condition (:mod:`qufzx.rewrite.match`'s condition 5, promoted from a bare
+    ``find_matches`` filter to a real certificate-visible condition in round 23), could
+    never fail for any candidate this module generated. Round 23's headline change was
+    therefore exercised only by the hand-picked unit tests in ``test_match.py``, never at
+    property-harness scale.
+
+    This generator closes that gap by sampling wire endpoints *with* replacement across
+    wires (so one port can be claimed by two wires, a
+    :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`) and by putting boundary
+    entries on already-wired ports (a
+    :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_AND_BOUNDARY`). Both are hard
+    validation errors, which is exactly the point: :func:`~qufzx.rewrite.match.find_matches`
+    does not require a well-formed diagram (see its own docstring), so it must decide this
+    condition itself rather than lean on a validity precondition it never asserts.
+
+    Otherwise deliberately kept as close to :func:`_build_clean_diagram` as possible -- one
+    concrete dimension shared by every leg of every node, fully concrete phases -- so a
+    match that *is* found still reaches :func:`~qufzx.semantics.check.compare` with an empty
+    assignment, and this arm tests condition 5 rather than re-testing dimension resolution.
+    """
+    dim = Dim.concrete(rng.choice(_CLEAN_DIM_VALUES))
+    diagram = Diagram()
+    ports: list[PortRef] = []
+    for node_index in range(rng.randint(2, 3)):
+        n_in, n_out = rng.randint(0, 2), rng.randint(0, 2)
+        phase = _random_clean_phase(rng, dim, node_index)
+        if n_in == 0 and n_out == 0 and phase is None:
+            phase = PhaseVector(dim, {})
+        node_id = diagram.add_node(
+            rng.choice(_COLORS),
+            input_dims=[dim] * n_in,
+            output_dims=[dim] * n_out,
+            phase=phase,
+        )
+        ports.extend(PortRef(node_id, Direction.INPUT, i) for i in range(n_in))
+        ports.extend(PortRef(node_id, Direction.OUTPUT, i) for i in range(n_out))
+    if len(ports) < 2:
+        return diagram
+
+    # With replacement across wires: a port already used by an earlier wire can be picked
+    # again, which is precisely the PORT_WIRED_TWICE shape condition 5 must refuse.
+    # Diagram._wires is a set and Wire equality is endpoint-set equality, so a repeat of the
+    # *same* pair collapses harmlessly rather than producing a duplicate wire.
+    for _ in range(rng.randint(1, 3)):
+        a, b = rng.sample(ports, 2)
+        diagram.add_wire(a, b)
+
+    wired = {ref for wire in diagram.wires for ref in (wire.a, wire.b)}
+    boundary_inputs: list[PortRef] = []
+    boundary_outputs: list[PortRef] = []
+    for ref in ports:
+        # An unwired port always goes on its boundary (as every other generator here does);
+        # a wired one goes on it too, sometimes -- the PORT_WIRED_AND_BOUNDARY shape.
+        if ref in wired and rng.random() >= 0.4:
+            continue
+        target = boundary_inputs if ref.direction is Direction.INPUT else boundary_outputs
+        target.append(ref)
+    diagram.set_boundary_inputs(boundary_inputs)
+    diagram.set_boundary_outputs(boundary_outputs)
+    return diagram
+
+
+_CONDITION_5_NAME = "consumed_ports_singly_claimed"
+
+
+def _condition5_outcome(
+    diagram: Diagram, a_id: NodeId, b_id: NodeId, wire: Wire
+) -> SideConditionOutcome | None:
+    """``consumed_ports_singly_claimed``'s outcome, or ``None`` if it was never evaluated.
+
+    :func:`~qufzx.rewrite.match.resolve_fusion_match` short-circuits: once a condition fails,
+    every later one is still *reported* (``outcomes`` always has exactly seven entries) but
+    with ``passed=False`` and a "not evaluated: ... failed first" detail. Cross-checking
+    condition 5's verdict against diagram contention is only meaningful when it was actually
+    decided, so this returns ``None`` whenever an earlier condition failed first -- reading
+    that off the preceding outcomes rather than re-deciding the earlier conditions here.
+    """
+    resolution = match_module.resolve_fusion_match(diagram, a_id, b_id, wire)
+    index = next(
+        i for i, entry in enumerate(resolution.outcomes) if entry.name == _CONDITION_5_NAME
+    )
+    if not all(entry.passed for entry in resolution.outcomes[:index]):
+        return None
+    return resolution.outcomes[index]
+
+
+def _consumed_refs(a_id: NodeId, b_id: NodeId, wire: Wire) -> tuple[PortRef, PortRef]:
+    """``wire``'s two endpoints, ordered ``(on a_id, on b_id)``."""
+    if wire.a.node_id == a_id:
+        return wire.a, wire.b
+    return wire.b, wire.a
+
+
+def _port_is_contended(diagram: Diagram, ref: PortRef, consuming_wire: Wire) -> bool:
+    """Independently: is ``ref`` claimed by a second wire, or listed on a boundary?
+
+    Re-derived here rather than by importing
+    :func:`~qufzx.rewrite.match._consumed_port_claim_conflict`, so this arm cross-checks the
+    matcher's verdict against a separate computation instead of restating it.
+    """
+    other_wires = sum(
+        1 for wire in diagram.wires if wire != consuming_wire and ref in (wire.a, wire.b)
+    )
+    on_boundary = ref in diagram.boundary_inputs or ref in diagram.boundary_outputs
+    return bool(other_wires) or on_boundary
+
+
+_MIN_CONDITION5_REJECTIONS = 2000
+"""Floor for how many candidates ``consumed_ports_singly_claimed`` actually *rejects*.
+
+Without a floor this arm would pass vacuously the moment a generator change stopped
+producing contended ports at all -- the exact failure mode
+:data:`_MIN_CLEAN_ORACLE_COMPARISONS` and :data:`_MIN_MALFORMED_BOUNDARY_HITS` exist to
+prevent for their own paths. Counted only over candidates where condition 5 was genuinely
+*evaluated* (every earlier condition passed -- see :func:`_condition5_outcome`), never over
+the short-circuited "not evaluated" reports, which would inflate this number with candidates
+that failed on colour or direction instead. Measured at 6,663 such rejections over
+``_CONTENDED_SEEDS``' 20,000 seeds; 2,000 leaves wide headroom for incidental generator
+tuning while still failing loudly if this arm's whole reason for existing evaporated."""
+
+_MIN_CONDITION5_ACCEPTANCES = 400
+"""Floor for how many candidates ``consumed_ports_singly_claimed`` actually *passes*.
+
+The other half of the same anti-vacuity guard: an arm in which condition 5 rejected
+*everything* would prove only that the resolver can say no, never that it still says yes for
+a legitimately single-claimed consumed port sitting in a diagram that is contended
+elsewhere. Measured at 1,208 acceptances over the same seed range."""
+
+_MIN_CONDITION5_ORACLE_COMPARISONS = 250
+"""Floor for oracle comparisons on this arm specifically.
+
+Deliberately modest, and *not* this arm's point -- oracle equality at scale is
+``test_clean_diagrams_fuse_soundly``'s job (thousands of comparisons). Most diagrams this
+generator builds are hard-invalid *somewhere*, so :func:`~qufzx.semantics.check.compare`
+refuses them outright (``ContractValidationError``) and the rewrite simply cannot be scored.
+Measured at 807 comparisons against 401 such skips; a floor of 250 pins that the seam
+between "contended enough to exercise condition 5" and "still contractible end to end" has
+not closed entirely, which is what would happen if this generator drifted toward producing
+only unscoreable diagrams."""
+
+
 class TestSpiderFusionProperties:
     def test_random_diagrams_fuse_soundly(self) -> None:
         # Phase 5 post-closing audit round 18, Defect 3: prove _verify_fixpoint_closure's
@@ -1095,6 +1249,117 @@ class TestSpiderFusionProperties:
             f"the clean generator never produced these colour/direction combinations: "
             f"{sorted(missing_combinations)} -- coverage of the Z same-direction widening "
             "(or the X alternating-only restriction) may have silently regressed"
+        )
+
+    def test_contended_ports_exercise_consumed_ports_singly_claimed(self) -> None:
+        """Round 24: property-scale coverage for the seventh side condition.
+
+        Every other generator in this module wires ports by popping them out of a pool, so
+        no port is ever claimed twice and the boundary lists are exactly the leftovers --
+        which means ``consumed_ports_singly_claimed`` could not fail for any candidate they
+        produce, and round 23's headline change was pinned only by hand-picked unit tests.
+        :func:`_build_contended_diagram` produces the shapes that *do* exercise it.
+
+        Four properties, all on the same sweep:
+
+        1. The condition genuinely rejects, at scale (:data:`_MIN_CONDITION5_REJECTIONS`)
+           and genuinely accepts, at scale (:data:`_MIN_CONDITION5_ACCEPTANCES`) -- so the
+           arm cannot pass vacuously from either direction.
+        2. Its verdict is *correct*, per candidate, against an independently re-derived
+           notion of contention (:func:`_port_is_contended`) rather than against the
+           matcher's own helper restated.
+        3. Match-implies-applicable still holds on exactly these diagrams: every match
+           :func:`~qufzx.rewrite.match.find_matches` returns applies without raising
+           anything but the step-8 relative postcondition -- in particular never
+           :func:`~qufzx.rewrite.engine._remap_endpoint`'s "absent from the builder's
+           port_mapping" ``RewriteDomainError``, which is the failure condition 5 exists to
+           prevent and which a contended consumed port would otherwise trigger.
+        4. The rewrite is still oracle-exact on the diagrams that survive.
+        """
+        rejections = 0
+        acceptances = 0
+        oracle_comparisons = 0
+        oracle_skips = 0
+        for seed in _CONTENDED_SEEDS:
+            rng = random.Random(seed)
+            diagram = _build_contended_diagram(rng)
+
+            # Property 1/2: walk every candidate pair the matcher itself would consider,
+            # not only the ones it accepted, so a rejected candidate is inspected too.
+            for wire in diagram.wires:
+                if wire.a.node_id == wire.b.node_id:
+                    continue
+                a_id, b_id = match_module._ordered_pair(wire)
+                outcome = _condition5_outcome(diagram, a_id, b_id, wire)
+                if outcome is None:
+                    continue  # an earlier condition failed first; 5 was never decided
+                ref_a, ref_b = _consumed_refs(a_id, b_id, wire)
+                contended = _port_is_contended(diagram, ref_a, wire) or _port_is_contended(
+                    diagram, ref_b, wire
+                )
+                assert outcome.passed is not contended, (
+                    f"seed {seed}: consumed_ports_singly_claimed reported "
+                    f"passed={outcome.passed} for wire {wire!r}, but an independent check "
+                    f"says contended={contended} (detail: {outcome.detail!r})"
+                )
+                if outcome.passed:
+                    acceptances += 1
+                else:
+                    rejections += 1
+
+            # Properties 3/4: every *returned* match must still apply cleanly and be
+            # oracle-exact, on these deliberately ill-formed diagrams.
+            for match in find_matches(diagram):
+                try:
+                    result = apply(diagram, SPIDER_FUSION, match)
+                except RewriteDomainError as exc:
+                    assert _RELATIVE_POSTCONDITION_MARKER in str(exc), (
+                        f"seed {seed}: apply() raised a RewriteDomainError that is not the "
+                        f"step-8 relative postcondition: {exc}"
+                    )
+                    continue
+                post = result.diagram
+                introduced = _hard_error_kinds(post) - _hard_error_kinds(diagram)
+                assert not introduced, (
+                    f"seed {seed}: rewrite introduced hard-error issue kind(s) "
+                    f"{sorted(k.value for k in introduced)} not present in the input diagram"
+                )
+                try:
+                    comparison = compare(diagram, post, {})
+                except ContractSizeError:
+                    oracle_skips += 1
+                    continue
+                except ContractValidationError:
+                    # Expected, and the reason this arm's oracle floor is modest rather
+                    # than in the thousands: a diagram with a contended port *elsewhere* is
+                    # not contractible at all
+                    # (``contract`` refuses a hard-invalid input), so the oracle simply has
+                    # nothing to say about it. That is a property of the input, not a defect
+                    # in the rewrite -- properties 1-3 above still applied to it, and the
+                    # oracle-equality property itself is carried at scale by
+                    # ``test_clean_diagrams_fuse_soundly``. Counted, never silently dropped.
+                    oracle_skips += 1
+                    continue
+                oracle_comparisons += 1
+                assert comparison.matched, f"seed {seed}: oracle mismatch: {comparison.reason}"
+
+        assert rejections >= _MIN_CONDITION5_REJECTIONS, (
+            f"consumed_ports_singly_claimed rejected only {rejections} candidate(s) "
+            f"(floor is {_MIN_CONDITION5_REJECTIONS}); this arm's whole purpose is to "
+            "exercise that rejection at property scale, so a low count means the generator "
+            "has stopped producing contended ports and the arm is passing vacuously"
+        )
+        assert acceptances >= _MIN_CONDITION5_ACCEPTANCES, (
+            f"consumed_ports_singly_claimed accepted only {acceptances} candidate(s) "
+            f"(floor is {_MIN_CONDITION5_ACCEPTANCES}); an arm that rejects everything "
+            "proves only that the resolver can say no, never that it still says yes for a "
+            "legitimately single-claimed consumed port"
+        )
+        assert oracle_comparisons >= _MIN_CONDITION5_ORACLE_COMPARISONS, (
+            f"only {oracle_comparisons} oracle comparison(s) actually executed on this arm "
+            f"(floor is {_MIN_CONDITION5_ORACLE_COMPARISONS}, {oracle_skips} skipped as "
+            "un-contractible or oversized); the generator may have drifted toward producing "
+            "only diagrams the oracle refuses outright"
         )
 
     def test_phase_index_out_of_range_under_binding_is_not_a_match(self) -> None:

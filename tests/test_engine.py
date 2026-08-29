@@ -19,6 +19,7 @@ import ast
 import dataclasses
 import inspect
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,8 +33,9 @@ from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
 from qufzx.rewrite import engine as engine_module
+from qufzx.rewrite import match as match_module
 from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FusionMatch, find_matches
+from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, find_matches
 from qufzx.rewrite.rule import (
     BuildResult,
     ConstraintOutcome,
@@ -1384,6 +1386,175 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
         with pytest.raises(RewriteGrammarError, match="wire-count postcondition"):
             apply(diagram, rule, _ScriptedMatch())
+
+
+class TestConditionNumberingMatchesDeclaredOrder:
+    """Round 24: numbered "condition N" references must agree with FUSION_SIDE_CONDITIONS.
+
+    The seven side conditions are addressed two ways throughout this package -- by *name*
+    (``dimension_agreement``) and by *position* ("condition 6"). Only the name is checkable
+    by the compiler. Round 23 inserted ``consumed_ports_singly_claimed`` at position 5,
+    shifting ``dimension_agreement`` 5 -> 6 and ``phase_dimension_agreement`` 6 -> 7, and
+    left **seven** references across three modules stating the old numbers -- including one
+    degraded into the meaningless "condition 6/6", and one
+    ("condition 5's own convention ... ``leg_deferred``") that no amount of grepping for the
+    obvious pattern would have surfaced.
+
+    That is the class this repo's audit history keeps rediscovering: one fact stated in two
+    places and kept in sync by hand. Two checks below, deliberately of different strengths:
+
+    * :meth:`test_module_docstring_list_matches_declared_order` is *exact*. The numbered list
+      in :mod:`qufzx.rewrite.match`'s own module docstring is the authoritative statement of
+      the numbering that every "condition N" elsewhere refers to, and it is machine-readable,
+      so it is machine-checked -- no heuristic, no false positives, no escape. A future
+      insertion that renumbers the conditions cannot land without this failing.
+    * :meth:`test_adjacent_number_and_name_agree` is a *partial net* over cross-references in
+      prose, and is documented as partial rather than sold as complete. "Condition 6" and
+      ``phase_dimension_agreement`` legitimately appear in one sentence whenever the prose
+      contrasts two conditions, so proximity is not reference; the window is calibrated
+      (:data:`_WINDOW`) to the tight ``condition N (``name``)`` / ``` ``name`` (condition N)```
+      shapes only, and compares the stated number *set* against the named conditions'
+      declared position set for equality. It would have caught two of round 24's seven
+      findings on its own; the exact check above is what actually guards the renumber,
+      and this one adds a second layer over the prose that sits closest to it.
+    """
+
+    _WINDOW = 60
+    """Characters either side of a "condition N" mention to search for a condition name.
+
+    Calibrated, not guessed: measured over the five modules below, 60 inspects 13 references
+    with zero false positives, while 90 pulls in the contrast sentence at ``match.py``'s
+    condition-7 body ("unlike condition 6's own ``leg_deferred``, a *passing*
+    ``phase_dimension_agreement`` outcome ...") where a number and a *different* condition's
+    name sit in one sentence entirely correctly. Widening this without re-checking that
+    trade-off will produce false failures, not extra coverage."""
+
+    _MODULES = (
+        "qufzx/rewrite/match.py",
+        "qufzx/rewrite/rules_library.py",
+        "qufzx/rewrite/engine.py",
+        "qufzx/rewrite/rule.py",
+        "qufzx/diagram/validate.py",
+    )
+
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    """Anchor paths to the repository, never to the process CWD -- pytest may be invoked from
+    anywhere, and a silently-missing file would make the sweep below vacuous."""
+
+    _LIST_ITEM_RE = re.compile(r"^(\d+)\. ``([a-z_]+)``", re.MULTILINE)
+    _NUMBER_RE = re.compile(r"\bcondition[s]? (\d+)(?: and (\d+))?")
+    _HEADING_PREFIX_RE = re.compile(r"^\s*\d+\.\s+$")
+
+    @staticmethod
+    def _positions() -> dict[str, int]:
+        return {condition.name: i for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)}
+
+    def test_module_docstring_list_matches_declared_order(self) -> None:
+        """The exact check: the authoritative numbered list *is* FUSION_SIDE_CONDITIONS."""
+        docstring = match_module.__doc__
+        assert docstring is not None, "qufzx.rewrite.match lost its module docstring"
+        listed = [
+            (int(number), name) for number, name in self._LIST_ITEM_RE.findall(docstring)
+        ]
+        expected = [
+            (i, condition.name) for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)
+        ]
+        assert listed == expected, (
+            "qufzx.rewrite.match's module docstring states the conditions in an order that "
+            f"disagrees with FUSION_SIDE_CONDITIONS.\n  docstring: {listed}\n  declared:  "
+            f"{expected}"
+        )
+
+    @classmethod
+    def _is_list_heading(cls, window: str, name_start: int) -> bool:
+        """Is the name at ``name_start`` the heading of a numbered list item?
+
+        Inside item 7's *body*, a mention of "condition 6" legitimately refers to a different
+        condition while item 7's own heading name is still the nearest one in the window --
+        so a heading occurrence is not a referent. Only the name's role is excluded, never
+        the surrounding text: a second, non-heading mention of the same name in that body is
+        still checked. The heading itself is covered exactly by
+        :meth:`test_module_docstring_list_matches_declared_order`.
+        """
+        line_start = window.rfind("\n", 0, name_start) + 1
+        return bool(cls._HEADING_PREFIX_RE.match(window[line_start:name_start]))
+
+    def _cross_references(self) -> list[tuple[str, int, set[int], set[str]]]:
+        """Every ``(module, line, stated numbers, adjacent names)`` the net inspects."""
+        positions = self._positions()
+        name_re = re.compile("``(" + "|".join(map(re.escape, positions)) + ")``")
+        found: list[tuple[str, int, set[int], set[str]]] = []
+        for relative in self._MODULES:
+            path = self._REPO_ROOT / relative
+            assert path.is_file(), f"{relative} not found at {path}"
+            text = path.read_text(encoding="utf-8")
+            for number_match in self._NUMBER_RE.finditer(text):
+                numbers = {int(g) for g in number_match.groups() if g}
+                start = max(0, number_match.start() - self._WINDOW)
+                window = text[start : number_match.end() + self._WINDOW]
+                names = {
+                    m.group(1)
+                    for m in name_re.finditer(window)
+                    if not self._is_list_heading(window, m.start())
+                }
+                if names:
+                    line = text.count("\n", 0, number_match.start()) + 1
+                    found.append((relative, line, numbers, names))
+        return found
+
+    def test_adjacent_number_and_name_agree(self) -> None:
+        """The partial net: a number stated right beside a name must be that name's."""
+        positions = self._positions()
+        # Strict set equality, not mere overlap. Overlap was the first draft's rule and is
+        # too lenient for a multi-number mention: the stale round-23 wording
+        # "conditions 5 and 6 (``dimension_agreement``, ``phase_dimension_agreement``)"
+        # states {5, 6} against true positions {6, 7}, which *do* overlap at 6 -- so an
+        # overlap rule would have waved through the exact wording this net exists to catch.
+        # Equality is safe here only because _WINDOW is tight enough to exclude contrast
+        # sentences (see that constant); measured over the five modules, all 13 inspected
+        # references satisfy equality exactly.
+        violations = [
+            f"{relative}:{line}: 'condition(s) {sorted(numbers)}' sits beside "
+            f"{sorted(names)}, whose declared position(s) are "
+            f"{sorted(positions[name] for name in names)}"
+            for relative, line, numbers, names in self._cross_references()
+            if numbers != {positions[name] for name in names}
+        ]
+        assert not violations, (
+            "numbered condition reference(s) disagree with FUSION_SIDE_CONDITIONS' declared "
+            "order:\n  " + "\n  ".join(violations)
+        )
+
+    def test_the_net_is_not_vacuous(self) -> None:
+        """It must actually inspect references, and must reject text it is meant to reject.
+
+        Without this, a regex that silently stopped matching (a changed quoting convention,
+        say) would leave the check above passing on zero inspected references forever -- the
+        same vacuity failure mode the property harness's own floors exist to prevent.
+        """
+        inspected = self._cross_references()
+        assert len(inspected) >= 8, (
+            f"the adjacency net inspected only {len(inspected)} reference(s); it is close to "
+            "vacuous -- has the ``name``/'condition N' wording convention changed?"
+        )
+        positions = self._positions()
+        assert positions["dimension_agreement"] == 6
+        assert positions["phase_dimension_agreement"] == 7
+        # The exact wording round 24 found stale in match.py, before it was fixed.
+        stale = "conditions 5 and 6 (``dimension_agreement``, ``phase_dimension_agreement``)"
+        numbers = {
+            int(g) for m in self._NUMBER_RE.finditer(stale) for g in m.groups() if g
+        }
+        assert numbers == {5, 6}, numbers
+        names = set(re.findall(r"``([a-z_]+)``", stale))
+        assert numbers != {positions[name] for name in names}, (
+            "the stale round-23 wording must be detectable as a disagreement, or this net "
+            "would not have caught it either"
+        )
+        assert numbers & {positions[name] for name in names}, (
+            "and it must be detectable *despite* overlapping, which is exactly why this "
+            "check uses set equality rather than intersection"
+        )
 
 
 class TestApplyDocstringMatchesRaiseSites:

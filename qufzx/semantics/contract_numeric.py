@@ -224,9 +224,16 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
             # function's own docstring). Keep the lower integer so the result stays
             # deterministic under the sorted iteration above.
             survivor, absorbed = (a_label, b_label) if a_label < b_label else (b_label, a_label)
-            for port, label in labels.items():
-                if label == absorbed:
-                    labels[port] = survivor
+            # The absorbed class is collected first, then rewritten -- not reassigned while
+            # iterating ``labels.items()`` (round 24). CPython permits replacing an existing
+            # key's *value* mid-iteration (the dict does not resize, so no RuntimeError), so
+            # the in-loop form worked; it is nonetheless the fragile shape of this pattern,
+            # one added key away from a "dictionary changed size during iteration" crash, and
+            # not worth relying on an implementation detail for in the function round 23 had
+            # just rewritten to fix a genuine union-find bug.
+            absorbed_ports = [port for port, label in labels.items() if label == absorbed]
+            for port in absorbed_ports:
+                labels[port] = survivor
     return labels
 
 
