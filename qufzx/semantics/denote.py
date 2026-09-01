@@ -13,70 +13,50 @@
 
 """Generator denotations: the tensor formula for each generator type at a concrete dimension.
 
-This is the one leaf the rest of the semantics layer calls into for "what does a single
-node mean"; :mod:`qufzx.semantics.contract_numeric` is the only other module allowed to
-build on it, and it is deliberately independent of :mod:`qufzx.rewrite` (empty as of this
-phase) -- rewriting never contracts, per ``CLAUDE.md``.
+The one leaf the rest of the semantics layer calls for "what does a single node mean".
+:mod:`qufzx.semantics.contract_numeric` is the only other module allowed to build on it,
+and it is independent of :mod:`qufzx.rewrite` -- rewriting never contracts, per the spec.
 
-Axis convention (shared by this module, :mod:`qufzx.semantics.contract_numeric`, and
-:mod:`qufzx.semantics.check`; state it once here since every other module defers to it).
-A node with ``m`` inputs and ``n`` outputs denotes a tensor of rank ``m + n`` whose axes
-are **outputs first, in Node.outputs order, then inputs, in Node.inputs order**. Axis
-``i`` has length equal to that port's ``Dim.to_int()``. A whole diagram's boundary
-follows the same rule: boundary outputs first, then boundary inputs. This is a
-convention choice, not a derivation -- outputs-before-inputs was picked to match the
-"ket before bra" reading of ``|k>^{ox n} <k|^{ox m}`` in the formula below, and every
-consumer of a denoted or contracted tensor must agree with it rather than re-deriving
-its own order.
+Axis convention (shared with :mod:`qufzx.semantics.contract_numeric` and
+:mod:`qufzx.semantics.check`; stated once here). A node with ``m`` inputs and ``n`` outputs
+denotes a rank-``m + n`` tensor whose axes are outputs first in ``Node.outputs`` order,
+then inputs in ``Node.inputs`` order; axis ``i`` has length that port's ``Dim.to_int()``. A
+diagram's boundary follows the same rule. This is a convention, not a derivation --
+outputs-before-inputs matches the "ket before bra" reading of ``|k>^{ox n} <k|^{ox m}`` --
+and every consumer must agree with it rather than re-deriving its own order.
 
-Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0`` fixed as
-gauge (see :mod:`qufzx.algebra.phase`, which is sparse and indexed by basis level ``k``,
-not by leg)::
+Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0`` as gauge::
 
     Z_{m -> n} = sum_{k=0}^{d-1} e^{i * angle(alpha_k)} |k>^{ox n} <k|^{ox m}
 
-i.e. the tensor is zero off the "all axes equal k" diagonal, and holds
-``Phase.to_complex()`` of ``phase.get(k)`` on it. A missing entry is ``Phase.zero()``, so
-a ``phase=None`` node is the all-ones diagonal. Degenerate cases fall out of the same
-formula read literally: ``m = n = 0`` collapses the tensor product of zero kets and zero
-bras to the number 1, so every ``k`` contributes to the *same* rank-0 position and the
-denotation is the scalar ``sum_k e^{i alpha_k}``; ``m = 0, n = 2`` denotes ``sum_k |kk>``.
-This module implements exactly that reading (accumulate into position ``(k,) * rank`` for
-every ``k``, which is a plain assignment when ``rank > 0`` since each ``k`` lands on a
-distinct diagonal position, and a genuine sum when ``rank == 0`` since every ``k`` lands
-on the sole position ``()``) rather than special-casing rank 0.
+The tensor is zero off the "all axes equal k" diagonal and holds ``Phase.to_complex()`` of
+``phase.get(k)`` on it; a missing entry is ``Phase.zero()``, so a ``phase=None`` node is
+the all-ones diagonal. Degenerate cases fall out of the formula read literally: ``m = n =
+0`` collapses to the scalar ``sum_k e^{i alpha_k}``, since every ``k`` lands on the sole
+rank-0 position; ``m = 0, n = 2`` denotes ``sum_k |kk>``. The implementation accumulates
+into position ``(k,) * rank`` rather than special-casing rank 0.
 
-X spider. Defined as the Fourier conjugate of the Z spider::
+X spider, the Fourier conjugate of Z::
 
     X_{m -> n} = (F^{ox n}) . Z_{m -> n} . ((F^dagger)^{ox m})
 
-with the **unitary** discrete Fourier matrix ``F[j][k] = omega_d^{j*k} / sqrt(d)``,
-``omega_d = e^{2*pi*i/d}``. This is a convention choice, not a derivation: the sign of
-the exponent and the ``1/sqrt(d)`` normalization are both picked here and nowhere else,
-and every later consumer -- in particular Phase 9's first-class Hadamard/Fourier
-generator -- must reuse this exact ``F``, not invent a second convention. At ``d = 2``
-this reduces to the usual (self-inverse) Hadamard, so the input/output asymmetry between
-"apply F" and "apply F^dagger" is invisible; at ``d > 2``, ``F`` is not self-inverse
-(though it *is* symmetric: ``F[j][k] = F[k][j]``, so ``F^dagger = conj(F)^T = conj(F)``
-here, letting the implementation apply the plain elementwise conjugate to input axes
-without a separate transpose step) and the asymmetry is real. Concretely: apply ``F`` to
-each output axis and ``conj(F)`` to each input axis.
+with the unitary DFT matrix ``F[j][k] = omega_d^{j*k} / sqrt(d)``, ``omega_d =
+e^{2*pi*i/d}``. The exponent sign and the ``1/sqrt(d)`` normalization are chosen here and
+nowhere else; every later consumer, in particular Phase 9's Hadamard/Fourier generator,
+must reuse this exact ``F``. At ``d = 2`` it reduces to the self-inverse Hadamard, so the
+asymmetry between ``F`` and ``F^dagger`` is invisible; at ``d > 2`` it is real. ``F`` is
+symmetric, so ``F^dagger = conj(F)`` and the implementation applies a plain elementwise
+conjugate to input axes with no transpose.
 
-Guards. :func:`denote` raises a typed error, and allocates nothing, when: any port
-dimension is not concrete; the node's phase vector is not concrete; the phase vector's
-dimension disagrees with the (concrete) leg dimension; the generator's
-:class:`~qufzx.diagram.generators.DimensionPolicy` is ``ALL_LEGS_EQUAL`` but the legs
-carry different dimensions; or the generator name is neither ``"Z"`` nor ``"X"``. Phase
-10 adds the triangle, W, and connective generators; :func:`denote` has exactly one
-dispatch point (on the registered :class:`~qufzx.diagram.generators.GeneratorType`, via
-its ``.name`` compared against the ``Z_SPIDER``/``X_SPIDER`` constants) for those to
-extend, and this module does not stub them in with placeholder tensors.
+Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
+the phase vector is not concrete, the phase vector's dimension disagrees with the leg
+dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, or the generator name is neither
+``"Z"`` nor ``"X"``. There is exactly one dispatch point for Phase 10's triangle, W, and
+connective generators to extend; they are not stubbed in with placeholder tensors.
 
-A zero-leg node (``m = n = 0``) has no port to read a dimension from at all; its
-dimension must then come from its phase vector's own ``Dim`` (a ``PhaseVector`` always
-carries one, even when it has no nonzero entries -- see :mod:`qufzx.algebra.phase`). A
-zero-leg node with no phase attached has no source for its dimension whatsoever and is
-rejected as malformed input, not defaulted.
+A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
+vector's own ``Dim``. A zero-leg node with no phase has no source at all and is rejected as
+malformed, not defaulted.
 """
 
 from __future__ import annotations

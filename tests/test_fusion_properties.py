@@ -19,7 +19,7 @@ against each, and checks three properties: no unexpected exception escapes, the
 relative-validity post-condition :func:`~qufzx.rewrite.engine.apply` itself enforces
 (re-derived independently here, not merely trusted), and oracle equality at concrete
 substitutions via :mod:`qufzx.semantics.check`. This is the harness the Phase 5 audit's
-manual fix rounds are meant to replace; see ``CLAUDE.md`` and ``FULL_PLAN.md`` Phase 5.
+manual fix rounds are meant to replace; see the spec and ``FULL_PLAN.md`` Phase 5.
 """
 
 from __future__ import annotations

@@ -13,75 +13,52 @@
 
 """Oracle equality check: instantiate symbols, contract concretely, and compare exactly.
 
-This is the top-level entry point of the Phase 4 oracle: :func:`score` denotes what a
-single diagram means at a concrete symbol assignment, and :func:`compare` decides whether
-two diagrams mean the same thing at a shared assignment. Everything below builds on
-:mod:`qufzx.semantics.contract_numeric`; this module adds nothing that touches a dense
-array directly.
+The top-level entry point of the Phase 4 oracle: :func:`score` denotes what one diagram
+means at a concrete symbol assignment, :func:`compare` decides whether two mean the same
+thing at a shared one. Everything builds on :mod:`qufzx.semantics.contract_numeric`;
+nothing here touches a dense array directly.
 
-Instantiation. :func:`instantiate` substitutes every dimension symbol, every phase
-symbol, and every scalar symbol in a diagram to a concrete value, via the node-id-
-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute` added to
-:mod:`qufzx.diagram.graph` for this purpose (see that module's docstring for why a plain
-rebuild through ``add_node`` cannot do this). It refuses -- rather than defaulting a
-missing symbol to some "reasonable" value -- whenever the assignment does not mention
-every free symbol the diagram actually carries; ``CLAUDE.md``'s "never construct a
-matrix... while any dimension or count in scope is symbolic" rule is enforced further
-downstream by :mod:`qufzx.semantics.contract_numeric`, but catching a missing symbol
-here, before any substitution happens, gives a much more specific error.
+Instantiation. :func:`instantiate` substitutes every dimension, phase, and scalar symbol
+via the node-id-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute`. It refuses --
+rather than defaulting a missing symbol to something "reasonable" -- whenever the
+assignment does not mention every free symbol the diagram carries. The spec's "never
+construct a matrix while any dimension or count in scope is symbolic" rule is enforced
+downstream in ``contract_numeric``, but catching a missing symbol here gives a far more
+specific error.
 
-Comparison modes. Exactly two are defined, and ``EXACT`` is the default in every
-signature in this module -- ``UP_TO_GLOBAL_PHASE`` is opt-in only, never inferred from
-context. ``EXACT`` requires matching shapes and every entry to agree within
-``tolerance``, including the overall scalar: nothing is normalized away.
-``UP_TO_GLOBAL_PHASE`` asks whether there is a unit-modulus ``lambda`` (``|lambda| == 1``,
-within ``tolerance``) with ``b == lambda * a``; ``lambda`` is recovered from the entry of
-``a`` with the largest magnitude (least sensitive to floating-point noise) and then
-verified against the *whole* tensor, not just that one entry. A recovered ``lambda`` with
-``|lambda| != 1`` is a documented **non-match** in this mode -- a rescaling by 2 is not a
-global phase, and this mode is deliberately not an up-to-scale escape hatch. All-zero
-tensors match each other (vacuously unit-modulus-compatible); one zero and one nonzero
-tensor never match.
+Comparison modes. Exactly two, and ``EXACT`` is the default everywhere;
+``UP_TO_GLOBAL_PHASE`` is opt-in, never inferred. ``EXACT`` requires matching shapes and
+entrywise agreement within ``tolerance``, including the overall scalar.
+``UP_TO_GLOBAL_PHASE`` asks whether some unit-modulus ``lambda`` has ``b == lambda * a``;
+``lambda`` is recovered from ``a``'s largest-magnitude entry (least sensitive to
+floating-point noise) and then verified against the whole tensor. A recovered ``lambda``
+with ``|lambda| != 1`` is a non-match: a rescaling by 2 is not a global phase, and this
+mode is deliberately not an up-to-scale escape hatch. All-zero tensors match each other;
+one zero and one nonzero never match.
 
-Tolerance. A single explicit parameter, ``tolerance``, defaults to ``1e-9`` (an absolute
-bound on entrywise deviation) everywhere in this module; there is no path that silently
-loosens it. ``1e-9`` was chosen as comfortably above float64 accumulation noise for the
-tensor sizes this oracle targets (see :mod:`qufzx.semantics.contract_numeric`'s
-``max_elements`` default) while remaining far below any physically meaningful difference.
+Tolerance is a single explicit parameter defaulting to ``1e-9``, an absolute entrywise
+bound, with no path that silently loosens it -- comfortably above float64 accumulation
+noise at the tensor sizes this oracle targets, far below any meaningful difference.
 
-Structured results, not bare booleans. :class:`ComparisonResult` carries the mode used, a
-matched flag, a human-readable reason, the max absolute deviation actually observed, and
-the recovered ``lambda`` (when relevant) -- this is what a developer needs to stare at
-when a later phase's rewrite turns out to be wrong, not just a yes/no.
+:class:`ComparisonResult` carries the mode, a matched flag, a reason, the max absolute
+deviation observed, and the recovered ``lambda`` -- what a developer needs when a later
+phase's rewrite turns out wrong, not a yes/no.
 
-Interface check, before tensors are ever compared. :func:`compare_tensors` only sees bare
-arrays, so it can do no better than ``a.shape == b.shape``: it has no way to know that
-axis ``i`` of one tensor and axis ``i`` of the other are supposed to describe the same
-boundary leg, only that both tensors happen to be that many axes long. :func:`compare`
-therefore checks, before calling :func:`compare_tensors` at all, that the two
-contractions' interfaces correspond: the same number of boundary outputs, the same number
-of boundary inputs (not just the same total axis count -- a 2-output/1-input diagram must
-never match a 1-output/2-input one just because both have three free legs), and, per axis,
-the same dimension. A mismatch here is reported as its own :class:`ComparisonResult`, with
-a reason naming the interface problem, instead of being handed to :func:`compare_tensors`
-where it would either raise a shape error or -- worse, if the two axis counts coincide --
-get silently compared position-by-position and misreported as a numeric deviation when the
-real cause is arity or dimension. See :func:`_interface_mismatch` for the full reasoning.
+Interface check, before tensors are compared. :func:`compare_tensors` sees bare arrays, so
+it can do no better than ``a.shape == b.shape``; it cannot know that axis ``i`` of each is
+meant to describe the same boundary leg. :func:`compare` therefore first checks that the
+interfaces correspond: the same number of boundary outputs, the same number of boundary
+inputs (not merely the same total, so a 2-output/1-input diagram never matches a
+1-output/2-input one), and the same dimension per axis. A mismatch is reported as its own
+result rather than being misreported as a numeric deviation.
 
-What this check cannot do -- and is not trying to do. Genuine leg correspondence --
-knowing that boundary axis ``i`` of diagram A and boundary axis ``j`` of diagram B denote
-"the same" leg, as opposed to merely having the same dimension -- cannot be established by
-this module at all. Two diagrams that denote the same map may distribute their boundary
-legs across an entirely different number and shape of nodes (a fused spider vs. several
-unfused ones), so there is no per-axis identity available to compare that survives a
-rewrite: a leg's local index within its node reflects only how that particular diagram
-happened to be built, not a correspondence with any other diagram's legs. Consequently a
-silently reordered boundary is invisible to this check whenever the two tensors agree
-regardless of order (e.g. any two diagrams whose contraction happens to be symmetric under
-the swap) -- this module has no way to catch that, at any arity. Establishing genuine leg
-correspondence requires a rewrite rule to declare the map between its input and output
-boundaries, and the engine to assert it; that is a :mod:`qufzx.rewrite.engine` concern
-feeding Phase 6's certificates, not something this numeric oracle can supply on its own.
+What this cannot do. Genuine leg correspondence -- that boundary axis ``i`` of A and axis
+``j`` of B denote the same leg, not merely the same dimension -- is not establishable here.
+Two diagrams denoting the same map may distribute boundary legs over an entirely different
+node structure, so no per-axis identity survives a rewrite. A silently reordered boundary
+is therefore invisible whenever the tensors agree regardless of order. Establishing real
+correspondence requires a rule to declare the map between its input and output boundaries
+and the engine to assert it -- a :mod:`qufzx.rewrite.engine` concern feeding Phase 6.
 """
 
 from __future__ import annotations

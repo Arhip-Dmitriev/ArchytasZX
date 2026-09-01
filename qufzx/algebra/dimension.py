@@ -18,7 +18,7 @@ A :class:`Dim` is normalized and compared through a single canonical
 sympy assumptions ``positive=True, integer=True`` and exponent symbols carry
 ``integer=True, nonnegative=True``, so sympy's own normalization (e.g.
 folding ``d**n * d**m`` to ``d**(n+m)``) is sound over this domain. This
-supports the ``CLAUDE.md`` invariant that dimension is stored per port, never
+supports the spec invariant that dimension is stored per port, never
 as a single global parameter: this module only supplies dimension *values*,
 it holds no ambient "current dimension" state of its own.
 
@@ -131,7 +131,7 @@ class Dim:
     are a concrete integer, a symbol, a product of dimensions, and a power of
     a dimension by a non-negative integer exponent (itself concrete or
     symbolic). This is the per-port dimension value referenced by the
-    "dimension is stored per port" invariant in ``CLAUDE.md``; ``Dim`` itself
+    "dimension is stored per port" invariant in the spec; ``Dim`` itself
     holds no global or default dimension.
 
     Two ``Dim`` values are equal iff their normalized expressions are

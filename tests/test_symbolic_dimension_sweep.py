@@ -11,68 +11,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Permanent regression guard: the symbolic-dimension sweep (Phase 5 post-closing audit
-probe 2), extended (round-12 audit) to close two blind spots that let defects 1 and 2 (see
-:mod:`qufzx.rewrite.match`'s module docstring, condition 7) through undetected.
+"""Permanent regression guard: the symbolic-dimension sweep.
 
-1-in/1-out spider pairs (A, B), each leg dim drawn from ``{2, 3, d, e}`` (genuinely
-symbolic where ``d``/``e`` appear -- these diagrams are built once, symbolically, matched
-and fused once, then oracle-compared at several concrete ``(d, e)`` assignments via
-:func:`~qufzx.semantics.check.compare`'s own ``assignment`` parameter), and phases drawn
-independently of the leg dims (see "Independent phase dimensions" below). This is the arm
-that actually exercises :func:`~qufzx.rewrite.match._resolve_with_bindings`,
+1-in/1-out spider pairs (A, B), each leg dim drawn from ``{2, 3, d, e}``, built and fused
+once symbolically, then oracle-compared at several concrete ``(d, e)`` assignments via
+:func:`~qufzx.semantics.check.compare`'s ``assignment`` parameter. This is the arm that
+exercises :func:`~qufzx.rewrite.match._resolve_with_bindings`,
 :func:`~qufzx.rewrite.match._unify_surviving_legs`,
-:func:`~qufzx.rewrite.match._unify_phase_dims`, and :func:`~qufzx.rewrite.match.reattach_phase`
-together -- a phase legally stated over a symbolic dimension that a fusion's own unify
-resolves through a binding, exactly the ``_over_shared_dim`` defect family
-:mod:`qufzx.rewrite.rules_library`'s module docstring describes at length.
+:func:`~qufzx.rewrite.match._unify_phase_dims`, and
+:func:`~qufzx.rewrite.match.reattach_phase` together: a phase legally stated over a symbolic
+dimension that a fusion's own unify resolves through a binding -- the ``_over_shared_dim``
+family described in :mod:`qufzx.rewrite.rules_library`'s module docstring.
 
-Independent phase dimensions (round-12 audit, closing blind spot 2): a node's phase is no
-longer only ever offered over its *own* leg's dim -- two additional choices, root-of-unity
-phases over the fixed concrete dims ``2`` and ``3``, are offered regardless of what the
-connecting leg's own dim is for that diagram. This is what lets the sweep generate defect
-1's shape at all: a phase over a concrete dim that has nothing to do with the (possibly
-symbolic) leg dim it will end up sharing a node with, on *both* A and B independently, so a
-diagram where A's phase and B's phase would bind the same shared symbol to two different
-concrete values (defect 1's exact reproduction) is reachable by this sweep, not merely
-possible in principle.
+Phases are drawn independently of the leg dims: besides a phase over the node's own leg
+dim, root-of-unity phases over the fixed concrete dims ``2`` and ``3`` are offered whatever
+the connecting leg carries. That is what makes a diagram reachable in which A's phase and
+B's phase would bind the same shared symbol to two different concrete values.
 
-Anti-laundering invariant, asserted not skipped (round-12 audit, closing blind spot 1): for
-every fused diagram, at every concrete ``(d, e)`` assignment, this arm now asserts the exact
-contrapositive of defect 2 -- if the post-fusion diagram is cleanly contractible at that
-assignment, the pre-fusion diagram must be too. The prior version silently ``continue``d
-whenever the pre-fusion diagram was not cleanly contractible at a given assignment, which is
-exactly the condition defect 2's own witness diagrams satisfy (the pre-fusion diagram is
-only contractible at the one dimension value the laundered assumption assumed), so that arm
-was structurally blind to the defect it was meant to guard against.
+Anti-laundering invariant. For every fused diagram, at every concrete assignment, this arm
+asserts that if the post-fusion diagram is cleanly contractible then the pre-fusion diagram
+is too. Skipping the case where the pre-fusion diagram is not cleanly contractible would be
+structurally blind to the defect this guards against, since that is exactly the condition a
+laundered assumption produces.
 
-Deliberate subsampling (stated, per ``claude.md``'s standing instruction), smaller than the
-audit brief's ~25,800 comparisons:
+Deliberate subsampling, stated per the spec's standing instruction:
 
-* The audit brief does not say whether ``{2, 3, d, e}`` applies to all four legs (A's
-  input and output, B's input and output) independently, or only to the connecting pair.
-  This sweep applies the full 4-symbol palette to the *connecting* pair (A's output, B's
-  input) -- the 16 combinations there exercise every :meth:`~qufzx.algebra.dimension.Dim.unify`
-  outcome type (syntactic identity, binding, and outright failure -- ``DEFERRED`` does not
-  arise from this simple, product/power-free palette, see below) on the pair that actually
-  drives ``shared_dim`` -- and fixes each node's *surviving* leg (A's input, B's output) at
-  one representative, already-mixed pair (a concrete ``2`` and the symbolic ``d``), rather
-  than sweeping all 16 combinations there too:
-  :func:`~qufzx.rewrite.match._unify_surviving_legs` is already exercised meaningfully by a
-  single symbolic surviving leg (see ``tests/test_match.py``'s
-  ``TestSurvivingLegDimensionUnification``, which uses exactly this shape), and the
-  connecting pair is where the combinatorics actually matter for this arm's stated purpose.
-* Only two ``(d, e)`` oracle-substitution pairs are checked (``(2, 3)`` and ``(3, 2)``), not
-  all four the brief lists -- the same-value pairs ``(2, 2)``/``(3, 3)`` are already covered
-  elsewhere (``tests/test_phase5_oracle.py``'s ``_CONCRETE_DS`` sweep); this arm's own
-  purpose is specifically the ``d != e`` case a same-value substitution cannot exercise.
-* ``DEFERRED`` genuinely never arises from ``{2, 3, d, e}`` alone (it needs a symbol
-  occurring as a proper subterm of the other side, e.g. ``d`` against ``d*e`` -- see
-  :mod:`qufzx.rewrite.match`'s module docstring, condition 6), so "clean" here means
-  ``validate(diagram).is_valid`` alone; every match this arm finds is a genuine
-  syntactic-identity or single-binding case, never a deferred one (that shape is covered by
-  the existing fuzz harness's ``d*e``/``d**2`` palette entries in
-  ``tests/test_fusion_properties.py``).
+* The full ``{2, 3, d, e}`` palette is applied to the *connecting* pair (A's output, B's
+  input), where the 16 combinations exercise every
+  :meth:`~qufzx.algebra.dimension.Dim.unify` outcome this palette can produce and where the
+  combinatorics drive ``shared_dim``. Each node's surviving leg is fixed at one
+  already-mixed pair (concrete ``2`` and symbolic ``d``);
+  :func:`~qufzx.rewrite.match._unify_surviving_legs` is exercised meaningfully by a single
+  symbolic surviving leg, as in ``test_match.py``'s ``TestSurvivingLegDimensionUnification``.
+* Only the ``(2, 3)`` and ``(3, 2)`` oracle substitutions are checked. The same-value pairs
+  are covered by ``test_phase5_oracle.py``'s ``_CONCRETE_DS`` sweep; this arm's purpose is
+  the ``d != e`` case those cannot exercise.
+* ``DEFERRED`` never arises from ``{2, 3, d, e}`` alone -- it needs a symbol occurring as a
+  proper subterm of the other side, e.g. ``d`` against ``d*e`` -- so "clean" here means
+  ``validate(diagram).is_valid`` alone. That shape is covered by the ``d*e``/``d**2``
+  palette entries in ``tests/test_fusion_properties.py``.
 """
 
 from __future__ import annotations

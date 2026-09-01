@@ -13,65 +13,48 @@
 
 """Numeric contraction of a fully concrete diagram into a tensor, carrying the exact scalar.
 
-This module is the only place, besides :mod:`qufzx.semantics.denote`, that is allowed to
-construct a dense array: it denotes every node (via :func:`~qufzx.semantics.denote.denote`)
-and contracts the results along the diagram's wires. It never rewrites, simplifies, or
-reorders the diagram it is given -- it only reads and evaluates it, per ``CLAUDE.md``'s
-"rewriting never contracts" rule read the other way around: contraction never rewrites.
+Besides :mod:`qufzx.semantics.denote`, the only place allowed to construct a dense array:
+it denotes every node and contracts the results along the diagram's wires. It never
+rewrites, simplifies, or reorders the diagram -- the spec's "rewriting never contracts"
+read the other way around.
 
-Algorithm. Refuse first: run :func:`qufzx.diagram.validate.validate` and refuse a diagram
-with any hard-failure issue (:class:`ContractValidationError`, carrying the report so the
-caller can see why); a diagram carrying a *deferred* dimension issue is refused the same
-way, since a deferred issue exists only because some dimension pair could not be decided,
-which cannot happen once every dimension in scope is concrete (checked next) -- seeing one
-here means something upstream (e.g. a caller skipping :mod:`qufzx.semantics.check`
-instantiation) left a symbol in. Then refuse if any port dimension, any node phase vector,
-or the diagram's own :class:`~qufzx.algebra.scalar.Scalar` is non-concrete. Both refusals
-happen before any array is allocated.
+Algorithm. Refuse first: :func:`qufzx.diagram.validate.validate` runs, and a diagram with
+any hard-failure issue is refused with :class:`ContractValidationError` carrying the
+report. A *deferred* dimension issue is refused the same way -- it exists only because a
+dimension pair could not be decided, which cannot happen once every dimension is concrete,
+so seeing one means something upstream left a symbol in. Then refuse any non-concrete port
+dimension, phase vector, or diagram :class:`~qufzx.algebra.scalar.Scalar`. Both refusals
+precede any allocation.
 
-Each node's axes get their own integer label; a :class:`~qufzx.diagram.graph.Wire`, which
-names exactly two :class:`~qufzx.diagram.graph.PortRef`\\ s (regardless of whether either
-side is an input or an output port -- the graph model permits wiring two outputs together,
-and this module does not assume wires run input-to-output), unifies its two ports' labels.
-A self-loop -- a wire whose two ports both belong to the same node -- unifies two labels
-that already sit on the same tensor, which is exactly a partial trace; nothing special-
-cases it. Free (boundary) ports keep their own distinct label. The whole contraction is
-then one call to ``numpy.einsum`` in its *interleaved* (operand, axis-label-list, ...,
-output-label-list) form, with axis labels as plain Python ints rather than the 52-letter
-subscript-string alphabet -- chosen specifically so the diagram's leg count is never
-bounded by that alphabet; there is accordingly no separate error path for "too many legs
-for einsum" here; see the size guard below for the orthogonal "too many elements" limit.
-Output axes are ordered ``diagram.boundary_outputs`` then ``diagram.boundary_inputs``, per
-the axis convention fixed in :mod:`qufzx.semantics.denote`. :func:`~qufzx.diagram.validate.validate`
-guarantees every port is wired exactly once or on exactly one boundary list, so every port
-gets exactly one label and every node axis is accounted for; this module asserts that
-rather than assuming it silently. The diagram's exact scalar is multiplied in as the very
-last step, via ``Scalar.to_complex()`` -- the only sanctioned Scalar-to-number path -- so
-no factor is ever normalized, dropped, or quotiented along the way.
+Each node's axes get their own integer label, and a :class:`~qufzx.diagram.graph.Wire`
+unifies its two ports' labels -- regardless of direction, since the graph model permits
+wiring two outputs together. A self-loop unifies two labels already on the same tensor,
+which is exactly a partial trace; nothing special-cases it. Free ports keep a distinct
+label. The contraction is one ``numpy.einsum`` call in interleaved form with plain ``int``
+labels rather than the 52-letter subscript alphabet, so leg count is never bounded by that
+alphabet and there is no "too many legs" error path. Output axes are ordered
+``boundary_outputs`` then ``boundary_inputs``, per ``denote``'s axis convention.
+``validate`` guarantees every port is wired exactly once or on exactly one boundary list,
+so every node axis is accounted for; this module asserts that rather than assuming it. The
+exact scalar is multiplied in last via ``Scalar.to_complex()``, the only sanctioned
+Scalar-to-number path, so no factor is ever normalized away.
 
-An empty diagram (no nodes) has nothing to denote or contract; it evaluates directly to
-the rank-0 array holding ``diagram.scalar.to_complex()``.
+An empty diagram evaluates directly to the rank-0 array holding
+``diagram.scalar.to_complex()``.
 
-Size guard. The result and every intermediate is ``d ** (number of axes)`` complex
-numbers, and a diagram that looks small on the page (few nodes, a symbolic-looking but
-fully concrete ``d``) can still be catastrophic once contracted -- e.g. a single 20-leg
+Size guard. The result and every intermediate is ``d ** (number of axes)`` complex numbers,
+so a diagram that looks small on the page can still be catastrophic -- a single 20-leg
 spider at ``d = 17``. ``max_elements`` (default ``10_000_000``, about 160 MB of
-``complex128``, an arbitrary but explicit budget for what this "boringly correct" oracle
-should attempt without a caller opting into more) is checked against both the size of
-each node's own tensor, before it is denoted, and the size of the final output tensor,
-before contraction runs, raising :class:`ContractSizeError` with a clear message rather
-than exhausting memory silently.
+``complex128``: an arbitrary but explicit budget) is checked against each node's own tensor
+before it is denoted and against the output tensor before contraction, raising
+:class:`ContractSizeError` rather than exhausting memory silently.
 
 Return type. :func:`contract` returns a :class:`ContractionResult` -- the tensor, the
-ordered tuple of :class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the
-count of leading axes that are boundary outputs -- rather than a bare array, matching this
-codebase's preference for structured returns (``ValidationReport``, ``UnifyResult``): a
-bare array cannot answer "which axis is which boundary port" or "where does the
-output/input split fall", which :mod:`qufzx.semantics.check` and any future caller
-comparing two contractions need in order to interpret the result at all. The split count
-is carried on the result rather than recomputed from ``len(diagram.boundary_outputs)`` at
-each call site, since the diagram itself may no longer be at hand (or may have been
-mutated) by the time a caller wants to interpret ``axis_refs``.
+ordered :class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the count of
+leading axes that are boundary outputs -- since a bare array cannot answer "which axis is
+which port" or "where does the output/input split fall", which any caller comparing two
+contractions needs. The split count is carried rather than recomputed from
+``len(diagram.boundary_outputs)``, since the diagram may no longer be at hand by then.
 """
 
 from __future__ import annotations

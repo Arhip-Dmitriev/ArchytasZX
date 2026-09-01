@@ -13,7 +13,7 @@
 
 """Phase 3 numeric-oracle stand-in for the diagram data model.
 
-Per CLAUDE.md, every build phase ends with a numeric oracle check. The real semantics
+Per the spec, every build phase ends with a numeric oracle check. The real semantics
 oracle arrives in Phase 4; here, exactly as tests/test_phase2_oracle.py does with cmath,
 we build the GHZ-with-copy worked example with a symbolic dimension and a symbolic
 phase, instantiate those symbols to concrete values, and verify -- by direct inspection

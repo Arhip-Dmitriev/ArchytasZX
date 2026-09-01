@@ -13,7 +13,7 @@
 
 """Phase 4 numeric-oracle check: the completion condition for this phase.
 
-Per CLAUDE.md, every build phase ends with a numeric oracle check, and per the build
+Per the spec, every build phase ends with a numeric oracle check, and per the build
 plan Phase 4 is done when "the oracle can score any concrete diagram and compare any two
 diagrams, exactly by default." This module exercises exactly that sentence against the
 GHZ-with-copy worked example shared with tests/test_phase2_oracle.py and

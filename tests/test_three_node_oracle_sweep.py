@@ -24,7 +24,7 @@ run as part of the audit -- this module exists to keep it that way, not to hunt 
 bugs. ``d = 2`` throughout, per the audit brief.
 
 Deliberate simplifications relative to the audit brief's literal enumeration (stated here,
-not left implicit, per ``claude.md``'s standing instruction to document any subsampling):
+not left implicit, per the spec's standing instruction to document any subsampling):
 
 * The audit brief describes "leg shapes (0,1),(1,0),(1,1),(2,1),(1,2),(2,0),(0,2)" without
   specifying whether they apply to one node or a pair; this sweep applies all seven, cross

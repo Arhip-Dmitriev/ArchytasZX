@@ -14,156 +14,74 @@
 """Diagram well-formedness checks: per-port dimension agreement, boundary consistency,
 port usage, and generator policy conformance.
 
-:func:`validate` never mutates the diagram it is given -- it is a pure read function
-from a :class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`. This is
-deliberate: :mod:`qufzx.diagram.graph`'s mutators are intentionally permissive (see
-that module's docstring), so this is the one place all of a diagram's cross-cutting
-invariants are checked together, in one pass, and reported as a structured list of
-typed issues rather than a bare pass/fail bool. Phase 5's rewrite matcher and Phase 6's
-certificates both need that structure (which port, which node, which wire, and why) to
-do their own work, not just a yes/no.
+:func:`validate` never mutates the diagram it is given -- it is a pure read function from a
+:class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`.
+:mod:`qufzx.diagram.graph`'s mutators are intentionally permissive, so this is the one
+place a diagram's cross-cutting invariants are checked together, in one pass, and reported
+as typed issues rather than a bool: Phase 5's matcher and Phase 6's certificates both need
+to know which port, which node, which wire, and why.
 
-Every port of every node must be exactly one of: an endpoint of exactly one wire, or an
-entry in the matching boundary list. Ports that are wired or claimed by the boundary
-more than once are reported by the existing over-use kinds
-(:class:`IssueKind.PORT_WIRED_TWICE`, :class:`IssueKind.PORT_WIRED_AND_BOUNDARY`,
-:class:`IssueKind.DUPLICATE_BOUNDARY_ENTRY`); a port claimed by neither is
-:class:`IssueKind.PORT_UNUSED`, a hard error, since a dangling port has no meaning to
-give the diagram. This under-use check is skipped for a port on a node already
-implicated in an :class:`IssueKind.UNKNOWN_NODE` or
-:class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue, so one structural mistake (e.g. a wire
-naming an out-of-range index) is reported once rather than cascading into spurious
-PORT_UNUSED findings for that node's real legs.
+Port usage. Every port of every node must be exactly one of: an endpoint of exactly one
+wire, or an entry in the matching boundary list. Over-use is reported by
+:class:`IssueKind.PORT_WIRED_TWICE`, :class:`IssueKind.PORT_WIRED_AND_BOUNDARY`, or
+:class:`IssueKind.DUPLICATE_BOUNDARY_ENTRY`; a port claimed by neither is
+:class:`IssueKind.PORT_UNUSED`, a hard error, since a dangling port gives the diagram no
+meaning. The under-use check is skipped for a node already implicated in an
+:class:`IssueKind.UNKNOWN_NODE` or :class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue, so one
+structural mistake is reported once rather than cascading.
 
-Dimension checking is layered exactly the way :meth:`~qufzx.algebra.dimension.Dim.unify`
-is layered, and this layering applies uniformly whether the two dimensions being
-compared are joined by a wire or shared by one node's legs (or its phase). A pair of
-dimensions that are unequal and non-unifiable is a hard error --
-:class:`IssueKind.DIMENSION_MISMATCH` for a wire, :class:`IssueKind.DIMENSION_POLICY_VIOLATION`
-for a node's legs, :class:`IssueKind.PHASE_DIMENSION_MISMATCH` for a node's phase. A pair
-whose dimensions cannot yet be resolved (``unify`` returns ``DEFERRED``, e.g. ``Dim("d")``
-against ``Dim("d") * Dim("e")``, where ``d`` occurs as a proper subterm of the other side
-and is therefore not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED` in every
-one of these cases, an *assumed* constraint, not silently accepted as valid and not
-reported as an error either -- this is exactly the seam Phase 10's real unifier is meant
-to drop into: replacing the placeholder in ``Dim.unify`` changes what gets deferred here
-without this module changing at all. A bare symbol against an unrelated symbol or
-concrete value -- e.g. ``Dim("d")`` against ``Dim("e")``, or against ``Dim(3)`` -- is not
-this case: ``unify`` reports ``SUCCESS`` with a binding (``d := e``, or ``d := 3``), and
-this module records no issue at all for it, the same as any other syntactic-identity
-success; only the *unresolved* residual shape above reaches ``DIMENSION_DEFERRED``.
+Dimension checking is layered the way :meth:`~qufzx.algebra.dimension.Dim.unify` is,
+uniformly for dimensions joined by a wire, shared by one node's legs, or tied to its phase.
+Unequal and non-unifiable is a hard error -- :class:`IssueKind.DIMENSION_MISMATCH`,
+:class:`IssueKind.DIMENSION_POLICY_VIOLATION`, or
+:class:`IssueKind.PHASE_DIMENSION_MISMATCH` respectively. A pair ``unify`` cannot yet
+resolve (``DEFERRED``, e.g. ``Dim("d")`` against ``Dim("d") * Dim("e")``, where ``d`` is a
+proper subterm and so not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED`: an
+assumed constraint, neither silently accepted nor reported as an error. This is the seam
+Phase 10's real unifier drops into -- replacing ``Dim.unify``'s placeholder changes what is
+deferred here without changing this module. A bare symbol against an unrelated symbol or
+concrete value is not that case: ``unify`` reports ``SUCCESS`` with a binding and nothing
+is recorded.
 
-What this module does not do. It does not contract, evaluate, or attach any numeric
-meaning to a diagram (that is Phase 4's oracle); it does not attempt to fix or rewrite
-anything it finds wrong (that is Phase 5); and it does not yet know about bang boxes
-(Phase 7 extends this module's scoping checks when that generator arrives).
+``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
+:func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint, rather than
+unifying each leg against ``all_ports[0].dim`` and discarding bindings -- otherwise a
+jointly-unsatisfiable leg set (one leg binding a symbol to ``2``, another to ``3``) passes,
+and the verdict depends on leg order. ``TIED_TO_LEG_DIM``'s phase/leg check resolves
+through those same bindings, for the same reason. Each residual ``DEFERRED`` pair gets its
+own issue rather than one collapsed "strongest" issue per node. This does not propagate a
+binding from one node's legs to another's: a ``d``-vs-``2`` wire on one node and a
+``d``-vs-``3`` wire on another is jointly unsatisfiable across the diagram, but each node's
+check binds ``d`` independently. Diagram-global propagation is FULL_PLAN.md Phase 10 item
+(i); pinned by ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
 
-Phase 5 audit round 18: process-independent issue ordering. The class of defect this round
-closed here: this module's issue-producing passes (:func:`_check_wire_dimensions`,
-:func:`_check_port_usage`) used to iterate ``diagram.wires``, a frozenset, directly. Any
-value whose hash is not a pure function of its own content -- concretely,
-:class:`~qufzx.diagram.graph.Direction`, an ``enum.Enum`` hashed by member name, and
-therefore ``PYTHONHASHSEED``-dependent, reached transitively through
-:class:`~qufzx.diagram.graph.PortRef` and :class:`~qufzx.diagram.graph.Wire`'s own hashes --
-makes a ``set``/``frozenset``'s iteration order vary by process, not merely by content. Every
-pass here whose issue-append order is observable (an exception raised partway through, or
-the order of :attr:`ValidationReport.issues` itself, which downstream consumers such as
-:mod:`qufzx.rewrite.engine`'s ``RewriteStep.removed_deferred_issues``/
-``introduced_deferred_issues`` selection explicitly rely on being deterministic) now iterates
-a snapshot sorted by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
-:meth:`~qufzx.diagram.graph.PortRef.sort_key` -- a plain tuple key with no ``Enum`` and no
-seed-dependent hash anywhere in its own comparison path -- instead. A future pass added to
-this module should default to the same discipline for any new set/frozenset it introduces,
-not merely for the two fixed here: the question to ask is not "does this look like it needs
-sorting" but "could this collection's construction ever route a value's own hash into
-something this function returns, raises, or appends to a list", since that is the actual
-condition that makes ordering observable rather than incidental.
+:class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
+vector, which carries its dimension nowhere at all (per the spec, dimension is stored per
+port, not as one global parameter). :mod:`qufzx.semantics.denote` already refused such a
+node; without this, ``validate(d).is_valid`` did not imply every node in ``d`` is
+denotable, yet :mod:`qufzx.rewrite.engine`'s step 8 rests on exactly that.
 
-Phase 5 post-closing audit round 20: a validator whose "valid" was weaker than the
-denotation it is meant to gate. A node with zero input legs, zero output legs, and no phase
-vector carries its dimension nowhere at all (per ``CLAUDE.md``, "dimension is stored per
-port, not as one global parameter") -- :mod:`qufzx.semantics.denote` already refused such a
-node (``DenoteGrammarError``, "has no legs and no phase vector; its dimension cannot be
-determined"), but this module accepted it as valid, resting :mod:`qufzx.rewrite.engine`'s
-``apply`` step 8 -- which uses this module as its sole structural postcondition on a
-rewritten diagram -- on one builder's (``rules_library``'s) good behaviour never producing
-such a node, rather than on a check. Closed by :class:`IssueKind.NODE_DIMENSION_UNDETERMINED`,
-a hard error (not deferred) for exactly this shape, worded to name the same fact ``denote``
-does. The invariant this establishes, and that ``tests/test_phase5_exhaustive_oracle.py``'s
-exhaustive sweep now checks directly rather than merely assumes: ``validate(d).is_valid``
-implies every node in ``d`` is denotable (at whatever concrete substitution makes every
-dimension in scope concrete -- ``validate`` itself still accepts a well-formed *symbolic*
-diagram, which is not yet denotable for an unrelated, expected reason; the invariant is about
-the shape gap this round closed, not about concreteness, which was never this module's job to
-enforce). The general question for a future check added to this module: does "valid" here
-actually imply everything a downstream consumer (a rewrite's postcondition, a certificate
-replay, an oracle contraction) assumes it does, or only the subset this module happened to
-check first?
+:class:`IssueKind.SYMBOL_ROLE_COLLISION` (:func:`_check_symbol_role_collisions`) rejects a
+name used in two symbol roles in one diagram. Substitution here is keyed by name, so
+:meth:`~qufzx.algebra.phase.PhaseVector.substitute` cannot tell such a collision from the
+legal case of a phase entry citing its own container dimension's symbol. The roles are
+distinguished by the sympy assumptions each of :mod:`qufzx.algebra`'s four symbol
+constructors stamps -- including a dimension's exponent, which is its own role, not a
+phase's.
 
-Phase 5 post-closing audit round 21 (same class as round 20's, reopened). Two more gaps
-in "valid implies denotable"/"valid implies well-formed" closed:
+Determinism. Every pass whose issue-append order is observable iterates a snapshot sorted
+by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
+:meth:`~qufzx.diagram.graph.PortRef.sort_key`, never a frozenset directly:
+:class:`~qufzx.diagram.graph.Direction` is an ``enum.Enum`` hashed by member name, so a set
+containing one iterates in a ``PYTHONHASHSEED``-dependent order.
+:attr:`ValidationReport.issues`'s order is relied on downstream by
+:mod:`qufzx.rewrite.engine`'s deferred-issue selection. A new pass should ask not whether a
+collection looks like it needs sorting but whether its construction could route a value's
+own hash into something this function returns, raises, or appends to.
 
-* ``DimensionPolicy.ALL_LEGS_EQUAL`` used to unify each leg against ``all_ports[0].dim``
-  independently and discard every binding, so a jointly-unsatisfiable leg set (e.g. one leg
-  binding a symbol to ``2``, another to ``3``) passed as valid, and the verdict depended on
-  leg order. Closed by :func:`~qufzx.algebra.dimension.unify_all`, which resolves the whole
-  leg set to one shared value via a monotone bindings fixpoint (mirroring
-  :mod:`qufzx.rewrite.match`'s own, but not sharing its implementation -- the two are
-  pinned to agree on the question they share, a lone connecting pair with no surviving
-  legs, by ``tests/test_unify_all.py::TestAgreesWithResolveFusionMatch``); FAILURE is now a
-  hard :class:`IssueKind.DIMENSION_POLICY_VIOLATION`, and every residual ``DEFERRED`` pair
-  gets its own :class:`IssueKind.DIMENSION_DEFERRED` rather than one collapsed
-  "strongest" issue for the whole node. What this still does not do: propagate a binding
-  from one node's legs to a *different* node's -- a ``d``-vs-``2`` wire on one node and a
-  ``d``-vs-``3`` wire on another is jointly unsatisfiable across the diagram but each
-  node's own check binds ``d`` independently and reports nothing, since diagram-global
-  dimension-constraint propagation is FULL_PLAN.md Phase 10 item (i)'s job, not this
-  module's local, per-node one; pinned by
-  ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
-* A name used as both a dimension symbol and a phase parameter in one diagram is a
-  different defect from a dimension disagreement: substitution in this codebase is keyed
-  by name, so :meth:`~qufzx.algebra.phase.PhaseVector.substitute` cannot tell such a
-  collision apart from the ordinary, legal case of a phase entry legitimately citing its
-  own container dimension's symbol (e.g. a root-of-unity entry over a symbolic dim).
-  :class:`IssueKind.SYMBOL_ROLE_COLLISION` (see :func:`_check_symbol_role_collisions`)
-  makes the ambiguous diagram itself invalid, using the distinguishing sympy assumptions
-  each of :mod:`qufzx.algebra.dimension`/:mod:`qufzx.algebra.phase`/
-  :mod:`qufzx.algebra.scalar`'s symbol constructors already stamps on its own symbols, as
-  the structural half of closing this; see :func:`~qufzx.rewrite.match.reattach_phase` for
-  the certificate half (which bindings a rewrite actually substituted into a phase's
-  entries, recorded rather than left implicit).
-
-Phase 5 post-closing audit round 22 (same class again -- the previous round's own fix,
-re-inspected, still carried the defect it was opened to close). Round 21's first bullet
-above fixed leg-order dependence for the ``ALL_LEGS_EQUAL`` leg/leg check (via
-``unify_all``) but left the ``TIED_TO_LEG_DIM`` phase/leg check in
-:func:`_check_generator_policy` reading ``all_ports[0].dim`` raw, unresolved by the very
-bindings ``unify_all`` had just computed a few lines above it -- so a node's phase-vs-legs
-verdict still depended on which leg the diagram happened to list first (legs
-``[Dim("d"), Dim(2)]`` with phase dim ``3`` validated clean; the same legs permuted did not),
-and the *jointly*-unsatisfiable case round 21's own leg/leg fix targeted could still slip
-through when a phase, not another leg, was the second half of the disagreement -- exactly
-the same shape of gap round 21 closed for legs, unclosed for phase. Also closed in this
-round: :func:`_classify_symbol_role` had three roles for ``qufzx.algebra``'s four symbol
-constructors (a dimension's exponent, built by :meth:`~qufzx.algebra.dimension.Dim.__pow__`,
-fell through into "phase"), which both mislabelled a genuine ``SYMBOL_ROLE_COLLISION`` and
-missed a real one (an exponent and a phase parameter sharing a name went unflagged); and
-:func:`~qufzx.algebra.dimension.unify_all` exhausting its pass budget reported ``DEFERRED``
-with an empty ``residual_pairs``, indistinguishable at this module's call site from an
-ordinary, fully-converged deferral, so an undecided node validated clean. See
-:func:`_check_generator_policy`, :func:`_classify_symbol_role`, and
-:class:`~qufzx.algebra.dimension.UnifyAllResult`'s own docstring for each fix's reasoning.
-
-The general question this round's own docstring puts to the next reader, since three
-rounds running have each found the next instance of the previous round's class rather than
-a genuinely new one: when a check here is fixed to resolve through accumulated bindings (or
-any other shared, mutable piece of state) instead of a raw, unresolved value, is *every*
-sibling check reading that same raw value fixed in the same pass, or does this module now
-contain another one, still unfixed, that merely was not this round's reproduction case?
-Do not take a docstring's claim that a class of defect is "closed" at face value, including
-this file's own; verify by grepping for the pattern the fix replaced (see the module-level
-sweep for ``all_ports[0]``/``ports[0].dim``/``[0].dim`` this round ran, which is the
-mechanical form of this question, not just the rhetorical one).
+What this module does not do. It does not contract, evaluate, or attach numeric meaning to
+a diagram (Phase 4's oracle); it does not fix anything it finds wrong (Phase 5); and it
+does not yet know about bang boxes (Phase 7).
 """
 
 from __future__ import annotations
@@ -548,7 +466,7 @@ def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue
 def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
 
-    # Round 20, Task 9: per CLAUDE.md, "dimension is stored per port, not as one global
+    # Round 20, Task 9: per the spec, "dimension is stored per port, not as one global
     # parameter" -- a node with zero legs and no phase vector carries its dimension nowhere
     # at all, so it is not well-formed, yet this module accepted it as valid before this
     # fix. :mod:`qufzx.semantics.denote` already refused such a node

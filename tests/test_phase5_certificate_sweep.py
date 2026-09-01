@@ -11,59 +11,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EXHAUSTIVE (not random) sweep over ``dimension_constraints`` content, closing the gap the
-certificate-fidelity round exists for: the exhaustive oracle sweep in
-``test_phase5_exhaustive_oracle.py`` only ever visits *cleanly contractible* diagrams
-(``_is_cleanly_contractible`` gates out anything with a deferred issue), so the entire
-deferred/binding path -- the one Phase 5's own judgement call allows fusion to fire across --
-has never been oracle-validated at a substitution where its own recorded assumption actually
-holds. This module closes that gap and, separately, sweeps the *shape* of the certificate
-data itself (source uniqueness, determinism, builder agreement) over a much larger space than
-any one hand-picked test in ``test_match.py``/``test_engine.py`` can cover.
+"""Exhaustive (not random) sweep over ``dimension_constraints`` content.
 
-Two sweeps, deliberately split by cost:
+The exhaustive oracle sweep in ``test_phase5_exhaustive_oracle.py`` only visits cleanly
+contractible diagrams, so the deferred/binding path -- the one Phase 5's judgement call
+allows fusion to fire across -- is never oracle-validated there at a substitution where its
+own recorded assumption holds. This module covers that path, and separately sweeps the
+shape of the certificate data itself over a far larger space than any hand-picked test in
+``test_match.py``/``test_engine.py``.
 
-* :class:`TestCertificateStructuralProperties` -- cheap (no tensor contraction), so it runs
-  over a broad cross product: both colours, alternating and same-direction (Z-only) wiring,
-  every combination of 0-1 surviving legs per side drawn from a five-entry palette (concrete,
-  two distinct bare symbols, a product, and a power -- see ``_SURVIVING_PALETTE``; widened
-  from a two-entry one, Phase 5 audit round 15, N1, so two distinct binding symbols and a
-  deferred-then-refuted leg are inside this sweep's own space, not only ``test_match.py``'s
-  hand-picked D1 regression shapes), and phase present/absent (concrete / symbolic / none) on
-  each node. Checked for every match this space produces: no duplicate constraint sources,
-  determinism across repeated ``find_matches`` calls, every constraint's own pair unifies in
-  isolation *and* the whole recorded set is simultaneously satisfiable under the match's
-  final bindings (not merely pairwise self-consistent -- exactly the distinction D1's own
-  contradictory constraint set exposed), and builder agreement (``apply`` never raises
-  ``RewriteDomainError``, and the recorded ``RewriteStep.dimension_constraints`` equals the
-  match's own).
-* :class:`TestOracleTiesBackToRecordedConstraints` -- expensive (one tensor contraction pair
-  per case), so it is deliberately narrower: a fixed, hand-chosen palette of dimension pairs
-  that are known to produce a ``BOUND`` or ``DEFERRED`` constraint (covering concrete, bare
-  symbol, product, and power representations -- see ``_DIM_PAIRS`` below), crossed with the
-  three constraint *sources* (connecting pair, a surviving leg, a node's phase) and the three
-  colour/direction combinations. For every resulting match, a small brute-force search finds
-  a concrete substitution that satisfies every recorded constraint and asserts the pre- and
-  post-fusion diagrams are then exactly oracle-equal, and a second substitution that violates
-  the one constraint under test and asserts they are *not* equal -- proving the constraint is
-  load-bearing, not decorative. A case where no small satisfying substitution exists (e.g. the
-  Diophantine-infeasible ``concrete(2) == d**2``) is skipped for the tie-back half only, not
-  silently counted as passing; the structural properties above still cover it.
-* :class:`TestCertificateDetailFidelity` (Phase 5 post-closing audit round 19, Task 1) --
-  cheap, like the structural sweep. Exhaustively checks that every human-readable
-  ``SideConditionOutcome.detail`` string derived from ``dimension_constraints`` (the
-  ``dimension_agreement`` outcome's connecting-pair clause and leg count, and the passing
-  ``phase_dimension_agreement`` outcome's "assuming ..." clause) states exactly the same
-  operands, in the same order, and names exactly the bindings, as the
-  :class:`~qufzx.rewrite.rule.DimensionConstraint` record entry it describes -- never a
-  value recomputed from final state or attributed by symbol-occurrence coincidence. This is
-  the class of defect Defect 4 (round 18) and its round-19 recurrence both belonged to (see
-  :func:`~qufzx.rewrite.match._connecting_pair_detail`'s docstring); round 18's own
-  regression test for it (``test_match.py::TestDimensionConstraintsRecording::
-  test_non_concrete_binding_detail_says_something_was_assumed``) missed the recurrence
-  because it was written at the one shape that produced the original bug rather than across
-  the space the fix's docstring claimed to cover -- this class is the sweep that shape
-  should have been from the start.
+Two sweeps, split by cost:
+
+* :class:`TestCertificateStructuralProperties` -- cheap (no contraction), so it runs over a
+  broad cross product: both colours, alternating and same-direction (Z-only) wiring, every
+  combination of 0-1 surviving legs per side from a five-entry palette (concrete, two
+  distinct bare symbols, a product, and a power; see ``_SURVIVING_PALETTE``), and phase
+  present/absent (concrete / symbolic / none) per node. For every match: no duplicate
+  constraint sources, determinism across repeated ``find_matches`` calls, each constraint's
+  pair unifying in isolation *and* the whole recorded set being simultaneously satisfiable
+  under the match's final bindings (not merely pairwise consistent), and builder agreement
+  -- ``apply`` never raises, and the recorded ``RewriteStep.dimension_constraints`` equals
+  the match's own.
+* :class:`TestOracleTiesBackToRecordedConstraints` -- expensive (a contraction pair per
+  case), so deliberately narrower: a hand-chosen palette of dimension pairs known to
+  produce a ``BOUND`` or ``DEFERRED`` constraint (see ``_DIM_PAIRS``), crossed with the
+  three constraint sources and the three colour/direction combinations. For each match, a
+  small brute-force search finds a substitution satisfying every recorded constraint and
+  asserts the pre- and post-fusion diagrams are then exactly oracle-equal, then finds one
+  violating the constraint under test and asserts they are not -- showing the constraint is
+  load-bearing, not decorative. A case with no small satisfying substitution (e.g. the
+  Diophantine-infeasible ``concrete(2) == d**2``) is skipped for the tie-back half only,
+  not counted as passing; the structural properties still cover it.
+* :class:`TestCertificateDetailFidelity` -- cheap. Checks exhaustively that every
+  human-readable ``SideConditionOutcome.detail`` derived from ``dimension_constraints``
+  states the same operands, in the same order, and names the same bindings as the
+  :class:`~qufzx.rewrite.rule.DimensionConstraint` entry it describes -- never a value
+  recomputed from final state or attributed by symbol-occurrence coincidence.
 """
 
 from __future__ import annotations

@@ -13,63 +13,34 @@
 
 """Input DSL parser: spiders, wires, symbolic phases, bang boxes, dimensions, and Dirac kets.
 
-Phase 5 slice only (Phase 5 post-closing audit round 19, Task 3). ``FULL_PLAN.md``'s Phase 5
-completion condition names a specific chain: "the full path Dirac to graph to fuse to graph
-runs and the oracle confirms exact equality". Before this module, that chain did not exist --
-``tests/test_phase5_oracle.py`` built its "A into B" worked example by hand
-(``tests/helpers.py::build_ghz_with_copy``) and stated in its own docstring that the Dirac
-half was deferred to Phases 17/18. This module closes exactly that gap, and no more:
+Phase 5 slice only. FULL_PLAN.md's Phase 5 completion condition names a specific chain:
+"the full path Dirac to graph to fuse to graph runs and the oracle confirms exact
+equality". Before this module that chain did not exist -- ``tests/test_phase5_oracle.py``
+built its worked example by hand (``tests/helpers.py::build_ghz_with_copy``). This module
+closes exactly that gap, and no more:
 
-* :func:`parse_dirac_source` accepts a single, restricted form -- a summed ket family
+* :func:`parse_dirac_source` accepts one restricted form: a summed ket family
   ``sum_{k=0}^{D-1} |k,k,...>`` (or the ``|k>^{n}`` tensor-power shorthand), optionally
-  followed by ``; copy`` to feed the resulting state into a fixed two-output "copy" spider.
-  This is exactly, and only, the shape Phase 5's worked example (``build_ghz_with_copy``)
-  needs: a state-prep spider with 0 inputs and ``n`` outputs, optionally wired into a
-  1-input/2-output copy spider.
+  followed by ``; copy`` to feed the state into a fixed two-output copy spider. That is
+  exactly the shape the worked example needs: a state-prep spider with 0 inputs and ``n``
+  outputs, optionally wired into a 1-input/2-output copy spider.
 * ``D`` may be a concrete positive integer or a bare identifier (a symbolic
-  :class:`~qufzx.algebra.dimension.Dim`); ``n`` (the leg count) must be concrete, per the
-  round-19 task's own scope -- a symbolic leg count is a
-  :class:`~qufzx.diagram.generators.LegPolicy` question this slice does not touch.
-* The emitted :class:`~qufzx.diagram.graph.Diagram` never builds a matrix or dense tensor
-  (the ket-sum itself is never evaluated numerically) -- it only ever allocates nodes,
-  wires, and a boundary order, exactly the same graph-construction calls
-  ``build_ghz_with_copy`` makes by hand.
+  :class:`~qufzx.algebra.dimension.Dim`); ``n`` must be concrete, since a symbolic leg
+  count is a :class:`~qufzx.diagram.generators.LegPolicy` question this slice does not
+  touch. The bound summation index is rejected in a dimension slot.
+* The emitted diagram never builds a matrix or dense tensor -- the ket-sum is never
+  evaluated numerically. It only allocates nodes, wires, and a boundary order.
+* The tensor-power leg count is bounded by :data:`_MAX_KET_LEG_COUNT`, since it comes from
+  user input and drives eager allocation.
+* Every outbound call is wrapped so no foreign exception hierarchy escapes this module's
+  boundary; see :class:`DiracError`.
 
-What this module deliberately does **not** do, because it belongs to a later phase: a
-general spider/wire/bang-box declaration syntax (Phase 18's own DSL), bang boxes, families
-indexed by more than the one implicit ``k``, or a printer (the ``Diagram`` to Dirac
-direction, Phase 17). ``copy`` is a single recognized keyword standing in for the one
-specific copy spider the worked example needs, not a general "declare an arbitrary
-generator" mechanism -- Phase 18 is expected to replace it with real declaration syntax,
-at which point this module's grammar is a strict subset of that one.
-
-Phase 5 post-closing audit round 20 closed four defect classes in this module, added in
-round 19 and never previously audited:
-
-* Foreign exception hierarchies escaping this module's boundary (Task 1) -- see
-  :class:`DiracError`'s docstring for the full outbound-call audit and the general question
-  it poses for a future reader. This is the third recurrence of the class: the first was
-  ``rules_library._over_shared_dim`` wrapping ``PhaseDomainError`` into ``RewriteDomainError``,
-  the second was A3's ``GraphGrammarError`` containment in ``engine.apply`` step 6.
-* The bound summation index leaking into a dimension slot as a free symbol (Task 2) --
-  ``_parse_dim`` now rejects :data:`_SUMMATION_INDEX` explicitly.
-* Unbounded eager allocation from a user-supplied tensor-power leg count (Task 3) --
-  bounded by :data:`_MAX_KET_LEG_COUNT`, the same pattern as ``match._MAX_FIXPOINT_PASSES``.
-* A doubled-brace error message rendered literally because a multi-line message was built
-  from an f-prefixed fragment adjacent to a plain (non-f) fragment, and brace-escaping rules
-  differ between the two (Task 4) -- fixed in :func:`_leg_count_from_body`. A repository-wide
-  sweep for the same pattern (an f-fragment and a non-f fragment immediately adjacent, either
-  containing a brace) and for the dual bug (a ``{var}`` placeholder stranded in a non-f
-  fragment, which renders the literal source text instead of a value) found no other live
-  instance: every other adjacent-fragment pair in the repository either has matching f-status
-  on both fragments, or the non-f fragment's braces are deliberately literal text (regex
-  group syntax, or Dirac/set notation quoted for a human reader, e.g. ``'sum_{k=0}^{D-1}'``
-  in this module's own grammar-error messages) rather than a stranded placeholder. The general
-  rule for a future reader: a multi-line message built by implicit string concatenation must
-  keep the same f-prefixing on every fragment, because ``{`` and ``}`` mean different things
-  in an f-fragment (interpolation, escaped by doubling) than in a plain fragment (literal
-  characters) -- mixing the two is *always* worth a second look even when today's instance of
-  the mismatch happens to be harmless.
+What this module does not do, because it belongs to a later phase: a general spider/wire/
+bang-box declaration syntax (Phase 18's DSL), bang boxes, families indexed by more than the
+one implicit ``k``, or a printer (the diagram-to-Dirac direction, Phase 17). ``copy`` is a
+single keyword standing in for the one copy spider the worked example needs, not a general
+generator-declaration mechanism; Phase 18 is expected to replace it with real declaration
+syntax, at which point this grammar is a strict subset of that one.
 """
 
 from __future__ import annotations
@@ -84,53 +55,28 @@ from qufzx.diagram.graph import Diagram, Direction, PortRef
 class DiracError(Exception):
     """Base of every error :func:`parse_dirac_source` can raise.
 
-    This is the same containment discipline :mod:`qufzx.rewrite` maintains for
-    :class:`~qufzx.rewrite.rule.RewriteError`: every exception that reaches a caller of this
-    module is a :class:`DiracError`, never a foreign exception class from a package this
-    module calls into. The general question for a future reader touching this file: does
-    every call this module makes into another package have its foreign exception hierarchy
-    contained at this boundary? As of round 20, the outbound calls and their answers are:
+    The same containment discipline :mod:`qufzx.rewrite` keeps for
+    :class:`~qufzx.rewrite.rule.RewriteError`: every exception reaching a caller is a
+    :class:`DiracError`, never a foreign class from a package this module calls into. The
+    question for a future reader touching this file is whether every outbound call still
+    has its foreign hierarchy contained here. The current calls:
 
-    * ``Dim.concrete`` -- **not safe on its own**; raises
+    * ``Dim.concrete`` -- not safe on its own; raises
       :class:`~qufzx.algebra.dimension.DimensionDomainError` for a non-positive integer.
-      :func:`_parse_dim` range-checks the token itself and additionally wraps the call in a
-      defensive ``except DimensionDomainError`` so a future change to ``Dim.concrete``'s own
-      domain cannot reopen this leak (Task 1, round 20; the same recurrence as
-      ``_over_shared_dim`` wrapping ``PhaseDomainError`` in ``rules_library.py`` and A3's
-      ``GraphGrammarError`` containment in ``engine.py`` -- this is the third instance of the
-      class).
-    * ``Dim.symbol`` -- safe. Every name this module ever passes has already matched
-      ``_KET_SUM_RE``'s ``[A-Za-z_]\\w*`` group, which is exactly the identifier shape
-      ``sympy.Symbol`` accepts, and this module always builds it with ``positive=True,
-      integer=True`` (via ``Dim.symbol``'s own construction), which is exactly the assumption
-      pair ``_check_dimension_domain`` requires of a dimension symbol. No input this module's
-      grammar admits can make ``Dim.symbol`` raise.
-    * ``Diagram.add_node`` -- safe; per its own docstring it never raises (leg-policy,
-      dimension-policy, and phase-schema conformance are :mod:`qufzx.diagram.validate`'s
-      job, not construction-time).
+      :func:`_parse_dim` range-checks the token and additionally wraps the call, so a future
+      change to ``Dim.concrete``'s domain cannot reopen the leak.
+    * ``Dim.symbol`` -- safe. Every name passed has matched ``_KET_SUM_RE``'s
+      ``[A-Za-z_]\\w*``, exactly the identifier shape ``sympy.Symbol`` accepts, and is built
+      with the ``positive=True, integer=True`` pair ``_check_dimension_domain`` requires.
+    * ``Diagram.add_node`` -- safe; per its own docstring it never raises.
     * ``Diagram.add_wire`` -- safe as used here; it raises ``GraphDomainError`` only for
-      ``a == b``, and every wire this module builds connects two distinct, freshly allocated
-      ports on different nodes.
+      ``a == b``, and every wire built here joins two distinct fresh ports on different nodes.
     * ``Diagram.set_boundary_outputs`` -- safe; it never raises.
     * ``int(token)`` -- safe as used here; every call site first confirms the token is a
-      non-empty run of ASCII ``0-9`` (:data:`_ASCII_DIGITS_RE` in :func:`_parse_dim`, or the
-      regex's own ``(?P<power>[0-9]+)`` group), so ``int()`` cannot raise ``ValueError``.
-
-      Round 24: this bullet used to justify the same conclusion via ``token.isdigit()``,
-      which is *not* the same predicate as ``\\d+`` and does not support it.
-      ``str.isdigit()`` is true for Unicode category ``No`` as well as ``Nd`` -- ``'\u00b2'``
-      and ``'\u2075'`` are both ``isdigit()``, match neither ``\\d+`` nor ``[0-9]+``, and
-      make ``int()`` raise ``ValueError`` -- so :func:`_parse_dim` called with such a token
-      leaked a bare ``ValueError`` straight through this module's own ``DiracError``
-      boundary, the Task 1 defect class round 20 closed everywhere else here. No *reachable*
-      input did that (``_KET_SUM_RE``'s own ``(?P<dim>...)`` group gated every real call
-      site, and its ``\\d+`` branch is ``Nd``-only), so the bullet's conclusion held -- but
-      it held because of the regex, not because of the ``isdigit()`` guard the bullet
-      credited, and this module's docstring says Phase 18 will replace that grammar. Fixed
-      structurally rather than re-documented: the guard is now literally the predicate this
-      bullet claims it is, so the two cannot diverge again. As a side effect this also stops
-      silently accepting a non-ASCII decimal digit (``'\u0663'`` is ``Nd``, so it *did*
-      match ``\\d+`` and parsed as ``Dim.concrete(3)``) as a concrete dimension.
+      non-empty run of ASCII ``0-9`` (:data:`_ASCII_DIGITS_RE`, or the regex's own
+      ``(?P<power>[0-9]+)`` group). Note that ``str.isdigit()`` is *not* this predicate: it
+      is true for Unicode category ``No`` as well as ``Nd``, so ``'²'`` is ``isdigit()``,
+      matches neither ``\\d+`` nor ``[0-9]+``, and makes ``int()`` raise ``ValueError``.
     """
 
 

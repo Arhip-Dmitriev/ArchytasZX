@@ -527,7 +527,7 @@ class TestSymbolConstructorRolesRoundTrip:
 
 class TestNodeDimensionUndetermined:
     """Round 20, Task 9: a node with zero legs and no phase carries its dimension nowhere at
-    all (per CLAUDE.md, "dimension is stored per port, not as one global parameter"), so it
+    all (per the spec, "dimension is stored per port, not as one global parameter"), so it
     is not well-formed -- yet this module used to accept it as valid, while
     :mod:`qufzx.semantics.denote` correctly refused it. The invariant this closes:
     ``validate(d).is_valid`` implies every node in ``d`` is denotable (see

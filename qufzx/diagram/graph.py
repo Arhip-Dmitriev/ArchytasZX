@@ -13,73 +13,51 @@
 
 """Core graph data model: Port, Node, and Diagram, with deep copy and controlled mutation.
 
-A :class:`Diagram` is an open graph: a set of :class:`Node` objects joined by
-:class:`Wire`\\ s, plus two ordered boundary lists (unwired ports of ordinary nodes)
-and an exact :class:`~qufzx.algebra.scalar.Scalar` accumulator. Dimension lives on each
-:class:`Port` individually -- there is no global or per-diagram dimension field
-anywhere in this module, not even as a default, per the ``CLAUDE.md`` invariant that
-dimension is stored per port.
+A :class:`Diagram` is an open graph: :class:`Node` objects joined by :class:`Wire`\\ s, two
+ordered boundary lists of unwired ports, and an exact
+:class:`~qufzx.algebra.scalar.Scalar` accumulator. Dimension lives on each :class:`Port`
+individually -- there is no global or per-diagram dimension field here, not even as a
+default, per the spec invariant that dimension is stored per port.
 
-What this representation cannot express. A boundary list entry is a :class:`PortRef`
-pointing at a port of some :class:`Node`; there is deliberately no way to express a bare
-identity wire running directly from a boundary input to a boundary output with no node
-on it at all. Representing that would require either a synthetic "boundary node" type
-(which this module declines to invent, since it is not a real generator and would need
-its own policy, denotation, and validation carve-outs) or a third kind of boundary-to-
-boundary edge alongside node-to-node wires (which would break the invariant that every
-wire has exactly two ports drawn from actual nodes). This gap is out of scope until
-either an explicit identity/wire generator is registered (a node whose sole job is to
-be transparent) or the Phase 18 parser needs to round-trip a bare wire and forces the
-issue. Callers who need "pass this boundary value straight through" today should use an
-explicit identity-flavored node once one exists, not attempt to fake it with two
-boundary entries.
+What this representation cannot express. A boundary entry is a :class:`PortRef` into some
+node, so there is no way to express a bare identity wire running from a boundary input
+straight to a boundary output. Representing it would need either a synthetic boundary-node
+type (not a real generator; it would need its own policy, denotation, and validation
+carve-outs) or a boundary-to-boundary edge alongside node-to-node wires (breaking the
+invariant that every wire has two ports drawn from actual nodes). Out of scope until an
+explicit identity generator is registered or the Phase 18 parser must round-trip a bare
+wire.
 
-Validation ownership. Construction and mutation here are deliberately permissive:
-methods perform only the checks that are properties of the data structure itself (an
-index must be a non-negative int, a wire cannot join a port to itself, you cannot
-mutate a node that does not exist). Cross-cutting well-formedness -- dimension
-agreement across a wire, double-wired ports, boundary/wire conflicts, out-of-range
-port indices in wires or boundary lists, generator policy conformance -- is
-deliberately left unchecked here and is entirely :mod:`qufzx.diagram.validate`'s
-responsibility. This lets that module's report carry every problem in one pass
-(including problems that span multiple mutation calls) rather than having them
-surface as scattered exceptions from whichever mutator happened to introduce them.
+Validation ownership. Construction and mutation here are deliberately permissive: methods
+check only properties of the data structure itself (an index is a non-negative int, a wire
+cannot join a port to itself, you cannot mutate a node that does not exist). Cross-cutting
+well-formedness -- dimension agreement, double-wired ports, boundary/wire conflicts,
+out-of-range indices, generator policy -- is entirely :mod:`qufzx.diagram.validate`'s
+responsibility, so its report can carry every problem in one pass, including problems
+spanning several mutation calls, rather than surfacing as scattered exceptions from
+whichever mutator introduced them.
 
-Node removal. :meth:`Diagram.remove_node` cascades: it also removes every wire
-incident to the node and every boundary entry referencing it. This is the one
-invariant this module *does* enforce eagerly, because the alternative -- leaving a
-:class:`PortRef` that resolves to nothing -- would silently corrupt every other wire
-and boundary entry that still references the removed node, with no single later
-validation pass able to distinguish "dangling because of a stale reference" from "just
-never wired". Rejecting the removal instead (requiring the caller to detach first) was
-the other option considered; cascading was chosen so that "delete a node" always
-succeeds and always leaves the diagram internally consistent from a referential-
-integrity standpoint (though not necessarily "valid" in the sense of
-:mod:`qufzx.diagram.validate` -- e.g. the remaining boundary may now have a different
-arity than a caller expected).
+Node removal. :meth:`Diagram.remove_node` cascades to every incident wire and boundary
+entry. This is the one invariant enforced eagerly: leaving a :class:`PortRef` that resolves
+to nothing would corrupt every other reference to the removed node, with no later pass able
+to tell "dangling because stale" from "never wired". Rejecting the removal instead was the
+alternative; cascading was chosen so deleting a node always succeeds and always leaves the
+diagram referentially consistent (though not necessarily *valid* -- the boundary may now
+have a different arity than a caller expected).
 
-Symbol substitution. :meth:`Diagram.substitute` (added for Phase 4's
-:mod:`qufzx.semantics.check`, which needs to instantiate a diagram's symbols to concrete
-values before contracting it) is node-id-preserving: the returned ``Diagram`` has
-identical :class:`NodeId`\\ s, an identical wire set, identical boundary lists, and the
-same ``_next_id`` counter, with only each port's ``Dim``, each node's ``PhaseVector``,
-and the diagram's ``Scalar`` substituted. This could not be expressed by rebuilding the
-diagram through :meth:`add_node` -- that allocates fresh ids, and every ``Wire`` and
-boundary ``PortRef`` addresses a node by id, so a rebuild would silently detach every
-wire and boundary entry from the diagram it was meant to describe. Like every other
-method here, :meth:`substitute` performs no well-formedness validation (that stays
-:mod:`qufzx.diagram.validate`'s job) and never mutates the receiver.
+Symbol substitution. :meth:`Diagram.substitute` is node-id-preserving: identical
+:class:`NodeId`\\ s, wire set, boundary lists, and ``_next_id``, with only each port's
+``Dim``, each node's ``PhaseVector``, and the diagram's ``Scalar`` substituted. Rebuilding
+through :meth:`add_node` could not express this -- that allocates fresh ids, and every wire
+and boundary ref addresses a node by id, so a rebuild would detach them all. Like every
+method here it validates nothing and never mutates the receiver.
 
-Diagram equality. :class:`Diagram` does not define ``__eq__``. Diagram equality --
-"do these two diagrams denote the same map, possibly after rewriting" -- is a decision
-procedure that belongs to Phase 13's normal form and is checked by Phase 4's oracle; a
-naive structural ``__eq__`` here (e.g. comparing node dicts and wire sets) would be a
-different, weaker notion that later code could come to rely on by accident. Diagram
-therefore uses ordinary identity semantics (``is``), inherited from ``object``, and
-this file defines no override. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
-:class:`~qufzx.diagram.generators.GeneratorType` are value objects and remain
-value-equal and hashable, since they are looked up and de-duplicated by value
-throughout this module.
+Diagram equality. :class:`Diagram` defines no ``__eq__``. Diagram equality -- "do these
+denote the same map, possibly after rewriting" -- is Phase 13's normal form, checked by
+Phase 4's oracle; a naive structural ``__eq__`` would be a weaker notion later code could
+come to rely on by accident. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
+:class:`~qufzx.diagram.generators.GeneratorType` are value objects and stay value-equal and
+hashable, since they are looked up and de-duplicated by value throughout.
 """
 
 from __future__ import annotations

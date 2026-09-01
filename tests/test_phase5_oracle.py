@@ -14,7 +14,7 @@
 """Phase 5 numeric-oracle check: the graph-to-fuse-to-graph half of this phase's completion
 condition, verified.
 
-Per ``claude.md``, every build phase ends with a numeric oracle check, and per the build
+Per the spec, every build phase ends with a numeric oracle check, and per the build
 plan Phase 5 is done when "the full path Dirac to graph to fuse to graph runs and the
 oracle confirms exact equality" -- de-risking the whole project. This module exercises the
 graph-to-fuse-to-graph half of that: build "A into B" via ``build_ghz_with_copy``, find the
@@ -738,7 +738,7 @@ class TestFusionMatchNegativeControls:
 
 
 class TestRewriteNeverImportsSemantics:
-    """Enforces ``claude.md``'s "rewriting never contracts" rule at the import level.
+    """Enforces the spec's "rewriting never contracts" rule at the import level.
 
     Parses each module's AST rather than substring-searching its source, since several
     modules' docstrings *discuss* :mod:`qufzx.semantics` (e.g. explaining why a boundary

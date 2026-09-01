@@ -105,65 +105,42 @@ Implemented and under test:
   spider-fusion phase addition, and exact scalars (roots of unity, free symbols, products
   and sums) with no silent discarding of global factors.
 - **Diagram data model** — ports, nodes, wires, ordered boundaries, exact scalar
-  accumulator, deep copy and controlled mutation, a generator registry for the Z and X
-  spiders, and validation of per-port dimension agreement, boundary consistency, port
-  usage, and generator policy — including that every node's dimension is determinable at
-  all (a node with no legs and no phase is rejected, matching the numeric oracle's own
-  refusal), that a node's legs are *jointly* unifiable to one shared dimension (not merely
-  pairwise unifiable against the first leg), and that a phase vector tied to its node's leg
-  dimension is checked against that same jointly-resolved dimension (not the raw, unresolved
-  first leg) — order-independently, at any concretizing substitution, in both cases. A name
+  accumulator, deep copy and controlled mutation, and a generator registry for the Z and X
+  spiders.
+- **Validation** — per-port dimension agreement, boundary consistency, port usage, and
+  generator policy. A node's legs must be *jointly* unifiable to one shared dimension, not
+  merely pairwise unifiable against the first leg, and a phase vector tied to its node's
+  leg dimension is checked against that same jointly-resolved value; both are therefore
+  independent of leg order. Every node's dimension must be determinable at all, so a node
+  with no legs and no phase is rejected, matching the numeric oracle's own refusal. A name
   may not serve as more than one of `qufzx.algebra`'s four symbol roles (a dimension, a
   dimension's exponent, a phase parameter, or a scalar) within one diagram, since
-  substitution is name-keyed and would otherwise silently conflate two of them. Diagram-wide
-  (cross-node) dimension-constraint propagation is not yet implemented; each node's checks
-  are local to that node — this is deferred to a later phase, not a current gap.
+  substitution is name-keyed and would otherwise conflate them. Checks are local to each
+  node; diagram-wide dimension-constraint propagation is deferred to a later phase.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
   up-to-global-phase mode.
 - **Rewrite core** — the rule/pattern/builder abstraction, a matcher for same-colour
-  spider fusion (including phase-dimension agreement resolved by unification, not merely
-  raw equality), the spider-fusion rule itself with its exact scalar, and an engine that
-  applies a rule at a match and records step provenance — re-derived independently by the
-  builder rather than trusted from the match. Seven side conditions are checked and
-  re-verified fresh by both the matcher and the builder, from the same one function: the
-  seventh, `consumed_ports_singly_claimed`, was promoted from a bare filter inside the
-  matcher to a real, certificate-visible side condition (Phase 5 post-closing audit round
-  23), closing the gap where a hand-built match claiming a multiply-claimed consumed port
-  used to be accepted by the builder and only fail deep inside the engine. Dimension
-  assumptions the matcher could not verify as a syntactic identity are recorded as a
-  source-keyed `DimensionConstraint` (one entry per connecting-wire pair, surviving leg, or
-  node phase, replaced in place across a fixpoint pass rather than re-appended, and carrying
-  the exact binding the check that recorded it produced — never re-derived from a later,
-  possibly-diverged state; the record's displacement policy and the adequacy invariant it
-  must satisfy are stated and mechanically checked, not merely asserted), and a rewrite's
-  effect on pre-existing deferred dimension assumptions is recorded symmetrically — both
-  which ones it resolved (`removed_deferred_issues`) and which new ones it introduced
-  (`introduced_deferred_issues`). A surviving leg forced onto the resolved shared dimension
-  can turn an exact match to a third node into a merely-deferred one — a routine outcome of
-  this pattern, not an edge case, permitted by the engine's own step-8 postcondition.
-  `unify_all` (used by the diagram-wide leg-dimension check) now also records, separately
-  from its verdict, every binding it declined to fold in because the bound-to value was
-  itself non-concrete — visible to a caller even though `validate` does not yet surface it
-  as a reported issue (a deliberate Phase 5 decision, left to Phase 10). Graph-to-fuse-to-graph
-  is oracle-checked exactly, including at substitutions where a recorded constraint only
-  holds by assumption (not merely the cleanly-contractible case).
-- **Dirac parsing (Phase 5 slice only)** — `qufzx/repl/parser.py` parses one restricted
-  form, a summed ket family `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power
-  shorthand) optionally followed by `; copy` to feed the state into a fixed copy spider —
-  exactly the shape Phase 5's own worked example needs, oracle-checked end to end
-  (source string → diagram → fusion match → post-diagram) against several concrete `d`,
-  and pinned structurally to the same hand-built fixture the graph-to-fuse-to-graph tests
-  use. Every exception it raises is a `DiracError` (no foreign exception class escapes —
-  including from its own internal helpers called directly, not only from the one public
-  entry point the grammar gates; round 24 closed a case where a token that was
-  `str.isdigit()` but not `[0-9]+` leaked a bare `ValueError` out of `_parse_dim`), the
-  bound summation index cannot be captured as a dimension symbol, numeric and identifier
-  tokens are ASCII by construction, and a tensor-power leg count is bounded against
-  unbounded eager allocation. A general spider/wire/bang-box
-  declaration syntax, bang boxes, multi-index families, and the Dirac *printer* (the
-  `Diagram`-to-Dirac direction) remain Phases 18/7/17's work, not this slice's.
+  spider fusion, the fusion rule itself with its exact scalar, and an engine that applies a
+  rule at a match and records step provenance. Seven side conditions are checked, and the
+  builder re-derives them fresh from the same function the matcher uses rather than
+  trusting the match's own claims. Dimension assumptions the matcher could not verify as a
+  syntactic identity are recorded as source-keyed `DimensionConstraint`s — one entry per
+  connecting pair, surviving leg, or node phase, replaced in place across a fixpoint pass
+  rather than re-appended. A rewrite's effect on pre-existing deferred assumptions is
+  recorded in both directions, `removed_deferred_issues` and `introduced_deferred_issues`.
+  Graph-to-fuse-to-graph is oracle-checked exactly, including at substitutions where a
+  recorded constraint holds only by assumption.
+- **Dirac parsing (Phase 5 slice only)** — one restricted form: a summed ket family
+  `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power shorthand), optionally
+  followed by `; copy` to feed the state into a fixed copy spider. That is exactly the
+  shape Phase 5's worked example needs, oracle-checked end to end (source → diagram →
+  fusion match → post-diagram) at several concrete `d`. Every exception it raises is a
+  `DiracError`, the bound summation index cannot be captured as a dimension symbol, tokens
+  are ASCII by construction, and a tensor-power leg count is bounded. A general
+  spider/wire/bang-box declaration syntax, bang boxes, multi-index families, and the Dirac
+  printer belong to Phases 18, 7, and 17.
 
 Not yet implemented:
 
@@ -173,7 +150,6 @@ mixed dimensions and the full qufinite generator set · the broader rule library
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
 saturation · tactics and proof search · scalable notation · a Dirac printer and the general
 REPL declaration syntax/bang-box grammar.
-
 ## References (Highly Incomplete List)
 
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi* —

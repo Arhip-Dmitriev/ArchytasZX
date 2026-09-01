@@ -13,7 +13,7 @@
 
 """Phase 2 numeric-oracle stand-in.
 
-Per CLAUDE.md, every build phase ends with a numeric oracle check. The real semantics
+Per the spec, every build phase ends with a numeric oracle check. The real semantics
 oracle arrives in Phase 4; here we instantiate all symbols to concrete values, evaluate
 through the gated numeric methods (Phase.to_complex / Scalar.to_complex), and confirm
 against cmath for representative cases. No simplifier is invoked -- the character-sum

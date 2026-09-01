@@ -33,7 +33,7 @@ equality here is sound but incomplete: two Scalars that compare equal are exactl
 but two exactly-equal Scalars may compare unequal if this module's cheap normalization
 cannot see it.
 
-CLAUDE.md invariant, restated precisely for this module: scalars are tracked exactly and
+The spec invariant, restated precisely for this module: scalars are tracked exactly and
 nothing here ever quotients a global factor, normalizes to a leading coefficient, or
 drops a unit-modulus factor. There is no such method, public or private, anywhere in
 this module -- not even as an option. ``s`` and ``2*s`` are unequal; ``s`` and
