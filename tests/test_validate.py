@@ -236,7 +236,7 @@ class TestGeneratorPolicyConformance:
 
 
 class TestPhaseDimensionResolvedThroughLegBindings:
-    """D1, Phase 5 post-closing audit round 22: the TIED_TO_LEG_DIM phase check must compare
+    """D1, the TIED_TO_LEG_DIM phase check must compare
     against the leg set's *jointly resolved* dimension (via unify_all), not the raw,
     unresolved first leg -- see qufzx.diagram.validate._check_generator_policy. Before this
     fix, the verdict depended on which leg the diagram happened to list first, and a
@@ -342,17 +342,15 @@ class TestPhaseDimensionResolvedThroughLegBindings:
 
 
 class TestNonConcreteLegBindingIsSilentlyAccepted:
-    """Phase 5 post-closing audit round 23, Task 7b: a node whose legs unify only by binding
-    one bare symbol to another (e.g. legs ``d`` and ``e``, binding ``d := e``) reports no
-    issue at all -- a deliberate Phase 5 decision (see ``_check_generator_policy``'s own
-    inline comment), not an oversight, and asymmetric with the structurally identical
-    situation in :mod:`qufzx.rewrite.match`, which records it as a ``BOUND`` certificate
-    entry. ``UnifyAllResult.declined_bindings`` is populated regardless (so the assumption
-    is not lost, only not yet reported) -- pinned directly in ``test_dimension.py``. This
-    class pins today's silent behavior at the ``validate()`` level, so a future change to
-    surface ``declined_bindings`` here (left to Phase 10, per that comment) is a deliberate,
-    visible change to this test, not a silent behavior drift.
-    """
+    """A node whose legs unify only by binding one bare symbol to another (e.g. legs ``d`` and
+    ``e``, binding ``d := e``) reports no issue at all -- a deliberate Phase 5 decision (see
+    ``_check_generator_policy``'s own inline comment), not an oversight, and asymmetric with
+    the structurally identical situation in :mod:`qufzx.rewrite.match`, which records it as
+    a ``BOUND`` certificate entry. ``UnifyAllResult.declined_bindings`` is populated
+    regardless (so the assumption is not lost, only not yet reported) -- pinned directly in
+    ``test_dimension.py``. This class pins today's silent behavior at the ``validate()``
+    level, so a future change to surface ``declined_bindings`` here (left to Phase 10, per
+    that comment) is a deliberate, visible change to this test, not a silent behavior drift."""
 
     def test_two_bare_symbol_legs_report_no_issue(self) -> None:
         d = Dim.symbol("d")
@@ -369,7 +367,7 @@ class TestNonConcreteLegBindingIsSilentlyAccepted:
 
 
 class TestAllLegsEqualJointSatisfiability:
-    """F1, Phase 5 post-closing audit round 21: leg dims must be *jointly* unifiable, not
+    """F1, leg dims must be *jointly* unifiable, not
     merely pairwise-unifiable against the first leg -- see qufzx.algebra.dimension.unify_all.
     """
 
@@ -414,7 +412,7 @@ class TestAllLegsEqualJointSatisfiability:
 
 
 class TestSymbolRoleCollision:
-    """F2, Phase 5 post-closing audit round 21: a name cannot legally serve as both a
+    """F2, a name cannot legally serve as both a
     dimension symbol and a phase parameter within one diagram (see
     qufzx.diagram.validate._classify_symbol_role)."""
 
@@ -453,7 +451,7 @@ class TestSymbolRoleCollision:
         assert phase_symbol != scalar_symbol
 
     def test_exponent_symbol_dimension_collision_is_flagged_and_named_correctly(self) -> None:
-        # D2: a dimension symbol 'n' and an exponent symbol also named 'n' (d ** n) is a
+        # a dimension symbol 'n' and an exponent symbol also named 'n' (d ** n) is a
         # genuine collision -- differing domains under one name (positive vs. merely
         # nonnegative integers) -- and must be reported as {'dimension', 'exponent'}, not
         # mislabelled {'dimension', 'phase'} the way the pre-fix three-role classifier did
@@ -526,15 +524,13 @@ class TestSymbolConstructorRolesRoundTrip:
 
 
 class TestNodeDimensionUndetermined:
-    """Round 20, Task 9: a node with zero legs and no phase carries its dimension nowhere at
-    all (per the spec, "dimension is stored per port, not as one global parameter"), so it
-    is not well-formed -- yet this module used to accept it as valid, while
-    :mod:`qufzx.semantics.denote` correctly refused it. The invariant this closes:
-    ``validate(d).is_valid`` implies every node in ``d`` is denotable (see
-    ``tests/test_phase5_exhaustive_oracle.py``'s exhaustive sweep, which now checks this
-    over its whole space, and ``denote.py``'s own "has no legs and no phase vector" message,
-    which this issue's message deliberately echoes).
-    """
+    """A node with zero legs and no phase carries its dimension nowhere at all (per the spec,
+    "dimension is stored per port, not as one global parameter"), so it is not well-formed
+    -- yet this module used to accept it as valid, while :mod:`qufzx.semantics.denote`
+    correctly refused it. The invariant this closes: ``validate(d).is_valid`` implies every
+    node in ``d`` is denotable (see ``tests/test_phase5_exhaustive_oracle.py``'s exhaustive
+    sweep, which now checks this over its whole space, and ``denote.py``'s own "has no legs
+    and no phase vector" message, which this issue's message deliberately echoes)."""
 
     def test_legless_phaseless_node_is_a_hard_error(self) -> None:
         diagram = Diagram()

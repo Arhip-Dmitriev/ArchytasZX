@@ -11,7 +11,7 @@ i. pyproject.toml
 ii. .gitignore, README.md, LICENSE (apache 2.0)
 - ignore venv, caches, build artifacts
 - README states the one-line purpose and how to run tests
-iii. qufzx/init.py and tests/init.py
+iii. qufzx/__init__.py and tests/__init__.py
 - import qufzx succeeds from a clean environment
 - test and debug: run pytest on an empty suite and confirm it collects zero tests without error
 - done when: editable install works, ruff and mypy run clean on empty package, git is initialized
@@ -35,11 +35,11 @@ i. algebra/dimension.py
 - normalizes and compares dim expressions so that equal dimensions test equal
 - exposes is_concrete, substitute (symbol to integer), and a placeholder unify that returns constraints (the real unifier arrives in Phase 10)
 - test and debug: unit tests for equality, substitution, and product normalization
-- done when: you can represent and compare d, 2, and d^n symbolically
+- done when: d, 2, and d^n can be represented and compared symbolically
 
 Phase 2: Phase and scalar algebra, exact from the start
 i. algebra/phase.py
-- a Phase can be a concrete value, a root-of-unity index, or a free symbolic parameter, so parameterized gate families are representable from the first version
+- a Phase can be a concrete value, a root-of-unity index, or a free symbolic parameter
 - phases live in vectors whose length is tied to the wire dimension d, symbolic length permitted
 - phase addition (spider fusion semantics) is defined and normalizes
 ii. algebra/scalar.py, representation only
@@ -50,10 +50,10 @@ ii. algebra/scalar.py, representation only
 
 Phase 3: Diagram data model, no bang box and no connectives yet
 i. diagram/graph.py
-- a Port carries its own dimension label (per-port, because you chose mixed dimensions)
+- a Port carries its own dimension label, per port
 - a Node carries a generator type, ordered input ports, ordered output ports, and a phase-data slot that accepts symbolic phases from Phase 2
 - a Diagram holds nodes, wires (each joining two ports), ordered boundary input and output lists, and an exact scalar accumulator
-- there is a deep copy and controlled mutation so rewrites do not corrupt the original
+- there is a deep copy and controlled mutation
 ii. diagram/generators.py
 - registers generator types, starting with Zspider and Xspider only
 - each type records its leg policy (any number of legs), its phase schema (vector length tied to d, symbolic entries allowed), and its dimension policy (for Z and X, all legs share one dimension)
@@ -61,7 +61,7 @@ iii. diagram/validate.py
 - rejects any wire whose two ports carry unequal dimensions
 - checks boundary consistency
 - test and debug: build a two-leg Z spider, build the A-into-B graph from the worked example, confirm validation passes, then confirm a deliberately mismatched wire fails
-- done when: you can construct and validate the GHZ-with-copy graph, carrying a symbolic phase on at least one node
+- done when: the GHZ-with-copy graph, carrying a symbolic phase on at least one node, can be constructed and validated
 
 Phase 4: Numeric oracle (rung 3) with exact scalar tracking
 i. semantics/denote.py
@@ -71,7 +71,7 @@ i. semantics/denote.py
 ii. semantics/contract_numeric.py
 - contracts a fully concrete diagram (all dimensions concrete, no bang box) into a numpy tensor by contracting along wires, and carries the exact scalar accumulator through
 iii. semantics/check.py
-- that, given two diagrams claimed equal, it instantiates all symbols to supplied concrete values, contracts both, and compares exactly including the overall scalar, up to floating-point tolerance
+- given two diagrams claimed equal, instantiates all symbols to supplied concrete values, contracts both, and compares exactly including the overall scalar, up to floating-point tolerance
 - an explicit up-to-global-phase mode exists as an opt-in, never as the default
 - test and debug: confirm the Z spider 0 to 2 at d equal to 2 gives the vector for |00> + |11>; confirm A-into-B contracts to the GHZ vector for d equal to 2 and 3; confirm that a deliberately scalar-shifted copy fails exact comparison but passes in up-to-global-phase mode
 - done when: the oracle can score any concrete diagram and compare any two diagrams, exactly by default
@@ -86,7 +86,7 @@ iii. rewrite/rules_library.py
 iv. rewrite/engine.py
 - applies a chosen rule at a found match, returns a new diagram, and records structured provenance of the step in a form a certificate can consume in Phase 6
 - test and debug: fuse A-into-B into a single spider; oracle-check that the pre and post diagrams are exactly equal at several concrete d; validate that the post diagram is well formed
-- done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality. This de-risks the project.
+- done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality
 
 Phase 6: Proof certificates
 i. semantics/certificate.py
@@ -101,9 +101,9 @@ Phase 7: Bang boxes, free n, with nesting and multiple indices
 i. diagram/bangbox.py
 - a bang box records a scope over a subgraph or set of ports, a multiplicity symbol, and its overlap and boundary edges
 - supports instantiate (a multiplicity to a concrete k, expanding to k copies), copy, kill (multiplicity 0), and merge
-- bang boxes may nest, and that several independent count symbols may coexist in one diagram, with an arithmetic of multiplicities (sums, products, and substitution)
+- bang boxes may nest, and several independent count symbols may coexist in one diagram, with an arithmetic of multiplicities (sums, products, and substitution)
 ii. extend diagram/validate.py
-- bang-box scopes, nesting, and boundary edges are well formed, and that distinct count symbols are tracked without collision
+- checks that bang-box scopes, nesting, and boundary edges are well formed, and that distinct count symbols are tracked without collision
 iii. extend semantics/check.py
 - instantiates every count symbol as well as every dimension symbol before contracting
 iv. extend rewrite/match.py
@@ -122,7 +122,7 @@ Phase 9: Character-sum simplifier and full symbolic contraction (rung 2)
 i. complete algebra/scalar.py
 - the character-sum simplifier knows sum_{k=0}^{d-1} w_d^(jk) = d*[j = 0 mod d] and the standard consequences, all with d symbolic
 ii. semantics/contract_symbolic.py
-- contracts an arbitrary diagram while d stays symbolic, producing a closed symbolic tensor expression simplified through the scalar layer, not merely enough to verify one rule
+- contracts an arbitrary diagram while d stays symbolic, producing a closed symbolic tensor expression simplified through the scalar layer
 - is the general fallback below rewriting whenever a value is needed with d formal
 iii. extend denote.py and rules_library.py
 - a Hadamard or Fourier generator is added, and one rule that needs a root-of-unity scalar (color change or bialgebra) is added with its exact scalar output
@@ -134,7 +134,7 @@ i. algebra/dimension.py
 - the placeholder unify becomes a real dimension checker and unifier over expressions with constraints such as d = d1*d2
 
 ii. diagram/generators.py
-- adds the triangle node, the W generator, and the qufinite dimension-connective generators exactly as defined in Wang, arXiv:2104.06429, read at spec time rather than guessed
+- adds the triangle node, the W generator, and the qufinite dimension-connective generators exactly as defined in Wang, arXiv:2104.06429
 iii. diagram/validate.py
 - per-port dimensions are enforced across genuinely mixed-dimension diagrams
 iv. rewrite/rule.py and match.py
@@ -150,7 +150,7 @@ i. rewrite/rules_library.py
 ii. rewrite/engine.py
 - adds a strategy layer with apply-until-fixpoint and toward-normal-form, plus a termination guard against nonterminating loops
 - test and debug: oracle-check every new rule at several tuples of counts and d; drive a known diagram to its expected form; confirm the termination guard trips on a deliberately looping strategy
-- done when: you have a usable rewriting toolkit rather than isolated rules
+- done when: the rule set is a usable rewriting toolkit
 
 Phase 12: Rewrite caching and incrementality
 i. rewrite/cache.py
@@ -162,14 +162,14 @@ i. rewrite/cache.py
 Phase 13: Normal-form driver and decision procedure
 i. rewrite/normal_form.py
 - a driver reduces a diagram to the qufinite normal form
-- equality of two diagrams is decided by reducing both and comparing normal forms, giving a decision procedure rather than a best-effort simplifier
+- equality of two diagrams is decided by reducing both and comparing normal forms
 - test and debug: reduce several diagrams known to be equal and confirm identical normal forms; reduce two known-unequal diagrams and confirm distinct normal forms; cross-check every decision against the oracle
-- done when: the engine can decide diagram equality, not only attempt simplification
+- done when: the engine can decide diagram equality
 
 Phase 14: Equality saturation
 i. rewrite/egraph.py
 - an e-graph applies rules non-destructively, growing a congruence closure of equal diagrams
-- an extraction step selects an optimal representative under a stated cost, avoiding the ordering and local-minimum problems of greedy rewriting
+- an extraction step selects an optimal representative under a stated cost
 - test and debug: saturate a diagram where greedy rewriting gets stuck and confirm extraction finds the shorter form; confirm every equivalence class member is oracle-equal to the input
 - done when: saturation reaches simplifications a greedy strategy cannot
 
@@ -183,7 +183,7 @@ i. rewrite/tactics.py
 Phase 16: Scalable notation interoperability
 i. diagram/scalable.py
 - the scalable sheet-wire notation is representable
-- translation runs both ways between bang boxes and scalable notation, since the two are equally expressive (arXiv:2204.11702)
+- translation runs both ways between bang boxes and scalable notation (arXiv:2204.11702)
 - a rewrite that is awkward in one notation may be performed after translating to the other and translating back
 - test and debug: round-trip several families through both notations and confirm the diagram and its denotation are preserved; confirm a rule easier in scalable form yields the same result as the bang-box path
 - done when: users may work in whichever notation suits a construction, losslessly
@@ -225,7 +225,7 @@ ii. CI configuration
 Phase 21: Performance pass, only if profiling demands it
 i. profile match.py and contract_numeric.py
 - the matcher and the numeric kernel sit behind narrow interfaces so a later port touches only them
-- done when: performance is acceptable for your working diagram sizes
+- done when: performance is acceptable at the working diagram sizes
 
 Phase 22: Documentation and examples
 i. README and an examples script
@@ -255,11 +255,11 @@ The deliverable has two parts: an Engine (data model, rewrite system, semantics 
 
 Why we are building it this way
 
-The core justification is that at symbolic n or symbolic d there is no matrix to compute with. A map on n qudits of dimension d is a d^n x d^n matrix and a state is a vector of length d^n. When n or d is a symbol, that size is a symbol, so the array does not exist. A conventional tensor or matrix library therefore cannot operate in the regime we care about.
+At symbolic n or symbolic d there is no matrix to compute with. A map on n qudits of dimension d is a d^n x d^n matrix and a state is a vector of length d^n; when n or d is a symbol, that size is a symbol, so the array does not exist.
 
-ZX-calculus with bang boxes is exactly the tool that does operate there. Its rewrite rules are equalities of diagrams that preserve the denoted linear map, and the rules are schematic: they are stated once and hold for every leg count and every dimension. A single graph rewrite is therefore a proof of an entire doubly indexed family of Dirac-level identities, one for every value of n and d at once. That is the capability the whole project exists to provide.
+ZX rewrite rules are equalities of diagrams that preserve the denoted linear map, and they are schematic: stated once, they hold for every leg count and every dimension. One graph rewrite is therefore a proof of a doubly indexed family of Dirac-level identities, one for every value of n and d.
 
-This is why the diagram, not the matrix, is the primary object. Matrices appear only as a verification oracle at concrete instantiations, never as the working representation. The general symbolic fallback below rewriting is a full symbolic contractor that keeps d formal, not a matrix.
+The diagram, not the matrix, is the primary object. Matrices appear only as a verification oracle at concrete instantiations, never as the working representation. The general symbolic fallback below rewriting is a full symbolic contractor that keeps d formal, not a matrix.
 
 The intended user workflow
 
@@ -289,7 +289,7 @@ Generators are a small fixed set of types, each with a denotation defined once a
 Bang boxes annotate a scoped subgraph with a multiplicity symbol and support instantiate, copy, kill, and merge, may nest, and admit several independent count symbols with an arithmetic of multiplicities.
 Scalable sheet-wire notation is representable and translates losslessly to and from bang boxes.
 
-Layer C, rewrite engine. This is the main manipulation layer and the reason the system is ZX rather than a tensor calculator.
+Layer C, rewrite engine. This is the main manipulation layer.
 
 A rule bundles a left-hand pattern, a right-hand builder, side conditions, quantifiers over n and over dimension variables, and the exact scalar it introduces.
 The matcher finds occurrences of a pattern and checks side conditions, including dimension side conditions, before a rule may fire. Matches and denotations are cached, and edits trigger incremental re-matching.
@@ -303,7 +303,7 @@ Symbolic contraction. A full contractor that evaluates an arbitrary diagram whil
 Numeric contraction. When n and d are concrete, instantiate and contract with real arrays, carrying the exact scalar. Used as the verification oracle and for concrete output.
 Beyond the rungs: induction discharges symbolic-n equalities for all n, and certificates record any derivation in a form that can be independently replayed and checked.
 
-The matrix rung is not a general fallback beneath rewriting, since no matrix exists while d or n is symbolic; it is specifically the concrete-instantiation path. The general fallback below rewriting is rung 2.
+The matrix rung is the concrete-instantiation path, not a general fallback beneath rewriting. The general fallback below rewriting is rung 2.
 
 Non-negotiable design rules
 
@@ -313,7 +313,7 @@ The diagram is the single source of truth. Do not introduce a parallel operator 
 Never construct a matrix or dense tensor while any dimension or count in scope is symbolic.
 Rewriting never contracts. Contraction lives only in the semantics oracle. A rewrite is graph to graph.
 Generator denotations are leaves of the evaluator, defined once per generator type as a formula in n and d. They are never the working object and are never enumerated per instance.
-Dimension is stored per port from the first version, because the target is genuinely mixed dimensions. Do not implement dimension as a single global parameter.
+Dimension is stored per port from the first version. Do not implement dimension as a single global parameter.
 Every wire is well formed only when its two ports carry equal dimensions. Composition is otherwise undefined and must be rejected by validation.
 Every rule is a quantified equation, "for all n, for all d satisfying its constraints." The matcher enforces those constraints before firing. Some rules are restricted, for example to prime d, and must refuse to fire outside their domain.
 Scalars are tracked exactly. Comparison is exact up to floating-point tolerance by default, and quotienting out a global factor is opt-in, never the default. Every rule records the exact scalar it introduces.
@@ -321,18 +321,18 @@ Phases are first-class symbolic objects. A phase slot must accept a free symboli
 Every rewrite emits a certificate step, and provenance is structured so a derivation can be replayed and re-checked independently.
 A symbolic-n equality that is claimed as proved, rather than spot-checked, is discharged by induction on the relevant multiplicity, not by sampling alone.
 Every build phase ends with a numeric oracle check and a stated completion condition. No phase proceeds until the previous one verifies.
-The hot paths, the matcher and the numeric contraction kernel, sit behind narrow interfaces so that a later port of only those pieces to a faster language is surgical rather than a rewrite.
+The hot paths, the matcher and the numeric contraction kernel, sit behind narrow interfaces so a later port of only those pieces to a faster language touches nothing else.
 Language and tooling
 
 Python. Reference code to learn from: PyZX and DisCoPy. Dependencies: numpy and sympy for computation, pytest, ruff, and mypy for quality.
 
 What to reuse and what is original
 PyZX: study for the graph data model, concrete rule implementations, and its numeric tensor evaluator. It is qubit-only, so borrow the architecture and discard the fixed-dimension assumptions.
-DisCoPy: study for the pattern of a diagram plus a functor that evaluates it into tensors. This is the clean generic form of "graph plus evaluator."
+DisCoPy: study for the pattern of a diagram plus a functor that evaluates it into tensors.
 Quantomatic: unmaintained, but the reference for genuine bang-box rewriting semantics.
 Original to this project: symbolic dimension carried per port, a full symbolic contractor with d kept formal, dimension-guarded rewrite rules over mixed dimensions, exact scalar and symbolic-phase tracking, symbolic-n proof by induction, proof certificates, a normal-form decision procedure, equality saturation over these diagrams, a tactic layer, and lossless bang-box to scalable translation.
 
-The precise qufinite generator set, the triangle and W generators, the dimension connectives, and which rules carry which dimension constraints, must be taken directly from Wang, "Qufinite ZX-calculus: a unified framework of qudit ZX-calculi," arXiv:2104.06429, and the qufinite ZXW completeness work, at specification time. These must not be reconstructed from memory, because an error there corrupts the data model.
+The precise qufinite generator set, the triangle and W generators, the dimension connectives, and which rules carry which dimension constraints, must be taken directly from Wang, "Qufinite ZX-calculus: a unified framework of qudit ZX-calculi," arXiv:2104.06429, and the qufinite ZXW completeness work, at specification time. These must not be reconstructed from memory.
 
 Scope boundaries for the first version
 
@@ -342,7 +342,7 @@ Out of scope for the first version unless promoted deliberately: a graphical use
 
 Build sequence, in one line
 
-Setup, then dimension algebra, then symbolic phase and exact scalar algebra, then the graph model, then the numeric oracle with exact scalars, then the first vertical slice which is spider fusion verified end to end, then proof certificates, then bang boxes with nesting and multiple indices, then symbolic-n proof by induction, then the character-sum simplifier and full symbolic contraction, then mixed dimensions and the full generator set, then rule breadth and strategies, then caching, then the normal-form decision procedure, then equality saturation, then tactics and proof search, then scalable-notation interoperability, then the REPL, then hardening. The first slice that proves the whole architecture is spider fusion checked by the oracle; everything after it is widening.
+Setup, then dimension algebra, then symbolic phase and exact scalar algebra, then the graph model, then the numeric oracle with exact scalars, then the first vertical slice which is spider fusion verified end to end, then proof certificates, then bang boxes with nesting and multiple indices, then symbolic-n proof by induction, then the character-sum simplifier and full symbolic contraction, then mixed dimensions and the full generator set, then rule breadth and strategies, then caching, then the normal-form decision procedure, then equality saturation, then tactics and proof search, then scalable-notation interoperability, then the REPL, then hardening. The first slice that proves the whole architecture is spider fusion checked by the oracle.
 
 Future improvements, updates, and features
 
@@ -350,40 +350,40 @@ The items below are deferred, not designed out; the first-version architecture l
 
 10.1 Interoperability and import/export
 
-Circuit extraction. Convert a rewritten diagram back into an executable qudit circuit where one exists. This is what makes the engine useful for optimization rather than only for proof, and it is a substantial subproject in its own right.
-Format bridges. Import and export against QASM, PyZX, DisCoPy, and Quantomatic project files, so the engine fits into existing toolchains rather than replacing them.
-TikZ and figure output. Render diagrams to TikZ for direct inclusion in papers, since a large fraction of the intended audience writes about these diagrams.
+Circuit extraction. Convert a rewritten diagram back into an executable qudit circuit where one exists.
+Format bridges. Import and export against QASM, PyZX, DisCoPy, and Quantomatic project files.
+TikZ and figure output. Render diagrams to TikZ for direct inclusion in papers.
 
 10.2 Frontend and user experience
 
-Graphical diagram editor and visualization. A visual surface for building, viewing, and interactively rewriting diagrams, with animation of each rewrite step. Deferred because the textual REPL is sufficient to prove the engine, but high value for adoption and teaching.
-Notebook integration. First-class rendering and interaction inside Jupyter, so diagrams display inline during algorithm development.
-Step explanation mode. For each rewrite, report which rule fired, at which match, and under which dimension conditions, in human-readable form. The certificate machinery from the first version already supplies the underlying record.
+Graphical diagram editor and visualization. A visual surface for building, viewing, and interactively rewriting diagrams, with animation of each rewrite step.
+Notebook integration. First-class rendering and interaction inside Jupyter, with diagrams displayed inline.
+Step explanation mode. For each rewrite, report which rule fired, at which match, and under which dimension conditions, in human-readable form, from the certificate record.
 
 10.3 Performance and the kernel port
 
-Kernel port. Move only the two hot paths, the subgraph matcher and the numeric contraction kernel, to a faster language such as C, Rust, or Java, keeping the Python API identical and differentially testing the port against the original through the oracle. The interfaces are narrowed in the first version specifically to make this surgical.
-Matcher acceleration. Index structures and pruning for subgraph isomorphism, and parallel match enumeration, for diagrams large enough that naive matching becomes the bottleneck.
+Kernel port. Move only the two hot paths, the subgraph matcher and the numeric contraction kernel, to a faster language such as C, Rust, or Java, keeping the Python API identical and differentially testing the port against the original through the oracle.
+Matcher acceleration. Index structures and pruning for subgraph isomorphism, and parallel match enumeration.
 
 10.4 Theory breadth
 
-Pluggable calculi. Generalize the generator table and rule library so that related graphical calculi, ZH, ZW, and the full ZXW, can be loaded as alternative theories over the same graph engine. Since the qufinite completeness results are stated in the ZXW setting, first-class ZXW support is the most valuable of these and may be promoted earlier than the others.
-Mixed classical and quantum wires. Support diagrams that carry both classical and quantum information, extending the reach toward measurement-based and hybrid protocols.
+Pluggable calculi. Generalize the generator table and rule library so that related graphical calculi, ZH, ZW, and the full ZXW, can be loaded as alternative theories over the same graph engine. ZXW may be promoted earlier than the others, since the qufinite completeness results are stated in that setting.
+Mixed classical and quantum wires. Support diagrams that carry both classical and quantum information.
 
 10.5 Correctness of the engine itself
 
-Property-based and fuzz testing at scale. Generate large random families of diagrams and confirm that every rule preserves the oracle across randomized concrete d and n, continuously, as a guard against regressions. The first version already includes a baseline of this; the deferred item is scaling it up.
-Formal verification of the core. Following the direction of VyZX (arXiv:2311.11571), mechanically verify the rewrite core against the linear-algebraic semantics, so the engine itself, not only individual results, carries a correctness guarantee. This is a long-horizon, high-assurance goal.
+Property-based and fuzz testing at scale. Generate large random families of diagrams and confirm that every rule preserves the oracle across randomized concrete d and n, continuously. The first version includes a baseline; the deferred item is scaling it up.
+Formal verification of the core. Following the direction of VyZX (arXiv:2311.11571), mechanically verify the rewrite core against the linear-algebraic semantics, so the engine itself, not only individual results, carries a correctness guarantee.
 
 10.6 Domain applications
 
-Differentiation and integration of diagrams. Implement diagram differentiation and integration in the sense of Wang, Yeung, and Koch (Quantum 8:1491, 2024), enabling gradient-based work and quantum machine learning directly at the diagrammatic level. The symbolic-phase support in the first version is the prerequisite, so this is now unblocked.
-Application libraries. Prebuilt constructions for condensed-matter tensor networks, error-correcting codes, and other areas where reasoning over diagram families at symbolic n and d is the natural mode, turning the engine from a general tool into a domain workbench.
+Differentiation and integration of diagrams. Implement diagram differentiation and integration in the sense of Wang, Yeung, and Koch (Quantum 8:1491, 2024), enabling gradient-based work and quantum machine learning directly at the diagrammatic level. The prerequisite is the first version's symbolic-phase support.
+Application libraries. Prebuilt constructions for condensed-matter tensor networks, error-correcting codes, and other areas where reasoning over diagram families at symbolic n and d is the natural mode.
 
 10.7 Standard library and ergonomics
 
-Named catalog of states and gates. A library of standard qudit constructions, GHZ and W states, the qudit Fourier transform, Clifford and Clifford-plus-T generators, and common gadgets, each defined once as a diagram parameterized by n and d, so users assemble from known pieces rather than from raw spiders.
-Session provenance and replay. Persist a derivation, reload it, and replay or edit it, so long algorithm-development sessions are reproducible and shareable. The certificate format from the first version is the natural persistence unit.
+Named catalog of states and gates. A library of standard qudit constructions, GHZ and W states, the qudit Fourier transform, Clifford and Clifford-plus-T generators, and common gadgets, each defined once as a diagram parameterized by n and d.
+Session provenance and replay. Persist a derivation, reload it, and replay or edit it, using the certificate format as the persistence unit.
 
 <!--
 Copyright 2026 Arkhip A. Dmitriev

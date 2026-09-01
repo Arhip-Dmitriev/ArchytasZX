@@ -11,44 +11,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EXHAUSTIVE (not random) spider-fusion oracle sweep. Phase 5 round-12 audit, B3.
+"""Exhaustive (not random) spider-fusion oracle sweep.
 
-Every prior property harness in ``test_fusion_properties.py`` is a *random* sample of a
-much larger space, no matter how many seeds it runs -- a shape the sampler never happens to
-draw stays untested forever, and rounds 3-11 of the audit chased shape-specific defects one
-at a time precisely because of this. This module instead enumerates the *entire* finite
-space of every 2-node, 0-2-legs-per-side, 1- or 2-wire spider pair at ``d in {2, 3}`` with a
-phase present or absent on each node, and asserts oracle equality on every fusion match this
-space produces. If this test passes, no fusion shape in that space -- however unlikely a
-random generator would be to draw it -- can silently disagree with the oracle.
+Enumerates the entire finite space of every 2-node, 0-2-legs-per-side, 1- or 2-wire spider
+pair at ``d in {2, 3}`` with a phase present or absent on each node, and asserts oracle
+equality on every fusion match it produces. Unlike ``test_fusion_properties.py``'s random
+harness, a shape here cannot go untested because a sampler never drew it.
 
-Space and runtime. Per node: 3 input-leg counts (0, 1, 2) x 3 output-leg counts (0, 1, 2) x
-2 phase choices (absent, or a fixed concrete phase at entry index 1) = 18 node shapes; two
-nodes, two colours each, two ``d`` values gives 18 * 18 * 2 * 2 * 2 = 2,592 base
-(shape, colour, d) configurations before wiring is even chosen. For each, every distinct
-1-wire and 2-wire matching between the two nodes' ports is enumerated (no port reused across
-wires, matching the diagram model). The 2-wire arm at ``d = 3`` is by far the most expensive
-slice (most matchings per shape pair, largest dense tensors) and is the one deliberately
-subsampled away -- see ``_SKIP_TWO_WIRE_AT_D3`` below -- per this task's explicit "subsample
-d=3 or the 2-wire arm if needed" allowance; the 1-wire arm still runs fully at every ``d``,
-and the 2-wire arm still runs fully at ``d = 2``. Do not "optimise" this into a random
-sample: the entire point is that it is not one.
+Space and runtime. Per node: 3 input-leg counts x 3 output-leg counts x 2 phase choices =
+18 node shapes; two nodes, two colours each, two ``d`` values gives 2,592 base
+configurations before wiring. For each, every distinct 1-wire and 2-wire matching between
+the two nodes' ports is enumerated, with no port reused across wires. The 2-wire arm at
+``d = 3`` is the most expensive slice and is subsampled away (``_SKIP_TWO_WIRE_AT_D3``);
+the 1-wire arm runs fully at every ``d`` and the 2-wire arm fully at ``d = 2``. Do not turn
+this into a random sample -- being exhaustive is the point.
 
-Scope boundary (Phase 5 audit round 15, N1): every node here is built at a single, shared
-*concrete* ``Dim.concrete(d_value)`` (see :func:`_build_node`) -- no symbol, no product, no
-power ever appears anywhere in this space, so :func:`_is_cleanly_contractible` holds
-trivially for every diagram this module constructs (asserted, never merely assumed) and
-every ``dimension_agreement``/``phase_dimension_agreement`` outcome this space can produce is
-a bare syntactic identity, never a ``DEFERRED`` or ``BOUND`` one. This sweep is therefore
-exhaustive over *leg/wire topology* at fixed concrete ``d``, not over the deferred/binding
-resolution path (the fixpoint in :func:`~qufzx.rewrite.match.resolve_fusion_match` that D1
-lived in) -- a defect confined to that path, such as D1, is structurally invisible here by
-this module's own design, not a gap introduced by an insufficiently wide palette the way the
-other two sweeps' had. See ``tests/test_match.py``'s ``TestD1FixpointTerminationSoundness``
-and ``TestStructuralSatisfiabilityOfEveryMatch``, ``tests/test_fusion_properties.py``'s
-``TestBindingsSubstitutionIsCleanAndOracleEqual``/``TestStructuralSatisfiabilityAtScale``, and
-``test_phase5_certificate_sweep.py``'s widened ``_SURVIVING_PALETTE`` for the harnesses that
-actually cover the symbolic/deferred/binding space this one does not.
+Scope boundary. Every node is built at a single shared concrete ``Dim.concrete(d_value)``,
+so :func:`_is_cleanly_contractible` holds trivially for every diagram here (asserted, not
+assumed) and every ``dimension_agreement``/``phase_dimension_agreement`` outcome is a bare
+syntactic identity, never ``DEFERRED`` or ``BOUND``. This sweep is exhaustive over leg/wire
+topology at fixed concrete ``d``, not over the deferred/binding resolution path. That path
+is covered by ``tests/test_match.py``, ``tests/test_fusion_properties.py``, and
+``test_phase5_certificate_sweep.py``'s ``_SURVIVING_PALETTE``.
 """
 
 from __future__ import annotations
@@ -172,7 +156,7 @@ class TestExhaustiveSpiderFusionOracleSweep:
     """The full B3 sweep. One test, so a single wall-clock/comparison-count report covers it."""
 
     def test_every_match_in_the_finite_space_agrees_with_the_oracle(self) -> None:
-        # Phase 5 post-closing audit round 18, Defect 3: _verify_fixpoint_closure's own
+        # _verify_fixpoint_closure's own
         # docstring claims the post-loop closure re-check it performs is unreachable (every
         # one of its own checks was already verified, this same pass, by the time the loop
         # reaches its convergence break) -- but a claim of unreachability is worth nothing
@@ -247,7 +231,7 @@ class TestExhaustiveSpiderFusionOracleSweep:
                             "always be cleanly contractible"
                         )
 
-                        # Round 20, Task 9: validate(d).is_valid must imply every node in d
+                        # validate(d).is_valid must imply every node in d
                         # is denotable -- qufzx.diagram.validate's NODE_DIMENSION_UNDETERMINED
                         # check exists specifically so this holds, rather than resting on one
                         # builder's (rules_library's) good behaviour never producing the gap.

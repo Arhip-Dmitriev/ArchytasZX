@@ -18,8 +18,7 @@ unseeded), applies every fusion match :func:`~qufzx.rewrite.match.find_matches` 
 against each, and checks three properties: no unexpected exception escapes, the
 relative-validity post-condition :func:`~qufzx.rewrite.engine.apply` itself enforces
 (re-derived independently here, not merely trusted), and oracle equality at concrete
-substitutions via :mod:`qufzx.semantics.check`. This is the harness the Phase 5 audit's
-manual fix rounds are meant to replace; see the spec and ``FULL_PLAN.md`` Phase 5.
+substitutions via :mod:`qufzx.semantics.check`.
 """
 
 from __future__ import annotations
@@ -62,12 +61,9 @@ _SEEDS: tuple[int, ...] = tuple(range(2500))
 _CLEAN_SEEDS: tuple[int, ...] = tuple(range(20000))
 _DIM_D = Dim.symbol("d")
 _DIM_E = Dim.symbol("e")
-# ``d*e`` and ``d**2`` are here so Dim.unify's DEFERRED branch (a symbol occurring as a
-# proper subterm of the other side, e.g. ``d`` against ``d*e``) is actually exercised by
-# the generator -- previously only bare symbols and concrete ints appeared in the palette,
-# so a leg dim could unify with another leg dim only via the concrete/concrete,
-# syntactic-identity, or bare-symbol-binding branches, never the deferred one, even though
-# ``_unify_surviving_legs`` has a dedicated code path for exactly this case.
+# d*e and d**2 are here so Dim.unify's DEFERRED branch (a symbol occurring as a proper
+# subterm of the other side) is actually exercised; bare symbols and concrete ints alone
+# only reach the concrete, syntactic-identity, and bare-symbol-binding branches.
 _DIM_PALETTE = (
     Dim.concrete(2),
     Dim.concrete(3),
@@ -80,13 +76,11 @@ _DIM_PALETTE = (
 )
 _DIM_SYMBOL_NAMES = frozenset({"d", "e"})
 _CONCRETE_TURNS = (sp.Integer(0), sp.Rational(1, 3), sp.Rational(2, 5))
-# (d, e) oracle substitution pairs -- see _substitution_for. d and e are substituted
-# independently (never collapsed to the same value): three pairs hold d == e (at each of
-# 2, 3, 5, matching the old single-value coverage), two hold d != e, and (2, 1)/(3, 1) let
-# a ``d*e`` or ``d**2`` leg agree with a concrete 2/3 leg at e=1 (Fix 4(a): without these,
-# ``_DIM_PALETTE``'s product/power dims almost never landed on a value any concrete leg
-# in the palette could also take, so a candidate carrying one almost always failed
-# ``_is_cleanly_contractible`` before the oracle ran).
+# (d, e) oracle substitution pairs -- see _substitution_for. Substituted independently,
+# never collapsed: three pairs hold d == e, two hold d != e, and (2, 1)/(3, 1) let a d*e or
+# d**2 leg agree with a concrete 2/3 leg at e=1. Without the last pair, product and power
+# dims rarely land on a value any concrete leg can also take, so a candidate carrying one
+# fails _is_cleanly_contractible before the oracle runs.
 _ORACLE_DIM_PAIRS: tuple[tuple[int, int], ...] = (
     (2, 2),
     (3, 3),
@@ -98,21 +92,16 @@ _ORACLE_DIM_PAIRS: tuple[tuple[int, int], ...] = (
 )
 _PHASE_SUBSTITUTE_TURNS = sp.Rational(1, 3)
 _COLORS = (Z_SPIDER, X_SPIDER)
-# Entry indices used for randomly generated phase vectors. Deliberately includes indices
-# (4, 6) that are out of range for the smaller members of _ORACLE_DIM_VALUES (2, 3) --
-# and 6 is out of range for all of them -- so a phase legally stated over a symbolic
-# dimension can carry an entry index that becomes invalid once that dimension is bound to
-# a small concrete value. This is exactly the shape of the Task 1 defect: match.py's
-# phase_dimension_agreement side condition binding a symbol without checking whether the
-# phase's own entries remain in range at that binding.
+# Entry indices for randomly generated phase vectors. Includes 4 and 6, out of range for
+# the smaller oracle dimensions, so a phase legally stated over a symbolic dimension can
+# carry an entry index that becomes invalid once that dimension binds to a small concrete
+# value -- the case phase_dimension_agreement must catch.
 _PHASE_INDEX_POOL = (1, 2, 3, 4, 6)
 
-# apply()'s own message for the step-8 relative post-condition (see engine.py) -- the one
-# RewriteDomainError a matcher-approved match may legitimately raise, since it reflects a
-# genuine downstream conflict (e.g. a symbol forced two different concrete values by two
-# independent fusions), not a builder bug. Anything else escaping apply() for a match
-# find_matches() itself returned is exactly the class of defect this harness exists to
-# catch (see defects 1 and 2 in the Phase 5 audit), so it must not be swallowed.
+# apply()'s message for the step-8 relative post-condition: the one RewriteDomainError a
+# matcher-approved match may legitimately raise, reflecting a genuine downstream conflict
+# rather than a builder bug. Anything else escaping apply() for a match find_matches
+# returned is the class of defect this harness exists to catch.
 _RELATIVE_POSTCONDITION_MARKER = "rewrite introduced hard-error issue kind"
 
 
@@ -180,7 +169,7 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
     ``DIMENSION_POLICY_VIOLATION`` on that node alone), or a concrete leg beside a symbolic
     one that only unifies by binding. Before this, every node had exactly one dim shared by
     every one of its legs, so a fusion's surviving legs were always already equal to
-    ``shared_dim`` by construction -- Defect 1 (Phase 5 audit), an un-unified overwrite of a
+    ``shared_dim`` by construction -- an un-unified overwrite of a
     surviving leg's dim, could never be observed disagreeing with anything, since nothing
     generated here ever gave it the chance to disagree.
     """
@@ -240,7 +229,7 @@ exercised many times over."""
 def _maybe_corrupt_a_boundary_ref(rng: random.Random, diagram: Diagram) -> bool:
     """With low probability, replace one boundary entry in place with a malformed ``PortRef``.
 
-    Phase 5 post-closing audit round 18, Defect 2: :func:`~qufzx.rewrite.match.find_matches`
+    :func:`~qufzx.rewrite.match.find_matches`
     must reject a malformed boundary entry (an unknown node id, or an out-of-range index)
     exactly as it already rejects a malformed wire endpoint -- see that module's docstring,
     "Malformed boundary references". Widening this generator to sometimes produce one is
@@ -304,26 +293,19 @@ def _build_clean_diagram(rng: random.Random) -> Diagram:
     symbolic -- there is no draw from ``_DIM_PALETTE``'s mixed, unify-only, or deferred-unify
     dimensions the way :func:`_build_random_diagram` deliberately includes.
 
-    The leg-count and node-count ranges are deliberately smaller than
-    :func:`_build_random_diagram`'s (which mostly never reaches ``compare`` at all, so its
-    own boundary size barely matters for wall time): since here essentially every match
-    *does* reach :func:`~qufzx.semantics.check.compare`, an unconstrained boundary size
-    would let the free (unwired) leg count -- and so the dense contracted tensor's element
-    count, ``dim ** boundary_legs`` -- grow large enough to dominate this test's runtime
-    (measured: 0-3 legs per side across up to 4 nodes occasionally left enough boundary legs
-    that a single ``compare()`` call took over 100ms, and a few tripped
-    :class:`~qufzx.semantics.contract_numeric.ContractSizeError` outright). This tighter
-    range keeps typical boundaries small while still leaving plenty of room for a
-    fusion-eligible pair (each node needs only one spare leg on the wired side to become a
-    fusion candidate), and still produces self-loops, same-direction wires, and all six
-    colour/direction combinations freely.
+    The leg-count and node-count ranges are smaller than :func:`_build_random_diagram`'s,
+    which mostly never reaches ``compare`` at all. Here essentially every match does, so an
+    unconstrained boundary size would let the dense contracted tensor's element count,
+    ``dim ** boundary_legs``, dominate runtime -- measured at over 100ms per ``compare()``
+    call, sometimes tripping :class:`~qufzx.semantics.contract_numeric.ContractSizeError`.
+    The tighter range still leaves room for a fusion-eligible pair (each node needs only one
+    spare leg on the wired side) and still produces self-loops, same-direction wires, and
+    all six colour/direction combinations.
 
-    This is the generator Task 4 (Phase 5 closing round) adds to give the oracle-equality
-    arm of this harness a diagram population that actually reaches ``compare()`` on (almost)
-    every match, rather than being dropped by :func:`_is_cleanly_contractible` before the
-    oracle ever runs -- see ``_MIN_CLEAN_ORACLE_COMPARISONS``'s docstring for why the
-    existing generator cannot be widened to do this instead without losing its own (still
-    needed) mixed-dimension coverage.
+    This generator exists so the oracle-equality arm sees a population that reaches
+    ``compare()`` on almost every match; see ``_MIN_CLEAN_ORACLE_COMPARISONS`` for why
+    :func:`_build_random_diagram` cannot be widened to do this without losing its own
+    mixed-dimension coverage.
     """
     diagram = Diagram()
     dim = Dim.concrete(rng.choice(_CLEAN_DIM_VALUES))
@@ -364,7 +346,7 @@ _MIXED_ORACLE_D_VALUES = (2, 3, 4, 5)
 
 
 def _build_mixed_diagram(rng: random.Random) -> Diagram:
-    """Fix 4(b): 2-4 nodes, Z/X mix, one dim per node from ``(d, 2, 3)``, phases only from
+    """2-4 nodes, Z/X mix, one dim per node from ``(d, 2, 3)``, phases only from
     ``Phase.turns`` or ``Phase.root_of_unity(1, pdim)`` over a palette member, wiring from a
     shuffled flat port pool (so self-loops and same-direction wires arise freely). Unlike
     :func:`_build_random_diagram`'s deliberately hard-to-contract ``d*e``/``d**2`` legs (see
@@ -411,13 +393,12 @@ def _build_mixed_diagram(rng: random.Random) -> Diagram:
 
 
 def _check_mixed_diagram_chain(rng: random.Random, seed: int) -> tuple[int, int]:
-    """Fix 4(c): repeatedly find-and-apply a match on a fresh mixed diagram, to a fixpoint
-    (up to 10 steps), oracle-checking each step at every d in ``_MIXED_ORACLE_D_VALUES`` --
-    skipping a (diagram, d) where either the substituted pre- or post-diagram is not
-    cleanly contractible, and any ``ContractSizeError`` -- so a defect that only appears on
-    the second (or later) fusion of a chain is exercised, not only a single fusion against
-    a fresh diagram. Returns ``(comparisons_ran, chain_steps)``.
-    """
+    """Repeatedly find-and-apply a match on a fresh mixed diagram, to a fixpoint (up to 10
+    steps), oracle-checking each step at every d in ``_MIXED_ORACLE_D_VALUES`` -- skipping a
+    (diagram, d) where either the substituted pre- or post-diagram is not cleanly
+    contractible, and any ``ContractSizeError`` -- so a defect that only appears on the
+    second (or later) fusion of a chain is exercised, not only a single fusion against a
+    fresh diagram. Returns ``(comparisons_ran, chain_steps)``."""
     diagram = _build_mixed_diagram(rng)
     comparisons = 0
     steps = 0
@@ -553,7 +534,7 @@ def _apply_ignoring_step8(diagram: Diagram, rule: Rule, match: Match) -> Rewrite
     never be non-empty -- ``apply`` runs every other step exactly as normal and returns its
     result unconditionally. This exists solely so ``_check_one_match`` can independently
     re-derive, via the real (unpatched) ``validate``, whether a step-8 raise from the normal
-    call was actually justified -- see that function and Defect 1 (Phase 5 round-7 audit),
+    call was actually justified -- see that function,
     which is exactly the class of bug a message-substring whitelist alone cannot catch.
     """
     with patch("qufzx.rewrite.engine.validate", return_value=ValidationReport(())):
@@ -628,7 +609,7 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
         )
         # Re-derive whether the block was actually justified, independently of apply()'s
         # own step-8 bookkeeping, instead of trusting the message alone (a message-substring
-        # whitelist here is exactly what let Defect 1 -- a false-positive step-8 block --
+        # whitelist here is exactly what let a false-positive step-8 block
         # survive three prior audit rounds undetected). ``_apply_ignoring_step8`` forces the
         # rewrite through regardless of step 8; ``_independent_issue_key`` /
         # ``_post_issue_key`` then build the same *multiset* comparison ``apply`` itself
@@ -679,12 +660,12 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
             continue
         if not _is_cleanly_contractible(pre_concrete):
             continue
-        # Phase 5 post-closing audit round 22: "validate(d).is_valid implies every node in
+        # "validate(d).is_valid implies every node in
         # d is denotable" (module docstrings of qufzx.diagram.validate and
         # qufzx.semantics.denote) is asserted as a property here, not only in
         # tests/test_phase5_exhaustive_oracle.py's exhaustive-but-single-dim-per-node sweep
         # -- this harness's mixed-leg-dimension diagrams (see _build_random_diagram's
-        # ``mixed`` branch) are exactly the shape Defect 1 (a validator that let a jointly-
+        # ``mixed`` branch) are exactly the shape a validator that let a jointly-
         # unsatisfiable leg/phase disagreement through) needed to be observed at all, so this
         # is where a future gap of that same shape would actually be caught.
         for node in pre_concrete.nodes.values():
@@ -794,7 +775,7 @@ def _assert_match_structurally_satisfiable(diagram: Diagram, match: FusionMatch)
     is exactly :func:`~qufzx.rewrite.match._verify_fixpoint_closure`'s own check, re-derived
     independently here (not by importing and calling that private function) as a genuine
     cross-check against a regression in the fixpoint's own termination or bindings-merge
-    logic (D1, Phase 5 audit round 15) -- not a tautological re-assertion of it.
+    logic -- not a tautological re-assertion of it.
     """
     bindings = dict(match.bindings)
     node_a = diagram.nodes[match.a_id]
@@ -900,13 +881,14 @@ _MIN_ORACLE_COMPARISONS = 82
 
 Without this, an always-skipped oracle arm (e.g. every substitution failing
 ``_is_cleanly_contractible`` or raising ``PhaseDomainError``) would let the test pass
-while never actually calling :func:`~qufzx.semantics.check.compare`. Fix 4(a) (Phase 5
-post-closing audit) added ``Dim.concrete(4)``/``Dim.concrete(6)`` to ``_DIM_PALETTE`` and
-``(2, 1)``/``(3, 1)`` to ``_ORACLE_DIM_PAIRS`` so a ``d*e`` or ``d**2`` leg can actually
-agree with a concrete leg at some oracle substitution instead of almost always failing
-``_is_cleanly_contractible`` first; this measured 118 comparisons over ``_SEEDS`` (up from
-~57 before). 82 is roughly 70% of that measurement, leaving headroom against incidental
-generator changes while still failing hard if the oracle arm silently stops running.
+while never actually calling :func:`~qufzx.semantics.check.compare`.
+
+``Dim.concrete(4)``/``Dim.concrete(6)`` in ``_DIM_PALETTE`` and ``(2, 1)``/``(3, 1)`` in
+``_ORACLE_DIM_PAIRS`` are what let a ``d*e`` or ``d**2`` leg agree with a concrete leg at
+some oracle substitution, rather than almost always failing ``_is_cleanly_contractible``
+first; that measures 118 comparisons over ``_SEEDS``. 82 is roughly 70% of it, leaving
+headroom against incidental generator changes while still failing hard if the oracle arm
+silently stops running.
 """
 
 
@@ -927,7 +909,7 @@ def _find_matches_tolerating_malformed_boundary(
     :func:`_maybe_corrupt_a_boundary_ref` deliberately introduces.
 
     Shared by every property-harness arm that iterates ``_build_random_diagram``'s output
-    (Phase 5 post-closing audit round 18, Defect 2): once that generator sometimes produces
+   : once that generator sometimes produces
     a diagram with a malformed boundary entry, every consumer of it must handle
     ``find_matches`` rejecting the whole diagram outright, not only the one arm
     (``test_random_diagrams_fuse_soundly``) that motivated the widening. Re-raises any other
@@ -952,30 +934,23 @@ def _build_contended_diagram(rng: random.Random) -> Diagram:
     """A clean diagram whose ports are deliberately *contended*: wired twice, or wired and
     on a boundary.
 
-    Round 24. Every other generator in this module wires ports by popping them out of a
-    pool (:func:`_build_random_diagram`, :func:`_build_clean_diagram`,
-    :func:`_build_mixed_diagram` all do), so a port is claimed by at most one wire and the
-    boundary lists are exactly the leftovers. That is a perfectly reasonable shape for a
-    *well-formed* diagram -- and it means ``consumed_ports_singly_claimed``, the seventh
-    side condition (:mod:`qufzx.rewrite.match`'s condition 5, promoted from a bare
-    ``find_matches`` filter to a real certificate-visible condition in round 23), could
-    never fail for any candidate this module generated. Round 23's headline change was
-    therefore exercised only by the hand-picked unit tests in ``test_match.py``, never at
-    property-harness scale.
+    Every other generator in this module wires ports by popping them out of a pool, so a
+    port is claimed by at most one wire and the boundary lists are the leftovers -- which
+    means ``consumed_ports_singly_claimed`` (:mod:`qufzx.rewrite.match`'s condition 5) can
+    never fail for any candidate they produce.
 
-    This generator closes that gap by sampling wire endpoints *with* replacement across
-    wires (so one port can be claimed by two wires, a
-    :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`) and by putting boundary
-    entries on already-wired ports (a
+    This generator samples wire endpoints with replacement across wires (one port claimed by
+    two wires, a :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`) and puts
+    boundary entries on already-wired ports (a
     :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_AND_BOUNDARY`). Both are hard
-    validation errors, which is exactly the point: :func:`~qufzx.rewrite.match.find_matches`
-    does not require a well-formed diagram (see its own docstring), so it must decide this
-    condition itself rather than lean on a validity precondition it never asserts.
+    validation errors, which is the point: :func:`~qufzx.rewrite.match.find_matches` does
+    not require a well-formed diagram, so it must decide this condition itself rather than
+    lean on a precondition it never asserts.
 
-    Otherwise deliberately kept as close to :func:`_build_clean_diagram` as possible -- one
-    concrete dimension shared by every leg of every node, fully concrete phases -- so a
-    match that *is* found still reaches :func:`~qufzx.semantics.check.compare` with an empty
-    assignment, and this arm tests condition 5 rather than re-testing dimension resolution.
+    Otherwise kept as close to :func:`_build_clean_diagram` as possible -- one concrete
+    dimension throughout, fully concrete phases -- so a match that is found still reaches
+    :func:`~qufzx.semantics.check.compare` with an empty assignment, and this arm tests
+    condition 5 rather than re-testing dimension resolution.
     """
     dim = Dim.concrete(rng.choice(_CLEAN_DIM_VALUES))
     diagram = Diagram()
@@ -1100,7 +1075,7 @@ only unscoreable diagrams."""
 
 class TestSpiderFusionProperties:
     def test_random_diagrams_fuse_soundly(self) -> None:
-        # Phase 5 post-closing audit round 18, Defect 3: prove _verify_fixpoint_closure's
+        # prove _verify_fixpoint_closure's
         # own "this is unreachable" claim actually holds, over this property harness's own
         # (deliberately messy, mixed-dimension) diagram population -- not only over the
         # exhaustive module's fully-concrete finite space (see
@@ -1116,7 +1091,7 @@ class TestSpiderFusionProperties:
             closure_results.append(result)
             return result
 
-        # Phase 5 post-closing audit round 23, Task 4: _merge_bindings' contradiction guard
+        # _merge_bindings' contradiction guard
         # is claimed (in its own docstring) to be currently unreachable, for a structural
         # reason (every operand is pre-resolved through _resolve_with_bindings before it
         # ever reaches Dim.unify, so an already-bound symbol can never come back as a fresh
@@ -1171,7 +1146,7 @@ class TestSpiderFusionProperties:
             diagram = _build_random_diagram(rng)
             matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
             if matches is None:
-                # Defect 2 (Phase 5 post-closing audit round 18): _build_random_diagram
+                # _build_random_diagram
                 # sometimes corrupts a boundary entry into a malformed PortRef (see
                 # _maybe_corrupt_a_boundary_ref); find_matches must reject the whole
                 # diagram outright, before ever returning a match, exactly as it already
@@ -1182,7 +1157,7 @@ class TestSpiderFusionProperties:
             for match in matches:
                 checked_any_match = True
                 # The match-implies-applicable invariant, asserted directly (Phase 5
-                # post-closing audit round 18, Defect 2's acceptance test): for every match
+                # acceptance test): for every match
                 # find_matches returns, apply() must either succeed outright or raise only
                 # the step-8 relative-postcondition marker -- never any other exception,
                 # and never a bare crash. _check_one_match already enforces exactly this
@@ -1204,7 +1179,7 @@ class TestSpiderFusionProperties:
         )
 
     def test_clean_diagrams_fuse_soundly(self) -> None:
-        """Task 4 (Phase 5 closing round): the oracle-equality arm, at real scale.
+        """The oracle-equality arm, at real scale.
 
         Uses :func:`_build_clean_diagram` (cleanly contractible by construction, unlike
         ``_build_random_diagram``'s deliberately mixed-dimension population) so that
@@ -1252,13 +1227,11 @@ class TestSpiderFusionProperties:
         )
 
     def test_contended_ports_exercise_consumed_ports_singly_claimed(self) -> None:
-        """Round 24: property-scale coverage for the seventh side condition.
+        """Property-scale coverage for ``consumed_ports_singly_claimed``.
 
         Every other generator in this module wires ports by popping them out of a pool, so
-        no port is ever claimed twice and the boundary lists are exactly the leftovers --
-        which means ``consumed_ports_singly_claimed`` could not fail for any candidate they
-        produce, and round 23's headline change was pinned only by hand-picked unit tests.
-        :func:`_build_contended_diagram` produces the shapes that *do* exercise it.
+        no port is claimed twice and this condition can never fail for any candidate they
+        produce. :func:`_build_contended_diagram` produces the shapes that do exercise it.
 
         Four properties, all on the same sweep:
 
@@ -1432,7 +1405,7 @@ _MIXED_SEEDS: tuple[int, ...] = tuple(range(40000))
 _MIN_MIXED_ORACLE_COMPARISONS = 2200
 """Floor for the total oracle comparisons summed across every checked step of every chain.
 
-Fix 4(b)/(c) (Phase 5 post-closing audit): :func:`_build_mixed_diagram`'s small
+:func:`_build_mixed_diagram`'s small
 ``(d, 2, 3)`` palette is chosen so a symbolic and a concrete leg frequently coexist on a
 fusable pair, reaching a ``shared_dim`` refined by a leg-unify binding -- unlike
 ``_build_random_diagram``'s ``d*e``/``d**2`` legs, which mostly fail
@@ -1462,7 +1435,7 @@ class TestMixedSymbolicConcreteFusionProperties:
 
 
 _FOREIGN_SEEDS: tuple[int, ...] = tuple(range(400))
-"""Seeds for :class:`TestForeignFusionMatchArm` (B4, Phase 5 round-12 audit).
+"""Seeds for :class:`TestForeignFusionMatchArm`.
 
 Reuses :func:`_build_clean_diagram` (fully concrete, cleanly contractible by construction --
 see that function's docstring) so every surviving leg of every match is guaranteed to be
@@ -1509,7 +1482,7 @@ def _diagram_with_swapped_color(diagram: Diagram, node_id: NodeId) -> Diagram:
 
 
 class TestForeignFusionMatchArm:
-    """B4 (Phase 5 round-12 audit): for every match a legitimate diagram produces, construct
+    """B4: for every match a legitimate diagram produces, construct
     corrupted variants of the match/diagram/BuildResult reaching ``spider_fusion_builder`` or
     ``apply``, and assert every one raises a :class:`RewriteError` subclass rather than
     silently producing a wrong diagram. A1-A3 existed because nothing before this ever
@@ -1616,10 +1589,9 @@ class TestForeignFusionMatchArm:
         )
 
     def test_fabricated_dimension_constraints_is_rejected(self) -> None:
-        """Defect 2 (Phase 5 post-closing audit): a match's own ``dimension_constraints``
-        is never trusted for the certificate -- it must agree exactly with what
-        ``resolve_fusion_match`` derives fresh, or the builder refuses outright.
-        """
+        """A match's own ``dimension_constraints`` is never trusted for the certificate -- it
+        must agree exactly with what ``resolve_fusion_match`` derives fresh, or the builder
+        refuses outright."""
         pairs = self._matches()
         assert pairs, "the clean generator never produced a single fusion match"
         for diagram, match in pairs:
@@ -1628,7 +1600,7 @@ class TestForeignFusionMatchArm:
                 equal_to=Dim.concrete(3),
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
-                # Round 20, Task 6: DimensionConstraint.__post_init__ now structurally
+                # DimensionConstraint.__post_init__ now structurally
                 # requires a non-empty bound_here for a BOUND outcome (this fixture
                 # previously relied on the unenforced invariant, constructing a BOUND entry
                 # with none). This binding is itself nonsensical (2 == 3 binds nothing real)
@@ -1648,7 +1620,7 @@ class TestForeignFusionMatchArm:
 class TestStructuralSatisfiabilityAtScale:
     """N1's required structural-satisfiability arm, run broadly (cheap, no oracle call) over
     the deliberately messy ``_build_random_diagram`` population -- this is what should have
-    caught D1 (Phase 5 audit round 15): every match ``find_matches`` returns must have every
+    caught D1: every match ``find_matches`` returns must have every
     surviving leg, the connecting pair, and every present phase resolve, under
     ``match.bindings``, to something that unifies with ``match.shared_dim`` -- and the same
     must hold of the *applied* ``RewriteStep.dimension_constraints``, not only the match's
@@ -1663,8 +1635,7 @@ class TestStructuralSatisfiabilityAtScale:
             diagram = _build_random_diagram(rng)
             matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
             if matches is None:
-                # See _find_matches_tolerating_malformed_boundary's docstring: Defect 2,
-                # Phase 5 post-closing audit round 18.
+                # See _find_matches_tolerating_malformed_boundary\'s docstring.
                 continue
             for match in matches:
                 checked_any_match = True
@@ -1719,8 +1690,7 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
             diagram = _build_random_diagram(rng)
             matches = _find_matches_tolerating_malformed_boundary(diagram, seed)
             if matches is None:
-                # See _find_matches_tolerating_malformed_boundary's docstring: Defect 2,
-                # Phase 5 post-closing audit round 18.
+                # See _find_matches_tolerating_malformed_boundary\'s docstring.
                 continue
             for match in matches:
                 checked_any_match = True
@@ -1797,7 +1767,7 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
         )
 
 
-# Phase 5 post-closing audit round 23, Task 8: the two sweeps that verified round 23 (a
+# the two sweeps that verified round 23 (a
 # structural-invariant fuzz and a fresh-seed oracle differential) were written ad hoc and
 # thrown away. Promoted into permanent tests here so every future round has to clear them
 # too, not just the ones that happened to motivate this round's fixes.

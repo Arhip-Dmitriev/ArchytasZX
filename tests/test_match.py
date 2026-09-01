@@ -137,7 +137,7 @@ class TestParallelWiresYieldOneCandidatePerWire:
         assert ref_b == PortRef(b_id, Direction.INPUT, 0)
 
     def test_leftover_wire_leg_binding_resolves_shared_dim(self) -> None:
-        """Fix 1(d): ``_unify_surviving_legs`` needs no change for parallel wires -- the
+        """``_unify_surviving_legs`` needs no change for parallel wires -- the
         leftover wire's endpoints are ordinary surviving legs, already unified against
         ``shared_dim``. Here the leftover leg on A is a concrete dim that only unifies
         with the (symbolic) connecting-pair's shared_dim by binding.
@@ -159,7 +159,7 @@ class TestParallelWiresYieldOneCandidatePerWire:
         assert consuming_wire0.shared_dim == three
 
     def test_stable_order_regardless_of_wire_insertion_order(self) -> None:
-        """Fix 1(c): ``(a_id, b_id)`` is no longer a unique key for a candidate, so
+        """``(a_id, b_id)`` is no longer a unique key for a candidate, so
         ``find_matches``'s sort must tiebreak deterministically on the consumed wire, not
         on whatever order the parallel wires happened to be added to the diagram.
         """
@@ -270,7 +270,7 @@ class TestPhaseDimensionMismatchIsNonMatch:
     def test_both_phases_present_with_concrete_phase_dim_binding_the_symbolic_shared_dim(
         self,
     ) -> None:
-        # Judgement call 2 (Phase 5 post-closing audit): both legs share the still-symbolic
+        # both legs share the still-symbolic
         # d (shared_dim=d, unbound), A's phase already agrees outright (also over d), and
         # B's phase over the concrete 3 now legitimately binds d := 3 through condition 7's
         # own unify call -- exactly the completeness gap the pre-fix plain-equality version
@@ -348,9 +348,10 @@ class TestPhaseDimensionMismatchIsNonMatch:
 
 
 class TestPhaseFailureDoesNotMisreportDimensionAgreement:
-    """Defect 3 (Phase 5 post-closing audit round 18): a phase-dim FAILURE inside
-    :func:`resolve_fusion_match`'s fixpoint must not be reported as a ``dimension_agreement``
-    (condition 6) failure -- nothing about a leg's own dimension failed here, only a phase's.
+    """A phase-dim FAILURE inside :func:`resolve_fusion_match`'s fixpoint must not be reported
+    as a ``dimension_agreement`` (condition 6) failure -- nothing about a leg's own
+    dimension failed here, only a phase's.
+
 
     Reproducer straight from the audit brief: a Z-Z pair, every leg ``Dim(2)``, node B's
     phase stated over the concrete ``Dim(3)`` -- plainly non-unifiable with the legs' shared
@@ -441,7 +442,7 @@ class TestPhaseFailureDoesNotMisreportDimensionAgreement:
             f"detail, which the leg sweep was never actually checked against: "
             f"{dimension_agreement!r}"
         )
-        # R1, Phase 5 post-closing audit round 21: phase_dimension_agreement's own detail
+        # phase_dimension_agreement's own detail
         # must name the value B's phase was actually checked against (3, refined by A's own
         # binding within this same _unify_phase_dims call), not the stale pre-call
         # shared_dim (e) the caller held before making the call.
@@ -503,10 +504,10 @@ class TestDimensionConstraintsRecording:
         assert not agreement.deferred
 
     def test_non_concrete_binding_detail_says_something_was_assumed(self) -> None:
-        """Defect 4 (Phase 5 post-closing audit round 18): a connecting pair recorded BOUND
-        via a symbol-to-symbol binding (``d := e``, non-concrete -- see the module
-        docstring's "Non-concrete bindings") must not render as a bare "d == e" with no
-        indication anything was assumed.
+        """A connecting pair recorded BOUND via a symbol-to-symbol binding (``d := e``, non-
+        concrete -- see the module docstring's "Non-concrete bindings") must not render as a
+        bare "d == e" with no indication anything was assumed.
+
 
         Root cause: the pre-fix ``_connecting_pair_detail`` derived its "bound to what"
         clause by intersecting the raw legs' free symbols with ``bindings`` -- but
@@ -553,7 +554,7 @@ class TestDimensionConstraintsRecording:
         )
 
     def test_a_leg_already_bound_by_the_connecting_pair_is_not_recorded_again(self) -> None:
-        """Phase 5 post-closing audit, dimension_constraints duplicate-assumption defect.
+        """Dimension_constraints duplicate-assumption defect.
 
         A: output dim d (consumed). B: input dim 2 (consumed), output dim 2 (survives). The
         connecting pair binds d := 2 and is recorded once; before the fix, B's surviving leg
@@ -610,9 +611,9 @@ class TestDimensionConstraintsRecording:
 
 
 class TestOutOfRangeWireEndpointRaises:
-    """graph.py is deliberately permissive about wire port indices; find_matches must not be.
+    """Graph.py is deliberately permissive about wire port indices; find_matches must not be.
 
-    Fix 2: an out-of-range index in a wire endpoint used to escape as a bare IndexError
+    an out-of-range index in a wire endpoint used to escape as a bare IndexError
     from ``node.legs(direction)[index]``; it must now raise RewriteGrammarError instead,
     for either endpoint, before any dimension work is attempted.
     """
@@ -637,10 +638,10 @@ class TestOutOfRangeWireEndpointRaises:
 
 
 class TestOutOfRangeBoundaryRefRaises:
-    """Phase 5 post-closing audit round 18, Defect 2: a boundary entry is held to the
-    identical malformed-reference standard as a wire endpoint (see
-    :class:`TestOutOfRangeWireEndpointRaises` above, and the module docstring's "Malformed
-    boundary references" section).
+    """A boundary entry is held to the identical malformed-reference standard as a wire
+    endpoint (see :class:`TestOutOfRangeWireEndpointRaises` above, and the module
+    docstring's "Malformed boundary references" section).
+
 
     Before this fix, an out-of-range or unknown-node boundary entry was not checked by
     :func:`find_matches` at all; it reached :mod:`qufzx.rewrite.engine`'s ``apply`` step 5
@@ -755,7 +756,7 @@ class TestOutOfRangeBoundaryRefRaises:
 
 
 class TestSharedDimResolvesThroughBinding:
-    """Fix 3: shared_dim must be resolved by substituting a unify binding, not taken raw from A.
+    """Shared_dim must be resolved by substituting a unify binding, not taken raw from A.
 
     Before the fix, ``shared_dim`` was unconditionally ``port_a.dim`` even when ``unify``
     only succeeded by binding a symbol -- e.g. leg dims ``d`` and ``3`` bind ``d := 3``, but
@@ -774,7 +775,7 @@ class TestSharedDimResolvesThroughBinding:
         assert matches[0].shared_dim == three
 
     def test_a_legitimate_phase_stated_over_the_bound_dim_now_matches(self) -> None:
-        # This is the proof scenario from the Fix 3(a) audit finding: B's phase is
+        # B's phase is
         # legitimately stated over Dim(3), the concrete value d unifies to, not over the
         # still-symbolic leg dim d itself. Before the fix this was wrongly dropped as a
         # non-match because phase_dimension_agreement compared it against raw d.
@@ -794,7 +795,7 @@ class TestSharedDimResolvesThroughBinding:
         assert matches[0].shared_dim == three
 
     def test_phases_agreeing_only_after_substitution_but_not_raw_now_matches(self) -> None:
-        # Judgement call 2 (Phase 5 post-closing audit), decided: node A's phase is stated
+        # Judgement call 2, decided: node A's phase is stated
         # over the symbolic leg dim d, node B's over the bound concrete value 3 -- both
         # individually resolve to shared_dim=3 (A's via a binding condition 7 itself now
         # derives, B's outright), but their raw, unsubstituted Dims differ. The pre-fix
@@ -825,13 +826,12 @@ class TestSharedDimResolvesThroughBinding:
 
 
 class TestPhaseDimensionAgreementSeesSurvivingLegBindings:
-    """Defect 2 (Phase 5 round-7 audit): phase_dimension_agreement used to resolve a present
-    phase's Dim using only the connecting pair's own unify bindings (``leg_unify.bindings``),
-    never a binding a *surviving* leg produced -- even though condition 6's own ``shared_dim``
-    is refined by exactly that binding. A phase legally stated over a symbol only a surviving
-    leg happens to bind was therefore compared unsubstituted against the refined shared_dim
-    and wrongly dropped as a non-match.
-    """
+    """Phase_dimension_agreement used to resolve a present phase's Dim using only the
+    connecting pair's own unify bindings (``leg_unify.bindings``), never a binding a
+    *surviving* leg produced -- even though condition 6's own ``shared_dim`` is refined by
+    exactly that binding. A phase legally stated over a symbol only a surviving leg happens
+    to bind was therefore compared unsubstituted against the refined shared_dim and wrongly
+    dropped as a non-match."""
 
     def test_a_phase_over_a_symbol_bound_only_by_a_surviving_leg_now_matches(self) -> None:
         # A's connecting leg (output 0) and B's connecting leg (input 0) are both the
@@ -877,11 +877,10 @@ class TestDeterministicOrder:
 
 
 class TestSurvivingLegDimensionUnification:
-    """Defect 1 (Phase 5 audit): surviving-leg dims used to be forced onto ``shared_dim`` by
-    the builder with no unification check at all, so a surviving leg that plainly conflicted
-    with ``shared_dim`` was silently overwritten (destroying a real dimension, or laundering
-    a pre-existing hard error) instead of making the candidate a non-match.
-    """
+    """Surviving-leg dims used to be forced onto ``shared_dim`` by the builder with no
+    unification check at all, so a surviving leg that plainly conflicted with ``shared_dim``
+    was silently overwritten (destroying a real dimension, or laundering a pre-existing hard
+    error) instead of making the candidate a non-match."""
 
     def test_a_surviving_leg_that_conflicts_with_shared_dim_is_a_non_match(self) -> None:
         # A already carries a hard dimension_policy_violation (outputs 3 and 5 disagree on
@@ -923,12 +922,11 @@ class TestSurvivingLegDimensionUnification:
 
 
 class TestConsumedPortClaimedElsewhereIsNonMatch:
-    """Defect 2 (Phase 5 audit): a consumed port also named by a second wire, or also on a
-    boundary list, used to still be returned as a match -- apply() then raised
-    RewriteDomainError (unmapped consumed port), breaking the documented "every match this
-    function returns can be applied" invariant. find_matches must reject such candidates
-    itself, since a port claimed twice like this is not a genuine fusion occurrence.
-    """
+    """A consumed port also named by a second wire, or also on a boundary list, used to still
+    be returned as a match -- apply() then raised RewriteDomainError (unmapped consumed
+    port), breaking the documented "every match this function returns can be applied"
+    invariant. find_matches must reject such candidates itself, since a port claimed twice
+    like this is not a genuine fusion occurrence."""
 
     def test_consumed_port_also_wired_to_a_third_node_is_a_non_match(self) -> None:
         d = Dim.concrete(2)
@@ -951,13 +949,11 @@ class TestConsumedPortClaimedElsewhereIsNonMatch:
         assert find_matches(diagram) == ()
 
     def test_wired_twice_is_reported_as_consumed_ports_singly_claimed_failing(self) -> None:
-        """Phase 5 post-closing audit round 23, Task 2: the check is now a real, named side
-        condition decided by ``resolve_fusion_match`` itself -- not merely a filter inside
-        ``find_matches`` invisible to the certificate. Call ``resolve_fusion_match`` directly
-        (bypassing ``find_matches``'s own filter, which no longer exists) and check the
-        named outcome appears, failing, with the remaining dimension conditions marked
-        "not evaluated".
-        """
+        """The check is now a real, named side condition decided by ``resolve_fusion_match``
+        itself -- not merely a filter inside ``find_matches`` invisible to the certificate.
+        Call ``resolve_fusion_match`` directly (bypassing ``find_matches``'s own filter,
+        which no longer exists) and check the named outcome appears, failing, with the
+        remaining dimension conditions marked "not evaluated"."""
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -1028,15 +1024,13 @@ class TestConsumedPortClaimedElsewhereIsNonMatch:
 
 
 class TestSurvivingLegOverwriteIntroducesDeferral:
-    """Phase 5 post-closing audit round 23, Task 7a: forcing a surviving leg onto
-    ``shared_dim`` (module docstring, condition 6) can turn a wire to a third node that
-    agreed *exactly* before fusion into one that only defers afterward -- a routine outcome
-    (roughly one in ten applications over the random property harness, not a rare edge
-    case), and one this pattern's own carve-out (:mod:`qufzx.rewrite.engine`'s step-8
-    relative postcondition) correctly permits. Constructed deliberately here, rather than
-    left to be rediscovered as folklore by whoever next reads the property harness's floor
-    numbers.
-    """
+    """Forcing a surviving leg onto ``shared_dim`` (module docstring, condition 6) can turn a
+    wire to a third node that agreed *exactly* before fusion into one that only defers
+    afterward -- a routine outcome (roughly one in ten applications over the random property
+    harness, not a rare edge case), and one this pattern's own carve-out
+    (:mod:`qufzx.rewrite.engine`'s step-8 relative postcondition) correctly permits.
+    Constructed deliberately here, rather than left to be rediscovered as folklore by
+    whoever next reads the property harness's floor numbers."""
 
     def test_exact_third_party_match_becomes_deferred_after_fusion(self) -> None:
         d = Dim.symbol("d")
@@ -1086,11 +1080,10 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
 
 
 class TestMalformedWireDetectionIsFullyUnconditional:
-    """Defect 3 (Phase 5 audit): the out-of-range-index check used to run only per-candidate,
-    after grouping and filtering, so a malformed wire dropped by the parallel-wire-pair
-    filter or the self-loop skip escaped detection entirely and returned () instead of
-    raising. The check must now run over every wire before any grouping or filtering.
-    """
+    """The out-of-range-index check used to run only per-candidate, after grouping and
+    filtering, so a malformed wire dropped by the parallel-wire-pair filter or the self-loop
+    skip escaped detection entirely and returned () instead of raising. The check must now
+    run over every wire before any grouping or filtering."""
 
     def test_malformed_wire_inside_a_parallel_pair_still_raises(self) -> None:
         d = Dim.concrete(2)
@@ -1118,7 +1111,7 @@ class TestMalformedWireDetectionIsFullyUnconditional:
 
 
 class TestFusionMatchIsHashable:
-    """Task 1 (Phase 5 closing round): ``FusionMatch`` was unhashable because the
+    """``FusionMatch`` was unhashable because the
     dataclass-generated ``__hash__`` hashed ``bindings`` -- a ``MappingProxyType`` -- verbatim.
     This fired even for the empty default, so no ``FusionMatch`` was ever hashable, and
     ``RewriteStep.__hash__`` (which embeds ``match`` unchanged) inherited the same failure.
@@ -1155,7 +1148,7 @@ class TestFusionMatchIsHashable:
 
 class TestPhaseDimensionAgreementDeferredFidelity:
     """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome
-    (Phase 5 post-closing audit, judgement call 2, decided): it now genuinely calls
+   : it now genuinely calls
     :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 6 -- a genuinely
     ``DEFERRED`` per-phase result is rejected outright (see the module docstring, condition
     6, for why a phase cannot tolerate the same unproven assumption a leg can), so a
@@ -1203,7 +1196,7 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         ) in match.dimension_constraints
 
     def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
-        # Judgement call 2 (Phase 5 post-closing audit): unlike a leg, a phase whose dim
+        # unlike a leg, a phase whose dim
         # only DEFERS against shared_dim (never binds, never a bare identity) cannot be
         # safely reattached -- there is no binding to substitute through its entries, so
         # this must be a non-match, not an accepted-with-assumption pass.
@@ -1246,12 +1239,11 @@ class TestPhaseDimensionAgreementDeferredFidelity:
 
 
 class TestSameGeneratorTypeReportsUnregisteredFusabilityItself:
-    """Phase 5 post-closing audit spec/doc defect: a same-typed pair whose shared type is
-    not a registered fusable generator (i.e. not Z or X) must fail ``same_generator_type``
-    itself, with that as the reported reason -- not pass it (the two types genuinely are
-    equal) only to have the real cause surface as an aside buried inside
-    ``consumed_wire_direction_permitted_for_color``'s detail, a condition whose own
-    declared description is about wire direction, not fusability.
+    """A same-typed pair whose shared type is not a registered fusable generator (not Z or
+    X) must fail ``same_generator_type`` itself, with that as the reported reason -- not
+    pass it, on the grounds that the two types genuinely are equal, and leave the real cause
+    buried inside ``consumed_wire_direction_permitted_for_color``'s detail, a condition
+    whose declared description is about wire direction, not fusability.
     """
 
     def test_same_unregistered_type_fails_same_generator_type_with_the_real_reason(self) -> None:
@@ -1286,7 +1278,7 @@ class TestSameGeneratorTypeReportsUnregisteredFusabilityItself:
 
 
 class TestResolveFusionMatchIsTheSharedPredicate:
-    """A1/A2/A4 (Phase 5 round-12 audit): ``find_matches`` and ``spider_fusion_builder`` must
+    """A1/A2/A4: ``find_matches`` and ``spider_fusion_builder`` must
     call the exact same function object to decide/re-verify a candidate -- not two
     similar-looking computations kept in sync by hand. See ``resolve_fusion_match``'s and the
     module docstring's "One verification predicate" section.
@@ -1342,7 +1334,7 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         assert {o.name for o in resolution.outcomes} == {c.name for c in FUSION_SIDE_CONDITIONS}
         same_type = next(o for o in resolution.outcomes if o.name == "same_generator_type")
         assert not same_type.passed
-        # Phase 5 post-closing audit: a failed resolution's shared_dim is unrepresentable
+        # a failed resolution's shared_dim is unrepresentable
         # as a meaningful Dim, not a placeholder concrete value a caller ignoring `passed`
         # could silently read as though it meant something.
         assert resolution.shared_dim is None
@@ -1360,12 +1352,10 @@ class TestResolveFusionMatchIsTheSharedPredicate:
     def test_raises_grammar_error_for_a_wire_incident_on_both_but_not_in_the_diagram(
         self,
     ) -> None:
-        """Defect 1 (Phase 5 post-closing audit): a ``Wire`` naming two ports that are each
-        genuinely incident on ``a_id``/``b_id`` -- so it passes every earlier structural
-        check -- but that was never actually added to the diagram (a caller merely
-        constructed it to look like one) must still be refused, not treated as a legal
-        fusion occurrence.
-        """
+        """A ``Wire`` naming two ports that are each genuinely incident on ``a_id``/``b_id`` --
+        so it passes every earlier structural check -- but that was never actually added to
+        the diagram (a caller merely constructed it to look like one) must still be refused,
+        not treated as a legal fusion occurrence."""
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
@@ -1383,7 +1373,7 @@ class TestResolveFusionMatchIsTheSharedPredicate:
 
 
 class TestFixpointBudgetExhaustion:
-    """D4: cap exhaustion is a resolver *iteration budget*, never a dimension disagreement.
+    """Cap exhaustion is a resolver *iteration budget*, never a dimension disagreement.
 
     ``_MAX_FIXPOINT_PASSES`` is unreachable under ``Dim.unify``'s current contract for any
     diagram with fewer distinct dimension symbols than the cap (see the module-level
@@ -1427,15 +1417,14 @@ class TestFixpointBudgetExhaustion:
 
 
 class TestD1FixpointTerminationSoundness:
-    """D1 (Phase 5 audit, round 15): the joint condition-5/6 fixpoint used to exit as soon as
-    ``shared_dim`` stopped changing, even when ``bindings`` had just grown -- e.g. by binding
-    a symbol that does not occur in ``shared_dim`` at all. Legs (and phases) checked earlier
-    in that same pass were then never re-checked against the newly accumulated binding, and
-    an unsatisfiable constraint set (recorded assumptions that cannot simultaneously hold)
-    was accepted as a match. Fixed by terminating only when a full pass leaves both
-    ``shared_dim`` and ``bindings`` unchanged, and by rejecting a contradictory rebind
-    outright (:func:`~qufzx.rewrite.match._merge_bindings`) rather than silently overwriting.
-    """
+    """The joint condition-5/6 fixpoint used to exit as soon as ``shared_dim`` stopped
+    changing, even when ``bindings`` had just grown -- e.g. by binding a symbol that does
+    not occur in ``shared_dim`` at all. Legs (and phases) checked earlier in that same pass
+    were then never re-checked against the newly accumulated binding, and an unsatisfiable
+    constraint set (recorded assumptions that cannot simultaneously hold) was accepted as a
+    match. Fixed by terminating only when a full pass leaves both ``shared_dim`` and
+    ``bindings`` unchanged, and by rejecting a contradictory rebind outright
+    (:func:`~qufzx.rewrite.match._merge_bindings`) rather than silently overwriting."""
 
     def test_d1_reproduction_e_times_f_e_f_against_2_is_not_a_match(self) -> None:
         """The exact reproduction from the audit brief: A's legs [e*f, e, f] against B's
@@ -1449,11 +1438,9 @@ class TestD1FixpointTerminationSoundness:
         b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
-        # b_id has zero output legs -- no boundary_outputs entry to declare for it. (Phase 5
-        # post-closing audit round 18: this fixture previously listed a nonexistent
-        # PortRef(b_id, OUTPUT, 0) here, which find_matches now correctly rejects as a
-        # malformed boundary reference -- Defect 2 -- rather than silently ignoring it the
-        # way the pre-fix matcher did.)
+        # b_id has zero output legs, so there is no boundary_outputs entry to declare for
+        # it: naming a nonexistent PortRef(b_id, OUTPUT, 0) here is a malformed boundary
+        # reference, which find_matches rejects.
         assert find_matches(diagram) == ()
 
     def test_legs_2_d_times_e_d_conn_e_is_not_a_match(self) -> None:
@@ -1557,9 +1544,9 @@ class TestD1FixpointTerminationSoundness:
 
 
 class TestMergeBindingsRejectsContradiction:
-    """:func:`~qufzx.rewrite.match._merge_bindings` -- D1's second required fix: a would-be
-    rebind of an already-bound name to a *different* concrete value must be a hard non-match,
-    never a silent last-write-wins overwrite.
+    """:func:`~qufzx.rewrite.match._merge_bindings` must treat a would-be rebind of an
+    already-bound name to a different concrete value as a hard non-match, never a silent
+    last-write-wins overwrite.
     """
 
     def test_rebinding_to_a_different_concrete_value_returns_conflict_and_does_not_mutate(
@@ -1590,11 +1577,10 @@ class TestMergeBindingsRejectsContradiction:
 
 
 class TestResolutionFailureReasonDetails:
-    """Task 3 (Phase 5 post-closing audit round 23): a failure's detail string must be
-    derived from *what actually failed* (:class:`~qufzx.rewrite.match._ResolutionFailure`'s
-    ``reason``), not from which call site happened to return it. Pins each reason's own
-    wording at the shape that produces it.
-    """
+    """A failure's detail string must be derived from *what actually failed*
+    (:class:`~qufzx.rewrite.match._ResolutionFailure`'s ``reason``), not from which call
+    site happened to return it. Pins each reason's own wording at the shape that produces
+    it."""
 
     def test_connecting_pair_unify_failure(self) -> None:
         two = Dim.concrete(2)
@@ -1748,11 +1734,10 @@ class TestResolutionFailureReasonDetails:
 
 
 class TestConnectingPairRederivedEachPass:
-    """D2 (Phase 5 audit, round 15): the connecting pair used to be recorded once, before the
-    fixpoint, and never revisited -- unlike every ``SURVIVING_LEG`` and ``NODE_PHASE`` source.
-    A phase-driven binding that refines the connecting pair's own legs must still show up in
-    the finished ``dimension_constraints`` record at its most-resolved form.
-    """
+    """The connecting pair used to be recorded once, before the fixpoint, and never revisited
+    -- unlike every ``SURVIVING_LEG`` and ``NODE_PHASE`` source. A phase-driven binding that
+    refines the connecting pair's own legs must still show up in the finished
+    ``dimension_constraints`` record at its most-resolved form."""
 
     def test_connecting_pair_constraint_reflects_a_later_phase_driven_binding(self) -> None:
         # Connecting pair: A's output (symbol d) vs B's input (symbol d) -- bare identity,

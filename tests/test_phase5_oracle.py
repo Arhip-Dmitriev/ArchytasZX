@@ -210,7 +210,7 @@ def _build_parallel_wire_pair(
 
 
 class TestParallelWireFusionOracle:
-    """Fix 1(f): parallel-wire fusion is exactly equal pre/post at d = 2, 3, 5, for both
+    """Parallel-wire fusion is exactly equal pre/post at d = 2, 3, 5, for both
     colors and both leftover-wire shapes, and the merged node actually carries the
     leftover wire as a self-loop.
     """
@@ -689,10 +689,9 @@ class TestFusionMatchNegativeControls:
         assert find_matches(diagram) == ()
 
     def test_two_wires_between_same_pair_now_yield_two_matches(self) -> None:
-        """Fix 1: a node pair joined by k wires now yields up to k candidates, one per
-        wire, each leaving the others as self-loops -- see match.py's module docstring,
-        condition 3. See :class:`TestParallelWireFusionOracle` for the oracle coverage.
-        """
+        """A node pair joined by k wires now yields up to k candidates, one per wire, each
+        leaving the others as self-loops -- see match.py's module docstring, condition 3.
+        See :class:`TestParallelWireFusionOracle` for the oracle coverage."""
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])

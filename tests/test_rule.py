@@ -41,7 +41,7 @@ from qufzx.rewrite.rules_library import spider_fusion_builder
 
 def _dummy_builder(diagram: Diagram, match: Match) -> BuildResult:
     """A builder with no ``side_conditions`` attribute, for tests that only need *some*
-    callable and must not trip the A5 (Phase 5 round-12 audit) builder/Rule
+    callable and must not trip the A5 builder/Rule
     ``side_conditions`` agreement check that ``spider_fusion_builder`` (which does declare
     one) would otherwise trigger."""
     raise NotImplementedError
@@ -149,12 +149,12 @@ class TestRule:
 
 
 class TestRuleValidatesEveryField:
-    """Defect 4 (Phase 5 audit): __post_init__ used to check only ``name``, so
-    ``Rule(name="x", pattern="not a pattern", builder="not callable", side_conditions=(),
-    quantifiers=Quantifiers(), scalar_introduced=1.0)`` constructed successfully -- including
-    a bare float ``scalar_introduced``, banned everywhere else in this codebase by the
-    exact-scalars rule. Every field must now be validated the way every other value object
-    here validates its own constructor arguments.
+    """__post_init__ must validate every field, not only ``name``.
+
+    Checking ``name`` alone lets ``Rule(name="x", pattern="not a pattern", builder="not
+    callable", side_conditions=(), quantifiers=Quantifiers(), scalar_introduced=1.0)``
+    construct successfully -- including a bare float ``scalar_introduced``, banned
+    everywhere else in this codebase by the exact-scalars rule.
     """
 
     def _kwargs(self, **overrides: object) -> dict[str, object]:
@@ -199,7 +199,7 @@ class TestRuleValidatesEveryField:
 
 
 class TestRuleRejectsSideConditionsDisagreeingWithItsBuilder:
-    """A5 (Phase 5 round-12 audit): ``spider_fusion_builder`` declares its own
+    """``spider_fusion_builder`` declares its own
     ``side_conditions`` (see its ``.side_conditions`` attribute) and checks a match's
     coverage against exactly that tuple, since it is reachable directly and not only through
     ``apply``. If a ``Rule`` wrapping it declared a *different* ``side_conditions`` tuple,
@@ -244,7 +244,7 @@ class TestRuleRejectsSideConditionsDisagreeingWithItsBuilder:
 
 
 class TestDimensionConstraintBoundHereInvariant:
-    """Round 20, Task 6: DimensionConstraint.__post_init__ now enforces structurally what its
+    """DimensionConstraint.__post_init__ now enforces structurally what its
     docstring already claimed -- BOUND requires a non-empty bound_here, DEFERRED requires an
     empty one -- the same way ConstraintSource.__post_init__ already rejects an illegal
     (kind, reference) combination. Both rejections and both legal combinations are pinned

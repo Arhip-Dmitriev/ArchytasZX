@@ -11,44 +11,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Permanent regression guard: the 3-node oracle sweep (Phase 5 post-closing audit probe 1).
+"""Permanent regression guard: the 3-node oracle sweep.
 
 Two same-colour fusable spiders (A, B) joined by a wire, plus a third node C wired to a
-surviving leg of either A or B, boundaries on everything else. This exercises a region the
+surviving leg of either A or B, boundaries on everything else. This covers a region the
 rest of the suite under-samples: :func:`~qufzx.rewrite.match.find_matches` and
-:func:`~qufzx.rewrite.engine.apply` in the presence of a third node whose own wiring must
-survive a fusion's port remapping untouched, across a real spread of leg-count shapes.
+:func:`~qufzx.rewrite.engine.apply` with a third node whose own wiring must survive a
+fusion's port remapping untouched, across a spread of leg-count shapes. ``d = 2``
+throughout.
 
-All comparisons ran with zero failures against current ``main`` when this probe was first
-run as part of the audit -- this module exists to keep it that way, not to hunt for new
-bugs. ``d = 2`` throughout, per the audit brief.
+Deliberate subsampling:
 
-Deliberate simplifications relative to the audit brief's literal enumeration (stated here,
-not left implicit, per the spec's standing instruction to document any subsampling):
-
-* The audit brief describes "leg shapes (0,1),(1,0),(1,1),(2,1),(1,2),(2,0),(0,2)" without
-  specifying whether they apply to one node or a pair; this sweep applies all seven, cross
-  producted, to A and to B independently (49 shape pairs), which is both an unambiguous
-  reading and the one that most directly stresses ``spider_fusion_builder``'s leg-ordering
-  convention ("A's surviving legs, then B's") across genuinely different shapes on each
-  side, not just symmetric ones.
-* The connecting leg is always chosen deterministically (A's last output if it has one,
-  else its only input; B's opposite-direction leg if available, else -- for Z only, per
-  match.py's condition 4 -- a same-direction leg), rather than exhaustively trying every
-  possible pairing of legs within each shape. A shape combination with no valid connecting
-  pair under a colour's direction rule (e.g. two X spiders that are both input-only) is
-  skipped, not force-matched.
-* C is always the same colour as A and B, and always attaches to the first surviving leg
-  found (checking A's surviving legs before B's), rather than varying C's own colour and
-  every possible attachment leg independently -- this still exercises both "C attaches to
-  A" and "C attaches to B" (whichever comes first in a given shape pair) without multiplying
-  the sweep by C's own colour and leg choice.
+* The seven leg shapes (0,1),(1,0),(1,1),(2,1),(1,2),(2,0),(0,2) are cross producted over A
+  and B independently (49 shape pairs), stressing ``spider_fusion_builder``'s leg-ordering
+  convention across genuinely different shapes on each side.
+* The connecting leg is chosen deterministically (A's last output if it has one, else its
+  only input; B's opposite-direction leg if available, else -- for Z only -- a
+  same-direction one), not by trying every pairing within a shape. A shape combination with
+  no valid connecting pair under a colour's direction rule is skipped, not force-matched.
+* C is always the same colour as A and B and attaches to the first surviving leg found,
+  checking A's before B's. This still reaches both "C attaches to A" and "C attaches to B"
+  without multiplying the sweep by C's own colour and leg choice.
 * Phase presence is swept for A and B (4 combinations); C never carries a phase.
 
-This keeps the sweep at 2 (colour pairs) x 49 (shape pairs) x 4 (phase combinations) = 392
-diagrams -- most of which produce a real, cleanly contractible fusion candidate -- rather
-than the audit brief's ~72,500, while still covering every leg-count shape, both colours,
-phase presence, and both attachment sides for C called out in the brief.
+The sweep is therefore 2 colour pairs x 49 shape pairs x 4 phase combinations = 392
+diagrams, most of which produce a real, cleanly contractible fusion candidate.
 """
 
 from __future__ import annotations

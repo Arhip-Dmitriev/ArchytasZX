@@ -13,26 +13,20 @@
 
 """Standalone driver for ``TestCrossProcessDeterminism`` (see ``test_engine.py``).
 
-Not a pytest module itself (no ``test_*`` functions) -- run as a plain script, once per
-``PYTHONHASHSEED`` value, via ``subprocess``. Builds a diagram engineered so more than one
-pre-existing, node-anchored ``DIMENSION_DEFERRED`` issue collides onto the same translated
-key once fusion merges its two nodes into one (see
-:mod:`qufzx.rewrite.engine`'s module docstring, step 8's deferred-issue paragraph), applies
-the one fusion match at it, and prints a stable, process-independent serialization of every
-field Phase 5 post-closing audit round 18's Defect 1 promises is deterministic across
-processes: ``removed_deferred_issues``, ``introduced_deferred_issues``,
-``deferred_issue_identity_ambiguous``, ``dimension_constraints``, ``side_condition_outcomes``,
-and ``validate(...).errors``/``.deferred`` on both the pre- and post-rewrite diagram.
+Not a pytest module itself -- run as a plain script, once per ``PYTHONHASHSEED`` value, via
+``subprocess``. Builds a diagram engineered so more than one pre-existing, node-anchored
+``DIMENSION_DEFERRED`` issue collides onto the same translated key once fusion merges its
+two nodes, applies the one fusion match at it, and prints a stable serialization of every
+field promised deterministic across processes: ``removed_deferred_issues``,
+``introduced_deferred_issues``, ``deferred_issue_identity_ambiguous``,
+``dimension_constraints``, ``side_condition_outcomes``, and ``validate(...)``'s errors and
+deferred issues on both diagrams.
 
-Printing ``repr()`` of these fields is safe here specifically because every value object on
-this path (``PortRef``, ``Wire``, ``ConstraintSource``, ``DimensionConstraint``, ``Dim``,
-``ValidationIssue``, ...) defines a ``__repr__`` built from literal attribute names/values
-(e.g. ``PortRef.__repr__`` uses ``direction.value``, a fixed string, never the ``Direction``
-enum member's own default ``repr``/``hash``) -- none of them embeds a raw ``id()`` or a
-Python-level ``hash()``. This script deliberately does NOT print ``hash()`` of anything: see
-the module docstring's disclaimer on :meth:`~qufzx.rewrite.engine.RewriteStep.__hash__` for
-why that legitimately does vary across processes (``IssueKind`` and ``Direction`` are hashed
-by member name) and is therefore not part of this determinism contract.
+Printing ``repr()`` is safe because every value object on this path defines a ``__repr__``
+built from literal attribute names and values -- ``PortRef.__repr__`` uses
+``direction.value``, a fixed string, never the ``Direction`` member's own ``repr`` -- and
+none embeds a raw ``id()`` or ``hash()``. This script deliberately prints no ``hash()``,
+which legitimately varies across processes.
 """
 
 from __future__ import annotations

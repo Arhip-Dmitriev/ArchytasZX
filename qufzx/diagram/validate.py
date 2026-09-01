@@ -45,15 +45,12 @@ is recorded.
 
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
 :func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint, rather than
-unifying each leg against ``all_ports[0].dim`` and discarding bindings -- otherwise a
-jointly-unsatisfiable leg set (one leg binding a symbol to ``2``, another to ``3``) passes,
-and the verdict depends on leg order. ``TIED_TO_LEG_DIM``'s phase/leg check resolves
-through those same bindings, for the same reason. Each residual ``DEFERRED`` pair gets its
-own issue rather than one collapsed "strongest" issue per node. This does not propagate a
-binding from one node's legs to another's: a ``d``-vs-``2`` wire on one node and a
-``d``-vs-``3`` wire on another is jointly unsatisfiable across the diagram, but each node's
-check binds ``d`` independently. Diagram-global propagation is FULL_PLAN.md Phase 10 item
-(i); pinned by ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
+unifying each leg against ``all_ports[0].dim`` and discarding bindings, which would let a
+jointly-unsatisfiable leg set pass and make the verdict leg-order-dependent.
+``TIED_TO_LEG_DIM``'s phase/leg check resolves through those same bindings. Each residual
+``DEFERRED`` pair gets its own issue. Bindings do not propagate from one node's legs to
+another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinned by
+``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
 
 :class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
 vector, which carries its dimension nowhere at all (per the spec, dimension is stored per
@@ -75,9 +72,7 @@ by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
 :class:`~qufzx.diagram.graph.Direction` is an ``enum.Enum`` hashed by member name, so a set
 containing one iterates in a ``PYTHONHASHSEED``-dependent order.
 :attr:`ValidationReport.issues`'s order is relied on downstream by
-:mod:`qufzx.rewrite.engine`'s deferred-issue selection. A new pass should ask not whether a
-collection looks like it needs sorting but whether its construction could route a value's
-own hash into something this function returns, raises, or appends to.
+:mod:`qufzx.rewrite.engine`'s deferred-issue selection.
 
 What this module does not do. It does not contract, evaluate, or attach numeric meaning to
 a diagram (Phase 4's oracle); it does not fix anything it finds wrong (Phase 5); and it
@@ -207,14 +202,10 @@ def _resolve(diagram: Diagram, ref: PortRef, issues: list[ValidationIssue]) -> P
 
 
 def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    # Phase 5 post-closing audit round 18, Defect 1: ``diagram.wires`` is a frozenset, and
-    # PortRef's (and therefore Wire's) hash folds in Direction's member-name hash, which is
-    # PYTHONHASHSEED-dependent -- so iterating it directly here would append issues in a
-    # process-dependent order. ``validate()``'s own module docstring, and
-    # ``qufzx.rewrite.engine``'s ``RewriteStep.deferred_issue_identity_ambiguous``, both
-    # promise a deterministic "first in validate order" selection downstream; sorting by
-    # ``Wire.sort_key()`` (hash-independent) is what actually makes that promise true across
-    # processes, not merely within one. See ``tests/test_engine.py::TestCrossProcessDeterminism``.
+    # Sorted by the hash-independent Wire.sort_key(): diagram.wires is a frozenset whose
+    # hash folds in Direction's member-name hash, so iterating it directly would append
+    # issues in a PYTHONHASHSEED-dependent order, breaking the "first in validate order"
+    # selection qufzx.rewrite.engine relies on.
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         port_a = _resolve(diagram, wire.a, issues)
         port_b = _resolve(diagram, wire.b, issues)
@@ -250,12 +241,9 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
 
 
 def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    # Same fix as _check_wire_dimensions, and for the same reason: ``diagram.wires`` is a
-    # frozenset whose iteration order is PYTHONHASHSEED-dependent (Direction's member-name
-    # hash), so building ``wired_refs`` from an unsorted pass would make the *insertion*
-    # order into ``wired_counts`` below (a ``Counter``, itself a plain dict -- iteration
-    # order is insertion order, not hash order, once built) process-dependent, and with it
-    # the order PORT_WIRED_TWICE issues are appended in.
+    # Sorted for the same reason as _check_wire_dimensions: an unsorted pass would make the
+    # insertion order into wired_counts below process-dependent, and with it the order
+    # PORT_WIRED_TWICE issues are appended in.
     wired_refs: list[PortRef] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         wired_refs.append(wire.a)
@@ -272,10 +260,8 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
             )
 
     wired_set = set(wired_refs)
-    # boundary_inputs/boundary_outputs are ordered tuples (Diagram.boundary_inputs/
-    # boundary_outputs), never a set/frozenset, and Counter/dict iteration order is
-    # insertion order, not hash order -- so this loop's order is already deterministic and
-    # process-independent without a sort, unlike the wire-derived loop above.
+    # No sort needed: boundary_inputs/boundary_outputs are ordered tuples, and Counter
+    # iteration order is insertion order.
     boundary_counts = Counter(diagram.boundary_inputs) + Counter(diagram.boundary_outputs)
     for ref, count in boundary_counts.items():
         if count > 1:
@@ -313,13 +299,10 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                     port_ref=ref,
                 )
             )
-    # A ref listed on both boundary lists (already reported once above, as
-    # DUPLICATE_BOUNDARY_ENTRY) must still be resolved only once here: resolving it twice
-    # would append two identical UNKNOWN_NODE/PORT_INDEX_OUT_OF_RANGE issues for what is a
-    # single malformed reference, inflating counts that removed_deferred_issues/
-    # introduced_deferred_issues treat as load-bearing (Phase 5 post-closing audit round 23,
-    # Task 6). `dict.fromkeys` dedupes while preserving first-appearance order -- inputs
-    # before outputs, matching the order the two source lists are already given in.
+    # A ref on both boundary lists (already reported above as DUPLICATE_BOUNDARY_ENTRY) is
+    # resolved only once, or one malformed reference would append two identical issues,
+    # inflating counts the engine's deferred-issue bookkeeping treats as load-bearing.
+    # dict.fromkeys dedupes while preserving first-appearance order, inputs before outputs.
     for ref in dict.fromkeys((*diagram.boundary_inputs, *diagram.boundary_outputs)):
         _resolve(diagram, ref, issues)
 
@@ -404,34 +387,15 @@ def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
 
 def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     # A same-named symbol of two different roles is two distinct sympy Symbol objects, so a
-    # by-name substitution (every substitute() here is) silently rewrites both.
+    # by-name substitution (every substitute() here is) silently rewrites both. All six
+    # unordered cross-role pairs over {dimension, exponent, phase, scalar} are genuine
+    # collisions, since the four roles accept different substitution domains: positive
+    # integers, nonnegative integers, reals mod one turn, and arbitrary complex.
     #
-    # The full 4x4 collision matrix over {dimension, exponent, phase, scalar} (Phase 5
-    # post-closing audit round 22, Defect 2): every one of the six unordered cross-role pairs
-    # is a genuine collision, none is benign --
-    #
-    #   dimension x exponent -- differing domains under one name (positive vs. merely
-    #     nonnegative integers): 0 is a legal exponent substitution but an illegal dimension
-    #     one, so Diagram.substitute({name: 0}) is one symbol's legal use and the other's
-    #     DimensionDomainError.
-    #   dimension x phase, exponent x phase -- an integer-only grammar (positive or
-    #     nonnegative) vs. phase's arbitrary-real, mod-one-turn grammar: a fractional or
-    #     negative substitution value is legal for the phase role and illegal for either
-    #     integer role.
-    #   dimension x scalar, exponent x scalar -- same integer-vs-arbitrary-complex gap, one
-    #     level further: a non-real complex substitution value is legal only for scalar.
-    #   phase x scalar -- both are "real-ish" continuous domains, but a phase's turns-value
-    #     is interpreted mod one turn and a scalar's is not; substituting the same value
-    #     through the two roles' own substitute() means two different things.
-    #
-    # The one *non*-collision this matrix has is not a pair at all: the same role used twice
-    # under the same name is one symbol legitimately reused (e.g. two ports sharing a
-    # dimension symbol, or a root-of-unity phase entry over its own node's dimension symbol,
-    # see tests/test_validate.py::TestSymbolRoleCollision::
-    # test_dimension_symbol_embedded_in_root_of_unity_phase_is_not_a_collision) --
-    # ``roles.setdefault(name, {}).setdefault(role, symbol)`` below never records a
-    # second entry for a role already seen under that name, so this case is not even
-    # represented as a "pair" for ``len(by_role) > 1`` to find.
+    # The same role used twice under one name is legitimate reuse, not a collision (two
+    # ports sharing a dimension symbol, or a root-of-unity phase entry over its own node's
+    # dimension symbol). The setdefault below never records a second entry for a role
+    # already seen under that name, so that case never becomes a pair for len(by_role) > 1.
     roles: dict[str, dict[str, sp.Symbol]] = {}
 
     def _note(expr: sp.Expr) -> None:
@@ -466,19 +430,10 @@ def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue
 def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
 
-    # Round 20, Task 9: per the spec, "dimension is stored per port, not as one global
-    # parameter" -- a node with zero legs and no phase vector carries its dimension nowhere
-    # at all, so it is not well-formed, yet this module accepted it as valid before this
-    # fix. :mod:`qufzx.semantics.denote` already refused such a node
-    # (``DenoteGrammarError``, "has no legs and no phase vector; its dimension cannot be
-    # determined") -- this check states the identical fact at validation time, as a hard
-    # error rather than a deferred one, so that ``validate(d).is_valid`` actually implies
-    # every node in ``d`` is denotable, which is the invariant :mod:`qufzx.rewrite.engine`'s
-    # ``apply`` step 8 depends on when it uses this module as its sole structural
-    # postcondition on a rewritten diagram. See ``tests/test_phase5_exhaustive_oracle.py``
-    # and ``tests/test_fusion_properties.py`` for the property sweep asserting this
-    # cross-module invariant holds over every diagram either generator produces, not merely
-    # over the one hand-built case that motivated the fix.
+    # Dimension is stored per port, so a node with zero legs and no phase vector carries it
+    # nowhere at all. qufzx.semantics.denote already refuses such a node; stating the same
+    # fact here, as a hard error, is what makes validate(d).is_valid imply every node in d
+    # is denotable -- the invariant qufzx.rewrite.engine's apply step 8 depends on.
     if node.num_inputs == 0 and node.num_outputs == 0 and node.phase is None:
         issues.append(
             ValidationIssue(
@@ -503,13 +458,10 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             )
         )
 
-    # Phase 5 post-closing audit round 22, Defect 1: ``leg_unify`` is the *only* place this
-    # function resolves "what dimension do this node's legs jointly agree on" -- both the
-    # DIMENSION_POLICY_VIOLATION/DEFERRED branch below and the phase-vs-legs branch after it
-    # read from it, so there is exactly one leg-resolution computation to keep in sync with
-    # match.py's own, not two that can drift apart (which is how this defect happened the
-    # first time: the DIMENSION_POLICY_VIOLATION branch was moved onto unify_all in round 21,
-    # but the phase branch below was left reading ``all_ports[0].dim`` raw).
+    # leg_unify is the only place this function resolves what dimension a node's legs
+    # jointly agree on; both the DIMENSION_POLICY_VIOLATION/DEFERRED branch below and the
+    # phase-vs-legs branch after it read from it, so there is one leg-resolution
+    # computation, not two that can drift apart.
     all_ports = (*node.inputs, *node.outputs)
     leg_unify = unify_all([port.dim for port in all_ports]) if all_ports else None
 
@@ -527,18 +479,10 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                 )
             )
         elif leg_unify.exhausted:
-            # Phase 5 post-closing audit round 22, Defect 3: unify_all's own pass budget
-            # ran out before its bindings fixpoint stabilised -- an undecided node, not a
-            # decided-and-fine one. Failing open here (the pre-fix behaviour: reading
-            # ``residual_pairs`` -- always ``()`` on this path before UnifyAllResult grew
-            # ``exhausted`` -- and finding nothing to append) let an undecided node validate
-            # completely clean, which is the opposite posture to
-            # :mod:`qufzx.rewrite.match`'s own budget-exhaustion path
-            # (``resolve_fusion_match`` conservatively refuses the candidate). This is a hard
-            # error, not deferred: a deferred issue is this module's word that the *question
-            # itself* -- not the resolver's ability to answer it -- is genuinely open (e.g.
-            # ``Dim("d")`` against ``Dim("d") * Dim("e")``); an exhausted budget has not
-            # reached that question at all.
+            # unify_all's pass budget ran out before its bindings fixpoint stabilised: an
+            # undecided node, not a decided-and-fine one. A hard error, not deferred -- a
+            # deferred issue means the question itself is genuinely open, whereas an
+            # exhausted budget has not reached that question at all.
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.DIMENSION_RESOLUTION_EXHAUSTED,
@@ -564,24 +508,13 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                         deferred=True,
                     )
                 )
-        # A SUCCESS whose ``leg_unify.declined_bindings`` is non-empty (e.g. legs stated as
-        # bare symbols ``d`` and ``e``, unifying only by binding ``d := e``) falls through
-        # here without an issue -- a deliberate Phase 5 decision, not an oversight (Phase 5
-        # post-closing audit round 23, Task 7b). The structurally identical situation in
-        # :mod:`qufzx.rewrite.match` is recorded on the certificate as a BOUND
-        # :class:`~qufzx.rewrite.rule.DimensionConstraint`, so this is a real, documented
-        # asymmetry: this module currently has no reporting path for "SUCCESS, but only
-        # under an assumption" the way it does for DEFERRED (which is exactly that same
-        # sentence for a *residual*, unresolved pair). Surfacing ``declined_bindings`` here
-        # (most likely as its own DIMENSION_DEFERRED finding) would make the two symmetric,
-        # but it ripples into :mod:`qufzx.rewrite.engine`'s step-8 deferred-issue bookkeeping
-        # (``RewriteStep.removed_deferred_issues``/``introduced_deferred_issues``, and every
-        # test asserting exact issue counts/lists across this module and that one) -- a
-        # certificate-shape change, not a Phase 5 bug fix, so it is left to Phase 10 rather
-        # than made here in passing. ``UnifyAllResult.declined_bindings`` is populated
-        # regardless (see that field's own docstring), so the assumption is not lost, only
-        # not yet reported; ``tests/test_symbolic_dimension_sweep.py`` pins today's silent
-        # behavior so this asymmetry is not rediscovered as a surprise later.
+        # A SUCCESS with non-empty leg_unify.declined_bindings (legs `d` and `e` unifying
+        # only by binding d := e) falls through without an issue. This module has no
+        # reporting path for "SUCCESS, but only under an assumption", unlike
+        # qufzx.rewrite.match, which records it as a BOUND DimensionConstraint. Closing that
+        # asymmetry is a certificate-shape change deferred to Phase 10; the assumption is
+        # still carried on UnifyAllResult.declined_bindings, and
+        # tests/test_symbolic_dimension_sweep.py pins today's behavior.
 
     if node.phase is not None:
         if gen.phase_schema is PhaseSchema.NONE:
@@ -601,28 +534,15 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
             and not leg_unify.is_failure
             and not leg_unify.exhausted
         ):
-            # A FAILURE leg set already reports DIMENSION_POLICY_VIOLATION above, and an
-            # exhausted one already reports DIMENSION_RESOLUTION_EXHAUSTED above -- neither
-            # leaves a coherent "shared leg dimension" to check the phase against, so this
-            # branch is skipped in both cases rather than manufacturing a second, arbitrary
-            # finding from whichever leg happens to be first (an exhausted leg_unify's
-            # ``bindings`` are a partial, non-final snapshot -- substituting them in would
-            # report a phase/leg (dis)agreement that the next unify_all pass, had the budget
-            # allowed it, might have overturned). See the module docstring for why a
-            # phase/leg disagreement is deliberately kept a *distinct* finding
-            # (PHASE_DIMENSION_MISMATCH) from a leg/leg disagreement
-            # (DIMENSION_POLICY_VIOLATION) rather than merged into one unify_all call.
+            # A FAILURE or exhausted leg set already has its own finding above, and neither
+            # leaves a coherent shared leg dimension to check the phase against, so this
+            # branch is skipped rather than manufacturing a second, arbitrary finding.
             #
-            # ``resolved_leg_dim`` is the node's first leg (input-then-output, original port
-            # order -- an arbitrary but fixed choice, exactly the role ``shared_dim`` plays in
-            # match.py's ``resolve_fusion_match``: seeded from one starting point and then
-            # refined by whatever the fixpoint bound) with ``leg_unify``'s accumulated
-            # bindings substituted in. When ``leg_unify`` is SUCCESS this is, by construction
-            # of that status, equal to what substituting bindings into *any* leg would give;
-            # when it is DEFERRED it is one representative among a residual-equal set --
-            # sound to compare the phase against for the same reason match.py's ``shared_dim``
-            # is sound to check surviving legs against one at a time (that module's docstring,
-            # conditions 6 and 7), not because the first leg is privileged.
+            # resolved_leg_dim is the node's first leg (input-then-output, original order --
+            # an arbitrary but fixed seed, the role shared_dim plays in match.py) with
+            # leg_unify's accumulated bindings substituted in. Under SUCCESS this equals what
+            # substituting into any leg would give; under DEFERRED it is one representative
+            # among a residual-equal set.
             resolved_leg_dim = all_ports[0].dim
             resolved_phase_dim = node.phase.dim
             if leg_unify.bindings:
@@ -656,21 +576,12 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                             deferred=True,
                         )
                     )
-                # A binding this phase check itself produces (``result.bindings``) is
-                # deliberately *not* fed back into ``leg_unify``/``resolved_leg_dim``: unlike
-                # match.py's condition 7, which threads phase bindings back into ``shared_dim``
-                # because a fusion candidate's applicability genuinely depends on the
-                # most-resolved view of every leg and phase together, this function is not
-                # deciding applicability of anything -- it has already fully decided the legs'
-                # own question (FAILURE/DEFERRED/SUCCESS, via ``leg_unify``) before the phase
-                # is even examined, and no later check in this function re-reads
-                # ``resolved_leg_dim``. Feeding the phase's binding back could only sharpen the
-                # wording of an already-emitted DIMENSION_DEFERRED leg residual (turning "d ==
-                # e assumed" into "2 == e assumed" if the phase happens to bind d := 2); it
-                # cannot change any verdict. A validator computing one-shot node-local diagnostics
-                # is allowed to be weaker here than a matcher computing whether a fusion is
-                # applicable -- if a later change makes this function iterate node-local
-                # checks to a fixpoint for some other reason, revisit this.
+                # A binding this phase check produces is deliberately not fed back into
+                # leg_unify/resolved_leg_dim. Unlike match.py's condition 7, this function
+                # decides no applicability: the legs' question is already fully settled
+                # before the phase is examined, and nothing later re-reads resolved_leg_dim.
+                # Feeding the binding back could only sharpen the wording of an
+                # already-emitted DIMENSION_DEFERRED residual, never change a verdict.
 
 
 def validate(diagram: Diagram) -> ValidationReport:

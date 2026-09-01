@@ -13,7 +13,7 @@
 
 """The literal chain ``FULL_PLAN.md`` names for Phase 5's completion condition: Dirac source
 string to :class:`~qufzx.diagram.graph.Diagram` to fusion match to post-diagram, oracle
-confirmed -- run end to end for the first time (Phase 5 post-closing audit round 19, Task 3).
+confirmed -- run end to end for the first time.
 
 ``tests/test_phase5_oracle.py`` already covers the graph-to-fuse-to-graph half, starting
 from ``tests/helpers.py::build_ghz_with_copy``'s hand-built diagram, and states explicitly
@@ -134,9 +134,9 @@ class TestDiracParserGrammar:
         raise AssertionError("ambiguous body+power should have raised DiracGrammarError")
 
     def test_every_malformed_or_out_of_domain_source_raises_only_dirac_error(self) -> None:
-        """Round 20, Task 1: no foreign exception (e.g. DimensionDomainError) may escape
-        parse_dirac_source. Swept over a table of distinct out-of-domain/malformed sources,
-        not just the one zero-dimension case that originally exposed the leak."""
+        """No foreign exception (e.g. DimensionDomainError) may escape parse_dirac_source.
+        Swept over a table of distinct out-of-domain/malformed sources, not just the one
+        zero-dimension case that originally exposed the leak."""
         bad_sources = (
             "sum_{k=0}^{0-1} |k,k>",  # concrete dimension 0
             "sum_{k=0}^{k-1} |k,k>",  # bound index used as a dimension symbol

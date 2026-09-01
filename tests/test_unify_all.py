@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.algebra.dimension.unify_all: F1, Phase 5 post-closing audit round 21."""
+"""Tests for qufzx.algebra.dimension.unify_all."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class TestBasicOutcomes:
         assert len(result.residual_pairs) >= 1
 
     def test_bare_symbol_pair_succeeds_via_a_declined_non_concrete_binding(self) -> None:
-        """Task 7b (Phase 5 post-closing audit round 23): two bare symbols (``d``, ``e``)
+        """Task 7b: two bare symbols (``d``, ``e``)
         unify by binding one to the other -- a non-concrete binding, never folded into
         ``bindings`` (see ``unify_all``'s own inline comment), but not simply dropped
         either: it lands in ``declined_bindings``, so the assumption this SUCCESS actually
@@ -161,13 +161,11 @@ class TestCrossNodePropagationDeferredToPhase10:
 
 
 class TestBudgetExhaustion:
-    """D3 (Phase 5 post-closing audit round 22, Defect 3): exhausting
-    ``_MAX_UNIFY_ALL_PASSES`` must be distinguishable from an ordinary, converged
+    """Exhausting ``_MAX_UNIFY_ALL_PASSES`` must be distinguishable from an ordinary, converged
     ``DEFERRED`` -- see :class:`~qufzx.algebra.dimension.UnifyAllResult`'s own docstring for
-    the general rule this is an instance of, mirrored from
-    ``qufzx.rewrite.match``'s own ``_MAX_FIXPOINT_PASSES``, which already fails closed
-    (:mod:`tests.test_match`'s ``TestFixpointBudgetExhaustion``).
-    """
+    the general rule this is an instance of, mirrored from ``qufzx.rewrite.match``'s own
+    ``_MAX_FIXPOINT_PASSES``, which already fails closed (:mod:`tests.test_match`'s
+    ``TestFixpointBudgetExhaustion``)."""
 
     def test_exhaustion_is_flagged_and_reports_the_final_pass_residual(
         self, monkeypatch: pytest.MonkeyPatch

@@ -139,20 +139,13 @@ class PortRef:
     def sort_key(self) -> tuple[int, str, int]:
         """A canonical, hash-independent ordering key: ``(node_id, direction, index)``.
 
-        Phase 5 post-closing audit round 18, Defect 1: :class:`PortRef`'s own ``__hash__``
-        (the dataclass-generated one) folds in :class:`Direction`, an ``enum.Enum`` whose
-        default hash is the member *name*'s string hash -- seed-dependent under
-        ``PYTHONHASHSEED``. Any caller that iterates a ``set``/``frozenset`` of ``PortRef``
-        (or of something built from one, such as :class:`Wire`) and lets that order reach a
-        returned value, a recorded certificate field, or an exception message therefore
-        produces a result that varies by process, not just by content. This method gives
-        every such caller a plain, hash-independent total order to sort by instead --
-        ``direction.value`` (the string ``"input"``/``"output"``), not the enum member
-        itself, so the key tuple contains no ``Enum`` and no seed-dependent hash anywhere in
-        its own comparison path. See :mod:`qufzx.diagram.validate`'s and
-        :mod:`qufzx.rewrite.match`/``engine``'s use of this for the sites this was added to
-        fix, and ``tests/test_engine.py::TestCrossProcessDeterminism`` for the regression
-        test pinning the fix end to end.
+        :class:`PortRef`'s own ``__hash__`` folds in :class:`Direction`, an ``enum.Enum``
+        hashed by member name and so ``PYTHONHASHSEED``-dependent. Any caller that iterates
+        a set of ``PortRef`` (or of :class:`Wire`) and lets that order reach a returned
+        value, a certificate field, or an exception message would produce a result varying
+        by process. This key uses ``direction.value``, not the enum member, so it contains
+        no seed-dependent hash anywhere in its comparison path. Pinned end to end by
+        ``tests/test_engine.py::TestCrossProcessDeterminism``.
         """
         return (int(self.node_id), self.direction.value, self.index)
 
@@ -206,12 +199,10 @@ class Wire:
     def sort_key(self) -> tuple[tuple[int, str, int], tuple[int, str, int]]:
         """A canonical, hash-independent ordering key: the sorted pair of endpoint keys.
 
-        Phase 5 post-closing audit round 18, Defect 1 -- see :meth:`PortRef.sort_key` for
-        why this is needed at all. ``Wire`` is unordered (``Wire(a, b) == Wire(b, a)``), so
-        this key must not depend on which endpoint happens to be stored as ``a`` versus
-        ``b``: it is the smaller of ``(self.a.sort_key(), self.b.sort_key())`` and
-        ``(self.b.sort_key(), self.a.sort_key())``, so two equal wires always produce the
-        identical key regardless of construction order.
+        See :meth:`PortRef.sort_key` for why this is needed. ``Wire`` is unordered, so
+        this key must not depend on which endpoint is stored as ``a`` versus ``b``: it is
+        the smaller of ``(a, b)`` and ``(b, a)``, so two equal wires always produce the
+        identical key.
         """
         a_key = self.a.sort_key()
         b_key = self.b.sort_key()

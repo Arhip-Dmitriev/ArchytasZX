@@ -11,12 +11,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Permanent regression guard: the 3-parallel-wire arm (Phase 5 post-closing audit probe 3).
+"""Permanent regression guard: the 3-parallel-wire arm.
 
-``tests/test_match.py``'s ``TestParallelWiresYieldOneCandidatePerWire`` exhaustively covers
-a pair joined by *two* parallel wires; this arm goes one further, to three, and then
-performs a *second* fusion round on the result -- a shape nothing else in the suite
-exercises. The diagram: A and B, same colour, joined by three parallel wires
+``tests/test_match.py``'s ``TestParallelWiresYieldOneCandidatePerWire`` covers a pair
+joined by two parallel wires; this arm goes to three, then performs a second fusion round
+on the result. The diagram: A and B, same colour, joined by three parallel wires
 (``a.out0-b.in0``, ``a.out1-b.in1``, ``a.out2-b.in2``); B also carries one further leg
 wired to a third node C. Round 1 fuses A and B across whichever of the three wires
 :func:`~qufzx.rewrite.match.find_matches` picks first (deterministically -- see that
@@ -28,11 +27,9 @@ rounds are oracle-compared against the ORIGINAL three-node diagram, not against 
 other's intermediate result, so a defect that only cancels out between two remaps (and
 would otherwise look locally correct at each step) cannot hide.
 
-All comparisons ran with zero failures against current ``main`` when this probe was first
-run as part of the audit -- this module exists to keep it that way, not to hunt for new
-bugs. Both colours are covered (X's own direction restriction -- condition 4 in
-:mod:`qufzx.rewrite.match`'s module docstring -- is respected throughout: every wire here
-is an alternating OUTPUT-to-INPUT wire, valid fusion for both colours).
+Both colours are covered; every wire here is an alternating OUTPUT-to-INPUT wire, valid
+fusion for both, so X's direction restriction (condition 4 in :mod:`qufzx.rewrite.match`)
+is respected throughout.
 """
 
 from __future__ import annotations

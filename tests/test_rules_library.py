@@ -199,7 +199,7 @@ class TestAllLegsConsumedPhase:
 
 
 class TestPhaseDimensionAgreementJudgementCall2:
-    """Judgement call 2 (Phase 5 post-closing audit), decided in
+    """Judgement call 2, decided in
     :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement``: a fusion whose two phase
     dims unify only by a *concrete* binding is now matched (was previously silently
     refused), and two present phases no longer need to agree raw before any resolution
@@ -317,8 +317,8 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
     Used to construct a foreign/hand-built ``FusionMatch`` whose ``side_condition_outcomes``
     lies about every condition having actually been checked -- so ``check_side_condition_coverage``
     (which only compares outcome *names* and passedness, never re-evaluates a predicate) lets
-    it through, and the builder's own fresh re-verification (:func:`resolve_fusion_match`,
-    Phase 5 round-12 audit) is what has to catch the lie.
+    it through, and the builder's own fresh re-verification via
+    :func:`resolve_fusion_match` is what has to catch the lie.
     """
     return tuple(
         SideConditionOutcome(name, True, "fabricated: claims to pass without being checked")
@@ -335,7 +335,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
 
 
 class TestPhase5Round12AuditDefects:
-    """Regression coverage for A1/A2 (Phase 5 round-12 audit): the builder must not trust a
+    """Regression coverage for A1/A2: the builder must not trust a
     match's own claimed ``generator_type`` agreement or ``shared_dim``/``bindings`` -- it must
     re-derive them fresh (via :func:`~qufzx.rewrite.match.resolve_fusion_match`) and reject any
     disagreement, since a fabricated-passing ``side_condition_outcomes`` tuple alone (which
@@ -397,12 +397,11 @@ class TestPhase5Round12AuditDefects:
 
 
 class TestGhostWireIsRejected:
-    """Defect 1 (Phase 5 post-closing audit): a match naming a wire that is structurally
-    incident on both nodes but was never actually added to the diagram used to be accepted
-    by ``resolve_fusion_match`` -- so the builder built a merged node consuming a wire the
-    diagram never had. Fixed in ``resolve_fusion_match`` itself; this proves the fix closes
-    the path all the way through the builder.
-    """
+    """A match naming a wire that is structurally incident on both nodes but was never actually
+    added to the diagram used to be accepted by ``resolve_fusion_match`` -- so the builder
+    built a merged node consuming a wire the diagram never had. Fixed in
+    ``resolve_fusion_match`` itself; this proves the fix closes the path all the way through
+    the builder."""
 
     def test_builder_refuses_a_match_over_a_wire_absent_from_the_diagram(self) -> None:
         d = Dim.concrete(2)
@@ -427,7 +426,7 @@ class TestGhostWireIsRejected:
 
 
 class TestSideConditionCoverageEnforced:
-    """Fix 1: an empty (or incomplete) side_condition_outcomes tuple must not be accepted.
+    """An empty (or incomplete) side_condition_outcomes tuple must not be accepted.
 
     Proof from the audit: a hand-built FusionMatch naming a Z spider wired into an X
     spider, with side_condition_outcomes=(), used to be accepted by spider_fusion_builder
@@ -474,11 +473,12 @@ class TestSideConditionCoverageEnforced:
 
 
 class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
-    """Defect 1 reproducer: a phase stated over the still-symbolic side of a bound leg
-    must not crash the builder. Before the fix, the absent phase was synthesized at the
-    resolved ``shared_dim`` while the present phase kept its own raw, unbound ``Dim``, so
-    ``PhaseVector.__add__`` raised ``PhaseDomainError`` -- a phase on one side only, over
-    the still-unbound symbol, passed the matcher and raised in the builder.
+    """A phase stated over the still-symbolic side of a bound leg must not crash the builder.
+
+    Synthesizing the absent phase at the resolved ``shared_dim`` while the present phase
+    keeps its own raw, unbound ``Dim`` makes ``PhaseVector.__add__`` raise
+    ``PhaseDomainError``: a phase on one side only, over the still-unbound symbol, passes
+    the matcher and raises in the builder.
     """
 
     def test_phase_on_the_symbolic_side_no_longer_raises(self) -> None:
@@ -534,7 +534,7 @@ class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
 
 
 class TestPhaseSubstitutionsCertificate:
-    """F2, Phase 5 post-closing audit round 21: which bindings were actually substituted
+    """F2, which bindings were actually substituted
     into a phase's *entries* is now recorded onto the certificate, distinct from the
     container ``Dim`` every merge reattaches regardless.
     """
@@ -584,11 +584,12 @@ class TestPhaseSubstitutionsCertificate:
 
 
 class TestSharedDimPropagatesToEverySurvivingPort:
-    """Defect 2 reproducer: a resolved ``shared_dim`` used to be computed and then
-    discarded -- the merged node's ports kept each leg's own raw ``Dim``, so a fusion
-    whose match resolved ``d := 3`` could still leave a surviving leg carrying the
-    unbound symbol ``d``, and the same symbol could be bound to contradictory values
-    across independent fusion steps with no error anywhere.
+    """The merged node's ports must carry the resolved ``shared_dim``, not each leg's raw
+    ``Dim``.
+
+    Keeping the raw dims lets a fusion whose match resolved ``d := 3`` still leave a
+    surviving leg carrying the unbound symbol ``d``, so the same symbol can be bound to
+    contradictory values across independent fusion steps with no error anywhere.
     """
 
     def test_a_surviving_leg_with_a_different_raw_dim_is_forced_to_shared_dim(self) -> None:
@@ -632,7 +633,7 @@ class TestSharedDimPropagatesToEverySurvivingPort:
 
 
 class TestRuleRegistry:
-    """Fix 5: RewriteStep.rule_name must be resolvable back to a Rule via a registry."""
+    """RewriteStep.rule_name must be resolvable back to a Rule via a registry."""
 
     def test_rules_contains_spider_fusion_by_name(self) -> None:
         assert RULES["spider_fusion"] is SPIDER_FUSION

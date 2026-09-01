@@ -14,11 +14,9 @@
 """Exhaustive (not random) sweep over ``dimension_constraints`` content.
 
 The exhaustive oracle sweep in ``test_phase5_exhaustive_oracle.py`` only visits cleanly
-contractible diagrams, so the deferred/binding path -- the one Phase 5's judgement call
-allows fusion to fire across -- is never oracle-validated there at a substitution where its
-own recorded assumption holds. This module covers that path, and separately sweeps the
-shape of the certificate data itself over a far larger space than any hand-picked test in
-``test_match.py``/``test_engine.py``.
+contractible diagrams, so the deferred/binding path is never oracle-validated there at a
+substitution where its own recorded assumption holds. This module covers that path, and
+separately sweeps the shape of the certificate data itself.
 
 Two sweeps, split by cost:
 
@@ -91,7 +89,7 @@ too would blow up runtime for no coverage this module doesn't already get elsewh
 connecting pair's own dimension-pair space is exhaustively covered by ``_DIM_PAIRS`` and
 ``TestOracleTiesBackToRecordedConstraints`` below)."""
 _SURVIVING_PALETTE = (Dim.concrete(2), _D, _E, _D * _E, _D**2)
-"""Palette for *surviving* legs and phases. Widened (Phase 5 audit round 15, N1) from
+"""Palette for *surviving* legs and phases. Widened from
 ``(Dim.concrete(2), _D)`` to include a product (``d*e``), a power (``d**2``), and a second
 bare symbol (``e``) -- so two distinct binding symbols and a deferred-then-refuted leg are
 inside this structural sweep's space, not only ``test_match.py``'s hand-picked D1 regression
@@ -180,7 +178,7 @@ class TestCertificateStructuralProperties:
                                         )
                                         assert not unify_result.is_failure
 
-                                    # N1 (Phase 5 audit round 15): the recorded constraint
+                                    # N1: the recorded constraint
                                     # set must be *simultaneously* satisfiable, not merely
                                     # pairwise self-consistent (each constraint's own
                                     # assumed/equal_to unifying in isolation, checked above,
@@ -365,7 +363,7 @@ family: without a floor, this arm degenerating to "every case's satisfying/viola
 substitution search comes back infeasible or absent" would still pass on the bare ``> 0``
 check it replaces, silently exercising nothing.
 
-Round 20, Task 11: this arm was previously guarded only by ``total_checked > 0``, with no
+this arm was previously guarded only by ``total_checked > 0``, with no
 floor at all -- unlike every random-seed property harness in ``test_fusion_properties.py``,
 which each has one. This arm iterates a fully deterministic, fixed cross product (
 ``_COLOR_DIRECTION_COMBOS`` x 3 source kinds x ``_DIM_PAIRS``, 36 cases total as of this
@@ -590,8 +588,7 @@ def _assert_dimension_agreement_detail_agrees(match: object) -> None:  # match: 
                 assert "non-concrete Dim" not in leg_part, leg_part
             else:
                 assert "bound to a non-concrete Dim" in leg_part, leg_part
-                # No misattributed concrete binding must leak in for this outcome -- the
-                # exact Defect 4 (round 18) / round 19 failure mode.
+                # No misattributed concrete binding must leak in for this outcome.
                 assert "(bound: " not in leg_part, leg_part
 
     leg_entries = [e for e in entries if e.source.kind is ConstraintSourceKind.SURVIVING_LEG]
@@ -635,11 +632,10 @@ def _assert_phase_dimension_agreement_detail_agrees(match: object) -> None:  # F
 
 
 class TestCertificateDetailFidelity:
-    """Task 1 (Phase 5 post-closing audit round 19): an exhaustive sweep, not a hand-picked
-    case, asserting every ``dimension_agreement``/``phase_dimension_agreement`` detail string
-    states exactly the operands and bindings its own record entry does. See the module
-    docstring for why this class exists and what round 18's regression test missed.
-    """
+    """An exhaustive sweep, not a hand-picked case, asserting every
+    ``dimension_agreement``/``phase_dimension_agreement`` detail string states exactly the
+    operands and bindings its own record entry does. See the module docstring for why this
+    class exists and what round 18's regression test missed."""
 
     def test_connecting_pair_and_surviving_leg_details_agree_with_the_record(self) -> None:
         total = 0
@@ -701,7 +697,7 @@ class TestCertificateDetailFidelity:
         assert total > 0, "the phase detail-fidelity sweep never produced a single fusion match"
 
     def test_phase_bound_on_both_nodes_with_legs_surviving_on_both_sides_agrees(self) -> None:
-        """Round 20, Task 7: a phase-sourced binding on *each* node, with a surviving leg on
+        """A phase-sourced binding on *each* node, with a surviving leg on
         *each* side too, is exactly the shape where the deleted ``phase_bound_names``
         accumulator and ``record`` itself could in principle have disagreed (see
         ``_unify_phase_dims``'s module-docstring "Round 20" note) -- both nodes contribute a
@@ -846,8 +842,9 @@ def _find_matches_with_adequacy_instrumentation(
 
 
 class TestConstraintRecordAdequacy:
-    """Task 1 (Phase 5 post-closing audit round 23): the adequacy property from
-    ``_ConstraintRecord``'s own docstring, mechanically enforced rather than merely argued.
+    """The adequacy property from ``_ConstraintRecord``'s own docstring, mechanically enforced
+    rather than merely argued.
+
 
     Every ``(assumed, equal_to)`` pair ``_ConstraintRecord.record`` ever asserts during a
     resolution -- including one a later pass displaces or overwrites, which round 23 found

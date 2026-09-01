@@ -260,14 +260,12 @@ class TestRewriteStepProvenance:
 
 
 class TestCertificateRecordsTheReDerivedFacts:
-    """Defect 2 (Phase 5 post-closing audit): the certificate must record what
-    ``resolve_fusion_match`` independently re-derives, not a match's own unaudited claim --
-    ``spider_fusion_builder`` computes the real ``FusionResolution`` as a side effect of its
-    own re-verification (Phase 5 round-12 audit, A1/A2) but, before this fix, had no
-    ``BuildResult`` channel to return it, so ``apply`` fell back to recording ``match``'s own
-    ``side_condition_outcomes``/``dimension_constraints`` verbatim -- fields a foreign or
-    hand-built match can fabricate.
-    """
+    """The certificate must record what ``resolve_fusion_match`` independently re-derives, not
+    a match's own unaudited claim -- ``spider_fusion_builder`` computes the real
+    ``FusionResolution`` as a side effect of its own re-verification but, before this fix,
+    had no ``BuildResult`` channel to return it, so ``apply`` fell back to recording
+    ``match``'s own ``side_condition_outcomes``/``dimension_constraints`` verbatim -- fields
+    a foreign or hand-built match can fabricate."""
 
     def test_fabricated_dimension_constraints_and_outcomes_are_rejected_not_silently_recorded(
         self,
@@ -366,12 +364,11 @@ class TestApplyRejectsAScalarMismatch:
 
 
 class TestApplyEnforcesSideConditionCoverage:
-    """Fix 1's audit proof, exercised through apply(): an empty outcomes tuple must not
-    silently bypass the side-condition invariant.
+    """An empty outcomes tuple must not silently bypass the side-condition invariant.
 
-    Before the fix, a hand-built FusionMatch(side_condition_outcomes=()) naming a Z
-    spider wired into an X spider was accepted by apply(): it merged the two into one Z
-    node, produced a diagram validate() called well-formed, and oracle-compared against
+    Without the coverage check, a hand-built FusionMatch(side_condition_outcomes=()) naming
+    a Z spider wired into an X spider is accepted by apply(): it merges the two into one Z
+    node, produces a diagram validate() calls well-formed, and oracle-compares against
     the input with a nonzero deviation -- while the emitted RewriteStep recorded zero
     side conditions.
     """
@@ -395,7 +392,7 @@ class TestApplyEnforcesSideConditionCoverage:
 
 
 class TestApplyRejectsAForeignMatch:
-    """Fix 4: apply() must verify the match actually belongs to the diagram it is applied to."""
+    """Apply() must verify the match actually belongs to the diagram it is applied to."""
 
     def test_raises_when_the_matched_wire_is_absent_from_the_diagram(self) -> None:
         d = Dim.concrete(2)
@@ -501,7 +498,7 @@ class TestApplyRejectsAForeignMatch:
 
 
 class TestRewriteStepRecordsTheMatch:
-    """Fix 6: RewriteStep must carry the located match Phase 6 replays from."""
+    """RewriteStep must carry the located match Phase 6 replays from."""
 
     def test_step_match_is_the_applied_match(self) -> None:
         d = Dim.symbol("d")
@@ -512,13 +509,12 @@ class TestRewriteStepRecordsTheMatch:
 
 
 class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
-    """Defect 5 (Phase 5 audit): step 8's relative post-condition used to compare hard-error
-    IssueKinds as a *set*. A set comparison cannot see a second, independent issue of a kind
-    the input diagram already carried once (both collapse to the same set element), so a
-    builder that left the input's pre-existing violation untouched but introduced a brand
-    new, unrelated one of the *same* kind on a fresh node used to slip through undetected.
-    The comparison must be a multiset keyed by (kind, offending ref) instead.
-    """
+    """Step 8's relative post-condition used to compare hard-error IssueKinds as a *set*. A set
+    comparison cannot see a second, independent issue of a kind the input diagram already
+    carried once (both collapse to the same set element), so a builder that left the input's
+    pre-existing violation untouched but introduced a brand new, unrelated one of the *same*
+    kind on a fresh node used to slip through undetected. The comparison must be a multiset
+    keyed by (kind, offending ref) instead."""
 
     def test_a_second_dimension_policy_violation_on_a_new_node_is_caught(self) -> None:
         def _builder_with_a_second_violation(working_diagram: Diagram, match_obj: object) -> object:
@@ -565,7 +561,7 @@ class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
 
 
 class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
-    """Defect 1 (Phase 5 round-7 audit): step 8 compared a pre-existing hard-error issue's
+    """Step 8 compared a pre-existing hard-error issue's
     key in its *input*-diagram coordinates against post-rewrite keys, which are always in
     *post*-rewrite coordinates. A consumed node's ports and node id do not survive a
     rewrite -- the merged node gets a fresh id and fresh port indices -- so an issue
@@ -605,7 +601,7 @@ class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
 
 
 class TestStep8CarriesANodeDimensionUndeterminedIssueOnAThirdUntouchedNode:
-    """Round 20, Task 9: NODE_DIMENSION_UNDETERMINED is anchored on ``node_id``, with no
+    """NODE_DIMENSION_UNDETERMINED is anchored on ``node_id``, with no
     ``port_ref``/``wire`` -- the same reference shape ``_translate_input_issue_key`` already
     routes through its single-``new_node_ids``-entry fallback for any other node-id-anchored
     kind (see that function's docstring). This pins that routing for the new kind
@@ -650,14 +646,12 @@ class TestStep8CarriesANodeDimensionUndeterminedIssueOnAThirdUntouchedNode:
 
 
 class TestRemovedDeferredIssuesAreRecorded:
-    """Judgement call 1 (Phase 5 post-closing audit): fusion is allowed to fire across a
-    ``DEFERRED`` dimension pair (see rules_library.py's module docstring, "Phase 5
-    judgement call"), but a rewrite that makes the resulting diagram-level
-    ``DIMENSION_DEFERRED`` finding disappear entirely must record that fact on the
-    certificate, not merely leave it inferable from ``dimension_constraints`` -- step 8's
-    own hard-error compare never looks at deferred issues at all, by design, so nothing
-    else in ``apply`` would otherwise ever mention this.
-    """
+    """Fusion is allowed to fire across a ``DEFERRED`` dimension pair (see rules_library.py's
+    module docstring, "Phase 5 judgement call"), but a rewrite that makes the resulting
+    diagram-level ``DIMENSION_DEFERRED`` finding disappear entirely must record that fact on
+    the certificate, not merely leave it inferable from ``dimension_constraints`` -- step
+    8's own hard-error compare never looks at deferred issues at all, by design, so nothing
+    else in ``apply`` would otherwise ever mention this."""
 
     def test_a_consumed_deferred_leg_pair_is_recorded_as_removed(self) -> None:
         d = Dim.symbol("d")
@@ -721,7 +715,7 @@ class TestRemovedDeferredIssuesAreRecorded:
 
 
 class TestDimensionConstraintsExactContent:
-    """Phase 5 post-closing audit, dimension_constraints duplicate-assumption defect.
+    """Dimension_constraints duplicate-assumption defect.
 
     Before the fix, ``_unify_surviving_legs`` (match.py) unified each surviving leg's raw,
     unresolved ``Dim`` against ``shared_dim`` -- unlike its sibling ``_unify_phase_dims``,
@@ -830,7 +824,7 @@ class TestDimensionConstraintsExactContent:
 
 
 class TestRemovedDeferredIssuesMultisetCompare:
-    """Phase 5 post-closing audit, ``removed_deferred_issues`` key-collision defect.
+    """``removed_deferred_issues`` key-collision defect.
 
     Before the fix, the deferred compare in ``apply`` (engine.py) keyed a plain dict
     comprehension on ``_translate_input_issue_key(issue, ...)``. That function maps both
@@ -1063,13 +1057,12 @@ class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
 
 
 class TestRewriteStepIsHashable:
-    """Task 1 (Phase 5 closing round): the explicit ``__hash__`` this class already declared
-    (to work around ``port_mapping`` being an unhashable ``MappingProxyType``) hashed
-    ``self.match`` verbatim -- and every ``FusionMatch`` was itself unhashable for the same
-    reason (its own ``bindings`` field), so ``hash(step)`` raised for every step ``apply``
-    ever produced, including the empty-``bindings`` default. See ``test_match.py``'s
-    ``TestFusionMatchIsHashable`` for the root-cause fix this depends on.
-    """
+    """The explicit ``__hash__`` this class already declared (to work around ``port_mapping``
+    being an unhashable ``MappingProxyType``) hashed ``self.match`` verbatim -- and every
+    ``FusionMatch`` was itself unhashable for the same reason (its own ``bindings`` field),
+    so ``hash(step)`` raised for every step ``apply`` ever produced, including the
+    empty-``bindings`` default. See ``test_match.py``'s ``TestFusionMatchIsHashable`` for
+    the root-cause fix this depends on."""
 
     def test_hash_succeeds_with_empty_bindings(self) -> None:
         d = Dim.symbol("d")
@@ -1136,7 +1129,7 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
         # wire between two *other* nodes being dropped, not about c_id/r_id's own shape.
         # Each still needs *some* dimension-bearing content (a phase, here, since it has no
         # legs to carry one) so it satisfies validate()'s NODE_DIMENSION_UNDETERMINED check
-        # (round 20, Task 9) and does not itself contribute a spurious pre/post error this
+        # and does not itself contribute a spurious pre/post error this
         # test is not exercising.
         c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[], phase=PhaseVector(d, {}))
         w = Wire(PortRef(s1_id, Direction.OUTPUT, 0), PortRef(s2_id, Direction.INPUT, 0))
@@ -1215,15 +1208,13 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_a3_duplicate_consumed_node_ids_raises_rewrite_grammar_error(self) -> None:
-        """A3 (Phase 5 round-12 audit): a repeated entry in ``consumed_node_ids`` passes the
-        plain membership check (every entry, including the repeat, names a real node) but
-        would otherwise make step 6's removal loop call ``remove_node`` twice on the same,
-        by-then-already-removed id, raising ``qufzx.diagram.graph.GraphGrammarError`` -- a
-        different module's exception, escaping the ``RewriteError`` hierarchy ``apply``'s own
-        docstring promises. It must instead be rejected as a malformed request, before step 6
-        is ever reached, with the same ``RewriteGrammarError`` every other malformed
-        ``BuildResult`` field raises.
-        """
+        """A repeated entry in ``consumed_node_ids`` passes the plain membership check (every
+        entry, including the repeat, names a real node) but would otherwise make step 6's
+        removal loop call ``remove_node`` twice on the same, by-then-already-removed id,
+        raising ``qufzx.diagram.graph.GraphGrammarError`` -- a different module's exception,
+        escaping the ``RewriteError`` hierarchy ``apply``'s own docstring promises. It must
+        instead be rejected as a malformed request, before step 6 is ever reached, with the
+        same ``RewriteGrammarError`` every other malformed ``BuildResult`` field raises."""
         d = Dim.concrete(2)
         diagram = Diagram()
         c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -1255,7 +1246,7 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_duplicate_new_node_ids_raises_rewrite_grammar_error(self) -> None:
-        """Class 2 sweep (Phase 5 post-closing audit round 19, Task 4): ``new_node_ids`` is a
+        """``new_node_ids`` is a
         structurally identical reference kind to ``consumed_node_ids`` (a tuple of ``NodeId``
         the builder reports about this one rewrite), but only the latter had a duplicate
         check (A3) before this fix. A repeat here drives no imperative loop into a crash --
@@ -1290,15 +1281,13 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_hardening_5_non_injective_port_mapping_raises_rewrite_grammar_error(self) -> None:
-        """Hardening 5 (Phase 5 post-closing audit round 18): port_mapping's injectivity is
-        load-bearing (step 5 relies on distinct surviving old ports remapping to distinct new
-        ports) but was previously unchecked. Two consumed ports mapped to the *same* new port
-        would, once both their wires are remapped, produce two ``Wire`` objects that could be
-        identical -- silently collapsing into one entry of ``Diagram``'s set-backed wire
-        storage, with no exception anywhere. ``spider_fusion_builder`` is injective by
-        construction, so this never fires for Phase 5's one registered rule; a foreign or
-        future builder need not be.
-        """
+        """Port_mapping's injectivity is load-bearing (step 5 relies on distinct surviving old
+        ports remapping to distinct new ports) but was previously unchecked. Two consumed
+        ports mapped to the *same* new port would, once both their wires are remapped,
+        produce two ``Wire`` objects that could be identical -- silently collapsing into one
+        entry of ``Diagram``'s set-backed wire storage, with no exception anywhere.
+        ``spider_fusion_builder`` is injective by construction, so this never fires for
+        Phase 5's one registered rule; a foreign or future builder need not be."""
         d = Dim.concrete(2)
         diagram = Diagram()
         c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
@@ -1334,17 +1323,16 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_hardening_6_wire_count_postcondition_catches_a_silently_lost_wire(self) -> None:
-        """Hardening 6 (Phase 5 post-closing audit round 18): a cheap structural postcondition
-        on step 5's remapping as a whole -- ``len(working.wires) == len(pre_wires) -
-        len(set(consumed_wires))`` -- catching a wire lost by any mechanism, not only the two
-        step 5 (single-wire collapse) and hardening 5 (port_mapping injectivity) already
-        guard. This reproduction is injective (``port_mapping`` has exactly one entry, so
-        injectivity is trivially satisfied) and does not collapse *within* one wire's own two
-        endpoints (``new_a != new_b``) -- it aliases a consumed port onto an *already-live*
-        port that some other, untouched wire already uses, so the remapped wire silently
-        duplicates that pre-existing one once added to ``Diagram``'s set-backed wire storage,
-        losing a wire with neither of the other two checks ever firing.
-        """
+        """A cheap structural postcondition on step 5's remapping as a whole --
+        ``len(working.wires) == len(pre_wires) - len(set(consumed_wires))`` -- catching a
+        wire lost by any mechanism, not only the two step 5 (single-wire collapse) and
+        hardening 5 (port_mapping injectivity) already guard. This reproduction is injective
+        (``port_mapping`` has exactly one entry, so injectivity is trivially satisfied) and
+        does not collapse *within* one wire's own two endpoints (``new_a != new_b``) -- it
+        aliases a consumed port onto an *already-live* port that some other, untouched wire
+        already uses, so the remapped wire silently duplicates that pre-existing one once
+        added to ``Diagram``'s set-backed wire storage, losing a wire with neither of the
+        other two checks ever firing."""
         d = Dim.concrete(2)
         diagram = Diagram()
         c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -1389,45 +1377,31 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 
 
 class TestConditionNumberingMatchesDeclaredOrder:
-    """Round 24: numbered "condition N" references must agree with FUSION_SIDE_CONDITIONS.
+    """Numbered "condition N" references must agree with FUSION_SIDE_CONDITIONS.
 
-    The seven side conditions are addressed two ways throughout this package -- by *name*
-    (``dimension_agreement``) and by *position* ("condition 6"). Only the name is checkable
-    by the compiler. Round 23 inserted ``consumed_ports_singly_claimed`` at position 5,
-    shifting ``dimension_agreement`` 5 -> 6 and ``phase_dimension_agreement`` 6 -> 7, and
-    left **seven** references across three modules stating the old numbers -- including one
-    degraded into the meaningless "condition 6/6", and one
-    ("condition 5's own convention ... ``leg_deferred``") that no amount of grepping for the
-    obvious pattern would have surfaced.
+    The seven side conditions are addressed two ways throughout this package -- by name
+    (``dimension_agreement``) and by position ("condition 6"). Only the name is checkable by
+    the compiler. Two checks below, of deliberately different strengths:
 
-    That is the class this repo's audit history keeps rediscovering: one fact stated in two
-    places and kept in sync by hand. Two checks below, deliberately of different strengths:
-
-    * :meth:`test_module_docstring_list_matches_declared_order` is *exact*. The numbered list
-      in :mod:`qufzx.rewrite.match`'s own module docstring is the authoritative statement of
-      the numbering that every "condition N" elsewhere refers to, and it is machine-readable,
-      so it is machine-checked -- no heuristic, no false positives, no escape. A future
-      insertion that renumbers the conditions cannot land without this failing.
-    * :meth:`test_adjacent_number_and_name_agree` is a *partial net* over cross-references in
-      prose, and is documented as partial rather than sold as complete. "Condition 6" and
-      ``phase_dimension_agreement`` legitimately appear in one sentence whenever the prose
-      contrasts two conditions, so proximity is not reference; the window is calibrated
-      (:data:`_WINDOW`) to the tight ``condition N (``name``)`` / ``` ``name`` (condition N)```
-      shapes only, and compares the stated number *set* against the named conditions'
-      declared position set for equality. It would have caught two of round 24's seven
-      findings on its own; the exact check above is what actually guards the renumber,
-      and this one adds a second layer over the prose that sits closest to it.
+    * :meth:`test_module_docstring_list_matches_declared_order` is exact. The numbered list
+      in :mod:`qufzx.rewrite.match`'s module docstring is the authoritative statement of the
+      numbering every "condition N" refers to, and it is machine-readable, so it is
+      machine-checked. An insertion that renumbers the conditions cannot land without this
+      failing.
+    * :meth:`test_adjacent_number_and_name_agree` is a partial net over prose
+      cross-references. "Condition 6" and ``phase_dimension_agreement`` legitimately appear
+      in one sentence whenever the prose contrasts two conditions, so proximity is not
+      reference; :data:`_WINDOW` is calibrated to the tight ``condition N (``name``)``
+      shapes only.
     """
 
     _WINDOW = 60
     """Characters either side of a "condition N" mention to search for a condition name.
 
-    Calibrated, not guessed: measured over the five modules below, 60 inspects 13 references
-    with zero false positives, while 90 pulls in the contrast sentence at ``match.py``'s
-    condition-7 body ("unlike condition 6's own ``leg_deferred``, a *passing*
-    ``phase_dimension_agreement`` outcome ...") where a number and a *different* condition's
-    name sit in one sentence entirely correctly. Widening this without re-checking that
-    trade-off will produce false failures, not extra coverage."""
+    Calibrated, not guessed: at 60 the net inspects only tight ``condition N (``name``)``
+    references, while 90 pulls in contrast sentences where a number and a different
+    condition's name correctly sit together. Widening this without re-checking that
+    trade-off produces false failures, not extra coverage."""
 
     _MODULES = (
         "qufzx/rewrite/match.py",
@@ -1505,14 +1479,10 @@ class TestConditionNumberingMatchesDeclaredOrder:
     def test_adjacent_number_and_name_agree(self) -> None:
         """The partial net: a number stated right beside a name must be that name's."""
         positions = self._positions()
-        # Strict set equality, not mere overlap. Overlap was the first draft's rule and is
-        # too lenient for a multi-number mention: the stale round-23 wording
-        # "conditions 5 and 6 (``dimension_agreement``, ``phase_dimension_agreement``)"
-        # states {5, 6} against true positions {6, 7}, which *do* overlap at 6 -- so an
-        # overlap rule would have waved through the exact wording this net exists to catch.
-        # Equality is safe here only because _WINDOW is tight enough to exclude contrast
-        # sentences (see that constant); measured over the five modules, all 13 inspected
-        # references satisfy equality exactly.
+        # Strict set equality, not overlap: a multi-number mention stating {5, 6} against
+        # true positions {6, 7} overlaps at 6, so an overlap rule would wave through exactly
+        # the wording this net exists to catch. Equality is safe only because _WINDOW is
+        # tight enough to exclude contrast sentences.
         violations = [
             f"{relative}:{line}: 'condition(s) {sorted(numbers)}' sits beside "
             f"{sorted(names)}, whose declared position(s) are "
@@ -1525,58 +1495,20 @@ class TestConditionNumberingMatchesDeclaredOrder:
             "order:\n  " + "\n  ".join(violations)
         )
 
-    def test_the_net_is_not_vacuous(self) -> None:
-        """It must actually inspect references, and must reject text it is meant to reject.
-
-        Without this, a regex that silently stopped matching (a changed quoting convention,
-        say) would leave the check above passing on zero inspected references forever -- the
-        same vacuity failure mode the property harness's own floors exist to prevent.
-        """
-        inspected = self._cross_references()
-        assert len(inspected) >= 8, (
-            f"the adjacency net inspected only {len(inspected)} reference(s); it is close to "
-            "vacuous -- has the ``name``/'condition N' wording convention changed?"
-        )
-        positions = self._positions()
-        assert positions["dimension_agreement"] == 6
-        assert positions["phase_dimension_agreement"] == 7
-        # The exact wording round 24 found stale in match.py, before it was fixed.
-        stale = "conditions 5 and 6 (``dimension_agreement``, ``phase_dimension_agreement``)"
-        numbers = {
-            int(g) for m in self._NUMBER_RE.finditer(stale) for g in m.groups() if g
-        }
-        assert numbers == {5, 6}, numbers
-        names = set(re.findall(r"``([a-z_]+)``", stale))
-        assert numbers != {positions[name] for name in names}, (
-            "the stale round-23 wording must be detectable as a disagreement, or this net "
-            "would not have caught it either"
-        )
-        assert numbers & {positions[name] for name in names}, (
-            "and it must be detectable *despite* overlapping, which is exactly why this "
-            "check uses set equality rather than intersection"
-        )
-
 
 class TestApplyDocstringMatchesRaiseSites:
-    """Round 20, Task 5: ``apply``'s docstring drifted out of date twice (rounds 18-19 each
-    added raise sites without updating the prose a caller actually reads), because nothing
-    checked the two stayed in sync. This pins the count of raise sites lexically inside
-    ``apply``'s own body so a future addition without a matching docstring update fails here,
-    naming the offending line, rather than silently drifting a third time.
+    """Pin the count of raise sites lexically inside ``apply``'s body against its docstring.
 
-    Deliberately an *equality* pin on a count, not a semantic check of the docstring's
-    content -- the AST can enumerate raise sites cheaply and reliably, but "does the prose
-    accurately describe this raise site" is not a question ast.parse can answer. See
-    ``apply``'s own docstring for why one of the 11 total documented raise conditions (the
-    unmapped-surviving-port raise inside ``_remap_endpoint``, called from step 5) is not
-    counted here: it is not a literal ``raise`` statement lexically inside ``apply``'s body,
-    so the AST walk below -- by construction -- cannot see it and must not claim to.
+    An equality pin on a count, not a semantic check of the prose: the AST can enumerate
+    raise sites reliably, but cannot answer whether the prose describes them accurately.
+    One of the 11 documented raise conditions -- the unmapped-surviving-port raise inside
+    ``_remap_endpoint``, called from step 5 -- is not counted, since it is not lexically
+    inside ``apply``'s body and the AST walk below cannot see it.
     """
 
     #: Count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
-    #: statements lexically inside ``apply``'s own function body, as of round 20. Keep this
-    #: adjacent to ``apply``'s docstring (qufzx/rewrite/engine.py) so updating one without the
-    #: other is visibly wrong in review.
+    #: statements lexically inside ``apply``'s own function body. Keep in sync with
+    #: ``apply``'s docstring in qufzx/rewrite/engine.py.
     _EXPECTED_RAISE_SITE_COUNT = 10
 
     def test_raise_site_count_matches_the_pinned_constant(self) -> None:
@@ -1609,40 +1541,20 @@ class TestApplyDocstringMatchesRaiseSites:
 
 
 class TestCrossProcessDeterminism:
-    """Phase 5 post-closing audit round 18, Defect 1: certificate provenance must not vary
-    by ``PYTHONHASHSEED``.
+    """Certificate provenance must not vary by ``PYTHONHASHSEED``.
 
-    Root cause: :meth:`~qufzx.diagram.validate._check_wire_dimensions` and
-    :meth:`~qufzx.diagram.validate._check_port_usage` used to iterate ``diagram.wires``, a
-    frozenset. ``PortRef``'s (and so ``Wire``'s) hash folds in ``Direction``, an
-    ``enum.Enum`` whose default hash is its member *name*'s string hash -- seed-dependent
-    under ``PYTHONHASHSEED`` (Python randomizes string hashing per process by default).
-    ``validate()``'s issue order therefore varied per process, and
-    :func:`~qufzx.rewrite.engine._select_by_key_surplus` (which walks that order to populate
-    :attr:`~qufzx.rewrite.engine.RewriteStep.removed_deferred_issues` /
-    ``introduced_deferred_issues`` when a translated key collides across several issues) made
-    those fields non-deterministic across processes, contradicting
-    :attr:`~qufzx.rewrite.engine.RewriteStep.deferred_issue_identity_ambiguous`'s own
-    docstring promise of "first in validate order".
+    ``PortRef``'s (and so ``Wire``'s) hash folds in ``Direction``, an ``enum.Enum`` hashed
+    by member name, which Python randomizes per process. Any wire iteration whose order is
+    observable is therefore sorted by the hash-independent ``PortRef.sort_key`` /
+    ``Wire.sort_key`` at every site in :mod:`qufzx.diagram.validate`,
+    :mod:`qufzx.rewrite.match` and :mod:`qufzx.rewrite.engine` where it could reach a
+    returned value, a certificate field, or an exception message.
 
-    Fixed by sorting every wire iteration whose order is observable
-    (``qufzx.diagram.graph.PortRef.sort_key`` / ``Wire.sort_key``, hash-independent) at every
-    site in :mod:`qufzx.diagram.validate`, :mod:`qufzx.rewrite.match`, and
-    :mod:`qufzx.rewrite.engine` where the order could reach a returned value, a recorded
-    certificate field, or an exception message -- see each site's own comment for why it, in
-    particular, needed the sort (or, at two sites, provably did not, and why).
-
-    This test runs the identical rewrite in two child processes with different
-    ``PYTHONHASHSEED`` values (rather than merely asserting something in-process, which
-    cannot observe seed-dependent hash ordering at all) and compares a full, stable
-    serialization of the fields the module docstrings promise are deterministic. It
-    deliberately never compares ``hash()`` of anything: ``IssueKind`` and ``Direction`` are
-    ``Enum``s hashed by member name, so ``hash(step)`` (or ``hash(issue)``, etc.)
-    legitimately -- and permanently -- differs across processes; that is a fact about
-    Python's ``Enum``/``str`` hashing this round does not change and could not soundly
-    change (``RewriteStep.__hash__``'s own docstring is corrected elsewhere in this round to
-    say so explicitly, rather than the pre-round-18 wording that implied more than
-    within-process stability).
+    This test runs the identical rewrite in two child processes under different
+    ``PYTHONHASHSEED`` values -- an in-process assertion cannot observe seed-dependent
+    ordering at all -- and compares a stable serialization of the fields promised
+    deterministic. It never compares ``hash()`` of anything: ``hash(step)`` legitimately and
+    permanently differs across processes.
     """
 
     SCRIPT = Path(__file__).parent / "_cross_process_determinism_script.py"

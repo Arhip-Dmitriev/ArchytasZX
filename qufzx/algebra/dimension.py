@@ -257,13 +257,10 @@ class Dim:
                 )
 
         subs_dict: dict[sp.Symbol, sp.Integer] = {}
-        # Sorted by name, not the raw sympy-returned set (Phase 5 post-closing audit round
-        # 18, Defect 1 sweep): sympy's ``free_symbols`` is a plain ``set``, and ``Symbol``
-        # hashing bottoms out in Python's string hash of its name, which is
-        # PYTHONHASHSEED-dependent. With more than one out-of-domain substitution value in
-        # one call, the DimensionDomainError raised below would otherwise name a different
-        # symbol first across processes. Sorting is cheap (this set is always small) and
-        # removes that nondeterminism without changing which single message is *possible*.
+        # Sorted by name: sympy's free_symbols is a plain set whose Symbol hashing bottoms
+        # out in the PYTHONHASHSEED-dependent string hash of the name, so with several
+        # out-of-domain values in one call the error below would name a different symbol
+        # first across processes.
         for sym in sorted(self._expr.free_symbols, key=lambda s: str(s.name)):
             sym_name = str(sym.name)
             if sym_name not in resolved:
@@ -462,22 +459,16 @@ class UnifyAllResult:
     see :func:`unify_all`'s own inline comment for why only concrete bindings are ever
     accumulated for resolution.
 
-    Phase 5 post-closing audit round 23, Task 7b: this field exists so a caller can *see*
-    that an assumption was made, even on a ``SUCCESS`` -- before it existed, a node whose
-    legs unified only via such a binding (e.g. legs ``d`` and ``e``) reported ``SUCCESS``
-    with nothing to show for it, while the structurally identical situation in
-    :mod:`qufzx.rewrite.match` (a ``BOUND`` :class:`~qufzx.rewrite.rule.DimensionConstraint`)
-    is recorded on the certificate. Deliberately additive: populating it changes no verdict
-    (``status`` is computed exactly as before) and no existing caller's behavior, since no
-    caller reads it yet.
+    It exists so a caller can see that an assumption was made even on a ``SUCCESS``: a node
+    whose legs unify only via such a binding (legs ``d`` and ``e``) would otherwise report
+    ``SUCCESS`` with nothing to show for it. Populating it changes no verdict and no
+    caller's behavior.
 
     :mod:`qufzx.diagram.validate`'s ``_check_generator_policy`` does not yet surface this as
-    a reported issue (e.g. a ``DIMENSION_DEFERRED`` finding) -- a decision, not an oversight;
-    see that function's own docstring for the reasoning and
-    ``tests/test_symbolic_dimension_sweep.py``'s pin of the current (silent) behavior. Doing
-    so would ripple into :mod:`qufzx.rewrite.engine`'s step-8 deferred-issue bookkeeping
-    (``RewriteStep.removed_deferred_issues``/``introduced_deferred_issues``), which is
-    Phase 6/10 certificate territory, not a Phase 5 change to make in passing.
+    a reported issue -- see that function for why, and
+    ``tests/test_symbolic_dimension_sweep.py`` for the pin of the current silent behavior.
+    Doing so would ripple into :mod:`qufzx.rewrite.engine`'s step-8 deferred-issue
+    bookkeeping, which is Phase 6/10 certificate territory.
     """
 
     @property
@@ -500,8 +491,8 @@ def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
     only on the multiset of dims given, never their input order. Runs :meth:`Dim.unify`
     to a bounded fixpoint, accumulating concrete bindings monotonically (a name rebound to
     a different concrete value is FAILURE); a binding to a non-concrete Dim is never folded
-    into ``bindings`` or substituted through (see :attr:`UnifyAllResult.declined_bindings`
-    for where it goes instead -- not simply dropped, since round 23 correction). Returns
+    into ``bindings`` or substituted through; it is recorded on
+    :attr:`UnifyAllResult.declined_bindings` rather than dropped. Returns
     FAILURE on any non-unifiable pair, DEFERRED with every pair still unresolved once the
     fixpoint stabilises, or SUCCESS. Raises only :class:`DimensionError` subclasses.
     """

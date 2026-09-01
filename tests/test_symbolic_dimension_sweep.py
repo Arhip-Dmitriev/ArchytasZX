@@ -25,31 +25,26 @@ family described in :mod:`qufzx.rewrite.rules_library`'s module docstring.
 
 Phases are drawn independently of the leg dims: besides a phase over the node's own leg
 dim, root-of-unity phases over the fixed concrete dims ``2`` and ``3`` are offered whatever
-the connecting leg carries. That is what makes a diagram reachable in which A's phase and
-B's phase would bind the same shared symbol to two different concrete values.
+the connecting leg carries, making reachable a diagram in which A's and B's phases would
+bind the same shared symbol to two different concrete values.
 
 Anti-laundering invariant. For every fused diagram, at every concrete assignment, this arm
 asserts that if the post-fusion diagram is cleanly contractible then the pre-fusion diagram
-is too. Skipping the case where the pre-fusion diagram is not cleanly contractible would be
-structurally blind to the defect this guards against, since that is exactly the condition a
-laundered assumption produces.
+is too -- the case where it is not is exactly what a laundered assumption produces, so it
+is asserted rather than skipped.
 
-Deliberate subsampling, stated per the spec's standing instruction:
+Deliberate subsampling:
 
-* The full ``{2, 3, d, e}`` palette is applied to the *connecting* pair (A's output, B's
+* The full ``{2, 3, d, e}`` palette is applied to the connecting pair (A's output, B's
   input), where the 16 combinations exercise every
-  :meth:`~qufzx.algebra.dimension.Dim.unify` outcome this palette can produce and where the
-  combinatorics drive ``shared_dim``. Each node's surviving leg is fixed at one
-  already-mixed pair (concrete ``2`` and symbolic ``d``);
-  :func:`~qufzx.rewrite.match._unify_surviving_legs` is exercised meaningfully by a single
-  symbolic surviving leg, as in ``test_match.py``'s ``TestSurvivingLegDimensionUnification``.
-* Only the ``(2, 3)`` and ``(3, 2)`` oracle substitutions are checked. The same-value pairs
-  are covered by ``test_phase5_oracle.py``'s ``_CONCRETE_DS`` sweep; this arm's purpose is
-  the ``d != e`` case those cannot exercise.
+  :meth:`~qufzx.algebra.dimension.Dim.unify` outcome and drive ``shared_dim``. Each node's
+  surviving leg is fixed at one already-mixed pair (concrete ``2`` and symbolic ``d``).
+* Only the ``(2, 3)`` and ``(3, 2)`` oracle substitutions are checked; the same-value pairs
+  are covered by ``test_phase5_oracle.py``'s ``_CONCRETE_DS`` sweep.
 * ``DEFERRED`` never arises from ``{2, 3, d, e}`` alone -- it needs a symbol occurring as a
-  proper subterm of the other side, e.g. ``d`` against ``d*e`` -- so "clean" here means
-  ``validate(diagram).is_valid`` alone. That shape is covered by the ``d*e``/``d**2``
-  palette entries in ``tests/test_fusion_properties.py``.
+  proper subterm of the other side -- so "clean" here means ``validate(diagram).is_valid``
+  alone. That shape is covered by ``tests/test_fusion_properties.py``'s ``d*e``/``d**2``
+  palette entries.
 """
 
 from __future__ import annotations
@@ -177,31 +172,21 @@ class TestSymbolicDimensionSweep:
                             post_report = validate(instantiated_post)
                             post_clean = post_report.is_valid and not post_report.deferred
 
-                            # The anti-laundering invariant (round-12 audit, closing blind
-                            # spot 1): a rewrite must never leave a dimension symbol dangling
-                            # in the post-fusion diagram in a way that lets it validate at an
-                            # assignment the pre-fusion diagram genuinely rejects -- exactly
-                            # defect 2's failure mode (the merged node kept `Dim(d)` on its
-                            # legs and phase container alike, so instantiating `d` at any
-                            # value looked self-consistent to `validate()`, even though the
-                            # frozen numeric phase entry was only actually correct at the one
-                            # value the binding assumed). This is deliberately scoped to
-                            # ``assignment`` keys the post-fusion diagram still mentions: once
-                            # a fusion fully resolves a symbol to a concrete value (as every
-                            # diagram in this sweep does), the symbol is gone from
-                            # ``result.diagram`` entirely, and re-``instantiate``-ing at a
-                            # different value for it is a no-op -- so "the post-fusion
-                            # diagram validates regardless of what `d` is assigned" is then
-                            # simply true and correct (the certificate's own `bindings`
-                            # records the assumption; see rules_library.py's "Phase 5
-                            # judgement call 1"), not a laundering bug. Checking it
-                            # unconditionally would make this assertion fail on correct code
-                            # for the ordinary, ever-present case of a leg forced concrete by
-                            # an unrelated surviving leg (e.g. a_out=b_in="2"), which has
-                            # nothing to do with defect 2. See
-                            # ``TestPinnedRegressionReproductions`` below for a diagram shape
-                            # where a genuinely dangling symbol -- the actual defect 2 shape
-                            # -- is exercised end to end instead.
+                            # The anti-laundering invariant: a rewrite must never leave a
+                            # dimension symbol dangling in the post-fusion diagram in a way
+                            # that lets it validate at an assignment the pre-fusion diagram
+                            # rejects -- e.g. a merged node keeping `Dim(d)` on its legs and
+                            # phase container while the frozen numeric phase entry is only
+                            # correct at the one value the binding assumed.
+                            #
+                            # Scoped to assignment keys the post-fusion diagram still
+                            # mentions: once a fusion fully resolves a symbol, it is gone
+                            # from result.diagram and re-instantiating it is a no-op, so
+                            # "validates regardless of what d is assigned" is then simply
+                            # correct. Checking unconditionally would fail on correct code
+                            # whenever a leg is forced concrete by an unrelated surviving
+                            # leg. See TestPinnedRegressionReproductions for a shape where a
+                            # genuinely dangling symbol is exercised end to end.
                             symbols_still_live = assignment.keys() & post_free_symbols
                             if symbols_still_live and post_clean and not pre_clean:
                                 raise AssertionError(
@@ -250,23 +235,22 @@ class TestSymbolicDimensionSweep:
 
 
 class TestPinnedRegressionReproductions:
-    """Permanent regressions pinned to the round-12 audit's two literal reproductions.
+    """Two literal witness diagrams, pinned as permanent regressions.
 
     Unlike :class:`TestSymbolicDimensionSweep`, which sweeps a combinatorial space and could
-    in principle stop generating either shape if the palette above ever changed, these two
-    tests build the audit's exact witness diagrams directly, so a regression on either
-    defect is caught even if the sweep's own coverage were to shift.
+    stop generating either shape if the palette above ever changed, these two tests build
+    the witness diagrams directly, so a regression is caught even if the sweep's own
+    coverage shifts.
     """
 
     def test_defect_1_contradictory_phase_bindings_are_refused_not_accepted(self) -> None:
-        """Defect 1: two present phases must not each bind the same symbol against a stale,
-        unrefined ``shared_dim`` (last-write-wins). A Z spider pair, every leg over the
-        symbol ``d``, joined by one OUTPUT->INPUT wire; A's phase is over the concrete ``2``,
-        B's over the concrete ``3`` -- mutually unsatisfiable, and already refused when the
-        identical contradiction is expressed through *legs* instead of phases (see
+        """Two present phases must not each bind the same symbol against a stale, unrefined
+        ``shared_dim`` (last-write-wins). A Z spider pair, every leg over the symbol ``d``,
+        joined by one OUTPUT->INPUT wire; A's phase is over the concrete ``2``, B's over the
+        concrete ``3`` -- mutually unsatisfiable, and already refused when the identical
+        contradiction is expressed through *legs* instead of phases (see
         :mod:`tests.test_match`'s ``TestSharedDimResolvesThroughBinding`` and
-        ``TestSurvivingLegDimensionUnification`` for that leg-side asymmetry check).
-        """
+        ``TestSurvivingLegDimensionUnification`` for that leg-side asymmetry check)."""
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(
@@ -294,14 +278,15 @@ class TestPinnedRegressionReproductions:
     def test_defect_2_a_phase_only_binding_refines_the_merged_legs_not_just_the_phase(
         self,
     ) -> None:
-        """Defect 2: a binding a present phase alone produces must refine ``shared_dim``
-        before the merged node's legs are built from it, not only the merged phase's
-        entries -- otherwise the merged node's legs keep the pre-binding symbol while its
-        phase is frozen at the bound value, and the two disagree on the dimension the
-        binding assumed. A Z spider pair, every leg over the symbol ``d``; A has one extra
-        surviving output leg (so the merged node keeps a leg to disagree with its phase over,
-        exactly the audit's own "legs = [Dim(d)]" witness), B carries an empty phase over the
+        """A binding a present phase alone produces must refine ``shared_dim`` before the
+        merged node's legs are built from it, not only the merged phase's entries --
+        otherwise the merged node's legs keep the pre-binding symbol while its phase is
+        frozen at the bound value, and the two disagree on the dimension the binding
+        assumed. A Z spider pair, every leg over the symbol ``d``; A has one extra surviving
+        output leg (so the merged node keeps a leg to disagree with its phase over, exactly
+        the audit's own "legs = [Dim(d)]" witness), B carries an empty phase over the
         concrete ``2`` -- B's mere presence binds ``d := 2``.
+
 
         Before the fix, the merged node came out as ``legs = [Dim(d)]``,
         ``phase = PhaseVector[d]({1: 1/2 turns})`` -- a container still claiming the
@@ -353,17 +338,12 @@ class TestPinnedRegressionReproductions:
             "individually plausible"
         )
 
-        # The pre-fusion diagram is contractible only at d = 2 (B's own phase-vs-leg
-        # dimension disagrees at any other value). The post-fusion diagram, since it no
-        # longer mentions `d` at all -- fully resolved to shared_dim=2 on both the
-        # surviving leg and the phase, per the assertions above -- validates and
-        # instantiates identically regardless of what `d` is assigned; that is the correct,
-        # intended behavior once the binding is baked in (see rules_library.py's "Phase 5
-        # judgement call 1"), not a laundering bug -- the assumption itself is what the
-        # shared_dim/phase.dim assertions above already pin down. The oracle comparison
-        # below is the check that actually distinguishes correct from wrong: before the fix,
-        # the merged phase's frozen entry (1/2 turns) was correct only by coincidence at
-        # d = 2 while the container still claimed `d`; comparing against the pre-fusion
-        # diagram at the assumed value catches any future regression in that substitution.
+        # The pre-fusion diagram is contractible only at d = 2 (B's phase-vs-leg dimension
+        # disagrees at any other value). The post-fusion diagram no longer mentions `d` at
+        # all -- fully resolved to shared_dim=2 on both the surviving leg and the phase --
+        # so it validates regardless of what `d` is assigned, which is correct once the
+        # binding is baked in. The oracle comparison below is what distinguishes correct
+        # from wrong: it catches a merged phase whose frozen entry is right only by
+        # coincidence at the assumed value while its container still claims `d`.
         comparison = compare(diagram, result.diagram, {"d": 2})
         assert comparison.matched, comparison.reason
