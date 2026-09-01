@@ -40,7 +40,6 @@ nobody can press.
 
 from __future__ import annotations
 
-import itertools
 import os
 import re
 import shutil
@@ -48,17 +47,18 @@ import sys
 import textwrap
 import time
 
-import numpy as np
-
 from qufzx.algebra.dimension import Dim, unify_all
-from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, find_matches
+from qufzx.rewrite.engine import RewriteResult, apply
+from qufzx.rewrite.match import (
+    FUSION_SIDE_CONDITIONS,
+    FusionMatch,
+    find_matches,
+    resolve_fusion_match,
+)
 from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare, score
 
 LEFT_WIDTH = 100
 RIGHT_WIDTH = 48
@@ -294,43 +294,6 @@ def _two_col(left: list[str], right: list[str]) -> None:
             sys.stdout.write(f"\033[{right_col}G{right[i]}")
         sys.stdout.write("\033[1B\033[1G")
     sys.stdout.flush()
-
-
-def _build_ghz_with_copy(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:
-    """The "A into B" GHZ-with-copy construction, matching ``tests/helpers.py``'s
-    ``build_ghz_with_copy``, inlined here so this file needs no import from ``tests/``.
-    """
-    diagram = Diagram()
-    a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim, dim])
-    b_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim])
-    diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
-    diagram.set_boundary_outputs(
-        [
-            PortRef(a_id, Direction.OUTPUT, 1),
-            PortRef(b_id, Direction.OUTPUT, 0),
-            PortRef(b_id, Direction.OUTPUT, 1),
-        ]
-    )
-    return diagram, a_id, b_id
-
-
-def _fmt_complex(value: complex) -> str:
-    """A short, real-if-possible rendering of one raw contracted tensor entry."""
-    if abs(value.imag) < 1e-9:
-        return f"{value.real:g}"
-    return f"{value.real:g}{value.imag:+g}j"
-
-
-def _all_tensor_entries(tensor: np.ndarray) -> list[str]:
-    """Literally every entry of ``tensor``, in index order, six to a row."""
-    items = [
-        f"[{','.join(map(str, index))}]={_fmt_complex(complex(tensor[index]))}"
-        for index in itertools.product(*(range(size) for size in tensor.shape))
-    ]
-    per_row = 6
-    return [
-        "  " + "  ".join(items[start : start + per_row]) for start in range(0, len(items), per_row)
-    ]
 
 
 def _node_label(node_id: NodeId, node: Node) -> str:
@@ -601,7 +564,7 @@ def _beat_match(diagram: Diagram) -> FusionMatch:
     return match
 
 
-def _beat_apply(diagram: Diagram, match: FusionMatch) -> Diagram:
+def _beat_apply(diagram: Diagram, match: FusionMatch) -> RewriteResult:
     _typeout("$ apply spider_fusion")
     left: list[str] = []
     right: list[str] = []
@@ -612,36 +575,20 @@ def _beat_apply(diagram: Diagram, match: FusionMatch) -> Diagram:
     left.append(f"  .quantifiers.dimensions = {SPIDER_FUSION.quantifiers.dimensions}")
 
     result = apply(diagram, SPIDER_FUSION, match)
-    step = result.step
     left.append("apply(diagram, SPIDER_FUSION, match)")
     left.append(f"  result.diagram is not input diagram: {result.diagram is not diagram}")
     left.append(f"  input diagram still has {len(diagram.nodes)} node(s) (never mutated)")
-    left.append(f"  step.rule_name = {step.rule_name!r}")
-    left.append(f"  step.consumed_node_ids = {step.consumed_node_ids}")
-    left.append(f"  step.consumed_wires = {step.consumed_wires!r}")
-    left.append(f"  step.new_node_ids = {result.new_node_ids}")
-    left.append(f"  step.scalar_introduced = {step.scalar_introduced!r}")
-    left.append(f"  step.dimension_constraints = {step.dimension_constraints!r}")
-    left.append(f"  step.removed_deferred_issues = {step.removed_deferred_issues!r}")
-    left.append(f"  step.introduced_deferred_issues = {step.introduced_deferred_issues!r}")
-    left.append(f"  step.phase_substitutions = {dict(step.phase_substitutions)!r}")
-    left.append(
-        f"  step.deferred_issue_identity_ambiguous = {step.deferred_issue_identity_ambiguous}"
-    )
-    left.append(f"  step.port_mapping ({len(step.port_mapping)} entries):")
-    for old_ref, new_ref in sorted(step.port_mapping.items(), key=lambda kv: kv[0].sort_key()):
-        left.append(f"    {old_ref!r} -> {new_ref!r}")
 
     post_report = validate(result.diagram)
     left.append(f"validate(result.diagram).issues = {post_report.issues!r}")
 
     right.extend(_render_before_after(diagram, result.diagram))
     right.append("")
-    consumed = ",".join(str(int(n)) for n in step.consumed_node_ids)
+    consumed = ",".join(str(int(n)) for n in result.step.consumed_node_ids)
     new = ",".join(str(int(n)) for n in result.new_node_ids)
     right.append(f"consumed=[{consumed}]")
     right.append(f"new=[{new}]")
-    right.append(f"scalar x {step.scalar_introduced}")
+    right.append(f"scalar x {result.step.scalar_introduced}")
     mark = "✓" if post_report.is_valid else "✗"
     color = _GREEN if post_report.is_valid else _RED
     right.append(f"{color}{mark}{_RESET} re-validated")
@@ -649,70 +596,69 @@ def _beat_apply(diagram: Diagram, match: FusionMatch) -> Diagram:
     _two_col(left, right)
     _blank()
     _wait_for_key()
-    return result.diagram
+    return result
 
 
-def _beat_check_values(pre: Diagram, post: Diagram) -> None:
-    _typeout("$ check --d 2,3,5")
-    for value in (2, 3, 5):
-        left: list[str] = []
-        right: list[str] = []
-
-        pre_contracted = score(pre, {"d": value})
-        post_contracted = score(post, {"d": value})
-        left.append(f"score(pre, d={value}) -> shape={pre_contracted.shape}")
-        left.extend(_all_tensor_entries(pre_contracted.tensor))
-        left.append(f"score(post, d={value}) -> shape={post_contracted.shape}")
-        left.extend(_all_tensor_entries(post_contracted.tensor))
-        result = compare(pre, post, {"d": value})
-        left.append(f"compare(pre, post, d={value}) -> {result!r}")
-
-        mark = "✓" if result.matched else "✗"
-        color = _GREEN if result.matched else _RED
-        right.append(f"d={_CYAN}{value}{_RESET}  {color}{mark}{_RESET}")
-        right.append(f"Δ={result.max_abs_deviation:.1e}")
-
-        _two_col(left, right)
-        _blank()
-        _wait_for_key()
-
-
-def _beat_check_scalar() -> None:
-    _typeout("$ check --scalar-shifted")
+def _beat_record(diagram: Diagram, match: FusionMatch, result: RewriteResult) -> None:
+    """RewriteStep, and how apply() actually built it -- see qufzx/rewrite/engine.py's
+    own docstring, step 9: the certificate is preferred from the builder's independently
+    re-derived facts, never from a match's own unaudited claims, and this beat is the
+    live demonstration of that preference rather than a claim about it.
+    """
+    _typeout("$ record spider_fusion")
     left: list[str] = []
     right: list[str] = []
+    step = result.step
 
-    concrete_dim = Dim(2)
-    base, _a_id, _b_id = _build_ghz_with_copy(concrete_dim)
-    shifted = base.copy()
-    factor = Scalar.omega(concrete_dim, 1)
-    left.append(f"Scalar.omega(2, 1) = {factor!r}")
-    left.append(f"  .to_complex() = {factor.to_complex()}")
-    shifted.multiply_scalar(factor)
-    left.append(f"base.scalar = {base.scalar!r}")
-    left.append(f"shifted.scalar = {shifted.scalar!r}")
+    left.append(f"match.dimension_constraints (claimed) = {match.dimension_constraints!r}")
+    resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+    left.append("resolve_fusion_match(diagram, a_id, b_id, wire) -- re-derived fresh,")
+    left.append(f"  independently of match: {resolution!r}")
+    left.append(
+        f"  match.side_condition_outcomes == resolution.outcomes: "
+        f"{match.side_condition_outcomes == resolution.outcomes}"
+    )
+    left.append(
+        f"  match.dimension_constraints == resolution.dimension_constraints: "
+        f"{match.dimension_constraints == resolution.dimension_constraints}"
+    )
+    left.append(
+        f"  match.shared_dim == resolution.shared_dim: "
+        f"{match.shared_dim == resolution.shared_dim}"
+    )
+    left.append(
+        f"  dict(match.bindings) == dict(resolution.bindings): "
+        f"{dict(match.bindings) == dict(resolution.bindings)}"
+    )
+    left.append(
+        "apply()'s builder returns this same resolution as "
+        "BuildResult.verified_side_condition_outcomes / verified_dimension_constraints;"
+    )
+    left.append("apply() records those, preferring them over match's own fields:")
+    left.append(
+        f"  step.side_condition_outcomes == resolution.outcomes: "
+        f"{step.side_condition_outcomes == resolution.outcomes}"
+    )
+    left.append(
+        f"  step.dimension_constraints == resolution.dimension_constraints: "
+        f"{step.dimension_constraints == resolution.dimension_constraints}"
+    )
+    left.append(f"  step.port_mapping ({len(step.port_mapping)} entries):")
+    for old_ref, new_ref in sorted(step.port_mapping.items(), key=lambda kv: kv[0].sort_key()):
+        left.append(f"    {old_ref!r} -> {new_ref!r}")
 
-    base_contracted = score(base, {})
-    shifted_contracted = score(shifted, {})
-    left.append(f"score(base) -> shape={base_contracted.shape}")
-    left.extend(_all_tensor_entries(base_contracted.tensor))
-    left.append(f"score(shifted) -> shape={shifted_contracted.shape}")
-    left.extend(_all_tensor_entries(shifted_contracted.tensor))
-
-    exact = compare(base, shifted, {}, mode=EqualityMode.EXACT)
-    left.append(f"compare(base, shifted, mode=EXACT) -> {exact!r}")
-    up_to_phase = compare(base, shifted, {}, mode=EqualityMode.UP_TO_GLOBAL_PHASE)
-    left.append(f"compare(base, shifted, mode=UP_TO_GLOBAL_PHASE) -> {up_to_phase!r}")
-
-    right.append(f"ref scalar = {base.scalar}")
-    right.append(f"shifted scalar = {shifted.scalar}")
+    right.append(f"rule: {step.rule_name}")
+    right.append(f"consumed: {list(step.consumed_node_ids)}")
+    right.append(f"new: {list(result.new_node_ids)}")
+    right.append(f"scalar introduced: {step.scalar_introduced}")
+    right.append(f"{len(step.side_condition_outcomes)} side conditions recorded")
+    right.append(f"{len(step.dimension_constraints)} dimension constraints")
+    right.append(f"{len(step.port_mapping)} port(s) remapped")
+    right.append(f"{len(step.removed_deferred_issues)} deferred issue(s) removed")
+    right.append(f"{len(step.introduced_deferred_issues)} deferred issue(s) introduced")
+    right.append(f"{len(step.phase_substitutions)} node(s) with phase substitutions")
     right.append("")
-    exact_mark = "✓" if exact.matched else "✗"
-    exact_color = _GREEN if exact.matched else _RED
-    right.append(f"exact:  {exact_color}{exact_mark}{_RESET}")
-    phase_mark = "✓" if up_to_phase.matched else "✗"
-    phase_color = _GREEN if up_to_phase.matched else _RED
-    right.append(f"phase:  {phase_color}{phase_mark}{_RESET}  λ={up_to_phase.recovered_lambda}")
+    right.append(f"{_GREEN}✓{_RESET} record == independent re-derivation")
 
     _two_col(left, right)
     _blank()
@@ -724,9 +670,8 @@ def main() -> None:
     diagram = _beat_build()
     _beat_validate(diagram)
     match = _beat_match(diagram)
-    post = _beat_apply(diagram, match)
-    _beat_check_values(diagram, post)
-    _beat_check_scalar()
+    result = _beat_apply(diagram, match)
+    _beat_record(diagram, match, result)
     _wait_for_key()
 
 

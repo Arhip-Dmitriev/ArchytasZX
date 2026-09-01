@@ -32,14 +32,17 @@ import sys
 import textwrap
 
 from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, find_matches
+from qufzx.rewrite.engine import RewriteResult, apply
+from qufzx.rewrite.match import (
+    FUSION_SIDE_CONDITIONS,
+    FusionMatch,
+    find_matches,
+    resolve_fusion_match,
+)
 from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare
 
 WRAP_WIDTH = 88
 
@@ -126,8 +129,8 @@ def step_problem() -> None:
         simultaneously a proof of an entire doubly-indexed family of identities. That
         is the promise this script is here to make concrete: build a diagram with a
         symbolic dimension, rewrite it by graph surgery alone (no matrix ever
-        constructed), and then use a numeric oracle to spot-check the rewrite at
-        several concrete dimensions as external validation.
+        constructed), and inspect the structured record the engine keeps of exactly
+        what it did and why that was legal.
         """
     )
 
@@ -218,7 +221,7 @@ def step_match(diagram: Diagram) -> FusionMatch:
     return match
 
 
-def step_apply(diagram: Diagram, match: FusionMatch) -> Diagram:
+def step_apply(diagram: Diagram, match: FusionMatch) -> RewriteResult:
     _header("Step 4 -- apply the rewrite")
     _explain(
         """
@@ -249,65 +252,91 @@ def step_apply(diagram: Diagram, match: FusionMatch) -> Diagram:
         old ports were remapped onto the merged node's new ports.
         """
     )
-    return result.diagram
+    return result
 
 
-def step_check_values(pre: Diagram, post: Diagram) -> None:
-    _header("Step 5 -- oracle-check the rewrite at concrete d")
+def step_record(diagram: Diagram, match: FusionMatch, result: RewriteResult) -> None:
+    _header("Step 5 -- the record: how RewriteStep actually gets built")
     _explain(
         """
-        Everything above was pure graph surgery -- no matrix was ever built, because
-        d was never given a value. compare() is the numeric oracle: it substitutes a
-        concrete value for every symbol in both diagrams, contracts each one down to
-        a dense tensor (a real numpy array now that d is concrete), and compares the
-        two tensors entrywise within a tight tolerance (mode=EXACT by default,
-        meaning nothing is normalized away, not even the overall scalar). This is a
-        spot check, not a proof -- but a spot check that fails would mean the
-        rewrite above is simply wrong, so agreement at several different d values is
-        real evidence, and the fact that the rewrite never referenced a specific d at
-        all is why the same check is expected to pass at every one of them.
+        Producing a new diagram is not the whole job: qufzx.rewrite.engine's apply()
+        also builds a RewriteStep, a structured record of exactly what happened and
+        why it was legal -- the rule name, which nodes and wires were consumed, every
+        side condition checked and its outcome, every dimension equality assumed
+        rather than proven, the exact scalar introduced, the full old-port to
+        new-port mapping, and which pre-existing deferred assumptions the rewrite
+        resolved or introduced. This is the data a future Phase 6 certificate-replay
+        feature would need to reproduce this exact step from scratch and confirm it
+        independently -- it does not exist yet, but the record it would replay
+        already does, on every single call to apply(). That record is only as
+        trustworthy as the process that built it, so this step does not introduce
+        new API; it walks through the same verification apply() itself performs, so
+        what gets printed below is shown to be earned rather than merely asserted.
         """
     )
-    for value in (2, 3, 5):
-        result = compare(pre, post, {"d": value})
-        verdict = f"{_GREEN}MATCH{_RESET}" if result.matched else f"{_RED}NO MATCH{_RESET}"
-        _result(
-            f"d={value}: {verdict}  mode={result.mode.value}  "
-            f"max_abs_deviation={result.max_abs_deviation:.2e}"
-        )
-
-
-def step_check_scalar() -> None:
-    _header("Step 6 -- a negative control: exactness vs. global phase")
     _explain(
         """
-        This is not part of the rewrite above -- it is a deliberate demonstration of
-        what "exact" actually buys you. Two fresh copies of the same concrete
-        diagram (d=2) are built; one is left alone, the other has its scalar
-        multiplied by a unit-modulus factor (a root of unity, e^{i*pi} = -1 here --
-        a legitimate global phase, not a rescaling). Under EqualityMode.EXACT
-        (the default everywhere in this codebase), the two are required to agree
-        entrywise including that overall scalar, so this comparison is *expected*
-        to fail -- and that failure is the point, not a bug: this library never
-        silently discards a global phase. EqualityMode.UP_TO_GLOBAL_PHASE is the
-        opt-in mode that recovers the unit-modulus factor relating the two tensors
-        and checks equality after removing it; only a genuinely unit-modulus factor
-        is accepted there, a real rescaling would still fail even in that mode.
+        find_matches() built `match` in the previous step by calling one function,
+        resolve_fusion_match(diagram, a_id, b_id, wire), which independently
+        re-derives every side condition and dimension assumption straight from the
+        diagram -- never trusting a pre-existing match's own fields. spider_fusion's
+        builder calls that exact same function again, fresh, against the diagram it
+        was actually handed, before doing any graph surgery at all. This matters
+        because a hand-built or foreign FusionMatch could in principle claim a
+        passing side condition, or a shared_dim, that does not actually hold --
+        match-approval and build-applicability being the same function call, not two
+        similar-looking computations that could quietly drift apart over time, is
+        what closes that gap. Calling it a third time here, independently of both,
+        is exactly that same check, made visible.
         """
     )
-    concrete_dim = Dim(2)
-    base, _a_id, _b_id = _build_ghz_with_copy(concrete_dim)
-    shifted = base.copy()
-    shifted.multiply_scalar(Scalar.omega(concrete_dim, 1))
-    _result(f"reference scalar = {base.scalar}, shifted scalar = {shifted.scalar}")
+    resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+    _result(f"resolve_fusion_match(diagram, a_id, b_id, wire) -> passed={resolution.passed}")
+    _result(f"  match.side_condition_outcomes == resolution.outcomes: "
+            f"{match.side_condition_outcomes == resolution.outcomes}")
+    _result(f"  match.dimension_constraints == resolution.dimension_constraints: "
+            f"{match.dimension_constraints == resolution.dimension_constraints}")
+    _result(f"  match.shared_dim == resolution.shared_dim: "
+            f"{match.shared_dim == resolution.shared_dim}")
+    _result(f"  dict(match.bindings) == dict(resolution.bindings): "
+            f"{dict(match.bindings) == dict(resolution.bindings)}")
+    print()
+    _explain(
+        """
+        The builder hands this same resolution back to apply() as
+        BuildResult.verified_side_condition_outcomes and
+        verified_dimension_constraints. apply() prefers those verified fields over
+        match's own when it writes the RewriteStep, so what actually lands on the
+        record below is the builder's independently re-checked ground truth, not
+        the match's original, unaudited claim -- even though, as just shown, the two
+        happen to agree exactly in this run.
+        """
+    )
+    step = result.step
+    _result(f"step.side_condition_outcomes == resolution.outcomes: "
+            f"{step.side_condition_outcomes == resolution.outcomes}")
+    _result(f"step.dimension_constraints == resolution.dimension_constraints: "
+            f"{step.dimension_constraints == resolution.dimension_constraints}")
     print()
 
-    exact = compare(base, shifted, {}, mode=EqualityMode.EXACT)
-    _result(f"EXACT:               matched={exact.matched}")
-    _result(f"                     reason: {exact.reason}")
-    up_to_phase = compare(base, shifted, {}, mode=EqualityMode.UP_TO_GLOBAL_PHASE)
-    _result(f"UP_TO_GLOBAL_PHASE:  matched={up_to_phase.matched}")
-    _result(f"                     reason: {up_to_phase.reason}")
+    _explain("The record itself, RewriteStep, in full:")
+    _result(f"rule_name = {step.rule_name!r}")
+    _result(f"consumed_node_ids = {step.consumed_node_ids}")
+    _result(f"consumed_wires = {step.consumed_wires!r}")
+    _result(f"new_node_ids = {result.new_node_ids}")
+    _result(f"scalar_introduced = {step.scalar_introduced!r}")
+    _result(f"dimension_constraints = {step.dimension_constraints!r}")
+    _result(f"removed_deferred_issues = {step.removed_deferred_issues!r}")
+    _result(f"introduced_deferred_issues = {step.introduced_deferred_issues!r}")
+    _result(f"phase_substitutions = {dict(step.phase_substitutions)!r}")
+    _result(f"deferred_issue_identity_ambiguous = {step.deferred_issue_identity_ambiguous}")
+    _result(f"port_mapping ({len(step.port_mapping)} entries):")
+    for old_ref, new_ref in sorted(step.port_mapping.items(), key=lambda kv: kv[0].sort_key()):
+        _result(f"  {old_ref!r} -> {new_ref!r}")
+    _result(f"side_condition_outcomes ({len(step.side_condition_outcomes)} entries):")
+    for outcome in step.side_condition_outcomes:
+        mark = f"{_GREEN}PASS{_RESET}" if outcome.passed else f"{_RED}FAIL{_RESET}"
+        _result(f"  [{mark}] {outcome.name}: {outcome.detail}")
 
 
 def step_solution() -> None:
@@ -318,9 +347,10 @@ def step_solution() -> None:
         global parameter (a Dim lives on each port individually, so a rewrite rule
         can be checked and applied without ever resolving it to a number), and by
         treating a rewrite as graph surgery with side conditions and an exact scalar
-        recorded at every step -- never as a numeric operation. The numeric oracle
-        exists purely as an external check on that graph surgery, at whatever
-        concrete values you feed it, never as the mechanism doing the proving.
+        recorded at every step -- never as a numeric operation. The RewriteStep
+        record from Step 5 is exactly what a future certificate-replay feature would
+        consume: the data already exists, on every rewrite, well before anything
+        reads it back that way.
         """
     )
     implemented = (
@@ -346,9 +376,8 @@ def main() -> None:
     diagram = step_build()
     step_validate(diagram)
     match = step_match(diagram)
-    post = step_apply(diagram, match)
-    step_check_values(diagram, post)
-    step_check_scalar()
+    result = step_apply(diagram, match)
+    step_record(diagram, match, result)
     step_solution()
 
 
