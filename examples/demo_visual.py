@@ -65,9 +65,9 @@ RIGHT_WIDTH = 48
 SEP = " │ "
 TOTAL_WIDTH = LEFT_WIDTH + len(SEP) + RIGHT_WIDTH
 _FAST_ENV_VAR = "ARCHYTAS_DEMO_FAST"
-_THINK_SECONDS = 0.3
-_COMMAND_CPS = 28.0
-_INTERMEDIATE_CPS = 170.0
+_THINK_SECONDS = 0.15
+_COMMAND_CPS = 56.0
+_INTERMEDIATE_CPS = 340.0
 """Characters per second for the two typing speeds this file uses: the "$ command" lines
 type slowly and dramatically (``_COMMAND_CPS``); the intermediate column's exhaustive trace
 rolls past much faster (``_INTERMEDIATE_CPS``) since there is far more of it to get through.
@@ -86,7 +86,7 @@ _RESET = "\033[0m"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _ANSI_SPLIT_RE = re.compile(r"(\x1b\[[0-9;]*m)")
-_PAUSE_BEFORE_NOTABLE = 1.0
+_PAUSE_BEFORE_NOTABLE = 0.5
 """Seconds the finished intermediate column holds, blank-right, before the notable column
 reveals -- a beat, not an instant cut."""
 
