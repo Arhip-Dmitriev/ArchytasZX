@@ -41,6 +41,7 @@ import functools
 import itertools
 from unittest.mock import patch
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
@@ -55,6 +56,9 @@ from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import EqualityMode, compare
 from qufzx.semantics.contract_numeric import ContractSizeError
 from qufzx.semantics.denote import DenoteError, denote
+
+pytestmark = pytest.mark.slow
+"""Every test in this module is a multi-thousand-seed sweep."""
 
 _LEG_COUNTS = (0, 1, 2)
 _COLORS = (Z_SPIDER, X_SPIDER)

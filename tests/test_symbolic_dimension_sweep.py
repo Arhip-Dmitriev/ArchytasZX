@@ -49,6 +49,7 @@ Deliberate subsampling:
 
 from __future__ import annotations
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
@@ -60,6 +61,9 @@ from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import compare, instantiate
+
+pytestmark = pytest.mark.slow
+"""Every test in this module is a multi-thousand-seed sweep."""
 
 _PALETTE: dict[str, Dim] = {
     "2": Dim.concrete(2),

@@ -40,6 +40,7 @@ diagrams, most of which produce a real, cleanly contractible fusion candidate.
 
 from __future__ import annotations
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
@@ -51,6 +52,9 @@ from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
 from qufzx.semantics.check import compare
+
+pytestmark = pytest.mark.slow
+"""Every test in this module is a multi-thousand-seed sweep."""
 
 _D = Dim.concrete(2)
 _LEG_SHAPES: tuple[tuple[int, int], ...] = (

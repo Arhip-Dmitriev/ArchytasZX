@@ -57,6 +57,9 @@ from qufzx.semantics.check import compare
 from qufzx.semantics.contract_numeric import ContractSizeError, ContractValidationError
 from qufzx.semantics.denote import DenoteError, denote
 
+pytestmark = pytest.mark.slow
+"""Every test in this module is a multi-thousand-seed sweep."""
+
 _SEEDS: tuple[int, ...] = tuple(range(2500))
 _CLEAN_SEEDS: tuple[int, ...] = tuple(range(20000))
 _DIM_D = Dim.symbol("d")

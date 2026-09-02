@@ -39,6 +39,12 @@ include = ["qufzx*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Seed sweeps and oracle differentials are deselected by default. Run them with
+# `pytest -m slow` (sweeps only) or `pytest -m ""` (everything); CI runs `pytest -m ""`.
+addopts = ["-m", "not slow"]
+markers = [
+    "slow: multi-thousand-seed fuzz sweep or oracle differential",
+]
 
 [tool.ruff]
 line-length = 100

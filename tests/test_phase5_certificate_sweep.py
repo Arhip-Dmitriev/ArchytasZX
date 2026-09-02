@@ -55,6 +55,7 @@ from collections.abc import Mapping
 from typing import cast
 from unittest.mock import patch
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 import qufzx.rewrite.match as match_module
@@ -79,6 +80,9 @@ from .test_fusion_properties import (
     _build_mixed_diagram,
     _build_random_diagram,
 )
+
+pytestmark = pytest.mark.slow
+"""Every test in this module is a multi-thousand-seed sweep."""
 
 _D = Dim.symbol("d")
 _E = Dim.symbol("e")
