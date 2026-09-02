@@ -198,25 +198,29 @@ PART 4: THE REPL
 Phase 17: Printer and Dirac output
 i. repl/printer.py
 - pretty-prints a graph textually, showing nodes, symbolic phases, exact scalars, port dimensions, and bang boxes including nesting and multiple indices
-- renders a diagram back to Dirac when the diagram is in a recognizable normal form
-- test and debug: confirm the printer round-trips the fusion example and that the Dirac output of a single Z spider matches the expected sum
-- from the user perspective, we want the interaction and progrmaming 'language' to be as close to Dirac notation as possible
-- done when: any engine state can be shown as text and, where possible, as Dirac
+- renders every diagram back to Dirac: by its recognized name when the diagram is in a known normal form, otherwise as the structural index-sum form, one bound index per spider, valid for symbolic n and d and requiring no contraction
+- implements the session notation mode of the Notation modes section: Dirac mode emits no graph output, ZX mode emits both
+- test and debug: confirm the printer round-trips the fusion example and that the Dirac output of a single Z spider matches the expected sum; confirm every state of a multi-step derivation has a Dirac rendering in Dirac mode
+- done when: any engine state can be shown as text, always as Dirac and always as a graph
 
 Phase 18: Parser and input DSL
 i. repl/parser.py
 - the file already exists, carrying Phase 5's Dirac slice (see Phase 5, item v); this phase widens it, and the existing ket-sum grammar and its "copy" keyword must survive as a strict subset of the DSL below
 - a small DSL can declare spiders, wires, symbolic phases, bang boxes (nested and multi-index), and dimensions
-- optionally(for user) parses simple Dirac kets into a diagram
+- the parser is mode-independent: Dirac expressions, the spider and wire DSL, and step-level rule application are all accepted in every session mode
 - test and debug: parse the GHZ-with-copy input and confirm it yields the same graph the Phase 3 tests build by hand
-- done when: text input produces valid diagrams
+- done when: text input produces valid diagrams, and every input form is accepted regardless of the session notation mode
 
 Phase 19: Commands and shell
 i. repl/commands.py
 - implements load, show, list-rules, match, apply (rule, optionally at a chosen match), check (with supplied counts and d), normalize, decide (equality via normal form), saturate (equality saturation), prove (tactic search), induct (symbolic-n proof), certificate (emit and verify), and translate (bang box to and from scalable)
 ii. repl/shell.py
 - wires commands to the engine in an interactive loop with history and clean error handling
-- test and debug: a scripted session builds the example, applies fusion, checks it, proves it for all n by induction, and emits and re-verifies a certificate, asserting the final state; malformed input yields a clean error
+- holds the session notation mode, Dirac by default, with a command to set it; the mode selects output rendering only and gates nothing
+- errors, proofs, derivations, certificates, and engine detail are available, but not visible by default, in full in both modes, with no flag
+- detail payloads, that is error engine-detail, proof traces, derivation steps, and certificate contents, are shown in both notations side by side in either mode
+- failure reports state the Dirac-level outcome, an oracle counterexample at concrete n and d where one exists, otherwise the furthest-simplified state and the bound that was hit
+- test and debug: a scripted session builds the example, applies fusion, checks it, proves it for all n by induction, and emits and re-verifies a certificate, asserting the final state; malformed input yields a clean error; confirm the same scripted session runs identically in both notation modes and that a ZX command issued in Dirac mode returns Dirac output
 - done when: the entire worked example, including a symbolic-n proof and a certificate, runs interactively
 
 PART 5: HARDENING AND FINALIZATION
@@ -277,8 +281,22 @@ The user describes a state or map, often in Dirac notation, for example sum_{k=0
 The engine represents it as a ZX diagram with the appropriate bang boxes and per-port dimensions.
 The user, or an automated strategy, applies rewrite rules. The engine performs pure graph manipulation: pattern match, splice, merge, adjust phases, track the exact scalar. It does not contract anything.
 When a genuine proof is wanted rather than a spot-check, the engine discharges symbolic-n equalities by induction and can decide equality of two diagrams via normal form, returning a machine-checkable certificate.
-The resulting diagram is read back out, as a diagram and, where it lands in a recognizable form, as Dirac notation.
+The resulting diagram is read back out, as a diagram and as Dirac notation: by its recognized name when it lands in a known form, otherwise as the structural index-sum form.
 Optionally, the user asks for a sanity check. The engine instantiates n and d to small concrete numbers, contracts numerically, and confirms the rewrite preserved the map exactly.
+
+Notation modes
+
+The REPL has one session-level notation mode, Dirac or ZX, defaulting to Dirac. It selects output rendering only.
+
+Input is universal. Every command is accepted in every mode: Dirac expressions, the spider and wire DSL, and step-level rule application. No command, rule, or capability is gated by the mode.
+
+Engine behaviour is identical in both modes. The same commands are accepted, the same results computed, the same state reached.
+
+Every reachable engine state must have both renderings. Dirac mode never emits graph output; ZX mode never withholds a Dirac form. A state with no recognized Dirac name renders as its structural index-sum form.
+
+Errors, proofs, derivations, certificates, and engine detail are available in full in both modes, without a flag. The mode is a rendering choice, not an access boundary.
+
+Detail payloads are shown in both notations side by side: error engine-detail, proof traces, derivation steps, and certificate contents.
 
 Architecture
 
