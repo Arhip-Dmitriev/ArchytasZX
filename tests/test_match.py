@@ -270,13 +270,10 @@ class TestPhaseDimensionMismatchIsNonMatch:
     def test_both_phases_present_with_concrete_phase_dim_binding_the_symbolic_shared_dim(
         self,
     ) -> None:
-        # both legs share the still-symbolic
-        # d (shared_dim=d, unbound), A's phase already agrees outright (also over d), and
-        # B's phase over the concrete 3 now legitimately binds d := 3 through condition 7's
-        # own unify call -- exactly the completeness gap the pre-fix plain-equality version
-        # missed (see the module docstring, condition 7). Neither phase's entries reference
-        # a dimension symbol, so there is nothing to substitute and reattach_phase succeeds
-        # trivially either way.
+        # Both legs share the still-symbolic d (shared_dim=d, unbound), A's phase agrees
+        # outright (also over d), and B's phase over the concrete 3 binds d := 3 through
+        # condition 7's own unify call. Neither phase's entries reference a dimension
+        # symbol, so reattach_phase has nothing to substitute.
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(
@@ -442,10 +439,9 @@ class TestPhaseFailureDoesNotMisreportDimensionAgreement:
             f"detail, which the leg sweep was never actually checked against: "
             f"{dimension_agreement!r}"
         )
-        # phase_dimension_agreement's own detail
-        # must name the value B's phase was actually checked against (3, refined by A's own
-        # binding within this same _unify_phase_dims call), not the stale pre-call
-        # shared_dim (e) the caller held before making the call.
+        # phase_dimension_agreement's own detail must name the value B's phase was checked
+        # against (3, refined by A's binding within this same _unify_phase_dims call), not
+        # the pre-call shared_dim (e).
         phase_dimension_agreement = by_name["phase_dimension_agreement"]
         assert not phase_dimension_agreement.passed
         assert "3" in phase_dimension_agreement.detail, phase_dimension_agreement.detail
@@ -554,7 +550,7 @@ class TestDimensionConstraintsRecording:
         )
 
     def test_a_leg_already_bound_by_the_connecting_pair_is_not_recorded_again(self) -> None:
-        """Dimension_constraints duplicate-assumption defect.
+        """``dimension_constraints`` records a duplicate assumption exactly once.
 
         A: output dim d (consumed). B: input dim 2 (consumed), output dim 2 (survives). The
         connecting pair binds d := 2 and is recorded once; before the fix, B's surviving leg
@@ -611,11 +607,10 @@ class TestDimensionConstraintsRecording:
 
 
 class TestOutOfRangeWireEndpointRaises:
-    """Graph.py is deliberately permissive about wire port indices; find_matches must not be.
+    """``graph.py`` is permissive about wire port indices; ``find_matches`` must not be.
 
-    an out-of-range index in a wire endpoint used to escape as a bare IndexError
-    from ``node.legs(direction)[index]``; it must now raise RewriteGrammarError instead,
-    for either endpoint, before any dimension work is attempted.
+    An out-of-range index in either wire endpoint raises ``RewriteGrammarError``, not a
+    bare ``IndexError`` from ``node.legs(direction)[index]``, before any dimension work.
     """
 
     def test_out_of_range_index_on_the_a_side_raises(self) -> None:
@@ -775,10 +770,8 @@ class TestSharedDimResolvesThroughBinding:
         assert matches[0].shared_dim == three
 
     def test_a_legitimate_phase_stated_over_the_bound_dim_now_matches(self) -> None:
-        # B's phase is
-        # legitimately stated over Dim(3), the concrete value d unifies to, not over the
-        # still-symbolic leg dim d itself. Before the fix this was wrongly dropped as a
-        # non-match because phase_dimension_agreement compared it against raw d.
+        # B's phase is stated over Dim(3), the concrete value d unifies to, not over the
+        # still-symbolic leg dim d itself.
         d = Dim.symbol("d")
         three = Dim.concrete(3)
         diagram = Diagram()
@@ -795,18 +788,11 @@ class TestSharedDimResolvesThroughBinding:
         assert matches[0].shared_dim == three
 
     def test_phases_agreeing_only_after_substitution_but_not_raw_now_matches(self) -> None:
-        # Judgement call 2, decided: node A's phase is stated
-        # over the symbolic leg dim d, node B's over the bound concrete value 3 -- both
-        # individually resolve to shared_dim=3 (A's via a binding condition 7 itself now
-        # derives, B's outright), but their raw, unsubstituted Dims differ. The pre-fix
-        # matcher additionally required two present phases' raw Dims to equal each other,
-        # rejecting this candidate on the theory that spider_fusion_builder's
-        # PhaseVector.__add__ would otherwise crash on unequal Dims -- but reattach_phase
-        # forces *both* operands' container Dim to the identical shared_dim regardless of
-        # their raw values (see that function's docstring), so the crash this guarded
-        # against was never actually reachable once reattach_phase existed. Removed as
-        # unneeded conservatism; the fused diagram is built and oracle-compared for real in
-        # TestPhase5Round12AuditDefects-style rules_library tests.
+        # Node A's phase is stated over the symbolic leg dim d, node B's over the bound
+        # concrete value 3: both resolve to shared_dim=3 (A's via a binding condition 7
+        # derives, B's outright), while their raw, unsubstituted Dims differ. Two present
+        # phases' raw Dims are not required to be equal -- reattach_phase forces both
+        # operands' container Dim to shared_dim before PhaseVector.__add__ sees them.
         d = Dim.symbol("d")
         three = Dim.concrete(3)
         diagram = Diagram()
@@ -826,12 +812,10 @@ class TestSharedDimResolvesThroughBinding:
 
 
 class TestPhaseDimensionAgreementSeesSurvivingLegBindings:
-    """Phase_dimension_agreement used to resolve a present phase's Dim using only the
-    connecting pair's own unify bindings (``leg_unify.bindings``), never a binding a
-    *surviving* leg produced -- even though condition 6's own ``shared_dim`` is refined by
-    exactly that binding. A phase legally stated over a symbol only a surviving leg happens
-    to bind was therefore compared unsubstituted against the refined shared_dim and wrongly
-    dropped as a non-match."""
+    """``phase_dimension_agreement`` resolves a present phase's Dim through every binding
+    accumulated so far, including one a *surviving* leg produced -- not only the connecting
+    pair's own. A phase stated over a symbol that only a surviving leg binds still matches.
+    """
 
     def test_a_phase_over_a_symbol_bound_only_by_a_surviving_leg_now_matches(self) -> None:
         # A's connecting leg (output 0) and B's connecting leg (input 0) are both the
@@ -877,10 +861,11 @@ class TestDeterministicOrder:
 
 
 class TestSurvivingLegDimensionUnification:
-    """Surviving-leg dims used to be forced onto ``shared_dim`` by the builder with no
-    unification check at all, so a surviving leg that plainly conflicted with ``shared_dim``
-    was silently overwritten (destroying a real dimension, or laundering a pre-existing hard
-    error) instead of making the candidate a non-match."""
+    """A surviving leg that conflicts with ``shared_dim`` makes the candidate a non-match.
+
+    It is never forced onto ``shared_dim`` unchecked, which would overwrite a real
+    dimension or launder a pre-existing hard error.
+    """
 
     def test_a_surviving_leg_that_conflicts_with_shared_dim_is_a_non_match(self) -> None:
         # A already carries a hard dimension_policy_violation (outputs 3 and 5 disagree on
@@ -1080,10 +1065,11 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
 
 
 class TestMalformedWireDetectionIsFullyUnconditional:
-    """The out-of-range-index check used to run only per-candidate, after grouping and
-    filtering, so a malformed wire dropped by the parallel-wire-pair filter or the self-loop
-    skip escaped detection entirely and returned () instead of raising. The check must now
-    run over every wire before any grouping or filtering."""
+    """The out-of-range-index check runs over every wire before any grouping or filtering.
+
+    A malformed wire that grouping would drop (a parallel-wire pair, a self-loop) still
+    raises rather than being silently skipped.
+    """
 
     def test_malformed_wire_inside_a_parallel_pair_still_raises(self) -> None:
         d = Dim.concrete(2)
@@ -1147,14 +1133,13 @@ class TestFusionMatchIsHashable:
 
 
 class TestPhaseDimensionAgreementDeferredFidelity:
-    """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome
-   : it now genuinely calls
-    :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 6 -- a genuinely
-    ``DEFERRED`` per-phase result is rejected outright (see the module docstring, condition
-    6, for why a phase cannot tolerate the same unproven assumption a leg can), so a
-    *passing* outcome is never itself resting on an undecided unify. A passing outcome can
-    still rest on a *binding* -- recorded in ``dimension_constraints`` -- but following
-    condition 6's own convention, a binding-only success does not set ``deferred`` either.
+    """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome.
+
+    It calls :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 6 -- a
+    ``DEFERRED`` per-phase result is rejected outright (module docstring, condition 7), so
+    a passing outcome never rests on an undecided unify. A passing outcome can rest on a
+    *binding*, recorded in ``dimension_constraints``; following condition 6's convention,
+    a binding-only success does not set ``deferred`` either.
     """
 
     def test_deferred_is_false_when_no_phase_present_on_either_node(self) -> None:
@@ -1196,10 +1181,8 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         ) in match.dimension_constraints
 
     def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
-        # unlike a leg, a phase whose dim
-        # only DEFERS against shared_dim (never binds, never a bare identity) cannot be
-        # safely reattached -- there is no binding to substitute through its entries, so
-        # this must be a non-match, not an accepted-with-assumption pass.
+        # Unlike a leg, a phase whose dim only DEFERS against shared_dim (never binds,
+        # never a bare identity) is a non-match, not an accepted-with-assumption pass.
         d = Dim.symbol("d")
         e = Dim.symbol("e")
         diagram = Diagram()
@@ -1278,10 +1261,10 @@ class TestSameGeneratorTypeReportsUnregisteredFusabilityItself:
 
 
 class TestResolveFusionMatchIsTheSharedPredicate:
-    """A1/A2/A4: ``find_matches`` and ``spider_fusion_builder`` must
-    call the exact same function object to decide/re-verify a candidate -- not two
-    similar-looking computations kept in sync by hand. See ``resolve_fusion_match``'s and the
-    module docstring's "One verification predicate" section.
+    """``find_matches`` and ``spider_fusion_builder`` call the same function object to
+    decide and re-verify a candidate.
+
+    See ``resolve_fusion_match`` and the module docstring's "One verification predicate".
     """
 
     def test_spider_fusion_builder_calls_the_same_function_object(self) -> None:
@@ -1334,9 +1317,7 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         assert {o.name for o in resolution.outcomes} == {c.name for c in FUSION_SIDE_CONDITIONS}
         same_type = next(o for o in resolution.outcomes if o.name == "same_generator_type")
         assert not same_type.passed
-        # a failed resolution's shared_dim is unrepresentable
-        # as a meaningful Dim, not a placeholder concrete value a caller ignoring `passed`
-        # could silently read as though it meant something.
+        # A failed resolution reports shared_dim as None, never a placeholder Dim.
         assert resolution.shared_dim is None
 
     def test_passing_resolution_agrees_with_find_matches_own_fields(self) -> None:

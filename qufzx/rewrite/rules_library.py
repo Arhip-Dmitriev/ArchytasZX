@@ -22,8 +22,8 @@ so Phase 6's certificate replay needs a way to resolve that name back to the rul
 :mod:`qufzx.rewrite.engine` generic over any future rule.
 
 Scalar derivation (not assertion). Same-color fusion across one wire introduces no scalar
-factor in either wire shape condition 4 (``consumed_wire_direction_permitted_for_color``)
-in :mod:`qufzx.rewrite.match` permits:
+factor in either wire shape that condition 4
+(``consumed_wire_direction_permitted_for_color``) in :mod:`qufzx.rewrite.match` permits:
 
 * Alternating output-to-input, either color. Z: both spiders are diagonal with entry
   ``e^{i*angle(k)}`` at the all-axes-``k`` position, so contracting an output leg against
@@ -128,22 +128,15 @@ def _surviving_legs(
 def _over_shared_dim(
     phase: PhaseVector | None, shared_dim: Dim, bindings: Mapping[str, Dim]
 ) -> tuple[PhaseVector, Mapping[str, Dim]]:
-    """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``.
+    """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``
+    -- or an all-zero vector over ``shared_dim`` if ``phase`` is absent.
 
-    Returns the reattached vector together with the subset of ``bindings`` that
-    :func:`~qufzx.rewrite.match.reattach_phase` actually substituted into an entry's value
-    -- empty when ``phase`` is absent.
-
-    Or an all-zero vector if ``phase`` is absent. Delegates to
-    :func:`qufzx.rewrite.match.reattach_phase`, the same function
-    ``phase_dimension_agreement`` uses as its trial construction while matching, so
-    match-approval and build-applicability are the same predicate by construction.
+    Delegates to :func:`qufzx.rewrite.match.reattach_phase`, and returns its reattached
+    vector together with the subset of ``bindings`` it substituted into an entry's value
+    (empty when ``phase`` is absent).
 
     Raises :class:`RewriteDomainError`, not :class:`~qufzx.algebra.phase.PhaseDomainError`,
-    if an entry index falls outside ``shared_dim``'s range: this builder is reachable
-    directly, so a foreign match must not leak a different module's exception hierarchy
-    through it. The ``except`` branch is unreachable for any match ``find_matches``
-    returned, since ``phase_dimension_agreement`` performs the same construction.
+    if an entry index falls outside ``shared_dim``'s range.
     """
     if phase is None:
         return PhaseVector(shared_dim, {}), MappingProxyType({})
