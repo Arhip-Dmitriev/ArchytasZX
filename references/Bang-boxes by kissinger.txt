@@ -1,0 +1,2446 @@
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+License: arXiv.org perpetual non-exclusive license
+arXiv:1204.6695v3 [math.CT] 01 Apr 2014
+Pattern graph rewrite systems
+Aleks Kissinger
+alexander.kissinger@cs.ox.ac.uk
+Department of Computer Science
+University of Oxford, United Kingdom
+Department of Computer Science
+University of Oxford, United Kingdom
+Computer Laboratory
+University of Cambridge, United Kingdom
+Alex Merry
+alex.merry@cs.ox.ac.uk
+Matvey Soloviev
+ms900@cam.ac.uk
+Draft: August 24, 2026
+Abstract
+String diagrams are a powerful tool for reasoning about physical processes, logic circuits, tensor networks, and many other compositional structures. Dixon, Duncan and Kissinger introduced string graphs, which are a combinatoric representations of string diagrams, amenable to automated reasoning about diagrammatic theories via graph rewrite systems. In this extended abstract, we show how the power of such rewrite systems can be greatly extended by introducing pattern graphs, which provide a means of expressing infinite families of rewrite rules where certain marked subgraphs, called 
+!
+-boxes (“bang boxes”), on both sides of a rule can be copied any number of times or removed. After reviewing the string graph formalism, we show how string graphs can be extended to pattern graphs and how pattern graphs and pattern rewrite rules can be instantiated to concrete string graphs and rewrite rules. We then provide examples demonstrating the expressive power of pattern graphs and how they can be applied to study interacting algebraic structures that are central to categorical quantum mechanics.
+
+1Introduction
+String diagrams consist of a collection of boxes representing processes with some inputs and outputs, and wires, representing the composition of these processes.
+
+α
+β
+γ
+ϕ
+ρ
+They were introduced by Penrose in 1971 to describe (abstract) tensor networks [18], but were later shown to be a much more general tool for expressing morphisms in arbitrary monoidal categories. Joyal and Street showed in 1991 that string diagrams could be formalised as topological graphs carrying extra structure and used to construct free (symmetric, braided, traced, etc.) monoidal categories [13]. As such, they are a powerful tool for reasoning about algebraic structures internal to monoidal categories, like those employed by Abramsky and Coecke’s program of categorical quantum mechanics [2, 4, 5, 6].
+
+However, while they provide an intuitive, geometric notion of a composed process, topological graphs are unwieldy to manipulate by computer program. To solve this problem, Dixon, Duncan and Kissinger introduced a discrete version of string diagrams, called string graphs [8]. The key difference is that “wires”, which in the Joyal and Street construction are represented by copies of the real interval 
+[
+0
+,
+1
+]
+, are replaced by chains of special vertices called wire-vertices.
+
+X
+X
+X
+↦
+X
+X
+Using string graphs, we can reason about algebraic structures in monoidal categories automatically using double-pushout graph rewriting [10]. This translation allows many techniques to be imported with very little change from term rewriting literature into the study of graphical calculi. However, in the course of applying graph rewrite systems, there are certain circumstances where a finite set of graph rewrite rules does not suffice. For instance, in [4] the authors focused on the study of how classical data (in this case, data associated with measurement outcomes) propagates through a quantum system. This relies crucially on so-called “spiders”. The distinguishing feature they highlighted about classical, as opposed to quantum, data is that it can be freely created, compared, copied, or deleted. They represent any combination of these operations as a spider, with a crucial identity, called the spider law, which says that connected spiders fuse together.
+
+…
+…
+…
+…
+  
+…
+…
+…
+spiders
+(1)
+This rule succinctly sums up an infinite family of rules, namely one for every arity of the two spiders involved. However, the use of ellipses is part of the meta-language, rather than the diagram itself. What we aim to do is replace this informal notion with diagrammatic syntax. We do this by introducing pattern graphs. Pattern graphs contain one or more labelled subgraphs called 
+!
+-boxes. To instantiate a pattern graph, the contents of its 
+!
+-boxes (along with any edges in or out) can be copied 0 or more times. So, a single pattern graph represents an infinite family of concrete graphs.
+
+=
+⋯
+,
+,
+,
+,
+,
+,
+b
+2
+b
+1
+If two pattern graphs have coinciding !-boxes, we can form them into pattern rewrite rules. For instance, the spider law can be reformulated:
+
+  
+b
+1
+b
+2
+b
+3
+b
+4
+b
+5
+b
+4
+b
+2
+b
+1
+b
+5
+b
+3
+This presents (1) in a manner that is machine-readable. Also note that in the process of formulating this rule, we have removed an ambiguity on the LHS. Namely, we wish to have zero or more wires as inputs and outputs to the two spiders, yet we need one or more wires connecting the two spiders for the equation to hold.
+
+Dixon and Duncan have previously [7] introduced a notion of pattern graphs using !-boxes. However, the underlying graph formalism, which did without (internal) wire-vertices, was ill-behaved with respect to the interpretation of the graphs as morphisms in a monoidal category. This extended abstract extends that work in three important ways. Firstly, it formalises the notions of pattern graph, pattern graph instantiation, and pattern rewriting in the context of string graphs, which were proven in [8] to be sound and complete with respect to their interpretation as morphisms in monoidal categories. Secondly, it shows that the latter two operations are sound and consistent with respect to the interpretation of string graphs as morphisms in a monoidal category. Thirdly, it extends Dixon and Duncan’s origin notion of a pattern graph by allowing edges to be repeated (via wire-vertices in !-boxes) and it increases the expressiveness of the language by allowing !-boxes to nest and overlap. This allows the expression of previously unexpressible equivalences, such as the path-counting rule,
+
+…
+…
+…
+n
+m
+  
+n
+∗
+m
+…
+…
+…
+which can now be formalised as follows:
+
+b
+2
+b
+1
+b
+2
+  
+b
+1
+The rest of the paper is structured as follows. In section 3, we briefly review the category of string graphs. In section 4, we define pattern graphs and the method by which pattern graphs can be instantiated to concrete graphs. In section 5, we show how this can be extended to pattern graph rewrite rules and show how pattern rules can be matched and applied to concrete string graphs. Finally, we conclude and discuss future work in section 6.
+
+2Related work
+As already mentioned, this work improves upon the specification of 
+!
+-boxes in [7]. The original inspiration for the term “
+!
+-box” in that paper is the “bang” operation from classical linear logic (CLL) introduced by Girard [11]. Its interpretation in that context is a logical expression that can be “consumed” any number of times in the course of the proof.
+
+Lafont introduced an alternative, and more flexible, 2-dimensional calculus [17]. It does not rely on symmetry, or on traced or compact structure, but this also makes it harder to work with as these properties allow us to do genuine graph rewriting.
+
+Researchers at Twente introduced two ways by which richer families of graphs could be matched and rewritten using something akin to pattern graphs. The first method, initiated by Rensink, uses quantified graph transformation rules, where subgraphs are attached to a tree of alternating quantifiers [19, 20]. Unlike the transformation rules we consider, this method allows matchings to be non-full on all vertices in a pattern graph, so an edge in the pattern can be interpreted as an existentially-quantified statement on the attached subgraph, rather than a requirement that all incident edges must be matched. Rensink showed that such statements could be generalised to include negations, universals, and nested quantifiers.
+
+The second method takes inspiration from abstraction/refinement-style model checking. Using graph abstraction [3], large or infinite families of graphs can be represented using coarse-grained abstract graphs. While this often has the side-effect of producing abstract graphs that match many more graphs than those of interest, it has the useful property that any high-level properties proven about the abstract graph hold for any concrete graph it represents.
+
+Both of these methods are implemented on the GROOVE platform, which is a general-purpose graph rewriting tool geared toward model-checking [12].
+
+3The category of string graphs
+We recall the definition of string graphs, introduced using the name open-graphs in [8].
+
+String diagrams can have wires that are not connected to vertices at one or both ends and wires that are connected to themselves to form circles. As we mentioned in section 1, we cope with these situations by replacing wires with chains of special place-holder vertices called wire-vertices. The other type of vertices in a string graph are called node-vertices, which should be considered the “logical” vertices of a diagram, and are used to represent some operation, process, or morphism. We now provide some basic definitions in order to fix graph notation.
+
+Definition 3.1.Let 
+𝐆𝐫𝐚𝐩𝐡
+ be the category of graphs. It is defined as the functor category 
+[
+𝔾
+,
+𝐒𝐞𝐭
+]
+, for 
+𝔾
+ defined as:
+E
+V
+s
+t
+E
+ identifies the edges of the graph, and 
+V
+ the vertices. 
+s
+ and 
+t
+ are functions taking an edge to its source and target respectively.
+
+If 
+t
+⁡
+(
+e
+)
+=
+v
+ then 
+e
+ is called an in-edge of 
+v
+ and if 
+s
+⁡
+(
+e
+)
+=
+v
+ then 
+e
+ is called an out-edge of 
+v
+. If 
+v
+′
+ is the target of one of the out-edges of 
+v
+, it is called a successor of 
+v
+. Similarly, if 
+v
+′
+ is the source of one of the in-edges of 
+v
+, it is called a predecessor of 
+v
+. We denote the set of all successors and predecessors for a given vertex 
+v
+ as 
+succ
+​
+(
+v
+)
+ and 
+pred
+​
+(
+v
+)
+, respectively.
+
+We shall often make use of the graph-theoretic subtraction. For a subgraph 
+H
+ of 
+G
+, let 
+G
+∖
+H
+ be the largest subgraph of 
+G
+ that is disjoint from 
+H
+.
+
+The typegraph 
+𝒢
+2
+ will be used to distinguish node-vertices from wire-vertices.
+
+η
+ω
+Definition 3.2 (
+𝐒𝐆𝐫𝐚𝐩𝐡
+).The category 
+𝐒𝐆𝐫𝐚𝐩𝐡
+ of string graphs is the full subcategory of the slice category 
+𝐆𝐫𝐚𝐩𝐡
+/
+𝒢
+2
+ induced by the objects where each wire-vertex has at most one in-edge and one out-edge.
+This slice construction allows string graphs to be represented as graphs with a typing morphism to 
+𝒢
+2
+. We refer to a single chain of wire-vertices as a wire. The slice construction also ensures that every path between two node-vertices must be connected by a wire containing at least one wire-vertex. This is important both for the concept of matching and for the case where the wire-vertex carries type information about the wire.
+
+Example 3.3.A diagrammatic presentation of a string graph:
+Definitions 3.4 (
+𝐒𝐆𝐫𝐚𝐩𝐡
+ Notation).If a wire-vertex has no in-edges, it is called an input. We write the set of inputs of a string graph 
+G
+ as 
+In
+​
+(
+G
+)
+. Similarly, a wire-vertex with no out-edges is called an output, and the set of outputs is written 
+Out
+​
+(
+G
+)
+. The inputs and outputs define a string graph’s boundary, 
+Bound
+​
+(
+G
+)
+:=
+In
+​
+(
+G
+)
++
+Out
+​
+(
+G
+)
+. If a boundary point has no in-edges and no out-edges, (it is both and input and output) it is called an isolated point. A string graph consisting of only isolated points is called a point-graph.
+These definitions can be easily extended to handle multiple node-vertex and wire types by using a richer typegraph. In general, one can turn any monoidal signature 
+T
+ into a typegraph 
+𝒢
+T
+ and use 
+𝒢
+T
+-typed graphs to construct the free (traced symmetric) monoidal category over the signature 
+T
+. For details, see [9] or [14]. However, for the main ideas in the coming sections, it suffices to consider string graphs with a single node-vertex and wire type.
+
+4Pattern graphs and instantiation
+Before proceeding to the notion of 
+!
+-boxes, it is useful to first define an open subgraph of a string graph. Intuitively, these are full subgraphs that contain only complete wires. One way to say this is the graph-theoretic subtraction does not create any new boundaries.
+
+Definition 4.1.A subgraph 
+O
+ of a string graph 
+G
+ is said to be open if 
+In
+​
+(
+G
+∖
+O
+)
+⊆
+In
+​
+(
+G
+)
+ and 
+Out
+​
+(
+G
+∖
+O
+)
+⊆
+Out
+​
+(
+G
+)
+.
+We shall shortly define 
+!
+-boxes as certain kinds of open subgraphs, and note that openness is important to preserve the property of being a string graph (i.e., no branching wires) when 
+!
+-boxes are copied. The following proposition justifies the use of the topological term “open”.
+
+Proposition 4.2.If 
+O
+,
+O
+′
+⊆
+G
+ are open subgraphs, and 
+H
+⊆
+G
+ is an arbitrary subgraph, then 
+O
+∩
+O
+′
+ and 
+O
+∪
+O
+′
+ are open in 
+G
+ and 
+H
+∩
+O
+ is open in 
+H
+.
+We encode 
+!
+-boxes into the graph structure itself, by introducing a third vertex type, called a 
+!
+-vertex. The extended typegraph 
+𝒢
+3
+ looks like this:
+
+η
+ω
+!
+Note that the typegraph enforces that 
+!
+-vertices can only have out-edges or edges coming from other 
+!
+-vertices. For a 
+𝒢
+3
+-typed graph 
+(
+G
+,
+τ
+)
+, we write 
+η
+⁡
+(
+G
+)
+, 
+ω
+⁡
+(
+G
+)
+, and 
+!
+(
+G
+)
+ as shorthand for the preimages 
+τ
+−
+1
+​
+(
+η
+)
+, 
+τ
+−
+1
+​
+(
+ω
+)
+, and 
+τ
+−
+1
+(
+!
+)
+ respectively. We alter the definition of an input slightly from the string-graph case, due to the new vertex type: a wire-vertex is an input if the only in-edges are from 
+!
+-vertices.
+
+For a 
+!
+-vertex 
+b
+∈
+!
+(
+G
+)
+, let 
+B
+⁡
+(
+b
+)
+ be its associated 
+!
+-box. This is the full subgraph whose vertices are the set 
+succ
+​
+(
+b
+)
+ of all of the successors of 
+b
+. We also define the parent graph of a 
+!
+-vertex 
+B
+↑
+​
+(
+b
+)
+ as the full subgraph of predecessors, that is, the full subgraph generated by 
+pred
+​
+(
+b
+)
+.
+
+Definition 4.3.A 
+𝒢
+3
+-typed graph 
+G
+ is called a pattern graph if:
+1.
+the full subgraph with vertices 
+η
+⁡
+(
+G
+)
+∪
+ω
+⁡
+(
+G
+)
+, denoted 
+Σ
+⁡
+(
+G
+)
+, is a string graph,
+2.
+the full subgraph with vertices 
+!
+(
+G
+)
+, denoted 
+β
+⁡
+(
+G
+)
+, is posetal,
+3.
+for all 
+b
+∈
+!
+(
+G
+)
+, 
+B
+⁡
+(
+b
+)
+ is an open subgraph of 
+G
+, and
+4.
+for all 
+b
+,
+b
+′
+∈
+!
+(
+G
+)
+, if 
+b
+′
+∈
+B
+⁡
+(
+b
+)
+ then 
+B
+⁡
+(
+b
+′
+)
+⊆
+B
+⁡
+(
+b
+)
+.
+Let 
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+ be the full subcategory of 
+𝐆𝐫𝐚𝐩𝐡
+/
+𝒢
+3
+ whose objects are pattern graphs.
+
+Recall that a graph is posetal if it is simple (at most one edge between any two vertices) and, when considered as a relation, forms a partial order. Note in particular that this implies 
+b
+∈
+B
+⁡
+(
+b
+)
+ (and 
+B
+↑
+​
+(
+b
+)
+), by reflexivity. This partial order allows 
+!
+-boxes to be nested inside each other, provided that the subgraph defined by a nested 
+!
+-vertex is totally contained in the subgraph defined by its parent (condition 4).
+
+We extend the 
+Σ
+⁡
+(
+G
+)
+ and 
+β
+⁡
+(
+G
+)
+ notation to morphisms of 
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+ by making their operation be the obvious restrictions. Thus 
+Σ
+ and 
+β
+ can be viewed as functors on 
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+.
+
+Definition 4.4.A pattern graph with no 
+!
+-vertices is called a concrete graph.
+Note that the full subcategory of 
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+ consisting of concrete graphs is isomorphic to 
+𝐒𝐆𝐫𝐚𝐩𝐡
+, and there is an obvious canonical isomorphism. Concrete graphs and string graphs will therefore be considered interchangable.
+
+We introduce special notation for pattern graphs. 
+!
+-vertices are drawn as squares, but rather than drawing edges to all of the node-vertices and wire-vertices in 
+B
+⁡
+(
+b
+)
+, we simply draw a box around it.
+
+:
+⁣
+=
+In this notation, we retain edges between distinct 
+!
+-vertices to indicate which 
+!
+-boxes are nested as opposed to simply overlapping. This distinction is important, as nested 
+!
+-boxes are copied whenever their parent is copied.
+
+≠
+In particular, every object in 
+𝐒𝐆𝐫𝐚𝐩𝐡
+ can be considered as a pattern graph that has no 
+!
+-vertices. This embedding 
+E
+:
+𝐒𝐆𝐫𝐚𝐩𝐡
+↪
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+ is full and coreflective. Its right adjoint is given by the forgetful functor 
+U
+:
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+→
+𝐒𝐆𝐫𝐚𝐩𝐡
+ that drops all of the 
+!
+-boxes.
+
+4.1Instantiation
+Following the “bang” operation from linear logic, 
+!
+-boxes admit 4 operations.
+
+COPY
+KILL
+DROP
+MERGE
+Definitions 4.5.For 
+G
+ a pattern graph, and 
+b
+,
+b
+′
+∈
+!
+(
+G
+)
+ where 
+B
+↑
+​
+(
+b
+)
+∖
+b
+=
+B
+↑
+​
+(
+b
+′
+)
+∖
+b
+′
+ and 
+B
+⁡
+(
+b
+)
+∩
+B
+⁡
+(
+b
+′
+)
+=
+{
+}
+, the four 
+!
+-box operations are defined as follows:
+COPY
+b
+⁡
+(
+G
+)
+ is defined by a pushout of inclusions in 
+𝐆𝐫𝐚𝐩𝐡
+/
+𝒢
+3
+:
+G
+∖
+B
+⁡
+(
+b
+)
+G
+G
+COPY
+b
+⁡
+(
+G
+)
+(2)
+DROP
+b
+⁡
+(
+G
+)
+:=
+G
+∖
+b
+.
+KILL
+b
+⁡
+(
+G
+)
+:=
+G
+∖
+B
+⁡
+(
+b
+)
+.
+MERGE
+b
+,
+b
+′
+⁡
+(
+G
+)
+ is a quotient of 
+G
+ where 
+B
+↑
+​
+(
+b
+)
+ and 
+B
+↑
+​
+(
+b
+′
+)
+ are identified. More explicitly, this is the coequaliser
+B
+↑
+​
+(
+b
+)
+G
+MERGE
+b
+,
+b
+′
+⁡
+(
+G
+′
+)
+b
+^
+b
+^
+′
+(3)
+in 
+𝐆𝐫𝐚𝐩𝐡
+/
+𝒢
+3
+ where 
+b
+^
+ is the normal inclusion map and 
+b
+^
+′
+ is the inclusion of 
+B
+↑
+​
+(
+b
+′
+)
+ into 
+G
+ composed with the obvious isomorphism from 
+B
+↑
+​
+(
+b
+)
+ to 
+B
+↑
+​
+(
+b
+′
+)
+.
+
+Note that all of these operations preserve the property of being a pattern graph.
+
+Theorem 4.6.Let 
+G
+ be a pattern graph and 
+b
+∈
+!
+(
+G
+)
+. Then the 
+𝒢
+3
+-typed graphs 
+COPY
+b
+⁡
+(
+G
+)
+, 
+DROP
+b
+⁡
+(
+G
+)
+ and 
+KILL
+b
+⁡
+(
+G
+)
+ are all pattern graphs. If we further suppose that 
+b
+′
+∈
+!
+(
+G
+)
+ with 
+B
+↑
+​
+(
+b
+)
+∖
+b
+=
+B
+↑
+​
+(
+b
+′
+)
+∖
+b
+′
+ and 
+B
+⁡
+(
+b
+)
+∩
+B
+⁡
+(
+b
+′
+)
+=
+∅
+, then 
+MERGE
+b
+,
+b
+′
+⁡
+(
+G
+)
+ is also a pattern graph.
+Applying one of these four operations any number of times to a pattern graph yields a more specific pattern. As such, we can define a refinement (pre-)ordering on pattern graphs.
+
+Definition 4.7.For pattern graphs 
+G
+, 
+H
+, we let 
+G
+⪰
+H
+ if and only if 
+H
+ can be obtained from 
+G
+ (up to isomorphism) by applying the four operations from definition 4.5 zero or more times. If 
+H
+ is a concrete graph, it is called an instance of 
+G
+, and the sequence of operations used to obtain 
+H
+ from 
+G
+ is called the instantiation.
+4.2Nested and overlapping 
+!
+-boxes
+Due to the definition of 
+COPY
+ as a pushout of inclusions, the absence of an edge between 
+!
+-vertices 
+b
+1
+ and 
+b
+2
+ with 
+B
+⁡
+(
+b
+1
+)
+∩
+B
+⁡
+(
+b
+2
+)
+≠
+∅
+ results in both copies of the contents of 
+b
+1
+ created having the same connectivity to 
+b
+2
+ as they had in the original graph:
+
+b
+1
+b
+1
+b
+1
+′
+COPY
+b
+2
+b
+2
+Note that it is not actually necessary that 
+B
+⁡
+(
+b
+2
+)
+∖
+b
+2
+ is completely contained in 
+B
+⁡
+(
+b
+1
+)
+∖
+b
+1
+ here. On the other hand, if 
+B
+⁡
+(
+b
+2
+)
+∖
+b
+2
+ is a subgraph of 
+B
+⁡
+(
+b
+1
+)
+∖
+b
+1
+, we could also add an edge from 
+b
+1
+ to 
+b
+2
+, which would result in a new copy of 
+b
+2
+ being created to contain the copies of the vertices in 
+B
+⁡
+(
+b
+2
+)
+.
+
+b
+1
+b
+1
+b
+1
+′
+COPY
+b
+2
+b
+2
+b
+2
+′
+Definition 4.8.For a pattern graph 
+G
+ with distinct 
+!
+-vertices 
+b
+1
+ and 
+b
+2
+, we say 
+b
+2
+ is nested in 
+b
+1
+ if there exists a directed edge from 
+b
+1
+ to 
+b
+2
+. If this is not the case, but 
+B
+⁡
+(
+b
+1
+)
+∩
+B
+⁡
+(
+b
+2
+)
+≠
+∅
+, we call 
+b
+1
+ and 
+b
+2
+ overlapping.
+Both of the above examples could be seen as attempts to formalise the family of all trees of height up to 2. However,
+
+=
+⋯
+,
+,
+,
+,
+,
+,
+b
+2
+b
+1
+,
+but
+
+=
+⋯
+,
+,
+,
+,
+,
+b
+2
+b
+1
+,
+The absence of nesting restricts the instances to those trees where all the first-level nodes have the same number of children; in other words, it allows only balanced trees. Removing the nesting enforces a higher degree of regularity in the concrete graphs that can be expressed.
+
+Nesting, in fact, always makes a pattern graph more general in the following sense:
+
+Proposition 4.9.Let 
+G
+ be a pattern graph and 
+b
+2
+ be nested in 
+b
+1
+ in 
+G
+, with the edge from 
+b
+1
+ to 
+b
+2
+ being 
+e
+. Then the set of instances of the graph 
+H
+=
+G
+∖
+e
+ is a subset of the set of instances of 
+G
+.
+This becomes evident when we observe that we can track operations on 
+H
+ in 
+G
+ by performing a 
+MERGE
+b
+2
+,
+b
+2
+′
+ on the two copies of 
+b
+2
+ produced whenever 
+b
+1
+ or a copy of it is copied (and performing the same operation otherwise), producing the same pattern graph apart from additional copies of 
+e
+, which must eventually be dropped to obtain a concrete graph.
+
+5Matching and rewriting with pattern graphs
+For those familiar with patterns in functional programming languages, the name “pattern graph” suggests that there should be a concept of matching, and given a pattern graph and a string graph, it should be possible to determine whether the string graph is matched by the pattern graph. This is, in fact, the case. First, we recall how matching between string graphs is defined.
+
+Definition 5.1.A monomorphism, 
+m
+:
+G
+→
+H
+, of string graphs is called a string graph matching when, for every node-vertex 
+n
+∈
+η
+⁡
+(
+G
+)
+, the edge function of 
+m
+ restricts to a bijection between the set of edges connected to 
+n
+ in 
+G
+ and the set of edges connected to 
+m
+⁡
+(
+n
+)
+ in 
+H
+. In this case, 
+G
+ is said to match 
+H
+ at 
+m
+.
+The concept of a matching from a pattern graph to a string graph is straightforward: if there is an instance of the pattern graph that matches the string graph, then the pattern graph is said to match the string graph.
+
+Definition 5.2.Let 
+P
+ be a pattern graph, and 
+H
+ a string graph. If there is an instance 
+G
+ of 
+P
+, with instantiation 
+S
+, that matches 
+H
+ at a morphism 
+m
+, 
+P
+ is said to match 
+H
+ at 
+m
+ under instantiation 
+S
+.
+Determining whether such an 
+m
+ and 
+S
+ exist, and what possible values they can take, is decidable, although we do not have space to show that here. The full details are set out in a document in the Quantomatic1
+1http://sites.google.com/site/quantomatic
+ repository.
+
+Given a concept of matching, we can proceed to define how to do rewriting of string graphs using rules built from pattern graphs. We start by recalling how rewriting of string graphs using string graph rewrite rules works.
+
+Definition 5.3 (Rewrite Rule).A span of string graphs 
+L
+​
+⟵
+i
+1
+​
+I
+​
+⟶
+i
+2
+​
+R
+ is called a rewrite rule, written 
+L
+​
+  
+⁡
+R
+, if
+1.
+I
+ is a point graph and 
+i
+1
+ restricts to a bijection 
+I
+≅
+Bound
+​
+(
+L
+)
+ and 
+i
+2
+ to 
+I
+≅
+Bound
+​
+(
+R
+)
+ and
+2.
+for all 
+p
+∈
+I
+, 
+i
+1
+​
+(
+p
+)
+∈
+In
+​
+(
+L
+)
+⇔
+i
+2
+​
+(
+p
+)
+∈
+In
+​
+(
+R
+)
+ and 
+i
+1
+​
+(
+p
+)
+∈
+Out
+​
+(
+L
+)
+⇔
+i
+2
+​
+(
+p
+)
+∈
+Out
+​
+(
+R
+)
+In other words, 
+L
+ and 
+R
+ share the same boundary.
+
+For a pair of morphisms 
+I
+​
+⟶
+i
+1
+​
+L
+​
+⟶
+𝑚
+​
+G
+, a pushout complement is some string graph 
+G
+−
+m
+L
+ completing the pushout square:
+
+I
+L
+G
+−
+m
+L
+G
+(4)
+Theorem 5.4 (Dixon-Kissinger [9]).For a rewrite rule 
+L
+​
+  
+⁡
+R
+ and a matching 
+m
+:
+L
+→
+G
+, the pushout complement (4) exists and is unique.
+Rewriting is performed via the double-pushout (DPO) technique. First, the pushout complement is computed, to remove the LHS of a rewrite rule, then the RHS is “glued in” with a second pushout. The rewrite rule is said to rewrite 
+G
+ to 
+G
+′
+ (also written 
+G
+​
+  
+⁡
+G
+′
+, when there is no ambiguity) at a matching 
+m
+:
+L
+→
+G
+, when 
+G
+′
+ is defined according to the following DPO diagram:
+
+L
+I
+R
+G
+G
+−
+m
+L
+G
+′
+i
+1
+i
+2
+m
+Definition 5.5.A rewrite pattern is a span of pattern graphs 
+L
+​
+⟵
+i
+1
+​
+I
+​
+⟶
+i
+2
+​
+R
+ where
+1.
+Σ
+⁡
+(
+I
+)
+ is a point graph;
+2.
+L
+ and 
+R
+ share the same boundary via 
+Σ
+⁡
+(
+i
+1
+)
+ and 
+Σ
+⁡
+(
+i
+2
+)
+;
+3.
+β
+⁡
+(
+i
+1
+)
+ and 
+β
+⁡
+(
+i
+2
+)
+ are graph isomorphisms; and
+4.
+for each 
+b
+∈
+!
+(
+I
+)
+, the preimage of 
+B
+​
+(
+i
+1
+​
+(
+b
+)
+)
+ under 
+i
+1
+ is exactly 
+B
+⁡
+(
+b
+)
+, and similarly for the preimage of 
+B
+​
+(
+i
+2
+​
+(
+b
+)
+)
+ under 
+i
+2
+.
+Note that the first two conditions ensure that simply applying the forgetful functor 
+U
+:
+𝐒𝐏𝐚𝐭𝐆𝐫𝐚𝐩𝐡
+→
+𝐒𝐆𝐫𝐚𝐩𝐡
+ to this span yields a rewrite rule, as defined above.
+
+Since our concept of matching involves applying 
+!
+-box operations to the pattern graph, we need to extend the !-box operations to rewrite patterns. The rule is that any operation performed on a !-box in 
+L
+ must also be performed on the equivalent !-box (determined by the bijection induced by 
+i
+1
+ and 
+i
+2
+) in 
+R
+.
+
+Lemma 5.6.If 
+L
+​
+⟵
+i
+1
+​
+I
+​
+⟶
+i
+2
+​
+R
+ is a rewrite pattern then, for all 
+b
+∈
+!
+(
+I
+)
+, the image of 
+I
+∖
+B
+⁡
+(
+b
+)
+ under 
+i
+1
+ is contained in 
+L
+∖
+B
+​
+(
+i
+1
+​
+(
+b
+)
+)
+, and similarly for 
+i
+2
+ and 
+R
+∖
+B
+​
+(
+i
+2
+​
+(
+b
+)
+)
+.
+Definition 5.7.Let 
+L
+​
+  
+⁡
+R
+ be a rewrite pattern defined by the span 
+L
+​
+⟵
+i
+1
+​
+I
+​
+⟶
+i
+2
+​
+R
+. Let 
+b
+,
+b
+′
+∈
+!
+(
+I
+)
+ be mergable 
+!
+-vertices such that the pairs of 
+!
+-boxes defined by 
+i
+1
+​
+(
+b
+)
+,
+i
+1
+​
+(
+b
+′
+)
+∈
+L
+ and 
+i
+2
+​
+(
+b
+)
+,
+i
+2
+​
+(
+b
+′
+)
+∈
+R
+ can also be merged. The four !-box operations on pattern graphs have the following equivalents on rewrite patterns:
+PCOPY
+b
+⁡
+(
+L
+​
+  
+⁡
+R
+)
+ is defined by:
+COPY
+i
+1
+​
+(
+b
+)
+⁡
+(
+L
+)
+​
+⟵
+i
+1
+′
+​
+COPY
+b
+⁡
+(
+I
+)
+​
+⟶
+i
+2
+′
+​
+COPY
+i
+2
+​
+(
+b
+)
+⁡
+(
+R
+)
+For 
+COPY
+b
+⁡
+(
+I
+)
+ and 
+COPY
+i
+1
+​
+(
+b
+)
+⁡
+(
+L
+)
+ defined by pushouts:
+
+I
+∖
+B
+⁡
+(
+b
+)
+I
+I
+COPY
+b
+⁡
+(
+I
+)
+ι
+p
+1
+I
+ι
+p
+2
+I
+L
+∖
+B
+​
+(
+i
+1
+​
+(
+b
+)
+)
+L
+L
+COPY
+i
+1
+​
+(
+b
+)
+⁡
+(
+L
+)
+p
+1
+L
+p
+2
+L
+the maps 
+p
+1
+L
+ and 
+p
+2
+L
+ agree on 
+L
+∖
+B
+​
+(
+i
+1
+​
+(
+b
+)
+)
+. From lemma 5.6, we can deduce that 
+p
+1
+L
+∘
+i
+1
+∘
+ι
+=
+p
+2
+L
+∘
+i
+1
+∘
+ι
+. We then define 
+i
+1
+′
+ as the map induced by the pushout along 
+I
+∖
+B
+⁡
+(
+b
+)
+.
+
+I
+∖
+B
+⁡
+(
+b
+)
+I
+I
+C
+​
+O
+​
+P
+​
+Y
+b
+​
+(
+I
+)
+L
+L
+C
+​
+O
+​
+P
+​
+Y
+i
+1
+​
+(
+b
+)
+​
+(
+L
+)
+ι
+ι
+i
+1
+i
+1
+′
+i
+1
+p
+1
+L
+p
+2
+L
+(5)
+i
+2
+′
+ is defined similarly.
+
+PDROP
+b
+⁡
+(
+L
+​
+  
+⁡
+R
+)
+ is defined by the span:
+DROP
+i
+1
+​
+(
+b
+)
+⁡
+(
+L
+)
+​
+⟵
+i
+1
+′
+​
+DROP
+b
+⁡
+(
+I
+)
+​
+⟶
+i
+2
+′
+​
+DROP
+i
+2
+​
+(
+b
+)
+⁡
+(
+R
+)
+where 
+i
+1
+′
+ and 
+i
+2
+′
+ are the restrictions of 
+i
+1
+ and 
+i
+2
+ to 
+DROP
+b
+⁡
+(
+I
+)
+.
+
+PKILL
+b
+⁡
+(
+L
+​
+  
+⁡
+R
+)
+ is defined similarly:
+KILL
+i
+1
+​
+(
+b
+)
+⁡
+(
+L
+)
+​
+⟵
+i
+1
+′
+​
+KILL
+b
+⁡
+(
+I
+)
+​
+⟶
+i
+2
+′
+​
+KILL
+i
+2
+​
+(
+b
+)
+⁡
+(
+R
+)
+where 
+i
+1
+′
+ and 
+i
+2
+′
+ are again restrictions of 
+i
+1
+ and 
+i
+2
+.
+
+PMERGE
+b
+,
+b
+′
+⁡
+(
+L
+​
+  
+⁡
+R
+)
+ is a span:
+MERGE
+i
+1
+​
+(
+b
+)
+,
+i
+1
+​
+(
+b
+′
+)
+⁡
+(
+L
+)
+​
+⟵
+i
+1
+′
+​
+MERGE
+b
+,
+b
+′
+⁡
+(
+I
+)
+​
+⟶
+i
+2
+′
+​
+MERGE
+i
+2
+​
+(
+b
+)
+,
+i
+2
+​
+(
+b
+′
+)
+⁡
+(
+R
+)
+The maps 
+i
+1
+′
+ and 
+i
+2
+′
+ are induced by the coequaliser of 
+b
+^
+ and 
+b
+^
+′
+.
+
+B
+↑
+​
+(
+b
+)
+L
+I
+R
+MERGE
+i
+1
+​
+(
+b
+)
+,
+i
+1
+​
+(
+b
+′
+)
+⁡
+(
+L
+)
+MERGE
+b
+,
+b
+′
+⁡
+(
+I
+)
+MERGE
+i
+2
+​
+(
+b
+)
+,
+i
+2
+​
+(
+b
+′
+)
+⁡
+(
+R
+)
+b
+^
+b
+^
+′
+i
+1
+i
+2
+i
+1
+′
+i
+2
+′
+Theorem 5.8.Let 
+L
+​
+  
+⁡
+R
+ be a rewrite pattern. Then applying any of the rewrite !-box operations yields another rewrite pattern.
+From this result and the definition of rewrite !-box operations above, we can see that, given matching of 
+L
+ against a string graph 
+G
+ at 
+m
+ under instantiation 
+S
+, applying the equivalent instantiation sequence to the rewrite pattern 
+L
+​
+  
+⁡
+R
+ will produce a rewrite rule that can be used to rewrite 
+G
+ to another string graph 
+H
+. In this way, a single rewrite pattern can take the place of an infinite family of rewrite rules.
+
+6Conclusions and future work
+We have presented a construction for expressing graphs with a certain form of repetitive structure, as might be informally expressed with ellipses. This pattern graph construction has been made in the language of typed graphs, allowing the application of familiar techniques for reasoning about graphs. We have demonstrated how it can be used to express rules that appear in graphical calculi for quantum information processing.
+
+We have also demonstrated how pattern graphs can be used to rewrite string graphs, and hence how they allow infinitary families of rules to be used when reasoning mechanically about string diagrams.
+
+We already have a piece of software, Quantomatic2
+2http://sites.google.com/site/quantomatic
+, that implements a restricted version of pattern graphs, and we are currently extending it to leverage nested and overlapping 
+!
+-boxes. The naïve algorithm for matching is quite inefficient, and there should be some gains to be made by making use of the inherent graph symmetries that arise from copying 
+!
+-boxes.
+
+An obvious next step is to explore how pattern graphs can be rewritten directly using rewrite patterns, which would allow us to reason by rewriting about infinite families of graphs simultaneously. In particular, the notions of pattern graph matching and unification could be applied to perform Knuth-Bendix completion [16], which could be used in combination with rules generated by other automated means (e.g., conjecture synthesis [15]) to generate new pattern graph rewrite rules [14].
+
+Another way this work can be extended is to develop ways to express richer families of string graphs. Pattern graphs can be thought of as something akin to regular expressions, sans alternation. What sorts of families can we express using analogues to full regular, context-free, or recursive languages? For example, could such a language effectively represent things like chains of unbounded length?
+
+,
+,
+,
+…
+,
+Another question one might ask is how pattern graphs can be applied to study more general graph rewriting problems, rather than just rewriting for string graphs. In this case, many of the concepts of this paper, with the exception of “open subgraphs”, translate straightforwardly to arbitrary typed graphs.
+
+References
+[2]
+Samson Abramsky & Bob Coecke (2004): A categorical semantics of quantum protocols.
+In: 19th IEEE Symposium on Logic in Computer Science (LICS 2004), 14-17 July 2004, Turku, Finland, Proceedings, IEEE Computer Society, pp. 415–425, 10.1109/LICS.2004.1319636.
+[3]
+Iovka B. Boneva, Arend Rensink, Marcos E. Kurbán & Jörg Bauer (2007): Graph Abstraction and Abstract Graph Transformation.
+Available at http://doc.utwente.nl/64257/.
+Technical Report, Universiteit Twente.
+[4]
+Bob Coecke & Ross Duncan (2008): Interacting quantum observables.
+In Luca Aceto, Ivan Damgård, Leslie Ann Goldberg, Magnús Halldórson, Anna Ingólfsdottir & Igor Wałukiewicz, editors: Automata, Languages and Programming, 35th International Colloquium, ICALP 2008, Reykjavik, Iceland, July 7-11, 2008, Proceedings, Part II–Track B: Logic, Semantics, and Theory of Programming & Track C: Security and Cryptography Foundations, Lecture Notes in Computer Science 5126, Springer Verlag, pp. 298–310, 10.1007/978-3-540-70583-3_25.
+[5]
+Bob Coecke & Aleks Kissinger (2010): The compositional structure of multipartite quantum entanglement.
+In Samson Abramsky, Cyril Gavoille, Claude Kirchner, Friedhelm Meyer auf der Heide & Paul G. Spirakis, editors: Automata, Languages and Programming, 37th International Colloquium, ICALP 2010, Bordeaux, France, July 6-10, 2010, Proceedings, Part II, Lecture Notes in Computer Science 6199, Springer Verlag, pp. 297–308, 10.1007/978-3-642-14162-1_25.
+[6]
+Bob Coecke, Simon Perdrix & Éric Oliver Paquette (2008): Bases in Diagrammatic Quantum Protocols.
+Electronic Notes in Theoretical Computer Science 218, pp. 131–152, 10.1016/j.entcs.2008.10.009.
+[7]
+Lucas Dixon & Ross Duncan (2009): Graphical reasoning in compact closed categories for quantum computation.
+Annals of Mathematics and Artificial Intelligence 56, pp. 23–42, 10.1007/s10472-009-9141-x.
+[8]
+Lucas Dixon, Ross Duncan & Aleks Kissinger (2010): Open Graphs and Computational Reasoning.
+In S. Barry Cooper, Prakash Panangaden & Elham Kashefi, editors: Proceedings Sixth Workshop on Developments in Computational Models: Causality, Computation, and Physics, Electronic Proceedings in Theoretical Computer Science 26, pp. 169–180, 10.4204/EPTCS.26.16.
+[9]
+Lucas Dixon & Aleks Kissinger (2010): Open Graphs and Monoidal Theories.
+Computing Research Repository abs/1011.4114.
+Available at http://arxiv.org/abs/1011.4114.
+[10]
+Hartmut Ehrig, Michael Pfender & Hans Jürgen Schneider (1973): Graph-Grammars: An Algebraic Approach.
+In: 14th Annual Symposium on Switching and Automata Theory, Iowa City, Iowa, USA, October 15-17, 1973, IEEE Computer Society, pp. 167–180, 10.1109/SWAT.1973.11.
+[11]
+J.-Y. Girard (1987): Linear Logic.
+Theoretical Computer Science 50(1), pp. 1–101, 10.1016/0304-3975(87)90045-4.
+[12]
+The GROOVE Project.
+Available at http://groove.cs.utwente.nl/.
+[13]
+André Joyal & Ross Street (1991): The geometry of tensor calculus. I.
+Advances in Mathematics 88(1), pp. 55–112, 10.1016/0001-8708(91)90003-P.
+[14]
+Aleks Kissinger (2012): Pictures of Processes: Automated Graph Rewriting for Monoidal Categories and Applications to Quantum Computing.
+Ph.D. thesis, University of Oxford.
+[15]
+Aleks Kissinger (2012): Synthesising Graphical Theories.
+Computing Research Repository abs/1202.6079.
+Available at http://arxiv.org/abs/1202.6079.
+[16]
+Donald E. Knuth & Peter B. Bendix (1970): Simple word problems in universal algebras.
+In John Leech, editor: Computational problems in abstract algebra. Proceedings of a Conference held at Oxford under the auspices of the Science Research Council, Atlas Computer Laboratory, 29th August to 2nd September 1967, Pergamon Press, pp. 263–297.
+[17]
+Y. Lafont (1995): Equational reasoning with 2-dimensional diagrams.
+In Hubert Comon & Jean-Pierre Jouannaud, editors: Term Rewriting, French Spring School of Theoretical Computer Science, Font Romeux, France, May 17-21, 1993, Advanced Course, Lecture Notes in Computer Science 909, Springer Verlag, pp. 170–195, 10.1007/3-540-59340-3_13.
+[18]
+Roger Penrose (1971): Applications of negative dimensional tensors.
+In: Combinatorial mathematics and its applications. Proceedings of a Conference held at the Mathematical Institute, Oxford, from 7-10 July, Academic Press, pp. 221–244.
+[19]
+Arend Rensink (2006): Nested Quantification in Graph Transformation Rules.
+In Andrea Corradini, Hartmut Ehrig, Ugo Montanari, Leila Ribeiro & Grzegorz Rozenberg, editors: Graph Transformations, Third International Conference, ICGT 2006, Natal, Rio Grande do Norte, Brazil, September 17-23, 2006, Proceedings, Lecture Notes in Computer Science 4178, Springer Verlag, pp. 1–13, 10.1007/11841883_1.
+[20]
+Arend Rensink & Jan-Hendrik Kuperus (2009): Repotting the Geraniums: On Nested Graph Transformation Rules.
+Electronic Communications of the European Association of Software Science and Technology 18.
+
+
+
+
+We gratefully acknowledge support from our major funders, member institutions, University of Maryland, and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status(opens in new tab)
+Major funding support from
+Simons Foundation
+Simons Foundation International
+Schmidt Sciences

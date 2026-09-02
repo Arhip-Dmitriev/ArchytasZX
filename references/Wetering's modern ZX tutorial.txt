@@ -1,0 +1,7933 @@
+
+arXiv is now an independent nonprofit!
+Learn more
+×
+License: arXiv.org perpetual non-exclusive license
+arXiv:2012.13966v1 [quant-ph] 27 Dec 2020
+ZX-calculus for the working quantum computer scientist
+John van de Wetering
+john@vdwetering.name
+http://vdwetering.name Radboud Universiteit Nijmegen
+Oxford University
+August 24, 2026
+Abstract
+The ZX-calculus is a graphical language for reasoning about quantum computation that has recently seen an increased usage in a variety of areas such as quantum circuit optimisation, surface codes and lattice surgery, measurement-based quantum computation, and quantum foundations. The first half of this review gives a gentle introduction to the ZX-calculus suitable for those familiar with the basics of quantum computing. The aim here is to make the reader comfortable enough with the ZX-calculus that they could use it in their daily work for small computations on quantum circuits and states. The latter sections give a condensed overview of the literature on the ZX-calculus. We discuss Clifford computation and graphically prove the Gottesman-Knill theorem, we discuss a recently introduced extension of the ZX-calculus that allows for convenient reasoning about Toffoli gates, and we discuss the recent completeness theorems for the ZX-calculus that show that, in principle, all reasoning about quantum computation can be done using ZX-diagrams. Additionally, we discuss the categorical and algebraic origins of the ZX-calculus and we discuss several extensions of the language which can represent mixed states, measurement, classical control and higher-dimensional qudits.
+
+1Introduction
+A ZX-diagram is a graphical representation of a linear map between qubits reminiscent of a conventional quantum circuit diagram. For instance, we can write the circuit on the left below as the ZX-diagram on the right:
+
+ 
+|0⟩
+|0⟩
+|0⟩
+​​+​​
+​​+​​
+H
+ 
+↝
+  
+ZX-diagrams come equipped with a compact set of graphical rewrite rules that allow us to diagrammatically reason about linear maps. For instance, we can prove diagrammatically that the above circuit implements a GHZ state:
+
+=
+=
+=
+=
+=
+The graphical language consisting of ZX-diagrams and their rewrite rules is called the ZX-calculus.
+
+Since the introduction of the ZX-calculus in 2008 by Coecke and Duncan [27, 28], the ZX-calculus has been used for a wide variety of tasks related to quantum computing. One of the first use-cases was in measurement-based quantum computation (MBQC). Graph states have a simple representation as ZX-diagrams [55] and hence the one-way model and related protocols can be described easily [82, 13]. In more recent years the ZX-calculus has been used successfully in quantum circuit optimisation [57, 46, 83, 42]; quantum circuit equality validation [83, 91]; and as a tool for reasoning about surface code quantum computing [72] and lattice surgery [47, 64, 44, 69]. It has also seen use in the design and verification of quantum error correcting codes [25, 53, 62, 23]; elucidating the structure of SAT and #SAT problems [48]; reasoning about certain condensed matter systems [43]; and in describing natural language processing tasks on a quantum computer [39]. In 2017 it was shown that certain rule sets for the ZX-calculus are complete, meaning that any equality between linear maps can be proven entirely diagrammatically [101, 76, 67]. This means that in principle all reasoning about quantum computation can be done inside the ZX-calculus.
+
+The goal of this paper is threefold. The first is that after reading this paper the reader should be comfortable enough with the notation and conventions of the ZX-calculus to be able to read any research paper using it. The second goal is to serve as a review of the literature on the ZX-calculus. There are well over a hundred papers and theses that use the ZX-calculus1
+1A list of all publications involving the ZX-calculus is maintained at https://zxcalculus.com/publications.
+, yet no concise overview of what has been done and what is known exists. Note that in this review we focus on general results regarding the ZX-calculus. We will not go into detail on domain-specific results except where illustrative (such as in Section 6 where we demonstrate the simplification of Clifford circuits).
+
+The third and perhaps most ambitious goal is to make the reader comfortable enough with ZX-diagrams that it becomes another tool in their arsenal for their day-to-day reasoning about quantum computing. Most researchers will regularly use some ad hoc reasoning about quantum circuits and matrices as part of their work. Many of those computations can be replaced by the ZX-calculus in a way that is faster, less error-prone and more amenable to automation. To aid in accomplishing this goal, this paper will spend quite some time explaining how to construct ZX-diagrams for common operators, explain how the rewriting works, and what the motivation is behind certain rewrites.
+
+1.1Overview of the paper
+This paper is divided into two parts. Sections 2–5 give a general introduction to ZX-diagrams and the ZX-calculus. This part should be read sequentially. Sections 6–10 each cover a different topic and can be read more or less independently from each other.
+
+In Section 2 we informally introduce ZX-diagrams and graphical rewriting by comparing it to standard quantum circuit notation. Then in Section 3 we introduce ZX-diagrams in full generality. Section 4 introduces the rewrite rules of the ZX-calculus. These rules are introduced one by one including motivation and examples. The entire set of rules is presented at the end in Figure 1. Section 5 serves as a repository of examples of how the ZX-calculus can be used in practice, covering for instance the simplification of quantum circuits, and the proving of correctness of protocols like quantum teleportation.
+
+The review portion of the paper starts with Section 6 wherein we discuss stabiliser states and Clifford computation using the ZX-calculus. We give a proof sketch that the ZX-calculus is complete for Clifford computation and we give a diagrammatic proof of the Gottesman-Knill theorem, i.e. that Clifford computation can be classically efficiently simulated. We furthermore show how measurement-based quantum computation can be represented in the ZX-calculus and how ZX-diagrams can be transformed back into circuits.
+
+In Section 7 we review the origins of the ZX-calculus in categorical quantum mechanics and we recall formalisations of several concepts that are commonly used in an intuitive way.
+
+Section 8 discusses Toffoli gates and other multi-linear Boolean logic gates and how they can be represented in the ZX-calculus. To do this, we recall the ZH-calculus, an alternative graphical calculus, that we can view as an extension of the ZX-calculus.
+
+A question that was the topic of many early works on the ZX-calculus is whether the ZX-calculus is complete. That is, whether the rules of the ZX-calculus suffice to prove any equation between linear maps that is true. This question was settled in a series of papers published in 2017-2018. We discuss those results in Section 9.
+
+Finally, in Section 10 we discuss several ways in which the domain of the ZX-calculus can be extended. We recall how adding a generator to represent the process of discarding allows the representation of mixed and decohered quantum states, and we discuss how the interaction between classical and quantum systems can be represented by ‘doubling’ the quantum process. We end the section with a look into how the ZX-calculus, that acts solely on 2-dimensional qubits, can be modified to function as a language for higher-dimensional qudits.
+
+The appendices give compact overviews of the generators and (derived) rewrite rules of the ZX-calculus.
+
+1.2Tools and resources
+This text is intended for readers already comfortable with the basics of quantum computing: circuit notation, qubits, Pauli matrices, phase gates, CNOTs, Clifford unitaries, etc. If the reader is at an earlier stage of learning quantum computing, the author highly recommends the book Picturing Quantum Processes by Coecke and Kissinger [31]. This book assumes only basic familiarity with linear algebra and mathematical reasoning and builds up all of quantum mechanics and quantum computing with graphical tools that concludes with the ZX-calculus.
+
+If after reading this review paper the reader wishes to learn more about the ZX-calculus there are a couple of ways to proceed. The ZX-calculus website https://zxcalculus.com collects a number of resources surrounding the ZX-calculus. In particular, its publications page2
+2https://zxcalculus.com/publications
+ is a searchable list of all the papers, theses and preprints that have appeared that use the ZX-calculus or associated graphical languages.
+
+There is some software that assists in working with ZX-diagrams. Quantomatic was the first software that could handle rewriting of ZX-diagrams [85]. It is however no longer actively developed, and because it is intended as a general tool for graphical languages, and not just the ZX-calculus, it can be somewhat cumbersome to use. A more modern software library is PyZX, an open-source Python library that has a number of tools for the conversion between quantum circuits and ZX-diagrams and the automated simplification of ZX-diagrams [84]3
+3Disclaimer: the author is the creator of PyZX and a main developer of it.
+. Many people writing papers containing ZX-diagrams use Tikzit to typeset them.4
+4https://tikzit.github.io/
+ Tikzit generates output that can be compiled in Latex with the tikz library and can save many hours in tedious tikz manipulation. The reader can for instance take a look at the latex source for this paper (available via the ArXiv) in order to see how the diagrams are constructed in tikz.
+
+2Quantum circuits vs ZX-diagrams
+In this section we give a brief informal introduction to ZX-diagrams and graphical rewriting. This will serve as motivation for the more in-depth construction of general ZX-diagrams in Section 3.
+
+2.1From quantum circuits to ZX-diagrams
+Quantum circuit notation has proven very useful for presenting short quantum computations. They usually consist of some horizontal wires, with some gates attached to these wires:
+
+S
+X
+T
++
++
+​T
+†
+X
+H
+H
+U
+The quantum computing community has mostly agreed on the naming conventions of most standard gates: 
+X
+, 
+Y
+, and 
+Z
+ are the corresponding Pauli matrices; The 
+S
+ gate is the 
+π
+2
+ Z-rotation; the 
+T
+ gate is the 
+π
+4
+ Z-rotation; adding a dagger 
+†
+ gives the inverse gate; the 
+H
+ gate is the Hadamard gate; a black dot is a control for some unitary; and a ‘plus’ is a NOT gate, meaning that a black dot connected to a a plus is a CNOT gate. Furthermore, gate names like 
+U
+ are used to denote some custom or black-box unitary that needs to be specified in the paper.
+
+There are some common extensions to this notation, which allow the specification of ancillae, measurement, classical control or post-selection, but some elements continue to be enforced: each horizontal line represents a single qubit, and time flows from left to right.
+
+The translation from the quantum circuit above (minus the ‘black-box’ 
+U
+) to its equivalent ZX-diagram is straightforward. Indeed, we can simply use the following translation table:
+
+S
+↝
+𝝅
+𝟐
+T
+↝
+𝝅
+𝟒
+X
+↝
+π
++
+↝
+​T
+†
+↝
+−
+𝝅
+𝟒
+H
+↝
+(1)
+And hence we arrive at the following ZX-diagram (again, not including 
+U
+):
+
+𝝅
+𝝅
+𝟐
+𝝅
+𝟒
+−
+𝝅
+𝟒
+𝝅
+It might not be immediately clear what the benefit of this translation is. Why would this notation be better than the standard quantum circuit notation? A first hint becomes apparent when we consider the well-known fact that Z phase gates commute through the control of a CNOT. For instance, using circuit notation we have the following equality:
+
+T
++
+=
+T
++
+When dealing with quantum circuits one has to simply remember that this is the case. For this one case this is not a problem, but there are of course dozens of useful circuit identities.
+
+The same identity in the ZX-calculus becomes:
+
+𝝅
+𝟒
+=
+𝝅
+𝟒
+(2)
+Although it might not look very different, it is actually part of a simple yet powerful pattern that holds in the ZX-calculus: dots of the same colour commute through one another. Here the ‘colour’ of a dot is either white (as is the case for the S gate, the T gate, and the control of a CNOT), or grey (as is the case for the X gate or the target of a CNOT). Hence, instead of remembering some set of ad hoc circuit identities we can just remember the simple rule that if the dots have the same color, we can move them past one another.
+
+This is in fact not the full story. An even more fundamental set of identities is true in the ZX-calculus: whenever we have two dots of the same color that are connected by a wire we can fuse them:
+
+𝝅
+𝟒
+=
+𝝅
+𝟒
+(3)
+This last diagram does not correspond to any standard type of gate, but it is useful: it immediately gives the truth of Eq. (2) because the right-hand side is manifestly symmetric.
+
+2.2States in the ZX-calculus
+We can represent not just unitaries in the ZX-calculus, but any linear map between qubits. Let us demonstrate this with some simple calculations involving single-qubit states. We have the following evident equality in circuit notation:
+
++
+=
+|
+0
+⟩
+|
+0
+⟩
+(4)
+In words: if we apply a qubit prepared in the 
+|
+0
+⟩
+ computational basis state to the control of a CNOT gate, this is the same as doing nothing. In the ZX-calculus a qubit prepared in the 
+|
+0
+⟩
+ state is represented by a grey dot:
+
+|
+0
+⟩
+↝
+(5)
+Hence, the left-hand side of Eq. (4) becomes:
+
+(6)
+We can prove Eq. (4) by applying a following simple rule in the ZX-calculus: a dot with a single wire copies through a dot of the opposite colour:
+
+=
+(7)
+Indeed, we can now calculate:
+
+=
+=
+=
+(8)
+The first equality is just (7). Note that even though (7) has two output wires, we are still ‘allowed’ to apply the rewrite rule in this case. This is because wires have no directionality to them in a ZX-diagram. We discuss this property in more detail in Section 3.3.
+
+The second equality in (8) applies a version of the rule we discussed in the previous section that dots of the same colour fuse. The last rule is new, but simple enough: dots with 2 wires can be removed:
+
+=
+=
+(9)
+The reader might also be aware of the following circuit identity:
+
++
+=
+|
++
+⟩
+|
++
+⟩
+(10)
+Here the 
+|
++
+⟩
+ state denotes the standard 
+X
+ basis state 
+|
++
+⟩
+=
+1
+2
+(
+|
+0
+⟩
++
+|
+1
+⟩
+)
+. The 
+|
++
+⟩
+ state also has a simple representation in the ZX-calculus:
+
+|
++
+⟩
+↝
+(11)
+We can now give a proof of Eq. (10) in the ZX-calculus entirely analogously to that of Eq.(4):
+
+=
+=
+=
+(12)
+Again, a dot with a single wire copies through a dot of the opposite colour, dots of the same colour fuse, and dots with 2 wires can be removed. That we get essentially the same proof here is an instance of a more general principle that holds in the ZX-calculus: any identity continues to hold when the colours (white and grey) are interchanged. We discuss this property in more detail in the next section.
+
+2.3Hadamards and colour changing
+As shown in the translation table (1), we have some special notation for the Hadamard gate in ZX-diagrams:
+
+H
+↝
+(13)
+We give it a distinct shape (a square instead of a circle) to denote that it behaves differently than the white and grey dots we have encountered in the previous sections. Indeed, while the dots can have any number of wires coming in and out of them, a Hadamard, being a single-qubit unitary, always has exactly two wires. There are two important identities associated to the Hadamard gate in the ZX-calculus.
+
+The first shouldn’t come as a surprise: the Hadamard gate is self-inverse, 
+H
+​
+H
+=
+id
+, and hence two boxes in a row should cancel.
+
+=
+(14)
+The second expresses a generalisation of a well-known property of the Hadamard gate: conjugating the Pauli 
+Z
+ with Hadamards we get the 
+X
+ gate: 
+H
+​
+Z
+​
+H
+=
+X
+. In terms of ZX-diagrams:
+
+=
+𝝅
+𝝅
+(15)
+This generalises to the following identity:
+
+…
+=
+…
+…
+𝜶
+𝜶
+…
+(16)
+Here 
+α
+ can be any phase 
+α
+∈
+ℝ
+. The ‘
+⋯
+’ mean that there can be any number of inputs and outputs. Whenever we write an equation with such a varying number of inputs and outputs we are assuming that the number of inputs on the left-hand side matches the number of inputs on the right-hand side and similarly for the outputs (as otherwise the identity would not make sense). The number of inputs or outputs can also be zero, so we also get for instance:
+
+=
+(17)
+Recalling the definition of 
+|
++
+⟩
+ and 
+|
+0
+⟩
+ in ZX (Eqs. (5) and (11)) we see that this simply states that 
+H
+|
++
+⟩
+=
+|
+0
+⟩
+.
+
+Using the self-inverse rule Eq. (14) we can also rephrase the ‘Hadamard conjugation’ rule of Eq. (16) as a commutation rule that tells us how to ‘push’ a Hadamard gate through a dot:
+
+=
+…
+𝜶
+…
+…
+…
+𝜶
+…
+…
+𝜶
+=
+(14)
+(16)
+(18)
+In a slogan: a Hadamard gate is commuted through a dot by changing its colour.
+
+As an application of the rules concerning Hadamards we can find a compact representation of a CZ gate in the ZX-calculus. Recall that a CZ gate is equal to a CNOT gate conjugated by Hadamards on the target qubit:
+
++
+H
+H
+=
+(19)
+Translating the right-hand side to a ZX-diagram and simplifying using the Hadamard colour-change rule and the self-inverse rule we find:
+
+=
+(18)
+=
+(14)
+(20)
+What is interesting about this is that the rightmost diagram is symmetric in the two qubits, as the CZ gate indeed is, and that we did not need to introduce any new generators or concepts to the ZX-calculus to represent it. In fact, we already have all ingredients to represent any linear map between qubits: ZX-diagrams are universal (see Section 3.7).
+
+3ZX-diagrams
+In this section we will introduce the building blocks of ZX-diagrams and discuss some of their main properties. We start by defining the basic generators of ZX-diagrams, the spiders, in Section 3.1. Then in Section 3.2 we will see how to compose these. We discuss the symmetries of ZX-diagrams in Section 3.3 which will allow us to treat ZX-diagrams as undirected graphs. Then Sections 3.4–3.7 discuss various topics culminating in a proof that ZX-diagrams are in fact universal and hence can represent any linear map between qubits.
+
+3.1Spiders
+The first type of generator is what we referred to as a ‘white dot’ in the previous section. The more common name for this is the Z-spider. A Z-spider can have any number of inputs (wires coming in from the left) and outputs (wires coming out of the right) and has the following interpretation as a linear map:
+
+ 
+𝜶
+…
+…
+ 
+:=
+|
+0
+⋯
+0
+⟩
+⟨
+0
+⋯
+0
+|
++
+e
+i
+​
+α
+|
+1
+⋯
+1
+⟩
+⟨
+1
+⋯
+1
+|
+,
+(21)
+Why it is called a ‘spider’ should be clear from the way the diagram looks. This is the Z-spider because it is defined with respect to the eigenbasis of the 
+Z
+ matrix, 
+|
+0
+⟩
+ and 
+|
+1
+⟩
+.
+
+Similarly, what we referred to as a ‘grey dot’, is more commonly called an X-spider. This is defined as above, but with the 
+Z
+ eigenbasis replaced by the 
+X
+ eigenbasis 
+|
++
+⟩
+ and 
+|
+−
+⟩
+:
+
+ 
+𝜶
+…
+…
+ 
+:=
+|
++
+⋯
++
+⟩
+⟨
++
+⋯
++
+|
++
+e
+i
+​
+α
+|
+−
+⋯
+−
+⟩
+⟨
+−
+⋯
+−
+|
+.
+(22)
+As it is instructive, let us explicitly write out some of the matrices that these spiders are equal to. Recall that:
+
+|
+0
+⟩
+=
+(
+1
+0
+)
+|
+1
+⟩
+=
+(
+0
+1
+)
+|
++
+⟩
+=
+1
+2
+(
+1
+1
+)
+|
+−
+⟩
+=
+1
+2
+(
+1
+−
+1
+)
+For the 1-input, 1-output 
+Z
+-spider with a phase 
+α
+ we hence have:
+
+ 
+𝜶
+ 
+=
+|
+0
+⟩
+⟨
+0
+|
++
+e
+i
+​
+α
+|
+1
+⟩
+⟨
+1
+|
+=
+(
+1
+0
+0
+0
+)
++
+(
+0
+0
+0
+e
+i
+​
+α
+)
+=
+(
+1
+0
+0
+e
+i
+​
+α
+)
+(23)
+This matrix is the 
+R
+Z
+​
+(
+α
+)
+ phase gate that rotates the Bloch sphere by an angle 
+α
+ over the 
+Z
+ axis. In particular, for 
+α
+=
+π
+ we get the 
+Z
+ Pauli matrix, which indeed matches with our translation table (1). We can do a similar calculation for the 1-input, 1-output 
+X
+-spider with a phase 
+α
+:
+
+ 
+𝜶
+ 
+=
+|
++
+⟩
+⟨
++
+|
++
+e
+i
+​
+α
+|
+−
+⟩
+⟨
+−
+|
+=
+1
+2
+(
+1
+1
+1
+1
+)
++
+1
+2
+e
+i
+​
+α
+(
+1
+−
+1
+−
+1
+1
+)
+=
+1
+2
+(
+1
++
+e
+i
+​
+α
+1
+−
+e
+i
+​
+α
+1
+−
+e
+i
+​
+α
+1
++
+e
+i
+​
+α
+)
+(24)
+This is the familiar 
+R
+X
+​
+(
+α
+)
+ phase gate, and for 
+α
+=
+π
+ we get the Pauli 
+X
+ matrix.
+
+It is customary to drop the label inside the spider when the phase 
+α
+ is 
+0
+:
+
+ 
+…
+…
+ 
+=
+|
+0
+⋯
+0
+⟩
+⟨
+0
+⋯
+0
+|
++
+|
+1
+⋯
+1
+⟩
+⟨
+1
+⋯
+1
+|
+ 
+…
+…
+ 
+=
+|
++
+⋯
++
+⟩
+⟨
++
+⋯
++
+|
++
+|
+−
+⋯
+−
+⟩
+⟨
+−
+⋯
+−
+|
+In particular, we have:
+
+  
+=
+  
+=
+(
+1
+0
+0
+1
+)
+(25)
+In a ZX-diagram we present an identity matrix like the one above by a empty piece of wire, and hence we have the following equation.
+
+  
+=
+  
+=
+  
+Indeed, it is this equation we used in the proof (8).
+
+In the previous section we claimed we could represent the Pauli 
+Z
+ and 
+X
+ basis states using spiders. We can now verify that this is indeed the case:
+
+=
+|
++
+⟩
++
+|
+−
+⟩
+=
+2
+|
+0
+⟩
+  
+=
+|
+0
+⟩
++
+|
+1
+⟩
+=
+2
+|
++
+⟩
+(26)
+𝝅
+=
+|
++
+⟩
+−
+|
+−
+⟩
+=
+2
+|
+1
+⟩
+ 
+𝝅
+ 
+=
+|
+0
+⟩
+−
+|
+1
+⟩
+=
+2
+|
+−
+⟩
+(27)
+We see that we get the right states, but with a wrong scalar factor. Just as we can ignore global phases in quantum circuits, we can usually ignore global non-zero scalar factors in ZX-diagrams and that is in fact what we will do throughout this paper. For a more thorough discussion on scalars in ZX-diagrams see Section 3.4.
+
+Traditionally, Z-spiders are written as green dots and X-spiders as red dots.5
+5The reason for this is that when Bob Coecke and Ross Duncan developed the ZX-calculus in 2007 they had a whiteboard with red and green markers [Duncan, personal communication].
+ To accommodate colour-blindness and printing we choose not to do this, and instead to follow [31] and write Z-spiders as white dots and X-spiders as grey dots. If one wishes to use the traditional green/red colours, the author recommends using the colour-blind friendly versions listed on the ZX-calculus website.6
+6http://zxcalculus.com/accessibility.html
+ Note that the green/red or white/grey colours are not universally used: Gidney et al. [64] use black dots to represent Z-spiders and white dots to represent X-spiders (in order to match it more closely with the translation of a CNOT into the ZX-calculus).
+
+3.2Composition
+A ZX-diagram can be built iteratively by composing other ZX-diagrams either horizontally, by connecting the output wires of the first to the input wires of the second, or vertically, simply by ‘stacking’ the diagrams to create the tensor product. The base case of this inductive construction starts with the Z- and X-spiders.
+
+To make more clear how this works exactly, let us work through an explicit construction of the CNOT gate. The first ingredient we need is the phaseless Z-spider with 1 input and 2 outputs:
+
+  
+=
+(
+1
+0
+0
+0
+0
+0
+0
+1
+)
+(28)
+Its matrix has 2 columns and 4 rows. The matrix of a general ZX-diagram with 
+n
+ inputs and 
+m
+ outputs will have 
+2
+n
+ columns, and 
+2
+m
+ rows. In particular, a ZX-diagram with no inputs is a column vector, and hence a quantum state, while a ZX-diagram with no outputs is a row vector, and hence an effect. If it has no inputs or outputs then it is a size 
+1
+×
+1
+ matrix, i.e. just a complex number.
+
+Suppose now that we wish to horizontally compose the spider (28) with an identity, which has matrix diag
+(
+1
+,
+1
+)
+. The way we calculate the result is with the Kronecker product:
+
+  
+=
+(
+1
+0
+0
+0
+0
+0
+0
+1
+)
+⊗
+(
+1
+0
+0
+1
+)
+=
+(
+1
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+1
+)
+Let us now calculate the matrix of the other ingredient we need:
+
+  
+=
+(
+1
+0
+0
+1
+)
+⊗
+1
+2
+(
+1
+0
+0
+1
+0
+1
+1
+0
+)
+=
+1
+2
+(
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+1
+0
+)
+Now to make a CNOT we need to horizontally compose these two subdiagrams:
+
+(29)
+To see that this is indeed a CNOT we calculate its matrix. On the level of the matrix, the horizontal composition of diagrams corresponds to matrix multiplication:
+
+1
+2
+​
+(
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+1
+0
+)
+​
+(
+1
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1
+0
+0
+0
+0
+1
+)
+=
+1
+2
+​
+(
+1
+0
+0
+0
+0
+1
+0
+0
+0
+0
+0
+1
+0
+0
+1
+0
+)
+Up to a scalar factor of 
+2
+ this is indeed the matrix of the CNOT gate.
+
+If this type of matrix calculation seems tedious: that is precisely the point why we want to use the ZX-calculus. We will see that many identities which would normally be proven by working with matrices can be replaced with graphical reasoning.
+
+In the previous section we wrote the CNOT gate as
+
+(30)
+which does not match the diagram (29). In fact, in Section 3.1 we defined spiders as having inputs, which come from the left, and outputs, which come from the right. So vertical wires aren’t even properly defined.
+
+The reason we are allowed to write this wire vertically is because of the following equation (which the reader is invited to verify by showing that the matrix on the right-hand side indeed matches the matrix of the diagram on the left-hand side):
+
+=
+(31)
+So whether the middle wire acts as an output of the Z-spider (as in the left-hand side), or as an input to the Z-spider (as in the right-hand side) does not change the matrix it represents. This means that we can write a vertical wire without ambiguity, because we can resolve it either way, and the matrix will be the same. This is an example of a broader set of symmetries that ZX-diagrams have that we will study in the next section.
+
+For those readers familiar with tensor networks it might be helpful to note that ZX-diagrams are in fact just tensor networks. Indeed, considering them as tensor networks, our notation matches the standard notion of a graphical tensor network as introduced by Penrose [104]. Considered as a tensor network, each wire in a ZX-diagram corresponds to a 2-dimensional index and a wire between two spiders denotes a tensor contraction. The Z- and X-spiders are then defined as:
+
+(
+ 
+𝜶
+ 
+)
+i
+1
+​
+…
+​
+i
+m
+j
+1
+​
+…
+​
+j
+n
+=
+{
+1
+ if 
+​
+i
+1
+=
+…
+=
+i
+m
+=
+j
+1
+=
+…
+=
+j
+n
+=
+0
+e
+i
+​
+α
+ if 
+​
+i
+1
+=
+…
+=
+i
+m
+=
+j
+1
+=
+…
+=
+j
+n
+=
+1
+0
+ otherwise
+(
+ 
+𝜶
+ 
+)
+i
+1
+​
+…
+​
+i
+m
+j
+1
+​
+…
+​
+j
+n
+=
+1
+2
+⋅
+{
+1
++
+e
+i
+​
+α
+ if 
+​
+⨁
+k
+i
+k
+⊕
+⨁
+l
+j
+l
+=
+0
+1
+−
+e
+i
+​
+α
+ if 
+​
+⨁
+k
+i
+k
+⊕
+⨁
+l
+j
+l
+=
+1
+where 
+i
+k
+,
+j
+l
+ range over 
+{
+0
+,
+1
+}
+ and 
+⊕
+ is addition modulo 2 (i.e. XOR). While ZX-diagrams are ‘just’ tensor networks, this glosses over the most important property of ZX-diagrams which sets it apart from the tensor networks that are used in for instance condensed matter physics. Namely, that we have a set of diagrammatic rewrite rules that act on the tensor network itself.
+
+We have been writing our diagrams with the inputs on the left and the outputs on the right in order to mimic conventional quantum circuit notation. This is however not a fixed convention for ZX-diagrams and some authors write ZX-diagrams vertically. While this is not an issue per se, what is more inconvenient is that some authors prefer time flowing upwards, while others have their time flowing downwards. Whether wires coming in from the bottom are inputs or outputs hence varies per paper. The reader is advised to check carefully for each paper which convention is used, for instance by looking at the linear map interpretation of a spider with a single wire going up (if it is a column vector then time is flowing upwards; if it is a row vector, then time is flowing downwards).
+
+3.3Symmetries
+An important reason ZX-diagrams are a useful representation is because of the number of symmetries that are present in the generators. To state these symmetries we need to introduce a couple of more generators of ZX-diagrams.
+
+A generator that has a natural circuit counterpart is the swap:
+
+  
+=
+(
+1
+0
+0
+0
+0
+0
+1
+0
+0
+1
+0
+0
+0
+0
+0
+1
+)
+(32)
+The swap generators interact with spiders the way you would expect. Namely, that you can ‘slide’ a spider along the wires, such as in the equation commuting a CNOT gate trough a swap below:
+
+=
+(33)
+We will not write down the full set of equations that are associated to the swap gate, and instead will let the reader’s intuition do the work. An important point to note though is that we are not working in a ‘braided’ setting, and hence the swap is self-inverse:
+
+=
+(34)
+The spiders are symmetric tensors. This means that they are invariant under swapping of some of their wires:
+
+𝜶
+…
+…
+𝜶
+…
+…
+=
+𝜶
+…
+…
+=
+𝜶
+…
+…
+𝜶
+…
+…
+=
+𝜶
+…
+…
+=
+(35)
+These symmetries hold for all phases 
+α
+, for spiders with any number of input and output wires, and for the swapping of any of their inputs or outputs.
+
+Swapping of wires is not the only symmetry ZX-diagrams possess: it also allows you to swap inputs with outputs. In order to state this symmetry we need to introduce two other generators, that we write as bended pieces of wire:
+
+  
+=
+(
+1
+0
+0
+1
+)
+  
+=
+(
+1
+0
+0
+1
+)
+(36)
+The first of these, the state, we call the cup, while the second, the effect, we call the cap. The astute reader might recognise these matrices as the maximally entangled 2-qubit state, also known as the Bell state, and respectively the Bell effect. The reason we write these generators as pieces of wire is because, just as with the swap, they act like pieces of wires. In particular, they satisfy the yanking equations:
+
+=
+=
+(37)
+Just as we can slide spiders along the wires of a swap gate (cf. (33)), we can slide a spider along the wires of cups and caps. For instance:
+
+𝜶
+=
+𝜶
+=
+(38)
+The general symmetries for the spiders with respect to the cups and caps can be expressed as follows:
+
+𝜶
+…
+…
+=
+𝜶
+…
+…
+𝜶
+…
+…
+=
+𝜶
+…
+…
+𝜶
+…
+…
+=
+𝜶
+…
+…
+𝜶
+…
+…
+=
+𝜶
+…
+…
+(39)
+The might just look like some meaningless bending of wires and that is exactly the point. While the cup and cap generator represent specific matrices and must be treated as such when calculating the matrix of a ZX-diagram, when working with just the ZX-diagram we can treat cups and caps simply as pieces of wires and bend them in any way we see fit. We let the notation do the work for us.
+
+In fact, now that we have introduced the cups and caps we can state a particularly useful property that ZX-diagrams enjoy:
+
+Only connectivity matters
+
+What this means is that a ZX-diagram can be deformed arbitrarily by moving the generators around in the plane, bending and unbending the wires, and as long as the order of the inputs and outputs of the diagram are preserved, it represents the same matrix. Another way to state this is that if two ZX-diagrams contain the same number of Z- and X-spiders, have the same phases, are connected by the same number of wires in each diagram, and the inputs and outputs of the diagrams are connected in the same order to the same spiders, then the ZX-diagrams represent the same matrix. Again another way to state this is that we can treat ZX-diagrams as undirected multigraphs (i.e. graphs that allow more than one edge between vertices), with some additional data on the vertices. In this representation the spiders are the vertices, and each vertex is labelled by a type (Z or X), a phase and a list of inputs and outputs it is connected to.
+
+To make more clear the type of freedom this entails, only connectivity matters means that the following ZX-diagrams all represent the same matrix.
+
+=
+𝝅
+𝝅
+𝟐
+𝝅
+𝟒
+-
+𝝅
+𝟐
+𝝅
+𝝅
+𝝅
+𝟐
+𝝅
+𝟒
+-
+𝝅
+𝟐
+𝝅
+=
+𝝅
+𝝅
+𝟐
+𝝅
+𝟒
+-
+𝝅
+𝟐
+𝝅
+(40)
+With any of these ZX-diagrams, if we wish to calculate the matrix they represent, we would first have to express it as a composition of tensor products of compositions of tensor products (and so on) of Z-spiders, X-spiders, identities, swaps, cups and caps. Alternatively, viewing the ZX-diagram as a tensor network, we can contract the tensors of the spiders according to the connectivity of the diagram using whatever tensor contraction algorithm we see fit.
+
+3.4Scalars
+In the diagram deformation example above, the zero-arity X-spider with a 
+−
+π
+2
+ phase can be moved completely freely throughout the diagram. This is because a zero-arity spider, or rather, any ZX-diagram with zero inputs and outputs, represents a scalar, a single complex number. For instance, we have:
+
+𝜶
+=
+2
+=
+2
+=
+1
+2
+𝜶
+𝝅
+=
+2
+​
+e
+i
+​
+α
+𝝅
+=
+0
+𝜶
+=
+1
++
+e
+i
+​
+α
+(41)
+If we have a pair of scalar subdiagrams in a ZX-diagram then in the calculation of the matrix these combine by multiplying together the numbers they represent. Note that using just combinations of the scalar diagrams of (41) we can then represent any complex number as a scalar ZX-diagram.7
+7This boils down to showing we can represent any complex number as a multiplication of 
+1
+2
+, 
+2
+​
+e
+i
+​
+α
+ and 
+1
++
+e
+i
+​
+α
+. It suffices to show we can represent any complex number 
+z
+ with 
+|
+z
+|
+≤
+2
+, because then for any number with larger absolute value we can first rescale it by multiplying with 
+1
+2
+ repeatedly. We can choose an 
+α
+ such that 
+|
+z
+|
+=
+|
+1
++
+e
+i
+​
+α
+|
+. Hence 
+z
+1
++
+e
+i
+​
+α
+=
+e
+i
+​
+β
+ for some 
+β
+. Hence 
+z
+=
+(
+1
++
+e
+i
+​
+α
+)
+​
+(
+2
+​
+e
+i
+​
+β
+)
+​
+1
+2
+.
+
+In this paper and in many other work dealing with the ZX-calculus scalar factors are often dropped. This is for the same reason that physicists will sometimes work with unnormalised quantum states: it is simply inconvenient and sometimes unnecessary to know the exact scalar values. Note that dropping the scalar should only be done if the scalar is non-zero, since otherwise the entire diagram should cancel in an appropriate way.
+
+A particular case where non-zero scalar factors can be ignored is when dealing with ZX-diagrams representing unitary quantum circuits (we in fact already did this in Section 3.1 in the representation of the CNOT gate, where we suppressed a factor of 
+1
+2
+). The reason we can ignore those factors is because we can always easily retrieve the correct factor: the matrix 
+M
+ is proportional to a unitary, and hence 
+M
+​
+M
+†
+=
+λ
+​
+id
+ for some 
+λ
+∈
+ℝ
+>
+0
+. The correct scalar (up to an innocuous global phase) is then 
+1
+/
+λ
+. We can efficiently calculate this value 
+λ
+ by composing the ZX-diagram with its adjoint and simplifying it until it reduces to the identity. This is efficient, because in the adjoint the order of the gates is flipped, and hence we can cancel each gate with its inverse to reveal the constant of proportionality of the diagram representing each gate and multiplying these factors together.
+
+A situation where knowing the exact scalar value is important is when calculating an amplitude, for instance when contracting a circuit with a particular input state and output effect.
+
+We can often write the scalar correction just as a number next to the diagram, instead of representing it as a scalar ZX-diagram. For instance, instead of writing
+
+(42)
+to represent a scalar-accurate CNOT gate, we can write
+
+2
+(43)
+In this paper, we will ignore global scalar factors everywhere. Hence ‘=’ should be read as ‘equal up to global non-zero scalar’.
+
+3.5Adjoints, transpose and conjugate
+There are some useful global operations on ZX-diagrams that correspond to well-known matrix operations.
+
+First of all, if we take a ZX-diagram and negate all the phases in the spiders, so that for instance 
+π
+2
+ is mapped to 
+−
+π
+2
+≡
+3
+​
+π
+2
+, and 
+π
+ is mapped to 
+−
+π
+≡
+π
+, the matrix of the resulting diagram is the conjugate of the matrix of the original diagram (recall that the conjugate of a complex matrix is simply the pointwise complex conjugate of each the elements of the matrix).
+
+The transpose of a matrix is also easily represented by ZX-diagrams: we use cups and caps to change every input into an output and vice versa.
+
+D
+⟶
+transpose
+D
+Note that these ‘crossovers’ of the wires are necessary to ensure that the first input is mapped to the first output, instead of to the last output. If we apply this procedure to the CNOT gate we can verify that the CNOT gate is indeed self-transpose:
+
+=
+=
+Here in the first step we slid the spiders along the wires to the bottom, and in the second step we applied the first yanking equation (37).
+
+The adjoint of a matrix is constructed by taking the transpose and conjugating the matrix. Hence, the adjoint of a ZX-diagram is constructed by interchanging the inputs and outputs using cups and caps as described above, and then negating all the phases of the spiders in the diagram.
+
+3.6Hadamards
+In Section 2 we used some special notation for the Hadamard gate:
+
+  
+=
+1
+2
+​
+(
+1
+1
+1
+−
+1
+)
+We can either decide to add this ‘Hadamard box’ as a new generator to the ZX-calculus or by seeing it as a derived generator defined in terms of the other generators. We will take the latter route.8
+8For practical purposes it makes no difference whether the Hadamard is a generator or is simply syntactic sugar. However, when studying completeness of the ZX-calculus (cf. Section 9) or when defining non-standard interpretations of ZX-diagrams, it is relevant how the Hadamard is defined.
+
+Recall that any single-qubit unitary gate is equal (up to global phase) to a rotation of the Bloch sphere over some axis. Hence, by decomposing the rotation using Euler angles we can represent any single-qubit unitary with a Z-rotation followed by an X-rotation, followed once again by a Z-rotation:
+
+U
+=
+𝜶
+𝜸
+𝜷
+In the particular case of 
+U
+=
+H
+, we can take 
+α
+=
+β
+=
+γ
+=
+π
+2
+:
+
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+(44)
+The global phase of 
+e
+−
+i
+​
+π
+4
+ is included in order to make the equation exactly equal. If one is willing to accept these global scalar factors as an inherent part of the ZX-calculus this definition is fine. On a formal level it is however desirable to have a representation that does not need scalar corrections:
+
+=
+𝝅
+𝟐
+𝝅
+𝟐
+-
+𝝅
+𝟐
+(45)
+Note that these are by no means the only ways to represent the Hadamard gate using spiders. There is in fact an entire family of representations that will also be useful to note:
+
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+=
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+e
+i
+​
+π
+4
+=
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+e
+i
+​
+π
+4
+𝝅
+𝟐
+𝝅
+𝟐
+-
+𝝅
+𝟐
+=
+𝝅
+𝟐
+𝝅
+𝟐
+-
+𝝅
+𝟐
+=
+Using any of these definitions it is easy to show that the Hadamard box in the ZX-calculus is self-transpose:
+
+=
+(46)
+This means that, just like with the spiders, the orientation of the Hadamard is not important, which is why we are allowed to draw it as a simple box. Also just like with the spiders, we can slide Hadamards along wires as intuition would suggest.
+
+3.7Universality
+We have now seen that quite a number of quantum gates and constructions can be represented in the ZX-calculus. This raises the following question: exactly which linear maps can be represented in the ZX-calculus. The answer to this is simple: everything. Here, ‘everything’ means any complex matrix of size 
+2
+n
+×
+2
+m
+ for some 
+n
+ and 
+m
+.
+
+We have already seen how to represent an arbitrary complex number using a scalar ZX-diagram (Section 3.4). We have also seen that we can represent arbitrary Z and X rotations of the Bloch sphere (Eqs. (23) and (24)). These rotations generate all single-qubit unitaries (up to global phase, which we can reconstruct by adding some scalar diagram). We have also seen that we can construct CNOT gates (see (29)). The single-qubit unitaries together with the CNOT gate form a universal gate set, and hence any unitary on an arbitrary number of qubits can be written as a composition of these gates. So we see that we can indeed represent any unitary between qubits as a ZX-diagram.
+
+For any 
+n
+-qubit normalised quantum state 
+|
+ψ
+⟩
+ there exists a 
+n
+-qubit unitary 
+U
+ such that 
+U
+|
+0
+⋯
+0
+⟩
+=
+|
+ψ
+⟩
+. As we can represent both 
+|
+0
+⋯
+0
+⟩
+ and 
+U
+ as a ZX-diagram, this means that we can represent an arbitrary normalised quantum state as a ZX-diagram. By composing it with the appropriate scalar diagram we can rescale this to a vector of arbitrary norm.
+
+Now given some linear map 
+L
+ from 
+n
+ qubits to 
+m
+ qubits we can transform it into a 
+(
+n
++
+m
+)
+-qubit state by the Choi-Jamiołkowski isomorphism:
+
+L
+⟶
+L
+This state can be represented as a ZX-diagram, and hence by bending back the wires using the yanking equation (37) we get a representation of 
+L
+ as a ZX-diagram.
+
+The property of ZX-diagrams that they can represent any linear map is known as the universality of the ZX-calculus. Together with two other properties we will encounter later, soundness and completeness, they form the backbone of the usefulness of ZX-diagrams.
+
+Note that just because we can represent any linear map using a ZX-diagram, this does not mean that such representations will necessary be ‘nice’. It is an ongoing challenge to find good representations of useful linear maps in the ZX-calculus. For instance, in Section 8 we will introduce a new (derived) generator that allows us to more easily represent Toffoli gates in the ZX-calculus, since the native representation is rather cumbersome.
+
+4The ZX-calculus
+In the previous section we introduced ZX-diagrams as essentially a graphical notation for complex matrices of size 
+2
+n
+×
+2
+m
+. In this section we will see how we can actually do calculations with ZX-diagrams, transforming it from notation into a language. Each subsection here introduces new rewrite rules and demonstrates how these rewrite rules can be used to prove well-known properties of quantum circuits and states. We summarise all the rules in Figure 1 in Section 4.6.
+
+4.1Spider fusion and identity removal
+The most fundamental of all the graphical rewrite rules allowed in the ZX-calculus is spider fusion. This says that when two spiders of the same colour are connected by one or more wires, that we can fuse these two spiders together. When spiders are fused, their phases are added together. In terms of diagrams:
+
+𝜷
+…
+…
+𝜶
+…
+…
+=
+…
+…
+…
+𝜶
++
+𝜷
+      
+𝜷
+…
+…
+𝜶
+…
+…
+=
+…
+…
+…
+𝜶
++
+𝜷
+(47)
+Note that we interpret the numbers 
+α
+ and 
+β
+ as phases 
+e
+i
+​
+α
+ and 
+e
+i
+​
+β
+, and hence this addition is assumed to be modulo 
+2
+​
+π
+.
+
+We already saw a few instances of spider fusion in Section 2, such as when proving that a T gate commutes through the control of a CNOT:
+
+𝝅
+𝟒
+=
+𝝅
+𝟒
+𝝅
+𝟒
+=
+Flipping the colours, we can use spider fusion to show that a X gate commutes through the target of a CNOT gate:
+
+=
+𝝅
+=
+𝝅
+𝝅
+The adding of the phases essentially generalises the fact that two rotations of the Bloch sphere in the same direction add together:
+
+𝜷
+𝜶
+=
+𝜶
++
+𝜷
+(48)
+Recalling that in the ZX-calculus 
+|
+0
+⟩
+=
+  
+ and 
+|
+1
+⟩
+=
+ 
+𝝅
+ 
+ (cf. (26)), we also see that spider fusion gives us that applying the Pauli 
+X
+ gate to 
+|
+0
+⟩
+ gives 
+|
+1
+⟩
+:
+
+𝝅
+=
+𝝅
+(49)
+An equation like 
+Z
+|
+−
+⟩
+=
+|
++
+⟩
+ is given similarly:
+
+𝝅
+𝝅
+=
+(50)
+Note here that we have 
+π
++
+π
+=
+2
+​
+π
+≡
+0
+.
+
+In fact, the spider fusion equations (47) states something much stronger then is evident from these particular cases: any family of linear maps satisfying an analogous set of equations is completely characterised by an orthonormal basis [38], cf. Section 7.5.
+
+Another rewrite rule we already saw is identity removal:
+
+=
+=
+(51)
+This can be interpreted in several ways. Considering a 1-input 1-output spider as a phase gate over either the Z- or X-axis, this rule says that a rotation by 0 degrees does nothing. Combining it with spider fusion it says that the inverse of a rotation by 
+α
+ is a rotation by 
+−
+α
+:
+
+𝜶
+=
+=
+−
+𝜶
+Composing the diagrams of (51) with a cup it says we can make a Bell state by either taking a maximally entangled state over the Z basis or over the X basis:
+
+=
+=
+|
+00
+⟩
++
+|
+11
+⟩
+=
+|
++
++
+⟩
++
+|
+−
+−
+⟩
+=
+Identity removal also allows us to get rid of self-loops on spiders:
+
+=
+…
+…
+𝜶
+…
+…
+𝜶
+=
+…
+…
+𝜶
+(51)
+(47)
+(52)
+Here in the first step we applied the rule in reverse to add an identity. Then we fused the two spiders that are now connected by two wires.
+
+4.2The copy rule and 
+π
+-commutation
+The second set of rules of the ZX-calculus we will look at concerns the interaction of the Pauli X and Z gates and their eigenstates 
+|
+0
+⟩
+,
+|
+1
+⟩
+,
+|
++
+⟩
+,
+|
+−
+⟩
+ with the spiders. Recall from Eq. (26) that (up to global non-zero scalar factors):
+
+=
+|
+0
+⟩
+  
+=
+|
++
+⟩
+𝝅
+=
+|
+1
+⟩
+ 
+𝝅
+ 
+=
+|
+−
+⟩
+𝝅
+=
+X
+ 
+𝝅
+ 
+=
+Z
+The spider fusion rule already covers the interaction of a couple of these maps and states. Indeed we can use the spider fusion rule to show that a Z gate commutes through a Z-spider:
+
+=
+…
+…
+𝜶
+𝝅
+…
+…
+𝜶
++
+𝝅
+…
+…
+𝜶
+𝝅
+=
+Spider fusion also shows what happens when a 
+|
++
+⟩
+ or 
+|
+−
+⟩
+ state is applied to a Z-spider:
+
+=
+…
+…
+𝜶
+…
+…
+𝜶
+=
+…
+…
+𝜶
+𝝅
+…
+…
+𝜶
++
+𝝅
+By flipping all the colours we then also know that an X gate commutes through an X spider and that the 
+|
+0
+⟩
+ and 
+|
+1
+⟩
+ fuse into an X spider.
+
+A more interesting question is what happens to an X gate when it encounters a Z-spider (or vice versa, a Z gate that encounters an X-spider). Consider a Z-spider with just a single input and no phase. Its linear operator is then given by 
+|
+0
+⋯
+0
+⟩
+⟨
+0
+|
++
+|
+1
+⋯
+1
+⟩
+⟨
+1
+|
+. Hence, if we apply an X gate to the input the resulting linear operator is
+
+|
+0
+⋯
+0
+⟩
+⟨
+0
+|
+X
++
+|
+1
+⋯
+1
+⟩
+⟨
+1
+|
+X
+=
+|
+0
+⋯
+0
+⟩
+⟨
+1
+|
++
+|
+1
+⋯
+1
+⟩
+⟨
+0
+|
+,
+as an X gate interchanges 
+|
+0
+⟩
+ and 
+|
+1
+⟩
+. This is easily seen to be equivalent to a Z-spider followed by an X gate on each of the outputs:
+
+|
+0
+⋯
+0
+⟩
+⟨
+1
+|
++
+|
+1
+⋯
+1
+⟩
+⟨
+0
+|
+=
+(
+X
+⊗
+⋯
+⊗
+X
+)
+|
+1
+⋯
+1
+⟩
+⟨
+1
+|
++
+(
+X
+⊗
+⋯
+⊗
+X
+)
+|
+0
+⋯
+0
+⟩
+⟨
+0
+|
+.
+Hence, in terms of diagrams, we have:
+
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+(53)
+We will refer to this as a 
+π
+-copy rule. By applying the appropriate cups and caps it should be clear that such a 
+π
+-copy rule continues to hold regardless of how many inputs and outputs the spider has. But what about when the spider has a non-zero phase? Using spider fusion in reverse to unfuse the phase we can reduce this to a simpler question:
+
+=
+…
+𝜶
+𝝅
+…
+𝝅
+𝜶
+=
+…
+𝝅
+𝜶
+𝝅
+𝝅
+𝝅
+(47)
+(53)
+(54)
+Hence, we need to resolve what happens when we apply an X gate to a 
+|
+0
+⟩
++
+e
+i
+​
+α
+|
+1
+⟩
+ state:
+
+X
+(
+|
+0
+⟩
++
+e
+i
+​
+α
+|
+1
+⟩
+)
+=
+X
+|
+0
+⟩
++
+e
+i
+​
+α
+X
+|
+1
+⟩
+=
+|
+1
+⟩
++
+e
+i
+​
+α
+|
+0
+⟩
+=
+e
+i
+​
+α
+(
+|
+0
+⟩
++
+e
+−
+i
+​
+α
+|
+1
+⟩
+)
+.
+Ignoring the global phase 
+e
+i
+​
+α
+ we can write this in terms of a diagram:
+
+=
+𝜶
+𝝅
+−
+𝜶
+(55)
+The most generic case, together with its colour-flipped counterpart is then:
+
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+…
+𝜶
+…
+-
+𝜶
+𝝅
+𝝅
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+…
+𝜶
+…
+-
+𝜶
+𝝅
+𝝅
+(56)
+Similar copy rules hold for the eigenstates of the X and Z operators. Indeed, applying a 
+|
+0
+⟩
+ to the 1-input Z-spider 
+|
+0
+⋯
+0
+⟩
+⟨
+0
+|
++
+e
+i
+​
+α
+|
+1
+⋯
+1
+⟩
+⟨
+1
+|
+ it is clear that we get the output 
+|
+0
+⋯
+0
+⟩
+:
+
+=
+…
+𝜶
+…
+(57)
+The same works for 
+|
+1
+⟩
+ (although we then do get a global phase of 
+e
+i
+​
+α
+ that we will ignore):
+
+=
+…
+𝜶
+𝝅
+…
+𝝅
+𝝅
+𝝅
+(58)
+By introducing a Boolean variable 
+a
+ that is either 
+0
+ or 
+1
+ we can represent the last two equations as a single parametrised equation:
+
+=
+…
+𝜶
+𝒂
+​
+𝝅
+…
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+(59)
+Here the 
+a
+​
+π
+ phase is either zero (when 
+a
+=
+0
+), or 
+π
+ (when 
+a
+=
+1
+), and hence the input represents either a 
+|
+0
+⟩
+ or a 
+|
+1
+⟩
+.
+
+As before, the same equation but with the colours flipped also continues to hold, which gives rules for copying 
+|
++
+⟩
+ and 
+|
+−
+⟩
+ states through X-spiders. We will refer to all these rules as state-copy rules. These state-copy rules only hold when the spider being copied has a phase of 
+0
+ or 
+π
+. For any other phase the analogue of (59) does not hold.
+
+Note that the orientation of the wires in the rewrite rules we have derived is irrelevant, as we can pre-compose and post-compose each rule with ‘cups and caps’ to change inputs to outputs and vice versa. For instance, for the ‘reverse’ of the state-copy rule:
+
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+=
+𝜶
+𝒂
+​
+𝝅
+𝜶
+=
+(59)
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+=
+(60)
+At this point the reader might wonder why we focus so much on X and Z, and not on Y. The reason for this is that Y can be presented as a composition of X and Z, and hence the rules relating to the Y-eigenbasis can be derived from the equations we have covered here. In principle, we could have worked with the ‘XY’-calculus instead of the ZX-calculus, but there is an important reason to prefer Z and X over Y. Namely, the Z and X eigenbases are self-conjugate meaning that each of the vectors in the basis is equal to its own componentwise complex conjugate, for instance: 
+|
+0
+⟩
+¯
+=
+|
+0
+⟩
+. This is not the case for the Y eigenbasis 
+|
+±
+i
+⟩
+:=
+|
+0
+⟩
+±
+i
+|
+1
+⟩
+. As a result, the ‘Y-spider’ does not enjoy the symmetry between inputs and outputs of (39) that the Z- and X-spider do.
+
+4.3Formal rewriting and soundness
+At this point it might be helpful to say a bit more about the formal nature of the rewriting we are doing. The rewrite rules we have given above are of the form 
+D
+1
+=
+D
+2
+, where 
+D
+1
+ and 
+D
+2
+ are some ZX-diagrams with the same number of inputs and outputs. We then used these rewrite rules on larger diagrams that contain either 
+D
+1
+ or 
+D
+2
+ as subdiagrams. This is because when we are asserting 
+D
+1
+=
+D
+2
+, we are actually asserting an entire family of equalities. We are for instance also asserting that 
+D
+1
+⊗
+E
+=
+D
+2
+⊗
+E
+ for any other ZX-diagram 
+E
+, and 
+D
+∘
+D
+1
+=
+D
+∘
+D
+2
+ for any composable ZX-diagram 
+D
+.
+
+In a sense we have the following implication:
+
+=
+D
+1
+⋯
+⋯
+D
+2
+⋯
+⋯
+⟹
+=
+D
+1
+⋯
+⋯
+⋯
+⋯
+D
+′
+D
+2
+⋯
+⋯
+⋯
+⋯
+D
+′
+(61)
+I.e. if 
+D
+1
+ appears as a subdiagram of some larger ‘ambient’ diagram 
+D
+′
+, then 
+D
+1
+ can be replaced by 
+D
+2
+ inside of 
+D
+′
+.
+
+An important question to settle here is whether this is sound. A rewrite rule in a language is called sound when it preserves the underlying semantics. In the setting of ZX-diagrams, the language is the set of diagrammatic rewrite rules of the ZX-calculus, and the semantics of a ZX-diagram is the linear map it represents. So a rule in the ZX-calculus is sound when the diagrams on each side of the equation represent the same matrix. For a single equation like 
+D
+1
+=
+D
+2
+ soundness is easy to check: just calculate the matrix on both sides. But how can we be sure that employing this rewrite rule in a larger context as in (61) is still sound, as this concerns an infinite family of rewrite rules?
+
+To make the following discussion more clear, we will adopt the convention of the literature on the ZX-calculus to denote the matrix of a ZX-diagram 
+D
+ by 
+⟦
+D
+⟧
+. The soundness of a rule 
+D
+1
+=
+D
+2
+ is then witnessed by the equation 
+⟦
+D
+1
+⟧
+=
+⟦
+D
+2
+⟧
+.
+
+By definition of how we calculate the matrix of a ZX-diagram, we have 
+⟦
+D
+1
+⊗
+D
+2
+⟧
+=
+⟦
+D
+1
+⟧
+⊗
+⟦
+D
+2
+⟧
+ and 
+⟦
+D
+1
+∘
+D
+2
+⟧
+=
+⟦
+D
+1
+⟧
+​
+⟦
+D
+2
+⟧
+ (where this latter juxtaposition represents matrix multiplication). Hence, if we have 
+⟦
+D
+1
+⟧
+=
+⟦
+D
+2
+⟧
+, then we also have 
+⟦
+D
+1
+⊗
+E
+⟧
+=
+⟦
+D
+1
+⟧
+⊗
+⟦
+E
+⟧
+=
+⟦
+D
+2
+⟧
+⊗
+⟦
+E
+⟧
+=
+⟦
+D
+2
+⊗
+E
+⟧
+, and hence 
+D
+1
+⊗
+E
+=
+D
+2
+⊗
+E
+ is also sound. The analogous result for composition with 
+E
+ also holds. As ZX-diagrams are built iteratively by repeated tensor products and composition, this shows that (61) is indeed sound.
+
+In terms of category theory, we can frame 
+⟦
+⋅
+⟧
+ as a strong monoidal functor from the category of ZX-diagrams to the category of complex matrices of size 
+2
+n
+, see Section 7 for more details. The type of local rewriting we do can be understood as an instance of double-pushout rewriting [18].
+
+4.4Colour changing
+As has been noted several times in the preceding sections, when we have derived some rule in the ZX-calculus, an analogous rule with the colours interchanged also holds. This follows from the rules concerning the Hadamard gate that we introduced in Section 2.3. Let us repeat these rules here for ease of reference:
+
+=
+      
+=
+…
+𝜶
+…
+…
+…
+𝜶
+…
+…
+𝜶
+=
+(14)
+(16)
+(62)
+The first of these rules states that the Hadamard gate is self-inverse, while the second says that commuting a Hadamard through a spider changes its colour (reflecting the fact that the Hadamard interchanges the eigenbasis of the Z and X gate). Note that the Hadamard commutation rule also holds for spiders that have no inputs, so for instance:
+
+𝜶
+=
+𝜶
+(63)
+Let us give an example to demonstrate how the two Hadamard rules (62) imply the colour-inverse of any other rule we have. For instance, suppose we want to prove the colour-inverse of Eq. (53):
+
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+(64)
+We start with the left-hand side of the colour-swapped version, and then insert two Hadamards on the input by applying the self-inverse rule in reverse:
+
+=
+…
+𝝅
+…
+𝝅
+(62)
+We then commute one of the Hadamards all the way to the outputs:
+
+=
+…
+𝝅
+…
+𝝅
+=
+…
+𝝅
+(62)
+(62)
+We now see the left-hand side of the original (not colour-swapped) equation (64), and hence we can apply it:
+
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+(64)
+Now it remains to commute the Hadamards back to the left, and to cancel the resulting double Hadamard:
+
+=
+…
+𝝅
+𝝅
+𝝅
+…
+𝝅
+𝝅
+𝝅
+=
+…
+𝝅
+𝝅
+𝝅
+=
+…
+𝝅
+𝝅
+𝝅
+(62)
+(62)
+(62)
+We have hence succeeded in proving the colour-inverse of Eq. (64):
+
+=
+…
+𝝅
+…
+𝝅
+𝝅
+𝝅
+4.5The bialgebra and Hopf rule
+The previous sets of rules all have a very distinct topologically intuitive character: spider fusion allows you to fuse adjacent spiders of the same colour; identity removal and the Hadamard self-inverse rule allow you to remove certain vertices; the 
+π
+-copy, state-copy and colour-change rule allow you to commute certain generators through spiders by copying them to the other side. It is therefore relatively easy (after you gain some practice) to spot where they can be applied and what the effect of their application will be on the structure of the rest of the diagram.
+
+The last major rule of the ZX-calculus takes more time to work with intuitively, although it does correspond to a natural and crucial property of the interaction of the Z- and X-spider.
+
+Before we introduce the rule, let us give some motivation. Treating the 
+|
+0
+⟩
+ and 
+|
+1
+⟩
+ states as Boolean bits, we can view the phaseless 1-input, 
+n
+-output Z-spider as the COPY gate that copies the bit 
+0
+ to 
+0
+⋯
+0
+ and the bit 
+1
+ to 
+1
+⋯
+1
+. Indeed, this is exactly what Eq. (59) states. Analogously, we can view the phaseless 2-input, 1-output X-spider as the XOR gate:
+
+=
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+(
+𝒂
+⊕
+𝒃
+)
+​
+𝝅
+The XOR gate and the COPY gate have a natural commutation relation. Indeed, first XORing bits, and then copying the outcome is the same as first copying each of the bits and then XORing the resulting pairs:
+
+=
+COPY
+XOR
+COPY
+COPY
+XOR
+XOR
+(65)
+This equation says that the XOR algebra and the COPY coalgebra together form a bialgebra (for more about these algebraic structures see Section 7.5). This is why we refer to the analogous equation in the ZX-calculus as the bialgebra rule:
+
+=
+(66)
+This rule is essential to many proofs in the ZX-calculus. As a demonstration of its utility, let us prove the well-known ‘three CNOTs make a swap’ circuit identity. This proof will also reveal the need for one additional rule that can actually be derived with the bialgebra rule. We start with the three CNOTs and deform the diagram to demonstrate where the bialgebra rule can be applied:
+
+=
+(67)
+Now, apply Eq. (66) from right-to-left, and then deform the diagram again to bring it to a cleaner form:
+
+=
+=
+(66)
+(68)
+To finish the proof it now remains to show that two CNOTs applied in succession cancel each other:
+
+=
+(69)
+The first step towards doing this might seem clear, namely, we fuse the adjacent spiders of the same colour:
+
+=
+(47)
+(70)
+But now we are seemingly stuck.
+
+The solution comes from another equation between the Boolean gates XOR and COPY. When we first apply an XOR and then a COPY, we can commute the XOR by essentially ‘copying’ it through the COPY gate. But what happens when we first apply a COPY and then an XOR gate to the two outputs of the COPY: the input 
+0
+ first gets copied to 
+00
+ and then XORed to 
+0
+, while the input 
+1
+ first gets copied to 
+11
+ and then XORed to 
+0
+. So regardless of the input, we output a 
+0
+. Generalising the notion of a XOR gate to allow for a 0-input XOR gate that just outputs its unit (namely 
+0
+), and a 0-output COPY gate that discards its output we can write this relation diagrammatically as:
+
+=
+COPY
+XOR
+COPY
+XOR
+(71)
+An algebra (XOR) and a coalgebra (COPY) satisfying this equation are known together as a Hopf algebra. This is why we refer to the following analogous equation between the Z- and X-spider as the Hopf rule:
+
+=
+(72)
+Operationally, this equation can be interpreted as saying that the Z-basis and X-basis correspond to complementary observables, where having maximal information about the Z observable gives minimal information about the X observable [31, Section 9.2]. In this same vein the bialgebra rule (66) says that the observables are strongly complementary [37].
+
+It turns out that complementarity can be derived from strong complementarity using some clever deformation of the diagram and the rules from the previous sections [52]:
+
+=
+=
+=
+=
+=
+=
+(51)
+(47)
+(66)
+(59)
+In this derivation, we first deformed the diagram, then we introduced identities, we unfused some spiders, applied the bialgebra rule, copied a state twice, and in the last equation we ignored the dangling scalar diagram as discussed in Section 3.4.
+
+The Hopf rule is exceedingly useful. Indeed, combining it with some spider fusion we can use it to show that we can always cancel pairs of connections between spiders of opposite colours:
+
+𝜷
+…
+…
+𝜶
+…
+…
+=
+𝜷
+…
+…
+𝜶
+…
+…
+(47)
+=
+𝜷
+…
+…
+𝜶
+…
+…
+(72)
+=
+𝜷
+…
+…
+𝜶
+…
+…
+(47)
+(73)
+So if two spiders of opposite colour are connected by 
+n
+ wires, then this can be reduced to 
+n
+​
+mod
+​
+2
+ wires. In particular, we can finish the proof that 2 CNOTs cancel each other out, and thus that 3 CNOTs make a SWAP:
+
+=
+=
+=
+(73)
+(47)
+(51)
+(74)
+We can extend the bialgebra rule (66) to spiders of arbitrary arity:
+
+=
+⋯
+⋯
+n
+m
+⋯
+⋯
+n
+m
+(75)
+That is, for any two connected phaseless spiders of different colours we can apply the bialgebra rule, resulting in a fully connected bipartite graph as on the right-hand side. For 
+n
+=
+m
+=
+2
+ this is exactly Eq. (66). For 
+n
+=
+1
+ or 
+m
+=
+1
+ this follows in a trivial manner by adding and removing identities (cf. Eq. (51)). When 
+n
+=
+0
+ or 
+m
+=
+0
+ this is just the state-copy rule, i.e. (the colour-swapped) Eq. (57). Now suppose 
+n
+=
+2
+ and 
+m
+=
+3
+, we will show how to derive its bialgebra rule using just spider fusion and the 
+n
+=
+2
+,
+m
+=
+2
+ bialgebra rule:
+
+=
+=
+=
+=
+(47)
+(66)
+(66)
+(47)
+(76)
+We leave it as an exercise for the reader how to derive the cases for larger 
+n
+ and 
+m
+ (hint: use induction or see [31, Theorem 9.71]).
+
+There are two common mistakes people make when using the bialgebra rule. The first is that the bialgebra rule (66) only works when the phases on the spiders are zero. When the phases are 
+π
+ a modification is possible by combining it with the 
+π
+-copy rules (56):
+
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+=
+𝒃
+​
+𝝅
+𝒃
+​
+𝝅
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+(77)
+But when one of the spiders contains some arbitrary phase 
+α
+, the result will be more complicated:
+
+𝜶
+=
+𝜶
+(47)
+=
+(75)
+𝜶
+=
+𝜶
+(78)
+The additional bit of diagram we get is called a phase gadget and is studied in more detail in Section 5.6.
+
+The second common mistake is that people apply the rule (66) from right-to-left without paying attention to how many outputs the spiders have, wrongfully equating the following diagrams:
+
+≠
+(79)
+The correct way to apply the bialgebra rule here is to first unfuse the spider:
+
+=
+(47)
+=
+(66)
+(80)
+4.6The complete calculus
+We now have all the main ingredients for reasoning with ZX-diagrams using the ZX-calculus, so let us summarise what we have already seen. The rules of the ZX-calculus are presented in Figure 1.
+
+𝜷
+…
+…
+𝜶
+…
+…
+=
+…
+…
+…
+𝜶
++
+𝜷
+(
+f
+)
+−
+𝜶
+=
+𝝅
+𝝅
+𝜶
+…
+…
+𝝅
+(
+π
+)
+…
+𝜶
+=
+…
+(
+c
+)
+…
+=
+…
+(
+h
+)
+(
+id
+)
+=
+=
+(
+hh
+)
+(
+b
+)
+=
+…
+𝜶
+𝜶
+…
+Figure 1: A convenient presentation of the ZX-calculus. These rules hold for all 
+α
+,
+β
+∈
+ℝ
+, and due to 
+(
+h
+)
+ and 
+(
+hh
+)
+ all rules also hold with the colours interchanged. Note ‘…’ should be read as ‘0 or more’, hence the spiders on the left-hand side of 
+(
+f
+)
+ are connected by one or more wires. The letters stand respectively for spider-
+(
+𝒇
+)
+usion, 
+(
+𝒉
+)
+adamard, 
+(
+𝒊
+​
+𝒅
+)
+entity, 
+(
+𝒉
+​
+𝒉
+)
+-cancellation, 
+(
+𝝅
+)
+-commute, 
+(
+𝒄
+)
+opy, and 
+(
+𝒃
+)
+ialgebra. Note that these rules are only correct up to non-zero scalar.
+The Hadamard is defined as any one of the following diagrams (that can be shown to be equivalent using the rules of Figure 1):
+
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+=
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+e
+i
+​
+π
+4
+=
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+e
+i
+​
+π
+4
+𝝅
+𝟐
+𝝅
+𝟐
+-
+𝝅
+𝟐
+=
+𝝅
+𝟐
+𝝅
+𝟐
+-
+𝝅
+𝟐
+=
+Besides these concrete rules we have several ‘meta-rules’:
+
+• Only connectivity matters: diagrams can be deformed in any way, as long as the order of the inputs and outputs of the whole diagram is preserved.
+• Each of the rules in Figure 1 also holds with the inputs and outputs interchanged.
+• Every rule also holds with the colours (white and grey) interchanged.
+• Every rule holds with all the phases negated.
+We have also seen several combined and derived rules:
+
+• The rules 
+(
+c
+)
+ and 
+(
+b
+)
+ can be combined and generalised to the following rule:
+=
+⋯
+⋯
+n
+m
+⋯
+⋯
+n
+m
+• The rules of Figure 1 imply the Hopf rule:
+=
+• The rules 
+(
+π
+)
+ and 
+(
+c
+)
+ can be combined to give a more generic state-copy rule:
+=
+…
+𝜶
+𝒂
+​
+𝝅
+…
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+Note that in the remainder of the paper we will often label steps in a derivation with the rule names of Figure 1 to denote which are applied. See for example (81).
+
+The rules we present in Figure 1 are not a minimal set. A smaller set of equivalent rules can be found in for instance [31, Definition 9.108] and a ruleset that contains the correct scalars can be found in [12].
+
+5Some example derivations
+Let us now use the ZX-calculus to reason about several small examples that demonstrate its use in reasoning about quantum computing. This will also demonstrate several best practices when trying to simplify a diagram using the ZX-calculus. A reader wishing to try out some diagrammatic proving themselves could take a look at Appendix A.6 and try to prove these circuit identities by hand (although it might be useful to read Section 5.6 first).
+
+5.1GHZ-preparation circuit
+The following quantum circuit implements the GHZ state 
+|
+000
+⟩
++
+|
+111
+⟩
+:
+
+|
+0
+⟩
+|
+0
+⟩
+|
+0
+⟩
+​​+​​
+​​+​​
+H
+We can verify this by translating it into a ZX-diagram and simplifying it using the rules of Figure 1:
+
+=
+=
+(
+f
+)
+(
+f
+)
+=
+(
+id
+)
+=
+(
+h
+)
+=
+(
+f
+)
+(81)
+By the definition of the Z-spider, this last diagram is equal to 
+|
+000
+⟩
++
+|
+111
+⟩
+ which is indeed the 3-qubit GHZ state. As is commonly the case for simplifying ZX-diagrams, we start with fusing adjacent spiders of the same colour using 
+(
+f
+)
+ and removing identities using 
+(
+id
+)
+. Once this is done we have a diagram that contains a state: a spider with just one leg. Many rules and simplifications deal with states and hence this is an obvious next target for simplification. It is connected to a Hadamard, so the only thing we can do with it is change its colour using 
+(
+h
+)
+. The final step is another spider fusion.
+
+5.2Pauli pushing
+Knowing how the Pauli operators commute through a circuit (or a more general computation) is important for several areas in quantum computation, such as when verifying the functioning of an error correcting code, implementing a measurement-based quantum computation, or calculating the stabiliser tableau of a Clifford circuit. The ZX-calculus makes it easy to remember the rules for how the Pauli’s propogate. Indeed, the only rules required are spider fusion 
+(
+f
+)
+ and the 
+π
+-copy rule 
+(
+c
+)
+ (and occasionally an identity will need to be removed with 
+(
+id
+)
+).
+
+For instance, suppose we wish to know how the Pauli operator 
+X
+⊗
+Z
+ commutes through the following circuit:
+
+​​+​​
+S
+​​+​​
+We write it as a ZX-diagram with the Pauli’s X and Z on the left, and start pushing them to the right:
+
+𝝅
+𝟐
+𝝅
+𝝅
+𝝅
+𝟐
+𝝅
+𝝅
+=
+(
+π
+)
+𝝅
+𝝅
+𝟐
+𝝅
+𝝅
+=
+(
+f
+)
+𝝅
+𝝅
+𝟐
+𝝅
+𝝅
+=
+(
+π
+)
+𝝅
+𝝅
+𝝅
+𝝅
+𝟐
+𝝅
+=
+(
+f
+)
+𝝅
+𝝅
+=
+(
+π
+)
+−
+𝝅
+𝟐
+𝝅
+𝝅
+𝝅
+𝝅
+=
+(
+f
+)
+𝝅
+𝝅
+𝝅
+𝝅
+𝟐
+=
+(
+π
+)
+𝝅
+𝝅
+𝝅
+𝝅
+𝟐
+𝝅
+=
+(
+f
+)
+𝝅
+𝝅
+𝝅
+𝟐
+(
+id
+)
+Note that we have used 
+(
+f
+)
+ both to commute spiders of the same colour through each other (like the Pauli Z through the control of the CNOTs, or the Pauli Z through the S gate), as well as to combine the phases of the Pauli’s in order to cancel out the phases.
+
+We see that we end up with the Pauli 
+Y
+⊗
+id
+. Of course, this process was quite lengthy, because every rewrite step is shown. Once you get comfortable with this process, many of the steps can be combined and it becomes easy to see where each of the Pauli’s ends up.
+
+5.3Magic state injection
+The following circuit implements the well-known magic state injection protocol, where a 
+|
+T
+⟩
+:=
+|
+0
+⟩
++
+e
+i
+​
+π
+/
+4
+|
+1
+⟩
+ magic state is pushed onto a qubit using a measurement and potential correction:
+
+|
+T
+⟩
+​​+​​
+S
+Here the double wire represents a classical measurement outcome being fed forward into the 
+S
+ gate, so that the 
+S
+ gate is only applied if the measurement outcome corresponded to 
+⟨
+1
+|
+.
+
+We can represent this in the ZX-calculus by introducing a Boolean variable 
+a
+ to represent the measurement outcome. We can then easily prove its correctness:
+
+𝝅
+𝟒
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+𝟐
+=
+𝝅
+𝟒
+𝒂
+​
+𝝅
+𝟐
+𝒂
+​
+𝝅
+(
+f
+)
+=
+(
+−
+𝟏
+)
+𝒂
+​
+𝝅
+𝟒
+𝒂
+​
+𝝅
+𝟐
+(
+π
+)
+=
+𝝅
+𝟒
+𝒂
+​
+𝝅
+𝟐
+(
+f
+)
+−
+𝒂
+​
+𝝅
+𝟐
+=
+𝝅
+𝟒
+(
+f
+)
+(82)
+Most of this proof is spider fusion, but there are a couple of interesting bits. The step labelled 
+(
+π
+)
+ actually consists of two branches, because if 
+a
+=
+0
+, then the grey dot can be removed using 
+(
+id
+)
+ so that the phase on the white dot remains 
+π
+4
+, while if 
+a
+=
+1
+, then 
+(
+π
+)
+ is indeed applied, and the phase flips to 
+−
+π
+4
+. In the step after that we make the observation that 
+(
+−
+1
+)
+a
+​
+π
+4
+=
+π
+4
+−
+a
+​
+π
+2
+.
+
+The usage of a variable to denote a measurement outcome is a simple ‘hack’ to deal with classically controlled circuits, and is used quite often when doing measurement-based quantum computation in the ZX-calculus [82, 13]. For more complicated scenario’s we can also adopt a variant of the ZX-calculus where we allow both classical and quantum wires to exist [35, 30]. We discuss this in more detail in Section 10.2.
+
+5.4Teleportation
+The standard state-teleportation protocol consists of two parties, Alice and Bob, that share a maximally entangled state 
+|
+00
+⟩
++
+|
+11
+⟩
+. Alice does some quantum operations, measures her states, sends the classical measurement outcomes to Bob, and Bob does some quantum corrections based on those outcomes. At the end Bob has the state that Alice started out with. We can represent this as a quantum circuit as follows:
+
+|
+Ψ
+⟩
+​​+​​
+|
+Ψ
+⟩
+H
+Z
+X
+Alice
+Bob
+Here the 
+|
+Ψ
+⟩
+ label is to denote that the bottom two qubits start in the maximally entangled Bell state. By representing the measurement outcomes by Boolean variables 
+a
+ and 
+b
+ we can again represent this in the ZX-calculus and prove the correctness of the protocol:
+
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+𝒃
+​
+𝝅
+𝒂
+​
+𝝅
+Alice
+Bob
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+𝒃
+​
+𝝅
+𝒂
+​
+𝝅
+Alice
+Bob
+=
+(
+f
+)
+(
+h
+)
+2
+​
+𝒃
+​
+𝝅
+𝒂
+​
+𝝅
+𝒂
+​
+𝝅
+Alice
+Bob
+=
+(
+f
+)
+2
+​
+𝒂
+​
+𝝅
+Alice
+Bob
+=
+(
+id
+)
+(
+f
+)
+Alice
+Bob
+=
+(
+id
+)
+Here we used the fact that 
+2
+​
+b
+​
+π
+ is either 
+2
+​
+π
+ or 
+0
+ which are both 
+0
+ modulo 
+2
+​
+π
+, and hence the spider can be removed using 
+(
+id
+)
+.
+
+5.5Detecting entanglement
+Let us now do a more involved calculation with the ZX-calculus, demonstrating how one goes about systematically simplifying a diagram.
+
+Suppose you are given the following (somewhat randomly chosen) quantum circuit:
+
+S
+H
+|
+0
+⟩
+|
+0
+⟩
+|
+0
+⟩
+|
+0
+⟩
++
++
++
++
++
+H
++
++
++
++
+S
++
+Suppose further that one wishes to know which qubits are entangled after applying this circuit. Calculating the state directly gives 
+1
+2
+​
+(
+1
+,
+0
+,
+0
+,
+0
+,
+i
+,
+0
+,
+0
+,
+0
+,
+0
+,
+0
+,
+0
+,
+1
+,
+0
+,
+0
+,
+0
+,
+i
+)
+T
+. While a trained eye might be able to spot that the 2nd qubit is unentangled, and that the remainder form a GHZ-state, at first glance this is altogether not obvious. Let us do a simplification of the same circuit in the ZX-calculus. In this simplification we have a couple of steps marked (*), (**), (***). These will be explained after.
+
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+c
+)
+(
+f
+)
+(
+h
+)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+(
+id
+)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+h
+)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+−
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(72)
+(*)
+−
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+(
+h
+)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+(*)
+−
+𝝅
+𝟐
+=
+(
+id
+)
+(**)
+−
+𝝅
+𝟐
+=
+(
+f
+)
+−
+𝝅
+𝟐
+=
+(72)
+𝝅
+𝟐
+=
+(***)
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+If this is one of the first times encountering ZX-diagrams it might not necessarily be clear what is happening here, but we are in fact following a simple algorithm. Most of the steps follow the general pattern that we always try to fuse spiders of the same colours with 
+(
+f
+)
+ (though we don’t do that here for all spiders at the same time to prevent cluttering), always remove identities with 
+(
+id
+)
+, always copy states through spiders with 
+(
+c
+)
+, and always remove parallel wires between spiders of opposite colours using the Hopf rule (72). Hadamards are moved out of the way with 
+(
+h
+)
+ when no other obvious move is available. We have marked three other types of rewrite rules (*), (**) and (***). These all rely on the particular decomposition (44) of the Hadamard gate into its Euler angles 
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+e
+−
+i
+​
+π
+4
+ , where we ignore the global phase:
+
+(
+∗
+)
+:
+ 
+𝜶
+…
+𝝅
+𝟐
+𝝅
+𝟐
+𝜶
+…
+𝝅
+𝟐
+=
+𝝅
+𝟐
+…
+𝜶
++
+𝝅
+=
+…
+𝜶
++
+𝝅
+=
+(
+f
+)
+(72)
+(44)
+𝝅
+𝟐
+…
+𝜶
++
+𝝅
+=
+(83)
+(
+∗
+∗
+)
+:
+ 
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+(44)
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+=
+(
+f
+)
+𝝅
+𝝅
+𝝅
+𝟐
+=
+(
+π
+)
+-
+𝝅
+𝟐
+(
+f
+)
+-
+𝝅
+𝟐
+=
+(
+id
+)
+(84)
+(
+∗
+∗
+∗
+)
+:
+ 
+-
+𝝅
+𝟐
+=
+-
+𝝅
+𝟐
+-
+𝝅
+𝟐
+=
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+=
+𝝅
+𝟐
+𝝅
+𝟐
+=
+𝝅
+𝟐
+=
+𝝅
+𝟐
+(
+h
+)
+(44)
+(
+f
+)
+(
+c
+)
+(
+f
+)
+(85)
+Note that in the last step of the proof of (*) we dropped the scalar 
+π
+2
+ X-spider. The equation (*) is particularly useful because it allows us to get rid of Hadamard self-loops, which is almost always the prudent thing to do in a simplification. The equation (**) is an example of how a series of Clifford phase gates can often be combined together into a simpler series of phase gates. The equation (***) relates two ways to write the eigenstate 
+|
+i
+⟩
+:=
+1
+2
+(
+|
+0
+⟩
++
+i
+|
+1
+⟩
+)
+ of the Pauli operator 
+Y
+ (up to global phase). Namely, the left-hand side says 
+|
+i
+⟩
+=
+R
+X
+(
+−
+π
+2
+)
+|
+0
+⟩
+ while the right-hand side says 
+|
+i
+⟩
+=
+R
+Z
+(
+π
+2
+)
+|
++
+⟩
+. An analogous equation holds for 
+|
+−
+i
+⟩
+:=
+1
+2
+(
+|
+0
+⟩
+−
+i
+|
+1
+⟩
+)
+, which boils down to flipping the signs of the phases in the spiders.
+
+The size of this circuit is nearing the limit of what is still comfortable to rewrite manually. In fact, the software PyZX [84] was used to verify and help with the rewriting here. This entire simplification can be done automatically and nearly instantaneously with PyZX using one of its built-in simplification strategies. We presented the derivation here in detail to show how one would go about systematically simplifying a ZX-diagram. A more formal approach to simplifying a (Clifford) diagram is presented in Section 6.5.
+
+5.6Phase polynomials and phase gadgets
+Phase polynomials are a class of unitaries that have proven useful in quantum circuit optimisation and verification [6, 5, 8, 71]. Phase polynomials are the unitaries generated by circuits containing CNOT gates and Z-phase rotations. The action of such a unitary on a computational basis state can be represented as 
+|
+x
+→
+⟩
+:=
+|
+x
+1
+x
+2
+⋯
+x
+n
+⟩
+↦
+e
+i
+​
+f
+​
+(
+x
+1
+,
+x
+2
+,
+…
+,
+x
+n
+)
+|
+A
+x
+→
+⟩
+ where 
+f
+:
+𝔹
+n
+→
+ℝ
+ is a semi-Boolean function and 
+A
+:
+𝔹
+n
+→
+𝔹
+n
+ is a linear Boolean function (i.e. one that can be represented by a CNOT circuit [95]). The interesting part of a phase polynomial is given by its diagonal action, the part that is given by the semi-Boolean function 
+f
+. We will write 
+U
+f
+ for the unitary that implements the diagonal action 
+U
+f
+|
+x
+→
+⟩
+=
+e
+i
+​
+f
+​
+(
+x
+→
+)
+|
+x
+→
+⟩
+.
+
+Each semi-Boolean function arising in this manner can be written as a linear combination of XOR terms. An example of such a decomposition would be 
+f
+⁡
+(
+x
+1
+,
+x
+2
+,
+x
+3
+)
+=
+π
+4
+​
+(
+x
+1
+⊕
+x
+2
+)
++
+π
+2
+​
+x
+3
++
+π
+⁡
+(
+x
+1
+⊕
+x
+2
+⊕
+x
+3
+)
+. Writing 
+f
+=
+∑
+i
+f
+i
+ where each 
+f
+i
+ is a single XOR term we then see that 
+U
+f
+=
+∏
+i
+U
+f
+i
+, where the order in the product is irrelevant as each 
+U
+f
+i
+ commutes with one another.
+
+It turns out that the unitary 
+U
+f
+ where 
+f
+ consists of a single XOR term has a natural representation as a ZX-diagram. Namely:
+
+ 
+𝜶
+…
+ 
+=
+U
+f
+​
+ where 
+​
+f
+​
+(
+x
+1
+,
+…
+,
+x
+n
+)
+=
+α
+⁡
+(
+x
+1
+⊕
+⋯
+⊕
+x
+n
+)
+.
+(86)
+We will refer to a ZX-diagram of this shape and a unitary 
+U
+f
+ as phase gadgets, as they look like small diagrammatic gadgets that add a phase to the state if the parity of the state is odd. We can relate this representation to a more common circuit construction of phase gadgets where we build a ‘ladder of CNOTs’ to construct the appropriate parity, apply a phase, and then uncompute with the opposite ladder of CNOTs [42]:
+
+𝜶
+=
+𝜶
+(87)
+For 2 qubits we can prove this correspondence easily:
+
+𝜶
+=
+𝜶
+𝜶
+=
+=
+𝜶
+=
+𝜶
+=
+𝜶
+(
+f
+)
+(
+f
+)
+(
+b
+)
+(
+id
+)
+(88)
+For more qubits we prove by induction (which we leave as an exercise for the reader). The action of a phase gadget is symmetric on its qubits. While this is clear in the representation of a phase gadget as a ZX-diagram, this is not the case in its circuit representation (87). This asymmetry in the representation requires circuit optimisation procedures based on circuits to build dedicated methods for handling phase gadgets and phase polynomials [99], while in the ZX representation the symmetry is evident.
+
+A straightforward calculation shows that the 2 qubit unitary presented in this calculation is equal (up to a global phase) to 
+exp
+(
+−
+i
+α
+2
+Z
+⊗
+Z
+)
+. Such a unitary is sometimes called an Ising-type interaction and is (up to a global basis change) the unitary that is implemented by the natural 2-qubit interaction in ion trap quantum computers, the Mølmer-Sørensen interaction [112]. It turns out that any circuit can be written as a product of gates of the form 
+exp
+⁡
+(
+i
+​
+α
+​
+P
+→
+)
+ where 
+P
+→
+ is some tensor product of Pauli’s [92]. Each such ‘exponentiated Pauli’ can be written efficiently as a ZX-diagram [42].
+
+For the unitaries in Eq. (86) we have 
+U
+f
+1
+​
+U
+f
+2
+=
+U
+f
+1
++
+f
+2
+. In particular, if 
+f
+1
+ and 
+f
+2
+ contain identical XOR terms and have phases 
+α
+ and 
+β
+, then the resulting 
+f
+=
+f
+1
++
+f
+2
+ has the same XOR term but with phase 
+α
++
+β
+. This relation implies that two phase gadgets, presented as ZX-diagrams, with exactly the same connectivity should be able to fuse together. This is readily shown in the ZX-calculus:
+
+=
+(
+f
+)
+=
+(
+b
+)
+=
+(
+f
+)
+𝜶
+𝜷
+𝜶
+𝒏
+𝜶
+𝟏
+…
+…
+…
+𝜶
++
+𝜷
+𝜶
+𝒏
+𝜶
+𝟏
+…
+…
+…
+𝜶
+𝜷
+𝜶
+𝒏
+𝜶
+𝟏
+…
+…
+…
+𝜶
+𝜷
+𝜶
+𝒏
+𝜶
+𝟏
+…
+…
+…
+(89)
+That the phases of phase gadgets with identical XOR terms fuse lies at the heart of several quantum circuit optimisation routines [99, 7] including one using the ZX-calculus [83].
+
+Instead of writing a phase polynomial as a sum of XOR terms, we can also write a phase polynomial as a sum of AND terms. For instance, the CCZ gate implements the diagonal action 
+|
+x
+y
+z
+⟩
+↦
+e
+i
+​
+π
+​
+(
+x
+⋅
+y
+⋅
+z
+)
+. This translation between XOR and AND representations of phase polynomials is used (either implicitly or explicitly) in several other circuit optimisation methods and has close links to Reed-Muller decoding and 3-tensor factorisation [6, 71, 46]. We discuss this transition between XOR and AND in more detail in Section 8.4.
+
+This marks the end of the introductory part of this paper. The remaining sections each cover separate topics related to the ZX-calculus that can mostly be read independently.
+
+6Clifford computation
+The Clifford unitaries are those unitaries generated by compositions of CNOT, Hadamard and S gates. Equivalently, Clifford unitaries are precisely those unitaries 
+U
+ that map a ‘Pauli string’ 
+P
+→
+=
+P
+1
+⊗
+⋯
+⊗
+P
+n
+ to another Pauli string under the conjugation 
+U
+​
+P
+→
+​
+U
+†
+. The states that can be reached starting from 
+|
+0
+⋯
+0
+⟩
+ and applying a Clifford unitary to it are the Clifford states (also known as the stabiliser states, because they can be characterised as those states that are stabilised by families of Pauli strings).
+
+Even though Clifford states and unitaries do not allow universal quantum computation, they are still incredibly useful in a wide variety of tasks, such as in error correcting codes, measurement-based quantum computation and numerous protocols such as quantum key distribution, teleportation or dense coding. As is well-known, computation with Clifford states and unitaries can be efficiently classically simulated. This is the content of the Gottesman-Knill theorem [1].
+
+For our purposes, it will also be useful to introduce the notion of a Clifford linear map. These are the linear maps that can be produced by composing Clifford states, Clifford unitaries, and 
+⟨
+0
+|
+, i.e. the post-selection for the 
+|
+0
+⟩
+ state.
+
+It turns out that Clifford linear maps are precisely those linear maps that can be presented by ZX-diagrams containing only phases that are multiples of 
+π
+2
+. Indeed, 
+|
+0
+⟩
+, 
+⟨
+0
+|
+, CNOT, Hadamard and S are are all representable by ZX-diagrams that contain only multiples of 
+π
+2
+ phases, and hence this is also true for their compositions. The converse is also not too hard to see.
+
+This Clifford fragment of the ZX-calculus, where spiders are only allowed to carry a phase that is a multiple of 
+π
+2
+, turns out to be particularly well-behaved. In this section we will study this fragment and reprove some well-known properties of Clifford states and Clifford computation, including a derivation that each Clifford state is equal to a graph state with local Cliffords and a graphical proof of the Gottesman-Knill theorem. Along the way we will briefly sketch how measurement-based quantum computation can be represented in the ZX-calculus (Section 6.3) and we discuss the question of how a ZX-diagram can be transformed back into a circuit (Section 6.6).
+
+6.1Graph states
+A particularly useful subset of the Clifford states are the graph states. For each simple undirected graph 
+G
+=
+(
+V
+,
+E
+)
+, we can define its corresponding graph state 
+|
+G
+⟩
+ as
+
+|
+G
+⟩
+:=
+∏
+(
+v
+,
+w
+)
+∈
+E
+CZ
+v
+,
+w
+|
++
+⟩
+⊗
+|
+V
+|
+.
+I.e. we prepare the 
+|
++
+⋯
++
+⟩
+ state, where the number of qubits is equal to the number of vertices in the graph, and then for every edge in 
+G
+ we apply a CZ gate between the corresponding qubits.9
+9Graph states are also sometimes defined implicitly as the unique stabiliser state stabilised by a particular set of Pauli strings defined in terms of the graph.
+
+Recall from (20) that a CZ gate is represented in the ZX-calculus as follows:
+
+CZ
+=
+  
+(90)
+As furthermore a 
+|
++
+⟩
+ state is a Z-spider with a single output, the translation of a graph into a graph state is particularly straightforward [54] in the ZX-calculus. An example:
+
+G
+|
+G
+⟩
+(91)
+In words: every vertex becomes a Z-spider with an output attached to it. Each edge in the graph becomes an edge between the corresponding spiders, and this edge has a Hadamard box on it.
+
+For graphs with many edges, writing Hadamard boxes on each edge might become cumbersome. To remedy this issue, [57] introduced a new notation for a Hadamard-edge: a blue dotted edge instead of a black edge. To stick with our black and white colour scheme, we will instead write this as a grey dotted edge:
+
+:
+⁣
+=
+…
+…
+…
+…
+(92)
+Any Clifford state is equal to a Graph State with Local Cliffords (GSLC) [116]. Hence, given a 
+n
+-qubit Clifford state 
+|
+ψ
+⟩
+, we can find a 
+n
+-vertex graph 
+G
+, and local Cliffords 
+U
+1
+,
+…
+,
+U
+n
+ such that 
+|
+ψ
+⟩
+=
+(
+⨂
+i
+=
+1
+n
+U
+i
+)
+|
+G
+⟩
+. A local Clifford in this context is a single-qubit Clifford unitary, i.e. a unitary that can be written as a composition of Hadamard and S gates. In terms of ZX-diagrams, such a unitary can always be written as a composition of three phase gates where the phases are multiples of 
+π
+2
+:
+
+U
+=
+𝒌
+𝟏
+​
+𝝅
+𝟐
+𝒌
+𝟑
+​
+𝝅
+𝟐
+𝒌
+𝟐
+​
+𝝅
+𝟐
+=
+𝒌
+𝟏
+′
+​
+𝝅
+𝟐
+𝒌
+𝟑
+′
+​
+𝝅
+𝟐
+𝒌
+𝟐
+′
+​
+𝝅
+𝟐
+(93)
+Here, 
+k
+i
+,
+k
+i
+′
+∈
+ℤ
+, and the ‘colouring’ ZXZ or XZX can be chosen based on what is more useful in context. Indeed, our definition of the Hadamard gate in terms of spiders (44) was of this form.
+
+For example, composing the graph state of (91) with some local Cliffords could give:
+
+𝝅
+𝟐
+𝝅
+−
+𝝅
+𝟐
+6.2Graph-like diagrams
+In the previous sections we worked with general ZX-diagrams that can contain Z-spiders, X-spiders and Hadamard gates, connected in any valid manner. For some purposes, especially when it comes to automated rewriting, it is however useful to reduce to a slightly more restricted type of ZX-diagram that we call a graph-like diagram [57]. Before giving an explicit description of those diagrams, let us give a simple algorithm that transforms an arbitrary ZX-diagram into a graph-like diagram:
+
+1.
+Convert all X-spiders into Z-spiders by pushing out Hadamards (by using 
+(
+h
+)
+ of Figure 1).
+2.
+Cancel all adjacent pairs of Hadamard gates using 
+(
+hh
+)
+.
+3.
+Fuse all connected spiders using 
+(
+f
+)
+.
+4.
+View the remaining Hadamard gates between spiders as the Hadamard-edges of (92).
+5.
+Remove all self-loops using (52) and (83).
+6.
+If two spiders are connected by multiple Hadamard-edges, we remove these using a variation of the Hopf-rule:
+𝜶
+𝜷
+…
+…
+=
+𝜶
+…
+𝜷
+…
+(
+h
+)
+=
+(
+f
+)
+𝜶
+…
+…
+𝜷
+=
+(72)
+𝜶
+…
+…
+𝜷
+=
+(
+f
+)
+𝜶
+…
+…
+𝜷
+(
+h
+)
+(94)
+What remains after these simplifications is a ZX-diagram that contains only Z-spiders (no X-spiders), and the only connections between these Z-spiders are by single Hadamard-edges. Diagrams that have this property we call graph-like. Hence, a graph-like diagram is fully specified by a simple graph (describing the spiders and the Hadamard-edge connectivity), a list of phases for the vertices, and an ordered list specifying to which vertices the inputs and outputs are connected (and whether this connection is a regular or Hadamard-edge).10
+10There is actually a subtlety here that we are choosing to ignore. Namely, that an input wire could also be an output wire, without any spider appearing on it. We can either deal with this as a special case, or modify our algorithm so that it introduces identity spiders with 
+(
+id
+)
+ to prevent this from happening.
+ As an example, we can rewrite the following circuit to a graph-like diagram as follows:
+
+𝜶
+𝜸
+=
+𝜸
+𝜶
+=
+𝜸
+𝜶
+(
+f
+)
+(
+id
+)
+𝜶
+𝜸
+=
+(
+h
+)
+=
+(
+hh
+)
+𝜶
+𝜸
+(95)
+Graph states can be seen as a special case of graph-like diagrams, where all the phases are zero, and every spider is connected to a unique output (and the diagram has no inputs).
+
+6.3Measurement-based quantum computation
+An interesting way to think about ZX-diagrams is as a description of a measurement-based quantum computation (MBQC). The circuit model is only one of the ways in which we can present a quantum computation. In this model we start with a simple input state (usually 
+|
+0
+⋯
+0
+⟩
+), then apply a sequence of unitary gates, each usually only affecting a small number of qubits, and finally measure some of the qubits. In this model we could say that the ‘actual computation’ happens through the application of gates, as the input state and the measurements are often the same for entirely different computations. In contrast, in MBQC the computation happens through the clever application of particular measurements. In the most well-studied model of MBQC, the one-way model [106], some highly entangled graph state is prepared, often in some standard way that doesn’t depend on the computation to be performed, and then single qubit measurements are applied, where later measurements can depend on previous outcomes. Crucially, each qubit can be measured in a different measurement basis, which allows us to inject phases into the state and to shape the entanglement in a controlled way. As measurements are fundamentally non-deterministic we need ways to correct for ‘wrong’ measurement outcomes in order to implement a deterministic computation.
+
+We can write a computation in the one-way model of MBQC straightforwardly in the ZX-calculus. Indeed, the development of the ZX-calculus was originally motivated by the desire to describe MBQC in a better way [51]. We give here a brief description. For a thorough treaty, see [13].
+
+We have already seen how to represent a graph state in the ZX-calculus in Section 6.1. It hence remains to show how to represent measurements in the ZX-calculus. In the one-way model, measurements are usually restricted to measurement bases that live on the three principal axes of the Bloch sphere. For instance, on the XY-plane we have measurement bases of the form 
+|
+±
+X
+​
+Y
+,
+α
+⟩
+:=
+|
+0
+⟩
+±
+e
+i
+​
+α
+|
+1
+⟩
+, while measurements on the YZ-plane are 
+|
+±
+Y
+​
+Z
+,
+α
+⟩
+=
+|
++
+⟩
+±
+e
+i
+​
+α
+|
+−
+⟩
+ (XZ-plane measurements are defined similarly, but we won’t need these here). Here we consider the ‘
++
+’ state to correspond to the ‘desired’ outcome of the measurement, while the ‘
+−
+’ state corresponds to the ‘wrong’ outcome that needs to be corrected in order to implement the desired outcome. These measurement outcomes, represented as effects, correspond to simple ZX-diagrams:
+
+⟨
++
+X
+​
+Y
+,
+α
+|
+=
+ 
+𝜶
+ 
+⟨
+−
+X
+​
+Y
+,
+α
+|
+=
+ 
+𝜶+𝝅
+ 
+⟨
++
+Y
+​
+Z
+,
+α
+|
+=
+ 
+𝜶
+ 
+⟨
+−
+Y
+​
+Z
+,
+α
+|
+=
+ 
+𝜶+𝝅
+ 
+A computation in the one-way model is then represented by for instance:
+
+𝒃
+​
+𝝅
+𝝅
+𝟐
++
+𝒂
+​
+𝝅
+𝝅
+𝟒
++
+𝒄
+​
+𝝅
+𝝅
++
+𝒅
+​
+𝝅
+(96)
+Here we took the graph state from (91) and measured each of its 4 qubits. The Boolean variables 
+a
+, 
+b
+, 
+c
+ and 
+d
+ represent each of the measurement outcomes and are the output of this computation. In this example we had pre-determined measurement phases (respectively 
+π
+2
+, 
+0
+, 
+π
+4
+ and 
+π
+), but in general each of these phases, and even whether we use the XY-plane or YZ-plane, can depend on earlier measurement outcomes.
+
+For a complete calculation in the one-way model we have a fixed input and measure all the qubits and hence this is represented by a scalar ZX-diagram, i.e. a diagram with no inputs or outputs. It is however often helpful to think of ‘fragments’ of a computation that can be composed together to create more complicated computations. These fragments have inputs and outputs just like a quantum circuit would. For instance, a measurement fragment that implements a CNOT gate is given by the following diagram:
+
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+(97)
+Here the top qubit is both an input and an output and hence isn’t measured. The third qubit is an input, but is not an output and hence is measured. The fourth qubit is an output and hence also isn’t measured. This fragment implements a CNOT gate up to a known Pauli error that depends on the measurement outcomes 
+a
+ and 
+b
+. We can calculate this Pauli error by simplifying the diagram:
+
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+=
+(
+f
+)
+(
+h
+)
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+=
+(
+π
+)
+(
+id
+)
+𝒃
+​
+𝝅
+=
+(
+f
+)
+𝒂
+​
+𝝅
+𝒃
+​
+𝝅
+(98)
+Hence we end up with the circuit 
+(
+Z
+b
+⊗
+(
+Z
+b
+​
+X
+a
+)
+)
+∘
+CNOT
+. Since the error is a known Pauli, later measurements can be adapted to absorb these errors so that the overall effect of this measurement fragment is the application of a CNOT gate. This process of pushing Pauli errors outside of the pattern is known as feed-forward in the MBQC literature.
+
+The diagram (97) is very close to being a graph-like ZX-diagram. Indeed, the only thing needed to make it graph-like is to fuse the measurement effects into the spider it is attached to. If the fragment also contained YZ-plane measurements, then we could make the diagram graph-like by changing the colour of the resulting X-spiders using 
+(
+h
+)
+.
+
+It turns out that the converse is also true: any graph-like ZX-diagram can be described as a measurement fragment. For instance, we can convert the graph-like diagram of (95) to a measurement fragment as follows:
+
+𝜸
+𝜶
+=
+𝜶
+𝜸
+(
+hh
+)
+(
+id
+)
+(
+f
+)
+(99)
+Here we introduce additional identity spiders and measurements, because the 
+γ
+ phase happens on an output qubit, which can’t be measured itself. Note that this pattern represents a ‘post-selected’ measurement fragment where we assume that the measurement outcome is always the correct one, so that we don’t have to deal with measurement errors that have to be fed forward. It is in general not possible to write a (graph-like) ZX-diagram as a measurement pattern in such a way that measurement errors can be taken into account. Indeed, as a ZX-diagram can represent an arbitrary linear map and deterministic measurement patterns are always isometries, we would not expect this to be the case. Consider for instance the extreme case where the ZX-diagram has inputs but no outputs: there would be nowhere for the errors to be fed forward into.
+
+6.4Local complementation and pivoting
+As mentioned in Section 6.1, each Clifford state can be represented as a graph state composed with some local Cliffords. This graph state is however not unique: we can ‘absorb’ some of the local Cliffords by changing the graph. The main way to do this is by applying local complementations of the graph.
+
+Let 
+G
+ be a graph, and 
+u
+ a vertex in 
+G
+. The local complementation of 
+G
+ about 
+u
+, commonly written as 
+G
+⋆
+u
+, is the graph which has the same vertices and edges as 
+G
+, except that the neighbourhood of 
+u
+ is complemented, i.e. two neighbours 
+v
+ and 
+w
+ of 
+u
+ are connected in 
+G
+⋆
+u
+ if and only if they are not connected in 
+G
+ [88]. For example:
+
+G
+ 
+a
+b
+d
+c
+ 
+G
+⋆
+a
+ 
+a
+b
+d
+c
+ 
+(
+G
+⋆
+a
+)
+⋆
+b
+ 
+a
+b
+d
+c
+ 
+Interestingly, if we have a graph state 
+|
+G
+⟩
+, we can get a graph state 
+|
+G
+⋆
+u
+⟩
+ just by applying some local Cliffords on the original graph state [116]. In fact, it turns out that a graph state 
+|
+G
+1
+⟩
+ can be transformed to a graph state 
+|
+G
+2
+⟩
+ using local Clifford unitaries if and only if there is a series of local complementations that transforms 
+G
+1
+ into 
+G
+2
+ [60].
+
+The transformation of a graph state via local complementation can be represented in the ZX-calculus as follows:
+
+−
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+𝝅
+𝟐
+N
+⁡
+(
+u
+)
+u
+=
+…
+…
+(100)
+Here 
+N
+⁡
+(
+u
+)
+ denotes the neighbourhood of the vertex 
+u
+ that we do the local complementation about. This equation was originally proved in the ZX-calculus in Ref. [54]. A more accessible proof is provided in Ref. [31, Prop. 9.125].
+
+Given a connected pair of vertices 
+(
+u
+,
+v
+)
+ in 
+G
+, we define the pivot of 
+G
+ along 
+u
+​
+v
+, written as 
+G
+∧
+u
+​
+v
+, as the graph 
+G
+⋆
+u
+⋆
+v
+⋆
+u
+. Note that it turns out that this graph is equal to 
+G
+⋆
+v
+⋆
+u
+⋆
+v
+, and hence the ordering of 
+u
+ and 
+v
+ is not important.
+
+On a graph, pivoting consists in exchanging 
+u
+ and 
+v
+, and complementing the edges between three particular subsets of the vertices: the common neighbourhood of 
+u
+ and 
+v
+ (i.e. 
+N
+G
+​
+(
+u
+)
+∩
+N
+G
+​
+(
+v
+)
+), the exclusive neighbourhood of 
+u
+ (i.e. 
+N
+G
+​
+(
+u
+)
+∖
+(
+N
+G
+​
+(
+v
+)
+∪
+{
+v
+}
+)
+), and exclusive neighbourhood of 
+v
+ (i.e. 
+N
+G
+​
+(
+v
+)
+∖
+(
+N
+G
+​
+(
+u
+)
+∪
+{
+u
+}
+)
+). Schematically:
+
+G
+ 
+𝑨
+𝑩
+𝑪
+v
+u
+ 
+G
+∧
+u
+​
+v
+ 
+𝑨
+𝑩
+𝑪
+v
+u
+ 
+As a pivot is just a series of local complementations, it can also be performed on a graph state by the application of a particular set of local Cliffords. Indeed, in terms of ZX-diagrams, we have:
+
+…
+…
+…
+…
+u
+v
+=
+…
+u
+v
+𝝅
+𝝅
+…
+…
+…
+(101)
+I.e. we can perform a pivot on the graph state by applying a Hadamard to the vertices we pivot along, and applying a Z gate to the vertices in their common neighbourhood.
+
+6.5Simplification of Clifford ZX-diagrams
+In Section 6.2 we introduced the notion of graph-like diagrams. Any ZX-diagram can be transformed into a graph-like diagram, but if the original diagram was Clifford, then the resulting diagram can actually be simplified considerably more using variations of the local complementation and pivoting rule described above.
+
+In particular, using the local complementation rule (100), we can prove the following simplification [57]:
+
+±
+𝝅
+𝟐
+𝜶
+𝟏
+𝜶
+𝒏
+…
+…
+…
+=
+…
+𝜶
+𝟏
+∓
+𝝅
+𝟐
+…
+𝜶
+𝒏
+∓
+𝝅
+𝟐
+𝜶
+𝟐
+…
+𝜶
+𝒏
+−
+𝟏
+…
+𝜶
+𝟐
+∓
+𝝅
+𝟐
+…
+𝜶
+𝒏
+−
+𝟏
+∓
+𝝅
+𝟐
+…
+…
+∗
+(102)
+In words: if we have a spider (here marked on the left-hand side by a 
+∗
+) with a 
+±
+π
+2
+ phase in a graph-like diagram that is internal, i.e. that is not connected to inputs or outputs but only to other spiders, then we can remove it from the diagram by complementing the connectivity on its neighbourhood and changing some phases.11
+11In the equation (102) we display a fully connected graph on the right-hand side, but if there were already edges present between some of the spiders, then the resulting double edges would be removed by (94), and hence this indeed results in a local complementation
+
+Note that in a Clifford ZX-diagram each spider has a phase 
+k
+​
+π
+2
+ for some 
+k
+∈
+ℤ
+. Using the rule above repeatedly on a graph-like Clifford diagram we can remove all internal spiders with a 
+±
+π
+2
+ phase. Hence, the only internal spiders, those not connected to an input or output, that remain are those that have a 
+0
+ or 
+π
+ phase. Most of these internal spiders can also be removed, by using a variation on the pivot rule (101):
+
+𝒋
+​
+𝝅
+𝜶
+𝟏
+=
+𝜶
+𝒏
+𝜷
+𝟏
+𝜷
+𝒏
+𝜸
+𝟏
+𝜸
+𝒏
+𝒌
+​
+𝝅
+…
+…
+…
+𝜶
+𝒏
++
+𝒌
+​
+𝝅
+𝜷
+𝒏
++
+(
+𝒋
++
+𝒌
++
+𝟏
+)
+​
+𝝅
+…
+𝜷
+𝟏
++
+(
+𝒋
++
+𝒌
++
+𝟏
+)
+​
+𝝅
+𝜸
+𝟏
++
+𝒋
+​
+𝝅
+𝜶
+𝟏
++
+𝒌
+​
+𝝅
+…
+…
+𝜸
+𝒏
++
+𝒋
+​
+𝝅
+…
+…
+…
+…
+…
+…
+…
+…
+…
+…
+…
+…
+∗
+∗
+(103)
+Here, the marked spiders on the left-hand side are internal connected spiders with a 
+0
+ or 
+π
+ phase. On the right-hand side, these spiders are removed, at the cost of complementing their neighbourhood in the manner described by the pivot rule, and introducing some phases. Using (103) repeatedly we can remove the remaining internal spiders that are connected to at least one other internal spider. The remaining internal spiders are then those that carry a 
+0
+ or 
+π
+ phase and are connected only to boundary spiders. It turns out that these internal spiders can also be removed by using a different variation of the pivot rule; see [57].
+
+Hence, given a Clifford ZX-diagram, we can first convert it into a graph-like diagram, and then by repeatedly applying (102) and (103) remove all internal spiders so that only the boundary spiders are left.
+
+In particular, if our starting diagram was a state (that is, it has no inputs), then the resulting diagram is very close to being a graph state with local Cliffords (the only complication coming from the fact that multiple outputs could be connected to the same spider, a problem that is easily solved by introducing some dummy spiders using 
+(
+id
+)
+). This means that this procedure gives a straightforward diagrammatic method to convert a Clifford state into GSLC form.
+
+Furthermore, if the starting diagram has no inputs or outputs, so that it represents a scalar, for instance if we are calculating an amplitude 
+⟨
+0
+⋯
+0
+|
+C
+|
+0
+⋯
+0
+⟩
+ of some Clifford circuit 
+C
+, then our procedure removes all spiders that have any connection to another spider. The resulting diagram hence consists of a bunch of arity-0 spiders, that each carry a phase of 
+0
+ (representing a scalar 
+2
+; cf. (41)) or a phase 
+π
+ (representing the scalar 
+0
+). Since this simplification procedure runs in polynomial time on the number of spiders in the original diagram, this shows that we can calculate amplitudes of Clifford circuits efficiently. We have hence given a diagrammatic proof of the Gottesman-Knill theorem.12
+12There are a couple of complications we are skipping over here. Namely, we have not presented scalar-accurate rewrite rules. So to actually use our method for amplitude calculation, one would also have to take into account the scalar accumulated after each applied rewrite rule. Additionally, the Gottesman-Knill theorem also states that you can efficiently calculate marginal probabilities as well, which our procedure in its current form does not do. This can however be fixed by using the doubling construction of [31] that we describe in Section 10.2 that allows the representation of non-pure quantum processes in the ZX-calculus.
+
+There is one more consequence of this simplification procedure. There is an efficient algorithm for recognizing whether two GSLC states are equal, which consists of a series of local complementations that transforms one into the other [60]. So suppose we are given two Clifford ZX-diagrams that implement the same matrix. As our procedure reduces Clifford diagrams to something GSLC-like, we could use this algorithm to find a series of local complementations that transforms the first reduced diagram into the second. As all our rewrite rules to get to this point were derived starting from the rules in Figure 1, we hence see that the rules of Figure 1 suffice to transform any Clifford diagram into any other that implements the same matrix. Hence, the ZX-calculus with the rules of Figure 1 is complete with respect to the Clifford fragment. This result, using a related method, was first proven by Backens [9].
+
+While we have used the local complementation rules here to simplify Clifford diagrams, they are also useful to simplify non-Clifford diagrams. Indeed, these rules were first introduced in [57] to simplify non-Clifford circuits and with some additional variations on the pivoting rule, they were used in [13] to simplify MBQC patterns.
+
+6.6From ZX-diagrams to circuits
+We started this paper with the observation that a quantum circuit can be transformed into a ZX-diagram in a straightforward way (simply by translating each of the gates in turn). The converse question, of how a ZX-diagram can be transformed into an equivalent circuit, is much harder and is known as the circuit extraction problem [57].
+
+Let us first note that the general case is not solvable: as a quantum circuit is unitary and ZX-diagrams can represent arbitrary linear maps, most ZX-diagrams are not writable as circuits. There are then two ways in which we can approach the issue of translating from ZX-diagrams to circuits: we can either expand the scope of what we consider a quantum circuit, or we can limit the type of ZX-diagrams we try to translate.
+
+Following the first approach, a way to let quantum circuits represent arbitrary linear maps between qubits is to allow ancillae and post-selected measurements. With these allowances, a translation from ZX-diagrams to circuits is straightforward. Indeed, each Z-spider can be presented as a series of CNOT gates with some qubits prepared in the 
+|
+0
+⟩
+ or 
+|
++
+⟩
+ state or post-selected to the 
+⟨
+0
+|
+ or 
+⟨
++
+|
+ effect:
+
+=
+=
+=
+=
+=
+=
+(104)
+In this approach, phases on spiders become phase gates, spiders with no output wires become post-selections and spiders with no input wires become ancilla preparations. Higher-arity spiders can be decomposed into lower-arity ones by unfusing the spiders and hence can also be transformed into post-selected circuits.
+
+For the second approach we need to restrict to ZX-diagrams that represent unitary computations. Given a ZX-diagram with the promise that it implements a unitary matrix there is a straightforward way to turn it into an equivalent circuit: calculate its matrix and synthesise a circuit using any synthesis algorithm. Unfortunately this method is likely to take time exponential in the number of inputs and outputs and hence isn’t very practical. The real question then is whether there is an efficient algorithm that transforms a given ZX-diagram that is promised to be unitary into a circuit. It is unlikely that such an algorithm exists, because the promise that it is unitary is a global property of the diagram: it can still mean that large chunks of the diagram represent a non-unitary linear map that is somehow canceled out by a later portion of the diagram. Hence, such an algorithm would somehow have to be using knowledge about the global structure of the diagram to nonlocally construct a circuit out of it. It is unclear how this would be possible without the ability to calculate which unitary the diagram implements so that it would implicitly calculate the matrix of the diagram. Similarly, it is unlikely that there is an efficient algorithm for determining whether a given ZX-diagram implements a linear map that is (proportional to) a unitary, as in the 0-input, 0-output case this would mean we could efficiently determine whether an amplitude of a circuit is zero or not, which comes awfully close to being a QMA-complete [19] problem.
+
+The only hope then for an efficient algorithm is for us to know more about the local structure of the diagram. The current best-known algorithm [13] can extract a circuit out of any ZX-diagram that has a gflow, a combinatorial property for graph-like ZX-diagrams and MBQC patterns that corresponds to the possibility of consistently feed-forwarding Pauli errors from measurement outcomes at the locations of each of the spiders [20, 55]. The description and correctness of the algorithm is a bit involved so let us demonstrate its functioning in the simplest case: extracting a circuit from Clifford normal forms.
+
+The algorithm described in Section 6.5 removes all internal spiders from a Clifford ZX-diagram. All the remaining spiders are hence connected to at least one input or output. The resulting diagram then looks something like this:
+
+𝒌
+𝟏
+​
+𝝅
+𝟐
+𝒌
+𝟐
+​
+𝝅
+𝟐
+𝒌
+𝒏
+​
+𝝅
+𝟐
+…
+…
+𝒍
+𝟏
+​
+𝝅
+𝟐
+𝒍
+𝒏
+​
+𝝅
+𝟐
+𝒍
+𝟐
+​
+𝝅
+𝟐
+⋯
+𝒫
+(105)
+I.e. we have a left row of spiders connected to inputs and a right row of spiders connected to outputs, with a possible Hadamard on the input/output wire and a phase on the spiders that is a multiple of 
+π
+2
+. The spiders on the left and on the right are connected in some bipartite way by Hadamard-edges described by a biadjacency matrix 
+𝒫
+. Additionally, there can be arbitrary Hadamard-edges between the spiders on the same side.
+
+The first step in transforming this into a circuit is to unfuse the Hadamard-edges connected on the same side into CZ gates (cf. (90)), and the phases into Z-phase gates. By changing the colour of the spiders on the right-hand side the middle part of the diagram becomes something that corresponds to a classical linear map:
+
+…
+…
+⋯
+𝒫
+𝒌
+𝒏
+​
+𝝅
+𝟐
+𝒌
+𝟐
+​
+𝝅
+𝟐
+𝒌
+𝟏
+​
+𝝅
+𝟐
+𝒍
+𝟏
+​
+𝝅
+𝟐
+𝒍
+𝟐
+​
+𝝅
+𝟐
+𝒍
+𝒏
+​
+𝝅
+𝟐
+(106)
+Indeed, the Z-spiders on the left-hand side of 
+𝒫
+ copy computational basis states, which are then fed into the X-spiders on the right which act as XORs. Hence, the output of this part of the diagram can be described in terms of parities of the inputs. For instance: 
+|
+x
+1
+,
+x
+2
+,
+x
+3
+,
+x
+4
+⟩
+↦
+|
+x
+1
+⊕
+x
+2
+,
+x
+1
+⊕
+x
+3
+,
+x
+4
+,
+x
+3
+⟩
+. Such an operation is known as a linear Boolean function. These linear maps can always be described by a circuit of CNOT gates [95]. The way this works is that the biadjacency matrix 
+𝒫
+ is seen as a matrix over the finite field 
+𝔽
+2
+. This matrix is then reduced to the identity using a Gaussian elimination algorithm. Each row operation needed to do this elimination corresponds to a CNOT gate in the final circuit. After this middle part of the diagram is synthesised into a CNOT circuit, we have indeed succeeded in rewriting this Clifford diagram into a circuit.
+
+The circuit extraction algorithm of [57] generalises this approach to graph-like ZX-diagrams that have internal spiders. The Gaussian elimination then does not fully reduce the matrix, but just a part of it, which allows one or more internal spiders to become a boundary spider. This is then repeated until all spiders are ‘consumed’ and the diagram is transformed into a circuit. The caveat here is that the Gaussian elimination must be able to reduce at least one row of the matrix to make progress. This is where the promise that the ZX-diagram has a gflow is needed. The algorithm of [13] further generalises this approach by being able to deal with phase gadgets (cf. Section 5.6) that are present in the diagram.
+
+7ZX-diagrams, categorically
+The ZX-calculus originated from the computer science department of Oxford University and investigations into the relations between category theory and quantum theory. As a result, many papers using the ZX-calculus are written for computer scientists and often use language from category theory. This might be hard to parse if one has a different background, say, in physics. In this section we therefore give a brief summary of some of the conventions and definitions related to category theory one can encounter reading ZX-calculus papers. A reader not interested in the formal background of the ZX-calculus can safely skip to Section 8. A reader looking for more formal background is invited to consider Vicary and Heunen’s book on categorical quantum mechanics [70].
+
+7.1Category theory background
+The ZX-calculus is often cast as a particular type of category. A category is a mathematical structure that consists of objects and morphisms (the latter are sometimes also called arrows) satisfying certain properties [93]. Probably the most familiar category is Sets. In this category the objects are standard mathematical sets, and the morphisms are the functions between these sets. Another familiar category is VecC, where the objects are complex vector spaces and the morphisms are linear maps between these vector spaces.
+
+In a category, given a morphism 
+f
+:
+A
+→
+B
+ from object 
+A
+ to object 
+B
+, and a morphism 
+g
+:
+B
+→
+C
+ from object 
+B
+ to object 
+C
+, we can compose these morphisms to get a morphism 
+g
+∘
+f
+:
+A
+→
+C
+. Composition is required to be associative: 
+h
+∘
+(
+g
+∘
+f
+)
+=
+(
+h
+∘
+g
+)
+∘
+f
+. In addition, for each object 
+B
+ we have a special identity morphism 
+id
+B
+:
+B
+→
+B
+ that acts as the identity for the composition operation: 
+id
+B
+∘
+f
+=
+f
+ and 
+g
+∘
+id
+B
+=
+g
+. These rules for composition and identity are the only things that are required of a standard category.
+
+For ZX-diagrams we cannot only compose sequentially, but also in parallel using a tensor product. A category that has tensor products in some suitable manner is called a monoidal category [109]. The category of ZX-diagrams is in fact symmetric monoidal, which means that 
+A
+⊗
+B
+ is always isomorphic to 
+B
+⊗
+A
+ for all objects 
+A
+ and 
+B
+ (in a particularly canonical manner). Monoidal categories play a foundational role in the field of applied category theory. A good introduction for the interested reader is given by Fong and Spivak’s book [61].
+
+We will call this category of ZX-diagrams ZX. The objects in this category are the natural numbers: the object 
+n
+ corresponds to 
+n
+ parallel wires. A morphism from 
+n
+ to 
+m
+ in this category is a ZX-diagram with 
+n
+ inputs and 
+m
+ outputs. Composition of morphisms is the regular sequential composition of ZX-diagrams. The tensor product of two objects 
+n
+ and 
+m
+ is defined to be 
+n
+⊗
+m
+:=
+n
++
+m
+, and the tensor product of two morphisms (i.e. two ZX-diagrams) is given by stacking the two diagrams on top of one another.
+
+A symmetric monoidal category where the objects are natural numbers and the tensor product is given by addition of the objects is also called a PROP (which stands for PROduct and Permutation) [94], and hence sometimes authors will speak of the ‘PROP of ZX-diagrams’.
+
+ZX-diagrams have cups and caps (see (36)) which allows inputs to be transformed into outputs and vice versa. Without going into details, a symmetric monoidal category which has cup and cap-like structure is called compact closed [80]. Compact closed category are the fundamental structure in categorical quantum mechanics [2].
+
+7.2Interpretation of a ZX-diagram
+In this paper we intentionally blur the line between a ZX-diagram and the linear map it represents. However, in many papers dealing with more foundational questions about the ZX-calculus it is often desirable to be more strict about which object it is we are dealing with. In this case, given a ZX-diagram 
+D
+, we denote the linear map it represents by 
+⟦
+D
+⟧
+. This construction 
+⟦
+⋅
+⟧
+ that associates a linear map to a diagram is called the interpretation of the diagram.
+
+The interpretation of a ZX-diagram is a linear map between qubits. Such linear maps live in a category that we call Qubit. This is a subcategory of VecC, meaning that the objects correspond to complex vector spaces and the morphisms are linear maps. In fact, Qubit is a PROP, where we interpret the object 
+n
+ as the vector space 
+(
+ℂ
+2
+)
+⊗
+n
+≅
+ℂ
+2
+n
+. The tensor product 
+n
+⊗
+m
+=
+n
++
+m
+ corresponds to the regular tensor product of the vector spaces 
+ℂ
+2
+n
+⊗
+ℂ
+2
+m
+≅
+ℂ
+2
+n
++
+m
+. The morphisms of Qubit are just linear maps 
+f
+:
+ℂ
+2
+n
+→
+ℂ
+2
+m
+ (i.e Qubit is a full subcategory of VecC). It turns out that the interpretation gives a type of mapping between ZX and Qubit that is called a functor.
+
+A functor 
+F
+:
+C
+→
+D
+ between two categories C and D is something that maps each object 
+A
+ in C to an object 
+F
+⁡
+(
+A
+)
+ in D. It also maps each morphism 
+f
+:
+A
+→
+B
+ in C to a morphism 
+F
+⁡
+(
+f
+)
+:
+F
+⁡
+(
+A
+)
+→
+F
+⁡
+(
+B
+)
+ in D. A functor is required to map identities to identities, 
+F
+⁡
+(
+id
+A
+)
+=
+id
+F
+⁡
+(
+A
+)
+, and to preserve composition, 
+F
+⁡
+(
+g
+∘
+f
+)
+=
+F
+⁡
+(
+g
+)
+∘
+F
+⁡
+(
+f
+)
+. For example, there is the functor 
+U
+:
+Vec
+ℂ
+→
+Sets
+ that sends a vector space 
+V
+ to the set 
+U
+⁡
+(
+V
+)
+=
+V
+ and a linear map 
+f
+:
+V
+→
+W
+ to the same function 
+U
+⁡
+(
+f
+)
+=
+f
+. This functor essentially does nothing except change the context in which we view the objects and morphisms. Such a functor is known as a forgetful functor.
+
+The interpretation of a ZX-diagram is a functor 
+⟦
+⋅
+⟧
+:
+ZX
+→
+Qubit
+. The objects of both ZX and Qubit are the natural numbers and we simply set 
+⟦
+n
+⟧
+=
+n
+ for all 
+n
+∈
+ℕ
+. As the morphisms of ZX are precisely ZX-diagrams, we set 
+⟦
+D
+⟧
+ to be the linear map the diagram 
+D
+ implements. We need to check that 
+⟦
+id
+n
+⟧
+=
+id
+n
+ and that 
+⟦
+D
+∘
+D
+′
+⟧
+=
+⟦
+D
+⟧
+∘
+⟦
+D
+′
+⟧
+, but this is immediate from how we defined the interpretation of a ZX-diagram iteratively starting from the atomic generators. Note that we also have 
+⟦
+D
+⊗
+D
+′
+⟧
+≅
+⟦
+D
+⟧
+⊗
+⟦
+D
+′
+⟧
+, i.e. that the tensor product of diagrams corresponds to the tensor product of the underlying linear maps. This makes 
+⟦
+⋅
+⟧
+ into a strong monoidal functor.
+
+In Section 3.7 we showed that for any linear map between qubits we can find a ZX-diagram that represents it, i.e. that the ZX-calculus is universal. In terms of the interpretation functor 
+⟦
+⋅
+⟧
+ we can phrase this as stating that for any morphism 
+f
+:
+ℂ
+2
+n
+→
+ℂ
+2
+m
+ in Qubit we can find a morphism 
+D
+:
+n
+→
+m
+ in ZX such that 
+⟦
+D
+⟧
+=
+f
+. A functor which has this property, which is reminiscent of the surjectivity of a function, is called full.
+
+7.3Rewriting and completeness
+In the previous subsection we saw that universality of the ZX-calculus corresponds to fullness of the interpretation functor. For a functor, being full is what being surjective is to a function. An immediate question is then: what about injectivity? An ‘injective’ functor is called faithful: for a faithful functor 
+F
+:
+C
+→
+D
+ an equality 
+F
+(
+f
+:
+A
+→
+B
+)
+=
+F
+(
+g
+:
+A
+→
+B
+)
+ implies 
+f
+=
+g
+.
+
+The functor 
+⟦
+⋅
+⟧
+:
+ZX
+→
+Qubit
+ is not faithful. This is because there are multiple different ZX-diagrams that represent the same linear map. This of course does not come as a surprise as we have been constantly rewriting ZX-diagrams with the promise that the linear maps they represent are the same.
+
+The solution to this ‘problem’ is to consider a modified category ZX/∼ where ZX-diagrams that can be transformed into one another by the rewrite rules of Figure 1 are identified with one another. The way to do this is to consider the smallest equivalence relation 
+∼
+ with the following properties:
+
+• 
+D
+1
+∼
+D
+2
+ for each of the equalities 
+D
+1
+=
+D
+2
+ in Figure 1.
+• If 
+D
+1
+∼
+D
+2
+, then also 
+(
+E
+∘
+D
+1
+∘
+C
+)
+∼
+(
+E
+∘
+D
+2
+∘
+C
+)
+ for all diagrams 
+C
+ and 
+E
+. In other words: if two diagrams are equivalent, then they remain equivalent when some other diagrams are composed with them.
+• If 
+D
+1
+∼
+D
+2
+, then also 
+(
+E
+⊗
+D
+1
+⊗
+C
+)
+∼
+(
+E
+⊗
+D
+2
+⊗
+C
+)
+ for all diagrams 
+C
+ and 
+E
+.
+These rules for the equivalence relation 
+∼
+ correspond precisely to how we have been using ZX-calculus rewrite rules intuitively in the previous sections.
+
+We can now define the morphisms of ZX/∼ to be equivalence classes 
+[
+D
+]
+/
+⁣
+∼
+ of diagrams under the relation 
+∼
+. Using the properties of 
+∼
+ above it is straightforward to verify that 
+[
+D
+1
+]
+/
+⁣
+∼
+∘
+[
+D
+2
+]
+/
+⁣
+∼
+:=
+[
+D
+1
+∘
+D
+2
+]
+/
+⁣
+∼
+ gives a well-defined composition of these classes. We can similarly define a tensor product, and hence ZX/∼ is again a PROP.
+
+For the interpretation functor 
+⟦
+⋅
+⟧
+:
+ZX
+/
+⁣
+∼
+→
+Qubit
+ we wish to set 
+⟦
+[
+D
+]
+/
+⁣
+∼
+⟧
+:=
+⟦
+D
+⟧
+. For this to be well-defined we need the value of 
+⟦
+D
+⟧
+ to not depend on the representative of the equivalence class, and hence we need to check that if 
+D
+1
+∼
+D
+2
+, then 
+⟦
+D
+1
+⟧
+=
+⟦
+D
+2
+⟧
+. As 
+∼
+ simply asks whether two diagrams are rewritable into one another this property asks that rewriting should preserve the linear map of the diagram, i.e. that our rewriting system is sound with respect to the interpretation 
+⟦
+⋅
+⟧
+. Due to the nature of 
+∼
+ it suffices to check this only for the equalities of Figure 1, for which it is indeed true.
+
+Hence, we have an interpretation functor 
+⟦
+⋅
+⟧
+:
+ZX
+/
+⁣
+∼
+→
+Qubit
+ that maps a class of equivalent ZX-diagrams to the linear map they represent. Is this functor faithful? Equivalently, given two diagrams 
+D
+1
+ and 
+D
+2
+ with 
+⟦
+D
+1
+⟧
+=
+⟦
+D
+2
+⟧
+, do we have 
+D
+1
+∼
+D
+2
+? This property, that two ZX-diagrams which represent the same linear map should be rewritable into one another is known as completeness. The ruleset we presented in Figure 1 is not complete (and hence our functor is not faithful). This means that there are in fact ZX-diagrams that represent the same linear map, while there is no set of rewrites that will transform these ZX-diagrams into one another. Fortunately, there exist extended rulesets that are complete. We will encounter such an extended ruleset in Section 8 and we discuss the question of completeness in more detail in Section 9. Note that, formally speaking, completeness is a property of the functor 
+⟦
+⋅
+⟧
+. We could consider a different interpretation of ZX-diagrams into the category Qubit or even into an entirely different category, and the resulting interpretation could be complete (i.e. the interpretation functor could be faithful). In addition, we can also consider interpretation functors for subcategories of ZX, such as ZX
+π
+2
+ which consists of ZX-diagrams where all spiders have phases that are multiples of 
+π
+2
+ (i.e. they are Clifford ZX-diagrams as studied in Section 6). These interpretation functors can then also have different properties. In the specific case of ZX
+π
+2
+, the interpretation functor is faithful (i.e. the calculus is complete, see Section 6), but it is of course no longer full, as only Clifford maps can be represented by such diagrams.
+
+7.4!-boxes
+In several places throughout this paper we have written ZX-diagrams with ‘
+⋯
+’ in them to denote that there is an arbitrary number of wires there. For instance in 
+(
+f
+)
+ and 
+(
+c
+)
+ in Figure 1. More formally, we can view equations with ’dots‘ in them as a family of equations parametrised by the number of wires. Some issues or confusion may however arise when we have multiple ‘
+⋯
+’ in the same equation, such as in (75) where the ‘dots’ on the inputs can denote a different number of wires from the dots on the outputs.
+
+In order to formalise the use of these dots to represent an arbitrary number of wires, the notion of !-boxes was introduced [50, 86]. A !-box (pronounced ‘bang-box’) in a ZX-diagram is a box surrounding a part of the diagram that is allowed to fan out arbitrarily. In other words, the contents of a !-box is allowed to be copied an arbitrary number of times (including zero times). For instance:
+
+  
+⟷
+{
+  
+,
+  
+,
+  
+,
+  
+,
+…
+}
+Here the blue box denotes the !-box. This family of diagrams is well-defined, because each of our generators, Z-spiders and X-spiders, are allowed to have an arbitrary number of wires attached to them. Note that we can’t have a Hadamard box be attached to something inside a !-box, because a Hadamard box always has arity 2 (unless we generalise it to the multi-arity H-boxes of Section 8).
+
+We can also write equations of diagrams with !-boxes in them. For instance, we can express 
+(
+c
+)
+ as follows:
+
+ 
+𝜶
+=
+ 
+⟷
+{
+ 
+𝜶
+=
+ 
+,
+ 
+𝜶
+=
+ 
+,
+ 
+𝜶
+=
+ 
+,
+…
+}
+The dashed box in the first equation denotes an empty diagram, corresponding to the !-box being expanded zero times.
+
+Some rules require more than one !-box to be expressed. For instance, the generalised bialgebra equation (75) can be expressed as follows:
+
+=
+(107)
+When writing an equation involving !-boxes it is important that the !-boxes on the left-hand side are matched 1-to-1 to those on the right-hand side. In (107) it is clear that the left !-boxes of each side of the equation match, because otherwise the equations would not be well-typed (they would have a different number of inputs). Formally, we would have to give a ‘name’ to each !-box so that it is clear which corresponds to which on each side of the equation. In practice, it is often clear how they correspond by their positioning in the diagram. Consider for instance the spider fusion rule 
+(
+f
+)
+ expressed using multiple !-boxes:
+
+𝜷
+𝜶
+=
+𝜶
++
+𝜷
+(108)
+!-boxes can also overlap and be nested (but note that when nested in a rule, they must be nested in the same way on both sides of the equation). For instance, we can express (a special case of) the pivot simplification rule (103) using !-boxes as follows:
+
+=
+(109)
+Note that not all repeated structure can be expressed using !-boxes. For instance, the iterated application of a linear map, or the notion of a fully connected graph as in (102).13
+13This first issue can be fixed through the definition of a different type of box as suggested in [97]. For (102) specifically, the issue of a fully connected graph can be sidestepped by viewing Hadamard boxes as H-edges so that they can cross into !-boxes. A fully connected graph can then be represented by a vertex inside a !-box with an H-box looping to the same vertex that goes outside the !-box.
+
+!-boxes are used in the software Quantomatic [85] in order to express families of diagrammatic rewrite rules. While !-boxes are not necessary for many manual derivations, they do sometimes become essential for expressing particularly complicated families of rewrite rules. For instance, normal form diagrams in the ZH-calculus [11] are naturally expressed using a variation on !-boxes called annotated !-boxes, where a !-box is labelled by an element from some finite set and elements inside the !-box are allowed to use this element as a variable. Complicated rewrite rules such as the graphical Fourier transform, cf. Section 8.4 or [89], or the hyper-pivot rule [91] also require (annotated) !-boxes to be expressed concisely.
+
+7.5Monoids, comonoids, Frobenius algebras and bialgebras
+The central generators of ZX-diagrams, the spiders, have an algebraic structure that is used far beyond just the ZX-calculus. In this section we will give some definitions regarding this structure, each building on the previous.
+
+One of the most basic algebraic structures is the monoid. A monoid is a set 
+M
+ with a binary operation 
+⋅
+ that is associative, 
+a
+⋅
+(
+b
+⋅
+c
+)
+=
+(
+a
+⋅
+b
+)
+⋅
+c
+, and has a unit, 
+1
+⋅
+a
+=
+a
+=
+a
+⋅
+1
+. In a monoidal category we can view a monoid as a pair of morphisms 
+μ
+:
+M
+⊗
+M
+→
+M
+ and 
+ν
+:
+I
+→
+M
+ satisfying 
+μ
+∘
+(
+μ
+⊗
+id
+M
+)
+=
+μ
+∘
+(
+id
+M
+⊗
+μ
+)
+ and 
+μ
+∘
+(
+ν
+⊗
+id
+M
+)
+=
+id
+M
+=
+μ
+∘
+(
+id
+M
+⊗
+ν
+)
+. Here 
+μ
+ represents the multiplication operation, and 
+ν
+ points towards the identity in 
+M
+ (
+I
+ here is the monoidal unit of the category, 
+A
+⊗
+I
+≅
+A
+ for all 
+A
+). We can form a monoid in ZX where 
+M
+=
+1
+ by using the Z-spider:
+
+μ
+=
+  
+ν
+=
+  
+(110)
+The associativity and unit conditions are then given by spider fusion:
+
+=
+=
+=
+=
+=
+(111)
+In fact, this is a commutative monoid, since:
+
+=
+(112)
+Of course nothing here is particular to the Z-spider, and this also works for the X-spider.
+
+A notion that is perhaps less familiar, but still equally fundamental is the comonoid. Whereas a monoid takes two elements of 
+M
+ and outputs a single element of 
+M
+, a comonoid does the opposite, taking a single element and outputting two. Note that, in general, the word ‘co’ in category theory denotes that you should take the dual definition which is given by switching the direction of all the morphisms involved. In terms of our diagrams this corresponds to horizontally flipping the diagram. Concretely, a comonoid consists of maps 
+δ
+:
+M
+→
+M
+⊗
+M
+ and 
+ϵ
+:
+M
+→
+I
+ that satisfy 
+(
+δ
+⊗
+id
+M
+)
+∘
+δ
+=
+(
+id
+M
+⊗
+δ
+)
+∘
+δ
+ and 
+(
+ϵ
+⊗
+id
+M
+)
+∘
+δ
+=
+id
+M
+=
+(
+id
+M
+⊗
+ϵ
+)
+∘
+δ
+. The map 
+δ
+ is called the co-multiplication, while 
+ϵ
+ is called the co-unit. Again, the Z-spider forms an example of this:
+
+δ
+=
+  
+ϵ
+=
+  
+(113)
+And the co-associativity and co-unit equations are again proven using spider fusion:
+
+=
+=
+=
+=
+=
+(114)
+Analogous to (112), this comonoid is co-commutative.
+
+We now see that the basic Z-spiders of arity 1 and arity 3 form a monoid and a comonoid. This monoid and comonoid structure of the Z-spider interact in a particularly nice way that makes the Z-spider a Frobenius algebra.14
+14Frobenius algebras have a long history. The name itself was coined in 1941 [98], with the first categorical definition given in 1969 [90]. For a good modern reference see [114] or the monograph [87]. The first use of Frobenius algebras in describing structure in quantum theory was in 2008 [32]
+. A Frobenius algebra is a monoid together with a comonoid that satisfy the Frobenius conditions:
+
+=
+=
+(115)
+As the monoid and comonoid of the Z-spider are (co-)commutative, the structure we get is actually a commutative Frobenius algebra. Additionally, the Z-spider also satisfies the following equation:
+
+=
+(116)
+Frobenius algebras satisfying these conditions are called special. The Z-spiders hence form a commutative special Frobenius algebra. This Frobenius algebra has one more important property that will require some further definitions.
+
+In the category of ZX-diagrams ZX or the category of finite-dimensional complex vector spaces fVecC we have a way of ‘flipping’ a morphism 
+f
+:
+A
+→
+B
+ to a morphism 
+f
+†
+:
+B
+→
+A
+. Namely, by taking the adjoint of the linear map in the latter case, and flipping a ZX-diagram horizontally and changing the signs of all the phases in the former case. This 
+†
+ operation satisfies 3 properties of interest: it is involutive, 
+(
+f
+†
+)
+†
+=
+f
+, it is contravariant, 
+(
+f
+∘
+g
+)
+†
+=
+g
+†
+∘
+f
+†
+, and it is the identity on objects, 
+A
+†
+=
+A
+. A category that has an operation with these properties is called a dagger-category [108].
+
+For the Z-spider, the monoid 
+μ
+ and the comonoid 
+δ
+ are related by the dagger: 
+μ
+†
+=
+δ
+. Similarly, the unit 
+ν
+ and counit 
+ϵ
+ are also related via 
+ν
+†
+=
+ϵ
+. A Frobenius algebra on a dagger-category where the monoid and comonoid are related in this manner is called a dagger-Frobenius algebra.
+
+So to summarise: the Z-spiders form a commutative special dagger-Frobenius algebra. Our entire discussion also holds for the X-spiders, and in fact holds for any family of maps satisfying a version of the spider fusion rule 
+(
+f
+)
+ and the identity rule 
+(
+id
+)
+. It turns out that a converse statement is also true [38]: if we have a commutative special dagger-Frobenius algebra on a finite-dimensional complex vector space 
+V
+, then there exists an orthonormal basis 
+|
+v
+1
+⟩
+,
+…
+|
+v
+n
+⟩
+ of 
+V
+ such that the Frobenius algebra is given by the spiders
+
+ 
+…
+…
+ 
+=
+∑
+i
+=
+1
+n
+|
+v
+i
+⋯
+v
+i
+⟩
+⟨
+v
+i
+⋯
+v
+i
+|
+,
+(117)
+analogously to the definition of the Z-spider in (21). Another way we can view this result is that the spider equation 
+(
+f
+)
+ essentially gives a diagrammatic characterisation of the notion of an orthonormal basis.
+
+The Frobenius algebra structure characterises a single spider, either Z or X. The interaction between the two species of spiders is however also a special case of a well-studied structure. A bialgebra consists of a monoid (that we will suggestively write as the Z-spider) and a comonoid (that we write as the X-spider) satisfying the following equations:
+
+=
+=
+=
+=
+(118)
+Here the dashed box represents an empty diagram. The Z-spider and X-spider evidently form a bialgebra15
+15In a bialgebra these equations hold on the nose, while in the ZX-calculus they only hold up to scalar. Such a structure might more accurately be called a scaled bialgebra.
+; see 
+(
+c
+)
+ and 
+(
+b
+)
+. As was the case for the Frobenius structure, they do not just form a bialgebra. As the monoid and comonoid structure are (co-)commutative we can call this a commutative bialgebra, but there is some additional structure. Given a bialgebra on an object 
+M
+, an antipode is a map 
+a
+:
+M
+→
+M
+ that satisfies the Hopf law:
+
+=
+a
+a
+=
+(119)
+A bialgebra that has an antipode is called a Hopf algebra. The Z-spider and X-spider form a Hopf algebra where the antipode is equal to the identity, as is evident from (72).
+
+We chose the Z-spider to supply the monoid and the X-spider to supply the comonoid, but we could have chosen to do this the other way around. A pair of Frobenius algebras that is a Hopf algebra in these two ways is variously called a pair of interacting Frobenius algebras [52], interacting Hopf algebras [17], interacting bialgebras [16] or a Hopf-Frobenius algebra [40].
+
+Much of what we said in this section can generalise to linear maps on higher-dimensional spaces (in contrast to the two-dimensional spaces we have been working with). We discuss qudits in more detail in Section 10.3.
+
+8Toffoli gates and the ZH-calculus
+In our discussion on the ZX-calculus in Sections 2–6 we have focused on gate sets consisting of single-qubit gates combined with the CNOT gate. This however skips over other widely used multi-qubit gates, in particular Toffoli gates and other multiply-controlled gates. While the ZX-calculus is very useful when it comes to reasoning about circuits based on CNOT gates and related gates like the CZ or the Ising-type unitaries such as the phase gadget of Section 5.6, it is considerably harder to work with multiply-controlled gates. This can be pinpointed to the fact that there is no concise way to represent the AND operation on computational basis states 
+|
+x
+⟩
+⊗
+|
+y
+⟩
+↦
+|
+x
+⋅
+y
+⟩
+. Note that the important word here is ‘concise’. As ZX-diagrams are universal (cf. Section 3.7) any linear map can be represented, but not always in a useful manner.
+
+In this section we will discuss a variation on the ZX-calculus that is called the ZH-calculus. This was introduced in 2018 by Backens and Kissinger [11] and introduces a new generator, the H-box, that generalises the Hadamard box we have been using to arbitrary arity, and which allows an easy representation of Toffoli gates and other multiply-controlled gates. Though the ZH-calculus was introduced as an alternative calculus, we will treat it here simply as an extension of the ZX-calculus that allows us to efficiently reason about a larger class of diagrams.16
+16The H-box is not the only way to simplify the representation of Toffoli gates in the ZX-calculus. Another approach is given by introducing the ‘triangle’ generator that we will encounter in Section 9.3.
+
+First, in Section 8.1 we introduce H-boxes. Then in Section 8.2 we introduce the additional rewrite rules that allow us to reason about this generator. As a demonstration of its utility, we use H-boxes in Section 8.3 to construct the graphical representation of several controlled unitaries. Then in Section 8.4 we recall the Fourier transform of semi-Boolean functions in order to relate H-boxes to Z- and X-spiders and the phase polynomials of Section 5.6. Finally, in Section 8.5 we prove diagrammatically some known optimisations of Toffoli gates using H-boxes and the Fourier transform.
+
+8.1H-boxes
+As discussed above, using Z- and X-spiders, there is no concise way to represent the coherent AND gate that maps the computational basis state 
+|
+x
+⟩
+⊗
+|
+y
+⟩
+ to 
+|
+x
+⋅
+y
+⟩
+. If we had such an AND gate, we could implement a Toffoli gate as follows:
+
+AND
+(120)
+Indeed, inputting computational basis states into the top two qubits we calculate:
+
+𝒙
+​
+𝝅
+𝒚
+​
+𝝅
+AND
+=
+𝒙
+​
+𝝅
+𝒚
+​
+𝝅
+AND
+𝒙
+​
+𝝅
+𝒚
+​
+𝝅
+(
+c
+)
+=
+𝒙
+​
+𝝅
+𝒚
+​
+𝝅
+(
+𝒙
+⋅
+𝒚
+)
+​
+𝝅
+=
+𝒙
+​
+𝝅
+𝒚
+​
+𝝅
+(
+𝒙
+⋅
+𝒚
+)
+​
+𝝅
+(
+f
+)
+(121)
+Hence, this construction ‘activates’ a NOT gate on the bottom qubit when the top two qubits are in the 
+|
+1
+⟩
+ state. This is exactly the action 
+|
+x
+,
+y
+,
+z
+⟩
+↦
+|
+x
+,
+y
+,
+(
+x
+⋅
+y
+)
+⊕
+z
+⟩
+ of the Toffoli gate.
+
+As discussed in Section 4.5, the Z-spider implements a coherent COPY gate when acting on computational basis states, and the X-spider implements an XOR. We might then hope that we could add another spider that implements the AND gate. However, one of the main symmetries present in the Z- and X-spiders does not hold for the AND gate (which can be verified by calculating the associated matrices):
+
+AND
+≠
+AND
+=
+but
+(122)
+It is however possible to ‘split up’ the AND gate into two components, each of which do have all the symmetries that the spiders have. We call these components H-boxes, for reasons that will become clear, and they are defined as follows:
+
+ 
+a
+n
+m
+…
+…
+ 
+:=
+∑
+a
+i
+1
+​
+…
+​
+i
+m
+​
+j
+1
+​
+…
+​
+j
+n
+|
+j
+1
+…
+j
+n
+⟩
+⟨
+i
+1
+…
+i
+m
+|
+(123)
+The sum in this equation is over all 
+i
+1
+,
+…
+,
+i
+m
+,
+j
+1
+,
+…
+,
+j
+n
+∈
+{
+0
+,
+1
+}
+ and 
+a
+ is an arbitrary complex number. Hence, an H-box represents a matrix with all entries equal to 1, except the bottom right element, which is equal to 
+a
+. We have for instance
+
+ 
+a
+ 
+=
+(
+1
+1
+1
+1
+1
+1
+1
+a
+)
+and
+ 
+a
+ 
+=
+(
+1
+1
+1
+a
+)
+.
+(124)
+Hence, in particular, when 
+a
+=
+−
+1
+, the 1-input 1-output H-box is just a rescaled Hadamard:
+
+  
+=
+1
+2
+​
+ 
+−1
+ 
+(125)
+The H-boxes are thus a generalisation of Hadamard gates to an arbitrary number of inputs and outputs (hence, the letter ‘H’). Just as spiders with a zero phase are depicted without a phase label, we will depict H-boxes with a label of 
+−
+1
+ without any label:
+
+ 
+…
+…
+n
+m
+ 
+:=
+ 
+…
+−1
+…
+n
+m
+ 
+(126)
+This convention means that the 1-input 1-output H-box with a phase of 
+−
+1
+ is denoted exactly the same as the Hadamard gate in the ZX-calculus. As these two diagrams represent the same matrix up to a scalar factor of 
+1
+2
+ this is fine as long as one does not care about the exact scalar value. Where this matters we will denote which definition we are using. In this section we will use the definition of H-boxes of (123).
+
+The linear maps that H-boxes represent have all the symmetries we would expect from a spider:
+
+a
+=
+=
+a
+a
+=
+a
+a
+…
+=
+…
+…
+…
+…
+…
+…
+…
+…
+…
+…
+…
+Now, as promised, the H-boxes are indeed the components with which we can construct the coherent AND:
+
+  
+=
+(
+2
+2
+2
+0
+0
+0
+0
+2
+)
+=
+2
+ 
+AND
+ 
+(127)
+We can then easily write down the Toffoli gate:
+
+(128)
+This simple representation of the AND (requiring just two diagrammatic generators) allows us to efficiently diagrammatically reason about constructions involving the AND, as we will see in the next section.
+
+8.2The ZH-calculus
+The reason we care about H-boxes is because they come equipped with a new set of rewrite rules called the ZH-calculus. These rewrite rules can essentially be grouped into two sets. The rules in the first set are motivated by the relationship of the H-boxes to the AND gate, while the second section contains rules that relate H-boxes with different labels.
+
+While ostensibly part of the second set, let us first note the following fundamental relation between an arity-1 H-box and a Z-spider:
+
+ 
+ei​α
+ 
+=
+ 
+𝜶
+ 
+(129)
+In particular, taking respectively 
+α
+=
+0
+ and 
+α
+=
+π
+, we get:
+
+ 
+1
+ 
+=
+  
+  
+=
+ 
+𝝅
+ 
+(130)
+To understand the first set of rules it will be helpful to use multi-input AND gates:
+
+ 
+AND
+…
+ 
+=
+ 
+…
+ 
+(131)
+A rule on H-boxes we have already seen is that two Hadamard gates cancel, cf. (14). Using our interpretation of multi-input AND gates (131) using H-boxes we can gain a different view on this equation. Indeed, using (131) we see that two Hadamard gates in a row correspond to an AND gate with a single input, and this gate is of course the identity.
+
+The first new rule expresses how a sequence of ANDs can be combined into a single multi-input AND:
+
+AND
+…
+AND
+…
+=
+AND
+…
+…
+↔
+…
+…
+=
+…
+…
+(132)
+This rule can be presented a bit more generally as an H-box fusion rule:
+
+a
+…
+a
+=
+…
+…
+…
+(133)
+An important consequence of this rule is that H-boxes absorb 
+|
+1
+⟩
+ states:
+
+…
+𝝅
+a
+=
+(
+h
+)
+…
+𝝅
+a
+=
+(130)
+…
+a
+=
+(133)
+…
+a
+(134)
+We will see later in (138) that, in contrast, a 
+|
+0
+⟩
+ ‘explodes’ an H-box.
+
+In Section 4.5 we saw how the interpretation of the Z- and X-spider as respectively COPY and XOR lead us to the bialgebra rule that allowed us to push (phaseless) Z- and X-spiders through each other. This equation (65) involving COPY and XOR holds in exactly the same way when XOR is replaced by AND:
+
+=
+COPY
+AND
+COPY
+COPY
+AND
+AND
+(135)
+We can directly translate this into a rule involving Z-spiders and H-boxes:
+
+=
+⋯
+⋯
+n
+m
+⋯
+⋯
+n
+m
+(136)
+By pushing the Hadamard through the Z-spider and cancelling some Hadamards we can also present this in a format that is often more convenient:
+
+=
+⋯
+⋯
+n
+m
+⋯
+⋯
+n
+m
+(137)
+As in (75), the right-hand side of both of these equations is a fully connected bipartite graph. Note that as a special case of the second equation (taking 
+n
+=
+0
+) we get the following useful state copy rule, which is a counterpart of (134):
+
+a
+=
+⋯
+⋯
+⋯
+=
+a
+⋯
+a
+=
+(133)
+(137)
+(138)
+Here in the last step we dropped the scalar subdiagram, as it only contributes a (usually irrelevant) non-zero scalar.
+
+Another consequence of this bialgebra rule is that the identification of a 
+1
+-labelled H-box with a Z-spider of (130) can be generalised to higher arity as follows:
+
+=
+1
+…
+(133)
+…
+1
+=
+(130)
+…
+(63)
+…
+=
+(138)
+…
+=
+(139)
+Let us now introduce the last pair of AND-inspired rewrite rules for H-boxes. These are based on the following identities:
+
+ 
+AND
+ 
+=
+  
+ 
+AND
+𝝅
+=
+𝝅
+𝝅
+ 
+(140)
+The first is quite self-evident: if we copy a value and then AND those values together, it is the same thing as doing nothing to the value. The second requires a bit more explanation. It expresses a fact about the possible ways that AND can return 
+|
+1
+⟩
+. Indeed, as a linear map, we can write AND as 
+|
+0
+⟩
+⟨
+00
+|
++
+|
+0
+⟩
+⟨
+01
+|
++
+|
+0
+⟩
+⟨
+01
+|
++
+|
+1
+⟩
+⟨
+11
+|
+, and hence post-selecting the output of AND with 
+⟨
+1
+|
+ we calculate 
+⟨
+1
+|
+AND
+=
+⟨
+11
+|
+.
+
+Writing the ANDs as H-boxes and simplifying the expressions a bit we get the following rewrite rules17
+17These rules were not present as axioms in the original ZH-calculus paper [11]. Instead, they follow as consequences of their (O) rule, which is arguably harder to motivate and to use. It is possible to prove (O) using the rules of (141), and so in that sense they are equivalent [14].
+:
+
+  
+=
+  
+ 
+𝝅
+=
+𝝅
+𝝅
+ 
+(141)
+Note that using (130) we could also have written the second equation of (141) as:
+
+=
+(142)
+The rules introduced so far are summarised in Figure 2.
+
+=
+a
+…
+a
+=
+…
+…
+…
+=
+⋯
+⋯
+⋯
+⋯
+=
+1
+𝝅
+=
+=
+Figure 2: The phase-free rules of the ZH-calculus.
+We have now covered all the ‘AND inspired’ ZH-calculus rules. In fact, these rules, together with some of the ZX-calculus rules of Figure 1, are complete for the Hadamard-Toffoli fragment of the ZH-calculus [115], where phases on spiders are limited to 
+0
+ and 
+π
+ and H-boxes can only be labelled by the default 
+−
+1
+. This means that when we have two circuits (or more generally, arbitrary diagrams) that represent the same linear map and that consist solely of Hadamard and Toffoli gates, then by representing these diagrams using spiders and H-boxes and using just the rules of Figure 1 and 2 we can prove diagrammatically that they are equal.18
+18The complete ruleset presented in [115] is somewhat different from the one we present. That the ruleset we present is complete is shown in a forthcoming paper [14].
+ This is significant because Hadamard+Toffoli circuits are approximately universal for quantum computation [111, 3]. Hence, unlike the rules of Figure 1 that are only complete for the Clifford fragment, we could in principle use the rules we have covered up to this point to do arbitrary calculations for the approximately universal model of quantum computation given by the Toffoli+Hadamard gate set.
+
+The second set of rules of the ZH-calculus has to do with how labelled H-boxes interact. The first two of these rules allow us to perform arithmetic with H-boxes:
+
+b
+a
+=
+a
+​
+b
+     
+a
+b
+=
+a
++
+b
+2
+𝝅
+(143)
+These rules are known as the ‘multiply rule’ and the ‘average rule’ [11]. When 
+a
+ and 
+b
+ are complex phases, the multiply rule is just an instance of the adding of phases when spiders fuse, cf. (129) and (48). The average rule has no counterpart in the standard ZX-calculus. In practice, the average rule doesn’t turn out to be useful very often. We include it here merely for completeness’ sake.
+
+The multiply rule can be generalised to H-boxes of arbitrary arity:
+
+a
+b
+=
+a
+​
+b
+…
+…
+(144)
+I.e. when two H-boxes are connected to exactly the same set of Z-spiders, then we can fuse the H-boxes together. With the rules we have seen before, the proof of this generalisation is straightforward:
+
+a
+b
+=
+a
+​
+b
+…
+…
+…
+=
+a
+b
+(133)
+=
+a
+b
+(136)
+…
+=
+a
+​
+b
+(143)
+…
+(133)
+(145)
+This rule appears quite often in the form where 
+a
+=
+b
+=
+−
+1
+, so that 
+a
+​
+b
+=
+1
+ and the H-box decomposes into white spiders according to (139). As an example, we can use this rule to prove that two Toffoli gates reduce to the identity:
+
+=
+(
+h
+)
+=
+(
+hh
+)
+(
+f
+)
+=
+(144)
+1
+=
+(139)
+=
+(
+f
+)
+(
+id
+)
+(
+hh
+)
+(146)
+Then there is only one more rule: the introduction rule:
+
+a
+a
+=
+𝝅
+a
+(147)
+It is called the introduction rule, because it allows you to introduce additional edges to an H-box (at the cost of copying the H-box). As do many of the previously introduced rules, it has a generalisation to H-boxes of arbitrary arity:
+
+a
+a
+=
+𝝅
+a
+…
+…
+(148)
+Most of the use-cases of this rule are when it is applied from right-to-left. Indeed, it is a close cousin of the multiply rule (144). Both rules target pairs of H-boxes connected to the same set of Z-spiders, although in the case of the introduction rule, they must also differ by a NOT gate on one of the connections, and have the same label. As an example, we can use the introduction rule to prove that if we apply both a controlled-phase gate, and a NOT-conjugated controlled-phase gate that this reduces to just a simple phase gate:
+
+=
+(
+π
+)
+e
+i
+​
+α
+e
+i
+​
+α
+𝝅
+𝝅
+(
+f
+)
+e
+i
+​
+α
+e
+i
+​
+α
+𝝅
+=
+(147)
+e
+i
+​
+α
+=
+(
+id
+)
+𝜶
+(129)
+𝜶
+=
+(
+f
+)
+(149)
+As noted above, the ‘AND inspired’ rules together with the ZX-calculus rules are complete for diagrams generated by Toffoli and Hadamard gates. When we add these three additional rules, multiply, average and introduction, we get a rule set that is complete for all diagrams [11]. The ZH-calculus, being a superset of the ZX-calculus, is also universal. Hence, we can, in principle, replace all reasoning about qubit linear maps with diagrammatic reasoning. Whether it is beneficial to do so of course depends on the situation.
+
+8.3Controlled unitaries
+A useful feature of the ZH-calculus is that it allows us to quite easily see how to make a controlled-unitary out of a unitary given as a ZH-diagram. This is perhaps most easily demonstrated by the difference between a CZ and a CCZ gate in the ZH-calculus:
+
+C
+​
+Z
+=
+  
+C
+​
+C
+​
+Z
+=
+  
+(150)
+This suggests a general procedure for adding a control qubit: identify which H-box ‘activates’ the application of your gate, and add another wire to it which connects to a Z-spider on your control qubit. Sometimes, one has to work a bit to uncover the correct H-box. For instance, to see how a Z gate relates to a CZ, we unfuse its phase:
+
+𝝅
+=
+(
+f
+)
+𝝅
+=
+(130)
+↝
+(151)
+This procedure also works for making controlled-phase gates if the phase is something other than 
+π
+:
+
+CZ
+​
+(
+α
+)
+=
+ 
+ei​α
+ 
