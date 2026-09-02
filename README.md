@@ -137,8 +137,10 @@ Implemented and under test:
   followed by `; copy` to feed the state into a fixed copy spider. That is exactly the
   shape Phase 5's worked example needs, oracle-checked end to end (source → diagram →
   fusion match → post-diagram) at several concrete `d`. Every exception it raises is a
-  `DiracError`, the bound summation index cannot be captured as a dimension symbol, tokens
-  are ASCII by construction, and a tensor-power leg count is bounded. A general
+  `DiracError`, the bound summation index cannot be captured as a dimension symbol, every
+  numeric token is ASCII by construction (identifier tokens stay Unicode-aware, since a
+  symbol name has no numeric domain to be silently misread into), and a tensor-power leg
+  count is bounded. A general
   spider/wire/bang-box declaration syntax, bang boxes, multi-index families, and the Dirac
   printer belong to Phases 18, 7, and 17.
 

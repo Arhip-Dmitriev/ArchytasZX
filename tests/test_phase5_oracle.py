@@ -28,14 +28,18 @@ fusion apart from a wrongly-wired one. It also carries the negative controls and
 boundary check the build plan calls out explicitly.
 
 The *Dirac* half of the phrase -- parsing a Dirac-notation expression into this graph in
-the first place -- is not exercised here, and cannot honestly be claimed done: there is no
-Dirac representation, parser, or printer in this codebase yet.
-:mod:`qufzx.repl.parser`/:mod:`qufzx.repl.printer` are license-header-only skeletons, owned
-by Phases 18 and 17 respectively, not this one. ``build_ghz_with_copy`` (in
-``tests/helpers.py``) builds the graph by hand, standing in for what a Dirac parser will
-one day produce. This is a deliberate, stated deferral to those later phases, not an
-oversight -- see ``README.md``'s "Current state" section for the same statement kept in
-sync.
+the first place -- is not exercised here. It is covered by
+``tests/test_phase5_dirac_oracle.py``, which starts from a Dirac source string, parses it
+with :func:`qufzx.repl.parser.parse_dirac_source`, and pins the parsed diagram against the
+same ``build_ghz_with_copy`` fixture this module uses before running the same
+fuse-and-compare chain. ``build_ghz_with_copy`` (in ``tests/helpers.py``) builds that graph
+by hand, and remains this module's starting point so the two halves are checked
+independently rather than through one shared construction path.
+
+:mod:`qufzx.repl.parser` carries Phase 5's Dirac slice only (``FULL_PLAN.md``, Phase 5 item
+v); the general input DSL is Phase 18's. :mod:`qufzx.repl.printer` -- the diagram-to-Dirac
+direction -- is still a license-header-only skeleton owned by Phase 17. See ``README.md``'s
+"Current state" section for the same statement kept in sync.
 """
 
 from __future__ import annotations

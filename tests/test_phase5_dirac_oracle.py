@@ -13,16 +13,16 @@
 
 """The literal chain ``FULL_PLAN.md`` names for Phase 5's completion condition: Dirac source
 string to :class:`~qufzx.diagram.graph.Diagram` to fusion match to post-diagram, oracle
-confirmed -- run end to end for the first time.
+confirmed, run end to end.
 
-``tests/test_phase5_oracle.py`` already covers the graph-to-fuse-to-graph half, starting
-from ``tests/helpers.py::build_ghz_with_copy``'s hand-built diagram, and states explicitly
-that the Dirac half was deferred. This module is that deferral closed, not a duplicate of
-that file's oracle coverage: it starts from a Dirac *source string*, parses it with
-:func:`qufzx.repl.parser.parse_dirac_source`, and pins the parsed diagram to
-``build_ghz_with_copy``'s own, already-oracle-checked construction before running the same
-fuse-and-compare chain that file does -- so this path is verified against the existing
-ground truth, not standing alone as a second, independently-trusted diagram builder.
+``tests/test_phase5_oracle.py`` covers the graph-to-fuse-to-graph half, starting from
+``tests/helpers.py::build_ghz_with_copy``'s hand-built diagram. This module covers the
+Dirac half, and is not a duplicate of that file's oracle coverage: it starts from a Dirac
+*source string*, parses it with :func:`qufzx.repl.parser.parse_dirac_source`, and pins the
+parsed diagram to ``build_ghz_with_copy``'s own, already-oracle-checked construction before
+running the same fuse-and-compare chain that file does -- so this path is verified against
+the existing ground truth, not standing alone as a second, independently-trusted diagram
+builder.
 """
 
 from __future__ import annotations
