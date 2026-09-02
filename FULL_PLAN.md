@@ -13,7 +13,7 @@ ii. .gitignore, README.md, LICENSE (apache 2.0)
 - README states the one-line purpose and how to run tests
 iii. qufzx/__init__.py and tests/__init__.py
 - import qufzx succeeds from a clean environment
-- test and debug: run pytest on an empty suite and confirm it collects zero tests without error
+- test and debug: run pytest on an empty suite and confirm it collects zero tests
 - done when: editable install works, ruff and mypy run clean on empty package, git is initialized
 
 Phase 0.2: Empty module skeleton
@@ -23,7 +23,7 @@ qufzx/diagram/graph.py, generators.py, bangbox.py, scalable.py, validate.py
 qufzx/rewrite/rule.py, match.py, rules_library.py, engine.py, cache.py, normal_form.py, egraph.py, tactics.py
 qufzx/semantics/denote.py, contract_numeric.py, contract_symbolic.py, induction.py, certificate.py, check.py
 qufzx/repl/parser.py, printer.py, commands.py, shell.py
-- every file has a top docstring stating its single responsibility in one sentence
+- every file has a top docstring stating its job
 - test and debug: import every module; confirm no import errors and no circular imports
 - done when: the tree matches the plan and the whole package imports cleanly
 
@@ -31,31 +31,31 @@ PART 1: THE ENGINE, CORE REPRESENTATION AND ORACLE
 
 Phase 1: Dimension algebra, minimal
 i. algebra/dimension.py
-- defines a Dim type covering a concrete integer, a symbol such as d, and product and power expressions such as d^n or d1*d2
+- defines a Dim type covering a concrete integer, a symbol d, and product and power expressions like d^n or d1*d2
 - normalizes and compares dim expressions so that equal dimensions test equal
-- exposes is_concrete, substitute (symbol to integer), and a placeholder unify that returns constraints (the real unifier arrives in Phase 10)
+- exposes is_concrete, substitute (symbol to integer), and a placeholder unify that returns constraints
 - test and debug: unit tests for equality, substitution, and product normalization
 - done when: d, 2, and d^n can be represented and compared symbolically
 
-Phase 2: Phase and scalar algebra, exact from the start
+Phase 2: Phase and scalar algebra, exact
 i. algebra/phase.py
 - a Phase can be a concrete value, a root-of-unity index, or a free symbolic parameter
 - phases live in vectors whose length is tied to the wire dimension d, symbolic length permitted
 - phase addition (spider fusion semantics) is defined and normalizes
 ii. algebra/scalar.py, representation only
-- a Scalar represents roots of unity w_d = e^(2*pi*i/d), free symbolic scalars, and products and sums of these, tracked exactly
-- defer the character-sum simplifier to Phase 9; here only the exact representation and basic normalization are required
+- a Scalar represents roots of unity w_d = e^(2*pi*i/d), free symbolic scalars, and products and sums of these
+- defer the character-sum simplifier to Phase 9!!!!
 - test and debug: unit tests for symbolic phase addition, phase-vector length tied to d, and exact scalar equality without any global-factor quotient
 - done when: phases and scalars are first-class symbolic objects and nothing silently discards a global factor
 
-Phase 3: Diagram data model, no bang box and no connectives yet
+Phase 3: Diagram data model, no bang box and connectives
 i. diagram/graph.py
 - a Port carries its own dimension label, per port
 - a Node carries a generator type, ordered input ports, ordered output ports, and a phase-data slot that accepts symbolic phases from Phase 2
 - a Diagram holds nodes, wires (each joining two ports), ordered boundary input and output lists, and an exact scalar accumulator
 - there is a deep copy and controlled mutation
 ii. diagram/generators.py
-- registers generator types, starting with Zspider and Xspider only
+- registers generator types, starting with Zspider and Xspider
 - each type records its leg policy (any number of legs), its phase schema (vector length tied to d, symbolic entries allowed), and its dimension policy (for Z and X, all legs share one dimension)
 iii. diagram/validate.py
 - rejects any wire whose two ports carry unequal dimensions
@@ -68,23 +68,26 @@ i. semantics/denote.py
 - returns the denotation of a Z spider m to n at a concrete d as a numpy tensor, and likewise for X, honoring any concrete or instantiated phase
 - the Z spider with zero phase gives sum_{k=0}^{d-1} |k>^{(x)n} <k|^{(x)m}
 
-ii. semantics/contract_numeric.py
+ii. semantics/contract_numeric.py [testing]
 - contracts a fully concrete diagram (all dimensions concrete, no bang box) into a numpy tensor by contracting along wires, and carries the exact scalar accumulator through
 iii. semantics/check.py
 - given two diagrams claimed equal, instantiates all symbols to supplied concrete values, contracts both, and compares exactly including the overall scalar, up to floating-point tolerance
-- an explicit up-to-global-phase mode exists as an opt-in, never as the default
+- an explicit up-to-global-phase mode exists as an OPT IN!
 - test and debug: confirm the Z spider 0 to 2 at d equal to 2 gives the vector for |00> + |11>; confirm A-into-B contracts to the GHZ vector for d equal to 2 and 3; confirm that a deliberately scalar-shifted copy fails exact comparison but passes in up-to-global-phase mode
 - done when: the oracle can score any concrete diagram and compare any two diagrams, exactly by default
 
-Phase 5: Rewrite core and spider fusion, the first vertical slice
+Phase 5: Rewrite core and spider fusion [CURRENT]
 i. rewrite/rule.py
 - a Rule bundles a left-hand pattern, a right-hand builder, side conditions, quantifiers over n and over dimensions, and the exact scalar it introduces
 ii. rewrite/match.py
-- finds occurrences of the fusion pattern only for now, that is two same-color spiders joined by a wire and sharing a dimension
+- finds occurrences of the fusion pattern ONLY, that is two same-color spiders joined by a wire and sharing a dimension
 iii. rewrite/rules_library.py
-- spider_fusion merges the two spiders, unions their legs minus the consumed wire, adds their phases, and records any scalar factor it introduces exactly
+- spider_fusion merges the two spiders, unions their legs minus the consumed wire, adds their phases, and records any scalar factor it introduces
 iv. rewrite/engine.py
-- applies a chosen rule at a found match, returns a new diagram, and records structured provenance of the step in a form a certificate can consume in Phase 6
+- applies a chosen rule at a found match, returns a new diagram, and records structured provenance of the step in a form a certificate can consume
+v. repl/parser.py, Dirac slice ONLY
+- parses one restricted form, the summed ket family sum_{k=0}^{D-1} |k,k,...> with the |k>^{n} tensor-power shorthand, optionally followed by "; copy", which is the Dirac-to-graph end from the done-when clause below
+- this grammar must remain a strict subset of the one in Phase 18
 - test and debug: fuse A-into-B into a single spider; oracle-check that the pre and post diagrams are exactly equal at several concrete d; validate that the post diagram is well formed
 - done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality
 
@@ -95,7 +98,7 @@ i. semantics/certificate.py
 - test and debug: emit a certificate for the Phase 5 fusion, replay it on a fresh copy of the input, and confirm the replay reproduces the output and passes the oracle
 - done when: any rewrite sequence carries evidence sufficient to re-derive and re-check it
 
-PART 2: FREE n AND FREE d
+PART 2: FREE n AND FREE d ---------
 
 Phase 7: Bang boxes, free n, with nesting and multiple indices
 i. diagram/bangbox.py
@@ -115,7 +118,7 @@ Phase 8: Symbolic verification over n by induction
 i. semantics/induction.py
 - an equality carrying a bang box can be discharged for all values of its multiplicity by induction: a base case at multiplicity 0 or 1 and a step case relating multiplicity k to k+1, each discharged by the oracle or by symbolic contraction
 - multi-index families induct on one index at a time with the others held symbolic
-- test and debug: prove the fusion GHZ identity for all n by induction rather than by sampling, and confirm the induction fails cleanly on a deliberately false near-identity
+- test and debug: prove the fusion GHZ identity for all n by induction rather than by sampling, and confirm the induction fails cleanly on false near-identity
 - done when: symbolic-n equalities can be proved, not merely spot-checked
 
 Phase 9: Character-sum simplifier and full symbolic contraction (rung 2)
@@ -134,9 +137,9 @@ i. algebra/dimension.py
 - the placeholder unify becomes a real dimension checker and unifier over expressions with constraints such as d = d1*d2
 
 ii. diagram/generators.py
-- adds the triangle node, the W generator, and the qufinite dimension-connective generators exactly as defined in Wang, arXiv:2104.06429
+- adds the triangle node, the W generator, and the qufinite dimension-connective generators as defined by Wang
 iii. diagram/validate.py
-- per-port dimensions are enforced across genuinely mixed-dimension diagrams
+- per-port dimensions are enforced across good mixed-dimension diagrams
 iv. rewrite/rule.py and match.py
 - rules carry dimension side conditions and the matcher checks them before firing
 - test and debug: a diagram mixing two dimensions validates; a rule restricted to prime d refuses to fire at composite d; a connective relating d1 and d2 to d1*d2 checks out on the oracle at small concretes
@@ -157,7 +160,9 @@ i. rewrite/cache.py
 - matches and denotations are memoized
 - a local edit triggers incremental re-matching over the affected region rather than a full rescan
 - test and debug: confirm cached and uncached runs produce identical results and certificates; confirm an incremental re-match after a small edit matches a full re-match; measure that repeated matching on a stable region hits the cache
-- done when: interactive sessions stay responsive as diagrams grow, with no change in results
+- done when: interactive sessions stay responsive as diagrams grow, with no change in results and caching/memoization is implemented.
+
+-- at this point do a full optimization sweep!
 
 Phase 13: Normal-form driver and decision procedure
 i. rewrite/normal_form.py
@@ -195,12 +200,14 @@ i. repl/printer.py
 - pretty-prints a graph textually, showing nodes, symbolic phases, exact scalars, port dimensions, and bang boxes including nesting and multiple indices
 - renders a diagram back to Dirac when the diagram is in a recognizable normal form
 - test and debug: confirm the printer round-trips the fusion example and that the Dirac output of a single Z spider matches the expected sum
+- from the user perspective, we want the interaction and progrmaming 'language' to be as close to Dirac notation as possible
 - done when: any engine state can be shown as text and, where possible, as Dirac
 
 Phase 18: Parser and input DSL
 i. repl/parser.py
+- the file already exists, carrying Phase 5's Dirac slice (see Phase 5, item v); this phase widens it, and the existing ket-sum grammar and its "copy" keyword must survive as a strict subset of the DSL below
 - a small DSL can declare spiders, wires, symbolic phases, bang boxes (nested and multi-index), and dimensions
-- optionally parses simple Dirac kets into a diagram
+- optionally(for user) parses simple Dirac kets into a diagram
 - test and debug: parse the GHZ-with-copy input and confirm it yields the same graph the Phase 3 tests build by hand
 - done when: text input produces valid diagrams
 
@@ -209,7 +216,7 @@ i. repl/commands.py
 - implements load, show, list-rules, match, apply (rule, optionally at a chosen match), check (with supplied counts and d), normalize, decide (equality via normal form), saturate (equality saturation), prove (tactic search), induct (symbolic-n proof), certificate (emit and verify), and translate (bang box to and from scalable)
 ii. repl/shell.py
 - wires commands to the engine in an interactive loop with history and clean error handling
-- test and debug: a scripted session builds the example, applies fusion, checks it, proves it for all n by induction, and emits and re-verifies a certificate, asserting the final state; malformed input yields a clean error rather than a crash
+- test and debug: a scripted session builds the example, applies fusion, checks it, proves it for all n by induction, and emits and re-verifies a certificate, asserting the final state; malformed input yields a clean error
 - done when: the entire worked example, including a symbolic-n proof and a certificate, runs interactively
 
 PART 5: HARDENING AND FINALIZATION
@@ -232,6 +239,7 @@ i. README and an examples script
 - there is a quickstart and a runnable script reproducing the Dirac to ZX to rewrite to Dirac example, including a symbolic-n proof and a certificate
 - there is a rule reference listing each rule, its side conditions, and its exact scalar
 - done when: a new reader can reproduce the example unaided
+- actually we want several examples
 
 ===============================================================
 CONTEXT
