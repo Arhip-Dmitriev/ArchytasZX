@@ -1409,7 +1409,14 @@ class TestConditionNumberingMatchesDeclaredOrder:
         "qufzx/rewrite/engine.py",
         "qufzx/rewrite/rule.py",
         "qufzx/diagram/validate.py",
+        "tests/test_match.py",
+        "tests/test_engine.py",
+        "tests/test_rules_library.py",
+        "tests/test_rule.py",
+        "tests/test_fusion_properties.py",
+        "tests/test_phase5_certificate_sweep.py",
     )
+    """Every file carrying numbered "condition N" prose, source and test alike."""
 
     _REPO_ROOT = Path(__file__).resolve().parent.parent
     """Anchor paths to the repository, never to the process CWD -- pytest may be invoked from
@@ -1456,7 +1463,11 @@ class TestConditionNumberingMatchesDeclaredOrder:
     def _cross_references(self) -> list[tuple[str, int, set[int], set[str]]]:
         """Every ``(module, line, stated numbers, adjacent names)`` the net inspects."""
         positions = self._positions()
-        name_re = re.compile("``(" + "|".join(map(re.escape, positions)) + ")``")
+        # Backticks optional, and outside the capturing group so ``_is_list_heading`` sees
+        # the same match start for a backticked and a bare name alike.
+        name_re = re.compile(
+            r"(?:``)?\b(" + "|".join(map(re.escape, positions)) + r")\b(?:``)?"
+        )
         found: list[tuple[str, int, set[int], set[str]]] = []
         for relative in self._MODULES:
             path = self._REPO_ROOT / relative
@@ -1493,6 +1504,60 @@ class TestConditionNumberingMatchesDeclaredOrder:
         assert not violations, (
             "numbered condition reference(s) disagree with FUSION_SIDE_CONDITIONS' declared "
             "order:\n  " + "\n  ".join(violations)
+        )
+
+    def _numbered_mentions(self) -> int:
+        """How many "condition N" mentions exist across :data:`_MODULES`, name-adjacent or not."""
+        return sum(
+            len(self._NUMBER_RE.findall((self._REPO_ROOT / relative).read_text(encoding="utf-8")))
+            for relative in self._MODULES
+        )
+
+    def test_the_net_is_not_vacuous(self) -> None:
+        """The net inspects real references, and rejects text it is meant to reject.
+
+        Four independent ways this check can go vacuous are covered: the corpus losing its
+        numbered prose, the adjacency net losing its referents, the name regex ceasing to
+        match, and the comparison ceasing to reject a known-stale wording.
+        """
+        mentions = self._numbered_mentions()
+        assert mentions >= 40, (
+            f'only {mentions} "condition N" mention(s) remain across _MODULES; the numbered '
+            "prose this net checks has largely gone, so passing says nothing (measured 48)"
+        )
+
+        inspected = self._cross_references()
+        assert len(inspected) >= 8, (
+            f"the adjacency net inspected only {len(inspected)} reference(s); it is close to "
+            "vacuous -- has the name/'condition N' wording convention changed? (measured 8)"
+        )
+
+        positions = self._positions()
+        assert set(positions.values()) == set(range(1, len(FUSION_SIDE_CONDITIONS) + 1)), (
+            f"declared positions are not 1..{len(FUSION_SIDE_CONDITIONS)}: {positions}"
+        )
+
+        # A wording the net must reject: the last two conditions named, but numbered one
+        # short each, so the stated pair overlaps the true pair without equalling it.
+        # Derived from FUSION_SIDE_CONDITIONS rather than written out, both so a renumbering
+        # cannot make this sample stale and so this file -- now itself part of _MODULES --
+        # carries no literal stale reference for the sweep above to flag.
+        last_two = [condition.name for condition in FUSION_SIDE_CONDITIONS[-2:]]
+        true_numbers = {positions[name] for name in last_two}
+        stale = "conditions {} and {} (``{}``, ``{}``)".format(
+            min(true_numbers) - 1, max(true_numbers) - 1, *last_two
+        )
+        numbers = {int(g) for m in self._NUMBER_RE.finditer(stale) for g in m.groups() if g}
+        assert numbers == {n - 1 for n in true_numbers}, numbers
+        names = set(re.findall(r"``([a-z_]+)``", stale))
+        assert names == set(last_two), names
+        assert numbers != {positions[name] for name in names}, (
+            "the stale wording must be detectable as a disagreement, or this net would not "
+            "have caught it either"
+        )
+        assert numbers & {positions[name] for name in names}, (
+            "and it must be detectable despite overlapping, which is why this check uses "
+            "set equality rather than intersection"
         )
 
 
