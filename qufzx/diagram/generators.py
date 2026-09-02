@@ -18,7 +18,7 @@ of nodes such as the Z spider or the X spider, what leg counts are permitted, ho
 node's :class:`~qufzx.algebra.phase.PhaseVector` slot relates to its leg dimension, and
 how dimensions are shared across a node's legs. It carries no formula, no matrix, and no
 lambda -- the denotation of a generator (what tensor it actually stands for) is a leaf of
-the evaluator and belongs to :mod:`qufzx.semantics.denote`, which arrives in Phase 4.
+the evaluator and belongs to :mod:`qufzx.semantics.denote`, Phase 4's module.
 This module only ever answers "is this node's shape legal", never "what does this node
 mean".
 
@@ -50,7 +50,8 @@ class GeneratorError(Exception):
 class GeneratorDomainError(GeneratorError):
     """A value is outside the mathematical domain a generator policy requires.
 
-    Raised for a negative minimum leg count and other malformed policy values.
+    Raised for a negative minimum leg count, and for a maximum leg count below its
+    corresponding minimum.
     """
 
 
@@ -144,7 +145,7 @@ class GeneratorType:
     """Descriptive policy metadata for one generator family, e.g. the Z spider.
 
     Purely a value object: leg policy, phase schema, and dimension policy. It records no
-    denotation -- see the module docstring for why that belongs to Phase 4's
+    denotation -- see the module docstring for why that belongs to
     :mod:`qufzx.semantics.denote` instead.
     """
 

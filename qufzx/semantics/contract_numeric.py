@@ -35,9 +35,12 @@ labels rather than the 52-letter subscript alphabet, so leg count is never bound
 alphabet and there is no "too many legs" error path. Output axes are ordered
 ``boundary_outputs`` then ``boundary_inputs``, per ``denote``'s axis convention.
 ``validate`` guarantees every port is wired exactly once or on exactly one boundary list,
-so every node axis is accounted for; this module asserts that rather than assuming it. The
-exact scalar is multiplied in last via ``Scalar.to_complex()``, the only sanctioned
-Scalar-to-number path, so no factor is ever normalized away.
+so every node axis is accounted for. Two consistency checks stand behind that guarantee
+rather than resting on it: each node's port-label count is compared against its tensor's
+rank, and every boundary ref is confirmed to have been labelled, each raising
+:class:`ContractGrammarError`. The exact scalar is multiplied in last via
+``Scalar.to_complex()``, the only sanctioned Scalar-to-number path, so no factor is ever
+normalized away.
 
 An empty diagram evaluates directly to the rank-0 array holding
 ``diagram.scalar.to_complex()``.

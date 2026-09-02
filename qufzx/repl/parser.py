@@ -30,8 +30,8 @@ equality". This module supplies the Dirac-to-graph end of it, and no more:
   evaluated numerically. It only allocates nodes, wires, and a boundary order.
 * The tensor-power leg count is bounded by :data:`_MAX_KET_LEG_COUNT`, since it comes from
   user input and drives eager allocation.
-* Every outbound call is wrapped so no foreign exception hierarchy escapes this module's
-  boundary; see :class:`DiracError`.
+* No foreign exception hierarchy escapes this module's boundary: each outbound call is
+  either wrapped or shown safe at every call site it has here; see :class:`DiracError`.
 
 What this module does not do, because it belongs to a later phase: a general spider/wire/
 bang-box declaration syntax (Phase 18's DSL), bang boxes, families indexed by more than the
@@ -63,10 +63,16 @@ class DiracError(Exception):
       :class:`~qufzx.algebra.dimension.DimensionDomainError` for a non-positive integer.
       :func:`_parse_dim` range-checks the token and additionally wraps the call, so a future
       change to ``Dim.concrete``'s domain cannot reopen the leak.
-    * ``Dim.symbol`` -- safe. Every name passed has matched ``_KET_SUM_RE``'s
-      ``[A-Za-z_]\\w*``, exactly the identifier shape ``sympy.Symbol`` accepts, and is built
-      with the ``positive=True, integer=True`` pair ``_check_dimension_domain`` requires.
-    * ``Diagram.add_node`` -- safe; per its own docstring it never raises.
+    * ``Dim.symbol`` -- safe as used here; :func:`_parse_dim` gates the call on
+      :data:`_IDENTIFIER_RE` (``[A-Za-z_]\\w*``), so every name reaching it is a shape
+      ``sympy.Symbol`` accepts, and ``Dim`` builds it with the ``positive=True,
+      integer=True`` pair ``_check_dimension_domain`` requires. The gate is in
+      ``_parse_dim`` itself, not only in ``_KET_SUM_RE``, so a caller that bypasses the
+      regex cannot reopen this.
+    * ``Diagram.add_node`` -- safe as used here; it forwards to ``Node``/``Port``, whose
+      constructors raise ``GraphGrammarError`` for a non-``GeneratorType``, a non-``Port``
+      leg, or a non-``PhaseVector`` phase. Every call here passes ``Z_SPIDER``, a list of
+      ``Dim``, and no phase.
     * ``Diagram.add_wire`` -- safe as used here; it raises ``GraphDomainError`` only for
       ``a == b``, and every wire built here joins two distinct fresh ports on different nodes.
     * ``Diagram.set_boundary_outputs`` -- safe; it never raises.

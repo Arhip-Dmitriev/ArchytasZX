@@ -15,9 +15,9 @@
 
 Phase 5 implements exactly one :class:`~qufzx.rewrite.rule.Pattern`: two spiders of the
 same generator type joined by a wire whose connected legs agree on dimension. A pair
-joined by k wires yields one candidate per wire; each fuses across its own wire and
-leaves the rest as self-loops on the merged node. Other pattern shapes (bialgebra, Hopf,
-copy, identity removal) are out of scope until Phase 11.
+joined by k wires yields up to one match per wire, each decided on its own; a match fuses
+across its own wire and leaves the rest as self-loops on the merged node. Other pattern
+shapes (bialgebra, Hopf, copy, identity removal) are out of scope until Phase 11.
 
 Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS`` for their declared
 names):
@@ -143,6 +143,11 @@ class FusionMatch:
     ``a_id`` is always the lower :class:`~qufzx.diagram.graph.NodeId` of the pair and
     ``b_id`` the higher, a deterministic convention :mod:`qufzx.rewrite.rules_library`
     reuses as its merged-leg ordering ("A's surviving legs, then B's").
+
+    The same convention breaks one further tie: ``shared_dim``'s resolution is seeded from
+    the A-side consumed leg's ``Dim``. A connecting pair that unifies resolves the seed away,
+    but one that only defers leaves it standing as ``shared_dim``, so a ``d``/``d*e`` pair
+    fuses onto whichever of the two the lower-id node carried.
 
     ``bindings`` is the whole-candidate accumulator of every concrete symbol binding
     conditions 6 and 7 produced while resolving ``shared_dim``. The builder substitutes it
@@ -997,6 +1002,10 @@ def resolve_fusion_match(
     port_b = legs_b[ref_b.index]
 
     record = _ConstraintRecord()
+    # Seeded from the A-side consumed leg, A being the lower NodeId. When the connecting
+    # pair unifies by binding or as an identity the seed is resolved away and the choice is
+    # invisible; when it only DEFERS (`d` against `d*e`) the seed survives as the merged
+    # node's leg dimension, so which side it came from is observable. See FusionMatch.
     shared_dim = port_a.dim
     bindings: dict[str, Dim] = {}
 

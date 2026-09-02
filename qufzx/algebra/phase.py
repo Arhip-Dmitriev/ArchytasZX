@@ -58,8 +58,10 @@ class PhaseError(Exception):
 class PhaseDomainError(PhaseError):
     """A value is outside the mathematical domain of phases or phase-vector indices.
 
-    Raised for non-concrete numeric evaluation attempts, out-of-range indices at a
-    concrete dimension, and gauge violations at index 0.
+    Raised for non-concrete numeric evaluation attempts, out-of-range or negative
+    phase-vector indices at a concrete dimension, gauge violations at index 0, addition of
+    two vectors over mismatched dimensions, and a substitution assigning a dimension symbol
+    a value that is not an exact integer.
     """
 
 

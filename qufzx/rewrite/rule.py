@@ -375,7 +375,8 @@ class BuildResult:
     ``None`` means the rule re-derived nothing new -- the correct value for a rule with no
     verification step of its own. :func:`~qufzx.rewrite.engine.apply` prefers these fields
     over ``match``'s whenever they are not ``None``. A builder must populate them only
-    after checking that the match's own claims agree; :func:`spider_fusion_builder` raises
+    after checking that the match's own claims agree;
+    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` raises
     :class:`RewriteDomainError` on disagreement rather than silently preferring one value.
     """
     verified_phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None

@@ -22,9 +22,9 @@ Instantiation. :func:`instantiate` substitutes every dimension, phase, and scala
 via the node-id-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute`. It refuses --
 rather than defaulting a missing symbol to something "reasonable" -- whenever the
 assignment does not mention every free symbol the diagram carries. The spec's "never
-construct a matrix while any dimension or count in scope is symbolic" rule is enforced
-downstream in ``contract_numeric``, but catching a missing symbol here gives a far more
-specific error.
+construct a matrix or dense tensor while any dimension or count in scope is symbolic" rule
+is enforced downstream in ``contract_numeric``, but catching a missing symbol here gives a
+far more specific error.
 
 Comparison modes. Exactly two, and ``EXACT`` is the default everywhere;
 ``UP_TO_GLOBAL_PHASE`` is opt-in, never inferred. ``EXACT`` requires matching shapes and
@@ -85,7 +85,14 @@ class CheckError(Exception):
 
 
 class CheckDomainError(CheckError):
-    """A value is outside the mathematical domain this module requires."""
+    """The domain half of this module's domain/grammar error split. Currently unraised.
+
+    Every refusal this module makes today is a malformed request (an incomplete assignment,
+    an unknown mode), so it raises :class:`CheckGrammarError`; a non-concrete value reaches
+    :mod:`qufzx.semantics.contract_numeric` and is refused there instead. Declared so the
+    split matches every other module here, and so a future domain refusal has its class
+    already in the hierarchy.
+    """
 
 
 class CheckGrammarError(CheckError):
@@ -287,7 +294,7 @@ def _interface_mismatch(
        position.
 
     This module has no way to establish genuine leg correspondence beyond that -- see the
-    module docstring's "What this check cannot do" paragraph. In particular this check
+    module docstring's "What this cannot do" paragraph. In particular this check
     does not catch a silently reordered boundary when the reordering leaves the tensor
     unchanged (e.g. any diagram symmetric under that swap); that is out of scope for a
     numeric oracle and belongs to the rewrite engine's own certificates instead.

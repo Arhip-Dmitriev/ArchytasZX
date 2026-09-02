@@ -23,7 +23,7 @@ as a single global parameter: this module only supplies dimension *values*,
 it holds no ambient "current dimension" state of its own.
 
 Phase 10 note: :meth:`Dim.unify` here is a deliberate placeholder. It never
-guesses, factors, or partially solves — it only recognizes the cases it can
+guesses, factors, or partially solves -- it only recognizes the cases it can
 decide outright (both concrete, syntactically equal, or one side a bare
 symbol) and defers everything else as a residual constraint. The real
 unifier, which must actually solve constraints such as ``d = d1 * d2``,
@@ -494,7 +494,10 @@ def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
     into ``bindings`` or substituted through; it is recorded on
     :attr:`UnifyAllResult.declined_bindings` rather than dropped. Returns
     FAILURE on any non-unifiable pair, DEFERRED with every pair still unresolved once the
-    fixpoint stabilises, or SUCCESS. Raises only :class:`DimensionError` subclasses.
+    fixpoint stabilises, or SUCCESS. A DEFERRED returned because
+    :data:`_MAX_UNIFY_ALL_PASSES` ran out first carries ``exhausted=True`` and holds only
+    what the final, non-converged pass left unresolved -- see :attr:`UnifyAllResult.exhausted`.
+    Raises only :class:`DimensionError` subclasses.
     """
     ordered = sorted(dims, key=lambda d: sp.srepr(d.to_sympy()))
     if len(ordered) < 2:

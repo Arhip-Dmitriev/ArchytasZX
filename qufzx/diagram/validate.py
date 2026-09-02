@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """Diagram well-formedness checks: per-port dimension agreement, boundary consistency,
-port usage, and generator policy conformance.
+port usage, generator policy conformance, and symbol-role collisions.
 
 :func:`validate` never mutates the diagram it is given -- it is a pure read function from a
 :class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`.

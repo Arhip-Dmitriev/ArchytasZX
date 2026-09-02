@@ -50,8 +50,9 @@ conjugate to input axes with no transpose.
 
 Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
-dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, or the generator name is neither
-``"Z"`` nor ``"X"``. There is exactly one dispatch point for Phase 10's triangle, W, and
+dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator carries some other
+dimension policy, or the generator name is neither ``"Z"`` nor ``"X"``. There is exactly one
+dispatch point for Phase 9's Hadamard/Fourier generator and Phase 10's triangle, W, and
 connective generators to extend; they are not stubbed in with placeholder tensors.
 
 A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
@@ -84,8 +85,9 @@ class DenoteDomainError(DenoteError):
 class DenoteGrammarError(DenoteError):
     """A request is malformed: an unknown generator name, or a dimension-less node.
 
-    Raised for a generator type this module does not know how to denote, and for a
-    zero-leg node with no phase vector to supply its dimension.
+    Raised for a generator type this module does not know how to denote, for one whose
+    dimension policy is not ``ALL_LEGS_EQUAL``, and for a zero-leg node with no phase vector
+    to supply its dimension.
     """
 
 
@@ -124,7 +126,8 @@ def resolve_dimension(node: Node) -> int:
     resolution logic.
 
     Raises DenoteDomainError for non-concrete or disagreeing dimensions, and
-    DenoteGrammarError for a zero-leg node with no phase vector to fall back on.
+    DenoteGrammarError for a generator whose dimension policy is not ``ALL_LEGS_EQUAL`` and
+    for a zero-leg node with no phase vector to fall back on.
     """
     if node.generator_type.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
         raise DenoteGrammarError(
@@ -210,7 +213,7 @@ def denote(node: Node) -> np.ndarray:
     :func:`resolve_dimension` has confirmed every dimension and phase in scope is
     concrete. Dispatches on ``node.generator_type`` against the registered
     ``Z_SPIDER``/``X_SPIDER`` constants -- the one dispatch point later generators
-    (Phase 10) must extend.
+    (Phase 9's Hadamard/Fourier, Phase 10's triangle, W, and connectives) must extend.
     """
     d = resolve_dimension(node)
     if node.generator_type.name == Z_SPIDER.name:

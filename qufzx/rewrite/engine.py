@@ -258,6 +258,12 @@ def _issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
     issue merely because its wording mentions a different id. ``port_ref``, ``wire`` and
     ``node_id`` are checked in that order; at most one is set in practice, so the order is
     only a deterministic tie-break.
+
+    An issue naming none of the three -- today only
+    :attr:`~qufzx.diagram.validate.IssueKind.SYMBOL_ROLE_COLLISION`, which reports a symbol
+    name and no diagram reference -- keys as ``(kind, None)``. Every such issue in one
+    report therefore shares a key, so the compare below sees only how many there are, not
+    which names collided.
     """
     ref: object = issue.port_ref
     if ref is None:

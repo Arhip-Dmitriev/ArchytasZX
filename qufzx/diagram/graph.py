@@ -120,7 +120,7 @@ class PortRef:
     index: int
 
     def __post_init__(self) -> None:
-        """Validate that ``index`` is a non-negative int."""
+        """Validate that ``direction`` is a Direction and ``index`` a non-negative int."""
         if not isinstance(self.direction, Direction):
             raise GraphGrammarError(
                 f"PortRef direction must be a Direction, got {self.direction!r}"

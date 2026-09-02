@@ -39,7 +39,7 @@ drops a unit-modulus factor. There is no such method, public or private, anywher
 this module -- not even as an option. ``s`` and ``2*s`` are unequal; ``s`` and
 ``omega_d * s`` are unequal; there is no API that makes them equal. If a later phase
 wants an up-to-global-phase comparison, that flag belongs at the semantics/check.py
-layer (Phase 4), never here.
+layer, where :class:`~qufzx.semantics.check.EqualityMode` now carries it, never here.
 """
 
 from __future__ import annotations
@@ -60,7 +60,9 @@ class ScalarError(Exception):
 class ScalarDomainError(ScalarError):
     """A value is outside the mathematical domain required by an operation.
 
-    Raised for numeric evaluation attempts on a scalar that still carries free symbols.
+    Raised for numeric evaluation of a scalar that still carries free symbols, for a zero
+    denominator in :meth:`Scalar.rational`, and for raising the zero scalar to a negative
+    power.
     """
 
 
@@ -190,8 +192,8 @@ class Scalar:
     def from_phase(cls, phase: Phase) -> Scalar:
         """The unit scalar e^{i*angle} corresponding to a :class:`~qufzx.algebra.phase.Phase`.
 
-        This is the bridge Phase 5 needs when spider fusion introduces a phase-derived
-        scalar factor.
+        The Phase-to-Scalar bridge, for a rule whose introduced scalar is phase-derived.
+        Spider fusion is not one: it introduces :meth:`Scalar.one`.
         """
         return cls(sp.exp(sp.I * phase.to_radians()))
 
