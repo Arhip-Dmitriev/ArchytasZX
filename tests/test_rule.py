@@ -41,9 +41,8 @@ from qufzx.rewrite.rules_library import spider_fusion_builder
 
 def _dummy_builder(diagram: Diagram, match: Match) -> BuildResult:
     """A builder with no ``side_conditions`` attribute, for tests that only need *some*
-    callable and must not trip the A5 builder/Rule
-    ``side_conditions`` agreement check that ``spider_fusion_builder`` (which does declare
-    one) would otherwise trigger."""
+    callable and must not trip the builder/Rule ``side_conditions`` agreement check that
+    ``spider_fusion_builder`` (which does declare one) would otherwise trigger."""
     raise NotImplementedError
 
 
@@ -244,11 +243,11 @@ class TestRuleRejectsSideConditionsDisagreeingWithItsBuilder:
 
 
 class TestDimensionConstraintBoundHereInvariant:
-    """DimensionConstraint.__post_init__ now enforces structurally what its
-    docstring already claimed -- BOUND requires a non-empty bound_here, DEFERRED requires an
-    empty one -- the same way ConstraintSource.__post_init__ already rejects an illegal
-    (kind, reference) combination. Both rejections and both legal combinations are pinned
-    here so a future change cannot silently relax either half of the invariant.
+    """DimensionConstraint.__post_init__ enforces structurally what its docstring states --
+    BOUND requires a non-empty bound_here, DEFERRED requires an empty one -- the same way
+    ConstraintSource.__post_init__ rejects an illegal (kind, reference) combination. Both
+    rejections and both legal combinations are pinned here so a future change cannot
+    silently relax either half of the invariant.
     """
 
     def _source(self) -> ConstraintSource:

@@ -86,7 +86,7 @@ class TestBasicOutcomes:
         assert len(result.residual_pairs) >= 1
 
     def test_bare_symbol_pair_succeeds_via_a_declined_non_concrete_binding(self) -> None:
-        """Task 7b: two bare symbols (``d``, ``e``)
+        """Two bare symbols (``d``, ``e``)
         unify by binding one to the other -- a non-concrete binding, never folded into
         ``bindings`` (see ``unify_all``'s own inline comment), but not simply dropped
         either: it lands in ``declined_bindings``, so the assumption this SUCCESS actually
@@ -175,11 +175,10 @@ class TestBudgetExhaustion:
         monkeypatch.setattr(dimension_module, "_MAX_UNIFY_ALL_PASSES", 1)
 
         a, b = Dim.symbol("a"), Dim.symbol("b")
-        # Reproduces the audit's own repro: with the budget capped at one pass, this leg set
-        # never reaches its fixpoint (a*b needs both a and b bound, which takes two passes to
-        # propagate), so pre-fix this returned DEFERRED with an empty residual_pairs --
-        # indistinguishable from a converged deferral that genuinely has nothing left to
-        # report.
+        # With the budget capped at one pass, this leg set never reaches its fixpoint (a*b
+        # needs both a and b bound, which takes two passes to propagate). A DEFERRED with an
+        # empty residual_pairs would be indistinguishable from a converged deferral that
+        # genuinely has nothing left to report, so `exhausted` must discriminate them.
         result = unify_all([a * b, a, b, Dim.concrete(2)])
 
         assert result.is_deferred
@@ -217,8 +216,8 @@ class TestBudgetExhaustion:
 
         report = validate(diagram)
 
-        # Failing open here (the pre-fix behaviour) reported this node completely clean --
-        # an undecided node read as valid. It must instead be a hard, non-deferred error.
+        # Failing open here would report this node completely clean -- an undecided node
+        # read as valid. It must instead be a hard, non-deferred error.
         assert not report.is_valid
         assert any(
             issue.kind is IssueKind.DIMENSION_RESOLUTION_EXHAUSTED

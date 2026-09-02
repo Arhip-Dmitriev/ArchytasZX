@@ -170,11 +170,10 @@ def _build_random_diagram(rng: random.Random) -> Diagram:
     ``_DIM_PALETTE`` (see the ``mixed`` branch below), so a single node can legitimately
     carry mixed leg dims -- e.g. two concrete dims that plainly disagree (already a hard
     ``DIMENSION_POLICY_VIOLATION`` on that node alone), or a concrete leg beside a symbolic
-    one that only unifies by binding. Before this, every node had exactly one dim shared by
-    every one of its legs, so a fusion's surviving legs were always already equal to
-    ``shared_dim`` by construction -- an un-unified overwrite of a
-    surviving leg's dim, could never be observed disagreeing with anything, since nothing
-    generated here ever gave it the chance to disagree.
+    one that only unifies by binding. Giving every node exactly one dim shared by all its
+    legs would make a fusion's surviving legs always already equal to ``shared_dim`` by
+    construction, so an un-unified overwrite of a surviving leg's dim could never be observed
+    disagreeing with anything.
     """
     diagram = Diagram()
     all_ports: list[PortRef] = []
@@ -235,7 +234,7 @@ def _maybe_corrupt_a_boundary_ref(rng: random.Random, diagram: Diagram) -> bool:
     :func:`~qufzx.rewrite.match.find_matches`
     must reject a malformed boundary entry (an unknown node id, or an out-of-range index)
     exactly as it already rejects a malformed wire endpoint -- see that module's docstring,
-    "Malformed boundary references". Widening this generator to sometimes produce one is
+    "Malformed references". Widening this generator to sometimes produce one is
     what lets :class:`TestSpiderFusionProperties` exercise that rejection at the property
     harness's own scale and diagram variety, not only via the hand-picked unit tests in
     ``test_match.py``'s ``TestOutOfRangeBoundaryRefRaises``. Returns whether a corruption was
@@ -498,11 +497,10 @@ def _assert_phase_entries_consistent_with_dim(diagram: Diagram, seed: int) -> No
     a ``PhaseVector`` whose ``dim`` is the concrete ``2`` (because a fusion's shared_dim
     resolution bound ``d := 2`` and the merged phase's container dim was updated to match,
     while the pre-fusion entry that still says ``1/d`` was carried over unchanged). This is
-    exactly the shape of the ``_over_shared_dim`` defect family (see
-    ``rules_library.py``'s module docstring, "Dimension of the merged node", and Task 2 of
-    the Phase 5 final fix round): a phase entry frozen in terms of a symbol its own
-    container dimension no longer mentions denotes a different (and wrong) angle once that
-    symbol's binding is substituted in.
+    exactly the shape ``_over_shared_dim`` must not produce (see
+    ``rules_library.py``'s module docstring, "Dimension of the merged node"): a phase entry
+    frozen in terms of a symbol its own container dimension no longer mentions denotes a
+    different (and wrong) angle once that symbol's binding is substituted in.
     """
     for node_id, node in diagram.nodes.items():
         phase = node.phase
@@ -765,7 +763,7 @@ def _assert_constraints_satisfiable(
 
 
 def _assert_match_structurally_satisfiable(diagram: Diagram, match: FusionMatch) -> None:
-    """N1's required structural-satisfiability arm (cheap, broad, no oracle call).
+    """The structural-satisfiability check (cheap, broad, no oracle call).
 
     Every surviving leg dim, the connecting pair's own two dims, and every present phase dim
     -- each resolved under ``match.bindings`` -- must unify with ``match.shared_dim`` without
@@ -1098,7 +1096,7 @@ class TestSpiderFusionProperties:
         # actually exercised, and assert it never returns False across this sweep. A Phase
         # 10 change to Dim.unify's contract that makes this reachable should fail this
         # assertion rather than pass silently. _merge_bindings returns None on a clean
-        # merge, (name, existing, new) on a contradictory rebind (Task 3) -- "no hit" is
+        # merge, (name, existing, new) on a contradictory rebind -- "no hit" is
         # `result is None`, not `result is truthy`.
         merge_bindings_results: list[object] = []
         real_merge_bindings = match_module._merge_bindings
@@ -1333,15 +1331,15 @@ class TestSpiderFusionProperties:
         )
 
     def test_phase_index_out_of_range_under_binding_is_not_a_match(self) -> None:
-        """Regression test for the Task 1 defect: see match.py's module docstring, condition 7.
+        """Condition 7's entry-index arm: see match.py's module docstring.
 
         A phase legally stated over symbolic ``d`` with an entry at index 5 must not be
         reported as a match once leg-unify binds ``d := 2`` -- index 5 is out of range at
-        that binding. Before the fix, ``phase_dimension_agreement`` checked only the phase
-        vector's container ``Dim`` against the resolved shared dimension, never its entry
-        indices, so this candidate passed matching and then ``spider_fusion_builder``
-        raised ``RewriteDomainError`` trying to build it -- violating the invariant that
-        every match ``find_matches`` returns is applicable by ``apply`` without raising.
+        that binding. Checking only the phase vector's container ``Dim`` against the
+        resolved shared dimension, never its entry indices, would let this candidate pass
+        matching and then have ``spider_fusion_builder`` raise ``RewriteDomainError`` trying
+        to build it -- violating the invariant that every match ``find_matches`` returns is
+        applicable by ``apply`` without raising.
         """
         d = Dim.symbol("d")
         diagram = Diagram()
@@ -1361,16 +1359,16 @@ class TestSpiderFusionProperties:
         )
 
     def test_phase_entry_over_bound_symbol_is_substituted_not_left_stale(self) -> None:
-        """Regression test for the Task 2 defect: see rules_library.py's ``_over_shared_dim``.
+        """The substitution ``_over_shared_dim`` must perform. See rules_library.py.
 
         A phase legally stated over symbolic ``d`` (``1/d`` turns, from
         ``Phase.root_of_unity``) fuses against a spider whose leg is the concrete ``2``,
-        binding ``d := 2``. Before the fix, ``_over_shared_dim`` reattached the entry
-        unchanged onto the resolved (now concrete) ``shared_dim``, producing
-        ``PhaseVector[2]({1: 1/d turns})`` -- a phase vector whose container dimension no
-        longer mentions the symbol its own entry still depends on, silently discarding the
-        ``d := 2`` constraint that made the fusion well-formed in the first place. The fixed
-        builder substitutes the accumulated binding into the entry before reattaching it, so
+        binding ``d := 2``. Reattaching the entry unchanged onto the resolved (now concrete)
+        ``shared_dim`` would produce ``PhaseVector[2]({1: 1/d turns})`` -- a phase vector
+        whose container dimension does not mention the symbol its own entry still depends on,
+        silently discarding the ``d := 2`` constraint that made the fusion well-formed in the
+        first place. The builder substitutes the accumulated binding into the entry before
+        reattaching it, so
         the merged phase is the concrete ``1/2`` turns the binding actually implies, and the
         oracle agrees exactly at ``d = 2``.
         """
@@ -1449,7 +1447,7 @@ surface rarely.
 
 def _all_claimed_passing(match: FusionMatch) -> tuple[SideConditionOutcome, ...]:
     """``match``'s own outcome names, all claimed ``passed=True`` -- a fabricated-passing
-    ``side_condition_outcomes`` tuple (B4/A1/A2): this is what lets a corrupted ``shared_dim``,
+    ``side_condition_outcomes`` tuple: this is what lets a corrupted ``shared_dim``,
     ``bindings``, or diagram slip past ``check_side_condition_coverage`` (which only checks
     outcome *names* and passedness, never re-evaluates a predicate) and reach the builder's
     own re-verification via :func:`~qufzx.rewrite.match.resolve_fusion_match`.
@@ -1478,12 +1476,11 @@ def _diagram_with_swapped_color(diagram: Diagram, node_id: NodeId) -> Diagram:
 
 
 class TestForeignFusionMatchArm:
-    """B4: for every match a legitimate diagram produces, construct
-    corrupted variants of the match/diagram/BuildResult reaching ``spider_fusion_builder`` or
-    ``apply``, and assert every one raises a :class:`RewriteError` subclass rather than
-    silently producing a wrong diagram. A1-A3 existed because nothing before this ever
-    exercised this untrusted-input path -- the trusted (``find_matches``-produced) path has
-    been fuzzed to death elsewhere in this file.
+    """For every match a legitimate diagram produces, construct corrupted variants of the
+    match/diagram/BuildResult reaching ``spider_fusion_builder`` or ``apply``, and assert
+    every one raises a :class:`RewriteError` subclass rather than silently producing a wrong
+    diagram. This is the untrusted-input path; the trusted (``find_matches``-produced) path
+    is fuzzed elsewhere in this file.
     """
 
     def _matches(self) -> list[tuple[Diagram, FusionMatch]]:
@@ -1596,10 +1593,9 @@ class TestForeignFusionMatchArm:
                 equal_to=Dim.concrete(3),
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.BOUND,
-                # DimensionConstraint.__post_init__ now structurally
-                # requires a non-empty bound_here for a BOUND outcome (this fixture
-                # previously relied on the unenforced invariant, constructing a BOUND entry
-                # with none). This binding is itself nonsensical (2 == 3 binds nothing real)
+                # DimensionConstraint.__post_init__ structurally requires a non-empty
+                # bound_here for a BOUND outcome, so this fixture must supply one.
+                # This binding is itself nonsensical (2 == 3 binds nothing real)
                 # -- fine, since the whole point of this fixture is that it is fabricated and
                 # must be rejected regardless of its content.
                 bound_here=(("d", Dim.concrete(3)),),
@@ -1614,9 +1610,9 @@ class TestForeignFusionMatchArm:
 
 
 class TestStructuralSatisfiabilityAtScale:
-    """N1's required structural-satisfiability arm, run broadly (cheap, no oracle call) over
-    the deliberately messy ``_build_random_diagram`` population -- this is what should have
-    caught D1: every match ``find_matches`` returns must have every
+    """The structural-satisfiability check, run broadly (cheap, no oracle call) over the
+    deliberately messy ``_build_random_diagram`` population: every match
+    ``find_matches`` returns must have every
     surviving leg, the connecting pair, and every present phase resolve, under
     ``match.bindings``, to something that unifies with ``match.shared_dim`` -- and the same
     must hold of the *applied* ``RewriteStep.dimension_constraints``, not only the match's
@@ -1736,7 +1732,7 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
                 assert _is_cleanly_contractible(pre_concrete), (
                     f"seed {seed}: substituting match.bindings {bindings_subs!r} into the "
                     "isolated pre-fusion pair is not cleanly contractible -- the match's own "
-                    "recorded assumptions do not actually make it well-formed (D1)"
+                    "recorded assumptions do not actually make it well-formed"
                 )
                 assert _is_cleanly_contractible(post_concrete), (
                     f"seed {seed}: substituting match.bindings {bindings_subs!r} into the "
@@ -1762,10 +1758,9 @@ class TestBindingsSubstitutionIsCleanAndOracleEqual:
         )
 
 
-# the two sweeps that verified round 23 (a
-# structural-invariant fuzz and a fresh-seed oracle differential) were written ad hoc and
-# thrown away. Promoted into permanent tests here so every future round has to clear them
-# too, not just the ones that happened to motivate this round's fixes.
+# The two arms below -- a structural-invariant fuzz and a fresh-seed oracle differential --
+# run over seed pools disjoint from every other pool in this module, so they check seeds the
+# matcher and builder were never tuned against.
 
 _STRUCTURAL_SEEDS: tuple[int, ...] = tuple(range(40000, 42000))
 """Disjoint from every other seed pool in this module (``_SEEDS`` 0-2499, ``_CLEAN_SEEDS``
@@ -1781,7 +1776,7 @@ as ``_MIN_ORACLE_COMPARISONS`` above."""
 
 
 def _check_structural_invariants(diagram: Diagram, match: FusionMatch, seed: int) -> int:
-    """Apply ``match`` and assert the structural postconditions Task 8a exists to pin.
+    """Apply ``match`` and assert :class:`TestStructuralInvariants`' postconditions.
 
     Returns 1 if the application went through and was checked, 0 if it was legitimately
     blocked by the step-8 relative postcondition (see ``_RELATIVE_POSTCONDITION_MARKER`` --
@@ -1862,7 +1857,7 @@ def _check_structural_invariants(diagram: Diagram, match: FusionMatch, seed: int
 
 
 class TestStructuralInvariants:
-    """Task 8a: every match this module returns, once applied, must leave the diagram in a
+    """Every match this module returns, once applied, must leave the diagram in a
     structurally coherent state -- not merely "oracle-equal at some substitution" (already
     covered by the oracle-differential arms above), but the graph-shape invariants a
     certificate consumer (Phase 6) and a future strategy layer (Phase 11) both need to be

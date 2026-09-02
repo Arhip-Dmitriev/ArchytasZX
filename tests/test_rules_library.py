@@ -86,9 +86,10 @@ class TestDanglingPortSurvives:
     """A leg that is neither wired to anything nor part of any boundary list still survives.
 
     The builder tracks "surviving" purely by leg identity -- every leg of a consumed node
-    except the one the matched wire itself consumes (see :func:`_surviving_legs`) -- never
-    by wiring or boundary status, so a genuinely dangling leg needs no special-casing, only
-    a test locking the behavior in.
+    except the one the matched wire itself consumes (see
+    :func:`~qufzx.rewrite.rules_library._surviving_legs`) -- never by wiring or boundary
+    status, so a genuinely dangling leg needs no special-casing, only a test locking the
+    behavior in.
     """
 
     def test_unwired_non_boundary_leg_on_b_survives_onto_the_merged_node(self) -> None:
@@ -198,14 +199,13 @@ class TestAllLegsConsumedPhase:
         assert result.diagram.nodes[result.new_node_ids[0]].phase is None
 
 
-class TestPhaseDimensionAgreementJudgementCall2:
-    """Judgement call 2, decided in
-    :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement``: a fusion whose two phase
-    dims unify only by a *concrete* binding is now matched (was previously silently
-    refused), and two present phases no longer need to agree raw before any resolution
-    (``reattach_phase`` already forces both onto the identical ``shared_dim``). Both are
-    exercised here all the way through the builder and the numeric oracle, not merely
-    matched.
+class TestPhaseDimensionAgreementAcceptsConcreteBindings:
+    """The two acceptances :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement`` makes.
+
+    A fusion whose two phase dims unify only by a *concrete* binding matches, and two
+    present phases need not agree raw before any resolution -- ``reattach_phase`` forces
+    both onto the identical ``shared_dim``. Both are exercised all the way through the
+    builder and the numeric oracle, not merely matched.
     """
 
     def test_a_phase_binding_the_symbolic_shared_leg_dim_builds_and_matches_the_oracle(
@@ -318,7 +318,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
     lies about every condition having actually been checked -- so ``check_side_condition_coverage``
     (which only compares outcome *names* and passedness, never re-evaluates a predicate) lets
     it through, and the builder's own fresh re-verification via
-    :func:`resolve_fusion_match` is what has to catch the lie.
+    :func:`~qufzx.rewrite.match.resolve_fusion_match` is what has to catch the lie.
     """
     return tuple(
         SideConditionOutcome(name, True, "fabricated: claims to pass without being checked")
@@ -334,16 +334,16 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
     )
 
 
-class TestPhase5Round12AuditDefects:
-    """Regression coverage for A1/A2: the builder must not trust a
-    match's own claimed ``generator_type`` agreement or ``shared_dim``/``bindings`` -- it must
-    re-derive them fresh (via :func:`~qufzx.rewrite.match.resolve_fusion_match`) and reject any
-    disagreement, since a fabricated-passing ``side_condition_outcomes`` tuple alone (which
-    ``check_side_condition_coverage`` cannot catch -- it never re-evaluates a predicate) would
+class TestBuilderRederivesMatchClaims:
+    """The builder must not trust a match's own claimed ``generator_type`` agreement or its
+    ``shared_dim``/``bindings``. It re-derives them fresh (via
+    :func:`~qufzx.rewrite.match.resolve_fusion_match`) and rejects any disagreement, since a
+    fabricated-passing ``side_condition_outcomes`` tuple alone -- which
+    ``check_side_condition_coverage`` cannot catch, never re-evaluating a predicate -- would
     otherwise let a Z/X pair, or a nonsensical ``shared_dim``, through to graph surgery.
     """
 
-    def test_a1_fabricated_same_generator_type_outcome_on_a_z_x_pair_is_rejected(self) -> None:
+    def test_fabricated_same_generator_type_outcome_on_a_z_x_pair_is_rejected(self) -> None:
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -360,7 +360,7 @@ class TestPhase5Round12AuditDefects:
         with pytest.raises(RewriteDomainError):
             spider_fusion_builder(diagram, match)
 
-    def test_a2_shared_dim_unrelated_to_the_matched_legs_is_rejected(self) -> None:
+    def test_shared_dim_unrelated_to_the_matched_legs_is_rejected(self) -> None:
         d = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -377,7 +377,7 @@ class TestPhase5Round12AuditDefects:
         with pytest.raises(RewriteDomainError):
             spider_fusion_builder(diagram, match)
 
-    def test_a2_bindings_unrelated_to_the_matched_legs_is_rejected(self) -> None:
+    def test_bindings_unrelated_to_the_matched_legs_is_rejected(self) -> None:
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
@@ -397,11 +397,10 @@ class TestPhase5Round12AuditDefects:
 
 
 class TestGhostWireIsRejected:
-    """A match naming a wire that is structurally incident on both nodes but was never actually
-    added to the diagram used to be accepted by ``resolve_fusion_match`` -- so the builder
-    built a merged node consuming a wire the diagram never had. Fixed in
-    ``resolve_fusion_match`` itself; this proves the fix closes the path all the way through
-    the builder."""
+    """A match may name a wire that is structurally incident on both nodes yet was never
+    added to the diagram. ``resolve_fusion_match`` rejects it, or the builder would construct
+    a merged node consuming a wire the diagram never had; this checks the rejection reaches
+    all the way through the builder."""
 
     def test_builder_refuses_a_match_over_a_wire_absent_from_the_diagram(self) -> None:
         d = Dim.concrete(2)
@@ -428,9 +427,9 @@ class TestGhostWireIsRejected:
 class TestSideConditionCoverageEnforced:
     """An empty (or incomplete) side_condition_outcomes tuple must not be accepted.
 
-    Proof from the audit: a hand-built FusionMatch naming a Z spider wired into an X
-    spider, with side_condition_outcomes=(), used to be accepted by spider_fusion_builder
-    -- ``all(...)`` over an empty tuple is vacuously True, so the (never actually checked)
+    A hand-built FusionMatch naming a Z spider wired into an X spider, with
+    side_condition_outcomes=(), would otherwise reach spider_fusion_builder unchallenged --
+    ``all(...)`` over an empty tuple is vacuously True, so the (never actually checked)
     same_generator_type condition never gets a chance to reject it. This builder is
     reachable directly (not only via qufzx.rewrite.engine.apply), so it must enforce
     coverage itself.
@@ -508,9 +507,9 @@ class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
         assert merged.phase.dim == three
 
     def test_the_mirror_orientation_phase_on_the_already_resolved_side_still_works(self) -> None:
-        # The pre-fix code already handled this orientation (phase on the side the
-        # binding resolves *to*); restated here so a future change to _over_shared_dim
-        # cannot regress this half while touching the other.
+        # The mirror of the test above: the phase sits on the side the binding resolves
+        # *to*. Stated so a future change to _over_shared_dim cannot regress this half while
+        # touching the other.
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
@@ -534,9 +533,8 @@ class TestPhaseOnTheUnboundSideOfALegUnifyBinding:
 
 
 class TestPhaseSubstitutionsCertificate:
-    """F2, which bindings were actually substituted
-    into a phase's *entries* is now recorded onto the certificate, distinct from the
-    container ``Dim`` every merge reattaches regardless.
+    """Which bindings were actually substituted into a phase's *entries* is recorded onto
+    the certificate, distinct from the container ``Dim`` every merge reattaches regardless.
     """
 
     def test_root_of_unity_entry_records_its_substituted_binding(self) -> None:
@@ -609,11 +607,11 @@ class TestSharedDimPropagatesToEverySurvivingPort:
     def test_contradictory_chain_does_not_silently_fuse_twice(self) -> None:
         """A(3) -- B(d) -- C(7): fusing A into B commits ``d := 3`` and propagates that
         onto B's other, surviving leg -- which is wired to C's dim 7, an unresolvable
-        concrete mismatch. Before the fix, B's surviving leg kept its own raw, never-
-        forced ``d``, so a second, independent fusion could just as freely bind
-        ``d := 7``, silently producing one legless node whose ``PhaseVector`` claimed
-        dimension 7 with nothing left in the diagram to say it also assumed dimension 3,
-        and a validate() report that came back clean. With the dimension propagated,
+        concrete mismatch. Were B's surviving leg to keep its own raw, never-forced ``d``, a
+        second, independent fusion could just as freely bind ``d := 7``, silently producing
+        one legless node whose ``PhaseVector`` claimed dimension 7 with nothing left in the
+        diagram to say it also assumed dimension 3, and a validate() report that came back
+        clean. With the dimension propagated,
         apply()'s relative post-condition (see qufzx.rewrite.engine) catches the
         resulting conflict against the still-unfused third node immediately.
         """

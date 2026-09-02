@@ -121,9 +121,10 @@ class TestBoundaryViolations:
         assert any(issue.kind is IssueKind.UNKNOWN_NODE for issue in report.errors)
 
     def test_malformed_ref_on_both_boundary_lists_reported_once(self) -> None:
-        """A ref listed on both boundary lists resolves once, not twice (Phase 5 post-closing
-        audit round 23, Task 6): resolving it on each list separately used to append two
-        identical PORT_INDEX_OUT_OF_RANGE issues for one malformed reference."""
+        """A ref listed on both boundary lists resolves once, not twice.
+
+        Resolving each list separately would append two identical
+        PORT_INDEX_OUT_OF_RANGE issues for one malformed reference."""
         diagram = Diagram()
         n = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2)])
         bad = PortRef(n, Direction.INPUT, 7)
@@ -236,18 +237,19 @@ class TestGeneratorPolicyConformance:
 
 
 class TestPhaseDimensionResolvedThroughLegBindings:
-    """D1, the TIED_TO_LEG_DIM phase check must compare
+    """The TIED_TO_LEG_DIM phase check must compare
     against the leg set's *jointly resolved* dimension (via unify_all), not the raw,
-    unresolved first leg -- see qufzx.diagram.validate._check_generator_policy. Before this
-    fix, the verdict depended on which leg the diagram happened to list first, and a
-    leg/phase disagreement masked by a leg/leg binding computed independently (and
-    discarded) could pass as valid even though no single substitution satisfies both.
+    unresolved first leg -- see qufzx.diagram.validate._check_generator_policy. Comparing
+    against the raw first leg would make the verdict depend on which leg the diagram happens
+    to list first, and would let a leg/phase disagreement masked by a leg/leg binding
+    computed independently (and discarded) pass as valid even though no single substitution
+    satisfies both.
     """
 
     def test_first_leg_binding_masking_a_phase_disagreement_is_rejected(self) -> None:
         # legs [d, 2] bind d := 2 (independently satisfiable); phase dim 3 unifies against
-        # the raw first leg d, binding d := 3 -- discarded pre-fix, so nothing caught that
-        # d cannot be both 2 and 3 at once. This diagram is unsatisfiable at every
+        # the raw first leg d, binding d := 3. Discarding that binding would leave nothing
+        # to catch that d cannot be both 2 and 3 at once. This diagram is unsatisfiable at every
         # substitution (apply d := 2 and phase dim 3 disagrees with leg dim 2).
         d = Dim.symbol("d")
         phase = PhaseVector(Dim.concrete(3), {})
@@ -367,7 +369,7 @@ class TestNonConcreteLegBindingIsSilentlyAccepted:
 
 
 class TestAllLegsEqualJointSatisfiability:
-    """F1, leg dims must be *jointly* unifiable, not
+    """Leg dims must be *jointly* unifiable, not
     merely pairwise-unifiable against the first leg -- see qufzx.algebra.dimension.unify_all.
     """
 
@@ -395,7 +397,7 @@ class TestAllLegsEqualJointSatisfiability:
             )
 
     def test_multiple_residual_deferred_pairs_are_all_reported(self) -> None:
-        # R3: three legs, each pair deferred against the others -- one DIMENSION_DEFERRED
+        # Three legs, each pair deferred against the others -- one DIMENSION_DEFERRED
         # issue per residual pair, not one collapsed "strongest" issue for the whole node.
         d, e, f = Dim.symbol("d"), Dim.symbol("e"), Dim.symbol("f")
         diagram = Diagram()
@@ -412,9 +414,8 @@ class TestAllLegsEqualJointSatisfiability:
 
 
 class TestSymbolRoleCollision:
-    """F2, a name cannot legally serve as both a
-    dimension symbol and a phase parameter within one diagram (see
-    qufzx.diagram.validate._classify_symbol_role)."""
+    """A name cannot legally serve as both a dimension symbol and a phase parameter within
+    one diagram (see qufzx.diagram.validate._classify_symbol_role)."""
 
     def test_same_name_dimension_and_phase_symbol_is_rejected(self) -> None:
         d = Dim.symbol("d")
@@ -454,8 +455,8 @@ class TestSymbolRoleCollision:
         # a dimension symbol 'n' and an exponent symbol also named 'n' (d ** n) is a
         # genuine collision -- differing domains under one name (positive vs. merely
         # nonnegative integers) -- and must be reported as {'dimension', 'exponent'}, not
-        # mislabelled {'dimension', 'phase'} the way the pre-fix three-role classifier did
-        # (an exponent symbol, lacking 'positive', fell through into the "phase" branch).
+        # mislabelled {'dimension', 'phase'}, which is where an exponent symbol lands if the
+        # classifier has no exponent role and it falls through into the "phase" branch.
         from qufzx.diagram.validate import _classify_symbol_role
 
         n_dim = Dim.symbol("n")
@@ -479,9 +480,8 @@ class TestSymbolRoleCollision:
         assert _classify_symbol_role(exponent_sym) == "exponent"
 
     def test_exponent_and_phase_parameter_sharing_a_name_is_flagged(self) -> None:
-        # D2's false-negative case: pre-fix, both an exponent and a phase parameter
-        # (Phase.symbol) landed in the same "phase" bucket, so a name shared between them
-        # went completely unflagged.
+        # The false-negative case: were an exponent and a phase parameter (Phase.symbol) to
+        # land in one "phase" bucket, a name shared between them would go unflagged.
         d = Dim.symbol("d")
         n = Dim.symbol("n")
         phase = PhaseVector(Dim.concrete(2), {1: Phase.symbol("n")})
@@ -493,7 +493,7 @@ class TestSymbolRoleCollision:
 
 
 class TestSymbolConstructorRolesRoundTrip:
-    """D2 hardening: every symbol constructor in qufzx.algebra must round-trip to its own,
+    """Every symbol constructor in qufzx.algebra must round-trip to its own,
     distinct role under _classify_symbol_role -- a test that fails loudly the day a fifth
     constructor is added without updating the classifier to give it a role of its own
     (silently aliasing into an existing one would otherwise only surface as a missed or
@@ -526,11 +526,10 @@ class TestSymbolConstructorRolesRoundTrip:
 class TestNodeDimensionUndetermined:
     """A node with zero legs and no phase carries its dimension nowhere at all (per the spec,
     "dimension is stored per port, not as one global parameter"), so it is not well-formed
-    -- yet this module used to accept it as valid, while :mod:`qufzx.semantics.denote`
-    correctly refused it. The invariant this closes: ``validate(d).is_valid`` implies every
-    node in ``d`` is denotable (see ``tests/test_phase5_exhaustive_oracle.py``'s exhaustive
-    sweep, which now checks this over its whole space, and ``denote.py``'s own "has no legs
-    and no phase vector" message, which this issue's message deliberately echoes)."""
+    and :mod:`qufzx.semantics.denote` refuses it. The invariant: ``validate(d).is_valid``
+    implies every node in ``d`` is denotable (see ``tests/test_phase5_exhaustive_oracle.py``'s
+    exhaustive sweep, which checks this over its whole space, and ``denote.py``'s own "has no
+    legs and no phase vector" message, which this issue's message deliberately echoes)."""
 
     def test_legless_phaseless_node_is_a_hard_error(self) -> None:
         diagram = Diagram()

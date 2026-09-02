@@ -13,9 +13,13 @@
 
 """Shared test fixtures: the "A into B" GHZ-with-copy worked example from the build plan.
 
-Not a test module itself (no ``Test*`` classes); imported by :mod:`test_diagram_graph`,
-:mod:`test_validate`, and :mod:`test_phase3_oracle`, and intended for reuse by the
-Phase 4/5/6 test suites that build on the same example.
+Not a test module itself (no ``Test*`` classes). Imported across the Phase 3, 4 and 5
+suites -- :mod:`tests.test_diagram_graph`, :mod:`tests.test_validate`,
+:mod:`tests.test_phase3_oracle`, :mod:`tests.test_check`,
+:mod:`tests.test_contract_numeric`, :mod:`tests.test_phase4_oracle`,
+:mod:`tests.test_match`, :mod:`tests.test_rules_library`, :mod:`tests.test_engine`,
+:mod:`tests.test_phase5_oracle` and :mod:`tests.test_phase5_dirac_oracle` -- so every one
+builds the worked example the same way.
 """
 
 from __future__ import annotations

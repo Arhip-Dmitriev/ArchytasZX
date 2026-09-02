@@ -62,7 +62,7 @@ def _build_diagram(color: GeneratorType) -> Diagram:
 
 
 class TestThreeParallelWireArm:
-    """Permanent regression guard for audit probe 3. See the module docstring."""
+    """The three-parallel-wire arm. See the module docstring."""
 
     def test_three_parallel_wires_then_a_second_fusion_round(self) -> None:
         for color in (Z_SPIDER, X_SPIDER):

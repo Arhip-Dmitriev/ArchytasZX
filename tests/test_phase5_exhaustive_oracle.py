@@ -157,7 +157,7 @@ def _is_cleanly_contractible(diagram: Diagram) -> bool:
 
 
 class TestExhaustiveSpiderFusionOracleSweep:
-    """The full B3 sweep. One test, so a single wall-clock/comparison-count report covers it."""
+    """The full sweep. One test, so a single wall-clock/comparison-count report covers it."""
 
     def test_every_match_in_the_finite_space_agrees_with_the_oracle(self) -> None:
         # _verify_fixpoint_closure's own

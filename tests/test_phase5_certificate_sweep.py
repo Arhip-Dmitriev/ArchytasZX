@@ -93,15 +93,16 @@ too would blow up runtime for no coverage this module doesn't already get elsewh
 connecting pair's own dimension-pair space is exhaustively covered by ``_DIM_PAIRS`` and
 ``TestOracleTiesBackToRecordedConstraints`` below)."""
 _SURVIVING_PALETTE = (Dim.concrete(2), _D, _E, _D * _E, _D**2)
-"""Palette for *surviving* legs and phases. Widened from
-``(Dim.concrete(2), _D)`` to include a product (``d*e``), a power (``d**2``), and a second
-bare symbol (``e``) -- so two distinct binding symbols and a deferred-then-refuted leg are
-inside this structural sweep's space, not only ``test_match.py``'s hand-picked D1 regression
-shapes. ``_leg_shapes``' ``max_total`` is correspondingly lowered from 2 to 1 (see that
-function) to keep the resulting cross product's runtime bounded -- a 5-member palette at
-``max_total=2`` would multiply the previous (already six-figure) diagram count by roughly
-``(5/2)**2``, which is not worth paying for marginal extra shape coverage over what
-``max_total=1`` already reaches with the wider palette."""
+"""Palette for *surviving* legs and phases: a concrete dim, two distinct bare symbols, a
+product (``d*e``), and a power (``d**2``).
+
+Two distinct binding symbols and a deferred-then-refuted leg are therefore inside this
+structural sweep's own space, not only in ``test_match.py``'s hand-picked
+unsatisfiable-leg-set shapes. ``_leg_shapes``' ``max_total`` is 1 (see that function) to
+keep the resulting cross product's runtime bounded: this five-member palette at
+``max_total=2`` would multiply an already six-figure diagram count by roughly ``(5/2)**2``,
+for marginal extra shape coverage over what ``max_total=1`` reaches with the same
+palette."""
 _COLOR_DIRECTION_COMBOS = (
     (Z_SPIDER, Direction.OUTPUT, Direction.INPUT),
     (Z_SPIDER, Direction.OUTPUT, Direction.OUTPUT),
@@ -182,12 +183,11 @@ class TestCertificateStructuralProperties:
                                         )
                                         assert not unify_result.is_failure
 
-                                    # N1: the recorded constraint
-                                    # set must be *simultaneously* satisfiable, not merely
-                                    # pairwise self-consistent (each constraint's own
-                                    # assumed/equal_to unifying in isolation, checked above,
-                                    # is exactly what let D1's contradictory set through:
-                                    # e*f == 2, e == 2, f == 2 each individually unify fine).
+                                    # The recorded constraint set must be *simultaneously*
+                                    # satisfiable, not merely pairwise self-consistent: each
+                                    # constraint's own assumed/equal_to unifying in isolation,
+                                    # checked above, admits a contradictory set such as
+                                    # e*f == 2, e == 2, f == 2, whose members each unify fine.
                                     # Resolve every constraint's own pair through the
                                     # match's *final* bindings and re-unify -- this is
                                     # _verify_fixpoint_closure's own check, re-derived here
@@ -605,8 +605,7 @@ def _assert_dimension_agreement_detail_agrees(match: object) -> None:  # match: 
 def _assert_phase_dimension_agreement_detail_agrees(match: object) -> None:  # FusionMatch
     """Every name/value ``phase_dimension_agreement``'s "assuming ..." clause states must
     come from a ``NODE_PHASE``/``BOUND`` record entry's own ``bound_here`` -- never from
-    ``match.bindings`` read by name alone (Task 1's audit of every detail string, not just
-    the connecting pair's)."""
+    ``match.bindings`` read by name alone."""
     entries = match.dimension_constraints  # type: ignore[attr-defined]
     outcome = next(
         o
@@ -697,17 +696,14 @@ class TestCertificateDetailFidelity:
         assert total > 0, "the phase detail-fidelity sweep never produced a single fusion match"
 
     def test_phase_bound_on_both_nodes_with_legs_surviving_on_both_sides_agrees(self) -> None:
-        """A phase-sourced binding on *each* node, with a surviving leg on
-        *each* side too, is exactly the shape where the deleted ``phase_bound_names``
-        accumulator and ``record`` itself could in principle have disagreed (see
-        ``_unify_phase_dims``'s module-docstring "Round 20" note) -- both nodes contribute a
-        NODE_PHASE entry to ``record``, and a surviving leg on each side means the shared
-        dimension is also being refined by a source ``_unify_phase_dims`` does not itself
-        touch. This does not (and, per that note, could not before the fix either) fail
-        under Phase 5's placeholder ``Dim.unify`` -- it exists so the shape is exercised at
-        all, pinning today's agreement so a future ``Dim.unify`` (Phase 10) that could
-        actually diverge the two collections has a regression test already in place rather
-        than discovering the gap the hard way.
+        """A phase-sourced binding on *each* node, with a surviving leg on *each* side too.
+
+        Both nodes contribute a ``NODE_PHASE`` entry to ``record``, and a surviving leg on
+        each side means the shared dimension is also refined by a source
+        ``_unify_phase_dims`` does not itself touch -- the shape in which the
+        ``phase_dimension_agreement`` detail and ``record`` could in principle disagree.
+        They do not under Phase 5's placeholder ``Dim.unify``; this pins that agreement for
+        the Phase 10 unifier, which can reach states this one cannot.
         """
         total = 0
         for color, dir_a, dir_b in _COLOR_DIRECTION_COMBOS:
@@ -755,7 +751,7 @@ def _check_adequacy(
     resolution: match_module.FusionResolution,
     asserted_pairs: list[tuple[Dim, Dim]],
 ) -> str | None:
-    """Verify Task 1's adequacy invariant for one passed resolution.
+    """Verify the adequacy invariant for one passed resolution.
 
     Every satisfying assignment (within :data:`_ADEQUACY_SEARCH_RANGE`) of the finished
     ``dimension_constraints`` plus the finished ``bindings`` must also satisfy every pair
@@ -794,7 +790,7 @@ def _check_adequacy(
 def _find_matches_with_adequacy_instrumentation(
     diagram: Diagram,
 ) -> tuple[tuple[match_module.FusionMatch, ...], int, int]:
-    """``find_matches(diagram)``, checking Task 1's adequacy invariant for every candidate
+    """``find_matches(diagram)``, checking the adequacy invariant for every candidate
     ``resolve_fusion_match`` resolves along the way (not only the ones that end up returned
     as matches -- a rejected candidate's own resolution is not checked here since it never
     reaches ``passed``, but every *passed* one is, exactly like the returned matches
@@ -842,16 +838,14 @@ def _find_matches_with_adequacy_instrumentation(
 
 
 class TestConstraintRecordAdequacy:
-    """The adequacy property from ``_ConstraintRecord``'s own docstring, mechanically enforced
-    rather than merely argued.
-
+    """The adequacy property from ``_ConstraintRecord``'s own docstring, mechanically enforced.
 
     Every ``(assumed, equal_to)`` pair ``_ConstraintRecord.record`` ever asserts during a
-    resolution -- including one a later pass displaces or overwrites, which round 23 found
-    happens 43 times over the property harness's 15,000-seed sweep (16 BOUND -> DEFERRED, 27
-    BOUND -> a different BOUND) -- must be implied by the *finished* ``dimension_constraints``
-    plus the *finished* ``bindings``: at every small concrete substitution satisfying both,
-    every asserted pair must also hold. See ``_check_adequacy`` for the mechanics.
+    resolution -- including one a later pass displaces or overwrites, which the property
+    harness's sweeps do reach, both BOUND -> DEFERRED and BOUND -> a different BOUND -- must
+    be implied by the *finished* ``dimension_constraints`` plus the *finished* ``bindings``:
+    at every small concrete substitution satisfying both, every asserted pair must also
+    hold. See ``_check_adequacy`` for the mechanics.
     """
 
     def test_structural_sweep_space_is_adequate(self) -> None:

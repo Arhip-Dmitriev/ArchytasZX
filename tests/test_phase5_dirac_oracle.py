@@ -162,23 +162,17 @@ class TestDiracParserGrammar:
 
 
 class TestDiracParserAsciiNumericTokens:
-    """Round 24: the numeric guard is the predicate its contract is written in terms of.
+    """The numeric guard is the same predicate ``DiracError``'s safety note is stated over.
 
-    :func:`~qufzx.repl.parser._parse_dim` used to gate ``int(token)`` on
-    ``token.isdigit()`` while :class:`~qufzx.repl.parser.DiracError`'s own safety audit
-    justified the call as safe because "the token matches ``\\d+``". Those are three
-    different predicates, widening in this order: ``[0-9]+`` (ASCII), ``\\d+`` (Unicode
-    category ``Nd``), ``str.isdigit()`` (``Nd`` *and* ``No``). ``int()`` accepts the first
-    two and raises ``ValueError`` on the third, so ``_parse_dim`` called with a ``No``
-    character leaked a bare ``ValueError`` through this module's ``DiracError`` boundary --
-    the Task 1 defect class round 20 closed everywhere else here. Nothing reachable through
-    :func:`~qufzx.repl.parser.parse_dirac_source` did that, because ``_KET_SUM_RE`` gated
-    every real call site, so the audit's *conclusion* held while its stated *reason* did
-    not; the module docstring says Phase 18 replaces that grammar.
+    Three predicates widen in this order: ``[0-9]+`` (ASCII), ``\\d+`` (Unicode category
+    ``Nd``), ``str.isdigit()`` (``Nd`` *and* ``No``). ``int()`` accepts the first two and
+    raises ``ValueError`` on the third, so gating ``int(token)`` on anything wider than the
+    regex the safety note cites would leak a bare ``ValueError`` through this module's
+    ``DiracError`` boundary.
 
-    These tests pin the fixed contract at both levels -- the private helper standing alone,
-    and the public entry point -- so a future caller that does not go through the current
-    regex cannot silently reopen it.
+    These tests pin the contract at both levels -- :func:`~qufzx.repl.parser._parse_dim`
+    standing alone, and :func:`~qufzx.repl.parser.parse_dirac_source` -- so a future caller
+    that does not go through ``_KET_SUM_RE`` cannot silently reopen it.
     """
 
     def test_helper_rejects_non_ascii_digits_as_dirac_errors_not_value_errors(self) -> None:

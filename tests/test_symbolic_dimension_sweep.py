@@ -127,7 +127,7 @@ def _build_diagram(
 
 
 class TestSymbolicDimensionSweep:
-    """Permanent regression guard for audit probe 2. See the module docstring."""
+    """The symbolic-dimension sweep. See the module docstring."""
 
     def test_every_combination_fuses_soundly_or_is_skipped_as_documented(self) -> None:
         checked = 0
@@ -208,9 +208,9 @@ class TestSymbolicDimensionSweep:
                                 # diagram whose unbound symbols unify freely (e.g. a leg
                                 # over bare `e` against one over bare `d`) is clean
                                 # symbolically, but a concrete assignment that sets d != e
-                                # can still make two now-concrete legs disagree outright --
-                                # exactly the audit brief's own "where the input is cleanly
-                                # contractible" qualifier. The anti-laundering invariant
+                                # can still make two now-concrete legs disagree outright,
+                                # which is why the qualifier is per assignment rather than
+                                # once up front. The anti-laundering invariant
                                 # above has already been checked for this (pre, post) pair
                                 # regardless; only the oracle comparison below needs a clean
                                 # pre-fusion diagram to be meaningful.
@@ -288,15 +288,13 @@ class TestPinnedRegressionReproductions:
         frozen at the bound value, and the two disagree on the dimension the binding
         assumed. A Z spider pair, every leg over the symbol ``d``; A has one extra surviving
         output leg (so the merged node keeps a leg to disagree with its phase over, exactly
-        the audit's own "legs = [Dim(d)]" witness), B carries an empty phase over the
-        concrete ``2`` -- B's mere presence binds ``d := 2``.
+        witness), B carries an empty phase over the concrete ``2`` -- B's mere presence binds
+        ``d := 2``.
 
-
-        Before the fix, the merged node came out as ``legs = [Dim(d)]``,
-        ``phase = PhaseVector[d]({1: 1/2 turns})`` -- a container still claiming the
-        unresolved symbol ``d`` while its one entry was already the numeric value only
-        correct at ``d = 2``. Both fields must now agree on the same concrete value the
-        binding actually produced.
+        The shape to avoid is a merged node of ``legs = [Dim(d)]``,
+        ``phase = PhaseVector[d]({1: 1/2 turns})``: a container still claiming the unresolved
+        symbol ``d`` while its one entry is already the numeric value only correct at
+        ``d = 2``. Both fields must agree on the same concrete value the binding produced.
         """
         d = Dim.symbol("d")
         diagram = Diagram()

@@ -164,7 +164,7 @@ def _build_diagram(
 
 
 class TestThreeNodeOracleSweep:
-    """Permanent regression guard for audit probe 1. See the module docstring."""
+    """The 3-node oracle sweep. See the module docstring."""
 
     def test_every_combination_fuses_soundly_or_is_skipped_as_documented(self) -> None:
         checked = 0

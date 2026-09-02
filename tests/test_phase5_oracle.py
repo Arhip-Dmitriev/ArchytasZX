@@ -131,8 +131,8 @@ class TestSpiderFusionOracleX:
 def _build_z_output_to_output(dim: Dim) -> Diagram:
     """Two Z spiders joined by an OUTPUT-OUTPUT wire, with one surviving boundary output.
 
-    Regression coverage for the Phase 5 final fix round's Step 4 decision (see match.py's
-    module docstring, condition 4): a Z-Z wire of any direction is valid fusion, since Z's
+    Coverage for condition 4 (see match.py's
+    module docstring): a Z-Z wire of any direction is valid fusion, since Z's
     tensor is diagonal in every axis and contraction never conjugates -- unlike X, where
     only an OUTPUT-to-INPUT wire is fusion (see :class:`TestSpiderFusionOracleX`).
     """
@@ -197,7 +197,7 @@ def _build_parallel_wire_pair(
     False, or same-direction (OUTPUT-OUTPUT) when True -- condition 4 restricts only the
     *consumed* wire (always OUTPUT-INPUT here, so this shape is legal fusion for X too).
     Returns the diagram and the consumed wire, so a caller can pick out (of the two matches
-    this pair now yields) the one that fuses across it.
+    this pair yields) the one that fuses across it.
     """
     diagram = Diagram()
     a_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim, dim])
@@ -258,8 +258,8 @@ def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram
     """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
 
     The corner case from :mod:`qufzx.rewrite.rules_library`'s module docstring ("See
-    :func:`_merged_phase` for the legless corner case, where dimension can only survive
-    via the phase slot") and from :func:`~qufzx.rewrite.rules_library._merged_phase`'s own
+    :func:`_merged_phase` for the legless corner case, where dimension can survive only via
+    the phase slot") and from :func:`~qufzx.rewrite.rules_library._merged_phase`'s own
     docstring: the merged node ends up with zero inputs and zero outputs, so its
     dimension can only survive via an explicit zero phase.
     """
@@ -271,7 +271,7 @@ def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram
 
 
 class TestSpiderFusionOracleAllLegsConsumed:
-    """The all-legs-consumed corner case, for both colors: the fix under test."""
+    """The all-legs-consumed corner case, for both colors."""
 
     def test_z_merged_node_has_no_legs(self) -> None:
         pre = _build_all_legs_consumed(Dim.symbol("d"), Z_SPIDER)
@@ -692,8 +692,8 @@ class TestFusionMatchNegativeControls:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         assert find_matches(diagram) == ()
 
-    def test_two_wires_between_same_pair_now_yield_two_matches(self) -> None:
-        """A node pair joined by k wires now yields up to k candidates, one per wire, each
+    def test_two_wires_between_same_pair_yield_two_matches(self) -> None:
+        """A node pair joined by k wires yields up to k candidates, one per wire, each
         leaving the others as self-loops -- see match.py's module docstring, condition 3.
         See :class:`TestParallelWireFusionOracle` for the oracle coverage."""
         d = Dim.concrete(2)

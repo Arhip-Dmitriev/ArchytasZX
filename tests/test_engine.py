@@ -154,10 +154,10 @@ class TestApplyRejectsAnUnmappedSurvivingPort:
 class TestApplyRejectsAnUnmappedSurvivingBoundaryPort:
     """Mirrors ``TestApplyRejectsAnUnmappedSurvivingPort`` for the boundary rebuild.
 
-    Before the fix, step 4's boundary rebuild used the silent ``port_mapping.get(ref, ref)``
-    fallback unconditionally, so an unmapped ref on a consumed node would survive the
-    rebuild unchanged and then be silently deleted by step 5's ``remove_node`` cascade --
-    shrinking the returned diagram's boundary arity with no exception. These two tests
+    A boundary rebuild using the silent ``port_mapping.get(ref, ref)`` fallback
+    unconditionally would let an unmapped ref on a consumed node survive the rebuild
+    unchanged, to be silently deleted by step 6's ``remove_node`` cascade -- shrinking the
+    returned diagram's boundary arity with no exception. These two tests
     (output and input) are the direct boundary-side mirror of
     ``test_raises_when_builder_omits_a_surviving_port_a_wire_references`` above.
     """
@@ -189,7 +189,7 @@ class TestApplyRejectsAnUnmappedSurvivingBoundaryPort:
         match = find_matches(diagram)[0]
 
         # A's output 1 is referenced only by the boundary output list, not by any wire --
-        # this is the case the pre-fix silent fallback let through unnoticed.
+        # the case a silent fallback would let through unnoticed.
         assert PortRef(a_id, Direction.OUTPUT, 1) in diagram.boundary_outputs
 
         with pytest.raises(RewriteDomainError):
@@ -262,8 +262,8 @@ class TestRewriteStepProvenance:
 class TestCertificateRecordsTheReDerivedFacts:
     """The certificate must record what ``resolve_fusion_match`` independently re-derives, not
     a match's own unaudited claim -- ``spider_fusion_builder`` computes the real
-    ``FusionResolution`` as a side effect of its own re-verification but, before this fix,
-    had no ``BuildResult`` channel to return it, so ``apply`` fell back to recording
+    ``FusionResolution`` as a side effect of its own re-verification and returns it through
+    ``BuildResult``'s ``verified_*`` channel. Without that channel ``apply`` would record
     ``match``'s own ``side_condition_outcomes``/``dimension_constraints`` verbatim -- fields
     a foreign or hand-built match can fabricate."""
 
@@ -304,10 +304,9 @@ class TestCertificateRecordsTheReDerivedFacts:
                 for o in match.side_condition_outcomes
             ),
         )
-        # Before the fix: apply() recorded fake's claim of "no dimension assumption"
-        # verbatim onto the certificate. Now: spider_fusion_builder catches the
-        # disagreement against its own fresh resolve_fusion_match derivation and refuses
-        # to build at all, rather than let a laundered certificate through.
+        # fake claims "no dimension assumption". spider_fusion_builder catches the
+        # disagreement against its own fresh resolve_fusion_match derivation and refuses to
+        # build at all, rather than let a laundered certificate through.
         with pytest.raises(RewriteDomainError):
             apply(diagram, SPIDER_FUSION, fake)
 
@@ -435,10 +434,9 @@ class TestApplyRejectsAForeignMatch:
     def test_raises_when_new_node_ids_names_a_node_never_added(self) -> None:
         """A builder that reports a ``new_node_ids`` entry it never actually created.
 
-        Neither step 5 (which never reads ``new_node_ids``) nor the pre-fix step 8/9 would
-        have caught this: step 9 would have published a phantom id into the ``RewriteStep``
-        for Phase 6's certificate to choke on much later, far from the builder bug that
-        produced it.
+        Step 5 never reads ``new_node_ids``, so without step 4's own existence check step 9
+        would publish a phantom id into the ``RewriteStep`` for Phase 6's certificate to
+        choke on much later, far from the builder bug that produced it.
         """
 
         def _phantom_new_node_builder(working_diagram: Diagram, match_obj: object) -> object:
@@ -465,8 +463,8 @@ class TestApplyRejectsAForeignMatch:
     def test_raises_when_port_mapping_names_an_out_of_range_port(self) -> None:
         """A builder that reports a ``port_mapping`` value naming a nonexistent port.
 
-        Undetected, step 5 would have fed this value straight into ``add_wire`` for every
-        surviving wire or boundary entry that used to point at the corresponding consumed
+        Undetected, step 5 would feed this value straight into ``add_wire`` for every
+        surviving wire or boundary entry pointing at the corresponding consumed
         port -- either raising a confusing, unrelated error deep in wire remapping, or (if
         the bogus index happened to be in range for some other leg) silently splicing the
         wire onto the wrong port instead.
@@ -509,12 +507,11 @@ class TestRewriteStepRecordsTheMatch:
 
 
 class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
-    """Step 8's relative post-condition used to compare hard-error IssueKinds as a *set*. A set
-    comparison cannot see a second, independent issue of a kind the input diagram already
-    carried once (both collapse to the same set element), so a builder that left the input's
-    pre-existing violation untouched but introduced a brand new, unrelated one of the *same*
-    kind on a fresh node used to slip through undetected. The comparison must be a multiset
-    keyed by (kind, offending ref) instead."""
+    """Step 8's relative post-condition compares hard-error issues as a *multiset* keyed by
+    (kind, offending ref). A bare set comparison cannot see a second, independent issue of a
+    kind the input diagram already carried once (both collapse to the same set element), so a
+    builder that left the input's pre-existing violation untouched but introduced a brand new,
+    unrelated one of the *same* kind on a fresh node would slip through undetected."""
 
     def test_a_second_dimension_policy_violation_on_a_new_node_is_caught(self) -> None:
         def _builder_with_a_second_violation(working_diagram: Diagram, match_obj: object) -> object:
@@ -574,9 +571,9 @@ class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
     def test_port_unused_on_a_consumed_nodes_surviving_leg_does_not_block_the_rewrite(
         self,
     ) -> None:
-        # The exact reproduction from the audit: A.in0 is left neither wired nor on a
-        # boundary (a pre-existing PORT_UNUSED), and is not the leg the fusion consumes
-        # (that's A.out0) -- it survives onto the merged node.
+        # A.in0 is left neither wired nor on a boundary (a pre-existing PORT_UNUSED), and
+        # is not the leg the fusion consumes (that's A.out0) -- it survives onto the merged
+        # node.
         two = Dim.concrete(2)
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[two])
@@ -715,15 +712,15 @@ class TestRemovedDeferredIssuesAreRecorded:
 
 
 class TestDimensionConstraintsExactContent:
-    """Dimension_constraints duplicate-assumption defect.
+    """``dimension_constraints`` must carry no duplicate assumption.
 
-    Before the fix, ``_unify_surviving_legs`` (match.py) unified each surviving leg's raw,
-    unresolved ``Dim`` against ``shared_dim`` -- unlike its sibling ``_unify_phase_dims``,
-    which first resolves the checked ``Dim`` through the running ``bindings`` accumulator.
-    A leg still mentioning a symbol some earlier leg or phase had already bound concretely
-    was therefore re-unified and re-appended to ``dimension_constraints`` as though it were
-    a fresh fact, once per such leg and again on every fixpoint pass that left ``shared_dim``
-    unchanged. Asserts exact tuple content (not merely length) on ``RewriteStep
+    ``_unify_surviving_legs`` (match.py) resolves each surviving leg's ``Dim`` through the
+    running ``bindings`` accumulator before unifying it against ``shared_dim``, exactly as
+    its sibling ``_unify_phase_dims`` does. Unifying the raw, unresolved ``Dim`` instead
+    would re-unify a leg still mentioning a symbol some earlier leg or phase had already
+    bound concretely, recording it as though it were a fresh fact, once per such leg and
+    again on every fixpoint pass. Asserts exact tuple content (not merely length) on
+    ``RewriteStep
     .dimension_constraints`` -- the field Phase 6 will read as the certificate -- for three
     shapes, mirroring the accumulator discipline ``_unify_phase_dims`` already had.
     """
@@ -824,15 +821,15 @@ class TestDimensionConstraintsExactContent:
 
 
 class TestRemovedDeferredIssuesMultisetCompare:
-    """``removed_deferred_issues`` key-collision defect.
+    """``removed_deferred_issues`` must not collapse two issues onto one key.
 
-    Before the fix, the deferred compare in ``apply`` (engine.py) keyed a plain dict
-    comprehension on ``_translate_input_issue_key(issue, ...)``. That function maps both
-    consumed node ids of a fusion onto the sole surviving ``new_node_ids[0]``, so two
-    distinct, node-anchored ``DIMENSION_DEFERRED`` issues -- one on each of the two fused
-    spiders -- translate to the *same* key and collapse to one dict entry, silently dropping
-    one to last-write-wins. The fix makes this compare multiset-aware (a ``Counter``
-    difference), mirroring step 8's own hard-error compare instead of diverging from it.
+    The deferred compare in ``apply`` (engine.py) is multiset-aware, a ``Counter``
+    difference, mirroring step 8's own hard-error compare. Keying a plain dict on
+    ``_translate_input_issue_key(issue, ...)`` would not do: that function maps both consumed
+    node ids of a fusion onto the sole surviving ``new_node_ids[0]``, so two distinct,
+    node-anchored ``DIMENSION_DEFERRED`` issues -- one on each of the two fused spiders --
+    translate to the *same* key and would collapse to one entry, dropping one to
+    last-write-wins.
     """
 
     def test_two_node_anchored_deferred_issues_are_both_reported(self) -> None:
@@ -870,8 +867,8 @@ class TestRemovedDeferredIssuesMultisetCompare:
 
 
 class TestDeferredIssueProvenanceIsSymmetric:
-    """D2/D3: a rewrite can introduce a deferred assumption as readily as it removes one, and
-    the identity contract on a colliding key is stated and pinned, not left implicit.
+    """A rewrite can introduce a deferred assumption as readily as it removes one, and the
+    identity contract on a colliding key is stated and pinned, not left implicit.
     """
 
     def test_introduced_deferred_issue_is_recorded_in_post_rewrite_coordinates(self) -> None:
@@ -1246,12 +1243,12 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_duplicate_new_node_ids_raises_rewrite_grammar_error(self) -> None:
-        """``new_node_ids`` is a
-        structurally identical reference kind to ``consumed_node_ids`` (a tuple of ``NodeId``
-        the builder reports about this one rewrite), but only the latter had a duplicate
-        check (A3) before this fix. A repeat here drives no imperative loop into a crash --
-        unlike A3 -- but it would still misreport, to ``RewriteStep.new_node_ids`` and
-        Phase 6's certificate, that a rewrite created two new nodes when it created one.
+        """``new_node_ids`` is a structurally identical reference kind to
+        ``consumed_node_ids`` (a tuple of ``NodeId`` the builder reports about this one
+        rewrite), and carries its own duplicate check. A repeat here drives no imperative
+        loop into a crash, unlike a duplicate ``consumed_node_id``, but it would still
+        misreport to ``RewriteStep.new_node_ids`` and Phase 6's certificate that a rewrite
+        created two new nodes when it created one.
         """
         d = Dim.concrete(2)
         diagram = Diagram()
@@ -1281,8 +1278,8 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
             apply(diagram, rule, _ScriptedMatch())
 
     def test_hardening_5_non_injective_port_mapping_raises_rewrite_grammar_error(self) -> None:
-        """Port_mapping's injectivity is load-bearing (step 5 relies on distinct surviving old
-        ports remapping to distinct new ports) but was previously unchecked. Two consumed
+        """``port_mapping``'s injectivity is load-bearing: step 5 relies on distinct surviving
+        old ports remapping to distinct new ports, and step 4 checks it. Two consumed
         ports mapped to the *same* new port would, once both their wires are remapped,
         produce two ``Wire`` objects that could be identical -- silently collapsing into one
         entry of ``Diagram``'s set-backed wire storage, with no exception anywhere.
