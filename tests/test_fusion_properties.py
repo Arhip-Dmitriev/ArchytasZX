@@ -730,22 +730,17 @@ def _check_one_clean_match(diagram: Diagram, match: FusionMatch, seed: int) -> t
 _MIN_CLEAN_ORACLE_COMPARISONS = 3000
 """Floor for the total oracle comparisons summed across every checked clean-diagram match.
 
-Set well above what :class:`TestSpiderFusionProperties`'s own reference run actually
-achieves (a few thousand over ``_CLEAN_SEEDS``), the same margin-for-safety posture as
-``_MIN_ORACLE_COMPARISONS`` above but at a scale that means something for *this* arm: the
-existing generator's floor was walked down from 260 to 130 to 57 across prior audit rounds
-because its deliberately mixed, deferred-unify, and product/power dimensions make almost
-every candidate fail :func:`_is_cleanly_contractible` before the oracle ever runs (~57 out
-of 2,500 seeds' worth of matches), so a low floor there says nothing about whether the
-oracle-equality property -- Phase 5's stated completion condition -- is actually being
-exercised at scale. ``_build_clean_diagram`` is cleanly contractible *by construction* (one
-concrete dim, no symbols anywhere), so essentially every match this generator produces
-reaches :func:`~qufzx.semantics.check.compare` -- measured at 7,656 comparisons over
-``_CLEAN_SEEDS``'s 20,000 seeds, in about 20s wall time (well within the existing test's own
-~65s), with zero ``ContractSizeError`` skips at the current leg-count/wiring-probability
-tuning (see :func:`_build_clean_diagram`'s docstring for why those are kept small). 3,000
-leaves comfortable headroom against incidental generator tuning while still failing hard if
-this arm's oracle calls silently stopped running.
+``_MIN_ORACLE_COMPARISONS`` above has to sit low because ``_build_random_diagram``'s
+deliberately mixed, deferred-unify, and product/power dimensions make almost every candidate
+fail :func:`_is_cleanly_contractible` before the oracle ever runs, so a floor there says
+little about whether the oracle-equality property -- Phase 5's stated completion condition --
+is exercised at scale. ``_build_clean_diagram`` is cleanly contractible *by construction*
+(one concrete dim, no symbols anywhere), so essentially every match it produces reaches
+:func:`~qufzx.semantics.check.compare`: measured at 7,656 comparisons over ``_CLEAN_SEEDS``'s
+20,000 seeds, with zero ``ContractSizeError`` skips at the current leg-count/wiring-probability
+tuning (see :func:`_build_clean_diagram`'s docstring for why those are kept small). 3,000 is
+under 40% of that, leaving headroom against incidental generator tuning while still failing
+hard if this arm's oracle calls silently stopped running.
 """
 
 def _resolved_dim(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
@@ -889,7 +884,7 @@ while never actually calling :func:`~qufzx.semantics.check.compare`.
 ``Dim.concrete(4)``/``Dim.concrete(6)`` in ``_DIM_PALETTE`` and ``(2, 1)``/``(3, 1)`` in
 ``_ORACLE_DIM_PAIRS`` are what let a ``d*e`` or ``d**2`` leg agree with a concrete leg at
 some oracle substitution, rather than almost always failing ``_is_cleanly_contractible``
-first; that measures 118 comparisons over ``_SEEDS``. 82 is roughly 70% of it, leaving
+first; that measures 136 comparisons over ``_SEEDS``. 82 is roughly 60% of it, leaving
 headroom against incidental generator changes while still failing hard if the oracle arm
 silently stops running.
 """
@@ -1187,12 +1182,11 @@ class TestSpiderFusionProperties:
         Uses :func:`_build_clean_diagram` (cleanly contractible by construction, unlike
         ``_build_random_diagram``'s deliberately mixed-dimension population) so that
         essentially every match reaches :func:`~qufzx.semantics.check.compare`, not just the
-        ~57-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
+        ~136-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
         six colour/direction shapes ``consumed_wire_direction_permitted_for_color`` actually
-        permits (see
-        ``match.py``'s condition 4) are all still being generated -- so a future change to
-        this generator that stopped producing, say, same-direction Z-Z wires would fail this
-        test directly, rather than silently losing coverage of the Z-widening commit.
+        permits (see ``match.py``'s condition 4) are all still being generated -- so a future
+        change to this generator that stopped producing, say, same-direction Z-Z wires would
+        fail this test directly rather than silently losing that coverage.
         """
         checked_any_match = False
         total_oracle_comparisons = 0
@@ -1413,10 +1407,9 @@ _MIN_MIXED_ORACLE_COMPARISONS = 2200
 fusable pair, reaching a ``shared_dim`` refined by a leg-unify binding -- unlike
 ``_build_random_diagram``'s ``d*e``/``d**2`` legs, which mostly fail
 ``_is_cleanly_contractible`` before the oracle runs (see ``_MIN_ORACLE_COMPARISONS``'s
-docstring). Measured 3,154 comparisons over 3,103 fixpoint-chain steps across
-``_MIXED_SEEDS``'s 40,000 seeds, in about 27s wall time. 2,200 is roughly 70% of that
-measurement, leaving headroom against incidental generator tuning while still failing hard
-if this arm's oracle calls silently stopped running.
+docstring). Measured 4,722 comparisons across ``_MIXED_SEEDS``'s 40,000 seeds. 2,200 is
+under half of that, leaving headroom against incidental generator tuning while still failing
+hard if this arm's oracle calls silently stopped running.
 """
 
 
@@ -1659,17 +1652,16 @@ class TestStructuralSatisfiabilityAtScale:
 _MIN_BINDINGS_ORACLE_COMPARISONS = 55
 """Floor for the total oracle comparisons run by substituting ``match.bindings`` itself.
 
-N1's required non-skippable invariant arm exists precisely because the fixed
-``_ORACLE_DIM_PAIRS`` palette used by :func:`_check_one_match` never tries the substitution
-that actually matters -- ``match.bindings`` itself -- so a D1-shaped defect (a match whose
-own recorded assumptions are jointly unsatisfiable) was invisible to it by construction: a
-diagram exhibiting D1 fails ``_is_cleanly_contractible`` at its own bindings and would, pre
-this arm, only ever be silently ``continue``d past. Measured over ``_SEEDS``'s 2,500 seeds
-(most matches either have all-symbolic bindings that don't fully concretize the diagram --
-counted as ``unconstrained_skips``, a legitimate skip per this arm's own contract -- or trip
-``ContractSizeError``). Set at roughly 70% of that measurement, leaving headroom against
-incidental generator tuning while still failing hard if this arm's oracle calls silently
-stopped running or its skip reasons silently widened to swallow everything.
+The fixed ``_ORACLE_DIM_PAIRS`` palette :func:`_check_one_match` uses never tries the one
+substitution that matters here -- ``match.bindings`` itself -- so a match whose own recorded
+assumptions are jointly unsatisfiable is invisible to it by construction: such a diagram
+fails ``_is_cleanly_contractible`` at its own bindings and would only ever be silently
+``continue``d past. Measured at 80 comparisons over ``_SEEDS``'s 2,500 seeds, alongside 113
+``unconstrained_skips`` (matches whose all-symbolic bindings do not fully concretize the
+diagram -- a legitimate skip per this arm's own contract) and no ``ContractSizeError`` skips.
+55 is roughly 70% of that, leaving headroom against incidental generator tuning while still
+failing hard if this arm's oracle calls silently stopped running or its skip reasons silently
+widened to swallow everything.
 """
 
 
@@ -1901,26 +1893,27 @@ class TestStructuralInvariants:
 
 _ORACLE_DIFF_SEEDS: tuple[int, ...] = tuple(range(42000, 44000))
 """Disjoint from ``_STRUCTURAL_SEEDS`` too, and from every pinned pool this module already
-uses (see that constant's own docstring) -- a genuinely fresh range for Task 8b, not merely
+uses (see that constant's own docstring) -- a genuinely fresh range, not merely
 re-confirming seeds the matcher and builder have already been tuned against."""
 
 _MIN_ORACLE_DIFF_COMPARISONS = 500
-_MIN_ORACLE_DIFF_EXACT_MATCHES = 500
-"""Floors for :class:`TestFreshSeedOracleDifferential`: a comparison-count floor (the arm
-actually ran ``compare()``, not silently skipping every match) and an exact-match floor (the
-arm actually found agreement, not merely running comparisons that all happened to mismatch
-or get skipped for size) -- the same two-floor discipline
-``TestOracleTiesBackToRecordedConstraints`` in ``test_phase5_certificate_sweep.py`` uses."""
+"""Floor for :class:`TestFreshSeedOracleDifferential`'s comparison count: the arm actually
+ran ``compare()``, rather than silently skipping every match.
+
+One floor is enough here: :func:`_check_one_clean_match` asserts ``comparison.matched``
+itself, so a comparison it counts is necessarily an exact match and a disagreement fails the
+test outright rather than being tallied. Measured at 818 comparisons over
+``_ORACLE_DIFF_SEEDS``' 2,000 seeds, with no ``ContractSizeError`` skips."""
 
 
 class TestFreshSeedOracleDifferential:
-    """Task 8b: a fresh-seed oracle differential over a range disjoint from every existing
+    """A fresh-seed oracle differential over a range disjoint from every existing
     pinned pool in this module, so the suite is not merely re-confirming the seeds it was
     tuned against. Uses :func:`_build_clean_diagram` (fully concrete by construction) so
     every match reaches :func:`~qufzx.semantics.check.compare` directly, via
     :func:`_check_one_clean_match` -- the same mechanics
-    ``TestSpiderFusionProperties::test_clean_diagrams_fuse_soundly_at_real_scale`` already
-    uses, over a disjoint seed range instead of a shared one.
+    ``TestSpiderFusionProperties::test_clean_diagrams_fuse_soundly`` already uses, over a
+    disjoint seed range instead of a shared one.
     """
 
     def test_fresh_seeds_agree_with_the_oracle(self) -> None:
@@ -1933,9 +1926,8 @@ class TestFreshSeedOracleDifferential:
                 comparisons, size_skips = _check_one_clean_match(diagram, match, seed)
                 total_comparisons += comparisons
                 total_size_skips += size_skips
-        assert total_comparisons >= _MIN_ORACLE_DIFF_EXACT_MATCHES, (
-            f"only {total_comparisons} exact oracle match(es) over the fresh seed range "
-            f"(floor is {_MIN_ORACLE_DIFF_EXACT_MATCHES}, {total_size_skips} skipped for "
+        assert total_comparisons >= _MIN_ORACLE_DIFF_COMPARISONS, (
+            f"only {total_comparisons} oracle comparison(s) over the fresh seed range "
+            f"(floor is {_MIN_ORACLE_DIFF_COMPARISONS}, {total_size_skips} skipped for "
             "ContractSizeError); this arm may be silently exercising almost nothing"
         )
-        assert total_comparisons >= _MIN_ORACLE_DIFF_COMPARISONS

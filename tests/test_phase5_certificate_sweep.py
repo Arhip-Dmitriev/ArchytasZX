@@ -364,21 +364,17 @@ _MIN_TIE_BACK_ORACLE_COMPARISONS = 2
 """Floor for ``total_checked`` in :class:`TestOracleTiesBackToRecordedConstraints`, the same
 pattern (and the same purpose) as ``test_fusion_properties.py``'s ``_MIN_ORACLE_COMPARISONS``
 family: without a floor, this arm degenerating to "every case's satisfying/violating
-substitution search comes back infeasible or absent" would still pass on the bare ``> 0``
-check it replaces, silently exercising nothing.
+substitution search comes back infeasible or absent" would still pass a bare ``> 0`` check,
+silently exercising nothing.
 
-this arm was previously guarded only by ``total_checked > 0``, with no
-floor at all -- unlike every random-seed property harness in ``test_fusion_properties.py``,
-which each has one. This arm iterates a fully deterministic, fixed cross product (
-``_COLOR_DIRECTION_COMBOS`` x 3 source kinds x ``_DIM_PAIRS``, 36 cases total as of this
-measurement), not a random seed range, so its ``total_checked`` count is exactly
-reproducible rather than merely likely to land near some expected value -- measured directly
-by running the test body's own loop standalone: 36 cases, 3 actually checked (a satisfying
-*and* a violating small-integer assignment both found), 15 recognized as Diophantine-
-infeasible and skipped, the remainder producing no match or no entry of the targeted source
-kind at all. The floor is set to 2, one below that exact measurement, so an incidental
-generator change that removes one checked case does not spuriously fail this floor while an
-arm that stops checking almost everything still does.
+This arm iterates a fully deterministic, fixed cross product (``_COLOR_DIRECTION_COMBOS`` x
+3 source kinds x ``_DIM_PAIRS``, 36 cases), not a random seed range, so its
+``total_checked`` count is exactly reproducible rather than merely likely to land near some
+expected value: 36 cases, 3 actually checked (a satisfying *and* a violating small-integer
+assignment both found), 15 recognized as Diophantine-infeasible and skipped, the remainder
+producing no match or no entry of the targeted source kind at all. The floor is 2, one below
+that exact count, so an incidental generator change that removes one checked case does not
+spuriously fail while an arm that stops checking almost everything still does.
 """
 
 
