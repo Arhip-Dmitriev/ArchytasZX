@@ -181,27 +181,15 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
 def _parse_dim(token: str) -> Dim:
     """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``.
 
-    "Concrete positive integer" means a non-empty run of ASCII ``0-9`` and nothing else
-    (:data:`_ASCII_DIGITS_RE`, the same constant :data:`_KET_SUM_RE`'s numeric groups are
-    built from -- see :data:`_ASCII_DIGITS` for why not ``str.isdigit()``). A token matching
-    neither branch never reaches this function through :func:`parse_dirac_source`:
-    :data:`_KET_SUM_RE` rejects it as a grammar error first.
-
-    Raises :class:`DiracDomainError` for a concrete value below 1, and for the bound
-    summation index (:data:`_SUMMATION_INDEX`) used as a dimension symbol -- the index is
-    bound by the enclosing sum, so a dimension named after it is always a capture error: a
-    later ``substitute`` on the returned ``Dim`` would bind that symbol independently of the
-    sum it lexically came from, silently detaching the dimension from its own index.
+    Raises :class:`DiracDomainError` for a concrete value outside ``Dim``'s domain, and for
+    the bound summation index (:data:`_SUMMATION_INDEX`) in a dimension slot -- a later
+    ``substitute`` would bind it independently of the sum it lexically came from. Raises
+    :class:`DiracGrammarError` for a token matching neither shape, which
+    :data:`_KET_SUM_RE` rejects before this function is reached.
     """
     if _ASCII_DIGITS_RE.match(token):
-        value = int(token)
-        if value < 1:
-            raise DiracDomainError(
-                f"dimension token {token!r} names {value}, but a concrete dimension must "
-                "be >= 1"
-            )
         try:
-            return Dim.concrete(value)
+            return Dim.concrete(int(token))
         except DimensionDomainError as exc:
             raise DiracDomainError(
                 f"dimension token {token!r} is outside Dim's domain: {exc}"

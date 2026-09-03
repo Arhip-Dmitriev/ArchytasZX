@@ -266,28 +266,26 @@ class _ResolutionFailure:
     equal_to: Dim
 
 
-def _merge_bindings(
-    bindings: dict[str, Dim], new_bindings: Mapping[str, Dim]
-) -> tuple[str, Dim, Dim] | None:
+def _merge_bindings(bindings: dict[str, Dim], new_bindings: Mapping[str, Dim]) -> bool:
     """Merge the concrete entries of ``new_bindings`` into ``bindings``, in place.
 
-    Only concrete-valued bindings are stored. Returns ``(name, existing_value,
-    new_value)``, leaving ``bindings`` unmodified, iff a name already bound to one concrete
-    ``Dim`` would be rebound to a different one; ``None`` on a clean merge. A non-``None``
-    return makes the candidate a non-match, like a ``FAILURE``.
+    Only concrete-valued bindings are stored. Returns ``False``, leaving ``bindings``
+    unmodified, iff a name already bound to one concrete ``Dim`` would be rebound to a
+    different one; ``True`` on a clean merge. A ``False`` return makes the candidate a
+    non-match, like a ``FAILURE``.
 
     The contradiction branch does not fire on any current call site: every operand is first
     passed through :func:`_resolve_with_bindings`, so an already-bound symbol is never free
-    in what reaches ``Dim.unify``. It is kept as a structural guard, since
-    :meth:`Dim.unify` is a placeholder Phase 10 replaces.
+    in what reaches ``Dim.unify``. Kept as a structural guard against
+    :meth:`Dim.unify`'s placeholder contract, which Phase 10 replaces.
     """
     concrete = {name: value for name, value in new_bindings.items() if value.is_concrete}
     for name, value in concrete.items():
         existing = bindings.get(name)
         if existing is not None and existing != value:
-            return (name, existing, value)
+            return False
     bindings.update(concrete)
-    return None
+    return True
 
 
 class _ConstraintRecord:
@@ -298,29 +296,27 @@ class _ConstraintRecord:
     :meth:`record`\\ s over the previous entry in place, so the finished sequence is in
     first-derivation order.
 
-    :meth:`record` overwrites unconditionally, so a previously ``BOUND`` entry can be
-    displaced by a later pass's ``DEFERRED``. The invariant that must hold is adequacy: the
-    conjunction of the finished ``dimension_constraints`` and ``bindings`` implies every
-    ``(assumed, equal_to)`` pair any check ever asserted, including one a later pass
-    replaced or dropped. Checked by
-    ``tests/test_phase5_certificate_sweep.py::TestConstraintRecordAdequacy``.
+    The invariant is adequacy: the finished ``dimension_constraints`` alone implies every
+    ``(assumed, equal_to)`` pair any check ever asserted, including one a later pass replaced
+    or dropped. ``bindings`` is not part of it -- ``RewriteStep`` carries only the
+    constraints. Checked by
+    ``tests/test_phase5_certificate_sweep.py::TestConstraintRecordAdequacy``; every cell of
+    the table below is pinned by
+    ``tests/test_match.py::TestConstraintRecordPolicyTable``.
 
     The policy over (previous entry, this check's outcome):
 
-    * (none, ``DEFERRED`` / ``BOUND``): record it -- the source's first assumption.
-    * (none, bare identity via :meth:`record_identity`): no-op -- nothing was assumed.
-    * (``DEFERRED``, ``DEFERRED``): overwrite -- the same open assumption, restated at its
-      currently-resolved operands.
-    * (``DEFERRED``, ``BOUND``): overwrite -- the deferral is discharged into a decided
-      fact, strictly more informative.
-    * (``DEFERRED``, bare identity): drop -- discharged into a syntactic identity, so
-      nothing is assumed any more.
-    * (``BOUND``, ``DEFERRED``): overwrite -- the record holds each source's most-resolved
+    * (none, ``DEFERRED`` / ``BOUND``): record it.
+    * (none, bare identity via :meth:`record_identity`): no-op.
+    * (``DEFERRED``, ``DEFERRED``): overwrite, restated at its currently-resolved operands.
+    * (``DEFERRED``, ``BOUND``): overwrite.
+    * (``DEFERRED``, bare identity): drop -- nothing is assumed any more.
+    * (``BOUND``, ``DEFERRED``): overwrite; the record holds each source's most-resolved
       current statement, not a history.
-    * (``BOUND``, ``BOUND``): overwrite -- same fact restated, or a refined ``bound_here``.
+    * (``BOUND``, ``BOUND``): overwrite.
     * (``BOUND``, bare identity): **keep** the ``BOUND`` entry -- the identity holds only
-      because that binding was made. The one cell where :meth:`record_identity` does not
-      mirror :meth:`record`.
+      under that binding. The one cell where :meth:`record_identity` does not mirror
+      :meth:`record`.
     """
 
     __slots__ = ("_entries",)
@@ -424,14 +420,16 @@ def _unify_surviving_legs(
                 record.record(source, leg_dim, shared_dim, ConstraintOutcome.DEFERRED)
             elif bound_this_pass:
                 record.record(
-                    source, leg_dim, shared_dim, ConstraintOutcome.BOUND,
+                    source,
+                    leg_dim,
+                    shared_dim,
+                    ConstraintOutcome.BOUND,
                     bound_here=result.bindings,
                 )
             else:
                 record.record_identity(source)
             if bound_this_pass:
-                conflict = _merge_bindings(bindings, result.bindings)
-                if conflict is not None:
+                if not _merge_bindings(bindings, result.bindings):
                     return _ResolutionFailure(
                         _FailureReason.CONTRADICTORY_REBIND, leg_dim, shared_dim
                     )
@@ -480,15 +478,14 @@ def _unify_phase_dims(
                 _FailureReason.PHASE_NON_CONCRETE_BINDING, phase_dim, shared_dim
             )
         record.record(
-            source, phase_dim, shared_dim, ConstraintOutcome.BOUND,
+            source,
+            phase_dim,
+            shared_dim,
+            ConstraintOutcome.BOUND,
             bound_here=phase_unify.bindings,
         )
-        new_concrete = dict(phase_unify.bindings)
-        conflict = _merge_bindings(bindings, new_concrete)
-        if conflict is not None:
-            return _ResolutionFailure(
-                _FailureReason.CONTRADICTORY_REBIND, phase_dim, shared_dim
-            )
+        if not _merge_bindings(bindings, phase_unify.bindings):
+            return _ResolutionFailure(_FailureReason.CONTRADICTORY_REBIND, phase_dim, shared_dim)
         shared_dim = _resolve_with_bindings(shared_dim, phase_unify.bindings)
     return shared_dim
 
@@ -522,17 +519,17 @@ def _unify_connecting_pair(
         record.record(source, resolved_a, resolved_b, ConstraintOutcome.DEFERRED)
     elif bound_this_pass:
         record.record(
-            source, resolved_a, resolved_b, ConstraintOutcome.BOUND,
+            source,
+            resolved_a,
+            resolved_b,
+            ConstraintOutcome.BOUND,
             bound_here=result.bindings,
         )
     else:
         record.record_identity(source)
     if bound_this_pass:
-        conflict = _merge_bindings(bindings, result.bindings)
-        if conflict is not None:
-            return _ResolutionFailure(
-                _FailureReason.CONTRADICTORY_REBIND, resolved_a, resolved_b
-            )
+        if not _merge_bindings(bindings, result.bindings):
+            return _ResolutionFailure(_FailureReason.CONTRADICTORY_REBIND, resolved_a, resolved_b)
         shared_dim = _resolve_with_bindings(shared_dim, result.bindings)
     return shared_dim
 

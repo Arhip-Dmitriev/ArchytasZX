@@ -1095,13 +1095,12 @@ class TestSpiderFusionProperties:
         # unreachability claim is pinned just above: wrap the real function, assert it is
         # actually exercised, and assert it never returns False across this sweep. A Phase
         # 10 change to Dim.unify's contract that makes this reachable should fail this
-        # assertion rather than pass silently. _merge_bindings returns None on a clean
-        # merge, (name, existing, new) on a contradictory rebind -- "no hit" is
-        # `result is None`, not `result is truthy`.
-        merge_bindings_results: list[object] = []
+        # assertion rather than pass silently. _merge_bindings returns True on a clean merge
+        # and False on a contradictory rebind, so "no hit" is `result is True`.
+        merge_bindings_results: list[bool] = []
         real_merge_bindings = match_module._merge_bindings
 
-        def _wrapped_merge_bindings(*args: object, **kwargs: object) -> object:
+        def _wrapped_merge_bindings(*args: object, **kwargs: object) -> bool:
             result = real_merge_bindings(*args, **kwargs)  # type: ignore[arg-type]
             merge_bindings_results.append(result)
             return result
@@ -1125,12 +1124,11 @@ class TestSpiderFusionProperties:
             "_merge_bindings was never called at all -- this instrumentation would then be "
             "vacuously proving nothing"
         )
-        conflicts = [r for r in merge_bindings_results if r is not None]
+        conflicts = merge_bindings_results.count(False)
         assert not conflicts, (
-            f"_merge_bindings reported a contradictory rebind {len(conflicts)} time(s) out "
-            f"of {len(merge_bindings_results)} calls across the random property harness "
-            f"({conflicts!r}) -- its own docstring's unreachability claim does not actually "
-            "hold"
+            f"_merge_bindings reported a contradictory rebind {conflicts} time(s) out of "
+            f"{len(merge_bindings_results)} calls across the random property harness -- its "
+            "own docstring's unreachability claim does not actually hold"
         )
 
     def _run_random_diagrams_fuse_soundly(self) -> None:
