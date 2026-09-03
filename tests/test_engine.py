@@ -1376,20 +1376,10 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
 class TestConditionNumberingMatchesDeclaredOrder:
     """Numbered "condition N" references must agree with FUSION_SIDE_CONDITIONS.
 
-    The seven side conditions are addressed two ways throughout this package -- by name
-    (``dimension_agreement``) and by position ("condition 6"). Only the name is checkable by
-    the compiler. Two checks below, of deliberately different strengths:
-
-    * :meth:`test_module_docstring_list_matches_declared_order` is exact. The numbered list
-      in :mod:`qufzx.rewrite.match`'s module docstring is the authoritative statement of the
-      numbering every "condition N" refers to, and it is machine-readable, so it is
-      machine-checked. An insertion that renumbers the conditions cannot land without this
-      failing.
-    * :meth:`test_adjacent_number_and_name_agree` is a partial net over prose
-      cross-references. "Condition 6" and ``phase_dimension_agreement`` legitimately appear
-      in one sentence whenever the prose contrasts two conditions, so proximity is not
-      reference; :data:`_WINDOW` is calibrated to the tight ``condition N (``name``)``
-      shapes only.
+    The side conditions are addressed by name (``dimension_agreement``) and by position
+    ("condition 6"); only the name is checkable by the compiler. Two checks of different
+    strengths: the numbered list in :mod:`qufzx.rewrite.match`'s module docstring is checked
+    exactly, and prose cross-references are checked by adjacency.
     """
 
     _WINDOW = 60
@@ -1397,8 +1387,7 @@ class TestConditionNumberingMatchesDeclaredOrder:
 
     Calibrated, not guessed: at 60 the net inspects only tight ``condition N (``name``)``
     references, while 90 pulls in contrast sentences where a number and a different
-    condition's name correctly sit together. Widening this without re-checking that
-    trade-off produces false failures, not extra coverage."""
+    condition's name correctly sit together."""
 
     _MODULES = (
         "qufzx/rewrite/match.py",
@@ -1413,11 +1402,10 @@ class TestConditionNumberingMatchesDeclaredOrder:
         "tests/test_fusion_properties.py",
         "tests/test_phase5_certificate_sweep.py",
     )
-    """Every file carrying numbered "condition N" prose, source and test alike."""
+    """Every file that may carry numbered "condition N" prose, source and test alike."""
 
     _REPO_ROOT = Path(__file__).resolve().parent.parent
-    """Anchor paths to the repository, never to the process CWD -- pytest may be invoked from
-    anywhere, and a silently-missing file would make the sweep below vacuous."""
+    """Anchor paths to the repository, never to the process CWD."""
 
     _LIST_ITEM_RE = re.compile(r"^(\d+)\. ``([a-z_]+)``", re.MULTILINE)
     _NUMBER_RE = re.compile(r"\bcondition[s]? (\d+)(?: and (\d+))?")
@@ -1431,12 +1419,8 @@ class TestConditionNumberingMatchesDeclaredOrder:
         """The exact check: the authoritative numbered list *is* FUSION_SIDE_CONDITIONS."""
         docstring = match_module.__doc__
         assert docstring is not None, "qufzx.rewrite.match lost its module docstring"
-        listed = [
-            (int(number), name) for number, name in self._LIST_ITEM_RE.findall(docstring)
-        ]
-        expected = [
-            (i, condition.name) for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)
-        ]
+        listed = [(int(number), name) for number, name in self._LIST_ITEM_RE.findall(docstring)]
+        expected = [(i, condition.name) for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)]
         assert listed == expected, (
             "qufzx.rewrite.match's module docstring states the conditions in an order that "
             f"disagrees with FUSION_SIDE_CONDITIONS.\n  docstring: {listed}\n  declared:  "
@@ -1447,114 +1431,96 @@ class TestConditionNumberingMatchesDeclaredOrder:
     def _is_list_heading(cls, window: str, name_start: int) -> bool:
         """Is the name at ``name_start`` the heading of a numbered list item?
 
-        Inside item 7's *body*, a mention of "condition 6" legitimately refers to a different
-        condition while item 7's own heading name is still the nearest one in the window --
-        so a heading occurrence is not a referent. Only the name's role is excluded, never
-        the surrounding text: a second, non-heading mention of the same name in that body is
-        still checked. The heading itself is covered exactly by
-        :meth:`test_module_docstring_list_matches_declared_order`.
+        Inside item 7's *body*, a mention of "condition 6" refers to a different condition
+        while item 7's own heading name is still nearest in the window, so a heading
+        occurrence is not a referent. Only the name's role is excluded, never the
+        surrounding text.
         """
         line_start = window.rfind("\n", 0, name_start) + 1
         return bool(cls._HEADING_PREFIX_RE.match(window[line_start:name_start]))
 
-    def _cross_references(self) -> list[tuple[str, int, set[int], set[str]]]:
-        """Every ``(module, line, stated numbers, adjacent names)`` the net inspects."""
-        positions = self._positions()
+    @classmethod
+    def _scan(cls, text: str) -> list[tuple[int, set[int], set[str]]]:
+        """Every ``(line, stated numbers, adjacent names)`` in ``text`` the net inspects."""
+        positions = {condition.name: i for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)}
         # Backticks optional, and outside the capturing group so ``_is_list_heading`` sees
         # the same match start for a backticked and a bare name alike.
-        name_re = re.compile(
-            r"(?:``)?\b(" + "|".join(map(re.escape, positions)) + r")\b(?:``)?"
-        )
-        found: list[tuple[str, int, set[int], set[str]]] = []
-        for relative in self._MODULES:
-            path = self._REPO_ROOT / relative
-            assert path.is_file(), f"{relative} not found at {path}"
-            text = path.read_text(encoding="utf-8")
-            for number_match in self._NUMBER_RE.finditer(text):
-                numbers = {int(g) for g in number_match.groups() if g}
-                start = max(0, number_match.start() - self._WINDOW)
-                window = text[start : number_match.end() + self._WINDOW]
-                names = {
-                    m.group(1)
-                    for m in name_re.finditer(window)
-                    if not self._is_list_heading(window, m.start())
-                }
-                if names:
-                    line = text.count("\n", 0, number_match.start()) + 1
-                    found.append((relative, line, numbers, names))
+        name_re = re.compile(r"(?:``)?\b(" + "|".join(map(re.escape, positions)) + r")\b(?:``)?")
+        found: list[tuple[int, set[int], set[str]]] = []
+        for number_match in cls._NUMBER_RE.finditer(text):
+            numbers = {int(g) for g in number_match.groups() if g}
+            start = max(0, number_match.start() - cls._WINDOW)
+            window = text[start : number_match.end() + cls._WINDOW]
+            names = {
+                m.group(1)
+                for m in name_re.finditer(window)
+                if not cls._is_list_heading(window, m.start())
+            }
+            if names:
+                found.append((text.count("\n", 0, number_match.start()) + 1, numbers, names))
         return found
+
+    @staticmethod
+    def _violations(
+        relative: str, scanned: list[tuple[int, set[int], set[str]]], positions: dict[str, int]
+    ) -> list[str]:
+        # Strict set equality, not overlap: a multi-number mention stating {5, 6} against
+        # true positions {6, 7} overlaps at 6, so an overlap rule would wave through exactly
+        # the wording this net exists to catch.
+        return [
+            f"{relative}:{line}: 'condition(s) {sorted(numbers)}' sits beside "
+            f"{sorted(names)}, whose declared position(s) are "
+            f"{sorted(positions[name] for name in names)}"
+            for line, numbers, names in scanned
+            if numbers != {positions[name] for name in names}
+        ]
 
     def test_adjacent_number_and_name_agree(self) -> None:
         """The partial net: a number stated right beside a name must be that name's."""
         positions = self._positions()
-        # Strict set equality, not overlap: a multi-number mention stating {5, 6} against
-        # true positions {6, 7} overlaps at 6, so an overlap rule would wave through exactly
-        # the wording this net exists to catch. Equality is safe only because _WINDOW is
-        # tight enough to exclude contrast sentences.
-        violations = [
-            f"{relative}:{line}: 'condition(s) {sorted(numbers)}' sits beside "
-            f"{sorted(names)}, whose declared position(s) are "
-            f"{sorted(positions[name] for name in names)}"
-            for relative, line, numbers, names in self._cross_references()
-            if numbers != {positions[name] for name in names}
-        ]
+        violations: list[str] = []
+        for relative in self._MODULES:
+            path = self._REPO_ROOT / relative
+            assert path.is_file(), f"{relative} not found at {path}"
+            scanned = self._scan(path.read_text(encoding="utf-8"))
+            violations += self._violations(relative, scanned, positions)
         assert not violations, (
             "numbered condition reference(s) disagree with FUSION_SIDE_CONDITIONS' declared "
             "order:\n  " + "\n  ".join(violations)
         )
 
-    def _numbered_mentions(self) -> int:
-        """How many "condition N" mentions exist across :data:`_MODULES`, name-adjacent or not."""
-        return sum(
-            len(self._NUMBER_RE.findall((self._REPO_ROOT / relative).read_text(encoding="utf-8")))
-            for relative in self._MODULES
-        )
+    def test_the_net_rejects_a_stale_reference_and_accepts_a_correct_one(self) -> None:
+        """The net is checked against synthetic text, not against how much prose survives.
 
-    def test_the_net_is_not_vacuous(self) -> None:
-        """The net inspects real references, and rejects text it is meant to reject.
-
-        Four independent ways this check can go vacuous are covered: the corpus losing its
-        numbered prose, the adjacency net losing its referents, the name regex ceasing to
-        match, and the comparison ceasing to reject a known-stale wording.
+        A floor on the corpus's own mention count would make deleting prose fail this test,
+        so the net's power is demonstrated directly instead: it must accept a correct
+        reference and reject a stale one, including a stale pair that *overlaps* the true
+        pair, which is why the comparison is set equality rather than intersection.
         """
-        mentions = self._numbered_mentions()
-        assert mentions >= 40, (
-            f'only {mentions} "condition N" mention(s) remain across _MODULES; the numbered '
-            "prose this net checks has largely gone, so passing says nothing (measured 48)"
-        )
-
-        inspected = self._cross_references()
-        assert len(inspected) >= 8, (
-            f"the adjacency net inspected only {len(inspected)} reference(s); it is close to "
-            "vacuous -- has the name/'condition N' wording convention changed? (measured 8)"
-        )
-
         positions = self._positions()
         assert set(positions.values()) == set(range(1, len(FUSION_SIDE_CONDITIONS) + 1)), (
             f"declared positions are not 1..{len(FUSION_SIDE_CONDITIONS)}: {positions}"
         )
-
-        # A wording the net must reject: the last two conditions named, but numbered one
-        # short each, so the stated pair overlaps the true pair without equalling it.
-        # Derived from FUSION_SIDE_CONDITIONS rather than written out, both so a renumbering
-        # cannot make this sample stale and so this file -- now itself part of _MODULES --
-        # carries no literal stale reference for the sweep above to flag.
         last_two = [condition.name for condition in FUSION_SIDE_CONDITIONS[-2:]]
-        true_numbers = {positions[name] for name in last_two}
-        stale = "conditions {} and {} (``{}``, ``{}``)".format(
-            min(true_numbers) - 1, max(true_numbers) - 1, *last_two
+        true_numbers = sorted(positions[name] for name in last_two)
+
+        correct = "see conditions {} and {} (``{}``, ``{}``)".format(*true_numbers, *last_two)
+        scanned = self._scan(correct)
+        assert scanned, "the net failed to inspect a reference it must inspect"
+        assert not self._violations("<synthetic>", scanned, positions)
+
+        stale = "see conditions {} and {} (``{}``, ``{}``)".format(
+            true_numbers[0] - 1, true_numbers[1] - 1, *last_two
         )
-        numbers = {int(g) for m in self._NUMBER_RE.finditer(stale) for g in m.groups() if g}
-        assert numbers == {n - 1 for n in true_numbers}, numbers
-        names = set(re.findall(r"``([a-z_]+)``", stale))
-        assert names == set(last_two), names
-        assert numbers != {positions[name] for name in names}, (
-            "the stale wording must be detectable as a disagreement, or this net would not "
-            "have caught it either"
+        stale_scanned = self._scan(stale)
+        assert stale_scanned, "the net failed to inspect the stale reference at all"
+        assert self._violations("<synthetic>", stale_scanned, positions), (
+            "the net accepted a reference numbered one short on both conditions"
         )
-        assert numbers & {positions[name] for name in names}, (
-            "and it must be detectable despite overlapping, which is why this check uses "
-            "set equality rather than intersection"
+
+        single = f"see condition {positions[last_two[0]] + 1} (``{last_two[0]}``)"
+        assert self._violations("<synthetic>", self._scan(single), positions), (
+            "the net accepted a single-condition reference off by one"
         )
 
 
@@ -1647,3 +1613,81 @@ class TestCrossProcessDeterminism:
         second = self._run_with_seed("2147483647")
         assert first, "the driver script printed nothing"
         assert second == first
+
+
+class TestTranslateInputIssueKeyCoversEveryAnchor:
+    """``_translate_input_issue_key`` must handle all four anchors a ``ValidationIssue`` can
+    carry: a ``port_ref``, a ``wire``, a ``node_id``, and none of them."""
+
+    _CONSUMED = frozenset({NodeId(0), NodeId(1)})
+
+    @staticmethod
+    def _issue(**kwargs: object) -> ValidationIssue:
+        return ValidationIssue(
+            kind=IssueKind.DIMENSION_MISMATCH,
+            message="",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    def test_wire_with_both_endpoints_on_consumed_nodes_is_remapped(self) -> None:
+        old_a = PortRef(NodeId(0), Direction.OUTPUT, 1)
+        old_b = PortRef(NodeId(1), Direction.INPUT, 0)
+        new_a = PortRef(NodeId(2), Direction.OUTPUT, 0)
+        new_b = PortRef(NodeId(2), Direction.INPUT, 0)
+        key = engine_module._translate_input_issue_key(
+            self._issue(wire=Wire(old_a, old_b)),
+            self._CONSUMED,
+            {old_a: new_a, old_b: new_b},
+            (NodeId(2),),
+        )
+        assert key == (IssueKind.DIMENSION_MISMATCH, Wire(new_a, new_b))
+
+    def test_wire_endpoint_on_a_surviving_node_passes_through(self) -> None:
+        consumed = PortRef(NodeId(0), Direction.OUTPUT, 1)
+        survivor = PortRef(NodeId(5), Direction.INPUT, 0)
+        new = PortRef(NodeId(2), Direction.OUTPUT, 0)
+        key = engine_module._translate_input_issue_key(
+            self._issue(wire=Wire(consumed, survivor)),
+            self._CONSUMED,
+            {consumed: new},
+            (NodeId(2),),
+        )
+        assert key == (IssueKind.DIMENSION_MISMATCH, Wire(new, survivor))
+
+    def test_a_collapsing_wire_translation_falls_back_to_the_untranslated_wire(self) -> None:
+        old_a = PortRef(NodeId(0), Direction.OUTPUT, 1)
+        old_b = PortRef(NodeId(1), Direction.INPUT, 0)
+        collapsed = PortRef(NodeId(2), Direction.OUTPUT, 0)
+        wire = Wire(old_a, old_b)
+        key = engine_module._translate_input_issue_key(
+            self._issue(wire=wire),
+            self._CONSUMED,
+            {old_a: collapsed, old_b: collapsed},
+            (NodeId(2),),
+        )
+        assert key == (IssueKind.DIMENSION_MISMATCH, wire)
+
+    def test_an_issue_naming_no_reference_keys_on_none(self) -> None:
+        issue = ValidationIssue(kind=IssueKind.SYMBOL_ROLE_COLLISION, message="d")
+        key = engine_module._translate_input_issue_key(issue, self._CONSUMED, {}, (NodeId(2),))
+        assert key == (IssueKind.SYMBOL_ROLE_COLLISION, None)
+        assert engine_module._issue_key(issue) == key
+
+
+class TestBuilderMustReturnTheWorkingDiagram:
+    """``apply`` rejects a builder that substitutes a different ``Diagram`` for the working
+    one it was handed, rather than splicing into a diagram nothing else references."""
+
+    def test_a_builder_returning_a_foreign_diagram_is_rejected(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        (match,) = find_matches(diagram)
+        real_builder = SPIDER_FUSION.builder
+
+        def foreign_builder(working: Diagram, match_: Match) -> BuildResult:
+            built = real_builder(working, match_)
+            return dataclasses.replace(built, diagram=working.copy())
+
+        rule = dataclasses.replace(SPIDER_FUSION, builder=foreign_builder)
+        with pytest.raises(RewriteGrammarError, match="not the working diagram"):
+            apply(diagram, rule, match)
