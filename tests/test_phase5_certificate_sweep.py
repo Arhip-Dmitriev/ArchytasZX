@@ -114,9 +114,7 @@ see :mod:`qufzx.rewrite.match`'s condition 4."""
 
 def _leg_shapes(max_total: int = 1) -> tuple[tuple[int, int], ...]:
     return tuple(
-        (n_in, n_out)
-        for n_in in range(max_total + 1)
-        for n_out in range(max_total + 1 - n_in)
+        (n_in, n_out) for n_in in range(max_total + 1) for n_out in range(max_total + 1 - n_in)
     )
 
 
@@ -143,9 +141,7 @@ class TestCertificateStructuralProperties:
                         for dims_in_b, dims_out_b in itertools.product(
                             _leg_contents(n_in_b), _leg_contents(n_out_b)
                         ):
-                            for phase_a, phase_b in itertools.product(
-                                phase_choices, phase_choices
-                            ):
+                            for phase_a, phase_b in itertools.product(phase_choices, phase_choices):
                                 diagram, _a_id, _b_id = _build_two_node_diagram(
                                     color=color,
                                     dir_a=dir_a,
@@ -178,9 +174,7 @@ class TestCertificateStructuralProperties:
                                         # syntactic identity -- there is always a real
                                         # unify to justify it, never an invented one.
                                         assert constraint.assumed != constraint.equal_to
-                                        unify_result = constraint.assumed.unify(
-                                            constraint.equal_to
-                                        )
+                                        unify_result = constraint.assumed.unify(constraint.equal_to)
                                         assert not unify_result.is_failure
 
                                     # The recorded constraint set must be *simultaneously*
@@ -312,9 +306,7 @@ def _build_two_node_diagram(
     consumed_dim_b = consumed_dim if consumed_dim_b is None else consumed_dim_b
 
     in_dims_a = [consumed_dim, *extra_in_a] if dir_a is Direction.INPUT else list(extra_in_a)
-    out_dims_a = (
-        [consumed_dim, *extra_out_a] if dir_a is Direction.OUTPUT else list(extra_out_a)
-    )
+    out_dims_a = [consumed_dim, *extra_out_a] if dir_a is Direction.OUTPUT else list(extra_out_a)
     phase_vector_a = (
         PhaseVector(phase_a, {1: Phase.turns(sp.Rational(1, 3))}) if phase_a is not None else None
     )
@@ -322,12 +314,8 @@ def _build_two_node_diagram(
         color, input_dims=in_dims_a, output_dims=out_dims_a, phase=phase_vector_a
     )
 
-    in_dims_b = (
-        [consumed_dim_b, *extra_in_b] if dir_b is Direction.INPUT else list(extra_in_b)
-    )
-    out_dims_b = (
-        [consumed_dim_b, *extra_out_b] if dir_b is Direction.OUTPUT else list(extra_out_b)
-    )
+    in_dims_b = [consumed_dim_b, *extra_in_b] if dir_b is Direction.INPUT else list(extra_in_b)
+    out_dims_b = [consumed_dim_b, *extra_out_b] if dir_b is Direction.OUTPUT else list(extra_out_b)
     phase_vector_b = (
         PhaseVector(phase_b, {1: Phase.turns(sp.Rational(1, 3))}) if phase_b is not None else None
     )
@@ -470,9 +458,7 @@ class TestOracleTiesBackToRecordedConstraints:
                         continue
                     target_index, target_constraint = target
 
-                    all_pairs = tuple(
-                        (c.assumed, c.equal_to) for c in match.dimension_constraints
-                    )
+                    all_pairs = tuple((c.assumed, c.equal_to) for c in match.dimension_constraints)
                     free_symbols: frozenset[str] = frozenset()
                     for node in diagram.nodes.values():
                         for port in (*node.inputs, *node.outputs):
@@ -727,8 +713,7 @@ class TestCertificateDetailFidelity:
                 _assert_dimension_agreement_detail_agrees(match)
                 _assert_phase_dimension_agreement_detail_agrees(match)
         assert total > 0, (
-            "the both-nodes-phase-bound-with-surviving-legs shape never produced a fusion "
-            "match"
+            "the both-nodes-phase-bound-with-surviving-legs shape never produced a fusion match"
         )
 
 
@@ -740,9 +725,7 @@ skipped for the adequacy check (still counted, via ``skipped``, in the reported 
 see :class:`TestConstraintRecordAdequacy`."""
 
 
-def _resolve_constraint_pair(
-    assumed: Dim, equal_to: Dim, substitution: Mapping[str, int]
-) -> bool:
+def _resolve_constraint_pair(assumed: Dim, equal_to: Dim, substitution: Mapping[str, int]) -> bool:
     typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], dict(substitution))
     return assumed.substitute(typed).to_int() == equal_to.substitute(typed).to_int()
 
@@ -754,35 +737,35 @@ def _check_adequacy(
     """Verify the adequacy invariant for one passed resolution.
 
     Every satisfying assignment (within :data:`_ADEQUACY_SEARCH_RANGE`) of the finished
-    ``dimension_constraints`` plus the finished ``bindings`` must also satisfy every pair
-    ``_ConstraintRecord.record`` ever asserted during the resolution, including ones a later
-    pass displaced or overwrote. Returns ``None`` if the case was checked and adequacy held,
-    ``"skipped"`` if it exceeded :data:`_MAX_ADEQUACY_FREE_SYMBOLS` or had no satisfying
-    assignment in range, or raises ``AssertionError`` with a precise counterexample.
+    ``dimension_constraints`` must also satisfy every pair ``_ConstraintRecord.record`` ever
+    asserted during the resolution, including ones a later pass displaced or overwrote.
+    ``bindings`` is deliberately not consulted: ``RewriteStep`` carries only the constraints,
+    so an invariant resting on both would not hold for the certificate. Returns ``None`` if
+    the case was checked and adequacy held, ``"skipped"`` if it exceeded
+    :data:`_MAX_ADEQUACY_FREE_SYMBOLS` or had no satisfying assignment in range, or raises
+    ``AssertionError`` with a precise counterexample.
     """
     assert resolution.shared_dim is not None
-    fixed = {name: value for name, value in resolution.bindings.items() if value.is_concrete}
-    fixed_int = {name: value.to_int() for name, value in fixed.items()}
     finished_pairs = [(c.assumed, c.equal_to) for c in resolution.dimension_constraints]
-    all_symbols: set[str] = set(fixed_int)
+    all_symbols: set[str] = set()
     for assumed, equal_to in (*finished_pairs, *asserted_pairs):
         all_symbols |= assumed.free_symbols | equal_to.free_symbols
-    free = sorted(all_symbols - set(fixed_int))
+    free = sorted(all_symbols)
     if len(free) > _MAX_ADEQUACY_FREE_SYMBOLS:
         return "skipped"
 
     any_satisfying = False
     for values in itertools.product(_ADEQUACY_SEARCH_RANGE, repeat=len(free)):
-        candidate = {**fixed_int, **dict(zip(free, values, strict=True))}
+        candidate = dict(zip(free, values, strict=True))
         if not all(_resolve_constraint_pair(a, b, candidate) for a, b in finished_pairs):
             continue
         any_satisfying = True
         for assumed, equal_to in asserted_pairs:
             assert _resolve_constraint_pair(assumed, equal_to, candidate), (
-                f"adequacy violated: finished record {finished_pairs!r} + bindings "
-                f"{fixed_int!r} is satisfied at {candidate!r}, but the asserted pair "
-                f"{assumed!r} == {equal_to!r} (recorded at some point during resolution, "
-                "possibly later displaced) does not hold there"
+                f"adequacy violated: finished record {finished_pairs!r} is satisfied at "
+                f"{candidate!r}, but the asserted pair {assumed!r} == {equal_to!r} "
+                "(recorded at some point during resolution, possibly later displaced) "
+                "does not hold there"
             )
     return None if any_satisfying else "skipped"
 
@@ -841,11 +824,9 @@ class TestConstraintRecordAdequacy:
     """The adequacy property from ``_ConstraintRecord``'s own docstring, mechanically enforced.
 
     Every ``(assumed, equal_to)`` pair ``_ConstraintRecord.record`` ever asserts during a
-    resolution -- including one a later pass displaces or overwrites, which the property
-    harness's sweeps do reach, both BOUND -> DEFERRED and BOUND -> a different BOUND -- must
-    be implied by the *finished* ``dimension_constraints`` plus the *finished* ``bindings``:
-    at every small concrete substitution satisfying both, every asserted pair must also
-    hold. See ``_check_adequacy`` for the mechanics.
+    resolution -- including one a later pass displaces or overwrites -- must be implied by
+    the *finished* ``dimension_constraints`` alone: at every small concrete substitution
+    satisfying those, every asserted pair must also hold. See ``_check_adequacy``.
     """
 
     def test_structural_sweep_space_is_adequate(self) -> None:
@@ -863,9 +844,7 @@ class TestConstraintRecordAdequacy:
                         for dims_in_b, dims_out_b in itertools.product(
                             _leg_contents(n_in_b), _leg_contents(n_out_b)
                         ):
-                            for phase_a, phase_b in itertools.product(
-                                phase_choices, phase_choices
-                            ):
+                            for phase_a, phase_b in itertools.product(phase_choices, phase_choices):
                                 diagram, _a_id, _b_id = _build_two_node_diagram(
                                     color=color,
                                     dir_a=dir_a,
@@ -900,9 +879,7 @@ class TestConstraintRecordAdequacy:
                 rng = random.Random(seed)
                 diagram = build_diagram(rng)
                 try:
-                    matches, checked, skipped = _find_matches_with_adequacy_instrumentation(
-                        diagram
-                    )
+                    matches, checked, skipped = _find_matches_with_adequacy_instrumentation(diagram)
                 except RewriteGrammarError:
                     # A deliberately-corrupted boundary ref (see _build_random_diagram's own
                     # docstring): find_matches rejects the whole diagram outright, before any

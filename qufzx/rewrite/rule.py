@@ -360,38 +360,15 @@ class BuildResult:
     consumed_wires: tuple[Wire, ...]
     port_mapping: Mapping[PortRef, PortRef]
     scalar_introduced: Scalar
-    verified_side_condition_outcomes: tuple[SideConditionOutcome, ...] | None = None
-    verified_dimension_constraints: tuple[DimensionConstraint, ...] | None = None
-    """The facts a builder independently re-derived, for the certificate to record instead
-    of the match's own unverified claims.
-
-    A builder that re-checks its match against the diagram it was handed (e.g.
-    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder`, via
-    :func:`~qufzx.rewrite.match.resolve_fusion_match`) computes a ground-truth
-    ``side_condition_outcomes``/``dimension_constraints`` pair as a side effect. Without
-    this channel the certificate would be built from the match's claims, which can assert a
-    dimension binding the rewrite never assumed, or omit one it did.
-
-    ``None`` means the rule re-derived nothing new -- the correct value for a rule with no
-    verification step of its own. :func:`~qufzx.rewrite.engine.apply` prefers these fields
-    over ``match``'s whenever they are not ``None``. A builder must populate them only
-    after checking that the match's own claims agree;
-    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` raises
-    :class:`RewriteDomainError` on disagreement rather than silently preferring one value.
-    """
     verified_phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
-    """Per-node bindings a builder actually substituted into a phase's entries, through the
-    same channel ``verified_dimension_constraints`` uses. ``None`` means the rule re-derived
-    nothing new.
+    """Per-node bindings a builder actually substituted into a phase's entries. ``None``
+    means the rule re-derived nothing; :func:`~qufzx.rewrite.engine.apply` then records an
+    empty mapping. There is no match-side counterpart to compare this against.
     """
 
 
 class Pattern(abc.ABC):
-    """A left-hand-side pattern: locates every occurrence of some rewrite shape in a diagram.
-
-    See the module docstring for why this is an abstract base rather than a hardcoded
-    dispatch on a rule name.
-    """
+    """A left-hand-side pattern: locates every occurrence of some rewrite shape in a diagram."""
 
     @abc.abstractmethod
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:

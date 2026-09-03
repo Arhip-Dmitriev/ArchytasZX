@@ -628,19 +628,6 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         result_deferred_keyed, result_deferred_key_counts - input_deferred_key_counts
     )
 
-    # Prefer the builder's independently re-derived facts over the match's own claims
-    # whenever supplied; a builder that re-verifies nothing leaves these None and the
-    # match's own fields are used.
-    step_side_condition_outcomes = (
-        build_result.verified_side_condition_outcomes
-        if build_result.verified_side_condition_outcomes is not None
-        else match.side_condition_outcomes
-    )
-    step_dimension_constraints = (
-        build_result.verified_dimension_constraints
-        if build_result.verified_dimension_constraints is not None
-        else match.dimension_constraints
-    )
     step_phase_substitutions = (
         build_result.verified_phase_substitutions
         if build_result.verified_phase_substitutions is not None
@@ -652,8 +639,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         match=match,
         consumed_node_ids=build_result.consumed_node_ids,
         consumed_wires=build_result.consumed_wires,
-        side_condition_outcomes=step_side_condition_outcomes,
-        dimension_constraints=step_dimension_constraints,
+        side_condition_outcomes=match.side_condition_outcomes,
+        dimension_constraints=match.dimension_constraints,
         scalar_introduced=build_result.scalar_introduced,
         port_mapping=MappingProxyType(dict(port_mapping)),
         new_node_ids=build_result.new_node_ids,

@@ -623,18 +623,16 @@ def _beat_record(diagram: Diagram, match: FusionMatch, result: RewriteResult) ->
         f"{match.dimension_constraints == resolution.dimension_constraints}"
     )
     left.append(
-        f"  match.shared_dim == resolution.shared_dim: "
-        f"{match.shared_dim == resolution.shared_dim}"
+        f"  match.shared_dim == resolution.shared_dim: {match.shared_dim == resolution.shared_dim}"
     )
     left.append(
         f"  dict(match.bindings) == dict(resolution.bindings): "
         f"{dict(match.bindings) == dict(resolution.bindings)}"
     )
     left.append(
-        "apply()'s builder returns this same resolution as "
-        "BuildResult.verified_side_condition_outcomes / verified_dimension_constraints;"
+        "the builder raises unless the match's own fields equal this resolution, so what "
+        "apply() records is ground truth:"
     )
-    left.append("apply() records those, preferring them over match's own fields:")
     left.append(
         f"  step.side_condition_outcomes == resolution.outcomes: "
         f"{step.side_condition_outcomes == resolution.outcomes}"

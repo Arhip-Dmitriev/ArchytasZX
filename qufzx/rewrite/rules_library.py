@@ -188,44 +188,36 @@ def _merged_phase(
 def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     """The right-hand side of :data:`SPIDER_FUSION`: merge the two matched spiders.
 
-    Mutates ``diagram`` in place by adding the merged node (see the module docstring for
-    the leg-ordering and scalar conventions) and returns the :class:`BuildResult`
+    Mutates ``diagram`` in place by adding the merged node (module docstring: leg ordering,
+    scalar, merged dimension) and returns the :class:`BuildResult`
     :mod:`qufzx.rewrite.engine` needs to splice it in; never removes the matched nodes or
-    touches any wire or boundary entry itself.
+    touches any wire or boundary entry.
 
-    Trusts nothing about ``match`` for graph surgery until it has been independently
-    re-derived. In order:
+    Trusts nothing about ``match`` for graph surgery until it has been re-derived. In order:
 
-    1. ``isinstance(match, FusionMatch)`` -- a foreign match type is a malformed request.
+    1. ``isinstance(match, FusionMatch)``.
     2. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against the module-level
-       :data:`FUSION_SIDE_CONDITIONS`. This builder is reachable directly, not only through
-       :func:`qufzx.rewrite.engine.apply`, so it cannot rely on that function having
-       checked.
-    3. :func:`~qufzx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``
-       -- the same function :func:`~qufzx.rewrite.match.find_matches` uses. This verifies
-       that the two generator types agree (coverage alone catches only a missing or
-       duplicate outcome, not a fabricated-passing one) and that
-       ``match.shared_dim``/``match.bindings`` really relate to the ports being assigned
-       them. Any disagreement raises :class:`~qufzx.rewrite.rule.RewriteDomainError`.
+       :data:`FUSION_SIDE_CONDITIONS` -- this builder is reachable directly, not only through
+       :func:`qufzx.rewrite.engine.apply`.
+    3. :func:`~qufzx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``.
        Everything downstream builds from ``resolution``'s fields, never ``match``'s.
-    4. ``match.dimension_constraints`` and ``match.side_condition_outcomes``, checked for
-       exact agreement with ``resolution``'s, so a match cannot claim to have assumed
-       nothing and have ``apply`` record that verbatim. This builder returns
-       ``resolution``'s as
-       :attr:`~qufzx.rewrite.rule.BuildResult.verified_side_condition_outcomes` /
-       ``verified_dimension_constraints``, which ``apply`` prefers when recording.
+    4. ``match.shared_dim``, ``bindings``, ``dimension_constraints`` and
+       ``side_condition_outcomes``, each checked for exact agreement with ``resolution``'s.
+       ``apply`` records the match's own copies, so this equality is what makes them the
+       certificate's ground truth.
 
-    A structurally malformed match -- equal node ids, a node absent from ``diagram``, or a
-    wire not incident on both or not in ``diagram.wires`` -- surfaces as
-    :class:`~qufzx.rewrite.rule.RewriteGrammarError` from step 3.
+    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError` on any disagreement at step 3 or
+    4, and :class:`~qufzx.rewrite.rule.RewriteGrammarError` for a foreign match type or a
+    structurally malformed one (equal node ids, a node absent from ``diagram``, a wire not
+    incident on both or not in ``diagram.wires``).
     """
     if not isinstance(match, FusionMatch):
         raise RewriteGrammarError(
             f"spider_fusion requires a FusionMatch, got {type(match).__name__}"
         )
-    # Reads the module-level constant, not spider_fusion_builder.side_conditions, which
-    # would be a self-reference to this function's own global name and would break under a
-    # rename or wrap. That attribute exists solely for Rule.__post_init__.
+    # The module-level constant, not spider_fusion_builder.side_conditions, which would be a
+    # self-reference to this function's own global name. That attribute exists solely for
+    # Rule.__post_init__.
     check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, "spider_fusion")
 
     resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
@@ -319,8 +311,6 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         consumed_wires=(wire,),
         port_mapping=port_mapping,
         scalar_introduced=Scalar.one(),
-        verified_side_condition_outcomes=resolution.outcomes,
-        verified_dimension_constraints=resolution.dimension_constraints,
         verified_phase_substitutions=MappingProxyType(phase_substitutions),
     )
 

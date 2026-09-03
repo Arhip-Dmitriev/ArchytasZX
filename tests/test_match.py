@@ -1523,30 +1523,27 @@ class TestMergeBindingsRejectsContradiction:
     last-write-wins overwrite.
     """
 
-    def test_rebinding_to_a_different_concrete_value_returns_conflict_and_does_not_mutate(
+    def test_rebinding_to_a_different_concrete_value_is_rejected_and_does_not_mutate(
         self,
     ) -> None:
         from qufzx.rewrite.match import _merge_bindings
 
         bindings = {"d": Dim.concrete(2)}
-        conflict = _merge_bindings(bindings, {"d": Dim.concrete(3)})
-        assert conflict == ("d", Dim.concrete(2), Dim.concrete(3))
+        assert _merge_bindings(bindings, {"d": Dim.concrete(3)}) is False
         assert bindings == {"d": Dim.concrete(2)}
 
     def test_rebinding_to_the_same_concrete_value_succeeds(self) -> None:
         from qufzx.rewrite.match import _merge_bindings
 
         bindings = {"d": Dim.concrete(2)}
-        conflict = _merge_bindings(bindings, {"d": Dim.concrete(2)})
-        assert conflict is None
+        assert _merge_bindings(bindings, {"d": Dim.concrete(2)}) is True
         assert bindings == {"d": Dim.concrete(2)}
 
     def test_non_concrete_bindings_are_dropped_not_merged(self) -> None:
         from qufzx.rewrite.match import _merge_bindings
 
         bindings: dict[str, Dim] = {}
-        conflict = _merge_bindings(bindings, {"d": Dim.symbol("e")})
-        assert conflict is None
+        assert _merge_bindings(bindings, {"d": Dim.symbol("e")}) is True
         assert bindings == {}
 
 
