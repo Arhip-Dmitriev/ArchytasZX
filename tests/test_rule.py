@@ -22,14 +22,16 @@ import pytest
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, NodeId
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern
 from qufzx.rewrite.rule import (
     BuildResult,
     ConstraintOutcome,
     ConstraintSource,
+    ConstraintSourceKind,
     DimensionConstraint,
     Match,
+    Pattern,
     Quantifiers,
     RewriteGrammarError,
     Rule,
@@ -301,3 +303,97 @@ class TestDimensionConstraintBoundHereInvariant:
                 outcome=ConstraintOutcome.BOUND,
                 bound_here=(("d", "not a Dim"),),  # type: ignore[arg-type]
             )
+
+
+class TestConstraintSourceRejectsMismatchedReferences:
+    """Each ``ConstraintSourceKind`` accepts exactly its own reference field and no other."""
+
+    def test_connecting_pair_with_a_port_ref_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="does not accept"):
+            ConstraintSource(
+                ConstraintSourceKind.CONNECTING_PAIR,
+                port_ref=PortRef(NodeId(0), Direction.OUTPUT, 0),
+            )
+
+    def test_surviving_leg_without_a_port_ref_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="does not accept"):
+            ConstraintSource(ConstraintSourceKind.SURVIVING_LEG)
+
+    def test_surviving_leg_with_a_node_id_as_well_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="does not accept"):
+            ConstraintSource(
+                ConstraintSourceKind.SURVIVING_LEG,
+                port_ref=PortRef(NodeId(0), Direction.OUTPUT, 0),
+                node_id=NodeId(0),
+            )
+
+    def test_node_phase_without_a_node_id_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="does not accept"):
+            ConstraintSource(ConstraintSourceKind.NODE_PHASE)
+
+
+class TestConstraintRenderings:
+    """``__str__`` on the two record value objects, one case per source kind."""
+
+    def test_connecting_pair(self) -> None:
+        assert str(ConstraintSource.connecting_pair()) == "connecting pair"
+
+    def test_surviving_leg(self) -> None:
+        source = ConstraintSource.surviving_leg(PortRef(NodeId(7), Direction.OUTPUT, 2))
+        assert str(source) == "surviving leg 7.output[2]"
+
+    def test_node_phase(self) -> None:
+        assert str(ConstraintSource.node_phase(NodeId(4))) == "phase on node 4"
+
+    def test_dimension_constraint(self) -> None:
+        constraint = DimensionConstraint(
+            assumed=Dim.symbol("d"),
+            equal_to=Dim.concrete(2),
+            source=ConstraintSource.node_phase(NodeId(1)),
+            outcome=ConstraintOutcome.BOUND,
+            bound_here=(("d", Dim.concrete(2)),),
+        )
+        assert str(constraint) == "d == 2 (bound, phase on node 1)"
+
+
+class TestPatternIsAbstract:
+    """``Pattern.find_matches`` is the seam later phases implement, never a usable default."""
+
+    def test_calling_the_base_implementation_raises(self) -> None:
+        class PassThroughPattern(Pattern):
+            def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+                # The base body is the seam's contract, not a trivial stub mypy may skip.
+                return super().find_matches(diagram)  # type: ignore[safe-super]
+
+        with pytest.raises(NotImplementedError):
+            PassThroughPattern().find_matches(Diagram())
+
+
+class TestBuilderDeclaredSideConditionsMustAgreeWithTheRule:
+    """A builder carrying its own ``side_conditions`` attribute pins the ``Rule`` wrapping it,
+    so ``check_side_condition_coverage`` cannot be given two different tuples for one match."""
+
+    def test_a_rule_disagreeing_with_its_builder_is_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="disagrees with its builder"):
+            Rule(
+                name="spider_fusion",
+                pattern=FusionPattern(),
+                builder=spider_fusion_builder,
+                side_conditions=FUSION_SIDE_CONDITIONS[:-1],
+                quantifiers=Quantifiers(),
+                scalar_introduced=Scalar.one(),
+            )
+
+    def test_a_builder_with_no_declared_side_conditions_is_unconstrained(self) -> None:
+        def bare_builder(diagram: Diagram, match: Match) -> BuildResult:
+            raise AssertionError("never called")
+
+        rule = Rule(
+            name="bare",
+            pattern=FusionPattern(),
+            builder=bare_builder,
+            side_conditions=(SideCondition("only", "the one condition"),),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+        assert rule.side_conditions == (SideCondition("only", "the one condition"),)

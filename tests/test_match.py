@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -30,10 +32,13 @@ from qufzx.diagram.generators import (
 )
 from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.diagram.validate import IssueKind, validate
+from qufzx.rewrite import match as match_module
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
     FusionPattern,
+    FusionResolution,
+    _ConstraintRecord,
     find_matches,
     resolve_fusion_match,
 )
@@ -1809,3 +1814,428 @@ class TestStructuralSatisfiabilityOfEveryMatch:
         )
         diagram.set_boundary_outputs([PortRef(b_id, Direction.OUTPUT, 0)])
         self._assert_match_is_structurally_satisfiable(diagram)
+
+
+class TestConstraintRecordPolicyTable:
+    """Every cell of ``_ConstraintRecord``'s (previous entry, this check's outcome) table.
+
+    ``record_identity`` mirrors ``record`` in every cell but ``(BOUND, identity)``, where it
+    keeps the ``BOUND`` entry: the identity holds only because that binding was made.
+    """
+
+    @staticmethod
+    def _record() -> tuple[_ConstraintRecord, ConstraintSource]:
+        return _ConstraintRecord(), ConstraintSource.connecting_pair()
+
+    def test_none_then_deferred_records(self) -> None:
+        record, source = self._record()
+        record.record(source, Dim.symbol("d"), Dim.symbol("e"), ConstraintOutcome.DEFERRED)
+        entry = record.entry_for(source)
+        assert entry is not None and entry.outcome is ConstraintOutcome.DEFERRED
+
+    def test_none_then_bound_records(self) -> None:
+        record, source = self._record()
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(2),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(2)},
+        )
+        entry = record.entry_for(source)
+        assert entry is not None and entry.bound_here == (("d", Dim.concrete(2)),)
+
+    def test_none_then_identity_is_a_no_op(self) -> None:
+        record, source = self._record()
+        record.record_identity(source)
+        assert record.entry_for(source) is None
+        assert record.entries() == ()
+
+    def test_deferred_then_deferred_overwrites_in_place(self) -> None:
+        record, source = self._record()
+        record.record(source, Dim.symbol("d"), Dim.symbol("e"), ConstraintOutcome.DEFERRED)
+        record.record(
+            source, Dim.symbol("d"), Dim.concrete(2) * Dim.symbol("d"), ConstraintOutcome.DEFERRED
+        )
+        assert len(record.entries()) == 1
+        entry = record.entry_for(source)
+        assert entry is not None and entry.equal_to == Dim.concrete(2) * Dim.symbol("d")
+
+    def test_deferred_then_bound_overwrites(self) -> None:
+        record, source = self._record()
+        record.record(source, Dim.symbol("d"), Dim.symbol("e"), ConstraintOutcome.DEFERRED)
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(2),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(2)},
+        )
+        entry = record.entry_for(source)
+        assert entry is not None and entry.outcome is ConstraintOutcome.BOUND
+
+    def test_deferred_then_identity_drops_the_entry(self) -> None:
+        record, source = self._record()
+        record.record(source, Dim.symbol("d"), Dim.symbol("e"), ConstraintOutcome.DEFERRED)
+        record.record_identity(source)
+        assert record.entry_for(source) is None
+        assert record.entries() == ()
+
+    def test_bound_then_deferred_overwrites(self) -> None:
+        record, source = self._record()
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(2),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(2)},
+        )
+        record.record(source, Dim.symbol("d"), Dim.symbol("e"), ConstraintOutcome.DEFERRED)
+        entry = record.entry_for(source)
+        assert entry is not None and entry.outcome is ConstraintOutcome.DEFERRED
+
+    def test_bound_then_bound_overwrites(self) -> None:
+        record, source = self._record()
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(2),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(2)},
+        )
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(3),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(3)},
+        )
+        assert len(record.entries()) == 1
+        entry = record.entry_for(source)
+        assert entry is not None and entry.bound_here == (("d", Dim.concrete(3)),)
+
+    def test_bound_then_identity_keeps_the_bound_entry(self) -> None:
+        record, source = self._record()
+        record.record(
+            source,
+            Dim.symbol("d"),
+            Dim.concrete(2),
+            ConstraintOutcome.BOUND,
+            bound_here={"d": Dim.concrete(2)},
+        )
+        record.record_identity(source)
+        entry = record.entry_for(source)
+        assert entry is not None and entry.outcome is ConstraintOutcome.BOUND
+
+    def test_deferred_then_identity_fires_inside_a_real_resolution(self) -> None:
+        """The drop cell on the live path.
+
+        B's ``d*e`` leg defers against the running ``shared_dim``; the later ``1`` leg binds
+        it down to a bare identity, and no entry for that leg survives.
+        """
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, e])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d * e, Dim.concrete(1)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+        diagram.set_boundary_inputs(
+            [PortRef(b_id, Direction.INPUT, 1), PortRef(b_id, Direction.INPUT, 2)]
+        )
+        wire = next(iter(diagram.wires))
+        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert resolution.passed
+        assert resolution.shared_dim == Dim.concrete(1)
+        dropped = ConstraintSource.surviving_leg(PortRef(b_id, Direction.INPUT, 1))
+        recorded = {entry.source for entry in resolution.dimension_constraints}
+        assert dropped not in recorded, (
+            "the d*e leg deferred and was then discharged into an identity, so its entry "
+            "must be dropped, not left standing as an assumption nothing assumes"
+        )
+        assert recorded == {
+            ConstraintSource.surviving_leg(PortRef(a_id, Direction.OUTPUT, 1)),
+            ConstraintSource.surviving_leg(PortRef(b_id, Direction.INPUT, 2)),
+        }
+
+
+class TestSharedDimSeedComesFromTheLowerIdNode:
+    """``shared_dim`` is seeded from the A-side (lower ``NodeId``) consumed leg.
+
+    Invisible whenever the connecting pair unifies -- the seed is resolved away. A pair that
+    only ``DEFERRED``\\ s leaves it standing as the merged node's leg dimension, which is the
+    only shape where the choice is observable.
+    """
+
+    @staticmethod
+    def _deferring_pair(a_dim: Dim, b_dim: Dim) -> Diagram:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[a_dim])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[b_dim], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        return diagram
+
+    def test_seed_is_the_a_side_leg_not_the_b_side_one(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        matches = find_matches(self._deferring_pair(d, d * e))
+        assert len(matches) == 1
+        assert matches[0].shared_dim == d
+
+    def test_swapping_the_two_legs_swaps_the_resolved_dimension(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        matches = find_matches(self._deferring_pair(d * e, d))
+        assert len(matches) == 1
+        assert matches[0].shared_dim == d * e
+
+    def test_the_merged_node_is_built_at_the_a_side_seed(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[d * e])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        (match,) = find_matches(diagram)
+        assert match.shared_dim == d
+        result = apply(diagram, SPIDER_FUSION, match)
+        (new_id,) = result.new_node_ids
+        merged = result.diagram.nodes[new_id]
+        assert [port.dim for port in (*merged.inputs, *merged.outputs)] == [d, d]
+
+
+class TestFixpointExitRequiresBothToStabilise:
+    """The leg/phase fixpoint exits only on a pass that changes neither ``shared_dim`` nor
+    ``bindings``.
+
+    Exiting on ``shared_dim`` alone leaves whatever was checked earlier in a pass unre-checked
+    against a binding that pass went on to make, so an unsatisfiable leg set escapes as a
+    match instead of failing on its own ``dimension_agreement``. Each shape below has an
+    unsatisfiable set whose contradiction is only visible on a further pass, and each is
+    pinned on the *reported* condition, not merely on the verdict: the post-loop closure
+    guard would otherwise catch them and report an "unreachable" internal failure.
+    """
+
+    @staticmethod
+    def _outcome(resolution: FusionResolution, name: str) -> SideConditionOutcome:
+        return next(o for o in resolution.outcomes if o.name == name)
+
+    def _resolve(self, a_dims: list[Dim], b_dims: list[Dim]) -> FusionResolution:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=a_dims)
+        b_id = diagram.add_node(Z_SPIDER, input_dims=b_dims, output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, i) for i in range(1, len(a_dims))]
+        )
+        diagram.set_boundary_inputs(
+            [PortRef(b_id, Direction.INPUT, i) for i in range(1, len(b_dims))]
+        )
+        return resolve_fusion_match(diagram, a_id, b_id, next(iter(diagram.wires)))
+
+    def test_product_leg_contradicted_by_later_factor_bindings_is_a_non_match(self) -> None:
+        e = Dim.symbol("e")
+        f = Dim.symbol("f")
+        two = Dim.concrete(2)
+        # Legs [2, e*f, e] against [2, f]: e*f defers against 2, then e := 2 and f := 2 bind,
+        # and only a further pass re-resolves e*f to 4 and fails.
+        resolution = self._resolve([two, e * f, e], [two, f])
+        assert resolution.passed is False
+        detail = self._outcome(resolution, "dimension_agreement").detail
+        assert "does not unify with shared_dim" in detail, detail
+        assert "closure check" not in detail, (
+            "the contradiction must surface as an ordinary leg failure inside the fixpoint, "
+            "not fall through to the post-loop closure guard, whose own detail string calls "
+            "itself unreachable on this path"
+        )
+
+    def test_the_contradiction_is_found_whichever_side_carries_the_product(self) -> None:
+        e = Dim.symbol("e")
+        f = Dim.symbol("f")
+        two = Dim.concrete(2)
+        resolution = self._resolve([two, e], [two, e * f, f])
+        assert resolution.passed is False
+        detail = self._outcome(resolution, "dimension_agreement").detail
+        assert "does not unify with shared_dim" in detail, detail
+        assert "closure check" not in detail, detail
+
+    def test_a_satisfiable_multi_pass_shape_still_matches(self) -> None:
+        """The guard above must not be bought by rejecting every multi-pass resolution.
+
+        ``[d, e]`` against ``[d, 2]`` needs three passes: ``e`` first binds to the symbolic
+        ``d``, ``d`` then binds to 2, and only the pass after that resolves ``e`` to 2.
+        """
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        two = Dim.concrete(2)
+        resolution = self._resolve([d, e], [d, two])
+        assert resolution.passed is True
+        assert resolution.shared_dim == two
+
+
+class TestWireEndpointNamingAnUnknownNodeRaises:
+    """A wire naming a node id absent from the diagram is held to the same standard as a
+    boundary entry naming one, and reports itself as a wire.
+
+    ``Diagram.add_wire`` checks nothing about its endpoints, and ``remove_node`` cascades, so
+    such a wire can only arrive from a hand-built or externally-mutated diagram.
+    """
+
+    @staticmethod
+    def _two_spiders() -> tuple[Diagram, NodeId, NodeId]:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        return diagram, a_id, b_id
+
+    def test_unknown_node_on_a_wire_between_the_matched_pair_raises(self) -> None:
+        diagram, a_id, _b_id = self._two_spiders()
+        diagram.add_wire(
+            PortRef(a_id, Direction.OUTPUT, 1), PortRef(NodeId(999999), Direction.INPUT, 0)
+        )
+        with pytest.raises(RewriteGrammarError, match=r"wire .* absent from the diagram"):
+            find_matches(diagram)
+
+    def test_the_message_names_the_wire_not_a_boundary_entry(self) -> None:
+        diagram, a_id, _b_id = self._two_spiders()
+        diagram.add_wire(
+            PortRef(NodeId(999999), Direction.OUTPUT, 0), PortRef(a_id, Direction.OUTPUT, 1)
+        )
+        with pytest.raises(RewriteGrammarError) as excinfo:
+            find_matches(diagram)
+        message = str(excinfo.value)
+        assert message.startswith("wire "), message
+        assert "a live wire can never legitimately name a removed node" in message
+
+    def test_resolve_fusion_match_rejects_it_too(self) -> None:
+        diagram, a_id, b_id = self._two_spiders()
+        wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(NodeId(999999), Direction.INPUT, 0))
+        with pytest.raises(RewriteGrammarError):
+            resolve_fusion_match(diagram, a_id, b_id, wire)
+
+
+class TestConnectingPairDetailRendersANonConcreteBinding:
+    """The connecting pair can unify by binding a symbol to another symbolic ``Dim``.
+
+    ``Dim.substitute`` accepts only concrete replacements, so such a binding is carried as an
+    assumption rather than resolved through, and the ``dimension_agreement`` detail says so
+    instead of printing a binding it never applied.
+    """
+
+    def test_detail_names_the_non_concrete_binding(self) -> None:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        f = Dim.symbol("f")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[e * f], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        (match,) = find_matches(diagram)
+        detail = next(
+            outcome.detail
+            for outcome in match.side_condition_outcomes
+            if outcome.name == "dimension_agreement"
+        )
+        assert "non-concrete Dim" in detail, detail
+        assert "left unused for shared-dimension resolution" in detail
+        assert match.bindings == {}, "a non-concrete binding must not enter the accumulator"
+        (constraint,) = match.dimension_constraints
+        assert constraint.outcome is ConstraintOutcome.BOUND
+        assert constraint.bound_here == (("d", e * f),)
+
+
+class TestStructuralGuardsThatTheFixpointNeverReaches:
+    """The two guards whose own docstrings call them unreachable, pinned by direct call.
+
+    ``_unify_connecting_pair``'s ``CONTRADICTORY_REBIND`` return is unconstructible even
+    contrivedly (see ``TestResolutionFailureReasonDetails``); its *renderer* is not, and is
+    pinned here so the guard's wording cannot rot unnoticed.
+    """
+
+    def test_connecting_pair_contradictory_rebind_renders_as_a_rebind(self) -> None:
+        from qufzx.rewrite.match import (
+            _connecting_pair_failure_detail,
+            _FailureReason,
+            _ResolutionFailure,
+        )
+
+        failure = _ResolutionFailure(
+            _FailureReason.CONTRADICTORY_REBIND, Dim.concrete(5), Dim.symbol("d")
+        )
+        detail = _connecting_pair_failure_detail(failure)
+        assert "contradicts an earlier binding" in detail
+        assert "does not unify" not in detail
+
+    @staticmethod
+    def _closure_args(
+        a_dims: list[Dim], b_dims: list[Dim], phase: PhaseVector | None, shared: Dim
+    ) -> tuple[object, ...]:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=a_dims, phase=phase)
+        b_id = diagram.add_node(Z_SPIDER, input_dims=b_dims, output_dims=[])
+        return (
+            diagram.nodes[a_id],
+            diagram.nodes[b_id],
+            a_id,
+            b_id,
+            PortRef(a_id, Direction.OUTPUT, 0),
+            PortRef(b_id, Direction.INPUT, 0),
+            a_dims[0],
+            b_dims[0],
+            shared,
+            {},
+        )
+
+    def test_closure_rejects_a_connecting_leg_that_does_not_unify(self) -> None:
+        from qufzx.rewrite.match import _verify_fixpoint_closure
+
+        args = self._closure_args([Dim.concrete(2)], [Dim.concrete(2)], None, Dim.concrete(3))
+        assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
+
+    def test_closure_rejects_a_surviving_leg_that_does_not_unify(self) -> None:
+        from qufzx.rewrite.match import _verify_fixpoint_closure
+
+        args = self._closure_args(
+            [Dim.concrete(2), Dim.concrete(7)], [Dim.concrete(2)], None, Dim.concrete(2)
+        )
+        assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
+
+    def test_closure_rejects_a_phase_dim_that_does_not_unify(self) -> None:
+        from qufzx.rewrite.match import _verify_fixpoint_closure
+
+        args = self._closure_args(
+            [Dim.concrete(2)], [Dim.concrete(2)], _phase_at(Dim.concrete(7), 1), Dim.concrete(2)
+        )
+        assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
+
+    def test_closure_accepts_a_consistent_state(self) -> None:
+        from qufzx.rewrite.match import _verify_fixpoint_closure
+
+        args = self._closure_args(
+            [Dim.concrete(2), Dim.concrete(2)], [Dim.concrete(2)], None, Dim.concrete(2)
+        )
+        assert _verify_fixpoint_closure(*args) is True  # type: ignore[arg-type]
+
+    def test_a_failing_closure_is_reported_on_both_dimension_conditions(self) -> None:
+        """``resolve_fusion_match``'s own use of the guard, forced via a patch: no input can
+        reach it, but the reporting must still be right if a future ``Dim.unify`` lets one."""
+        two = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[two])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[two], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        wire = next(iter(diagram.wires))
+        with patch.object(match_module, "_verify_fixpoint_closure", return_value=False):
+            resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        assert resolution.passed is False
+        assert resolution.shared_dim is None
+        failed = {o.name for o in resolution.outcomes if not o.passed}
+        assert failed == {"dimension_agreement", "phase_dimension_agreement"}
+        for outcome in resolution.outcomes:
+            if not outcome.passed:
+                assert "post-loop closure check failed" in outcome.detail

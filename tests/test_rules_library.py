@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -24,7 +25,7 @@ from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
+from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import FusionMatch, find_matches
 from qufzx.rewrite.rule import (
@@ -35,7 +36,13 @@ from qufzx.rewrite.rule import (
     RewriteGrammarError,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import RULES, SPIDER_FUSION, lookup_rule, spider_fusion_builder
+from qufzx.rewrite.rules_library import (
+    RULES,
+    SPIDER_FUSION,
+    _over_shared_dim,
+    lookup_rule,
+    spider_fusion_builder,
+)
 from qufzx.semantics.check import compare
 
 from .helpers import build_ghz_with_copy
@@ -223,13 +230,16 @@ class TestPhaseDimensionAgreementAcceptsConcreteBindings:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert DimensionConstraint(
-            assumed=Dim.concrete(3),
-            equal_to=d,
-            source=ConstraintSource.node_phase(b_id),
-            outcome=ConstraintOutcome.BOUND,
-            bound_here=(("d", Dim.concrete(3)),),
-        ) in matches[0].dimension_constraints
+        assert (
+            DimensionConstraint(
+                assumed=Dim.concrete(3),
+                equal_to=d,
+                source=ConstraintSource.node_phase(b_id),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", Dim.concrete(3)),),
+            )
+            in matches[0].dimension_constraints
+        )
 
         result = apply(diagram, SPIDER_FUSION, matches[0])
         report = compare(diagram, result.diagram, {"d": 3})
@@ -642,3 +652,124 @@ class TestRuleRegistry:
     def test_lookup_rule_raises_on_an_unknown_name(self) -> None:
         with pytest.raises(RewriteGrammarError):
             lookup_rule("no_such_rule")
+
+
+class TestBuilderRejectsFabricatedDimensionConstraints:
+    """A match whose ``dimension_constraints`` disagree with a fresh resolution is rejected.
+
+    The other three agreement checks (``shared_dim``, ``bindings``,
+    ``side_condition_outcomes``) are covered above; this is the fourth, and the one the
+    certificate's own record is built from.
+    """
+
+    @staticmethod
+    def _deferring_match() -> tuple[Diagram, FusionMatch]:
+        d = Dim.symbol("d")
+        e = Dim.symbol("e")
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[d * e])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        (match,) = find_matches(diagram)
+        assert match.dimension_constraints, "shape must actually record a constraint"
+        return diagram, match
+
+    def test_claiming_no_constraints_is_rejected(self) -> None:
+        diagram, match = self._deferring_match()
+        broken = dataclasses.replace(match, dimension_constraints=())
+        with pytest.raises(RewriteDomainError, match="dimension_constraints"):
+            spider_fusion_builder(diagram, broken)
+
+    def test_claiming_a_fabricated_constraint_is_rejected(self) -> None:
+        diagram, match = self._deferring_match()
+        fabricated = match.dimension_constraints + (
+            DimensionConstraint(
+                assumed=Dim.symbol("z"),
+                equal_to=Dim.concrete(7),
+                source=ConstraintSource.node_phase(match.a_id),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("z", Dim.concrete(7)),),
+            ),
+        )
+        broken = dataclasses.replace(match, dimension_constraints=fabricated)
+        with pytest.raises(RewriteDomainError, match="dimension_constraints"):
+            spider_fusion_builder(diagram, broken)
+
+
+class TestPhaseSubstitutionIsRecordedForEitherNode:
+    """``verified_phase_substitutions`` must name whichever node's phase entries a binding
+    actually reached -- the B-side node as readily as the A-side one."""
+
+    @staticmethod
+    def _fuse_with_phase_on(
+        side: str,
+    ) -> tuple[Mapping[NodeId, Mapping[str, Dim]], NodeId, NodeId]:
+        d = Dim.symbol("d")
+        phase = PhaseVector(d, {1: Phase.root_of_unity(1, d)})
+        diagram = Diagram()
+        a_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d, Dim.concrete(3)],
+            phase=phase if side == "a" else None,
+        )
+        b_id = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[d],
+            output_dims=[],
+            phase=phase if side == "b" else None,
+        )
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
+        (match,) = find_matches(diagram)
+        result = apply(diagram, SPIDER_FUSION, match)
+        return result.step.phase_substitutions, a_id, b_id
+
+    def test_a_side_phase_substitution_is_recorded(self) -> None:
+        substitutions, a_id, _b_id = self._fuse_with_phase_on("a")
+        assert set(substitutions) == {a_id}
+        assert dict(substitutions[a_id]) == {"d": Dim.concrete(3)}
+
+    def test_b_side_phase_substitution_is_recorded(self) -> None:
+        substitutions, _a_id, b_id = self._fuse_with_phase_on("b")
+        assert set(substitutions) == {b_id}
+        assert dict(substitutions[b_id]) == {"d": Dim.concrete(3)}
+
+
+class TestOverSharedDimTranslatesPhaseErrors:
+    """``_over_shared_dim`` re-raises an out-of-range phase reattach as ``RewriteDomainError``.
+
+    Unreachable through ``apply`` -- ``resolve_fusion_match`` trial-reattaches every present
+    phase before a match is returned -- so the translation is pinned on the helper directly.
+    """
+
+    def test_an_entry_out_of_range_for_the_shared_dim_becomes_a_domain_error(self) -> None:
+        phase = PhaseVector(Dim.concrete(5), {4: Phase.turns(sp.Rational(1, 3))})
+        with pytest.raises(RewriteDomainError, match="cannot reattach a phase vector"):
+            _over_shared_dim(phase, Dim.concrete(2), {})
+
+    def test_an_absent_phase_becomes_an_all_zero_vector_over_the_shared_dim(self) -> None:
+        vector, applied = _over_shared_dim(None, Dim.concrete(3), {"d": Dim.concrete(3)})
+        assert vector == PhaseVector(Dim.concrete(3), {})
+        assert dict(applied) == {}
+
+
+class TestBuilderRejectsOutcomesDifferingOnlyInDetail:
+    """Coverage and passedness are not enough: the *detail* strings are certificate content
+    too, so a match whose outcomes differ from a fresh resolution's in wording alone is
+    rejected rather than recorded."""
+
+    def test_a_rewritten_detail_string_is_rejected(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a, _b = build_ghz_with_copy(d)
+        (match,) = find_matches(diagram)
+        tampered = (
+            dataclasses.replace(match.side_condition_outcomes[0], detail="a nicer story"),
+            *match.side_condition_outcomes[1:],
+        )
+        broken = dataclasses.replace(match, side_condition_outcomes=tampered)
+        with pytest.raises(RewriteDomainError, match="side_condition_outcomes disagrees"):
+            spider_fusion_builder(diagram, broken)

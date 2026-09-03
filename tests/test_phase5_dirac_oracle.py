@@ -119,6 +119,19 @@ class TestDiracParserGrammar:
                 continue
             raise AssertionError(f"{bad!r} should have raised DiracGrammarError")
 
+    def test_term_structure_outside_one_or_two_terms_raises_grammar_error(self) -> None:
+        """The ``;``-split guard, before the ket-sum grammar is consulted at all."""
+        for bad in (
+            "",
+            "   ",
+            ";",
+            "sum_{k=0}^{d-1} |k,k>;",
+            ";sum_{k=0}^{d-1} |k,k>",
+            "sum_{k=0}^{d-1} |k,k>; copy; copy",
+        ):
+            with pytest.raises(DiracGrammarError, match="ket-sum term"):
+                parse_dirac_source(bad)
+
     def test_zero_leg_count_raises_domain_error(self) -> None:
         try:
             parse_dirac_source("sum_{k=0}^{d-1} |k>^{0}")
