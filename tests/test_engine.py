@@ -123,9 +123,7 @@ class TestApplyRejectsAnUnmappedSurvivingPort:
         def _drop_b_output_mapping_builder(working_diagram: Diagram, match_obj: object) -> object:
             result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
             b_output_ref = PortRef(match_obj.b_id, Direction.OUTPUT, 0)  # type: ignore[attr-defined]
-            incomplete_mapping = {
-                k: v for k, v in result.port_mapping.items() if k != b_output_ref
-            }
+            incomplete_mapping = {k: v for k, v in result.port_mapping.items() if k != b_output_ref}
             return dataclasses.replace(result, port_mapping=incomplete_mapping)
 
         incomplete_rule = Rule(
@@ -165,9 +163,7 @@ class TestApplyRejectsAnUnmappedSurvivingBoundaryPort:
     def test_raises_when_builder_omits_a_surviving_port_a_boundary_output_references(
         self,
     ) -> None:
-        def _drop_a_output_1_mapping_builder(
-            working_diagram: Diagram, match_obj: object
-        ) -> object:
+        def _drop_a_output_1_mapping_builder(working_diagram: Diagram, match_obj: object) -> object:
             result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
             a_output_1_ref = PortRef(match_obj.a_id, Direction.OUTPUT, 1)  # type: ignore[attr-defined]
             incomplete_mapping = {
@@ -198,9 +194,7 @@ class TestApplyRejectsAnUnmappedSurvivingBoundaryPort:
     def test_raises_when_builder_omits_a_surviving_port_a_boundary_input_references(
         self,
     ) -> None:
-        def _drop_a_input_0_mapping_builder(
-            working_diagram: Diagram, match_obj: object
-        ) -> object:
+        def _drop_a_input_0_mapping_builder(working_diagram: Diagram, match_obj: object) -> object:
             result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
             a_input_0_ref = PortRef(match_obj.a_id, Direction.INPUT, 0)  # type: ignore[attr-defined]
             incomplete_mapping = {

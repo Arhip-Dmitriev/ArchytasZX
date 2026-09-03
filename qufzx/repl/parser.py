@@ -13,32 +13,23 @@
 
 """Input DSL parser: spiders, wires, symbolic phases, bang boxes, dimensions, and Dirac kets.
 
-Phase 5 slice only. FULL_PLAN.md's Phase 5 completion condition names a specific chain:
-"the full path Dirac to graph to fuse to graph runs and the oracle confirms exact
-equality". This module supplies the Dirac-to-graph end of it, and no more:
+Phase 5 slice only, supplying the Dirac-to-graph end of that phase's completion condition:
 
-* :func:`parse_dirac_source` accepts one restricted form: a summed ket family
+* :func:`parse_dirac_source` accepts one restricted form, a summed ket family
   ``sum_{k=0}^{D-1} |k,k,...>`` (or the ``|k>^{n}`` tensor-power shorthand), optionally
-  followed by ``; copy`` to feed the state into a fixed two-output copy spider. That is
-  exactly the shape the worked example needs: a state-prep spider with 0 inputs and ``n``
-  outputs, optionally wired into a 1-input/2-output copy spider.
+  followed by ``; copy`` to feed the state into a fixed two-output copy spider.
 * ``D`` may be a concrete positive integer or a bare identifier (a symbolic
-  :class:`~qufzx.algebra.dimension.Dim`); ``n`` must be concrete, since a symbolic leg
-  count is a :class:`~qufzx.diagram.generators.LegPolicy` question this slice does not
-  touch. The bound summation index is rejected in a dimension slot.
-* The emitted diagram never builds a matrix or dense tensor -- the ket-sum is never
-  evaluated numerically. It only allocates nodes, wires, and a boundary order.
-* The tensor-power leg count is bounded by :data:`_MAX_KET_LEG_COUNT`, since it comes from
-  user input and drives eager allocation.
-* No foreign exception hierarchy escapes this module's boundary: each outbound call is
-  either wrapped or shown safe at every call site it has here; see :class:`DiracError`.
+  :class:`~qufzx.algebra.dimension.Dim`); ``n`` must be concrete. The bound summation index
+  is rejected in a dimension slot.
+* The emitted diagram never builds a matrix or dense tensor; it allocates nodes, wires and a
+  boundary order.
+* The tensor-power leg count is bounded by :data:`_MAX_KET_LEG_COUNT`.
+* No foreign exception hierarchy escapes this module; see :class:`DiracError`.
 
-What this module does not do, because it belongs to a later phase: a general spider/wire/
-bang-box declaration syntax (Phase 18's DSL), bang boxes, families indexed by more than the
-one implicit ``k``, or a printer (the diagram-to-Dirac direction, Phase 17). ``copy`` is a
-single keyword standing in for the one copy spider the worked example needs, not a general
-generator-declaration mechanism; Phase 18 is expected to replace it with real declaration
-syntax, at which point this grammar is a strict subset of that one.
+Out of scope, and belonging to later phases: a general spider/wire/bang-box declaration
+syntax (Phase 18), bang boxes (Phase 7), multi-index families, and the diagram-to-Dirac
+printer (Phase 17). ``copy`` is a single keyword standing in for the one copy spider the
+worked example needs; Phase 18 must keep this grammar as a strict subset of its own.
 """
 
 from __future__ import annotations
@@ -53,34 +44,28 @@ from qufzx.diagram.graph import Diagram, Direction, PortRef
 class DiracError(Exception):
     """Base of every error :func:`parse_dirac_source` can raise.
 
-    The same containment discipline :mod:`qufzx.rewrite` keeps for
-    :class:`~qufzx.rewrite.rule.RewriteError`: every exception reaching a caller is a
-    :class:`DiracError`, never a foreign class from a package this module calls into. A
-    change here should re-check that every outbound call is still contained. The current
-    calls:
+    Every exception reaching a caller is a :class:`DiracError`, never a foreign class from a
+    package this module calls into. A change here should re-check that every outbound call is
+    still contained. The current calls:
 
-    * ``Dim.concrete`` -- not safe on its own; raises
-      :class:`~qufzx.algebra.dimension.DimensionDomainError` for a non-positive integer.
-      :func:`_parse_dim` range-checks the token and additionally wraps the call, so a future
-      change to ``Dim.concrete``'s domain cannot reopen the leak.
-    * ``Dim.symbol`` -- safe as used here; :func:`_parse_dim` gates the call on
-      :data:`_IDENTIFIER_RE` (``[A-Za-z_]\\w*``), so every name reaching it is a shape
-      ``sympy.Symbol`` accepts, and ``Dim`` builds it with the ``positive=True,
-      integer=True`` pair ``_check_dimension_domain`` requires. The gate is in
-      ``_parse_dim`` itself, not only in ``_KET_SUM_RE``, so a caller that bypasses the
-      regex cannot reopen this.
-    * ``Diagram.add_node`` -- safe as used here; it forwards to ``Node``/``Port``, whose
-      constructors raise ``GraphGrammarError`` for a non-``GeneratorType``, a non-``Port``
-      leg, or a non-``PhaseVector`` phase. Every call here passes ``Z_SPIDER``, a list of
-      ``Dim``, and no phase.
-    * ``Diagram.add_wire`` -- safe as used here; it raises ``GraphDomainError`` only for
-      ``a == b``, and every wire built here joins two distinct fresh ports on different nodes.
-    * ``Diagram.set_boundary_outputs`` -- safe; it never raises.
-    * ``int(token)`` -- safe as used here; every call site first confirms the token is a
-      non-empty run of ASCII ``0-9`` (:data:`_ASCII_DIGITS_RE`, or the regex's own
-      ``(?P<power>[0-9]+)`` group). Note that ``str.isdigit()`` is *not* this predicate: it
-      is true for Unicode category ``No`` as well as ``Nd``, so ``'²'`` is ``isdigit()``,
-      matches neither ``\\d+`` nor ``[0-9]+``, and makes ``int()`` raise ``ValueError``.
+    * ``Dim.concrete`` -- raises :class:`~qufzx.algebra.dimension.DimensionDomainError` for
+      a non-positive integer; :func:`_parse_dim` wraps the call.
+    * ``Dim.symbol`` -- gated in :func:`_parse_dim` itself, not only in :data:`_KET_SUM_RE`,
+      on :data:`_IDENTIFIER_RE` (``[A-Za-z_]\\w*``), so every name reaching it is a shape
+      ``sympy.Symbol`` accepts and ``Dim`` builds with the ``positive=True, integer=True``
+      pair ``_check_dimension_domain`` requires.
+    * ``Diagram.add_node`` -- forwards to ``Node``/``Port``, which raise
+      ``GraphGrammarError`` for a non-``GeneratorType``, a non-``Port`` leg, or a
+      non-``PhaseVector`` phase. Every call here passes ``Z_SPIDER``, a list of ``Dim``, and
+      no phase.
+    * ``Diagram.add_wire`` -- raises ``GraphDomainError`` only for ``a == b``, and every wire
+      built here joins two distinct fresh ports on different nodes.
+    * ``Diagram.set_boundary_outputs`` -- never raises.
+    * ``int(token)`` -- every call site first confirms the token is a non-empty run of ASCII
+      ``0-9`` (:data:`_ASCII_DIGITS_RE`, or the regex's own ``(?P<power>[0-9]+)`` group).
+      ``str.isdigit()`` is not that predicate: it is true for Unicode category ``No``, so
+      ``'²'`` is ``isdigit()``, matches neither ``\\d+`` nor ``[0-9]+``, and makes ``int()``
+      raise ``ValueError``.
     """
 
 
@@ -89,28 +74,28 @@ class DiracGrammarError(DiracError):
 
 
 class DiracDomainError(DiracError):
-    """The source text parses, but names a value outside what this slice accepts (e.g. a
-    zero leg count, a dimension of 0, the bound summation index used as a dimension symbol,
-    or a leg count above :data:`_MAX_KET_LEG_COUNT`)."""
+    """The source text parses, but names a value outside this slice: a zero leg count, a
+    dimension outside ``Dim``'s domain, the bound summation index used as a dimension symbol,
+    or a leg count above :data:`_MAX_KET_LEG_COUNT`."""
 
 
 _SUMMATION_INDEX = "k"
-"""The (only) bound summation variable this slice's grammar recognizes. A single module-level
-constant so the regex (:data:`_KET_SUM_RE`) and the dimension-symbol exclusion in
-:func:`_parse_dim` are derived from the same source and cannot drift apart."""
+"""The only bound summation variable this slice's grammar recognizes.
+
+One constant, so :data:`_KET_SUM_RE` and :func:`_parse_dim`'s dimension-symbol exclusion
+cannot drift apart."""
 
 _ASCII_DIGITS = "[0-9]+"
 """The one decimal-literal shape this module's grammar admits, as a regex fragment.
 
-A single module-level constant so :data:`_KET_SUM_RE`'s two numeric groups and
-:func:`_parse_dim`'s own guard (:data:`_ASCII_DIGITS_RE`) are derived from the same source
-and cannot drift apart, as :data:`_SUMMATION_INDEX` does for the bound index.
+``[0-9]+``, not ``\\d+`` and not ``str.isdigit()``: Python's ``\\d`` is Unicode-aware
+(category ``Nd``) and admits e.g. ``'\u0663'``, for which ``int()`` returns 3 -- a non-ASCII
+digit silently accepted as a concrete dimension in an otherwise all-ASCII DSL.
+``str.isdigit()`` is broader still, admitting category ``No`` (``'\u00b2'``), for which
+``int()`` raises ``ValueError``. Leading zeros are accepted: ``07`` is 7.
 
-Deliberately ``[0-9]+``, not ``\\d+`` and not ``str.isdigit()``. Python's ``\\d`` is
-Unicode-aware (category ``Nd``), so it admits e.g. ``'\u0663'``, for which ``int()`` returns
-3 -- a non-ASCII digit silently accepted as a concrete dimension in an otherwise all-ASCII
-DSL. ``str.isdigit()`` is broader still, admitting category ``No`` (``'\u00b2'``,
-``'\u2075'``), for which ``int()`` raises ``ValueError``."""
+One constant, shared with :data:`_KET_SUM_RE`'s numeric groups and
+:data:`_ASCII_DIGITS_RE`."""
 
 _ASCII_DIGITS_RE = re.compile(rf"^{_ASCII_DIGITS}$")
 """Whole-token form of :data:`_ASCII_DIGITS`, for :func:`_parse_dim`'s guard."""
@@ -118,21 +103,19 @@ _ASCII_DIGITS_RE = re.compile(rf"^{_ASCII_DIGITS}$")
 _IDENTIFIER = r"[A-Za-z_]\w*"
 """The one bare-identifier shape this module's grammar admits, as a regex fragment.
 
-Shared by :data:`_KET_SUM_RE`'s ``dim`` group and :func:`_parse_dim`'s own symbol branch
-(via :data:`_IDENTIFIER_RE`), for the same single-source reason as :data:`_ASCII_DIGITS`.
-``\\w`` is left Unicode-aware deliberately: ``sympy.Symbol`` accepts such a name and
-nothing downstream cares, unlike the numeric branch."""
+``\\w`` stays Unicode-aware, unlike the numeric branch: ``sympy.Symbol`` accepts such a name
+and nothing downstream cares. Shared by :data:`_KET_SUM_RE`'s ``dim`` group and
+:data:`_IDENTIFIER_RE`."""
 
 _IDENTIFIER_RE = re.compile(rf"^{_IDENTIFIER}$")
 """Whole-token form of :data:`_IDENTIFIER`, for :func:`_parse_dim`'s guard."""
 
 _MAX_KET_LEG_COUNT = 1024
-"""Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit -- nothing
-about ZX-calculus or this project caps a spider's leg count, and a large or symbolic ``n`` is
-Phase 7's bang boxes' answer, not this slice's. This bound exists only so a single malformed or
-adversarial source string cannot force this parser to eagerly allocate an unbounded number of
-ports before any later phase gets a chance to reject the diagram. Same role and shape as
-``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match`."""
+"""Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit.
+
+Nothing about ZX-calculus caps a spider's leg count; this only stops one adversarial source
+string forcing unbounded eager port allocation. Same role as ``_MAX_FIXPOINT_PASSES`` in
+:mod:`qufzx.rewrite.match`."""
 
 _KET_SUM_RE = re.compile(
     rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
@@ -147,9 +130,10 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
     """How many output legs the ket family declares.
 
     ``body`` must, once commas and whitespace are stripped, consist only of repeated ``k``
-    characters (``"k"``, ``"kk"``, ``"k,k"``, ``"k, k, k"``, ...) -- one leg per ``k``. A
-    ``power`` suffix (``|k>^{n}``) is the tensor-power shorthand instead: it requires
-    ``body`` to be the single index ``"k"`` and supplies the leg count directly.
+    characters (``"k"``, ``"kk"``, ``"k,k"``, ``"k, k, k"``, ...) -- one leg per ``k``.
+    Commas and spaces are separators only, so ``|k,,k>`` and ``|kk>`` are the same two-leg
+    body. A ``power`` suffix (``|k>^{n}``) is the tensor-power shorthand instead: it
+    requires ``body`` to be the single index ``"k"`` and supplies the leg count directly.
     """
     stripped = body.replace(",", "").replace(" ", "")
     if not stripped or any(ch != "k" for ch in stripped):
@@ -199,9 +183,9 @@ def _parse_dim(token: str) -> Dim:
             f"dimension token {token!r} is the bound summation index; a dimension symbol "
             "must be free, not the variable the enclosing sum binds"
         )
-    # Keeps this function total on its own terms, not merely on the tokens _KET_SUM_RE
-    # currently hands it: without this branch a token matching neither shape falls through
-    # to Dim.symbol() and becomes a symbol named after it -- a silent wrong parse.
+    # Total on its own terms, not merely on the tokens _KET_SUM_RE currently hands it:
+    # without this branch a token matching neither shape becomes a symbol named after
+    # itself.
     if not _IDENTIFIER_RE.match(token):
         raise DiracGrammarError(
             f"dimension token {token!r} is neither a decimal literal ({_ASCII_DIGITS}) nor "
@@ -226,20 +210,17 @@ def _parse_ket_sum(text: str) -> tuple[Dim, int]:
 def parse_dirac_source(source: str) -> Diagram:
     """Parse a restricted Dirac-ket source string into a :class:`~qufzx.diagram.graph.Diagram`.
 
-    See the module docstring for exactly what grammar this accepts. Two forms:
+    Two forms, both detailed in the module docstring:
 
-    * ``"sum_{k=0}^{D-1} |k,k,...>"`` alone: one state-prep spider, 0 inputs, one output
-      per ket index, boundary outputs in ket order. This is ``A`` in
-      :func:`tests.helpers.build_ghz_with_copy`.
-    * ``"sum_{k=0}^{D-1} |k,k,...>; copy"``: the same state, with its first output wired
-      into a fixed 1-input/2-output copy spider (also over ``D``); the boundary is the
-      state's own remaining outputs (in order) followed by the copy spider's two outputs.
-      This is the full "A into B" shape ``build_ghz_with_copy`` builds by hand, structurally
-      identical port-for-port (see ``tests/test_phase5_dirac_oracle.py``).
+    * ``"sum_{k=0}^{D-1} |k,k,...>"``: one state-prep spider, 0 inputs, one output per ket
+      index, boundary outputs in ket order.
+    * ``"sum_{k=0}^{D-1} |k,k,...>; copy"``: the same state with its first output wired into
+      a fixed 1-input/2-output copy spider over ``D``; the boundary is the state's remaining
+      outputs in order, then the copy spider's two. Port-for-port identical to
+      :func:`tests.helpers.build_ghz_with_copy` (see ``tests/test_phase5_dirac_oracle.py``).
 
-    Raises :class:`DiracGrammarError` for source text outside this slice's restricted
-    grammar, and :class:`DiracDomainError` for grammatically valid source naming a value
-    (e.g. a zero leg count) this slice does not accept.
+    Raises :class:`DiracGrammarError` for source outside this grammar and
+    :class:`DiracDomainError` for a value this slice does not accept.
     """
     terms = [term.strip() for term in source.split(";")]
     if len(terms) not in (1, 2) or any(not term for term in terms):
@@ -264,11 +245,10 @@ def parse_dirac_source(source: str) -> Diagram:
             "(a general spider-declaration syntax is Phase 18's, not this slice's)"
         )
     copy_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim])
-    diagram.add_wire(
-        PortRef(state_id, Direction.OUTPUT, 0), PortRef(copy_id, Direction.INPUT, 0)
-    )
-    boundary_outputs = [
-        PortRef(state_id, Direction.OUTPUT, i) for i in range(1, leg_count)
-    ] + [PortRef(copy_id, Direction.OUTPUT, 0), PortRef(copy_id, Direction.OUTPUT, 1)]
+    diagram.add_wire(PortRef(state_id, Direction.OUTPUT, 0), PortRef(copy_id, Direction.INPUT, 0))
+    boundary_outputs = [PortRef(state_id, Direction.OUTPUT, i) for i in range(1, leg_count)] + [
+        PortRef(copy_id, Direction.OUTPUT, 0),
+        PortRef(copy_id, Direction.OUTPUT, 1),
+    ]
     diagram.set_boundary_outputs(boundary_outputs)
     return diagram

@@ -13,48 +13,15 @@
 
 """Rule: a left-hand pattern, right-hand builder, side conditions, quantifiers, and exact scalar.
 
-A :class:`Rule` is a frozen value object bundling everything Phase 6's certificate needs to
-describe why a rewrite step was legal, without performing any graph surgery: the
-:class:`Pattern` that locates candidates, a builder turning one :class:`Match` into a
-:class:`BuildResult`, the named side conditions the pattern checks, declared quantifier
-metadata, and the exact scalar the rule introduces.
+:class:`Rule` is a frozen value object; it performs no graph surgery. :class:`Pattern` is the
+abstract seam later phases implement to add new rewrite shapes. :class:`Match` is a
+``typing.Protocol``, so each pattern defines its own match type carrying whatever location
+data it needs. :class:`BuildResult` is the generic engine/builder contract:
+:func:`qufzx.rewrite.engine.apply` splices from its fields alone, knowing nothing
+rule-specific.
 
-Pattern is an abstract base class with a single method, :meth:`Pattern.find_matches`, so
-Phase 7 onward adds new shapes (bang-boxed fusion, bialgebra, Hopf) by implementing that
-seam rather than teaching :mod:`qufzx.rewrite.match` a family of hardcoded rule names.
-
-Match is a ``typing.Protocol``, not a dataclass base. Every pattern produces its own match
-type carrying whatever location data it needs, and dataclass inheritance would force one
-consistent constructor shape across unrelated ones. Any object exposing
-``side_condition_outcomes``, ``dimension_constraints``, and ``all_side_conditions_passed``
-satisfies it structurally.
-
-:class:`DimensionConstraint` is source-keyed, not a bare pair: it carries the assumed
-equality plus the :class:`ConstraintSource` that produced it and the
-:class:`ConstraintOutcome` it came from. That lets a pattern whose dimension resolution
-iterates to a fixpoint record each source exactly once, at its most-resolved form, by
-replacing the entry for a source it re-derives.
-
-:class:`BuildResult` is the generic engine/builder contract. Since ``apply()`` stays
-generic over any future rule, a builder must report not just a diagram and a scalar but
-which nodes and wires the match consumed and how surviving ports were remapped, so the
-engine can splice without knowing anything rule-specific. It also carries
-``verified_side_condition_outcomes`` and ``verified_dimension_constraints``: the channel
-through which a builder that independently re-derives its match's assumptions returns that
-ground truth, rather than an unaudited claim a foreign match could have fabricated.
-
-Quantifiers are declared metadata, not enforced machinery, in this phase. Every ZX rule is
-mathematically "for all leg counts n, for all dimensions d satisfying some constraint, this
-holds"; :class:`Quantifiers` records the names of those variables but is not yet consulted
-to restrict matching. Phase 7 (bang-box multiplicities) and Phase 10 (a real unifier with
-constraints such as "only at prime d") turn them into checked constraints -- the field
-exists now so those phases extend metadata that already has a place to live.
-
-Typed errors follow this codebase's domain/grammar split. :class:`RewriteError` is the base
-for everything raised in :mod:`qufzx.rewrite`; :class:`RewriteDomainError` covers a value
-or state outside the domain a rewrite requires (a match whose side conditions did not pass,
-a builder whose scalar disagrees with its rule's); :class:`RewriteGrammarError` covers a
-malformed request (a match or diagram not belonging to the rule being applied).
+:class:`Quantifiers` is declared metadata only in this phase; Phase 7 and Phase 10 make it
+checkable.
 """
 
 from __future__ import annotations
@@ -77,27 +44,39 @@ class RewriteError(Exception):
 class RewriteDomainError(RewriteError):
     """A value or state is outside the mathematical domain a rewrite operation requires.
 
-    Raised for a match whose side conditions were not all satisfied, and for a builder
-    whose introduced scalar disagrees with its rule's declared :attr:`Rule.scalar_introduced`.
+    Raised for: a match whose ``side_condition_outcomes`` do not exactly cover, or do not all
+    pass, its rule's declared conditions; a builder whose ``scalar_introduced`` disagrees with
+    its rule's; a match whose ``shared_dim``, ``bindings``, ``dimension_constraints`` or
+    ``side_condition_outcomes`` disagree with a fresh
+    :func:`~qufzx.rewrite.match.resolve_fusion_match`, or that re-resolves as a non-match; a
+    phase whose entries fall outside the shared dimension once reattached; a wire or boundary
+    entry naming a consumed port absent from the builder's ``port_mapping``; and a rewrite
+    that introduces a hard validation issue the input did not carry.
     """
 
 
 class RewriteGrammarError(RewriteError):
     """A rewrite request is malformed independent of mathematical domain.
 
-    Raised for a match that does not belong to the diagram or rule it is applied against.
+    Raised for: a value object built outside its own contract (a :class:`ConstraintSource`
+    whose kind and reference disagree, a :class:`DimensionConstraint` whose ``bound_here`` is
+    ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type or one
+    whose ``side_conditions`` disagree with its builder's); a match or wire that does not
+    belong to the diagram it is applied against; a :class:`BuildResult` naming a node, port or
+    wire the working diagram does not have, repeating an id, or whose ``port_mapping`` is not
+    injective; and an unknown rule name at
+    :func:`~qufzx.rewrite.rules_library.lookup_rule`.
     """
 
 
 @dataclass(frozen=True, slots=True)
 class SideCondition:
-    """A named, individually-reportable predicate a :class:`Pattern` checks per candidate.
+    """One named entry in a :class:`Pattern`'s declared condition list.
 
-    Declared once per pattern (see ``FUSION_SIDE_CONDITIONS`` in
-    :mod:`qufzx.rewrite.match`) so a certificate can say *which* condition was checked and
-    what it returned for a given match, rather than reporting only "it matched". This is
-    metadata about the pattern; the per-candidate result lives in
-    :class:`SideConditionOutcome`.
+    Metadata about the pattern, declared once (see ``FUSION_SIDE_CONDITIONS`` in
+    :mod:`qufzx.rewrite.match`); the per-candidate result lives in
+    :class:`SideConditionOutcome`. Not every entry is a decision: a pattern may declare a
+    condition it always reports True, as a structural fact for the certificate to carry.
     """
 
     name: str
@@ -106,12 +85,11 @@ class SideCondition:
 
 @dataclass(frozen=True, slots=True)
 class SideConditionOutcome:
-    """The result of checking one named :class:`SideCondition` against one match candidate.
+    """The result of one named :class:`SideCondition` against one match candidate.
 
-    ``deferred`` mirrors :class:`qufzx.diagram.validate.ValidationIssue`'s convention:
-    True marks an outcome that passed only because a dimension equality could not yet be
-    decided and was assumed (see :meth:`qufzx.algebra.dimension.Dim.unify`'s ``DEFERRED``
-    status), not because it was verified outright.
+    ``deferred`` is True for an outcome that passed on an assumed rather than verified
+    dimension equality, mirroring
+    :class:`qufzx.diagram.validate.ValidationIssue`'s convention.
     """
 
     name: str
@@ -121,43 +99,31 @@ class SideConditionOutcome:
 
 
 class ConstraintSourceKind(enum.Enum):
-    """Which kind of check in a pattern's resolution produced a :class:`DimensionConstraint`.
-
-    The discriminator that makes :attr:`Match.dimension_constraints` a uniformly-readable
-    record: the connecting pair relates two legs to each other, while every other entry
-    relates one leg or phase to the shared dimension.
-    """
+    """Which kind of check produced a :class:`DimensionConstraint`."""
 
     CONNECTING_PAIR = "connecting_pair"
-    """The two legs the matched (consumed) wire joins, related to each other. This is the
-    only kind whose :attr:`DimensionConstraint.equal_to` is another leg's dimension rather
-    than the candidate's running shared dimension: it is what *starts* the resolution, so
-    there is no shared dimension yet to relate it to."""
+    """The two legs the consumed wire joins, related to each other. The only kind whose
+    :attr:`DimensionConstraint.equal_to` is another leg's dimension rather than the running
+    shared dimension."""
 
     SURVIVING_LEG = "surviving_leg"
-    """One specific surviving leg, identified by :attr:`ConstraintSource.port_ref`
-    (``(NodeId, Direction, index)``), related to the shared dimension as of the check."""
+    """One surviving leg, identified by :attr:`ConstraintSource.port_ref`, related to the
+    shared dimension as of the check."""
 
     NODE_PHASE = "node_phase"
-    """One specific node's phase vector dimension, identified by
-    :attr:`ConstraintSource.node_id`, related to the shared dimension as of the check."""
+    """One node's phase vector dimension, identified by :attr:`ConstraintSource.node_id`,
+    related to the shared dimension as of the check."""
 
 
 @dataclass(frozen=True, slots=True)
 class ConstraintSource:
     """*Which* check produced a :class:`DimensionConstraint` -- the record's identity key.
 
-    A resolution that iterates to a fixpoint checks the same leg or phase several times,
-    each against a more-resolved shared dimension. Keying the record by source makes "a
-    source is checked many times but recorded once, at its most-resolved form" structural:
-    :mod:`qufzx.rewrite.match` replaces the entry for a source it re-derives, in place,
-    preserving first-derivation order.
-
-    Enforced by :meth:`__post_init__`: ``CONNECTING_PAIR`` carries neither reference
-    (there is exactly one connecting pair per candidate), ``SURVIVING_LEG`` carries exactly
-    ``port_ref``, and ``NODE_PHASE`` carries exactly ``node_id``. Build one through
-    :meth:`connecting_pair`, :meth:`surviving_leg`, or :meth:`node_phase` rather than by
-    hand.
+    :mod:`qufzx.rewrite.match` records at most one constraint per source, replacing an
+    entry it re-derives in place. :meth:`__post_init__` enforces that ``CONNECTING_PAIR``
+    carries neither reference, ``SURVIVING_LEG`` exactly ``port_ref``, and ``NODE_PHASE``
+    exactly ``node_id``. Build through :meth:`connecting_pair`, :meth:`surviving_leg` or
+    :meth:`node_phase`.
     """
 
     kind: ConstraintSourceKind
@@ -206,9 +172,7 @@ class ConstraintSource:
 class ConstraintOutcome(enum.Enum):
     """Why a :class:`DimensionConstraint` was recorded: the unify deferred, or it bound.
 
-    Both are assumptions a real unifier (Phase 10) must eventually justify, and they are
-    different assumptions, so the record says which. A unify that was a bare syntactic
-    identity is never recorded at all -- hence no third member.
+    A unify that was a bare syntactic identity is never recorded at all.
     """
 
     DEFERRED = "deferred"
@@ -223,24 +187,15 @@ class ConstraintOutcome(enum.Enum):
 class DimensionConstraint:
     """One dimension equality a rewrite assumed rather than verified as a syntactic identity.
 
-    ``assumed == equal_to`` is the assumed equality, ``source`` says which check produced
-    it (and is the key a fixpoint re-derivation replaces in place -- see
-    :class:`ConstraintSource`), and ``outcome`` says whether the underlying
-    :meth:`~qufzx.algebra.dimension.Dim.unify` deferred or bound.
+    For ``SURVIVING_LEG`` and ``NODE_PHASE``, ``assumed`` is the leg's or phase's own ``Dim``
+    with every binding accumulated so far substituted in, and ``equal_to`` is the shared
+    dimension as of that check. For ``CONNECTING_PAIR``, both are raw leg dims.
 
-    For ``SURVIVING_LEG`` and ``NODE_PHASE`` sources, ``assumed`` is the leg's or phase's
-    own ``Dim`` with every concrete binding accumulated so far already substituted in, and
-    ``equal_to`` is the candidate's shared dimension as of that check. For
-    ``CONNECTING_PAIR``, both are raw leg dims -- see
-    :attr:`ConstraintSourceKind.CONNECTING_PAIR`.
-
-    ``bound_here`` is exactly what this check's own ``Dim.unify`` call bound: empty for a
-    ``DEFERRED`` outcome, and for ``BOUND`` the raw ``UnifyResult.bindings``, name-sorted.
-    It may include a binding to a non-concrete ``Dim`` (``d := e``), unlike the running
-    ``bindings`` accumulator, since it records what one check bound rather than feeding
-    later resolution. A detail string must read what a check bound off this field, never by
-    intersecting symbol occurrences in ``assumed``/``equal_to`` against another check's
-    bindings.
+    ``bound_here`` is exactly what this check's own ``Dim.unify`` bound: empty when
+    ``DEFERRED``, and the name-sorted ``UnifyResult.bindings`` when ``BOUND``. It may hold a
+    binding to a non-concrete ``Dim``, unlike the running ``bindings`` accumulator. A detail
+    string must read what a check bound off this field, never by intersecting symbol
+    occurrences in ``assumed``/``equal_to``.
     """
 
     assumed: Dim
@@ -250,11 +205,8 @@ class DimensionConstraint:
     bound_here: tuple[tuple[str, Dim], ...] = ()
 
     def __post_init__(self) -> None:
-        """Require ``bound_here`` non-empty iff ``outcome`` is ``BOUND``, and well-shaped.
-
-        The shape check (a tuple of ``(str, Dim)`` pairs) mirrors
-        :meth:`ConstraintSource.__post_init__`'s treatment of ``(kind, reference)``.
-        """
+        """Require ``bound_here`` non-empty iff ``outcome`` is ``BOUND``, and a tuple of
+        ``(str, Dim)`` pairs."""
         if self.outcome is ConstraintOutcome.BOUND and not self.bound_here:
             raise RewriteGrammarError(
                 f"DimensionConstraint with outcome=BOUND must carry a non-empty "
@@ -290,9 +242,8 @@ class DimensionConstraint:
 class Quantifiers:
     """Declared quantifier metadata: which leg-count and dimension names a rule ranges over.
 
-    Pure documentation in Phase 5; Phase 7 and Phase 10 make it checkable. ``leg_counts``
-    names the leg-count variables the rule's equation is stated over; ``dimensions`` names
-    the dimension variables (for spider fusion, the one shared leg dimension ``"d"``).
+    ``leg_counts`` names the leg-count variables the rule's equation is stated over;
+    ``dimensions`` names the dimension variables. Not consulted in this phase.
     """
 
     leg_counts: tuple[str, ...] = ()
@@ -302,10 +253,9 @@ class Quantifiers:
 class Match(Protocol):
     """Structural protocol every concrete match type (e.g. ``FusionMatch``) must satisfy.
 
-    Deliberately a ``Protocol``, not a shared dataclass base -- see the module docstring.
-    A match's rule-specific location data (which nodes, which wire, ...) lives entirely on
-    the concrete match type; :mod:`qufzx.rewrite.engine` never reads it directly, since
-    that data reaches the engine through :class:`BuildResult` instead.
+    Rule-specific location data lives on the concrete match type;
+    :mod:`qufzx.rewrite.engine` never reads it, receiving what it needs through
+    :class:`BuildResult`.
     """
 
     @property
@@ -317,10 +267,8 @@ class Match(Protocol):
     def dimension_constraints(self) -> tuple[DimensionConstraint, ...]:
         """Every dimension equality this match assumed rather than verified as an identity.
 
-        Source-keyed: at most one entry per :class:`ConstraintSource`, each carrying its
-        own :class:`ConstraintOutcome` (deferred, or decided only under a binding). See
-        :class:`DimensionConstraint` and :mod:`qufzx.rewrite.match`'s module docstring,
-        "Dimension constraints", for the recording contract and the tests that enforce it.
+        Source-keyed: at most one entry per :class:`ConstraintSource`. See
+        :mod:`qufzx.rewrite.match`'s module docstring, "Dimension constraints".
         """
         ...
 
@@ -328,12 +276,8 @@ class Match(Protocol):
     def all_side_conditions_passed(self) -> bool:
         """True iff every entry of :attr:`side_condition_outcomes` passed.
 
-        A pattern never returns a candidate with a failing side condition, so this is
-        always True for a match a pattern produced. It is not the full invariant:
-        ``all(...)`` over an empty or incomplete :attr:`side_condition_outcomes` is
-        vacuously True, so it cannot catch a hand-built match missing outcomes. Full
-        coverage is checked separately by :func:`check_side_condition_coverage`, which both
-        :mod:`qufzx.rewrite.engine`'s ``apply`` and each rule's builder call first.
+        Vacuously True over an empty or incomplete tuple; full coverage is
+        :func:`check_side_condition_coverage`'s job.
         """
         ...
 
@@ -342,16 +286,11 @@ class Match(Protocol):
 class BuildResult:
     """What a rule's right-hand builder hands back to :mod:`qufzx.rewrite.engine`.
 
-    See the module docstring for why this is the generic engine/builder contract.
     ``diagram`` is the same working diagram the builder was given, mutated in place to add
     the replacement node(s); the builder never removes matched nodes or touches wires and
-    boundaries. Splicing the replacement into the rest of the diagram is
-    :mod:`qufzx.rewrite.engine`'s job, done generically from these fields alone.
-    :func:`~qufzx.rewrite.engine.apply` checks ``diagram is working`` by object identity
-    right after calling the builder.
-
-    ``new_node_ids`` reports every node the builder created, in a deterministic order --
-    one for spider fusion, several for a rule such as Phase 11's bialgebra or Hopf/copy.
+    boundaries. :func:`~qufzx.rewrite.engine.apply` checks ``diagram is working`` by object
+    identity. ``new_node_ids`` reports every node the builder created, in a deterministic
+    order.
     """
 
     diagram: Diagram
@@ -383,8 +322,8 @@ class Pattern(abc.ABC):
 RuleBuilder = Callable[[Diagram, Match], BuildResult]
 """The right-hand-side builder signature: consumes a working diagram and a located match.
 
-Mutates and returns the diagram it was given (see :class:`BuildResult`); never receives
-or returns the original, unmutated diagram passed to :func:`qufzx.rewrite.engine.apply`.
+Mutates and returns the diagram it was given, never the original passed to
+:func:`qufzx.rewrite.engine.apply`.
 """
 
 
@@ -392,14 +331,11 @@ or returns the original, unmutated diagram passed to :func:`qufzx.rewrite.engine
 class Rule:
     """A frozen, named rewrite rule: pattern, builder, side conditions, quantifiers, and scalar.
 
-    ``name`` is a stable identifier (e.g. ``"spider_fusion"``) a certificate can reference.
-    ``side_conditions`` documents every named predicate :attr:`pattern` checks; a match's
-    own ``side_condition_outcomes`` names the same conditions with their per-candidate
-    result. ``scalar_introduced`` is the exact scalar this rule introduces on every
-    application; :mod:`qufzx.rewrite.engine` checks a builder's
-    :attr:`BuildResult.scalar_introduced` against it and raises
-    :class:`RewriteDomainError` on disagreement. ``__post_init__`` validates every field's
-    type, including that ``scalar_introduced`` is a ``Scalar`` and never a bare ``float``.
+    ``name`` is a stable identifier a certificate can reference. ``side_conditions`` declares
+    every named entry :attr:`pattern` reports on. ``scalar_introduced`` is the exact scalar
+    this rule introduces on every application; :mod:`qufzx.rewrite.engine` checks a builder's
+    against it. ``__post_init__`` validates every field's type, including that
+    ``scalar_introduced`` is a ``Scalar`` and never a bare ``float``.
     """
 
     name: str
@@ -419,8 +355,7 @@ class Rule:
             )
         if not callable(self.builder):
             raise RewriteGrammarError(
-                f"rule {self.name!r}: builder must be callable, "
-                f"got {type(self.builder).__name__}"
+                f"rule {self.name!r}: builder must be callable, got {type(self.builder).__name__}"
             )
         if not isinstance(self.side_conditions, tuple) or not all(
             isinstance(condition, SideCondition) for condition in self.side_conditions
@@ -439,11 +374,9 @@ class Rule:
                 f"rule {self.name!r}: scalar_introduced must be a Scalar, "
                 f"got {type(self.scalar_introduced).__name__}"
             )
-        # A builder that calls check_side_condition_coverage itself (it is reachable
-        # directly, not only through apply) must check against exactly the tuple this Rule
-        # declares, or the two give contradictory verdicts on the same match. A builder
-        # declares its expectation by setting a `side_conditions` attribute on the callable;
-        # one with no such attribute is unconstrained here.
+        # A builder declares the tuple it expects by setting a `side_conditions` attribute
+        # on the callable; a Rule wrapping it must agree, or the two give contradictory
+        # verdicts on the same match. A builder with no such attribute is unconstrained.
         builder_side_conditions = getattr(self.builder, "side_conditions", None)
         if (
             builder_side_conditions is not None
@@ -465,17 +398,11 @@ def check_side_condition_coverage(
 ) -> None:
     """Verify ``match`` carries a complete, all-passing outcome for every declared condition.
 
-    :attr:`Match.all_side_conditions_passed` alone cannot catch a match whose
-    ``side_condition_outcomes`` is empty or incomplete, since ``all()`` over ``()`` is
-    vacuously True. This function requires the set of ``outcome.name`` to equal exactly the
-    set of ``condition.name`` in ``side_conditions``, with no duplicates, and only then
-    checks that every outcome passed. ``context`` (typically a rule name) is folded into
-    the raised message.
-
-    Both :func:`qufzx.rewrite.engine.apply` and each rule's own builder call this before
-    doing any work, since a builder is reachable directly. Raises
-    :class:`RewriteDomainError`: a coverage or passedness failure is a match outside the
-    domain a rewrite requires, not a malformed request.
+    Requires the set of ``outcome.name`` to equal exactly the set of ``condition.name``,
+    with no duplicates, and only then that every outcome passed. ``context`` (typically a
+    rule name) is folded into the message. Both :func:`qufzx.rewrite.engine.apply` and each
+    rule's own builder call this first, since a builder is reachable directly. Raises
+    :class:`RewriteDomainError`.
     """
     outcomes = match.side_condition_outcomes
     outcome_names = [outcome.name for outcome in outcomes]

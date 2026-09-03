@@ -289,7 +289,7 @@ def _interface_mismatch(
 
     1. The boundary output/input split (``result.num_boundary_outputs`` and the
        remainder) -- a diagram with 2 outputs and 1 input must never match one with 1
-       output and 2 inputs just because both have three free legs.
+       output and 2 inputs merely on both having three free legs.
     2. Per axis, the concrete dimension of the port that produced it, position by
        position.
 

@@ -275,8 +275,7 @@ class Dim:
             else:
                 if value < 0:
                     raise DimensionDomainError(
-                        f"exponent symbol {sym_name!r} requires a non-negative integer, "
-                        f"got {value}"
+                        f"exponent symbol {sym_name!r} requires a non-negative integer, got {value}"
                     )
             subs_dict[sym] = sp.Integer(value)
 
@@ -423,8 +422,8 @@ class UnifyAllResult:
     """The result of :func:`unify_all`: a status, accumulated bindings, and residual pairs.
 
     ``residual_pairs`` holds every pair left unresolved once the loop stopped -- either
-    because the fixpoint genuinely stabilised with real residual constraints left (the
-    ordinary ``DEFERRED`` case), or because :data:`_MAX_UNIFY_ALL_PASSES` was exhausted
+    with the fixpoint genuinely stabilised on real residual constraints (the ordinary
+    ``DEFERRED`` case), or with :data:`_MAX_UNIFY_ALL_PASSES` exhausted
     before it could stabilise, in which case ``residual_pairs`` holds whatever was still
     unresolved on that final, non-converged pass -- a snapshot of an interrupted
     computation, not a decided answer.
@@ -494,7 +493,7 @@ def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
     into ``bindings`` or substituted through; it is recorded on
     :attr:`UnifyAllResult.declined_bindings` rather than dropped. Returns
     FAILURE on any non-unifiable pair, DEFERRED with every pair still unresolved once the
-    fixpoint stabilises, or SUCCESS. A DEFERRED returned because
+    fixpoint stabilises, or SUCCESS. A DEFERRED returned when
     :data:`_MAX_UNIFY_ALL_PASSES` ran out first carries ``exhausted=True`` and holds only
     what the final, non-converged pass left unresolved -- see :attr:`UnifyAllResult.exhausted`.
     Raises only :class:`DimensionError` subclasses.

@@ -14,12 +14,11 @@
 """Diagram well-formedness checks: per-port dimension agreement, boundary consistency,
 port usage, generator policy conformance, and symbol-role collisions.
 
-:func:`validate` never mutates the diagram it is given -- it is a pure read function from a
+:func:`validate` never mutates the diagram it is given: a pure read function from a
 :class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`.
-:mod:`qufzx.diagram.graph`'s mutators are intentionally permissive, so this is the one
-place a diagram's cross-cutting invariants are checked together, in one pass, and reported
-as typed issues rather than a bool: Phase 5's matcher and Phase 6's certificates both need
-to know which port, which node, which wire, and why.
+:mod:`qufzx.diagram.graph`'s mutators are permissive, so this is the one place a diagram's
+cross-cutting invariants are checked together, in one pass, and reported as typed issues
+rather than a bool.
 
 Port usage. Every port of every node must be exactly one of: an endpoint of exactly one
 wire, or an entry in the matching boundary list. Over-use is reported by
@@ -37,11 +36,10 @@ Unequal and non-unifiable is a hard error -- :class:`IssueKind.DIMENSION_MISMATC
 :class:`IssueKind.PHASE_DIMENSION_MISMATCH` respectively. A pair ``unify`` cannot yet
 resolve (``DEFERRED``, e.g. ``Dim("d")`` against ``Dim("d") * Dim("e")``, where ``d`` is a
 proper subterm and so not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED`: an
-assumed constraint, neither silently accepted nor reported as an error. This is the seam
-Phase 10's real unifier drops into -- replacing ``Dim.unify``'s placeholder changes what is
-deferred here without changing this module. A bare symbol against an unrelated symbol or
-concrete value is not that case: ``unify`` reports ``SUCCESS`` with a binding and nothing
-is recorded.
+assumed constraint, neither silently accepted nor reported as an error. Phase 10's real
+unifier drops in at ``Dim.unify``, changing what is deferred here without changing this
+module. A bare symbol against an unrelated symbol or concrete value is not that case:
+``unify`` reports ``SUCCESS`` with a binding and nothing is recorded.
 
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
 :func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint, rather than
@@ -53,10 +51,9 @@ another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinne
 ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
 
 :class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
-vector, which carries its dimension nowhere at all (per the spec, dimension is stored per
-port, not as one global parameter). :mod:`qufzx.semantics.denote` already refused such a
-node; without this, ``validate(d).is_valid`` did not imply every node in ``d`` is
-denotable, yet :mod:`qufzx.rewrite.engine`'s step 8 rests on exactly that.
+vector, which carries its dimension nowhere (dimension is stored per port, never as one
+global parameter). It keeps ``validate(d).is_valid`` implying every node in ``d`` is
+denotable, which :mod:`qufzx.rewrite.engine`'s step 8 rests on.
 
 :class:`IssueKind.SYMBOL_ROLE_COLLISION` (:func:`_check_symbol_role_collisions`) rejects a
 name used in two symbol roles in one diagram. Substitution here is keyed by name, so
@@ -219,8 +216,7 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
                 ValidationIssue(
                     kind=IssueKind.DIMENSION_MISMATCH,
                     message=(
-                        f"wire {wire!r} joins mismatched dimensions {port_a.dim} and "
-                        f"{port_b.dim}"
+                        f"wire {wire!r} joins mismatched dimensions {port_a.dim} and {port_b.dim}"
                     ),
                     wire=wire,
                 )
@@ -324,9 +320,7 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                 issues.append(
                     ValidationIssue(
                         kind=IssueKind.PORT_UNUSED,
-                        message=(
-                            f"{ref} is neither wired nor present on the boundary"
-                        ),
+                        message=(f"{ref} is neither wired nor present on the boundary"),
                         port_ref=ref,
                     )
                 )
@@ -335,39 +329,28 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
 def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
     """Which namespace ``symbol`` belongs to, from its assumptions.
 
-    ``qufzx.algebra`` has four symbol constructors, each stamping a distinct, exact
-    assumption signature (verified against sympy's own computed closure -- not merely the
-    kwargs each constructor passes in -- in ``tests/test_validate.py``'s
-    ``TestSymbolConstructorRolesRoundTrip``, which walks every constructor and asserts each
-    round-trips to its own role):
+    ``qufzx.algebra``'s four symbol constructors each stamp a distinct assumption signature,
+    matched here against sympy's computed closure. Round-tripped per constructor by
+    ``tests/test_validate.py``'s ``TestSymbolConstructorRolesRoundTrip``:
 
     * :meth:`~qufzx.algebra.dimension.Dim.symbol` (``positive=True, integer=True``) --
-      "dimension". Signature: ``integer and positive``.
-    * a dimension's exponent, built internally by :meth:`~qufzx.algebra.dimension.Dim.__pow__`
-      via ``_exponent_symbol`` (``integer=True, nonnegative=True``, deliberately *not*
-      ``positive`` -- an exponent of 0 is legal, a dimension of 0 is not) -- "exponent".
-      Signature: ``integer and not positive`` (``nonnegative`` is always true for both
-      dimension and exponent symbols here, so it does not discriminate between them; the
-      presence or absence of ``positive`` is what does).
-    * :meth:`~qufzx.algebra.phase.Phase.symbol` (``real=True``) -- "phase". Signature:
-      ``real and not integer`` (a dimension or exponent symbol is also ``real`` --
-      sympy's assumption closure derives it from ``integer`` -- so ``not integer`` is
-      required to keep this branch from also catching those).
-    * :meth:`~qufzx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature:
-      ``complex and not real`` (a phase symbol, and both dimension/exponent symbols, are
-      also ``complex`` by closure, so ``not real`` is required here for the same reason).
+      "dimension". Signature ``integer and positive``.
+    * a dimension's exponent, from :meth:`~qufzx.algebra.dimension.Dim.__pow__` via
+      ``_exponent_symbol`` (``integer=True, nonnegative=True``, never ``positive``: an
+      exponent of 0 is legal, a dimension of 0 is not) -- "exponent". Signature ``integer
+      and not positive``; ``nonnegative`` holds for both and does not discriminate.
+    * :meth:`~qufzx.algebra.phase.Phase.symbol` (``real=True``) -- "phase". Signature ``real
+      and not integer``; a dimension or exponent symbol is ``real`` by closure.
+    * :meth:`~qufzx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature
+      ``complex and not real``; the other three are ``complex`` by closure.
 
-    Each branch below tests only the two assumption keys each constructor actually sets
-    (never a derived one sympy fills in as a side effect), so a fifth constructor that sets
-    a *different* pair (e.g. ``negative=True`` with no ``integer``) falls through every
-    branch and returns ``None`` -- unclassified, not silently aliased into an existing role
-    -- rather than being caught by an earlier, looser check meant for someone else's
-    symbols. ``None`` is also returned for any symbol with no assumptions recognized here at
-    all (e.g. a bare, assumption-free sympy ``Symbol`` this module never itself constructs).
+    Each branch tests only the keys its constructor sets, never a derived one, so a fifth
+    constructor setting a different pair falls through to ``None`` -- unclassified rather
+    than aliased into an existing role. ``None`` also covers a bare, assumption-free
+    ``Symbol``.
 
-    See :func:`_check_symbol_role_collisions` for which pairs of these four roles, sharing
-    one name, are a genuine collision (a name-keyed substitution silently applying the wrong
-    domain/grammar) and which are not.
+    :func:`_check_symbol_role_collisions` decides which pairs of roles sharing one name are
+    a genuine collision.
     """
     assumptions = symbol.assumptions0
     is_integer = bool(assumptions.get("integer"))
@@ -522,8 +505,7 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                 ValidationIssue(
                     kind=IssueKind.PHASE_NOT_PERMITTED,
                     message=(
-                        f"node {node.id!r} ({gen.name}) carries a phase but its type is "
-                        "phase-free"
+                        f"node {node.id!r} ({gen.name}) carries a phase but its type is phase-free"
                     ),
                     node_id=node.id,
                 )

@@ -40,7 +40,7 @@ whichever mutator introduced them.
 Node removal. :meth:`Diagram.remove_node` cascades to every incident wire and boundary
 entry. This is the one invariant enforced eagerly: leaving a :class:`PortRef` that resolves
 to nothing would corrupt every other reference to the removed node, with no later pass able
-to tell "dangling because stale" from "never wired". Rejecting the removal instead was the
+to tell a stale dangling ref from "never wired". Rejecting the removal instead was the
 alternative; cascading was chosen so deleting a node always succeeds and always leaves the
 diagram referentially consistent (though not necessarily *valid* -- the boundary may now
 have a different arity than a caller expected).
@@ -354,9 +354,7 @@ class Diagram:
             raise GraphGrammarError(f"no such node: {node_id!r}")
         del self._nodes[node_id]
         self._wires = {
-            wire
-            for wire in self._wires
-            if wire.a.node_id != node_id and wire.b.node_id != node_id
+            wire for wire in self._wires if wire.a.node_id != node_id and wire.b.node_id != node_id
         }
         self._boundary_inputs = [ref for ref in self._boundary_inputs if ref.node_id != node_id]
         self._boundary_outputs = [ref for ref in self._boundary_outputs if ref.node_id != node_id]

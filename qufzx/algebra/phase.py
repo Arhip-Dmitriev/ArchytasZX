@@ -130,7 +130,7 @@ class Phase:
     def turns(cls, value: sp.Rational | int) -> Phase:
         """Build a phase from an exact fraction of a full turn (angle = 2*pi*value).
 
-        ``value`` must be an exact int or sympy Rational; floats are rejected because
+        ``value`` must be an exact int or sympy Rational; floats are rejected, since
         this module tracks phases exactly, never approximately.
         """
         if isinstance(value, bool):
@@ -417,7 +417,7 @@ class PhaseVector:
         (a key, str or bare-symbol Phase, is recognized as targeting the dimension by
         name whenever that name is one of ``self.dim``'s free symbols). Substituting the
         dimension can turn a symbolic-length vector into a concrete-length one; any
-        index bound that could not previously be checked (because dim was symbolic) is
+        index bound that could not previously be checked (dim being symbolic) is
         checked now, against the newly concrete dim, and raises PhaseDomainError if
         violated.
 
