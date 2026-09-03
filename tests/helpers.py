@@ -51,9 +51,7 @@ def build_ghz_with_copy(
     mismatched wire).
     """
     diagram = Diagram()
-    a_id = diagram.add_node(
-        generator_type, input_dims=[], output_dims=[dim, dim], phase=phase_on_a
-    )
+    a_id = diagram.add_node(generator_type, input_dims=[], output_dims=[dim, dim], phase=phase_on_a)
     b_id = diagram.add_node(
         generator_type, input_dims=[dim], output_dims=[dim, dim], phase=phase_on_b
     )

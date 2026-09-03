@@ -146,9 +146,7 @@ def _translate_wiring(
     def _lookup(ref: PortRef, ports: list[PortRef]) -> PortRef:
         return next(p for p in ports if p.direction is ref.direction and p.index == ref.index)
 
-    return tuple(
-        (_lookup(ref_a, ports_a), _lookup(ref_b, ports_b)) for ref_a, ref_b in template
-    )
+    return tuple((_lookup(ref_a, ports_a), _lookup(ref_b, ports_b)) for ref_a, ref_b in template)
 
 
 def _is_cleanly_contractible(diagram: Diagram) -> bool:
