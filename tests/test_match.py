@@ -158,8 +158,7 @@ class TestParallelWiresYieldOneCandidatePerWire:
         consuming_wire0 = next(
             m
             for m in matches
-            if m.wire
-            == Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+            if m.wire == Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         )
         assert consuming_wire0.shared_dim == three
 
@@ -281,22 +280,23 @@ class TestPhaseDimensionMismatchIsNonMatch:
         # symbol, so reattach_phase has nothing to substitute.
         d = Dim.symbol("d")
         diagram = Diagram()
-        a_id = diagram.add_node(
-            Z_SPIDER, input_dims=[], output_dims=[d], phase=_phase_at(d, 1)
-        )
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=_phase_at(d, 1))
         b_id = diagram.add_node(
             Z_SPIDER, input_dims=[d], output_dims=[], phase=_phase_at(Dim.concrete(3), 1)
         )
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert DimensionConstraint(
-            assumed=Dim.concrete(3),
-            equal_to=d,
-            source=ConstraintSource.node_phase(b_id),
-            outcome=ConstraintOutcome.BOUND,
-            bound_here=(("d", Dim.concrete(3)),),
-        ) in matches[0].dimension_constraints
+        assert (
+            DimensionConstraint(
+                assumed=Dim.concrete(3),
+                equal_to=d,
+                source=ConstraintSource.node_phase(b_id),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", Dim.concrete(3)),),
+            )
+            in matches[0].dimension_constraints
+        )
 
     def test_one_sided_phase_binding_the_symbolic_shared_leg_dim_now_matches(self) -> None:
         # Mirror of the above with only one phase present: B has none, so only A's phase
@@ -313,13 +313,16 @@ class TestPhaseDimensionMismatchIsNonMatch:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
-        assert DimensionConstraint(
-            assumed=Dim.concrete(3),
-            equal_to=shared,
-            source=ConstraintSource.node_phase(a_id),
-            outcome=ConstraintOutcome.BOUND,
-            bound_here=(("d", Dim.concrete(3)),),
-        ) in matches[0].dimension_constraints
+        assert (
+            DimensionConstraint(
+                assumed=Dim.concrete(3),
+                equal_to=shared,
+                source=ConstraintSource.node_phase(a_id),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", Dim.concrete(3)),),
+            )
+            in matches[0].dimension_constraints
+        )
 
     def test_a_phase_dim_that_fails_to_unify_with_shared_dim_is_still_a_non_match(self) -> None:
         # Two distinct concrete dims can never unify. phase_dimension_agreement accepts a
@@ -898,13 +901,16 @@ class TestSurvivingLegDimensionUnification:
         assert len(matches) == 1
         match = matches[0]
         assert match.shared_dim == two
-        assert DimensionConstraint(
-            assumed=two,
-            equal_to=d,
-            source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.OUTPUT, 1)),
-            outcome=ConstraintOutcome.BOUND,
-            bound_here=(("d", two),),
-        ) in match.dimension_constraints
+        assert (
+            DimensionConstraint(
+                assumed=two,
+                equal_to=d,
+                source=ConstraintSource.surviving_leg(PortRef(a_id, Direction.OUTPUT, 1)),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", two),),
+            )
+            in match.dimension_constraints
+        )
 
 
 class TestConsumedPortClaimedElsewhereIsNonMatch:
@@ -1028,9 +1034,7 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
         c_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[])
         consumed = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(consumed.a, consumed.b)
-        surviving_wire = Wire(
-            PortRef(a_id, Direction.OUTPUT, 1), PortRef(c_id, Direction.INPUT, 0)
-        )
+        surviving_wire = Wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(c_id, Direction.INPUT, 0))
         diagram.add_wire(surviving_wire.a, surviving_wire.b)
 
         # A's own legs (d, d*e) are themselves ALL_LEGS_EQUAL-deferred against each other --
@@ -1058,8 +1062,7 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
             f"expected the merged-node-to-C wire to now be DIMENSION_DEFERRED: {post_report!r}"
         )
         assert not post_report.errors, (
-            f"this shape must not introduce a hard error -- DEFERRED, not MISMATCH: "
-            f"{post_report!r}"
+            f"this shape must not introduce a hard error -- DEFERRED, not MISMATCH: {post_report!r}"
         )
 
 
@@ -1171,13 +1174,16 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         )
         assert outcome.passed
         assert outcome.deferred is False
-        assert DimensionConstraint(
-            assumed=d,
-            equal_to=three,
-            source=ConstraintSource.connecting_pair(),
-            outcome=ConstraintOutcome.BOUND,
-            bound_here=(("d", three),),
-        ) in match.dimension_constraints
+        assert (
+            DimensionConstraint(
+                assumed=d,
+                equal_to=three,
+                source=ConstraintSource.connecting_pair(),
+                outcome=ConstraintOutcome.BOUND,
+                bound_here=(("d", three),),
+            )
+            in match.dimension_constraints
+        )
 
     def test_a_genuinely_deferred_phase_dim_is_a_non_match(self) -> None:
         # Unlike a leg, a phase whose dim only DEFERS against shared_dim (never binds,
@@ -1432,9 +1438,7 @@ class TestFixpointTerminationSoundness:
         d = Dim.symbol("d")
         e = Dim.symbol("e")
         diagram = Diagram()
-        a_id = diagram.add_node(
-            Z_SPIDER, input_dims=[Dim.concrete(2), d * e, d], output_dims=[e]
-        )
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2), d * e, d], output_dims=[e])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[e], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
@@ -1449,9 +1453,7 @@ class TestFixpointTerminationSoundness:
         d = Dim.symbol("d")
         e = Dim.symbol("e")
         diagram = Diagram()
-        a_id = diagram.add_node(
-            Z_SPIDER, input_dims=[d, d * e, e], output_dims=[Dim.concrete(2)]
-        )
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[d, d * e, e], output_dims=[Dim.concrete(2)])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_inputs([PortRef(a_id, Direction.INPUT, i) for i in range(3)])
@@ -1681,7 +1683,11 @@ class TestResolutionFailureReasonDetails:
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(1), five])
         consumed_ref = PortRef(node_id, Direction.OUTPUT, 0)
         result = _unify_surviving_legs(
-            diagram.nodes[node_id], node_id, consumed_ref, d, {"d": Dim.concrete(3)},
+            diagram.nodes[node_id],
+            node_id,
+            consumed_ref,
+            d,
+            {"d": Dim.concrete(3)},
             _ConstraintRecord(),
         )
         assert isinstance(result, _ResolutionFailure)

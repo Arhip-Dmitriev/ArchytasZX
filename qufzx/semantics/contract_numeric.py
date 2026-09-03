@@ -20,7 +20,7 @@ read the other way around.
 
 Algorithm. Refuse first: :func:`qufzx.diagram.validate.validate` runs, and a diagram with
 any hard-failure issue is refused with :class:`ContractValidationError` carrying the
-report. A *deferred* dimension issue is refused the same way -- it exists only because a
+report. A *deferred* dimension issue is refused the same way -- it exists only when a
 dimension pair could not be decided, which cannot happen once every dimension is concrete,
 so seeing one means something upstream left a symbol in. Then refuse any non-concrete port
 dimension, phase vector, or diagram :class:`~qufzx.algebra.scalar.Scalar`. Both refusals

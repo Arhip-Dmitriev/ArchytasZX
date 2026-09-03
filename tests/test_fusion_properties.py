@@ -741,6 +741,7 @@ under 40% of that, leaving headroom against incidental generator tuning while st
 hard if this arm's oracle calls silently stopped running.
 """
 
+
 def _resolved_dim(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
     """``dim`` with every concrete entry of ``bindings`` substituted in, non-concrete dropped."""
     concrete: dict[str | Dim, int | Dim] = {
@@ -808,8 +809,7 @@ def _assert_match_structurally_satisfiable(diagram: Diagram, match: FusionMatch)
             continue
         resolved = _resolved_dim(node.phase.dim, bindings)
         assert not resolved.unify(match.shared_dim).is_failure, (
-            f"phase dim (resolved {resolved}) does not unify with shared_dim "
-            f"{match.shared_dim}"
+            f"phase dim (resolved {resolved}) does not unify with shared_dim {match.shared_dim}"
         )
 
     _assert_constraints_satisfiable(match.dimension_constraints, bindings)
@@ -864,9 +864,7 @@ def _isolate_match_pair(diagram: Diagram, match: FusionMatch) -> Diagram:
                 if direction == consumed_ref.direction and index == consumed_ref.index:
                     continue
                 ref = PortRef(new_id, direction, index)
-                (boundary_inputs if direction is Direction.INPUT else boundary_outputs).append(
-                    ref
-                )
+                (boundary_inputs if direction is Direction.INPUT else boundary_outputs).append(ref)
     isolated.set_boundary_inputs(boundary_inputs)
     isolated.set_boundary_outputs(boundary_outputs)
     return isolated
@@ -902,22 +900,21 @@ def _find_matches_tolerating_malformed_boundary(
     diagram: Diagram, seed: int
 ) -> tuple[FusionMatch, ...] | None:
     """``find_matches(diagram)``, or ``None`` if it raised for the malformed-boundary reason
-    :func:`_maybe_corrupt_a_boundary_ref` deliberately introduces.
+     :func:`_maybe_corrupt_a_boundary_ref` deliberately introduces.
 
-    Shared by every property-harness arm that iterates ``_build_random_diagram``'s output
-   : once that generator sometimes produces
-    a diagram with a malformed boundary entry, every consumer of it must handle
-    ``find_matches`` rejecting the whole diagram outright, not only the one arm
-    (``test_random_diagrams_fuse_soundly``) that motivated the widening. Re-raises any other
-    exception, and re-raises if the message does not match the expected malformed-reference
-    wording, so an unrelated regression is never mistaken for this deliberate corruption.
+     Shared by every property-harness arm that iterates ``_build_random_diagram``'s output
+    : once that generator sometimes produces
+     a diagram with a malformed boundary entry, every consumer of it must handle
+     ``find_matches`` rejecting the whole diagram outright, not only the one arm
+     (``test_random_diagrams_fuse_soundly``) that motivated the widening. Re-raises any other
+     exception, and re-raises if the message does not match the expected malformed-reference
+     wording, so an unrelated regression is never mistaken for this deliberate corruption.
     """
     try:
         return find_matches(diagram)
     except RewriteGrammarError as exc:
         assert "out of range" in str(exc) or "absent from the diagram" in str(exc), (
-            f"seed {seed}: find_matches raised RewriteGrammarError for an unexpected "
-            f"reason: {exc}"
+            f"seed {seed}: find_matches raised RewriteGrammarError for an unexpected reason: {exc}"
         )
         return None
 
@@ -1386,9 +1383,9 @@ class TestSpiderFusionProperties:
         assert len(matches) == 1
         result = apply(diagram, SPIDER_FUSION, matches[0])
         merged = result.diagram.nodes[result.new_node_ids[0]]
-        assert merged.phase == PhaseVector(
-            Dim.concrete(2), {1: Phase.turns(sp.Rational(1, 2))}
-        ), f"expected the binding d := 2 substituted into the entry, got {merged.phase!r}"
+        assert merged.phase == PhaseVector(Dim.concrete(2), {1: Phase.turns(sp.Rational(1, 2))}), (
+            f"expected the binding d := 2 substituted into the entry, got {merged.phase!r}"
+        )
 
         comparison = compare(diagram, result.diagram, {"d": 2})
         assert comparison.matched, f"oracle mismatch at d=2: {comparison.reason}"
@@ -1560,9 +1557,7 @@ class TestForeignFusionMatchArm:
             if not legitimate.port_mapping:
                 continue
             removed_key = next(iter(legitimate.port_mapping))
-            shrunk_mapping = {
-                k: v for k, v in legitimate.port_mapping.items() if k != removed_key
-            }
+            shrunk_mapping = {k: v for k, v in legitimate.port_mapping.items() if k != removed_key}
             corrupted = dataclasses.replace(legitimate, port_mapping=shrunk_mapping)
 
             def _builder(

@@ -99,9 +99,7 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     scalars exactly, never approximately.
     """
     if expr.atoms(sp.Float):
-        raise ScalarGrammarError(
-            f"Scalar requires an exact expression, got a float in {expr!r}"
-        )
+        raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
     return sp.powsimp(sp.expand(expr), force=True)
 
 
@@ -145,7 +143,7 @@ class Scalar:
         """Build an exact Gaussian rational real + imag*i, both parts exact.
 
         Both ``real`` and ``imag`` must be an int or sympy Rational; floats are
-        rejected because this module tracks scalars exactly, never approximately.
+        rejected: this module tracks scalars exactly, never approximately.
         """
         if isinstance(real, bool) or isinstance(imag, bool):
             raise ScalarGrammarError("gaussian_rational() does not accept bool")
