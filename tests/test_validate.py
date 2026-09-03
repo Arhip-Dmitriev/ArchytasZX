@@ -254,9 +254,7 @@ class TestPhaseDimensionResolvedThroughLegBindings:
         d = Dim.symbol("d")
         phase = PhaseVector(Dim.concrete(3), {})
         diagram = Diagram()
-        diagram.add_node(
-            Z_SPIDER, input_dims=[d, Dim.concrete(2)], output_dims=[], phase=phase
-        )
+        diagram.add_node(Z_SPIDER, input_dims=[d, Dim.concrete(2)], output_dims=[], phase=phase)
         report = validate(diagram)
         assert not report.is_valid
         assert any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
@@ -378,9 +376,7 @@ class TestAllLegsEqualJointSatisfiability:
         # two bindings contradict -- validate() must reject this, not silently discard both.
         d = Dim.symbol("d")
         diagram = Diagram()
-        diagram.add_node(
-            Z_SPIDER, input_dims=[d, Dim.concrete(2), Dim.concrete(3)], output_dims=[]
-        )
+        diagram.add_node(Z_SPIDER, input_dims=[d, Dim.concrete(2), Dim.concrete(3)], output_dims=[])
         report = validate(diagram)
         assert not report.is_valid
         assert any(issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors)
@@ -402,9 +398,7 @@ class TestAllLegsEqualJointSatisfiability:
         d, e, f = Dim.symbol("d"), Dim.symbol("e"), Dim.symbol("f")
         diagram = Diagram()
         node = diagram.add_node(Z_SPIDER, input_dims=[d * e, d * f, e * f], output_dims=[])
-        diagram.set_boundary_inputs(
-            [PortRef(node, Direction.INPUT, i) for i in range(3)]
-        )
+        diagram.set_boundary_inputs([PortRef(node, Direction.INPUT, i) for i in range(3)])
         report = validate(diagram)
         assert report.is_valid
         deferred_on_node = [
@@ -435,9 +429,7 @@ class TestSymbolRoleCollision:
         diagram = Diagram()
         diagram.add_node(Z_SPIDER, input_dims=[d, d], output_dims=[], phase=phase)
         report = validate(diagram)
-        assert not any(
-            issue.kind is IssueKind.SYMBOL_ROLE_COLLISION for issue in report.errors
-        )
+        assert not any(issue.kind is IssueKind.SYMBOL_ROLE_COLLISION for issue in report.errors)
 
     def test_distinct_symbols_of_the_same_name_are_never_equal(self) -> None:
         # The discriminator itself: Dim.symbol/Phase.symbol/Scalar.symbol build distinct
@@ -505,7 +497,7 @@ class TestSymbolConstructorRolesRoundTrip:
         from qufzx.diagram.validate import _classify_symbol_role
 
         d = Dim.symbol("d")
-        n = (d**Dim.symbol("n")).to_sympy().free_symbols - d.to_sympy().free_symbols
+        n = (d ** Dim.symbol("n")).to_sympy().free_symbols - d.to_sympy().free_symbols
         (exponent_symbol,) = n
 
         constructors: dict[str, object] = {

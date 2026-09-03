@@ -48,6 +48,8 @@ markers = [
 
 [tool.ruff]
 line-length = 100
+# `ruff format` is authoritative for layout and is expected to run clean; `ruff check`
+# enforces the lint rules below. Run both.
 
 [tool.ruff.lint]
 extend-select = ["E501"]

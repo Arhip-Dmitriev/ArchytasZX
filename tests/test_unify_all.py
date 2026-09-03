@@ -207,12 +207,8 @@ class TestBudgetExhaustion:
 
         a, b = Dim.symbol("a"), Dim.symbol("b")
         diagram = Diagram()
-        node = diagram.add_node(
-            Z_SPIDER, input_dims=[a * b, a, b, Dim.concrete(2)], output_dims=[]
-        )
-        diagram.set_boundary_inputs(
-            [PortRef(node, Direction.INPUT, i) for i in range(4)]
-        )
+        node = diagram.add_node(Z_SPIDER, input_dims=[a * b, a, b, Dim.concrete(2)], output_dims=[])
+        diagram.set_boundary_inputs([PortRef(node, Direction.INPUT, i) for i in range(4)])
 
         report = validate(diagram)
 
