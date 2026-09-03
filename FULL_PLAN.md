@@ -33,9 +33,10 @@ Phase 1: Dimension algebra, minimal
 i. algebra/dimension.py
 - defines a Dim type covering a concrete integer, a symbol d, and product and power expressions like d^n or d1*d2
 - normalizes and compares dim expressions so that equal dimensions test equal
-- exposes is_concrete, substitute (symbol to integer), and a placeholder unify that returns constraints
-- test and debug: unit tests for equality, substitution, and product normalization
-- done when: d, 2, and d^n can be represented and compared symbolically
+- exposes is_concrete, substitute (symbol to integer), abstract (a concrete integer to a fresh symbol, returning that symbol and the binding recording the integer it stands for), and a placeholder unify that returns constraints
+- abstract is the inverse direction of substitute and exists so a user-supplied integer never has to be carried through the algebra as a literal; the fresh name is guaranteed not to collide with any symbol already in scope
+- test and debug: unit tests for equality, substitution, product normalization, and abstract-then-substitute round-tripping back to the original integer
+- done when: d, 2, and d^n can be represented and compared symbolically, and a user-supplied 3 can be abstracted to d and recovered exactly
 
 Phase 2: Phase and scalar algebra, exact
 i. algebra/phase.py
@@ -54,12 +55,15 @@ i. diagram/graph.py
 - a Node carries a generator type, ordered input ports, ordered output ports, and a phase-data slot that accepts symbolic phases from Phase 2
 - a Diagram holds nodes, wires (each joining two ports), ordered boundary input and output lists, and an exact scalar accumulator
 - there is a deep copy and controlled mutation
+- a Diagram carries a parameter environment: a map from symbol name to the concrete value the user supplied for it, empty when the input was genuinely symbolic. It is a record of pending substitutions. Several symbols with different values coexist in it, and ports still carry their own dimension expression.
+- the environment survives deep copy, mutation, and (Phase 6 onward) rewriting; substitute consumes its entries
 ii. diagram/generators.py
 - registers generator types, starting with Zspider and Xspider
 - each type records its leg policy (any number of legs), its phase schema (vector length tied to d, symbolic entries allowed), and its dimension policy (for Z and X, all legs share one dimension)
 iii. diagram/validate.py
 - rejects any wire whose two ports carry unequal dimensions
 - checks boundary consistency
+- checks the parameter environment: every name it binds is a symbol the diagram actually carries, in exactly one symbol role, with a value inside that role's domain
 - test and debug: build a two-leg Z spider, build the A-into-B graph from the worked example, confirm validation passes, then confirm a deliberately mismatched wire fails
 - done when: the GHZ-with-copy graph, carrying a symbolic phase on at least one node, can be constructed and validated
 
@@ -72,6 +76,8 @@ ii. semantics/contract_numeric.py [testing]
 - contracts a fully concrete diagram (all dimensions concrete, no bang box) into a numpy tensor by contracting along wires, and carries the exact scalar accumulator through
 iii. semantics/check.py
 - given two diagrams claimed equal, instantiates all symbols to supplied concrete values, contracts both, and compares exactly including the overall scalar, up to floating-point tolerance
+- an unsupplied symbol falls back to its parameter-environment binding, and only a symbol neither source supplies is refused; a supplied value overrides the environment, so the oracle can spot-check.
+- this rung is a small-instance path. It never answers a large concrete d; Phase 9 does
 - an explicit up-to-global-phase mode exists as an OPT IN!
 - test and debug: confirm the Z spider 0 to 2 at d equal to 2 gives the vector for |00> + |11>; confirm A-into-B contracts to the GHZ vector for d equal to 2 and 3; confirm that a deliberately scalar-shifted copy fails exact comparison but passes in up-to-global-phase mode
 - done when: the oracle can score any concrete diagram and compare any two diagrams, exactly by default
@@ -87,6 +93,9 @@ iv. rewrite/engine.py
 - applies a chosen rule at a found match, returns a new diagram, and records structured provenance of the step in a form a certificate can consume
 v. repl/parser.py, Dirac slice ONLY
 - parses one restricted form, the summed ket family sum_{k=0}^{D-1} |k,k,...> with the |k>^{n} tensor-power shorthand, optionally followed by "; copy", which is the Dirac-to-graph end from the done-when clause below
+- a concrete dimension in the source is abstracted on entry: the numeral becomes a fresh dimension symbol and the parameter environment records its value, so the algebra downstream is symbolic no matter what the user typed. A literal marker suppresses this, for the oracle's own fixtures
+- this clause postdates Phases 1 and 3 and is owed by them: Dim.abstract and the Diagram parameter environment must be retrofitted before it can be met, and until they are, a concrete dimension is carried through the algebra as a literal, which is the pre-vision behaviour
+- the tensor-power count stays concrete and expanded in this slice; Phase 7 replaces it with a bound bang box
 - this grammar must remain a strict subset of the one in Phase 18
 - test and debug: fuse A-into-B into a single spider; oracle-check that the pre and post diagrams are exactly equal at several concrete d; validate that the post diagram is well formed
 - done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality
@@ -105,6 +114,7 @@ i. diagram/bangbox.py
 - a bang box records a scope over a subgraph or set of ports, a multiplicity symbol, and its overlap and boundary edges
 - supports instantiate (a multiplicity to a concrete k, expanding to k copies), copy, kill (multiplicity 0), and merge
 - bang boxes may nest, and several independent count symbols may coexist in one diagram, with an arithmetic of multiplicities (sums, products, and substitution)
+- a concrete count in user input is abstracted exactly as a concrete dimension is: it becomes a bang box whose multiplicity symbol is bound in the parameter environmen.. A user-supplied n equal to 30 therefore still admits Phase 8 induction and never forces a d^30 tensor; this supersedes Phase 5's eager tensor-power expansion!!!
 ii. extend diagram/validate.py
 - checks that bang-box scopes, nesting, and boundary edges are well formed, and that distinct count symbols are tracked without collision
 iii. extend semantics/check.py
@@ -127,6 +137,7 @@ i. complete algebra/scalar.py
 ii. semantics/contract_symbolic.py
 - contracts an arbitrary diagram while d stays symbolic, producing a closed symbolic tensor expression simplified through the scalar layer
 - is the general fallback below rewriting whenever a value is needed with d formal
+- substituting the parameter environment into that closed expression is the path that answers a user-supplied concrete d or n at any size. Instantiate-then-contract is not that path and cannot be made into one
 iii. extend denote.py and rules_library.py
 - a Hadamard or Fourier generator is added, and one rule that needs a root-of-unity scalar (color change or bialgebra) is added with its exact scalar output
 - test and debug: unit-test the character-sum identity; verify the new rule two independent ways, once by full symbolic contraction in d and once by the numeric oracle at concrete d; contract a small nontrivial diagram symbolically and confirm it matches numeric instantiation at several d
@@ -269,6 +280,8 @@ Why we are building it this way
 
 At symbolic n or symbolic d there is no matrix to compute with. A map on n qudits of dimension d is a d^n x d^n matrix and a state is a vector of length d^n; when n or d is a symbol, that size is a symbol, so the array does not exist.
 
+A concrete integer is no licence to build that array either. d^n is astronomically large long before it is symbolic, so the difference between a user typing d and a user typing 30 is not the difference between symbolic and computable. Both are handled the same way, and for the same reason.
+
 ZX rewrite rules are equalities of diagrams that preserve the denoted linear map, and they are schematic: stated once, they hold for every leg count and every dimension. One graph rewrite is therefore a proof of a doubly indexed family of Dirac-level identities, one for every value of n and d.
 
 The diagram, not the matrix, is the primary object. Matrices appear only as a verification oracle at concrete instantiations, never as the working representation. The general symbolic fallback below rewriting is a full symbolic contractor that keeps d formal, not a matrix.
@@ -277,12 +290,13 @@ The intended user workflow
 
 The round trip we optimize for is: Dirac in, ZX manipulation, Dirac out.
 
-The user describes a state or map, often in Dirac notation, for example sum_{k=0}^{d-1} |k>^{(x)n}, possibly with free symbolic phases.
-The engine represents it as a ZX diagram with the appropriate bang boxes and per-port dimensions.
+The user describes a state or map, often in Dirac notation, for example sum_{k=0}^{d-1} |k>^{(x)n}, possibly with free symbolic phases. Symbolic input is permitted; concrete input is the expected case. The user may write d and n, or write 3 and 30, and both are first-class.
+The engine represents it as a ZX diagram with the appropriate bang boxes and per-port dimensions. Every concrete dimension and count the user supplied is abstracted here, to a fresh symbol whose value is recorded in the diagram's parameter environment. From this point on the engine is doing symbolic algebra in d and n whatever the user typed, and it is doing exactly one kind of work rather than two.
 The user, or an automated strategy, applies rewrite rules. The engine performs pure graph manipulation: pattern match, splice, merge, adjust phases, track the exact scalar. It does not contract anything.
 When a genuine proof is wanted rather than a spot-check, the engine discharges symbolic-n equalities by induction and can decide equality of two diagrams via normal form, returning a machine-checkable certificate.
 The resulting diagram is read back out, as a diagram and as Dirac notation: by its recognized name when it lands in a known form, otherwise as the structural index-sum form.
-Optionally, the user asks for a sanity check. The engine instantiates n and d to small concrete numbers, contracts numerically, and confirms the rewrite preserved the map exactly.
+Where the user supplied concrete values, the recorded environment is substituted back in at the end, into the finished diagram and into the closed symbolic form of its value. Because the derivation was symbolic, the user gets both the general result and their own instance of it, and the substitution costs nothing in the size of the value.
+Optionally, the user asks for a sanity check. The engine instantiates n and d to small concrete numbers, contracts numerically, and confirms the rewrite preserved the map exactly. Small is the operative word: this is the verification oracle, and it is never how a large supplied value is evaluated.
 
 Notation modes
 
@@ -326,7 +340,7 @@ Layer D, semantics oracle and proof. Three rungs, in order of preference, plus p
 
 Stay diagrammatic. Rewrite only. Exact, cheapest, and valid while n and d are symbolic. This is the normal mode of operation.
 Symbolic contraction. A full contractor that evaluates an arbitrary diagram while d stays formal, producing a closed symbolic tensor expression simplified through the character-sum layer. This is the general fallback below rewriting.
-Numeric contraction. When n and d are concrete, instantiate and contract with real arrays, carrying the exact scalar. Used as the verification oracle and for concrete output.
+Numeric contraction. When n and d are concrete and small, instantiate and contract with real arrays, carrying the exact scalar. Used as the verification oracle. It is not the route to a concrete answer at a large supplied value: that is rung 2 evaluated at the parameter environment.
 Beyond the rungs: induction discharges symbolic-n equalities for all n, and certificates record any derivation in a form that can be independently replayed and checked.
 
 The matrix rung is the concrete-instantiation path, not a general fallback beneath rewriting. The general fallback below rewriting is rung 2.
@@ -339,7 +353,9 @@ The diagram is the single source of truth. Do not introduce a parallel operator 
 Never construct a matrix or dense tensor while any dimension or count in scope is symbolic.
 Rewriting never contracts. Contraction lives only in the semantics oracle. A rewrite is graph to graph.
 Generator denotations are leaves of the evaluator, defined once per generator type as a formula in n and d. They are never the working object and are never enumerated per instance.
-Dimension is stored per port from the first version. Do not implement dimension as a single global parameter.
+A concrete value the user supplies is abstracted to a symbol on entry, with the value recorded in the parameter environment, and substituted back only on output. No dimension or count is carried through the algebra as a literal integer. There is therefore one algebra, always symbolic, and a concrete-input derivation proves the whole family and not merely its instance.
+A concrete answer at a large supplied value is produced by substituting into a closed symbolic form, never by instantiating and contracting. Numeric contraction is the small-instance verification oracle and nothing else.
+Dimension is stored per port from the first version. Do not implement dimension as a single global parameter. The parameter environment is not an exception to this: it binds symbols to supplied values and is never read to determine a dimension.
 Every wire is well formed only when its two ports carry equal dimensions. Composition is otherwise undefined and must be rejected by validation.
 Every rule is a quantified equation, "for all n, for all d satisfying its constraints." The matcher enforces those constraints before firing. Some rules are restricted, for example to prime d, and must refuse to fire outside their domain.
 Scalars are tracked exactly. Comparison is exact up to floating-point tolerance by default, and quotienting out a global factor is opt-in, never the default. Every rule records the exact scalar it introduces.
