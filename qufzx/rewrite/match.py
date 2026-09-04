@@ -87,7 +87,7 @@ from typing import cast
 
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import PhaseDomainError, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
+from qufzx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
     ConstraintOutcome,
@@ -840,7 +840,9 @@ def resolve_fusion_match(
     # same_generator_type.
     generator_types_match = node_a.generator_type == node_b.generator_type
     is_fusable_type = (
-        generator_types_match and node_a.generator_type.name in _FUSABLE_GENERATOR_NAMES
+        generator_types_match
+        and REGISTRY.is_registered(node_a.generator_type)
+        and node_a.generator_type.name in _FUSABLE_GENERATOR_NAMES
     )
     if not generator_types_match:
         same_type_detail = (
@@ -850,7 +852,8 @@ def resolve_fusion_match(
     elif not is_fusable_type:
         same_type_detail = (
             f"both nodes are {node_a.generator_type.name!r}, but that is not a registered "
-            "fusable generator type"
+            "fusable generator type (the name is unregistered, or names a registered type "
+            "whose fields differ from this one's)"
         )
     else:
         same_type_detail = f"both nodes are {node_a.generator_type.name!r}"

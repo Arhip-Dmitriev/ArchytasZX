@@ -66,7 +66,7 @@ import numpy as np
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, DimensionPolicy
+from qufzx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER, DimensionPolicy
 from qufzx.diagram.graph import Node
 
 
@@ -216,6 +216,12 @@ def denote(node: Node) -> np.ndarray:
     (Phase 9's Hadamard/Fourier, Phase 10's triangle, W, and connectives) must extend.
     """
     d = resolve_dimension(node)
+    if not REGISTRY.is_registered(node.generator_type):
+        raise DenoteGrammarError(
+            f"node {node.id!r} carries generator type {node.generator_type.name!r}, which is "
+            "not the type registered under that name; denote() dispatches on the registry, "
+            "never on a name alone"
+        )
     if node.generator_type.name == Z_SPIDER.name:
         return _z_tensor(node, d)
     if node.generator_type.name == X_SPIDER.name:
