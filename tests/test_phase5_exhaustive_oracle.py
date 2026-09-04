@@ -21,10 +21,9 @@ harness, a shape here cannot go untested because a sampler never drew it.
 Space and runtime. Per node: 3 input-leg counts x 3 output-leg counts x 2 phase choices =
 18 node shapes; two nodes, two colours each, two ``d`` values gives 2,592 base
 configurations before wiring. For each, every distinct 1-wire and 2-wire matching between
-the two nodes' ports is enumerated, with no port reused across wires. The 2-wire arm at
-``d = 3`` is the most expensive slice and is subsampled away (``_SKIP_TWO_WIRE_AT_D3``);
-the 1-wire arm runs fully at every ``d`` and the 2-wire arm fully at ``d = 2``. Do not turn
-this into a random sample -- being exhaustive is the point.
+the two nodes' ports is enumerated, with no port reused across wires. Every arm runs fully
+at every ``d``; nothing here is subsampled. Do not turn this into a random sample -- being
+exhaustive is the point.
 
 Scope boundary. Every node is built at a single shared concrete ``Dim.concrete(d_value)``,
 so :func:`_is_cleanly_contractible` holds trivially for every diagram here (asserted, not
@@ -65,11 +64,6 @@ _COLORS = (Z_SPIDER, X_SPIDER)
 _D_VALUES = (2, 3)
 _PHASE_TURNS = sp.Rational(1, 3)
 
-# See the module docstring: the 2-wire arm at d=3 is the single most expensive slice, and is
-# the one this task's own instructions permit subsampling away to keep the whole sweep under
-# about a minute.
-_SKIP_TWO_WIRE_AT_D3 = True
-
 _NodeShape = tuple[int, int, bool]  # (n_in, n_out, phase_present)
 
 
@@ -104,9 +98,9 @@ def _build_node(
 
 @functools.cache
 def _wiring_templates(
-    n_in_a: int, n_out_a: int, n_in_b: int, n_out_b: int, skip_two_wire: bool
+    n_in_a: int, n_out_a: int, n_in_b: int, n_out_b: int
 ) -> tuple[tuple[tuple[PortRef, PortRef], ...], ...]:
-    """Every distinct 1-wire and (unless ``skip_two_wire``) 2-wire matching from A to B.
+    """Every distinct 1-wire and 2-wire matching from A to B.
 
     Placeholder ``PortRef``\\ s (node id 0 for A, 1 for B) -- this depends only on each
     node's leg counts, never on its colour, phase, or ``d``, so it is cached per leg-count
@@ -125,7 +119,7 @@ def _wiring_templates(
     wirings: list[tuple[tuple[PortRef, PortRef], ...]] = [
         ((a, b),) for a in ports_a for b in ports_b
     ]
-    if not skip_two_wire and len(ports_a) >= 2 and len(ports_b) >= 2:
+    if len(ports_a) >= 2 and len(ports_b) >= 2:
         for pair_a in itertools.combinations(ports_a, 2):
             for pair_b in itertools.combinations(ports_b, 2):
                 for perm_b in itertools.permutations(pair_b):
@@ -198,12 +192,9 @@ class TestExhaustiveSpiderFusionOracleSweep:
 
         for d_value in _D_VALUES:
             dim = Dim.concrete(d_value)
-            skip_two_wire = _SKIP_TWO_WIRE_AT_D3 and d_value == 3
             for color_a, color_b in itertools.product(_COLORS, _COLORS):
                 for shape_a, shape_b in itertools.product(shapes, shapes):
-                    templates = _wiring_templates(
-                        shape_a[0], shape_a[1], shape_b[0], shape_b[1], skip_two_wire
-                    )
+                    templates = _wiring_templates(shape_a[0], shape_a[1], shape_b[0], shape_b[1])
                     for template in templates:
                         diagram = Diagram()
                         ports_a = _build_node(diagram, color_a, shape_a, dim)
