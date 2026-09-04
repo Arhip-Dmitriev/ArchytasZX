@@ -45,7 +45,7 @@ layer, where :class:`~qufzx.semantics.check.EqualityMode` now carries it, never 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Union
+from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -78,8 +78,40 @@ ScalarSymbolKey = Union[str, "Scalar"]
 ScalarSubstituteValue = Union[int, "sp.Rational", "Scalar"]
 
 
+def _check_symbol_name(name: str) -> None:
+    """Reject a symbol name that is not a bare identifier."""
+    if not isinstance(name, str) or not name.isidentifier():
+        raise ScalarGrammarError(
+            f"symbol name must be a bare identifier, got {name!r}; a name carrying "
+            "operator characters builds a symbol that renders identically to an "
+            "expression but is a different Scalar"
+        )
+
+
 def _scalar_symbol(name: str) -> sp.Symbol:
+    _check_symbol_name(name)
     return sp.Symbol(name, complex=True)
+
+
+def _check_scalar_domain(expr: sp.Expr) -> None:
+    """Reject an expression outside the scalar grammar.
+
+    The grammar is: exact numbers, ``I``, sympy's named constants, symbols, and sums,
+    products, powers and ``exp``/``conjugate`` applications of these. A transcendental
+    function (``log``, ``sin``) or any other head is rejected.
+    """
+    if expr.is_Number or expr is sp.I or expr.is_NumberSymbol:
+        return
+    if expr.is_Symbol:
+        _check_symbol_name(str(expr.name))
+        return
+    if expr.is_Add or expr.is_Mul or expr.is_Pow or isinstance(expr, (sp.exp, sp.conjugate)):
+        for arg in expr.args:
+            _check_scalar_domain(arg)
+        return
+    raise ScalarGrammarError(
+        f"expression {expr} is outside the scalar grammar (head {type(expr).__name__})"
+    )
 
 
 def _normalize(expr: sp.Expr) -> sp.Expr:
@@ -100,7 +132,9 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     """
     if expr.atoms(sp.Float):
         raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
-    return sp.powsimp(sp.expand(expr), force=True)
+    normalized = sp.powsimp(sp.expand(expr), force=True)
+    _check_scalar_domain(normalized)
+    return cast(sp.Expr, normalized)
 
 
 class Scalar:
