@@ -41,6 +41,7 @@ include = ["qufzx*"]
 testpaths = ["tests"]
 # Seed sweeps and oracle differentials are deselected by default. Run them with
 # `pytest -m slow` (sweeps only) or `pytest -m ""` (everything); CI runs `pytest -m ""`.
+# Measured 2026-09-04: the default tier is 892 tests in ~3s; `-m slow` is 28 tests in ~4m15s.
 addopts = ["-m", "not slow"]
 markers = [
     "slow: multi-thousand-seed fuzz sweep or oracle differential",
@@ -56,12 +57,6 @@ extend-select = ["E501"]
 # E501 (line-too-long) is not in ruff's default select set (line length is usually left to
 # a formatter), which is how a declared line-length of 100 sat unenforced. Extending, not
 # replacing, the default select set, so no other rule category's behavior changes.
-
-[tool.ruff.lint.per-file-ignores]
-# engine.py's module docstring carries large reStructuredText tables (the step-by-step
-# ``apply`` walkthrough) that read better unwrapped; every other file in the tree is held
-# to the 100-column limit.
-"qufzx/rewrite/engine.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
