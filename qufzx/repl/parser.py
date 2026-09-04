@@ -11,9 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Input DSL parser: spiders, wires, symbolic phases, bang boxes, dimensions, and Dirac kets.
+"""Input DSL parser, Phase 5's Dirac slice only.
 
-Phase 5 slice only, supplying the Dirac-to-graph end of that phase's completion condition:
+Supplies the Dirac-to-graph end of Phase 5's completion condition:
 
 * :func:`parse_dirac_source` accepts one restricted form, a summed ket family
   ``sum_{k=0}^{D-1} |k,k,...>`` (or the ``|k>^{n}`` tensor-power shorthand), optionally
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import re
 
-from qufzx.algebra.dimension import Dim, DimensionDomainError
+from qufzx.algebra.dimension import Dim, DimensionDomainError, DimensionError
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 
@@ -44,28 +44,12 @@ from qufzx.diagram.graph import Diagram, Direction, PortRef
 class DiracError(Exception):
     """Base of every error :func:`parse_dirac_source` can raise.
 
-    Every exception reaching a caller is a :class:`DiracError`, never a foreign class from a
-    package this module calls into. A change here should re-check that every outbound call is
-    still contained. The current calls:
-
-    * ``Dim.concrete`` -- raises :class:`~qufzx.algebra.dimension.DimensionDomainError` for
-      a non-positive integer; :func:`_parse_dim` wraps the call.
-    * ``Dim.symbol`` -- gated in :func:`_parse_dim` itself, not only in :data:`_KET_SUM_RE`,
-      on :data:`_IDENTIFIER_RE` (``[A-Za-z_]\\w*``), so every name reaching it is a shape
-      ``sympy.Symbol`` accepts and ``Dim`` builds with the ``positive=True, integer=True``
-      pair ``_check_dimension_domain`` requires.
-    * ``Diagram.add_node`` -- forwards to ``Node``/``Port``, which raise
-      ``GraphGrammarError`` for a non-``GeneratorType``, a non-``Port`` leg, or a
-      non-``PhaseVector`` phase. Every call here passes ``Z_SPIDER``, a list of ``Dim``, and
-      no phase.
-    * ``Diagram.add_wire`` -- raises ``GraphDomainError`` only for ``a == b``, and every wire
-      built here joins two distinct fresh ports on different nodes.
-    * ``Diagram.set_boundary_outputs`` -- never raises.
-    * ``int(token)`` -- every call site first confirms the token is a non-empty run of ASCII
-      ``0-9`` (:data:`_ASCII_DIGITS_RE`, or the regex's own ``(?P<power>[0-9]+)`` group).
-      ``str.isdigit()`` is not that predicate: it is true for Unicode category ``No``, so
-      ``'²'`` is ``isdigit()``, matches neither ``\\d+`` nor ``[0-9]+``, and makes ``int()``
-      raise ``ValueError``.
+    No foreign exception class from a package this module calls into reaches a caller.
+    ``Dim.concrete`` and ``Dim.symbol`` are both wrapped in :func:`_parse_dim`, whose
+    identifier shape is Unicode-aware and so wider than ``Dim``'s own; ``Diagram.add_node``,
+    ``add_wire`` and ``set_boundary_outputs`` are only ever called with a ``Z_SPIDER``, a list
+    of ``Dim``, no phase, and two distinct fresh ports on different nodes; every ``int()``
+    call site first confirms its token is a run of :data:`_ASCII_DIGITS`.
     """
 
 
@@ -80,42 +64,30 @@ class DiracDomainError(DiracError):
 
 
 _SUMMATION_INDEX = "k"
-"""The only bound summation variable this slice's grammar recognizes.
-
-One constant, so :data:`_KET_SUM_RE` and :func:`_parse_dim`'s dimension-symbol exclusion
-cannot drift apart."""
+"""The only bound summation variable this slice's grammar recognizes. Shared by
+:data:`_KET_SUM_RE` and :func:`_parse_dim`'s dimension-symbol exclusion."""
 
 _ASCII_DIGITS = "[0-9]+"
 """The one decimal-literal shape this module's grammar admits, as a regex fragment.
 
-``[0-9]+``, not ``\\d+`` and not ``str.isdigit()``: Python's ``\\d`` is Unicode-aware
-(category ``Nd``) and admits e.g. ``'\u0663'``, for which ``int()`` returns 3 -- a non-ASCII
-digit silently accepted as a concrete dimension in an otherwise all-ASCII DSL.
-``str.isdigit()`` is broader still, admitting category ``No`` (``'\u00b2'``), for which
-``int()`` raises ``ValueError``. Leading zeros are accepted: ``07`` is 7.
-
-One constant, shared with :data:`_KET_SUM_RE`'s numeric groups and
-:data:`_ASCII_DIGITS_RE`."""
+ASCII-only, unlike ``\\d`` (Unicode category ``Nd``) and ``str.isdigit()`` (also ``No``).
+Leading zeros are accepted: ``07`` is 7. Shared with :data:`_KET_SUM_RE`'s numeric groups
+and :data:`_ASCII_DIGITS_RE`."""
 
 _ASCII_DIGITS_RE = re.compile(rf"^{_ASCII_DIGITS}$")
 """Whole-token form of :data:`_ASCII_DIGITS`, for :func:`_parse_dim`'s guard."""
 
 _IDENTIFIER = r"[A-Za-z_]\w*"
 """The one bare-identifier shape this module's grammar admits, as a regex fragment.
-
-``\\w`` stays Unicode-aware, unlike the numeric branch: ``sympy.Symbol`` accepts such a name
-and nothing downstream cares. Shared by :data:`_KET_SUM_RE`'s ``dim`` group and
+Unicode-aware, unlike the numeric branch. Shared by :data:`_KET_SUM_RE`'s ``dim`` group and
 :data:`_IDENTIFIER_RE`."""
 
 _IDENTIFIER_RE = re.compile(rf"^{_IDENTIFIER}$")
 """Whole-token form of :data:`_IDENTIFIER`, for :func:`_parse_dim`'s guard."""
 
 _MAX_KET_LEG_COUNT = 1024
-"""Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit.
-
-Nothing about ZX-calculus caps a spider's leg count; this only stops one adversarial source
-string forcing unbounded eager port allocation. Same role as ``_MAX_FIXPOINT_PASSES`` in
-:mod:`qufzx.rewrite.match`."""
+"""Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit. Same
+role as ``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match`."""
 
 _KET_SUM_RE = re.compile(
     rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
@@ -165,11 +137,10 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
 def _parse_dim(token: str) -> Dim:
     """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``.
 
-    Raises :class:`DiracDomainError` for a concrete value outside ``Dim``'s domain, and for
-    the bound summation index (:data:`_SUMMATION_INDEX`) in a dimension slot -- a later
-    ``substitute`` would bind it independently of the sum it lexically came from. Raises
-    :class:`DiracGrammarError` for a token matching neither shape, which
-    :data:`_KET_SUM_RE` rejects before this function is reached.
+    Raises :class:`DiracDomainError` for a concrete value outside ``Dim``'s domain and for
+    the bound summation index (:data:`_SUMMATION_INDEX`) in a dimension slot, and
+    :class:`DiracGrammarError` for a token matching neither shape, or matching
+    :data:`_IDENTIFIER` but not ``Dim``'s own narrower name rule.
     """
     if _ASCII_DIGITS_RE.match(token):
         try:
@@ -183,15 +154,19 @@ def _parse_dim(token: str) -> Dim:
             f"dimension token {token!r} is the bound summation index; a dimension symbol "
             "must be free, not the variable the enclosing sum binds"
         )
-    # Total on its own terms, not merely on the tokens _KET_SUM_RE currently hands it:
-    # without this branch a token matching neither shape becomes a symbol named after
-    # itself.
+    # Total on its own terms, not merely on the tokens _KET_SUM_RE currently hands it.
     if not _IDENTIFIER_RE.match(token):
         raise DiracGrammarError(
             f"dimension token {token!r} is neither a decimal literal ({_ASCII_DIGITS}) nor "
             f"a bare identifier ({_IDENTIFIER})"
         )
-    return Dim.symbol(token)
+    try:
+        return Dim.symbol(token)
+    except DimensionError as exc:
+        raise DiracGrammarError(
+            f"dimension token {token!r} matches this module's identifier shape "
+            f"({_IDENTIFIER}, Unicode-aware) but is not a name Dim accepts: {exc}"
+        ) from exc
 
 
 def _parse_ket_sum(text: str) -> tuple[Dim, int]:
