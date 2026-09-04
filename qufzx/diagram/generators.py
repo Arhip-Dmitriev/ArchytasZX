@@ -155,10 +155,25 @@ class GeneratorType:
     dimension_policy: DimensionPolicy
 
     def __post_init__(self) -> None:
-        """Validate that ``name`` is a non-empty string."""
+        """Validate every field's type, the same way every other value object here does."""
         if not isinstance(self.name, str) or not self.name:
             raise GeneratorGrammarError(
                 f"generator name must be a non-empty str, got {self.name!r}"
+            )
+        if not isinstance(self.leg_policy, LegPolicy):
+            raise GeneratorGrammarError(
+                f"generator {self.name!r}: leg_policy must be a LegPolicy, "
+                f"got {type(self.leg_policy).__name__}"
+            )
+        if not isinstance(self.phase_schema, PhaseSchema):
+            raise GeneratorGrammarError(
+                f"generator {self.name!r}: phase_schema must be a PhaseSchema, "
+                f"got {type(self.phase_schema).__name__}"
+            )
+        if not isinstance(self.dimension_policy, DimensionPolicy):
+            raise GeneratorGrammarError(
+                f"generator {self.name!r}: dimension_policy must be a DimensionPolicy, "
+                f"got {type(self.dimension_policy).__name__}"
             )
 
 
@@ -188,6 +203,15 @@ class GeneratorRegistry:
             raise GeneratorGrammarError(
                 f"unknown generator type {name!r}; registered names: {sorted(self._types)}"
             ) from None
+
+    def is_registered(self, generator_type: GeneratorType) -> bool:
+        """Whether ``generator_type``'s name resolves here to a type equal to it.
+
+        False for a name this registry does not carry, and for one it carries under a
+        type whose other fields differ.
+        """
+        registered = self._types.get(generator_type.name)
+        return registered is not None and registered == generator_type
 
     def names(self) -> frozenset[str]:
         """The set of all registered generator type names."""
