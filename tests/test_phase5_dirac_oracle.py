@@ -285,3 +285,14 @@ class TestDiracParserErrorMessageRendering:
             assert "'|k>^{n}'" in message
         else:
             raise AssertionError("expected DiracGrammarError")
+
+
+class TestEveryFailureIsADiracError:
+    """A dimension token this module's Unicode-aware identifier shape admits but ``Dim``'s
+    own narrower name rule rejects must still surface as a :class:`DiracError`."""
+
+    def test_a_unicode_non_identifier_dimension_token_raises_diracgrammarerror(self) -> None:
+        # 'd\u00b2' matches _IDENTIFIER ([A-Za-z_]\w*, Unicode-aware) but is not a Python
+        # identifier, which is the shape Dim.symbol requires.
+        with pytest.raises(DiracGrammarError):
+            parse_dirac_source("sum_{k=0}^{d\u00b2-1} |k,k>")
