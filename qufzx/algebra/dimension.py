@@ -64,11 +64,23 @@ class DimensionGrammarError(DimensionError):
     """
 
 
+def _check_symbol_name(name: str) -> None:
+    """Reject a symbol name that is not a bare identifier."""
+    if not isinstance(name, str) or not name.isidentifier():
+        raise DimensionGrammarError(
+            f"symbol name must be a bare identifier, got {name!r}; a name like 'd*e' "
+            "builds a symbol that renders identically to the product d*e but is a "
+            "different Dim"
+        )
+
+
 def _dimension_symbol(name: str) -> sp.Symbol:
+    _check_symbol_name(name)
     return sp.Symbol(name, positive=True, integer=True)
 
 
 def _exponent_symbol(name: str) -> sp.Symbol:
+    _check_symbol_name(name)
     return sp.Symbol(name, integer=True, nonnegative=True)
 
 
@@ -84,6 +96,7 @@ def _check_exponent_domain(expr: sp.Expr) -> None:
                 f"symbol {expr} is not a valid exponent symbol "
                 "(exponent symbols must be non-negative integers)"
             )
+        _check_symbol_name(str(expr.name))
         return
     if expr.is_Add or expr.is_Mul:
         for arg in expr.args:
@@ -104,6 +117,7 @@ def _check_dimension_domain(expr: sp.Expr) -> None:
                 f"symbol {expr} is not a valid dimension symbol "
                 "(dimension symbols must be positive integers)"
             )
+        _check_symbol_name(str(expr.name))
         return
     if expr.is_Mul:
         for arg in expr.args:
