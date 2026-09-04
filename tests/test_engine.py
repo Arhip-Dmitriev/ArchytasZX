@@ -510,15 +510,11 @@ class TestStep8CatchesAnExtraIssueOfAnAlreadyPresentKind:
     def test_a_second_dimension_policy_violation_on_a_new_node_is_caught(self) -> None:
         def _builder_with_a_second_violation(working_diagram: Diagram, match_obj: object) -> object:
             result = spider_fusion_builder(working_diagram, match_obj)  # type: ignore[arg-type]
-            extra_id = working_diagram.add_node(
-                Z_SPIDER, input_dims=[], output_dims=[Dim.concrete(2), Dim.concrete(3)]
-            )
-            working_diagram.set_boundary_outputs(
-                working_diagram.boundary_outputs
-                + (
-                    PortRef(extra_id, Direction.OUTPUT, 0),
-                    PortRef(extra_id, Direction.OUTPUT, 1),
-                )
+            # Added as a bare node: step 3's builder-contract check rejects a builder that
+            # touches wires or boundaries, so the new node's ports stay unused. That adds a
+            # PORT_UNUSED pair alongside the DIMENSION_POLICY_VIOLATION under test.
+            working_diagram.add_node(
+                Z_SPIDER, input_dims=[Dim.concrete(3)], output_dims=[Dim.concrete(2)]
             )
             return result
 
@@ -1523,7 +1519,7 @@ class TestApplyDocstringMatchesRaiseSites:
 
     An equality pin on a count, not a semantic check of the prose: the AST can enumerate
     raise sites reliably, but cannot answer whether the prose describes them accurately.
-    One of the 11 documented raise conditions -- the unmapped-surviving-port raise inside
+    One of the 15 documented raise conditions -- the unmapped-surviving-port raise inside
     ``_remap_endpoint``, called from step 5 -- is not counted, since it is not lexically
     inside ``apply``'s body and the AST walk below cannot see it.
     """
@@ -1531,7 +1527,7 @@ class TestApplyDocstringMatchesRaiseSites:
     #: Count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
     #: statements lexically inside ``apply``'s own function body. Keep in sync with
     #: ``apply``'s docstring in qufzx/rewrite/engine.py.
-    _EXPECTED_RAISE_SITE_COUNT = 10
+    _EXPECTED_RAISE_SITE_COUNT = 14
 
     def test_raise_site_count_matches_the_pinned_constant(self) -> None:
         source = inspect.getsource(engine_module.apply)
@@ -1685,3 +1681,178 @@ class TestBuilderMustReturnTheWorkingDiagram:
         rule = dataclasses.replace(SPIDER_FUSION, builder=foreign_builder)
         with pytest.raises(RewriteGrammarError, match="not the working diagram"):
             apply(diagram, rule, match)
+
+
+class TestPortMappingMayNotTargetAConsumedNode:
+    """``apply`` rejects a ``port_mapping`` value on a node the rewrite consumes.
+
+    Such a value names a real port at step 4 and survives step 5's remap; step 6's
+    ``remove_node`` cascade then drops every reference to it. A wire lost that way is below
+    the wire-count postcondition's snapshot, and a boundary entry lost that way changed the
+    diagram's arity with no exception at all.
+    """
+
+    @staticmethod
+    def _diagram_and_match() -> tuple[Diagram, NodeId, NodeId, FusionMatch]:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
+        )
+        (match,) = find_matches(diagram)
+        return diagram, a_id, b_id, match
+
+    def _rule_mapping_onto(self, target_is_consumed: bool) -> Rule:
+        d = Dim.concrete(2)
+
+        def builder(working: Diagram, match_: Match) -> BuildResult:
+            assert isinstance(match_, FusionMatch)
+            new_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+            survivor = PortRef(match_.a_id, Direction.OUTPUT, 1)
+            target = (
+                PortRef(match_.b_id, Direction.OUTPUT, 0)
+                if target_is_consumed
+                else PortRef(new_id, Direction.OUTPUT, 1)
+            )
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(new_id,),
+                consumed_node_ids=(match_.a_id, match_.b_id),
+                consumed_wires=(match_.wire,),
+                port_mapping={
+                    survivor: target,
+                    PortRef(match_.b_id, Direction.OUTPUT, 0): PortRef(new_id, Direction.OUTPUT, 0),
+                },
+                scalar_introduced=Scalar.one(),
+            )
+
+        builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+        return dataclasses.replace(SPIDER_FUSION, name="maps_onto_consumed", builder=builder)
+
+    def test_a_value_on_a_consumed_node_is_rejected(self) -> None:
+        diagram, _a_id, _b_id, match = self._diagram_and_match()
+        with pytest.raises(RewriteGrammarError, match="lies on a node this rewrite consumes"):
+            apply(diagram, self._rule_mapping_onto(target_is_consumed=True), match)
+
+    def test_the_same_builder_mapping_onto_a_surviving_node_is_accepted(self) -> None:
+        diagram, _a_id, _b_id, match = self._diagram_and_match()
+        result = apply(diagram, self._rule_mapping_onto(target_is_consumed=False), match)
+        assert len(result.diagram.boundary_outputs) == len(diagram.boundary_outputs)
+
+
+class TestBuilderMayNotEditWiresOrBoundaries:
+    """``apply`` rejects a builder that edited ``working``'s wires or boundary lists.
+
+    Both are checked at step 3 against ``diagram``, the pre-builder state. A boundary edit
+    would otherwise reach step 5's remap and be adopted as ground truth; a wire edit would
+    move the baseline the wire-count postcondition is measured against.
+    """
+
+    def test_a_builder_that_appends_a_boundary_entry_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram, _a_id, _b_id = build_ghz_with_copy(d)
+        (match,) = find_matches(diagram)
+        real_builder = SPIDER_FUSION.builder
+
+        def appending_builder(working: Diagram, match_: Match) -> BuildResult:
+            built = real_builder(working, match_)
+            spare_id = working.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+            working.set_boundary_outputs(
+                (*working.boundary_outputs, PortRef(spare_id, Direction.OUTPUT, 0))
+            )
+            return built
+
+        appending_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+        rule = dataclasses.replace(SPIDER_FUSION, name="appends", builder=appending_builder)
+        with pytest.raises(RewriteGrammarError, match="mutated the working diagram's boundary"):
+            apply(diagram, rule, match)
+
+    def test_a_builder_that_permutes_the_boundary_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
+        c_id = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[d])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        diagram.add_wire(PortRef(b_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+        diagram.set_boundary_outputs(
+            [
+                PortRef(a_id, Direction.OUTPUT, 1),
+                PortRef(b_id, Direction.OUTPUT, 1),
+                PortRef(c_id, Direction.OUTPUT, 0),
+            ]
+        )
+        (match,) = [m for m in find_matches(diagram) if {m.a_id, m.b_id} == {a_id, b_id}]
+        real_builder = SPIDER_FUSION.builder
+
+        def permuting_builder(working: Diagram, match_: Match) -> BuildResult:
+            built = real_builder(working, match_)
+            outputs = list(working.boundary_outputs)
+            working.set_boundary_outputs([outputs[2], outputs[1], outputs[0]])
+            return built
+
+        permuting_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+        rule = dataclasses.replace(SPIDER_FUSION, name="permutes", builder=permuting_builder)
+        with pytest.raises(RewriteGrammarError, match="mutated the working diagram's boundary"):
+            apply(diagram, rule, match)
+
+    def test_a_builder_that_adds_a_wire_is_rejected(self) -> None:
+        d = Dim.concrete(2)
+        diagram, _a_id, _b_id = build_ghz_with_copy(d)
+        (match,) = find_matches(diagram)
+        real_builder = SPIDER_FUSION.builder
+
+        def wiring_builder(working: Diagram, match_: Match) -> BuildResult:
+            built = real_builder(working, match_)
+            spare = working.add_node(Z_SPIDER, input_dims=[d], output_dims=[d])
+            working.add_wire(
+                PortRef(spare, Direction.OUTPUT, 0), PortRef(spare, Direction.INPUT, 0)
+            )
+            return built
+
+        wiring_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+        rule = dataclasses.replace(SPIDER_FUSION, name="wires", builder=wiring_builder)
+        with pytest.raises(RewriteGrammarError, match="mutated the working diagram's wires"):
+            apply(diagram, rule, match)
+
+    def test_the_real_fusion_rule_preserves_both_arities(self) -> None:
+        diagram, _a_id, _b_id = build_ghz_with_copy(Dim.symbol("d"))
+        (match,) = find_matches(diagram)
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert len(result.diagram.boundary_inputs) == len(diagram.boundary_inputs)
+        assert len(result.diagram.boundary_outputs) == len(diagram.boundary_outputs)
+
+
+class TestVerifiedPhaseSubstitutionsMustNameConsumedNodes:
+    """``apply`` rejects a ``verified_phase_substitutions`` key the rewrite does not consume.
+
+    The field is copied verbatim onto :attr:`RewriteStep.phase_substitutions`, so an
+    unconsumed node id there is a claim in the certificate the rewrite never made.
+    """
+
+    def test_a_foreign_node_id_is_rejected(self) -> None:
+        d = Dim.symbol("d")
+        diagram, _a_id, _b_id = build_ghz_with_copy(d)
+        (match,) = find_matches(diagram)
+        real_builder = SPIDER_FUSION.builder
+
+        def lying_builder(working: Diagram, match_: Match) -> BuildResult:
+            built = real_builder(working, match_)
+            return dataclasses.replace(
+                built,
+                verified_phase_substitutions={NodeId(9999): {"d": Dim.concrete(2)}},
+            )
+
+        lying_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+        rule = dataclasses.replace(SPIDER_FUSION, name="lies", builder=lying_builder)
+        with pytest.raises(RewriteGrammarError, match="does not consume"):
+            apply(diagram, rule, match)
+
+    def test_the_real_fusion_rule_only_names_consumed_nodes(self) -> None:
+        diagram, a_id, b_id = build_ghz_with_copy(Dim.concrete(3))
+        (match,) = find_matches(diagram)
+        result = apply(diagram, SPIDER_FUSION, match)
+        assert set(result.step.phase_substitutions) <= {a_id, b_id}

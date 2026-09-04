@@ -23,18 +23,24 @@ Algorithm.
 1. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against ``rule.side_conditions``.
 2. Work on ``diagram.copy()``; never mutate the diagram passed in.
 3. Call ``rule.builder(working, match)``. ``build_result.diagram`` must ``is``-match
-   ``working``.
+   ``working``, and the builder must have left ``working``'s wire set and both boundary
+   lists exactly as ``diagram`` had them -- every other change it makes is reported through
+   :class:`~qufzx.rewrite.rule.BuildResult`, never applied directly.
 4. Validate the build result against ``working``: the scalar agrees with the rule's; every
    consumed wire and node exists; every ``new_node_ids`` entry exists; every
-   ``port_mapping`` value names a real port; neither id tuple repeats; ``port_mapping`` is
-   injective.
+   ``port_mapping`` value names a real port on a node that outlives the rewrite; neither id
+   tuple repeats; ``port_mapping`` is injective; ``verified_phase_substitutions`` names only
+   consumed nodes.
 5. Remap every reference, before any node is removed. A consumed wire is dropped; any other
    wire with an endpoint on a consumed node is re-added through ``port_mapping``. An
    endpoint on a consumed node absent from ``port_mapping`` raises, as does a remap
    collapsing one wire's two endpoints onto a single port. Both boundary lists are rebuilt
-   through the same ``_remap_endpoint``, in place, so position is preserved. A wire-count
-   postcondition then catches a silently lost wire from any cause.
-6. Remove the consumed nodes, once nothing references them.
+   through the same ``_remap_endpoint``, in place, so position is preserved -- and both are
+   the input's own lists, step 3 having established the builder did not touch them. A
+   wire-count postcondition, anchored on ``diagram``'s wire set rather than the
+   post-builder one, then catches a wire lost during remapping.
+6. Remove the consumed nodes. Step 4 rejects a ``port_mapping`` value on a consumed node,
+   so no surviving reference can point at one by the time the cascade runs.
 7. Multiply the scalar.
 8. Verify the rewrite is not a relative regression. :func:`~qufzx.diagram.validate.validate`
    runs on the input and on the finished ``working``; a hard-failure issue in ``working``
@@ -300,29 +306,27 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     ``test_engine.py::TestApplyDocstringMatchesRaiseSites`` pins the count of raise
     statements lexically inside this body against this list.
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError`:
+    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError` at step 1 (``match``'s
+    ``side_condition_outcomes`` do not exactly cover ``rule.side_conditions``, or include a
+    failed one), step 4 (the builder's ``scalar_introduced`` disagrees with the rule's),
+    step 5 (a wire or boundary entry names a port on a consumed node absent from
+    ``port_mapping``, from :func:`_remap_endpoint`, so not counted by the meta-test), and
+    step 8 (the result carries a hard-failure validation issue the input did not).
 
-    * Step 1: ``match``'s ``side_condition_outcomes`` do not exactly cover
-      ``rule.side_conditions``, or include a failed one.
-    * Step 4: the builder's ``scalar_introduced`` disagrees with ``rule.scalar_introduced``.
-    * Step 5 (from :func:`_remap_endpoint`, so not counted by the meta-test): a wire or
-      boundary entry names a port on a consumed node absent from ``port_mapping``.
-    * Step 8: the result carries a hard-failure validation issue the input did not, under
-      the multiset compare over :func:`_translate_input_issue_key`/:func:`_issue_key`.
+    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` at step 3
+    (``BuildResult.diagram`` is not, by identity, the working diagram; the builder edited
+    the working diagram's wire set or either boundary list), step 4 (a consumed
+    wire or node absent from the working diagram; ``consumed_node_ids`` or ``new_node_ids``
+    repeating an id; a ``new_node_ids`` entry naming no node; a ``port_mapping`` value naming
+    no real port or one on a consumed node; a non-injective ``port_mapping``;
+    ``verified_phase_substitutions`` naming a node the rewrite does not consume), and step 5
+    (``port_mapping`` collapsing one wire's endpoints onto a single port; the wire count not
+    matching its postcondition).
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError`:
-
-    * Step 3: ``BuildResult.diagram`` is not, by identity, the working diagram.
-    * Step 4: a reported consumed wire or node is absent from the working diagram;
-      ``consumed_node_ids`` or ``new_node_ids`` repeats an id; a ``new_node_ids`` entry names
-      no node; a ``port_mapping`` value names no real port; ``port_mapping`` is not injective.
-    * Step 5: ``port_mapping`` collapses one surviving wire's endpoints onto a single port;
-      or the wire count after remapping is not the expected count.
-
-    Still unchecked, and deferred to Phase 11: a builder that mutates ``working`` directly
-    rather than through the returned fields; a ``new_node_ids`` entry naming a pre-existing
-    node (existence is checked, freshness is not); a duplicate in ``consumed_wires``; and an
-    unused ``port_mapping`` key.
+    Still unchecked, and deferred to Phase 11: a builder that edits a pre-existing node's
+    phase or port dimensions in place (its wire and boundary edits are caught at step 3); a
+    ``new_node_ids`` entry naming a pre-existing node (existence is checked, freshness is
+    not); a duplicate in ``consumed_wires``; and an unused ``port_mapping`` key.
     """
     check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
@@ -336,15 +340,40 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "object, never substitute a different one (see BuildResult's docstring)"
         )
 
+    # BuildResult's contract: the builder adds the replacement node(s) and reports every
+    # other change through its fields. Checked against `diagram`, the pre-builder state, so
+    # the wire-count postcondition below is anchored to a baseline the builder cannot move,
+    # and so a boundary edit cannot reach step 5's remap and be adopted as ground truth.
+    if working.wires != diagram.wires:
+        added = sorted(working.wires - diagram.wires, key=lambda w: w.sort_key())
+        removed = sorted(diagram.wires - working.wires, key=lambda w: w.sort_key())
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder mutated the working diagram's wires directly "
+            f"(added {added!r}; removed {removed!r}); a builder reports every wire it "
+            "consumes through BuildResult.consumed_wires and never edits the wire set"
+        )
+    if (
+        working.boundary_inputs != diagram.boundary_inputs
+        or working.boundary_outputs != diagram.boundary_outputs
+    ):
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder mutated the working diagram's boundary lists "
+            f"directly (inputs {diagram.boundary_inputs!r} -> "
+            f"{working.boundary_inputs!r}; outputs {diagram.boundary_outputs!r} -> "
+            f"{working.boundary_outputs!r}); a builder never touches a boundary list, and "
+            "step 5 rebuilds both from the input's through port_mapping"
+        )
+
     if build_result.scalar_introduced != rule.scalar_introduced:
         raise RewriteDomainError(
             f"rule {rule.name!r} declares scalar_introduced={rule.scalar_introduced!r}, "
             f"but its builder returned {build_result.scalar_introduced!r} for this match"
         )
 
-    # Snapshotted once as a set: working.wires re-materialises on every access, which would
-    # make this check quadratic in consumed wires times diagram wires.
-    working_wire_set = frozenset(working.wires)
+    # diagram.wires, not working.wires: equal by the step-3b check above, and naming the
+    # pre-builder set keeps the postcondition's baseline independent of the builder.
+    # Snapshotted once, since the property re-materialises on every access.
+    working_wire_set = frozenset(diagram.wires)
     missing_wires = [wire for wire in build_result.consumed_wires if wire not in working_wire_set]
     missing_node_ids = [
         node_id for node_id in build_result.consumed_node_ids if node_id not in working.nodes
@@ -388,6 +417,37 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"{invalid_port_mapping_values!r})"
         )
 
+    consumed_node_ids = frozenset(build_result.consumed_node_ids)
+
+    # A value on a consumed node names a real port here and survives step 5's remap, and
+    # step 6's remove_node cascade then drops every reference to it -- a wire below the
+    # wire-count postcondition's snapshot, or a boundary entry, with no exception raised.
+    port_mapping_onto_consumed = tuple(
+        ref for ref in build_result.port_mapping.values() if ref.node_id in consumed_node_ids
+    )
+    if port_mapping_onto_consumed:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder's port_mapping sends a surviving port onto "
+            f"{port_mapping_onto_consumed!r}, which lies on a node this rewrite consumes; "
+            "a surviving reference must be remapped onto a port that outlives the rewrite"
+        )
+
+    # Recorded verbatim onto RewriteStep.phase_substitutions, so a node id no phase was
+    # read from puts a claim in the certificate the rewrite never made.
+    if build_result.verified_phase_substitutions is not None:
+        foreign_phase_nodes = tuple(
+            node_id
+            for node_id in build_result.verified_phase_substitutions
+            if node_id not in consumed_node_ids
+        )
+        if foreign_phase_nodes:
+            raise RewriteGrammarError(
+                f"rule {rule.name!r}: build_result.verified_phase_substitutions names node "
+                f"id(s) {sorted(foreign_phase_nodes)!r} that this rewrite does not consume; "
+                "a builder substitutes into a matched node's own phase, so every key must "
+                "be a consumed node id"
+            )
+
     # Step 9 publishes new_node_ids verbatim, where a duplicate would misreport how many
     # new nodes were created.
     duplicate_new_node_ids = [
@@ -411,7 +471,6 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         )
 
     consumed_wire_set = frozenset(build_result.consumed_wires)
-    consumed_node_ids = frozenset(build_result.consumed_node_ids)
     port_mapping = build_result.port_mapping
 
     # Sorted, not the raw frozenset: working.wires' hash is PYTHONHASHSEED-dependent, and

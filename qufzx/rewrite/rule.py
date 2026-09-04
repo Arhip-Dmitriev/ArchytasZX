@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import abc
 import enum
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -60,11 +61,18 @@ class RewriteGrammarError(RewriteError):
 
     Raised for: a value object built outside its own contract (a :class:`ConstraintSource`
     whose kind and reference disagree, a :class:`DimensionConstraint` whose ``bound_here`` is
-    ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type or one
-    whose ``side_conditions`` disagree with its builder's); a match or wire that does not
-    belong to the diagram it is applied against; a :class:`BuildResult` naming a node, port or
-    wire the working diagram does not have, repeating an id, or whose ``port_mapping`` is not
-    injective; and an unknown rule name at
+    ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type, one
+    whose ``side_conditions`` repeat a name, or one whose ``side_conditions`` disagree with
+    its builder's); a match handed to a builder that does not take its type; a request
+    :func:`~qufzx.rewrite.match.resolve_fusion_match` cannot evaluate at all (equal node ids,
+    a node absent from the diagram, a wire not incident on both or not in ``diagram.wires``,
+    or a wire endpoint or boundary entry naming an unknown node or out-of-range index); a
+    :class:`BuildResult` that is not the working diagram it was given, or that names a node,
+    port or wire the working diagram does not have, repeats an id, maps a surviving port onto
+    a consumed node, is not injective, or names a non-consumed node in
+    ``verified_phase_substitutions``; a ``port_mapping`` that collapses one wire's endpoints
+    onto a single port, or that leaves :func:`~qufzx.rewrite.engine.apply`'s wire-count
+    postcondition violated; and an unknown rule name at
     :func:`~qufzx.rewrite.rules_library.lookup_rule`.
     """
 
@@ -363,6 +371,19 @@ class Rule:
             raise RewriteGrammarError(
                 f"rule {self.name!r}: side_conditions must be a tuple of SideCondition, "
                 f"got {self.side_conditions!r}"
+            )
+        # check_side_condition_coverage compares outcome names against a *set* of declared
+        # names, where a repeated name collapses and one outcome covers both entries.
+        repeated_condition_names = sorted(
+            name
+            for name, count in Counter(condition.name for condition in self.side_conditions).items()
+            if count > 1
+        )
+        if repeated_condition_names:
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: side_conditions declares the name(s) "
+                f"{repeated_condition_names!r} more than once; each declared condition needs "
+                "its own name for a match's outcomes to cover it"
             )
         if not isinstance(self.quantifiers, Quantifiers):
             raise RewriteGrammarError(
