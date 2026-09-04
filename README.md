@@ -141,7 +141,11 @@ Implemented and under test:
   may not serve as more than one of `qufzx.algebra`'s four symbol roles (a dimension, a
   dimension's exponent, a phase parameter, or a scalar) within one diagram, since
   substitution is name-keyed and would otherwise conflate them. Checks are local to each
-  node; diagram-wide dimension-constraint propagation is deferred to a later phase.
+  node; diagram-wide dimension-constraint propagation is deferred to a later phase. A pair
+  of dimensions that agree only *under a binding* (a symbol against a concrete value, or
+  against another symbol) is recorded as `DIMENSION_BOUND`, alongside the `DIMENSION_DEFERRED`
+  case where the unifier could not decide at all. Both are assumptions rather than failures,
+  so neither fails validation, and both reach the rewrite engine's before/after compare.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
@@ -159,8 +163,13 @@ Implemented and under test:
   own: the finished record implies every equality any pass ever asserted, with no appeal to
   the resolver's binding accumulator. A rewrite's effect on pre-existing deferred
   assumptions is recorded in both directions, `removed_deferred_issues` and
-  `introduced_deferred_issues`. Graph-to-fuse-to-graph is oracle-checked exactly, including
-  at substitutions where a recorded constraint holds only by assumption.
+  `introduced_deferred_issues`. Every field a builder hands back is checked before it is
+  spliced or recorded — including that no surviving port is remapped onto a node the rewrite
+  consumes — and the builder's own effect on the working diagram is checked against the
+  pre-builder state: it adds the replacement node(s) and reports every other change through
+  its result, so an edit to the wire set or to either boundary list is rejected rather than
+  adopted as ground truth. Graph-to-fuse-to-graph is oracle-checked exactly, including at
+  substitutions where a recorded constraint holds only by assumption.
 - **Dirac parsing (Phase 5 slice only)** — one restricted form: a summed ket family
   `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power shorthand), optionally
   followed by `; copy` to feed the state into a fixed copy spider. That is exactly the
@@ -169,9 +178,8 @@ Implemented and under test:
   `DiracError`, the bound summation index cannot be captured as a dimension symbol, every
   numeric token is ASCII by construction (identifier tokens stay Unicode-aware, since a
   symbol name has no numeric domain to be silently misread into), and a tensor-power leg
-  count is bounded. A general
-  spider/wire/bang-box declaration syntax, bang boxes, multi-index families, and the Dirac
-  printer belong to Phases 18, 7, and 17.
+  count is bounded. A general spider/wire/bang-box declaration syntax, bang boxes,
+  multi-index families, and the Dirac printer belong to Phases 18, 7, and 17.
 
 Not yet implemented:
 
@@ -183,12 +191,17 @@ mixed dimensions and the full qufinite generator set · the broader rule library
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
 saturation · tactics and proof search · scalable notation · a Dirac printer and the general
 REPL declaration syntax/bang-box grammar.
+
 ## References (Highly Incomplete List)
+
+Full texts of these are under [`references/`](references/).
 
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi* —
   [arXiv:2104.06429](https://arxiv.org/abs/2104.06429)
-- *Scalable notation and its equivalence to bang boxes* —
+- Kissinger et al., on bang boxes and scalable notation —
   [arXiv:2204.11702](https://arxiv.org/abs/2204.11702)
+- van de Wetering, *ZX-calculus for the working quantum computer scientist* —
+  [arXiv:2012.13966](https://arxiv.org/abs/2012.13966)
 
 ## License
 
