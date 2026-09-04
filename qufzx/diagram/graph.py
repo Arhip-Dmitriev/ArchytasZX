@@ -250,6 +250,8 @@ class Node:
 
     def legs(self, direction: Direction) -> tuple[Port, ...]:
         """The ordered port tuple for the given direction."""
+        if not isinstance(direction, Direction):
+            raise GraphGrammarError(f"legs() requires a Direction, got {direction!r}")
         return self.inputs if direction is Direction.INPUT else self.outputs
 
     def with_phase(self, phase: PhaseVector | None) -> Node:
@@ -379,6 +381,8 @@ class Diagram:
 
     def remove_wire(self, a: PortRef, b: PortRef) -> None:
         """Remove the wire between two ports. Raises GraphGrammarError if it is absent."""
+        if a == b:
+            raise GraphGrammarError(f"no such wire: a wire cannot connect port {a} to itself")
         wire = Wire(a, b)
         if wire not in self._wires:
             raise GraphGrammarError(f"no such wire: {wire!r}")
