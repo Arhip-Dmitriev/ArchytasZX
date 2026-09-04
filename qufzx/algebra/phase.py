@@ -44,7 +44,7 @@ and must not be anticipated by this module or by :mod:`qufzx.algebra.scalar`.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Union
+from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -77,32 +77,42 @@ PhaseSymbolKey = Union[str, "Phase"]
 PhaseSubstituteValue = Union[int, "sp.Rational", "Phase"]
 
 
+def _check_symbol_name(name: str) -> None:
+    """Reject a symbol name that is not a bare identifier."""
+    if not isinstance(name, str) or not name.isidentifier():
+        raise PhaseGrammarError(
+            f"symbol name must be a bare identifier, got {name!r}; a name carrying "
+            "operator characters builds a symbol that renders identically to an "
+            "expression but is a different Phase"
+        )
+
+
 def _turns_symbol(name: str) -> sp.Symbol:
+    _check_symbol_name(name)
     return sp.Symbol(name, real=True)
 
 
 def _normalize_turns(expr: sp.Expr) -> sp.Expr:
-    """Reduce a turns-expression mod one turn, but only when it is a concrete Rational.
+    """Reduce a turns-expression's additive rational constant mod one turn.
 
-    This is the one and only normalization step this module performs on a Phase's
-    internal expression. Anything that is not literally a sympy Rational (or Integer)
-    after simplification of numeric structure -- in particular any expression carrying
-    a free symbol, even something as simple as ``j/d`` with symbolic ``d`` -- is
-    returned unchanged.
+    ``expr.as_coeff_Add()`` splits off that constant; it is replaced by
+    ``constant - floor(constant)`` and the remainder is left untouched. A wholly
+    concrete Rational is the case where the remainder is zero. A constant that is not
+    Rational (``pi``), and every non-constant term (``x``, ``j/d`` with symbolic ``d``),
+    passes through unchanged.
 
-    Before any of that: an expression containing an ``sp.Float`` atom anywhere in its
-    tree (not just at the top level) is rejected outright, since this module tracks
-    phases exactly, never approximately.
+    An expression carrying an ``sp.Float`` atom anywhere in its tree is rejected first.
     """
     if expr.atoms(sp.Float):
         raise PhaseGrammarError(
             f"Phase requires an exact turns-expression, got a float in {expr!r}"
         )
-    if expr.free_symbols:
+    if expr.atoms(sp.zoo, sp.oo, sp.nan):
+        raise PhaseGrammarError(f"Phase requires a finite turns-expression, got {expr!r}")
+    constant, rest = expr.as_coeff_Add()
+    if not constant.is_Rational or constant == 0:
         return expr
-    if expr.is_Rational:
-        return expr - sp.floor(expr)
-    return expr
+    return cast(sp.Expr, (constant - sp.floor(constant)) + rest)
 
 
 class Phase:
