@@ -38,8 +38,9 @@ resolve (``DEFERRED``, e.g. ``Dim("d")`` against ``Dim("d") * Dim("e")``, where 
 proper subterm and so not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED`: an
 assumed constraint, neither silently accepted nor reported as an error. Phase 10's real
 unifier drops in at ``Dim.unify``, changing what is deferred here without changing this
-module. A bare symbol against an unrelated symbol or concrete value is not that case:
-``unify`` reports ``SUCCESS`` with a binding and nothing is recorded.
+module. A pair that unifies only by *binding* a symbol is the other assumed case,
+:class:`IssueKind.DIMENSION_BOUND`; it too carries ``deferred=True`` and never fails
+validation.
 
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
 :func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint, rather than
@@ -115,6 +116,7 @@ class IssueKind(enum.Enum):
     PORT_INDEX_OUT_OF_RANGE = "port_index_out_of_range"
     DIMENSION_MISMATCH = "dimension_mismatch"
     DIMENSION_DEFERRED = "dimension_deferred"
+    DIMENSION_BOUND = "dimension_bound"
     PORT_WIRED_TWICE = "port_wired_twice"
     PORT_WIRED_AND_BOUNDARY = "port_wired_and_boundary"
     PORT_UNUSED = "port_unused"
@@ -135,8 +137,9 @@ class ValidationIssue:
 
     Exactly one of ``node_id``, ``port_ref``, or ``wire`` is typically the primary
     offender for a given ``kind``; the others are left ``None``. ``deferred`` is True
-    only for :attr:`IssueKind.DIMENSION_DEFERRED`, marking this as an assumed
-    constraint rather than a hard failure -- see the module docstring.
+    for :attr:`IssueKind.DIMENSION_DEFERRED` and :attr:`IssueKind.DIMENSION_BOUND`,
+    marking these as assumed constraints rather than hard failures -- see the module
+    docstring.
     """
 
     kind: IssueKind
@@ -228,6 +231,21 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
                     message=(
                         f"wire {wire!r} assumes {port_a.dim} == {port_b.dim} "
                         "(deferred, not yet decided)"
+                    ),
+                    wire=wire,
+                    deferred=True,
+                )
+            )
+        elif result.bindings:
+            bound = ", ".join(
+                f"{name} := {value}" for name, value in sorted(result.bindings.items())
+            )
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.DIMENSION_BOUND,
+                    message=(
+                        f"wire {wire!r} assumes {port_a.dim} == {port_b.dim}, which holds "
+                        f"only under the binding(s) {bound}"
                     ),
                     wire=wire,
                     deferred=True,
@@ -478,6 +496,25 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                     node_id=node.id,
                 )
             )
+        elif leg_unify.is_success and (leg_unify.bindings or leg_unify.declined_bindings):
+            bound = ", ".join(
+                f"{name} := {value}"
+                for name, value in sorted(
+                    {**dict(leg_unify.bindings), **dict(leg_unify.declined_bindings)}.items()
+                )
+            )
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.DIMENSION_BOUND,
+                    message=(
+                        f"node {node.id!r} ({gen.name}) legs "
+                        f"{sorted(str(port.dim) for port in all_ports)} agree only under the "
+                        f"binding(s) {bound}"
+                    ),
+                    node_id=node.id,
+                    deferred=True,
+                )
+            )
         elif leg_unify.is_deferred:
             for assumed, equal_to in leg_unify.residual_pairs:
                 issues.append(
@@ -491,13 +528,6 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                         deferred=True,
                     )
                 )
-        # A SUCCESS with non-empty leg_unify.declined_bindings (legs `d` and `e` unifying
-        # only by binding d := e) falls through without an issue. This module has no
-        # reporting path for "SUCCESS, but only under an assumption", unlike
-        # qufzx.rewrite.match, which records it as a BOUND DimensionConstraint. Closing that
-        # asymmetry is a certificate-shape change deferred to Phase 10; the assumption is
-        # still carried on UnifyAllResult.declined_bindings, and
-        # tests/test_symbolic_dimension_sweep.py pins today's behavior.
 
     if node.phase is not None:
         if gen.phase_schema is PhaseSchema.NONE:
@@ -553,6 +583,22 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                                 f"node {node.id!r} ({gen.name}) assumes phase dimension "
                                 f"{resolved_phase_dim} == leg dimension {resolved_leg_dim} "
                                 "(deferred, not yet decided)"
+                            ),
+                            node_id=node.id,
+                            deferred=True,
+                        )
+                    )
+                elif result.bindings:
+                    bound = ", ".join(
+                        f"{name} := {value}" for name, value in sorted(result.bindings.items())
+                    )
+                    issues.append(
+                        ValidationIssue(
+                            kind=IssueKind.DIMENSION_BOUND,
+                            message=(
+                                f"node {node.id!r} ({gen.name}) assumes phase dimension "
+                                f"{resolved_phase_dim} == leg dimension {resolved_leg_dim}, "
+                                f"which holds only under the binding(s) {bound}"
                             ),
                             node_id=node.id,
                             deferred=True,

@@ -341,18 +341,14 @@ class TestPhaseDimensionResolvedThroughLegBindings:
         )
 
 
-class TestNonConcreteLegBindingIsSilentlyAccepted:
-    """A node whose legs unify only by binding one bare symbol to another (e.g. legs ``d`` and
-    ``e``, binding ``d := e``) reports no issue at all -- a deliberate Phase 5 decision (see
-    ``_check_generator_policy``'s own inline comment), not an oversight, and asymmetric with
-    the structurally identical situation in :mod:`qufzx.rewrite.match`, which records it as
-    a ``BOUND`` certificate entry. ``UnifyAllResult.declined_bindings`` is populated
-    regardless (so the assumption is not lost, only not yet reported) -- pinned directly in
-    ``test_dimension.py``. This class pins today's silent behavior at the ``validate()``
-    level, so a future change to surface ``declined_bindings`` here (left to Phase 10, per
-    that comment) is a deliberate, visible change to this test, not a silent behavior drift."""
+class TestNonConcreteLegBindingIsReportedAsBound:
+    """A node whose legs unify only by binding one symbol to another (legs ``d`` and ``e``,
+    binding ``d := e``) is recorded as a ``DIMENSION_BOUND`` deferred issue, matching the
+    ``BOUND`` :class:`~qufzx.rewrite.rule.DimensionConstraint`
+    :mod:`qufzx.rewrite.match` records for the structurally identical situation. It never
+    fails validation: ``is_valid`` stays True."""
 
-    def test_two_bare_symbol_legs_report_no_issue(self) -> None:
+    def test_two_bare_symbol_legs_are_reported_as_bound(self) -> None:
         d = Dim.symbol("d")
         e = Dim.symbol("e")
         diagram = Diagram()
@@ -362,8 +358,17 @@ class TestNonConcreteLegBindingIsSilentlyAccepted:
         )
         report = validate(diagram)
         assert report.is_valid
-        assert not report.deferred
         assert not report.errors
+        assert [issue.kind for issue in report.deferred] == [IssueKind.DIMENSION_BOUND]
+
+    def test_a_wire_joining_a_symbol_to_a_concrete_dim_is_reported_as_bound(self) -> None:
+        diagram = Diagram()
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.symbol("d")])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(2)], output_dims=[])
+        diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
+        report = validate(diagram)
+        assert report.is_valid
+        assert IssueKind.DIMENSION_BOUND in {issue.kind for issue in report.deferred}
 
 
 class TestAllLegsEqualJointSatisfiability:

@@ -43,8 +43,9 @@ Merged dimension. Every surviving port is built at
 makes that sound is that condition 6 unifies every surviving leg against the resolved
 ``shared_dim`` before a match is returned, and this builder calls the same
 :func:`~qufzx.rewrite.match.resolve_fusion_match` fresh against the diagram it was handed.
-``ALL_LEGS_EQUAL`` alone would not suffice: :mod:`qufzx.diagram.validate` reports nothing for
-two leg dims that unify by binding a free symbol.
+``ALL_LEGS_EQUAL`` alone would not suffice: :mod:`qufzx.diagram.validate` reports two leg
+dims that unify only by binding a free symbol as a deferred
+:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_BOUND`, never as a hard error.
 
 Fusion may fire on a ``DEFERRED`` dimension pair, though FULL_PLAN.md's Phase 5 states the
 pattern as spiders "sharing a dimension". A ``d``/``d*e`` leg pair is already legal,
