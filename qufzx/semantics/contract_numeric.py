@@ -73,7 +73,17 @@ from qufzx.diagram.validate import ValidationReport, validate
 from qufzx.semantics.denote import denote, resolve_dimension
 
 DEFAULT_MAX_ELEMENTS = 10_000_000
-"""The default cap on the element count of any single tensor this module allocates."""
+"""The default cap on the element count of any single tensor this module allocates.
+
+Also the memory limit handed to :func:`numpy.einsum_path`, so it bounds the contraction's
+intermediates as well as its inputs and its output."""
+
+_MAX_EINSUM_LABELS = 52
+"""How many distinct axis labels :func:`numpy.einsum`'s sublist interface accepts.
+
+It maps each integer label onto a fixed 52-character alphabet and raises a bare
+``IndexError`` from inside numpy on the 53rd. :func:`contract` checks the count first and
+raises :class:`ContractSizeError` instead."""
 
 
 class ContractError(Exception):
@@ -236,15 +246,32 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
 
     labels = _assign_labels(diagram)
 
+    distinct_labels = len(set(labels.values()))
+    if distinct_labels > _MAX_EINSUM_LABELS:
+        raise ContractSizeError(
+            f"diagram contracts over {distinct_labels} distinct axis labels, above "
+            f"numpy.einsum's sublist-interface limit of {_MAX_EINSUM_LABELS} (see "
+            "_MAX_EINSUM_LABELS); every wire equivalence class and every boundary port "
+            "takes one label"
+        )
+
     einsum_args: list[Any] = []
     for node_id, node in diagram.nodes.items():
         rank = node.num_outputs + node.num_inputs
         d = resolve_dimension(node)
         _check_size(d**rank, max_elements=max_elements, what=f"node {node_id!r}'s tensor")
         tensor = denote(node)
-        axis_labels = [
-            labels[PortRef(node_id, Direction.OUTPUT, i)] for i in range(node.num_outputs)
-        ] + [labels[PortRef(node_id, Direction.INPUT, i)] for i in range(node.num_inputs)]
+        port_refs = [PortRef(node_id, Direction.OUTPUT, i) for i in range(node.num_outputs)] + [
+            PortRef(node_id, Direction.INPUT, i) for i in range(node.num_inputs)
+        ]
+        unlabelled = [ref for ref in port_refs if ref not in labels]
+        if unlabelled:
+            raise ContractGrammarError(
+                f"node {node_id!r} has port(s) {unlabelled!r} that were never assigned an "
+                "axis label; validate() rejects an unused port, so a labelled-port gap here "
+                "is an internal bookkeeping inconsistency"
+            )
+        axis_labels = [labels[ref] for ref in port_refs]
         if len(axis_labels) != tensor.ndim:
             raise ContractGrammarError(
                 f"node {node_id!r} has {tensor.ndim} tensor axes but {len(axis_labels)} "
@@ -267,7 +294,13 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
         output_elements *= port.dim.to_int()
     _check_size(output_elements, max_elements=max_elements, what="the contracted output tensor")
 
-    raw_tensor = np.einsum(*einsum_args, output_labels)
+    # optimize=("greedy", max_elements): the planner both contracts pairwise, instead of
+    # iterating the full index space, and declines any pairing whose intermediate would
+    # exceed the same cap _check_size applies to the inputs and the output.
+    path, _path_info = np.einsum_path(
+        *einsum_args, output_labels, optimize=("greedy", max_elements)
+    )
+    raw_tensor = np.einsum(*einsum_args, output_labels, optimize=path)
     tensor = np.asarray(raw_tensor, dtype=np.complex128) * diagram.scalar.to_complex()
     return ContractionResult(
         tensor=tensor, axis_refs=axis_refs, num_boundary_outputs=num_boundary_outputs

@@ -119,7 +119,10 @@ def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]
     """Substitute every symbol in ``diagram`` per ``assignment``.
 
     Raises CheckGrammarError if ``assignment`` does not cover every free symbol the
-    diagram carries -- a missing symbol is never defaulted. See the module docstring.
+    diagram carries -- a missing symbol is never defaulted. A key naming no symbol in this
+    diagram is dropped: :func:`compare` and the sweeps pass one shared assignment to two
+    diagrams, and a rewrite can eliminate a symbol from one side (a phase binding the
+    shared leg dimension leaves the merged node concrete). See the module docstring.
     """
     missing = _diagram_free_symbols(diagram) - set(assignment)
     if missing:
