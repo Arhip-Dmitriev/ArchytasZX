@@ -864,10 +864,13 @@ class TestConstraintRecordAdequacy:
                                 total_checked += checked
                                 total_skipped += skipped
         assert total_matches > 0, "the adequacy sweep never produced a single fusion match"
-        assert total_checked > 50, (
+        # Floor set from the measured figure (4518 checked / 384 skipped on 2026-09-03),
+        # not an order of magnitude below it, where a collapse to a handful of cases would
+        # still pass.
+        assert total_checked >= 4400, (
             f"only {total_checked} case(s) actually had their adequacy checked (with "
             f"{total_skipped} skipped for being out of the search range/symbol cap); the "
-            "sweep collapsed to checking almost nothing"
+            "sweep measured 4518 when this floor was set -- it has collapsed"
         )
 
     def test_random_generators_are_adequate(self) -> None:
@@ -891,8 +894,9 @@ class TestConstraintRecordAdequacy:
         assert total_matches > 0, (
             "the random-generator adequacy sweep never produced a single fusion match"
         )
-        assert total_checked > 20, (
+        # Floor set from the measured figure (172 checked / 12 skipped on 2026-09-03).
+        assert total_checked >= 165, (
             f"only {total_checked} case(s) actually had their adequacy checked across the "
-            f"three random generators (with {total_skipped} skipped); the sweep collapsed "
-            "to checking almost nothing"
+            f"three random generators (with {total_skipped} skipped); the sweep measured "
+            "172 when this floor was set -- it has collapsed"
         )
