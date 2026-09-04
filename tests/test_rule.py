@@ -397,3 +397,33 @@ class TestBuilderDeclaredSideConditionsMustAgreeWithTheRule:
             scalar_introduced=Scalar.one(),
         )
         assert rule.side_conditions == (SideCondition("only", "the one condition"),)
+
+
+class TestRuleRejectsRepeatedSideConditionNames:
+    """A repeated declared name collapses in ``check_side_condition_coverage``'s set compare,
+    where one reported outcome would cover both entries."""
+
+    def test_two_conditions_sharing_one_name_are_rejected(self) -> None:
+        with pytest.raises(RewriteGrammarError, match="more than once"):
+            Rule(
+                name="repeats",
+                pattern=FusionPattern(),
+                builder=_dummy_builder,
+                side_conditions=(
+                    SideCondition("shared", "first"),
+                    SideCondition("shared", "second"),
+                ),
+                quantifiers=Quantifiers(),
+                scalar_introduced=Scalar.one(),
+            )
+
+    def test_distinct_names_are_accepted(self) -> None:
+        rule = Rule(
+            name="distinct",
+            pattern=FusionPattern(),
+            builder=_dummy_builder,
+            side_conditions=(SideCondition("one", "first"), SideCondition("two", "second")),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+        assert len(rule.side_conditions) == 2
