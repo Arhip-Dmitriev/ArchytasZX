@@ -35,6 +35,7 @@ worked example needs; Phase 18 must keep this grammar as a strict subset of its 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from qufzx.algebra.dimension import Dim, DimensionDomainError, DimensionError
 from qufzx.diagram.generators import Z_SPIDER
@@ -89,13 +90,20 @@ _MAX_KET_LEG_COUNT = 1024
 """Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit. Same
 role as ``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match`."""
 
+_LITERAL_MARKER = "literal"
+"""Keyword prefixing a numeric dimension to suppress abstraction-on-entry, for the oracle's
+own fixtures. It is followed by whitespace, so a dimension symbol named ``literal`` stays
+readable as itself."""
+
 _KET_SUM_RE = re.compile(
-    rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
+    rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?:(?P<literal>{_LITERAL_MARKER})\s+)?"
+    rf"(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
     rf"\|(?P<body>[^>]*)>"
     rf"(?:\^\{{(?:\\otimes|⊗)?\s*(?P<power>{_ASCII_DIGITS})\s*\}})?$"
 )
-"""Matches ``sum_{k=0}^{D-1} |BODY>`` with an optional ``^{n}`` (or ``^{\\otimes n}``/
-``^{⊗n}``) tensor-power suffix on the ket. ``BODY`` is read by :func:`_leg_count_from_body`."""
+"""Matches ``sum_{k=0}^{D-1} |BODY>``, ``D`` optionally prefixed by :data:`_LITERAL_MARKER`,
+with an optional ``^{n}`` (or ``^{\\otimes n}``/``^{⊗n}``) tensor-power suffix on the ket.
+``BODY`` is read by :func:`_leg_count_from_body`."""
 
 
 def _leg_count_from_body(body: str, power: str | None) -> int:
@@ -134,21 +142,35 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
     return leg_count
 
 
-def _parse_dim(token: str) -> Dim:
-    """A concrete positive integer, or a bare identifier naming a symbolic ``Dim``.
+def _parse_dim(token: str, *, literal: bool) -> tuple[Dim, Mapping[str, int]]:
+    """The dimension a token names, and the parameter binding it records.
+
+    A numeral is abstracted through :meth:`~qufzx.algebra.dimension.Dim.abstract` to a fresh
+    symbol, returned with the one-entry binding recording its value, unless ``literal``
+    suppresses that and the concrete ``Dim`` is returned with an empty binding. A bare
+    identifier names a symbolic ``Dim`` and records nothing.
 
     Raises :class:`DiracDomainError` for a concrete value outside ``Dim``'s domain and for
     the bound summation index (:data:`_SUMMATION_INDEX`) in a dimension slot, and
-    :class:`DiracGrammarError` for a token matching neither shape, or matching
-    :data:`_IDENTIFIER` but not ``Dim``'s own narrower name rule.
+    :class:`DiracGrammarError` for :data:`_LITERAL_MARKER` on a non-numeral, for a token
+    matching neither shape, and for one matching :data:`_IDENTIFIER` but not ``Dim``'s own
+    narrower name rule.
     """
     if _ASCII_DIGITS_RE.match(token):
         try:
-            return Dim.concrete(int(token))
+            concrete = Dim.concrete(int(token))
         except DimensionDomainError as exc:
             raise DiracDomainError(
                 f"dimension token {token!r} is outside Dim's domain: {exc}"
             ) from exc
+        if literal:
+            return concrete, {}
+        return concrete.abstract()
+    if literal:
+        raise DiracGrammarError(
+            f"the {_LITERAL_MARKER!r} marker suppresses abstraction of a numeric dimension, "
+            f"but {token!r} is not a numeral; a symbolic dimension is never abstracted"
+        )
     if token == _SUMMATION_INDEX:
         raise DiracDomainError(
             f"dimension token {token!r} is the bound summation index; a dimension symbol "
@@ -161,7 +183,7 @@ def _parse_dim(token: str) -> Dim:
             f"a bare identifier ({_IDENTIFIER})"
         )
     try:
-        return Dim.symbol(token)
+        return Dim.symbol(token), {}
     except DimensionError as exc:
         raise DiracGrammarError(
             f"dimension token {token!r} matches this module's identifier shape "
@@ -169,17 +191,17 @@ def _parse_dim(token: str) -> Dim:
         ) from exc
 
 
-def _parse_ket_sum(text: str) -> tuple[Dim, int]:
-    """Parse ``sum_{k=0}^{D-1} |...>`` into ``(dim, leg_count)``."""
+def _parse_ket_sum(text: str) -> tuple[Dim, Mapping[str, int], int]:
+    """Parse ``sum_{k=0}^{D-1} |...>`` into ``(dim, parameter_binding, leg_count)``."""
     match = _KET_SUM_RE.match(text.strip())
     if match is None:
         raise DiracGrammarError(
             f"{text!r} does not match this slice's grammar: expected "
             "'sum_{k=0}^{D-1} |k,k,...>' (or the '|k>^{n}' shorthand)"
         )
-    dim = _parse_dim(match.group("dim"))
+    dim, binding = _parse_dim(match.group("dim"), literal=match.group("literal") is not None)
     leg_count = _leg_count_from_body(match.group("body"), match.group("power"))
-    return dim, leg_count
+    return dim, binding, leg_count
 
 
 def parse_dirac_source(source: str) -> Diagram:
@@ -203,9 +225,10 @@ def parse_dirac_source(source: str) -> Diagram:
             f"{source!r}: expected a single ket-sum term, optionally followed by one "
             "';' and the keyword 'copy'"
         )
-    dim, leg_count = _parse_ket_sum(terms[0])
+    dim, binding, leg_count = _parse_ket_sum(terms[0])
 
     diagram = Diagram()
+    diagram.set_parameters(binding)
     state_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim] * leg_count)
 
     if len(terms) == 1:

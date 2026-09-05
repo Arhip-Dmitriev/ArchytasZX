@@ -193,14 +193,14 @@ class TestDiracParserAsciiNumericTokens:
         for token in ("\u00b2", "\u2075"):  # superscript two, superscript five
             assert token.isdigit(), f"{token!r} must be isdigit() or this pins nothing"
             with pytest.raises(DiracError):
-                parser_module._parse_dim(token)
+                parser_module._parse_dim(token, literal=False)
 
     def test_helper_rejects_non_ascii_decimal_digits(self) -> None:
         """Category ``Nd``: matched ``\\d+`` and parsed as a concrete dimension before."""
         token = "\u0663"  # Arabic-Indic digit three
         assert re.fullmatch(r"\d+", token), f"{token!r} must match \\d+ or this pins nothing"
         with pytest.raises(DiracError):
-            parser_module._parse_dim(token)
+            parser_module._parse_dim(token, literal=False)
 
     def test_helper_is_total_rejecting_tokens_matching_neither_branch(self) -> None:
         """A token that is neither a decimal literal nor an identifier must raise, not
@@ -208,12 +208,13 @@ class TestDiracParserAsciiNumericTokens:
         ``ValueError`` alone would have left behind."""
         for token in ("", "1abc", "-3", "a b", "\u00b2"):
             with pytest.raises(DiracGrammarError):
-                parser_module._parse_dim(token)
+                parser_module._parse_dim(token, literal=False)
 
     def test_helper_still_accepts_ascii_digits_and_identifiers(self) -> None:
-        assert parser_module._parse_dim("12") == Dim.concrete(12)
-        assert parser_module._parse_dim("d") == Dim.symbol("d")
-        assert parser_module._parse_dim("_d2") == Dim.symbol("_d2")
+        assert parser_module._parse_dim("12", literal=True) == (Dim.concrete(12), {})
+        assert parser_module._parse_dim("12", literal=False) == (Dim.symbol("d"), {"d": 12})
+        assert parser_module._parse_dim("d", literal=False) == (Dim.symbol("d"), {})
+        assert parser_module._parse_dim("_d2", literal=False) == (Dim.symbol("_d2"), {})
 
     def test_source_with_non_ascii_dimension_digits_is_a_grammar_error(self) -> None:
         """End to end: the public entry point rejects it as malformed source."""
@@ -296,3 +297,57 @@ class TestEveryFailureIsADiracError:
         # identifier, which is the shape Dim.symbol requires.
         with pytest.raises(DiracGrammarError):
             parse_dirac_source("sum_{k=0}^{d\u00b2-1} |k,k>")
+
+
+class TestConcreteDimensionIsAbstractedOnEntry:
+    """FULL_PLAN.md Phase 5 item v: a numeral in the source becomes a fresh dimension symbol
+    whose value the parameter environment records, so the algebra downstream is symbolic no
+    matter what the user typed."""
+
+    def test_numeral_becomes_a_symbol_bound_in_the_parameter_environment(self) -> None:
+        parsed = parse_dirac_source("sum_{k=0}^{3-1} |k,k>; copy")
+        dims = {str(port.dim) for node in parsed.nodes.values() for port in node.outputs}
+        assert dims == {"d"}
+        assert dict(parsed.parameters) == {"d": 3}
+
+    def test_symbolic_source_records_no_binding(self) -> None:
+        assert dict(parse_dirac_source(_SOURCE).parameters) == {}
+
+    def test_literal_marker_suppresses_abstraction(self) -> None:
+        parsed = parse_dirac_source("sum_{k=0}^{literal 3-1} |k,k>; copy")
+        dims = {str(port.dim) for node in parsed.nodes.values() for port in node.outputs}
+        assert dims == {"3"}
+        assert dict(parsed.parameters) == {}
+
+    def test_literal_marker_on_a_symbolic_dimension_is_a_grammar_error(self) -> None:
+        with pytest.raises(DiracGrammarError):
+            parse_dirac_source("sum_{k=0}^{literal d-1} |k,k>")
+
+    def test_a_dimension_symbol_named_literal_still_parses_as_itself(self) -> None:
+        parsed = parse_dirac_source("sum_{k=0}^{literal-1} |k,k>")
+        dims = {str(port.dim) for node in parsed.nodes.values() for port in node.outputs}
+        assert dims == {"literal"}
+        assert dict(parsed.parameters) == {}
+
+    def test_abstracted_diagram_validates_clean(self) -> None:
+        report = validate(parse_dirac_source("sum_{k=0}^{3-1} |k,k>; copy"))
+        assert report.is_valid
+        assert not report.deferred
+
+
+class TestAbstractedChainRunsWithoutAnExplicitAssignment:
+    """The environment survives the rewrite and supplies the oracle's assignment."""
+
+    def test_environment_survives_fusion_and_supplies_the_oracle(self) -> None:
+        pre = parse_dirac_source("sum_{k=0}^{3-1} |k,k>; copy")
+        post = apply(pre, SPIDER_FUSION, find_matches(pre)[0]).diagram
+        assert dict(post.parameters) == {"d": 3}
+        result = compare(pre, post, {})
+        assert result.matched, result.reason
+
+    def test_a_supplied_value_overrides_the_environment(self) -> None:
+        pre = parse_dirac_source("sum_{k=0}^{3-1} |k,k>; copy")
+        post = apply(pre, SPIDER_FUSION, find_matches(pre)[0]).diagram
+        for d_value in _CONCRETE_DS:
+            result = compare(pre, post, {"d": d_value})
+            assert result.matched, result.reason

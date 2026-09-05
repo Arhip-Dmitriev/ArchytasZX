@@ -63,7 +63,7 @@ ii. diagram/generators.py
 iii. diagram/validate.py
 - rejects any wire whose two ports carry unequal dimensions
 - checks boundary consistency
-- checks the parameter environment: every name it binds is a symbol the diagram actually carries, in exactly one symbol role, with a value inside that role's domain
+- checks the parameter environment: every name it binds is a symbol the diagram actually carries, in exactly one symbol role, with a value inside that role's domain. A name no symbol carries is deferred (a pending substitution with nothing to substitute into); a value outside the role's domain is a hard error; a name already reported as a role collision is skipped, there being no single domain to check it against
 - test and debug: build a two-leg Z spider, build the A-into-B graph from the worked example, confirm validation passes, then confirm a deliberately mismatched wire fails
 - done when: the GHZ-with-copy graph, carrying a symbolic phase on at least one node, can be constructed and validated
 
@@ -82,7 +82,7 @@ iii. semantics/check.py
 - test and debug: confirm the Z spider 0 to 2 at d equal to 2 gives the vector for |00> + |11>; confirm A-into-B contracts to the GHZ vector for d equal to 2 and 3; confirm that a deliberately scalar-shifted copy fails exact comparison but passes in up-to-global-phase mode
 - done when: the oracle can score any concrete diagram and compare any two diagrams, exactly by default
 
-Phase 5: Rewrite core and spider fusion [CURRENT]
+Phase 5: Rewrite core and spider fusion [DONE]
 i. rewrite/rule.py
 - a Rule bundles a left-hand pattern, a right-hand builder, side conditions, quantifiers over n and over dimensions, and the exact scalar it introduces
 ii. rewrite/match.py
@@ -94,13 +94,13 @@ iv. rewrite/engine.py
 v. repl/parser.py, Dirac slice ONLY
 - parses one restricted form, the summed ket family sum_{k=0}^{D-1} |k,k,...> with the |k>^{n} tensor-power shorthand, optionally followed by "; copy", which is the Dirac-to-graph end from the done-when clause below
 - a concrete dimension in the source is abstracted on entry: the numeral becomes a fresh dimension symbol and the parameter environment records its value, so the algebra downstream is symbolic no matter what the user typed. A literal marker suppresses this, for the oracle's own fixtures
-- this clause postdates Phases 1 and 3 and is owed by them: Dim.abstract and the Diagram parameter environment must be retrofitted before it can be met, and until they are, a concrete dimension is carried through the algebra as a literal, which is the pre-vision behaviour
+- this clause postdated Phases 1 and 3 and was owed by them; Dim.abstract and the Diagram parameter environment are now retrofitted, so it is met: the literal marker is the keyword "literal" before the numeral, and applying it to a symbolic dimension is a grammar error
 - the tensor-power count stays concrete and expanded in this slice; Phase 7 replaces it with a bound bang box
 - this grammar must remain a strict subset of the one in Phase 18
 - test and debug: fuse A-into-B into a single spider; oracle-check that the pre and post diagrams are exactly equal at several concrete d; validate that the post diagram is well formed
 - done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality
 
-Phase 6: Proof certificates
+Phase 6: Proof certificates [CURRENT]
 i. semantics/certificate.py
 - every rewrite step emits a machine-checkable record: the rule fired, the match location, the side conditions checked, the dimension constraints assumed, and the scalar introduced
 - a full derivation is a sequence of such records that can be independently replayed and verified against the oracle
