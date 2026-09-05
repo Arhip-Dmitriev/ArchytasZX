@@ -11,16 +11,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Enforces the project's docstring budgets across ``qufzx/``, and bans the word "because".
+"""Enforces the project's docstring budgets across ``qufzx/``, and bans a set of rationale
+markers.
 
-A docstring states what a thing is or how it works; reasoning belongs in FULL_PLAN.md. What
-this module checks is the *volume* of prose, not its content: three line budgets and a ratio
-cap. Those bound how much rationale any one file can carry, they do not detect it.
+A docstring states what a thing is or how it works; reasoning belongs in FULL_PLAN.md. Two
+halves are checked here. The *volume* half is three line budgets and a ratio cap, each set
+at the tree's current high-water mark with no headroom, so any growth in prose fails rather
+than being absorbed. The *content* half is :data:`_BANNED`, a lexical scan for markers that
+only ever introduce rationale.
 
-The ``because`` ban is a lexical check on one word, not a WHY detector. Prose that reaches
-the same place through "so", "since", "rather than" or "which would otherwise" passes, and a
-good deal of the tree's prose does. Read the budgets as the enforceable half of the policy
-and the rest as a convention this suite cannot check.
+Neither half is a WHY detector. Prose reaching the same place through "so", "since" or
+"which would otherwise" passes, and some of the tree's prose does. Read this suite as the
+enforceable floor under the convention, not as the convention itself.
 """
 
 from __future__ import annotations
@@ -34,25 +36,29 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE = _REPO_ROOT / "qufzx"
 
-_MAX_MODULE_DOCSTRING_LINES = 65
-"""Ceiling on a module docstring. ``qufzx/rewrite/match.py`` and
-``qufzx/diagram/validate.py`` share the high-water mark at 64."""
+_MAX_MODULE_DOCSTRING_LINES = 55
+"""Ceiling on a module docstring. ``qufzx/diagram/validate.py`` sets the high-water mark at
+55, measured 2026-09-04."""
 
-_MAX_DOCSTRING_LINES = 30
+_MAX_DOCSTRING_LINES = 25
 """Ceiling on every other docstring, module-attribute docstrings included.
-``qufzx.rewrite.match``'s ``_ConstraintRecord`` sets the high-water mark at 29."""
+``qufzx.rewrite.engine``'s ``apply`` sets the high-water mark at 25, measured 2026-09-04."""
 
-_MAX_PROSE_RATIO = 0.45
+_MAX_PROSE_RATIO = 0.40
 """Ceiling on docstring+comment lines as a fraction of a file's non-blank lines.
-``qufzx/semantics/contract_numeric.py`` sets the high-water mark at 0.444. Set just above
-the measured maximum, so prose growth in any file fails rather than being absorbed by
-headroom."""
+``qufzx/semantics/denote.py`` sets the high-water mark at 0.397, measured 2026-09-04. Every
+budget here sits at its measured maximum, not above it."""
 
 _LICENSE_HEADER_LINES = 12
 
-_BANNED = re.compile(r"\bbecause\b", re.IGNORECASE)
-"""The one rationale marker checked lexically. Not a WHY detector: see the module
-docstring."""
+_BANNED = re.compile(
+    r"\b(because|rationale|the reason|reasoning behind|was chosen|the alternative was|"
+    r"which is why|for this reason)\b",
+    re.IGNORECASE,
+)
+"""The rationale markers checked lexically. Each one introduces a why-clause in every use;
+softer connectives are left out to keep the check free of false positives. Not a WHY
+detector: see the module docstring."""
 
 
 def _python_files() -> list[Path]:
@@ -132,7 +138,7 @@ class TestDocstringPolicy:
             f"({len(prose_lines)} of {len(non_blank)})"
         )
 
-    def test_no_docstring_or_comment_uses_the_banned_word(self, path: Path) -> None:
+    def test_no_docstring_or_comment_uses_a_rationale_marker(self, path: Path) -> None:
         source = path.read_text(encoding="utf-8")
         prose_lines = _prose_line_numbers(source)
         offenders = [
@@ -141,8 +147,9 @@ class TestDocstringPolicy:
             if number in prose_lines and _BANNED.search(line)
         ]
         assert not offenders, (
-            f"{path.relative_to(_REPO_ROOT)}: 'because' at line(s) {offenders}. A docstring "
-            "states what a thing is or how it works; a sentence needing 'because' is "
-            "answering why, which belongs in FULL_PLAN.md. This check sees only that one "
-            "word -- the convention is broader than what it enforces."
+            f"{path.relative_to(_REPO_ROOT)}: rationale marker at line(s) {offenders}. A "
+            "docstring states what a thing is or how it works; a sentence needing one of "
+            f"these markers ({_BANNED.pattern}) is answering why, which belongs in "
+            "FULL_PLAN.md. This check sees only those markers -- the convention is broader "
+            "than what it enforces."
         )

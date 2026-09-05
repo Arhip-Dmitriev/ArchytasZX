@@ -14,16 +14,14 @@
 """Generator denotations: the tensor formula for each generator type at a concrete dimension.
 
 The one leaf the rest of the semantics layer calls for "what does a single node mean".
-:mod:`qufzx.semantics.contract_numeric` is the only other module allowed to build on it,
-and it is independent of :mod:`qufzx.rewrite` -- rewriting never contracts, per the spec.
+:mod:`qufzx.semantics.contract_numeric` is the only other module allowed to build on it.
 
 Axis convention (shared with :mod:`qufzx.semantics.contract_numeric` and
 :mod:`qufzx.semantics.check`; stated once here). A node with ``m`` inputs and ``n`` outputs
 denotes a rank-``m + n`` tensor whose axes are outputs first in ``Node.outputs`` order,
 then inputs in ``Node.inputs`` order; axis ``i`` has length that port's ``Dim.to_int()``. A
-diagram's boundary follows the same rule. This is a convention, not a derivation --
-outputs-before-inputs matches the "ket before bra" reading of ``|k>^{ox n} <k|^{ox m}`` --
-and every consumer must agree with it rather than re-deriving its own order.
+diagram's boundary follows the same rule. This is a convention, not a derivation, and every
+consumer must agree with it rather than re-deriving its own order.
 
 Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0`` as gauge::
 
@@ -32,32 +30,28 @@ Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0``
 The tensor is zero off the "all axes equal k" diagonal and holds ``Phase.to_complex()`` of
 ``phase.get(k)`` on it; a missing entry is ``Phase.zero()``, so a ``phase=None`` node is
 the all-ones diagonal. Degenerate cases fall out of the formula read literally: ``m = n =
-0`` collapses to the scalar ``sum_k e^{i alpha_k}``, since every ``k`` lands on the sole
-rank-0 position; ``m = 0, n = 2`` denotes ``sum_k |kk>``. The implementation accumulates
-into position ``(k,) * rank`` rather than special-casing rank 0.
+0`` collapses to the scalar ``sum_k e^{i alpha_k}``; ``m = 0, n = 2`` denotes ``sum_k
+|kk>``. The implementation accumulates into position ``(k,) * rank``.
 
 X spider, the Fourier conjugate of Z::
 
     X_{m -> n} = (F^{ox n}) . Z_{m -> n} . ((F^dagger)^{ox m})
 
 with the unitary DFT matrix ``F[j][k] = omega_d^{j*k} / sqrt(d)``, ``omega_d =
-e^{2*pi*i/d}``. The exponent sign and the ``1/sqrt(d)`` normalization are chosen here and
-nowhere else; every later consumer, in particular Phase 9's Hadamard/Fourier generator,
-must reuse this exact ``F``. At ``d = 2`` it reduces to the self-inverse Hadamard, so the
-asymmetry between ``F`` and ``F^dagger`` is invisible; at ``d > 2`` it is real. ``F`` is
-symmetric, so ``F^dagger = conj(F)`` and the implementation applies a plain elementwise
-conjugate to input axes with no transpose.
+e^{2*pi*i/d}``. The exponent sign and the ``1/sqrt(d)`` normalization are fixed here and
+nowhere else; every later consumer, Phase 9's Hadamard/Fourier generator included, reuses
+this exact ``F``. ``F`` is symmetric, so ``F^dagger = conj(F)`` and the implementation
+applies a plain elementwise conjugate to input axes with no transpose.
 
 Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
 dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator carries some other
-dimension policy, or the generator name is neither ``"Z"`` nor ``"X"``. There is exactly one
+dimension policy, or the generator name is neither ``"Z"`` nor ``"X"``. There is one
 dispatch point for Phase 9's Hadamard/Fourier generator and Phase 10's triangle, W, and
-connective generators to extend; they are not stubbed in with placeholder tensors.
+connective generators to extend.
 
 A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
-vector's own ``Dim``. A zero-leg node with no phase has no source at all and is rejected as
-malformed, not defaulted.
+vector's own ``Dim``. A zero-leg node with no phase is rejected as malformed, not defaulted.
 """
 
 from __future__ import annotations

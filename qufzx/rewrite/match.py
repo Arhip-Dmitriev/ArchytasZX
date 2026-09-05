@@ -13,24 +13,20 @@
 
 """The fusion matcher: locates occurrences of same-color spider fusion.
 
-Phase 5 implements exactly one :class:`~qufzx.rewrite.rule.Pattern`: two spiders of the
-same generator type joined by a wire whose connected legs agree on dimension. A pair joined
-by k wires yields up to one match per wire, each decided on its own; a match fuses across
-its own wire and leaves the rest as self-loops on the merged node.
+Phase 5 implements one :class:`~qufzx.rewrite.rule.Pattern`: two spiders of the same
+generator type joined by a wire whose connected legs agree on dimension. A pair joined by
+k wires yields up to one match per wire, each decided on its own; a match fuses across its
+own wire and leaves the rest as self-loops on the merged node.
 
 Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
 
-1. ``distinct_nodes`` -- the endpoints are different nodes. Reported True always: a
-   self-loop wire is dropped before candidate grouping, and equal ids raise from
-   :func:`resolve_fusion_match` rather than failing here.
+1. ``distinct_nodes`` -- the endpoints are different nodes. Always True.
 2. ``same_generator_type`` -- both nodes carry the identical registered
-   :class:`~qufzx.diagram.generators.GeneratorType`, and that type is fusable
-   (``Z_SPIDER``/``X_SPIDER``).
-3. ``parallel_wires_become_self_loops`` -- reported True always, carrying the count of other
-   wires joining the pair; each survives as a self-loop on the merged spider.
-4. ``consumed_wire_direction_permitted_for_color`` -- for X, the consumed wire must run
-   OUTPUT-to-INPUT, so that the contraction is ``F^dagger F = I`` and fusion is scalar-free.
-   Z is diagonal in every axis, so any direction is valid.
+   :class:`~qufzx.diagram.generators.GeneratorType`, and it is fusable (Z or X).
+3. ``parallel_wires_become_self_loops`` -- always True, carrying the count of other wires
+   joining the pair; each survives as a self-loop on the merged spider.
+4. ``consumed_wire_direction_permitted_for_color`` -- for X the consumed wire runs
+   OUTPUT-to-INPUT; Z permits any direction combination.
 5. ``consumed_ports_singly_claimed`` -- neither consumed port is claimed by a second wire
    or listed on a boundary.
 6. ``dimension_agreement`` -- the connected legs' :class:`~qufzx.algebra.dimension.Dim`
@@ -38,12 +34,11 @@ Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
    recorded as a dimension constraint. Every surviving leg of both nodes is then unified
    against the running ``shared_dim`` in turn, each refinement carrying forward.
 7. ``phase_dimension_agreement`` -- every phase vector present must unify with
-   ``shared_dim``. Unlike condition 6, a ``DEFERRED`` is rejected rather than recorded.
-   Conditions 6 and 7 form one bounded fixpoint; see :func:`resolve_fusion_match`.
+   ``shared_dim``; unlike condition 6 a ``DEFERRED`` is rejected. Conditions 6 and 7 form
+   one bounded fixpoint; see :func:`resolve_fusion_match`.
 
-Conditions 1 and 3 are structural facts recorded for the certificate, not decisions: no
-candidate can fail either. The numbering above is authoritative and machine-checked against
-``FUSION_SIDE_CONDITIONS`` by
+Conditions 1 and 3 are structural facts recorded for the certificate, not decisions. The
+numbering above is authoritative and machine-checked against ``FUSION_SIDE_CONDITIONS`` by
 ``tests/test_engine.py::TestConditionNumberingMatchesDeclaredOrder``.
 
 One verification predicate. :func:`resolve_fusion_match` decides every condition above.
@@ -51,26 +46,22 @@ One verification predicate. :func:`resolve_fusion_match` decides every condition
 :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, against
 the diagram it was handed, building only from its result.
 
-Malformed references. :mod:`qufzx.diagram.graph` is deliberately permissive about what a
-:class:`~qufzx.diagram.graph.Wire` or boundary entry may name. :func:`find_matches` checks
-both endpoints of every wire and every boundary entry via :func:`_validate_wire_endpoint`,
-in a pre-pass that runs before grouping, raising
-:class:`~qufzx.rewrite.rule.RewriteGrammarError`. Detection does not depend on any other
-property of the wire or its candidate pair.
+Malformed references. :func:`find_matches` checks both endpoints of every wire and every
+boundary entry through :func:`_validate_wire_endpoint`, in a pre-pass that runs before
+grouping, raising :class:`~qufzx.rewrite.rule.RewriteGrammarError`.
 
-Match-implies-applicable. Every match returned here can be applied by
+Match-implies-applicable. Every match returned here applies under
 :func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8
 relative-postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
 
 Dimension constraints. ``dimension_constraints`` records every dimension equality accepted
-without a syntactic identity: both a ``DEFERRED`` unify and a ``SUCCESS`` holding only
-under a binding. Entries are :class:`~qufzx.rewrite.rule.DimensionConstraint`, keyed by
-:class:`~qufzx.rewrite.rule.ConstraintSource`.
+without a syntactic identity -- both a ``DEFERRED`` unify and a ``SUCCESS`` holding only
+under a binding -- as :class:`~qufzx.rewrite.rule.DimensionConstraint` keyed by
+:class:`~qufzx.rewrite.rule.ConstraintSource`, at most one entry per source.
 
 Non-concrete bindings. :meth:`Dim.unify` can bind a symbol to another symbolic ``Dim``
-(``d := e``), but :meth:`Dim.substitute` and ``PhaseVector.substitute`` accept only
-concrete replacements, so such a binding is carried as an assumption rather than resolved
-through.
+(``d := e``), while :meth:`Dim.substitute` and ``PhaseVector.substitute`` take only
+concrete replacements, so such a binding is carried as an assumption, not resolved through.
 
 Determinism. :func:`find_matches` sorts its result by node ids, then by the consumed wire's
 (direction, index) on each side. Every set iteration whose order could reach a returned
@@ -294,23 +285,19 @@ class _ConstraintRecord:
 
     The invariant is adequacy: the finished ``dimension_constraints`` alone implies every
     ``(assumed, equal_to)`` pair any check ever asserted, including one a later pass replaced
-    or dropped. ``bindings`` is not part of it -- ``RewriteStep`` carries only the
-    constraints. Checked by
+    or dropped. Checked by
     ``tests/test_phase5_certificate_sweep.py::TestConstraintRecordAdequacy``; every cell of
-    the table below is pinned by
-    ``tests/test_match.py::TestConstraintRecordPolicyTable``.
+    the table below is pinned by ``tests/test_match.py::TestConstraintRecordPolicyTable``.
 
     The policy over (previous entry, this check's outcome):
 
     * (none, ``DEFERRED`` / ``BOUND``): record it.
     * (none, bare identity via :meth:`record_identity`): no-op.
-    * (``DEFERRED``, ``DEFERRED``): overwrite, restated at its currently-resolved operands.
-    * (``DEFERRED``, ``BOUND``): overwrite.
+    * (``DEFERRED``, anything recorded): overwrite, at its currently-resolved operands.
     * (``DEFERRED``, bare identity): drop -- nothing is assumed any more.
-    * (``BOUND``, ``DEFERRED``): overwrite; the record holds each source's most-resolved
+    * (``BOUND``, anything recorded): overwrite; the record holds each source's most-resolved
       current statement, not a history.
-    * (``BOUND``, ``BOUND``): overwrite.
-    * (``BOUND``, bare identity): **keep** the ``BOUND`` entry -- the identity holds only
+    * (``BOUND``, bare identity): **keep** the ``BOUND`` entry, the identity holding only
       under that binding. The one cell where :meth:`record_identity` does not mirror
       :meth:`record`.
     """

@@ -13,15 +13,12 @@
 
 """Rule: a left-hand pattern, right-hand builder, side conditions, quantifiers, and exact scalar.
 
-:class:`Rule` is a frozen value object; it performs no graph surgery. :class:`Pattern` is the
+:class:`Rule` is a frozen value object performing no graph surgery. :class:`Pattern` is the
 abstract seam later phases implement to add new rewrite shapes. :class:`Match` is a
 ``typing.Protocol``, so each pattern defines its own match type carrying whatever location
 data it needs. :class:`BuildResult` is the generic engine/builder contract:
-:func:`qufzx.rewrite.engine.apply` splices from its fields alone, knowing nothing
-rule-specific.
-
-:class:`Quantifiers` is declared metadata only in this phase; Phase 7 and Phase 10 make it
-checkable.
+:func:`qufzx.rewrite.engine.apply` splices from its fields alone. :class:`Quantifiers` is
+declared metadata only in this phase; Phases 7 and 10 make it checkable.
 """
 
 from __future__ import annotations
@@ -45,14 +42,14 @@ class RewriteError(Exception):
 class RewriteDomainError(RewriteError):
     """A value or state is outside the mathematical domain a rewrite operation requires.
 
-    Raised for: a match whose ``side_condition_outcomes`` do not exactly cover, or do not all
-    pass, its rule's declared conditions; a builder whose ``scalar_introduced`` disagrees with
-    its rule's; a match whose ``shared_dim``, ``bindings``, ``dimension_constraints`` or
+    Raised for: a match whose ``side_condition_outcomes`` do not exactly cover, or do not
+    all pass, its rule's conditions; a builder whose ``scalar_introduced`` disagrees with its
+    rule's; a match whose ``shared_dim``, ``bindings``, ``dimension_constraints`` or
     ``side_condition_outcomes`` disagree with a fresh
     :func:`~qufzx.rewrite.match.resolve_fusion_match`, or that re-resolves as a non-match; a
     phase whose entries fall outside the shared dimension once reattached; a wire or boundary
-    entry naming a consumed port absent from the builder's ``port_mapping``; and a rewrite
-    that introduces a hard validation issue the input did not carry.
+    entry naming a consumed port absent from ``port_mapping``; a rewrite introducing a hard
+    validation issue the input did not carry.
     """
 
 
@@ -82,8 +79,8 @@ class SideCondition:
 
     Metadata about the pattern, declared once (see ``FUSION_SIDE_CONDITIONS`` in
     :mod:`qufzx.rewrite.match`); the per-candidate result lives in
-    :class:`SideConditionOutcome`. Not every entry is a decision: a pattern may declare a
-    condition it always reports True, as a structural fact for the certificate to carry.
+    :class:`SideConditionOutcome`. A pattern may declare a condition it always reports True,
+    as a structural fact for the certificate to carry.
     """
 
     name: str
@@ -249,8 +246,8 @@ class DimensionConstraint:
 class Quantifiers:
     """Declared quantifier metadata: which leg-count and dimension names a rule ranges over.
 
-    ``leg_counts`` names the leg-count variables the rule's equation is stated over;
-    ``dimensions`` names the dimension variables. Not consulted in this phase.
+    ``leg_counts`` and ``dimensions`` name the variables the rule's equation is stated
+    over. Not consulted in this phase.
     """
 
     leg_counts: tuple[str, ...] = ()
@@ -295,9 +292,8 @@ class BuildResult:
 
     ``diagram`` is the same working diagram the builder was given, mutated in place to add
     the replacement node(s); the builder never removes matched nodes or touches wires and
-    boundaries. :func:`~qufzx.rewrite.engine.apply` checks ``diagram is working`` by object
-    identity. ``new_node_ids`` reports every node the builder created, in a deterministic
-    order.
+    boundaries, and :func:`~qufzx.rewrite.engine.apply` checks ``diagram is working`` by
+    object identity. ``new_node_ids`` reports every node created, in a deterministic order.
     """
 
     diagram: Diagram
@@ -421,7 +417,7 @@ def check_side_condition_coverage(
     Requires the set of ``outcome.name`` to equal exactly the set of ``condition.name``,
     with no duplicates, and only then that every outcome passed. ``context`` (typically a
     rule name) is folded into the message. Both :func:`qufzx.rewrite.engine.apply` and each
-    rule's own builder call this first, since a builder is reachable directly. Raises
+    rule's own builder call this first, a builder being reachable directly. Raises
     :class:`RewriteDomainError`.
     """
     outcomes = match.side_condition_outcomes

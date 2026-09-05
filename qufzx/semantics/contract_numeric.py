@@ -14,50 +14,40 @@
 """Numeric contraction of a fully concrete diagram into a tensor, carrying the exact scalar.
 
 Besides :mod:`qufzx.semantics.denote`, the only place allowed to construct a dense array:
-it denotes every node and contracts the results along the diagram's wires. It never
-rewrites, simplifies, or reorders the diagram -- the spec's "rewriting never contracts"
-read the other way around.
+it denotes every node and contracts the results along the diagram's wires, never rewriting,
+simplifying, or reordering.
 
 Algorithm. Refuse first: :func:`qufzx.diagram.validate.validate` runs, and a diagram with
 any hard-failure issue is refused with :class:`ContractValidationError` carrying the
 report. A *deferred* dimension issue is refused the same way -- it exists only when a
-dimension pair could not be decided, which cannot happen once every dimension is concrete,
-so seeing one means something upstream left a symbol in. Then refuse any non-concrete port
-dimension, phase vector, or diagram :class:`~qufzx.algebra.scalar.Scalar`. Both refusals
-precede any allocation.
+dimension pair could not be decided, which cannot happen once every dimension is concrete.
+Then refuse any non-concrete port dimension, phase vector, or diagram
+:class:`~qufzx.algebra.scalar.Scalar`. Both refusals precede any allocation.
 
 Each node's axes get their own integer label, and a :class:`~qufzx.diagram.graph.Wire`
-unifies its two ports' labels -- regardless of direction, since the graph model permits
-wiring two outputs together. A self-loop unifies two labels already on the same tensor,
-which is exactly a partial trace; nothing special-cases it. Free ports keep a distinct
+unifies its two ports' labels, regardless of direction. A self-loop unifies two labels
+already on the same tensor, which is exactly a partial trace. Free ports keep a distinct
 label. The contraction is one ``numpy.einsum`` call in interleaved form with plain ``int``
-labels rather than the 52-letter subscript alphabet, so leg count is never bounded by that
-alphabet and there is no "too many legs" error path. Output axes are ordered
+labels rather than the 52-letter subscript alphabet. Output axes are ordered
 ``boundary_outputs`` then ``boundary_inputs``, per ``denote``'s axis convention.
-``validate`` guarantees every port is wired exactly once or on exactly one boundary list,
-so every node axis is accounted for. Two consistency checks stand behind that guarantee
-rather than resting on it: each node's port-label count is compared against its tensor's
-rank, and every boundary ref is confirmed to have been labelled, each raising
-:class:`ContractGrammarError`. The exact scalar is multiplied in last via
-``Scalar.to_complex()``, the only sanctioned Scalar-to-number path, so no factor is ever
-normalized away.
+``validate`` guarantees every port is wired exactly once or on exactly one boundary list;
+two consistency checks stand behind that guarantee rather than resting on it -- each node's
+port-label count against its tensor's rank, and every boundary ref confirmed labelled --
+each raising :class:`ContractGrammarError`. The exact scalar is multiplied in last via
+``Scalar.to_complex()``, the only sanctioned Scalar-to-number path.
 
 An empty diagram evaluates directly to the rank-0 array holding
 ``diagram.scalar.to_complex()``.
 
-Size guard. The result and every intermediate is ``d ** (number of axes)`` complex numbers,
-so a diagram that looks small on the page can still be catastrophic -- a single 20-leg
-spider at ``d = 17``. ``max_elements`` (default ``10_000_000``, about 160 MB of
-``complex128``: an arbitrary but explicit budget) is checked against each node's own tensor
-before it is denoted and against the output tensor before contraction, raising
-:class:`ContractSizeError` rather than exhausting memory silently.
+Size guard. The result and every intermediate is ``d ** (number of axes)`` complex numbers.
+``max_elements`` (default ``10_000_000``, about 160 MB of ``complex128``) is checked
+against each node's own tensor before it is denoted and against the output tensor before
+contraction, raising :class:`ContractSizeError`.
 
-Return type. :func:`contract` returns a :class:`ContractionResult` -- the tensor, the
-ordered :class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the count of
-leading axes that are boundary outputs -- since a bare array cannot answer "which axis is
-which port" or "where does the output/input split fall", which any caller comparing two
-contractions needs. The split count is carried rather than recomputed from
-``len(diagram.boundary_outputs)``, since the diagram may no longer be at hand by then.
+Return type. :func:`contract` returns a :class:`ContractionResult`: the tensor, the ordered
+:class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the count of leading
+axes that are boundary outputs. The split count is carried rather than recomputed from
+``len(diagram.boundary_outputs)``, the diagram not necessarily being at hand by then.
 """
 
 from __future__ import annotations
@@ -111,9 +101,9 @@ class ContractGrammarError(ContractError):
 class ContractValidationError(ContractDomainError):
     """Raised when the diagram fails :func:`qufzx.diagram.validate.validate`.
 
-    A subclass of :class:`ContractDomainError`: a diagram that validate rejects, or that
-    still carries a deferred dimension constraint, is not a diagram this module's domain
-    (fully concrete, well-formed graphs) accepts. Carries the offending
+    A subclass of :class:`ContractDomainError`: a diagram validate rejects, or that still
+    carries a deferred dimension constraint, is outside this module's domain of fully
+    concrete, well-formed graphs. Carries the offending
     :class:`~qufzx.diagram.validate.ValidationReport` as :attr:`report`.
     """
 
@@ -135,10 +125,8 @@ class ContractionResult:
     ``axis_refs[i]`` is the :class:`~qufzx.diagram.graph.PortRef` that ``tensor``'s axis
     ``i`` came from, in ``diagram.boundary_outputs`` then ``diagram.boundary_inputs``
     order (the axis convention fixed in :mod:`qufzx.semantics.denote`).
-    ``num_boundary_outputs`` records where that split falls: ``axis_refs[:num_boundary_outputs]``
-    are the boundary outputs and ``axis_refs[num_boundary_outputs:]`` are the boundary
-    inputs, so a caller can recover the output/input arity split without re-deriving it
-    from a diagram it may not still have on hand.
+    ``axis_refs[:num_boundary_outputs]`` are the boundary outputs and the rest the boundary
+    inputs, giving a caller the output/input arity split without a diagram on hand.
     """
 
     tensor: np.ndarray
@@ -173,24 +161,19 @@ def _check_concrete(diagram: Diagram) -> None:
 def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
     """Assign one integer axis label per port, unifying the two ends of every wire.
 
-    A proper union-find over ports, not a per-wire two-endpoint patch: when a wire's two
-    ends already carry different labels, every port wearing the higher-numbered (absorbed)
-    label is rewritten to the lower-numbered (surviving) one, not merely ``wire.a`` and
-    ``wire.b``. A third port sharing the absorbed label would otherwise keep a stale one,
-    splitting an equivalence class in two and producing a wrong contraction silently.
-
-    That merge path is unreachable from :func:`contract`, which refuses the multiply-claimed
-    ports needed to reach it, but this function is also callable directly on an unvalidated
-    wire set, so it is correct on its own terms.
+    A union-find over ports: when a wire's two ends already carry different labels, every
+    port wearing the higher-numbered (absorbed) label is rewritten to the lower-numbered
+    (surviving) one, not merely ``wire.a`` and ``wire.b``. That merge path is unreachable
+    from :func:`contract`, which refuses the multiply-claimed ports needed to reach it; this
+    function is also callable directly on an unvalidated wire set.
     """
     counter = itertools.count()
     labels: dict[PortRef, int] = {}
     for ref in (*diagram.boundary_outputs, *diagram.boundary_inputs):
         labels.setdefault(ref, next(counter))
-    # diagram.wires is a frozenset with PYTHONHASHSEED-dependent iteration order. That
-    # order cannot affect the returned tensor -- the integers are dummy labels, and
-    # contraction is invariant under any consistent relabeling of them -- but it is sorted
-    # anyway so a dump of `labels` itself is reproducible.
+    # diagram.wires is a frozenset with PYTHONHASHSEED-dependent iteration order. The
+    # tensor is invariant under any consistent relabeling, but sorting keeps a dump of
+    # `labels` itself reproducible.
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         a_label = labels.get(wire.a)
         b_label = labels.get(wire.b)
@@ -204,13 +187,11 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
         elif b_label is None:
             labels[wire.b] = a_label
         elif a_label != b_label:
-            # This wire merges two equivalence classes built up independently by earlier
-            # wires, so every port wearing either label must end up on the same one. The
-            # lower integer survives, keeping the result deterministic.
+            # This wire merges two equivalence classes built up by earlier wires: every
+            # port wearing either label ends up on the lower one, deterministically.
             survivor, absorbed = (a_label, b_label) if a_label < b_label else (b_label, a_label)
-            # Collected first, then rewritten, rather than reassigned while iterating
-            # labels.items(): mutating values mid-iteration happens to work in CPython, but
-            # it is one added key away from a "dictionary changed size" crash.
+            # Collected first, then rewritten, never reassigned while iterating
+            # labels.items().
             absorbed_ports = [port for port, label in labels.items() if label == absorbed]
             for port in absorbed_ports:
                 labels[port] = survivor
@@ -299,9 +280,9 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
         output_elements *= port.dim.to_int()
     _check_size(output_elements, max_elements=max_elements, what="the contracted output tensor")
 
-    # optimize=("greedy", max_elements): the planner both contracts pairwise, instead of
-    # iterating the full index space, and declines any pairing whose intermediate would
-    # exceed the same cap _check_size applies to the inputs and the output.
+    # optimize=("greedy", max_elements): the planner contracts pairwise instead of
+    # iterating the full index space, and declines any pairing whose intermediate exceeds
+    # the same cap _check_size applies to the inputs and the output.
     path, _path_info = np.einsum_path(
         *einsum_args, output_labels, optimize=("greedy", max_elements)
     )

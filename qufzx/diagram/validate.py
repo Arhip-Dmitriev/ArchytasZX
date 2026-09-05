@@ -357,12 +357,8 @@ def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
       ``complex and not real``; the other three are ``complex`` by closure.
 
     Each branch tests only the keys its constructor sets, never a derived one, so a fifth
-    constructor setting a different pair falls through to ``None`` -- unclassified rather
-    than aliased into an existing role. ``None`` also covers a bare, assumption-free
-    ``Symbol``.
-
-    :func:`_check_symbol_role_collisions` decides which pairs of roles sharing one name are
-    a genuine collision.
+    constructor setting a different pair falls through to ``None``, unclassified rather than
+    aliased into an existing role. ``None`` also covers a bare, assumption-free ``Symbol``.
     """
     assumptions = symbol.assumptions0
     is_integer = bool(assumptions.get("integer"))

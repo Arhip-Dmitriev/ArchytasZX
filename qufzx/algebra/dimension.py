@@ -246,13 +246,12 @@ class Dim:
         """Return a new Dim with symbols replaced by concrete integers.
 
         Keys may be symbol names (str) or bare-symbol Dims; values may be
-        int or a concrete Dim. The mapping need not be total: symbols not
-        mentioned are left symbolic (e.g. substituting only d in d ** n
-        leaves 2 ** n). Substitution reaches into exponents as well as
-        bases. Substituted values are validated against the domain of the
-        symbol they replace (positive integers for dimension symbols,
-        non-negative integers for exponent symbols). This Dim is never
-        mutated; a new Dim is always returned.
+        int or a concrete Dim. The mapping need not be total: symbols not mentioned are left
+        symbolic (e.g. substituting only d in d ** n leaves 2 ** n).
+        Substitution reaches into exponents as well as bases. Values are
+        validated against the domain of the symbol they replace (positive
+        integers for dimension symbols, non-negative integers for exponent
+        symbols). This Dim is never mutated; a new Dim is always returned.
         """
         resolved: dict[str, int] = {}
         for key, value in mapping.items():
@@ -466,24 +465,12 @@ class UnifyAllResult:
     unresolved on that final, non-converged pass -- a snapshot of an interrupted
     computation, not a decided answer.
 
-    ``exhausted`` is the discriminator between those two cases: ``False`` for an ordinary,
-    converged ``DEFERRED`` (or ``SUCCESS``/``FAILURE``), ``True`` only when the pass budget
-    ran out first. Both are reported as ``status=DEFERRED`` (in neither case has this
-    function decided FAILURE or SUCCESS), but they are not the same finding and a caller
-    that treats them identically is silently trusting an interrupted computation as much as
-    a completed one -- see :mod:`qufzx.diagram.validate`'s ``_check_generator_policy`` for a
-    caller that fails closed on ``exhausted`` (a hard error) rather than folding it into the
-    ordinary deferred-constraint bookkeeping.
-
-    General rule for the next bounded fixpoint this codebase grows (this one mirrors
-    :mod:`qufzx.rewrite.match`'s ``_MAX_FIXPOINT_PASSES``, which already fails closed by
-    rejecting the match outright on exhaustion): a bounded fixpoint's exhaustion path must
-    be distinguishable from its success path at every call site, not just internally. A
-    ``return`` statement that produces the same shape of result on both paths -- as this
-    function's exhaustion return used to, before this field existed, always with
-    ``residual_pairs=()`` regardless of what was actually still outstanding -- lets an
-    undecided node read as decided-and-fine three calls away from where the budget was
-    actually exhausted.
+    ``exhausted`` is the discriminator: ``False`` for an ordinary converged result, ``True``
+    only when the pass budget ran out first. Both report ``status=DEFERRED``, and every
+    caller must keep them apart -- :mod:`qufzx.diagram.validate`'s
+    ``_check_generator_policy`` fails closed on ``exhausted`` with a hard error rather than
+    folding it into the ordinary deferred-constraint bookkeeping. Every bounded fixpoint
+    here keeps that distinction visible at the call site, not only internally.
     """
 
     status: UnifyStatus

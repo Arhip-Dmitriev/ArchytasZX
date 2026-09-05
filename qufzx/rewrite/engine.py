@@ -54,6 +54,9 @@ Algorithm.
    :attr:`RewriteStep.introduced_deferred_issues`.
 9. Record a :class:`RewriteStep`. Phase 6 implements replay; this module does not.
 
+The parameter environment rides through unchanged on ``diagram.copy()``; no step here reads
+or edits it.
+
 This module does not search for matches, choose which rule or match to apply, iterate to a
 fixpoint, or evaluate a diagram numerically -- nothing here imports
 :mod:`qufzx.semantics`.
@@ -238,9 +241,8 @@ def _translate_input_issue_key(
         translated_a = _translate_ref(issue.wire.a)
         translated_b = _translate_ref(issue.wire.b)
         if translated_a == translated_b:
-            # Step 5 rejects any collapsing remap of a live wire, so this is reachable only
-            # for an input-issue wire listed in consumed_wires whose endpoints a foreign
-            # builder mapped anyway. Falling back to the untranslated wire is fail-closed.
+            # Reachable only for an input-issue wire in consumed_wires; step 5 rejects any
+            # collapsing remap of a live one. Falling back untranslated is fail-closed.
             return (issue.kind, issue.wire)
         return (issue.kind, Wire(translated_a, translated_b))
     if issue.node_id is not None:
@@ -336,10 +338,9 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "object, never substitute a different one (see BuildResult's docstring)"
         )
 
-    # BuildResult's contract: the builder adds the replacement node(s) and reports every
-    # other change through its fields. Checked against `diagram`, the pre-builder state, so
-    # the wire-count postcondition below is anchored to a baseline the builder cannot move,
-    # and so a boundary edit cannot reach step 5's remap and be adopted as ground truth.
+    # Checked against `diagram`, the pre-builder state: the wire-count postcondition below
+    # is anchored to a baseline the builder cannot move, and a boundary edit never reaches
+    # step 5's remap to be adopted as ground truth.
     if working.wires != diagram.wires:
         added = sorted(working.wires - diagram.wires, key=lambda w: w.sort_key())
         removed = sorted(diagram.wires - working.wires, key=lambda w: w.sort_key())
@@ -366,9 +367,9 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"but its builder returned {build_result.scalar_introduced!r} for this match"
         )
 
-    # diagram.wires, not working.wires: equal by the step-3b check above, and naming the
-    # pre-builder set keeps the postcondition's baseline independent of the builder.
-    # Snapshotted once, since the property re-materialises on every access.
+    # diagram.wires, not working.wires: equal by the check above, and the pre-builder set
+    # keeps this baseline independent of the builder. The property re-materialises on every
+    # access, so it is snapshotted once.
     working_wire_set = frozenset(diagram.wires)
     missing_wires = [wire for wire in build_result.consumed_wires if wire not in working_wire_set]
     missing_node_ids = [
@@ -381,9 +382,9 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"{missing_node_ids!r})"
         )
 
-    # A repeated entry passes the membership check above but would make step 6's removal
-    # loop call remove_node twice on an already-removed id, raising GraphGrammarError --
-    # a foreign exception class escaping this function's declared hierarchy.
+    # A repeated entry passes the membership check above, then makes step 6's removal loop
+    # call remove_node twice on one id, raising GraphGrammarError from outside this
+    # function's declared hierarchy.
     duplicate_node_ids = [
         node_id for node_id, count in Counter(build_result.consumed_node_ids).items() if count > 1
     ]
@@ -394,8 +395,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "consume the same node twice"
         )
 
-    # Checked here rather than surfacing later as a KeyError deep in remapping -- or, if a
-    # corrupted ref aliases a real port, not surfacing at all.
+    # Caught here; later it surfaces as a KeyError deep in remapping, or, if a corrupted
+    # ref aliases a real port, not at all.
     missing_new_node_ids = tuple(
         node_id for node_id in build_result.new_node_ids if node_id not in working.nodes
     )
@@ -415,9 +416,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     consumed_node_ids = frozenset(build_result.consumed_node_ids)
 
-    # A value on a consumed node names a real port here and survives step 5's remap, and
-    # step 6's remove_node cascade then drops every reference to it -- a wire below the
-    # wire-count postcondition's snapshot, or a boundary entry, with no exception raised.
+    # Such a value names a real port here and survives step 5's remap; step 6's remove_node
+    # cascade then silently drops every reference to it.
     port_mapping_onto_consumed = tuple(
         ref for ref in build_result.port_mapping.values() if ref.node_id in consumed_node_ids
     )
@@ -456,8 +456,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "the certificate"
         )
 
-    # Diagram._wires is a set, so two remapped wires producing the identical Wire would
-    # collapse into one entry at add_wire time, losing a wire with no exception.
+    # Diagram._wires is a set: two remapped wires producing one Wire collapse at add_wire
+    # time, losing a wire with no exception.
     if len(set(build_result.port_mapping.values())) != len(build_result.port_mapping):
         raise RewriteGrammarError(
             f"rule {rule.name!r}: builder's port_mapping is not injective -- two or more "
@@ -469,8 +469,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     port_mapping = build_result.port_mapping
 
     # Sorted, not the raw frozenset: working.wires' hash is PYTHONHASHSEED-dependent, and
-    # this loop can raise. The final wire set is order-independent, but which of several
-    # offending wires gets reported is not.
+    # which of several offending wires this loop raises on is order-dependent.
     for wire in sorted(working.wires, key=lambda w: w.sort_key()):
         if wire in consumed_wire_set:
             working.remove_wire(wire.a, wire.b)
@@ -491,9 +490,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         working.remove_wire(wire.a, wire.b)
         working.add_wire(new_a, new_b)
 
-    # Every wire either survived untouched, was dropped as a consumed wire, or was removed
-    # and re-added exactly once, so the count can only shrink by the number of *distinct*
-    # consumed wires.
+    # Every wire survived untouched, was dropped as consumed, or was removed and re-added
+    # once, so the count shrinks by exactly the number of *distinct* consumed wires.
     expected_wire_count = len(working_wire_set) - len(consumed_wire_set)
     actual_wire_count = len(working.wires)
     if actual_wire_count != expected_wire_count:
@@ -522,9 +520,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     working.multiply_scalar(build_result.scalar_introduced)
 
-    # One validate call per diagram, not one per view: .errors/.deferred are cheap tuple
-    # filters over the same report, and this guarantees the hard-error and deferred compares
-    # below read off the same validation snapshot.
+    # One validate call per diagram: .errors/.deferred are tuple filters over the same
+    # report, so both compares below read one validation snapshot.
     input_report = validate(diagram)
     result_report = validate(working)
 
@@ -537,8 +534,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     result_hard_counts = Counter(_issue_key(issue) for issue in result_report.errors)
     introduced_counts = result_hard_counts - input_hard_counts
     if introduced_counts:
-        # Name the offending (kind, ref) pairs, not just the kinds: a bare kind does not say
-        # where. Sorted by (kind.value, repr(ref)), since ref is a heterogeneous mix of
+        # Sorted by (kind.value, repr(ref)): ref is a heterogeneous mix of
         # PortRef | Wire | NodeId | None with no natural order.
         offending = sorted(
             ((kind.value, ref, count) for (kind, ref), count in introduced_counts.items()),
@@ -553,8 +549,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"in the input diagram: {detail}"
         )
 
-    # Firing across a DEFERRED pair can drop the resulting assumption from the diagram --
-    # not a regression, but a loss of information the certificate records here.
+    # Firing across a DEFERRED pair can drop the resulting assumption from the diagram; the
+    # certificate records that loss here.
     input_deferred_keyed = tuple(
         (
             _translate_input_issue_key(

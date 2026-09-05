@@ -41,7 +41,7 @@ and every value of `d` at once. That is the capability this project exists to pr
 Symbolic input is permitted; **concrete input is the expected case**. A user who writes
 `3` and `30` rather than `d` and `n` gets the same engine: the values are abstracted to
 symbols on entry, recorded in the diagram's *parameter environment*, and substituted back
-on output. There is one algebra, always symbolic, and a concrete-input derivation proves
+on output. Dimensions work this way today; counts follow with bang boxes in Phase 7. There is one algebra, always symbolic, and a concrete-input derivation proves
 the whole family as well as the user's own instance of it.
 
 ## Intended workflow
@@ -54,7 +54,8 @@ The round trip being optimised for is **Dirac in, ZX manipulation, Dirac out**:
 2. The engine represents it as a ZX diagram with the appropriate bang boxes and per-port
    dimensions. Any concrete dimension or count is **abstracted here** — to a fresh symbol
    whose value is recorded in the parameter environment — so everything downstream is
-   symbolic algebra in `d` and `n` regardless of what was typed.
+   symbolic algebra in `d` and `n` regardless of what was typed. (Dimensions are abstracted
+   today; counts join them in Phase 7.)
 3. Rewrite rules are applied, by hand or by an automated strategy. This is pure graph
    surgery: pattern match, splice, merge, add phases, track the exact scalar. Nothing is
    contracted.
@@ -123,15 +124,16 @@ Implemented and under test:
 
 - **Dimension algebra** — concrete integers, symbols, products and powers, normalised and
   compared through a single canonical form, with substitution and a placeholder unifier.
-  Substitution currently runs one way only, symbol → integer; `abstract` and the parameter
-  environment are specified but not yet built, so concrete input is at present carried
-  through the algebra as a literal rather than abstracted on entry.
+  Substitution runs both directions: symbol → integer, and `abstract` the other way, turning
+  a concrete value into a fresh non-colliding symbol plus the binding that recovers it.
 - **Phase and scalar algebra** — symbolic phases in vectors tied to the wire dimension,
   spider-fusion phase addition, and exact scalars (roots of unity, free symbols, products
   and sums) with no silent discarding of global factors.
 - **Diagram data model** — ports, nodes, wires, ordered boundaries, exact scalar
   accumulator, deep copy and controlled mutation, and a generator registry for the Z and X
-  spiders.
+  spiders. A diagram also carries a **parameter environment**: the concrete value a user
+  supplied for each abstracted symbol. It survives copy and rewriting, and `substitute`
+  consumes exactly the entries its mapping names.
 - **Validation** — per-port dimension agreement, boundary consistency, port usage, and
   generator policy. A node's legs must be *jointly* unifiable to one shared dimension, not
   merely pairwise unifiable against the first leg, and a phase vector tied to its node's
@@ -145,11 +147,19 @@ Implemented and under test:
   of dimensions that agree only *under a binding* (a symbol against a concrete value, or
   against another symbol) is recorded as `DIMENSION_BOUND`, alongside the `DIMENSION_DEFERRED`
   case where the unifier could not decide at all. Both are assumptions rather than failures,
-  so neither fails validation, and both reach the rewrite engine's before/after compare.
+  so neither fails validation, and both reach the rewrite engine's before/after compare. The
+  two are independent findings, not alternatives: a leg set that ends up deferred may still
+  have bound a symbol along the way, and that binding is reported rather than dropped —
+  without it the residual pair is stated at operands nothing in the report explains. The
+  parameter environment is checked too: every name it binds must be a symbol the diagram
+  carries, in exactly one role, at a value inside that role's domain.
 - **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
   concrete diagram into a tensor carrying the exact scalar, and an equality check that
   instantiates symbols, contracts both sides, and compares exactly, with an opt-in
-  up-to-global-phase mode.
+  up-to-global-phase mode. A symbol the caller does not supply falls back to its parameter-
+  environment binding, and a supplied value overrides that binding, so a diagram parsed from
+  concrete source can be scored with no assignment at all — or spot-checked at some other
+  value.
 - **Rewrite core** — the rule/pattern/builder abstraction, a matcher for same-colour
   spider fusion, the fusion rule itself with its exact scalar, and an engine that applies a
   rule at a match and records step provenance. Seven side conditions are declared: five are
@@ -174,7 +184,11 @@ Implemented and under test:
   `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power shorthand), optionally
   followed by `; copy` to feed the state into a fixed copy spider. That is exactly the
   shape Phase 5's worked example needs, oracle-checked end to end (source → diagram →
-  fusion match → post-diagram) at several concrete `d`. Every exception it raises is a
+  fusion match → post-diagram) at several concrete `d`. **A concrete dimension in the source
+  is abstracted on entry**: the numeral becomes a fresh dimension symbol and the parameter
+  environment records its value, so everything downstream is symbolic whatever the user
+  typed. The keyword `literal` before the numeral suppresses this, for the oracle's own
+  fixtures. Every exception it raises is a
   `DiracError`, the bound summation index cannot be captured as a dimension symbol, every
   numeric token is ASCII by construction (identifier tokens stay Unicode-aware, since a
   symbol name has no numeric domain to be silently misread into), and a tensor-power leg
@@ -183,8 +197,7 @@ Implemented and under test:
 
 Not yet implemented:
 
-`abstract` and the parameter environment (concrete input abstracted on entry and
-substituted back on output) · certificates and replayable derivations · bang boxes and
+certificates and replayable derivations · bang boxes and
 free `n` · induction over
 multiplicities · symbolic contraction with `d` formal · the character-sum simplifier ·
 mixed dimensions and the full qufinite generator set · the broader rule library and

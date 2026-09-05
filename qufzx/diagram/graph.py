@@ -212,7 +212,7 @@ class Node:
 
     Immutable: :meth:`Diagram.set_phase` builds a replacement ``Node`` via
     :meth:`with_phase` rather than mutating one in place, so a ``Node`` handed out by a
-    read-only view can never be corrupted by a later mutation elsewhere.
+    read-only view is never corrupted by a later mutation elsewhere.
     """
 
     id: NodeId
@@ -459,20 +459,13 @@ class Diagram:
         """Return a new Diagram with symbols substituted, preserving every NodeId.
 
         ``mapping`` is a single symbol-name -> value mapping shared across every port's
-        ``Dim``, every node's ``PhaseVector``, and the diagram's ``Scalar``. Unlike a
-        single call to one of those three ``substitute()`` methods, this method must
-        first split ``mapping`` by each value's *type* before dispatching: each of
-        ``Dim.substitute``, ``PhaseVector.substitute``, and ``Scalar.substitute``
-        validates every entry of the mapping it is given up front (not only the entries
-        that name one of its own free symbols), so a mapping entry meant only for a
-        phase symbol -- e.g. an ``sp.Rational`` turns value -- would make
-        ``Dim.substitute`` raise even though no ``Dim`` here ever mentions that symbol.
-        Splitting by value type (``int`` goes to all three; ``sp.Rational`` goes to the
-        phase and scalar mappings; ``Dim``, ``Phase``, and ``Scalar`` values go only to
-        their own matching mapping) avoids that false conflict. See the module docstring
-        for why this preserves node ids (and thus every ``Wire`` and boundary
-        ``PortRef``) rather than being expressible via :meth:`add_node`. This Diagram is
-        never mutated.
+        ``Dim``, every node's ``PhaseVector``, and the diagram's ``Scalar``. It is first
+        split by each value's *type* before dispatching -- ``int`` goes to all three,
+        ``sp.Rational`` to the phase and scalar mappings, and a ``Dim``, ``Phase`` or
+        ``Scalar`` value only to its own -- since each of those three ``substitute()``
+        methods validates every entry it is handed up front, not only the entries naming
+        one of its own free symbols. Entries the mapping names are consumed from
+        :attr:`parameters`. This Diagram is never mutated.
         """
         dim_mapping: dict[str, DimSubstituteValue] = {}
         phase_mapping: dict[str, PhaseSubstituteValue] = {}
