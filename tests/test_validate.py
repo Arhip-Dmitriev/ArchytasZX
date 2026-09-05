@@ -606,3 +606,36 @@ class TestValidationIsPure:
         assert diagram.wires == wires_before
         assert diagram.boundary_outputs == boundary_before
         assert diagram.scalar == scalar_before
+
+
+class TestABoundLegDimensionIsReportedEvenWhenTheLegSetDefers:
+    """A binding and a residual pair are independent findings, not alternatives: a DEFERRED
+    ``unify_all`` can also have bound a symbol, and dropping that binding leaves a report
+    whose residual pair is stated at operands nothing in the report explains."""
+
+    def _node_with_legs(self, dims: list[Dim]) -> Diagram:
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=dims, output_dims=[])
+        diagram.set_boundary_inputs(
+            [PortRef(node_id, Direction.INPUT, i) for i in range(len(dims))]
+        )
+        return diagram
+
+    def test_a_success_reports_the_binding(self) -> None:
+        report = validate(self._node_with_legs([Dim.symbol("d"), Dim.concrete(2)]))
+        assert [issue.kind for issue in report.deferred] == [IssueKind.DIMENSION_BOUND]
+        assert "d := 2" in report.deferred[0].message
+
+    def test_a_deferred_resolution_reports_the_binding_too(self) -> None:
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        report = validate(self._node_with_legs([d, Dim.concrete(2), d * e]))
+        kinds = [issue.kind for issue in report.deferred]
+        assert kinds == [IssueKind.DIMENSION_BOUND, IssueKind.DIMENSION_DEFERRED]
+        assert "d := 2" in report.deferred[0].message
+
+    def test_adding_a_deferring_leg_never_removes_an_assumption(self) -> None:
+        d, e = Dim.symbol("d"), Dim.symbol("e")
+        two_legs = validate(self._node_with_legs([d, Dim.concrete(2)]))
+        three_legs = validate(self._node_with_legs([d, Dim.concrete(2), d * e]))
+        assert "d := 2" in " ".join(issue.message for issue in two_legs.deferred)
+        assert "d := 2" in " ".join(issue.message for issue in three_legs.deferred)

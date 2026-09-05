@@ -477,11 +477,9 @@ class UnifyAllResult:
     ``SUCCESS`` with nothing to show for it. Populating it changes no verdict and no
     caller's behavior.
 
-    :mod:`qufzx.diagram.validate`'s ``_check_generator_policy`` does not yet surface this as
-    a reported issue -- see that function for why, and
-    ``tests/test_symbolic_dimension_sweep.py`` for the pin of the current silent behavior.
-    Doing so would ripple into :mod:`qufzx.rewrite.engine`'s step-8 deferred-issue
-    bookkeeping, which is Phase 6/10 certificate territory.
+    :mod:`qufzx.diagram.validate`'s ``_check_generator_policy`` reports it, together with
+    ``bindings``, as a deferred
+    :class:`~qufzx.diagram.validate.IssueKind.DIMENSION_BOUND` issue.
     """
 
     @property

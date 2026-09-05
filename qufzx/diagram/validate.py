@@ -496,26 +496,29 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                     node_id=node.id,
                 )
             )
-        elif leg_unify.is_success and (leg_unify.bindings or leg_unify.declined_bindings):
-            bound = ", ".join(
-                f"{name} := {value}"
-                for name, value in sorted(
-                    {**dict(leg_unify.bindings), **dict(leg_unify.declined_bindings)}.items()
+        else:
+            # A binding and a residual pair are independent findings, not alternatives: a
+            # DEFERRED resolution can also have bound a symbol, and its residual pairs are
+            # stated at operands that binding already resolved.
+            if leg_unify.bindings or leg_unify.declined_bindings:
+                bound = ", ".join(
+                    f"{name} := {value}"
+                    for name, value in sorted(
+                        {**dict(leg_unify.bindings), **dict(leg_unify.declined_bindings)}.items()
+                    )
                 )
-            )
-            issues.append(
-                ValidationIssue(
-                    kind=IssueKind.DIMENSION_BOUND,
-                    message=(
-                        f"node {node.id!r} ({gen.name}) legs "
-                        f"{sorted(str(port.dim) for port in all_ports)} agree only under the "
-                        f"binding(s) {bound}"
-                    ),
-                    node_id=node.id,
-                    deferred=True,
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.DIMENSION_BOUND,
+                        message=(
+                            f"node {node.id!r} ({gen.name}) legs "
+                            f"{sorted(str(port.dim) for port in all_ports)} agree only under "
+                            f"the binding(s) {bound}"
+                        ),
+                        node_id=node.id,
+                        deferred=True,
+                    )
                 )
-            )
-        elif leg_unify.is_deferred:
             for assumed, equal_to in leg_unify.residual_pairs:
                 issues.append(
                     ValidationIssue(
