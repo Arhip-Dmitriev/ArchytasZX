@@ -61,19 +61,18 @@ class RewriteGrammarError(RewriteError):
 
     Raised for: a value object built outside its own contract (a :class:`ConstraintSource`
     whose kind and reference disagree, a :class:`DimensionConstraint` whose ``bound_here`` is
-    ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type, one
-    whose ``side_conditions`` repeat a name, or one whose ``side_conditions`` disagree with
-    its builder's); a match handed to a builder that does not take its type; a request
+    ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type, with a
+    repeated ``side_conditions`` name, or disagreeing with its builder's); a match handed to
+    a builder that does not take its type; a request
     :func:`~qufzx.rewrite.match.resolve_fusion_match` cannot evaluate at all (equal node ids,
     a node absent from the diagram, a wire not incident on both or not in ``diagram.wires``,
-    or a wire endpoint or boundary entry naming an unknown node or out-of-range index); a
+    a wire endpoint or boundary entry naming an unknown node or out-of-range index); a
     :class:`BuildResult` that is not the working diagram it was given, or that names a node,
-    port or wire the working diagram does not have, repeats an id, maps a surviving port onto
-    a consumed node, is not injective, or names a non-consumed node in
-    ``verified_phase_substitutions``; a ``port_mapping`` that collapses one wire's endpoints
-    onto a single port, or that leaves :func:`~qufzx.rewrite.engine.apply`'s wire-count
-    postcondition violated; and an unknown rule name at
-    :func:`~qufzx.rewrite.rules_library.lookup_rule`.
+    port or wire it does not have, repeats an id, maps a surviving port onto a consumed node,
+    is not injective, or names a non-consumed node in ``phase_substitutions``; a
+    ``port_mapping`` collapsing one wire's endpoints onto a single port or leaving
+    :func:`~qufzx.rewrite.engine.apply`'s wire-count postcondition violated; an unknown rule
+    name at :func:`~qufzx.rewrite.rules_library.lookup_rule`.
     """
 
 
@@ -307,7 +306,7 @@ class BuildResult:
     consumed_wires: tuple[Wire, ...]
     port_mapping: Mapping[PortRef, PortRef]
     scalar_introduced: Scalar
-    verified_phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
+    phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
     """Per-node bindings a builder actually substituted into a phase's entries. ``None``
     means the rule re-derived nothing; :func:`~qufzx.rewrite.engine.apply` then records an
     empty mapping. There is no match-side counterpart to compare this against.

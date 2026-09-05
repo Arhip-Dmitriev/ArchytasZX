@@ -281,7 +281,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         consumed_wires=(wire,),
         port_mapping=port_mapping,
         scalar_introduced=Scalar.one(),
-        verified_phase_substitutions=MappingProxyType(phase_substitutions),
+        phase_substitutions=MappingProxyType(phase_substitutions),
     )
 
 

@@ -79,11 +79,12 @@ Also the memory limit handed to :func:`numpy.einsum_path`, so it bounds the cont
 intermediates as well as its inputs and its output."""
 
 _MAX_EINSUM_LABELS = 52
-"""How many distinct axis labels :func:`numpy.einsum`'s sublist interface accepts.
+"""The exclusive upper bound :func:`numpy.einsum`'s sublist interface puts on an axis label.
 
-It maps each integer label onto a fixed 52-character alphabet and raises a bare
-``IndexError`` from inside numpy on the 53rd. :func:`contract` checks the count first and
-raises :class:`ContractSizeError` instead."""
+It maps each integer label onto a fixed 52-character alphabet, raising ``ValueError:
+subscript is not within the valid range [0, 52)`` for anything outside it. :func:`contract`
+checks both the label count and the largest label first, raising
+:class:`ContractSizeError` instead."""
 
 
 class ContractError(Exception):
@@ -246,13 +247,17 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
 
     labels = _assign_labels(diagram)
 
+    # Both the count and the largest value: numpy validates each subscript integer against
+    # [0, _MAX_EINSUM_LABELS), and _assign_labels draws from a counter that skips a value
+    # whenever two equivalence classes merge, so the two bounds are not the same check.
     distinct_labels = len(set(labels.values()))
-    if distinct_labels > _MAX_EINSUM_LABELS:
+    highest_label = max(labels.values(), default=-1)
+    if distinct_labels > _MAX_EINSUM_LABELS or highest_label >= _MAX_EINSUM_LABELS:
         raise ContractSizeError(
-            f"diagram contracts over {distinct_labels} distinct axis labels, above "
-            f"numpy.einsum's sublist-interface limit of {_MAX_EINSUM_LABELS} (see "
-            "_MAX_EINSUM_LABELS); every wire equivalence class and every boundary port "
-            "takes one label"
+            f"diagram contracts over {distinct_labels} distinct axis labels, the highest "
+            f"being {highest_label}, against numpy.einsum's sublist-interface range of "
+            f"[0, {_MAX_EINSUM_LABELS}) (see _MAX_EINSUM_LABELS); every wire equivalence "
+            "class and every boundary port takes one label"
         )
 
     einsum_args: list[Any] = []

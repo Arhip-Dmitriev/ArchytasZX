@@ -700,7 +700,7 @@ class TestBuilderRejectsFabricatedDimensionConstraints:
 
 
 class TestPhaseSubstitutionIsRecordedForEitherNode:
-    """``verified_phase_substitutions`` must name whichever node's phase entries a binding
+    """``phase_substitutions`` must name whichever node's phase entries a binding
     actually reached -- the B-side node as readily as the A-side one."""
 
     @staticmethod

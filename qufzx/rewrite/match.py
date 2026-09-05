@@ -1089,8 +1089,8 @@ def resolve_fusion_match(
             )
             return _failed(())
 
-    # Read off record.entries(), in first-derivation order, de-duplicated with dict.fromkeys
-    # to drop a name a later pass re-bound.
+    # Read off record.entries(), in first-derivation order; a name a later pass re-bound
+    # keeps its one dict entry, at that later value.
     phase_bound_values: dict[str, Dim] = {}
     for phase_entry in record.entries():
         if (
@@ -1098,7 +1098,7 @@ def resolve_fusion_match(
             and phase_entry.outcome is ConstraintOutcome.BOUND
         ):
             phase_bound_values.update(phase_entry.bound_here)
-    unique_bound_names = list(dict.fromkeys(phase_bound_values))
+    unique_bound_names = list(phase_bound_values)
     phase_detail = (
         "no phase present on either node"
         if not phase_dims_present

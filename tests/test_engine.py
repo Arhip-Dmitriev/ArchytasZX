@@ -1827,7 +1827,7 @@ class TestBuilderMayNotEditWiresOrBoundaries:
 
 
 class TestVerifiedPhaseSubstitutionsMustNameConsumedNodes:
-    """``apply`` rejects a ``verified_phase_substitutions`` key the rewrite does not consume.
+    """``apply`` rejects a ``phase_substitutions`` key the rewrite does not consume.
 
     The field is copied verbatim onto :attr:`RewriteStep.phase_substitutions`, so an
     unconsumed node id there is a claim in the certificate the rewrite never made.
@@ -1843,7 +1843,7 @@ class TestVerifiedPhaseSubstitutionsMustNameConsumedNodes:
             built = real_builder(working, match_)
             return dataclasses.replace(
                 built,
-                verified_phase_substitutions={NodeId(9999): {"d": Dim.concrete(2)}},
+                phase_substitutions={NodeId(9999): {"d": Dim.concrete(2)}},
             )
 
         lying_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]

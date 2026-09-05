@@ -29,16 +29,15 @@ Algorithm.
 4. Validate the build result against ``working``: the scalar agrees with the rule's; every
    consumed wire and node exists; every ``new_node_ids`` entry exists; every
    ``port_mapping`` value names a real port on a node that outlives the rewrite; neither id
-   tuple repeats; ``port_mapping`` is injective; ``verified_phase_substitutions`` names only
+   tuple repeats; ``port_mapping`` is injective; ``phase_substitutions`` names only
    consumed nodes.
 5. Remap every reference, before any node is removed. A consumed wire is dropped; any other
    wire with an endpoint on a consumed node is re-added through ``port_mapping``. An
    endpoint on a consumed node absent from ``port_mapping`` raises, as does a remap
    collapsing one wire's two endpoints onto a single port. Both boundary lists are rebuilt
-   through the same ``_remap_endpoint``, in place, so position is preserved -- and both are
-   the input's own lists, step 3 having established the builder did not touch them. A
-   wire-count postcondition, anchored on ``diagram``'s wire set rather than the
-   post-builder one, then catches a wire lost during remapping.
+   through the same ``_remap_endpoint``, in place, so position is preserved. A wire-count
+   postcondition, anchored on ``diagram``'s wire set rather than the post-builder one, then
+   catches a wire lost during remapping.
 6. Remove the consumed nodes. Step 4 rejects a ``port_mapping`` value on a consumed node,
    so no surviving reference can point at one by the time the cascade runs.
 7. Multiply the scalar.
@@ -128,7 +127,7 @@ class RewriteStep:
 
     phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] = MappingProxyType({})
     """Per-node bindings the builder actually substituted into a phase's entries -- see
-    :attr:`~qufzx.rewrite.rule.BuildResult.verified_phase_substitutions`. Empty when the
+    :attr:`~qufzx.rewrite.rule.BuildResult.phase_substitutions`. Empty when the
     builder supplied ``None`` (nothing re-derived) or genuinely substituted nothing.
     """
 
@@ -303,30 +302,27 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
     Never mutates ``diagram``; the module docstring numbers the steps below.
-    ``test_engine.py::TestApplyDocstringMatchesRaiseSites`` pins the count of raise
-    statements lexically inside this body against this list.
+    ``test_engine.py::TestApplyDocstringMatchesRaiseSites`` pins this body's raise count.
 
     Raises :class:`~qufzx.rewrite.rule.RewriteDomainError` at step 1 (``match``'s
     ``side_condition_outcomes`` do not exactly cover ``rule.side_conditions``, or include a
     failed one), step 4 (the builder's ``scalar_introduced`` disagrees with the rule's),
-    step 5 (a wire or boundary entry names a port on a consumed node absent from
-    ``port_mapping``, from :func:`_remap_endpoint`, so not counted by the meta-test), and
-    step 8 (the result carries a hard-failure validation issue the input did not).
+    step 5 (a wire or boundary entry names a consumed-node port absent from
+    ``port_mapping``, raised inside :func:`_remap_endpoint`, so uncounted by the meta-test),
+    and step 8 (the result carries a hard-failure issue the input did not).
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` at step 3
-    (``BuildResult.diagram`` is not, by identity, the working diagram; the builder edited
-    the working diagram's wire set or either boundary list), step 4 (a consumed
-    wire or node absent from the working diagram; ``consumed_node_ids`` or ``new_node_ids``
-    repeating an id; a ``new_node_ids`` entry naming no node; a ``port_mapping`` value naming
-    no real port or one on a consumed node; a non-injective ``port_mapping``;
-    ``verified_phase_substitutions`` naming a node the rewrite does not consume), and step 5
-    (``port_mapping`` collapsing one wire's endpoints onto a single port; the wire count not
-    matching its postcondition).
+    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
+    is not, by identity, the working diagram; the builder edited its wire set or either
+    boundary list), step 4 (a consumed wire or node absent; ``consumed_node_ids`` or
+    ``new_node_ids`` repeating an id; a ``new_node_ids`` entry naming no node; a
+    ``port_mapping`` value naming no real port or one on a consumed node; a non-injective
+    ``port_mapping``; ``phase_substitutions`` naming an unconsumed node), and step 5
+    (``port_mapping`` collapsing one wire's endpoints onto a single port; the wire count
+    missing its postcondition).
 
-    Still unchecked, and deferred to Phase 11: a builder that edits a pre-existing node's
-    phase or port dimensions in place (its wire and boundary edits are caught at step 3); a
-    ``new_node_ids`` entry naming a pre-existing node (existence is checked, freshness is
-    not); a duplicate in ``consumed_wires``; and an unused ``port_mapping`` key.
+    Unchecked, deferred to Phase 11: a builder editing an existing node's phase or port
+    dims in place; a ``new_node_ids`` entry naming an existing node; a duplicate in
+    ``consumed_wires``; an unused ``port_mapping`` key.
     """
     check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
@@ -432,24 +428,23 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "a surviving reference must be remapped onto a port that outlives the rewrite"
         )
 
-    # Recorded verbatim onto RewriteStep.phase_substitutions, so a node id no phase was
-    # read from puts a claim in the certificate the rewrite never made.
-    if build_result.verified_phase_substitutions is not None:
+    # Recorded verbatim onto RewriteStep.phase_substitutions: a node id no phase was read
+    # from would be a certificate claim the rewrite never made.
+    if build_result.phase_substitutions is not None:
         foreign_phase_nodes = tuple(
             node_id
-            for node_id in build_result.verified_phase_substitutions
+            for node_id in build_result.phase_substitutions
             if node_id not in consumed_node_ids
         )
         if foreign_phase_nodes:
             raise RewriteGrammarError(
-                f"rule {rule.name!r}: build_result.verified_phase_substitutions names node "
+                f"rule {rule.name!r}: build_result.phase_substitutions names node "
                 f"id(s) {sorted(foreign_phase_nodes)!r} that this rewrite does not consume; "
                 "a builder substitutes into a matched node's own phase, so every key must "
                 "be a consumed node id"
             )
 
-    # Step 9 publishes new_node_ids verbatim, where a duplicate would misreport how many
-    # new nodes were created.
+    # Step 9 publishes new_node_ids verbatim; a duplicate misreports how many nodes exist.
     duplicate_new_node_ids = [
         node_id for node_id, count in Counter(build_result.new_node_ids).items() if count > 1
     ]
@@ -580,8 +575,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     )
 
     step_phase_substitutions = (
-        build_result.verified_phase_substitutions
-        if build_result.verified_phase_substitutions is not None
+        build_result.phase_substitutions
+        if build_result.phase_substitutions is not None
         else MappingProxyType({})
     )
 
