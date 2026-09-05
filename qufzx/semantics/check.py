@@ -15,50 +15,42 @@
 
 The top-level entry point of the Phase 4 oracle: :func:`score` denotes what one diagram
 means at a concrete symbol assignment, :func:`compare` decides whether two mean the same
-thing at a shared one. Everything builds on :mod:`qufzx.semantics.contract_numeric`;
-nothing here touches a dense array directly.
+thing at a shared one. Everything builds on :mod:`qufzx.semantics.contract_numeric`.
 
 Instantiation. :func:`instantiate` substitutes every dimension, phase, and scalar symbol
-via the node-id-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute`. It refuses --
-rather than defaulting a missing symbol to something "reasonable" -- whenever the
-assignment does not mention every free symbol the diagram carries. The spec's "never
-construct a matrix or dense tensor while any dimension or count in scope is symbolic" rule
-is enforced downstream in ``contract_numeric``, but catching a missing symbol here gives a
-far more specific error.
+via the node-id-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute`. An unsupplied
+symbol falls back to its :attr:`~qufzx.diagram.graph.Diagram.parameters` binding and a
+supplied value overrides that binding, so the oracle can spot-check a diagram at a value
+other than the one its user typed. Only a symbol neither source supplies is refused, never
+defaulted.
 
 Comparison modes. Exactly two, and ``EXACT`` is the default everywhere;
 ``UP_TO_GLOBAL_PHASE`` is opt-in, never inferred. ``EXACT`` requires matching shapes and
 entrywise agreement within ``tolerance``, including the overall scalar.
 ``UP_TO_GLOBAL_PHASE`` asks whether some unit-modulus ``lambda`` has ``b == lambda * a``;
-``lambda`` is recovered from ``a``'s largest-magnitude entry (least sensitive to
-floating-point noise) and then verified against the whole tensor. A recovered ``lambda``
-with ``|lambda| != 1`` is a non-match: a rescaling by 2 is not a global phase, and this
-mode is deliberately not an up-to-scale escape hatch. All-zero tensors match each other;
-one zero and one nonzero never match.
+``lambda`` is recovered from ``a``'s largest-magnitude entry and then verified against the
+whole tensor. A recovered ``lambda`` with ``|lambda| != 1`` is a non-match: a rescaling by
+2 is not a global phase, and this mode is not an up-to-scale escape hatch. All-zero tensors
+match each other; one zero and one nonzero never match.
 
 Tolerance is a single explicit parameter defaulting to ``1e-9``, an absolute entrywise
-bound, with no path that silently loosens it -- comfortably above float64 accumulation
-noise at the tensor sizes this oracle targets, far below any meaningful difference.
+bound, with no path that silently loosens it.
 
 :class:`ComparisonResult` carries the mode, a matched flag, a reason, the max absolute
-deviation observed, and the recovered ``lambda`` -- what a developer needs when a later
-phase's rewrite turns out wrong, not a yes/no.
+deviation observed, and the recovered ``lambda``.
 
 Interface check, before tensors are compared. :func:`compare_tensors` sees bare arrays, so
-it can do no better than ``a.shape == b.shape``; it cannot know that axis ``i`` of each is
-meant to describe the same boundary leg. :func:`compare` therefore first checks that the
-interfaces correspond: the same number of boundary outputs, the same number of boundary
-inputs (not merely the same total, so a 2-output/1-input diagram never matches a
-1-output/2-input one), and the same dimension per axis. A mismatch is reported as its own
-result rather than being misreported as a numeric deviation.
+it can do no better than ``a.shape == b.shape``. :func:`compare` therefore first checks
+that the interfaces correspond: the same number of boundary outputs, the same number of
+boundary inputs, and the same dimension per axis. A mismatch is reported as its own result
+rather than as a numeric deviation.
 
 What this cannot do. Genuine leg correspondence -- that boundary axis ``i`` of A and axis
-``j`` of B denote the same leg, not merely the same dimension -- is not establishable here.
-Two diagrams denoting the same map may distribute boundary legs over an entirely different
-node structure, so no per-axis identity survives a rewrite. A silently reordered boundary
-is therefore invisible whenever the tensors agree regardless of order. Establishing real
-correspondence requires a rule to declare the map between its input and output boundaries
-and the engine to assert it -- a :mod:`qufzx.rewrite.engine` concern feeding Phase 6.
+``j`` of B denote the same leg, not merely the same dimension -- is not establishable here:
+two diagrams denoting the same map may distribute boundary legs over an entirely different
+node structure. A silently reordered boundary is therefore invisible whenever the tensors
+agree regardless of order. Real correspondence needs a rule to declare the map between its
+input and output boundaries and the engine to assert it, feeding Phase 6.
 """
 
 from __future__ import annotations
@@ -116,21 +108,30 @@ def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
 
 
 def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]) -> Diagram:
-    """Substitute every symbol in ``diagram`` per ``assignment``.
+    """Substitute every symbol in ``diagram`` per ``assignment``, falling back to
+    ``diagram.parameters``.
 
-    Raises CheckGrammarError if ``assignment`` does not cover every free symbol the
-    diagram carries -- a missing symbol is never defaulted. A key naming no symbol in this
-    diagram is dropped: :func:`compare` and the sweeps pass one shared assignment to two
-    diagrams, and a rewrite can eliminate a symbol from one side (a phase binding the
-    shared leg dimension leaves the merged node concrete). See the module docstring.
+    A symbol ``assignment`` does not mention takes its value from the diagram's parameter
+    environment; a symbol ``assignment`` does mention takes that value, overriding the
+    environment. A symbol neither supplies raises CheckGrammarError -- never defaulted. A
+    key naming no symbol in this diagram is dropped: :func:`compare` and the sweeps pass one
+    shared assignment to two diagrams, and a rewrite can eliminate a symbol from one side (a
+    phase binding the shared leg dimension leaves the merged node concrete). See the module
+    docstring.
     """
-    missing = _diagram_free_symbols(diagram) - set(assignment)
+    free_symbols = _diagram_free_symbols(diagram)
+    resolved: dict[str, CheckAssignmentValue] = {
+        name: value for name, value in diagram.parameters.items() if name in free_symbols
+    }
+    resolved.update({name: value for name, value in assignment.items() if name in free_symbols})
+    missing = free_symbols - set(resolved)
     if missing:
         raise CheckGrammarError(
-            f"assignment leaves symbol(s) uninstantiated: {sorted(missing)}; "
+            f"assignment leaves symbol(s) uninstantiated: {sorted(missing)}; neither the "
+            "assignment nor the diagram's parameter environment supplies them, and "
             "instantiate() never defaults a missing symbol"
         )
-    return diagram.substitute(assignment)
+    return diagram.substitute(resolved)
 
 
 def score(

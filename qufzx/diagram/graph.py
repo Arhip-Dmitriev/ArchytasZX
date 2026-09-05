@@ -14,50 +14,47 @@
 """Core graph data model: Port, Node, and Diagram, with deep copy and controlled mutation.
 
 A :class:`Diagram` is an open graph: :class:`Node` objects joined by :class:`Wire`\\ s, two
-ordered boundary lists of unwired ports, and an exact
-:class:`~qufzx.algebra.scalar.Scalar` accumulator. Dimension lives on each :class:`Port`
-individually -- there is no global or per-diagram dimension field here, not even as a
-default, per the spec invariant that dimension is stored per port.
+ordered boundary lists of unwired ports, an exact
+:class:`~qufzx.algebra.scalar.Scalar` accumulator, and a parameter environment. Dimension
+lives on each :class:`Port` individually -- there is no global or per-diagram dimension
+field here, per the spec invariant that dimension is stored per port.
 
-What this representation cannot express. A boundary entry is a :class:`PortRef` into some
-node, so there is no way to express a bare identity wire running from a boundary input
-straight to a boundary output. Representing it would need either a synthetic boundary-node
-type (not a real generator; it would need its own policy, denotation, and validation
-carve-outs) or a boundary-to-boundary edge alongside node-to-node wires (breaking the
-invariant that every wire has two ports drawn from actual nodes). Out of scope until an
-explicit identity generator is registered or the Phase 18 parser must round-trip a bare
-wire.
+What this representation cannot express: a bare identity wire running from a boundary input
+straight to a boundary output, every boundary entry being a :class:`PortRef` into some
+node. Out of scope until an explicit identity generator is registered or the Phase 18
+parser must round-trip a bare wire.
 
-Validation ownership. Construction and mutation here are deliberately permissive: methods
-check only properties of the data structure itself (an index is a non-negative int, a wire
-cannot join a port to itself, you cannot mutate a node that does not exist). Cross-cutting
+Validation ownership. Construction and mutation here are permissive: methods check only
+properties of the data structure itself (an index is a non-negative int, a wire cannot join
+a port to itself, you cannot mutate a node that does not exist). Cross-cutting
 well-formedness -- dimension agreement, double-wired ports, boundary/wire conflicts,
-out-of-range indices, generator policy -- is entirely :mod:`qufzx.diagram.validate`'s
-responsibility, so its report can carry every problem in one pass, including problems
-spanning several mutation calls, rather than surfacing as scattered exceptions from
-whichever mutator introduced them.
+out-of-range indices, generator policy, the parameter environment -- is entirely
+:mod:`qufzx.diagram.validate`'s responsibility, so its report carries every problem in one
+pass.
 
 Node removal. :meth:`Diagram.remove_node` cascades to every incident wire and boundary
-entry. This is the one invariant enforced eagerly: leaving a :class:`PortRef` that resolves
-to nothing would corrupt every other reference to the removed node, with no later pass able
-to tell a stale dangling ref from "never wired". Rejecting the removal instead was the
-alternative; cascading was chosen so deleting a node always succeeds and always leaves the
-diagram referentially consistent (though not necessarily *valid* -- the boundary may now
-have a different arity than a caller expected).
+entry, the one invariant enforced eagerly. Removal always succeeds and always leaves the
+diagram referentially consistent, though not necessarily *valid*: the boundary may now have
+a different arity than a caller expected.
+
+Parameter environment. :attr:`Diagram.parameters` maps a symbol name to the concrete value
+a user supplied for it, empty when the input was genuinely symbolic. It records pending
+substitutions: several names with different values coexist, ports still carry their own
+dimension expression, :meth:`Diagram.copy` carries it across, and :meth:`Diagram.substitute`
+consumes exactly the entries its mapping names.
 
 Symbol substitution. :meth:`Diagram.substitute` is node-id-preserving: identical
 :class:`NodeId`\\ s, wire set, boundary lists, and ``_next_id``, with only each port's
-``Dim``, each node's ``PhaseVector``, and the diagram's ``Scalar`` substituted. Rebuilding
-through :meth:`add_node` could not express this -- that allocates fresh ids, and every wire
-and boundary ref addresses a node by id, so a rebuild would detach them all. Like every
-method here it validates nothing and never mutates the receiver.
+``Dim``, each node's ``PhaseVector``, the diagram's ``Scalar`` and the environment changed.
+Rebuilding through :meth:`add_node` could not express this -- that allocates fresh ids, and
+every wire and boundary ref addresses a node by id. Like every method here it validates
+nothing and never mutates the receiver.
 
 Diagram equality. :class:`Diagram` defines no ``__eq__``. Diagram equality -- "do these
 denote the same map, possibly after rewriting" -- is Phase 13's normal form, checked by
-Phase 4's oracle; a naive structural ``__eq__`` would be a weaker notion later code could
-come to rely on by accident. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
+Phase 4's oracle. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
 :class:`~qufzx.diagram.generators.GeneratorType` are value objects and stay value-equal and
-hashable, since they are looked up and de-duplicated by value throughout.
+hashable, being looked up and de-duplicated by value throughout.
 """
 
 from __future__ import annotations
@@ -275,15 +272,25 @@ class Diagram:
     node-removal cascade, and for why this class has no ``__eq__``.
     """
 
-    __slots__ = ("_boundary_inputs", "_boundary_outputs", "_next_id", "_nodes", "_scalar", "_wires")
+    __slots__ = (
+        "_boundary_inputs",
+        "_boundary_outputs",
+        "_next_id",
+        "_nodes",
+        "_parameters",
+        "_scalar",
+        "_wires",
+    )
 
     def __init__(self) -> None:
-        """Build an empty diagram: no nodes, no wires, empty boundaries, scalar 1."""
+        """Build an empty diagram: no nodes, no wires, empty boundaries, scalar 1, no
+        parameters."""
         self._nodes: dict[NodeId, Node] = {}
         self._wires: set[Wire] = set()
         self._boundary_inputs: list[PortRef] = []
         self._boundary_outputs: list[PortRef] = []
         self._scalar: Scalar = Scalar.one()
+        self._parameters: dict[str, int] = {}
         self._next_id: int = 0
 
     # -- read-only views -----------------------------------------------------------
@@ -312,6 +319,14 @@ class Diagram:
     def scalar(self) -> Scalar:
         """The exact scalar accumulator (Scalar is itself immutable)."""
         return self._scalar
+
+    @property
+    def parameters(self) -> MappingProxyType[str, int]:
+        """A read-only view of the parameter environment: symbol name -> supplied value.
+
+        Empty when the input was genuinely symbolic. See the module docstring.
+        """
+        return MappingProxyType(self._parameters)
 
     def __iter__(self) -> Iterator[NodeId]:
         """Iterate over node ids, mirroring dict-like iteration over the node keys."""
@@ -410,6 +425,31 @@ class Diagram:
             raise GraphGrammarError(f"multiply_scalar requires a Scalar, got {factor!r}")
         self._scalar = self._scalar * factor
 
+    # -- parameter environment ----------------------------------------------------------
+
+    def bind_parameter(self, name: str, value: int) -> None:
+        """Record that symbol ``name`` stands for the supplied concrete ``value``.
+
+        Replaces any existing entry for ``name``. Checks only that ``name`` is a bare
+        identifier and ``value`` a non-bool int; that the name is a symbol the diagram
+        carries, in one role, with a value in that role's domain, is
+        :mod:`qufzx.diagram.validate`'s job.
+        """
+        if not isinstance(name, str) or not name.isidentifier():
+            raise GraphGrammarError(f"parameter name must be a bare identifier, got {name!r}")
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise GraphGrammarError(f"parameter value for {name!r} must be an int, got {value!r}")
+        self._parameters[name] = value
+
+    def set_parameters(self, parameters: Mapping[str, int]) -> None:
+        """Replace the whole parameter environment, entry-checking each through
+        :meth:`bind_parameter`."""
+        replacement: dict[str, int] = {}
+        for name, value in parameters.items():
+            self.bind_parameter(name, value)
+            replacement[name] = self._parameters.pop(name)
+        self._parameters = replacement
+
     # -- substitution -----------------------------------------------------------------
 
     def substitute(
@@ -487,6 +527,9 @@ class Diagram:
         clone._boundary_inputs = list(self._boundary_inputs)
         clone._boundary_outputs = list(self._boundary_outputs)
         clone._scalar = self._scalar.substitute(typed_scalar_mapping)
+        clone._parameters = {
+            name: value for name, value in self._parameters.items() if name not in mapping
+        }
         return clone
 
     # -- copying --------------------------------------------------------------------------
@@ -505,5 +548,6 @@ class Diagram:
         clone._boundary_inputs = list(self._boundary_inputs)
         clone._boundary_outputs = list(self._boundary_outputs)
         clone._scalar = self._scalar
+        clone._parameters = dict(self._parameters)
         clone._next_id = self._next_id
         return clone

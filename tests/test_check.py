@@ -268,3 +268,36 @@ class TestCompareInterfaceMismatch:
         result = compare(unfused, fused, {"d": d_value})
         assert result.matched
         assert result.reason != ""
+
+
+class TestParameterEnvironmentFallback:
+    """FULL_PLAN.md Phase 4 iii: an unsupplied symbol falls back to its environment binding;
+    a supplied value overrides it; only a symbol neither source supplies is refused."""
+
+    def _symbolic_ghz(self, parameters: dict[str, int]) -> Diagram:
+        diagram, _a_id, _b_id = build_ghz_with_copy(Dim.symbol("d"))
+        diagram.set_parameters(parameters)
+        return diagram
+
+    def test_an_unsupplied_symbol_falls_back_to_the_environment(self) -> None:
+        instantiated = instantiate(self._symbolic_ghz({"d": 3}), {})
+        dims = {str(port.dim) for node in instantiated.nodes.values() for port in node.outputs}
+        assert dims == {"3"}
+
+    def test_a_supplied_value_overrides_the_environment(self) -> None:
+        instantiated = instantiate(self._symbolic_ghz({"d": 3}), {"d": 5})
+        dims = {str(port.dim) for node in instantiated.nodes.values() for port in node.outputs}
+        assert dims == {"5"}
+
+    def test_a_symbol_neither_source_supplies_is_refused(self) -> None:
+        with pytest.raises(CheckGrammarError):
+            instantiate(self._symbolic_ghz({"e": 3}), {})
+
+    def test_instantiation_consumes_the_entry_it_used(self) -> None:
+        instantiated = instantiate(self._symbolic_ghz({"d": 3}), {})
+        assert dict(instantiated.parameters) == {}
+
+    def test_compare_runs_off_the_environment_alone(self) -> None:
+        diagram = self._symbolic_ghz({"d": 3})
+        result = compare(diagram, diagram, {})
+        assert result.matched, result.reason

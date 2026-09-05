@@ -13,12 +13,17 @@
 
 """Tests for qufzx.algebra.dimension: the Phase 1 dimension algebra."""
 
+from collections.abc import Mapping
+from typing import cast
+
 import pytest
 
 from qufzx.algebra.dimension import (
     Dim,
     DimensionDomainError,
     DimensionGrammarError,
+    DimSubstituteValue,
+    DimSymbolKey,
     UnifyStatus,
 )
 
@@ -304,3 +309,42 @@ class TestCompletionCondition:
         assert Dim.concrete(2).to_int() == 2
         assert d.substitute({"d": 7}).to_int() == 7
         assert power.substitute({"d": 3, "n": 5}).to_int() == 3**5 == 243
+
+
+class TestAbstract:
+    """FULL_PLAN.md Phase 1: abstract is the inverse direction of substitute."""
+
+    def test_abstract_then_substitute_round_trips(self) -> None:
+        for value in (1, 2, 3, 30, 4096):
+            symbol, binding = Dim.concrete(value).abstract()
+            assert not symbol.is_concrete
+            assert dict(binding) == {"d": value}
+            # Mapping's key type is invariant, so the str-keyed binding needs the same
+            # narrowing cast qufzx.diagram.graph applies at its own substitute() call.
+            typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], binding)
+            assert symbol.substitute(typed) == Dim.concrete(value)
+
+    def test_fresh_name_avoids_every_symbol_in_scope(self) -> None:
+        symbol, binding = Dim.concrete(3).abstract(avoid=("d", "d1", "d2"))
+        assert str(symbol) == "d3"
+        assert dict(binding) == {"d3": 3}
+
+    def test_stem_is_configurable(self) -> None:
+        symbol, binding = Dim.concrete(7).abstract(stem="n")
+        assert str(symbol) == "n"
+        assert dict(binding) == {"n": 7}
+
+    def test_abstracting_a_symbolic_dim_is_a_domain_error(self) -> None:
+        with pytest.raises(DimensionDomainError):
+            Dim.symbol("d").abstract()
+        with pytest.raises(DimensionDomainError):
+            (Dim.symbol("d") * Dim.symbol("e")).abstract()
+
+    def test_a_malformed_stem_is_a_grammar_error(self) -> None:
+        with pytest.raises(DimensionGrammarError):
+            Dim.concrete(2).abstract(stem="d*e")
+
+    def test_returned_binding_is_read_only(self) -> None:
+        _symbol, binding = Dim.concrete(2).abstract()
+        with pytest.raises(TypeError):
+            binding["d"] = 3  # type: ignore[index]

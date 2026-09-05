@@ -608,6 +608,62 @@ class TestValidationIsPure:
         assert diagram.scalar == scalar_before
 
 
+class TestParameterEnvironmentChecks:
+    """FULL_PLAN.md Phase 3 iii: every name the environment binds is a symbol the diagram
+    carries, in exactly one role, with a value inside that role's domain."""
+
+    def _node_over(self, dim: Dim, phase: PhaseVector | None = None) -> Diagram:
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[], phase=phase)
+        diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
+        return diagram
+
+    def test_a_binding_the_diagram_carries_is_clean(self) -> None:
+        diagram = self._node_over(Dim.symbol("d"))
+        diagram.set_parameters({"d": 3})
+        report = validate(diagram)
+        assert report.is_valid
+        assert not report.deferred
+
+    def test_a_name_no_symbol_carries_is_deferred_not_a_hard_error(self) -> None:
+        diagram = self._node_over(Dim.symbol("d"))
+        diagram.set_parameters({"e": 3})
+        report = validate(diagram)
+        assert report.is_valid
+        kinds = [issue.kind for issue in report.deferred]
+        assert IssueKind.PARAMETER_UNKNOWN_SYMBOL in kinds
+
+    def test_a_value_outside_the_dimension_role_domain_is_a_hard_error(self) -> None:
+        for value in (0, -4):
+            diagram = self._node_over(Dim.symbol("d"))
+            diagram.set_parameters({"d": value})
+            report = validate(diagram)
+            assert not report.is_valid
+            assert [issue.kind for issue in report.errors] == [
+                IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN
+            ]
+
+    def test_an_exponent_role_admits_zero_but_not_a_negative(self) -> None:
+        dim = Dim.symbol("d") ** Dim.symbol("n")
+        for value, valid in ((0, True), (-1, False)):
+            diagram = self._node_over(dim)
+            diagram.set_parameters({"n": value})
+            assert validate(diagram).is_valid is valid
+
+    def test_a_phase_role_bounds_the_value_nowhere(self) -> None:
+        phase = PhaseVector(Dim.concrete(4), {1: Phase.symbol("theta")})
+        diagram = self._node_over(Dim.concrete(4), phase=phase)
+        diagram.set_parameters({"theta": -7})
+        assert validate(diagram).is_valid
+
+    def test_a_name_in_two_roles_is_reported_once_as_a_role_collision(self) -> None:
+        diagram = self._node_over(Dim.symbol("d") ** Dim.symbol("d"))
+        diagram.set_parameters({"d": 0})
+        kinds = [issue.kind for issue in validate(diagram).errors]
+        assert IssueKind.SYMBOL_ROLE_COLLISION in kinds
+        assert IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN not in kinds
+
+
 class TestABoundLegDimensionIsReportedEvenWhenTheLegSetDefers:
     """A binding and a residual pair are independent findings, not alternatives: a DEFERRED
     ``unify_all`` can also have bound a symbol, and dropping that binding leaves a report

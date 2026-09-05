@@ -12,69 +12,60 @@
 # limitations under the License.
 
 """Diagram well-formedness checks: per-port dimension agreement, boundary consistency,
-port usage, generator policy conformance, and symbol-role collisions.
+port usage, generator policy conformance, symbol-role collisions, and the parameter
+environment.
 
-:func:`validate` never mutates the diagram it is given: a pure read function from a
-:class:`~qufzx.diagram.graph.Diagram` to a :class:`ValidationReport`.
-:mod:`qufzx.diagram.graph`'s mutators are permissive, so this is the one place a diagram's
-cross-cutting invariants are checked together, in one pass, and reported as typed issues
-rather than a bool.
+:func:`validate` is a pure read function from a :class:`~qufzx.diagram.graph.Diagram` to a
+:class:`ValidationReport`. It is the one place a diagram's cross-cutting invariants are
+checked together, in one pass, and reported as typed issues rather than a bool.
 
 Port usage. Every port of every node must be exactly one of: an endpoint of exactly one
-wire, or an entry in the matching boundary list. Over-use is reported by
+wire, or an entry in the matching boundary list. Over-use is
 :class:`IssueKind.PORT_WIRED_TWICE`, :class:`IssueKind.PORT_WIRED_AND_BOUNDARY`, or
 :class:`IssueKind.DUPLICATE_BOUNDARY_ENTRY`; a port claimed by neither is
-:class:`IssueKind.PORT_UNUSED`, a hard error, since a dangling port gives the diagram no
-meaning. The under-use check is skipped for a node already implicated in an
-:class:`IssueKind.UNKNOWN_NODE` or :class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue, so one
-structural mistake is reported once rather than cascading.
+:class:`IssueKind.PORT_UNUSED`, a hard error. The under-use check is skipped for a node
+already implicated in an :class:`IssueKind.UNKNOWN_NODE` or
+:class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue.
 
 Dimension checking is layered the way :meth:`~qufzx.algebra.dimension.Dim.unify` is,
 uniformly for dimensions joined by a wire, shared by one node's legs, or tied to its phase.
 Unequal and non-unifiable is a hard error -- :class:`IssueKind.DIMENSION_MISMATCH`,
 :class:`IssueKind.DIMENSION_POLICY_VIOLATION`, or
-:class:`IssueKind.PHASE_DIMENSION_MISMATCH` respectively. A pair ``unify`` cannot yet
-resolve (``DEFERRED``, e.g. ``Dim("d")`` against ``Dim("d") * Dim("e")``, where ``d`` is a
-proper subterm and so not bound) is recorded as :class:`IssueKind.DIMENSION_DEFERRED`: an
-assumed constraint, neither silently accepted nor reported as an error. Phase 10's real
-unifier drops in at ``Dim.unify``, changing what is deferred here without changing this
-module. A pair that unifies only by *binding* a symbol is the other assumed case,
-:class:`IssueKind.DIMENSION_BOUND`; it too carries ``deferred=True`` and never fails
-validation.
+:class:`IssueKind.PHASE_DIMENSION_MISMATCH`. A pair ``unify`` cannot resolve is
+:class:`IssueKind.DIMENSION_DEFERRED`; a pair holding only under a binding is
+:class:`IssueKind.DIMENSION_BOUND`. Both carry ``deferred=True`` and never fail validation,
+and a resolution can report both at once.
 
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
-:func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint, rather than
-unifying each leg against ``all_ports[0].dim`` and discarding bindings, which would let a
-jointly-unsatisfiable leg set pass and make the verdict leg-order-dependent.
+:func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint;
 ``TIED_TO_LEG_DIM``'s phase/leg check resolves through those same bindings. Each residual
 ``DEFERRED`` pair gets its own issue. Bindings do not propagate from one node's legs to
 another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinned by
 ``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
 
 :class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
-vector, which carries its dimension nowhere (dimension is stored per port, never as one
-global parameter). It keeps ``validate(d).is_valid`` implying every node in ``d`` is
-denotable, which :mod:`qufzx.rewrite.engine`'s step 8 rests on.
+vector, which carries its dimension nowhere. It keeps ``validate(d).is_valid`` implying
+every node in ``d`` is denotable, which :mod:`qufzx.rewrite.engine`'s step 8 rests on.
 
-:class:`IssueKind.SYMBOL_ROLE_COLLISION` (:func:`_check_symbol_role_collisions`) rejects a
-name used in two symbol roles in one diagram. Substitution here is keyed by name, so
-:meth:`~qufzx.algebra.phase.PhaseVector.substitute` cannot tell such a collision from the
-legal case of a phase entry citing its own container dimension's symbol. The roles are
-distinguished by the sympy assumptions each of :mod:`qufzx.algebra`'s four symbol
-constructors stamps -- including a dimension's exponent, which is its own role, not a
-phase's.
+:class:`IssueKind.SYMBOL_ROLE_COLLISION` rejects a name used in two symbol roles in one
+diagram. The roles are read off the sympy assumptions each of :mod:`qufzx.algebra`'s four
+symbol constructors stamps -- including a dimension's exponent, which is its own role.
+
+Parameter environment. Every name :attr:`~qufzx.diagram.graph.Diagram.parameters` binds
+must be a symbol the diagram carries, in exactly one role, at a value inside that role's
+domain. A name no symbol carries is the deferred
+:class:`IssueKind.PARAMETER_UNKNOWN_SYMBOL`; a value outside the role's domain is the hard
+:class:`IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN`. A name already reported as a role
+collision is skipped, there being no single domain to check it against.
 
 Determinism. Every pass whose issue-append order is observable iterates a snapshot sorted
 by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
-:meth:`~qufzx.diagram.graph.PortRef.sort_key`, never a frozenset directly:
-:class:`~qufzx.diagram.graph.Direction` is an ``enum.Enum`` hashed by member name, so a set
-containing one iterates in a ``PYTHONHASHSEED``-dependent order.
-:attr:`ValidationReport.issues`'s order is relied on downstream by
-:mod:`qufzx.rewrite.engine`'s deferred-issue selection.
+:meth:`~qufzx.diagram.graph.PortRef.sort_key`, never a frozenset directly.
+:attr:`ValidationReport.issues`'s order is relied on by :mod:`qufzx.rewrite.engine`'s
+deferred-issue selection.
 
-What this module does not do. It does not contract, evaluate, or attach numeric meaning to
-a diagram (Phase 4's oracle); it does not fix anything it finds wrong (Phase 5); and it
-does not yet know about bang boxes (Phase 7).
+Out of scope: contraction and numeric meaning (Phase 4's oracle), repair, and bang boxes
+(Phase 7).
 """
 
 from __future__ import annotations
@@ -83,6 +74,7 @@ import enum
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -129,6 +121,8 @@ class IssueKind(enum.Enum):
     NODE_DIMENSION_UNDETERMINED = "node_dimension_undetermined"
     SYMBOL_ROLE_COLLISION = "symbol_role_collision"
     DIMENSION_RESOLUTION_EXHAUSTED = "dimension_resolution_exhausted"
+    PARAMETER_UNKNOWN_SYMBOL = "parameter_unknown_symbol"
+    PARAMETER_VALUE_OUT_OF_DOMAIN = "parameter_value_out_of_domain"
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,17 +380,14 @@ def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
     return None
 
 
-def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    # A same-named symbol of two different roles is two distinct sympy Symbol objects, so a
-    # by-name substitution (every substitute() here is) silently rewrites both. All six
-    # unordered cross-role pairs over {dimension, exponent, phase, scalar} are genuine
-    # collisions, since the four roles accept different substitution domains: positive
-    # integers, nonnegative integers, reals mod one turn, and arbitrary complex.
-    #
-    # The same role used twice under one name is legitimate reuse, not a collision (two
-    # ports sharing a dimension symbol, or a root-of-unity phase entry over its own node's
-    # dimension symbol). The setdefault below never records a second entry for a role
-    # already seen under that name, so that case never becomes a pair for len(by_role) > 1.
+def _symbol_roles(diagram: Diagram) -> dict[str, dict[str, sp.Symbol]]:
+    """Every symbol name the diagram carries, mapped to the roles it appears in.
+
+    The same role twice under one name records one entry, so a name in legitimate reuse
+    (two ports sharing a dimension symbol, a root-of-unity entry over its own node's
+    dimension symbol) never reaches ``len(by_role) > 1``. Shared by
+    :func:`_check_symbol_role_collisions` and :func:`_check_parameter_environment`.
+    """
     roles: dict[str, dict[str, sp.Symbol]] = {}
 
     def _note(expr: sp.Expr) -> None:
@@ -414,8 +405,59 @@ def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue
             for entry in node.phase.entries().values():
                 _note(entry.to_sympy_turns())
     _note(diagram.scalar.to_sympy())
+    return roles
 
-    for name, by_role in sorted(roles.items()):
+
+_ROLE_MINIMUM: Mapping[str, int | None] = MappingProxyType(
+    {"dimension": 1, "exponent": 0, "phase": None, "scalar": None}
+)
+"""The lower bound each symbol role imposes on an integer parameter value, ``None`` for a
+role that bounds it nowhere."""
+
+
+def _check_parameter_environment(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    # A same-named symbol of two roles is already SYMBOL_ROLE_COLLISION, and there is no one
+    # domain to check the value against, so such a name is skipped here rather than reported
+    # twice under two different kinds.
+    roles = _symbol_roles(diagram)
+    for name, value in sorted(diagram.parameters.items()):
+        by_role = roles.get(name)
+        if not by_role:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.PARAMETER_UNKNOWN_SYMBOL,
+                    message=(
+                        f"parameter environment binds {name!r} := {value}, which no symbol "
+                        "in this diagram carries; the substitution it records is pending "
+                        "against nothing"
+                    ),
+                    deferred=True,
+                )
+            )
+            continue
+        if len(by_role) > 1:
+            continue
+        (role,) = by_role
+        minimum = _ROLE_MINIMUM[role]
+        if minimum is not None and value < minimum:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN,
+                    message=(
+                        f"parameter environment binds {name!r} := {value}, outside the "
+                        f"domain of its {role} role (>= {minimum})"
+                    ),
+                )
+            )
+
+
+def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    # A same-named symbol of two different roles is two distinct sympy Symbol objects, so a
+    # by-name substitution (every substitute() here is) silently rewrites both. All six
+    # unordered cross-role pairs over {dimension, exponent, phase, scalar} are genuine
+    # collisions, since the four roles accept different substitution domains: positive
+    # integers, nonnegative integers, reals mod one turn, and arbitrary complex.
+    for name, by_role in sorted(_symbol_roles(diagram).items()):
         if len(by_role) > 1:
             issues.append(
                 ValidationIssue(
@@ -627,6 +669,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     for node in diagram.nodes.values():
         _check_generator_policy(node, issues)
     _check_symbol_role_collisions(diagram, issues)
+    _check_parameter_environment(diagram, issues)
     return ValidationReport(tuple(issues))
 
 

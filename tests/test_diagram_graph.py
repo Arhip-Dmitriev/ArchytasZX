@@ -289,3 +289,74 @@ class TestSubstitute:
         assert b_phase is not None
         assert not b_phase.is_concrete
         assert b_phase.dim == Dim.concrete(3)
+
+
+class TestParameterEnvironment:
+    """FULL_PLAN.md Phase 3: a record of pending substitutions, surviving copy and
+    consumed by substitute."""
+
+    def _one_node(self, dim: Dim) -> Diagram:
+        diagram = Diagram()
+        node_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[])
+        diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
+        return diagram
+
+    def test_a_fresh_diagram_binds_nothing(self) -> None:
+        assert dict(Diagram().parameters) == {}
+
+    def test_several_names_with_different_values_coexist(self) -> None:
+        diagram = Diagram()
+        diagram.set_parameters({"d": 3, "e": 5, "n": 30})
+        assert dict(diagram.parameters) == {"d": 3, "e": 5, "n": 30}
+
+    def test_the_view_is_read_only(self) -> None:
+        diagram = Diagram()
+        diagram.bind_parameter("d", 3)
+        with pytest.raises(TypeError):
+            diagram.parameters["d"] = 4  # type: ignore[index]
+
+    def test_bind_parameter_replaces_an_existing_entry(self) -> None:
+        diagram = Diagram()
+        diagram.bind_parameter("d", 3)
+        diagram.bind_parameter("d", 4)
+        assert dict(diagram.parameters) == {"d": 4}
+
+    def test_a_malformed_name_or_value_is_a_grammar_error(self) -> None:
+        diagram = Diagram()
+        with pytest.raises(GraphGrammarError):
+            diagram.bind_parameter("d*e", 3)
+        with pytest.raises(GraphGrammarError):
+            diagram.bind_parameter("d", True)
+        with pytest.raises(GraphGrammarError):
+            diagram.bind_parameter("d", 3.0)  # type: ignore[arg-type]
+
+    def test_set_parameters_leaves_the_environment_untouched_on_a_rejected_entry(
+        self,
+    ) -> None:
+        diagram = Diagram()
+        diagram.bind_parameter("d", 3)
+        with pytest.raises(GraphGrammarError):
+            diagram.set_parameters({"e": 5, "bad name": 1})
+        assert dict(diagram.parameters) == {"d": 3}
+
+    def test_the_environment_survives_deep_copy_independently(self) -> None:
+        diagram = self._one_node(Dim.symbol("d"))
+        diagram.set_parameters({"d": 3})
+        clone = diagram.copy()
+        assert dict(clone.parameters) == {"d": 3}
+        clone.bind_parameter("d", 9)
+        assert dict(diagram.parameters) == {"d": 3}
+
+    def test_the_environment_survives_mutation(self) -> None:
+        diagram = self._one_node(Dim.symbol("d"))
+        diagram.set_parameters({"d": 3})
+        diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[Dim.symbol("d")])
+        diagram.multiply_scalar(Scalar.rational(2))
+        assert dict(diagram.parameters) == {"d": 3}
+
+    def test_substitute_consumes_exactly_the_entries_its_mapping_names(self) -> None:
+        diagram = self._one_node(Dim.symbol("d"))
+        diagram.set_parameters({"d": 3, "e": 5})
+        substituted = diagram.substitute({"d": 3})
+        assert dict(substituted.parameters) == {"e": 5}
+        assert dict(diagram.parameters) == {"d": 3, "e": 5}

@@ -35,8 +35,9 @@ not verify.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -295,6 +296,29 @@ class Dim:
 
         new_expr = self._expr.subs(subs_dict)
         return Dim._from_expr(new_expr)
+
+    def abstract(
+        self, *, avoid: Iterable[str] = (), stem: str = "d"
+    ) -> tuple[Dim, Mapping[str, int]]:
+        """Return a fresh symbol standing for this concrete dimension, and its binding.
+
+        The inverse direction of :meth:`substitute`: ``symbol.substitute(binding)`` returns
+        this Dim again. The name is ``stem``, or ``stem`` suffixed with the lowest positive
+        integer not in ``avoid``. Raises DimensionDomainError on a symbolic Dim.
+        """
+        if not self.is_concrete:
+            raise DimensionDomainError(
+                f"cannot abstract symbolic dimension {self}; abstract() takes a concrete "
+                f"value, free symbols: {sorted(self.free_symbols)}"
+            )
+        _check_symbol_name(stem)
+        taken = set(avoid)
+        name = stem
+        suffix = 0
+        while name in taken:
+            suffix += 1
+            name = f"{stem}{suffix}"
+        return Dim.symbol(name), MappingProxyType({name: self.to_int()})
 
     def __mul__(self, other: Dim | int) -> Dim:
         """Multiply two dimensions, returning a normalized product."""
