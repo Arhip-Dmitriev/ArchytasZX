@@ -72,7 +72,7 @@ i. semantics/denote.py
 - returns the denotation of a Z spider m to n at a concrete d as a numpy tensor, and likewise for X, honoring any concrete or instantiated phase
 - the Z spider with zero phase gives sum_{k=0}^{d-1} |k>^{(x)n} <k|^{(x)m}
 
-ii. semantics/contract_numeric.py [testing]
+ii. semantics/contract_numeric.py
 - contracts a fully concrete diagram (all dimensions concrete, no bang box) into a numpy tensor by contracting along wires, and carries the exact scalar accumulator through
 iii. semantics/check.py
 - given two diagrams claimed equal, instantiates all symbols to supplied concrete values, contracts both, and compares exactly including the overall scalar, up to floating-point tolerance
@@ -82,7 +82,7 @@ iii. semantics/check.py
 - test and debug: confirm the Z spider 0 to 2 at d equal to 2 gives the vector for |00> + |11>; confirm A-into-B contracts to the GHZ vector for d equal to 2 and 3; confirm that a deliberately scalar-shifted copy fails exact comparison but passes in up-to-global-phase mode
 - done when: the oracle can score any concrete diagram and compare any two diagrams, exactly by default
 
-Phase 5: Rewrite core and spider fusion [DONE]
+Phase 5: Rewrite core and spider fusion [UNDER FINAL DEBUG]
 i. rewrite/rule.py
 - a Rule bundles a left-hand pattern, a right-hand builder, side conditions, quantifiers over n and over dimensions, and the exact scalar it introduces
 ii. rewrite/match.py

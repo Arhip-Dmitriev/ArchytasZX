@@ -38,6 +38,7 @@ from qufzx.diagram.validate import validate
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rules_library import SPIDER_FUSION
+from qufzx.semantics.certificate import certify, compare_structure, replay
 
 
 def _build_diagram() -> Diagram:
@@ -87,6 +88,24 @@ def main() -> None:
         f"post_deferred={post_report.deferred!r}",
     ]
     print("\n".join(lines))
+
+    certificate = certify(diagram, [result])
+    replayed = replay(certificate)
+    certificate_lines = [
+        f"replay.reproduced={replayed.reproduced!r}",
+        f"replay.reason={replayed.reason!r}",
+    ]
+    for step_replay in replayed.steps:
+        step_tuple = (
+            step_replay.index,
+            step_replay.rule_name,
+            step_replay.reproduced,
+            step_replay.reason,
+        )
+        certificate_lines.append(f"step_replay={step_tuple!r}")
+    final_comparison = compare_structure(replayed.diagram, certificate.final)
+    certificate_lines.append(f"final_comparison.reason={final_comparison.reason!r}")
+    print("\n".join(certificate_lines))
 
 
 if __name__ == "__main__":
