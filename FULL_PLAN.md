@@ -100,7 +100,7 @@ v. repl/parser.py, Dirac slice ONLY
 - test and debug: fuse A-into-B into a single spider; oracle-check that the pre and post diagrams are exactly equal at several concrete d; validate that the post diagram is well formed
 - done when: the full path Dirac to graph to fuse to graph runs and the oracle confirms exact equality
 
-Phase 6: Proof certificates [CURRENT]
+Phase 6: Proof certificates [UNDER PRE-FINAL DEBUG]
 i. semantics/certificate.py
 - every rewrite step emits a machine-checkable record: the rule fired, the match location, the side conditions checked, the dimension constraints assumed, and the scalar introduced
 - a full derivation is a sequence of such records that can be independently replayed and verified against the oracle
@@ -109,7 +109,7 @@ i. semantics/certificate.py
 
 PART 2: FREE n AND FREE d ---------
 
-Phase 7: Bang boxes, free n, with nesting and multiple indices
+Phase 7: Bang boxes, free n, with nesting and multiple indices [CURRENT]
 i. diagram/bangbox.py
 - a bang box records a scope over a subgraph or set of ports, a multiplicity symbol, and its overlap and boundary edges
 - supports instantiate (a multiplicity to a concrete k, expanding to k copies), copy, kill (multiplicity 0), and merge

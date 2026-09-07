@@ -72,6 +72,7 @@ from qufzx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
     FusionMatch,
     FusionPattern,
+    innermost_node_scope_box,
     reattach_phase,
     resolve_fusion_match,
 )
@@ -270,6 +271,17 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         port_mapping[old_ref] = PortRef(new_node_id, Direction.INPUT, new_index)
     for new_index, (old_ref, _) in enumerate(merged_outputs):
         port_mapping[old_ref] = PortRef(new_node_id, Direction.OUTPUT, new_index)
+
+    # Bang box "left intact" (Phase 7): condition 6 already required both matched nodes
+    # to share one innermost node-scope box, or neither to have one. If they do, that
+    # box's scope drops the two consumed nodes and gains the merged one, in place --
+    # multiplicity, and every other field, untouched, since this fusion is a single
+    # symbolic rewrite standing for one fusion per future instantiated copy.
+    enclosing_box = innermost_node_scope_box(diagram, match.a_id)
+    if enclosing_box is not None:
+        box = diagram.bang_boxes[enclosing_box]
+        new_scope = (box.node_scope - {match.a_id, match.b_id}) | {new_node_id}
+        diagram.set_bang_box_node_scope(enclosing_box, frozenset(new_scope))
 
     return BuildResult(
         diagram=diagram,

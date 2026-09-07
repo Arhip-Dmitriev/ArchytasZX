@@ -1367,7 +1367,7 @@ class TestConditionNumberingMatchesDeclaredOrder:
     """Numbered "condition N" references must agree with FUSION_SIDE_CONDITIONS.
 
     The side conditions are addressed by name (``dimension_agreement``) and by position
-    ("condition 6"); only the name is checkable by the compiler. Two checks of different
+    ("condition 7"); only the name is checkable by the compiler. Two checks of different
     strengths: the numbered list in :mod:`qufzx.rewrite.match`'s module docstring is checked
     exactly, and prose cross-references are checked by adjacency.
     """

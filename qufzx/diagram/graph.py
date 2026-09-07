@@ -63,7 +63,7 @@ import enum
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import NewType, cast
+from typing import TYPE_CHECKING, NewType, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -71,6 +71,10 @@ from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import Phase, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
 from qufzx.algebra.scalar import Scalar, ScalarSubstituteValue, ScalarSymbolKey
 from qufzx.diagram.generators import GeneratorType
+
+if TYPE_CHECKING:
+    # Typing only, to break the import cycle: bangbox.py imports Diagram from here.
+    from qufzx.diagram.bangbox import BangBox
 
 
 class GraphError(Exception):
@@ -106,6 +110,10 @@ NodeId = NewType("NodeId", int)
 A distinct type over bare ``int`` so that a node id is never accidentally used where a
 port index or a leg count is expected, and vice versa.
 """
+
+BangBoxId = NewType("BangBoxId", int)
+"""An opaque bang-box identifier, allocated by :meth:`Diagram.add_bang_box` (Phase 7),
+from its own counter -- never compared against a :class:`NodeId`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,8 +281,10 @@ class Diagram:
     """
 
     __slots__ = (
+        "_bang_boxes",
         "_boundary_inputs",
         "_boundary_outputs",
+        "_next_bang_box_id",
         "_next_id",
         "_nodes",
         "_parameters",
@@ -284,7 +294,7 @@ class Diagram:
 
     def __init__(self) -> None:
         """Build an empty diagram: no nodes, no wires, empty boundaries, scalar 1, no
-        parameters."""
+        parameters, no bang boxes."""
         self._nodes: dict[NodeId, Node] = {}
         self._wires: set[Wire] = set()
         self._boundary_inputs: list[PortRef] = []
@@ -292,6 +302,8 @@ class Diagram:
         self._scalar: Scalar = Scalar.one()
         self._parameters: dict[str, int] = {}
         self._next_id: int = 0
+        self._bang_boxes: dict[BangBoxId, BangBox] = {}
+        self._next_bang_box_id: int = 0
 
     # -- read-only views -----------------------------------------------------------
 
@@ -327,6 +339,12 @@ class Diagram:
         Empty when the input was genuinely symbolic. See the module docstring.
         """
         return MappingProxyType(self._parameters)
+
+    @property
+    def bang_boxes(self) -> MappingProxyType[BangBoxId, BangBox]:
+        """A read-only view of every bang box, keyed by id (Phase 7). ``BangBox`` values
+        are themselves immutable."""
+        return MappingProxyType(self._bang_boxes)
 
     def __iter__(self) -> Iterator[NodeId]:
         """Iterate over node ids, mirroring dict-like iteration over the node keys."""
@@ -381,6 +399,69 @@ class Diagram:
         if node_id not in self._nodes:
             raise GraphGrammarError(f"no such node: {node_id!r}")
         self._nodes[node_id] = self._nodes[node_id].with_phase(phase)
+
+    # -- bang box mutation (Phase 7) --------------------------------------------------
+
+    def add_bang_box(
+        self,
+        multiplicity: object,
+        *,
+        node_scope: frozenset[NodeId] = frozenset(),
+        port_scope: frozenset[PortRef] = frozenset(),
+        parent: BangBoxId | None = None,
+    ) -> BangBoxId:
+        """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
+
+        Mirrors :meth:`add_node`: no conformance checks, that being
+        :mod:`qufzx.diagram.validate`'s job. ``multiplicity`` is typed ``object`` to
+        avoid a runtime import cycle (see the ``TYPE_CHECKING`` import above); it is
+        always a :class:`~qufzx.diagram.bangbox.Mult`.
+        """
+        from qufzx.diagram.bangbox import BangBox, Mult  # local: see the class docstring
+
+        if not isinstance(multiplicity, Mult):
+            raise GraphGrammarError(
+                f"add_bang_box multiplicity must be a Mult, got {multiplicity!r}"
+            )
+        box_id = BangBoxId(self._next_bang_box_id)
+        self._next_bang_box_id += 1
+        self._bang_boxes[box_id] = BangBox(
+            id=box_id,
+            multiplicity=multiplicity,
+            node_scope=frozenset(node_scope),
+            port_scope=frozenset(port_scope),
+            parent=parent,
+        )
+        return box_id
+
+    def remove_bang_box(self, box_id: BangBoxId) -> None:
+        """Remove a bang box. Raises GraphGrammarError if ``box_id`` is not present.
+
+        Unlike :meth:`remove_node`, this does not cascade to child boxes -- see the
+        module docstring's validation-ownership rule; a caller removing a family of
+        boxes (Phase 7's ``kill``) does so explicitly, one box at a time.
+        """
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        del self._bang_boxes[box_id]
+
+    def set_bang_box_node_scope(self, box_id: BangBoxId, node_scope: frozenset[NodeId]) -> None:
+        """Replace a bang box's ``node_scope`` field, leaving every other field unchanged.
+
+        Mirrors :meth:`set_phase`. Raises GraphGrammarError if ``box_id`` is absent.
+        """
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        self._bang_boxes[box_id] = self._bang_boxes[box_id].with_node_scope(frozenset(node_scope))
+
+    def set_bang_box_port_scope(self, box_id: BangBoxId, port_scope: frozenset[PortRef]) -> None:
+        """Replace a bang box's ``port_scope`` field, leaving every other field unchanged.
+
+        Mirrors :meth:`set_phase`. Raises GraphGrammarError if ``box_id`` is absent.
+        """
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        self._bang_boxes[box_id] = self._bang_boxes[box_id].with_port_scope(frozenset(port_scope))
 
     # -- wire mutation ----------------------------------------------------------------
 
@@ -523,6 +604,10 @@ class Diagram:
         clone._parameters = {
             name: value for name, value in self._parameters.items() if name not in mapping
         }
+        # Bang boxes (Phase 7) carry a Mult, never a Dim/Phase/Scalar, so this mapping
+        # never touches them; they cross to the clone unchanged, same as the wire set.
+        clone._bang_boxes = dict(self._bang_boxes)
+        clone._next_bang_box_id = self._next_bang_box_id
         return clone
 
     # -- copying --------------------------------------------------------------------------
@@ -543,4 +628,6 @@ class Diagram:
         clone._scalar = self._scalar
         clone._parameters = dict(self._parameters)
         clone._next_id = self._next_id
+        clone._bang_boxes = dict(self._bang_boxes)
+        clone._next_bang_box_id = self._next_bang_box_id
         return clone

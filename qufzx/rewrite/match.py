@@ -29,12 +29,14 @@ Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
    OUTPUT-to-INPUT; Z permits any direction combination.
 5. ``consumed_ports_singly_claimed`` -- neither consumed port is claimed by a second wire
    or listed on a boundary.
-6. ``dimension_agreement`` -- the connected legs' :class:`~qufzx.algebra.dimension.Dim`
+6. ``bang_box_scope_agreement`` (Phase 7) -- both nodes' innermost enclosing node-scope
+   bang box, if any, must be identical: both unboxed, or the same box.
+7. ``dimension_agreement`` -- the connected legs' :class:`~qufzx.algebra.dimension.Dim`
    unify. A ``FAILURE`` is a non-match; a ``DEFERRED`` or binding-only ``SUCCESS`` is
    recorded as a dimension constraint. Every surviving leg of both nodes is then unified
    against the running ``shared_dim`` in turn, each refinement carrying forward.
-7. ``phase_dimension_agreement`` -- every phase vector present must unify with
-   ``shared_dim``; unlike condition 6 a ``DEFERRED`` is rejected. Conditions 6 and 7 form
+8. ``phase_dimension_agreement`` -- every phase vector present must unify with
+   ``shared_dim``; unlike condition 7 a ``DEFERRED`` is rejected. Conditions 7 and 8 form
    one bounded fixpoint; see :func:`resolve_fusion_match`.
 
 Conditions 1 and 3 are structural facts recorded for the certificate, not decisions. The
@@ -55,13 +57,10 @@ Match-implies-applicable. Every match returned here applies under
 relative-postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
 
 Dimension constraints. ``dimension_constraints`` records every dimension equality accepted
-without a syntactic identity -- both a ``DEFERRED`` unify and a ``SUCCESS`` holding only
-under a binding -- as :class:`~qufzx.rewrite.rule.DimensionConstraint` keyed by
-:class:`~qufzx.rewrite.rule.ConstraintSource`, at most one entry per source.
-
-Non-concrete bindings. :meth:`Dim.unify` can bind a symbol to another symbolic ``Dim``
-(``d := e``), while :meth:`Dim.substitute` and ``PhaseVector.substitute`` take only
-concrete replacements, so such a binding is carried as an assumption, not resolved through.
+without a syntactic identity -- a ``DEFERRED`` unify or a binding-only ``SUCCESS`` -- as
+:class:`~qufzx.rewrite.rule.DimensionConstraint`, at most one entry per
+:class:`~qufzx.rewrite.rule.ConstraintSource`. A binding to another symbolic ``Dim`` (not
+a concrete value) is carried as an assumption rather than resolved through.
 
 Determinism. :func:`find_matches` sorts its result by node ids, then by the consumed wire's
 (direction, index) on each side. Every set iteration whose order could reach a returned
@@ -79,7 +78,7 @@ from typing import cast
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import PhaseDomainError, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
 from qufzx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
+from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSource,
@@ -114,6 +113,11 @@ FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "either boundary list",
     ),
     SideCondition(
+        "bang_box_scope_agreement",
+        "both matched nodes' innermost enclosing node-scope bang box, if any, are "
+        "identical (both unboxed, or the same box) -- Phase 7",
+    ),
+    SideCondition(
         "dimension_agreement",
         "the connecting pair and every surviving leg of both nodes unify, in a bounded "
         "fixpoint, against the shared dimension -- equal outright, or unify defers or "
@@ -124,7 +128,7 @@ FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "every phase vector present unifies with the resolved shared leg dimension -- equal "
         "outright, or unify binds a symbol to a concrete value (never merely defers, and "
         "never binds to another still-symbolic Dim -- see the module docstring's "
-        "'Non-concrete bindings' note)",
+        "'Dimension constraints' note)",
     ),
 )
 """The declared side-condition specs for :class:`FusionPattern`, in the module docstring's
@@ -144,7 +148,7 @@ class FusionMatch:
     ``d``/``d*e`` pair fuses onto whichever the lower-id node carried.
 
     ``bindings`` is the whole-candidate accumulator of every concrete symbol binding
-    conditions 6 and 7 produced. The builder substitutes it into a present phase's entries,
+    conditions 7 and 8 produced. The builder substitutes it into a present phase's entries,
     via :func:`reattach_phase`, before reattaching them to ``shared_dim``.
     """
 
@@ -230,7 +234,7 @@ class _FailureReason(enum.Enum):
 
     PHASE_DEFERRED = "phase_deferred"
     """A phase's own dimension unify ``DEFERRED`` against the shared leg dimension --
-    tolerated for a leg or the connecting pair, not for a phase (condition 7,
+    tolerated for a leg or the connecting pair, not for a phase (condition 8,
     ``phase_dimension_agreement``)."""
 
     PHASE_NON_CONCRETE_BINDING = "phase_non_concrete_binding"
@@ -428,7 +432,7 @@ def _unify_phase_dims(
 
     Same accumulator discipline as :func:`_unify_surviving_legs`. Unlike a leg, a
     ``DEFERRED`` result, or one whose binding is not concrete, is never accepted (module
-    docstring, condition 7). Returns a :class:`_ResolutionFailure` on any of those or on a
+    docstring, condition 8). Returns a :class:`_ResolutionFailure` on any of those or on a
     contradictory rebind; its ``equal_to`` is the ``shared_dim`` actually checked against the
     failing phase. On success returns the refined ``shared_dim``, having written each phase's
     binding into ``record`` under its
@@ -583,7 +587,7 @@ def _dimension_agreement_outcome(
     bindings: Mapping[str, Dim],
     record: _ConstraintRecord,
 ) -> SideConditionOutcome:
-    """Build condition 6's (``dimension_agreement``) passing outcome from a leg-sweep state.
+    """Build condition 7's (``dimension_agreement``) passing outcome from a leg-sweep state.
 
     Shared by :func:`resolve_fusion_match`'s stabilised-success and phase-failure paths, both
     reporting from the leg sweep's own ``shared_dim``/``bindings``, never from a state a
@@ -712,7 +716,7 @@ def _leg_failure_detail(side: str, failure: _ResolutionFailure) -> str:
 def _phase_failure_detail(failure: _ResolutionFailure) -> str:
     """Render an in-loop phase-dimension :class:`_ResolutionFailure`, by cause.
 
-    Four causes (module docstring, condition 7): a ``FAILURE``, a ``DEFERRED`` unify, a
+    Four causes (module docstring, condition 8): a ``FAILURE``, a ``DEFERRED`` unify, a
     binding to a non-concrete ``Dim``, and a contradictory rebind. The post-loop
     ``reattach_phase`` failure is rendered at its own call site in
     :func:`resolve_fusion_match`.
@@ -721,7 +725,7 @@ def _phase_failure_detail(failure: _ResolutionFailure) -> str:
         return (
             f"a present phase dimension ({failure.assumed}) unifies only as DEFERRED "
             f"against the resolved shared leg dimension {failure.equal_to} -- a DEFERRED "
-            "unify is not accepted for a phase, see the module docstring, condition 7"
+            "unify is not accepted for a phase, see the module docstring, condition 8"
         )
     if failure.reason is _FailureReason.PHASE_NON_CONCRETE_BINDING:
         return (
@@ -762,6 +766,23 @@ def _consumed_port_claim_conflict(
     if on_boundary:
         parts.append("listed on a boundary list")
     return f"{ref} is " + " and ".join(parts)
+
+
+def innermost_node_scope_box(diagram: Diagram, node_id: NodeId) -> BangBoxId | None:
+    """The most specific node-scope bang box containing ``node_id``, or ``None`` (Phase 7).
+
+    "Most specific" means smallest ``node_scope``, tie-broken by id -- Phase 7 never
+    needs node-scope-inside-node-scope nesting, so this is a simple, deterministic
+    fallback rather than a real depth computation.
+    """
+    candidates = [
+        box
+        for box in diagram.bang_boxes.values()
+        if box.is_node_scope and node_id in box.node_scope
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda b: (len(b.node_scope), b.id)).id
 
 
 def resolve_fusion_match(
@@ -874,6 +895,7 @@ def resolve_fusion_match(
             (
                 "consumed_wire_direction_permitted_for_color",
                 "consumed_ports_singly_claimed",
+                "bang_box_scope_agreement",
                 "dimension_agreement",
                 "phase_dimension_agreement",
             ),
@@ -910,7 +932,12 @@ def resolve_fusion_match(
 
     if not direction_ok:
         return _failed(
-            ("consumed_ports_singly_claimed", "dimension_agreement", "phase_dimension_agreement"),
+            (
+                "consumed_ports_singly_claimed",
+                "bang_box_scope_agreement",
+                "dimension_agreement",
+                "phase_dimension_agreement",
+            ),
             "not evaluated: consumed_wire_direction_permitted_for_color failed first",
         )
 
@@ -927,8 +954,34 @@ def resolve_fusion_match(
     outcomes.append(SideConditionOutcome("consumed_ports_singly_claimed", claims_ok, claim_detail))
     if not claims_ok:
         return _failed(
-            ("dimension_agreement", "phase_dimension_agreement"),
+            ("bang_box_scope_agreement", "dimension_agreement", "phase_dimension_agreement"),
             "not evaluated: consumed_ports_singly_claimed failed first",
+        )
+
+    # Condition 6 (Phase 7). Purely structural -- decidable from diagram.bang_boxes alone,
+    # no dimension-unification work -- so it runs before the fixpoint below for the same
+    # reason condition 5 runs before it: a candidate failing it has no legal fusion
+    # regardless of what dimension unification would find.
+    box_a = innermost_node_scope_box(diagram, a_id)
+    box_b = innermost_node_scope_box(diagram, b_id)
+    scope_ok = box_a == box_b
+    if scope_ok:
+        scope_detail = (
+            f"both nodes are inside bang box {box_a!r}"
+            if box_a is not None
+            else "neither node is inside a bang box"
+        )
+    else:
+        scope_detail = (
+            f"{a_id!r} is inside bang box {box_a!r} but {b_id!r} is inside {box_b!r} -- "
+            "fusion cannot span two different bang-box scopes (or a scope boundary), "
+            "since that would fix what should be a per-copy rewrite to a one-off merge"
+        )
+    outcomes.append(SideConditionOutcome("bang_box_scope_agreement", scope_ok, scope_detail))
+    if not scope_ok:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            "not evaluated: bang_box_scope_agreement failed first",
         )
 
     legs_a = node_a.legs(ref_a.direction)
@@ -1021,7 +1074,7 @@ def resolve_fusion_match(
         if shared_dim == pass_start_dim and bindings == pass_start_bindings:
             break
     else:
-        # The fixpoint decides conditions 6 and 7 jointly, so when it does not terminate
+        # The fixpoint decides conditions 7 and 8 jointly, so when it does not terminate
         # neither was decided, and both report the same budget-exhaustion detail.
         fixpoint_budget_exhausted = True
 

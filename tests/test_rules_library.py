@@ -338,6 +338,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
             "parallel_wires_become_self_loops",
             "consumed_wire_direction_permitted_for_color",
             "consumed_ports_singly_claimed",
+            "bang_box_scope_agreement",
             "dimension_agreement",
             "phase_dimension_agreement",
         )

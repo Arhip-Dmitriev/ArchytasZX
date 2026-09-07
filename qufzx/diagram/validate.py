@@ -71,6 +71,7 @@ Out of scope: contraction and numeric meaning (Phase 4's oracle), repair, and ba
 from __future__ import annotations
 
 import enum
+import itertools
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -80,8 +81,9 @@ from typing import cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import DimSubstituteValue, DimSymbolKey, unify_all
+from qufzx.diagram.bangbox import BangBox
 from qufzx.diagram.generators import DimensionPolicy, PhaseSchema
-from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
+from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 
 
 class ValidateError(Exception):
@@ -123,6 +125,14 @@ class IssueKind(enum.Enum):
     DIMENSION_RESOLUTION_EXHAUSTED = "dimension_resolution_exhausted"
     PARAMETER_UNKNOWN_SYMBOL = "parameter_unknown_symbol"
     PARAMETER_VALUE_OUT_OF_DOMAIN = "parameter_value_out_of_domain"
+    BANGBOX_SCOPE_UNKNOWN_NODE = "bangbox_scope_unknown_node"
+    BANGBOX_PORT_UNKNOWN = "bangbox_port_unknown"
+    BANGBOX_PORT_NOT_BOUNDARY = "bangbox_port_not_boundary"
+    BANGBOX_SCOPE_OVERLAP = "bangbox_scope_overlap"
+    BANGBOX_UNKNOWN_PARENT = "bangbox_unknown_parent"
+    BANGBOX_PARENT_CYCLE = "bangbox_parent_cycle"
+    BANGBOX_NESTING_MISMATCH = "bangbox_nesting_mismatch"
+    BANGBOX_COUNT_SYMBOL_COLLISION = "bangbox_count_symbol_collision"
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +151,7 @@ class ValidationIssue:
     node_id: NodeId | None = None
     port_ref: PortRef | None = None
     wire: Wire | None = None
+    bang_box_id: BangBoxId | None = None
     deferred: bool = False
 
 
@@ -355,6 +366,9 @@ def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
       and not integer``; a dimension or exponent symbol is ``real`` by closure.
     * :meth:`~qufzx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature
       ``complex and not real``; the other three are ``complex`` by closure.
+    * :meth:`~qufzx.diagram.bangbox.Mult.symbol` (Phase 7) -- "multiplicity". Same real
+      assumptions as an exponent, discriminated only by an inert ``multiplicity`` marker
+      sympy's own closure never sets, so it survives into ``assumptions0`` untouched.
 
     Each branch tests only the keys its constructor sets, never a derived one, so a fifth
     constructor setting a different pair falls through to ``None``, unclassified rather than
@@ -365,8 +379,11 @@ def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
     is_positive = bool(assumptions.get("positive"))
     is_real = bool(assumptions.get("real"))
     is_complex = bool(assumptions.get("complex"))
+    is_multiplicity = bool(assumptions.get("multiplicity"))
     if is_integer and is_positive:
         return "dimension"
+    if is_integer and is_multiplicity:
+        return "multiplicity"
     if is_integer and not is_positive:
         return "exponent"
     if is_real and not is_integer:
@@ -401,11 +418,13 @@ def _symbol_roles(diagram: Diagram) -> dict[str, dict[str, sp.Symbol]]:
             for entry in node.phase.entries().values():
                 _note(entry.to_sympy_turns())
     _note(diagram.scalar.to_sympy())
+    for box in diagram.bang_boxes.values():
+        _note(box.multiplicity.to_sympy())
     return roles
 
 
 _ROLE_MINIMUM: Mapping[str, int | None] = MappingProxyType(
-    {"dimension": 1, "exponent": 0, "phase": None, "scalar": None}
+    {"dimension": 1, "exponent": 0, "phase": None, "scalar": None, "multiplicity": 0}
 )
 """The lower bound each symbol role imposes on an integer parameter value, ``None`` for a
 role that bounds it nowhere."""
@@ -646,11 +665,240 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                         )
                     )
                 # A binding this phase check produces is deliberately not fed back into
-                # leg_unify/resolved_leg_dim. Unlike match.py's condition 7, this function
+                # leg_unify/resolved_leg_dim. Unlike match.py's condition 8, this function
                 # decides no applicability: the legs' question is already fully settled
                 # before the phase is examined, and nothing later re-reads resolved_leg_dim.
                 # Feeding the binding back could only sharpen the wording of an
                 # already-emitted DIMENSION_DEFERRED residual, never change a verdict.
+
+
+def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """Every node-scope node and every port-scope port must resolve against ``diagram``
+    (Phase 7).
+
+    A port-scope box's port must additionally currently be a diagram boundary slot --
+    :mod:`qufzx.diagram.bangbox`'s instantiate/kill mechanism has no other way to grow
+    or remove it (see that module's docstring). Boxes failing either check are excluded
+    from :func:`_check_bangbox_nesting` and :func:`_check_count_symbol_collisions`,
+    mirroring :func:`_check_port_usage`'s ``broken_node_ids`` skip pattern.
+    """
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        for node_id in sorted(box.node_scope):
+            if node_id not in diagram.nodes:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_SCOPE_UNKNOWN_NODE,
+                        message=(
+                            f"bang box {box_id!r} node_scope references unknown node "
+                            f"{node_id!r}"
+                        ),
+                        bang_box_id=box_id,
+                    )
+                )
+        for ref in sorted(box.port_scope, key=lambda r: r.sort_key()):
+            node = diagram.nodes.get(ref.node_id)
+            if node is None or ref.index >= len(node.legs(ref.direction)):
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_PORT_UNKNOWN,
+                        message=(
+                            f"bang box {box_id!r} port_scope references unresolvable port "
+                            f"{ref!r}"
+                        ),
+                        bang_box_id=box_id,
+                        port_ref=ref,
+                    )
+                )
+                continue
+            if ref not in diagram.boundary_inputs and ref not in diagram.boundary_outputs:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_PORT_NOT_BOUNDARY,
+                        message=(
+                            f"bang box {box_id!r} port_scope port {ref!r} is not a diagram "
+                            "boundary slot; instantiate/kill can only grow or remove a "
+                            "scoped port that is currently on the boundary"
+                        ),
+                        bang_box_id=box_id,
+                        port_ref=ref,
+                    )
+                )
+
+
+def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
+    return frozenset(
+        issue.bang_box_id
+        for issue in issues
+        if issue.kind
+        in (
+            IssueKind.BANGBOX_SCOPE_UNKNOWN_NODE,
+            IssueKind.BANGBOX_PORT_UNKNOWN,
+            IssueKind.BANGBOX_PORT_NOT_BOUNDARY,
+            IssueKind.BANGBOX_UNKNOWN_PARENT,
+            IssueKind.BANGBOX_PARENT_CYCLE,
+        )
+        and issue.bang_box_id is not None
+    )
+
+
+def _bangbox_footprint(box: BangBox) -> frozenset[NodeId]:
+    """The set of node ids a box "occupies", for overlap/nesting purposes: its own
+    node_scope, plus the node each of its port_scope entries sits on."""
+    return box.node_scope | frozenset(ref.node_id for ref in box.port_scope)
+
+
+def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """Parent references form a cycle-free forest, and a declared parent's footprint
+    properly contains its child's (Phase 7).
+
+    Two boxes with no declared parent/child relationship along the ``parent`` chain
+    must have disjoint footprints -- an undeclared overlap can only mean two
+    independent boxes were built over the same node in error, since a legitimate nested
+    relationship is always recorded via ``parent`` (see
+    :mod:`qufzx.diagram.bangbox`'s module docstring).
+    """
+    broken = _broken_bangbox_ids(issues)
+    boxes = {box_id: box for box_id, box in diagram.bang_boxes.items() if box_id not in broken}
+
+    ancestors: dict[BangBoxId, tuple[BangBoxId, ...]] = {}
+    for box_id, box in sorted(boxes.items()):
+        chain: list[BangBoxId] = []
+        current = box.parent
+        seen = {box_id}
+        cyclic = False
+        for _ in range(len(boxes) + 1):
+            if current is None:
+                break
+            if current not in boxes and current not in diagram.bang_boxes:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_UNKNOWN_PARENT,
+                        message=(
+                            f"bang box {box_id!r} declares parent {current!r}, which does "
+                            "not exist"
+                        ),
+                        bang_box_id=box_id,
+                    )
+                )
+                cyclic = True  # not a cycle, but stops the walk from trusting `chain`
+                chain = []
+                break
+            if current in seen:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_PARENT_CYCLE,
+                        message=(
+                            f"bang box {box_id!r} has a cyclic parent chain reaching "
+                            f"{current!r} again"
+                        ),
+                        bang_box_id=box_id,
+                    )
+                )
+                cyclic = True
+                chain = []
+                break
+            seen.add(current)
+            chain.append(current)
+            current = diagram.bang_boxes[current].parent
+        if not cyclic:
+            ancestors[box_id] = tuple(chain)
+
+    ok_ids = frozenset(ancestors) & frozenset(boxes)
+    for box_id in sorted(ok_ids):
+        box = boxes[box_id]
+        if box.parent is None:
+            continue
+        parent_id = box.parent
+        if parent_id not in boxes:
+            continue  # the parent itself is broken/cyclic; already reported against it
+        parent = boxes[parent_id]
+        footprint = _bangbox_footprint(box)
+        parent_footprint = _bangbox_footprint(parent)
+        if not footprint <= parent_footprint or footprint == parent_footprint:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.BANGBOX_NESTING_MISMATCH,
+                    message=(
+                        f"bang box {box_id!r} declares parent {parent_id!r}, but its "
+                        f"footprint {sorted(footprint)} is not a proper subset of the "
+                        f"parent's {sorted(parent_footprint)}"
+                    ),
+                    bang_box_id=box_id,
+                )
+            )
+
+    for box_id_1, box_id_2 in itertools.combinations(sorted(ok_ids), 2):
+        box_1, box_2 = boxes[box_id_1], boxes[box_id_2]
+        related = box_id_2 in ancestors.get(box_id_1, ()) or box_id_1 in ancestors.get(box_id_2, ())
+        if related:
+            continue
+        overlap = _bangbox_footprint(box_1) & _bangbox_footprint(box_2)
+        if overlap:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.BANGBOX_SCOPE_OVERLAP,
+                    message=(
+                        f"bang boxes {box_id_1!r} and {box_id_2!r} overlap on node(s) "
+                        f"{sorted(overlap)} with no declared parent/child relationship "
+                        "between them"
+                    ),
+                    bang_box_id=box_id_1,
+                )
+            )
+
+
+def _check_count_symbol_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """A bare multiplicity symbol owned by two boxes outside one nesting chain is a
+    collision (Phase 7).
+
+    Owning (a box's multiplicity *is* the bare symbol) is distinguished from merely
+    using it as a subterm of a compound expression (e.g. ``2*k1``): only owners are
+    checked against each other here, since a use makes no claim about which box the name
+    "belongs" to. Two owners of the same name are legitimate only when one is an
+    ancestor of the other -- the mechanism :mod:`qufzx.diagram.bangbox`'s nested
+    instantiation relies on (an outer box's own instantiation duplicates a child while
+    keeping its symbol unrenamed, so two or more boxes legitimately share one name along
+    a parent chain, never across unrelated boxes).
+    """
+    broken = _broken_bangbox_ids(issues)
+    boxes = {box_id: box for box_id, box in diagram.bang_boxes.items() if box_id not in broken}
+
+    owners: dict[str, list[BangBoxId]] = {}
+    for box_id, box in sorted(boxes.items()):
+        if box.multiplicity.is_bare_symbol:
+            owners.setdefault(box.multiplicity.bare_symbol_name(), []).append(box_id)
+
+    def _ancestors(box_id: BangBoxId) -> set[BangBoxId]:
+        result: set[BangBoxId] = set()
+        current = boxes[box_id].parent
+        while current is not None and current in boxes and current not in result:
+            result.add(current)
+            current = boxes[current].parent
+        return result
+
+    for name, owner_ids in sorted(owners.items()):
+        if len(owner_ids) < 2:
+            continue
+        ancestor_sets = {box_id: _ancestors(box_id) | {box_id} for box_id in owner_ids}
+        # Every pair must be ancestor-related, not merely every box related to *some*
+        # other one -- the latter would wrongly accept two disjoint nesting chains that
+        # both happen to touch a third, unrelated owner.
+        all_pairs_related = all(
+            (a in ancestor_sets[b] or b in ancestor_sets[a])
+            for i, a in enumerate(owner_ids)
+            for b in owner_ids[i + 1 :]
+        )
+        if not all_pairs_related:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.BANGBOX_COUNT_SYMBOL_COLLISION,
+                    message=(
+                        f"multiplicity symbol {name!r} is owned by bang boxes "
+                        f"{sorted(owner_ids)!r}, which are not all related along one "
+                        "parent chain"
+                    ),
+                )
+            )
 
 
 def validate(diagram: Diagram) -> ValidationReport:
@@ -664,6 +912,9 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_port_usage(diagram, issues)
     for node in diagram.nodes.values():
         _check_generator_policy(node, issues)
+    _check_bangbox_scopes(diagram, issues)
+    _check_bangbox_nesting(diagram, issues)
+    _check_count_symbol_collisions(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)
     return ValidationReport(tuple(issues))

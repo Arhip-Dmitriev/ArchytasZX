@@ -276,7 +276,7 @@ class TestPhaseDimensionMismatchIsNonMatch:
     ) -> None:
         # Both legs share the still-symbolic d (shared_dim=d, unbound), A's phase agrees
         # outright (also over d), and B's phase over the concrete 3 binds d := 3 through
-        # condition 7's own unify call. Neither phase's entries reference a dimension
+        # condition 8's own unify call. Neither phase's entries reference a dimension
         # symbol, so reattach_phase has nothing to substitute.
         d = Dim.symbol("d")
         diagram = Diagram()
@@ -354,7 +354,7 @@ class TestPhaseDimensionMismatchIsNonMatch:
 
 class TestPhaseFailureDoesNotMisreportDimensionAgreement:
     """A phase-dim FAILURE inside :func:`resolve_fusion_match`'s fixpoint must not be reported
-    as a ``dimension_agreement`` (condition 6) failure -- nothing about a leg's own
+    as a ``dimension_agreement`` (condition 7) failure -- nothing about a leg's own
     dimension failed here, only a phase's.
 
     The shape: a Z-Z pair, every leg ``Dim(2)``, node B's
@@ -388,7 +388,7 @@ class TestPhaseFailureDoesNotMisreportDimensionAgreement:
         phase_dimension_agreement = by_name["phase_dimension_agreement"]
 
         assert dimension_agreement.passed, (
-            "every leg here is exactly Dim(2) == Dim(2); condition 6 must pass, not be "
+            "every leg here is exactly Dim(2) == Dim(2); condition 7 must pass, not be "
             f"misreported as failed alongside the phase failure: {dimension_agreement!r}"
         )
         assert "2 == 2" in dimension_agreement.detail
@@ -793,7 +793,7 @@ class TestSharedDimResolvesThroughBinding:
 
     def test_phases_agreeing_only_after_substitution_but_not_raw_now_matches(self) -> None:
         # Node A's phase is stated over the symbolic leg dim d, node B's over the bound
-        # concrete value 3: both resolve to shared_dim=3 (A's via a binding condition 7
+        # concrete value 3: both resolve to shared_dim=3 (A's via a binding condition 8
         # derives, B's outright), while their raw, unsubstituted Dims differ. Two present
         # phases' raw Dims are not required to be equal -- reattach_phase forces both
         # operands' container Dim to shared_dim before PhaseVector.__add__ sees them.
@@ -824,7 +824,7 @@ class TestPhaseDimensionAgreementSeesSurvivingLegBindings:
     def test_a_phase_over_a_symbol_bound_only_by_a_surviving_leg_now_matches(self) -> None:
         # A's connecting leg (output 0) and B's connecting leg (input 0) are both the
         # symbol d -- unifying them binds nothing. A's *surviving* input leg is a
-        # concrete Dim(2), which binds d := 2 once condition 6 unifies it against
+        # concrete Dim(2), which binds d := 2 once condition 7 unifies it against
         # shared_dim. A's phase, stated over the still-symbolic d, is legal only because
         # it resolves through that surviving-leg binding, not the connecting pair's own.
         d = Dim.symbol("d")
@@ -1014,7 +1014,7 @@ class TestConsumedPortClaimedElsewhereIsNonMatch:
 
 
 class TestSurvivingLegOverwriteIntroducesDeferral:
-    """Forcing a surviving leg onto ``shared_dim`` (module docstring, condition 6) can turn a
+    """Forcing a surviving leg onto ``shared_dim`` (module docstring, condition 7) can turn a
     wire to a third node that agreed *exactly* before fusion into one that only defers
     afterward -- a routine outcome (roughly one in ten applications over the random property
     harness, not a rare edge case), and one this pattern's own carve-out
@@ -1137,10 +1137,10 @@ class TestFusionMatchIsHashable:
 class TestPhaseDimensionAgreementDeferredFidelity:
     """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome.
 
-    It calls :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 6 -- a
-    ``DEFERRED`` per-phase result is rejected outright (module docstring, condition 7), so
+    It calls :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 7 -- a
+    ``DEFERRED`` per-phase result is rejected outright (module docstring, condition 8), so
     a passing outcome never rests on an undecided unify. A passing outcome can rest on a
-    *binding*, recorded in ``dimension_constraints``; following condition 6's convention,
+    *binding*, recorded in ``dimension_constraints``; following condition 7's convention,
     a binding-only success does not set ``deferred`` either.
     """
 
@@ -1724,7 +1724,7 @@ class TestConnectingPairRederivedEachPass:
     def test_connecting_pair_constraint_reflects_a_later_phase_driven_binding(self) -> None:
         # Connecting pair: A's output (symbol d) vs B's input (symbol d) -- bare identity,
         # nothing bound yet, shared_dim seeds at d. A's phase, stated over the concrete 3,
-        # binds d := 3 through condition 7. The connecting pair's own finished detail must
+        # binds d := 3 through condition 8. The connecting pair's own finished detail must
         # reflect d := 3, not the bare-identity state it started the fixpoint in.
         d = Dim.symbol("d")
         three = Dim.concrete(3)

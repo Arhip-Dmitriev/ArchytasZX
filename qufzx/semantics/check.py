@@ -63,6 +63,7 @@ from typing import TypeAlias
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from qufzx.diagram.bangbox import BangBoxDomainError, free_mult_symbols, instantiate_symbol
 from qufzx.diagram.graph import Diagram
 from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
 
@@ -97,14 +98,35 @@ class CheckGrammarError(CheckError):
 
 
 def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
-    """Every free symbol (dimension, phase, or scalar) appearing anywhere in ``diagram``."""
+    """Every free symbol (dimension, phase, scalar, or bang-box multiplicity, Phase 7)
+    appearing anywhere in ``diagram``."""
     symbols: set[str] = set(diagram.scalar.free_symbols)
     for node in diagram.nodes.values():
         for port in (*node.outputs, *node.inputs):
             symbols |= port.dim.free_symbols
         if node.phase is not None:
             symbols |= node.phase.free_symbols
+    symbols |= free_mult_symbols(diagram)
     return frozenset(symbols)
+
+
+def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentValue]) -> Diagram:
+    """Instantiate every bang-box multiplicity symbol named in ``resolved``, in turn.
+
+    Must run before :meth:`~qufzx.diagram.graph.Diagram.substitute`: expansion can build
+    fresh port/node structure whose dimensions still carry the very symbols ``resolved``
+    is about to substitute, so dimension/phase/scalar substitution runs once, last, over
+    the fully box-free result (Phase 7).
+    """
+    working = diagram
+    for name in sorted(free_mult_symbols(diagram)):
+        value = resolved[name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise BangBoxDomainError(
+                f"multiplicity symbol {name!r} requires a non-negative int, got {value!r}"
+            )
+        working = instantiate_symbol(working, name, value)
+    return working
 
 
 def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]) -> Diagram:
@@ -117,7 +139,9 @@ def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]
     key naming no symbol in this diagram is dropped: :func:`compare` and the sweeps pass one
     shared assignment to two diagrams, and a rewrite can eliminate a symbol from one side (a
     phase binding the shared leg dimension leaves the merged node concrete). See the module
-    docstring.
+    docstring. Every bang-box multiplicity symbol (Phase 7) is instantiated the same way,
+    before the ordinary dimension/phase/scalar substitution runs -- see
+    :func:`_expand_bang_boxes`.
     """
     free_symbols = _diagram_free_symbols(diagram)
     resolved: dict[str, CheckAssignmentValue] = {
@@ -131,7 +155,10 @@ def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]
             "assignment nor the diagram's parameter environment supplies them, and "
             "instantiate() never defaults a missing symbol"
         )
-    return diagram.substitute(resolved)
+    expanded = _expand_bang_boxes(diagram, resolved)
+    mult_names = free_mult_symbols(diagram)
+    remaining = {name: value for name, value in resolved.items() if name not in mult_names}
+    return expanded.substitute(remaining)
 
 
 def score(
