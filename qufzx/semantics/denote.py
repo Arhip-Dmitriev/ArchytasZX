@@ -39,7 +39,7 @@ X spider, the Fourier conjugate of Z::
 
 with the unitary DFT matrix ``F[j][k] = omega_d^{j*k} / sqrt(d)``, ``omega_d =
 e^{2*pi*i/d}``. The exponent sign and the ``1/sqrt(d)`` normalization are fixed here and
-nowhere else; every later consumer, Phase 9's Hadamard/Fourier generator included, reuses
+nowhere else; every later consumer, the Fourier box included, reuses
 this exact ``F``. ``F`` is symmetric, so ``F^dagger = conj(F)`` and the implementation
 applies a plain elementwise conjugate to input axes with no transpose.
 
@@ -47,7 +47,7 @@ Guards. :func:`denote` raises a typed error, allocating nothing, when any port d
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
 dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator carries some other
 dimension policy, or the generator name is neither ``"Z"`` nor ``"X"``. There is one
-dispatch point for Phase 9's Hadamard/Fourier generator and Phase 10's triangle, W, and
+dispatch point for the Fourier box and Phase 10's triangle, W, and
 connective generators to extend.
 
 A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
@@ -60,7 +60,13 @@ import numpy as np
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase
-from qufzx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER, DimensionPolicy
+from qufzx.diagram.generators import (
+    FOURIER_BOX,
+    REGISTRY,
+    X_SPIDER,
+    Z_SPIDER,
+    DimensionPolicy,
+)
 from qufzx.diagram.graph import Node
 
 
@@ -85,17 +91,18 @@ class DenoteGrammarError(DenoteError):
     """
 
 
-def _leg_dim(node: Node) -> Dim | None:
+def _leg_dim(node: Node, *, require_concrete: bool = True) -> Dim | None:
     """The single dimension shared by every leg of ``node``, or None if it has no legs.
 
-    Raises DenoteDomainError if any leg dimension is non-concrete or if legs disagree.
+    Raises DenoteDomainError if legs disagree, and, when ``require_concrete``, if any leg
+    dimension is non-concrete.
     """
     all_ports = (*node.outputs, *node.inputs)
     if not all_ports:
         return None
     shared = all_ports[0].dim
     for port in all_ports:
-        if not port.dim.is_concrete:
+        if require_concrete and not port.dim.is_concrete:
             raise DenoteDomainError(
                 f"node {node.id!r} ({node.generator_type.name}) has a non-concrete port "
                 f"dimension {port.dim}; denote() requires every dimension in scope to be "
@@ -107,6 +114,36 @@ def _leg_dim(node: Node) -> Dim | None:
                 f"ALL_LEGS_EQUAL but its legs disagree: {shared} vs {port.dim}"
             )
     return shared
+
+
+def resolve_dim(node: Node) -> Dim:
+    """The single leg dimension of ``node`` as a Dim, concrete or symbolic.
+
+    The dimension-resolution logic of :func:`resolve_dimension` without its concreteness
+    gate, so :mod:`qufzx.semantics.contract_symbolic` shares one leg-agreement rule with the
+    numeric path instead of restating it.
+    """
+    if node.generator_type.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
+        raise DenoteGrammarError(
+            f"node {node.id!r} ({node.generator_type.name}) has dimension policy "
+            f"{node.generator_type.dimension_policy!r}, which denote() does not yet support"
+        )
+    leg_dim = _leg_dim(node, require_concrete=False)
+    if leg_dim is not None:
+        dim = leg_dim
+    elif node.phase is not None:
+        dim = node.phase.dim
+    else:
+        raise DenoteGrammarError(
+            f"node {node.id!r} ({node.generator_type.name}) has no legs and no phase "
+            "vector; its dimension cannot be determined"
+        )
+    if node.phase is not None and node.phase.dim != dim:
+        raise DenoteDomainError(
+            f"node {node.id!r} ({node.generator_type.name}) phase vector is over "
+            f"{node.phase.dim}, but its legs share dimension {dim}"
+        )
+    return dim
 
 
 def resolve_dimension(node: Node) -> int:
@@ -206,8 +243,8 @@ def denote(node: Node) -> np.ndarray:
     that may allocate a dense array for one node; it does so only after
     :func:`resolve_dimension` has confirmed every dimension and phase in scope is
     concrete. Dispatches on ``node.generator_type`` against the registered
-    ``Z_SPIDER``/``X_SPIDER`` constants -- the one dispatch point later generators
-    (Phase 9's Hadamard/Fourier, Phase 10's triangle, W, and connectives) must extend.
+    ``Z_SPIDER``/``X_SPIDER``/``FOURIER_BOX`` constants -- the one dispatch point later
+    generators (Phase 10's triangle, W, and connectives) must extend.
     """
     d = resolve_dimension(node)
     if not REGISTRY.is_registered(node.generator_type):
@@ -220,7 +257,9 @@ def denote(node: Node) -> np.ndarray:
         return _z_tensor(node, d)
     if node.generator_type.name == X_SPIDER.name:
         return _x_tensor(node, d)
+    if node.generator_type.name == FOURIER_BOX.name:
+        return _fourier_matrix(d)
     raise DenoteGrammarError(
         f"node {node.id!r} has generator type {node.generator_type.name!r}, which "
-        "denote() does not know how to denote (only 'Z' and 'X' are registered)"
+        "denote() does not know how to denote (only 'Z', 'X' and 'F' are registered)"
     )

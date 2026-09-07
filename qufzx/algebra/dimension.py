@@ -189,6 +189,11 @@ class Dim:
         return cls(name)
 
     @classmethod
+    def from_sympy(cls, expr: sp.Expr) -> Dim:
+        """Build a Dim from a sympy expression, rejecting anything outside the dimension grammar."""
+        return cls._from_expr(sp.sympify(expr))
+
+    @classmethod
     def _from_expr(cls, expr: sp.Expr) -> Dim:
         normalized = sp.powsimp(expr, force=True)
         _check_dimension_domain(normalized)

@@ -463,6 +463,23 @@ class Diagram:
             raise GraphGrammarError(f"no such bang box: {box_id!r}")
         self._bang_boxes[box_id] = self._bang_boxes[box_id].with_port_scope(frozenset(port_scope))
 
+    def set_bang_box_multiplicity(self, box_id: BangBoxId, multiplicity: object) -> None:
+        """Replace a bang box's multiplicity, leaving every other field unchanged.
+
+        Mirrors :meth:`set_phase`. Raises GraphGrammarError if ``box_id`` is absent.
+        ``multiplicity`` is typed ``object`` to avoid a runtime import cycle (see
+        :meth:`add_bang_box`); it is always a :class:`~qufzx.diagram.bangbox.Mult`.
+        """
+        from qufzx.diagram.bangbox import Mult  # local: see add_bang_box
+
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        if not isinstance(multiplicity, Mult):
+            raise GraphGrammarError(
+                f"set_bang_box_multiplicity multiplicity must be a Mult, got {multiplicity!r}"
+            )
+        self._bang_boxes[box_id] = self._bang_boxes[box_id].with_multiplicity(multiplicity)
+
     # -- wire mutation ----------------------------------------------------------------
 
     def add_wire(self, a: PortRef, b: PortRef) -> None:

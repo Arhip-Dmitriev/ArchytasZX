@@ -233,6 +233,15 @@ Z_SPIDER = GeneratorType(
 )
 """The qudit Z spider: any number of legs, phase vector tied to the shared leg dim."""
 
+FOURIER_BOX = GeneratorType(
+    name="F",
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+)
+"""The Fourier box: the unitary DFT on one wire, F[j][k] = omega_d^{j*k} / sqrt(d)."""
+
+
 X_SPIDER = GeneratorType(
     name="X",
     leg_policy=LegPolicy(),
@@ -243,3 +252,4 @@ X_SPIDER = GeneratorType(
 
 REGISTRY.register(Z_SPIDER)
 REGISTRY.register(X_SPIDER)
+REGISTRY.register(FOURIER_BOX)

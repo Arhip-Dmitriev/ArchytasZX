@@ -322,6 +322,10 @@ class BangBox:
         """Return a copy of this (port-scope) box with its scope replaced."""
         return replace(self, port_scope=frozenset(port_scope))
 
+    def with_multiplicity(self, multiplicity: Mult) -> BangBox:
+        """A copy of this box carrying ``multiplicity``."""
+        return replace(self, multiplicity=multiplicity)
+
 
 # -- structural helpers, shared with qufzx.diagram.validate ---------------------------
 

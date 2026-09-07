@@ -109,7 +109,7 @@ i. semantics/certificate.py
 
 PART 2: FREE n AND FREE d ---------
 
-Phase 7: Bang boxes, free n, with nesting and multiple indices [CURRENT]
+Phase 7: Bang boxes, free n, with nesting and multiple indices [UNDER DEBUG]
 i. diagram/bangbox.py
 - a bang box records a scope over a subgraph or set of ports, a multiplicity symbol, and its overlap and boundary edges
 - supports instantiate (a multiplicity to a concrete k, expanding to k copies), copy, kill (multiplicity 0), and merge
@@ -124,14 +124,14 @@ iv. extend rewrite/match.py
 - test and debug: confirm the bang-boxed GHZ instantiates to the correct concrete GHZ for k equal to 0, 1, 2, 3; confirm a nested two-index family instantiates correctly on both indices; confirm fusion under a bang box preserves exact oracle equality across several tuples of counts and d
 - done when: free n works end to end, including nesting and multiple indices
 
-Phase 8: Symbolic verification over n by induction
+Phase 8: Symbolic verification over n by induction [UNDER FINAL DEBUG]
 i. semantics/induction.py
 - an equality carrying a bang box can be discharged for all values of its multiplicity by induction: a base case at multiplicity 0 or 1 and a step case relating multiplicity k to k+1, each discharged by the oracle or by symbolic contraction
 - multi-index families induct on one index at a time with the others held symbolic
 - test and debug: prove the fusion GHZ identity for all n by induction rather than by sampling, and confirm the induction fails cleanly on false near-identity
 - done when: symbolic-n equalities can be proved, not merely spot-checked
 
-Phase 9: Character-sum simplifier and full symbolic contraction (rung 2)
+Phase 9: Character-sum simplifier and full symbolic contraction (rung 2) [UNDER DEBUG]
 i. complete algebra/scalar.py
 - the character-sum simplifier knows sum_{k=0}^{d-1} w_d^(jk) = d*[j = 0 mod d] and the standard consequences, all with d symbolic
 ii. semantics/contract_symbolic.py

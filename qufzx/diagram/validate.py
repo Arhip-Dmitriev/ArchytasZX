@@ -747,9 +747,44 @@ def _bangbox_footprint(box: BangBox) -> frozenset[NodeId]:
     return box.node_scope | frozenset(ref.node_id for ref in box.port_scope)
 
 
+def _render_ports(port_scope: frozenset[PortRef]) -> list[tuple[int, str, int]]:
+    """A port scope as a list of sort keys, ordered by ``PortRef.sort_key``."""
+    return [ref.sort_key() for ref in sorted(port_scope, key=lambda r: r.sort_key())]
+
+
+def _nesting_refusal(box: BangBox, parent: BangBox) -> str | None:
+    """Why ``box`` is not strictly finer than ``parent``, or None when it is.
+
+    Containment is judged on footprints; strictness is judged on the child's own scope,
+    a port-scope child under a node-scope parent refining that parent's ports.
+    """
+    footprint = _bangbox_footprint(box)
+    parent_footprint = _bangbox_footprint(parent)
+    if not footprint <= parent_footprint:
+        return (
+            f"its footprint {sorted(footprint)} is not contained in the parent's "
+            f"{sorted(parent_footprint)}"
+        )
+    if box.is_node_scope:
+        if footprint == parent_footprint:
+            return (
+                f"its node scope {sorted(footprint)} is not a proper subset of the "
+                f"parent's footprint {sorted(parent_footprint)}"
+            )
+        return None
+    if parent.is_node_scope:
+        return None
+    if box.port_scope < parent.port_scope:
+        return None
+    return (
+        f"its port scope {_render_ports(box.port_scope)} is not a proper subset of the "
+        f"parent's {_render_ports(parent.port_scope)}"
+    )
+
+
 def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    """Parent references form a cycle-free forest, and a declared parent's footprint
-    properly contains its child's (Phase 7).
+    """Parent references form a cycle-free forest, and a declared parent strictly
+    contains its child (Phase 7).
 
     Two boxes with no declared parent/child relationship along the ``parent`` chain
     must have disjoint footprints -- an undeclared overlap can only mean two
@@ -812,16 +847,13 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
         if parent_id not in boxes:
             continue  # the parent itself is broken/cyclic; already reported against it
         parent = boxes[parent_id]
-        footprint = _bangbox_footprint(box)
-        parent_footprint = _bangbox_footprint(parent)
-        if not footprint <= parent_footprint or footprint == parent_footprint:
+        refusal = _nesting_refusal(box, parent)
+        if refusal is not None:
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.BANGBOX_NESTING_MISMATCH,
                     message=(
-                        f"bang box {box_id!r} declares parent {parent_id!r}, but its "
-                        f"footprint {sorted(footprint)} is not a proper subset of the "
-                        f"parent's {sorted(parent_footprint)}"
+                        f"bang box {box_id!r} declares parent {parent_id!r}, but {refusal}"
                     ),
                     bang_box_id=box_id,
                 )

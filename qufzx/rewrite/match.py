@@ -77,7 +77,7 @@ from typing import cast
 
 from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import PhaseDomainError, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
-from qufzx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER
+from qufzx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.rewrite.rule import (
     ConstraintOutcome,
@@ -1256,3 +1256,136 @@ class FusionPattern(Pattern):
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_matches`. See the module docstring."""
         return find_matches(diagram)
+
+
+FOURIER_CHAIN_LENGTH = 4
+"""How many Fourier boxes in series the cancellation pattern consumes: F^4 is the identity."""
+
+
+FOURIER_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "chain_is_series",
+        "four F boxes joined output-to-input in series, each internal node used only there",
+    ),
+    SideCondition("same_dimension", "every leg of the four boxes carries one dimension"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FourierMatch:
+    """One located F^4 chain: its four node ids in series order, its three internal wires."""
+
+    node_ids: tuple[NodeId, ...]
+    wires: tuple[Wire, ...]
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def _wire_by_port(diagram: Diagram) -> dict[PortRef, Wire]:
+    """Map every wired port to the wire carrying it."""
+    mapping: dict[PortRef, Wire] = {}
+    for wire in diagram.wires:
+        mapping[wire.a] = wire
+        mapping[wire.b] = wire
+    return mapping
+
+
+def _fourier_successor(
+    diagram: Diagram, node_id: NodeId, by_port: Mapping[PortRef, Wire]
+) -> tuple[NodeId, Wire] | None:
+    """The F box wired to this one's single output, and the wire joining them."""
+    wire = by_port.get(PortRef(node_id, Direction.OUTPUT, 0))
+    if wire is None:
+        return None
+    other = wire.b if wire.a.node_id == node_id else wire.a
+    if other.node_id == node_id or other.direction is not Direction.INPUT or other.index != 0:
+        return None
+    successor = diagram.nodes[other.node_id]
+    if successor.generator_type.name != FOURIER_BOX.name:
+        return None
+    return other.node_id, wire
+
+
+def find_fourier_matches(diagram: Diagram) -> tuple[FourierMatch, ...]:
+    """Every chain of four Fourier boxes in series, ordered by the chain's first node id."""
+    by_port = _wire_by_port(diagram)
+    matches: list[FourierMatch] = []
+    for start in sorted(diagram.nodes):
+        node = diagram.nodes[start]
+        if not REGISTRY.is_registered(node.generator_type):
+            continue
+        if node.generator_type.name != FOURIER_BOX.name:
+            continue
+        chain = [start]
+        wires: list[Wire] = []
+        while len(chain) < FOURIER_CHAIN_LENGTH:
+            step = _fourier_successor(diagram, chain[-1], by_port)
+            if step is None:
+                break
+            next_id, wire = step
+            if next_id in chain:
+                break
+            chain.append(next_id)
+            wires.append(wire)
+        if len(chain) != FOURIER_CHAIN_LENGTH:
+            continue
+        dims = [
+            diagram.nodes[node_id].legs(direction)[0].dim
+            for node_id in chain
+            for direction in (Direction.OUTPUT, Direction.INPUT)
+        ]
+        shared = dims[0]
+        constraints: list[DimensionConstraint] = []
+        failed = False
+        for other in dims[1:]:
+            if other == shared:
+                continue
+            result = shared.unify(other)
+            if result.is_failure:
+                failed = True
+                break
+            constraints.append(
+                DimensionConstraint(
+                    assumed=shared,
+                    equal_to=other,
+                    source=ConstraintSource.connecting_pair(),
+                    outcome=ConstraintOutcome.DEFERRED,
+                )
+            )
+        if failed:
+            continue
+        outcomes = (
+            SideConditionOutcome(
+                "chain_is_series", True, f"{FOURIER_CHAIN_LENGTH} F boxes in series at {chain[0]}"
+            ),
+            SideConditionOutcome(
+                "same_dimension",
+                True,
+                f"every leg carries {shared}",
+                deferred=bool(constraints),
+            ),
+        )
+        matches.append(
+            FourierMatch(
+                node_ids=tuple(chain),
+                wires=tuple(wires),
+                shared_dim=shared,
+                side_condition_outcomes=outcomes,
+                dimension_constraints=tuple(constraints),
+            )
+        )
+    return tuple(matches)
+
+
+class FourierCancellationPattern(Pattern):
+    """The :class:`~qufzx.rewrite.rule.Pattern` implementation for F^4 cancellation."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_fourier_matches`."""
+        return find_fourier_matches(diagram)

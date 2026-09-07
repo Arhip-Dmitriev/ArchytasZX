@@ -14,8 +14,9 @@
 """Proof certificates: machine-checkable records of rewrite steps and replayable derivations.
 
 A :class:`Derivation` is one node of a proof tree, carrying an initial diagram, a final
-diagram, and the evidence between them. Phase 6 admits one kind, ``STEP_SEQUENCE``, whose
-evidence is a tuple of :class:`~qufzx.rewrite.engine.RewriteStep`. A :class:`Certificate`
+diagram, and the evidence between them. A ``STEP_SEQUENCE`` kind carries a tuple of
+:class:`~qufzx.rewrite.engine.RewriteStep`; an ``INDUCTION`` kind carries those over a free
+multiplicity symbol together with a base child and a step child. A :class:`Certificate`
 pairs a derivation with the :class:`CheckMethod` its claim is discharged by.
 
 :func:`replay` re-applies each recorded step to a fresh copy of the initial diagram, checking
@@ -23,7 +24,8 @@ per step that the rule still resolves by name, that the consumed nodes and wires
 that the matcher rediscovers the recorded match, and that the step ``apply`` produces equals
 the step on record; then that the diagram reached is identical, id for id, to the recorded
 final. :func:`verify` runs that replay and contracts both ends at a supplied assignment
-through :func:`~qufzx.semantics.check.compare`.
+through :func:`~qufzx.semantics.check.compare`; for an ``INDUCTION`` derivation it contracts
+each child's own ends at that assignment, never the symbolic node's.
 
 A verified certificate is evidence of five things: the recorded steps re-derive the recorded
 final diagram exactly; every rule named still exists; every match is still discoverable in
@@ -72,12 +74,44 @@ class CheckMethod(enum.Enum):
     """How a certificate's claimed equality is discharged."""
 
     NUMERIC_ORACLE = "numeric_oracle"
+    INDUCTION = "induction"
 
 
 class DerivationKind(enum.Enum):
     """Which shape of evidence a derivation node carries."""
 
     STEP_SEQUENCE = "step_sequence"
+    INDUCTION = "induction"
+
+
+@dataclass(frozen=True, slots=True)
+class InductionClaim:
+    """The multiplicity symbol an induction derivation quantifies over, and how each half of it
+    was discharged."""
+
+    symbol: str
+    base_value: int
+    held_symbolic: tuple[str, ...] = ()
+    step_discharge: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate every field's type and shape, in declaration order."""
+        if not isinstance(self.symbol, str):
+            raise CertificateGrammarError(f"symbol must be a str, got {type(self.symbol).__name__}")
+        if isinstance(self.base_value, bool) or not isinstance(self.base_value, int):
+            raise CertificateGrammarError(
+                f"base_value must be an int, got {type(self.base_value).__name__}"
+            )
+        if not isinstance(self.held_symbolic, tuple) or not all(
+            isinstance(name, str) for name in self.held_symbolic
+        ):
+            raise CertificateGrammarError(
+                f"held_symbolic must be a tuple of str, got {self.held_symbolic!r}"
+            )
+        if not isinstance(self.step_discharge, str):
+            raise CertificateGrammarError(
+                f"step_discharge must be a str, got {type(self.step_discharge).__name__}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +210,7 @@ class Derivation:
     steps: tuple[RewriteStep, ...] = ()
     children: tuple[Derivation, ...] = ()
     label: str = ""
+    induction: InductionClaim | None = None
 
     def __post_init__(self) -> None:
         """Validate every field's type and shape, in declaration order."""
@@ -203,8 +238,40 @@ class Derivation:
             )
         if not isinstance(self.label, str):
             raise CertificateGrammarError(f"label must be a str, got {self.label!r}")
+        if self.induction is not None and not isinstance(self.induction, InductionClaim):
+            raise CertificateGrammarError(
+                f"induction must be an InductionClaim or None, got "
+                f"{type(self.induction).__name__}"
+            )
         if self.kind is DerivationKind.STEP_SEQUENCE and self.children:
             raise CertificateGrammarError("a step_sequence derivation carries no children")
+        if self.induction is not None and self.kind is not DerivationKind.INDUCTION:
+            raise CertificateGrammarError(
+                "induction is set but kind is not DerivationKind.INDUCTION"
+            )
+        if self.induction is None and self.kind is DerivationKind.INDUCTION:
+            raise CertificateGrammarError(
+                "kind is DerivationKind.INDUCTION but induction is not set"
+            )
+        if self.induction is not None and self.induction.base_value not in (0, 1):
+            raise CertificateGrammarError(
+                f"induction base_value must be 0 or 1, got {self.induction.base_value!r}"
+            )
+        if self.kind is DerivationKind.INDUCTION:
+            if len(self.children) != 2:
+                raise CertificateGrammarError(
+                    f"an induction derivation must have exactly 2 children, got "
+                    f"{len(self.children)}"
+                )
+            base, step = self.children
+            if base.kind is not DerivationKind.STEP_SEQUENCE:
+                raise CertificateGrammarError(
+                    f"induction base child must be step_sequence, got {base.kind!r}"
+                )
+            if step.kind is not DerivationKind.STEP_SEQUENCE:
+                raise CertificateGrammarError(
+                    f"induction step child must be step_sequence, got {step.kind!r}"
+                )
 
     def __eq__(self, other: object) -> bool:
         """Compare by content, with the two diagrams compared through :func:`compare_structure`."""
@@ -215,6 +282,7 @@ class Derivation:
             and self.label == other.label
             and self.steps == other.steps
             and self.children == other.children
+            and self.induction == other.induction
             and compare_structure(self.initial, other.initial).identical
             and compare_structure(self.final, other.final).identical
         )
@@ -291,6 +359,52 @@ def certify(
     return Certificate(derivation=derivation, check_method=check_method)
 
 
+def certify_induction(
+    initial: Diagram,
+    final: Diagram,
+    results: Sequence[RewriteResult],
+    base: Derivation,
+    step: Derivation,
+    claim: InductionClaim,
+    *,
+    label: str = "",
+    check_method: CheckMethod = CheckMethod.INDUCTION,
+) -> Certificate:
+    """Assemble an induction certificate from the symbolic pre and post diagrams, the symbolic
+    rewrite results between them, the base and step child derivations, and the induction claim."""
+    if not isinstance(initial, Diagram):
+        raise CertificateGrammarError(f"initial must be a Diagram, got {type(initial).__name__}")
+    if not isinstance(final, Diagram):
+        raise CertificateGrammarError(f"final must be a Diagram, got {type(final).__name__}")
+    if not isinstance(results, Sequence) or isinstance(results, (str, bytes)):
+        raise CertificateGrammarError(
+            f"results must be a Sequence of RewriteResult, got {type(results).__name__}"
+        )
+    if not all(isinstance(result, RewriteResult) for result in results):
+        raise CertificateGrammarError(
+            f"every element of results must be a RewriteResult, got {results!r}"
+        )
+    if not isinstance(base, Derivation):
+        raise CertificateGrammarError(f"base must be a Derivation, got {type(base).__name__}")
+    if not isinstance(step, Derivation):
+        raise CertificateGrammarError(f"step must be a Derivation, got {type(step).__name__}")
+    if not isinstance(claim, InductionClaim):
+        raise CertificateGrammarError(
+            f"claim must be an InductionClaim, got {type(claim).__name__}"
+        )
+
+    derivation = Derivation(
+        kind=DerivationKind.INDUCTION,
+        initial=initial.copy(),
+        final=final.copy(),
+        steps=tuple(r.step for r in results),
+        children=(base, step),
+        label=label,
+        induction=claim,
+    )
+    return Certificate(derivation=derivation, check_method=check_method)
+
+
 @dataclass(frozen=True, slots=True)
 class StepReplay:
     """The outcome of re-applying one recorded step: which rule, whether it reproduced, and
@@ -310,6 +424,7 @@ class ReplayResult:
     reason: str
     diagram: Diagram
     steps: tuple[StepReplay, ...]
+    children: tuple[ReplayResult, ...] = ()
 
 
 def _first_step_difference(recorded: RewriteStep, produced: RewriteStep) -> str:
@@ -382,6 +497,36 @@ def _replay_one(
     return None, result.diagram
 
 
+def _replay_derivation(
+    derivation: Derivation, source: Diagram | None, rediscover: bool
+) -> ReplayResult:
+    """Re-apply one derivation's recorded steps, then recurse into its children."""
+    working = (source if source is not None else derivation.initial).copy()
+    records: list[StepReplay] = []
+    for index, step in enumerate(derivation.steps):
+        failure, next_working = _replay_one(working, index, step, rediscover)
+        if failure is not None:
+            records.append(StepReplay(index, step.rule_name, False, failure))
+            return ReplayResult(False, failure, working, tuple(records))
+        records.append(StepReplay(index, step.rule_name, True, "reproduced"))
+        working = next_working
+
+    comparison = compare_structure(working, derivation.final)
+    if not comparison.identical:
+        reason = f"final diagram differs: {comparison.reason}"
+        return ReplayResult(False, reason, working, tuple(records))
+
+    child_results: list[ReplayResult] = []
+    for child in derivation.children:
+        child_result = _replay_derivation(child, None, rediscover)
+        child_results.append(child_result)
+        if not child_result.reproduced:
+            reason = f"child derivation did not reproduce: {child_result.reason}"
+            return ReplayResult(False, reason, working, tuple(records), tuple(child_results))
+
+    return ReplayResult(True, "reproduced", working, tuple(records), tuple(child_results))
+
+
 def replay(
     certificate: Certificate,
     source: Diagram | None = None,
@@ -399,18 +544,7 @@ def replay(
     if not isinstance(rediscover, bool):
         raise CertificateGrammarError(f"rediscover must be a bool, got {rediscover!r}")
 
-    working = (source if source is not None else certificate.initial).copy()
-    records: list[StepReplay] = []
-    for index, step in enumerate(certificate.steps):
-        failure, next_working = _replay_one(working, index, step, rediscover)
-        if failure is not None:
-            records.append(StepReplay(index, step.rule_name, False, failure))
-            return ReplayResult(False, failure, working, tuple(records))
-        records.append(StepReplay(index, step.rule_name, True, "reproduced"))
-        working = next_working
-    comparison = compare_structure(working, certificate.final)
-    reason = "reproduced" if comparison.identical else f"final diagram differs: {comparison.reason}"
-    return ReplayResult(comparison.identical, reason, working, tuple(records))
+    return _replay_derivation(certificate.derivation, source, rediscover)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -425,6 +559,7 @@ class VerificationReport:
     assignment: Mapping[str, CheckAssignmentValue]
     mode: EqualityMode
     check_method: CheckMethod
+    child_comparisons: tuple[ComparisonResult, ...] = ()
 
 
 def verify(
@@ -449,38 +584,92 @@ def verify(
     if not isinstance(mode, EqualityMode):
         raise CertificateGrammarError(f"mode must be an EqualityMode, got {mode!r}")
 
-    if certificate.check_method is not CheckMethod.NUMERIC_ORACLE:
-        raise CertificateGrammarError(f"unknown check method: {certificate.check_method!r}")
-
     frozen_assignment = MappingProxyType(dict(assignment))
-    replay_result = replay(certificate, rediscover=rediscover)
-    if not replay_result.reproduced:
+
+    if certificate.check_method is CheckMethod.NUMERIC_ORACLE:
+        replay_result = replay(certificate, rediscover=rediscover)
+        if not replay_result.reproduced:
+            return VerificationReport(
+                verified=False,
+                reason=f"replay failed: {replay_result.reason}",
+                replay=replay_result,
+                comparison=None,
+                assignment=frozen_assignment,
+                mode=mode,
+                check_method=certificate.check_method,
+            )
+
+        comparison = compare(
+            certificate.initial,
+            replay_result.diagram,
+            frozen_assignment,
+            mode=mode,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
         return VerificationReport(
-            verified=False,
-            reason=f"replay failed: {replay_result.reason}",
+            verified=comparison.matched,
+            reason=comparison.reason
+            if comparison.matched
+            else f"oracle disagreed: {comparison.reason}",
             replay=replay_result,
-            comparison=None,
+            comparison=comparison,
             assignment=frozen_assignment,
             mode=mode,
             check_method=certificate.check_method,
         )
 
-    comparison = compare(
-        certificate.initial,
-        replay_result.diagram,
-        frozen_assignment,
-        mode=mode,
-        tolerance=tolerance,
-        max_elements=max_elements,
-    )
-    return VerificationReport(
-        verified=comparison.matched,
-        reason=comparison.reason
-        if comparison.matched
-        else f"oracle disagreed: {comparison.reason}",
-        replay=replay_result,
-        comparison=comparison,
-        assignment=frozen_assignment,
-        mode=mode,
-        check_method=certificate.check_method,
-    )
+    if certificate.check_method is CheckMethod.INDUCTION:
+        if certificate.derivation.kind is not DerivationKind.INDUCTION:
+            raise CertificateGrammarError(
+                f"check_method is INDUCTION but derivation.kind is "
+                f"{certificate.derivation.kind!r}"
+            )
+
+        replay_result = replay(certificate, rediscover=rediscover)
+        if not replay_result.reproduced:
+            return VerificationReport(
+                verified=False,
+                reason=f"replay failed: {replay_result.reason}",
+                replay=replay_result,
+                comparison=None,
+                assignment=frozen_assignment,
+                mode=mode,
+                check_method=certificate.check_method,
+            )
+
+        child_comparisons = tuple(
+            compare(
+                child.initial,
+                child_replay.diagram,
+                frozen_assignment,
+                mode=mode,
+                tolerance=tolerance,
+                max_elements=max_elements,
+            )
+            for child, child_replay in zip(
+                certificate.derivation.children, replay_result.children, strict=True
+            )
+        )
+        verified = all(comparison.matched for comparison in child_comparisons)
+        reason = (
+            "reproduced and every child comparison matched"
+            if verified
+            else "; ".join(
+                f"child {index}: {child_comparison.reason}"
+                for index, child_comparison in enumerate(child_comparisons)
+                if not child_comparison.matched
+            )
+        )
+        return VerificationReport(
+            verified=verified,
+            reason=reason,
+            replay=replay_result,
+            comparison=None,
+            assignment=frozen_assignment,
+            mode=mode,
+            check_method=certificate.check_method,
+            child_comparisons=child_comparisons,
+        )
+
+    raise CertificateGrammarError(f"unknown check method: {certificate.check_method!r}")

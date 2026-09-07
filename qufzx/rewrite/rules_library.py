@@ -67,9 +67,13 @@ from types import MappingProxyType
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseDomainError, PhaseVector
 from qufzx.algebra.scalar import Scalar
+from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
 from qufzx.rewrite.match import (
+    FOURIER_SIDE_CONDITIONS,
     FUSION_SIDE_CONDITIONS,
+    FourierCancellationPattern,
+    FourierMatch,
     FusionMatch,
     FusionPattern,
     innermost_node_scope_box,
@@ -321,13 +325,6 @@ merged spider (condition 3 in :mod:`qufzx.rewrite.match`).
 """
 
 
-RULES: Mapping[str, Rule] = MappingProxyType({SPIDER_FUSION.name: SPIDER_FUSION})
-"""Every rule this module registers, keyed by :attr:`~qufzx.rewrite.rule.Rule.name`.
-
-A ``MappingProxyType``, so a caller cannot mutate the registry through it.
-"""
-
-
 def lookup_rule(name: str) -> Rule:
     """Resolve a rule name back to its :class:`Rule`.
 
@@ -338,3 +335,66 @@ def lookup_rule(name: str) -> Rule:
         return RULES[name]
     except KeyError:
         raise RewriteGrammarError(f"no such rule: {name!r}") from None
+
+
+def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`FOURIER_CANCELLATION`: one identity spider for four F boxes.
+
+    Adds a phaseless one-in-one-out Z spider (the identity on a wire) and maps the chain's
+    free input and output onto its legs; never removes the matched nodes or touches a wire.
+    """
+    if not isinstance(match, FourierMatch):
+        raise RewriteGrammarError(
+            f"fourier_cancellation_builder requires a FourierMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(match, FOURIER_SIDE_CONDITIONS, "fourier_cancellation_builder")
+    for node_id in match.node_ids:
+        node = diagram.nodes.get(node_id)
+        if node is None or node.generator_type.name != FOURIER_BOX.name:
+            raise RewriteGrammarError(
+                f"fourier_cancellation_builder: node {node_id!r} is not an F box in this diagram"
+            )
+    dim = match.shared_dim
+    new_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
+    first, last = match.node_ids[0], match.node_ids[-1]
+    port_mapping = {
+        PortRef(first, Direction.INPUT, 0): PortRef(new_id, Direction.INPUT, 0),
+        PortRef(last, Direction.OUTPUT, 0): PortRef(new_id, Direction.OUTPUT, 0),
+    }
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(new_id,),
+        consumed_node_ids=tuple(match.node_ids),
+        consumed_wires=tuple(match.wires),
+        port_mapping=port_mapping,
+        scalar_introduced=FOURIER_CANCELLATION_SCALAR,
+    )
+
+
+FOURIER_CANCELLATION_SCALAR = Scalar.one()
+"""The exact scalar F^4 cancellation introduces: one.
+
+The character sum contributes a factor of ``d`` twice and the four boxes contribute
+``d^{-1/2}`` each, so the product is exactly one. An implementation that drops either
+factor lands on ``d``, ``d^{-1}`` or ``d^{-2}`` instead, which is a wrong global factor.
+"""
+
+
+FOURIER_CANCELLATION = Rule(
+    name="fourier_cancellation",
+    pattern=FourierCancellationPattern(),
+    builder=fourier_cancellation_builder,
+    side_conditions=FOURIER_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=FOURIER_CANCELLATION_SCALAR,
+)
+"""Four Fourier boxes in series collapse to the identity wire, introducing exactly one."""
+
+
+RULES: Mapping[str, Rule] = MappingProxyType(
+    {SPIDER_FUSION.name: SPIDER_FUSION, FOURIER_CANCELLATION.name: FOURIER_CANCELLATION}
+)
+"""Every rule this module registers, keyed by :attr:`~qufzx.rewrite.rule.Rule.name`.
+
+A ``MappingProxyType``, so a caller cannot mutate the registry through it.
+"""

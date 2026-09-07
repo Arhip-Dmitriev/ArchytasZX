@@ -36,8 +36,8 @@ differ by an integer number of turns). Reporting "not equal" for something unver
 always preferred here to reporting "equal" for something unverified -- the same contract
 :meth:`qufzx.algebra.dimension.Dim.unify` follows.
 
-Phase 9 note: the character-sum identity Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d]
-is explicitly out of scope here. It belongs to the scalar simplifier arriving in Phase 9
+The character-sum identity Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d] is out of
+scope here. It belongs to :meth:`~qufzx.algebra.scalar.Scalar.simplify`
 and must not be anticipated by this module or by :mod:`qufzx.algebra.scalar`.
 """
 

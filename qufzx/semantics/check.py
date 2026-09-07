@@ -63,9 +63,11 @@ from typing import TypeAlias
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from qufzx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS
 from qufzx.diagram.bangbox import BangBoxDomainError, free_mult_symbols, instantiate_symbol
 from qufzx.diagram.graph import Diagram
 from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
+from qufzx.semantics.contract_symbolic import SymbolicTensor
 
 CheckAssignmentValue: TypeAlias = "int | sp.Rational"
 DEFAULT_TOLERANCE = 1e-9
@@ -388,3 +390,42 @@ def compare(
         return interface_mismatch
 
     return compare_tensors(result_a.tensor, result_b.tensor, mode=mode, tolerance=tolerance)
+
+
+def compare_symbolic(
+    left: SymbolicTensor,
+    right: SymbolicTensor,
+    *,
+    mode: EqualityMode = EqualityMode.EXACT,
+    max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
+) -> ComparisonResult:
+    """Compare two symbolic tensors by simplifying the difference of their entries.
+
+    Three outcomes, not two: equal, definitely unequal, and indeterminate -- the difference
+    still carries an index sum whose character-sum verdict was undecidable. An indeterminate
+    result reports ``matched=False`` with a reason naming the residual sum, so a caller that
+    treats "not matched" as "unequal" is wrong and must read ``reason``.
+    """
+    if mode is not EqualityMode.EXACT:
+        raise CheckDomainError(
+            "up-to-global-phase comparison requires concrete entries; substitute the "
+            "parameter environment first"
+        )
+    if left.rank != right.rank:
+        return ComparisonResult(mode, False, f"rank {left.rank} != rank {right.rank}", float("inf"))
+    if left.dims() != right.dims():
+        return ComparisonResult(
+            mode, False, f"axis dimensions {left.dims()} != {right.dims()}", float("inf")
+        )
+    difference = (left.entry - right.entry).simplify(max_steps=max_steps)
+    if difference.is_zero:
+        return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
+    if difference.to_sympy().atoms(sp.Sum):
+        return ComparisonResult(
+            mode,
+            False,
+            f"indeterminate: the difference {difference} still carries an unevaluated "
+            "index sum, so no conclusion is drawn",
+            float("inf"),
+        )
+    return ComparisonResult(mode, False, f"entries differ by {difference}", float("inf"))

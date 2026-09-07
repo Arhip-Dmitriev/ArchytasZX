@@ -16,6 +16,7 @@
 import pytest
 
 from qufzx.diagram.generators import (
+    FOURIER_BOX,
     REGISTRY,
     X_SPIDER,
     Z_SPIDER,
@@ -55,7 +56,7 @@ class TestLegPolicy:
 
 class TestZAndXRegistration:
     def test_z_and_x_are_registered(self) -> None:
-        assert REGISTRY.names() == frozenset({"Z", "X"})
+        assert REGISTRY.names() == frozenset({"Z", "X", "F"})
 
     def test_get_returns_registered_types(self) -> None:
         assert REGISTRY.get("Z") is Z_SPIDER
@@ -78,7 +79,22 @@ class TestZAndXRegistration:
 
     def test_all_types_view_contains_both(self) -> None:
         all_types = REGISTRY.all_types()
-        assert set(all_types) == {"Z", "X"}
+        assert set(all_types) == {"Z", "X", "F"}
+
+
+class TestFourierBoxRegistration:
+    def test_fourier_box_is_registered(self) -> None:
+        assert REGISTRY.get("F") is FOURIER_BOX
+
+    def test_fourier_box_takes_exactly_one_leg_each_side(self) -> None:
+        assert FOURIER_BOX.leg_policy.allows(1, 1)
+        assert not FOURIER_BOX.leg_policy.allows(0, 1)
+        assert not FOURIER_BOX.leg_policy.allows(1, 2)
+        assert not FOURIER_BOX.leg_policy.allows(2, 1)
+
+    def test_fourier_box_takes_no_phase_and_shares_one_dimension(self) -> None:
+        assert FOURIER_BOX.phase_schema is PhaseSchema.NONE
+        assert FOURIER_BOX.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL
 
 
 class TestRegistryDuplicates:
