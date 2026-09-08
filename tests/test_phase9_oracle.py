@@ -24,6 +24,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
+from qufzx.diagram.bangbox import Mult
 from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.diagram.validate import validate
@@ -33,6 +34,7 @@ from qufzx.rewrite.rule import RewriteDomainError, SideConditionOutcome
 from qufzx.rewrite.rules_library import FOURIER_CANCELLATION, RULES
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_symbolic import contract_symbolic
+from qufzx.semantics.denote import DenoteGrammarError, denote
 
 D = Dim.symbol("d")
 
@@ -256,3 +258,54 @@ class TestFourierBuilderRederivesItsMatch:
         matches = find_fourier_matches(diagram)
         assert len(matches) == 1
         assert apply(diagram, FOURIER_CANCELLATION, matches[0]).diagram is not None
+
+
+class TestFourierBoxArity:
+    """An F box denotes a d-by-d matrix and takes exactly one leg of each direction."""
+
+    @pytest.mark.parametrize("inputs,outputs", [(2, 1), (1, 2), (3, 3), (0, 1)])
+    def test_a_wrong_arity_f_box_is_refused(self, inputs: int, outputs: int) -> None:
+        dim = Dim.concrete(3)
+        diagram = Diagram()
+        node_id = diagram.add_node(
+            FOURIER_BOX, input_dims=[dim] * inputs, output_dims=[dim] * outputs
+        )
+        with pytest.raises(DenoteGrammarError):
+            denote(diagram.nodes[node_id])
+
+    def test_the_one_in_one_out_f_box_still_denotes(self) -> None:
+        dim = Dim.concrete(3)
+        diagram = Diagram()
+        node_id = diagram.add_node(FOURIER_BOX, input_dims=[dim], output_dims=[dim])
+        assert denote(diagram.nodes[node_id]).shape == (3, 3)
+
+
+class TestFourierCancellationUnderABangBox:
+    """The rule fires inside a node-scope box and leaves the box intact (Phase 7)."""
+
+    @staticmethod
+    def _boxed_chain(d_value: int) -> tuple[Diagram, list[int]]:
+        dim = Dim.concrete(d_value)
+        diagram = Diagram()
+        ids = [diagram.add_node(FOURIER_BOX, input_dims=[dim], output_dims=[dim]) for _ in range(4)]
+        for first, second in itertools.pairwise(ids):
+            diagram.add_wire(
+                PortRef(first, Direction.OUTPUT, 0), PortRef(second, Direction.INPUT, 0)
+            )
+        diagram.set_boundary_inputs([PortRef(ids[0], Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(ids[-1], Direction.OUTPUT, 0)])
+        diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset(ids))
+        return diagram, ids
+
+    def test_the_chain_collapses_and_the_box_gains_the_identity_spider(self) -> None:
+        diagram, ids = self._boxed_chain(3)
+        assert validate(diagram).is_valid
+        matches = find_fourier_matches(diagram)
+        assert len(matches) == 1
+        fused = apply(diagram, FOURIER_CANCELLATION, matches[0]).diagram
+        report = validate(fused)
+        assert report.is_valid, [issue.kind.value for issue in report.errors]
+        (box,) = fused.bang_boxes.values()
+        assert str(box.multiplicity) == "m"
+        assert box.node_scope == frozenset(fused.nodes)
+        assert not (box.node_scope & set(ids))

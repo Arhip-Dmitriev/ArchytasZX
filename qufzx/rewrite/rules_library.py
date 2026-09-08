@@ -378,12 +378,29 @@ def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
                 f"fourier_cancellation_builder: node {node_id!r} is not an F box in this diagram"
             )
     dim = match.shared_dim
+    enclosing_boxes = {innermost_node_scope_box(diagram, node_id) for node_id in match.node_ids}
+    if len(enclosing_boxes) != 1:
+        found = sorted(box for box in enclosing_boxes if box is not None)
+        raise RewriteDomainError(
+            "fourier_cancellation_builder: the four F boxes do not share one innermost "
+            f"node-scope bang box (found {found!r}); the chain must be wholly inside one "
+            "box or wholly outside every box"
+        )
     new_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
     first, last = match.node_ids[0], match.node_ids[-1]
     port_mapping = {
         PortRef(first, Direction.INPUT, 0): PortRef(new_id, Direction.INPUT, 0),
         PortRef(last, Direction.OUTPUT, 0): PortRef(new_id, Direction.OUTPUT, 0),
     }
+
+    # Bang box "left intact" (Phase 7), as in spider_fusion_builder: the enclosing box drops
+    # the four consumed nodes and gains the identity spider, every other field untouched.
+    (enclosing_box,) = enclosing_boxes
+    if enclosing_box is not None:
+        box = diagram.bang_boxes[enclosing_box]
+        new_scope = (box.node_scope - set(match.node_ids)) | {new_id}
+        diagram.set_bang_box_node_scope(enclosing_box, frozenset(new_scope))
+
     return BuildResult(
         diagram=diagram,
         new_node_ids=(new_id,),

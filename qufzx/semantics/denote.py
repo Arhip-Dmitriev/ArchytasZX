@@ -46,9 +46,9 @@ applies a plain elementwise conjugate to input axes with no transpose.
 Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
 dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator carries some other
-dimension policy, or the generator name is neither ``"Z"`` nor ``"X"``. There is one
-dispatch point for the Fourier box and Phase 10's triangle, W, and
-connective generators to extend.
+dimension policy, the generator name is none of ``"Z"``, ``"X"`` and ``"F"``, or an ``"F"``
+box does not carry exactly one input and one output. There is one dispatch point for
+Phase 10's triangle, W, and connective generators to extend.
 
 A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
 vector's own ``Dim``. A zero-leg node with no phase is rejected as malformed, not defaulted.
@@ -258,6 +258,12 @@ def denote(node: Node) -> np.ndarray:
     if node.generator_type.name == X_SPIDER.name:
         return _x_tensor(node, d)
     if node.generator_type.name == FOURIER_BOX.name:
+        if node.num_inputs != 1 or node.num_outputs != 1:
+            raise DenoteGrammarError(
+                f"node {node.id!r} (F) has {node.num_inputs} input(s) and "
+                f"{node.num_outputs} output(s); an F box denotes a d-by-d matrix and takes "
+                "exactly one of each"
+            )
         return _fourier_matrix(d)
     raise DenoteGrammarError(
         f"node {node.id!r} has generator type {node.generator_type.name!r}, which "
