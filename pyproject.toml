@@ -16,16 +16,44 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qufzx"
-version = "0.1.0"
-description = "A qufinite ZX-calculus engine and REPL"
+name = "ArchytasZX"
+version = "0.9.1"
+description = "A qufinite ZX-calculus engine with symbolic qudit count and dimension"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
+authors = [{ name = "Arkhip Alekseyevich Dmitriev" }]
+# Kept in sync with CITATION.cff.
+keywords = [
+    "zx-calculus",
+    "qufinite",
+    "qudit",
+    "quantum computing",
+    "symbolic algebra",
+    "graph rewriting",
+    "quantum algorithms",
+    "symbolic quantum",
+    "graphical calculus",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Quantum Computing",
+]
 dependencies = [
     "numpy",
     "sympy",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Arhip-Dmitriev/ArchytasZX"
+Repository = "https://github.com/Arhip-Dmitriev/ArchytasZX"
+Issues = "https://github.com/Arhip-Dmitriev/ArchytasZX/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -35,13 +63,13 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["qufzx*"]
+include = ["archytaszx*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Seed sweeps and oracle differentials are deselected by default. Run them with
 # `pytest -m slow` (sweeps only) or `pytest -m ""` (everything); CI runs `pytest -m ""`.
-# Measured 2026-09-04: the default tier is 929 tests in ~3s; `-m slow` is 28 tests in ~4m40s.
+# Measured 2026-09-08: the default tier is 1408 tests in ~45s; `-m slow` is 28 tests in ~14m40s.
 addopts = ["-m", "not slow"]
 markers = [
     "slow: multi-thousand-seed fuzz sweep or oracle differential",
@@ -49,6 +77,9 @@ markers = [
 
 [tool.ruff]
 line-length = 100
+# Markdown is excluded: ruff formats fenced code blocks, and doing so collapses the aligned
+# annotation columns the docs rely on.
+extend-exclude = ["*.md"]
 # `ruff format` is authoritative for layout and is expected to run clean; `ruff check`
 # enforces the lint rules below. Run both.
 
