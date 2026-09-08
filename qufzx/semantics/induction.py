@@ -26,8 +26,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from qufzx.algebra.scalar import ScalarBudgetError
-from qufzx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols
-from qufzx.diagram.graph import Diagram, PortRef
+from qufzx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols, peel_one
+from qufzx.diagram.graph import Diagram, NodeId, PortRef
 from qufzx.diagram.validate import ValidateError, validate_or_raise
 from qufzx.rewrite.engine import RewriteStep, apply
 from qufzx.rewrite.rule import Match, Rule
@@ -450,6 +450,91 @@ def _hypothesis_inexpressible_reason(obligation: InductionObligation) -> str:
     return "the hypothesis left side already equals the successor left side field for field"
 
 
+def _extract(diagram: Diagram, node_ids: frozenset[NodeId]) -> Diagram:
+    """The sub-diagram on ``node_ids``: their wires among themselves, their boundary refs in
+    the enclosing order."""
+    extracted = Diagram()
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(node_ids):
+        node = diagram.nodes[old_id]
+        id_map[old_id] = extracted.add_node(
+            node.generator_type,
+            [port.dim for port in node.inputs],
+            [port.dim for port in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if wire.a.node_id in node_ids and wire.b.node_id in node_ids:
+            extracted.add_wire(
+                PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
+                PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
+            )
+    extracted.set_boundary_inputs(
+        [
+            PortRef(id_map[ref.node_id], ref.direction, ref.index)
+            for ref in diagram.boundary_inputs
+            if ref.node_id in node_ids
+        ]
+    )
+    extracted.set_boundary_outputs(
+        [
+            PortRef(id_map[ref.node_id], ref.direction, ref.index)
+            for ref in diagram.boundary_outputs
+            if ref.node_id in node_ids
+        ]
+    )
+    extracted.set_parameters(dict(diagram.parameters))
+    return extracted
+
+
+def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Diagram) -> bool:
+    """Whether ``peeled`` minus its peeled copy is ``expected``, field for field."""
+    kept = frozenset(peeled.nodes) - copy_node_ids
+    if kept != frozenset(expected.nodes):
+        return False
+    residual = _extract(peeled, kept)
+    reference = _extract(expected, frozenset(expected.nodes))
+    if not compare_structure(residual, reference).identical:
+        return False
+    peeled_boxes = {
+        box_id: box
+        for box_id, box in peeled.bang_boxes.items()
+        if not (box.node_scope & copy_node_ids)
+        and not any(ref.node_id in copy_node_ids for ref in box.port_scope)
+    }
+    if sorted(peeled_boxes) != sorted(expected.bang_boxes):
+        return False
+    for box_id, box in peeled_boxes.items():
+        other = expected.bang_boxes[box_id]
+        if box.multiplicity != other.multiplicity or box.parent != other.parent:
+            return False
+        if sorted(box.node_scope) != sorted(other.node_scope):
+            return False
+        if sorted(box.port_scope, key=_port_scope_key) != sorted(
+            other.port_scope, key=_port_scope_key
+        ):
+            return False
+    return True
+
+
+def _peel_step_index(diagram: Diagram, index: str) -> tuple[Diagram, frozenset[NodeId]] | None:
+    """Peel one copy off the single box whose multiplicity carries ``index``."""
+    owners = [
+        box_id
+        for box_id, box in sorted(diagram.bang_boxes.items())
+        if index in box.multiplicity.free_symbols
+    ]
+    if len(owners) != 1:
+        return None
+    try:
+        result = peel_one(diagram, owners[0])
+    except BangBoxError:
+        return None
+    if not result.separable or not result.copy_node_ids:
+        return None
+    return result.diagram, result.copy_node_ids
+
+
 def hypothesis_rule(obligation: InductionObligation) -> Rule | None:
     """A rule rewriting the hypothesis diagram's left side to its right side, or None when that
     pattern is not matchable."""
@@ -475,6 +560,70 @@ def discharge_uniform_rewrite(
     return TierOutcome(StepDischarge.UNIFORM_REWRITE, ok, reason, steps=steps)
 
 
+def discharge_peeled_hypothesis(
+    obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
+) -> TierOutcome:
+    """Settle the step case by peeling one copy off each successor and discharging the rest.
+
+    ``!_{k+1}(G)`` splits into ``!_k(G)`` beside one bare copy of ``G``
+    (:func:`~qufzx.diagram.bangbox.peel_one`). When each peeled residual is exactly its own
+    hypothesis diagram, the hypothesis settles the residuals and the step reduces to the two
+    peeled copies, which carry no bang box and are compared by symbolic contraction with ``d``
+    formal. Requires a separable (node-scope) box, and one owner of the index per side.
+    """
+    index = obligation.step_symbol
+    left = _peel_step_index(obligation.left_at_successor, index)
+    right = _peel_step_index(obligation.right_at_successor, index)
+    if left is None or right is None:
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            "the step index is not carried by a single separable bang box on each side, so no "
+            "copy can be peeled off to expose the hypothesis",
+        )
+    left_peeled, left_copy = left
+    right_peeled, right_copy = right
+
+    if not _residual_is(left_peeled, left_copy, obligation.left_at_k):
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            "the left successor's peeled residual is not the left hypothesis diagram",
+        )
+    if not _residual_is(right_peeled, right_copy, obligation.right_at_k):
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            "the right successor's peeled residual is not the right hypothesis diagram",
+        )
+
+    left_extra = _extract(left_peeled, left_copy)
+    right_extra = _extract(right_peeled, right_copy)
+    try:
+        contracted_left = contract_symbolic(left_extra, max_steps=max_steps)
+        contracted_right = contract_symbolic(right_extra, max_steps=max_steps)
+    except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
+        return TierOutcome(StepDischarge.INDUCTION_REWRITE, False, str(exc), ())
+    except ScalarBudgetError as exc:
+        return TierOutcome(StepDischarge.INDUCTION_REWRITE, False, str(exc), ())
+
+    comparison = compare_symbolic(contracted_left, contracted_right)
+    if comparison.matched:
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            True,
+            "peeled one copy off each successor; the residuals are the hypothesis diagrams and "
+            "the peeled copies agree under symbolic contraction with d formal",
+            (comparison,),
+        )
+    return TierOutcome(
+        StepDischarge.INDUCTION_REWRITE,
+        False,
+        f"the peeled copies are not equal: {comparison.reason}",
+        (comparison,),
+    )
+
+
 def discharge_induction_rewrite(
     obligation: InductionObligation,
     *,
@@ -482,13 +631,18 @@ def discharge_induction_rewrite(
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> TierOutcome:
     """Rewrite the successor diagrams into each other with the induction hypothesis available as a
-    rule."""
+    rule, falling back to :func:`discharge_peeled_hypothesis` when no such rule exists."""
     hypothesis = hypothesis_rule(obligation)
     if hypothesis is None:
+        peeled = discharge_peeled_hypothesis(obligation, max_steps=max_steps)
+        if peeled.settled:
+            return peeled
         return TierOutcome(
             StepDischarge.INDUCTION_REWRITE,
             False,
-            "hypothesis not expressible as a rule: " + _hypothesis_inexpressible_reason(obligation),
+            "hypothesis not expressible as a rule: "
+            + _hypothesis_inexpressible_reason(obligation)
+            + f"; peeling did not settle it either: {peeled.reason}",
         )
     rules_in_use = rules if rules is not None else DEFAULT_RULES
     ok, steps, reason = _rewrite_to(

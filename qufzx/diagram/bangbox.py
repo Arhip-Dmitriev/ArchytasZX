@@ -797,6 +797,124 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
     return working
 
 
+def _predecessor(multiplicity: Mult) -> Mult:
+    """``multiplicity`` less one, for an expression whose constant term is at least one."""
+    expr = sp.expand(multiplicity.to_sympy())
+    constant = expr.as_coeff_Add()[0]
+    if not (constant.is_Integer and constant >= 1):
+        raise BangBoxDomainError(
+            f"cannot peel a copy off multiplicity {multiplicity}: its constant term is not "
+            "a positive integer, so it is not known to be at least one"
+        )
+    return Mult._from_expr(sp.expand(expr - 1))
+
+
+def _peel_port_scope(diagram: Diagram, box: BangBox) -> None:
+    """Split the scoped leg into the box's own leg plus one bare leg after it."""
+    (ref,) = sorted(box.port_scope, key=lambda r: r.sort_key())
+    _grow_port(diagram, ref, 2)
+    grown = sorted(diagram.bang_boxes[box.id].port_scope, key=lambda r: r.sort_key())
+    if len(grown) != 2:
+        raise BangBoxGrammarError(
+            f"peeling port-scope box {box.id!r} grew its scope to {len(grown)} legs, not two"
+        )
+    diagram.set_bang_box_port_scope(box.id, frozenset({grown[0]}))
+
+
+def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
+    """Add one concrete copy of the scope, after the box's own boundary block."""
+    scope = box.node_scope
+    bad_wire = _non_boundary_crossing(diagram, scope)
+    if bad_wire is not None:
+        raise BangBoxGrammarError(
+            f"node-scope peel only supports a crossing that lands on the diagram boundary; "
+            f"{bad_wire!r} crosses to another live node"
+        )
+
+    internal = internal_wires(diagram, scope)
+    boundary_crossings = boundary_refs_in_scope(diagram, scope)
+    children = _children_of(diagram, box.id)
+
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(scope):
+        node = diagram.nodes[old_id]
+        id_map[old_id] = diagram.add_node(
+            node.generator_type,
+            [p.dim for p in node.inputs],
+            [p.dim for p in node.outputs],
+            phase=node.phase,
+        )
+
+    for wire in sorted(internal, key=lambda w: w.sort_key()):
+        diagram.add_wire(
+            PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
+            PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
+        )
+
+    identity = {old_id: old_id for old_id in scope}
+    sorted_crossings = sorted(boundary_crossings, key=lambda r: r.sort_key())
+    id_maps = [identity, id_map]
+    diagram.set_boundary_inputs(
+        _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, id_maps)
+    )
+    diagram.set_boundary_outputs(
+        _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, id_maps)
+    )
+
+    for child in children:
+        if child.is_node_scope:
+            diagram.add_bang_box(
+                child.multiplicity,
+                node_scope=frozenset(id_map[n] for n in child.node_scope),
+                parent=box.parent,
+            )
+        else:
+            diagram.add_bang_box(
+                child.multiplicity,
+                port_scope=frozenset(
+                    PortRef(id_map[r.node_id], r.direction, r.index) for r in child.port_scope
+                ),
+                parent=box.parent,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PeelResult:
+    """The outcome of :func:`peel_one`: the split diagram and the copy it split off.
+
+    ``copy_node_ids`` is empty for a port-scope peel, where the peeled leg grows on the
+    box's own node rather than onto a separate copy; ``separable`` records that distinction.
+    """
+
+    diagram: Diagram
+    copy_node_ids: frozenset[NodeId]
+    separable: bool
+
+
+def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
+    """Split one copy off a bang box: multiplicity ``m`` becomes ``m - 1`` beside one bare copy.
+
+    The peeled copy is laid out after the box's own boundary block, so instantiating the
+    residual box at ``k`` reproduces exactly what instantiating the original at ``k + 1``
+    would: :func:`instantiate_symbol` builds its copies copy-major from the same splice.
+    Requires a multiplicity whose constant term is at least one.
+    """
+    working = diagram.copy()
+    box = working.bang_boxes.get(box_id)
+    if box is None:
+        raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
+    predecessor = _predecessor(box.multiplicity)
+    before = frozenset(working.nodes)
+    if box.is_node_scope:
+        _peel_node_scope(working, box)
+    else:
+        _peel_port_scope(working, box)
+    working.set_bang_box_multiplicity(box_id, predecessor)
+    separable = box.is_node_scope
+    copy_node_ids = frozenset(working.nodes) - before if separable else frozenset()
+    return PeelResult(working, copy_node_ids, separable)
+
+
 def kill(diagram: Diagram, box_id: BangBoxId) -> Diagram:
     """Instantiate one box at multiplicity 0: its scope (and, for a node-scope box, every
     nested child) vanishes entirely. Returns a new Diagram."""

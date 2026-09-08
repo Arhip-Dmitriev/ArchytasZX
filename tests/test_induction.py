@@ -22,16 +22,21 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 
+import numpy as np
 import pytest
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseVector
 from qufzx.diagram.bangbox import (
     BangBox,
+    BangBoxDomainError,
     BangBoxGrammarError,
     Mult,
     abstract_port_count,
     abstract_subgraph_count,
+    free_mult_symbols,
+    instantiate_symbol,
+    peel_one,
 )
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import (
@@ -49,7 +54,7 @@ from qufzx.rewrite.rule import BuildResult, Match, Rule
 from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 from qufzx.semantics import induction
 from qufzx.semantics.certificate import compare_structure
-from qufzx.semantics.check import compare
+from qufzx.semantics.check import compare, score
 from qufzx.semantics.contract_numeric import ContractSizeError
 from qufzx.semantics.induction import (
     InductionDomainError,
@@ -67,6 +72,8 @@ from qufzx.semantics.induction import (
     successor_diagram,
 )
 
+from . import test_phase7_oracle as T7
+from . import test_phase8_oracle as T8
 from .helpers import build_ghz_with_copy
 
 
@@ -624,3 +631,61 @@ class TestMultiplicitySetter:
         diagram, outer_id, _inner_id = _mult_nested_family()
         with pytest.raises(GraphGrammarError):
             diagram.set_bang_box_multiplicity(outer_id, "not a mult")
+
+
+class TestPeelCommutesWithInstantiate:
+    """peel_one is the step case's primitive: it must not change what the family denotes."""
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3, 4])
+    @pytest.mark.parametrize(
+        "build,symbol",
+        [
+            (T7._build_ghz_family, "n"),
+            (T7._build_nested_two_index_family, "k1"),
+        ],
+    )
+    def test_peel_then_instantiate_at_k_equals_instantiate_at_k_plus_one(
+        self, build: Callable[[int], Diagram], symbol: str, k: int
+    ) -> None:
+        direct = score(instantiate_symbol(build(2), symbol, k + 1), {}).tensor
+        successor = induction.successor_diagram(build(2), symbol)
+        step_symbol = min(free_mult_symbols(successor))
+        peeled = peel_one(successor, min(successor.bang_boxes))
+        assert peeled.separable == bool(peeled.copy_node_ids)
+        via_peel = score(instantiate_symbol(peeled.diagram, step_symbol, k), {}).tensor
+        assert direct.shape == via_peel.shape
+        assert np.allclose(direct, via_peel)
+
+    def test_a_bare_symbol_multiplicity_cannot_be_peeled(self) -> None:
+        family = T7._build_ghz_family(2)
+        with pytest.raises(BangBoxDomainError):
+            peel_one(family, min(family.bang_boxes))
+
+
+class TestStepCaseIsReachableAndSound:
+    """The k to k+1 tier settles a true family and never settles a false one."""
+
+    def test_a_nested_family_is_proved_by_induction(self) -> None:
+        left = T7._build_nested_two_index_family(2)
+        right = T7._build_nested_two_index_family(2)
+        result = induction.prove_by_induction(
+            left, right, witness={"d": 2}, ladder=(induction.StepDischarge.INDUCTION_REWRITE,)
+        )
+        assert result.verdict is induction.Verdict.PROVED_INDUCTION
+        assert result.proved
+
+    def test_the_step_tier_refuses_a_false_near_identity(self) -> None:
+        left, right = T8._build_false_near_identity()
+        result = induction.prove_by_induction(
+            left, right, witness={"d": 2}, ladder=(induction.StepDischarge.INDUCTION_REWRITE,)
+        )
+        assert not result.proved
+        assert result.verdict is not induction.Verdict.PROVED_INDUCTION
+
+    def test_the_step_tier_refuses_a_family_off_by_one_leg(self) -> None:
+        left = T7._build_nested_two_index_family(2)
+        right = T7._build_nested_two_index_family(3)
+        result = induction.prove_by_induction(
+            left, right, witness={"d": 2}, ladder=(induction.StepDischarge.INDUCTION_REWRITE,)
+        )
+        assert not result.proved
