@@ -915,6 +915,38 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
     return PeelResult(working, copy_node_ids, separable)
 
 
+def expand_concrete_boxes(diagram: Diagram) -> Diagram:
+    """Expand every bang box whose multiplicity is already a concrete number.
+
+    Boxes are taken one at a time and the diagram rescanned, so a box a parent's expansion
+    copies is reached in turn. Returns a new Diagram.
+    """
+    working = diagram.copy()
+    for _round in range(_MAX_INSTANTIATE_ROUNDS):
+        targets = [
+            box_id
+            for box_id, box in sorted(working.bang_boxes.items())
+            if box.multiplicity.is_concrete
+        ]
+        if not targets:
+            return working
+        box_id = targets[0]
+        _instantiate_one(working, box_id, working.bang_boxes[box_id].multiplicity.to_int())
+    raise BangBoxGrammarError(
+        f"expanding concrete bang boxes did not settle within {_MAX_INSTANTIATE_ROUNDS} rounds"
+    )
+
+
+def scope_is_closed(diagram: Diagram, node_scope: frozenset[NodeId]) -> bool:
+    """Whether ``node_scope`` meets the rest of the diagram at no wire and no boundary slot."""
+    for wire in diagram.wires:
+        if (wire.a.node_id in node_scope) != (wire.b.node_id in node_scope):
+            return False
+    return not any(
+        ref.node_id in node_scope for ref in (*diagram.boundary_inputs, *diagram.boundary_outputs)
+    )
+
+
 def kill(diagram: Diagram, box_id: BangBoxId) -> Diagram:
     """Instantiate one box at multiplicity 0: its scope (and, for a node-scope box, every
     nested child) vanishes entirely. Returns a new Diagram."""

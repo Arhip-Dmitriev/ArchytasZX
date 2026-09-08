@@ -44,8 +44,9 @@ from qufzx.algebra.scalar import (
     ScalarSubstituteValue,
     ScalarSymbolKey,
 )
+from qufzx.diagram.bangbox import expand_concrete_boxes, scope_is_closed
 from qufzx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
+from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from qufzx.diagram.validate import ValidationReport, validate
 from qufzx.semantics.denote import resolve_dim
 
@@ -278,6 +279,40 @@ def _port_dim(diagram: Diagram, ref: PortRef) -> Dim:
     return node.legs(ref.direction)[ref.index].dim
 
 
+def _closed_scope_subdiagram(
+    diagram: Diagram, node_scope: frozenset[NodeId], exclude: BangBoxId
+) -> Diagram:
+    """The closed sub-diagram on ``node_scope``: its nodes, its wires, no boundary, scalar one.
+
+    ``exclude`` is the box being expanded; every other box lying inside the scope is carried
+    over, so a nested count is still there for the recursive contraction to meet.
+    """
+    extracted = Diagram()
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(node_scope):
+        node = diagram.nodes[old_id]
+        id_map[old_id] = extracted.add_node(
+            node.generator_type,
+            [port.dim for port in node.inputs],
+            [port.dim for port in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(diagram.wires, key=Wire.sort_key):
+        if wire.a.node_id in node_scope and wire.b.node_id in node_scope:
+            extracted.add_wire(
+                PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
+                PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
+            )
+    for box_id in sorted(diagram.bang_boxes):
+        box = diagram.bang_boxes[box_id]
+        if box_id != exclude and box.node_scope and box.node_scope <= node_scope:
+            extracted.add_bang_box(
+                box.multiplicity, node_scope=frozenset(id_map[n] for n in box.node_scope)
+            )
+    extracted.set_parameters(dict(diagram.parameters))
+    return extracted
+
+
 def contract_symbolic(
     diagram: Diagram, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS
 ) -> SymbolicTensor:
@@ -286,14 +321,39 @@ def contract_symbolic(
     if report.errors:
         raise SymbolicContractionValidationError(report)
 
+    # A concrete multiplicity is expanded outright: k copies of a scope contribute k times
+    # over, and contracting the scope once would silently drop the rest.
+    diagram = expand_concrete_boxes(diagram)
+
+    # What survives carries a symbolic multiplicity. A box closed off from the rest of the
+    # diagram contributes its own scalar raised to that multiplicity, which stays closed-form
+    # with the count formal; one meeting a wire or a boundary slot has a rank that varies
+    # with the count, which is out of scope for Phase 9.
+    box_factor: sp.Expr = sp.Integer(1)
     for box_id in sorted(diagram.bang_boxes):
         box = diagram.bang_boxes[box_id]
-        if not box.multiplicity.is_concrete:
+        if not box.is_node_scope or not scope_is_closed(diagram, box.node_scope):
             raise SymbolicContractionUnsupportedError(
-                f"bang box {box_id} has symbolic multiplicity {box.multiplicity} and a "
-                "non-scalar boundary; symbolic contraction over a variable rank is out of "
-                "scope for Phase 9"
+                f"bang box {box_id} has symbolic multiplicity {box.multiplicity} and meets "
+                "the rest of the diagram at a wire or a boundary slot; symbolic contraction "
+                "over a variable rank is out of scope for Phase 9"
             )
+    if diagram.bang_boxes:
+        working = diagram.copy()
+        for box_id in sorted(diagram.bang_boxes):
+            box = diagram.bang_boxes[box_id]
+            if box_id not in working.bang_boxes:
+                continue
+            scope = box.node_scope
+            inner = contract_symbolic(
+                _closed_scope_subdiagram(diagram, scope, box_id), max_steps=max_steps
+            )
+            box_factor = box_factor * sp.Pow(inner.entry.to_sympy(), box.multiplicity.to_sympy())
+            working.remove_bang_box(box_id)
+            for node_id in sorted(scope):
+                if node_id in working.nodes:
+                    working.remove_node(node_id)
+        diagram = working
 
     indices = _Indices()
     port_index: dict[PortRef, sp.Symbol] = {}
@@ -313,7 +373,7 @@ def contract_symbolic(
         port_index[second] = symbol
         wire_indices.append((symbol, _port_dim(diagram, first)))
 
-    entry: sp.Expr = diagram.scalar.to_sympy()
+    entry: sp.Expr = diagram.scalar.to_sympy() * box_factor
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
         for direction in (Direction.OUTPUT, Direction.INPUT):

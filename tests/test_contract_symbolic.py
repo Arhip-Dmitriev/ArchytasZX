@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import cmath
 import itertools
 
 import numpy as np
@@ -24,8 +25,10 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
+from qufzx.diagram.bangbox import Mult, expand_concrete_boxes
 from qufzx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER, GeneratorType
 from qufzx.diagram.graph import Diagram, Direction, PortRef
+from qufzx.semantics.check import score
 from qufzx.semantics.contract_numeric import ContractSizeError, contract
 from qufzx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
@@ -359,3 +362,76 @@ class TestCrossProcessDeterminism:
 
         for name in ("qufzx/algebra/scalar.py", "qufzx/semantics/contract_symbolic.py"):
             assert "Dummy(" not in pathlib.Path(name).read_text()
+
+
+class TestBangBoxesInSymbolicContraction:
+    """A bang box multiplies what its scope contributes; ignoring it drops that factor."""
+
+    @staticmethod
+    def _closed_cap_family(multiplicity: Mult | None) -> Diagram:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        effect = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
+        if multiplicity is not None:
+            diagram.add_bang_box(multiplicity, node_scope=frozenset({state, effect}))
+        return diagram
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    @pytest.mark.parametrize("d_value", [2, 3, 5])
+    def test_a_concrete_multiplicity_is_honoured(self, k: int, d_value: int) -> None:
+        boxed = self._closed_cap_family(Mult.concrete(k))
+        entry = contract_symbolic(boxed).entry.substitute({"d": d_value})
+        got = complex(sp.N(entry.to_sympy().doit()))
+        expected = complex(sp.N(sp.sqrt(d_value) ** k))
+        assert cmath.isclose(got, expected, abs_tol=1e-9)
+
+    def test_a_symbolic_multiplicity_over_a_closed_scope_stays_closed_form(self) -> None:
+        """Phase 9 ii: substituting the environment answers a count at any size."""
+        boxed = self._closed_cap_family(Mult.symbol("m"))
+        entry = contract_symbolic(boxed).entry
+        assert not entry.to_sympy().has(sp.Sum)
+        for m in (0, 1, 2, 5, 30):
+            for d_value in (2, 3, 7):
+                got = complex(sp.N(entry.substitute({"m": m, "d": d_value}).to_sympy().doit()))
+                expected = complex(sp.N(sp.sqrt(d_value) ** m))
+                assert cmath.isclose(got, expected, rel_tol=1e-9)
+
+    def test_a_thousand_copies_answer_without_building_a_tensor(self) -> None:
+        entry = contract_symbolic(self._closed_cap_family(Mult.symbol("m"))).entry
+        value = entry.substitute({"m": 1000, "d": 7}).to_sympy()
+        assert sp.simplify(value - sp.sqrt(7) ** 1000) == 0
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    @pytest.mark.parametrize("d_value", [2, 3])
+    def test_a_concrete_box_meeting_the_boundary_is_expanded(self, k: int, d_value: int) -> None:
+        """A concrete count is expanded whatever its scope touches, and must match the oracle."""
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.set_boundary_outputs([PortRef(state, Direction.OUTPUT, 0)])
+        diagram.add_bang_box(Mult.concrete(k), node_scope=frozenset({state}))
+
+        contracted = contract_symbolic(diagram)
+        assert len(contracted.axes) == k
+        expanded = expand_concrete_boxes(diagram)
+        truth = score(expanded, {"d": d_value}).tensor
+        entry = contracted.entry.substitute({"d": d_value}).to_sympy()
+        for index in itertools.product(range(d_value), repeat=k):
+            substituted = entry
+            for position, value in enumerate(index):
+                substituted = substituted.subs(
+                    sp.Symbol(f"_i{position}", integer=True, nonnegative=True), value
+                )
+            got = complex(sp.N(substituted.doit()))
+            assert cmath.isclose(got, complex(truth[index]) if k else complex(truth), abs_tol=1e-9)
+
+    def test_a_box_meeting_the_boundary_is_refused_not_ignored(self) -> None:
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.set_boundary_outputs([PortRef(state, Direction.OUTPUT, 0)])
+        diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset({state}))
+        with pytest.raises(SymbolicContractionUnsupportedError):
+            contract_symbolic(diagram)
