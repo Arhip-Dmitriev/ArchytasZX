@@ -44,18 +44,22 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from qufzx.diagram.graph import Diagram, Wire
+from qufzx.diagram.bangbox import BangBoxError, free_mult_symbols
+from qufzx.diagram.graph import Diagram, PortRef, Wire
 from qufzx.rewrite.engine import RewriteResult, RewriteStep, apply
 from qufzx.rewrite.rule import RewriteError
 from qufzx.rewrite.rules_library import lookup_rule
 from qufzx.semantics.check import (
     DEFAULT_TOLERANCE,
     CheckAssignmentValue,
+    CheckError,
     ComparisonResult,
     EqualityMode,
     compare,
+    instantiate,
 )
-from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS
+from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
+from qufzx.semantics.denote import DenoteError
 
 
 class CertificateError(Exception):
@@ -174,6 +178,40 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             False, f"wires differ: only in a {wire_only_a!r}, only in b {wire_only_b!r}"
         )
 
+    if sorted(a.bang_boxes) != sorted(b.bang_boxes):
+        box_only_a = sorted(set(a.bang_boxes) - set(b.bang_boxes))
+        box_only_b = sorted(set(b.bang_boxes) - set(a.bang_boxes))
+        return StructuralComparison(
+            False, f"bang box ids differ: only in a {box_only_a!r}, only in b {box_only_b!r}"
+        )
+
+    for box_id in sorted(a.bang_boxes):
+        box_a = a.bang_boxes[box_id]
+        box_b = b.bang_boxes[box_id]
+        if box_a.multiplicity != box_b.multiplicity:
+            return StructuralComparison(
+                False,
+                f"bang box {box_id}: multiplicity differs: "
+                f"{box_a.multiplicity!r} vs {box_b.multiplicity!r}",
+            )
+        if sorted(box_a.node_scope) != sorted(box_b.node_scope):
+            return StructuralComparison(
+                False,
+                f"bang box {box_id}: node scope differs: "
+                f"{sorted(box_a.node_scope)!r} vs {sorted(box_b.node_scope)!r}",
+            )
+        scope_a = sorted(box_a.port_scope, key=PortRef.sort_key)
+        scope_b = sorted(box_b.port_scope, key=PortRef.sort_key)
+        if scope_a != scope_b:
+            return StructuralComparison(
+                False, f"bang box {box_id}: port scope differs: {scope_a!r} vs {scope_b!r}"
+            )
+        if box_a.parent != box_b.parent:
+            return StructuralComparison(
+                False,
+                f"bang box {box_id}: parent differs: {box_a.parent!r} vs {box_b.parent!r}",
+            )
+
     if a.boundary_inputs != b.boundary_inputs:
         return StructuralComparison(
             False,
@@ -240,8 +278,7 @@ class Derivation:
             raise CertificateGrammarError(f"label must be a str, got {self.label!r}")
         if self.induction is not None and not isinstance(self.induction, InductionClaim):
             raise CertificateGrammarError(
-                f"induction must be an InductionClaim or None, got "
-                f"{type(self.induction).__name__}"
+                f"induction must be an InductionClaim or None, got {type(self.induction).__name__}"
             )
         if self.kind is DerivationKind.STEP_SEQUENCE and self.children:
             raise CertificateGrammarError("a step_sequence derivation carries no children")
@@ -562,6 +599,52 @@ class VerificationReport:
     child_comparisons: tuple[ComparisonResult, ...] = ()
 
 
+def _induction_binding_failure(
+    derivation: Derivation, assignment: Mapping[str, CheckAssignmentValue]
+) -> str | None:
+    """Why ``derivation``'s children and claim are not tied to its own ends, or None.
+
+    A base child and a successor child, each the parent's ends instantiated at the claimed
+    base value and one above it, with the parent's own multiplicity symbol supplying the
+    index. Anything looser leaves the claim asserting nothing about the parent.
+    """
+    claim = derivation.induction
+    if claim is None:
+        return "the derivation carries no InductionClaim"
+    if not claim.symbol or not claim.symbol.isidentifier():
+        return f"claim symbol {claim.symbol!r} is not an identifier"
+    if len(derivation.children) != 2:
+        return f"expected a base child and a successor child, got {len(derivation.children)}"
+
+    live = free_mult_symbols(derivation.initial)
+    if len(live) != 1:
+        return (
+            f"the parent's initial diagram carries {sorted(live)!r} as free multiplicity "
+            "symbol(s); induction needs exactly one to instantiate the children at"
+        )
+    (index,) = sorted(live)
+
+    for offset, (child, label) in enumerate(zip(derivation.children, ("base", "successor"))):
+        value = claim.base_value + offset
+        binding = {**dict(assignment), index: value}
+        for end, parent_end in (("initial", derivation.initial), ("final", derivation.final)):
+            try:
+                expected = instantiate(parent_end, binding)
+            except (BangBoxError, CheckError, DenoteError, ContractError) as exc:
+                return (
+                    f"the parent's {end} diagram cannot be instantiated at {index}={value} "
+                    f"to check the {label} child against: {exc}"
+                )
+            found = child.initial if end == "initial" else child.final
+            structural = compare_structure(found, expected)
+            if not structural.identical:
+                return (
+                    f"the {label} child's {end} diagram is not the parent's {end} diagram at "
+                    f"{index}={value}: {structural.reason}"
+                )
+    return None
+
+
 def verify(
     certificate: Certificate,
     assignment: Mapping[str, CheckAssignmentValue],
@@ -622,8 +705,7 @@ def verify(
     if certificate.check_method is CheckMethod.INDUCTION:
         if certificate.derivation.kind is not DerivationKind.INDUCTION:
             raise CertificateGrammarError(
-                f"check_method is INDUCTION but derivation.kind is "
-                f"{certificate.derivation.kind!r}"
+                f"check_method is INDUCTION but derivation.kind is {certificate.derivation.kind!r}"
             )
 
         replay_result = replay(certificate, rediscover=rediscover)
@@ -631,6 +713,18 @@ def verify(
             return VerificationReport(
                 verified=False,
                 reason=f"replay failed: {replay_result.reason}",
+                replay=replay_result,
+                comparison=None,
+                assignment=frozen_assignment,
+                mode=mode,
+                check_method=certificate.check_method,
+            )
+
+        binding_failure = _induction_binding_failure(certificate.derivation, frozen_assignment)
+        if binding_failure is not None:
+            return VerificationReport(
+                verified=False,
+                reason=f"induction claim unbound: {binding_failure}",
                 replay=replay_result,
                 comparison=None,
                 assignment=frozen_assignment,

@@ -25,6 +25,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar
+from qufzx.diagram.bangbox import Mult
 from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.rewrite.engine import RewriteResult, apply
@@ -501,3 +502,48 @@ class TestVerify:
         assert plumbed.mode is EqualityMode.UP_TO_GLOBAL_PHASE
         assert plumbed.comparison is not None
         assert plumbed.comparison.mode is EqualityMode.UP_TO_GLOBAL_PHASE
+
+
+class TestStructuralComparisonSeesBangBoxes:
+    """compare_structure reports a bang-box difference, not just nodes and wires."""
+
+    @staticmethod
+    def _boxed(multiplicity: Mult | None, scope_node: int = 0) -> Diagram:
+        d = Dim(2)
+        diagram = Diagram()
+        first = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        second = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.set_boundary_outputs(
+            [PortRef(first, Direction.OUTPUT, 0), PortRef(second, Direction.OUTPUT, 0)]
+        )
+        if multiplicity is not None:
+            scope = first if scope_node == 0 else second
+            diagram.add_bang_box(multiplicity, node_scope=frozenset({scope}))
+        return diagram
+
+    def test_differing_multiplicity_is_not_identical(self) -> None:
+        result = compare_structure(self._boxed(Mult.concrete(2)), self._boxed(Mult.concrete(5)))
+        assert not result.identical
+        assert "multiplicity" in result.reason
+
+    def test_a_missing_box_is_not_identical(self) -> None:
+        result = compare_structure(self._boxed(Mult.concrete(2)), self._boxed(None))
+        assert not result.identical
+        assert "bang box ids differ" in result.reason
+
+    def test_differing_scope_is_not_identical(self) -> None:
+        result = compare_structure(
+            self._boxed(Mult.concrete(2), scope_node=0),
+            self._boxed(Mult.concrete(2), scope_node=1),
+        )
+        assert not result.identical
+        assert "node scope" in result.reason
+
+    def test_concrete_against_symbolic_is_not_identical(self) -> None:
+        result = compare_structure(self._boxed(Mult.concrete(2)), self._boxed(Mult.symbol("n")))
+        assert not result.identical
+
+    def test_the_same_box_is_identical(self) -> None:
+        assert compare_structure(
+            self._boxed(Mult.symbol("n")), self._boxed(Mult.symbol("n"))
+        ).identical
