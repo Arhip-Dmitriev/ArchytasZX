@@ -996,6 +996,19 @@ def resolve_fusion_match(
     shared_dim = port_a.dim
     bindings: dict[str, Dim] = {}
 
+    # An equality the diagram's own parameter environment refutes is decided, not deferred:
+    # the two spiders do not share a dimension, so this is a non-match.
+    resolved_a = diagram.resolve_dim(port_a.dim)
+    resolved_b = diagram.resolve_dim(port_b.dim)
+    if (resolved_a, resolved_b) != (port_a.dim, port_b.dim) and resolved_a.unify(
+        resolved_b
+    ).is_failure:
+        return _failed(
+            ("dimension_agreement", "phase_dimension_agreement"),
+            f"the parameter environment resolves {port_a.dim} and {port_b.dim} to "
+            f"{resolved_a} and {resolved_b}, which do not unify",
+        )
+
     # Conditions 6 and 7 run as one bounded fixpoint: each pass re-derives the connecting
     # pair, then every surviving leg of both nodes, then every present phase's Dim -- each
     # against shared_dim as of the point reached so far in that pass, refining `bindings` and

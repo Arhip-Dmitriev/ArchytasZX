@@ -218,6 +218,22 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
             continue
         if port_a.dim == port_b.dim:
             continue
+        resolved_a = diagram.resolve_dim(port_a.dim)
+        resolved_b = diagram.resolve_dim(port_b.dim)
+        if (resolved_a, resolved_b) != (port_a.dim, port_b.dim) and resolved_a.unify(
+            resolved_b
+        ).is_failure:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.DIMENSION_MISMATCH,
+                    message=(
+                        f"wire {wire!r} joins {port_a.dim} and {port_b.dim}, which the "
+                        f"parameter environment resolves to {resolved_a} and {resolved_b}"
+                    ),
+                    wire=wire,
+                )
+            )
+            continue
         result = port_a.dim.unify(port_b.dim)
         if result.is_failure:
             issues.append(

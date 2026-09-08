@@ -695,3 +695,43 @@ class TestABoundLegDimensionIsReportedEvenWhenTheLegSetDefers:
         three_legs = validate(self._node_with_legs([d, Dim.concrete(2), d * e]))
         assert "d := 2" in " ".join(issue.message for issue in two_legs.deferred)
         assert "d := 2" in " ".join(issue.message for issue in three_legs.deferred)
+
+
+class TestParameterEnvironmentRefutesADimensionEquality:
+    """A wire equality the environment decides is decided, not deferred."""
+
+    @staticmethod
+    def _two_spiders(bind: dict[str, int]) -> Diagram:
+        x, y = Dim.symbol("x"), Dim.symbol("y")
+        diagram = Diagram()
+        a = diagram.add_node(Z_SPIDER, input_dims=[x], output_dims=[x])
+        b = diagram.add_node(Z_SPIDER, input_dims=[y], output_dims=[y])
+        diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(a, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(b, Direction.OUTPUT, 0)])
+        for name, value in bind.items():
+            diagram.bind_parameter(name, value)
+        return diagram
+
+    def test_refuted_wire_equality_is_a_hard_mismatch(self) -> None:
+        report = validate(self._two_spiders({"x": 2, "y": 3}))
+        assert not report.is_valid
+        assert IssueKind.DIMENSION_MISMATCH in {issue.kind for issue in report.errors}
+
+    def test_agreeing_environment_leaves_the_diagram_valid(self) -> None:
+        assert validate(self._two_spiders({"x": 2, "y": 2})).is_valid
+
+    def test_unbound_symbols_still_defer(self) -> None:
+        report = validate(self._two_spiders({}))
+        assert report.is_valid
+        assert all(issue.deferred for issue in report.issues if issue.kind.value.startswith("dim"))
+
+    def test_partially_bound_symbols_still_defer(self) -> None:
+        assert validate(self._two_spiders({"x": 2})).is_valid
+
+    def test_fusion_does_not_fire_on_a_refuted_equality(self) -> None:
+        from qufzx.rewrite.match import find_matches
+
+        assert find_matches(self._two_spiders({"x": 2, "y": 3})) == ()
+        assert len(find_matches(self._two_spiders({"x": 2, "y": 2}))) == 1
+        assert len(find_matches(self._two_spiders({}))) == 1

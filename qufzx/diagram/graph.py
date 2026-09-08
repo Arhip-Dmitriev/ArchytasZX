@@ -67,7 +67,7 @@ from typing import TYPE_CHECKING, NewType, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from qufzx.algebra.dimension import Dim, DimensionError, DimSubstituteValue, DimSymbolKey
 from qufzx.algebra.phase import Phase, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
 from qufzx.algebra.scalar import Scalar, ScalarSubstituteValue, ScalarSymbolKey
 from qufzx.diagram.generators import GeneratorType
@@ -524,6 +524,24 @@ class Diagram:
         self._scalar = self._scalar * factor
 
     # -- parameter environment ----------------------------------------------------------
+
+    def resolve_dim(self, dim: Dim) -> Dim:
+        """Substitute this diagram's parameter environment into ``dim``, its own symbols only.
+
+        Returns ``dim`` unchanged when the environment binds none of them, or when a bound
+        value lies outside the symbol's domain (:mod:`qufzx.diagram.validate` reports that).
+        """
+        mapping: dict[DimSymbolKey, DimSubstituteValue] = {
+            name: self._parameters[name]
+            for name in sorted(dim.free_symbols)
+            if name in self._parameters
+        }
+        if not mapping:
+            return dim
+        try:
+            return dim.substitute(mapping)
+        except DimensionError:
+            return dim
 
     def bind_parameter(self, name: str, value: int) -> None:
         """Record that symbol ``name`` stands for the supplied concrete ``value``.
