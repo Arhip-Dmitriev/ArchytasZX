@@ -37,8 +37,9 @@ from qufzx.diagram.bangbox import (
     instantiate_symbol,
     kill,
     merge,
+    peel_one,
 )
-from qufzx.diagram.generators import Z_SPIDER
+from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from qufzx.diagram.validate import validate
 from qufzx.semantics.check import score
@@ -268,3 +269,49 @@ class TestCompoundMultiplicityInstantiation:
     def test_an_unmentioned_symbol_is_still_refused(self) -> None:
         with pytest.raises(BangBoxGrammarError):
             instantiate_symbol(self._family(Mult.symbol("k") * 2), "nope", 1)
+
+
+class TestBoundaryOrderIsContinuousAtOne:
+    """Instantiating at 1 splices the boundary the way every larger count does."""
+
+    @staticmethod
+    def _non_contiguous_crossings() -> Diagram:
+        """A boxed two-leg spider whose boundary is split by an unboxed spider's leg."""
+        d = Dim(2)
+        diagram = Diagram()
+        boxed = diagram.add_node(
+            Z_SPIDER, input_dims=[], output_dims=[d, d], phase=PhaseVector(d, {})
+        )
+        other = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {}))
+        diagram.set_boundary_outputs(
+            [
+                PortRef(boxed, Direction.OUTPUT, 0),
+                PortRef(other, Direction.OUTPUT, 0),
+                PortRef(boxed, Direction.OUTPUT, 1),
+            ]
+        )
+        diagram, _box, _m = abstract_subgraph_count(diagram, frozenset({boxed}), 1, stem="m")
+        return diagram
+
+    @staticmethod
+    def _generator_order(diagram: Diagram) -> list[str]:
+        return [diagram.nodes[ref.node_id].generator_type.name for ref in diagram.boundary_outputs]
+
+    def test_the_boxed_block_is_contiguous_at_every_count(self) -> None:
+        for k in (1, 2, 3):
+            order = self._generator_order(
+                instantiate_symbol(self._non_contiguous_crossings(), "m", k)
+            )
+            boxed_positions = [i for i, name in enumerate(order) if name == "Z"]
+            assert boxed_positions == list(range(len(boxed_positions))), (k, order)
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    def test_peel_then_instantiate_matches_instantiate_at_one_more(self, k: int) -> None:
+        from qufzx.semantics.induction import successor_diagram
+
+        family = self._non_contiguous_crossings()
+        direct = score(instantiate_symbol(family, "m", k + 1), {}).tensor
+        successor = successor_diagram(self._non_contiguous_crossings(), "m")
+        step = min(free_mult_symbols(successor))
+        peeled = peel_one(successor, min(successor.bang_boxes)).diagram
+        assert np.allclose(direct, score(instantiate_symbol(peeled, step, k), {}).tensor)

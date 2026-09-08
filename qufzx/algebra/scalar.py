@@ -163,16 +163,19 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
 
 
 def _normalize(expr: sp.Expr) -> sp.Expr:
-    """Cheap, always-sound normalization: expand/collect and fold same-base exponentials.
+    """Cheap, always-sound normalization: expand/collect, fold same-base exponentials, and
+    alpha-rename bound indices.
 
-    Two steps, in this order: ``sympy.expand`` distributes products over sums (folding
+    Three steps, in this order: ``sympy.expand`` distributes products over sums (folding
     concrete rational and Gaussian-rational arithmetic along the way), then
     ``sympy.powsimp(..., force=True)`` recombines products of same-base exponentials
     (e.g. ``exp(a) * exp(b) -> exp(a + b)``) into one canonical exponential term. Both
     steps are exact identities for complex exponentials (``e^a * e^b = e^{a+b}`` holds
     unconditionally, with no branch-cut subtlety, since ``exp`` is entire) -- this is
     not the kind of number-theoretic reasoning about a symbolic ``d`` that
-    :meth:`Scalar.simplify` performs.
+    :meth:`Scalar.simplify` performs. Finally :func:`_rename_indices` gives every bound
+    summation index a name fixed by its binder depth, so two scalars differing only in a
+    bound name are the same object here.
 
     Before any of that: an expression containing an ``sp.Float`` atom anywhere in its
     tree (not just at the top level) is rejected outright, since this module tracks
@@ -180,7 +183,7 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     """
     if expr.atoms(sp.Float):
         raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
-    normalized = sp.powsimp(sp.expand(expr), force=True)
+    normalized = _rename_indices(sp.powsimp(sp.expand(expr), force=True))
     _check_scalar_domain(normalized)
     return cast(sp.Expr, normalized)
 

@@ -281,3 +281,31 @@ class TestDeltaEliminationResidueSystem:
         result = self._double_sum(d, e, -1).simplify()
         got = complex(sp.N(result.substitute({"d": 4, "e": 1}).to_sympy().doit()))
         assert cmath.isclose(got, 0j, abs_tol=1e-9)
+
+
+class TestAlphaEquivalentSumsCancel:
+    """Canonical index names depend on binder depth, not on where a sum sits."""
+
+    @staticmethod
+    def _sum_over(name: str) -> sp.Expr:
+        d = sp.Symbol("d", integer=True, positive=True)
+        index = sp.Symbol(name, integer=True, nonnegative=True)
+        return sp.Sum(sp.exp(2 * sp.pi * sp.I * index / d), (index, 0, d - 1))
+
+    def test_two_sums_differing_only_in_their_bound_name_cancel(self) -> None:
+        difference = Scalar(self._sum_over("_k0") - self._sum_over("_k1"))
+        assert difference.is_zero
+
+    def test_such_sums_compare_equal(self) -> None:
+        assert Scalar(self._sum_over("_k0")) == Scalar(self._sum_over("_k7"))
+
+    def test_a_nested_sum_does_not_collide_with_its_parent(self) -> None:
+        d = sp.Symbol("d", integer=True, positive=True)
+        outer = sp.Symbol("_k0", integer=True, nonnegative=True)
+        inner = sp.Symbol("_k1", integer=True, nonnegative=True)
+        nested = sp.Sum(
+            outer * sp.Sum(sp.exp(2 * sp.pi * sp.I * inner / d), (inner, 0, d - 1)),
+            (outer, 0, d - 1),
+        )
+        assert not Scalar(nested).is_zero
+        assert Scalar(nested) == Scalar(nested)

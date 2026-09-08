@@ -27,6 +27,7 @@ import pytest
 
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseVector
+from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.bangbox import (
     BangBox,
     BangBoxDomainError,
@@ -38,7 +39,7 @@ from qufzx.diagram.bangbox import (
     instantiate_symbol,
     peel_one,
 )
-from qufzx.diagram.generators import Z_SPIDER
+from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import (
     BangBoxId,
     Diagram,
@@ -688,3 +689,65 @@ class TestStepCaseIsReachableAndSound:
             left, right, witness={"d": 2}, ladder=(induction.StepDischarge.INDUCTION_REWRITE,)
         )
         assert not result.proved
+
+
+class TestStepCaseRefusesUnsoundReductions:
+    """The peeled reduction holds only when the copy attaches the same way on both sides."""
+
+    @staticmethod
+    def _boxed_pair(
+        *, boxed_first: bool, scalar: Scalar | None = None, effect: bool = False
+    ) -> Diagram:
+        """A Z spider under a node-scope box beside a second spider, in a chosen order."""
+        d = Dim.symbol("d")
+        diagram = Diagram()
+        boxed = diagram.add_node(
+            Z_SPIDER,
+            input_dims=[d] if effect else [],
+            output_dims=[] if effect else [d],
+            phase=PhaseVector(d, {}),
+        )
+        other = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {}))
+        boxed_ref = PortRef(boxed, Direction.INPUT if effect else Direction.OUTPUT, 0)
+        other_ref = PortRef(other, Direction.OUTPUT, 0)
+        order = [boxed_ref, other_ref] if boxed_first else [other_ref, boxed_ref]
+        if effect:
+            diagram.set_boundary_inputs([boxed_ref])
+            diagram.set_boundary_outputs([other_ref])
+        else:
+            diagram.set_boundary_outputs(order)
+        if scalar is not None:
+            diagram.multiply_scalar(scalar)
+        diagram, _box, _n = abstract_subgraph_count(diagram, frozenset({boxed}), 1, stem="n")
+        return diagram
+
+    def _verdict(self, left: Diagram, right: Diagram) -> induction.InductionResult:
+        return induction.prove_by_induction(
+            left, right, witness={"d": 2}, ladder=(induction.StepDischarge.INDUCTION_REWRITE,)
+        )
+
+    def test_a_boundary_permutation_is_not_proved(self) -> None:
+        """The two sides are transposes at every n >= 1 and agree only at the base."""
+        left = self._boxed_pair(boxed_first=True)
+        right = self._boxed_pair(boxed_first=False)
+        assert compare(left, right, {"d": 2, "n": 1}).matched is False
+        assert not self._verdict(left, right).proved
+
+    def test_a_scalar_difference_is_not_proved(self) -> None:
+        """The sides differ by a factor that only agrees at the witness's own d."""
+        left = self._boxed_pair(boxed_first=True, scalar=Scalar.from_dim(Dim.symbol("d")))
+        right = self._boxed_pair(boxed_first=True, scalar=Scalar.rational(2))
+        assert compare(left, right, {"d": 3, "n": 1}).matched is False
+        assert not self._verdict(left, right).proved
+
+    def test_an_input_output_swap_is_not_proved(self) -> None:
+        """A copy with a boundary output is not a copy with a boundary input."""
+        left = self._boxed_pair(boxed_first=True)
+        right = self._boxed_pair(boxed_first=True, effect=True)
+        assert not self._verdict(left, right).proved
+
+    def test_the_true_family_is_still_proved(self) -> None:
+        left = self._boxed_pair(boxed_first=True)
+        right = self._boxed_pair(boxed_first=True)
+        result = self._verdict(left, right)
+        assert result.verdict is induction.Verdict.PROVED_INDUCTION

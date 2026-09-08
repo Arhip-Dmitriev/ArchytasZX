@@ -493,7 +493,6 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId]) -> Diagram:
         ]
     )
     extracted.set_parameters(dict(diagram.parameters))
-    extracted.multiply_scalar(diagram.scalar)
     return extracted
 
 
