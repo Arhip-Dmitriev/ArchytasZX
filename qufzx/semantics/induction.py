@@ -71,10 +71,6 @@ class InductionGrammarError(InductionError):
     """A request is malformed, independent of any diagram's concreteness."""
 
 
-class InductionUnavailableError(InductionError):
-    """A discharge tier's backing machinery is not implemented."""
-
-
 class Verdict(enum.Enum):
     """What an induction attempt established about the claimed equality."""
 

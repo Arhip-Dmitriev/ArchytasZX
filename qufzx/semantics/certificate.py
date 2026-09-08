@@ -30,8 +30,15 @@ each child's own ends at that assignment, never the symbolic node's.
 A verified certificate is evidence of five things: the recorded steps re-derive the recorded
 final diagram exactly; every rule named still exists; every match is still discoverable in
 the diagram it was recorded against; every recorded side-condition outcome and dimension
-constraint is what the matcher derives fresh; and the two ends denote the same tensor at
-that assignment.
+constraint is what the matcher derives fresh; and, for a ``NUMERIC_ORACLE`` derivation, the
+two ends denote the same tensor at that assignment.
+
+An ``INDUCTION`` derivation's own ends are symbolic in the induction index and are never
+contracted. What is checked there is that each child is the parent's ends instantiated at the
+claimed base value and one above it, and that both children's ends agree at the assignment.
+That is the base case and one concrete instance of the step, not the step schema itself,
+which :mod:`qufzx.semantics.induction` discharges and which no field of the certificate
+records in re-checkable form.
 
 It is not evidence about other assignments, about the satisfiability of a ``DEFERRED``
 dimension constraint, or about a rule whose meaning changed under a name it kept.

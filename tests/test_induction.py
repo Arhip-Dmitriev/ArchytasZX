@@ -61,7 +61,6 @@ from qufzx.semantics.induction import (
     InductionError,
     InductionGrammarError,
     InductionResult,
-    InductionUnavailableError,
     StepDischarge,
     TierOutcome,
     Verdict,
@@ -162,7 +161,6 @@ class TestErrorTaxonomy:
         assert InductionError.__bases__ == (Exception,)
         assert issubclass(InductionDomainError, InductionError)
         assert issubclass(InductionGrammarError, InductionError)
-        assert issubclass(InductionUnavailableError, InductionError)
 
     @pytest.mark.parametrize("base", [2, -1])
     def test_a_base_index_other_than_zero_or_one_is_rejected(self, base: int) -> None:

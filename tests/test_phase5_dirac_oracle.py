@@ -182,15 +182,24 @@ class TestDiracParserGrammar:
             "sum_{k=0}^{k-1} |k,k>",  # bound index used as a dimension symbol
             f"sum_{{k=0}}^{{d-1}} |k>^{{literal {parser_module._MAX_KET_LEG_COUNT + 1}}}",
             "sum_{k=0}^{d-1} |k>^{0}",  # zero legs
+            # A well-formed digit run that int() itself refuses: CPython caps
+            # integer-string conversion, so the digit shape alone is not enough.
+            f"sum_{{k=0}}^{{{'9' * 5000}-1}} |k,k>",
+            f"sum_{{k=0}}^{{literal {'9' * 5000}-1}} |k,k>",
+            f"sum_{{k=0}}^{{d-1}} |k>^{{{'9' * 5000}}}",
             "sum_{k=0}^{d-1} |k,j>",  # grammar error, not domain
             "not dirac at all",  # grammar error, not domain
         )
         for source in bad_sources:
             try:
                 parse_dirac_source(source)
-            except DiracError as exc:
-                assert isinstance(exc, DiracError), (source, exc)
+            except DiracError:
                 continue
+            except Exception as exc:
+                raise AssertionError(
+                    f"{source!r} raised the foreign {type(exc).__module__}."
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
             raise AssertionError(f"{source!r} should have raised a DiracError")
 
     def test_dimension_zero_is_a_dirac_domain_error_not_a_foreign_one(self) -> None:

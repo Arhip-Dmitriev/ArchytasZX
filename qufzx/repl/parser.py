@@ -111,6 +111,26 @@ with an optional ``^{n}`` (or ``^{\\otimes n}``/``^{⊗n}``) tensor-power suffix
 ``BODY`` is read by :func:`_leg_count_from_body`."""
 
 
+_MAX_NUMERAL_DIGITS = 18
+"""Longest digit run this parser converts with ``int()``.
+
+CPython's integer-string conversion limit makes ``int()`` raise ``ValueError`` on a
+well-formed run of digits, so the :data:`_ASCII_DIGITS` shape alone does not make the
+conversion total; this bound does, well below any dimension or count anything downstream
+can hold.
+"""
+
+
+def _numeral(token: str, what: str) -> int:
+    """The int a checked digit run names, as this module's own error when it is too long."""
+    if len(token) > _MAX_NUMERAL_DIGITS:
+        raise DiracDomainError(
+            f"{what} {token[:16]}... is {len(token)} digits long, above this parser's bound "
+            f"of {_MAX_NUMERAL_DIGITS}"
+        )
+    return int(token)
+
+
 def _leg_count_from_body(body: str, power: str | None, *, eager: bool = True) -> int:
     """How many output legs the ket family declares.
 
@@ -132,7 +152,7 @@ def _leg_count_from_body(body: str, power: str | None, *, eager: bool = True) ->
                 f"ket body {body!r} combined with a tensor-power suffix ^{{{power}}} is "
                 f"ambiguous: use either '|k>^{{n}}' or '|k,k,...>', not both"
             )
-        leg_count = int(power)
+        leg_count = _numeral(power, "tensor-power count")
     else:
         leg_count = len(stripped)
     if leg_count < 1:
@@ -163,7 +183,7 @@ def _parse_dim(token: str, *, literal: bool) -> tuple[Dim, Mapping[str, int]]:
     """
     if _ASCII_DIGITS_RE.match(token):
         try:
-            concrete = Dim.concrete(int(token))
+            concrete = Dim.concrete(_numeral(token, "dimension token"))
         except DimensionDomainError as exc:
             raise DiracDomainError(
                 f"dimension token {token!r} is outside Dim's domain: {exc}"
