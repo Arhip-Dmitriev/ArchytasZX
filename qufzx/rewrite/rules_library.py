@@ -76,6 +76,7 @@ from qufzx.rewrite.match import (
     FourierMatch,
     FusionMatch,
     FusionPattern,
+    find_fourier_matches,
     innermost_node_scope_box,
     reattach_phase,
     resolve_fusion_match,
@@ -342,12 +343,23 @@ def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     Adds a phaseless one-in-one-out Z spider (the identity on a wire) and maps the chain's
     free input and output onto its legs; never removes the matched nodes or touches a wire.
+
+    Trusts nothing about ``match`` for graph surgery until it has been re-derived: the match
+    must be among those :func:`~qufzx.rewrite.match.find_fourier_matches` finds afresh in
+    ``diagram``, which settles ``node_ids``, ``wires``, ``shared_dim``,
+    ``dimension_constraints`` and ``side_condition_outcomes`` in one equality. This builder
+    is reachable directly, so a fabricated match must not reach surgery.
     """
     if not isinstance(match, FourierMatch):
         raise RewriteGrammarError(
             f"fourier_cancellation_builder requires a FourierMatch, got {type(match).__name__}"
         )
     check_side_condition_coverage(match, FOURIER_SIDE_CONDITIONS, "fourier_cancellation_builder")
+    if match not in find_fourier_matches(diagram):
+        raise RewriteDomainError(
+            "fourier_cancellation_builder: the match is not among those rediscovered in this "
+            "diagram, so it is not evidence of an F^4 chain"
+        )
     for node_id in match.node_ids:
         node = diagram.nodes.get(node_id)
         if node is None or node.generator_type.name != FOURIER_BOX.name:

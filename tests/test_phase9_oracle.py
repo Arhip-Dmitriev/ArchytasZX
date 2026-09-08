@@ -28,7 +28,8 @@ from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.diagram.validate import validate
 from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_fourier_matches
+from qufzx.rewrite.match import FOURIER_SIDE_CONDITIONS, FourierMatch, find_fourier_matches
+from qufzx.rewrite.rule import RewriteDomainError, SideConditionOutcome
 from qufzx.rewrite.rules_library import FOURIER_CANCELLATION, RULES
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_symbolic import contract_symbolic
@@ -214,3 +215,44 @@ class TestTheFourierMatcher:
         diagram.set_boundary_inputs([PortRef(order[0], Direction.INPUT, 0)])
         diagram.set_boundary_outputs([PortRef(order[-1], Direction.OUTPUT, 0)])
         assert find_fourier_matches(diagram) == ()
+
+
+class TestFourierBuilderRederivesItsMatch:
+    """A fabricated FourierMatch never reaches graph surgery."""
+
+    @staticmethod
+    def _chain(length: int, d: int = 3) -> tuple[Diagram, list[int]]:
+        dim = Dim.concrete(d)
+        diagram = Diagram()
+        ids = [
+            diagram.add_node(FOURIER_BOX, input_dims=[dim], output_dims=[dim])
+            for _ in range(length)
+        ]
+        for first, second in itertools.pairwise(ids):
+            diagram.add_wire(
+                PortRef(first, Direction.OUTPUT, 0), PortRef(second, Direction.INPUT, 0)
+            )
+        diagram.set_boundary_inputs([PortRef(ids[0], Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(ids[-1], Direction.OUTPUT, 0)])
+        return diagram, ids
+
+    @pytest.mark.parametrize("length", [2, 3, 5])
+    def test_a_chain_that_is_not_four_boxes_is_refused(self, length: int) -> None:
+        diagram, ids = self._chain(length)
+        fabricated = FourierMatch(
+            node_ids=tuple(ids),
+            wires=tuple(diagram.wires),
+            shared_dim=Dim.concrete(3),
+            side_condition_outcomes=tuple(
+                SideConditionOutcome(condition.name, True, "fabricated")
+                for condition in FOURIER_SIDE_CONDITIONS
+            ),
+        )
+        with pytest.raises(RewriteDomainError):
+            apply(diagram, FOURIER_CANCELLATION, fabricated)
+
+    def test_the_genuine_four_box_chain_still_fires(self) -> None:
+        diagram, _ids = self._chain(4)
+        matches = find_fourier_matches(diagram)
+        assert len(matches) == 1
+        assert apply(diagram, FOURIER_CANCELLATION, matches[0]).diagram is not None
