@@ -33,6 +33,7 @@ import pytest
 
 import qufzx.repl.parser as parser_module
 from qufzx.algebra.dimension import Dim
+from qufzx.diagram.bangbox import free_mult_symbols, instantiate_symbol
 from qufzx.diagram.validate import validate
 from qufzx.repl.parser import DiracDomainError, DiracError, DiracGrammarError, parse_dirac_source
 from qufzx.rewrite.engine import apply
@@ -93,13 +94,39 @@ class TestDiracToGraphToFuseToGraph:
         assert result.mode is EqualityMode.EXACT
         assert result.matched, result.reason
 
-    def test_tensor_power_shorthand_parses_to_the_same_diagram_as_repeated_indices(
-        self,
-    ) -> None:
+    def test_tensor_power_shorthand_instantiates_to_the_repeated_index_diagram(self) -> None:
+        """The shorthand abstracts its count into a bang box (Phase 7 i), so the two agree
+        once that box is instantiated rather than as written."""
         repeated = parse_dirac_source("sum_{k=0}^{d-1} |k,k>")
         shorthand = parse_dirac_source("sum_{k=0}^{d-1} |k>^{2}")
-        assert repeated.nodes == shorthand.nodes
-        assert repeated.boundary_outputs == shorthand.boundary_outputs
+        assert not repeated.bang_boxes
+        assert [str(box.multiplicity) for box in shorthand.bang_boxes.values()] == ["n"]
+        assert dict(shorthand.parameters) == {"n": 2}
+
+        expanded = instantiate_symbol(shorthand, "n", 2)
+        (expanded_node,) = expanded.nodes.values()
+        (repeated_node,) = repeated.nodes.values()
+        assert expanded_node.num_outputs == repeated_node.num_outputs == 2
+        assert len(expanded.boundary_outputs) == len(repeated.boundary_outputs)
+        for d_value in (2, 3):
+            result = compare(expanded, repeated, {"d": d_value}, mode=EqualityMode.EXACT)
+            assert result.matched, result.reason
+
+    def test_the_literal_marker_keeps_the_tensor_power_expanded(self) -> None:
+        shorthand = parse_dirac_source("sum_{k=0}^{d-1} |k>^{literal 2}")
+        repeated = parse_dirac_source("sum_{k=0}^{d-1} |k,k>")
+        assert not shorthand.bang_boxes
+        assert shorthand.nodes == repeated.nodes
+        assert shorthand.boundary_outputs == repeated.boundary_outputs
+
+    def test_a_large_tensor_power_costs_no_legs_and_stays_inductable(self) -> None:
+        """Phase 7 i: a user-supplied 30 must not force a d**30 tensor."""
+        diagram = parse_dirac_source("sum_{k=0}^{d-1} |k>^{30}")
+        (node,) = diagram.nodes.values()
+        assert node.num_outputs == 1
+        assert dict(diagram.parameters) == {"n": 30}
+        assert free_mult_symbols(diagram) == frozenset({"n"})
+        assert validate(diagram).is_valid
 
     def test_state_only_source_without_copy_parses_to_a_single_state_spider(self) -> None:
         diagram = parse_dirac_source("sum_{k=0}^{d-1} |k,k,k>")
@@ -153,7 +180,7 @@ class TestDiracParserGrammar:
         bad_sources = (
             "sum_{k=0}^{0-1} |k,k>",  # concrete dimension 0
             "sum_{k=0}^{k-1} |k,k>",  # bound index used as a dimension symbol
-            f"sum_{{k=0}}^{{d-1}} |k>^{{{parser_module._MAX_KET_LEG_COUNT + 1}}}",  # too many legs
+            f"sum_{{k=0}}^{{d-1}} |k>^{{literal {parser_module._MAX_KET_LEG_COUNT + 1}}}",
             "sum_{k=0}^{d-1} |k>^{0}",  # zero legs
             "sum_{k=0}^{d-1} |k,j>",  # grammar error, not domain
             "not dirac at all",  # grammar error, not domain
@@ -263,7 +290,7 @@ class TestDiracParserLegCountBound:
     def test_leg_count_above_bound_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(parser_module, "_MAX_KET_LEG_COUNT", 4)
         try:
-            parse_dirac_source("sum_{k=0}^{d-1} |k>^{5}")
+            parse_dirac_source("sum_{k=0}^{d-1} |k>^{literal 5}")
         except DiracDomainError:
             pass
         else:
@@ -271,9 +298,19 @@ class TestDiracParserLegCountBound:
 
     def test_leg_count_at_bound_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(parser_module, "_MAX_KET_LEG_COUNT", 4)
-        diagram = parse_dirac_source("sum_{k=0}^{d-1} |k>^{4}")
+        diagram = parse_dirac_source("sum_{k=0}^{d-1} |k>^{literal 4}")
         (node,) = diagram.nodes.values()
         assert node.num_outputs == 4
+
+    def test_an_abstracted_count_is_not_bounded_by_the_leg_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bound guards eager expansion; an abstracted count costs one leg whatever it is."""
+        monkeypatch.setattr(parser_module, "_MAX_KET_LEG_COUNT", 4)
+        diagram = parse_dirac_source("sum_{k=0}^{d-1} |k>^{9}")
+        (node,) = diagram.nodes.values()
+        assert node.num_outputs == 1
+        assert dict(diagram.parameters) == {"n": 9}
 
 
 class TestDiracParserErrorMessageRendering:

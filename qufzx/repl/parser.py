@@ -23,13 +23,16 @@ Supplies the Dirac-to-graph end of Phase 5's completion condition:
   is rejected in a dimension slot.
 * The emitted diagram never builds a matrix or dense tensor; it allocates nodes, wires and a
   boundary order.
-* The tensor-power leg count is bounded by :data:`_MAX_KET_LEG_COUNT`.
+* A tensor-power count is abstracted into a port-scope bang box bound in the parameter
+  environment (Phase 7 i, superseding Phase 5's eager expansion), so ``^{30}`` costs one leg
+  and stays open to induction. :data:`_LITERAL_MARKER` before the numeral expands it eagerly
+  instead, and only then does :data:`_MAX_KET_LEG_COUNT` bound it.
 * No foreign exception hierarchy escapes this module; see :class:`DiracError`.
 
 Out of scope, and belonging to later phases: a general spider/wire/bang-box declaration
-syntax (Phase 18), bang boxes (Phase 7), multi-index families, and the diagram-to-Dirac
-printer (Phase 17). ``copy`` is a single keyword standing in for the one copy spider the
-worked example needs; Phase 18 must keep this grammar as a strict subset of its own.
+syntax (Phase 18), multi-index families, and the diagram-to-Dirac printer (Phase 17).
+``copy`` is a single keyword standing in for the one copy spider the worked example needs;
+Phase 18 must keep this grammar as a strict subset of its own.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import re
 from collections.abc import Mapping
 
 from qufzx.algebra.dimension import Dim, DimensionDomainError, DimensionError
+from qufzx.diagram.bangbox import abstract_port_count
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 
@@ -99,14 +103,15 @@ _KET_SUM_RE = re.compile(
     rf"^sum_\{{{_SUMMATION_INDEX}=0\}}\^\{{(?:(?P<literal>{_LITERAL_MARKER})\s+)?"
     rf"(?P<dim>{_IDENTIFIER}|{_ASCII_DIGITS})-1\}}\s*"
     rf"\|(?P<body>[^>]*)>"
-    rf"(?:\^\{{(?:\\otimes|⊗)?\s*(?P<power>{_ASCII_DIGITS})\s*\}})?$"
+    rf"(?:\^\{{(?:\\otimes|⊗)?\s*(?:(?P<power_literal>{_LITERAL_MARKER})\s+)?"
+    rf"(?P<power>{_ASCII_DIGITS})\s*\}})?$"
 )
 """Matches ``sum_{k=0}^{D-1} |BODY>``, ``D`` optionally prefixed by :data:`_LITERAL_MARKER`,
 with an optional ``^{n}`` (or ``^{\\otimes n}``/``^{⊗n}``) tensor-power suffix on the ket.
 ``BODY`` is read by :func:`_leg_count_from_body`."""
 
 
-def _leg_count_from_body(body: str, power: str | None) -> int:
+def _leg_count_from_body(body: str, power: str | None, *, eager: bool = True) -> int:
     """How many output legs the ket family declares.
 
     ``body`` must, once commas and whitespace are stripped, consist only of repeated ``k``
@@ -134,7 +139,7 @@ def _leg_count_from_body(body: str, power: str | None) -> int:
         raise DiracDomainError(
             f"ket family declares {leg_count} output legs; at least 1 is required"
         )
-    if leg_count > _MAX_KET_LEG_COUNT:
+    if eager and leg_count > _MAX_KET_LEG_COUNT:
         raise DiracDomainError(
             f"ket family declares {leg_count} output legs, above this parser's sanity bound "
             f"of {_MAX_KET_LEG_COUNT} (see _MAX_KET_LEG_COUNT's docstring)"
@@ -191,8 +196,9 @@ def _parse_dim(token: str, *, literal: bool) -> tuple[Dim, Mapping[str, int]]:
         ) from exc
 
 
-def _parse_ket_sum(text: str) -> tuple[Dim, Mapping[str, int], int]:
-    """Parse ``sum_{k=0}^{D-1} |...>`` into ``(dim, parameter_binding, leg_count)``."""
+def _parse_ket_sum(text: str) -> tuple[Dim, Mapping[str, int], int, bool]:
+    """Parse ``sum_{k=0}^{D-1} |...>`` into dim, parameter binding, leg count and whether
+    the count is to be abstracted into a bang box."""
     match = _KET_SUM_RE.match(text.strip())
     if match is None:
         raise DiracGrammarError(
@@ -200,8 +206,10 @@ def _parse_ket_sum(text: str) -> tuple[Dim, Mapping[str, int], int]:
             "'sum_{k=0}^{D-1} |k,k,...>' (or the '|k>^{n}' shorthand)"
         )
     dim, binding = _parse_dim(match.group("dim"), literal=match.group("literal") is not None)
-    leg_count = _leg_count_from_body(match.group("body"), match.group("power"))
-    return dim, binding, leg_count
+    power = match.group("power")
+    abstract_count = power is not None and match.group("power_literal") is None
+    leg_count = _leg_count_from_body(match.group("body"), power, eager=not abstract_count)
+    return dim, binding, leg_count, abstract_count
 
 
 def parse_dirac_source(source: str) -> Diagram:
@@ -225,16 +233,26 @@ def parse_dirac_source(source: str) -> Diagram:
             f"{source!r}: expected a single ket-sum term, optionally followed by one "
             "';' and the keyword 'copy'"
         )
-    dim, binding, leg_count = _parse_ket_sum(terms[0])
+    dim, binding, leg_count, abstract_count = _parse_ket_sum(terms[0])
 
     diagram = Diagram()
     diagram.set_parameters(binding)
-    state_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim] * leg_count)
+    # A tensor-power count is abstracted the way a numeric dimension is: the spider carries
+    # one leg standing for the whole block, and a port-scope bang box bound in the parameter
+    # environment carries the count (Phase 7 i, superseding Phase 5's eager expansion).
+    built_legs = 1 if abstract_count else leg_count
+    if abstract_count and len(terms) == 2:
+        built_legs = 2
+    state_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim] * built_legs)
 
     if len(terms) == 1:
         diagram.set_boundary_outputs(
-            [PortRef(state_id, Direction.OUTPUT, i) for i in range(leg_count)]
+            [PortRef(state_id, Direction.OUTPUT, i) for i in range(built_legs)]
         )
+        if abstract_count:
+            diagram, _box_id, _mult = abstract_port_count(
+                diagram, PortRef(state_id, Direction.OUTPUT, 0), leg_count, stem="n"
+            )
         return diagram
 
     if terms[1] != "copy":
@@ -244,9 +262,14 @@ def parse_dirac_source(source: str) -> Diagram:
         )
     copy_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim])
     diagram.add_wire(PortRef(state_id, Direction.OUTPUT, 0), PortRef(copy_id, Direction.INPUT, 0))
-    boundary_outputs = [PortRef(state_id, Direction.OUTPUT, i) for i in range(1, leg_count)] + [
+    boundary_outputs = [PortRef(state_id, Direction.OUTPUT, i) for i in range(1, built_legs)] + [
         PortRef(copy_id, Direction.OUTPUT, 0),
         PortRef(copy_id, Direction.OUTPUT, 1),
     ]
     diagram.set_boundary_outputs(boundary_outputs)
+    if abstract_count:
+        # Leg 0 feeds the copy spider, so the box carries the legs beyond it.
+        diagram, _box_id, _mult = abstract_port_count(
+            diagram, PortRef(state_id, Direction.OUTPUT, 1), leg_count - 1, stem="n"
+        )
     return diagram
