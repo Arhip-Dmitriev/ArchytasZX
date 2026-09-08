@@ -239,6 +239,23 @@ class TestGroupB_AFalseNearIdentityFailsCleanly:
         assert result.derivation is None, result.reason
 
 
+def _build_two_index_fusion_family() -> tuple[Diagram, Diagram]:
+    """The boxed "A into B" gadget before and after one fusion, with a second index.
+
+    One surviving boundary leg is port-scope boxed under ``k2``, nested inside the
+    node-scope box over the whole gadget under ``m``. Unlike
+    :func:`_build_nested_two_index_family`, the two sides genuinely differ, so proving them
+    equal takes a real rewrite rather than structural identity.
+    """
+    pre, a_id, b_id = build_ghz_with_copy(Dim("d"))
+    pre, inner_id, _k2 = abstract_port_count(pre, pre.boundary_outputs[-1], 1, stem="k2")
+    pre, outer_id, _m = abstract_subgraph_count(pre, frozenset({a_id, b_id}), 1, stem="m")
+    inner = pre.bang_boxes[inner_id]
+    pre.remove_bang_box(inner_id)
+    pre.add_bang_box(inner.multiplicity, port_scope=inner.port_scope, parent=outer_id)
+    return pre, _fuse_once(pre)
+
+
 def _build_nested_two_index_family() -> Diagram:
     """One Z spider whose output leg is port-scope boxed under ``k2``, the whole gadget
     node-scope boxed under ``k1``, over the symbolic dimension ``Dim("d")``."""
@@ -277,6 +294,21 @@ def _cert_phase_six_certificate() -> Certificate:
 
 class TestGroupC_MultiIndexInductsOneIndexAtATime:
     """A two-index family is proved one index at a time, the other index left symbolic."""
+
+    @pytest.mark.parametrize("index,held", [("m", "k2"), ("k2", "m")])
+    def test_a_genuinely_differing_family_is_proved_one_index_at_a_time(
+        self, index: str, held: str
+    ) -> None:
+        """The two sides differ by a fusion, so the proof takes a real rewrite step."""
+        left, right = _build_two_index_fusion_family()
+        result = induction.prove_by_induction(left, right, index=index, witness={"d": 2})
+        assert result.proved, result.reason
+        assert held in result.held_symbolic
+        settled = [tier for tier in result.tiers if tier.settled]
+        assert settled, result.reason
+        assert any(tier.steps for tier in settled), (
+            "the family was settled without rewriting anything, so this asserts only X = X"
+        )
 
     def test_inducting_on_the_outer_index_holds_the_inner_one_symbolic(self) -> None:
         left = _build_nested_two_index_family()

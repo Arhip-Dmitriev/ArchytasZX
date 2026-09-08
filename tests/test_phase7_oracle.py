@@ -318,3 +318,33 @@ class TestNegativeAndRegressionControls:
     def test_a_dead_count_symbol_still_rejects_an_out_of_domain_value(self) -> None:
         with pytest.raises(BangBoxDomainError):
             score(_build_nested_two_index_family(2), {"k1": 0, "k2": -1})
+
+
+class TestFusionUnderAPortScopeBox:
+    """A port-scope box follows its leg onto the merged spider (Phase 7 iv)."""
+
+    @staticmethod
+    def _boxed_gadget(d_value: int) -> Diagram:
+        diagram, _a_id, _b_id = build_ghz_with_copy(Dim(d_value))
+        diagram, _box, _k = abstract_port_count(diagram, diagram.boundary_outputs[-1], 1, stem="k")
+        return diagram
+
+    def test_fusion_fires_and_leaves_the_port_box_on_a_live_port(self) -> None:
+        diagram = self._boxed_gadget(2)
+        matches = find_matches(diagram)
+        assert len(matches) == 1
+        fused = apply(diagram, SPIDER_FUSION, matches[0]).diagram
+        report = validate(fused)
+        assert report.is_valid, [issue.kind.value for issue in report.errors]
+        for box in fused.bang_boxes.values():
+            for ref in box.port_scope:
+                assert ref.node_id in fused.nodes
+                assert ref in fused.boundary_inputs or ref in fused.boundary_outputs
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    @pytest.mark.parametrize("d_value", [2, 3])
+    def test_fusion_under_a_port_box_preserves_the_oracle(self, k: int, d_value: int) -> None:
+        diagram = self._boxed_gadget(d_value)
+        fused = apply(diagram, SPIDER_FUSION, find_matches(diagram)[0]).diagram
+        result = compare(diagram, fused, {"k": k}, mode=EqualityMode.EXACT)
+        assert result.matched, result.reason

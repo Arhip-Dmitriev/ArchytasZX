@@ -288,6 +288,17 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         new_scope = (box.node_scope - {match.a_id, match.b_id}) | {new_node_id}
         diagram.set_bang_box_node_scope(enclosing_box, frozenset(new_scope))
 
+    # A port-scope box names a leg of one of the merged nodes; that leg survives on the
+    # merged node, so the box follows it through the same port_mapping the boundary does.
+    # A consumed port is never boxed: a port-scope box's port must be a boundary slot, and
+    # condition 5 already required neither consumed port to be one.
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if not any(ref in port_mapping for ref in box.port_scope):
+            continue
+        diagram.set_bang_box_port_scope(
+            box_id, frozenset(port_mapping.get(ref, ref) for ref in box.port_scope)
+        )
+
     return BuildResult(
         diagram=diagram,
         new_node_ids=(new_node_id,),
