@@ -28,6 +28,7 @@ import pytest
 from qufzx.algebra.dimension import Dim
 from qufzx.algebra.phase import PhaseVector
 from qufzx.diagram.bangbox import (
+    BangBoxDomainError,
     BangBoxGrammarError,
     abstract_port_count,
     abstract_subgraph_count,
@@ -266,12 +267,13 @@ class TestNegativeAndRegressionControls:
         with pytest.raises(BangBoxGrammarError):
             instantiate_symbol(diagram, "m", 2)
 
-    def test_count_symbol_name_reuse_across_unrelated_boxes_is_rejected(self) -> None:
-        # The ordinary abstraction path (abstract_subgraph_count) mints a name absent
-        # from every existing symbol, so it can never itself produce this collision --
-        # by design, per the module docstring. A real occurrence comes from elsewhere
-        # (hand-authored input, a parser bug); simulated here by adding two boxes that
-        # directly declare the same bare symbol, bypassing abstraction.
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    def test_two_boxes_sharing_one_count_symbol_expand_together(self, k: int) -> None:
+        """One symbol means one multiplicity: every box owning it expands to the same k.
+
+        This is the shape instantiating an enclosing box produces -- it re-parents the
+        duplicated children to siblings, all still owning the inner name.
+        """
         from qufzx.diagram.bangbox import Mult
 
         d = Dim(2)
@@ -283,10 +285,19 @@ class TestNegativeAndRegressionControls:
         )
         diagram.add_bang_box(Mult.symbol("k"), node_scope=frozenset({a}))
         diagram.add_bang_box(Mult.symbol("k"), node_scope=frozenset({b}))
-        report = validate(diagram)
-        assert not report.is_valid
-        kinds = {issue.kind.value for issue in report.errors}
-        assert "bangbox_count_symbol_collision" in kinds
+        assert validate(diagram).is_valid
+
+        expanded = instantiate_symbol(diagram, "k", k)
+        assert validate(expanded).is_valid
+        tensor = score(expanded, {}).tensor
+        assert np.allclose(tensor, np.ones((2,) * (2 * k)))
+
+    @pytest.mark.parametrize("k1", [0, 1, 2, 3])
+    def test_instantiation_preserves_validity(self, k1: int) -> None:
+        """Instantiating one index of a nested family leaves a diagram that still validates."""
+        diagram = _build_nested_two_index_family(2)
+        assert validate(diagram).is_valid
+        assert validate(instantiate_symbol(diagram, "k1", k1)).is_valid
 
     def test_vacuous_inner_symbol_after_kill_needs_no_assignment(self) -> None:
         diagram = _build_nested_two_index_family(2)
@@ -294,3 +305,16 @@ class TestNegativeAndRegressionControls:
         assert "k2" not in free_mult_symbols(diagram)
         result = score(diagram, {})  # must not raise for a missing k2
         assert np.allclose(result.tensor, 1.0)
+
+    @pytest.mark.parametrize("assignment", [{"k1": 0}, {"k1": 0, "k2": 3}])
+    def test_kill_driven_through_score_matches_pre_instantiation(
+        self, assignment: dict[str, int]
+    ) -> None:
+        """Letting score instantiate the killing count agrees with killing it first."""
+        pre = score(instantiate_symbol(_build_nested_two_index_family(2), "k1", 0), {}).tensor
+        via_score = score(_build_nested_two_index_family(2), assignment).tensor
+        assert np.allclose(via_score, pre)
+
+    def test_a_dead_count_symbol_still_rejects_an_out_of_domain_value(self) -> None:
+        with pytest.raises(BangBoxDomainError):
+            score(_build_nested_two_index_family(2), {"k1": 0, "k2": -1})

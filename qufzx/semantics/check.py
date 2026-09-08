@@ -119,6 +119,9 @@ def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentV
     fresh port/node structure whose dimensions still carry the very symbols ``resolved``
     is about to substitute, so dimension/phase/scalar substitution runs once, last, over
     the fully box-free result (Phase 7).
+
+    A name whose boxes an earlier instantiation already killed is skipped: a multiplicity
+    of 0 removes its box's children, leaving their symbols with nothing to expand.
     """
     working = diagram
     for name in sorted(free_mult_symbols(diagram)):
@@ -127,6 +130,8 @@ def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentV
             raise BangBoxDomainError(
                 f"multiplicity symbol {name!r} requires a non-negative int, got {value!r}"
             )
+        if name not in free_mult_symbols(working):
+            continue
         working = instantiate_symbol(working, name, value)
     return working
 

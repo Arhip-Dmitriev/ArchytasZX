@@ -166,9 +166,8 @@ class Mult:
     def is_bare_symbol(self) -> bool:
         """True iff this expression is a single symbol, not a sum/product/concrete value.
 
-        The distinction :mod:`qufzx.diagram.validate`'s count-symbol collision check uses
-        between a box that *owns* a name (this) and one that merely *uses* it as a
-        subterm of a compound expression.
+        Distinguishes a box that *owns* a name (this) from one that merely *uses* it as
+        a subterm of a compound expression.
         """
         return bool(self._expr.is_Symbol)
 
@@ -440,14 +439,6 @@ def free_mult_symbols(diagram: Diagram) -> frozenset[str]:
     return frozenset(symbols)
 
 
-def _boxes_with_bare_symbol(diagram: Diagram, name: str) -> tuple[BangBoxId, ...]:
-    return tuple(
-        box_id
-        for box_id, box in sorted(diagram.bang_boxes.items())
-        if box.multiplicity.is_bare_symbol and box.multiplicity.bare_symbol_name() == name
-    )
-
-
 def _purge_symbol_if_dead(diagram: Diagram, name: str | None) -> None:
     """Drop ``name`` from the parameter environment if no live box still carries it.
 
@@ -602,9 +593,7 @@ def _instantiate_port_scope(diagram: Diagram, box: BangBox, k: int) -> None:
 
 
 def _children_of(diagram: Diagram, box_id: BangBoxId) -> tuple[BangBox, ...]:
-    return tuple(
-        box for _, box in sorted(diagram.bang_boxes.items()) if box.parent == box_id
-    )
+    return tuple(box for _, box in sorted(diagram.bang_boxes.items()) if box.parent == box_id)
 
 
 def _splice_boundary_block(
@@ -760,30 +749,46 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
 # -- public entry points -----------------------------------------------------------------
 
 
+_MAX_INSTANTIATE_ROUNDS = 10_000
+
+
 def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
-    """Instantiate every live bang box whose multiplicity is exactly the bare symbol
-    ``name``, together, at the concrete ``value``.
+    """Substitute ``value`` for ``name`` in every live bang box's multiplicity, expanding
+    each box whose multiplicity thereby becomes concrete.
 
     This -- not a single box id -- is Phase 7's unit of instantiation: nesting can
     multiply how many boxes carry one shared, not-yet-supplied count (see the module
     docstring), and instantiating only one of them would leave the others still
-    denoting the same free variable at a different value. Raises BangBoxGrammarError if
-    no live box carries this symbol, and BangBoxDomainError if ``value`` is not a
+    denoting the same free variable at a different value. A compound multiplicity
+    (``2*k``, ``k + 1``, ``k1 + k2``) is substituted the same way; one still carrying
+    another symbol afterwards keeps its box until that symbol is supplied too. Boxes are
+    taken one at a time and the diagram rescanned, so copies a parent's expansion makes
+    of a child that also carries ``name`` are reached in turn. Raises BangBoxGrammarError
+    if no live box carries this symbol, and BangBoxDomainError if ``value`` is not a
     non-negative int.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise BangBoxDomainError(f"instantiate_symbol requires a non-negative int, got {value!r}")
     working = diagram.copy()
-    target_ids = _boxes_with_bare_symbol(working, name)
-    if not target_ids:
+    if not any(name in box.multiplicity.free_symbols for box in working.bang_boxes.values()):
         raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
-    for box_id in target_ids:
-        if box_id not in working.bang_boxes:
-            # Already consumed as a nested child of an earlier id in this same batch
-            # (cannot happen for siblings, since sibling scopes are disjoint by
-            # construction, but stays correct if it ever did).
-            continue
-        _instantiate_one(working, box_id, value)
+    for _round in range(_MAX_INSTANTIATE_ROUNDS):
+        targets = [
+            box_id
+            for box_id, box in sorted(working.bang_boxes.items())
+            if name in box.multiplicity.free_symbols
+        ]
+        if not targets:
+            break
+        box_id = targets[0]
+        substituted = working.bang_boxes[box_id].multiplicity.substitute({name: value})
+        working.set_bang_box_multiplicity(box_id, substituted)
+        if substituted.is_concrete:
+            _instantiate_one(working, box_id, substituted.to_int())
+    else:
+        raise BangBoxGrammarError(
+            f"instantiating {name!r} did not settle within {_MAX_INSTANTIATE_ROUNDS} rounds"
+        )
     if name in working.parameters:
         # Mirrors Diagram.substitute's "entries the mapping names are consumed from
         # parameters" contract: the symbol is now gone from every box, so a lingering

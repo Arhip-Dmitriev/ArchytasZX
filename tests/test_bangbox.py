@@ -22,6 +22,7 @@ exercises.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from qufzx.algebra.dimension import Dim
@@ -32,11 +33,15 @@ from qufzx.diagram.bangbox import (
     BangBoxGrammarError,
     Mult,
     abstract_subgraph_count,
+    free_mult_symbols,
+    instantiate_symbol,
     kill,
     merge,
 )
 from qufzx.diagram.generators import Z_SPIDER
 from qufzx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
+from qufzx.diagram.validate import validate
+from qufzx.semantics.check import score
 
 
 class TestMult:
@@ -222,3 +227,44 @@ class TestKill:
         diagram = Diagram()
         with pytest.raises(BangBoxGrammarError):
             kill(diagram, BangBoxId(999))
+
+
+class TestCompoundMultiplicityInstantiation:
+    """Phase 7's multiplicity arithmetic reaches instantiation, not just Mult."""
+
+    @staticmethod
+    def _family(multiplicity: Mult) -> Diagram:
+        d = Dim(2)
+        diagram = Diagram()
+        node = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {}))
+        diagram.set_boundary_outputs([PortRef(node, Direction.OUTPUT, 0)])
+        diagram.add_bang_box(multiplicity, node_scope=frozenset({node}))
+        return diagram
+
+    @pytest.mark.parametrize(
+        "multiplicity,assignment,copies",
+        [
+            (Mult.symbol("k") * 2, {"k": 3}, 6),
+            (Mult.symbol("k") + 1, {"k": 2}, 3),
+            (Mult.symbol("k") * 2, {"k": 0}, 0),
+            (Mult.symbol("k") + 1, {"k": 0}, 1),
+            (Mult.symbol("k1") + Mult.symbol("k2"), {"k1": 2, "k2": 3}, 5),
+            (Mult.symbol("k1") * Mult.symbol("k2"), {"k1": 2, "k2": 3}, 6),
+        ],
+    )
+    def test_compound_multiplicity_expands_to_the_arithmetic_value(
+        self, multiplicity: Mult, assignment: dict[str, int], copies: int
+    ) -> None:
+        tensor = score(self._family(multiplicity), assignment).tensor
+        assert np.allclose(tensor, np.ones((2,) * copies))
+
+    def test_a_partially_supplied_compound_keeps_its_box(self) -> None:
+        diagram = self._family(Mult.symbol("k1") + Mult.symbol("k2"))
+        partial = instantiate_symbol(diagram, "k1", 2)
+        assert free_mult_symbols(partial) == frozenset({"k2"})
+        assert validate(partial).is_valid
+        assert np.allclose(score(partial, {"k2": 1}).tensor, np.ones((2,) * 3))
+
+    def test_an_unmentioned_symbol_is_still_refused(self) -> None:
+        with pytest.raises(BangBoxGrammarError):
+            instantiate_symbol(self._family(Mult.symbol("k") * 2), "nope", 1)

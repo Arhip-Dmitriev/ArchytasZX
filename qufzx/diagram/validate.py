@@ -132,7 +132,6 @@ class IssueKind(enum.Enum):
     BANGBOX_UNKNOWN_PARENT = "bangbox_unknown_parent"
     BANGBOX_PARENT_CYCLE = "bangbox_parent_cycle"
     BANGBOX_NESTING_MISMATCH = "bangbox_nesting_mismatch"
-    BANGBOX_COUNT_SYMBOL_COLLISION = "bangbox_count_symbol_collision"
 
 
 @dataclass(frozen=True, slots=True)
@@ -695,8 +694,8 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
     A port-scope box's port must additionally currently be a diagram boundary slot --
     :mod:`qufzx.diagram.bangbox`'s instantiate/kill mechanism has no other way to grow
     or remove it (see that module's docstring). Boxes failing either check are excluded
-    from :func:`_check_bangbox_nesting` and :func:`_check_count_symbol_collisions`,
-    mirroring :func:`_check_port_usage`'s ``broken_node_ids`` skip pattern.
+    from :func:`_check_bangbox_nesting`, mirroring :func:`_check_port_usage`'s
+    ``broken_node_ids`` skip pattern.
     """
     for box_id, box in sorted(diagram.bang_boxes.items()):
         for node_id in sorted(box.node_scope):
@@ -705,8 +704,7 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
                     ValidationIssue(
                         kind=IssueKind.BANGBOX_SCOPE_UNKNOWN_NODE,
                         message=(
-                            f"bang box {box_id!r} node_scope references unknown node "
-                            f"{node_id!r}"
+                            f"bang box {box_id!r} node_scope references unknown node {node_id!r}"
                         ),
                         bang_box_id=box_id,
                     )
@@ -718,8 +716,7 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
                     ValidationIssue(
                         kind=IssueKind.BANGBOX_PORT_UNKNOWN,
                         message=(
-                            f"bang box {box_id!r} port_scope references unresolvable port "
-                            f"{ref!r}"
+                            f"bang box {box_id!r} port_scope references unresolvable port {ref!r}"
                         ),
                         bang_box_id=box_id,
                         port_ref=ref,
@@ -825,8 +822,7 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
                     ValidationIssue(
                         kind=IssueKind.BANGBOX_UNKNOWN_PARENT,
                         message=(
-                            f"bang box {box_id!r} declares parent {current!r}, which does "
-                            "not exist"
+                            f"bang box {box_id!r} declares parent {current!r}, which does not exist"
                         ),
                         bang_box_id=box_id,
                     )
@@ -868,9 +864,7 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
             issues.append(
                 ValidationIssue(
                     kind=IssueKind.BANGBOX_NESTING_MISMATCH,
-                    message=(
-                        f"bang box {box_id!r} declares parent {parent_id!r}, but {refusal}"
-                    ),
+                    message=(f"bang box {box_id!r} declares parent {parent_id!r}, but {refusal}"),
                     bang_box_id=box_id,
                 )
             )
@@ -895,60 +889,6 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
             )
 
 
-def _check_count_symbol_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    """A bare multiplicity symbol owned by two boxes outside one nesting chain is a
-    collision (Phase 7).
-
-    Owning (a box's multiplicity *is* the bare symbol) is distinguished from merely
-    using it as a subterm of a compound expression (e.g. ``2*k1``): only owners are
-    checked against each other here, since a use makes no claim about which box the name
-    "belongs" to. Two owners of the same name are legitimate only when one is an
-    ancestor of the other -- the mechanism :mod:`qufzx.diagram.bangbox`'s nested
-    instantiation relies on (an outer box's own instantiation duplicates a child while
-    keeping its symbol unrenamed, so two or more boxes legitimately share one name along
-    a parent chain, never across unrelated boxes).
-    """
-    broken = _broken_bangbox_ids(issues)
-    boxes = {box_id: box for box_id, box in diagram.bang_boxes.items() if box_id not in broken}
-
-    owners: dict[str, list[BangBoxId]] = {}
-    for box_id, box in sorted(boxes.items()):
-        if box.multiplicity.is_bare_symbol:
-            owners.setdefault(box.multiplicity.bare_symbol_name(), []).append(box_id)
-
-    def _ancestors(box_id: BangBoxId) -> set[BangBoxId]:
-        result: set[BangBoxId] = set()
-        current = boxes[box_id].parent
-        while current is not None and current in boxes and current not in result:
-            result.add(current)
-            current = boxes[current].parent
-        return result
-
-    for name, owner_ids in sorted(owners.items()):
-        if len(owner_ids) < 2:
-            continue
-        ancestor_sets = {box_id: _ancestors(box_id) | {box_id} for box_id in owner_ids}
-        # Every pair must be ancestor-related, not merely every box related to *some*
-        # other one -- the latter would wrongly accept two disjoint nesting chains that
-        # both happen to touch a third, unrelated owner.
-        all_pairs_related = all(
-            (a in ancestor_sets[b] or b in ancestor_sets[a])
-            for i, a in enumerate(owner_ids)
-            for b in owner_ids[i + 1 :]
-        )
-        if not all_pairs_related:
-            issues.append(
-                ValidationIssue(
-                    kind=IssueKind.BANGBOX_COUNT_SYMBOL_COLLISION,
-                    message=(
-                        f"multiplicity symbol {name!r} is owned by bang boxes "
-                        f"{sorted(owner_ids)!r}, which are not all related along one "
-                        "parent chain"
-                    ),
-                )
-            )
-
-
 def validate(diagram: Diagram) -> ValidationReport:
     """Run every well-formedness check against ``diagram`` and return the full report.
 
@@ -962,7 +902,6 @@ def validate(diagram: Diagram) -> ValidationReport:
         _check_generator_policy(node, issues)
     _check_bangbox_scopes(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
-    _check_count_symbol_collisions(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)
     return ValidationReport(tuple(issues))
