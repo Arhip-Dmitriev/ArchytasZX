@@ -1402,3 +1402,92 @@ class FourierCancellationPattern(Pattern):
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_fourier_matches`."""
         return find_fourier_matches(diagram)
+
+
+CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("state_is_a_z_spider", "a Z spider with no input and one output"),
+    SideCondition("effect_is_an_x_spider", "an X spider with one input and no output"),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("phaseless", "neither node carries a phase vector"),
+    SideCondition("same_dimension", "both legs carry one dimension"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CapMatch:
+    """One located Z-state-into-X-effect cap: its two node ids and the wire joining them."""
+
+    state_id: NodeId
+    effect_id: NodeId
+    wire: Wire
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def find_cap_matches(diagram: Diagram) -> tuple[CapMatch, ...]:
+    """Every phaseless Z state wired into a phaseless X effect, ordered by the state's node id."""
+    claimed: dict[PortRef, int] = {}
+    for wire in diagram.wires:
+        claimed[wire.a] = claimed.get(wire.a, 0) + 1
+        claimed[wire.b] = claimed.get(wire.b, 0) + 1
+    boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
+
+    matches: list[CapMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        for state_ref, effect_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if state_ref.direction is not Direction.OUTPUT:
+                continue
+            state = diagram.nodes.get(state_ref.node_id)
+            effect = diagram.nodes.get(effect_ref.node_id)
+            if state is None or effect is None or state is effect:
+                continue
+            if not REGISTRY.is_registered(state.generator_type):
+                continue
+            if not REGISTRY.is_registered(effect.generator_type):
+                continue
+            if state.generator_type.name != Z_SPIDER.name:
+                continue
+            if effect.generator_type.name != X_SPIDER.name:
+                continue
+            if (state.num_inputs, state.num_outputs) != (0, 1):
+                continue
+            if (effect.num_inputs, effect.num_outputs) != (1, 0):
+                continue
+            if state.phase is not None or effect.phase is not None:
+                continue
+            if claimed.get(state_ref, 0) != 1 or claimed.get(effect_ref, 0) != 1:
+                continue
+            if state_ref in boundary or effect_ref in boundary:
+                continue
+            state_dim = state.outputs[0].dim
+            effect_dim = effect.inputs[0].dim
+            if state_dim != effect_dim:
+                continue
+            matches.append(
+                CapMatch(
+                    state_id=state_ref.node_id,
+                    effect_id=effect_ref.node_id,
+                    wire=wire,
+                    shared_dim=state_dim,
+                    side_condition_outcomes=tuple(
+                        SideConditionOutcome(condition.name, True, "re-derived from the diagram")
+                        for condition in CAP_SIDE_CONDITIONS
+                    ),
+                )
+            )
+    matches.sort(key=lambda m: (m.state_id, m.effect_id))
+    return tuple(matches)
+
+
+class CapPattern(Pattern):
+    """The :class:`~qufzx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_cap_matches`."""
+        return find_cap_matches(diagram)

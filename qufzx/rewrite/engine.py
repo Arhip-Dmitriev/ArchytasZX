@@ -361,10 +361,12 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "step 5 rebuilds both from the input's through port_mapping"
         )
 
-    if build_result.scalar_introduced != rule.scalar_introduced:
+    expected_scalar = rule.scalar_for(getattr(match, "shared_dim", None))
+    if build_result.scalar_introduced != expected_scalar:
         raise RewriteDomainError(
-            f"rule {rule.name!r} declares scalar_introduced={rule.scalar_introduced!r}, "
-            f"but its builder returned {build_result.scalar_introduced!r} for this match"
+            f"rule {rule.name!r} declares scalar_introduced={expected_scalar!r} at this "
+            f"match's dimension, but its builder returned "
+            f"{build_result.scalar_introduced!r}"
         )
 
     # diagram.wires, not working.wires: equal by the check above, and the pre-builder set

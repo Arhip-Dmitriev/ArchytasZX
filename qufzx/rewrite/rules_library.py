@@ -70,12 +70,16 @@ from qufzx.algebra.scalar import Scalar
 from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
 from qufzx.rewrite.match import (
+    CAP_SIDE_CONDITIONS,
     FOURIER_SIDE_CONDITIONS,
     FUSION_SIDE_CONDITIONS,
+    CapMatch,
+    CapPattern,
     FourierCancellationPattern,
     FourierMatch,
     FusionMatch,
     FusionPattern,
+    find_cap_matches,
     find_fourier_matches,
     innermost_node_scope_box,
     reattach_phase,
@@ -431,8 +435,62 @@ FOURIER_CANCELLATION = Rule(
 """Four Fourier boxes in series collapse to the identity wire, introducing exactly one."""
 
 
+def zx_cap_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`ZX_CAP`: nothing, with ``d ** (1/2)`` recorded.
+
+    Removes both nodes and the wire joining them, leaving whatever else the diagram holds.
+
+    Trusts nothing about ``match`` for graph surgery until it has been re-derived: the match
+    must be among those :func:`~qufzx.rewrite.match.find_cap_matches` finds afresh in
+    ``diagram``.
+    """
+    if not isinstance(match, CapMatch):
+        raise RewriteGrammarError(f"zx_cap_builder requires a CapMatch, got {type(match).__name__}")
+    check_side_condition_coverage(match, CAP_SIDE_CONDITIONS, "zx_cap_builder")
+    if match not in find_cap_matches(diagram):
+        raise RewriteDomainError(
+            "zx_cap_builder: the match is not among those rediscovered in this diagram, so "
+            "it is not evidence of a Z state wired into an X effect"
+        )
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(),
+        consumed_node_ids=(match.state_id, match.effect_id),
+        consumed_wires=(match.wire,),
+        port_mapping={},
+        scalar_introduced=zx_cap_scalar(match.shared_dim),
+    )
+
+
+def zx_cap_scalar(dim: Dim) -> Scalar:
+    """The exact scalar the cap introduces at ``dim``: ``dim ** (1/2)``."""
+    return Scalar.dim_power(dim, 1, 2)
+
+
+ZX_CAP = Rule(
+    name="zx_cap",
+    pattern=CapPattern(),
+    builder=zx_cap_builder,
+    side_conditions=CAP_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=zx_cap_scalar(Dim.symbol("d")),
+    scalar_in_dim=zx_cap_scalar,
+)
+"""A phaseless Z state capped by a phaseless X effect is the empty diagram times ``d ** (1/2)``.
+
+The X effect reads ``sum_j conj(omega_d^{j k}) / sqrt(d)``, which the character sum closes to
+``sqrt(d) * [k == 0 mod d]``; summing that against the Z state's all-ones vector leaves exactly
+``sqrt(d)``. Unlike the other two rules, the scalar this introduces is not one, so a dropped
+factor changes the answer.
+"""
+
+
 RULES: Mapping[str, Rule] = MappingProxyType(
-    {SPIDER_FUSION.name: SPIDER_FUSION, FOURIER_CANCELLATION.name: FOURIER_CANCELLATION}
+    {
+        SPIDER_FUSION.name: SPIDER_FUSION,
+        FOURIER_CANCELLATION.name: FOURIER_CANCELLATION,
+        ZX_CAP.name: ZX_CAP,
+    }
 )
 """Every rule this module registers, keyed by :attr:`~qufzx.rewrite.rule.Rule.name`.
 

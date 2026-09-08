@@ -23,15 +23,23 @@ import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from qufzx.algebra.dimension import Dim
+from qufzx.algebra.phase import Phase, PhaseVector
 from qufzx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
 from qufzx.diagram.bangbox import Mult
-from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
+from qufzx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
 from qufzx.diagram.graph import Diagram, Direction, PortRef
 from qufzx.diagram.validate import validate
 from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FOURIER_SIDE_CONDITIONS, FourierMatch, find_fourier_matches
+from qufzx.rewrite.match import (
+    CAP_SIDE_CONDITIONS,
+    FOURIER_SIDE_CONDITIONS,
+    CapMatch,
+    FourierMatch,
+    find_cap_matches,
+    find_fourier_matches,
+)
 from qufzx.rewrite.rule import RewriteDomainError, SideConditionOutcome
-from qufzx.rewrite.rules_library import FOURIER_CANCELLATION, RULES
+from qufzx.rewrite.rules_library import FOURIER_CANCELLATION, RULES, ZX_CAP
 from qufzx.semantics.check import compare
 from qufzx.semantics.contract_symbolic import contract_symbolic
 from qufzx.semantics.denote import DenoteGrammarError, denote
@@ -309,3 +317,82 @@ class TestFourierCancellationUnderABangBox:
         assert str(box.multiplicity) == "m"
         assert box.node_scope == frozenset(fused.nodes)
         assert not (box.node_scope & set(ids))
+
+
+class TestZXCapRootOfUnityScalar:
+    """Phase 9 iii's rule that needs a root-of-unity scalar, with its exact scalar output."""
+
+    @staticmethod
+    def _cap(dim: Dim) -> Diagram:
+        diagram = Diagram()
+        state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim])
+        effect = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
+        diagram.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
+        return diagram
+
+    def test_the_scalar_it_introduces_is_not_one(self) -> None:
+        assert not ZX_CAP.scalar_introduced.is_one
+        assert ZX_CAP.scalar_introduced == Scalar.dim_power(D, 1, 2)
+        assert ZX_CAP.scalar_for(Dim.concrete(9)) == Scalar.dim_power(Dim.concrete(9), 1, 2)
+
+    @pytest.mark.parametrize("d_value", [2, 3, 4, 5, 6, 7])
+    def test_the_numeric_oracle_confirms_the_rewrite(self, d_value: int) -> None:
+        """First of the two independent checks Phase 9 asks for: the oracle at concrete d."""
+        before = self._cap(Dim.concrete(d_value))
+        matches = find_cap_matches(before)
+        assert len(matches) == 1
+        result = apply(before, ZX_CAP, matches[0])
+        assert result.step.scalar_introduced == Scalar.dim_power(Dim.concrete(d_value), 1, 2)
+        assert not result.diagram.nodes
+        assert validate(result.diagram).is_valid
+        comparison = compare(before, result.diagram, {})
+        assert comparison.matched, comparison.reason
+
+    def test_full_symbolic_contraction_in_d_confirms_the_same_scalar(self) -> None:
+        """Second, independent of the oracle: contract with d formal and close the sum."""
+        before = self._cap(D)
+        result = apply(before, ZX_CAP, find_cap_matches(before)[0])
+        contracted_before = contract_symbolic(before).entry.simplify()
+        contracted_after = contract_symbolic(result.diagram).entry.simplify()
+        assert contracted_before == Scalar.dim_power(D, 1, 2)
+        assert contracted_before == contracted_after
+
+    def test_a_dropped_factor_would_be_caught(self) -> None:
+        """The scalar is load-bearing: without it the two sides disagree."""
+        before = self._cap(Dim.concrete(3))
+        result = apply(before, ZX_CAP, find_cap_matches(before)[0])
+        unscaled = result.diagram.copy()
+        unscaled.multiply_scalar(Scalar.dim_power(Dim.concrete(3), -1, 2))
+        assert not compare(before, unscaled, {}).matched
+
+    def test_the_builder_refuses_a_fabricated_match(self) -> None:
+        phased = self._cap(Dim.concrete(3))
+        fabricated = CapMatch(
+            state_id=0,
+            effect_id=1,
+            wire=next(iter(phased.wires)),
+            shared_dim=Dim.concrete(5),
+            side_condition_outcomes=tuple(
+                SideConditionOutcome(condition.name, True, "fabricated")
+                for condition in CAP_SIDE_CONDITIONS
+            ),
+        )
+        with pytest.raises(RewriteDomainError):
+            apply(phased, ZX_CAP, fabricated)
+
+    def test_a_phased_or_boundary_cap_is_not_matched(self) -> None:
+        dim = Dim.concrete(3)
+        boundary = self._cap(dim)
+        boundary.set_boundary_outputs([PortRef(0, Direction.OUTPUT, 0)])
+        assert find_cap_matches(boundary) == ()
+
+        phased = Diagram()
+        state = phased.add_node(
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[dim],
+            phase=PhaseVector(dim, {1: Phase.symbol("a")}),
+        )
+        effect = phased.add_node(X_SPIDER, input_dims=[dim], output_dims=[])
+        phased.add_wire(PortRef(state, Direction.OUTPUT, 0), PortRef(effect, Direction.INPUT, 0))
+        assert find_cap_matches(phased) == ()

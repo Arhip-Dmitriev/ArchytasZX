@@ -339,6 +339,9 @@ class Rule:
     this rule introduces on every application; :mod:`qufzx.rewrite.engine` checks a builder's
     against it. ``__post_init__`` validates every field's type, including that
     ``scalar_introduced`` is a ``Scalar`` and never a bare ``float``.
+
+    ``scalar_in_dim``, when set, evaluates that scalar at the matched dimension, and
+    ``scalar_introduced`` is it written in the rule's own quantified dimension symbol.
     """
 
     name: str
@@ -347,6 +350,13 @@ class Rule:
     side_conditions: tuple[SideCondition, ...]
     quantifiers: Quantifiers
     scalar_introduced: Scalar
+    scalar_in_dim: Callable[[Dim], Scalar] | None = None
+
+    def scalar_for(self, dim: Dim | None) -> Scalar:
+        """The exact scalar this rule introduces at ``dim``."""
+        if self.scalar_in_dim is None or dim is None:
+            return self.scalar_introduced
+        return self.scalar_in_dim(dim)
 
     def __post_init__(self) -> None:
         """Validate every field's type, the same way every other value object here does."""
@@ -389,6 +399,11 @@ class Rule:
             raise RewriteGrammarError(
                 f"rule {self.name!r}: scalar_introduced must be a Scalar, "
                 f"got {type(self.scalar_introduced).__name__}"
+            )
+        if self.scalar_in_dim is not None and not callable(self.scalar_in_dim):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: scalar_in_dim must be callable or None, "
+                f"got {type(self.scalar_in_dim).__name__}"
             )
         # A builder declares the tuple it expects by setting a `side_conditions` attribute
         # on the callable; a Rule wrapping it must agree, or the two give contradictory
