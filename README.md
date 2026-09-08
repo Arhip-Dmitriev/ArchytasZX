@@ -3,6 +3,7 @@
 **A qufinite ZX-calculus engine for reasoning and interacting with quantum states that
 leverages symbolic algebra to remove qudit-count and dimensionality limits.**
 
+[![PyPI](https://img.shields.io/pypi/v/archytaszx.svg)](https://pypi.org/project/archytaszx/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](#project-status)
@@ -28,6 +29,12 @@ every qudit dimension at once.
 Python ≥ 3.11. `numpy` and `sympy` are the only runtime dependencies.
 
 ```bash
+pip install archytaszx
+```
+
+To work on the engine itself, install from a clone instead:
+
+```bash
 git clone https://github.com/Arhip-Dmitriev/ArchytasZX.git
 cd ArchytasZX
 python -m venv .venv && source .venv/bin/activate
@@ -35,7 +42,8 @@ pip install -e '.[dev]'
 python -m pytest
 ```
 
-The distribution is named `ArchytasZX`; the importable package is `archytaszx`. There is
+The distribution is named `ArchytasZX` and installs from PyPI as `archytaszx` (the index
+normalizes the two to the same name); the importable package is `archytaszx`. There is
 **no REPL and no command-line entry point yet** — `archytaszx/repl/shell.py` is a skeleton
 awaiting implementation. The engine can currently only be used as a Python library, and has
 generally limited use.
