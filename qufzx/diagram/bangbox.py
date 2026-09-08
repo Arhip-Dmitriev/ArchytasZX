@@ -663,6 +663,19 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         return
 
     if k == 1:
+        # The one copy keeps the nodes it already has, but the boundary still goes through
+        # the same block splice k >= 2 performs: without it a scope whose crossings are not
+        # already contiguous would order its boundary differently at 1 than at 2.
+        identity = {node_id: node_id for node_id in scope}
+        sorted_crossings = sorted(
+            boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key()
+        )
+        diagram.set_boundary_inputs(
+            _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, [identity])
+        )
+        diagram.set_boundary_outputs(
+            _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, [identity])
+        )
         for child in children:
             diagram.remove_bang_box(child.id)
             diagram.add_bang_box(

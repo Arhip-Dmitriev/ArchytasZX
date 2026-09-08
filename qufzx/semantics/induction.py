@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from qufzx.algebra.dimension import Dim
 from qufzx.algebra.scalar import ScalarBudgetError
 from qufzx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols, peel_one
 from qufzx.diagram.graph import Diagram, NodeId, PortRef
@@ -492,6 +493,7 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId]) -> Diagram:
         ]
     )
     extracted.set_parameters(dict(diagram.parameters))
+    extracted.multiply_scalar(diagram.scalar)
     return extracted
 
 
@@ -568,6 +570,32 @@ def discharge_uniform_rewrite(
     return TierOutcome(StepDischarge.UNIFORM_REWRITE, ok, reason, steps=steps)
 
 
+def _boundary_positions(
+    diagram: Diagram, node_ids: frozenset[NodeId]
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Which slots of each boundary list ``node_ids`` occupies."""
+    inputs = tuple(
+        position for position, ref in enumerate(diagram.boundary_inputs) if ref.node_id in node_ids
+    )
+    outputs = tuple(
+        position for position, ref in enumerate(diagram.boundary_outputs) if ref.node_id in node_ids
+    )
+    return inputs, outputs
+
+
+def _interface(diagram: Diagram) -> tuple[tuple[Dim, ...], tuple[Dim, ...]]:
+    """The dimensions of a diagram's boundary inputs and outputs, in order."""
+    return (
+        tuple(_ref_dim(diagram, ref) for ref in diagram.boundary_inputs),
+        tuple(_ref_dim(diagram, ref) for ref in diagram.boundary_outputs),
+    )
+
+
+def _ref_dim(diagram: Diagram, ref: PortRef) -> Dim:
+    """The dimension carried by one boundary port."""
+    return diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim
+
+
 def discharge_peeled_hypothesis(
     obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
 ) -> TierOutcome:
@@ -605,8 +633,37 @@ def discharge_peeled_hypothesis(
             "the right successor's peeled residual is not the right hypothesis diagram",
         )
 
+    # The reduction is "residual tensored with copy" on both sides, so the copy must sit in
+    # the same boundary slots on each: otherwise the two sides differ by a permutation the
+    # hypothesis says nothing about.
+    if _boundary_positions(left_peeled, left_copy) != _boundary_positions(right_peeled, right_copy):
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            "the peeled copies occupy different boundary slots on the two sides, so the two "
+            "successors differ by a permutation the hypothesis does not settle",
+        )
+
+    if left_peeled.scalar != right_peeled.scalar:
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            f"the two successors carry different scalars, {left_peeled.scalar} and "
+            f"{right_peeled.scalar}",
+        )
+
     left_extra = _extract(left_peeled, left_copy)
     right_extra = _extract(right_peeled, right_copy)
+
+    # compare_symbolic sees a rank and the axis dimensions, not which axes are inputs and
+    # which outputs, so the interfaces are compared here before contracting.
+    if _interface(left_extra) != _interface(right_extra):
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            False,
+            "the peeled copies do not share one boundary interface: "
+            f"{_interface(left_extra)} against {_interface(right_extra)}",
+        )
     try:
         contracted_left = contract_symbolic(left_extra, max_steps=max_steps)
         contracted_right = contract_symbolic(right_extra, max_steps=max_steps)

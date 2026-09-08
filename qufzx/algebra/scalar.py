@@ -202,28 +202,30 @@ def _is_zero_mod(j_expr: sp.Expr, d_expr: sp.Expr) -> str:
 
 
 def _rename_indices(expr: sp.Expr) -> sp.Expr:
-    """Alpha-rename every bound summation index to _k0, _k1, ... in pre-order."""
+    """Alpha-rename every bound summation index by how many binders enclose it.
 
-    counter = [0]
+    Two alpha-equivalent subexpressions are named identically wherever they sit, so sibling
+    sums that differ only in their bound name cancel; a counter running over the whole
+    expression would give them different names and leave the difference standing.
+    """
 
-    def stage_a(node: sp.Expr) -> sp.Expr:
+    def stage_a(node: sp.Expr, level: int) -> sp.Expr:
         if isinstance(node, sp.Sum):
             body = node.function
             limits = []
-            for var, lower, upper in node.limits:
-                temp = sp.Symbol(f"_tmp{counter[0]}", integer=True, nonnegative=True)
-                counter[0] += 1
+            for position, (var, lower, upper) in enumerate(node.limits):
+                temp = sp.Symbol(f"_tmp{level + position}", integer=True, nonnegative=True)
                 body = body.xreplace({var: temp})
                 limits.append((temp, lower, upper))
-            return sp.Sum(stage_a(body), *limits)
+            return sp.Sum(stage_a(body, level + len(node.limits)), *limits)
         if not node.args:
             return node
         new_args = list(node.args)
         for position in sorted(range(len(node.args)), key=lambda i: sp.srepr(node.args[i])):
-            new_args[position] = stage_a(node.args[position])
+            new_args[position] = stage_a(node.args[position], level)
         return cast(sp.Expr, node.func(*new_args))
 
-    staged = stage_a(expr)
+    staged = stage_a(expr, 0)
     mapping = {
         symbol: sp.Symbol(f"_k{symbol.name[4:]}", integer=True, nonnegative=True)
         for symbol in staged.atoms(sp.Symbol)

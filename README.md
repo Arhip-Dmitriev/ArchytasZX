@@ -41,8 +41,9 @@ and every value of `d` at once. That is the capability this project exists to pr
 Symbolic input is permitted; **concrete input is the expected case**. A user who writes
 `3` and `30` rather than `d` and `n` gets the same engine: the values are abstracted to
 symbols on entry, recorded in the diagram's *parameter environment*, and substituted back
-on output. Dimensions work this way today; counts follow with bang boxes in Phase 7. There is one algebra, always symbolic, and a concrete-input derivation proves
-the whole family as well as the user's own instance of it.
+on output. Dimensions and counts both work this way today, a count becoming a bang box
+whose multiplicity the environment binds. There is one algebra, always symbolic, and a
+concrete-input derivation proves the whole family as well as the user's own instance of it.
 
 ## Intended workflow
 
@@ -54,8 +55,7 @@ The round trip being optimised for is **Dirac in, ZX manipulation, Dirac out**:
 2. The engine represents it as a ZX diagram with the appropriate bang boxes and per-port
    dimensions. Any concrete dimension or count is **abstracted here** — to a fresh symbol
    whose value is recorded in the parameter environment — so everything downstream is
-   symbolic algebra in `d` and `n` regardless of what was typed. (Dimensions are abstracted
-   today; counts join them in Phase 7.)
+   symbolic algebra in `d` and `n` regardless of what was typed.
 3. Rewrite rules are applied, by hand or by an automated strategy. This is pure graph
    surgery: pattern match, splice, merge, add phases, track the exact scalar. Nothing is
    contracted.
@@ -191,19 +191,58 @@ Implemented and under test:
   fixtures. Every exception it raises is a
   `DiracError`, the bound summation index cannot be captured as a dimension symbol, every
   numeric token is ASCII by construction (identifier tokens stay Unicode-aware, since a
-  symbol name has no numeric domain to be silently misread into), and a tensor-power leg
-  count is bounded. A general spider/wire/bang-box declaration syntax, bang boxes,
-  multi-index families, and the Dirac printer belong to Phases 18, 7, and 17.
+  symbol name has no numeric domain to be silently misread into), and every numeral is
+  length-bounded so that `int()` itself cannot refuse one. **A tensor-power count is
+  abstracted the same way**: `|k>^{30}` becomes one leg under a bang box whose multiplicity
+  the parameter environment binds to 30, so it costs no legs and stays open to induction;
+  `literal` before that numeral expands it eagerly instead, and only then is the leg count
+  bounded. A general spider/wire declaration syntax, multi-index families and the Dirac
+  printer belong to Phases 18 and 17.
+- **Proof certificates** — every rewrite step emits the rule fired, the match location, the
+  side conditions checked, the dimension constraints assumed, and the scalar introduced. A
+  derivation replays independently on a fresh copy of its input and is checked field for
+  field against what the matcher and builder derive afresh; the diagram reached must be
+  identical to the recorded one, bang boxes included. Tampering with any recorded field —
+  the scalar, the rule name, a consumed wire, a side-condition outcome, a multiplicity —
+  fails the replay rather than passing it.
+- **Bang boxes and free `n`** — a scope over a subgraph or a set of ports, carrying a
+  multiplicity symbol with its own arithmetic: sums, products and substitution all reach
+  instantiation, so `2*k`, `k + 1` and `k1 + k2` expand to the count they name. Boxes nest,
+  several independent counts coexist, and instantiate/copy/kill/merge and `peel_one` (one
+  copy off, `m` becoming `m - 1`) all preserve what the family denotes — pinned by the
+  requirement that peeling then instantiating at `k` equals instantiating at `k + 1`.
+  Fusion fires on a boxed spider with the box left intact, node-scope and port-scope alike.
+- **Induction over a multiplicity** — an equality carrying a bang box is discharged for
+  every value of its count by a base case at 0 or 1 and a step relating `k` to `k + 1`,
+  multi-index families inducting on one index with the others held symbolic. The step peels
+  one copy off each successor, requires each residual to be its own hypothesis diagram, and
+  reduces to the peeled copies, which carry no bang box and are compared with `d` formal —
+  the hypothesis is what settles the residuals. A family whose two sides differ by a
+  boundary permutation, a scalar, or an input/output signature is refused, not proved, and
+  the verdict distinguishes a proof for all `n` from a finite schema check.
+- **Symbolic contraction and the character sum** — an arbitrary diagram contracts with `d`
+  formal into a closed expression simplified through the scalar layer, which knows
+  `sum_k w_d^{jk} = d*[j = 0 mod d]` and closes it only over a full residue system. A bang
+  box multiplies what its scope contributes, so a closed family contracts to a closed form
+  in the count: substituting the parameter environment into it answers a user-supplied `d`
+  or `n` at any size, which instantiate-then-contract cannot. A Fourier generator and a
+  rule whose exact scalar is `d^(1/2)` are verified both ways the plan asks — the numeric
+  oracle at concrete `d`, and full symbolic contraction in `d`.
 
 Not yet implemented:
 
-certificates and replayable derivations · bang boxes and
-free `n` · induction over
-multiplicities · symbolic contraction with `d` formal · the character-sum simplifier ·
 mixed dimensions and the full qufinite generator set · the broader rule library and
 strategy layer · match/denotation caching · the normal-form decision procedure · equality
 saturation · tactics and proof search · scalable notation · a Dirac printer and the general
 REPL declaration syntax/bang-box grammar.
+
+Known limits inside what is implemented: the dimension unifier is still Phase 1's
+placeholder, so it decides only what needs no guessing; symbolic contraction handles a
+symbolic multiplicity only where the bang box is closed off from the rest of the diagram,
+a box meeting a wire or a boundary slot having a rank that varies with the count; and the
+induction step case settles a family whose peeled copies the scalar layer can close, the
+rest falling through to rewriting at symbolic `n` or to a finite schema check, which
+reports itself as one.
 
 ## References (Highly Incomplete List)
 
