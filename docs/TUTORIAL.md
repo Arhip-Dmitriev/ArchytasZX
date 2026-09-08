@@ -1,4 +1,4 @@
-# qufzx: a tutorial and API reference
+# ArchytasZX: a tutorial and API reference
 
 A working guide to the engine as it exists today. Every code fragment here is drawn from
 [`examples/api_tour.py`](../examples/api_tour.py), which runs end to end:
@@ -7,7 +7,7 @@ A working guide to the engine as it exists today. Every code fragment here is dr
 python examples/api_tour.py
 ```
 
-**There is no REPL yet.** `qufzx/repl/shell.py`, `commands.py` and `printer.py` are
+**There is no REPL yet.** `archytaszx/repl/shell.py`, `commands.py` and `printer.py` are
 docstring skeletons awaiting Phase 17/18. The engine is used as a Python library. The one
 live file in that package is `parser.py`, the restricted Dirac front end ([§6](#6-the-dirac-front-end)).
 
@@ -17,16 +17,16 @@ Python ≥ 3.11; `numpy` and `sympy` are the only runtime dependencies.
 
 ```
 pip install -e '.[dev]'
-python -m pytest        # 1396 tests
+python -m pytest        # 1408 tests
 ```
 
 **The sub-package `__init__.py` files are empty.** There are no re-exports, so
-`from qufzx import Diagram` fails. Import by full module path throughout:
+`from archytaszx import Diagram` fails. Import by full module path throughout:
 
 ```python
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.rewrite.engine import apply
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.rewrite.engine import apply
 ```
 
 Every module raises only its own exception hierarchy. Each has a base `<Area>Error` split
@@ -39,7 +39,7 @@ The four layers depend strictly downward: `algebra` ← `diagram` ← `rewrite` 
 
 ---
 
-## Layer A — `qufzx.algebra`
+## Layer A — `archytaszx.algebra`
 
 ### `Dim` — dimension expressions
 
@@ -112,7 +112,7 @@ rather than returning a partial result.
 
 ---
 
-## Layer B — `qufzx.diagram`
+## Layer B — `archytaszx.diagram`
 
 ### Ports, nodes, wires
 
@@ -151,9 +151,7 @@ Three are registered today, in `REGISTRY`:
 | `X_SPIDER` | `"X"` | any | vector tied to leg dim |
 | `FOURIER_BOX` | `"F"` | exactly 1 in, 1 out | none |
 
-(The `generators.py` module docstring still says "only Z and X" — stale; `F` was added
-with the Fourier rule.) The triangle, W, and the qufinite dimension connectives are not
-implemented.
+The triangle, W, and the qufinite dimension connectives are not implemented.
 
 ### Validation
 
@@ -164,7 +162,7 @@ report.issues    # everything, including non-fatal findings
 validate_or_raise(diagram)
 ```
 
-Findings are typed by `IssueKind` (27 kinds). Two deserve attention because they are
+Findings are typed by `IssueKind` (26 kinds). Two deserve attention because they are
 **assumptions, not failures**, and both pass validation and reach the rewrite engine:
 
 - `DIMENSION_BOUND` — the pair agrees *under a binding* (a symbol against a value, or
@@ -182,7 +180,7 @@ substitution is name-keyed.
 
 Dimension checks are **local to each node**. Diagram-wide constraint propagation is deferred.
 
-### Bang boxes — `qufzx.diagram.bangbox`
+### Bang boxes — `archytaszx.diagram.bangbox`
 
 A bang box marks a scoped subgraph repeated an unspecified number of times, so one diagram
 denotes a family indexed by a count. Multiplicities are `Mult` (a non-negative integer or a
@@ -208,7 +206,7 @@ a box, turning multiplicity `k+1` into one explicit copy plus a box at `k`.
 
 ---
 
-## Layer C — `qufzx.rewrite`
+## Layer C — `archytaszx.rewrite`
 
 ### The rule abstraction
 
@@ -280,7 +278,7 @@ normal-form decision procedure, equality saturation, tactics and caching do not 
 
 ---
 
-## Layer D — `qufzx.semantics`
+## Layer D — `archytaszx.semantics`
 
 Three rungs, in order of preference: rewrite first, then symbolic contraction with `d`
 formal, then numeric contraction at small concrete values as the oracle of last resort.
@@ -310,6 +308,9 @@ spider's denotation is `d^rank` entries and saturates within single digits of le
 ### Symbolic contraction
 
 ```python
+from archytaszx.semantics.contract_symbolic import contract_symbolic
+from archytaszx.semantics.check import compare_symbolic     # note: check, not contract_symbolic
+
 tensor = contract_symbolic(diagram)   # -> SymbolicTensor
 tensor.entry                          # one closed Scalar entry, d formal
 compare_symbolic(left, right)
@@ -396,7 +397,7 @@ the oracle check, and `compare_structure` gives a structural diff of two diagram
 
 ## 6. The Dirac front end
 
-One restricted grammar, `qufzx.repl.parser.parse_dirac_source`:
+One restricted grammar, `archytaszx.repl.parser.parse_dirac_source`:
 
 ```
 sum_{k=0}^{D-1} |k,k,...>            # a summed ket family
@@ -432,10 +433,6 @@ procedure · equality saturation and the e-graph · tactics and proof search · 
 denotation caching · scalable sheet-wire notation · mixed dimensions across a diagram and
 the full qufinite generator set (triangle, W, dimension connectives) · the broader rule
 library and strategy layer · diagram-wide dimension-constraint propagation.
-
-Note also that the README's **"Not yet implemented"** list is stale: it still disclaims
-certificates, bang boxes, free `n`, induction, symbolic contraction and the character-sum
-simplifier, all of which are implemented and tested.
 
 <!--
 Copyright 2026 Arkhip A. Dmitriev

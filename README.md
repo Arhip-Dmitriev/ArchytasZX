@@ -1,252 +1,290 @@
 # ArchytasZX
 
-**A qufinite ZX-calculus engine and REPL for reasoning about quantum states and linear maps when both the number of subsystems and the dimension of each subsystem are symbolic.**
+**A qufinite ZX-calculus engine for reasoning and interacting with quantum states that
+leverages symbolic algebra to remove qudit-count and dimensionality limits.**
 
-> **This is a work in progress.** The project is being built phase by phase against a
-> written build plan, and large parts of the intended system are not implemented yet.
-> The API is unstable, the rule library is deliberately tiny, and nothing here should be
-> treated as a finished tool. See [Current state](#current-state) for what actually runs
-> today.
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](#project-status)
 
-## The problem
+Example:
 
-A linear map on `n` qudits of dimension `d` is a `d^n × d^n` matrix, and a state is a
-vector of length `d^n`. When `n` or `d` is a symbol rather than a number, that array does
-not exist — there is nothing for a tensor or matrix library to allocate. So the regime
-this project cares about, symbolic qudit count *and* symbolic qudit dimension, is
-precisely the regime where conventional numerical tooling has nothing to offer.
+```python
+prove_by_induction(boxed, fused, witness={"d": 2})
+# proved=True  verdict=proved_uniform  index='m'  held_symbolic={'d'}
+```
 
-A concrete integer does not rescue that. `d^n` is astronomically large long before it is
-symbolic — a 20-leg spider at `d = 30` is `30^20` entries — so the gap between typing `d`
-and typing `30` is not the gap between symbolic and computable. This engine treats them
-the same way, and for the same reason.
+One call, one proof, an entire doubly indexed family of identities for every qudit count and
+every qudit dimension at once.
 
-ZX-calculus with bang boxes does operate there. Its rewrite rules are equalities of
-diagrams that preserve the denoted linear map, and they are *schematic*: stated once, they
-hold for every leg count and every dimension. A single graph rewrite is therefore a proof
-of an entire doubly indexed family of Dirac-level identities — one for every value of `n`
-and every value of `d` at once. That is the capability this project exists to provide.
+---
 
-## The two symbolic axes
+## Why
 
-- **Symbolic qudit count, `n`.** Handled by bang boxes: a bang box marks a subgraph
-  repeated an unspecified number of times, so one diagram denotes a whole family indexed
-  by `n`. Bang boxes may nest, and several independent count symbols may coexist in a
-  single diagram.
-- **Symbolic qudit dimension, `d`.** Handled by carrying dimension as data on the diagram
-  rather than as a fixed global integer. The target is the full *qufinite* setting, where
-  one diagram may carry wires of different dimensions — so dimension is stored **per
-  port**, never as one global parameter.
+*Coming soon.*
 
-Symbolic input is permitted; **concrete input is the expected case**. A user who writes
-`3` and `30` rather than `d` and `n` gets the same engine: the values are abstracted to
-symbols on entry, recorded in the diagram's *parameter environment*, and substituted back
-on output. Dimensions and counts both work this way today, a count becoming a bang box
-whose multiplicity the environment binds. There is one algebra, always symbolic, and a
-concrete-input derivation proves the whole family as well as the user's own instance of it.
+## Install
 
-## Intended workflow
+Python ≥ 3.11. `numpy` and `sympy` are the only runtime dependencies.
 
-The round trip being optimised for is **Dirac in, ZX manipulation, Dirac out**:
+```bash
+git clone https://github.com/Arhip-Dmitriev/ArchytasZX.git
+cd ArchytasZX
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'
+python -m pytest
+```
 
-1. Describe a state or map, typically in Dirac notation, possibly with free symbolic
-   phases — e.g. `sum_{k=0}^{d-1} |k>^{⊗n}`, or the same thing with `d = 3` and `n = 30`
-   written as literal numbers.
-2. The engine represents it as a ZX diagram with the appropriate bang boxes and per-port
-   dimensions. Any concrete dimension or count is **abstracted here** — to a fresh symbol
-   whose value is recorded in the parameter environment — so everything downstream is
-   symbolic algebra in `d` and `n` regardless of what was typed.
-3. Rewrite rules are applied, by hand or by an automated strategy. This is pure graph
-   surgery: pattern match, splice, merge, add phases, track the exact scalar. Nothing is
-   contracted.
-4. When a proof is wanted rather than a spot-check, symbolic-`n` equalities are discharged
-   by induction, and equality of two diagrams is decided via normal form — returning a
-   machine-checkable certificate.
-5. The result is read back out as a diagram and, where it lands in a recognisable form, as
-   Dirac notation.
-6. Where concrete values were supplied, the recorded environment is substituted back in —
-   into the finished diagram and into the closed symbolic form of its value. That
-   substitution costs nothing in the size of the value, so it answers `d = 30` as readily
-   as `d = 3`.
-7. Optionally the oracle instantiates `n` and `d` to **small** concrete numbers, contracts
-   numerically, and confirms the rewrite preserved the map exactly, scalar included. This
-   is the verification oracle, not the route to a large concrete answer: a spider's
-   denotation is `d^rank` entries, so it saturates within single digits of legs.
+The distribution is named `ArchytasZX`; the importable package is `archytaszx`. There is
+**no REPL and no command-line entry point yet** — `archytaszx/repl/shell.py` is a skeleton
+awaiting implementation. The engine can currently only be used as a Python library, and has
+generally limited use.
+
+### Imports
+
+The sub-package `__init__.py` files are empty. There are **no re-exports**, so
+`from archytaszx import Diagram` will fail — import by full module path. It is verbose during the
+development phase:
+
+```python
+# Layer A -- symbolic algebra
+from archytaszx.algebra.dimension import Dim, unify_all
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+
+# Layer B -- diagram data model
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.generators import Z_SPIDER, X_SPIDER, FOURIER_BOX
+from archytaszx.diagram.bangbox import abstract_subgraph_count, abstract_port_count, peel_one
+from archytaszx.diagram.validate import validate, validate_or_raise
+
+# Layer C -- rewriting
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, FOURIER_CANCELLATION, ZX_CAP
+
+# Layer D -- semantics, proof, certificates
+from archytaszx.semantics.check import compare, score, compare_symbolic
+from archytaszx.semantics.contract_symbolic import contract_symbolic
+from archytaszx.semantics.induction import prove_by_induction
+from archytaszx.semantics.certificate import certify, verify
+
+# The restricted Dirac front end
+from archytaszx.repl.parser import parse_dirac_source
+```
+
+### Errors
+
+Every module raises only its own hierarchy, under a base `<Area>Error`:
+
+| Exception | Meaning |
+|---|---|
+| `<Area>GrammarError` | Wrong call |
+| `<Area>DomainError` | Unimplemented as of now |
+
+## Quickstart
+
+### 1. Fuse two spiders over a symbolic dimension
+
+Build a state-prep Z spider whose output feeds a copy spider, with the dimension left as the
+symbol `d`, and fuse them.
+
+```python
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+
+d = Dim.symbol("d")
+
+g = Diagram()
+a = g.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+b = g.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
+g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+g.set_boundary_outputs([
+    PortRef(a, Direction.OUTPUT, 1),
+    PortRef(b, Direction.OUTPUT, 0),
+    PortRef(b, Direction.OUTPUT, 1),
+])
+
+result = apply(g, SPIDER_FUSION, find_matches(g)[0])
+
+len(result.diagram.nodes)             # 1         -- two spiders became one
+len(result.diagram.boundary_outputs)  # 3         -- the boundary is unchanged
+result.diagram.scalar                 # Scalar(1) -- exact, never discarded
+```
+
+`d` was never given a value. The exact scalar the rule introduces is tracked rather than
+dropped, which is what makes the result an equality rather than a proportionality.
+
+### 2. Check it, and get a replayable certificate
+
+```python
+from archytaszx.semantics.check import compare
+from archytaszx.semantics.certificate import certify, verify
+
+compare(g, result.diagram, {"d": 5}).matched   # True -- numeric oracle at d = 5
+
+certificate = certify(g, [result], label="fuse A into B")
+verify(certificate, {"d": 3}).verified         # True
+```
+
+`verify` **replays** the derivation from the recorded steps and oracle-checks the input
+against the re-derived output. Tampering with any recorded field (the scalar, the rule name,
+a consumed wire, a side-condition outcome, a multiplicity) fails the replay.
+
+### 3. Prove it for every count at once
+
+Wrap the same graph in a bang box with symbolic multiplicity `m`, and discharge the identity
+for every value of `m` with `d` still symbolic.
+
+```python
+from archytaszx.diagram.bangbox import abstract_subgraph_count
+from archytaszx.semantics.induction import prove_by_induction
+
+boxed, box_id, mult = abstract_subgraph_count(g, frozenset({a, b}), 1, stem="m")
+fused = apply(boxed, SPIDER_FUSION, find_matches(boxed)[0]).diagram
+
+proof = prove_by_induction(boxed, fused, witness={"d": 2})
+
+proof.proved          # True
+proof.verdict         # Verdict.PROVED_UNIFORM
+proof.index           # 'm': the multiplicity inducted on
+proof.discharge       # StepDischarge.UNIFORM_REWRITE -- which tier settled it
+proof.held_symbolic   # frozenset({'d'}) -- what stayed universally quantified
+```
+
+The verdict distinguishes a proof for all `n` from a finite schema check, and `discharge`
+names the tier that did the work. `SCHEMA_CHECKED` is reported separately from the two
+`PROVED_*` verdicts.
+
+### 4. Dirac in, with concrete numbers
+
+```python
+from archytaszx.repl.parser import parse_dirac_source
+
+p = parse_dirac_source("sum_{k=0}^{3-1} |k>^{30}; copy")
+
+len(p.nodes)         # 2
+len(p.bang_boxes)    # 1
+dict(p.parameters)   # {'d': 3, 'n': 29}
+```
+
+The user typed `3` and `30`. What came back is symbolic in **both** axes, with the values
+recorded in the parameter environment for substitution back on output. The tensor power costs
+*one* leg under a bang box, not thirty, and stays open to induction. Prefix a numeral with
+`literal` to suppress abstraction.
+
+### The full tour
+
+Every layer end to end — validation, matching, certificates, the numeric and symbolic
+oracles, the Dirac front end, and a proof by induction:
+
+```bash
+python examples/api_tour.py
+```
+
+[`docs/TUTORIAL.md`](docs/TUTORIAL.md) is the matching API reference, section for section.
+[`examples/demo_visual.py`](examples/demo_visual.py) is a wide-terminal walkthrough that
+prints the full unfiltered trace next to the diagram pictures (working, but outdated).
 
 ## Architecture
 
-Four layers, with the dependency direction running strictly downward. The REPL depends on
-the engine; the engine never depends on the REPL.
+Four layers, with the dependency direction running downward:
+`algebra` ← `diagram` ← `rewrite` ← `semantics`.
 
-**A — Symbolic algebra substrate** (`algebra/`)
-Dimension expressions (a concrete integer, a symbol such as `d`, or arithmetic such as
-`d^n` or `d1·d2`) with normalisation, equality, a unifier that decides or constrains when
-two dimension expressions must agree, and `abstract`/`substitute` as inverse directions —
-a supplied integer becomes a fresh symbol, and the recorded binding brings it back. Phases as concrete values, root-of-unity
-indices, or free symbolic parameters, carried in vectors whose length is tied to `d`.
-Scalars built from roots of unity `ω_d = e^{2πi/d}` and free symbols, tracked exactly, with
-a character-sum simplifier that knows `sum_{k=0}^{d-1} ω_d^{jk} = d·[j ≡ 0 mod d]`.
+**A — Symbolic algebra substrate** ([`archytaszx/algebra/`](archytaszx/algebra/))
+Dimension expressions — a concrete integer, a symbol such as `d`, or arithmetic such as `d^n`
+or `d1·d2` — normalised through one canonical form with a unifier that decides or constrains
+when two must agree, and `abstract`/`substitute` as inverse directions. Phases as concrete
+values, root-of-unity indices, or free symbolic parameters, carried in vectors whose length is
+tied to `d`. Exact scalars built from roots of unity `ω_d = e^{2πi/d}` and free symbols, with
+a character-sum simplifier that knows `Σ_{k=0}^{d-1} ω_d^{jk} = d·[j ≡ 0 mod d]`.
 
-**B — Diagram data model** (`diagram/`)
-Ports carrying their own dimension label; nodes carrying a generator type, ordered input
-and output ports, and a symbolic phase slot; diagrams holding nodes, wires, ordered
-boundary lists, and an exact scalar accumulator. Generators are a small fixed set, each
-with a denotation defined once as a formula in `n` and `d` — Z and X spiders to start, with
-Hadamard/Fourier, the triangle, the W generator, and the qufinite dimension connectives to
-follow. Bang boxes annotate a scoped subgraph with a multiplicity symbol and support
-instantiate, copy, kill, and merge. Scalable sheet-wire notation translates losslessly to
-and from bang boxes.
+**B — Diagram data model** ([`archytaszx/diagram/`](archytaszx/diagram/))
+Ports carrying their own dimension label; nodes carrying a generator type, ordered input and
+output ports, and a symbolic phase slot; diagrams holding nodes, wires, ordered boundary
+lists, a parameter environment, and an exact scalar accumulator. Bang boxes annotate a scoped
+subgraph with a multiplicity symbol and support instantiate, copy, kill, merge and peel.
 
-**C — Rewrite engine** (`rewrite/`)
+**C — Rewrite engine** ([`archytaszx/rewrite/`](archytaszx/rewrite/))
 A rule bundles a left-hand pattern, a right-hand builder, side conditions, quantifiers over
-counts and dimensions, and the exact scalar it introduces. The matcher finds occurrences
-and checks every side condition — dimension side conditions included — before a rule may
-fire. The engine applies a rule at a match, returns a new diagram, and records structured
-provenance from which a certificate is emitted. Above that sit a normal-form driver that
-decides diagram equality, an equality-saturation e-graph for non-destructive rewriting with
-cost-based extraction, and a tactic and proof-search layer.
+counts and dimensions, and the exact scalar it introduces. The matcher finds occurrences and
+checks every side condition before a rule may fire. The engine applies a rule at a match,
+returns a new diagram, and records structured provenance from which a certificate is emitted.
 
-**D — Semantics oracle and proof** (`semantics/`)
-Three rungs in order of preference: rewriting first; symbolic contraction with `d` kept
-formal as the general fallback, and the path by which a supplied concrete value of any
-size is evaluated; numeric contraction at small concrete instantiations as the
-verification oracle of last resort. Alongside them sits the proof machinery — induction
-over bang-box multiplicities for symbolic-`n` equalities, and replayable certificates.
+**D — Semantics oracle and proof** ([`archytaszx/semantics/`](archytaszx/semantics/))
+Three rungs in order of preference: rewriting first; symbolic contraction with `d` kept formal
+as the general fallback, and the path by which a supplied concrete value of any size is
+evaluated; numeric contraction at small concrete instantiations as the verification oracle of
+last resort. Alongside them, induction over bang-box multiplicities and replayable
+certificates.
 
-**The REPL** (`repl/`)
-A parser for a small input DSL (spiders, wires, symbolic phases, nested and multi-index
-bang boxes, dimensions, and simple Dirac kets), a printer that renders diagrams textually
-and back to Dirac where possible, and an interactive command loop.
+Numeric contraction is the oracle. A spider's denotation is `d^rank` entries, so it saturates
+within single digits of legs. Large concrete values are answered by substituting the parameter
+environment into the closed symbolic form, which costs nothing in the size of the value.
 
-## Current state
+## Project status
 
-Implemented and under test:
+This is a **research prototype under active development**. The API is unstable, the rule
+library is very limited, and nothing here should be treated as a useful, finished tool at this
+moment.
 
-- **Dimension algebra** — concrete integers, symbols, products and powers, normalised and
-  compared through a single canonical form, with substitution and a placeholder unifier.
-  Substitution runs both directions: symbol → integer, and `abstract` the other way, turning
-  a concrete value into a fresh non-colliding symbol plus the binding that recovers it.
-- **Phase and scalar algebra** — symbolic phases in vectors tied to the wire dimension,
-  spider-fusion phase addition, and exact scalars (roots of unity, free symbols, products
-  and sums) with no silent discarding of global factors.
-- **Diagram data model** — ports, nodes, wires, ordered boundaries, exact scalar
-  accumulator, deep copy and controlled mutation, and a generator registry for the Z and X
-  spiders. A diagram also carries a **parameter environment**: the concrete value a user
-  supplied for each abstracted symbol. It survives copy and rewriting, and `substitute`
-  consumes exactly the entries its mapping names.
-- **Validation** — per-port dimension agreement, boundary consistency, port usage, and
-  generator policy. A node's legs must be *jointly* unifiable to one shared dimension, not
-  merely pairwise unifiable against the first leg, and a phase vector tied to its node's
-  leg dimension is checked against that same jointly-resolved value; both are therefore
-  independent of leg order. Every node's dimension must be determinable at all, so a node
-  with no legs and no phase is rejected, matching the numeric oracle's own refusal. A name
-  may not serve as more than one of `qufzx.algebra`'s four symbol roles (a dimension, a
-  dimension's exponent, a phase parameter, or a scalar) within one diagram, since
-  substitution is name-keyed and would otherwise conflate them. Checks are local to each
-  node; diagram-wide dimension-constraint propagation is deferred to a later phase. A pair
-  of dimensions that agree only *under a binding* (a symbol against a concrete value, or
-  against another symbol) is recorded as `DIMENSION_BOUND`, alongside the `DIMENSION_DEFERRED`
-  case where the unifier could not decide at all. Both are assumptions rather than failures,
-  so neither fails validation, and both reach the rewrite engine's before/after compare. The
-  two are independent findings, not alternatives: a leg set that ends up deferred may still
-  have bound a symbol along the way, and that binding is reported rather than dropped —
-  without it the residual pair is stated at operands nothing in the report explains. The
-  parameter environment is checked too: every name it binds must be a symbol the diagram
-  carries, in exactly one role, at a value inside that role's domain.
-- **Numeric oracle** — generator denotations at concrete `d`, contraction of a fully
-  concrete diagram into a tensor carrying the exact scalar, and an equality check that
-  instantiates symbols, contracts both sides, and compares exactly, with an opt-in
-  up-to-global-phase mode. A symbol the caller does not supply falls back to its parameter-
-  environment binding, and a supplied value overrides that binding, so a diagram parsed from
-  concrete source can be scored with no assignment at all — or spot-checked at some other
-  value.
-- **Rewrite core** — the rule/pattern/builder abstraction, a matcher for same-colour
-  spider fusion, the fusion rule itself with its exact scalar, and an engine that applies a
-  rule at a match and records step provenance. Seven side conditions are declared: five are
-  decisions, and two (`distinct_nodes`, `parallel_wires_become_self_loops`) are structural
-  facts recorded for the certificate that no candidate can fail. The builder re-derives
-  every one fresh, from the same function the matcher uses, and rejects a match whose own
-  claims disagree rather than quietly correcting them. Dimension assumptions the matcher
-  could not verify as a syntactic identity are recorded as source-keyed
-  `DimensionConstraint`s — one entry per connecting pair, surviving leg, or node phase,
-  replaced in place across a fixpoint pass rather than re-appended, and adequate on their
-  own: the finished record implies every equality any pass ever asserted, with no appeal to
-  the resolver's binding accumulator. A rewrite's effect on pre-existing deferred
-  assumptions is recorded in both directions, `removed_deferred_issues` and
-  `introduced_deferred_issues`. Every field a builder hands back is checked before it is
-  spliced or recorded — including that no surviving port is remapped onto a node the rewrite
-  consumes — and the builder's own effect on the working diagram is checked against the
-  pre-builder state: it adds the replacement node(s) and reports every other change through
-  its result, so an edit to the wire set or to either boundary list is rejected rather than
-  adopted as ground truth. Graph-to-fuse-to-graph is oracle-checked exactly, including at
-  substitutions where a recorded constraint holds only by assumption.
-- **Dirac parsing (Phase 5 slice only)** — one restricted form: a summed ket family
-  `sum_{k=0}^{D-1} |k,k,...>` (or the `|k>^{n}` tensor-power shorthand), optionally
-  followed by `; copy` to feed the state into a fixed copy spider. That is exactly the
-  shape Phase 5's worked example needs, oracle-checked end to end (source → diagram →
-  fusion match → post-diagram) at several concrete `d`. **A concrete dimension in the source
-  is abstracted on entry**: the numeral becomes a fresh dimension symbol and the parameter
-  environment records its value, so everything downstream is symbolic whatever the user
-  typed. The keyword `literal` before the numeral suppresses this, for the oracle's own
-  fixtures. Every exception it raises is a
-  `DiracError`, the bound summation index cannot be captured as a dimension symbol, every
-  numeric token is ASCII by construction (identifier tokens stay Unicode-aware, since a
-  symbol name has no numeric domain to be silently misread into), and every numeral is
-  length-bounded so that `int()` itself cannot refuse one. **A tensor-power count is
-  abstracted the same way**: `|k>^{30}` becomes one leg under a bang box whose multiplicity
-  the parameter environment binds to 30, so it costs no legs and stays open to induction;
-  `literal` before that numeral expands it eagerly instead, and only then is the leg count
-  bounded. A general spider/wire declaration syntax, multi-index families and the Dirac
-  printer belong to Phases 18 and 17.
-- **Proof certificates** — every rewrite step emits the rule fired, the match location, the
-  side conditions checked, the dimension constraints assumed, and the scalar introduced. A
-  derivation replays independently on a fresh copy of its input and is checked field for
-  field against what the matcher and builder derive afresh; the diagram reached must be
-  identical to the recorded one, bang boxes included. Tampering with any recorded field —
-  the scalar, the rule name, a consumed wire, a side-condition outcome, a multiplicity —
-  fails the replay rather than passing it.
-- **Bang boxes and free `n`** — a scope over a subgraph or a set of ports, carrying a
-  multiplicity symbol with its own arithmetic: sums, products and substitution all reach
-  instantiation, so `2*k`, `k + 1` and `k1 + k2` expand to the count they name. Boxes nest,
-  several independent counts coexist, and instantiate/copy/kill/merge and `peel_one` (one
-  copy off, `m` becoming `m - 1`) all preserve what the family denotes — pinned by the
-  requirement that peeling then instantiating at `k` equals instantiating at `k + 1`.
-  Fusion fires on a boxed spider with the box left intact, node-scope and port-scope alike.
-- **Induction over a multiplicity** — an equality carrying a bang box is discharged for
-  every value of its count by a base case at 0 or 1 and a step relating `k` to `k + 1`,
-  multi-index families inducting on one index with the others held symbolic. The step peels
-  one copy off each successor, requires each residual to be its own hypothesis diagram, and
-  reduces to the peeled copies, which carry no bang box and are compared with `d` formal —
-  the hypothesis is what settles the residuals. A family whose two sides differ by a
-  boundary permutation, a scalar, or an input/output signature is refused, not proved, and
-  the verdict distinguishes a proof for all `n` from a finite schema check.
-- **Symbolic contraction and the character sum** — an arbitrary diagram contracts with `d`
-  formal into a closed expression simplified through the scalar layer, which knows
-  `sum_k w_d^{jk} = d*[j = 0 mod d]` and closes it only over a full residue system. A bang
-  box multiplies what its scope contributes, so a closed family contracts to a closed form
-  in the count: substituting the parameter environment into it answers a user-supplied `d`
-  or `n` at any size, which instantiate-then-contract cannot. A Fourier generator and a
-  rule whose exact scalar is `d^(1/2)` are verified both ways the plan asks — the numeric
-  oracle at concrete `d`, and full symbolic contraction in `d`.
+### Working today
 
-Not yet implemented:
+| Area | State |
+|---|---|
+| Dimension algebra | Integers, symbols, products, powers; one canonical form; `abstract`/`substitute` both directions |
+| Phase and scalar algebra | Symbolic phase vectors tied to `d`; exact scalars with no silent global factors |
+| Diagram model | Per-port dimensions, ordered boundaries, parameter environment, deep copy |
+| Validation | Joint (leg-order independent) dimension resolution, boundary and port checks, symbol-role separation; typed finding kinds |
+| Generators | Z spider, X spider, Fourier box |
+| Rewrite core | Rule/pattern/builder abstraction, matcher, engine, structured provenance |
+| Rule library | `spider_fusion`, `fourier_cancellation`, `zx_cap` |
+| Numeric oracle | Denotation, contraction, exact comparison, opt-in up-to-global-phase mode |
+| Symbolic contraction | Arbitrary diagram closed with `d` formal, through the character-sum simplifier |
+| Induction | Base + step over a bang-box multiplicity, four-tier step ladder, five distinct verdicts |
+| Certificates | Per-step provenance, independent replay, tamper detection |
+| Dirac front end | One restricted grammar: a summed ket family |
 
-mixed dimensions and the full qufinite generator set · the broader rule library and
-strategy layer · match/denotation caching · the normal-form decision procedure · equality
-saturation · tactics and proof search · scalable notation · a Dirac printer and the general
-REPL declaration syntax/bang-box grammar.
+### Not yet implemented
 
-Known limits inside what is implemented: the dimension unifier is still Phase 1's
-placeholder, so it decides only what needs no guessing; symbolic contraction handles a
-symbolic multiplicity only where the bang box is closed off from the rest of the diagram,
-a box meeting a wire or a boundary slot having a rank that varies with the count; and the
-induction step case settles a family whose peeled copies the scalar layer can close, the
-rest falling through to rewriting at symbolic `n` or to a finite schema check, which
-reports itself as one.
+Mixed dimensions across a diagram and the full qufinite generator set (triangle, W, dimension
+connectives) · the broader rule library and strategy layer · the normal-form decision
+procedure · equality saturation and the e-graph · tactics and proof search · match and
+denotation caching · scalable sheet-wire notation · the diagram-to-Dirac printer · the general
+declaration syntax and the interactive REPL · diagram-wide dimension-constraint propagation.
 
-## References (Highly Incomplete List)
+### Known limits inside what is implemented
 
-Full texts of these are under [`references/`](references/).
+- The dimension unifier is still a placeholder: it decides simple cases, and reports
+  `DEFERRED` otherwise. Deferred and bound dimension findings are recorded as
+  assumptions, and both reach the certificate.
+- Symbolic contraction handles a symbolic multiplicity only where the bang box is **closed off**
+  from the rest of the diagram; a box meeting a wire or a boundary slot has a rank that varies
+  with the count.
+- `compare_symbolic` has **three** outcomes, not two — equal, unequal, and *indeterminate*
+  (the residual still carries an undecided index sum). Read `.reason` whenever a comparison
+  comes back unmatched.
+- The induction step case settles a family whose peeled copies the scalar layer can close; the
+  rest falls through to rewriting at symbolic `n` or to a finite schema check, which reports
+  itself as one.
+
+## Development
+
+```bash
+python -m pytest          # default tier: 1408 tests, ~45s
+python -m pytest -m slow  # 28 multi-thousand-seed fuzz sweeps and oracle differentials, ~15m
+python -m pytest -m ""    # both tiers together
+ruff format . && ruff check . && mypy archytaszx
+```
+
+`ruff format` is authoritative for layout; `mypy` runs in strict mode. Counts and timings
+measured 2026-09-08.
+
+## References
 
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi* —
   [arXiv:2104.06429](https://arxiv.org/abs/2104.06429)
@@ -255,9 +293,29 @@ Full texts of these are under [`references/`](references/).
 - van de Wetering, *ZX-calculus for the working quantum computer scientist* —
   [arXiv:2012.13966](https://arxiv.org/abs/2012.13966)
 
+## Citation
+
+If you use ArchytasZX in academic work, please cite it via [`CITATION.cff`](CITATION.cff), or:
+
+```bibtex
+@software{dmitriev_archytaszx,
+  author  = {Dmitriev, Arkhip Alekseyevich},
+  title   = {ArchytasZX: a qufinite ZX-calculus engine with symbolic qudit count and dimension},
+  year    = {2026},
+  url     = {https://github.com/Arhip-Dmitriev/ArchytasZX},
+  license = {Apache-2.0}
+}
+```
+
+## Contributing
+
+Issues — bug reports, counterexamples, questions about the mathematics — are a vital part of
+the development process. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the required
+checks, and how to report a soundness bug.
+
 ## License
 
-Apache 2.0.
+Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 <!--
 Copyright 2026 Arkhip A. Dmitriev
