@@ -47,7 +47,7 @@ from qufzx.diagram.graph import (
     NodeId,
     PortRef,
 )
-from qufzx.diagram.validate import IssueKind, ValidationFailedError, validate
+from qufzx.diagram.validate import IssueKind, validate
 from qufzx.rewrite.engine import apply
 from qufzx.rewrite.match import find_matches
 from qufzx.rewrite.rule import BuildResult, Match, Rule
@@ -227,11 +227,12 @@ class TestErrorTaxonomy:
         with pytest.raises(induction.InductionGrammarError, match="uninstantiated"):
             induction.prove_by_induction(pre, post)
 
-    def test_a_base_forced_onto_an_unavailable_instance_raises_the_validation_error(
+    def test_a_base_forced_onto_an_unavailable_instance_raises_an_induction_error(
         self,
     ) -> None:
+        """A named base with no evaluable instance fails as this module's own error."""
         family = _build_phaseless_boxed_family()
-        with pytest.raises(ValidationFailedError):
+        with pytest.raises(InductionDomainError, match="no evaluable instance"):
             induction.prove_by_induction(family, family, base=0, witness={"d": 2})
 
 

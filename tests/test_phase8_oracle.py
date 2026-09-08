@@ -314,21 +314,22 @@ class TestGroupC_MultiIndexInductsOneIndexAtATime:
         assert result.index == "k1"
 
     def test_an_unbound_second_index_is_refused_in_a_numeric_tier(self) -> None:
+        """The tier itself refuses an unbound symbol; a ladder declines instead of raising."""
         left = _build_nested_two_index_family()
         right = _build_nested_two_index_family()
+        obligation = induction.build_obligation(left, right, index="k1", witness={"d": 2})
         with pytest.raises(InductionGrammarError, match="uninstantiated"):
-            induction.prove_by_induction(
-                left,
-                right,
-                index="k1",
-                witness={"d": 2},
-                ladder=(StepDischarge.ORACLE_WINDOW,),
-            )
+            induction.discharge_oracle_window(obligation)
 
-
-class TestGroupD_Determinism:
-    """A refutation's verdict, counterexample and reason vary with neither repetition nor
-    ``PYTHONHASHSEED``."""
+        result = induction.prove_by_induction(
+            left,
+            right,
+            index="k1",
+            witness={"d": 2},
+            ladder=(StepDischarge.ORACLE_WINDOW,),
+        )
+        assert not result.proved
+        assert any("uninstantiated" in tier.reason for tier in result.tiers)
 
     SCRIPT = Path(__file__).parent / "_induction_determinism_script.py"
 

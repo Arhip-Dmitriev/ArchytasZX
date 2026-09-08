@@ -313,6 +313,18 @@ def build_obligation(
         )
     if base is not None and (isinstance(base, bool) or base not in (0, 1)):
         raise InductionDomainError(f"base index must be 0 or 1, got {base!r}")
+    if base is not None:
+        try:
+            compare(
+                left,
+                right,
+                {**witness, idx: base},
+                mode=mode,
+                tolerance=tolerance,
+                max_elements=max_elements,
+            )
+        except (BangBoxError, CheckError, DenoteError, ContractError, ValidateError) as exc:
+            raise InductionDomainError(f"base {base} has no evaluable instance: {exc}") from exc
     if base is None:
         base = choose_base_value(
             left, right, idx, witness, mode=mode, tolerance=tolerance, max_elements=max_elements
@@ -759,15 +771,23 @@ def _run_tier(
     tolerance: float,
     max_elements: int,
 ) -> TierOutcome:
-    """Call one tier's discharge function with the keyword arguments its signature takes."""
+    """Call one tier's discharge function with the keyword arguments its signature takes.
+
+    A tier that refuses the obligation outright returns an unsettled outcome here, so a
+    ladder falls through to the tier below instead of taking the whole call down; a direct
+    call to that tier still raises, where the refusal is the caller's own error.
+    """
     run = _DISPATCH[discharge]
-    if discharge in (StepDischarge.UNIFORM_REWRITE, StepDischarge.INDUCTION_REWRITE):
-        return run(obligation, rules=rules, max_steps=max_steps)
-    if discharge is StepDischarge.ORACLE_WINDOW:
-        return run(
-            obligation, width=width, mode=mode, tolerance=tolerance, max_elements=max_elements
-        )
-    return run(obligation, max_steps=max_steps)
+    try:
+        if discharge in (StepDischarge.UNIFORM_REWRITE, StepDischarge.INDUCTION_REWRITE):
+            return run(obligation, rules=rules, max_steps=max_steps)
+        if discharge is StepDischarge.ORACLE_WINDOW:
+            return run(
+                obligation, width=width, mode=mode, tolerance=tolerance, max_elements=max_elements
+            )
+        return run(obligation, max_steps=max_steps)
+    except InductionGrammarError as exc:
+        return TierOutcome(discharge, False, f"tier refused the obligation: {exc}")
 
 
 def _concrete_child(
