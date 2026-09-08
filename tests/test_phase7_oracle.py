@@ -25,9 +25,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.diagram.bangbox import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
     BangBoxGrammarError,
     abstract_port_count,
@@ -35,13 +35,13 @@ from qufzx.diagram.bangbox import (
     free_mult_symbols,
     instantiate_symbol,
 )
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import CheckGrammarError, EqualityMode, compare, score
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import CheckGrammarError, EqualityMode, compare, score
 
 from .helpers import build_ghz_with_copy
 
@@ -49,7 +49,7 @@ from .helpers import build_ghz_with_copy
 def _instantiate_if_present(diagram: Diagram, name: str, value: int) -> Diagram:
     """``instantiate_symbol`` if ``name`` is still free, otherwise a no-op.
 
-    Mirrors what :func:`~qufzx.semantics.check.score`/``compare`` do: a symbol a prior
+    Mirrors what :func:`~archytaszx.semantics.check.score`/``compare`` do: a symbol a prior
     instantiation has already eliminated (Group B's k1=0 case) is simply not asked for.
     """
     if name in free_mult_symbols(diagram):
@@ -194,7 +194,7 @@ class TestGroupC_FusionUnderABangBox:
 
     # (5, 4) is dropped: 3 legs/copy * 5 copies at d=4 contracts to 4**15 (~1.07e9)
     # elements, well beyond what an exact numeric contraction can hold in memory --
-    # a genuine size limit of the rung-3 oracle (qufzx.semantics.check's own module
+    # a genuine size limit of the rung-3 oracle (archytaszx.semantics.check's own module
     # docstring: "a small-instance path"), not a defect in the mechanism under test.
     _MATRIX: tuple[tuple[int, int], ...] = tuple(
         (m, d) for m in (0, 1, 2, 3, 5) for d in (2, 3, 4) if (m, d) != (5, 4)
@@ -236,7 +236,7 @@ class TestNegativeAndRegressionControls:
         # abstract_port_count always binds the parameter environment too (mirroring
         # Dim.abstract), so a genuinely *unsupplied* symbol needs a hand-built box with
         # no such binding -- not the ordinary abstraction path, which never leaves one.
-        from qufzx.diagram.bangbox import Mult
+        from archytaszx.diagram.bangbox import Mult
 
         d = Dim(2)
         diagram = Diagram()
@@ -274,7 +274,7 @@ class TestNegativeAndRegressionControls:
         This is the shape instantiating an enclosing box produces -- it re-parents the
         duplicated children to siblings, all still owning the inner name.
         """
-        from qufzx.diagram.bangbox import Mult
+        from archytaszx.diagram.bangbox import Mult
 
         d = Dim(2)
         diagram = Diagram()

@@ -5,24 +5,24 @@ PART 0: PROJECT SETUP
 
 Phase 0.1: Repository and environment
 i. pyproject.toml
-- declare the package qufzx, Python version, and dependencies numpy and sympy
+- declare the package archytaszx, Python version, and dependencies numpy and sympy
 - declare dev dependencies pytest, ruff, mypy
 - make the package installable in editable mode
 ii. .gitignore, README.md, LICENSE (apache 2.0)
 - ignore venv, caches, build artifacts
 - README states the one-line purpose and how to run tests
-iii. qufzx/__init__.py and tests/__init__.py
-- import qufzx succeeds from a clean environment
+iii. archytaszx/__init__.py and tests/__init__.py
+- import archytaszx succeeds from a clean environment
 - test and debug: run pytest on an empty suite and confirm it collects zero tests
 - done when: editable install works, ruff and mypy run clean on empty package, git is initialized
 
 Phase 0.2: Empty module skeleton
 i. create the full tree as empty stubs with docstrings only:
-qufzx/algebra/dimension.py, phase.py, scalar.py
-qufzx/diagram/graph.py, generators.py, bangbox.py, scalable.py, validate.py
-qufzx/rewrite/rule.py, match.py, rules_library.py, engine.py, cache.py, normal_form.py, egraph.py, tactics.py
-qufzx/semantics/denote.py, contract_numeric.py, contract_symbolic.py, induction.py, certificate.py, check.py
-qufzx/repl/parser.py, printer.py, commands.py, shell.py
+archytaszx/algebra/dimension.py, phase.py, scalar.py
+archytaszx/diagram/graph.py, generators.py, bangbox.py, scalable.py, validate.py
+archytaszx/rewrite/rule.py, match.py, rules_library.py, engine.py, cache.py, normal_form.py, egraph.py, tactics.py
+archytaszx/semantics/denote.py, contract_numeric.py, contract_symbolic.py, induction.py, certificate.py, check.py
+archytaszx/repl/parser.py, printer.py, commands.py, shell.py
 - every file has a top docstring stating its job
 - test and debug: import every module; confirm no import errors and no circular imports
 - done when: the tree matches the plan and the whole package imports cleanly

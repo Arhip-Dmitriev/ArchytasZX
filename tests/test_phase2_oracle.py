@@ -25,9 +25,9 @@ import cmath
 
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase
-from qufzx.algebra.scalar import Scalar
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase
+from archytaszx.algebra.scalar import Scalar
 
 
 class TestPhaseAdditionHomomorphism:

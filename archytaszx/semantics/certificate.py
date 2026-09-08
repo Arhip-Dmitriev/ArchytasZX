@@ -15,7 +15,7 @@
 
 A :class:`Derivation` is one node of a proof tree, carrying an initial diagram, a final
 diagram, and the evidence between them. A ``STEP_SEQUENCE`` kind carries a tuple of
-:class:`~qufzx.rewrite.engine.RewriteStep`; an ``INDUCTION`` kind carries those over a free
+:class:`~archytaszx.rewrite.engine.RewriteStep`; an ``INDUCTION`` kind carries those over a free
 multiplicity symbol together with a base child and a step child. A :class:`Certificate`
 pairs a derivation with the :class:`CheckMethod` its claim is discharged by.
 
@@ -24,7 +24,7 @@ per step that the rule still resolves by name, that the consumed nodes and wires
 that the matcher rediscovers the recorded match, and that the step ``apply`` produces equals
 the step on record; then that the diagram reached is identical, id for id, to the recorded
 final. :func:`verify` runs that replay and contracts both ends at a supplied assignment
-through :func:`~qufzx.semantics.check.compare`; for an ``INDUCTION`` derivation it contracts
+through :func:`~archytaszx.semantics.check.compare`; for an ``INDUCTION`` derivation it contracts
 each child's own ends at that assignment, never the symbolic node's.
 
 A verified certificate is evidence of five things: the recorded steps re-derive the recorded
@@ -37,7 +37,7 @@ An ``INDUCTION`` derivation's own ends are symbolic in the induction index and a
 contracted. What is checked there is that each child is the parent's ends instantiated at the
 claimed base value and one above it, and that both children's ends agree at the assignment.
 That is the base case and one concrete instance of the step, not the step schema itself,
-which :mod:`qufzx.semantics.induction` discharges and which no field of the certificate
+which :mod:`archytaszx.semantics.induction` discharges and which no field of the certificate
 records in re-checkable form.
 
 It is not evidence about other assignments, about the satisfiability of a ``DEFERRED``
@@ -51,12 +51,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from qufzx.diagram.bangbox import BangBoxError, free_mult_symbols
-from qufzx.diagram.graph import Diagram, PortRef, Wire
-from qufzx.rewrite.engine import RewriteResult, RewriteStep, apply
-from qufzx.rewrite.rule import RewriteError
-from qufzx.rewrite.rules_library import lookup_rule
-from qufzx.semantics.check import (
+from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols
+from archytaszx.diagram.graph import Diagram, PortRef, Wire
+from archytaszx.rewrite.engine import RewriteResult, RewriteStep, apply
+from archytaszx.rewrite.rule import RewriteError
+from archytaszx.rewrite.rules_library import lookup_rule
+from archytaszx.semantics.check import (
     DEFAULT_TOLERANCE,
     CheckAssignmentValue,
     CheckError,
@@ -65,8 +65,8 @@ from qufzx.semantics.check import (
     compare,
     instantiate,
 )
-from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
-from qufzx.semantics.denote import DenoteError
+from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
+from archytaszx.semantics.denote import DenoteError
 
 
 class CertificateError(Exception):

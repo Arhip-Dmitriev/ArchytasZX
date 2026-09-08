@@ -24,11 +24,11 @@ from __future__ import annotations
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.semantics.contract_symbolic import contract_symbolic
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.semantics.contract_symbolic import contract_symbolic
 
 
 def _build_diagram() -> Diagram:

@@ -11,14 +11,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.algebra.dimension: the Phase 1 dimension algebra."""
+"""Tests for archytaszx.algebra.dimension: the Phase 1 dimension algebra."""
 
 from collections.abc import Mapping
 from typing import cast
 
 import pytest
 
-from qufzx.algebra.dimension import (
+from archytaszx.algebra.dimension import (
     Dim,
     DimensionDomainError,
     DimensionGrammarError,
@@ -320,7 +320,7 @@ class TestAbstract:
             assert not symbol.is_concrete
             assert dict(binding) == {"d": value}
             # Mapping's key type is invariant, so the str-keyed binding needs the same
-            # narrowing cast qufzx.diagram.graph applies at its own substitute() call.
+            # narrowing cast archytaszx.diagram.graph applies at its own substitute() call.
             typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], binding)
             assert symbol.substitute(typed) == Dim.concrete(value)
 

@@ -14,11 +14,11 @@
 """Deterministic randomized property harness over spider fusion.
 
 Generates small random diagrams (fixed seed list, ``random.Random(seed)``, never
-unseeded), applies every fusion match :func:`~qufzx.rewrite.match.find_matches` reports
+unseeded), applies every fusion match :func:`~archytaszx.rewrite.match.find_matches` reports
 against each, and checks three properties: no unexpected exception escapes, the
-relative-validity post-condition :func:`~qufzx.rewrite.engine.apply` itself enforces
+relative-validity post-condition :func:`~archytaszx.rewrite.engine.apply` itself enforces
 (re-derived independently here, not merely trusted), and oracle equality at concrete
-substitutions via :mod:`qufzx.semantics.check`.
+substitutions via :mod:`archytaszx.semantics.check`.
 """
 
 from __future__ import annotations
@@ -32,15 +32,15 @@ from unittest.mock import patch
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseDomainError, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from qufzx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
-from qufzx.rewrite import match as match_module
-from qufzx.rewrite.engine import RewriteResult, apply
-from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseDomainError, PhaseVector
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
+from archytaszx.rewrite import match as match_module
+from archytaszx.rewrite.engine import RewriteResult, apply
+from archytaszx.rewrite.match import FusionMatch, find_matches
+from archytaszx.rewrite.rule import (
     BuildResult,
     ConstraintOutcome,
     ConstraintSource,
@@ -52,10 +52,10 @@ from qufzx.rewrite.rule import (
     Rule,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
-from qufzx.semantics.check import compare
-from qufzx.semantics.contract_numeric import ContractSizeError, ContractValidationError
-from qufzx.semantics.denote import DenoteError, denote
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
+from archytaszx.semantics.check import compare
+from archytaszx.semantics.contract_numeric import ContractSizeError, ContractValidationError
+from archytaszx.semantics.denote import DenoteError, denote
 
 pytestmark = pytest.mark.slow
 """Every test in this module is a multi-thousand-seed sweep."""
@@ -111,7 +111,7 @@ _RELATIVE_POSTCONDITION_MARKER = "rewrite introduced hard-error issue kind"
 def _random_phase_index(rng: random.Random, phase_dim: Dim) -> int:
     """An entry index from ``_PHASE_INDEX_POOL``, capped to what ``phase_dim`` allows.
 
-    When ``phase_dim`` is concrete, :class:`~qufzx.algebra.phase.PhaseVector` enforces the
+    When ``phase_dim`` is concrete, :class:`~archytaszx.algebra.phase.PhaseVector` enforces the
     valid range at construction time, so the pool is filtered down to what is actually
     constructible. When ``phase_dim`` is symbolic, the full pool is available -- including
     indices that will turn out to be out of range once a leg-unify binding (see
@@ -138,7 +138,7 @@ def _random_phase(rng: random.Random, dim: Dim, node_index: int) -> PhaseVector 
     :meth:`Phase.symbol` (a ``theta_i`` phase parameter, never a dimension name), so a phase
     entry referencing ``d`` or ``e`` directly (as opposed to only via its container ``Dim``)
     was never generated at all, and the defect family in
-    :func:`~qufzx.rewrite.rules_library._over_shared_dim` (which reattaches entries to a
+    :func:`~archytaszx.rewrite.rules_library._over_shared_dim` (which reattaches entries to a
     resolved ``shared_dim`` verbatim, without substituting a binding into them) could never
     be observed disagreeing with anything.
     """
@@ -231,7 +231,7 @@ exercised many times over."""
 def _maybe_corrupt_a_boundary_ref(rng: random.Random, diagram: Diagram) -> bool:
     """With low probability, replace one boundary entry in place with a malformed ``PortRef``.
 
-    :func:`~qufzx.rewrite.match.find_matches`
+    :func:`~archytaszx.rewrite.match.find_matches`
     must reject a malformed boundary entry (an unknown node id, or an out-of-range index)
     exactly as it already rejects a malformed wire endpoint -- see that module's docstring,
     "Malformed references". Widening this generator to sometimes produce one is
@@ -270,7 +270,7 @@ def _random_clean_phase(rng: random.Random, dim: Dim, node_index: int) -> PhaseV
     Unlike :func:`_random_phase`, this never produces an entry over a dimension symbol or a
     phase parameter (``Phase.symbol``) -- every free symbol in the diagram would otherwise
     need to appear in the oracle's ``assignment``, and the whole point of this generator is
-    a diagram with *no* free symbols at all, so :func:`~qufzx.semantics.check.compare` can be
+    a diagram with *no* free symbols at all, so :func:`~archytaszx.semantics.check.compare` can be
     called with an empty assignment and never raise ``CheckGrammarError`` for a missing one.
     """
     if rng.random() < 0.2:
@@ -290,7 +290,7 @@ def _build_clean_diagram(rng: random.Random) -> Diagram:
     input ports, landing adjacent) arises freely, exactly like :func:`_build_random_diagram`'s
     own wiring mechanism, just never blocked by a mismatched dimension since there is only
     ever one dimension in play. Every diagram this produces is cleanly contractible by
-    construction: :mod:`qufzx.diagram.validate` reports no issue at all (hard or deferred),
+    construction: :mod:`archytaszx.diagram.validate` reports no issue at all (hard or deferred),
     since every leg agrees syntactically (not merely by unification) and nothing is
     symbolic -- there is no draw from ``_DIM_PALETTE``'s mixed, unify-only, or deferred-unify
     dimensions the way :func:`_build_random_diagram` deliberately includes.
@@ -299,7 +299,7 @@ def _build_clean_diagram(rng: random.Random) -> Diagram:
     which mostly never reaches ``compare`` at all. Here essentially every match does, so an
     unconstrained boundary size would let the dense contracted tensor's element count,
     ``dim ** boundary_legs``, dominate runtime -- measured at over 100ms per ``compare()``
-    call, sometimes tripping :class:`~qufzx.semantics.contract_numeric.ContractSizeError`.
+    call, sometimes tripping :class:`~archytaszx.semantics.contract_numeric.ContractSizeError`.
     The tighter range still leaves room for a fusion-eligible pair (each node needs only one
     spare leg on the wired side) and still produces self-loops, same-direction wires, and
     all six colour/direction combinations.
@@ -529,7 +529,7 @@ def _is_cleanly_contractible(diagram: Diagram) -> bool:
 def _apply_ignoring_step8(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Re-run ``apply`` with its step-8 relative post-condition disarmed, for re-derivation.
 
-    Patches ``qufzx.rewrite.engine.validate`` (the name ``apply`` actually calls, per its
+    Patches ``archytaszx.rewrite.engine.validate`` (the name ``apply`` actually calls, per its
     module-level import) to report no issues at all for the duration of this one call, so
     ``input_hard_counts`` and ``result_hard_counts`` are both empty and their difference can
     never be non-empty -- ``apply`` runs every other step exactly as normal and returns its
@@ -538,7 +538,7 @@ def _apply_ignoring_step8(diagram: Diagram, rule: Rule, match: Match) -> Rewrite
     call was actually justified -- see that function,
     which is exactly the class of bug a message-substring whitelist alone cannot catch.
     """
-    with patch("qufzx.rewrite.engine.validate", return_value=ValidationReport(())):
+    with patch("archytaszx.rewrite.engine.validate", return_value=ValidationReport(())):
         return apply(diagram, rule, match)
 
 
@@ -550,7 +550,7 @@ def _independent_issue_key(
     """A ``(kind, ref)`` key for one *input*-diagram hard-error issue, in post-rewrite terms.
 
     A from-scratch reimplementation of the same idea
-    :func:`qufzx.rewrite.engine._translate_input_issue_key` embodies -- written
+    :func:`archytaszx.rewrite.engine._translate_input_issue_key` embodies -- written
     independently here (not by importing and calling that private function) so this
     harness gives real cross-check value against a regression in ``apply``'s own step-8
     bookkeeping, rather than trivially agreeing with it by construction. A ``port_ref`` or
@@ -559,7 +559,7 @@ def _independent_issue_key(
     port itself is never in ``port_mapping`` and has no post-rewrite counterpart, so it is
     left as something that will correctly match nothing on the result side). A wire's two
     endpoints are compared as an unordered ``frozenset`` pair, matching
-    :class:`~qufzx.diagram.graph.Wire`'s own order-independent equality. A ``node_id`` on a
+    :class:`~archytaszx.diagram.graph.Wire`'s own order-independent equality. A ``node_id`` on a
     consumed node has no principled translation from only this function's inputs (spider
     fusion always merges into exactly one new node, but nothing here is told which) and is
     left unchanged -- the same fail-closed posture the module under test documents for that
@@ -662,8 +662,8 @@ def _check_one_match(diagram: Diagram, match: FusionMatch, seed: int) -> int:
         if not _is_cleanly_contractible(pre_concrete):
             continue
         # "validate(d).is_valid implies every node in
-        # d is denotable" (module docstrings of qufzx.diagram.validate and
-        # qufzx.semantics.denote) is asserted as a property here, not only in
+        # d is denotable" (module docstrings of archytaszx.diagram.validate and
+        # archytaszx.semantics.denote) is asserted as a property here, not only in
         # tests/test_phase5_exhaustive_oracle.py's exhaustive-but-single-dim-per-node sweep
         # -- this harness's mixed-leg-dimension diagrams (see _build_random_diagram's
         # ``mixed`` branch) are exactly the shape a validator that let a jointly-
@@ -734,7 +734,7 @@ fail :func:`_is_cleanly_contractible` before the oracle ever runs, so a floor th
 little about whether the oracle-equality property -- Phase 5's stated completion condition --
 is exercised at scale. ``_build_clean_diagram`` is cleanly contractible *by construction*
 (one concrete dim, no symbols anywhere), so essentially every match it produces reaches
-:func:`~qufzx.semantics.check.compare`: measured at 7,656 comparisons over ``_CLEAN_SEEDS``'s
+:func:`~archytaszx.semantics.check.compare`: measured at 7,656 comparisons over ``_CLEAN_SEEDS``'s
 20,000 seeds, with zero ``ContractSizeError`` skips at the current leg-count/wiring-probability
 tuning (see :func:`_build_clean_diagram`'s docstring for why those are kept small). 3,000 is
 under 40% of that, leaving headroom against incidental generator tuning while still failing
@@ -769,7 +769,7 @@ def _assert_match_structurally_satisfiable(diagram: Diagram, match: FusionMatch)
     Every surviving leg dim, the connecting pair's own two dims, and every present phase dim
     -- each resolved under ``match.bindings`` -- must unify with ``match.shared_dim`` without
     ``FAILURE``, and ``match.dimension_constraints`` must be simultaneously satisfiable. This
-    is exactly :func:`~qufzx.rewrite.match._verify_fixpoint_closure`'s own check, re-derived
+    is exactly :func:`~archytaszx.rewrite.match._verify_fixpoint_closure`'s own check, re-derived
     independently here (not by importing and calling that private function) as a genuine
     cross-check against a regression in the fixpoint's own termination or bindings-merge
     logic -- not a tautological re-assertion of it.
@@ -823,7 +823,7 @@ def _isolate_match_pair(diagram: Diagram, match: FusionMatch) -> Diagram:
     """A fresh 2-node diagram containing only ``match``'s own pair, its connecting wire, and
     every surviving leg as a boundary port.
 
-    :func:`~qufzx.rewrite.match.resolve_fusion_match` decides everything about a match from
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match` decides everything about a match from
     ``(diagram, a_id, b_id, wire)`` alone (see that function's own docstring), so this
     isolated diagram reproduces the identical match -- but with any unrelated third node
     ``_build_random_diagram`` may also have generated (and any dimension symbol it happens
@@ -875,7 +875,7 @@ _MIN_ORACLE_COMPARISONS = 82
 
 Without this, an always-skipped oracle arm (e.g. every substitution failing
 ``_is_cleanly_contractible`` or raising ``PhaseDomainError``) would let the test pass
-while never actually calling :func:`~qufzx.semantics.check.compare`.
+while never actually calling :func:`~archytaszx.semantics.check.compare`.
 
 ``Dim.concrete(4)``/``Dim.concrete(6)`` in ``_DIM_PALETTE`` and ``(2, 1)``/``(3, 1)`` in
 ``_ORACLE_DIM_PAIRS`` are what let a ``d*e`` or ``d**2`` leg agree with a concrete leg at
@@ -929,20 +929,20 @@ def _build_contended_diagram(rng: random.Random) -> Diagram:
 
     Every other generator in this module wires ports by popping them out of a pool, so a
     port is claimed by at most one wire and the boundary lists are the leftovers -- which
-    means ``consumed_ports_singly_claimed`` (:mod:`qufzx.rewrite.match`'s condition 5) can
+    means ``consumed_ports_singly_claimed`` (:mod:`archytaszx.rewrite.match`'s condition 5) can
     never fail for any candidate they produce.
 
     This generator samples wire endpoints with replacement across wires (one port claimed by
-    two wires, a :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_TWICE`) and puts
+    two wires, a :class:`~archytaszx.diagram.validate.IssueKind.PORT_WIRED_TWICE`) and puts
     boundary entries on already-wired ports (a
-    :class:`~qufzx.diagram.validate.IssueKind.PORT_WIRED_AND_BOUNDARY`). Both are hard
-    validation errors, which is the point: :func:`~qufzx.rewrite.match.find_matches` does
+    :class:`~archytaszx.diagram.validate.IssueKind.PORT_WIRED_AND_BOUNDARY`). Both are hard
+    validation errors, which is the point: :func:`~archytaszx.rewrite.match.find_matches` does
     not require a well-formed diagram, so it must decide this condition itself rather than
     lean on a precondition it never asserts.
 
     Otherwise kept as close to :func:`_build_clean_diagram` as possible -- one concrete
     dimension throughout, fully concrete phases -- so a match that is found still reaches
-    :func:`~qufzx.semantics.check.compare` with an empty assignment, and this arm tests
+    :func:`~archytaszx.semantics.check.compare` with an empty assignment, and this arm tests
     condition 5 rather than re-testing dimension resolution.
     """
     dim = Dim.concrete(rng.choice(_CLEAN_DIM_VALUES))
@@ -995,7 +995,7 @@ def _condition5_outcome(
 ) -> SideConditionOutcome | None:
     """``consumed_ports_singly_claimed``'s outcome, or ``None`` if it was never evaluated.
 
-    :func:`~qufzx.rewrite.match.resolve_fusion_match` short-circuits: once a condition fails,
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match` short-circuits: once a condition fails,
     every later one is still *reported* (``outcomes`` always has exactly seven entries) but
     with ``passed=False`` and a "not evaluated: ... failed first" detail. Cross-checking
     condition 5's verdict against diagram contention is only meaningful when it was actually
@@ -1022,7 +1022,7 @@ def _port_is_contended(diagram: Diagram, ref: PortRef, consuming_wire: Wire) -> 
     """Independently: is ``ref`` claimed by a second wire, or listed on a boundary?
 
     Re-derived here rather than by importing
-    :func:`~qufzx.rewrite.match._consumed_port_claim_conflict`, so this arm cross-checks the
+    :func:`~archytaszx.rewrite.match._consumed_port_claim_conflict`, so this arm cross-checks the
     matcher's verdict against a separate computation instead of restating it.
     """
     other_wires = sum(
@@ -1058,7 +1058,7 @@ _MIN_CONDITION5_ORACLE_COMPARISONS = 250
 
 Deliberately modest, and *not* this arm's point -- oracle equality at scale is
 ``test_clean_diagrams_fuse_soundly``'s job (thousands of comparisons). Most diagrams this
-generator builds are hard-invalid *somewhere*, so :func:`~qufzx.semantics.check.compare`
+generator builds are hard-invalid *somewhere*, so :func:`~archytaszx.semantics.check.compare`
 refuses them outright (``ContractValidationError``) and the rewrite simply cannot be scored.
 Measured at 807 comparisons against 401 such skips; a floor of 250 pins that the seam
 between "contended enough to exercise condition 5" and "still contractible end to end" has
@@ -1174,7 +1174,7 @@ class TestSpiderFusionProperties:
 
         Uses :func:`_build_clean_diagram` (cleanly contractible by construction, unlike
         ``_build_random_diagram``'s deliberately mixed-dimension population) so that
-        essentially every match reaches :func:`~qufzx.semantics.check.compare`, not just the
+        essentially every match reaches :func:`~archytaszx.semantics.check.compare`, not just the
         ~136-out-of-2,500-seeds' worth the other arm's own floor documents. Also asserts the
         six colour/direction shapes ``consumed_wire_direction_permitted_for_color`` actually
         permits (see ``match.py``'s condition 4) are all still being generated -- so a future
@@ -1232,9 +1232,9 @@ class TestSpiderFusionProperties:
            notion of contention (:func:`_port_is_contended`) rather than against the
            matcher's own helper restated.
         3. Match-implies-applicable still holds on exactly these diagrams: every match
-           :func:`~qufzx.rewrite.match.find_matches` returns applies without raising
+           :func:`~archytaszx.rewrite.match.find_matches` returns applies without raising
            anything but the step-8 relative postcondition -- in particular never
-           :func:`~qufzx.rewrite.engine._remap_endpoint`'s "absent from the builder's
+           :func:`~archytaszx.rewrite.engine._remap_endpoint`'s "absent from the builder's
            port_mapping" ``RewriteDomainError``, which is the failure condition 5 exists to
            prevent and which a contended consumed port would otherwise trigger.
         4. The rewrite is still oracle-exact on the diagrams that survive.
@@ -1445,7 +1445,7 @@ def _all_claimed_passing(match: FusionMatch) -> tuple[SideConditionOutcome, ...]
     ``side_condition_outcomes`` tuple: this is what lets a corrupted ``shared_dim``,
     ``bindings``, or diagram slip past ``check_side_condition_coverage`` (which only checks
     outcome *names* and passedness, never re-evaluates a predicate) and reach the builder's
-    own re-verification via :func:`~qufzx.rewrite.match.resolve_fusion_match`.
+    own re-verification via :func:`~archytaszx.rewrite.match.resolve_fusion_match`.
     """
     return tuple(
         dataclasses.replace(outcome, passed=True, detail="fabricated: claims to pass")
@@ -1898,7 +1898,7 @@ class TestFreshSeedOracleDifferential:
     """A fresh-seed oracle differential over a range disjoint from every existing
     pinned pool in this module, so the suite is not merely re-confirming the seeds it was
     tuned against. Uses :func:`_build_clean_diagram` (fully concrete by construction) so
-    every match reaches :func:`~qufzx.semantics.check.compare` directly, via
+    every match reaches :func:`~archytaszx.semantics.check.compare` directly, via
     :func:`_check_one_clean_match` -- the same mechanics
     ``TestSpiderFusionProperties::test_clean_diagrams_fuse_soundly`` already uses, over a
     disjoint seed range instead of a shared one.

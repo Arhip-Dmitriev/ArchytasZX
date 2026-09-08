@@ -43,7 +43,7 @@ Two sweeps, split by cost:
 * :class:`TestCertificateDetailFidelity` -- cheap. Checks exhaustively that every
   human-readable ``SideConditionOutcome.detail`` derived from ``dimension_constraints``
   states the same operands, in the same order, and names the same bindings as the
-  :class:`~qufzx.rewrite.rule.DimensionConstraint` entry it describes -- never a value
+  :class:`~archytaszx.rewrite.rule.DimensionConstraint` entry it describes -- never a value
   recomputed from final state or attributed by symbol-occurrence coincidence.
 """
 
@@ -58,22 +58,22 @@ from unittest.mock import patch
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-import qufzx.rewrite.match as match_module
-from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rule import (
+import archytaszx.rewrite.match as match_module
+from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSourceKind,
     DimensionConstraint,
     RewriteGrammarError,
 )
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare
-from qufzx.semantics.contract_numeric import ContractDomainError
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import EqualityMode, compare
+from archytaszx.semantics.contract_numeric import ContractDomainError
 
 from .test_fusion_properties import (
     _build_clean_diagram,
@@ -109,7 +109,7 @@ _COLOR_DIRECTION_COMBOS = (
     (X_SPIDER, Direction.OUTPUT, Direction.INPUT),
 )
 """(color, a-side consumed direction, b-side consumed direction). Same-direction is Z-only --
-see :mod:`qufzx.rewrite.match`'s condition 4."""
+see :mod:`archytaszx.rewrite.match`'s condition 4."""
 
 
 def _leg_shapes(max_total: int = 1) -> tuple[tuple[int, int], ...]:

@@ -13,7 +13,7 @@
 
 """The fusion matcher: locates occurrences of same-color spider fusion.
 
-Phase 5 implements one :class:`~qufzx.rewrite.rule.Pattern`: two spiders of the same
+Phase 5 implements one :class:`~archytaszx.rewrite.rule.Pattern`: two spiders of the same
 generator type joined by a wire whose connected legs agree on dimension. A pair joined by
 k wires yields up to one match per wire, each decided on its own; a match fuses across its
 own wire and leaves the rest as self-loops on the merged node.
@@ -22,7 +22,7 @@ Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
 
 1. ``distinct_nodes`` -- the endpoints are different nodes. Always True.
 2. ``same_generator_type`` -- both nodes carry the identical registered
-   :class:`~qufzx.diagram.generators.GeneratorType`, and it is fusable (Z or X).
+   :class:`~archytaszx.diagram.generators.GeneratorType`, and it is fusable (Z or X).
 3. ``parallel_wires_become_self_loops`` -- always True, carrying the count of other wires
    joining the pair; each survives as a self-loop on the merged spider.
 4. ``consumed_wire_direction_permitted_for_color`` -- for X the consumed wire runs
@@ -31,7 +31,7 @@ Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
    or listed on a boundary.
 6. ``bang_box_scope_agreement`` (Phase 7) -- both nodes' innermost enclosing node-scope
    bang box, if any, must be identical: both unboxed, or the same box.
-7. ``dimension_agreement`` -- the connected legs' :class:`~qufzx.algebra.dimension.Dim`
+7. ``dimension_agreement`` -- the connected legs' :class:`~archytaszx.algebra.dimension.Dim`
    unify. A ``FAILURE`` is a non-match; a ``DEFERRED`` or binding-only ``SUCCESS`` is
    recorded as a dimension constraint. Every surviving leg of both nodes is then unified
    against the running ``shared_dim`` in turn, each refinement carrying forward.
@@ -45,21 +45,21 @@ numbering above is authoritative and machine-checked against ``FUSION_SIDE_CONDI
 
 One verification predicate. :func:`resolve_fusion_match` decides every condition above.
 :func:`find_matches` calls it to decide whether a candidate is a match, and
-:func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, against
+:func:`~archytaszx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, against
 the diagram it was handed, building only from its result.
 
 Malformed references. :func:`find_matches` checks both endpoints of every wire and every
 boundary entry through :func:`_validate_wire_endpoint`, in a pre-pass that runs before
-grouping, raising :class:`~qufzx.rewrite.rule.RewriteGrammarError`.
+grouping, raising :class:`~archytaszx.rewrite.rule.RewriteGrammarError`.
 
 Match-implies-applicable. Every match returned here applies under
-:func:`~qufzx.rewrite.engine.apply` without raising anything except the step-8
-relative-postcondition :class:`~qufzx.rewrite.rule.RewriteDomainError`.
+:func:`~archytaszx.rewrite.engine.apply` without raising anything except the step-8
+relative-postcondition :class:`~archytaszx.rewrite.rule.RewriteDomainError`.
 
 Dimension constraints. ``dimension_constraints`` records every dimension equality accepted
 without a syntactic identity -- a ``DEFERRED`` unify or a binding-only ``SUCCESS`` -- as
-:class:`~qufzx.rewrite.rule.DimensionConstraint`, at most one entry per
-:class:`~qufzx.rewrite.rule.ConstraintSource`. A binding to another symbolic ``Dim`` (not
+:class:`~archytaszx.rewrite.rule.DimensionConstraint`, at most one entry per
+:class:`~archytaszx.rewrite.rule.ConstraintSource`. A binding to another symbolic ``Dim`` (not
 a concrete value) is carried as an assumption rather than resolved through.
 
 Determinism. :func:`find_matches` sorts its result by node ids, then by the consumed wire's
@@ -75,11 +75,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
-from qufzx.algebra.phase import PhaseDomainError, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
-from qufzx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.phase import (
+    PhaseDomainError,
+    PhaseSubstituteValue,
+    PhaseSymbolKey,
+    PhaseVector,
+)
+from archytaszx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
+from archytaszx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSource,
     ConstraintSourceKind,
@@ -140,8 +145,8 @@ decisions."""
 class FusionMatch:
     """One located fusion occurrence: the two spiders, the consumed wire, and the shared dim.
 
-    ``a_id`` is always the lower :class:`~qufzx.diagram.graph.NodeId` of the pair,
-    ``b_id`` the higher -- the convention :mod:`qufzx.rewrite.rules_library` reuses as its
+    ``a_id`` is always the lower :class:`~archytaszx.diagram.graph.NodeId` of the pair,
+    ``b_id`` the higher -- the convention :mod:`archytaszx.rewrite.rules_library` reuses as its
     merged-leg ordering ("A's surviving legs, then B's"), and the one that seeds
     ``shared_dim`` from the A-side consumed leg's ``Dim``. A connecting pair that unifies
     resolves the seed away; one that only defers leaves it standing as ``shared_dim``, so a
@@ -184,7 +189,10 @@ class FusionMatch:
 
     @property
     def all_side_conditions_passed(self) -> bool:
-        """True iff every recorded side condition passed. See :class:`qufzx.rewrite.rule.Match`."""
+        """True iff every recorded side condition passed.
+
+        See :class:`archytaszx.rewrite.rule.Match`.
+        """
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
 
@@ -201,7 +209,7 @@ _MAX_FIXPOINT_PASSES = 32
 Module-level so a test can patch it low and exercise the exhaustion path. Unreachable in
 practice: ``bindings`` is monotone and drawn from the finite free-symbol set of both nodes'
 legs, phases, and the connecting pair, so a non-stabilising pass adds at least one fresh
-key. Kept as a guard against :meth:`~qufzx.algebra.dimension.Dim.unify`'s placeholder
+key. Kept as a guard against :meth:`~archytaszx.algebra.dimension.Dim.unify`'s placeholder
 contract, which Phase 10 replaces."""
 
 
@@ -226,7 +234,7 @@ class _FailureReason(enum.Enum):
     """
 
     UNIFY_FAILURE = "unify_failure"
-    """:meth:`~qufzx.algebra.dimension.Dim.unify` returned ``FAILURE`` outright."""
+    """:meth:`~archytaszx.algebra.dimension.Dim.unify` returned ``FAILURE`` outright."""
 
     CONTRADICTORY_REBIND = "contradictory_rebind"
     """The unify succeeded, but :func:`_merge_bindings` rejected its binding as a
@@ -282,7 +290,7 @@ def _merge_bindings(bindings: dict[str, Dim], new_bindings: Mapping[str, Dim]) -
 class _ConstraintRecord:
     """The source-keyed, insertion-ordered record of one candidate's dimension assumptions.
 
-    One entry per :class:`~qufzx.rewrite.rule.ConstraintSource`, never one per check: the
+    One entry per :class:`~archytaszx.rewrite.rule.ConstraintSource`, never one per check: the
     leg/phase fixpoint re-checks the same source once per pass, and each re-check
     :meth:`record`\\ s over the previous entry in place, so the finished sequence is in
     first-derivation order.
@@ -385,7 +393,7 @@ def _unify_surviving_legs(
     Returns the (possibly refined) shared dimension, or a :class:`_ResolutionFailure` if a
     leg's resolved dim does not unify or unifies only via a contradictory binding -- either
     makes the candidate a non-match. Every leg's outcome is written into ``record`` under its
-    own :meth:`~qufzx.rewrite.rule.ConstraintSource.surviving_leg` key.
+    own :meth:`~archytaszx.rewrite.rule.ConstraintSource.surviving_leg` key.
     """
     for direction in (Direction.INPUT, Direction.OUTPUT):
         for index, port in enumerate(node.legs(direction)):
@@ -436,7 +444,7 @@ def _unify_phase_dims(
     contradictory rebind; its ``equal_to`` is the ``shared_dim`` actually checked against the
     failing phase. On success returns the refined ``shared_dim``, having written each phase's
     binding into ``record`` under its
-    :meth:`~qufzx.rewrite.rule.ConstraintSource.node_phase` key.
+    :meth:`~archytaszx.rewrite.rule.ConstraintSource.node_phase` key.
     """
     for node_id, phase in ((a_id, node_a.phase), (b_id, node_b.phase)):
         if phase is None:
@@ -618,10 +626,10 @@ def reattach_phase(
 
     Returns the reattached vector together with the subset of ``bindings`` actually
     substituted into an entry's value. Public: :func:`resolve_fusion_match` calls it as a
-    trial construction and :mod:`qufzx.rewrite.rules_library`'s builder to build the merged
+    trial construction and :mod:`archytaszx.rewrite.rules_library`'s builder to build the merged
     phase, so both decide reattachability the same way.
 
-    Raises :class:`~qufzx.algebra.phase.PhaseDomainError` if, after substitution, an entry's
+    Raises :class:`~archytaszx.algebra.phase.PhaseDomainError` if, after substitution, an entry's
     index falls outside ``shared_dim``'s range.
     """
     concrete_bindings = {name: dim.to_int() for name, dim in bindings.items() if dim.is_concrete}
@@ -792,10 +800,10 @@ def resolve_fusion_match(
 
     The single shared predicate behind every condition in the module docstring.
     :func:`find_matches` calls it once per candidate wire;
-    :func:`~qufzx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, and
+    :func:`~archytaszx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, and
     trusts only its return value for graph surgery.
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` for a request that cannot be
+    Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` for a request that cannot be
     evaluated at all: ``a_id == b_id``, either node id absent from ``diagram``, ``wire`` not
     incident on both, ``wire`` not an element of ``diagram.wires``, or either endpoint naming
     an unknown node id or out-of-range port index.
@@ -1184,7 +1192,7 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
     Never mutates ``diagram``, and does not require it to be well-formed --
-    :func:`~qufzx.diagram.validate.validate` is never called here. Returns matches sorted by
+    :func:`~archytaszx.diagram.validate.validate` is never called here. Returns matches sorted by
     ``(a_id, b_id)``, tiebroken by the consumed wire's own per-side (direction, index).
     """
     # Malformed-wire detection is independent of every other property of the wire or its
@@ -1264,7 +1272,7 @@ def _ordered_pair(wire: Wire) -> tuple[NodeId, NodeId]:
 
 
 class FusionPattern(Pattern):
-    """The :class:`~qufzx.rewrite.rule.Pattern` implementation for same-color spider fusion."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for same-color spider fusion."""
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_matches`. See the module docstring."""
@@ -1397,7 +1405,7 @@ def find_fourier_matches(diagram: Diagram) -> tuple[FourierMatch, ...]:
 
 
 class FourierCancellationPattern(Pattern):
-    """The :class:`~qufzx.rewrite.rule.Pattern` implementation for F^4 cancellation."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for F^4 cancellation."""
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_fourier_matches`."""
@@ -1486,7 +1494,7 @@ def find_cap_matches(diagram: Diagram) -> tuple[CapMatch, ...]:
 
 
 class CapPattern(Pattern):
-    """The :class:`~qufzx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap."""
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_cap_matches`."""

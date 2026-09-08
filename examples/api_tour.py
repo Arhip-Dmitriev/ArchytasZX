@@ -14,7 +14,7 @@
 """Runnable tour of every engine layer, one short section per public entry point.
 
 Each ``stage_*`` function builds on the previous one's return value and prints what the
-engine handed back. Calls only public ``qufzx.*`` API -- no test helpers. Deterministic and
+engine handed back. Calls only public ``archytaszx.*`` API -- no test helpers. Deterministic and
 non-interactive; run with no arguments and no config:
 
     python examples/api_tour.py
@@ -27,19 +27,19 @@ Companion to ``docs/TUTORIAL.md``, whose sections match these numbers.
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.bangbox import abstract_subgraph_count
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.repl.parser import parse_dirac_source
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.certificate import certify, verify
-from qufzx.semantics.check import compare
-from qufzx.semantics.contract_symbolic import contract_symbolic
-from qufzx.semantics.induction import prove_by_induction
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.bangbox import abstract_subgraph_count
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.repl.parser import parse_dirac_source
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.certificate import certify, verify
+from archytaszx.semantics.check import compare
+from archytaszx.semantics.contract_symbolic import contract_symbolic
+from archytaszx.semantics.induction import prove_by_induction
 
 
 def build_ghz_with_copy(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:

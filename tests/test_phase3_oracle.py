@@ -26,10 +26,10 @@ diagram construction quietly drops or introduces a global factor).
 
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.validate import validate
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.validate import validate
 
 from .helpers import build_ghz_with_copy
 

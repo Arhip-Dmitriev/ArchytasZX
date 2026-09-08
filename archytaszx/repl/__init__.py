@@ -11,4 +11,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive REPL: parser, printer, commands, and shell for the qufzx engine."""
+"""Interactive REPL: parser, printer, commands, and shell for the ArchytasZX engine."""

@@ -15,12 +15,12 @@
 
 A :class:`Scalar` is an exact complex number built from exact (Gaussian) rationals, roots
 of unity ``omega_d^j = e^{2*pi*i*j/d}`` where ``d`` is a (possibly symbolic)
-:class:`~qufzx.algebra.dimension.Dim` and ``j`` may itself be symbolic, dimension factors
+:class:`~archytaszx.algebra.dimension.Dim` and ``j`` may itself be symbolic, dimension factors
 (contraction produces bare factors of ``d``, so :meth:`Scalar.from_dim` exists for that),
 and free symbolic scalars. Scalars are closed under product, sum, integer powers, and
 complex conjugation.
 
-Like :class:`~qufzx.algebra.dimension.Dim`, a Scalar is backed by a single canonical
+Like :class:`~archytaszx.algebra.dimension.Dim`, a Scalar is backed by a single canonical
 sympy expression (see :meth:`Scalar.to_sympy`), built with ``sympy.exp`` and
 ``sympy.I`` so that root-of-unity factors combine algebraically under sympy's own
 exact arithmetic. Normalization performed here is limited to cheap, always-sound
@@ -28,7 +28,7 @@ steps: collecting like terms, folding concrete rational arithmetic, and reducing
 root-of-unity index modulo ``d`` only when ``d`` is concrete. Deciding whether a symbolic
 ``d`` divides a symbolic index is :meth:`Scalar.simplify`'s job, not this normalization's:
 it closes an index sum through the character-sum identity
-Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d]. As with :class:`~qufzx.algebra.phase.Phase`,
+Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d]. As with :class:`~archytaszx.algebra.phase.Phase`,
 equality here is sound but incomplete: two Scalars that compare equal are exactly equal,
 but two exactly-equal Scalars may compare unequal if this module's cheap normalization
 cannot see it.
@@ -39,7 +39,7 @@ drops a unit-modulus factor. There is no such method, public or private, anywher
 this module -- not even as an option. ``s`` and ``2*s`` are unequal; ``s`` and
 ``omega_d * s`` are unequal; there is no API that makes them equal. If a later phase
 wants an up-to-global-phase comparison, that flag belongs at the semantics/check.py
-layer, where :class:`~qufzx.semantics.check.EqualityMode` now carries it, never here.
+layer, where :class:`~archytaszx.semantics.check.EqualityMode` now carries it, never here.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim, DimensionError
-from qufzx.algebra.phase import Phase
+from archytaszx.algebra.dimension import Dim, DimensionError
+from archytaszx.algebra.phase import Phase
 
 
 class ScalarError(Exception):
@@ -514,7 +514,7 @@ class Scalar:
 
     @classmethod
     def from_phase(cls, phase: Phase) -> Scalar:
-        """The unit scalar e^{i*angle} corresponding to a :class:`~qufzx.algebra.phase.Phase`.
+        """The unit scalar e^{i*angle} corresponding to a :class:`~archytaszx.algebra.phase.Phase`.
 
         The Phase-to-Scalar bridge, for a rule whose introduced scalar is phase-derived.
         Spider fusion is not one: it introduces :meth:`Scalar.one`.

@@ -22,15 +22,15 @@ import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
-from qufzx.diagram.bangbox import Mult
-from qufzx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
+from archytaszx.diagram.bangbox import Mult
+from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import (
     CAP_SIDE_CONDITIONS,
     FOURIER_SIDE_CONDITIONS,
     CapMatch,
@@ -38,11 +38,11 @@ from qufzx.rewrite.match import (
     find_cap_matches,
     find_fourier_matches,
 )
-from qufzx.rewrite.rule import RewriteDomainError, SideConditionOutcome
-from qufzx.rewrite.rules_library import FOURIER_CANCELLATION, RULES, ZX_CAP
-from qufzx.semantics.check import compare
-from qufzx.semantics.contract_symbolic import contract_symbolic
-from qufzx.semantics.denote import DenoteGrammarError, denote
+from archytaszx.rewrite.rule import RewriteDomainError, SideConditionOutcome
+from archytaszx.rewrite.rules_library import FOURIER_CANCELLATION, RULES, ZX_CAP
+from archytaszx.semantics.check import compare
+from archytaszx.semantics.contract_symbolic import contract_symbolic
+from archytaszx.semantics.denote import DenoteGrammarError, denote
 
 D = Dim.symbol("d")
 

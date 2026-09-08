@@ -19,7 +19,7 @@ Supplies the Dirac-to-graph end of Phase 5's completion condition:
   ``sum_{k=0}^{D-1} |k,k,...>`` (or the ``|k>^{n}`` tensor-power shorthand), optionally
   followed by ``; copy`` to feed the state into a fixed two-output copy spider.
 * ``D`` may be a concrete positive integer or a bare identifier (a symbolic
-  :class:`~qufzx.algebra.dimension.Dim`); ``n`` must be concrete. The bound summation index
+  :class:`~archytaszx.algebra.dimension.Dim`); ``n`` must be concrete. The bound summation index
   is rejected in a dimension slot.
 * The emitted diagram never builds a matrix or dense tensor; it allocates nodes, wires and a
   boundary order.
@@ -40,10 +40,10 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-from qufzx.algebra.dimension import Dim, DimensionDomainError, DimensionError
-from qufzx.diagram.bangbox import abstract_port_count
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError
+from archytaszx.diagram.bangbox import abstract_port_count
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
 
 
 class DiracError(Exception):
@@ -92,7 +92,7 @@ _IDENTIFIER_RE = re.compile(rf"^{_IDENTIFIER}$")
 
 _MAX_KET_LEG_COUNT = 1024
 """Parser sanity bound on the ``^{n}`` tensor-power leg count, not a semantic limit. Same
-role as ``_MAX_FIXPOINT_PASSES`` in :mod:`qufzx.rewrite.match`."""
+role as ``_MAX_FIXPOINT_PASSES`` in :mod:`archytaszx.rewrite.match`."""
 
 _LITERAL_MARKER = "literal"
 """Keyword prefixing a numeric dimension to suppress abstraction-on-entry, for the oracle's
@@ -170,7 +170,7 @@ def _leg_count_from_body(body: str, power: str | None, *, eager: bool = True) ->
 def _parse_dim(token: str, *, literal: bool) -> tuple[Dim, Mapping[str, int]]:
     """The dimension a token names, and the parameter binding it records.
 
-    A numeral is abstracted through :meth:`~qufzx.algebra.dimension.Dim.abstract` to a fresh
+    A numeral is abstracted through :meth:`~archytaszx.algebra.dimension.Dim.abstract` to a fresh
     symbol, returned with the one-entry binding recording its value, unless ``literal``
     suppresses that and the concrete ``Dim`` is returned with an empty binding. A bare
     identifier names a symbolic ``Dim`` and records nothing.
@@ -233,7 +233,7 @@ def _parse_ket_sum(text: str) -> tuple[Dim, Mapping[str, int], int, bool]:
 
 
 def parse_dirac_source(source: str) -> Diagram:
-    """Parse a restricted Dirac-ket source string into a :class:`~qufzx.diagram.graph.Diagram`.
+    """Parse a restricted Dirac-ket source string into a :class:`~archytaszx.diagram.graph.Diagram`.
 
     Two forms, both detailed in the module docstring:
 

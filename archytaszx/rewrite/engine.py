@@ -13,19 +13,19 @@
 
 """Rewrite engine: applies rules at matches, returns new diagrams, and records step provenance.
 
-:func:`apply` is the single entry point, generic over any :class:`~qufzx.rewrite.rule.Rule`:
-it reads only :class:`~qufzx.rewrite.rule.Match` and
-:class:`~qufzx.rewrite.rule.BuildResult`, never a match's rule-specific fields. All
+:func:`apply` is the single entry point, generic over any :class:`~archytaszx.rewrite.rule.Rule`:
+it reads only :class:`~archytaszx.rewrite.rule.Match` and
+:class:`~archytaszx.rewrite.rule.BuildResult`, never a match's rule-specific fields. All
 rule-specific work happens in the rule's own builder.
 
 Algorithm.
 
-1. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against ``rule.side_conditions``.
+1. :func:`~archytaszx.rewrite.rule.check_side_condition_coverage` against ``rule.side_conditions``.
 2. Work on ``diagram.copy()``; never mutate the diagram passed in.
 3. Call ``rule.builder(working, match)``. ``build_result.diagram`` must ``is``-match
    ``working``, and the builder must have left ``working``'s wire set and both boundary
    lists exactly as ``diagram`` had them -- every other change it makes is reported through
-   :class:`~qufzx.rewrite.rule.BuildResult`, never applied directly.
+   :class:`~archytaszx.rewrite.rule.BuildResult`, never applied directly.
 4. Validate the build result against ``working``: the scalar agrees with the rule's; every
    consumed wire and node exists; every ``new_node_ids`` entry exists; every
    ``port_mapping`` value names a real port on a node that outlives the rewrite; neither id
@@ -41,7 +41,7 @@ Algorithm.
 6. Remove the consumed nodes. Step 4 rejects a ``port_mapping`` value on a consumed node,
    so no surviving reference can point at one by the time the cascade runs.
 7. Multiply the scalar.
-8. Verify the rewrite is not a relative regression. :func:`~qufzx.diagram.validate.validate`
+8. Verify the rewrite is not a relative regression. :func:`~archytaszx.diagram.validate.validate`
    runs on the input and on the finished ``working``; a hard-failure issue in ``working``
    not accounted for in the input raises. The comparison is a *multiset* over
    ``(kind, offending ref)`` (:func:`_issue_key`), never over messages, with input-side keys
@@ -59,7 +59,7 @@ or edits it.
 
 This module does not search for matches, choose which rule or match to apply, iterate to a
 fixpoint, or evaluate a diagram numerically -- nothing here imports
-:mod:`qufzx.semantics`.
+:mod:`archytaszx.semantics`.
 """
 
 from __future__ import annotations
@@ -69,11 +69,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
-from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import IssueKind, ValidationIssue, validate
+from archytaszx.rewrite.rule import (
     DimensionConstraint,
     Match,
     RewriteDomainError,
@@ -92,7 +92,7 @@ class RewriteStep:
     produced, or step 8's before/after validation compare -- the three deferred-issue fields
     are the compare's, and are the only ones that read the finished working diagram.
     ``match`` is stored verbatim so Phase 6 can resolve ``rule_name`` through
-    :func:`~qufzx.rewrite.rules_library.lookup_rule` and re-apply at this match directly,
+    :func:`~archytaszx.rewrite.rules_library.lookup_rule` and re-apply at this match directly,
     without re-running the matcher.
     """
 
@@ -103,7 +103,7 @@ class RewriteStep:
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...]
     """Every dimension equality this rewrite assumed rather than verified as a syntactic
-    identity, source-keyed (see :attr:`~qufzx.rewrite.rule.Match.dimension_constraints`).
+    identity, source-keyed (see :attr:`~archytaszx.rewrite.rule.Match.dimension_constraints`).
 
     A ``DEFERRED`` entry is a recorded assumption, not a claim of satisfiability on anything
     but a degenerate point: a surviving leg of ``d**2`` forced onto a shared ``d`` records
@@ -130,7 +130,7 @@ class RewriteStep:
 
     phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] = MappingProxyType({})
     """Per-node bindings the builder actually substituted into a phase's entries -- see
-    :attr:`~qufzx.rewrite.rule.BuildResult.phase_substitutions`. Empty when the
+    :attr:`~archytaszx.rewrite.rule.BuildResult.phase_substitutions`. Empty when the
     builder supplied ``None`` (nothing re-derived) or genuinely substituted nothing.
     """
 
@@ -139,7 +139,7 @@ class RewriteStep:
     their count.
 
     Both fields take the first ``n`` occurrences of each translated key in
-    :func:`~qufzx.diagram.validate.validate` order, where ``n`` is that key's Counter
+    :func:`~archytaszx.diagram.validate.validate` order, where ``n`` is that key's Counter
     surplus. When a key's surplus equals its total occurrence count the selection is forced;
     when several issues collide on one key and only some lack a counterpart, which to name is
     unrecoverable, the selection is arbitrary but deterministic, and this flag is ``True``.
@@ -200,7 +200,7 @@ def _issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
     practice, so the order is a deterministic tie-break.
 
     An issue naming none of the three -- today only
-    :attr:`~qufzx.diagram.validate.IssueKind.SYMBOL_ROLE_COLLISION` -- keys as
+    :attr:`~archytaszx.diagram.validate.IssueKind.SYMBOL_ROLE_COLLISION` -- keys as
     ``(kind, None)``, so every such issue in one report shares a key and the compare sees
     only how many there are, not which names collided.
     """
@@ -306,14 +306,14 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     Never mutates ``diagram``; the module docstring numbers the steps below.
     ``test_engine.py::TestApplyDocstringMatchesRaiseSites`` pins this body's raise count.
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError` at step 1 (``match``'s
+    Raises :class:`~archytaszx.rewrite.rule.RewriteDomainError` at step 1 (``match``'s
     ``side_condition_outcomes`` do not exactly cover ``rule.side_conditions``, or include a
     failed one), step 4 (the builder's ``scalar_introduced`` disagrees with the rule's),
     step 5 (a wire or boundary entry names a consumed-node port absent from
     ``port_mapping``, raised inside :func:`_remap_endpoint`, so uncounted by the meta-test),
     and step 8 (the result carries a hard-failure issue the input did not).
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
+    Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
     is not, by identity, the working diagram; the builder edited its wire set or either
     boundary list), step 4 (a consumed wire or node absent; ``consumed_node_ids`` or
     ``new_node_ids`` repeating an id; a ``new_node_ids`` entry naming no node; a

@@ -29,20 +29,20 @@ from pathlib import Path
 
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.diagram.bangbox import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.bangbox import (
     abstract_port_count,
     abstract_subgraph_count,
     free_mult_symbols,
 )
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics import induction
-from qufzx.semantics.certificate import (
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics import induction
+from archytaszx.semantics.certificate import (
     Certificate,
     CheckMethod,
     DerivationKind,
@@ -51,8 +51,8 @@ from qufzx.semantics.certificate import (
     replay,
     verify,
 )
-from qufzx.semantics.check import EqualityMode, compare
-from qufzx.semantics.induction import (
+from archytaszx.semantics.check import EqualityMode, compare
+from archytaszx.semantics.induction import (
     InductionGrammarError,
     InductionResult,
     StepDischarge,

@@ -12,13 +12,13 @@
 # limitations under the License.
 
 """The literal chain ``FULL_PLAN.md`` names for Phase 5's completion condition: Dirac source
-string to :class:`~qufzx.diagram.graph.Diagram` to fusion match to post-diagram, oracle
+string to :class:`~archytaszx.diagram.graph.Diagram` to fusion match to post-diagram, oracle
 confirmed, run end to end.
 
 ``tests/test_phase5_oracle.py`` covers the graph-to-fuse-to-graph half, starting from
 ``tests/helpers.py::build_ghz_with_copy``'s hand-built diagram. This module covers the
 Dirac half, and is not a duplicate of that file's oracle coverage: it starts from a Dirac
-*source string*, parses it with :func:`qufzx.repl.parser.parse_dirac_source`, and pins the
+*source string*, parses it with :func:`archytaszx.repl.parser.parse_dirac_source`, and pins the
 parsed diagram to ``build_ghz_with_copy``'s own, already-oracle-checked construction before
 running the same fuse-and-compare chain that file does -- so this path is verified against
 the existing ground truth, not standing alone as a second, independently-trusted diagram
@@ -31,15 +31,20 @@ import re
 
 import pytest
 
-import qufzx.repl.parser as parser_module
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.bangbox import free_mult_symbols, instantiate_symbol
-from qufzx.diagram.validate import validate
-from qufzx.repl.parser import DiracDomainError, DiracError, DiracGrammarError, parse_dirac_source
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare
+import archytaszx.repl.parser as parser_module
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.bangbox import free_mult_symbols, instantiate_symbol
+from archytaszx.diagram.validate import validate
+from archytaszx.repl.parser import (
+    DiracDomainError,
+    DiracError,
+    DiracGrammarError,
+    parse_dirac_source,
+)
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import EqualityMode, compare
 
 from .helpers import build_ghz_with_copy
 
@@ -219,8 +224,8 @@ class TestDiracParserAsciiNumericTokens:
     regex the safety note cites would leak a bare ``ValueError`` through this module's
     ``DiracError`` boundary.
 
-    These tests pin the contract at both levels -- :func:`~qufzx.repl.parser._parse_dim`
-    standing alone, and :func:`~qufzx.repl.parser.parse_dirac_source` -- so a future caller
+    These tests pin the contract at both levels -- :func:`~archytaszx.repl.parser._parse_dim`
+    standing alone, and :func:`~archytaszx.repl.parser.parse_dirac_source` -- so a future caller
     that does not go through ``_KET_SUM_RE`` cannot silently reopen it.
     """
 

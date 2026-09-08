@@ -11,11 +11,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.diagram.generators: the Phase 3 generator-type registry."""
+"""Tests for archytaszx.diagram.generators: the Phase 3 generator-type registry."""
 
 import pytest
 
-from qufzx.diagram.generators import (
+from archytaszx.diagram.generators import (
     FOURIER_BOX,
     REGISTRY,
     X_SPIDER,

@@ -28,12 +28,12 @@ legitimately vary across processes.
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.diagram.bangbox import abstract_port_count, abstract_subgraph_count
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.semantics.induction import prove_by_induction
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.bangbox import abstract_port_count, abstract_subgraph_count
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.semantics.induction import prove_by_induction
 
 
 def _build_false_near_identity() -> tuple[Diagram, Diagram]:

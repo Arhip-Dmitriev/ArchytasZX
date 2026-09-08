@@ -11,15 +11,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.algebra.phase: the Phase 2 phase algebra."""
+"""Tests for archytaszx.algebra.phase: the Phase 2 phase algebra."""
 
 import cmath
 
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import (
     Phase,
     PhaseDomainError,
     PhaseGrammarError,

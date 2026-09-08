@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Enforces the project's docstring budgets across ``qufzx/``, and bans a set of rationale
+"""Enforces the project's docstring budgets across ``archytaszx/``, and bans a set of rationale
 markers.
 
 A docstring states what a thing is or how it works; reasoning belongs in FULL_PLAN.md. Two
@@ -34,19 +34,19 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_PACKAGE = _REPO_ROOT / "qufzx"
+_PACKAGE = _REPO_ROOT / "archytaszx"
 
 _MAX_MODULE_DOCSTRING_LINES = 55
-"""Ceiling on a module docstring. ``qufzx/diagram/validate.py`` sets the high-water mark at
+"""Ceiling on a module docstring. ``archytaszx/diagram/validate.py`` sets the high-water mark at
 55, measured 2026-09-04."""
 
 _MAX_DOCSTRING_LINES = 25
 """Ceiling on every other docstring, module-attribute docstrings included.
-``qufzx.rewrite.engine``'s ``apply`` sets the high-water mark at 25, measured 2026-09-04."""
+``archytaszx.rewrite.engine``'s ``apply`` sets the high-water mark at 25, measured 2026-09-04."""
 
 _MAX_PROSE_RATIO = 0.40
 """Ceiling on docstring+comment lines as a fraction of a file's non-blank lines.
-``qufzx/semantics/denote.py`` sets the high-water mark at 0.397, measured 2026-09-04. Every
+``archytaszx/semantics/denote.py`` sets the high-water mark at 0.397, measured 2026-09-04. Every
 budget here sits at its measured maximum, not above it."""
 
 _LICENSE_HEADER_LINES = 12
@@ -89,7 +89,7 @@ def _docstring_nodes(tree: ast.Module) -> list[ast.Expr]:
 
 @pytest.mark.parametrize("path", _python_files(), ids=lambda p: str(p.relative_to(_REPO_ROOT)))
 class TestDocstringPolicy:
-    """One parametrized case per module in ``qufzx/``."""
+    """One parametrized case per module in ``archytaszx/``."""
 
     def test_module_docstring_is_within_budget(self, path: Path) -> None:
         docstring = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))

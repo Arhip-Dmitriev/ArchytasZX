@@ -11,15 +11,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.diagram.validate: the Phase 3 well-formedness checker."""
+"""Tests for archytaszx.diagram.validate: the Phase 3 well-formedness checker."""
 
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
-from qufzx.diagram.validate import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.validate import (
     IssueKind,
     ValidationFailedError,
     validate,
@@ -239,7 +239,7 @@ class TestGeneratorPolicyConformance:
 class TestPhaseDimensionResolvedThroughLegBindings:
     """The TIED_TO_LEG_DIM phase check must compare
     against the leg set's *jointly resolved* dimension (via unify_all), not the raw,
-    unresolved first leg -- see qufzx.diagram.validate._check_generator_policy. Comparing
+    unresolved first leg -- see archytaszx.diagram.validate._check_generator_policy. Comparing
     against the raw first leg would make the verdict depend on which leg the diagram happens
     to list first, and would let a leg/phase disagreement masked by a leg/leg binding
     computed independently (and discarded) pass as valid even though no single substitution
@@ -344,8 +344,8 @@ class TestPhaseDimensionResolvedThroughLegBindings:
 class TestNonConcreteLegBindingIsReportedAsBound:
     """A node whose legs unify only by binding one symbol to another (legs ``d`` and ``e``,
     binding ``d := e``) is recorded as a ``DIMENSION_BOUND`` deferred issue, matching the
-    ``BOUND`` :class:`~qufzx.rewrite.rule.DimensionConstraint`
-    :mod:`qufzx.rewrite.match` records for the structurally identical situation. It never
+    ``BOUND`` :class:`~archytaszx.rewrite.rule.DimensionConstraint`
+    :mod:`archytaszx.rewrite.match` records for the structurally identical situation. It never
     fails validation: ``is_valid`` stays True."""
 
     def test_two_bare_symbol_legs_are_reported_as_bound(self) -> None:
@@ -373,7 +373,7 @@ class TestNonConcreteLegBindingIsReportedAsBound:
 
 class TestAllLegsEqualJointSatisfiability:
     """Leg dims must be *jointly* unifiable, not
-    merely pairwise-unifiable against the first leg -- see qufzx.algebra.dimension.unify_all.
+    merely pairwise-unifiable against the first leg -- see archytaszx.algebra.dimension.unify_all.
     """
 
     def test_jointly_unsatisfiable_bindings_are_rejected(self) -> None:
@@ -414,7 +414,7 @@ class TestAllLegsEqualJointSatisfiability:
 
 class TestSymbolRoleCollision:
     """A name cannot legally serve as both a dimension symbol and a phase parameter within
-    one diagram (see qufzx.diagram.validate._classify_symbol_role)."""
+    one diagram (see archytaszx.diagram.validate._classify_symbol_role)."""
 
     def test_same_name_dimension_and_phase_symbol_is_rejected(self) -> None:
         d = Dim.symbol("d")
@@ -439,7 +439,7 @@ class TestSymbolRoleCollision:
     def test_distinct_symbols_of_the_same_name_are_never_equal(self) -> None:
         # The discriminator itself: Dim.symbol/Phase.symbol/Scalar.symbol build distinct
         # sympy Symbol objects for the same name string, via different assumptions.
-        from qufzx.algebra.scalar import Scalar
+        from archytaszx.algebra.scalar import Scalar
 
         dim_symbol = Dim.symbol("d").to_sympy()
         phase_symbol = Phase.symbol("d").to_sympy_turns()
@@ -454,7 +454,7 @@ class TestSymbolRoleCollision:
         # nonnegative integers) -- and must be reported as {'dimension', 'exponent'}, not
         # mislabelled {'dimension', 'phase'}, which is where an exponent symbol lands if the
         # classifier has no exponent role and it falls through into the "phase" branch.
-        from qufzx.diagram.validate import _classify_symbol_role
+        from archytaszx.diagram.validate import _classify_symbol_role
 
         n_dim = Dim.symbol("n")
         d = Dim.symbol("d")
@@ -490,7 +490,7 @@ class TestSymbolRoleCollision:
 
 
 class TestSymbolConstructorRolesRoundTrip:
-    """Every symbol constructor in qufzx.algebra must round-trip to its own,
+    """Every symbol constructor in archytaszx.algebra must round-trip to its own,
     distinct role under _classify_symbol_role -- a test that fails loudly the day a fifth
     constructor is added without updating the classifier to give it a role of its own
     (silently aliasing into an existing one would otherwise only surface as a missed or
@@ -498,8 +498,8 @@ class TestSymbolConstructorRolesRoundTrip:
     """
 
     def test_every_constructor_round_trips_to_a_distinct_role(self) -> None:
-        from qufzx.algebra.scalar import Scalar
-        from qufzx.diagram.validate import _classify_symbol_role
+        from archytaszx.algebra.scalar import Scalar
+        from archytaszx.diagram.validate import _classify_symbol_role
 
         d = Dim.symbol("d")
         n = (d ** Dim.symbol("n")).to_sympy().free_symbols - d.to_sympy().free_symbols
@@ -523,7 +523,7 @@ class TestSymbolConstructorRolesRoundTrip:
 class TestNodeDimensionUndetermined:
     """A node with zero legs and no phase carries its dimension nowhere at all (per the spec,
     "dimension is stored per port, not as one global parameter"), so it is not well-formed
-    and :mod:`qufzx.semantics.denote` refuses it. The invariant: ``validate(d).is_valid``
+    and :mod:`archytaszx.semantics.denote` refuses it. The invariant: ``validate(d).is_valid``
     implies every node in ``d`` is denotable (see ``tests/test_phase5_exhaustive_oracle.py``'s
     exhaustive sweep, which checks this over its whole space, and ``denote.py``'s own "has no
     legs and no phase vector" message, which this issue's message deliberately echoes)."""
@@ -730,7 +730,7 @@ class TestParameterEnvironmentRefutesADimensionEquality:
         assert validate(self._two_spiders({"x": 2})).is_valid
 
     def test_fusion_does_not_fire_on_a_refuted_equality(self) -> None:
-        from qufzx.rewrite.match import find_matches
+        from archytaszx.rewrite.match import find_matches
 
         assert find_matches(self._two_spiders({"x": 2, "y": 3})) == ()
         assert len(find_matches(self._two_spiders({"x": 2, "y": 2}))) == 1

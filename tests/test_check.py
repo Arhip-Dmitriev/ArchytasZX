@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.semantics.check: instantiation and oracle comparison."""
+"""Tests for archytaszx.semantics.check: instantiation and oracle comparison."""
 
 from __future__ import annotations
 
@@ -19,12 +19,12 @@ import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.semantics.check import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.semantics.check import (
     CheckGrammarError,
     ComparisonResult,
     EqualityMode,

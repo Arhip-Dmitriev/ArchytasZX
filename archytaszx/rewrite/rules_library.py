@@ -14,12 +14,12 @@
 """Concrete rewrite rules, starting with spider fusion, each recording its exact scalar.
 
 Phase 5 registers one rule, :data:`SPIDER_FUSION`. :data:`RULES` and :func:`lookup_rule`
-resolve a :class:`~qufzx.rewrite.engine.RewriteStep`'s ``rule_name`` back to its
-:class:`~qufzx.rewrite.rule.Rule`, keeping :mod:`qufzx.rewrite.engine` generic.
+resolve a :class:`~archytaszx.rewrite.engine.RewriteStep`'s ``rule_name`` back to its
+:class:`~archytaszx.rewrite.rule.Rule`, keeping :mod:`archytaszx.rewrite.engine` generic.
 
 Scalar. Same-color fusion across one wire introduces no factor in either wire shape
 condition 4 (``consumed_wire_direction_permitted_for_color``) permits, so both land on
-:meth:`~qufzx.algebra.scalar.Scalar.one`:
+:meth:`~archytaszx.algebra.scalar.Scalar.one`:
 
 * Alternating output-to-input, either color. Z: both spiders are diagonal with entry
   ``e^{i*angle(k)}`` at the all-axes-``k`` position, so contracting an output leg against
@@ -27,7 +27,7 @@ condition 4 (``consumed_wire_direction_permitted_for_color``) permits, so both l
   (conj(F))^{ox m}``, and the wire contracts an ``F`` against a ``conj(F)`` on the shared
   axis, which cancel to the identity, ``F`` being unitary and symmetric.
 * Same-direction, Z only. ``_z_tensor`` is diagonal in every axis and
-  :mod:`qufzx.semantics.contract_numeric` applies no conjugation at contraction time, so
+  :mod:`archytaszx.semantics.contract_numeric` applies no conjugation at contraction time, so
   the same index ``k`` is identified. A same-direction X wire contracts ``F`` against ``F``,
   giving a permutation matrix, and is not this rule.
 
@@ -36,20 +36,20 @@ between the same nodes is never contracted by this rule.
 
 Merged leg ordering, a choice rather than a derivation: the merged node's inputs are A's
 surviving inputs in original index order, then B's; outputs likewise. "A" is the lower
-:class:`~qufzx.diagram.graph.NodeId`.
+:class:`~archytaszx.diagram.graph.NodeId`.
 
 Merged dimension. Every surviving port is built at
-:attr:`~qufzx.rewrite.match.FusionMatch.shared_dim`, never its own original ``Dim``.
+:attr:`~archytaszx.rewrite.match.FusionMatch.shared_dim`, never its own original ``Dim``.
 Condition 6 unifies every surviving leg against the resolved ``shared_dim`` before a match
 is returned, and this builder calls the same
-:func:`~qufzx.rewrite.match.resolve_fusion_match` fresh against the diagram it was handed.
+:func:`~archytaszx.rewrite.match.resolve_fusion_match` fresh against the diagram it was handed.
 
 Fusion may fire on a ``DEFERRED`` dimension pair, though FULL_PLAN.md's Phase 5 states the
 pattern as spiders "sharing a dimension". A ``d``/``d*e`` leg pair is already legal,
 non-hard-error input under ``ALL_LEGS_EQUAL``
-(:class:`~qufzx.diagram.validate.IssueKind.DIMENSION_DEFERRED`), and the assumption is
+(:class:`~archytaszx.diagram.validate.IssueKind.DIMENSION_DEFERRED`), and the assumption is
 recorded either way. Two consequences: a neighbouring wire that was an exact match before
-the fusion may be merely deferred after, which :mod:`qufzx.rewrite.engine`'s step-8
+the fusion may be merely deferred after, which :mod:`archytaszx.rewrite.engine`'s step-8
 relative postcondition permits; and a surviving leg on a boundary is rebuilt at
 ``shared_dim``, so the finished diagram's interface holds only under the same recorded
 assumption.
@@ -64,12 +64,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseDomainError, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import FOURIER_BOX, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
-from qufzx.rewrite.match import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseDomainError, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import FOURIER_BOX, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef
+from archytaszx.rewrite.match import (
     CAP_SIDE_CONDITIONS,
     FOURIER_SIDE_CONDITIONS,
     FUSION_SIDE_CONDITIONS,
@@ -85,7 +85,7 @@ from qufzx.rewrite.match import (
     reattach_phase,
     resolve_fusion_match,
 )
-from qufzx.rewrite.rule import (
+from archytaszx.rewrite.rule import (
     BuildResult,
     Match,
     Quantifiers,
@@ -116,9 +116,9 @@ def _over_shared_dim(
     """``phase``'s entries, with ``bindings`` substituted in, reattached to ``shared_dim``
     -- or an all-zero vector over ``shared_dim`` if ``phase`` is absent.
 
-    Delegates to :func:`qufzx.rewrite.match.reattach_phase`, returning its vector and the
+    Delegates to :func:`archytaszx.rewrite.match.reattach_phase`, returning its vector and the
     subset of ``bindings`` it substituted into an entry's value. Raises
-    :class:`RewriteDomainError`, not :class:`~qufzx.algebra.phase.PhaseDomainError`, if an
+    :class:`RewriteDomainError`, not :class:`~archytaszx.algebra.phase.PhaseDomainError`, if an
     entry index falls outside ``shared_dim``'s range.
     """
     if phase is None:
@@ -147,7 +147,7 @@ def _merged_phase(
     merged node with no surviving legs has no port to carry ``shared_dim``, so an all-zero
     ``PhaseVector(shared_dim, {})`` is returned instead. Otherwise both operands are read via
     :func:`_over_shared_dim` before adding, since
-    :meth:`~qufzx.algebra.phase.PhaseVector.__add__` demands exactly equal ``Dim``\\ s.
+    :meth:`~archytaszx.algebra.phase.PhaseVector.__add__` demands exactly equal ``Dim``\\ s.
 
     The second return value is every node whose phase had a binding substituted into an
     entry, keyed by node id.
@@ -171,23 +171,23 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 
     Mutates ``diagram`` in place by adding the merged node (module docstring: leg ordering,
     scalar, merged dimension) and returns the :class:`BuildResult`
-    :mod:`qufzx.rewrite.engine` needs to splice it in; never removes the matched nodes or
+    :mod:`archytaszx.rewrite.engine` needs to splice it in; never removes the matched nodes or
     touches any wire or boundary entry.
 
     Trusts nothing about ``match`` for graph surgery until it has been re-derived. In order:
 
     1. ``isinstance(match, FusionMatch)``.
-    2. :func:`~qufzx.rewrite.rule.check_side_condition_coverage` against the module-level
+    2. :func:`~archytaszx.rewrite.rule.check_side_condition_coverage` against the module-level
        :data:`FUSION_SIDE_CONDITIONS`; this builder is reachable directly.
-    3. :func:`~qufzx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``.
+    3. :func:`~archytaszx.rewrite.match.resolve_fusion_match`, called fresh against ``diagram``.
        Everything downstream builds from ``resolution``'s fields, never ``match``'s.
     4. ``match.shared_dim``, ``bindings``, ``dimension_constraints`` and
        ``side_condition_outcomes``, each checked for exact agreement with ``resolution``'s.
        ``apply`` records the match's own copies, so this equality is what makes them the
        certificate's ground truth.
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteDomainError` on any disagreement at step 3 or
-    4, and :class:`~qufzx.rewrite.rule.RewriteGrammarError` for a foreign match type or a
+    Raises :class:`~archytaszx.rewrite.rule.RewriteDomainError` on any disagreement at step 3 or
+    4, and :class:`~archytaszx.rewrite.rule.RewriteGrammarError` for a foreign match type or a
     structurally malformed one (equal node ids, a node absent from ``diagram``, a wire not
     incident on both or not in ``diagram.wires``).
     """
@@ -317,7 +317,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
 spider_fusion_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
 """The single declared side-condition tuple this builder is meant to be paired with.
 
-Read only by :class:`~qufzx.rewrite.rule.Rule`'s constructor-time consistency check, which
+Read only by :class:`~archytaszx.rewrite.rule.Rule`'s constructor-time consistency check, which
 makes two contradicting tuples for one builder impossible to construct. The builder's own
 body reads the module-level constant.
 """
@@ -337,14 +337,14 @@ SPIDER_FUSION = Rule(
 """Same-color spider fusion across one wire -- any direction for Z, output-to-input only for X.
 
 Any further wire joining the same pair is not consumed: it survives as a self-loop on the
-merged spider (condition 3 in :mod:`qufzx.rewrite.match`).
+merged spider (condition 3 in :mod:`archytaszx.rewrite.match`).
 """
 
 
 def lookup_rule(name: str) -> Rule:
     """Resolve a rule name back to its :class:`Rule`.
 
-    Raises :class:`~qufzx.rewrite.rule.RewriteGrammarError` if ``name`` is not in
+    Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` if ``name`` is not in
     :data:`RULES`.
     """
     try:
@@ -360,7 +360,7 @@ def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
     free input and output onto its legs; never removes the matched nodes or touches a wire.
 
     Trusts nothing about ``match`` for graph surgery until it has been re-derived: the match
-    must be among those :func:`~qufzx.rewrite.match.find_fourier_matches` finds afresh in
+    must be among those :func:`~archytaszx.rewrite.match.find_fourier_matches` finds afresh in
     ``diagram``, which settles ``node_ids``, ``wires``, ``shared_dim``,
     ``dimension_constraints`` and ``side_condition_outcomes`` in one equality. This builder
     is reachable directly, so a fabricated match must not reach surgery.
@@ -441,7 +441,7 @@ def zx_cap_builder(diagram: Diagram, match: Match) -> BuildResult:
     Removes both nodes and the wire joining them, leaving whatever else the diagram holds.
 
     Trusts nothing about ``match`` for graph surgery until it has been re-derived: the match
-    must be among those :func:`~qufzx.rewrite.match.find_cap_matches` finds afresh in
+    must be among those :func:`~archytaszx.rewrite.match.find_cap_matches` finds afresh in
     ``diagram``.
     """
     if not isinstance(match, CapMatch):
@@ -492,7 +492,7 @@ RULES: Mapping[str, Rule] = MappingProxyType(
         ZX_CAP.name: ZX_CAP,
     }
 )
-"""Every rule this module registers, keyed by :attr:`~qufzx.rewrite.rule.Rule.name`.
+"""Every rule this module registers, keyed by :attr:`~archytaszx.rewrite.rule.Rule.name`.
 
 A ``MappingProxyType``, so a caller cannot mutate the registry through it.
 """

@@ -11,4 +11,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""qufzx: a qufinite ZX-calculus engine and REPL."""
+"""ArchytasZX: a qufinite ZX-calculus engine with symbolic qudit count and dimension."""

@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit coverage for :mod:`qufzx.semantics.certificate`: structural comparison, derivation
+"""Unit coverage for :mod:`archytaszx.semantics.certificate`: structural comparison, derivation
 and certificate construction, replay, and oracle-backed verification.
 """
 
@@ -22,16 +22,16 @@ import dataclasses
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.bangbox import Mult
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.rewrite.engine import RewriteResult, apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.certificate import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.bangbox import Mult
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.rewrite.engine import RewriteResult, apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.certificate import (
     Certificate,
     CertificateGrammarError,
     CheckMethod,
@@ -42,7 +42,7 @@ from qufzx.semantics.certificate import (
     replay,
     verify,
 )
-from qufzx.semantics.check import CheckGrammarError, EqualityMode, compare
+from archytaszx.semantics.check import CheckGrammarError, EqualityMode, compare
 
 from .helpers import build_ghz_with_copy
 

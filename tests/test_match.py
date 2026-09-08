@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Establishes qufzx.rewrite.match: fusion-pattern matching, its side conditions, and ordering."""
+"""Establishes archytaszx.rewrite.match: fusion-pattern matching, its side conditions, and
+ordering."""
 
 from __future__ import annotations
 
@@ -20,9 +21,9 @@ from unittest.mock import patch
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import (
     X_SPIDER,
     Z_SPIDER,
     DimensionPolicy,
@@ -30,11 +31,11 @@ from qufzx.diagram.generators import (
     LegPolicy,
     PhaseSchema,
 )
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from qufzx.diagram.validate import IssueKind, validate
-from qufzx.rewrite import match as match_module
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import (
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import IssueKind, validate
+from archytaszx.rewrite import match as match_module
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
     FusionPattern,
     FusionResolution,
@@ -42,7 +43,7 @@ from qufzx.rewrite.match import (
     find_matches,
     resolve_fusion_match,
 )
-from qufzx.rewrite.rule import (
+from archytaszx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSource,
     DimensionConstraint,
@@ -50,7 +51,7 @@ from qufzx.rewrite.rule import (
     RewriteGrammarError,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
 
@@ -643,7 +644,7 @@ class TestOutOfRangeBoundaryRefRaises:
     docstring's "Malformed references" section).
 
     Left unchecked by :func:`find_matches`, an out-of-range or unknown-node boundary entry
-    would reach :mod:`qufzx.rewrite.engine`'s ``apply`` step 5 unexamined, surfacing (if at
+    would reach :mod:`archytaszx.rewrite.engine`'s ``apply`` step 5 unexamined, surfacing (if at
     all) as a *different* error class (``RewriteDomainError`` from ``_remap_endpoint``, not
     ``RewriteGrammarError`` from this module) and only when the ref happened to sit on a
     consumed port. Every combination
@@ -998,7 +999,7 @@ class TestConsumedPortClaimedElsewhereIsNonMatch:
         diagram.add_wire(wire.a, wire.b)
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
 
-        from qufzx.rewrite.match import FusionMatch
+        from archytaszx.rewrite.match import FusionMatch
 
         fabricated = FusionMatch(
             a_id=a_id,
@@ -1018,7 +1019,7 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
     wire to a third node that agreed *exactly* before fusion into one that only defers
     afterward -- a routine outcome (roughly one in ten applications over the random property
     harness, not a rare edge case), and one this pattern's own carve-out
-    (:mod:`qufzx.rewrite.engine`'s step-8 relative postcondition) correctly permits.
+    (:mod:`archytaszx.rewrite.engine`'s step-8 relative postcondition) correctly permits.
     Constructed deliberately here, rather than left to be rediscovered as folklore by
     whoever next reads the property harness's floor numbers."""
 
@@ -1137,7 +1138,7 @@ class TestFusionMatchIsHashable:
 class TestPhaseDimensionAgreementDeferredFidelity:
     """``phase_dimension_agreement`` never reports ``deferred=True`` on a passing outcome.
 
-    It calls :meth:`~qufzx.algebra.dimension.Dim.unify`, but -- unlike condition 7 -- a
+    It calls :meth:`~archytaszx.algebra.dimension.Dim.unify`, but -- unlike condition 7 -- a
     ``DEFERRED`` per-phase result is rejected outright (module docstring, condition 8), so
     a passing outcome never rests on an undecided unify. A passing outcome can rest on a
     *binding*, recorded in ``dimension_constraints``; following condition 7's convention,
@@ -1293,7 +1294,7 @@ class TestResolveFusionMatchIsTheSharedPredicate:
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
         wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(wire.a, wire.b)
-        from qufzx.diagram.graph import NodeId
+        from archytaszx.diagram.graph import NodeId
 
         with pytest.raises(RewriteGrammarError):
             resolve_fusion_match(diagram, a_id, NodeId(9999), wire)
@@ -1374,7 +1375,7 @@ class TestFixpointBudgetExhaustion:
     def test_cap_exhaustion_reports_the_budget_not_a_phase_disagreement(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import qufzx.rewrite.match as match_module
+        import archytaszx.rewrite.match as match_module
 
         monkeypatch.setattr(match_module, "_MAX_FIXPOINT_PASSES", 0)
 
@@ -1410,7 +1411,7 @@ class TestFixpointTerminationSoundness:
     constraint set (recorded assumptions that cannot simultaneously hold) would be accepted
     as a match. The loop terminates only when a full pass leaves both ``shared_dim`` and
     ``bindings`` unchanged, and rejects a contradictory rebind outright
-    (:func:`~qufzx.rewrite.match._merge_bindings`) rather than silently overwriting."""
+    (:func:`~archytaszx.rewrite.match._merge_bindings`) rather than silently overwriting."""
 
     def test_e_times_f_e_f_against_2_is_not_a_match(self) -> None:
         """A's legs [e*f, e, f] against B's single leg 2 record the unsatisfiable set
@@ -1525,7 +1526,7 @@ class TestFixpointTerminationSoundness:
 
 
 class TestMergeBindingsRejectsContradiction:
-    """:func:`~qufzx.rewrite.match._merge_bindings` must treat a would-be rebind of an
+    """:func:`~archytaszx.rewrite.match._merge_bindings` must treat a would-be rebind of an
     already-bound name to a different concrete value as a hard non-match, never a silent
     last-write-wins overwrite.
     """
@@ -1533,21 +1534,21 @@ class TestMergeBindingsRejectsContradiction:
     def test_rebinding_to_a_different_concrete_value_is_rejected_and_does_not_mutate(
         self,
     ) -> None:
-        from qufzx.rewrite.match import _merge_bindings
+        from archytaszx.rewrite.match import _merge_bindings
 
         bindings = {"d": Dim.concrete(2)}
         assert _merge_bindings(bindings, {"d": Dim.concrete(3)}) is False
         assert bindings == {"d": Dim.concrete(2)}
 
     def test_rebinding_to_the_same_concrete_value_succeeds(self) -> None:
-        from qufzx.rewrite.match import _merge_bindings
+        from archytaszx.rewrite.match import _merge_bindings
 
         bindings = {"d": Dim.concrete(2)}
         assert _merge_bindings(bindings, {"d": Dim.concrete(2)}) is True
         assert bindings == {"d": Dim.concrete(2)}
 
     def test_non_concrete_bindings_are_dropped_not_merged(self) -> None:
-        from qufzx.rewrite.match import _merge_bindings
+        from archytaszx.rewrite.match import _merge_bindings
 
         bindings: dict[str, Dim] = {}
         assert _merge_bindings(bindings, {"d": Dim.symbol("e")}) is True
@@ -1556,7 +1557,7 @@ class TestMergeBindingsRejectsContradiction:
 
 class TestResolutionFailureReasonDetails:
     """A failure's detail string must be derived from *what actually failed*
-    (:class:`~qufzx.rewrite.match._ResolutionFailure`'s ``reason``), not from which call
+    (:class:`~archytaszx.rewrite.match._ResolutionFailure`'s ``reason``), not from which call
     site happened to return it. Pins each reason's own wording at the shape that produces
     it."""
 
@@ -1665,7 +1666,7 @@ class TestResolutionFailureReasonDetails:
         exercised here for that reason (see the difference in the two functions' own
         docstrings for why one raw operand exists and the other does not).
         """
-        from qufzx.rewrite.match import (
+        from archytaszx.rewrite.match import (
             _ConstraintRecord,
             _leg_failure_detail,
             _phase_failure_detail,
@@ -2164,7 +2165,7 @@ class TestStructuralGuardsThatTheFixpointNeverReaches:
     """
 
     def test_connecting_pair_contradictory_rebind_renders_as_a_rebind(self) -> None:
-        from qufzx.rewrite.match import (
+        from archytaszx.rewrite.match import (
             _connecting_pair_failure_detail,
             _FailureReason,
             _ResolutionFailure,
@@ -2198,13 +2199,13 @@ class TestStructuralGuardsThatTheFixpointNeverReaches:
         )
 
     def test_closure_rejects_a_connecting_leg_that_does_not_unify(self) -> None:
-        from qufzx.rewrite.match import _verify_fixpoint_closure
+        from archytaszx.rewrite.match import _verify_fixpoint_closure
 
         args = self._closure_args([Dim.concrete(2)], [Dim.concrete(2)], None, Dim.concrete(3))
         assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
 
     def test_closure_rejects_a_surviving_leg_that_does_not_unify(self) -> None:
-        from qufzx.rewrite.match import _verify_fixpoint_closure
+        from archytaszx.rewrite.match import _verify_fixpoint_closure
 
         args = self._closure_args(
             [Dim.concrete(2), Dim.concrete(7)], [Dim.concrete(2)], None, Dim.concrete(2)
@@ -2212,7 +2213,7 @@ class TestStructuralGuardsThatTheFixpointNeverReaches:
         assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
 
     def test_closure_rejects_a_phase_dim_that_does_not_unify(self) -> None:
-        from qufzx.rewrite.match import _verify_fixpoint_closure
+        from archytaszx.rewrite.match import _verify_fixpoint_closure
 
         args = self._closure_args(
             [Dim.concrete(2)], [Dim.concrete(2)], _phase_at(Dim.concrete(7), 1), Dim.concrete(2)
@@ -2220,7 +2221,7 @@ class TestStructuralGuardsThatTheFixpointNeverReaches:
         assert _verify_fixpoint_closure(*args) is False  # type: ignore[arg-type]
 
     def test_closure_accepts_a_consistent_state(self) -> None:
-        from qufzx.rewrite.match import _verify_fixpoint_closure
+        from archytaszx.rewrite.match import _verify_fixpoint_closure
 
         args = self._closure_args(
             [Dim.concrete(2), Dim.concrete(2)], [Dim.concrete(2)], None, Dim.concrete(2)

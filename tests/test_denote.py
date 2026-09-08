@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.semantics.denote: the Z and X spider tensor formulas."""
+"""Tests for archytaszx.semantics.denote: the Z and X spider tensor formulas."""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram
-from qufzx.semantics.denote import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram
+from archytaszx.semantics.denote import (
     DenoteDomainError,
     DenoteGrammarError,
     _fourier_matrix,
@@ -120,7 +120,12 @@ class TestZSpider:
 
 class TestUnknownGenerator:
     def test_unregistered_generator_name_raises_grammar_error(self) -> None:
-        from qufzx.diagram.generators import DimensionPolicy, GeneratorType, LegPolicy, PhaseSchema
+        from archytaszx.diagram.generators import (
+            DimensionPolicy,
+            GeneratorType,
+            LegPolicy,
+            PhaseSchema,
+        )
 
         bogus = GeneratorType(
             name="W",

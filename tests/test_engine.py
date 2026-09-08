@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Establishes qufzx.rewrite.engine.apply: non-mutation, remapping, scalar, and provenance."""
+"""Establishes archytaszx.rewrite.engine.apply: non-mutation, remapping, scalar, and provenance."""
 
 from __future__ import annotations
 
@@ -26,17 +26,17 @@ from pathlib import Path
 
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from qufzx.diagram.validate import IssueKind, ValidationIssue, validate
-from qufzx.rewrite import engine as engine_module
-from qufzx.rewrite import match as match_module
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, find_matches
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import IssueKind, ValidationIssue, validate
+from archytaszx.rewrite import engine as engine_module
+from archytaszx.rewrite import match as match_module
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionMatch, find_matches
+from archytaszx.rewrite.rule import (
     BuildResult,
     ConstraintOutcome,
     ConstraintSource,
@@ -49,7 +49,7 @@ from qufzx.rewrite.rule import (
     Rule,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 
 from .helpers import build_ghz_with_copy
 
@@ -311,7 +311,7 @@ class TestCertificateRecordsTheReDerivedFacts:
         ``step.dimension_constraints``/``side_condition_outcomes`` equal exactly what
         ``resolve_fusion_match`` derives fresh for that wire.
         """
-        from qufzx.rewrite.match import resolve_fusion_match
+        from archytaszx.rewrite.match import resolve_fusion_match
 
         d = Dim.symbol("d")
         diagram, _a, _b = build_ghz_with_copy(d)
@@ -555,7 +555,7 @@ class TestStep8DoesNotBlockAPreExistingIssueOnAConsumedNode:
     anchored on one of them (e.g. an unwired, non-boundary leg) always looked "introduced"
     even when the rewrite carried it over faithfully, wrongly raising
     ``RewriteDomainError`` for a rewrite that introduced nothing. See the module docstring,
-    step 8, and :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
+    step 8, and :func:`~archytaszx.rewrite.engine._translate_input_issue_key`.
     """
 
     def test_port_unused_on_a_consumed_nodes_surviving_leg_does_not_block_the_rewrite(
@@ -907,8 +907,8 @@ class TestDeferredIssueProvenanceIsSymmetric:
         assert not result.step.deferred_issue_identity_ambiguous
 
     def test_colliding_keys_are_flagged_ambiguous_and_pinned_to_validate_order(self) -> None:
-        """Unit-level pin of :func:`~qufzx.rewrite.engine._select_by_key_surplus`'s own
-        contract (see :attr:`~qufzx.rewrite.engine.RewriteStep
+        """Unit-level pin of :func:`~archytaszx.rewrite.engine._select_by_key_surplus`'s own
+        contract (see :attr:`~archytaszx.rewrite.engine.RewriteStep
         .deferred_issue_identity_ambiguous`'s docstring): when several issues collide on one
         translated key and only *some* of them have a surplus, the selection is arbitrary
         but deterministic -- first in the given (``validate``) order -- and the ambiguity
@@ -919,7 +919,7 @@ class TestDeferredIssueProvenanceIsSymmetric:
         """
         from collections import Counter
 
-        from qufzx.rewrite.engine import _select_by_key_surplus
+        from archytaszx.rewrite.engine import _select_by_key_surplus
 
         key = (IssueKind.DIMENSION_DEFERRED, None)
         first = ValidationIssue(
@@ -953,7 +953,7 @@ class TestDeferredIssueProvenanceIsSymmetric:
 
 
 class TestTranslateInputIssueKeyMapsConsumedNodeReferences:
-    """Direct unit coverage of :func:`~qufzx.rewrite.engine._translate_input_issue_key`.
+    """Direct unit coverage of :func:`~archytaszx.rewrite.engine._translate_input_issue_key`.
 
     A hard-error issue's ``node_id`` or ``port_ref`` anchor cannot, by construction,
     survive a fusion on the very node it names without :meth:`Dim.unify` also failing
@@ -1198,7 +1198,7 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
         """A repeated entry in ``consumed_node_ids`` passes the plain membership check (every
         entry, including the repeat, names a real node) but would otherwise make step 6's
         removal loop call ``remove_node`` twice on the same, by-then-already-removed id,
-        raising ``qufzx.diagram.graph.GraphGrammarError`` -- a different module's exception,
+        raising ``archytaszx.diagram.graph.GraphGrammarError`` -- a different module's exception,
         escaping the ``RewriteError`` hierarchy ``apply``'s own docstring promises. It must
         instead be rejected as a malformed request, before step 6 is ever reached, with the
         same ``RewriteGrammarError`` every other malformed ``BuildResult`` field raises."""
@@ -1327,7 +1327,7 @@ class TestApplyWithAnIndependentlyScriptedBuilder:
         x_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
         wire1 = Wire(PortRef(c_id, Direction.OUTPUT, 0), PortRef(x_id, Direction.INPUT, 0))
         # A second, pre-existing wire onto the exact same (already-occupied) x_id port --
-        # permissive but weird, mirroring exactly what qufzx.diagram.graph documents as
+        # permissive but weird, mirroring exactly what archytaszx.diagram.graph documents as
         # deliberately unchecked at construction time (well-formedness is validate()'s job,
         # never this module's). Both wires exist in the diagram before apply() is ever
         # called; only wire1's own node is reported as consumed.
@@ -1368,7 +1368,7 @@ class TestConditionNumberingMatchesDeclaredOrder:
 
     The side conditions are addressed by name (``dimension_agreement``) and by position
     ("condition 7"); only the name is checkable by the compiler. Two checks of different
-    strengths: the numbered list in :mod:`qufzx.rewrite.match`'s module docstring is checked
+    strengths: the numbered list in :mod:`archytaszx.rewrite.match`'s module docstring is checked
     exactly, and prose cross-references are checked by adjacency.
     """
 
@@ -1380,11 +1380,11 @@ class TestConditionNumberingMatchesDeclaredOrder:
     condition's name correctly sit together."""
 
     _MODULES = (
-        "qufzx/rewrite/match.py",
-        "qufzx/rewrite/rules_library.py",
-        "qufzx/rewrite/engine.py",
-        "qufzx/rewrite/rule.py",
-        "qufzx/diagram/validate.py",
+        "archytaszx/rewrite/match.py",
+        "archytaszx/rewrite/rules_library.py",
+        "archytaszx/rewrite/engine.py",
+        "archytaszx/rewrite/rule.py",
+        "archytaszx/diagram/validate.py",
         "tests/test_match.py",
         "tests/test_engine.py",
         "tests/test_rules_library.py",
@@ -1408,11 +1408,11 @@ class TestConditionNumberingMatchesDeclaredOrder:
     def test_module_docstring_list_matches_declared_order(self) -> None:
         """The exact check: the authoritative numbered list *is* FUSION_SIDE_CONDITIONS."""
         docstring = match_module.__doc__
-        assert docstring is not None, "qufzx.rewrite.match lost its module docstring"
+        assert docstring is not None, "archytaszx.rewrite.match lost its module docstring"
         listed = [(int(number), name) for number, name in self._LIST_ITEM_RE.findall(docstring)]
         expected = [(i, condition.name) for i, condition in enumerate(FUSION_SIDE_CONDITIONS, 1)]
         assert listed == expected, (
-            "qufzx.rewrite.match's module docstring states the conditions in an order that "
+            "archytaszx.rewrite.match's module docstring states the conditions in an order that "
             f"disagrees with FUSION_SIDE_CONDITIONS.\n  docstring: {listed}\n  declared:  "
             f"{expected}"
         )
@@ -1526,7 +1526,7 @@ class TestApplyDocstringMatchesRaiseSites:
 
     #: Count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
     #: statements lexically inside ``apply``'s own function body. Keep in sync with
-    #: ``apply``'s docstring in qufzx/rewrite/engine.py.
+    #: ``apply``'s docstring in archytaszx/rewrite/engine.py.
     _EXPECTED_RAISE_SITE_COUNT = 14
 
     def test_raise_site_count_matches_the_pinned_constant(self) -> None:
@@ -1564,8 +1564,8 @@ class TestCrossProcessDeterminism:
     ``PortRef``'s (and so ``Wire``'s) hash folds in ``Direction``, an ``enum.Enum`` hashed
     by member name, which Python randomizes per process. Any wire iteration whose order is
     observable is therefore sorted by the hash-independent ``PortRef.sort_key`` /
-    ``Wire.sort_key`` at every site in :mod:`qufzx.diagram.validate`,
-    :mod:`qufzx.rewrite.match` and :mod:`qufzx.rewrite.engine` where it could reach a
+    ``Wire.sort_key`` at every site in :mod:`archytaszx.diagram.validate`,
+    :mod:`archytaszx.rewrite.match` and :mod:`archytaszx.rewrite.engine` where it could reach a
     returned value, a certificate field, or an exception message.
 
     This test runs the identical rewrite in two child processes under different

@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for qufzx.diagram.bangbox: Mult, BangBox construction, and copy/kill/merge.
+"""Unit tests for archytaszx.diagram.bangbox: Mult, BangBox construction, and copy/kill/merge.
 
 Instantiate itself (the GHZ-family and nested-two-index mechanics) is exercised end to
 end, against the numeric oracle, by tests/test_phase7_oracle.py; this module covers the
@@ -25,9 +25,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.diagram.bangbox import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.bangbox import (
     BangBox,
     BangBoxDomainError,
     BangBoxGrammarError,
@@ -39,10 +39,10 @@ from qufzx.diagram.bangbox import (
     merge,
     peel_one,
 )
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.semantics.check import score
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.semantics.check import score
 
 
 class TestMult:
@@ -130,7 +130,7 @@ class TestCopyBox:
         diagram.set_boundary_outputs([PortRef(a, Direction.OUTPUT, 0)])
         diagram, box_id, symbol = abstract_subgraph_count(diagram, frozenset({a}), 1, stem="m")
 
-        from qufzx.diagram.bangbox import copy_box
+        from archytaszx.diagram.bangbox import copy_box
 
         copied_diagram, new_box_id = copy_box(diagram, box_id)
         original_box = copied_diagram.bang_boxes[box_id]
@@ -147,7 +147,7 @@ class TestCopyBox:
         assert symbol == original_box.multiplicity
 
     def test_copy_of_port_scope_box_is_refused(self) -> None:
-        from qufzx.diagram.bangbox import abstract_port_count, copy_box
+        from archytaszx.diagram.bangbox import abstract_port_count, copy_box
 
         d = Dim(2)
         diagram = Diagram()
@@ -307,7 +307,7 @@ class TestBoundaryOrderIsContinuousAtOne:
 
     @pytest.mark.parametrize("k", [0, 1, 2, 3])
     def test_peel_then_instantiate_matches_instantiate_at_one_more(self, k: int) -> None:
-        from qufzx.semantics.induction import successor_diagram
+        from archytaszx.semantics.induction import successor_diagram
 
         family = self._non_contiguous_crossings()
         direct = score(instantiate_symbol(family, "m", k + 1), {}).tensor

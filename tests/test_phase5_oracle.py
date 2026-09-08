@@ -18,26 +18,26 @@ Per the spec, every build phase ends with a numeric oracle check, and per the bu
 plan Phase 5 is done when "the full path Dirac to graph to fuse to graph runs and the
 oracle confirms exact equality" -- de-risking the whole project. This module exercises the
 graph-to-fuse-to-graph half of that: build "A into B" via ``build_ghz_with_copy``, find the
-fusion match, apply it, and confirm the oracle (:mod:`qufzx.semantics.check`) reports the
+fusion match, apply it, and confirm the oracle (:mod:`archytaszx.semantics.check`) reports the
 pre- and post-fusion diagrams exactly equal at several concrete ``d``, with no symbolic
 phase, with a symbolic phase on A, on B, and on both, and for both the Z and X spider
 colors -- the X case exists specifically to exercise the
 ``consumed_wire_direction_permitted_for_color`` side condition documented in
-:mod:`qufzx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
+:mod:`archytaszx.rewrite.match`, since only X's non-diagonal denotation can tell a correct
 fusion apart from a wrongly-wired one. It also carries the negative controls and import-
 boundary check the build plan calls out explicitly.
 
 The *Dirac* half of the phrase -- parsing a Dirac-notation expression into this graph in
 the first place -- is not exercised here. It is covered by
 ``tests/test_phase5_dirac_oracle.py``, which starts from a Dirac source string, parses it
-with :func:`qufzx.repl.parser.parse_dirac_source`, and pins the parsed diagram against the
+with :func:`archytaszx.repl.parser.parse_dirac_source`, and pins the parsed diagram against the
 same ``build_ghz_with_copy`` fixture this module uses before running the same
 fuse-and-compare chain. ``build_ghz_with_copy`` (in ``tests/helpers.py``) builds that graph
 by hand, and remains this module's starting point so the two halves are checked
 independently rather than through one shared construction path.
 
-:mod:`qufzx.repl.parser` carries Phase 5's Dirac slice only (``FULL_PLAN.md``, Phase 5 item
-v); the general input DSL is Phase 18's. :mod:`qufzx.repl.printer` -- the diagram-to-Dirac
+:mod:`archytaszx.repl.parser` carries Phase 5's Dirac slice only (``FULL_PLAN.md``, Phase 5 item
+v); the general input DSL is Phase 18's. :mod:`archytaszx.repl.printer` -- the diagram-to-Dirac
 direction -- is still a license-header-only skeleton owned by Phase 17. See ``README.md``'s
 "Current state" section for the same statement kept in sync.
 """
@@ -46,16 +46,16 @@ from __future__ import annotations
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import EqualityMode, compare
 
 from .helpers import build_ghz_with_copy
 
@@ -148,7 +148,7 @@ def _build_z_input_to_input(dim: Dim) -> Diagram:
     """Two single-leg Z spiders joined by an INPUT-INPUT wire; both legs are consumed.
 
     No leg survives, so the merged node is legless (a bare scalar diagram, per
-    :func:`qufzx.semantics.denote._z_tensor`'s ``rank == 0`` reading) and there is no
+    :func:`archytaszx.semantics.denote._z_tensor`'s ``rank == 0`` reading) and there is no
     boundary at all, before or after fusion.
     """
     diagram = Diagram()
@@ -257,9 +257,9 @@ class TestParallelWireFusionOracle:
 def _build_all_legs_consumed(dim: Dim, generator_type: GeneratorType) -> Diagram:
     """A: ``0->1``, B: ``1->0``, wired output-to-input -- fusion consumes every leg of both.
 
-    The corner case from :mod:`qufzx.rewrite.rules_library`'s module docstring ("See
+    The corner case from :mod:`archytaszx.rewrite.rules_library`'s module docstring ("See
     :func:`_merged_phase` for the legless corner case, where dimension can survive only via
-    the phase slot") and from :func:`~qufzx.rewrite.rules_library._merged_phase`'s own
+    the phase slot") and from :func:`~archytaszx.rewrite.rules_library._merged_phase`'s own
     docstring: the merged node ends up with zero inputs and zero outputs, so its
     dimension can only survive via an explicit zero phase.
     """
@@ -433,7 +433,7 @@ def _build_multiple_boundary_inputs(dim: Dim) -> tuple[Diagram, NodeId, NodeId]:
     A: 2 inputs (indices 0, 1), 1 output (the fusion wire). B: 3 inputs (index 0 is the
     fusion wire; indices 1, 2 survive), 0 outputs. The ordered boundary-input list is
     ``[A_in0, A_in1, B_in1, B_in2]`` -- A's survivors in original order, then B's, matching
-    the merged leg-ordering convention documented in :mod:`qufzx.rewrite.rules_library`.
+    the merged leg-ordering convention documented in :mod:`archytaszx.rewrite.rules_library`.
     Every prior boundary-input test in this suite used a single boundary input, so order
     preservation across several, interleaved from both matched nodes, was untested.
     """
@@ -744,7 +744,7 @@ class TestRewriteNeverImportsSemantics:
     """Enforces the spec's "rewriting never contracts" rule at the import level.
 
     Parses each module's AST rather than substring-searching its source, since several
-    modules' docstrings *discuss* :mod:`qufzx.semantics` (e.g. explaining why a boundary
+    modules' docstrings *discuss* :mod:`archytaszx.semantics` (e.g. explaining why a boundary
     check matters) without importing it -- a substring check would misfire on prose.
     """
 
@@ -752,7 +752,7 @@ class TestRewriteNeverImportsSemantics:
         import ast
         import pathlib
 
-        import qufzx.rewrite as rewrite_pkg
+        import archytaszx.rewrite as rewrite_pkg
 
         package_dir = pathlib.Path(rewrite_pkg.__file__).parent
         for path in package_dir.glob("*.py"):
@@ -764,8 +764,10 @@ class TestRewriteNeverImportsSemantics:
                     names = [node.module] if node.module else []
                 else:
                     continue
-                offending = [n for n in names if n is not None and n.startswith("qufzx.semantics")]
+                offending = [
+                    n for n in names if n is not None and n.startswith("archytaszx.semantics")
+                ]
                 assert not offending, (
-                    f"{path.name} imports {offending} from qufzx.semantics; "
+                    f"{path.name} imports {offending} from archytaszx.semantics; "
                     "rewriting never contracts"
                 )

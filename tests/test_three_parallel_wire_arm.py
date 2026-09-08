@@ -18,7 +18,7 @@ joined by two parallel wires; this arm goes to three, then performs a second fus
 on the result. The diagram: A and B, same colour, joined by three parallel wires
 (``a.out0-b.in0``, ``a.out1-b.in1``, ``a.out2-b.in2``); B also carries one further leg
 wired to a third node C. Round 1 fuses A and B across whichever of the three wires
-:func:`~qufzx.rewrite.match.find_matches` picks first (deterministically -- see that
+:func:`~archytaszx.rewrite.match.find_matches` picks first (deterministically -- see that
 module's own ordering guarantee), leaving the other two as self-loops on the merged node
 and carrying B's wire to C over, remapped. The merged node and C are now themselves a
 fresh fusion candidate (same colour, one connecting wire) -- round 2 fuses them, and the
@@ -28,20 +28,20 @@ other's intermediate result, so a defect that only cancels out between two remap
 would otherwise look locally correct at each step) cannot hide.
 
 Both colours are covered; every wire here is an alternating OUTPUT-to-INPUT wire, valid
-fusion for both, so X's direction restriction (condition 4 in :mod:`qufzx.rewrite.match`)
+fusion for both, so X's direction restriction (condition 4 in :mod:`archytaszx.rewrite.match`)
 is respected throughout.
 """
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import compare
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import compare
 
 _D = Dim.concrete(2)
 

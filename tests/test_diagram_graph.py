@@ -11,16 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.diagram.graph: Port, Node, and Diagram."""
+"""Tests for archytaszx.diagram.graph: Port, Node, and Diagram."""
 
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import (
     Diagram,
     Direction,
     GraphDomainError,

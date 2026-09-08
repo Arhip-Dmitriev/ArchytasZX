@@ -14,10 +14,10 @@
 """Generator denotations: the tensor formula for each generator type at a concrete dimension.
 
 The one leaf the rest of the semantics layer calls for "what does a single node mean".
-:mod:`qufzx.semantics.contract_numeric` is the only other module allowed to build on it.
+:mod:`archytaszx.semantics.contract_numeric` is the only other module allowed to build on it.
 
-Axis convention (shared with :mod:`qufzx.semantics.contract_numeric` and
-:mod:`qufzx.semantics.check`; stated once here). A node with ``m`` inputs and ``n`` outputs
+Axis convention (shared with :mod:`archytaszx.semantics.contract_numeric` and
+:mod:`archytaszx.semantics.check`; stated once here). A node with ``m`` inputs and ``n`` outputs
 denotes a rank-``m + n`` tensor whose axes are outputs first in ``Node.outputs`` order,
 then inputs in ``Node.inputs`` order; axis ``i`` has length that port's ``Dim.to_int()``. A
 diagram's boundary follows the same rule. This is a convention, not a derivation, and every
@@ -58,16 +58,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase
-from qufzx.diagram.generators import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase
+from archytaszx.diagram.generators import (
     FOURIER_BOX,
     REGISTRY,
     X_SPIDER,
     Z_SPIDER,
     DimensionPolicy,
 )
-from qufzx.diagram.graph import Node
+from archytaszx.diagram.graph import Node
 
 
 class DenoteError(Exception):
@@ -120,7 +120,7 @@ def resolve_dim(node: Node) -> Dim:
     """The single leg dimension of ``node`` as a Dim, concrete or symbolic.
 
     The dimension-resolution logic of :func:`resolve_dimension` without its concreteness
-    gate, so :mod:`qufzx.semantics.contract_symbolic` shares one leg-agreement rule with the
+    gate, so :mod:`archytaszx.semantics.contract_symbolic` shares one leg-agreement rule with the
     numeric path instead of restating it.
     """
     if node.generator_type.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
@@ -152,7 +152,7 @@ def resolve_dimension(node: Node) -> int:
     This is the public dimension-resolution gate: it decides where a node's dimension
     comes from (its legs when it has any, otherwise its phase vector), checks it is
     concrete, and cross-checks a present phase vector's dimension against it. Exposed
-    separately from :func:`denote` so :mod:`qufzx.semantics.contract_numeric` can size a
+    separately from :func:`denote` so :mod:`archytaszx.semantics.contract_numeric` can size a
     node's tensor before allocating it (the size-cap guard), without duplicating this
     resolution logic.
 

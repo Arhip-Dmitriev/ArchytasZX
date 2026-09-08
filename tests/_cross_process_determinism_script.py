@@ -31,14 +31,14 @@ which legitimately varies across processes.
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.certificate import certify, compare_structure, replay
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.certificate import certify, compare_structure, replay
 
 
 def _build_diagram() -> Diagram:

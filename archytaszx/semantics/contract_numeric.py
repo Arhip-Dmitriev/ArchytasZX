@@ -13,18 +13,18 @@
 
 """Numeric contraction of a fully concrete diagram into a tensor, carrying the exact scalar.
 
-Besides :mod:`qufzx.semantics.denote`, the only place allowed to construct a dense array:
+Besides :mod:`archytaszx.semantics.denote`, the only place allowed to construct a dense array:
 it denotes every node and contracts the results along the diagram's wires, never rewriting,
 simplifying, or reordering.
 
-Algorithm. Refuse first: :func:`qufzx.diagram.validate.validate` runs, and a diagram with
+Algorithm. Refuse first: :func:`archytaszx.diagram.validate.validate` runs, and a diagram with
 any hard-failure issue is refused with :class:`ContractValidationError` carrying the
 report. A *deferred* dimension issue is refused the same way -- it exists only when a
 dimension pair could not be decided, which cannot happen once every dimension is concrete.
 Then refuse any non-concrete port dimension, phase vector, or diagram
-:class:`~qufzx.algebra.scalar.Scalar`. Both refusals precede any allocation.
+:class:`~archytaszx.algebra.scalar.Scalar`. Both refusals precede any allocation.
 
-Each node's axes get their own integer label, and a :class:`~qufzx.diagram.graph.Wire`
+Each node's axes get their own integer label, and a :class:`~archytaszx.diagram.graph.Wire`
 unifies its two ports' labels, regardless of direction. A self-loop unifies two labels
 already on the same tensor, which is exactly a partial trace. Free ports keep a distinct
 label. The contraction is one ``numpy.einsum`` call in interleaved form with plain ``int``
@@ -45,7 +45,7 @@ against each node's own tensor before it is denoted and against the output tenso
 contraction, raising :class:`ContractSizeError`.
 
 Return type. :func:`contract` returns a :class:`ContractionResult`: the tensor, the ordered
-:class:`~qufzx.diagram.graph.PortRef`\\ s that produced its axes, and the count of leading
+:class:`~archytaszx.diagram.graph.PortRef`\\ s that produced its axes, and the count of leading
 axes that are boundary outputs. The split count is carried rather than recomputed from
 ``len(diagram.boundary_outputs)``, the diagram not necessarily being at hand by then.
 """
@@ -58,9 +58,9 @@ from typing import Any
 
 import numpy as np
 
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import ValidationReport, validate
-from qufzx.semantics.denote import denote, resolve_dimension
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import ValidationReport, validate
+from archytaszx.semantics.denote import denote, resolve_dimension
 
 DEFAULT_MAX_ELEMENTS = 10_000_000
 """The default cap on the element count of any single tensor this module allocates.
@@ -99,12 +99,12 @@ class ContractGrammarError(ContractError):
 
 
 class ContractValidationError(ContractDomainError):
-    """Raised when the diagram fails :func:`qufzx.diagram.validate.validate`.
+    """Raised when the diagram fails :func:`archytaszx.diagram.validate.validate`.
 
     A subclass of :class:`ContractDomainError`: a diagram validate rejects, or that still
     carries a deferred dimension constraint, is outside this module's domain of fully
     concrete, well-formed graphs. Carries the offending
-    :class:`~qufzx.diagram.validate.ValidationReport` as :attr:`report`.
+    :class:`~archytaszx.diagram.validate.ValidationReport` as :attr:`report`.
     """
 
     def __init__(self, report: ValidationReport) -> None:
@@ -122,9 +122,9 @@ class ContractSizeError(ContractDomainError):
 class ContractionResult:
     """The result of :func:`contract`: a tensor plus the axis order that produced it.
 
-    ``axis_refs[i]`` is the :class:`~qufzx.diagram.graph.PortRef` that ``tensor``'s axis
+    ``axis_refs[i]`` is the :class:`~archytaszx.diagram.graph.PortRef` that ``tensor``'s axis
     ``i`` came from, in ``diagram.boundary_outputs`` then ``diagram.boundary_inputs``
-    order (the axis convention fixed in :mod:`qufzx.semantics.denote`).
+    order (the axis convention fixed in :mod:`archytaszx.semantics.denote`).
     ``axis_refs[:num_boundary_outputs]`` are the boundary outputs and the rest the boundary
     inputs, giving a caller the output/input arity split without a diagram on hand.
     """

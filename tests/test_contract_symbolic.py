@@ -23,14 +23,14 @@ import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.bangbox import Mult, expand_concrete_boxes
-from qufzx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.semantics.check import score
-from qufzx.semantics.contract_numeric import ContractSizeError, contract
-from qufzx.semantics.contract_symbolic import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.bangbox import Mult, expand_concrete_boxes
+from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.semantics.check import score
+from archytaszx.semantics.contract_numeric import ContractSizeError, contract
+from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
     SymbolicContractionUnsupportedError,
     SymbolicContractionValidationError,
@@ -177,7 +177,7 @@ class TestTheSubstitutionPath:
         import ast
         import pathlib
 
-        source = pathlib.Path("qufzx/semantics/contract_symbolic.py").read_text()
+        source = pathlib.Path("archytaszx/semantics/contract_symbolic.py").read_text()
         tree = ast.parse(source)
         contraction = next(
             node
@@ -193,7 +193,7 @@ class TestTheSubstitutionPath:
         import ast
         import pathlib
 
-        source = pathlib.Path("qufzx/semantics/contract_symbolic.py").read_text()
+        source = pathlib.Path("archytaszx/semantics/contract_symbolic.py").read_text()
         tree = ast.parse(source)
         importers = {
             node.name
@@ -234,7 +234,7 @@ class TestRefusals:
 
 class TestUnsupportedShapes:
     def test_a_symbolic_multiplicity_with_an_open_boundary_is_unsupported(self) -> None:
-        from qufzx.diagram.bangbox import Mult
+        from archytaszx.diagram.bangbox import Mult
 
         diagram = Diagram()
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[D])
@@ -360,7 +360,7 @@ class TestCrossProcessDeterminism:
     def test_no_dummy_symbol_is_ever_constructed(self) -> None:
         import pathlib
 
-        for name in ("qufzx/algebra/scalar.py", "qufzx/semantics/contract_symbolic.py"):
+        for name in ("archytaszx/algebra/scalar.py", "archytaszx/semantics/contract_symbolic.py"):
             assert "Dummy(" not in pathlib.Path(name).read_text()
 
 

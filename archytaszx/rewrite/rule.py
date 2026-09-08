@@ -17,7 +17,7 @@
 abstract seam later phases implement to add new rewrite shapes. :class:`Match` is a
 ``typing.Protocol``, so each pattern defines its own match type carrying whatever location
 data it needs. :class:`BuildResult` is the generic engine/builder contract:
-:func:`qufzx.rewrite.engine.apply` splices from its fields alone. :class:`Quantifiers` is
+:func:`archytaszx.rewrite.engine.apply` splices from its fields alone. :class:`Quantifiers` is
 declared metadata only in this phase; Phases 7 and 10 make it checkable.
 """
 
@@ -30,13 +30,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.graph import Diagram, NodeId, PortRef, Wire
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
 
 
 class RewriteError(Exception):
-    """Base class for all errors raised anywhere in :mod:`qufzx.rewrite`."""
+    """Base class for all errors raised anywhere in :mod:`archytaszx.rewrite`."""
 
 
 class RewriteDomainError(RewriteError):
@@ -46,7 +46,7 @@ class RewriteDomainError(RewriteError):
     all pass, its rule's conditions; a builder whose ``scalar_introduced`` disagrees with its
     rule's; a match whose ``shared_dim``, ``bindings``, ``dimension_constraints`` or
     ``side_condition_outcomes`` disagree with a fresh
-    :func:`~qufzx.rewrite.match.resolve_fusion_match`, or that re-resolves as a non-match; a
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match`, or that re-resolves as a non-match; a
     phase whose entries fall outside the shared dimension once reattached; a wire or boundary
     entry naming a consumed port absent from ``port_mapping``; a rewrite introducing a hard
     validation issue the input did not carry.
@@ -61,15 +61,15 @@ class RewriteGrammarError(RewriteError):
     ill-shaped or disagrees with its outcome, a :class:`Rule` field of the wrong type, with a
     repeated ``side_conditions`` name, or disagreeing with its builder's); a match handed to
     a builder that does not take its type; a request
-    :func:`~qufzx.rewrite.match.resolve_fusion_match` cannot evaluate at all (equal node ids,
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match` cannot evaluate at all (equal node ids,
     a node absent from the diagram, a wire not incident on both or not in ``diagram.wires``,
     a wire endpoint or boundary entry naming an unknown node or out-of-range index); a
     :class:`BuildResult` that is not the working diagram it was given, or that names a node,
     port or wire it does not have, repeats an id, maps a surviving port onto a consumed node,
     is not injective, or names a non-consumed node in ``phase_substitutions``; a
     ``port_mapping`` collapsing one wire's endpoints onto a single port or leaving
-    :func:`~qufzx.rewrite.engine.apply`'s wire-count postcondition violated; an unknown rule
-    name at :func:`~qufzx.rewrite.rules_library.lookup_rule`.
+    :func:`~archytaszx.rewrite.engine.apply`'s wire-count postcondition violated; an unknown rule
+    name at :func:`~archytaszx.rewrite.rules_library.lookup_rule`.
     """
 
 
@@ -78,7 +78,7 @@ class SideCondition:
     """One named entry in a :class:`Pattern`'s declared condition list.
 
     Metadata about the pattern, declared once (see ``FUSION_SIDE_CONDITIONS`` in
-    :mod:`qufzx.rewrite.match`); the per-candidate result lives in
+    :mod:`archytaszx.rewrite.match`); the per-candidate result lives in
     :class:`SideConditionOutcome`. A pattern may declare a condition it always reports True,
     as a structural fact for the certificate to carry.
     """
@@ -93,7 +93,7 @@ class SideConditionOutcome:
 
     ``deferred`` is True for an outcome that passed on an assumed rather than verified
     dimension equality, mirroring
-    :class:`qufzx.diagram.validate.ValidationIssue`'s convention.
+    :class:`archytaszx.diagram.validate.ValidationIssue`'s convention.
     """
 
     name: str
@@ -123,7 +123,7 @@ class ConstraintSourceKind(enum.Enum):
 class ConstraintSource:
     """*Which* check produced a :class:`DimensionConstraint` -- the record's identity key.
 
-    :mod:`qufzx.rewrite.match` records at most one constraint per source, replacing an
+    :mod:`archytaszx.rewrite.match` records at most one constraint per source, replacing an
     entry it re-derives in place. :meth:`__post_init__` enforces that ``CONNECTING_PAIR``
     carries neither reference, ``SURVIVING_LEG`` exactly ``port_ref``, and ``NODE_PHASE``
     exactly ``node_id``. Build through :meth:`connecting_pair`, :meth:`surviving_leg` or
@@ -180,10 +180,10 @@ class ConstraintOutcome(enum.Enum):
     """
 
     DEFERRED = "deferred"
-    """:meth:`~qufzx.algebra.dimension.Dim.unify` could not decide the equality at all."""
+    """:meth:`~archytaszx.algebra.dimension.Dim.unify` could not decide the equality at all."""
 
     BOUND = "bound"
-    """:meth:`~qufzx.algebra.dimension.Dim.unify` succeeded, but only by binding a free
+    """:meth:`~archytaszx.algebra.dimension.Dim.unify` succeeded, but only by binding a free
     symbol -- decided, but only under that binding."""
 
 
@@ -258,7 +258,7 @@ class Match(Protocol):
     """Structural protocol every concrete match type (e.g. ``FusionMatch``) must satisfy.
 
     Rule-specific location data lives on the concrete match type;
-    :mod:`qufzx.rewrite.engine` never reads it, receiving what it needs through
+    :mod:`archytaszx.rewrite.engine` never reads it, receiving what it needs through
     :class:`BuildResult`.
     """
 
@@ -272,7 +272,7 @@ class Match(Protocol):
         """Every dimension equality this match assumed rather than verified as an identity.
 
         Source-keyed: at most one entry per :class:`ConstraintSource`. See
-        :mod:`qufzx.rewrite.match`'s module docstring, "Dimension constraints".
+        :mod:`archytaszx.rewrite.match`'s module docstring, "Dimension constraints".
         """
         ...
 
@@ -288,11 +288,11 @@ class Match(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class BuildResult:
-    """What a rule's right-hand builder hands back to :mod:`qufzx.rewrite.engine`.
+    """What a rule's right-hand builder hands back to :mod:`archytaszx.rewrite.engine`.
 
     ``diagram`` is the same working diagram the builder was given, mutated in place to add
     the replacement node(s); the builder never removes matched nodes or touches wires and
-    boundaries, and :func:`~qufzx.rewrite.engine.apply` checks ``diagram is working`` by
+    boundaries, and :func:`~archytaszx.rewrite.engine.apply` checks ``diagram is working`` by
     object identity. ``new_node_ids`` reports every node created, in a deterministic order.
     """
 
@@ -304,7 +304,7 @@ class BuildResult:
     scalar_introduced: Scalar
     phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
     """Per-node bindings a builder actually substituted into a phase's entries. ``None``
-    means the rule re-derived nothing; :func:`~qufzx.rewrite.engine.apply` then records an
+    means the rule re-derived nothing; :func:`~archytaszx.rewrite.engine.apply` then records an
     empty mapping. There is no match-side counterpart to compare this against.
     """
 
@@ -326,7 +326,7 @@ RuleBuilder = Callable[[Diagram, Match], BuildResult]
 """The right-hand-side builder signature: consumes a working diagram and a located match.
 
 Mutates and returns the diagram it was given, never the original passed to
-:func:`qufzx.rewrite.engine.apply`.
+:func:`archytaszx.rewrite.engine.apply`.
 """
 
 
@@ -336,7 +336,7 @@ class Rule:
 
     ``name`` is a stable identifier a certificate can reference. ``side_conditions`` declares
     every named entry :attr:`pattern` reports on. ``scalar_introduced`` is the exact scalar
-    this rule introduces on every application; :mod:`qufzx.rewrite.engine` checks a builder's
+    this rule introduces on every application; :mod:`archytaszx.rewrite.engine` checks a builder's
     against it. ``__post_init__`` validates every field's type, including that
     ``scalar_introduced`` is a ``Scalar`` and never a bare ``float``.
 
@@ -431,7 +431,7 @@ def check_side_condition_coverage(
 
     Requires the set of ``outcome.name`` to equal exactly the set of ``condition.name``,
     with no duplicates, and only then that every outcome passed. ``context`` (typically a
-    rule name) is folded into the message. Both :func:`qufzx.rewrite.engine.apply` and each
+    rule name) is folded into the message. Both :func:`archytaszx.rewrite.engine.apply` and each
     rule's own builder call this first, a builder being reachable directly. Raises
     :class:`RewriteDomainError`.
     """

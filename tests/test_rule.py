@@ -19,12 +19,12 @@ import dataclasses
 
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
-from qufzx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.rewrite.match import FUSION_SIDE_CONDITIONS, FusionPattern
+from archytaszx.rewrite.rule import (
     BuildResult,
     ConstraintOutcome,
     ConstraintSource,
@@ -38,7 +38,7 @@ from qufzx.rewrite.rule import (
     SideCondition,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import spider_fusion_builder
+from archytaszx.rewrite.rules_library import spider_fusion_builder
 
 
 def _dummy_builder(diagram: Diagram, match: Match) -> BuildResult:

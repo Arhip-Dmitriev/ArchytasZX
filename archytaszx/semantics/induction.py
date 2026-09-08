@@ -25,21 +25,21 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import ScalarBudgetError
-from qufzx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols, peel_one
-from qufzx.diagram.graph import Diagram, NodeId, PortRef
-from qufzx.diagram.validate import ValidateError, validate_or_raise
-from qufzx.rewrite.engine import RewriteStep, apply
-from qufzx.rewrite.rule import Match, Rule
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.certificate import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import ScalarBudgetError
+from archytaszx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols, peel_one
+from archytaszx.diagram.graph import Diagram, NodeId, PortRef
+from archytaszx.diagram.validate import ValidateError, validate_or_raise
+from archytaszx.rewrite.engine import RewriteStep, apply
+from archytaszx.rewrite.rule import Match, Rule
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.certificate import (
     Derivation,
     DerivationKind,
     InductionClaim,
     compare_structure,
 )
-from qufzx.semantics.check import (
+from archytaszx.semantics.check import (
     DEFAULT_TOLERANCE,
     CheckAssignmentValue,
     CheckError,
@@ -51,13 +51,13 @@ from qufzx.semantics.check import (
     instantiate,
     score,
 )
-from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
-from qufzx.semantics.contract_symbolic import (
+from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
+from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
     SymbolicContractionUnsupportedError,
     contract_symbolic,
 )
-from qufzx.semantics.denote import DenoteError
+from archytaszx.semantics.denote import DenoteError
 
 
 class InductionError(Exception):
@@ -411,10 +411,10 @@ def _rewrite_to(
     """Apply up to ``max_steps`` rule firings from ``source`` toward ``target``.
 
     Tries each rule in the order given and, within one rule, its matches in the order
-    :meth:`~qufzx.rewrite.rule.Pattern.find_matches` returns them; the first applicable
+    :meth:`~archytaszx.rewrite.rule.Pattern.find_matches` returns them; the first applicable
     pair fires. ``guard_symbols``, when given, rejects a step whose result changes
-    :func:`~qufzx.diagram.bangbox.free_mult_symbols` away from it. A
-    :class:`~qufzx.rewrite.rule.RewriteError` from :func:`~qufzx.rewrite.engine.apply`
+    :func:`~archytaszx.diagram.bangbox.free_mult_symbols` away from it. A
+    :class:`~archytaszx.rewrite.rule.RewriteError` from :func:`~archytaszx.rewrite.engine.apply`
     propagates uncaught.
     """
     working = source.copy()
@@ -601,7 +601,7 @@ def discharge_peeled_hypothesis(
     """Settle the step case by peeling one copy off each successor and discharging the rest.
 
     ``!_{k+1}(G)`` splits into ``!_k(G)`` beside one bare copy of ``G``
-    (:func:`~qufzx.diagram.bangbox.peel_one`). When each peeled residual is exactly its own
+    (:func:`~archytaszx.diagram.bangbox.peel_one`). When each peeled residual is exactly its own
     hypothesis diagram, the hypothesis settles the residuals and the step reduces to the two
     peeled copies, which carry no bang box and are compared by symbolic contraction with ``d``
     formal. Requires a separable (node-scope) box, and one owner of the index per side.

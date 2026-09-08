@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.algebra.dimension.unify_all."""
+"""Tests for archytaszx.algebra.dimension.unify_all."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ import random
 
 import pytest
 
-from qufzx.algebra.dimension import Dim, UnifyAllResult, unify_all
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef, Wire
-from qufzx.rewrite.match import resolve_fusion_match
+from archytaszx.algebra.dimension import Dim, UnifyAllResult, unify_all
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef, Wire
+from archytaszx.rewrite.match import resolve_fusion_match
 
 _D = Dim.symbol("d")
 _E = Dim.symbol("e")
@@ -142,7 +142,7 @@ class TestCrossNodePropagationDeferredToPhase10:
     """
 
     def test_unreported_cross_node_contradiction(self) -> None:
-        from qufzx.diagram.validate import validate
+        from archytaszx.diagram.validate import validate
 
         d = Dim.symbol("d")
         diagram = Diagram()
@@ -162,15 +162,15 @@ class TestCrossNodePropagationDeferredToPhase10:
 
 class TestBudgetExhaustion:
     """Exhausting ``_MAX_UNIFY_ALL_PASSES`` must be distinguishable from an ordinary, converged
-    ``DEFERRED`` -- see :class:`~qufzx.algebra.dimension.UnifyAllResult`'s own docstring for
-    the general rule this is an instance of, mirrored from ``qufzx.rewrite.match``'s own
+    ``DEFERRED`` -- see :class:`~archytaszx.algebra.dimension.UnifyAllResult`'s own docstring for
+    the general rule this is an instance of, mirrored from ``archytaszx.rewrite.match``'s own
     ``_MAX_FIXPOINT_PASSES``, which already fails closed (:mod:`tests.test_match`'s
     ``TestFixpointBudgetExhaustion``)."""
 
     def test_exhaustion_is_flagged_and_reports_the_final_pass_residual(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import qufzx.algebra.dimension as dimension_module
+        import archytaszx.algebra.dimension as dimension_module
 
         monkeypatch.setattr(dimension_module, "_MAX_UNIFY_ALL_PASSES", 1)
 
@@ -200,8 +200,8 @@ class TestBudgetExhaustion:
     def test_exhaustion_is_a_hard_error_at_the_validate_call_site(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import qufzx.algebra.dimension as dimension_module
-        from qufzx.diagram.validate import IssueKind, validate
+        import archytaszx.algebra.dimension as dimension_module
+        from archytaszx.diagram.validate import IssueKind, validate
 
         monkeypatch.setattr(dimension_module, "_MAX_UNIFY_ALL_PASSES", 1)
 

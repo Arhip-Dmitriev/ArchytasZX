@@ -15,11 +15,11 @@
 
 The top-level entry point of the Phase 4 oracle: :func:`score` denotes what one diagram
 means at a concrete symbol assignment, :func:`compare` decides whether two mean the same
-thing at a shared one. Everything builds on :mod:`qufzx.semantics.contract_numeric`.
+thing at a shared one. Everything builds on :mod:`archytaszx.semantics.contract_numeric`.
 
 Instantiation. :func:`instantiate` substitutes every dimension, phase, and scalar symbol
-via the node-id-preserving :meth:`~qufzx.diagram.graph.Diagram.substitute`. An unsupplied
-symbol falls back to its :attr:`~qufzx.diagram.graph.Diagram.parameters` binding and a
+via the node-id-preserving :meth:`~archytaszx.diagram.graph.Diagram.substitute`. An unsupplied
+symbol falls back to its :attr:`~archytaszx.diagram.graph.Diagram.parameters` binding and a
 supplied value overrides that binding, so the oracle can spot-check a diagram at a value
 other than the one its user typed. Only a symbol neither source supplies is refused, never
 defaulted.
@@ -63,11 +63,11 @@ from typing import TypeAlias
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS
-from qufzx.diagram.bangbox import BangBoxDomainError, free_mult_symbols, instantiate_symbol
-from qufzx.diagram.graph import Diagram
-from qufzx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
-from qufzx.semantics.contract_symbolic import SymbolicTensor
+from archytaszx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS
+from archytaszx.diagram.bangbox import BangBoxDomainError, free_mult_symbols, instantiate_symbol
+from archytaszx.diagram.graph import Diagram
+from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
+from archytaszx.semantics.contract_symbolic import SymbolicTensor
 
 CheckAssignmentValue: TypeAlias = "int | sp.Rational"
 DEFAULT_TOLERANCE = 1e-9
@@ -84,7 +84,7 @@ class CheckDomainError(CheckError):
 
     Every refusal this module makes today is a malformed request (an incomplete assignment,
     an unknown mode), so it raises :class:`CheckGrammarError`; a non-concrete value reaches
-    :mod:`qufzx.semantics.contract_numeric` and is refused there instead. Declared so the
+    :mod:`archytaszx.semantics.contract_numeric` and is refused there instead. Declared so the
     split matches every other module here, and so a future domain refusal has its class
     already in the hierarchy.
     """
@@ -115,7 +115,7 @@ def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
 def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentValue]) -> Diagram:
     """Instantiate every bang-box multiplicity symbol named in ``resolved``, in turn.
 
-    Must run before :meth:`~qufzx.diagram.graph.Diagram.substitute`: expansion can build
+    Must run before :meth:`~archytaszx.diagram.graph.Diagram.substitute`: expansion can build
     fresh port/node structure whose dimensions still carry the very symbols ``resolved``
     is about to substitute, so dimension/phase/scalar substitution runs once, last, over
     the fully box-free result (Phase 7).
@@ -298,9 +298,9 @@ def _compare_up_to_global_phase(
 def _axis_dimensions(diagram: Diagram, result: ContractionResult) -> tuple[int, ...]:
     """The concrete dimension of each axis in ``result``, in ``axis_refs`` order.
 
-    Resolves each :class:`~qufzx.diagram.graph.PortRef` against ``diagram``, following the
+    Resolves each :class:`~archytaszx.diagram.graph.PortRef` against ``diagram``, following the
     same ``node.legs(ref.direction)[ref.index]`` pattern
-    :mod:`qufzx.semantics.contract_numeric` uses for its own output-size guard, rather than
+    :mod:`archytaszx.semantics.contract_numeric` uses for its own output-size guard, rather than
     inventing a second way to resolve a ``PortRef`` against its node.
     """
     dimensions = []

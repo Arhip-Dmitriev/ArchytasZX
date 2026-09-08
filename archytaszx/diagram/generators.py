@@ -15,25 +15,25 @@
 
 A :class:`GeneratorType` is a purely descriptive value object: it records, for a family
 of nodes such as the Z spider or the X spider, what leg counts are permitted, how a
-node's :class:`~qufzx.algebra.phase.PhaseVector` slot relates to its leg dimension, and
+node's :class:`~archytaszx.algebra.phase.PhaseVector` slot relates to its leg dimension, and
 how dimensions are shared across a node's legs. It carries no formula, no matrix, and no
 lambda -- the denotation of a generator (what tensor it actually stands for) is a leaf of
-the evaluator and belongs to :mod:`qufzx.semantics.denote`, Phase 4's module.
+the evaluator and belongs to :mod:`archytaszx.semantics.denote`, Phase 4's module.
 This module only ever answers "is this node's shape legal", never "what does this node
 mean".
 
 Dimension policy is deliberately an enum rather than a hardcoded assumption baked into
 the validator. Z and X are ``ALL_LEGS_EQUAL``: every leg of the node -- input or output --
-shares one :class:`~qufzx.algebra.dimension.Dim`. Phase 10 introduces generators (the
+shares one :class:`~archytaszx.algebra.dimension.Dim`. Phase 10 introduces generators (the
 triangle, W, and dimension-connective generators) with genuinely mixed per-leg
 dimensions; those will add new :class:`DimensionPolicy` members rather than requiring
-:mod:`qufzx.diagram.validate` to special-case generator names.
+:mod:`archytaszx.diagram.validate` to special-case generator names.
 
 Leg policy is likewise a value object (:class:`LegPolicy`) rather than a bare predicate,
 so that a validation report can name *which* policy a node's leg count violates.
 
-This module registers only ``"Z"`` and ``"X"``. No other generator, no bang box, and no
-dimension connective is defined here -- those are later phases.
+This module registers ``"Z"``, ``"X"`` and ``"F"``. No other generator, no bang box, and
+no dimension connective is defined here -- those are later phases.
 """
 
 from __future__ import annotations
@@ -66,10 +66,10 @@ class DimensionPolicy(enum.Enum):
     """How a generator type's leg dimensions relate to one another.
 
     ``ALL_LEGS_EQUAL`` is the only member needed for Z and X: every input and output
-    port of the node carries one shared :class:`~qufzx.algebra.dimension.Dim`. This is
+    port of the node carries one shared :class:`~archytaszx.algebra.dimension.Dim`. This is
     an enum, not a boolean flag, so Phase 10's triangle, W, and dimension-connective
     generators -- which have genuinely mixed per-leg dimensions -- can add new members
-    here without requiring :mod:`qufzx.diagram.validate` to be rewritten; the validator
+    here without requiring :mod:`archytaszx.diagram.validate` to be rewritten; the validator
     dispatches on the policy value rather than on the generator name.
     """
 
@@ -129,8 +129,8 @@ class PhaseSchema(enum.Enum):
     """How a generator type's phase slot relates to its leg dimension.
 
     ``TIED_TO_LEG_DIM`` is the only member needed for Z and X: the node's
-    :class:`~qufzx.algebra.phase.PhaseVector`, when present, must be built over the same
-    :class:`~qufzx.algebra.dimension.Dim` that :class:`DimensionPolicy.ALL_LEGS_EQUAL`
+    :class:`~archytaszx.algebra.phase.PhaseVector`, when present, must be built over the same
+    :class:`~archytaszx.algebra.dimension.Dim` that :class:`DimensionPolicy.ALL_LEGS_EQUAL`
     assigns to every leg. ``NONE`` marks a phase-free generator (no later phase in this
     plan currently needs it for Z or X, but the member exists so a future phase-free
     generator does not have to invent a sentinel).
@@ -146,7 +146,7 @@ class GeneratorType:
 
     Purely a value object: leg policy, phase schema, and dimension policy. It records no
     denotation -- see the module docstring for why that belongs to
-    :mod:`qufzx.semantics.denote` instead.
+    :mod:`archytaszx.semantics.denote` instead.
     """
 
     name: str

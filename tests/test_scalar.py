@@ -11,16 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.algebra.scalar: the Phase 2 exact scalar algebra."""
+"""Tests for archytaszx.algebra.scalar: the Phase 2 exact scalar algebra."""
 
 import cmath
 
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase
-from qufzx.algebra.scalar import Scalar, ScalarDomainError, ScalarGrammarError
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase
+from archytaszx.algebra.scalar import Scalar, ScalarDomainError, ScalarGrammarError
 
 
 class TestConstruction:

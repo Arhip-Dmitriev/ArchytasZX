@@ -15,7 +15,7 @@
 port usage, generator policy conformance, symbol-role collisions, and the parameter
 environment.
 
-:func:`validate` is a pure read function from a :class:`~qufzx.diagram.graph.Diagram` to a
+:func:`validate` is a pure read function from a :class:`~archytaszx.diagram.graph.Diagram` to a
 :class:`ValidationReport`. It is the one place a diagram's cross-cutting invariants are
 checked together, in one pass, and reported as typed issues rather than a bool.
 
@@ -27,7 +27,7 @@ wire, or an entry in the matching boundary list. Over-use is
 already implicated in an :class:`IssueKind.UNKNOWN_NODE` or
 :class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue.
 
-Dimension checking is layered the way :meth:`~qufzx.algebra.dimension.Dim.unify` is,
+Dimension checking is layered the way :meth:`~archytaszx.algebra.dimension.Dim.unify` is,
 uniformly for dimensions joined by a wire, shared by one node's legs, or tied to its phase.
 Unequal and non-unifiable is a hard error -- :class:`IssueKind.DIMENSION_MISMATCH`,
 :class:`IssueKind.DIMENSION_POLICY_VIOLATION`, or
@@ -37,7 +37,7 @@ Unequal and non-unifiable is a hard error -- :class:`IssueKind.DIMENSION_MISMATC
 and a resolution can report both at once.
 
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
-:func:`~qufzx.algebra.dimension.unify_all`, a monotone bindings fixpoint;
+:func:`~archytaszx.algebra.dimension.unify_all`, a monotone bindings fixpoint;
 ``TIED_TO_LEG_DIM``'s phase/leg check resolves through those same bindings. Each residual
 ``DEFERRED`` pair gets its own issue. Bindings do not propagate from one node's legs to
 another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinned by
@@ -45,13 +45,13 @@ another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinne
 
 :class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
 vector, which carries its dimension nowhere. It keeps ``validate(d).is_valid`` implying
-every node in ``d`` is denotable, which :mod:`qufzx.rewrite.engine`'s step 8 rests on.
+every node in ``d`` is denotable, which :mod:`archytaszx.rewrite.engine`'s step 8 rests on.
 
 :class:`IssueKind.SYMBOL_ROLE_COLLISION` rejects a name used in two symbol roles in one
-diagram. The roles are read off the sympy assumptions each of :mod:`qufzx.algebra`'s four
+diagram. The roles are read off the sympy assumptions each of :mod:`archytaszx.algebra`'s four
 symbol constructors stamps -- including a dimension's exponent, which is its own role.
 
-Parameter environment. Every name :attr:`~qufzx.diagram.graph.Diagram.parameters` binds
+Parameter environment. Every name :attr:`~archytaszx.diagram.graph.Diagram.parameters` binds
 must be a symbol the diagram carries, in exactly one role, at a value inside that role's
 domain. A name no symbol carries is the deferred
 :class:`IssueKind.PARAMETER_UNKNOWN_SYMBOL`; a value outside the role's domain is the hard
@@ -59,9 +59,9 @@ domain. A name no symbol carries is the deferred
 collision is skipped, there being no single domain to check it against.
 
 Determinism. Every pass whose issue-append order is observable iterates a snapshot sorted
-by :meth:`~qufzx.diagram.graph.Wire.sort_key` /
-:meth:`~qufzx.diagram.graph.PortRef.sort_key`, never a frozenset directly.
-:attr:`ValidationReport.issues`'s order is relied on by :mod:`qufzx.rewrite.engine`'s
+by :meth:`~archytaszx.diagram.graph.Wire.sort_key` /
+:meth:`~archytaszx.diagram.graph.PortRef.sort_key`, never a frozenset directly.
+:attr:`ValidationReport.issues`'s order is relied on by :mod:`archytaszx.rewrite.engine`'s
 deferred-issue selection.
 
 Out of scope: contraction and numeric meaning (Phase 4's oracle), repair, and bang boxes
@@ -80,10 +80,19 @@ from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import DimSubstituteValue, DimSymbolKey, unify_all
-from qufzx.diagram.bangbox import BangBox
-from qufzx.diagram.generators import DimensionPolicy, PhaseSchema
-from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, Port, PortRef, Wire
+from archytaszx.algebra.dimension import DimSubstituteValue, DimSymbolKey, unify_all
+from archytaszx.diagram.bangbox import BangBox
+from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
+from archytaszx.diagram.graph import (
+    BangBoxId,
+    Diagram,
+    Direction,
+    Node,
+    NodeId,
+    Port,
+    PortRef,
+    Wire,
+)
 
 
 class ValidateError(Exception):
@@ -209,7 +218,7 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
     # Sorted by the hash-independent Wire.sort_key(): diagram.wires is a frozenset whose
     # hash folds in Direction's member-name hash, so iterating it directly would append
     # issues in a PYTHONHASHSEED-dependent order, breaking the "first in validate order"
-    # selection qufzx.rewrite.engine relies on.
+    # selection archytaszx.rewrite.engine relies on.
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
         port_a = _resolve(diagram, wire.a, issues)
         port_b = _resolve(diagram, wire.b, issues)
@@ -367,21 +376,21 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
 def _classify_symbol_role(symbol: sp.Symbol) -> str | None:
     """Which namespace ``symbol`` belongs to, from its assumptions.
 
-    ``qufzx.algebra``'s four symbol constructors each stamp a distinct assumption signature,
+    ``archytaszx.algebra``'s four symbol constructors each stamp a distinct assumption signature,
     matched here against sympy's computed closure. Round-tripped per constructor by
     ``tests/test_validate.py``'s ``TestSymbolConstructorRolesRoundTrip``:
 
-    * :meth:`~qufzx.algebra.dimension.Dim.symbol` (``positive=True, integer=True``) --
+    * :meth:`~archytaszx.algebra.dimension.Dim.symbol` (``positive=True, integer=True``) --
       "dimension". Signature ``integer and positive``.
-    * a dimension's exponent, from :meth:`~qufzx.algebra.dimension.Dim.__pow__` via
+    * a dimension's exponent, from :meth:`~archytaszx.algebra.dimension.Dim.__pow__` via
       ``_exponent_symbol`` (``integer=True, nonnegative=True``, never ``positive``: an
       exponent of 0 is legal, a dimension of 0 is not) -- "exponent". Signature ``integer
       and not positive``; ``nonnegative`` holds for both and does not discriminate.
-    * :meth:`~qufzx.algebra.phase.Phase.symbol` (``real=True``) -- "phase". Signature ``real
+    * :meth:`~archytaszx.algebra.phase.Phase.symbol` (``real=True``) -- "phase". Signature ``real
       and not integer``; a dimension or exponent symbol is ``real`` by closure.
-    * :meth:`~qufzx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature
+    * :meth:`~archytaszx.algebra.scalar.Scalar.symbol` (``complex=True``) -- "scalar". Signature
       ``complex and not real``; the other three are ``complex`` by closure.
-    * :meth:`~qufzx.diagram.bangbox.Mult.symbol` (Phase 7) -- "multiplicity". Same real
+    * :meth:`~archytaszx.diagram.bangbox.Mult.symbol` (Phase 7) -- "multiplicity". Same real
       assumptions as an exponent, discriminated only by an inert ``multiplicity`` marker
       sympy's own closure never sets, so it survives into ``assumptions0`` untouched.
 
@@ -504,9 +513,9 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     gen = node.generator_type
 
     # Dimension is stored per port, so a node with zero legs and no phase vector carries it
-    # nowhere at all. qufzx.semantics.denote already refuses such a node; stating the same
+    # nowhere at all. archytaszx.semantics.denote already refuses such a node; stating the same
     # fact here, as a hard error, is what makes validate(d).is_valid imply every node in d
-    # is denotable -- the invariant qufzx.rewrite.engine's apply step 8 depends on.
+    # is denotable -- the invariant archytaszx.rewrite.engine's apply step 8 depends on.
     if node.num_inputs == 0 and node.num_outputs == 0 and node.phase is None:
         issues.append(
             ValidationIssue(
@@ -692,7 +701,7 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
     (Phase 7).
 
     A port-scope box's port must additionally currently be a diagram boundary slot --
-    :mod:`qufzx.diagram.bangbox`'s instantiate/kill mechanism has no other way to grow
+    :mod:`archytaszx.diagram.bangbox`'s instantiate/kill mechanism has no other way to grow
     or remove it (see that module's docstring). Boxes failing either check are excluded
     from :func:`_check_bangbox_nesting`, mirroring :func:`_check_port_usage`'s
     ``broken_node_ids`` skip pattern.
@@ -803,7 +812,7 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
     must have disjoint footprints -- an undeclared overlap can only mean two
     independent boxes were built over the same node in error, since a legitimate nested
     relationship is always recorded via ``parent`` (see
-    :mod:`qufzx.diagram.bangbox`'s module docstring).
+    :mod:`archytaszx.diagram.bangbox`'s module docstring).
     """
     broken = _broken_bangbox_ids(issues)
     boxes = {box_id: box for box_id, box in diagram.bang_boxes.items() if box_id not in broken}

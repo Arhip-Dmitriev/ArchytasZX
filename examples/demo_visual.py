@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Scripted terminal demo of the current qufzx engine, for grant-application screen capture.
+"""Scripted terminal demo of the current archytaszx engine, for grant-application screen capture.
 
 Two columns, printed side by side for every step: INTERMEDIATE (left) is an exhaustive,
 unfiltered trace of every value the engine actually computed -- every port, every dimension
@@ -22,8 +22,8 @@ colored highlights: the diagram pictures and the pass/fail verdicts. No narratio
 printed anywhere in either column -- that is left entirely to a voice-over recorded
 separately over this output. A wide terminal (150+ columns) is assumed.
 
-Calls only public API from ``qufzx.*`` -- no test helpers, no new engine surface, no
-rendering borrowed from (or added to) ``qufzx.repl.printer``, which stays a Phase 17
+Calls only public API from ``archytaszx.*`` -- no test helpers, no new engine surface, no
+rendering borrowed from (or added to) ``archytaszx.repl.printer``, which stays a Phase 17
 skeleton. Every value shown is read live from the objects the engine returns; nothing here
 is hardcoded. Deterministic: no randomness, no wall-clock value is ever printed, and every
 set/frozenset the engine hands back is iterated through its own ``sort_key()`` rather than
@@ -47,18 +47,18 @@ import sys
 import textwrap
 import time
 
-from qufzx.algebra.dimension import Dim, unify_all
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import RewriteResult, apply
-from qufzx.rewrite.match import (
+from archytaszx.algebra.dimension import Dim, unify_all
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import RewriteResult, apply
+from archytaszx.rewrite.match import (
     FUSION_SIDE_CONDITIONS,
     FusionMatch,
     find_matches,
     resolve_fusion_match,
 )
-from qufzx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
 
 LEFT_WIDTH = 100
 RIGHT_WIDTH = 48
@@ -600,7 +600,7 @@ def _beat_apply(diagram: Diagram, match: FusionMatch) -> RewriteResult:
 
 
 def _beat_record(diagram: Diagram, match: FusionMatch, result: RewriteResult) -> None:
-    """RewriteStep, and how apply() actually built it -- see qufzx/rewrite/engine.py's
+    """RewriteStep, and how apply() actually built it -- see archytaszx/rewrite/engine.py's
     own docstring, step 9: the certificate is preferred from the builder's independently
     re-derived facts, never from a match's own unaudited claims, and this beat is the
     live demonstration of that preference rather than a claim about it.

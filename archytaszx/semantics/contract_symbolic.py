@@ -15,10 +15,10 @@
 """Symbolic contraction of an arbitrary diagram with the dimension kept formal.
 
 A dense array is unavailable once ``d`` is symbolic, so a tensor is represented as an
-ordered list of axes plus one exact :class:`~qufzx.algebra.scalar.Scalar` entry expression
+ordered list of axes plus one exact :class:`~archytaszx.algebra.scalar.Scalar` entry expression
 over per-axis index symbols. Wires become bound summation indices and every Kronecker delta
 is written as the character sum ``delta(a, b) = d^-1 * Sum_t omega_d^{t*(a-b)}``, so the
-Phase 9 simplifier in :mod:`qufzx.algebra.scalar` is what closes a contraction rather than
+Phase 9 simplifier in :mod:`archytaszx.algebra.scalar` is what closes a contraction rather than
 a separate tensor engine.
 
 Substituting a parameter environment into the returned entry is the path that answers a
@@ -37,18 +37,18 @@ from dataclasses import dataclass
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
-from qufzx.algebra.scalar import (
+from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     Scalar,
     ScalarSubstituteValue,
     ScalarSymbolKey,
 )
-from qufzx.diagram.bangbox import expand_concrete_boxes, scope_is_closed
-from qufzx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
-from qufzx.diagram.validate import ValidationReport, validate
-from qufzx.semantics.denote import resolve_dim
+from archytaszx.diagram.bangbox import expand_concrete_boxes, scope_is_closed
+from archytaszx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
+from archytaszx.diagram.validate import ValidationReport, validate
+from archytaszx.semantics.denote import resolve_dim
 
 
 class SymbolicContractionError(Exception):
@@ -182,7 +182,7 @@ def _delta(dim: Dim, a: sp.Expr, b: sp.Expr, indices: _Indices) -> sp.Expr:
 def _phase_corrections(node: Node) -> tuple[tuple[int, sp.Expr], ...]:
     """Each stored phase entry as (concrete index, e^{i*alpha_k} - 1), in ascending index order.
 
-    A :class:`~qufzx.algebra.phase.PhaseVector` is sparse over concrete integer indices with
+    A :class:`~archytaszx.algebra.phase.PhaseVector` is sparse over concrete integer indices with
     ``Phase.zero()`` everywhere else, so subtracting the phaseless spider leaves a finite
     correction whose every index is a concrete integer. That is what lets a phased spider
     contract with ``d`` symbolic: nothing is ever indexed by a symbolic summation variable.

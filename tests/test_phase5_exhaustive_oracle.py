@@ -43,18 +43,18 @@ from unittest.mock import patch
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite import match as match_module
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import EqualityMode, compare
-from qufzx.semantics.contract_numeric import ContractSizeError
-from qufzx.semantics.denote import DenoteError, denote
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite import match as match_module
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import EqualityMode, compare
+from archytaszx.semantics.contract_numeric import ContractSizeError
+from archytaszx.semantics.denote import DenoteError, denote
 
 pytestmark = pytest.mark.slow
 """Every test in this module is a multi-thousand-seed sweep."""
@@ -225,7 +225,7 @@ class TestExhaustiveSpiderFusionOracleSweep:
                         )
 
                         # validate(d).is_valid must imply every node in d
-                        # is denotable -- qufzx.diagram.validate's NODE_DIMENSION_UNDETERMINED
+                        # is denotable -- archytaszx.diagram.validate's NODE_DIMENSION_UNDETERMINED
                         # check exists specifically so this holds, rather than resting on one
                         # builder's (rules_library's) good behaviour never producing the gap.
                         # Every diagram in this exhaustive space is already asserted valid

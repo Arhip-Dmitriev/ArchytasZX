@@ -15,7 +15,7 @@
 
 A :class:`Diagram` is an open graph: :class:`Node` objects joined by :class:`Wire`\\ s, two
 ordered boundary lists of unwired ports, an exact
-:class:`~qufzx.algebra.scalar.Scalar` accumulator, and a parameter environment. Dimension
+:class:`~archytaszx.algebra.scalar.Scalar` accumulator, and a parameter environment. Dimension
 lives on each :class:`Port` individually -- there is no global or per-diagram dimension
 field here, per the spec invariant that dimension is stored per port.
 
@@ -29,7 +29,7 @@ properties of the data structure itself (an index is a non-negative int, a wire 
 a port to itself, you cannot mutate a node that does not exist). Cross-cutting
 well-formedness -- dimension agreement, double-wired ports, boundary/wire conflicts,
 out-of-range indices, generator policy, the parameter environment -- is entirely
-:mod:`qufzx.diagram.validate`'s responsibility, so its report carries every problem in one
+:mod:`archytaszx.diagram.validate`'s responsibility, so its report carries every problem in one
 pass.
 
 Node removal. :meth:`Diagram.remove_node` cascades to every incident wire and boundary
@@ -53,7 +53,7 @@ nothing and never mutates the receiver.
 Diagram equality. :class:`Diagram` defines no ``__eq__``. Diagram equality -- "do these
 denote the same map, possibly after rewriting" -- is Phase 13's normal form, checked by
 Phase 4's oracle. :class:`PortRef`, :class:`Port`, :class:`Wire`, and
-:class:`~qufzx.diagram.generators.GeneratorType` are value objects and stay value-equal and
+:class:`~archytaszx.diagram.generators.GeneratorType` are value objects and stay value-equal and
 hashable, being looked up and de-duplicated by value throughout.
 """
 
@@ -67,14 +67,14 @@ from typing import TYPE_CHECKING, NewType, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim, DimensionError, DimSubstituteValue, DimSymbolKey
-from qufzx.algebra.phase import Phase, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
-from qufzx.algebra.scalar import Scalar, ScalarSubstituteValue, ScalarSymbolKey
-from qufzx.diagram.generators import GeneratorType
+from archytaszx.algebra.dimension import Dim, DimensionError, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.phase import Phase, PhaseSubstituteValue, PhaseSymbolKey, PhaseVector
+from archytaszx.algebra.scalar import Scalar, ScalarSubstituteValue, ScalarSymbolKey
+from archytaszx.diagram.generators import GeneratorType
 
 if TYPE_CHECKING:
     # Typing only, to break the import cycle: bangbox.py imports Diagram from here.
-    from qufzx.diagram.bangbox import BangBox
+    from archytaszx.diagram.bangbox import BangBox
 
 
 class GraphError(Exception):
@@ -362,7 +362,7 @@ class Diagram:
         """Allocate a fresh NodeId and add a node with the given ports and phase.
 
         Does not check the generator type's leg policy, dimension policy, or phase
-        schema -- that conformance check is :mod:`qufzx.diagram.validate`'s job, so
+        schema -- that conformance check is :mod:`archytaszx.diagram.validate`'s job, so
         that a caller assembling a diagram step by step is never blocked mid-
         construction (e.g. before a phase is attached).
         """
@@ -413,11 +413,11 @@ class Diagram:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
         Mirrors :meth:`add_node`: no conformance checks, that being
-        :mod:`qufzx.diagram.validate`'s job. ``multiplicity`` is typed ``object`` to
+        :mod:`archytaszx.diagram.validate`'s job. ``multiplicity`` is typed ``object`` to
         avoid a runtime import cycle (see the ``TYPE_CHECKING`` import above); it is
-        always a :class:`~qufzx.diagram.bangbox.Mult`.
+        always a :class:`~archytaszx.diagram.bangbox.Mult`.
         """
-        from qufzx.diagram.bangbox import BangBox, Mult  # local: see the class docstring
+        from archytaszx.diagram.bangbox import BangBox, Mult  # local: see the class docstring
 
         if not isinstance(multiplicity, Mult):
             raise GraphGrammarError(
@@ -468,9 +468,9 @@ class Diagram:
 
         Mirrors :meth:`set_phase`. Raises GraphGrammarError if ``box_id`` is absent.
         ``multiplicity`` is typed ``object`` to avoid a runtime import cycle (see
-        :meth:`add_bang_box`); it is always a :class:`~qufzx.diagram.bangbox.Mult`.
+        :meth:`add_bang_box`); it is always a :class:`~archytaszx.diagram.bangbox.Mult`.
         """
-        from qufzx.diagram.bangbox import Mult  # local: see add_bang_box
+        from archytaszx.diagram.bangbox import Mult  # local: see add_bang_box
 
         if box_id not in self._bang_boxes:
             raise GraphGrammarError(f"no such bang box: {box_id!r}")
@@ -507,7 +507,7 @@ class Diagram:
         """Replace the ordered boundary-input list wholesale.
 
         Does not check for duplicates, wire conflicts, or direction consistency --
-        see :mod:`qufzx.diagram.validate`.
+        see :mod:`archytaszx.diagram.validate`.
         """
         self._boundary_inputs = list(refs)
 
@@ -529,7 +529,7 @@ class Diagram:
         """Substitute this diagram's parameter environment into ``dim``, its own symbols only.
 
         Returns ``dim`` unchanged when the environment binds none of them, or when a bound
-        value lies outside the symbol's domain (:mod:`qufzx.diagram.validate` reports that).
+        value lies outside the symbol's domain (:mod:`archytaszx.diagram.validate` reports that).
         """
         mapping: dict[DimSymbolKey, DimSubstituteValue] = {
             name: self._parameters[name]
@@ -549,7 +549,7 @@ class Diagram:
         Replaces any existing entry for ``name``. Checks only that ``name`` is a bare
         identifier and ``value`` a non-bool int; that the name is a symbol the diagram
         carries, in one role, with a value in that role's domain, is
-        :mod:`qufzx.diagram.validate`'s job.
+        :mod:`archytaszx.diagram.validate`'s job.
         """
         if not isinstance(name, str) or not name.isidentifier():
             raise GraphGrammarError(f"parameter name must be a bare identifier, got {name!r}")

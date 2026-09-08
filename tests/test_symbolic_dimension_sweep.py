@@ -15,13 +15,13 @@
 
 1-in/1-out spider pairs (A, B), each leg dim drawn from ``{2, 3, d, e}``, built and fused
 once symbolically, then oracle-compared at several concrete ``(d, e)`` assignments via
-:func:`~qufzx.semantics.check.compare`'s ``assignment`` parameter. This is the arm that
-exercises :func:`~qufzx.rewrite.match._resolve_with_bindings`,
-:func:`~qufzx.rewrite.match._unify_surviving_legs`,
-:func:`~qufzx.rewrite.match._unify_phase_dims`, and
-:func:`~qufzx.rewrite.match.reattach_phase` together: a phase legally stated over a symbolic
+:func:`~archytaszx.semantics.check.compare`'s ``assignment`` parameter. This is the arm that
+exercises :func:`~archytaszx.rewrite.match._resolve_with_bindings`,
+:func:`~archytaszx.rewrite.match._unify_surviving_legs`,
+:func:`~archytaszx.rewrite.match._unify_phase_dims`, and
+:func:`~archytaszx.rewrite.match.reattach_phase` together: a phase legally stated over a symbolic
 dimension that a fusion's own unify resolves through a binding -- the ``_over_shared_dim``
-family described in :mod:`qufzx.rewrite.rules_library`'s module docstring.
+family described in :mod:`archytaszx.rewrite.rules_library`'s module docstring.
 
 Phases are drawn independently of the leg dims: besides a phase over the node's own leg
 dim, root-of-unity phases over the fixed concrete dims ``2`` and ``3`` are offered whatever
@@ -37,7 +37,7 @@ Deliberate subsampling:
 
 * The full ``{2, 3, d, e}`` palette is applied to the connecting pair (A's output, B's
   input), where the 16 combinations exercise every
-  :meth:`~qufzx.algebra.dimension.Dim.unify` outcome and drive ``shared_dim``. Each node's
+  :meth:`~archytaszx.algebra.dimension.Dim.unify` outcome and drive ``shared_dim``. Each node's
   surviving leg is fixed at one already-mixed pair (concrete ``2`` and symbolic ``d``).
 * Only the ``(2, 3)`` and ``(3, 2)`` oracle substitutions are checked; the same-value pairs
   are covered by ``test_phase5_oracle.py``'s ``_CONCRETE_DS`` sweep.
@@ -52,15 +52,15 @@ from __future__ import annotations
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.diagram.validate import validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.check import compare, instantiate
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.validate import validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.check import compare, instantiate
 
 pytestmark = pytest.mark.slow
 """Every test in this module is a multi-thousand-seed sweep."""

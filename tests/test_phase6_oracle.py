@@ -18,14 +18,14 @@ replay reproduces the output and passes the oracle.
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.repl.parser import parse_dirac_source
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rules_library import SPIDER_FUSION
-from qufzx.semantics.certificate import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.repl.parser import parse_dirac_source
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rules_library import SPIDER_FUSION
+from archytaszx.semantics.certificate import (
     Certificate,
     Derivation,
     DerivationKind,

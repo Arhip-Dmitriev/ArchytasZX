@@ -24,10 +24,10 @@ builds the worked example the same way.
 
 from __future__ import annotations
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.diagram.generators import Z_SPIDER, GeneratorType
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.generators import Z_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 
 
 def build_ghz_with_copy(

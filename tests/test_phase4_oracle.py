@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.scalar import Scalar
-from qufzx.semantics.check import EqualityMode, compare, score
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.semantics.check import EqualityMode, compare, score
 
 from .helpers import build_ghz_with_copy
 

@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for qufzx.semantics.contract_numeric: contracting a fully concrete diagram."""
+"""Tests for archytaszx.semantics.contract_numeric: contracting a fully concrete diagram."""
 
 from __future__ import annotations
 
@@ -19,12 +19,12 @@ import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, PortRef
-from qufzx.semantics.contract_numeric import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.semantics.contract_numeric import (
     ContractDomainError,
     ContractSizeError,
     ContractValidationError,

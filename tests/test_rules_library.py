@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Establishes qufzx.rewrite.rules_library.spider_fusion_builder's merge and scalar behavior."""
+"""Establishes archytaszx.rewrite.rules_library.spider_fusion_builder's merge and scalar
+behavior."""
 
 from __future__ import annotations
 
@@ -21,14 +22,14 @@ from collections.abc import Mapping
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import Phase, PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import FusionMatch, find_matches
-from qufzx.rewrite.rule import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import FusionMatch, find_matches
+from archytaszx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSource,
     DimensionConstraint,
@@ -36,14 +37,14 @@ from qufzx.rewrite.rule import (
     RewriteGrammarError,
     SideConditionOutcome,
 )
-from qufzx.rewrite.rules_library import (
+from archytaszx.rewrite.rules_library import (
     RULES,
     SPIDER_FUSION,
     _over_shared_dim,
     lookup_rule,
     spider_fusion_builder,
 )
-from qufzx.semantics.check import compare
+from archytaszx.semantics.check import compare
 
 from .helpers import build_ghz_with_copy
 
@@ -94,7 +95,7 @@ class TestDanglingPortSurvives:
 
     The builder tracks "surviving" purely by leg identity -- every leg of a consumed node
     except the one the matched wire itself consumes (see
-    :func:`~qufzx.rewrite.rules_library._surviving_legs`) -- never by wiring or boundary
+    :func:`~archytaszx.rewrite.rules_library._surviving_legs`) -- never by wiring or boundary
     status, so a genuinely dangling leg needs no special-casing, only a test locking the
     behavior in.
     """
@@ -207,7 +208,7 @@ class TestAllLegsConsumedPhase:
 
 
 class TestPhaseDimensionAgreementAcceptsConcreteBindings:
-    """The two acceptances :mod:`qufzx.rewrite.match`'s ``phase_dimension_agreement`` makes.
+    """The two acceptances :mod:`archytaszx.rewrite.match`'s ``phase_dimension_agreement`` makes.
 
     A fusion whose two phase dims unify only by a *concrete* binding matches, and two
     present phases need not agree raw before any resolution -- ``reattach_phase`` forces
@@ -328,7 +329,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
     lies about every condition having actually been checked -- so ``check_side_condition_coverage``
     (which only compares outcome *names* and passedness, never re-evaluates a predicate) lets
     it through, and the builder's own fresh re-verification via
-    :func:`~qufzx.rewrite.match.resolve_fusion_match` is what has to catch the lie.
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match` is what has to catch the lie.
     """
     return tuple(
         SideConditionOutcome(name, True, "fabricated: claims to pass without being checked")
@@ -348,7 +349,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
 class TestBuilderRederivesMatchClaims:
     """The builder must not trust a match's own claimed ``generator_type`` agreement or its
     ``shared_dim``/``bindings``. It re-derives them fresh (via
-    :func:`~qufzx.rewrite.match.resolve_fusion_match`) and rejects any disagreement, since a
+    :func:`~archytaszx.rewrite.match.resolve_fusion_match`) and rejects any disagreement, since a
     fabricated-passing ``side_condition_outcomes`` tuple alone -- which
     ``check_side_condition_coverage`` cannot catch, never re-evaluating a predicate -- would
     otherwise let a Z/X pair, or a nonsensical ``shared_dim``, through to graph surgery.
@@ -442,7 +443,7 @@ class TestSideConditionCoverageEnforced:
     side_condition_outcomes=(), would otherwise reach spider_fusion_builder unchallenged --
     ``all(...)`` over an empty tuple is vacuously True, so the (never actually checked)
     same_generator_type condition never gets a chance to reject it. This builder is
-    reachable directly (not only via qufzx.rewrite.engine.apply), so it must enforce
+    reachable directly (not only via archytaszx.rewrite.engine.apply), so it must enforce
     coverage itself.
     """
 
@@ -623,7 +624,7 @@ class TestSharedDimPropagatesToEverySurvivingPort:
         one legless node whose ``PhaseVector`` claimed dimension 7 with nothing left in the
         diagram to say it also assumed dimension 3, and a validate() report that came back
         clean. With the dimension propagated,
-        apply()'s relative post-condition (see qufzx.rewrite.engine) catches the
+        apply()'s relative post-condition (see archytaszx.rewrite.engine) catches the
         resulting conflict against the still-unfused third node immediately.
         """
         d = Dim.symbol("d")

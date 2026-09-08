@@ -25,10 +25,10 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from qufzx.algebra.dimension import Dim
-from qufzx.algebra.phase import PhaseVector
-from qufzx.algebra.scalar import Scalar
-from qufzx.diagram.bangbox import (
+from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.bangbox import (
     BangBox,
     BangBoxDomainError,
     BangBoxGrammarError,
@@ -39,8 +39,8 @@ from qufzx.diagram.bangbox import (
     instantiate_symbol,
     peel_one,
 )
-from qufzx.diagram.generators import X_SPIDER, Z_SPIDER
-from qufzx.diagram.graph import (
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import (
     BangBoxId,
     Diagram,
     Direction,
@@ -48,16 +48,16 @@ from qufzx.diagram.graph import (
     NodeId,
     PortRef,
 )
-from qufzx.diagram.validate import IssueKind, validate
-from qufzx.rewrite.engine import apply
-from qufzx.rewrite.match import find_matches
-from qufzx.rewrite.rule import BuildResult, Match, Rule
-from qufzx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
-from qufzx.semantics import induction
-from qufzx.semantics.certificate import compare_structure
-from qufzx.semantics.check import compare, score
-from qufzx.semantics.contract_numeric import ContractSizeError
-from qufzx.semantics.induction import (
+from archytaszx.diagram.validate import IssueKind, validate
+from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import find_matches
+from archytaszx.rewrite.rule import BuildResult, Match, Rule
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
+from archytaszx.semantics import induction
+from archytaszx.semantics.certificate import compare_structure
+from archytaszx.semantics.check import compare, score
+from archytaszx.semantics.contract_numeric import ContractSizeError
+from archytaszx.semantics.induction import (
     InductionDomainError,
     InductionError,
     InductionGrammarError,
@@ -422,7 +422,7 @@ class TestLadder:
 
 
 class TestResultShape:
-    """The invariants every :class:`~qufzx.semantics.induction.InductionResult` carries."""
+    """The invariants every :class:`~archytaszx.semantics.induction.InductionResult` carries."""
 
     def test_the_result_is_frozen(self) -> None:
         pre, post = _build_boxed_fusion_family()
