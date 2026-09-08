@@ -313,6 +313,25 @@ def _close_sum(node: sp.Sum) -> sp.Expr | None:
     return None
 
 
+def _is_periodic_in(expr: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> bool:
+    """Whether every var-dependent factor of expr is an omega_d power of integer index."""
+    for factor in sp.Mul.make_args(expr):
+        if var not in factor.free_symbols:
+            continue
+        if not isinstance(factor, sp.exp):
+            return False
+        ratio = sp.expand(sp.cancel(factor.args[0] * d_expr / (2 * sp.pi * sp.I)))
+        try:
+            polynomial = sp.Poly(ratio, var)
+        except sp.PolynomialError:
+            return False
+        if polynomial.degree() > 1:
+            return False
+        if not polynomial.coeff_monomial(var).is_integer:
+            return False
+    return True
+
+
 def _eliminate_via_delta(
     term: sp.Expr,
     var: sp.Symbol,
@@ -321,17 +340,18 @@ def _eliminate_via_delta(
 ) -> sp.Expr | None:
     """Close a sum whose index is an enclosing bound variable, collapsing that outer sum.
 
-    Sum_u Sum_k omega^{k*(u + rest)} f(u) closes to d * f(-rest): the inner character sum is
-    d times the indicator that u == -rest, and u ranges over a full residue system, so the
-    outer sum keeps exactly that one term.
+    Sum_u Sum_k omega_d^{k*(u + rest)} f(u) closes to d * f(-rest), fired only when the
+    outer index runs over a full residue system mod d and f is d-periodic in it.
     """
     split = _split_term(term, var, d_expr)
     if split is None:
         return None
     constant, index, offset = split
     constant = constant * sp.exp(2 * sp.pi * sp.I * offset / d_expr)
-    for position, (candidate, lower, upper) in enumerate(outer):
+    for position, (candidate, _lower, upper) in enumerate(outer):
         if candidate not in index.free_symbols:
+            continue
+        if sp.expand(upper + 1) != d_expr:
             continue
         try:
             polynomial = sp.Poly(index, candidate)
@@ -345,10 +365,7 @@ def _eliminate_via_delta(
         rest = sp.expand(index - coefficient * candidate)
         if candidate in rest.free_symbols:
             continue
-        if any(
-            candidate in factor.free_symbols and not isinstance(factor, sp.exp)
-            for factor in sp.Mul.make_args(constant)
-        ):
+        if not _is_periodic_in(constant, candidate, d_expr):
             continue
         remaining = [limit for i, limit in enumerate(outer) if i != position]
         collapsed = d_expr * constant.xreplace({candidate: sp.expand(-coefficient * rest)})

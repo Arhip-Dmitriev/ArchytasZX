@@ -237,3 +237,47 @@ class TestNoGlobalFactorQuotientAPI:
     def test_no_method_named_normalize_or_quotient(self) -> None:
         forbidden = {"quotient_global_phase", "normalize_global_phase", "up_to_phase"}
         assert not (forbidden & set(dir(Scalar)))
+
+
+class TestDeltaEliminationResidueSystem:
+    """The outer-sum collapse fires only over a full residue system mod d."""
+
+    @staticmethod
+    def _double_sum(inner_dim: sp.Expr, outer_dim: sp.Expr, offset: int) -> Scalar:
+        k = sp.Symbol("_k0", integer=True, nonnegative=True)
+        u = sp.Symbol("_k1", integer=True, nonnegative=True)
+        body = sp.exp(2 * sp.pi * sp.I * k * (u + offset) / inner_dim)
+        return Scalar(sp.Sum(body, (u, 0, outer_dim - 1), (k, 0, inner_dim - 1)))
+
+    @staticmethod
+    def _brute(inner: int, outer: int, offset: int) -> complex:
+        return sum(
+            complex(sp.exp(2 * sp.pi * sp.I * kk * (uu + offset) / inner))
+            for uu in range(outer)
+            for kk in range(inner)
+        )
+
+    def test_matching_ranges_still_close(self) -> None:
+        d = sp.Symbol("d", integer=True, positive=True)
+        for offset in (0, -1, 3):
+            closed = self._double_sum(d, d, offset).simplify()
+            assert not closed.to_sympy().has(sp.Sum)
+            for value in (2, 3, 4, 5, 6):
+                got = complex(sp.N(closed.substitute({"d": value}).to_sympy().doit()))
+                assert cmath.isclose(got, self._brute(value, value, offset), abs_tol=1e-9)
+
+    def test_differing_ranges_are_left_unclosed_and_stay_exact(self) -> None:
+        d = sp.Symbol("d", integer=True, positive=True)
+        e = sp.Symbol("e", integer=True, positive=True)
+        for offset in (0, -1):
+            result = self._double_sum(d, e, offset).simplify()
+            for inner, outer in ((4, 1), (3, 1), (4, 8), (2, 4), (3, 9), (5, 2)):
+                got = complex(sp.N(result.substitute({"d": inner, "e": outer}).to_sympy().doit()))
+                assert cmath.isclose(got, self._brute(inner, outer, offset), abs_tol=1e-9)
+
+    def test_shorter_outer_range_does_not_invent_a_scalar(self) -> None:
+        d = sp.Symbol("d", integer=True, positive=True)
+        e = sp.Symbol("e", integer=True, positive=True)
+        result = self._double_sum(d, e, -1).simplify()
+        got = complex(sp.N(result.substitute({"d": 4, "e": 1}).to_sympy().doit()))
+        assert cmath.isclose(got, 0j, abs_tol=1e-9)
