@@ -292,7 +292,7 @@ ruff format . && ruff check . && mypy archytaszx
 `ruff format` is authoritative for layout; `mypy` runs in strict mode. Counts and timings
 measured 2026-09-08.
 
-## References
+## Main References
 
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi* —
   [arXiv:2104.06429](https://arxiv.org/abs/2104.06429)
