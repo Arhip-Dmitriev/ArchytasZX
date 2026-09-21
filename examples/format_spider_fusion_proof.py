@@ -17,7 +17,7 @@ from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.match import find_matches
 from archytaszx.rewrite.rules_library import SPIDER_FUSION
 from archytaszx.semantics.induction import prove_by_induction
-from examples.proof_formatter import ProofFormatter
+from proof_formatter import ProofFormatter
 
 
 def main():
