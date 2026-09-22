@@ -56,7 +56,7 @@ class TestLegPolicy:
 
 class TestZAndXRegistration:
     def test_z_and_x_are_registered(self) -> None:
-        assert REGISTRY.names() == frozenset({"Z", "X", "F"})
+        assert {"Z", "X", "F"} <= REGISTRY.names()
 
     def test_get_returns_registered_types(self) -> None:
         assert REGISTRY.get("Z") is Z_SPIDER
@@ -64,7 +64,7 @@ class TestZAndXRegistration:
 
     def test_unknown_name_raises(self) -> None:
         with pytest.raises(GeneratorGrammarError):
-            REGISTRY.get("W")
+            REGISTRY.get("NotAGenerator")
 
     def test_z_and_x_allow_any_leg_count_including_zero(self) -> None:
         for gen in (Z_SPIDER, X_SPIDER):
@@ -79,7 +79,7 @@ class TestZAndXRegistration:
 
     def test_all_types_view_contains_both(self) -> None:
         all_types = REGISTRY.all_types()
-        assert set(all_types) == {"Z", "X", "F"}
+        assert {"Z", "X", "F"} <= set(all_types)
 
 
 class TestFourierBoxRegistration:

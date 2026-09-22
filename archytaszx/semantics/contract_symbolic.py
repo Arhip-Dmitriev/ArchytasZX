@@ -45,7 +45,17 @@ from archytaszx.algebra.scalar import (
     ScalarSymbolKey,
 )
 from archytaszx.diagram.bangbox import expand_concrete_boxes, scope_is_closed
-from archytaszx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import (
+    DIM_BINDER,
+    DIM_SPLITTER,
+    FOURIER_BOX,
+    REGISTRY,
+    TRIANGLE,
+    TRIANGLE_INVERSE,
+    W_NODE,
+    X_SPIDER,
+    Z_SPIDER,
+)
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from archytaszx.diagram.validate import ValidationReport, validate
 from archytaszx.semantics.denote import resolve_dim
@@ -235,6 +245,50 @@ def _x_entry(
     return sp.Pow(d_expr, sp.Rational(-len(legs), 2)) * entry
 
 
+def _connective_entry(
+    node: Node,
+    node_id: NodeId,
+    port_index: Mapping[PortRef, sp.Symbol],
+    indices: _Indices,
+) -> sp.Expr:
+    """B's or S's entry: one delta pairing the joint index against ``a * t + b``."""
+    dims = _node_leg_dims(node)
+    if len(dims) != 3:
+        raise SymbolicContractionGrammarError(
+            f"node {node_id!r} ({node.generator_type.name}) has {len(dims)} leg(s); a "
+            "dimension connective takes exactly three"
+        )
+    if node.generator_type.name == DIM_BINDER.name:
+        _, s_dim, t_dim = dims
+        _check_connective_product(node, node_id, s_dim, t_dim, dims[0])
+        out = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
+        in0 = port_index[PortRef(node_id, Direction.INPUT, 0)]
+        in1 = port_index[PortRef(node_id, Direction.INPUT, 1)]
+        return _delta(s_dim * t_dim, out, in0 * t_dim.to_sympy() + in1, indices)
+    s_dim, t_dim, _ = dims
+    _check_connective_product(node, node_id, s_dim, t_dim, dims[2])
+    out0 = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
+    out1 = port_index[PortRef(node_id, Direction.OUTPUT, 1)]
+    inp = port_index[PortRef(node_id, Direction.INPUT, 0)]
+    return _delta(s_dim * t_dim, inp, out0 * t_dim.to_sympy() + out1, indices)
+
+
+def _check_connective_product(
+    node: Node, node_id: NodeId, s_dim: Dim, t_dim: Dim, joint: Dim
+) -> None:
+    """Raise when ``joint`` and ``s_dim * t_dim`` are known not to be equal."""
+    if (s_dim * t_dim).unify(joint).is_failure:
+        raise SymbolicContractionDomainError(
+            f"node {node_id!r} ({node.generator_type.name}) pairs {s_dim} and {t_dim} "
+            f"against joint dimension {joint}, which is not their product"
+        )
+
+
+def _node_leg_dims(node: Node) -> tuple[Dim, ...]:
+    """Every leg dimension of ``node``, outputs then inputs, with no agreement check."""
+    return tuple(port.dim for port in (*node.outputs, *node.inputs))
+
+
 def _node_entry(
     diagram: Diagram,
     node_id: NodeId,
@@ -248,6 +302,9 @@ def _node_entry(
             f"node {node_id!r} carries generator type {node.generator_type.name!r}, which is "
             "not the type registered under that name"
         )
+    name = node.generator_type.name
+    if name in (DIM_BINDER.name, DIM_SPLITTER.name):
+        return _connective_entry(node, node_id, port_index, indices)
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     outputs = [port_index[PortRef(node_id, Direction.OUTPUT, i)] for i in range(node.num_outputs)]
@@ -256,6 +313,28 @@ def _node_entry(
     if node.generator_type.name == FOURIER_BOX.name:
         return sp.Pow(d_expr, sp.Rational(-1, 2)) * sp.exp(
             2 * sp.pi * sp.I * outputs[0] * inputs[0] / d_expr
+        )
+
+    if name == TRIANGLE.name:
+        return _delta(dim, outputs[0], inputs[0], indices) + _delta(
+            dim, outputs[0], sp.Integer(0), indices
+        ) * (1 - _delta(dim, inputs[0], sp.Integer(0), indices))
+
+    if name == TRIANGLE_INVERSE.name:
+        return _delta(dim, outputs[0], inputs[0], indices) - _delta(
+            dim, outputs[0], sp.Integer(0), indices
+        ) * (1 - _delta(dim, inputs[0], sp.Integer(0), indices))
+
+    if name == W_NODE.name:
+        o0, o1 = outputs[0], outputs[1]
+        i0 = inputs[0]
+        zero = sp.Integer(0)
+        return (
+            _delta(dim, o0, zero, indices) * _delta(dim, o1, i0, indices)
+            + _delta(dim, o1, zero, indices) * _delta(dim, o0, i0, indices)
+            - _delta(dim, o0, zero, indices)
+            * _delta(dim, o1, zero, indices)
+            * _delta(dim, i0, zero, indices)
         )
 
     corrections = _phase_corrections(node)

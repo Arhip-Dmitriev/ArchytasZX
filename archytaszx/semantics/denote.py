@@ -20,8 +20,11 @@ Axis convention (shared with :mod:`archytaszx.semantics.contract_numeric` and
 :mod:`archytaszx.semantics.check`; stated once here). A node with ``m`` inputs and ``n`` outputs
 denotes a rank-``m + n`` tensor whose axes are outputs first in ``Node.outputs`` order,
 then inputs in ``Node.inputs`` order; axis ``i`` has length that port's ``Dim.to_int()``. A
-diagram's boundary follows the same rule. This is a convention, not a derivation, and every
-consumer must agree with it rather than re-deriving its own order.
+diagram's boundary follows the same rule. Every consumer must agree with it.
+
+Pairing convention (stated once here, used by ``"B"`` and ``"S"`` alike). A pair ``(a, b)``
+with ``a`` in ``[0, s)`` and ``b`` in ``[0, t)`` corresponds to the single index
+``k = a * t + b`` in ``[0, s*t)``. ``B . S = id`` and ``S . B = id`` hold exactly.
 
 Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0`` as gauge::
 
@@ -29,9 +32,7 @@ Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0``
 
 The tensor is zero off the "all axes equal k" diagonal and holds ``Phase.to_complex()`` of
 ``phase.get(k)`` on it; a missing entry is ``Phase.zero()``, so a ``phase=None`` node is
-the all-ones diagonal. Degenerate cases fall out of the formula read literally: ``m = n =
-0`` collapses to the scalar ``sum_k e^{i alpha_k}``; ``m = 0, n = 2`` denotes ``sum_k
-|kk>``. The implementation accumulates into position ``(k,) * rank``.
+the all-ones diagonal. ``m = n = 0`` collapses to the scalar ``sum_k e^{i alpha_k}``.
 
 X spider, the Fourier conjugate of Z::
 
@@ -39,16 +40,16 @@ X spider, the Fourier conjugate of Z::
 
 with the unitary DFT matrix ``F[j][k] = omega_d^{j*k} / sqrt(d)``, ``omega_d =
 e^{2*pi*i/d}``. The exponent sign and the ``1/sqrt(d)`` normalization are fixed here and
-nowhere else; every later consumer, the Fourier box included, reuses
-this exact ``F``. ``F`` is symmetric, so ``F^dagger = conj(F)`` and the implementation
-applies a plain elementwise conjugate to input axes with no transpose.
+nowhere else. ``F`` is symmetric, so ``F^dagger = conj(F)``.
+
+``T`` is ``1`` iff ``out == 0 or out == in``; ``Ti`` is ``1`` iff ``out == in``, ``-1`` iff
+``out == 0 and in >= 1``, built in closed integer form. ``W`` has ``W[0][0][0] = 1`` and,
+for ``i`` in ``1..d-1``, ``W[0][i][i] = W[i][0][i] = 1``, everything else ``0``.
 
 Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
-dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator carries some other
-dimension policy, the generator name is none of ``"Z"``, ``"X"`` and ``"F"``, or an ``"F"``
-box does not carry exactly one input and one output. There is one dispatch point for
-Phase 10's triangle, W, and connective generators to extend.
+dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator name is unregistered,
+or a fixed-arity box carries the wrong leg counts.
 
 A zero-leg node has no port to read a dimension from, so its dimension comes from its phase
 vector's own ``Dim``. A zero-leg node with no phase is rejected as malformed, not defaulted.
@@ -61,8 +62,13 @@ import numpy as np
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase
 from archytaszx.diagram.generators import (
+    DIM_BINDER,
+    DIM_SPLITTER,
     FOURIER_BOX,
     REGISTRY,
+    TRIANGLE,
+    TRIANGLE_INVERSE,
+    W_NODE,
     X_SPIDER,
     Z_SPIDER,
     DimensionPolicy,
@@ -119,9 +125,7 @@ def _leg_dim(node: Node, *, require_concrete: bool = True) -> Dim | None:
 def resolve_dim(node: Node) -> Dim:
     """The single leg dimension of ``node`` as a Dim, concrete or symbolic.
 
-    The dimension-resolution logic of :func:`resolve_dimension` without its concreteness
-    gate, so :mod:`archytaszx.semantics.contract_symbolic` shares one leg-agreement rule with the
-    numeric path instead of restating it.
+    :func:`resolve_dimension` without its concreteness gate.
     """
     if node.generator_type.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
         raise DenoteGrammarError(
@@ -149,12 +153,9 @@ def resolve_dim(node: Node) -> Dim:
 def resolve_dimension(node: Node) -> int:
     """The single concrete leg dimension of ``node``, as a Python int.
 
-    This is the public dimension-resolution gate: it decides where a node's dimension
-    comes from (its legs when it has any, otherwise its phase vector), checks it is
-    concrete, and cross-checks a present phase vector's dimension against it. Exposed
-    separately from :func:`denote` so :mod:`archytaszx.semantics.contract_numeric` can size a
-    node's tensor before allocating it (the size-cap guard), without duplicating this
-    resolution logic.
+    The public dimension-resolution gate: a node's dimension comes from its legs when it
+    has any, otherwise from its phase vector; it is checked concrete and cross-checked
+    against a present phase vector's dimension.
 
     Raises DenoteDomainError for non-concrete or disagreeing dimensions, and
     DenoteGrammarError for a generator whose dimension policy is not ``ALL_LEGS_EQUAL`` and
@@ -236,36 +237,140 @@ def _x_tensor(node: Node, d: int) -> np.ndarray:
     return tensor
 
 
+def leg_dims(node: Node) -> tuple[Dim, ...]:
+    """Every leg dimension of ``node`` as a Dim, outputs then inputs, with no agreement check."""
+    return tuple(port.dim for port in (*node.outputs, *node.inputs))
+
+
+def leg_dimensions(node: Node) -> tuple[int, ...]:
+    """Every leg dimension of ``node`` as an int, outputs then inputs.
+
+    Raises DenoteDomainError on any non-concrete port dim. A zero-leg ``ALL_LEGS_EQUAL``
+    node falls back to its phase dim exactly as :func:`resolve_dimension` does.
+    """
+    dims = leg_dims(node)
+    if not dims:
+        if node.generator_type.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL:
+            # Called for its raise on a zero-leg node whose phase dim is missing or
+            # symbolic. The int it returns is not an axis extent; a rank-0 node has none.
+            resolve_dimension(node)
+        return ()
+    out: list[int] = []
+    for dim in dims:
+        if not dim.is_concrete:
+            raise DenoteDomainError(
+                f"node {node.id!r} ({node.generator_type.name}) has a non-concrete port "
+                f"dimension {dim}; denote() requires every dimension in scope to be concrete"
+            )
+        out.append(dim.to_int())
+    return tuple(out)
+
+
+def _check_arity(node: Node, num_inputs: int, num_outputs: int) -> None:
+    """Raise DenoteGrammarError unless ``node`` has exactly the given leg counts."""
+    if node.num_inputs != num_inputs or node.num_outputs != num_outputs:
+        raise DenoteGrammarError(
+            f"node {node.id!r} ({node.generator_type.name}) has {node.num_inputs} input(s) "
+            f"and {node.num_outputs} output(s); exactly {num_inputs} and {num_outputs} "
+            "are required"
+        )
+
+
+def _triangle_tensor(d: int) -> np.ndarray:
+    """T at concrete dimension ``d``: tensor[out][in] = 1 iff out == 0 or out == in."""
+    tensor = np.zeros((d, d), dtype=np.complex128)
+    for out in range(d):
+        for inp in range(d):
+            if out == 0 or out == inp:
+                tensor[out][inp] = 1
+    return tensor
+
+
+def _triangle_inverse_tensor(d: int) -> np.ndarray:
+    """Ti at concrete dimension ``d``, in closed integer form: the exact inverse of T."""
+    tensor = np.zeros((d, d), dtype=np.complex128)
+    for out in range(d):
+        for inp in range(d):
+            if out == inp:
+                tensor[out][inp] = 1
+            elif out == 0 and inp >= 1:
+                tensor[out][inp] = -1
+    return tensor
+
+
+def _w_tensor(d: int) -> np.ndarray:
+    """W at concrete dimension ``d``: shape (d, d, d), tensor[out0][out1][in]."""
+    tensor = np.zeros((d, d, d), dtype=np.complex128)
+    tensor[0][0][0] = 1
+    for i in range(1, d):
+        tensor[0][i][i] = 1
+        tensor[i][0][i] = 1
+    return tensor
+
+
+def _connective_tensor(node: Node) -> np.ndarray:
+    """B or S at concrete per-port dims, under the module docstring's pairing convention."""
+    name = node.generator_type.name
+    if name == DIM_BINDER.name:
+        _check_arity(node, 2, 1)
+    else:
+        _check_arity(node, 1, 2)
+    dims = leg_dimensions(node)
+    if name == DIM_BINDER.name:
+        product, s, t = dims
+    else:
+        s, t, product = dims
+    if s * t != product:
+        raise DenoteGrammarError(
+            f"node {node.id!r} ({name}) has leg dims {dims}; the product of its input dims "
+            "must equal the product of its output dims"
+        )
+    if name == DIM_BINDER.name:
+        tensor = np.zeros((product, s, t), dtype=np.complex128)
+        for a in range(s):
+            for b in range(t):
+                tensor[a * t + b][a][b] = 1
+        return tensor
+    tensor = np.zeros((s, t, product), dtype=np.complex128)
+    for a in range(s):
+        for b in range(t):
+            tensor[a][b][a * t + b] = 1
+    return tensor
+
+
 def denote(node: Node) -> np.ndarray:
     """The denotation of ``node`` as a ``complex128`` numpy tensor. See the module docstring.
 
-    This is the single point in this module (and, transitively, in the whole oracle)
-    that may allocate a dense array for one node; it does so only after
-    :func:`resolve_dimension` has confirmed every dimension and phase in scope is
-    concrete. Dispatches on ``node.generator_type`` against the registered
-    ``Z_SPIDER``/``X_SPIDER``/``FOURIER_BOX`` constants -- the one dispatch point later
-    generators (Phase 10's triangle, W, and connectives) must extend.
+    The single point in this module that may allocate a dense array for one node, reached
+    only after every dimension and phase in scope is confirmed concrete. Dispatches on
+    ``node.generator_type`` against the registered generator constants.
     """
-    d = resolve_dimension(node)
     if not REGISTRY.is_registered(node.generator_type):
         raise DenoteGrammarError(
             f"node {node.id!r} carries generator type {node.generator_type.name!r}, which is "
             "not the type registered under that name; denote() dispatches on the registry, "
             "never on a name alone"
         )
-    if node.generator_type.name == Z_SPIDER.name:
+    name = node.generator_type.name
+    if name in (DIM_BINDER.name, DIM_SPLITTER.name):
+        return _connective_tensor(node)
+    d = resolve_dimension(node)
+    if name == Z_SPIDER.name:
         return _z_tensor(node, d)
-    if node.generator_type.name == X_SPIDER.name:
+    if name == X_SPIDER.name:
         return _x_tensor(node, d)
-    if node.generator_type.name == FOURIER_BOX.name:
-        if node.num_inputs != 1 or node.num_outputs != 1:
-            raise DenoteGrammarError(
-                f"node {node.id!r} (F) has {node.num_inputs} input(s) and "
-                f"{node.num_outputs} output(s); an F box denotes a d-by-d matrix and takes "
-                "exactly one of each"
-            )
+    if name == FOURIER_BOX.name:
+        _check_arity(node, 1, 1)
         return _fourier_matrix(d)
+    if name == TRIANGLE.name:
+        _check_arity(node, 1, 1)
+        return _triangle_tensor(d)
+    if name == TRIANGLE_INVERSE.name:
+        _check_arity(node, 1, 1)
+        return _triangle_inverse_tensor(d)
+    if name == W_NODE.name:
+        _check_arity(node, 1, 2)
+        return _w_tensor(d)
     raise DenoteGrammarError(
-        f"node {node.id!r} has generator type {node.generator_type.name!r}, which "
-        "denote() does not know how to denote (only 'Z', 'X' and 'F' are registered)"
+        f"node {node.id!r} has generator type {name!r}, which denote() does not know how to denote"
     )

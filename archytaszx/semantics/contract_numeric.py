@@ -39,7 +39,7 @@ each raising :class:`ContractGrammarError`. The exact scalar is multiplied in la
 An empty diagram evaluates directly to the rank-0 array holding
 ``diagram.scalar.to_complex()``.
 
-Size guard. The result and every intermediate is ``d ** (number of axes)`` complex numbers.
+Size guard. A node's element count is the product of its per-leg dimensions.
 ``max_elements`` (default ``10_000_000``, about 160 MB of ``complex128``) is checked
 against each node's own tensor before it is denoted and against the output tensor before
 contraction, raising :class:`ContractSizeError`.
@@ -53,6 +53,7 @@ axes that are boundary outputs. The split count is carried rather than recompute
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,7 +61,7 @@ import numpy as np
 
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.diagram.validate import ValidationReport, validate
-from archytaszx.semantics.denote import denote, resolve_dimension
+from archytaszx.semantics.denote import denote, leg_dimensions
 
 DEFAULT_MAX_ELEMENTS = 10_000_000
 """The default cap on the element count of any single tensor this module allocates.
@@ -243,9 +244,8 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
 
     einsum_args: list[Any] = []
     for node_id, node in diagram.nodes.items():
-        rank = node.num_outputs + node.num_inputs
-        d = resolve_dimension(node)
-        _check_size(d**rank, max_elements=max_elements, what=f"node {node_id!r}'s tensor")
+        elements = math.prod(leg_dimensions(node))
+        _check_size(elements, max_elements=max_elements, what=f"node {node_id!r}'s tensor")
         tensor = denote(node)
         port_refs = [PortRef(node_id, Direction.OUTPUT, i) for i in range(node.num_outputs)] + [
             PortRef(node_id, Direction.INPUT, i) for i in range(node.num_inputs)

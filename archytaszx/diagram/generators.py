@@ -13,27 +13,23 @@
 
 """Registry of generator types and their leg, phase, and dimension policies.
 
-A :class:`GeneratorType` is a purely descriptive value object: it records, for a family
-of nodes such as the Z spider or the X spider, what leg counts are permitted, how a
-node's :class:`~archytaszx.algebra.phase.PhaseVector` slot relates to its leg dimension, and
-how dimensions are shared across a node's legs. It carries no formula, no matrix, and no
-lambda -- the denotation of a generator (what tensor it actually stands for) is a leaf of
-the evaluator and belongs to :mod:`archytaszx.semantics.denote`, Phase 4's module.
-This module only ever answers "is this node's shape legal", never "what does this node
-mean".
+A :class:`GeneratorType` is a descriptive value object: it records, for a family of nodes
+such as the Z spider, what leg counts are permitted, how a node's
+:class:`~archytaszx.algebra.phase.PhaseVector` slot relates to its leg dimension, and how
+dimensions are shared across a node's legs. It carries no formula, no matrix and no lambda;
+a generator's denotation lives in :mod:`archytaszx.semantics.denote`. This module answers
+"is this node's shape legal", never "what does this node mean".
 
-Dimension policy is deliberately an enum rather than a hardcoded assumption baked into
-the validator. Z and X are ``ALL_LEGS_EQUAL``: every leg of the node -- input or output --
-shares one :class:`~archytaszx.algebra.dimension.Dim`. Phase 10 introduces generators (the
-triangle, W, and dimension-connective generators) with genuinely mixed per-leg
-dimensions; those will add new :class:`DimensionPolicy` members rather than requiring
-:mod:`archytaszx.diagram.validate` to special-case generator names.
+Dimension policy is an enum the validator dispatches on, never a generator-name special
+case. ``ALL_LEGS_EQUAL``: every leg shares one
+:class:`~archytaszx.algebra.dimension.Dim`. ``PRODUCT_OF_LEGS_EQUAL``: the product of the input
+dims equals the product of the output dims, an empty side having product ``Dim.concrete(1)``.
 
-Leg policy is likewise a value object (:class:`LegPolicy`) rather than a bare predicate,
-so that a validation report can name *which* policy a node's leg count violates.
+Leg policy is likewise a value object (:class:`LegPolicy`), so a validation report can name
+*which* policy a node's leg count violates.
 
-This module registers ``"Z"``, ``"X"`` and ``"F"``. No other generator, no bang box, and
-no dimension connective is defined here -- those are later phases.
+Registered here: ``"Z"``, ``"X"``, ``"F"``, ``"T"``, ``"Ti"``, ``"W"``, ``"B"``, ``"S"``. No
+bang box is defined here.
 """
 
 from __future__ import annotations
@@ -65,15 +61,13 @@ class GeneratorGrammarError(GeneratorError):
 class DimensionPolicy(enum.Enum):
     """How a generator type's leg dimensions relate to one another.
 
-    ``ALL_LEGS_EQUAL`` is the only member needed for Z and X: every input and output
-    port of the node carries one shared :class:`~archytaszx.algebra.dimension.Dim`. This is
-    an enum, not a boolean flag, so Phase 10's triangle, W, and dimension-connective
-    generators -- which have genuinely mixed per-leg dimensions -- can add new members
-    here without requiring :mod:`archytaszx.diagram.validate` to be rewritten; the validator
-    dispatches on the policy value rather than on the generator name.
+    ``ALL_LEGS_EQUAL``: every input and output port carries one shared
+    :class:`~archytaszx.algebra.dimension.Dim`. ``PRODUCT_OF_LEGS_EQUAL``: the product of the
+    input dims equals the product of the output dims.
     """
 
     ALL_LEGS_EQUAL = "all_legs_equal"
+    PRODUCT_OF_LEGS_EQUAL = "product_of_legs_equal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +75,7 @@ class LegPolicy:
     """How many input and output legs a generator type permits.
 
     ``min_inputs`` and ``min_outputs`` are inclusive lower bounds; ``None`` for
-    ``max_inputs`` or ``max_outputs`` means unbounded. Z and X use the unbounded
-    zero-or-more policy on both sides (a spider may have zero legs on a side, as the
-    "A into B" worked example's state-preparation node does).
+    ``max_inputs`` or ``max_outputs`` means unbounded.
     """
 
     min_inputs: int = 0
@@ -128,12 +120,9 @@ class LegPolicy:
 class PhaseSchema(enum.Enum):
     """How a generator type's phase slot relates to its leg dimension.
 
-    ``TIED_TO_LEG_DIM`` is the only member needed for Z and X: the node's
-    :class:`~archytaszx.algebra.phase.PhaseVector`, when present, must be built over the same
-    :class:`~archytaszx.algebra.dimension.Dim` that :class:`DimensionPolicy.ALL_LEGS_EQUAL`
-    assigns to every leg. ``NONE`` marks a phase-free generator (no later phase in this
-    plan currently needs it for Z or X, but the member exists so a future phase-free
-    generator does not have to invent a sentinel).
+    ``TIED_TO_LEG_DIM``: the node's :class:`~archytaszx.algebra.phase.PhaseVector`, when
+    present, is built over the same :class:`~archytaszx.algebra.dimension.Dim` every leg
+    carries. ``NONE`` marks a phase-free generator.
     """
 
     TIED_TO_LEG_DIM = "tied_to_leg_dim"
@@ -144,9 +133,8 @@ class PhaseSchema(enum.Enum):
 class GeneratorType:
     """Descriptive policy metadata for one generator family, e.g. the Z spider.
 
-    Purely a value object: leg policy, phase schema, and dimension policy. It records no
-    denotation -- see the module docstring for why that belongs to
-    :mod:`archytaszx.semantics.denote` instead.
+    A value object holding a leg policy, a phase schema and a dimension policy. It records
+    no denotation; see :mod:`archytaszx.semantics.denote`.
     """
 
     name: str
@@ -223,7 +211,7 @@ class GeneratorRegistry:
 
 
 REGISTRY = GeneratorRegistry()
-"""The module-level registry, pre-populated with Z and X."""
+"""The module-level registry, pre-populated with every generator type this module defines."""
 
 Z_SPIDER = GeneratorType(
     name="Z",
@@ -250,6 +238,51 @@ X_SPIDER = GeneratorType(
 )
 """The qudit X spider: any number of legs, phase vector tied to the shared leg dim."""
 
+TRIANGLE = GeneratorType(
+    name="T",
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+)
+"""The generalised triangle: one in, one out, T[out][in] = 1 iff out == 0 or out == in."""
+
+TRIANGLE_INVERSE = GeneratorType(
+    name="Ti",
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+)
+"""The exact inverse of :data:`TRIANGLE`: one in, one out."""
+
+W_NODE = GeneratorType(
+    name="W",
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=2, max_outputs=2),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+)
+"""The W node: one in, two out, the qudit generalisation of |00><0| + (|01> + |10>)<1|."""
+
+DIM_BINDER = GeneratorType(
+    name="B",
+    leg_policy=LegPolicy(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.PRODUCT_OF_LEGS_EQUAL,
+)
+"""The dimension binder: two inputs of dims s, t into one output of dim s*t."""
+
+DIM_SPLITTER = GeneratorType(
+    name="S",
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=2, max_outputs=2),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.PRODUCT_OF_LEGS_EQUAL,
+)
+"""The dimension splitter: one input of dim s*t into two outputs of dims s, t."""
+
 REGISTRY.register(Z_SPIDER)
 REGISTRY.register(X_SPIDER)
 REGISTRY.register(FOURIER_BOX)
+REGISTRY.register(TRIANGLE)
+REGISTRY.register(TRIANGLE_INVERSE)
+REGISTRY.register(W_NODE)
+REGISTRY.register(DIM_BINDER)
+REGISTRY.register(DIM_SPLITTER)
