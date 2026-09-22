@@ -143,7 +143,7 @@ iii. extend denote.py and rules_library.py
 - test and debug: unit-test the character-sum identity; verify the new rule two independent ways, once by full symbolic contraction in d and once by the numeric oracle at concrete d; contract a small nontrivial diagram symbolically and confirm it matches numeric instantiation at several d
 - done when: the symbolic contractor evaluates arbitrary diagrams with d formal, and at least one root-of-unity rule is verified symbolically in d
 
-Phase 10: Mixed dimensions and the full generator set
+Phase 10: Mixed dimensions and the full generator set [UNDER DEBUG]
 i. algebra/dimension.py
 - the placeholder unify becomes a real dimension checker and unifier over expressions with constraints such as d = d1*d2
 
@@ -158,7 +158,7 @@ iv. rewrite/rule.py and match.py
 
 PART 3: REWRITING POWER
 
-Phase 11: Rule library breadth and strategies
+Phase 11: Rule library breadth and strategies [CURRENT]
 i. rewrite/rules_library.py
 - adds identity removal, copy and Hopf, bialgebra, and the qufinite normal-form-directed rules, each recording its exact scalar
 ii. rewrite/engine.py
