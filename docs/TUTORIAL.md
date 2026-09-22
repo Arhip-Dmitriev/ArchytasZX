@@ -143,15 +143,26 @@ from concrete source be scored with no assignment passed at all.
 
 ### Generators
 
-Three are registered today, in `REGISTRY`:
+Eight are registered today, in `REGISTRY`:
 
-| Constant | Name | Legs | Phase |
-|---|---|---|---|
-| `Z_SPIDER` | `"Z"` | any | vector tied to leg dim |
-| `X_SPIDER` | `"X"` | any | vector tied to leg dim |
-| `FOURIER_BOX` | `"F"` | exactly 1 in, 1 out | none |
+| Constant | Name | Legs | Phase | Dimension policy |
+|---|---|---|---|---|
+| `Z_SPIDER` | `"Z"` | any | vector tied to leg dim | all legs equal |
+| `X_SPIDER` | `"X"` | any | vector tied to leg dim | all legs equal |
+| `FOURIER_BOX` | `"F"` | exactly 1 in, 1 out | none | all legs equal |
+| `TRIANGLE` | `"T"` | exactly 1 in, 1 out | none | all legs equal |
+| `TRIANGLE_INVERSE` | `"Ti"` | exactly 1 in, 1 out | none | all legs equal |
+| `W_NODE` | `"W"` | exactly 1 in, 2 out | none | all legs equal |
+| `DIM_BINDER` | `"B"` | exactly 2 in, 1 out | none | product of legs equal |
+| `DIM_SPLITTER` | `"S"` | exactly 1 in, 2 out | none | product of legs equal |
 
-The triangle, W, and the qufinite dimension connectives are not implemented.
+`DimensionPolicy` has two members. `ALL_LEGS_EQUAL` shares one `Dim` across every leg.
+`PRODUCT_OF_LEGS_EQUAL` requires the product of the input dims to equal the product of the
+output dims, an empty side having product `Dim.concrete(1)`; the binder and splitter carry it.
+
+The binder takes wires of dimension `s` and `t` to one wire of dimension `s*t`, and the
+splitter is its inverse. Both use the pairing `k = a*t + b`, with `a` in `[0, s)` and `b` in
+`[0, t)`, so composing them either way is the identity.
 
 ### Validation
 
@@ -234,14 +245,19 @@ result.step                                      # RewriteStep provenance
 
 Match finders: `find_matches` (fusion), `find_fourier_matches`, `find_cap_matches`.
 
-Spider fusion declares **eight side conditions**, each reported with a human-readable
+Spider fusion declares **nine side conditions**, each reported with a human-readable
 detail string whether it passed or failed:
 
 ```
 distinct_nodes · same_generator_type · parallel_wires_become_self_loops ·
 consumed_wire_direction_permitted_for_color · consumed_ports_singly_claimed ·
-bang_box_scope_agreement · dimension_agreement · phase_dimension_agreement
+bang_box_scope_agreement · dimension_agreement · phase_dimension_agreement ·
+dimension_guards_satisfied
 ```
+
+`dimension_guards_satisfied` reports on the `DimensionGuard`s its rule declares. A guard is
+three-valued: it passes, fails, or is undecided at a symbolic dimension, and an undecided
+guard blocks the rewrite rather than deferring it.
 
 Two of them (`distinct_nodes`, `parallel_wires_become_self_loops`) are structural facts no
 candidate can fail; they are recorded for the certificate rather than used as gates.
@@ -430,9 +446,8 @@ syntax, multi-index families, and the diagram-to-Dirac printer are later phases.
 Do not describe these as available: the interactive REPL and command loop · the Dirac
 *printer* (diagram → Dirac) · the general declaration syntax · the normal-form decision
 procedure · equality saturation and the e-graph · tactics and proof search · match and
-denotation caching · scalable sheet-wire notation · mixed dimensions across a diagram and
-the full qufinite generator set (triangle, W, dimension connectives) · the broader rule
-library and strategy layer · diagram-wide dimension-constraint propagation.
+denotation caching · scalable sheet-wire notation · the broader rule library and strategy
+layer.
 
 <!--
 Copyright 2026 Arkhip A. Dmitriev

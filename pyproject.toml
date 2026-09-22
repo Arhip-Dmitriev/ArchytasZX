@@ -69,7 +69,7 @@ include = ["archytaszx*"]
 testpaths = ["tests"]
 # Seed sweeps and oracle differentials are deselected by default. Run them with
 # `pytest -m slow` (sweeps only) or `pytest -m ""` (everything); CI runs `pytest -m ""`.
-# Measured 2026-09-08: the default tier is 1408 tests in ~45s; `-m slow` is 28 tests in ~14m40s.
+# Measured 2026-09-22: the default tier is 2403 tests in ~3m40s; `-m slow` is 36 tests.
 addopts = ["-m", "not slow"]
 markers = [
     "slow: multi-thousand-seed fuzz sweep or oracle differential",

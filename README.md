@@ -62,7 +62,8 @@ from archytaszx.algebra.scalar import Scalar
 
 # Layer B -- diagram data model
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
-from archytaszx.diagram.generators import Z_SPIDER, X_SPIDER, FOURIER_BOX
+from archytaszx.diagram.generators import Z_SPIDER, X_SPIDER, FOURIER_BOX, TRIANGLE, W_NODE
+from archytaszx.diagram.generators import TRIANGLE_INVERSE, DIM_BINDER, DIM_SPLITTER
 from archytaszx.diagram.bangbox import abstract_subgraph_count, abstract_port_count, peel_one
 from archytaszx.diagram.validate import validate, validate_or_raise
 
@@ -247,10 +248,10 @@ moment.
 | Dimension algebra | Integers, symbols, products, powers; one canonical form; `abstract`/`substitute` both directions |
 | Phase and scalar algebra | Symbolic phase vectors tied to `d`; exact scalars with no silent global factors |
 | Diagram model | Per-port dimensions, ordered boundaries, parameter environment, deep copy |
-| Validation | Joint (leg-order independent) dimension resolution, boundary and port checks, symbol-role separation; typed finding kinds |
-| Generators | Z spider, X spider, Fourier box |
+| Validation | Joint (leg-order independent) dimension resolution, per-node policy checks, a diagram-global consistency pass, boundary and port checks, symbol-role separation; typed finding kinds |
+| Generators | Z spider, X spider, Fourier box, triangle and its inverse, W node, dimension binder and splitter |
 | Rewrite core | Rule/pattern/builder abstraction, matcher, engine, structured provenance |
-| Rule library | `spider_fusion`, `fourier_cancellation`, `zx_cap` |
+| Rule library | `spider_fusion`, `fourier_cancellation`, `zx_cap`, `z_fusion_prime_d` (dimension-guarded) |
 | Numeric oracle | Denotation, contraction, exact comparison, opt-in up-to-global-phase mode |
 | Symbolic contraction | Arbitrary diagram closed with `d` formal, through the character-sum simplifier |
 | Induction | Base + step over a bang-box multiplicity, four-tier step ladder, five distinct verdicts |
@@ -259,17 +260,20 @@ moment.
 
 ### Not yet implemented
 
-Mixed dimensions across a diagram and the full qufinite generator set (triangle, W, dimension
-connectives) · the broader rule library and strategy layer · the normal-form decision
-procedure · equality saturation and the e-graph · tactics and proof search · match and
-denotation caching · scalable sheet-wire notation · the diagram-to-Dirac printer · the general
-declaration syntax and the interactive REPL · diagram-wide dimension-constraint propagation.
+The broader rule library and strategy layer · the normal-form decision procedure · equality
+saturation and the e-graph · tactics and proof search · match and denotation caching ·
+scalable sheet-wire notation · the diagram-to-Dirac printer · the general declaration syntax
+and the interactive REPL.
 
 ### Known limits inside what is implemented
 
-- The dimension unifier is still a placeholder: it decides simple cases, and reports
-  `DEFERRED` otherwise. Deferred and bound dimension findings are recorded as
-  assumptions, and both reach the certificate.
+- The dimension unifier cancels common factors and then decides the reduced equation. It
+  still reports `DEFERRED` where an equation has several solution branches: a product of
+  symbols against a concrete (`d1*d2 == 6`), and equations with symbolic exponents
+  (`d**n == d**m`). Deferred and bound dimension findings are recorded as assumptions, and
+  both reach the certificate.
+- A dimension guard is three-valued. A rule restricted to prime `d` refuses to fire at a
+  composite `d` and equally refuses at a symbolic `d`, which cannot be decided.
 - Symbolic contraction handles a symbolic multiplicity only where the bang box is **closed off**
   from the rest of the diagram; a box meeting a wire or a boundary slot has a rank that varies
   with the count.
