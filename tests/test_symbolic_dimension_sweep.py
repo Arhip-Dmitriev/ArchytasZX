@@ -56,7 +56,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.diagram.generators import Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
-from archytaszx.diagram.validate import validate
+from archytaszx.diagram.validate import IssueKind, validate
 from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.match import find_matches
 from archytaszx.rewrite.rules_library import SPIDER_FUSION
@@ -254,7 +254,10 @@ class TestPinnedRegressionReproductions:
         concrete ``3`` -- mutually unsatisfiable, and already refused when the identical
         contradiction is expressed through *legs* instead of phases (see
         :mod:`tests.test_match`'s ``TestSharedDimResolvesThroughBinding`` and
-        ``TestSurvivingLegDimensionUnification`` for that leg-side asymmetry check)."""
+        ``TestSurvivingLegDimensionUnification`` for that leg-side asymmetry check).
+
+        Phase 10's diagram-global consistency pass now also refuses this diagram outright.
+        The matcher is still required to refuse it on its own, which is what this pins."""
         d = Dim.symbol("d")
         diagram = Diagram()
         a_id = diagram.add_node(
@@ -273,10 +276,14 @@ class TestPinnedRegressionReproductions:
         diagram.set_boundary_outputs([])
 
         report = validate(diagram)
-        assert report.is_valid, f"input diagram must validate cleanly: {report.issues}"
+        assert any(
+            issue.kind is IssueKind.DIMENSION_GLOBALLY_INCONSISTENT and not issue.deferred
+            for issue in report.errors
+        ), f"the global pass must refuse d := 2 against d := 3: {report.issues}"
         assert find_matches(diagram) == (), (
             "a Z spider pair whose two present phases bind the shared leg symbol to two "
-            "different concrete values must not be reported as a fusion match"
+            "different concrete values must not be reported as a fusion match, "
+            "independently of what validate() reports"
         )
 
     def test_defect_2_a_phase_only_binding_refines_the_merged_legs_not_just_the_phase(

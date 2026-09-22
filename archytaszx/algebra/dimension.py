@@ -22,19 +22,21 @@ supports the spec invariant that dimension is stored per port, never
 as a single global parameter: this module only supplies dimension *values*,
 it holds no ambient "current dimension" state of its own.
 
-Phase 10 note: :meth:`Dim.unify` here is a deliberate placeholder. It never
-guesses, factors, or partially solves -- it only recognizes the cases it can
-decide outright (both concrete, syntactically equal, or one side a bare
-symbol) and defers everything else as a residual constraint. The real
-unifier, which must actually solve constraints such as ``d = d1 * d2``,
-arrives in Phase 10 and should replace the body of this method, not its
-contract: callers rely on it never reporting success for something it did
-not verify.
+:meth:`Dim.unify` decides one asserted equality: it cancels common factors,
+then either decides the reduced equation outright or reports it as a residual
+constraint. It never reports SUCCESS for an equation it did not verify and
+never FAILURE for one that has a solution over the positive integers.
+
+:func:`solve` runs :meth:`Dim.unify` over a whole system of asserted
+equalities to a monotone fixpoint bounded by :data:`_MAX_SOLVE_PASSES`,
+resolving symbolic bindings against each other. :func:`unify_all` is the
+special case of one shared value.
 """
 
 from __future__ import annotations
 
 import enum
+import itertools
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -100,6 +102,12 @@ def _check_exponent_domain(expr: sp.Expr) -> None:
         _check_symbol_name(str(expr.name))
         return
     if expr.is_Add or expr.is_Mul:
+        for arg in expr.args:
+            _check_exponent_domain(arg)
+        return
+    if expr.is_Pow:
+        # Closes the grammar under substitution: rewriting a dimension symbol by a power
+        # multiplies exponents, and sympy folds m*m to m**2.
         for arg in expr.args:
             _check_exponent_domain(arg)
         return
@@ -386,21 +394,47 @@ class Dim:
     def __str__(self) -> str:
         return str(self._expr)
 
-    def unify(self, other: Dim) -> UnifyResult:
-        """Placeholder unifier (Phase 10 will replace this with a real solver).
+    def rewrite(self, mapping: Mapping[DimSymbolKey, Dim]) -> Dim:
+        """Return a new Dim with symbols replaced by arbitrary (possibly symbolic) Dims.
 
-        Resolves only the cases that can be decided without guessing:
-        concrete-vs-concrete (definite success or definite failure),
-        syntactically-equal-after-normalization (success, no constraints),
-        and a bare symbol against anything that does not contain it (a
-        binding). If a symbol occurs in the other side as a proper subterm
-        (e.g. d against d*e, or d against d**n), it is deferred rather than
-        bound: such an equation is satisfiable only in degenerate cases
-        (d = d*e holds at e == 1; d = d**n holds at n == 1, or at d == 1 for
-        any n), so neither binding it as success nor reporting failure would
-        be honest. Everything else is reported as deferred with the pair
-        recorded as a residual constraint -- it is never guessed at,
-        partially factored, or silently reported as equal.
+        Keys are symbol names or bare-symbol Dims. A value replacing a dimension symbol may
+        be any Dim; a value replacing an exponent symbol must be concrete or a bare symbol.
+        The result is validated against the dimension grammar.
+        """
+        resolved: dict[str, Dim] = {}
+        for key, value in mapping.items():
+            name = self._key_symbol_name(key)
+            if not isinstance(value, Dim):
+                raise TypeError(
+                    f"rewrite value for {name!r} must be a Dim, got {type(value).__name__}"
+                )
+            resolved[name] = value
+        if not resolved:
+            return self
+
+        subs_dict: dict[sp.Symbol, sp.Expr] = {}
+        for sym in sorted(self._expr.free_symbols, key=lambda s: str(s.name)):
+            sym_name = str(sym.name)
+            if sym_name not in resolved:
+                continue
+            value_expr = resolved[sym_name]._expr
+            if sym.assumptions0.get("positive"):
+                subs_dict[sym] = value_expr
+            else:
+                subs_dict[sym] = Dim._coerce_exponent(resolved[sym_name])
+        # Simultaneous: a sequential subs would feed one value into another, so
+        # {d: e, e: 2} would send d*e to 4 rather than to 2*e.
+        return Dim._from_expr(self._expr.subs(subs_dict, simultaneous=True))
+
+    def unify(self, other: Dim) -> UnifyResult:
+        """Decide the equation ``self == other`` over the positive integers.
+
+        Cancels the common factors of both sides base by base (a base with a symbolic or
+        undetermined residual exponent is left uncancelled), then decides the reduced
+        equation: both sides concrete, one side ``1``, one side a lone symbol, or a lone
+        symbol at a concrete power against a concrete integer. Anything else is DEFERRED
+        with the reduced pair as its single residual constraint. SUCCESS is reported only
+        for a verified equation, FAILURE only for one with no solution.
         """
         if not isinstance(other, Dim):
             raise TypeError(f"unify() requires a Dim, got {type(other).__name__}")
@@ -409,19 +443,13 @@ class Dim:
             return UnifyResult(status=status)
         if self._expr == other._expr:
             return UnifyResult(status=UnifyStatus.SUCCESS)
-        if self._expr.is_Symbol:
-            if str(self._expr.name) in other.free_symbols:
-                return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
-            return UnifyResult(status=UnifyStatus.SUCCESS, bindings={str(self._expr.name): other})
-        if other._expr.is_Symbol:
-            if str(other._expr.name) in self.free_symbols:
-                return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
-            return UnifyResult(status=UnifyStatus.SUCCESS, bindings={str(other._expr.name): self})
-        return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((self, other),))
+
+        left, right = _cancel_common_factors(self._expr, other._expr)
+        return _decide_reduced(Dim._from_expr(left), Dim._from_expr(right))
 
 
 class UnifyStatus(enum.Enum):
-    """The three outcomes the Phase 1 unify placeholder can report."""
+    """The three outcomes a dimension equation can be decided into."""
 
     SUCCESS = "success"
     FAILURE = "failure"
@@ -433,8 +461,8 @@ class UnifyResult:
     """The result of Dim.unify: a status plus any bindings or residual constraints found.
 
     ``bindings`` maps a symbol name to the Dim it was unified with.
-    ``constraints`` lists pairs of Dims asserted equal that this placeholder
-    declined to solve; a real solver (Phase 10) would resolve these further.
+    ``constraints`` lists the reduced pairs of Dims asserted equal that a single
+    :meth:`Dim.unify` call could not decide; :func:`solve` carries them further.
     """
 
     status: UnifyStatus
@@ -452,6 +480,249 @@ class UnifyResult:
     @property
     def is_deferred(self) -> bool:
         return self.status is UnifyStatus.DEFERRED
+
+
+def _cancel_common_factors(left: sp.Expr, right: sp.Expr) -> tuple[sp.Expr, sp.Expr]:
+    """Split ``left == right`` into an equivalent pair sharing no base.
+
+    Subtracts exponents base by base. A base whose residual exponent is not a concrete
+    integer stays on the side or sides it started on.
+    """
+    left_powers = left.as_powers_dict()
+    right_powers = right.as_powers_dict()
+    reduced_left: sp.Expr = sp.Integer(1)
+    reduced_right: sp.Expr = sp.Integer(1)
+    for base in sorted(set(left_powers) | set(right_powers), key=sp.srepr):
+        left_exponent = sp.sympify(left_powers.get(base, 0))
+        right_exponent = sp.sympify(right_powers.get(base, 0))
+        net = sp.expand(left_exponent - right_exponent)
+        if net.is_Integer:
+            if net > 0:
+                reduced_left *= base**net
+            elif net < 0:
+                reduced_right *= base ** (-net)
+            continue
+        if left_exponent != 0:
+            reduced_left *= base**left_exponent
+        if right_exponent != 0:
+            reduced_right *= base**right_exponent
+    return reduced_left, reduced_right
+
+
+def _lone_symbol_power(dim: Dim) -> tuple[str, sp.Expr] | None:
+    """The (symbol name, exponent) of a Dim that is one symbol at unit coefficient."""
+    powers = dim.to_sympy().as_powers_dict()
+    if len(powers) != 1:
+        return None
+    ((base, exponent),) = powers.items()
+    if not base.is_Symbol:
+        return None
+    return str(base.name), sp.sympify(exponent)
+
+
+def _decide_against_one(other: Dim) -> UnifyResult:
+    """Decide ``other == 1``: every factor of ``other`` must itself be 1."""
+    bindings: dict[str, Dim] = {}
+    for base, exponent in sorted(
+        other.to_sympy().as_powers_dict().items(), key=lambda kv: sp.srepr(kv[0])
+    ):
+        exponent_expr = sp.sympify(exponent)
+        if not (exponent_expr.is_Integer and exponent_expr > 0):
+            return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((other, Dim.concrete(1)),))
+        if base.is_Integer:
+            if int(base) != 1:
+                return UnifyResult(status=UnifyStatus.FAILURE)
+            continue
+        if not base.is_Symbol:
+            return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((other, Dim.concrete(1)),))
+        bindings[str(base.name)] = Dim.concrete(1)
+    return UnifyResult(status=UnifyStatus.SUCCESS, bindings=bindings)
+
+
+def _divide_out_coefficient(left: Dim, right: Dim) -> UnifyResult | None:
+    """Decide ``k * rest == c`` by divisibility, or return None when that shape is absent.
+
+    Every symbolic factor is a positive integer, so ``k * rest`` is a multiple of ``k``.
+    A ``c`` that ``k`` does not divide is FAILURE; otherwise the equation becomes
+    ``rest == c // k``.
+    """
+    for side, counterpart in ((left, right), (right, left)):
+        if side.is_concrete or not counterpart.is_concrete:
+            continue
+        coefficient, rest = side.to_sympy().as_coeff_Mul()
+        if not (coefficient.is_Integer and int(coefficient) > 1):
+            continue
+        factor = int(coefficient)
+        value = counterpart.to_int()
+        if value % factor != 0:
+            return UnifyResult(status=UnifyStatus.FAILURE)
+        return _decide_reduced(Dim._from_expr(rest), Dim.concrete(value // factor))
+    return None
+
+
+def _decide_reduced(left: Dim, right: Dim) -> UnifyResult:
+    """Decide a reduced equation whose two sides share no base."""
+    if left.is_concrete and right.is_concrete:
+        status = UnifyStatus.SUCCESS if left == right else UnifyStatus.FAILURE
+        return UnifyResult(status=status)
+    if left == right:
+        return UnifyResult(status=UnifyStatus.SUCCESS)
+
+    one = Dim.concrete(1)
+    if left == one:
+        return _decide_against_one(right)
+    if right == one:
+        return _decide_against_one(left)
+
+    divided = _divide_out_coefficient(left, right)
+    if divided is not None:
+        return divided
+
+    for side, counterpart in ((left, right), (right, left)):
+        lone = _lone_symbol_power(side)
+        if lone is None:
+            continue
+        name, exponent = lone
+        if name in counterpart.free_symbols:
+            continue
+        if exponent == 1:
+            return UnifyResult(status=UnifyStatus.SUCCESS, bindings={name: counterpart})
+        if exponent.is_Integer and exponent >= 2 and counterpart.is_concrete:
+            root, exact = sp.integer_nthroot(counterpart.to_int(), int(exponent))
+            if not exact:
+                return UnifyResult(status=UnifyStatus.FAILURE)
+            return UnifyResult(status=UnifyStatus.SUCCESS, bindings={name: Dim.concrete(int(root))})
+    return UnifyResult(status=UnifyStatus.DEFERRED, constraints=((left, right),))
+
+
+_MAX_SOLVE_PASSES = 32
+"""Iteration budget for :func:`solve`'s fixpoint. Module-level so a test can patch it low."""
+
+_MAX_BINDING_MERGES = 64
+"""Per-pair cap on the binding merges one :func:`solve` pass will chase."""
+
+
+@dataclass(frozen=True)
+class SolveResult:
+    """The result of :func:`solve`: a status, resolved bindings, and residual pairs.
+
+    ``bindings`` holds concrete and symbolic bindings, resolved against each other.
+    ``residual_pairs`` holds every pair the fixpoint left undecided. ``exhausted`` is True
+    only when :data:`_MAX_SOLVE_PASSES` ran out before the fixpoint converged, in which case
+    ``residual_pairs`` is a snapshot of the final, non-converged pass.
+    """
+
+    status: UnifyStatus
+    bindings: Mapping[str, Dim] = field(default_factory=dict)
+    residual_pairs: tuple[tuple[Dim, Dim], ...] = ()
+    exhausted: bool = False
+
+    @property
+    def is_success(self) -> bool:
+        return self.status is UnifyStatus.SUCCESS
+
+    @property
+    def is_failure(self) -> bool:
+        return self.status is UnifyStatus.FAILURE
+
+    @property
+    def is_deferred(self) -> bool:
+        return self.status is UnifyStatus.DEFERRED
+
+
+def _pair_sort_key(pair: tuple[Dim, Dim]) -> tuple[str, str]:
+    return (sp.srepr(pair[0].to_sympy()), sp.srepr(pair[1].to_sympy()))
+
+
+def _dedupe_pairs(pairs: Sequence[tuple[Dim, Dim]]) -> tuple[tuple[Dim, Dim], ...]:
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[Dim, Dim]] = []
+    for pair in pairs:
+        key = _pair_sort_key(pair)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(pair)
+    return tuple(unique)
+
+
+def solve(constraints: Sequence[tuple[Dim, Dim]], *, max_passes: int | None = None) -> SolveResult:
+    """Resolve a system of asserted dimension equalities to a monotone fixpoint.
+
+    Sorts ``constraints`` first, so the result depends only on the set of constraints. Each
+    pass resolves both members of every pair through the running bindings and calls
+    :meth:`Dim.unify`. A symbol rebound to a Dim that does not unify with its current value
+    is FAILURE; a binding whose value contains the symbol being bound is deferred as a
+    residual pair. Converged with residuals is DEFERRED with ``exhausted=False``; a budget
+    of :data:`_MAX_SOLVE_PASSES` passes (or ``max_passes``) running out is DEFERRED with
+    ``exhausted=True``.
+    """
+    pairs = tuple(sorted(constraints, key=_pair_sort_key))
+    if not pairs:
+        return SolveResult(status=UnifyStatus.SUCCESS)
+    budget = _MAX_SOLVE_PASSES if max_passes is None else max_passes
+
+    bindings: dict[str, Dim] = {}
+    residual: list[tuple[Dim, Dim]] = []
+    for _pass_index in range(budget):
+        changed = False
+        residual = []
+        for left, right in pairs:
+            mapping = cast(Mapping[DimSymbolKey, Dim], bindings)
+            resolved_left = left.rewrite(mapping)
+            resolved_right = right.rewrite(mapping)
+            result = resolved_left.unify(resolved_right)
+            if result.is_failure:
+                return SolveResult(status=UnifyStatus.FAILURE, bindings=dict(bindings))
+            if result.is_deferred:
+                residual.extend(result.constraints or ((resolved_left, resolved_right),))
+                continue
+            queue = sorted(result.bindings.items())
+            merges = 0
+            while queue:
+                merges += 1
+                if merges > _MAX_BINDING_MERGES:
+                    residual.extend((Dim.symbol(name), value) for name, value in queue)
+                    break
+                name, value = queue.pop(0)
+                value = value.rewrite(cast(Mapping[DimSymbolKey, Dim], bindings))
+                existing = bindings.get(name)
+                if existing is not None:
+                    if existing == value:
+                        continue
+                    merged = existing.unify(value)
+                    if merged.is_failure:
+                        return SolveResult(status=UnifyStatus.FAILURE, bindings=dict(bindings))
+                    if merged.is_deferred:
+                        residual.append((existing, value))
+                        continue
+                    queue.extend(sorted(merged.bindings.items()))
+                    continue
+                if name in value.free_symbols:
+                    residual.append((Dim.symbol(name), value))
+                    continue
+                shift = cast(Mapping[DimSymbolKey, Dim], {name: value})
+                bindings = {key: held.rewrite(shift) for key, held in bindings.items()}
+                bindings[name] = value
+                changed = True
+        if not changed:
+            status = UnifyStatus.DEFERRED if residual else UnifyStatus.SUCCESS
+            return SolveResult(
+                status=status,
+                bindings=dict(bindings),
+                residual_pairs=_dedupe_pairs(residual),
+            )
+
+    # A final pass that added a binding and left nothing unresolved has in fact solved the
+    # system; only an outstanding residual makes the budget's end an undecided answer.
+    if not residual:
+        return SolveResult(status=UnifyStatus.SUCCESS, bindings=dict(bindings))
+    return SolveResult(
+        status=UnifyStatus.DEFERRED,
+        bindings=dict(bindings),
+        residual_pairs=_dedupe_pairs(residual),
+        exhausted=True,
+    )
 
 
 _MAX_UNIFY_ALL_PASSES = 32
@@ -483,15 +754,9 @@ class UnifyAllResult:
     residual_pairs: tuple[tuple[Dim, Dim], ...] = ()
     exhausted: bool = False
     declined_bindings: Mapping[str, Dim] = field(default_factory=dict)
-    """Every binding to a non-concrete ``Dim`` (e.g. ``d := e``) that a pairwise
-    :meth:`Dim.unify` call produced but this function declined to fold into ``bindings`` --
-    see :func:`unify_all`'s own inline comment for why only concrete bindings are ever
-    accumulated for resolution.
-
-    It exists so a caller can see that an assumption was made even on a ``SUCCESS``: a node
-    whose legs unify only via such a binding (legs ``d`` and ``e``) would otherwise report
-    ``SUCCESS`` with nothing to show for it. Populating it changes no verdict and no
-    caller's behavior.
+    """Every solved binding to a non-concrete ``Dim`` (e.g. ``d := e``), split out of
+    ``bindings`` so that ``bindings`` stays usable by :meth:`Dim.substitute`, which takes
+    concrete values only.
 
     :mod:`archytaszx.diagram.validate`'s ``_check_generator_policy`` reports it, together with
     ``bindings``, as a deferred
@@ -514,77 +779,26 @@ class UnifyAllResult:
 def unify_all(dims: Sequence[Dim]) -> UnifyAllResult:
     """Resolve a multiset of Dims that must all be pairwise equal to one shared value.
 
-    Sorts ``dims`` by a canonical key before doing anything else, so the result depends
-    only on the multiset of dims given, never their input order. Runs :meth:`Dim.unify`
-    to a bounded fixpoint, accumulating concrete bindings monotonically (a name rebound to
-    a different concrete value is FAILURE); a binding to a non-concrete Dim is never folded
-    into ``bindings`` or substituted through; it is recorded on
-    :attr:`UnifyAllResult.declined_bindings` rather than dropped. Returns
-    FAILURE on any non-unifiable pair, DEFERRED with every pair still unresolved once the
-    fixpoint stabilises, or SUCCESS. A DEFERRED returned when
-    :data:`_MAX_UNIFY_ALL_PASSES` ran out first carries ``exhausted=True`` and holds only
-    what the final, non-converged pass left unresolved -- see :attr:`UnifyAllResult.exhausted`.
+    Sorts ``dims`` by a canonical key, chains them into consecutive pairs, and hands the
+    system to :func:`solve` with a budget of :data:`_MAX_UNIFY_ALL_PASSES` passes. The final
+    binding map is split: concrete values into ``bindings``, non-concrete ones into
+    :attr:`UnifyAllResult.declined_bindings`. ``exhausted`` propagates from :func:`solve`.
     Raises only :class:`DimensionError` subclasses.
     """
     ordered = sorted(dims, key=lambda d: sp.srepr(d.to_sympy()))
     if len(ordered) < 2:
         return UnifyAllResult(status=UnifyStatus.SUCCESS)
 
-    bindings: dict[str, Dim] = {}
-    declined: dict[str, Dim] = {}
-    residual: dict[str, tuple[Dim, Dim]] = {}
-
-    for _pass_index in range(_MAX_UNIFY_ALL_PASSES):
-        pass_start_bindings = dict(bindings)
-        residual = {}
-        concrete_bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings)
-        base = ordered[0].substitute(concrete_bindings) if bindings else ordered[0]
-        for other in ordered[1:]:
-            concrete_bindings = cast(Mapping[DimSymbolKey, DimSubstituteValue], bindings)
-            resolved_other = other.substitute(concrete_bindings) if bindings else other
-            result = base.unify(resolved_other)
-            if result.is_failure:
-                return UnifyAllResult(status=UnifyStatus.FAILURE)
-            if result.is_deferred:
-                key = f"{base!r}|{resolved_other!r}"
-                residual[key] = (base, resolved_other)
-                continue
-            new_concrete = {
-                name: value for name, value in result.bindings.items() if value.is_concrete
-            }
-            declined.update(
-                {name: value for name, value in result.bindings.items() if not value.is_concrete}
-            )
-            for name, value in new_concrete.items():
-                existing = bindings.get(name)
-                if existing is not None and existing != value:
-                    return UnifyAllResult(status=UnifyStatus.FAILURE)
-                bindings[name] = value
-            if new_concrete:
-                new_concrete_typed = cast(Mapping[DimSymbolKey, DimSubstituteValue], new_concrete)
-                base = base.substitute(new_concrete_typed)
-        if bindings == pass_start_bindings:
-            if residual:
-                return UnifyAllResult(
-                    status=UnifyStatus.DEFERRED,
-                    bindings=dict(bindings),
-                    declined_bindings=dict(declined),
-                    residual_pairs=tuple(residual.values()),
-                )
-            return UnifyAllResult(
-                status=UnifyStatus.SUCCESS,
-                bindings=dict(bindings),
-                declined_bindings=dict(declined),
-            )
-
-    # Budget exhausted without stabilising: report whatever the final, non-converged pass
-    # actually left unresolved, and mark it ``exhausted`` -- see UnifyAllResult's own
-    # docstring for why this must not be a bare, contentless DEFERRED indistinguishable from
-    # a genuinely converged one.
+    result = solve(
+        tuple(itertools.pairwise(ordered)),
+        max_passes=_MAX_UNIFY_ALL_PASSES,
+    )
     return UnifyAllResult(
-        status=UnifyStatus.DEFERRED,
-        bindings=dict(bindings),
-        declined_bindings=dict(declined),
-        residual_pairs=tuple(residual.values()),
-        exhausted=True,
+        status=result.status,
+        bindings={name: value for name, value in result.bindings.items() if value.is_concrete},
+        residual_pairs=result.residual_pairs,
+        exhausted=result.exhausted,
+        declined_bindings={
+            name: value for name, value in result.bindings.items() if not value.is_concrete
+        },
     )

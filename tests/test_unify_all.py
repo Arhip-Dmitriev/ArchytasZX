@@ -40,7 +40,8 @@ class TestOrderIndependence:
         [
             (_D, Dim.concrete(2), Dim.concrete(3)),  # jointly unsatisfiable
             (Dim.concrete(2), Dim.concrete(2), Dim.concrete(2)),  # success
-            (_D, _E, _D * _E),  # deferred residuals
+            (_D, _E, _D * _E),  # success: the shared factor cancels, forcing d = e = 1
+            (Dim.concrete(2) * _D, Dim.concrete(3) * _E),  # deferred residuals
             (_D, _D, Dim.concrete(2)),  # success via one binding, reused
         ],
     )
@@ -80,10 +81,16 @@ class TestBasicOutcomes:
         assert result.bindings == {"d": Dim.concrete(2)}
 
     def test_residual_deferred_pairs_reported(self) -> None:
-        # d, e, d*e: every pair is a deferred occurs-check case.
-        result = unify_all([_D, _E, _D * _E])
+        # Symbolic exponents: no factor cancels and no side is a lone symbol.
+        n, m = Dim.symbol("n"), Dim.symbol("m")
+        result = unify_all([_D**n, _D**m])
         assert result.is_deferred
         assert len(result.residual_pairs) >= 1
+
+    def test_shared_factor_cancellation_decides_a_symbolic_multiset(self) -> None:
+        result = unify_all([_D, _E, _D * _E])
+        assert result.is_success
+        assert dict(result.bindings) == {"d": Dim.concrete(1), "e": Dim.concrete(1)}
 
     def test_bare_symbol_pair_succeeds_via_a_declined_non_concrete_binding(self) -> None:
         """Two bare symbols (``d``, ``e``)
@@ -133,16 +140,14 @@ class TestAgreesWithResolveFusionMatch:
         assert resolution.passed is not all_result.is_failure
 
 
-class TestCrossNodePropagationDeferredToPhase10:
-    """A ``d``-vs-``2`` wire and a ``d``-vs-``3`` wire on two *different* nodes (no shared
-    port, so no single ``unify_all`` call ever sees both) is not, and per FULL_PLAN.md
-    Phase 10 item (i), is not yet meant to be, caught by validate(): diagram-global
-    dimension-constraint propagation is explicitly Phase 10's job, not this module's.
-    Pinned so the day Phase 10 lands, this test fails and says so.
+class TestCrossNodePropagation:
+    """A ``d``-vs-``2`` leg pair and a ``d``-vs-``3`` leg pair on two *different* nodes (no
+    shared port, so no single ``unify_all`` call sees both) is caught by validate()'s
+    diagram-global pass as ``DIMENSION_GLOBALLY_INCONSISTENT``.
     """
 
-    def test_unreported_cross_node_contradiction(self) -> None:
-        from archytaszx.diagram.validate import validate
+    def test_cross_node_contradiction_is_globally_inconsistent(self) -> None:
+        from archytaszx.diagram.validate import IssueKind, validate
 
         d = Dim.symbol("d")
         diagram = Diagram()
@@ -153,11 +158,13 @@ class TestCrossNodePropagationDeferredToPhase10:
             + [PortRef(node_y, Direction.INPUT, i) for i in range(2)]
         )
         report = validate(diagram)
-        # Each node individually binds d to a different concrete value -- jointly
-        # unsatisfiable across the diagram -- but neither node's own ALL_LEGS_EQUAL check
-        # can see the other node's binding, so both bind silently and validate reports
-        # nothing.
-        assert report.is_valid
+        # Each node individually binds d to a different concrete value; the two bindings are
+        # jointly unsatisfiable, which only the diagram-global solve can see.
+        assert not report.is_valid
+        assert any(
+            issue.kind is IssueKind.DIMENSION_GLOBALLY_INCONSISTENT and not issue.deferred
+            for issue in report.errors
+        )
 
 
 class TestBudgetExhaustion:
@@ -191,8 +198,8 @@ class TestBudgetExhaustion:
     def test_converged_deferred_is_not_flagged_exhausted(self) -> None:
         # Sanity check on the discriminator itself: an ordinary DEFERRED, reached well
         # within the default budget, must not be mistaken for an exhausted one.
-        d, e = Dim.symbol("d"), Dim.symbol("e")
-        result = unify_all([d, e, d * e])
+        d, n, m = Dim.symbol("d"), Dim.symbol("n"), Dim.symbol("m")
+        result = unify_all([d**n, d**m])
 
         assert result.is_deferred
         assert result.exhausted is False

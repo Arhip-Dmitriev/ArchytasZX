@@ -193,7 +193,7 @@ class TestSubstitution:
         assert not expr.is_concrete
 
 
-class TestUnifyPlaceholder:
+class TestUnify:
     def test_concrete_equal_succeeds(self) -> None:
         result = Dim.concrete(2).unify(Dim.concrete(2))
         assert result.is_success
@@ -221,7 +221,7 @@ class TestUnifyPlaceholder:
         assert result.is_success
         assert result.bindings == {"d": Dim.concrete(5)}
 
-    def test_product_vs_symbol_deferred(self) -> None:
+    def test_product_vs_symbol_binds(self) -> None:
         d, d1, d2 = Dim.symbol("d"), Dim.symbol("d1"), Dim.symbol("d2")
         result = d.unify(d1 * d2)
         # d is a bare symbol, so this binds rather than defers.
@@ -246,19 +246,19 @@ class TestUnifyPlaceholder:
         assert not result.is_success
         assert not result.is_failure
 
-    def test_occurs_check_defers_symbol_in_product(self) -> None:
+    def test_shared_factor_cancels_and_forces_the_survivor_to_one(self) -> None:
         d, e = Dim.symbol("d"), Dim.symbol("e")
         result = d.unify(d * e)
-        assert result.is_deferred
-        assert result.bindings == {}
-        assert result.constraints == ((d, d * e),)
+        assert result.is_success
+        assert result.bindings == {"e": Dim.concrete(1)}
+        assert result.constraints == ()
 
-    def test_occurs_check_defers_symmetrically(self) -> None:
+    def test_shared_factor_cancels_symmetrically(self) -> None:
         d, e = Dim.symbol("d"), Dim.symbol("e")
         result = (d * e).unify(d)
-        assert result.is_deferred
-        assert result.bindings == {}
-        assert result.constraints == ((d * e, d),)
+        assert result.is_success
+        assert result.bindings == {"e": Dim.concrete(1)}
+        assert result.constraints == ()
 
     def test_occurs_check_defers_symbol_in_power(self) -> None:
         d, n = Dim.symbol("d"), Dim.symbol("n")
