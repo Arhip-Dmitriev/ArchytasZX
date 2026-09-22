@@ -14,9 +14,9 @@
 """The fusion matcher: locates occurrences of same-color spider fusion.
 
 Phase 5 implements one :class:`~archytaszx.rewrite.rule.Pattern`: two spiders of the same
-generator type joined by a wire whose connected legs agree on dimension. A pair joined by
-k wires yields up to one match per wire, each decided on its own; a match fuses across its
-own wire and leaves the rest as self-loops on the merged node.
+generator type joined by a wire whose connected legs agree on dimension. A pair joined by k
+wires yields up to one match per wire, each decided on its own; a match fuses across its own
+wire and leaves the rest as self-loops on the merged node.
 
 Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
 
@@ -34,13 +34,16 @@ Side conditions, in the order applied (see ``FUSION_SIDE_CONDITIONS``):
 7. ``dimension_agreement`` -- the connected legs' :class:`~archytaszx.algebra.dimension.Dim`
    unify. A ``FAILURE`` is a non-match; a ``DEFERRED`` or binding-only ``SUCCESS`` is
    recorded as a dimension constraint. Every surviving leg of both nodes is then unified
-   against the running ``shared_dim`` in turn, each refinement carrying forward.
+   against the running ``shared_dim``, each refinement carrying forward.
 8. ``phase_dimension_agreement`` -- every phase vector present must unify with
    ``shared_dim``; unlike condition 7 a ``DEFERRED`` is rejected. Conditions 7 and 8 form
    one bounded fixpoint; see :func:`resolve_fusion_match`.
+9. ``dimension_guards_satisfied`` (Phase 10) -- every
+   :class:`~archytaszx.rewrite.rule.DimensionGuard` the rule declares holds at the settled
+   ``shared_dim``. An ``UNDECIDED`` guard blocks, with ``deferred`` False.
 
 Conditions 1 and 3 are structural facts recorded for the certificate, not decisions. The
-numbering above is authoritative and machine-checked against ``FUSION_SIDE_CONDITIONS`` by
+numbering above is machine-checked against ``FUSION_SIDE_CONDITIONS`` by
 ``tests/test_engine.py::TestConditionNumberingMatchesDeclaredOrder``.
 
 One verification predicate. :func:`resolve_fusion_match` decides every condition above.
@@ -48,23 +51,21 @@ One verification predicate. :func:`resolve_fusion_match` decides every condition
 :func:`~archytaszx.rewrite.rules_library.spider_fusion_builder` calls it again, fresh, against
 the diagram it was handed, building only from its result.
 
-Malformed references. :func:`find_matches` checks both endpoints of every wire and every
-boundary entry through :func:`_validate_wire_endpoint`, in a pre-pass that runs before
-grouping, raising :class:`~archytaszx.rewrite.rule.RewriteGrammarError`.
+Malformed references. :func:`find_matches` validates both endpoints of every wire and every
+boundary entry in a pre-pass, raising :class:`~archytaszx.rewrite.rule.RewriteGrammarError`.
 
 Match-implies-applicable. Every match returned here applies under
 :func:`~archytaszx.rewrite.engine.apply` without raising anything except the step-8
 relative-postcondition :class:`~archytaszx.rewrite.rule.RewriteDomainError`.
 
-Dimension constraints. ``dimension_constraints`` records every dimension equality accepted
-without a syntactic identity -- a ``DEFERRED`` unify or a binding-only ``SUCCESS`` -- as
-:class:`~archytaszx.rewrite.rule.DimensionConstraint`, at most one entry per
-:class:`~archytaszx.rewrite.rule.ConstraintSource`. A binding to another symbolic ``Dim`` (not
-a concrete value) is carried as an assumption rather than resolved through.
+Dimension constraints. ``dimension_constraints`` records every equality accepted without a
+syntactic identity -- a ``DEFERRED`` unify or a binding-only ``SUCCESS`` -- as
+:class:`~archytaszx.rewrite.rule.DimensionConstraint`, at most one per
+:class:`~archytaszx.rewrite.rule.ConstraintSource`; a symbolic binding stays an assumption.
 
 Determinism. :func:`find_matches` sorts its result by node ids, then by the consumed wire's
-(direction, index) on each side. Every set iteration whose order could reach a returned
-value, a certificate field, or an exception message is sorted by a hash-independent key.
+(direction, index) on each side; every order-observable set iteration is sorted by a
+hash-independent key.
 """
 
 from __future__ import annotations
@@ -89,6 +90,8 @@ from archytaszx.rewrite.rule import (
     ConstraintSource,
     ConstraintSourceKind,
     DimensionConstraint,
+    DimensionGuard,
+    GuardOutcome,
     Match,
     Pattern,
     RewriteGrammarError,
@@ -134,6 +137,10 @@ FUSION_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "outright, or unify binds a symbol to a concrete value (never merely defers, and "
         "never binds to another still-symbolic Dim -- see the module docstring's "
         "'Dimension constraints' note)",
+    ),
+    SideCondition(
+        "dimension_guards_satisfied",
+        "every dimension guard the rule declares holds at the matched shared dimension",
     ),
 )
 """The declared side-condition specs for :class:`FusionPattern`, in the module docstring's
@@ -209,8 +216,8 @@ _MAX_FIXPOINT_PASSES = 32
 Module-level so a test can patch it low and exercise the exhaustion path. Unreachable in
 practice: ``bindings`` is monotone and drawn from the finite free-symbol set of both nodes'
 legs, phases, and the connecting pair, so a non-stabilising pass adds at least one fresh
-key. Kept as a guard against :meth:`~archytaszx.algebra.dimension.Dim.unify`'s placeholder
-contract, which Phase 10 replaces."""
+key. Kept as a structural guard on :meth:`~archytaszx.algebra.dimension.Dim.unify`'s
+contract."""
 
 
 def _resolve_with_bindings(dim: Dim, bindings: Mapping[str, Dim]) -> Dim:
@@ -275,8 +282,7 @@ def _merge_bindings(bindings: dict[str, Dim], new_bindings: Mapping[str, Dim]) -
 
     The contradiction branch does not fire on any current call site: every operand is first
     passed through :func:`_resolve_with_bindings`, so an already-bound symbol is never free
-    in what reaches ``Dim.unify``. Kept as a structural guard against
-    :meth:`Dim.unify`'s placeholder contract, which Phase 10 replaces.
+    in what reaches ``Dim.unify``. Kept as a structural guard on that invariant.
     """
     concrete = {name: value for name, value in new_bindings.items() if value.is_concrete}
     for name, value in concrete.items():
@@ -793,8 +799,48 @@ def innermost_node_scope_box(diagram: Diagram, node_id: NodeId) -> BangBoxId | N
     return min(candidates, key=lambda b: (len(b.node_scope), b.id)).id
 
 
+_GUARD_CONDITION_NAME = "dimension_guards_satisfied"
+"""The name of the Phase 10 side condition :func:`_dimension_guards_outcome` reports."""
+
+
+def _dimension_guards_outcome(
+    guards: tuple[DimensionGuard, ...], shared_dim: Dim
+) -> SideConditionOutcome:
+    """Evaluate every guard at ``shared_dim``. ``UNDECIDED`` blocks, with ``deferred`` False."""
+    if not guards:
+        return SideConditionOutcome(
+            _GUARD_CONDITION_NAME, True, "no dimension guards declared", deferred=False
+        )
+    verdicts = [(guard, guard.evaluate(shared_dim)) for guard in guards]
+    failed = [guard for guard, verdict in verdicts if verdict is GuardOutcome.FAILED]
+    if failed:
+        detail = (
+            f"dimension guard(s) {', '.join(str(guard) for guard in failed)} do not hold at "
+            f"the matched shared dimension {shared_dim}"
+        )
+        return SideConditionOutcome(_GUARD_CONDITION_NAME, False, detail, deferred=False)
+    undecided = [guard for guard, verdict in verdicts if verdict is GuardOutcome.UNDECIDED]
+    if undecided:
+        detail = (
+            f"dimension guard(s) {', '.join(str(guard) for guard in undecided)} cannot be "
+            f"decided at the non-concrete matched shared dimension {shared_dim}, so the "
+            "rewrite is blocked rather than assumed"
+        )
+        return SideConditionOutcome(_GUARD_CONDITION_NAME, False, detail, deferred=False)
+    detail = (
+        f"dimension guard(s) {', '.join(str(guard) for guard in guards)} hold at the matched "
+        f"shared dimension {shared_dim}"
+    )
+    return SideConditionOutcome(_GUARD_CONDITION_NAME, True, detail, deferred=False)
+
+
 def resolve_fusion_match(
-    diagram: Diagram, a_id: NodeId, b_id: NodeId, wire: Wire
+    diagram: Diagram,
+    a_id: NodeId,
+    b_id: NodeId,
+    wire: Wire,
+    *,
+    dimension_guards: tuple[DimensionGuard, ...] = (),
 ) -> FusionResolution:
     """Decide, from ``diagram`` alone, whether ``wire`` is a legal fusion of ``a_id``/``b_id``.
 
@@ -888,6 +934,8 @@ def resolve_fusion_match(
     def _failed(remaining_names: tuple[str, ...], reason: str = "") -> FusionResolution:
         for name in remaining_names:
             outcomes.append(SideConditionOutcome(name, False, reason))
+        if not any(outcome.name == _GUARD_CONDITION_NAME for outcome in outcomes):
+            outcomes.append(SideConditionOutcome(_GUARD_CONDITION_NAME, False, reason))
         return FusionResolution(
             passed=False,
             # None, not a placeholder Dim: a failed resolution has no shared dimension a
@@ -1082,7 +1130,11 @@ def resolve_fusion_match(
                 )
             )
             # Same failure convention as _failed(), but not routed through it: _failed marks
-            # every remaining name False and cannot express this path's mix.
+            # every remaining name False and cannot express this path's mix. The guard
+            # outcome is appended here for the same coverage reason _failed appends it.
+            outcomes.append(
+                SideConditionOutcome(_GUARD_CONDITION_NAME, False, phase_detail, deferred=False)
+            )
             return FusionResolution(
                 passed=False,
                 shared_dim=None,
@@ -1179,6 +1231,17 @@ def resolve_fusion_match(
         # passing outcome rests at most on a binding, which dimension_constraints records.
         SideConditionOutcome("phase_dimension_agreement", True, phase_detail, deferred=False)
     )
+
+    guard_outcome = _dimension_guards_outcome(dimension_guards, shared_dim)
+    outcomes.append(guard_outcome)
+    if not guard_outcome.passed:
+        return FusionResolution(
+            passed=False,
+            shared_dim=None,
+            bindings=MappingProxyType({}),
+            dimension_constraints=(),
+            outcomes=tuple(outcomes),
+        )
     return FusionResolution(
         passed=True,
         shared_dim=shared_dim,
@@ -1188,7 +1251,9 @@ def resolve_fusion_match(
     )
 
 
-def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
+def find_matches(
+    diagram: Diagram, *, dimension_guards: tuple[DimensionGuard, ...] = ()
+) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
     Never mutates ``diagram``, and does not require it to be well-formed --
@@ -1234,7 +1299,9 @@ def find_matches(diagram: Diagram) -> tuple[FusionMatch, ...]:
 
         # Conditions 2 and 4-7 are decided by exactly this call -- the same function
         # spider_fusion_builder calls again to re-verify the match.
-        resolution = resolve_fusion_match(diagram, a_id, b_id, wire)
+        resolution = resolve_fusion_match(
+            diagram, a_id, b_id, wire, dimension_guards=dimension_guards
+        )
         if not resolution.passed:
             continue
         assert resolution.shared_dim is not None  # invariant: passed implies shared_dim is set
@@ -1271,12 +1338,15 @@ def _ordered_pair(wire: Wire) -> tuple[NodeId, NodeId]:
     return wire.b.node_id, wire.a.node_id
 
 
+@dataclass(frozen=True, slots=True)
 class FusionPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for same-color spider fusion."""
+    """Same-color spider fusion, optionally restricted by :class:`DimensionGuard`\\ s."""
+
+    dimension_guards: tuple[DimensionGuard, ...] = ()
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_matches`. See the module docstring."""
-        return find_matches(diagram)
+        return find_matches(diagram, dimension_guards=self.dimension_guards)
 
 
 FOURIER_CHAIN_LENGTH = 4

@@ -342,6 +342,7 @@ def _fabricated_passing_outcomes() -> tuple[SideConditionOutcome, ...]:
             "bang_box_scope_agreement",
             "dimension_agreement",
             "phase_dimension_agreement",
+            "dimension_guards_satisfied",
         )
     )
 

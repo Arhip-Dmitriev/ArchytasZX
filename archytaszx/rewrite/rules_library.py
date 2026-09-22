@@ -87,6 +87,8 @@ from archytaszx.rewrite.match import (
 )
 from archytaszx.rewrite.rule import (
     BuildResult,
+    DimensionGuard,
+    DimensionGuardKind,
     Match,
     Quantifiers,
     RewriteDomainError,
@@ -166,7 +168,17 @@ def _merged_phase(
     return phase_a + phase_b, substitutions
 
 
-def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
+PRIME_DIMENSION_GUARDS: tuple[DimensionGuard, ...] = (DimensionGuard(DimensionGuardKind.PRIME),)
+"""The guard tuple :data:`Z_FUSION_PRIME_D` declares: the shared dimension must be prime."""
+
+
+def spider_fusion_builder(
+    diagram: Diagram,
+    match: Match,
+    *,
+    dimension_guards: tuple[DimensionGuard, ...] = (),
+    context: str = "spider_fusion",
+) -> BuildResult:
     """The right-hand side of :data:`SPIDER_FUSION`: merge the two matched spiders.
 
     Mutates ``diagram`` in place by adding the merged node (module docstring: leg ordering,
@@ -192,19 +204,19 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     incident on both or not in ``diagram.wires``).
     """
     if not isinstance(match, FusionMatch):
-        raise RewriteGrammarError(
-            f"spider_fusion requires a FusionMatch, got {type(match).__name__}"
-        )
+        raise RewriteGrammarError(f"{context} requires a FusionMatch, got {type(match).__name__}")
     # The module-level constant, not spider_fusion_builder.side_conditions, which would be a
     # self-reference to this function's own global name. That attribute exists solely for
     # Rule.__post_init__.
-    check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, "spider_fusion")
+    check_side_condition_coverage(match, FUSION_SIDE_CONDITIONS, context)
 
-    resolution = resolve_fusion_match(diagram, match.a_id, match.b_id, match.wire)
+    resolution = resolve_fusion_match(
+        diagram, match.a_id, match.b_id, match.wire, dimension_guards=dimension_guards
+    )
     if not resolution.passed:
         failed = [outcome.name for outcome in resolution.outcomes if not outcome.passed]
         raise RewriteDomainError(
-            f"spider_fusion: match at ({match.a_id!r}, {match.b_id!r}) over wire "
+            f"{context}: match at ({match.a_id!r}, {match.b_id!r}) over wire "
             f"{match.wire!r} fails side condition(s) {failed} when re-verified fresh "
             "against the diagram it is being applied to; match.side_condition_outcomes "
             "claimed every condition passed, but a match's own outcomes are never taken "
@@ -213,14 +225,14 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     assert resolution.shared_dim is not None  # invariant: passed implies shared_dim is set
     if match.shared_dim != resolution.shared_dim:
         raise RewriteDomainError(
-            f"spider_fusion: match.shared_dim {match.shared_dim!r} disagrees with the "
+            f"{context}: match.shared_dim {match.shared_dim!r} disagrees with the "
             f"shared dimension {resolution.shared_dim!r} resolve_fusion_match derives "
             "fresh from the diagram for this wire; a match's own shared_dim is never "
             "trusted for graph surgery without this agreement"
         )
     if dict(match.bindings) != dict(resolution.bindings):
         raise RewriteDomainError(
-            f"spider_fusion: match.bindings {dict(match.bindings)!r} disagrees with the "
+            f"{context}: match.bindings {dict(match.bindings)!r} disagrees with the "
             f"bindings {dict(resolution.bindings)!r} resolve_fusion_match derives fresh "
             "from the diagram for this wire"
         )
@@ -228,7 +240,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     # rejected here or the certificate records a claim the rewrite never made.
     if match.dimension_constraints != resolution.dimension_constraints:
         raise RewriteDomainError(
-            f"spider_fusion: match.dimension_constraints {match.dimension_constraints!r} "
+            f"{context}: match.dimension_constraints {match.dimension_constraints!r} "
             f"disagrees with {resolution.dimension_constraints!r}, which "
             "resolve_fusion_match derives fresh from the diagram for this wire -- a "
             "match's own dimension_constraints is never trusted for the certificate "
@@ -236,7 +248,7 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
         )
     if match.side_condition_outcomes != resolution.outcomes:
         raise RewriteDomainError(
-            "spider_fusion: match.side_condition_outcomes disagrees with the outcomes "
+            f"{context}: match.side_condition_outcomes disagrees with the outcomes "
             "resolve_fusion_match derives fresh from the diagram for this wire -- a "
             "match's own side_condition_outcomes is never trusted for the certificate "
             "without this agreement"
@@ -314,6 +326,16 @@ def spider_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
     )
 
 
+def z_fusion_prime_d_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """:func:`spider_fusion_builder` under :data:`PRIME_DIMENSION_GUARDS`."""
+    return spider_fusion_builder(
+        diagram,
+        match,
+        dimension_guards=PRIME_DIMENSION_GUARDS,
+        context="z_fusion_prime_d",
+    )
+
+
 spider_fusion_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
 """The single declared side-condition tuple this builder is meant to be paired with.
 
@@ -338,6 +360,29 @@ SPIDER_FUSION = Rule(
 
 Any further wire joining the same pair is not consumed: it survives as a self-loop on the
 merged spider (condition 3 in :mod:`archytaszx.rewrite.match`).
+"""
+
+
+z_fusion_prime_d_builder.side_conditions = FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+Z_FUSION_PRIME_D = Rule(
+    name="z_fusion_prime_d",
+    pattern=FusionPattern(dimension_guards=PRIME_DIMENSION_GUARDS),
+    builder=z_fusion_prime_d_builder,
+    side_conditions=FUSION_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(
+        leg_counts=("m_a", "n_a", "m_b", "n_b"),
+        dimensions=("d",),
+    ),
+    scalar_introduced=Scalar.one(),
+    dimension_guards=PRIME_DIMENSION_GUARDS,
+)
+"""Spider fusion restricted to a prime shared dimension.
+
+Same builder and scalar as :data:`SPIDER_FUSION`; a composite or non-concrete shared
+dimension is not a match.
 """
 
 
@@ -488,6 +533,7 @@ factor changes the answer.
 RULES: Mapping[str, Rule] = MappingProxyType(
     {
         SPIDER_FUSION.name: SPIDER_FUSION,
+        Z_FUSION_PRIME_D.name: Z_FUSION_PRIME_D,
         FOURIER_CANCELLATION.name: FOURIER_CANCELLATION,
         ZX_CAP.name: ZX_CAP,
     }

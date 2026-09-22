@@ -30,6 +30,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
@@ -242,6 +244,105 @@ class DimensionConstraint:
         return f"{self.assumed} == {self.equal_to} ({self.outcome.value}, {self.source})"
 
 
+class DimensionGuardKind(enum.Enum):
+    """Which arithmetic predicate a :class:`DimensionGuard` tests on a matched dimension."""
+
+    PRIME = "prime"
+    COMPOSITE = "composite"
+    AT_LEAST = "at_least"
+    EQUALS = "equals"
+    DIVISIBLE_BY = "divisible_by"
+
+
+_VALUED_GUARD_KINDS = frozenset(
+    {
+        DimensionGuardKind.AT_LEAST,
+        DimensionGuardKind.EQUALS,
+        DimensionGuardKind.DIVISIBLE_BY,
+    }
+)
+"""The kinds requiring :attr:`DimensionGuard.value`; the rest forbid it."""
+
+
+class GuardOutcome(enum.Enum):
+    """The three-valued verdict of :meth:`DimensionGuard.evaluate`."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    UNDECIDED = "undecided"
+    """The dimension is absent or not concrete, so the predicate was not evaluated."""
+
+
+@dataclass(frozen=True, slots=True)
+class DimensionGuard:
+    """One arithmetic restriction a rule places on the dimension its match resolves to.
+
+    ``value`` is required for ``AT_LEAST``, ``EQUALS`` and ``DIVISIBLE_BY``, and forbidden
+    for ``PRIME`` and ``COMPOSITE``. :meth:`evaluate` is three-valued and never guesses: a
+    non-concrete dimension is ``UNDECIDED``, never assumed either way.
+    """
+
+    kind: DimensionGuardKind
+    value: int | None = None
+
+    def __post_init__(self) -> None:
+        """Require ``value`` exactly for the kinds taking one, as a positive non-bool int."""
+        if not isinstance(self.kind, DimensionGuardKind):
+            raise RewriteGrammarError(
+                f"DimensionGuard.kind must be a DimensionGuardKind, got {self.kind!r}"
+            )
+        needs_value = self.kind in _VALUED_GUARD_KINDS
+        if needs_value and self.value is None:
+            raise RewriteGrammarError(
+                f"DimensionGuard kind {self.kind.value!r} requires a value, got None"
+            )
+        if not needs_value and self.value is not None:
+            raise RewriteGrammarError(
+                f"DimensionGuard kind {self.kind.value!r} takes no value, got {self.value!r}"
+            )
+        if self.value is None:
+            return
+        if isinstance(self.value, bool) or not isinstance(self.value, int):
+            raise RewriteGrammarError(
+                f"DimensionGuard.value must be an int (never a bool), got {self.value!r}"
+            )
+        if self.value < 1:
+            raise RewriteGrammarError(f"DimensionGuard.value must be >= 1, got {self.value!r}")
+
+    def evaluate(self, dim: Dim | None) -> GuardOutcome:
+        """Test this guard at ``dim``: ``UNDECIDED`` unless ``dim`` is a concrete ``Dim``.
+
+        ``d == 1`` is neither prime nor composite, so both ``PRIME`` and ``COMPOSITE``
+        report ``FAILED`` there.
+        """
+        if dim is None or not dim.is_concrete:
+            return GuardOutcome.UNDECIDED
+        value = dim.to_int()
+        if self.kind is DimensionGuardKind.PRIME:
+            held = bool(sp.isprime(value))
+        elif self.kind is DimensionGuardKind.COMPOSITE:
+            held = value >= 2 and not bool(sp.isprime(value))
+        else:
+            bound = self.value
+            assert bound is not None  # invariant, enforced in __post_init__
+            if self.kind is DimensionGuardKind.AT_LEAST:
+                held = value >= bound
+            elif self.kind is DimensionGuardKind.EQUALS:
+                held = value == bound
+            else:
+                held = value % bound == 0
+        return GuardOutcome.PASSED if held else GuardOutcome.FAILED
+
+    def __str__(self) -> str:
+        if self.value is None:
+            return f"d is {self.kind.value}"
+        if self.kind is DimensionGuardKind.AT_LEAST:
+            return f"d >= {self.value}"
+        if self.kind is DimensionGuardKind.EQUALS:
+            return f"d == {self.value}"
+        return f"d divisible by {self.value}"
+
+
 @dataclass(frozen=True, slots=True)
 class Quantifiers:
     """Declared quantifier metadata: which leg-count and dimension names a rule ranges over.
@@ -351,6 +452,7 @@ class Rule:
     quantifiers: Quantifiers
     scalar_introduced: Scalar
     scalar_in_dim: Callable[[Dim], Scalar] | None = None
+    dimension_guards: tuple[DimensionGuard, ...] = ()
 
     def scalar_for(self, dim: Dim | None) -> Scalar:
         """The exact scalar this rule introduces at ``dim``."""
@@ -400,6 +502,13 @@ class Rule:
                 f"rule {self.name!r}: scalar_introduced must be a Scalar, "
                 f"got {type(self.scalar_introduced).__name__}"
             )
+        if not isinstance(self.dimension_guards, tuple) or not all(
+            isinstance(guard, DimensionGuard) for guard in self.dimension_guards
+        ):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: dimension_guards must be a tuple of DimensionGuard, "
+                f"got {self.dimension_guards!r}"
+            )
         if self.scalar_in_dim is not None and not callable(self.scalar_in_dim):
             raise RewriteGrammarError(
                 f"rule {self.name!r}: scalar_in_dim must be callable or None, "
@@ -421,6 +530,19 @@ class Rule:
                 "Rule that agrees with it exactly, so there is exactly one source of truth "
                 "for which conditions a match must cover, not two verdicts kept in sync by "
                 "hand"
+            )
+
+        # A pattern that carries its own dimension_guards is the one that actually gates
+        # matching; a Rule declaring a different tuple would advertise a restriction the
+        # matcher does not apply. A pattern with no such attribute is unconstrained.
+        pattern_guards = getattr(self.pattern, "dimension_guards", None)
+        if pattern_guards is not None and tuple(pattern_guards) != self.dimension_guards:
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: dimension_guards {self.dimension_guards!r} disagrees "
+                f"with its pattern's own dimension_guards {tuple(pattern_guards)!r} -- the "
+                "pattern's guards are what gate matching, so a Rule must declare exactly "
+                "the guards its pattern enforces, never a restriction the matcher does not "
+                "apply"
             )
 
 

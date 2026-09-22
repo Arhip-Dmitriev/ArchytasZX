@@ -461,19 +461,22 @@ class TestPhaseFailureDoesNotMisreportDimensionAgreement:
 
 class TestDimensionConstraintsRecording:
     def test_deferred_leg_dims_are_recorded(self) -> None:
+        # d**p vs d**q: a symbolic residual exponent, which Dim.unify cannot decide either
+        # way, so the connecting pair is recorded as a DEFERRED assumption.
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
+        q = Dim.symbol("q")
         diagram = Diagram()
-        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[])
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d**p])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d**q], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         matches = find_matches(diagram)
         assert len(matches) == 1
         match = matches[0]
         assert match.dimension_constraints == (
             DimensionConstraint(
-                assumed=d,
-                equal_to=d * e,
+                assumed=d**p,
+                equal_to=d**q,
                 source=ConstraintSource.connecting_pair(),
                 outcome=ConstraintOutcome.DEFERRED,
             ),
@@ -1025,22 +1028,22 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
 
     def test_exact_third_party_match_becomes_deferred_after_fusion(self) -> None:
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
         diagram = Diagram()
         # A's consumed leg and B's consumed leg are both literally `d` -- a bare identity,
         # so the connecting pair unifies trivially and shared_dim stays raw `d`, unchanged.
-        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d * e])
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d**p])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
-        # C's port dim is exactly `d * e`, matching A's surviving leg exactly before fusion.
-        c_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[])
+        # C's port dim is exactly `d**p`, matching A's surviving leg exactly before fusion.
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d**p], output_dims=[])
         consumed = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(consumed.a, consumed.b)
         surviving_wire = Wire(PortRef(a_id, Direction.OUTPUT, 1), PortRef(c_id, Direction.INPUT, 0))
         diagram.add_wire(surviving_wire.a, surviving_wire.b)
 
-        # A's own legs (d, d*e) are themselves ALL_LEGS_EQUAL-deferred against each other --
+        # A's own legs (d, d**p) are themselves ALL_LEGS_EQUAL-deferred against each other --
         # an unrelated, pre-existing node-level assumption this test does not care about.
-        # What matters is the A-C *wire* specifically: d*e == d*e, an exact match, no issue.
+        # What matters is the A-C *wire* specifically: d**p == d**p, exact, no issue.
         pre_report = validate(diagram)
         assert not any(
             issue.wire == surviving_wire
@@ -1050,9 +1053,8 @@ class TestSurvivingLegOverwriteIntroducesDeferral:
 
         matches = find_matches(diagram)
         match = next(m for m in matches if m.wire == consumed)
-        # Surviving leg A.output[1] (d*e) unifies against shared_dim=d as DEFERRED (the same
-        # shape as the module docstring's own `d` vs `d*e` example) -- not a FAILURE, so this
-        # is a genuine match, not rejected.
+        # Surviving leg A.output[1] (d**p) unifies against shared_dim=d as DEFERRED -- a
+        # symbolic residual exponent, not a FAILURE, so this is a genuine match.
         assert match.shared_dim == d
 
         result = apply(diagram, SPIDER_FUSION, match)
@@ -1190,29 +1192,38 @@ class TestPhaseDimensionAgreementDeferredFidelity:
         # Unlike a leg, a phase whose dim only DEFERS against shared_dim (never binds,
         # never a bare identity) is a non-match, not an accepted-with-assumption pass.
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
+        q = Dim.symbol("q")
         diagram = Diagram()
         a_id = diagram.add_node(
-            Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d * e, {1: Phase.turns(1)})
+            Z_SPIDER,
+            input_dims=[],
+            output_dims=[d**q],
+            phase=PhaseVector(d**p, {1: Phase.turns(1)}),
         )
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d**q], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         assert find_matches(diagram) == ()
 
     def test_deferred_is_false_when_phase_agrees_outright_despite_an_unrelated_defer(
         self,
     ) -> None:
-        # The connecting pair's own leg dims are both the bare symbol d (syntactic
-        # identity, no defer, no binding); A carries an extra surviving leg over d*e,
-        # which defers against shared_dim=d (a symbol occurring as a proper subterm of the
-        # other side). B's phase is stated directly over d, agreeing with shared_dim
-        # outright -- this must not inherit the unrelated surviving leg's defer.
+        # The connecting pair's own leg dims are both 2*d (syntactic identity, no defer, no
+        # binding); A carries an extra surviving leg over 3*e, which defers against
+        # shared_dim=2*d (coprime coefficients on either side, no single-symbol solution).
+        # B's phase is stated directly over 2*d, agreeing with shared_dim outright -- this
+        # must not inherit the unrelated surviving leg's defer.
         d = Dim.symbol("d")
         e = Dim.symbol("e")
+        two_d = Dim.concrete(2) * d
+        three_e = Dim.concrete(3) * e
         diagram = Diagram()
-        a_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[d])
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[three_e], output_dims=[two_d])
         b_id = diagram.add_node(
-            Z_SPIDER, input_dims=[d], output_dims=[], phase=PhaseVector(d, {1: Phase.turns(1)})
+            Z_SPIDER,
+            input_dims=[two_d],
+            output_dims=[],
+            phase=PhaseVector(two_d, {1: Phase.turns(1)}),
         )
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         match = find_matches(diagram)[0]
@@ -1595,12 +1606,13 @@ class TestResolutionFailureReasonDetails:
 
     def test_phase_deferred_is_not_a_unify_failure_wording(self) -> None:
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
+        q = Dim.symbol("q")
         diagram = Diagram()
         a_id = diagram.add_node(
-            Z_SPIDER, input_dims=[], output_dims=[d * e], phase=_phase_at(d**2, 1)
+            Z_SPIDER, input_dims=[], output_dims=[d**q], phase=_phase_at(d**p, 1)
         )
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d**q], output_dims=[])
         wire = Wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.add_wire(wire.a, wire.b)
 
@@ -1937,14 +1949,15 @@ class TestConstraintRecordPolicyTable:
     def test_deferred_then_identity_fires_inside_a_real_resolution(self) -> None:
         """The drop cell on the live path.
 
-        B's ``d*e`` leg defers against the running ``shared_dim``; the later ``1`` leg binds
+        B's ``d**p`` leg defers against the running ``shared_dim``; the later ``1`` leg binds
         it down to a bare identity, and no entry for that leg survives.
         """
         d = Dim.symbol("d")
         e = Dim.symbol("e")
+        p = Dim.symbol("p")
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, e])
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d * e, Dim.concrete(1)], output_dims=[])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d, d**p, Dim.concrete(1)], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
         diagram.set_boundary_inputs(
@@ -1957,7 +1970,7 @@ class TestConstraintRecordPolicyTable:
         dropped = ConstraintSource.surviving_leg(PortRef(b_id, Direction.INPUT, 1))
         recorded = {entry.source for entry in resolution.dimension_constraints}
         assert dropped not in recorded, (
-            "the d*e leg deferred and was then discharged into an identity, so its entry "
+            "the d**p leg deferred and was then discharged into an identity, so its entry "
             "must be dropped, not left standing as an assumption nothing assumes"
         )
         assert recorded == {
@@ -1982,36 +1995,38 @@ class TestSharedDimSeedComesFromTheLowerIdNode:
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         return diagram
 
+    # 2*d vs 3*e: coprime concrete coefficients on either side, which Dim.unify leaves
+    # DEFERRED, so the A-side seed stays standing and the choice is observable.
+    _A_DIM = Dim.concrete(2) * Dim.symbol("d")
+    _B_DIM = Dim.concrete(3) * Dim.symbol("e")
+
     def test_seed_is_the_a_side_leg_not_the_b_side_one(self) -> None:
-        d = Dim.symbol("d")
-        e = Dim.symbol("e")
-        matches = find_matches(self._deferring_pair(d, d * e))
+        matches = find_matches(self._deferring_pair(self._A_DIM, self._B_DIM))
         assert len(matches) == 1
-        assert matches[0].shared_dim == d
+        assert matches[0].shared_dim == self._A_DIM
 
     def test_swapping_the_two_legs_swaps_the_resolved_dimension(self) -> None:
-        d = Dim.symbol("d")
-        e = Dim.symbol("e")
-        matches = find_matches(self._deferring_pair(d * e, d))
+        matches = find_matches(self._deferring_pair(self._B_DIM, self._A_DIM))
         assert len(matches) == 1
-        assert matches[0].shared_dim == d * e
+        assert matches[0].shared_dim == self._B_DIM
 
     def test_the_merged_node_is_built_at_the_a_side_seed(self) -> None:
-        d = Dim.symbol("d")
-        e = Dim.symbol("e")
         diagram = Diagram()
-        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d * e], output_dims=[d * e])
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[self._A_DIM, self._A_DIM])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[self._B_DIM], output_dims=[self._B_DIM])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_outputs(
             [PortRef(a_id, Direction.OUTPUT, 1), PortRef(b_id, Direction.OUTPUT, 0)]
         )
         (match,) = find_matches(diagram)
-        assert match.shared_dim == d
+        assert match.shared_dim == self._A_DIM
         result = apply(diagram, SPIDER_FUSION, match)
         (new_id,) = result.new_node_ids
         merged = result.diagram.nodes[new_id]
-        assert [port.dim for port in (*merged.inputs, *merged.outputs)] == [d, d]
+        assert [port.dim for port in (*merged.inputs, *merged.outputs)] == [
+            self._A_DIM,
+            self._A_DIM,
+        ]
 
 
 class TestFixpointExitRequiresBothToStabilise:
@@ -2242,7 +2257,11 @@ class TestStructuralGuardsThatTheFixpointNeverReaches:
         assert resolution.passed is False
         assert resolution.shared_dim is None
         failed = {o.name for o in resolution.outcomes if not o.passed}
-        assert failed == {"dimension_agreement", "phase_dimension_agreement"}
+        assert failed == {
+            "dimension_agreement",
+            "phase_dimension_agreement",
+            "dimension_guards_satisfied",
+        }
         for outcome in resolution.outcomes:
             if not outcome.passed:
                 assert "post-loop closure check failed" in outcome.detail

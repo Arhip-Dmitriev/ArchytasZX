@@ -642,12 +642,14 @@ class TestRemovedDeferredIssuesAreRecorded:
 
     def test_a_consumed_deferred_leg_pair_is_recorded_as_removed(self) -> None:
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
+        q = Dim.symbol("q")
         diagram = Diagram()
-        # a_id's own two legs (d, d*e) defer against each other under ALL_LEGS_EQUAL --
-        # a legal, non-hard-error diagram-level DIMENSION_DEFERRED finding.
-        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d * e])
-        b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        # a_id's own two legs (d**p, d**q) defer against each other under ALL_LEGS_EQUAL --
+        # a legal, non-hard-error diagram-level DIMENSION_DEFERRED finding. A symbolic
+        # exponent pair is undecidable for Dim.unify, so the finding is DEFERRED, not BOUND.
+        a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d**p, d**q])
+        b_id = diagram.add_node(Z_SPIDER, input_dims=[d**p], output_dims=[])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_outputs([PortRef(a_id, Direction.OUTPUT, 1)])
 
@@ -660,7 +662,7 @@ class TestRemovedDeferredIssuesAreRecorded:
         match = find_matches(diagram)[0]
         result = apply(diagram, SPIDER_FUSION, match)
 
-        # The merged node has exactly one surviving leg (forced onto shared_dim=d) -- no
+        # The merged node has exactly one surviving leg (forced onto shared_dim=d**p) -- no
         # second leg left to defer against, so the finding is gone from `working` entirely.
         post_report = validate(result.diagram)
         assert not any(issue.kind is IssueKind.DIMENSION_DEFERRED for issue in post_report.deferred)
@@ -674,11 +676,12 @@ class TestRemovedDeferredIssuesAreRecorded:
         # Mirror case: the deferred pair survives fusion untouched (on the third,
         # unrelated node c_id) -- removed_deferred_issues must stay empty.
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        p = Dim.symbol("p")
+        q = Dim.symbol("q")
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
-        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d * e])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d**p, d**q])
         diagram.add_wire(PortRef(a_id, Direction.OUTPUT, 0), PortRef(b_id, Direction.INPUT, 0))
         diagram.set_boundary_outputs(
             [PortRef(c_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.OUTPUT, 1)]
@@ -772,17 +775,15 @@ class TestDimensionConstraintsExactContent:
         assert match.dimension_constraints == expected
 
     def test_two_independent_deferred_legs_are_both_recorded_not_collapsed(self) -> None:
-        # A: input dim d*e (survives), output dim d (consumed). B: input dim d (consumed),
-        # output dim d*e (survives). shared_dim = d (connecting pair, bare identity). Both
-        # surviving legs (A's d*e, B's d*e) unify against d and defer -- neither resolves
-        # through bindings (unify(d*e, d) never binds a symbol, since there is no single
-        # substitution of d or e alone that equates a product to one of its own factors), so
-        # both are genuinely independent, undischarged assumptions and both are recorded --
-        # this is not the duplicate-assumption defect, since neither check could have been
-        # derived from the other's outcome.
+        # A: input dim d**p (survives), output dim d (consumed). B: input dim d (consumed),
+        # output dim d**p (survives). shared_dim = d (connecting pair, bare identity). Both
+        # surviving legs unify against d and defer -- unify(d**p, d) has a symbolic residual
+        # exponent and binds nothing, so both are independent, undischarged assumptions and
+        # both are recorded; this is not the duplicate-assumption defect, since neither check
+        # could have been derived from the other's outcome.
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
-        de = d * e
+        p = Dim.symbol("p")
+        de = d**p
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[de], output_dims=[d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[de])
@@ -824,8 +825,8 @@ class TestRemovedDeferredIssuesMultisetCompare:
 
     def test_two_node_anchored_deferred_issues_are_both_reported(self) -> None:
         d = Dim.symbol("d")
-        e = Dim.symbol("e")
-        de = d * e
+        p = Dim.symbol("p")
+        de = d**p
         diagram = Diagram()
         a_id = diagram.add_node(Z_SPIDER, input_dims=[de], output_dims=[d])
         b_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[de])
@@ -1491,24 +1492,26 @@ class TestConditionNumberingMatchesDeclaredOrder:
         assert set(positions.values()) == set(range(1, len(FUSION_SIDE_CONDITIONS) + 1)), (
             f"declared positions are not 1..{len(FUSION_SIDE_CONDITIONS)}: {positions}"
         )
-        last_two = [condition.name for condition in FUSION_SIDE_CONDITIONS[-2:]]
-        true_numbers = sorted(positions[name] for name in last_two)
+        # The first two declared names, whose combined length fits inside ``_WINDOW``; a
+        # longer-named pair is truncated out of the window and the net never sees the second.
+        sample_pair = [condition.name for condition in FUSION_SIDE_CONDITIONS[:2]]
+        true_numbers = sorted(positions[name] for name in sample_pair)
 
-        correct = "see conditions {} and {} (``{}``, ``{}``)".format(*true_numbers, *last_two)
+        correct = "see conditions {} and {} (``{}``, ``{}``)".format(*true_numbers, *sample_pair)
         scanned = self._scan(correct)
         assert scanned, "the net failed to inspect a reference it must inspect"
         assert not self._violations("<synthetic>", scanned, positions)
 
         stale = "see conditions {} and {} (``{}``, ``{}``)".format(
-            true_numbers[0] - 1, true_numbers[1] - 1, *last_two
+            true_numbers[0] + 1, true_numbers[1] + 1, *sample_pair
         )
         stale_scanned = self._scan(stale)
         assert stale_scanned, "the net failed to inspect the stale reference at all"
         assert self._violations("<synthetic>", stale_scanned, positions), (
-            "the net accepted a reference numbered one short on both conditions"
+            "the net accepted a reference numbered one over on both conditions"
         )
 
-        single = f"see condition {positions[last_two[0]] + 1} (``{last_two[0]}``)"
+        single = f"see condition {positions[sample_pair[0]] + 1} (``{sample_pair[0]}``)"
         assert self._violations("<synthetic>", self._scan(single), positions), (
             "the net accepted a single-condition reference off by one"
         )

@@ -69,6 +69,7 @@ from archytaszx.rewrite.rule import (
     ConstraintOutcome,
     ConstraintSourceKind,
     DimensionConstraint,
+    DimensionGuard,
     RewriteGrammarError,
 )
 from archytaszx.rewrite.rules_library import SPIDER_FUSION
@@ -789,6 +790,8 @@ def _find_matches_with_adequacy_instrumentation(
         a_id: object,
         b_id: object,
         wire: object,
+        *,
+        dimension_guards: tuple[DimensionGuard, ...] = (),
     ) -> match_module.FusionResolution:
         nonlocal checked, skipped
         asserted_pairs: list[tuple[Dim, Dim]] = []
@@ -806,7 +809,13 @@ def _find_matches_with_adequacy_instrumentation(
             real_record(self, source, assumed, equal_to, outcome, bound_here=bound_here)  # type: ignore[arg-type]
 
         with patch.object(match_module._ConstraintRecord, "record", patched_record):
-            resolution = real_resolve(diagram_, a_id, b_id, wire)  # type: ignore[arg-type]
+            resolution = real_resolve(
+                diagram_,
+                a_id,  # type: ignore[arg-type]
+                b_id,  # type: ignore[arg-type]
+                wire,  # type: ignore[arg-type]
+                dimension_guards=dimension_guards,
+            )
         if resolution.passed:
             outcome_ = _check_adequacy(resolution, asserted_pairs)
             if outcome_ == "skipped":
@@ -864,13 +873,14 @@ class TestConstraintRecordAdequacy:
                                 total_checked += checked
                                 total_skipped += skipped
         assert total_matches > 0, "the adequacy sweep never produced a single fusion match"
-        # Floor set from the measured figure (4518 checked / 384 skipped on 2026-09-03),
-        # not an order of magnitude below it, where a collapse to a handful of cases would
-        # still pass.
-        assert total_checked >= 4400, (
+        # Floor set from the measured figure (4158 checked on 2026-09-21, down from 4518 on
+        # 2026-09-03: Phase 10's Dim.unify decides equalities that previously deferred, so
+        # fewer cases record a constraint at all). Not an order of magnitude below it, where
+        # a collapse to a handful of cases would still pass.
+        assert total_checked >= 4100, (
             f"only {total_checked} case(s) actually had their adequacy checked (with "
             f"{total_skipped} skipped for being out of the search range/symbol cap); the "
-            "sweep measured 4518 when this floor was set -- it has collapsed"
+            "sweep measured 4158 when this floor was set -- it has collapsed"
         )
 
     def test_random_generators_are_adequate(self) -> None:
