@@ -68,10 +68,23 @@ class TestDimensionMismatch:
 
 
 class TestDeferredDimensionConstraint:
-    def test_symbol_against_a_product_containing_it_is_deferred_not_error(self) -> None:
-        # Dim.unify's occurs check defers exactly this shape (see its docstring): "d"
-        # occurs as a proper subterm of "d * e", so it is neither bound (as bare
-        # symbol-vs-symbol would be) nor rejected -- it is a residual constraint.
+    def test_a_product_of_symbols_against_a_concrete_is_deferred_not_error(self) -> None:
+        # 6 factors as 1*6, 2*3, 3*2 or 6*1, so d1*d2 == 6 has solutions but no unique
+        # one: a residual constraint, neither bound nor rejected.
+        d1 = Dim.symbol("d1")
+        d2 = Dim.symbol("d2")
+        diagram = Diagram()
+        a = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d1 * d2])
+        b = diagram.add_node(Z_SPIDER, input_dims=[Dim.concrete(6)], output_dims=[])
+        diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+        report = validate(diagram)
+        assert report.is_valid
+        assert any(issue.kind is IssueKind.DIMENSION_DEFERRED for issue in report.deferred)
+        assert not any(issue.kind is IssueKind.DIMENSION_MISMATCH for issue in report.errors)
+
+    def test_symbol_against_a_product_containing_it_binds_the_cofactor(self) -> None:
+        # d == d * e cancels to 1 == e, so this pair is decided, not deferred: a
+        # DIMENSION_BOUND assumption, never a DIMENSION_MISMATCH.
         d = Dim.symbol("d")
         e = Dim.symbol("e")
         diagram = Diagram()
@@ -80,7 +93,9 @@ class TestDeferredDimensionConstraint:
         diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
         report = validate(diagram)
         assert report.is_valid
-        assert any(issue.kind is IssueKind.DIMENSION_DEFERRED for issue in report.deferred)
+        bound = [issue for issue in report.deferred if issue.kind is IssueKind.DIMENSION_BOUND]
+        assert bound
+        assert "e := 1" in bound[0].message
         assert not any(issue.kind is IssueKind.DIMENSION_MISMATCH for issue in report.errors)
 
 
@@ -181,14 +196,13 @@ class TestGeneratorPolicyConformance:
         assert any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
 
     def test_symbolic_leg_dims_deferred_not_hard_error(self) -> None:
-        # d occurs as a proper subterm of d * e, so Dim.unify defers this pair rather
-        # than binding or failing it (see its docstring) -- this must land as
-        # DIMENSION_DEFERRED, not DIMENSION_POLICY_VIOLATION, mirroring the wire-level
-        # case in TestDeferredDimensionConstraint.
-        d = Dim.symbol("d")
-        e = Dim.symbol("e")
+        # d1*d2 == 6 has solutions but no unique one, so Dim.unify defers this pair -- it
+        # must land as DIMENSION_DEFERRED, not DIMENSION_POLICY_VIOLATION, mirroring the
+        # wire-level case in TestDeferredDimensionConstraint.
+        d1 = Dim.symbol("d1")
+        d2 = Dim.symbol("d2")
         diagram = Diagram()
-        diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d * e])
+        diagram.add_node(Z_SPIDER, input_dims=[d1 * d2], output_dims=[Dim.concrete(6)])
         report = validate(diagram)
         assert not any(
             issue.kind is IssueKind.DIMENSION_POLICY_VIOLATION for issue in report.errors
@@ -208,11 +222,11 @@ class TestGeneratorPolicyConformance:
         )
 
     def test_symbolic_phase_dim_deferred_not_hard_error(self) -> None:
-        d = Dim.symbol("d")
-        e = Dim.symbol("e")
-        phase = PhaseVector(d * e, {1: Phase.symbol("alpha")})
+        d1 = Dim.symbol("d1")
+        d2 = Dim.symbol("d2")
+        phase = PhaseVector(Dim.concrete(6), {1: Phase.symbol("alpha")})
         diagram = Diagram()
-        diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d], phase=phase)
+        diagram.add_node(Z_SPIDER, input_dims=[d1 * d2], output_dims=[d1 * d2], phase=phase)
         report = validate(diagram)
         assert not any(issue.kind is IssueKind.PHASE_DIMENSION_MISMATCH for issue in report.errors)
         assert any(
@@ -400,9 +414,11 @@ class TestAllLegsEqualJointSatisfiability:
     def test_multiple_residual_deferred_pairs_are_all_reported(self) -> None:
         # Three legs, each pair deferred against the others -- one DIMENSION_DEFERRED
         # issue per residual pair, not one collapsed "strongest" issue for the whole node.
-        d, e, f = Dim.symbol("d"), Dim.symbol("e"), Dim.symbol("f")
+        d1, d2, d3, d4 = (Dim.symbol(name) for name in ("d1", "d2", "d3", "d4"))
         diagram = Diagram()
-        node = diagram.add_node(Z_SPIDER, input_dims=[d * e, d * f, e * f], output_dims=[])
+        node = diagram.add_node(
+            Z_SPIDER, input_dims=[d1 * d2, Dim.concrete(6), d3 * d4], output_dims=[]
+        )
         diagram.set_boundary_inputs([PortRef(node, Direction.INPUT, i) for i in range(3)])
         report = validate(diagram)
         assert report.is_valid
@@ -683,11 +699,11 @@ class TestABoundLegDimensionIsReportedEvenWhenTheLegSetDefers:
         assert "d := 2" in report.deferred[0].message
 
     def test_a_deferred_resolution_reports_the_binding_too(self) -> None:
-        d, e = Dim.symbol("d"), Dim.symbol("e")
-        report = validate(self._node_with_legs([d, Dim.concrete(2), d * e]))
+        d, d1, d2 = Dim.symbol("d"), Dim.symbol("d1"), Dim.symbol("d2")
+        report = validate(self._node_with_legs([d, Dim.concrete(2), d1 * d2]))
         kinds = [issue.kind for issue in report.deferred]
         assert kinds == [IssueKind.DIMENSION_BOUND, IssueKind.DIMENSION_DEFERRED]
-        assert "d := 2" in report.deferred[0].message
+        assert "d := d1*d2" in report.deferred[0].message
 
     def test_adding_a_deferring_leg_never_removes_an_assumption(self) -> None:
         d, e = Dim.symbol("d"), Dim.symbol("e")

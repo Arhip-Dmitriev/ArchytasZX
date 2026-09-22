@@ -16,16 +16,14 @@ port usage, generator policy conformance, symbol-role collisions, and the parame
 environment.
 
 :func:`validate` is a pure read function from a :class:`~archytaszx.diagram.graph.Diagram` to a
-:class:`ValidationReport`. It is the one place a diagram's cross-cutting invariants are
-checked together, in one pass, and reported as typed issues rather than a bool.
+:class:`ValidationReport`, reporting typed issues rather than a bool.
 
 Port usage. Every port of every node must be exactly one of: an endpoint of exactly one
 wire, or an entry in the matching boundary list. Over-use is
 :class:`IssueKind.PORT_WIRED_TWICE`, :class:`IssueKind.PORT_WIRED_AND_BOUNDARY`, or
 :class:`IssueKind.DUPLICATE_BOUNDARY_ENTRY`; a port claimed by neither is
 :class:`IssueKind.PORT_UNUSED`, a hard error. The under-use check is skipped for a node
-already implicated in an :class:`IssueKind.UNKNOWN_NODE` or
-:class:`IssueKind.PORT_INDEX_OUT_OF_RANGE` issue.
+already implicated in an ``UNKNOWN_NODE`` or ``PORT_INDEX_OUT_OF_RANGE`` issue.
 
 Dimension checking is layered the way :meth:`~archytaszx.algebra.dimension.Dim.unify` is,
 uniformly for dimensions joined by a wire, shared by one node's legs, or tied to its phase.
@@ -39,33 +37,35 @@ and a resolution can report both at once.
 ``ALL_LEGS_EQUAL`` resolves a node's whole leg set through
 :func:`~archytaszx.algebra.dimension.unify_all`, a monotone bindings fixpoint;
 ``TIED_TO_LEG_DIM``'s phase/leg check resolves through those same bindings. Each residual
-``DEFERRED`` pair gets its own issue. Bindings do not propagate from one node's legs to
-another's -- diagram-global propagation is FULL_PLAN.md Phase 10 item (i), pinned by
-``tests/test_unify_all.py::TestCrossNodePropagationDeferredToPhase10``.
+``DEFERRED`` pair gets its own issue. ``PRODUCT_OF_LEGS_EQUAL`` instead unifies the product of
+the input dims against the product of the output dims, and skips the leg-agreement check.
+
+Diagram-global pass. :func:`_check_dimension_consistency` runs last, so its issues append
+after every per-node one. It gathers every dimension equality the diagram asserts -- wire
+endpoints by ``Wire.sort_key``, then each node's policy and phase equalities by node id --
+and hands them to :func:`~archytaszx.algebra.dimension.solve` as one system. FAILURE is the
+hard :class:`IssueKind.DIMENSION_GLOBALLY_INCONSISTENT`; an exhausted budget is the hard
+:class:`IssueKind.DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED`. A converged ``DEFERRED`` emits
+nothing, each such finding already being reported per node or per wire. The pass is skipped
+when the report already carries an ``UNKNOWN_NODE`` or ``PORT_INDEX_OUT_OF_RANGE`` issue.
 
 :class:`IssueKind.NODE_DIMENSION_UNDETERMINED` rejects a node with no legs and no phase
-vector, which carries its dimension nowhere. It keeps ``validate(d).is_valid`` implying
-every node in ``d`` is denotable, which :mod:`archytaszx.rewrite.engine`'s step 8 rests on.
+vector, which carries its dimension nowhere.
 
 :class:`IssueKind.SYMBOL_ROLE_COLLISION` rejects a name used in two symbol roles in one
-diagram. The roles are read off the sympy assumptions each of :mod:`archytaszx.algebra`'s four
-symbol constructors stamps -- including a dimension's exponent, which is its own role.
+diagram, the roles read off the sympy assumptions each symbol constructor stamps.
 
 Parameter environment. Every name :attr:`~archytaszx.diagram.graph.Diagram.parameters` binds
 must be a symbol the diagram carries, in exactly one role, at a value inside that role's
-domain. A name no symbol carries is the deferred
-:class:`IssueKind.PARAMETER_UNKNOWN_SYMBOL`; a value outside the role's domain is the hard
-:class:`IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN`. A name already reported as a role
-collision is skipped, there being no single domain to check it against.
+domain. An uncarried name is the deferred :class:`IssueKind.PARAMETER_UNKNOWN_SYMBOL`; an
+out-of-domain value is the hard :class:`IssueKind.PARAMETER_VALUE_OUT_OF_DOMAIN`. A name
+already reported as a role collision is skipped.
 
 Determinism. Every pass whose issue-append order is observable iterates a snapshot sorted
 by :meth:`~archytaszx.diagram.graph.Wire.sort_key` /
 :meth:`~archytaszx.diagram.graph.PortRef.sort_key`, never a frozenset directly.
-:attr:`ValidationReport.issues`'s order is relied on by :mod:`archytaszx.rewrite.engine`'s
-deferred-issue selection.
 
-Out of scope: contraction and numeric meaning (Phase 4's oracle), repair, and bang boxes
-(Phase 7).
+Out of scope: contraction and numeric meaning, and repair.
 """
 
 from __future__ import annotations
@@ -73,14 +73,20 @@ from __future__ import annotations
 import enum
 import itertools
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.dimension import DimSubstituteValue, DimSymbolKey, unify_all
+from archytaszx.algebra.dimension import (
+    Dim,
+    DimSubstituteValue,
+    DimSymbolKey,
+    solve,
+    unify_all,
+)
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
@@ -132,6 +138,8 @@ class IssueKind(enum.Enum):
     NODE_DIMENSION_UNDETERMINED = "node_dimension_undetermined"
     SYMBOL_ROLE_COLLISION = "symbol_role_collision"
     DIMENSION_RESOLUTION_EXHAUSTED = "dimension_resolution_exhausted"
+    DIMENSION_GLOBALLY_INCONSISTENT = "dimension_globally_inconsistent"
+    DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED = "dimension_global_resolution_exhausted"
     PARAMETER_UNKNOWN_SYMBOL = "parameter_unknown_symbol"
     PARAMETER_VALUE_OUT_OF_DOMAIN = "parameter_value_out_of_domain"
     BANGBOX_SCOPE_UNKNOWN_NODE = "bangbox_scope_unknown_node"
@@ -545,7 +553,13 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
     # phase-vs-legs branch after it read from it, so there is one leg-resolution
     # computation, not two that can drift apart.
     all_ports = (*node.inputs, *node.outputs)
-    leg_unify = unify_all([port.dim for port in all_ports]) if all_ports else None
+    product_policy = gen.dimension_policy is DimensionPolicy.PRODUCT_OF_LEGS_EQUAL
+    leg_unify = (
+        unify_all([port.dim for port in all_ports]) if all_ports and not product_policy else None
+    )
+
+    if product_policy:
+        _check_product_policy(node, issues)
 
     if gen.dimension_policy is DimensionPolicy.ALL_LEGS_EQUAL and leg_unify is not None:
         if leg_unify.is_failure:
@@ -694,6 +708,136 @@ def _check_generator_policy(node: Node, issues: list[ValidationIssue]) -> None:
                 # before the phase is examined, and nothing later re-reads resolved_leg_dim.
                 # Feeding the binding back could only sharpen the wording of an
                 # already-emitted DIMENSION_DEFERRED residual, never change a verdict.
+
+
+def _dim_product(dims: Iterable[Dim]) -> Dim:
+    """The product of ``dims``, ``Dim.concrete(1)`` for an empty sequence."""
+    product = Dim.concrete(1)
+    for dim in dims:
+        product = product * dim
+    return product
+
+
+def _check_product_policy(node: Node, issues: list[ValidationIssue]) -> None:
+    """Unify a ``PRODUCT_OF_LEGS_EQUAL`` node's input product against its output product."""
+    gen = node.generator_type
+    inputs_product = _dim_product(port.dim for port in node.inputs)
+    outputs_product = _dim_product(port.dim for port in node.outputs)
+    result = inputs_product.unify(outputs_product)
+    if result.is_failure:
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.DIMENSION_POLICY_VIOLATION,
+                message=(
+                    f"node {node.id!r} ({gen.name}) requires its input product to equal its "
+                    f"output product, but {inputs_product} != {outputs_product}"
+                ),
+                node_id=node.id,
+            )
+        )
+    elif result.is_deferred:
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.DIMENSION_DEFERRED,
+                message=(
+                    f"node {node.id!r} ({gen.name}) assumes input product {inputs_product} == "
+                    f"output product {outputs_product} (deferred, not yet decided)"
+                ),
+                node_id=node.id,
+                deferred=True,
+            )
+        )
+    elif result.bindings:
+        bound = ", ".join(f"{name} := {value}" for name, value in sorted(result.bindings.items()))
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.DIMENSION_BOUND,
+                message=(
+                    f"node {node.id!r} ({gen.name}) input product {inputs_product} equals "
+                    f"output product {outputs_product} only under the binding(s) {bound}"
+                ),
+                node_id=node.id,
+                deferred=True,
+            )
+        )
+
+
+def _gather_dimension_constraints(diagram: Diagram) -> list[tuple[Dim, Dim]]:
+    """Every dimension equality the diagram asserts: wire endpoints (by ``Wire.sort_key``),
+    then each node's policy and phase equalities (by node id)."""
+    constraints: list[tuple[Dim, Dim]] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        node_a = diagram.nodes.get(wire.a.node_id)
+        node_b = diagram.nodes.get(wire.b.node_id)
+        if node_a is None or node_b is None:
+            continue
+        legs_a = node_a.legs(wire.a.direction)
+        legs_b = node_b.legs(wire.b.direction)
+        if wire.a.index >= len(legs_a) or wire.b.index >= len(legs_b):
+            continue
+        constraints.append((legs_a[wire.a.index].dim, legs_b[wire.b.index].dim))
+    for node_id in sorted(diagram.nodes):
+        node = diagram.nodes[node_id]
+        gen = node.generator_type
+        all_ports = (*node.inputs, *node.outputs)
+        if gen.dimension_policy is DimensionPolicy.PRODUCT_OF_LEGS_EQUAL:
+            constraints.append(
+                (
+                    _dim_product(port.dim for port in node.inputs),
+                    _dim_product(port.dim for port in node.outputs),
+                )
+            )
+            continue
+        if gen.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
+            continue
+        for left, right in itertools.pairwise(all_ports):
+            constraints.append((left.dim, right.dim))
+        tied = gen.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
+        if node.phase is not None and tied and all_ports:
+            constraints.append((node.phase.dim, all_ports[0].dim))
+    return constraints
+
+
+def _check_dimension_consistency(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """Solve every dimension equality the diagram asserts as one system.
+
+    Emits :attr:`IssueKind.DIMENSION_GLOBALLY_INCONSISTENT` on FAILURE and
+    :attr:`IssueKind.DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED` on an exhausted budget, both
+    hard. A converged DEFERRED emits nothing. Skipped when the report already carries an
+    ``UNKNOWN_NODE`` or ``PORT_INDEX_OUT_OF_RANGE`` issue.
+    """
+    if any(
+        issue.kind in (IssueKind.UNKNOWN_NODE, IssueKind.PORT_INDEX_OUT_OF_RANGE)
+        for issue in issues
+    ):
+        return
+    constraints = _gather_dimension_constraints(diagram)
+    if not constraints:
+        return
+    result = solve(constraints)
+    if result.is_failure:
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.DIMENSION_GLOBALLY_INCONSISTENT,
+                message=(
+                    f"the diagram's {len(constraints)} dimension equality assertion(s) have no "
+                    "simultaneous solution"
+                ),
+            )
+        )
+    elif result.exhausted:
+        issues.append(
+            ValidationIssue(
+                kind=IssueKind.DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED,
+                message=(
+                    f"diagram-global dimension resolution over {len(constraints)} assertion(s) "
+                    "ran out of solve's pass budget before its bindings stabilised, leaving "
+                    f"{len(result.residual_pairs)} pair(s) unresolved and "
+                    f"{len(result.bindings)} binding(s) reached on the final pass -- nothing "
+                    "global was decided"
+                ),
+            )
+        )
 
 
 def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> None:
@@ -913,6 +1057,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_bangbox_nesting(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)
+    _check_dimension_consistency(diagram, issues)
     return ValidationReport(tuple(issues))
 
 
