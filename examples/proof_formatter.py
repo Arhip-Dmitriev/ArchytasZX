@@ -33,7 +33,7 @@ Usage:
 
 from __future__ import annotations
 
-from archytaszx.semantics.induction import InductionResult, Verdict, StepDischarge
+from archytaszx.semantics.induction import InductionResult, Verdict
 
 
 class ProofFormatter:
@@ -61,7 +61,7 @@ class ProofFormatter:
         """Explain witness values used for oracle verification only."""
         if not self.proof.witness:
             return ""
-        
+
         witness_str = ", ".join(f"{k}={v}" for k, v in sorted(self.proof.witness.items()))
         return (
             f"[Witness: {witness_str}. These are concrete instantiations "
@@ -72,7 +72,7 @@ class ProofFormatter:
     def _uniform_rewrite_proof(self) -> str:
         """Render a UNIFORM_REWRITE proof (direct, not induction)."""
         index = self.proof.index
-        
+
         lines = [
             "THEOREM",
             "-" * 80,
@@ -84,22 +84,24 @@ class ProofFormatter:
         if witness_note:
             lines.extend([witness_note, ""])
 
-        lines.extend([
-            "PROOF",
-            "-" * 80,
-            f"The spider fusion rule is quantified over all multiplicities and dimensions:",
-            f"",
-            f"  ∀ d, ∀ m: SPIDER_FUSION(diagram) → result",
-            f"",
-            f"This rule does not depend on the parameter {index} itself. It fires uniformly",
-            f"at every value of {index}:",
-            f"",
-            f"  ∀ m: LHS[m] --SPIDER_FUSION→ RHS[m]",
-            f"",
-            f"Therefore, the identity holds for all multiplicities {index} without need for",
-            f"an induction hypothesis. The proof is direct and uniform. □",
-            "",
-        ])
+        lines.extend(
+            [
+                "PROOF",
+                "-" * 80,
+                "The spider fusion rule is quantified over all multiplicities and dimensions:",
+                "",
+                "  ∀ d, ∀ m: SPIDER_FUSION(diagram) → result",
+                "",
+                f"This rule does not depend on the parameter {index} itself. It fires uniformly",
+                f"at every value of {index}:",
+                "",
+                "  ∀ m: LHS[m] --SPIDER_FUSION→ RHS[m]",
+                "",
+                f"Therefore, the identity holds for all multiplicities {index} without need for",
+                "an induction hypothesis. The proof is direct and uniform. □",
+                "",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -108,8 +110,7 @@ class ProofFormatter:
         index = self.proof.index
         base = self.proof.base_value
         step = self.obligation.step_symbol
-        held = sorted(self.proof.held_symbolic) if self.proof.held_symbolic else []
-        
+
         lines = [
             "THEOREM",
             "-" * 80,
@@ -121,25 +122,30 @@ class ProofFormatter:
         if witness_note:
             lines.extend([witness_note, ""])
 
-        lines.extend([
-            "PROOF (by induction on " + index + ")",
-            "-" * 80,
-            f"Base case ({index} = {base}):",
-            f"  LHS[{index}={base}] = RHS[{index}={base}]",
-            f"",
-            f"Inductive hypothesis (assume true for {index} = {step}):",
-            f"  LHS[{index}={step}] = RHS[{index}={step}]",
-            f"",
-            f"Inductive step (prove for {index} = {step} + 1):",
-            f"  Goal: LHS[{index}={step}+1] = RHS[{index}={step}+1]",
-            f"",
-            f"  By {self.proof.discharge.value if self.proof.discharge else 'the discharge tier'},",
-            f"  the successor diagrams are rewritten to each other, with the residual",
-            f"  matching the hypothesis by assumption.",
-            f"",
-            f"By mathematical induction, LHS({index}) = RHS({index}) for all {index} ≥ {base}. □",
-            "",
-        ])
+        lines.extend(
+            [
+                "PROOF (by induction on " + index + ")",
+                "-" * 80,
+                f"Base case ({index} = {base}):",
+                f"  LHS[{index}={base}] = RHS[{index}={base}]",
+                "",
+                f"Inductive hypothesis (assume true for {index} = {step}):",
+                f"  LHS[{index}={step}] = RHS[{index}={step}]",
+                "",
+                f"Inductive step (prove for {index} = {step} + 1):",
+                f"  Goal: LHS[{index}={step}+1] = RHS[{index}={step}+1]",
+                "",
+                f"  By {self.proof.discharge.value if self.proof.discharge else 'the tier'},",
+                "  the successor diagrams are rewritten to each other, with the residual",
+                "  matching the hypothesis by assumption.",
+                "",
+                (
+                    f"By mathematical induction, LHS({index}) = RHS({index}) "
+                    f"for all {index} ≥ {base}. □"
+                ),
+                "",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -147,7 +153,7 @@ class ProofFormatter:
         """Render a REFUTED proof (disproof)."""
         index = self.proof.index
         cx = self.proof.counterexample
-        
+
         lines = [
             "THEOREM (REFUTED)",
             "-" * 80,
@@ -157,10 +163,10 @@ class ProofFormatter:
             "-" * 80,
             f"The claimed equality fails at {index} = {cx}:",
             f"  LHS[{index}={cx}] ≠ RHS[{index}={cx}]",
-            f"",
+            "",
             f"Reason: {self.proof.reason}",
-            f"",
-            f"The theorem is false. ✗",
+            "",
+            "The theorem is false. ✗",
             "",
         ]
 
@@ -175,10 +181,10 @@ class ProofFormatter:
             "",
             "STATUS",
             "-" * 80,
-            f"No discharge tier proved or refuted the equality.",
+            "No discharge tier proved or refuted the equality.",
             f"Reason: {self.proof.reason}",
-            f"",
-            f"Verdict unknown. The proof is incomplete.",
+            "",
+            "Verdict unknown. The proof is incomplete.",
             "",
         ]
 
@@ -198,54 +204,71 @@ class ProofFormatter:
 
         # Obligation structure
         ob = self.obligation
-        obligation_section = "\n".join([
-            "OBLIGATION STRUCTURE",
-            "-" * 80,
-            f"Index: {self.proof.index}",
-            f"Base value: {self.proof.base_value}",
-            f"Step symbol: {ob.step_symbol}",
-            f"Held symbolic: {sorted(self.proof.held_symbolic) or 'none'}",
-            f"",
-            f"Diagrams constructed:",
-            f"  LHS at base ({self.proof.index}={self.proof.base_value}): {len(ob.left_at_base.nodes)} nodes",
-            f"  RHS at base ({self.proof.index}={self.proof.base_value}): {len(ob.right_at_base.nodes)} nodes",
-            f"  LHS at hypothesis ({self.proof.index}={ob.step_symbol}): {len(ob.left_at_k.nodes)} nodes, "
-            f"{len(ob.left_at_k.bang_boxes)} bang box(es)",
-            f"  RHS at hypothesis ({self.proof.index}={ob.step_symbol}): {len(ob.right_at_k.nodes)} nodes, "
-            f"{len(ob.right_at_k.bang_boxes)} bang box(es)",
-            f"  LHS at successor ({self.proof.index}={ob.step_symbol}+1): {len(ob.left_at_successor.nodes)} nodes",
-            f"  RHS at successor ({self.proof.index}={ob.step_symbol}+1): {len(ob.right_at_successor.nodes)} nodes",
-            "",
-        ])
+        obligation_section = "\n".join(
+            [
+                "OBLIGATION STRUCTURE",
+                "-" * 80,
+                f"Index: {self.proof.index}",
+                f"Base value: {self.proof.base_value}",
+                f"Step symbol: {ob.step_symbol}",
+                f"Held symbolic: {sorted(self.proof.held_symbolic) or 'none'}",
+                "",
+                "Diagrams constructed:",
+                (
+                    f"  LHS at base ({self.proof.index}={self.proof.base_value}): "
+                    f"{len(ob.left_at_base.nodes)} nodes"
+                ),
+                (
+                    f"  RHS at base ({self.proof.index}={self.proof.base_value}): "
+                    f"{len(ob.right_at_base.nodes)} nodes"
+                ),
+                (
+                    f"  LHS at hypothesis ({self.proof.index}={ob.step_symbol}): "
+                    f"{len(ob.left_at_k.nodes)} nodes, "
+                    f"{len(ob.left_at_k.bang_boxes)} bang box(es)"
+                ),
+                (
+                    f"  RHS at hypothesis ({self.proof.index}={ob.step_symbol}): "
+                    f"{len(ob.right_at_k.nodes)} nodes, "
+                    f"{len(ob.right_at_k.bang_boxes)} bang box(es)"
+                ),
+                (
+                    f"  LHS at successor ({self.proof.index}={ob.step_symbol}+1): "
+                    f"{len(ob.left_at_successor.nodes)} nodes"
+                ),
+                (
+                    f"  RHS at successor ({self.proof.index}={ob.step_symbol}+1): "
+                    f"{len(ob.right_at_successor.nodes)} nodes"
+                ),
+                "",
+            ]
+        )
 
         # Proof metadata
-        metadata_section = "\n".join([
-            "PROOF METADATA",
-            "-" * 80,
-            f"Verdict: {self.proof.verdict.value}",
-            f"Proved: {self.proof.proved}",
-            f"Discharge tier: {self.proof.discharge.value if self.proof.discharge else 'N/A'}",
-            f"Certificate: {'Yes' if self.proof.derivation else 'No'}",
-            f"Reason: {self.proof.reason}",
-            "",
-            "=" * 80,
-        ])
-
-        return (
-            "=" * 80 + "\n" +
-            base +
-            obligation_section +
-            metadata_section
+        metadata_section = "\n".join(
+            [
+                "PROOF METADATA",
+                "-" * 80,
+                f"Verdict: {self.proof.verdict.value}",
+                f"Proved: {self.proof.proved}",
+                f"Discharge tier: {self.proof.discharge.value if self.proof.discharge else 'N/A'}",
+                f"Certificate: {'Yes' if self.proof.derivation else 'No'}",
+                f"Reason: {self.proof.reason}",
+                "",
+                "=" * 80,
+            ]
         )
+
+        return "=" * 80 + "\n" + base + obligation_section + metadata_section
 
 
 if __name__ == "__main__":
     """Example usage: format the spider fusion proof."""
 
     from archytaszx.algebra.dimension import Dim
+    from archytaszx.diagram.bangbox import abstract_subgraph_count
     from archytaszx.diagram.generators import Z_SPIDER
     from archytaszx.diagram.graph import Diagram, Direction, PortRef
-    from archytaszx.diagram.bangbox import abstract_subgraph_count
     from archytaszx.rewrite.engine import apply
     from archytaszx.rewrite.match import find_matches
     from archytaszx.rewrite.rules_library import SPIDER_FUSION
@@ -257,11 +280,13 @@ if __name__ == "__main__":
     a = g.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
     b = g.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
     g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
-    g.set_boundary_outputs([
-        PortRef(a, Direction.OUTPUT, 1),
-        PortRef(b, Direction.OUTPUT, 0),
-        PortRef(b, Direction.OUTPUT, 1),
-    ])
+    g.set_boundary_outputs(
+        [
+            PortRef(a, Direction.OUTPUT, 1),
+            PortRef(b, Direction.OUTPUT, 0),
+            PortRef(b, Direction.OUTPUT, 1),
+        ]
+    )
 
     # Box and prove by induction
     a_id, b_id = list(g.nodes.keys())
