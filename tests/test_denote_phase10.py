@@ -314,3 +314,28 @@ class TestSymbolicEntriesAgreeWithDenote:
     @pytest.mark.parametrize(("s", "t"), ((2, 2), (2, 3), (3, 2)))
     def test_splitter(self, s: int, t: int) -> None:
         assert np.allclose(self._dense(DIM_SPLITTER, [s * t], [s, t]), denote(_splitter(s, t)))
+
+
+class TestTheTrivialDimension:
+    """d = 1 is a legal dimension, so every Phase 10 generator must denote there."""
+
+    @pytest.mark.parametrize("generator", (TRIANGLE, TRIANGLE_INVERSE), ids=lambda g: g.name)
+    def test_a_triangle_at_d1_is_the_one_by_one_identity(self, generator: object) -> None:
+        assert np.array_equal(denote(_unary(generator, 1)), np.ones((1, 1), dtype=np.complex128))
+
+    def test_w_at_d1_is_the_single_one_entry(self) -> None:
+        assert np.array_equal(denote(_w(1)), np.ones((1, 1, 1), dtype=np.complex128))
+
+    @pytest.mark.parametrize(("s", "t"), ((1, 1), (1, 4), (4, 1)))
+    def test_the_connectives_at_a_unit_factor_are_the_identity(self, s: int, t: int) -> None:
+        binder = denote(_binder(s, t))
+        splitter = denote(_splitter(s, t))
+        assert binder.shape == (s * t, s, t)
+        assert splitter.shape == (s, t, s * t)
+        assert np.array_equal(binder.reshape(s * t, s * t), np.eye(s * t, dtype=np.complex128))
+        assert np.array_equal(splitter.reshape(s * t, s * t), np.eye(s * t, dtype=np.complex128))
+
+    @pytest.mark.parametrize(("s", "t"), ((1, 1), (1, 4), (4, 1)))
+    def test_the_connectives_still_invert_each_other(self, s: int, t: int) -> None:
+        composed = np.einsum("oab,abi->oi", denote(_binder(s, t)), denote(_splitter(s, t)))
+        assert np.allclose(composed, np.eye(s * t, dtype=np.complex128))

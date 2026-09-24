@@ -91,9 +91,10 @@ class DenoteDomainError(DenoteError):
 class DenoteGrammarError(DenoteError):
     """A request is malformed: an unknown generator name, or a dimension-less node.
 
-    Raised for a generator type this module does not know how to denote, for one whose
-    dimension policy is not ``ALL_LEGS_EQUAL``, and for a zero-leg node with no phase vector
-    to supply its dimension.
+    Raised for a generator type this module does not know how to denote, for a node whose
+    dimension policy :func:`resolve_dimension` does not support, for a fixed-arity box with
+    the wrong leg counts, and for a zero-leg node with no phase vector to supply its
+    dimension.
     """
 
 
