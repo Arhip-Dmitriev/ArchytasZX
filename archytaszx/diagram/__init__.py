@@ -11,4 +11,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Diagram data model: ports, nodes, generators, bang boxes, and scalable notation."""
+"""Diagram data model: ports, nodes, generators, bang boxes, scalable notation, and
+structural comparison."""

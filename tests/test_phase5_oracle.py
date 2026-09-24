@@ -771,3 +771,38 @@ class TestRewriteNeverImportsSemantics:
                     f"{path.name} imports {offending} from archytaszx.semantics; "
                     "rewriting never contracts"
                 )
+
+
+class TestDiagramNeverImportsSemanticsOrRewrite:
+    """Enforces the layering below :mod:`archytaszx.rewrite` at the import level.
+
+    Parses each module's AST rather than substring-searching its source, for the same reason
+    as :class:`TestRewriteNeverImportsSemantics`.
+    """
+
+    def test_no_diagram_module_imports_semantics_or_rewrite(self) -> None:
+        import ast
+        import pathlib
+
+        import archytaszx.diagram as diagram_pkg
+
+        package_dir = pathlib.Path(diagram_pkg.__file__).parent
+        for path in package_dir.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module] if node.module else []
+                else:
+                    continue
+                offending = [
+                    n
+                    for n in names
+                    if n is not None
+                    and n.startswith(("archytaszx.semantics", "archytaszx.rewrite"))
+                ]
+                assert not offending, (
+                    f"{path.name} imports {offending}; the diagram layer sits below both "
+                    "rewriting and semantics"
+                )

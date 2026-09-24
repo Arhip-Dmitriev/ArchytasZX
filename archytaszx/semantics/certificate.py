@@ -52,7 +52,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols
-from archytaszx.diagram.graph import Diagram, PortRef, Wire
+from archytaszx.diagram.compare import StructuralComparison
+from archytaszx.diagram.compare import compare_structure as _compare_structure
+from archytaszx.diagram.graph import Diagram
 from archytaszx.rewrite.engine import RewriteResult, RewriteStep, apply
 from archytaszx.rewrite.rule import RewriteError
 from archytaszx.rewrite.rules_library import lookup_rule
@@ -125,123 +127,15 @@ class InductionClaim:
             )
 
 
-@dataclass(frozen=True, slots=True)
-class StructuralComparison:
-    """The outcome of comparing two diagrams id for id: whether they agree, and where they
-    first differ."""
-
-    identical: bool
-    reason: str
-
-
 def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
     """Compare two diagrams node id for node id, reporting the first difference in a fixed
-    check order."""
+    check order, rejecting anything that is not a Diagram."""
     if not isinstance(a, Diagram) or not isinstance(b, Diagram):
         raise CertificateGrammarError(
             f"compare_structure requires two Diagram instances, got {type(a).__name__!r} "
             f"and {type(b).__name__!r}"
         )
-
-    if sorted(a.nodes) != sorted(b.nodes):
-        only_a = sorted(set(a.nodes) - set(b.nodes))
-        only_b = sorted(set(b.nodes) - set(a.nodes))
-        return StructuralComparison(
-            False, f"node ids differ: only in a {only_a!r}, only in b {only_b!r}"
-        )
-
-    for nid in sorted(a.nodes):
-        node_a = a.nodes[nid]
-        node_b = b.nodes[nid]
-        if node_a.generator_type != node_b.generator_type:
-            return StructuralComparison(
-                False,
-                f"node {nid}: generator_type differs: "
-                f"{node_a.generator_type.name} vs {node_b.generator_type.name}",
-            )
-        if node_a.inputs != node_b.inputs:
-            left = tuple(p.dim for p in node_a.inputs)
-            right = tuple(p.dim for p in node_b.inputs)
-            return StructuralComparison(False, f"node {nid}: inputs differs: {left!r} vs {right!r}")
-        if node_a.outputs != node_b.outputs:
-            left = tuple(p.dim for p in node_a.outputs)
-            right = tuple(p.dim for p in node_b.outputs)
-            return StructuralComparison(
-                False, f"node {nid}: outputs differs: {left!r} vs {right!r}"
-            )
-        if node_a.phase != node_b.phase:
-            left_phase = str(node_a.phase) if node_a.phase is not None else "None"
-            right_phase = str(node_b.phase) if node_b.phase is not None else "None"
-            return StructuralComparison(
-                False, f"node {nid}: phase differs: {left_phase} vs {right_phase}"
-            )
-
-    wires_a = sorted(a.wires, key=Wire.sort_key)
-    wires_b = sorted(b.wires, key=Wire.sort_key)
-    if wires_a != wires_b:
-        wire_only_a = sorted(a.wires - b.wires, key=Wire.sort_key)
-        wire_only_b = sorted(b.wires - a.wires, key=Wire.sort_key)
-        return StructuralComparison(
-            False, f"wires differ: only in a {wire_only_a!r}, only in b {wire_only_b!r}"
-        )
-
-    if sorted(a.bang_boxes) != sorted(b.bang_boxes):
-        box_only_a = sorted(set(a.bang_boxes) - set(b.bang_boxes))
-        box_only_b = sorted(set(b.bang_boxes) - set(a.bang_boxes))
-        return StructuralComparison(
-            False, f"bang box ids differ: only in a {box_only_a!r}, only in b {box_only_b!r}"
-        )
-
-    for box_id in sorted(a.bang_boxes):
-        box_a = a.bang_boxes[box_id]
-        box_b = b.bang_boxes[box_id]
-        if box_a.multiplicity != box_b.multiplicity:
-            return StructuralComparison(
-                False,
-                f"bang box {box_id}: multiplicity differs: "
-                f"{box_a.multiplicity!r} vs {box_b.multiplicity!r}",
-            )
-        if sorted(box_a.node_scope) != sorted(box_b.node_scope):
-            return StructuralComparison(
-                False,
-                f"bang box {box_id}: node scope differs: "
-                f"{sorted(box_a.node_scope)!r} vs {sorted(box_b.node_scope)!r}",
-            )
-        scope_a = sorted(box_a.port_scope, key=PortRef.sort_key)
-        scope_b = sorted(box_b.port_scope, key=PortRef.sort_key)
-        if scope_a != scope_b:
-            return StructuralComparison(
-                False, f"bang box {box_id}: port scope differs: {scope_a!r} vs {scope_b!r}"
-            )
-        if box_a.parent != box_b.parent:
-            return StructuralComparison(
-                False,
-                f"bang box {box_id}: parent differs: {box_a.parent!r} vs {box_b.parent!r}",
-            )
-
-    if a.boundary_inputs != b.boundary_inputs:
-        return StructuralComparison(
-            False,
-            f"boundary inputs differ: {a.boundary_inputs!r} vs {b.boundary_inputs!r}",
-        )
-
-    if a.boundary_outputs != b.boundary_outputs:
-        return StructuralComparison(
-            False,
-            f"boundary outputs differ: {a.boundary_outputs!r} vs {b.boundary_outputs!r}",
-        )
-
-    if a.scalar != b.scalar:
-        return StructuralComparison(False, f"scalar differs: {a.scalar!r} vs {b.scalar!r}")
-
-    items_a = sorted(a.parameters.items(), key=lambda kv: kv[0])
-    items_b = sorted(b.parameters.items(), key=lambda kv: kv[0])
-    if items_a != items_b:
-        return StructuralComparison(
-            False, f"parameter environments differ: {items_a!r} vs {items_b!r}"
-        )
-
-    return StructuralComparison(True, "identical")
+    return _compare_structure(a, b)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
