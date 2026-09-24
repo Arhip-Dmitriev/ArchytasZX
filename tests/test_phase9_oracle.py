@@ -27,7 +27,7 @@ from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
 from archytaszx.diagram.bangbox import Mult
 from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import validate
 from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.match import (
@@ -231,7 +231,7 @@ class TestFourierBuilderRederivesItsMatch:
     """A fabricated FourierMatch never reaches graph surgery."""
 
     @staticmethod
-    def _chain(length: int, d: int = 3) -> tuple[Diagram, list[int]]:
+    def _chain(length: int, d: int = 3) -> tuple[Diagram, list[NodeId]]:
         dim = Dim.concrete(d)
         diagram = Diagram()
         ids = [
@@ -292,7 +292,7 @@ class TestFourierCancellationUnderABangBox:
     """The rule fires inside a node-scope box and leaves the box intact (Phase 7)."""
 
     @staticmethod
-    def _boxed_chain(d_value: int) -> tuple[Diagram, list[int]]:
+    def _boxed_chain(d_value: int) -> tuple[Diagram, list[NodeId]]:
         dim = Dim.concrete(d_value)
         diagram = Diagram()
         ids = [diagram.add_node(FOURIER_BOX, input_dims=[dim], output_dims=[dim]) for _ in range(4)]
@@ -368,8 +368,8 @@ class TestZXCapRootOfUnityScalar:
     def test_the_builder_refuses_a_fabricated_match(self) -> None:
         phased = self._cap(Dim.concrete(3))
         fabricated = CapMatch(
-            state_id=0,
-            effect_id=1,
+            state_id=NodeId(0),
+            effect_id=NodeId(1),
             wire=next(iter(phased.wires)),
             shared_dim=Dim.concrete(5),
             side_condition_outcomes=tuple(
@@ -383,7 +383,7 @@ class TestZXCapRootOfUnityScalar:
     def test_a_phased_or_boundary_cap_is_not_matched(self) -> None:
         dim = Dim.concrete(3)
         boundary = self._cap(dim)
-        boundary.set_boundary_outputs([PortRef(0, Direction.OUTPUT, 0)])
+        boundary.set_boundary_outputs([PortRef(NodeId(0), Direction.OUTPUT, 0)])
         assert find_cap_matches(boundary) == ()
 
         phased = Diagram()
