@@ -165,6 +165,7 @@ ii. rewrite/engine.py
 - adds a strategy layer with apply-until-fixpoint and toward-normal-form, plus a termination guard against nonterminating loops
 - test and debug: oracle-check every new rule at several tuples of counts and d; drive a known diagram to its expected form; confirm the termination guard trips on a deliberately looping strategy
 - done when: the rule set is a usable rewriting toolkit
+- carry-over: the triangle, W, and dimension-connective normal-form-directed rules are not implemented here. They must be taken directly from Wang, arXiv:2104.06429, per the CONTEXT rule against reconstructing the qufinite generator set from memory, and that text was not available at implementation time. Phase 13's normal-form driver must not assume they exist.
 
 Phase 12: Rewrite caching and incrementality
 i. rewrite/cache.py
