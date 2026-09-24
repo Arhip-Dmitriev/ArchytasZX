@@ -83,7 +83,14 @@ from archytaszx.algebra.phase import (
     PhaseSymbolKey,
     PhaseVector,
 )
-from archytaszx.diagram.generators import FOURIER_BOX, REGISTRY, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import (
+    FOURIER_BOX,
+    REGISTRY,
+    TRIANGLE,
+    TRIANGLE_INVERSE,
+    X_SPIDER,
+    Z_SPIDER,
+)
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef, Wire
 from archytaszx.rewrite.rule import (
     ConstraintOutcome,
@@ -1569,3 +1576,777 @@ class CapPattern(Pattern):
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_cap_matches`."""
         return find_cap_matches(diagram)
+
+
+def _port_claims(diagram: Diagram) -> tuple[dict[PortRef, int], frozenset[PortRef]]:
+    """How many wires claim each port, and every port listed on either boundary list."""
+    claims: dict[PortRef, int] = {}
+    for wire in diagram.wires:
+        claims[wire.a] = claims.get(wire.a, 0) + 1
+        claims[wire.b] = claims.get(wire.b, 0) + 1
+    return claims, frozenset(diagram.boundary_inputs) | frozenset(diagram.boundary_outputs)
+
+
+def _claimed_at_most_once(
+    ref: PortRef, claims: Mapping[PortRef, int], boundary: frozenset[PortRef]
+) -> bool:
+    """True iff ``ref`` carries at most one wire and, together with a boundary slot, one claim."""
+    return claims.get(ref, 0) + (1 if ref in boundary else 0) <= 1
+
+
+def _claimed_exactly_once_by_a_wire(
+    ref: PortRef, claims: Mapping[PortRef, int], boundary: frozenset[PortRef]
+) -> bool:
+    """True iff exactly one wire claims ``ref`` and no boundary list names it."""
+    return claims.get(ref, 0) == 1 and ref not in boundary
+
+
+def _far_end(wire: Wire, near: PortRef) -> PortRef:
+    """The endpoint of ``wire`` that is not ``near``."""
+    return wire.b if wire.a == near else wire.a
+
+
+def _all_passed(conditions: tuple[SideCondition, ...]) -> tuple[SideConditionOutcome, ...]:
+    """One passing outcome per declared condition, in declared order."""
+    return tuple(
+        SideConditionOutcome(condition.name, True, "re-derived from the diagram")
+        for condition in conditions
+    )
+
+
+def _is_spider(node: Node) -> bool:
+    """True iff ``node`` is a registered Z or X spider."""
+    return REGISTRY.is_registered(node.generator_type) and node.generator_type.name in (
+        Z_SPIDER.name,
+        X_SPIDER.name,
+    )
+
+
+def _exhausts_a_node_scope_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
+    """True iff removing ``node_ids`` would leave some node-scope bang box with no nodes."""
+    return any(
+        box.is_node_scope and box.node_scope and box.node_scope <= frozenset(node_ids)
+        for box in diagram.bang_boxes.values()
+    )
+
+
+def _in_any_node_scope_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
+    """True iff any of ``node_ids`` sits in a node-scope bang box."""
+    return any(
+        box.is_node_scope and not box.node_scope.isdisjoint(node_ids)
+        for box in diagram.bang_boxes.values()
+    )
+
+
+def _is_phaseless(node: Node) -> bool:
+    """True iff ``node`` carries no phase vector, or an all-zero one."""
+    return node.phase is None or node.phase.is_zero
+
+
+def _uniform_leg_dim(node: Node) -> Dim | None:
+    """``node``'s single leg dimension, or None if it has no legs or they disagree."""
+    dims = {port.dim for port in (*node.inputs, *node.outputs)}
+    if len(dims) != 1:
+        return None
+    return dims.pop()
+
+
+IDENTITY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("node_is_a_phaseless_spider", "a registered Z or X spider with no phase"),
+    SideCondition("one_in_one_out", "exactly one input leg and one output leg"),
+    SideCondition("not_a_self_loop", "no wire joins the node's two legs"),
+    SideCondition(
+        "legs_singly_claimed",
+        "neither leg carries a second wire or a boundary slot alongside one, and at least "
+        "one leg carries a wire to splice through",
+    ),
+    SideCondition(
+        "splice_keeps_two_ports",
+        "the spliced wire's far port is not the surviving leg's own neighbour",
+    ),
+    SideCondition("same_dimension", "both legs carry one dimension"),
+    SideCondition(
+        "leaves_every_bang_box_populated",
+        "no node-scope bang box holds the node and nothing else",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityMatch:
+    """One located identity spider: the node, the wire spliced out, and the surviving leg."""
+
+    node_id: NodeId
+    wire: Wire
+    surviving_ref: PortRef
+    far_ref: PortRef
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def find_identity_matches(diagram: Diagram) -> tuple[IdentityMatch, ...]:
+    """Every phaseless one-in-one-out spider, ordered by node id.
+
+    The output leg's wire is the spliced one whenever it has one; otherwise the input
+    leg's.
+    """
+    claims, boundary = _port_claims(diagram)
+    by_port = _wire_by_port(diagram)
+    matches: list[IdentityMatch] = []
+    for node_id in sorted(diagram.nodes):
+        node = diagram.nodes[node_id]
+        if not _is_spider(node) or not _is_phaseless(node):
+            continue
+        if (node.num_inputs, node.num_outputs) != (1, 1):
+            continue
+        shared_dim = _uniform_leg_dim(node)
+        if shared_dim is None:
+            continue
+        port_in = PortRef(node_id, Direction.INPUT, 0)
+        port_out = PortRef(node_id, Direction.OUTPUT, 0)
+        if not _claimed_at_most_once(port_in, claims, boundary):
+            continue
+        if not _claimed_at_most_once(port_out, claims, boundary):
+            continue
+        wire_in = by_port.get(port_in)
+        wire_out = by_port.get(port_out)
+        if wire_out is not None and wire_out == wire_in:
+            continue
+        if wire_out is not None:
+            wire, consumed_ref, surviving_ref = wire_out, port_out, port_in
+        elif wire_in is not None:
+            wire, consumed_ref, surviving_ref = wire_in, port_in, port_out
+        else:
+            continue
+        far_ref = _far_end(wire, consumed_ref)
+        if far_ref.node_id == node_id:
+            continue
+        neighbour = by_port.get(surviving_ref)
+        if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
+            continue
+        if _exhausts_a_node_scope_box(diagram, (node_id,)):
+            continue
+        matches.append(
+            IdentityMatch(
+                node_id=node_id,
+                wire=wire,
+                surviving_ref=surviving_ref,
+                far_ref=far_ref,
+                shared_dim=shared_dim,
+                side_condition_outcomes=_all_passed(IDENTITY_SIDE_CONDITIONS),
+            )
+        )
+    return tuple(matches)
+
+
+class IdentityRemovalPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for identity removal."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_identity_matches`."""
+        return find_identity_matches(diagram)
+
+
+TRIANGLE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("inverse_pair_in_series", "a T and a Ti joined output-to-input, either order"),
+    SideCondition("joining_wire_unclaimed", "neither joined port carries a second claim"),
+    SideCondition(
+        "outer_legs_singly_claimed",
+        "neither outer leg carries a second claim, and at least one carries a wire to "
+        "splice through",
+    ),
+    SideCondition(
+        "splice_keeps_two_ports",
+        "the spliced wire's far port is not the surviving outer leg's own neighbour",
+    ),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition(
+        "bang_box_scope_agreement",
+        "both nodes' innermost enclosing node-scope bang box, if any, are identical",
+    ),
+    SideCondition(
+        "leaves_every_bang_box_populated",
+        "no node-scope bang box holds the pair and nothing else",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TriangleMatch:
+    """One located T/Ti pair: the two nodes, the wire between them, and the wire spliced out."""
+
+    first_id: NodeId
+    second_id: NodeId
+    wire: Wire
+    spliced_wire: Wire
+    surviving_ref: PortRef
+    far_ref: PortRef
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+_TRIANGLE_PAIR_NAMES = frozenset((TRIANGLE.name, TRIANGLE_INVERSE.name))
+"""The two generator names a :class:`TriangleMatch` joins, one of each."""
+
+
+def find_triangle_matches(diagram: Diagram) -> tuple[TriangleMatch, ...]:
+    """Every T/Ti pair in series, ordered by the first node's id.
+
+    The second node's output wire is the spliced one whenever it has one; otherwise the
+    first node's input wire.
+    """
+    claims, boundary = _port_claims(diagram)
+    by_port = _wire_by_port(diagram)
+    matches: list[TriangleMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
+                continue
+            if out_ref.index != 0 or in_ref.index != 0:
+                continue
+            first = diagram.nodes.get(out_ref.node_id)
+            second = diagram.nodes.get(in_ref.node_id)
+            if first is None or second is None or first.id == second.id:
+                continue
+            names = {first.generator_type.name, second.generator_type.name}
+            if names != _TRIANGLE_PAIR_NAMES:
+                continue
+            if not REGISTRY.is_registered(first.generator_type):
+                continue
+            if not REGISTRY.is_registered(second.generator_type):
+                continue
+            if (first.num_inputs, first.num_outputs) != (1, 1):
+                continue
+            if (second.num_inputs, second.num_outputs) != (1, 1):
+                continue
+            if not _claimed_exactly_once_by_a_wire(out_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
+                continue
+            dims = {
+                port.dim
+                for port in (*first.inputs, *first.outputs, *second.inputs, *second.outputs)
+            }
+            if len(dims) != 1:
+                continue
+            outer_in = PortRef(first.id, Direction.INPUT, 0)
+            outer_out = PortRef(second.id, Direction.OUTPUT, 0)
+            if not _claimed_at_most_once(outer_in, claims, boundary):
+                continue
+            if not _claimed_at_most_once(outer_out, claims, boundary):
+                continue
+            wire_head = by_port.get(outer_in)
+            wire_tail = by_port.get(outer_out)
+            if wire_tail is not None:
+                spliced, consumed_ref, surviving_ref = wire_tail, outer_out, outer_in
+            elif wire_head is not None:
+                spliced, consumed_ref, surviving_ref = wire_head, outer_in, outer_out
+            else:
+                continue
+            far_ref = _far_end(spliced, consumed_ref)
+            if far_ref.node_id in (first.id, second.id):
+                continue
+            neighbour = by_port.get(surviving_ref)
+            if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
+                continue
+            enclosing = {
+                innermost_node_scope_box(diagram, first.id),
+                innermost_node_scope_box(diagram, second.id),
+            }
+            if len(enclosing) != 1:
+                continue
+            if _exhausts_a_node_scope_box(diagram, (first.id, second.id)):
+                continue
+            matches.append(
+                TriangleMatch(
+                    first_id=first.id,
+                    second_id=second.id,
+                    wire=wire,
+                    spliced_wire=spliced,
+                    surviving_ref=surviving_ref,
+                    far_ref=far_ref,
+                    shared_dim=next(iter(dims)),
+                    side_condition_outcomes=_all_passed(TRIANGLE_SIDE_CONDITIONS),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.first_id), int(m.second_id)))
+    return tuple(matches)
+
+
+class TriangleInverseCancellationPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for T/Ti cancellation."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_triangle_matches`."""
+        return find_triangle_matches(diagram)
+
+
+STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "state_is_a_phaseless_x_spider", "an X spider with no input, one output, and no phase"
+    ),
+    SideCondition("spider_is_a_phaseless_z_spider", "a Z spider with one input and no phase"),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StateCopyMatch:
+    """One located X state feeding a Z spider: both node ids, the wire, and the Z's output count."""
+
+    state_id: NodeId
+    spider_id: NodeId
+    wire: Wire
+    output_count: int
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def find_state_copy_matches(diagram: Diagram) -> tuple[StateCopyMatch, ...]:
+    """Every phaseless X state wired into a phaseless Z spider's only input, by state id."""
+    claims, boundary = _port_claims(diagram)
+    matches: list[StateCopyMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        for state_ref, spider_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if state_ref.direction is not Direction.OUTPUT:
+                continue
+            if spider_ref.direction is not Direction.INPUT or spider_ref.index != 0:
+                continue
+            state = diagram.nodes.get(state_ref.node_id)
+            spider = diagram.nodes.get(spider_ref.node_id)
+            if state is None or spider is None or state.id == spider.id:
+                continue
+            if not REGISTRY.is_registered(state.generator_type):
+                continue
+            if not REGISTRY.is_registered(spider.generator_type):
+                continue
+            if state.generator_type.name != X_SPIDER.name:
+                continue
+            if spider.generator_type.name != Z_SPIDER.name:
+                continue
+            if (state.num_inputs, state.num_outputs) != (0, 1) or spider.num_inputs != 1:
+                continue
+            if not _is_phaseless(state) or not _is_phaseless(spider):
+                continue
+            if not _claimed_exactly_once_by_a_wire(state_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(spider_ref, claims, boundary):
+                continue
+            dims = {port.dim for port in (*state.outputs, *spider.inputs, *spider.outputs)}
+            if len(dims) != 1:
+                continue
+            if _in_any_node_scope_box(diagram, (state.id, spider.id)):
+                continue
+            matches.append(
+                StateCopyMatch(
+                    state_id=state.id,
+                    spider_id=spider.id,
+                    wire=wire,
+                    output_count=spider.num_outputs,
+                    shared_dim=next(iter(dims)),
+                    side_condition_outcomes=_all_passed(STATE_COPY_SIDE_CONDITIONS),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.state_id), int(m.spider_id)))
+    return tuple(matches)
+
+
+class StateCopyPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for state copy."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_state_copy_matches`."""
+        return find_state_copy_matches(diagram)
+
+
+HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("z_and_x_spiders", "a registered Z spider and a registered X spider"),
+    SideCondition(
+        "two_paths",
+        "one Z output runs straight into an X input, a second Z output runs into that same "
+        "X through two Fourier boxes in series",
+    ),
+    SideCondition(
+        "path_ports_unclaimed", "every port along the two paths carries exactly one wire"
+    ),
+    SideCondition(
+        "same_dimension", "every leg along the two paths and both spiders share one dimension"
+    ),
+    SideCondition(
+        "phase_dimension_agreement",
+        "each spider's phase vector, if present, is over that dimension",
+    ),
+    SideCondition(
+        "outside_every_bang_box",
+        "none of the four nodes lies in any node-scope bang box",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HopfMatch:
+    """One located Hopf pair: the two spiders, the two F boxes, and the four consumed wires."""
+
+    z_id: NodeId
+    x_id: NodeId
+    fourier_ids: tuple[NodeId, NodeId]
+    wires: tuple[Wire, ...]
+    z_leg_indices: tuple[int, int]
+    x_leg_indices: tuple[int, int]
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def _fourier_pair_path(
+    diagram: Diagram,
+    start: PortRef,
+    by_port: Mapping[PortRef, Wire],
+    claims: Mapping[PortRef, int],
+    boundary: frozenset[PortRef],
+) -> tuple[tuple[NodeId, NodeId], tuple[Wire, Wire, Wire], PortRef] | None:
+    """The two F boxes in series leaving ``start``, their three wires, and the far port."""
+    boxes: list[NodeId] = []
+    wires: list[Wire] = []
+    current = start
+    for _ in range(2):
+        wire = by_port.get(current)
+        if wire is None:
+            return None
+        entry = _far_end(wire, current)
+        node = diagram.nodes.get(entry.node_id)
+        if node is None or not REGISTRY.is_registered(node.generator_type):
+            return None
+        if node.generator_type.name != FOURIER_BOX.name:
+            return None
+        if entry.direction is not Direction.INPUT or entry.index != 0:
+            return None
+        if (node.num_inputs, node.num_outputs) != (1, 1):
+            return None
+        if node.id in boxes:
+            return None
+        exit_ref = PortRef(node.id, Direction.OUTPUT, 0)
+        if not _claimed_exactly_once_by_a_wire(entry, claims, boundary):
+            return None
+        if not _claimed_exactly_once_by_a_wire(exit_ref, claims, boundary):
+            return None
+        boxes.append(node.id)
+        wires.append(wire)
+        current = exit_ref
+    final = by_port.get(current)
+    if final is None:
+        return None
+    wires.append(final)
+    return (boxes[0], boxes[1]), (wires[0], wires[1], wires[2]), _far_end(final, current)
+
+
+def find_hopf_matches(diagram: Diagram) -> tuple[HopfMatch, ...]:
+    """Every Z/X pair joined by one plain wire and one wire through two F boxes, by node id."""
+    claims, boundary = _port_claims(diagram)
+    by_port = _wire_by_port(diagram)
+    matches: list[HopfMatch] = []
+    for z_id in sorted(diagram.nodes):
+        z_node = diagram.nodes[z_id]
+        if not REGISTRY.is_registered(z_node.generator_type):
+            continue
+        if z_node.generator_type.name != Z_SPIDER.name:
+            continue
+        z_dim = _uniform_leg_dim(z_node)
+        if z_dim is None:
+            continue
+        for direct_index in range(z_node.num_outputs):
+            direct_ref = PortRef(z_id, Direction.OUTPUT, direct_index)
+            direct_wire = by_port.get(direct_ref)
+            if direct_wire is None:
+                continue
+            if not _claimed_exactly_once_by_a_wire(direct_ref, claims, boundary):
+                continue
+            x_direct = _far_end(direct_wire, direct_ref)
+            x_node = diagram.nodes.get(x_direct.node_id)
+            if x_node is None or x_node.id == z_id:
+                continue
+            if not REGISTRY.is_registered(x_node.generator_type):
+                continue
+            if x_node.generator_type.name != X_SPIDER.name:
+                continue
+            if x_direct.direction is not Direction.INPUT:
+                continue
+            if not _claimed_exactly_once_by_a_wire(x_direct, claims, boundary):
+                continue
+            if _uniform_leg_dim(x_node) != z_dim:
+                continue
+            for fourier_index in range(z_node.num_outputs):
+                if fourier_index == direct_index:
+                    continue
+                start = PortRef(z_id, Direction.OUTPUT, fourier_index)
+                if not _claimed_exactly_once_by_a_wire(start, claims, boundary):
+                    continue
+                path = _fourier_pair_path(diagram, start, by_port, claims, boundary)
+                if path is None:
+                    continue
+                fourier_ids, fourier_wires, x_fourier = path
+                if x_fourier.node_id != x_node.id or x_fourier.direction is not Direction.INPUT:
+                    continue
+                if x_fourier == x_direct:
+                    continue
+                if not _claimed_exactly_once_by_a_wire(x_fourier, claims, boundary):
+                    continue
+                if any(_uniform_leg_dim(diagram.nodes[box_id]) != z_dim for box_id in fourier_ids):
+                    continue
+                if any(
+                    node.phase is not None and node.phase.dim != z_dim for node in (z_node, x_node)
+                ):
+                    continue
+                if _in_any_node_scope_box(diagram, (z_id, x_node.id, *fourier_ids)):
+                    continue
+                matches.append(
+                    HopfMatch(
+                        z_id=z_id,
+                        x_id=x_node.id,
+                        fourier_ids=fourier_ids,
+                        wires=(direct_wire, *fourier_wires),
+                        z_leg_indices=(direct_index, fourier_index),
+                        x_leg_indices=(x_direct.index, x_fourier.index),
+                        shared_dim=z_dim,
+                        side_condition_outcomes=_all_passed(HOPF_SIDE_CONDITIONS),
+                    )
+                )
+    matches.sort(key=lambda m: (int(m.z_id), int(m.x_id), m.z_leg_indices, m.x_leg_indices))
+    return tuple(matches)
+
+
+class HopfPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Hopf law."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_hopf_matches`."""
+        return find_hopf_matches(diagram)
+
+
+BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "x_is_a_phaseless_two_to_one", "an X spider with two inputs, one output, and no phase"
+    ),
+    SideCondition(
+        "z_is_a_phaseless_one_to_two", "a Z spider with one input, two outputs, and no phase"
+    ),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class BialgebraMatch:
+    """One located X_{2->1} into Z_{1->2}: both node ids and the wire joining them."""
+
+    x_id: NodeId
+    z_id: NodeId
+    wire: Wire
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def find_bialgebra_matches(diagram: Diagram) -> tuple[BialgebraMatch, ...]:
+    """Every phaseless X_{2->1} whose output feeds a phaseless Z_{1->2}, by X node id."""
+    claims, boundary = _port_claims(diagram)
+    matches: list[BialgebraMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        for x_ref, z_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if x_ref.direction is not Direction.OUTPUT or x_ref.index != 0:
+                continue
+            if z_ref.direction is not Direction.INPUT or z_ref.index != 0:
+                continue
+            x_node = diagram.nodes.get(x_ref.node_id)
+            z_node = diagram.nodes.get(z_ref.node_id)
+            if x_node is None or z_node is None or x_node.id == z_node.id:
+                continue
+            if not REGISTRY.is_registered(x_node.generator_type):
+                continue
+            if not REGISTRY.is_registered(z_node.generator_type):
+                continue
+            if x_node.generator_type.name != X_SPIDER.name:
+                continue
+            if z_node.generator_type.name != Z_SPIDER.name:
+                continue
+            if (x_node.num_inputs, x_node.num_outputs) != (2, 1):
+                continue
+            if (z_node.num_inputs, z_node.num_outputs) != (1, 2):
+                continue
+            if not _is_phaseless(x_node) or not _is_phaseless(z_node):
+                continue
+            if not _claimed_exactly_once_by_a_wire(x_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(z_ref, claims, boundary):
+                continue
+            x_dim = _uniform_leg_dim(x_node)
+            if x_dim is None or _uniform_leg_dim(z_node) != x_dim:
+                continue
+            if _in_any_node_scope_box(diagram, (x_node.id, z_node.id)):
+                continue
+            matches.append(
+                BialgebraMatch(
+                    x_id=x_node.id,
+                    z_id=z_node.id,
+                    wire=wire,
+                    shared_dim=x_dim,
+                    side_condition_outcomes=_all_passed(BIALGEBRA_SIDE_CONDITIONS),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.x_id), int(m.z_id)))
+    return tuple(matches)
+
+
+class BialgebraPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the bialgebra law."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_bialgebra_matches`."""
+        return find_bialgebra_matches(diagram)
+
+
+FOURIER_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("spider_is_a_phaseless_z_state", "a Z spider with no phase and a single leg"),
+    SideCondition("fourier_box_on_that_leg", "a registered F box wired to it in series"),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("free_leg_singly_claimed", "the F box's other leg carries at most one claim"),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition(
+        "bang_box_scope_agreement",
+        "both nodes' innermost enclosing node-scope bang box, if any, are identical",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FourierStateMatch:
+    """One located F box on a phaseless Z state's output, or on a Z effect's input."""
+
+    spider_id: NodeId
+    fourier_id: NodeId
+    wire: Wire
+    free_ref: PortRef
+    is_state: bool
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+
+def find_fourier_state_matches(diagram: Diagram) -> tuple[FourierStateMatch, ...]:
+    """Every F box in series with a phaseless Z state or Z effect, by spider node id."""
+    claims, boundary = _port_claims(diagram)
+    matches: list[FourierStateMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        for spider_ref, fourier_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            spider = diagram.nodes.get(spider_ref.node_id)
+            fourier = diagram.nodes.get(fourier_ref.node_id)
+            if spider is None or fourier is None or spider.id == fourier.id:
+                continue
+            if not REGISTRY.is_registered(spider.generator_type):
+                continue
+            if not REGISTRY.is_registered(fourier.generator_type):
+                continue
+            if spider.generator_type.name != Z_SPIDER.name:
+                continue
+            if fourier.generator_type.name != FOURIER_BOX.name:
+                continue
+            if (fourier.num_inputs, fourier.num_outputs) != (1, 1):
+                continue
+            if not _is_phaseless(spider):
+                continue
+            is_state = spider_ref.direction is Direction.OUTPUT
+            if is_state:
+                if (spider.num_inputs, spider.num_outputs) != (0, 1):
+                    continue
+                if fourier_ref != PortRef(fourier.id, Direction.INPUT, 0):
+                    continue
+                free_ref = PortRef(fourier.id, Direction.OUTPUT, 0)
+            else:
+                if (spider.num_inputs, spider.num_outputs) != (1, 0):
+                    continue
+                if fourier_ref != PortRef(fourier.id, Direction.OUTPUT, 0):
+                    continue
+                free_ref = PortRef(fourier.id, Direction.INPUT, 0)
+            if spider_ref.index != 0:
+                continue
+            if not _claimed_exactly_once_by_a_wire(spider_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(fourier_ref, claims, boundary):
+                continue
+            if not _claimed_at_most_once(free_ref, claims, boundary):
+                continue
+            dims = {
+                port.dim
+                for port in (*spider.inputs, *spider.outputs, *fourier.inputs, *fourier.outputs)
+            }
+            if len(dims) != 1:
+                continue
+            enclosing = {
+                innermost_node_scope_box(diagram, spider.id),
+                innermost_node_scope_box(diagram, fourier.id),
+            }
+            if len(enclosing) != 1:
+                continue
+            matches.append(
+                FourierStateMatch(
+                    spider_id=spider.id,
+                    fourier_id=fourier.id,
+                    wire=wire,
+                    free_ref=free_ref,
+                    is_state=is_state,
+                    shared_dim=next(iter(dims)),
+                    side_condition_outcomes=_all_passed(FOURIER_STATE_SIDE_CONDITIONS),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.spider_id), int(m.fourier_id)))
+    return tuple(matches)
+
+
+class FourierStateColorChangePattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the F-on-a-state rule."""
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to the module-level :func:`find_fourier_state_matches`."""
+        return find_fourier_state_matches(diagram)

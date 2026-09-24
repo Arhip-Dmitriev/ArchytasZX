@@ -35,9 +35,10 @@ Algorithm.
    wire with an endpoint on a consumed node is re-added through ``port_mapping``. An
    endpoint on a consumed node absent from ``port_mapping`` raises, as does a remap
    collapsing one wire's two endpoints onto a single port. Both boundary lists are rebuilt
-   through the same ``_remap_endpoint``, in place, so position is preserved. A wire-count
-   postcondition, anchored on ``diagram``'s wire set rather than the post-builder one, then
-   catches a wire lost during remapping.
+   through the same ``_remap_endpoint``, in place, so position is preserved. Every
+   ``BuildResult.new_wires`` entry is then validated and added. A wire-count postcondition,
+   anchored on ``diagram``'s wire set rather than the post-builder one, then catches a wire
+   lost during remapping.
 6. Remove the consumed nodes. Step 4 rejects a ``port_mapping`` value on a consumed node,
    so no surviving reference can point at one by the time the cascade runs.
 7. Multiply the scalar.
@@ -57,26 +58,33 @@ Algorithm.
 The parameter environment rides through unchanged on ``diagram.copy()``; no step here reads
 or edits it.
 
-This module does not search for matches, choose which rule or match to apply, iterate to a
-fixpoint, or evaluate a diagram numerically -- nothing here imports
-:mod:`archytaszx.semantics`.
+This module does not evaluate a diagram numerically and imports nothing from
+:mod:`archytaszx.semantics`. :func:`apply` itself does not search for matches or iterate;
+the strategy layer below (:func:`apply_until_fixpoint`, :func:`toward_normal_form`) drives
+repeated :func:`apply` calls, detecting a loop with
+:func:`~archytaszx.diagram.compare.canonical_key` and resolving
+:data:`NORMAL_FORM_RULE_NAMES` through a function-local
+:func:`~archytaszx.rewrite.rules_library.lookup_rule` import, that module importing this one.
 """
 
 from __future__ import annotations
 
+import enum
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
 from archytaszx.diagram.validate import IssueKind, ValidationIssue, validate
 from archytaszx.rewrite.rule import (
     DimensionConstraint,
     Match,
     RewriteDomainError,
+    RewriteError,
     RewriteGrammarError,
     Rule,
     SideConditionOutcome,
@@ -315,16 +323,15 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
     is not, by identity, the working diagram; the builder edited its wire set or either
-    boundary list), step 4 (a consumed wire or node absent; ``consumed_node_ids`` or
-    ``new_node_ids`` repeating an id; a ``new_node_ids`` entry naming no node; a
-    ``port_mapping`` value naming no real port or one on a consumed node; a non-injective
-    ``port_mapping``; ``phase_substitutions`` naming an unconsumed node), and step 5
-    (``port_mapping`` collapsing one wire's endpoints onto a single port; the wire count
+    boundary list; the builder edited a surviving pre-existing node in place), step 4 (a
+    consumed wire or node absent; a duplicate in ``consumed_wires``; ``consumed_node_ids``
+    or ``new_node_ids`` repeating an id; a ``new_node_ids`` entry naming no node or naming
+    a node ``diagram`` already had; a ``port_mapping`` value naming no real port or one on
+    a consumed node; a ``port_mapping`` key naming a port on no consumed node; a
+    non-injective ``port_mapping``; ``phase_substitutions`` naming an unconsumed node), and
+    step 5 (``port_mapping`` collapsing one wire's endpoints onto a single port; a
+    ``new_wires`` endpoint naming no real port or one on a consumed node; the wire count
     missing its postcondition).
-
-    Unchecked, deferred to Phase 11: a builder editing an existing node's phase or port
-    dims in place; a ``new_node_ids`` entry naming an existing node; a duplicate in
-    ``consumed_wires``; an unused ``port_mapping`` key.
     """
     check_side_condition_coverage(match, rule.side_conditions, rule.name)
 
@@ -361,7 +368,7 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             "step 5 rebuilds both from the input's through port_mapping"
         )
 
-    expected_scalar = rule.scalar_for(getattr(match, "shared_dim", None))
+    expected_scalar = rule.scalar_for_match(match)
     if build_result.scalar_introduced != expected_scalar:
         raise RewriteDomainError(
             f"rule {rule.name!r} declares scalar_introduced={expected_scalar!r} at this "
@@ -382,6 +389,19 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"rule {rule.name!r}: match does not belong to the diagram it is applied to "
             f"(consumed wire(s) absent: {missing_wires!r}; consumed node id(s) absent: "
             f"{missing_node_ids!r})"
+        )
+
+    # A repeated entry passes the membership check above, then inflates
+    # len(consumed_wire_set)'s counterpart in the step-5 wire-count postcondition only
+    # once, while RewriteStep.consumed_wires reports the wire twice.
+    duplicate_wires = [
+        wire for wire, count in Counter(build_result.consumed_wires).items() if count > 1
+    ]
+    if duplicate_wires:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: build_result.consumed_wires names the same wire more "
+            f"than once: {sorted(duplicate_wires, key=lambda w: w.sort_key())!r} -- a "
+            "match cannot legitimately consume the same wire twice"
         )
 
     # A repeated entry passes the membership check above, then makes step 6's removal loop
@@ -446,6 +466,23 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
                 "be a consumed node id"
             )
 
+    # A builder reports every change through BuildResult; an in-place edit of a node that
+    # outlives the rewrite is invisible to steps 5 to 8 and to the certificate.
+    edited_existing_nodes = tuple(
+        node_id
+        for node_id in sorted(diagram.nodes)
+        if node_id not in consumed_node_ids
+        and node_id in working.nodes
+        and working.nodes[node_id] != diagram.nodes[node_id]
+    )
+    if edited_existing_nodes:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder edited the generator type, port dims or phase of "
+            f"pre-existing node(s) {list(edited_existing_nodes)!r} in place; a builder adds "
+            "the replacement node(s) and reports everything else through BuildResult, and "
+            "a node it neither consumes nor creates it leaves exactly as it found it"
+        )
+
     # Step 9 publishes new_node_ids verbatim; a duplicate misreports how many nodes exist.
     duplicate_new_node_ids = [
         node_id for node_id, count in Counter(build_result.new_node_ids).items() if count > 1
@@ -456,6 +493,31 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
             f"than once: {sorted(duplicate_new_node_ids)!r} -- a builder creates each new "
             "node once; a repeated id here would misreport how many new nodes exist to "
             "the certificate"
+        )
+
+    # new_node_ids is the certificate's record of what this rewrite created; a
+    # pre-existing id there reports a node the rewrite did not create.
+    pre_existing_new_node_ids = tuple(
+        node_id for node_id in build_result.new_node_ids if node_id in diagram.nodes
+    )
+    if pre_existing_new_node_ids:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: build_result.new_node_ids names node id(s) "
+            f"{sorted(pre_existing_new_node_ids)!r} that already existed in the input "
+            "diagram; new_node_ids reports only the nodes the builder itself added"
+        )
+
+    # _remap_endpoint consults a key only for a reference on a consumed node, so any other
+    # key is dead weight the certificate would nonetheless carry.
+    unconsumed_port_mapping_keys = tuple(
+        ref for ref in build_result.port_mapping if ref.node_id not in consumed_node_ids
+    )
+    if unconsumed_port_mapping_keys:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: builder's port_mapping keys "
+            f"{sorted(unconsumed_port_mapping_keys, key=lambda ref: ref.sort_key())!r} "
+            "lie on no consumed node, so no surviving reference is ever remapped through "
+            "them; a port_mapping key names a port on a node this rewrite consumes"
         )
 
     # Diagram._wires is a set: two remapped wires producing one Wire collapse at add_wire
@@ -492,9 +554,31 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         working.remove_wire(wire.a, wire.b)
         working.add_wire(new_a, new_b)
 
+    # Added here rather than by the builder: step 3 forbids a builder editing the wire set,
+    # and an endpoint is only known to survive once the remap loop above has run.
+    for new_wire in build_result.new_wires:
+        for ref in (new_wire.a, new_wire.b):
+            if ref.node_id not in working.nodes or ref.index >= len(
+                working.nodes[ref.node_id].legs(ref.direction)
+            ):
+                raise RewriteGrammarError(
+                    f"rule {rule.name!r}: build_result.new_wires names port {ref!r}, "
+                    "which is not a real port in the working diagram"
+                )
+            if ref.node_id in consumed_node_ids:
+                raise RewriteGrammarError(
+                    f"rule {rule.name!r}: build_result.new_wires names port {ref!r} on a "
+                    "node this rewrite consumes"
+                )
+        working.add_wire(new_wire.a, new_wire.b)
+
     # Every wire survived untouched, was dropped as consumed, or was removed and re-added
-    # once, so the count shrinks by exactly the number of *distinct* consumed wires.
-    expected_wire_count = len(working_wire_set) - len(consumed_wire_set)
+    # once, so the count shrinks by exactly the number of *distinct* consumed wires and
+    # grows by the number of *distinct* new ones -- a repeated new_wires entry collapses in
+    # Diagram._wires, and the frozenset keeps it visible here.
+    expected_wire_count = (
+        len(working_wire_set) - len(consumed_wire_set) + len(frozenset(build_result.new_wires))
+    )
     actual_wire_count = len(working.wires)
     if actual_wire_count != expected_wire_count:
         raise RewriteGrammarError(
@@ -594,3 +678,219 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         deferred_issue_identity_ambiguous=removed_ambiguous or introduced_ambiguous,
     )
     return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)
+
+
+class StopReason(enum.Enum):
+    """Why a strategy loop stopped."""
+
+    FIXPOINT = "fixpoint"
+    """No rule in the set matched the current diagram."""
+
+    STEP_LIMIT = "step_limit"
+    """:attr:`TerminationGuard.max_steps` rewrites had already been applied."""
+
+    NODE_LIMIT = "node_limit"
+    """The current diagram held more nodes than :attr:`TerminationGuard.max_nodes`."""
+
+    LOOP_DETECTED = "loop_detected"
+    """A rewrite reproduced a diagram the run had already visited."""
+
+
+@dataclass(frozen=True, slots=True)
+class TerminationGuard:
+    """The budget a strategy loop runs under: a step ceiling, a node ceiling, and loop detection."""
+
+    max_steps: int
+    max_nodes: int | None = None
+    detect_loops: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate every field's type and range, as every other value object here does."""
+        if isinstance(self.max_steps, bool) or not isinstance(self.max_steps, int):
+            raise RewriteGrammarError(
+                f"TerminationGuard.max_steps must be an int (never a bool), got {self.max_steps!r}"
+            )
+        if self.max_steps < 0:
+            raise RewriteGrammarError(
+                f"TerminationGuard.max_steps must be >= 0, got {self.max_steps!r}"
+            )
+        if self.max_nodes is not None:
+            if isinstance(self.max_nodes, bool) or not isinstance(self.max_nodes, int):
+                raise RewriteGrammarError(
+                    f"TerminationGuard.max_nodes must be an int or None (never a bool), got "
+                    f"{self.max_nodes!r}"
+                )
+            if self.max_nodes < 0:
+                raise RewriteGrammarError(
+                    f"TerminationGuard.max_nodes must be >= 0, got {self.max_nodes!r}"
+                )
+        if not isinstance(self.detect_loops, bool):
+            raise RewriteGrammarError(
+                f"TerminationGuard.detect_loops must be a bool, got {self.detect_loops!r}"
+            )
+
+
+DEFAULT_GUARD = TerminationGuard(max_steps=128, max_nodes=None, detect_loops=True)
+"""The guard :func:`apply_until_fixpoint` and :func:`toward_normal_form` use when given none."""
+
+
+class TerminationGuardTripped(RewriteError):
+    """A strategy loop hit its :class:`TerminationGuard` while running with ``strict=True``.
+
+    Carries the :class:`StrategyOutcome` the same run would have returned with
+    ``strict=False``.
+    """
+
+    def __init__(self, outcome: StrategyOutcome) -> None:
+        self.outcome = outcome
+        super().__init__(
+            f"strategy stopped at {outcome.stop_reason.value!r} rather than a fixpoint "
+            f"after {len(outcome.steps)} step(s)"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyOutcome:
+    """The result of one strategy run: the furthest-simplified diagram and its provenance."""
+
+    diagram: Diagram
+    steps: tuple[RewriteStep, ...]
+    stop_reason: StopReason
+    scalar_accumulated: Scalar
+    """The exact product of every step's ``scalar_introduced``, equal to the factor between
+    the input diagram's ``scalar`` and :attr:`diagram`'s."""
+
+    steps_attempted: int
+    """How many times the loop searched for an applicable rule -- ``len(steps)`` plus one
+    whenever the search itself, rather than a step, ended the run."""
+
+
+def _first_applicable(diagram: Diagram, rules: Sequence[Rule]) -> tuple[Rule, Match] | None:
+    """The first match of the first rule in ``rules`` that has one, or ``None``."""
+    for rule in rules:
+        matches = rule.pattern.find_matches(diagram)
+        if matches:
+            return rule, matches[0]
+    return None
+
+
+def apply_until_fixpoint(
+    diagram: Diagram,
+    rules: Sequence[Rule],
+    *,
+    guard: TerminationGuard = DEFAULT_GUARD,
+    strict: bool = False,
+) -> StrategyOutcome:
+    """Apply ``rules`` in order, first match first, until nothing matches or ``guard`` trips.
+
+    Each iteration checks the node ceiling, then the step ceiling, then takes the first match
+    of the earliest rule in ``rules`` that has one and applies it through :func:`apply`, so
+    every step carries full provenance. Loop detection looks each new diagram's
+    :func:`~archytaszx.diagram.compare.canonical_key` up among the earlier ones and confirms
+    a hit with :func:`~archytaszx.diagram.compare.isomorphic`; the key reads the scalar, so a
+    cycle that introduces a factor each time reaches the step ceiling.
+
+    With ``strict=True`` any :attr:`~StopReason` other than ``FIXPOINT`` raises
+    :class:`TerminationGuardTripped` carrying the outcome. Anything :func:`apply` raises
+    propagates unchanged.
+    """
+    if not isinstance(guard, TerminationGuard):
+        raise RewriteGrammarError(
+            f"apply_until_fixpoint: guard must be a TerminationGuard, got {type(guard).__name__}"
+        )
+
+    current = diagram
+    history: dict[str, list[Diagram]] = {canonical_key(diagram): [diagram]}
+    steps: list[RewriteStep] = []
+    scalar_accumulated = Scalar.one()
+    steps_attempted = 0
+    stop_reason = StopReason.FIXPOINT
+
+    while True:
+        steps_attempted += 1
+        if guard.max_nodes is not None and len(current.nodes) > guard.max_nodes:
+            stop_reason = StopReason.NODE_LIMIT
+            break
+        if len(steps) >= guard.max_steps:
+            stop_reason = StopReason.STEP_LIMIT
+            break
+        candidate = _first_applicable(current, rules)
+        if candidate is None:
+            stop_reason = StopReason.FIXPOINT
+            break
+        rule, match = candidate
+        result = apply(current, rule, match)
+        steps.append(result.step)
+        scalar_accumulated = scalar_accumulated * result.step.scalar_introduced
+        current = result.diagram
+        key = canonical_key(current)
+        bucket = history.setdefault(key, [])
+        if guard.detect_loops and any(isomorphic(current, seen) for seen in bucket):
+            stop_reason = StopReason.LOOP_DETECTED
+            break
+        bucket.append(current)
+
+    outcome = StrategyOutcome(
+        diagram=current,
+        steps=tuple(steps),
+        stop_reason=stop_reason,
+        scalar_accumulated=scalar_accumulated,
+        steps_attempted=steps_attempted,
+    )
+    if strict and stop_reason is not StopReason.FIXPOINT:
+        raise TerminationGuardTripped(outcome)
+    return outcome
+
+
+NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
+    "identity_removal",
+    "triangle_inverse_cancellation",
+    "fourier_cancellation",
+    "fourier_state_color_change",
+    "spider_fusion",
+    "hopf",
+    "state_copy",
+    "zx_cap",
+)
+""":func:`toward_normal_form`'s rule set, in application order.
+
+Every entry is non-growing; ``bialgebra`` turns two nodes into four and is deliberately
+absent. A name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is
+skipped, so the ordering here is the target set and
+:func:`missing_normal_form_rule_names` reports what of it is not yet live.
+"""
+
+
+def _resolve_normal_form_rules() -> tuple[tuple[Rule, ...], tuple[str, ...]]:
+    """:data:`NORMAL_FORM_RULE_NAMES` split, in order, into what
+    :func:`~archytaszx.rewrite.rules_library.lookup_rule` resolves now and what it does not."""
+    from archytaszx.rewrite.rules_library import lookup_rule
+
+    resolved: list[Rule] = []
+    missing: list[str] = []
+    for name in NORMAL_FORM_RULE_NAMES:
+        try:
+            resolved.append(lookup_rule(name))
+        except RewriteGrammarError:
+            missing.append(name)
+    return tuple(resolved), tuple(missing)
+
+
+def normal_form_rules() -> tuple[Rule, ...]:
+    """Every :data:`NORMAL_FORM_RULE_NAMES` entry registered right now, resolved in that order."""
+    return _resolve_normal_form_rules()[0]
+
+
+def missing_normal_form_rule_names() -> tuple[str, ...]:
+    """Every :data:`NORMAL_FORM_RULE_NAMES` entry :func:`normal_form_rules` skips right now."""
+    return _resolve_normal_form_rules()[1]
+
+
+def toward_normal_form(
+    diagram: Diagram,
+    *,
+    guard: TerminationGuard = DEFAULT_GUARD,
+    strict: bool = False,
+) -> StrategyOutcome:
+    """Run :func:`apply_until_fixpoint` over :func:`normal_form_rules`."""
+    return apply_until_fixpoint(diagram, normal_form_rules(), guard=guard, strict=strict)

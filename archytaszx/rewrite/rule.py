@@ -403,6 +403,10 @@ class BuildResult:
     consumed_wires: tuple[Wire, ...]
     port_mapping: Mapping[PortRef, PortRef]
     scalar_introduced: Scalar
+    new_wires: tuple[Wire, ...] = ()
+    """Wires joining new nodes, which :func:`~archytaszx.rewrite.engine.apply` adds after
+    remapping. A builder never edits the wire set itself.
+    """
     phase_substitutions: Mapping[NodeId, Mapping[str, Dim]] | None = None
     """Per-node bindings a builder actually substituted into a phase's entries. ``None``
     means the rule re-derived nothing; :func:`~archytaszx.rewrite.engine.apply` then records an
@@ -443,6 +447,8 @@ class Rule:
 
     ``scalar_in_dim``, when set, evaluates that scalar at the matched dimension, and
     ``scalar_introduced`` is it written in the rule's own quantified dimension symbol.
+    ``scalar_in_match`` takes precedence over both, for a scalar depending on a matched leg
+    count as well as on the dimension.
     """
 
     name: str
@@ -453,12 +459,32 @@ class Rule:
     scalar_introduced: Scalar
     scalar_in_dim: Callable[[Dim], Scalar] | None = None
     dimension_guards: tuple[DimensionGuard, ...] = ()
+    scalar_in_match: Callable[[Match], Scalar] | None = None
 
     def scalar_for(self, dim: Dim | None) -> Scalar:
-        """The exact scalar this rule introduces at ``dim``."""
+        """The exact scalar this rule introduces at ``dim``.
+
+        Raises :class:`RewriteGrammarError` when ``scalar_in_match`` is set, a dimension
+        alone not determining this rule's scalar; :meth:`scalar_for_match` answers instead.
+        """
+        if self.scalar_in_match is not None:
+            raise RewriteGrammarError(
+                f"rule {self.name!r} sets scalar_in_match, so its scalar is not a function "
+                "of the dimension alone; call scalar_for_match(match)"
+            )
         if self.scalar_in_dim is None or dim is None:
             return self.scalar_introduced
         return self.scalar_in_dim(dim)
+
+    def scalar_for_match(self, match: Match) -> Scalar:
+        """The exact scalar this rule introduces at ``match``.
+
+        Delegates to :meth:`scalar_for` at the match's own ``shared_dim`` unless
+        ``scalar_in_match`` is set.
+        """
+        if self.scalar_in_match is not None:
+            return self.scalar_in_match(match)
+        return self.scalar_for(getattr(match, "shared_dim", None))
 
     def __post_init__(self) -> None:
         """Validate every field's type, the same way every other value object here does."""
@@ -513,6 +539,11 @@ class Rule:
             raise RewriteGrammarError(
                 f"rule {self.name!r}: scalar_in_dim must be callable or None, "
                 f"got {type(self.scalar_in_dim).__name__}"
+            )
+        if self.scalar_in_match is not None and not callable(self.scalar_in_match):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: scalar_in_match must be callable or None, "
+                f"got {type(self.scalar_in_match).__name__}"
             )
         # A builder declares the tuple it expects by setting a `side_conditions` attribute
         # on the callable; a Rule wrapping it must agree, or the two give contradictory

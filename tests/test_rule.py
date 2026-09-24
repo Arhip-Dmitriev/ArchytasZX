@@ -427,3 +427,18 @@ class TestRuleRejectsRepeatedSideConditionNames:
             scalar_introduced=Scalar.one(),
         )
         assert len(rule.side_conditions) == 2
+
+
+class TestScalarForRefusesCountsDependentRules:
+    """``scalar_for`` must not answer for a rule whose scalar depends on a leg count."""
+
+    def test_a_scalar_in_match_rule_refuses_scalar_for(self) -> None:
+        from archytaszx.rewrite.rules_library import STATE_COPY
+
+        with pytest.raises(RewriteGrammarError, match="scalar_for_match"):
+            STATE_COPY.scalar_for(Dim.concrete(3))
+
+    def test_a_dimension_only_rule_still_answers(self) -> None:
+        from archytaszx.rewrite.rules_library import ZX_CAP, zx_cap_scalar
+
+        assert ZX_CAP.scalar_for(Dim.concrete(3)) == zx_cap_scalar(Dim.concrete(3))

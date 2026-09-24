@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import dataclasses
 import inspect
 import os
@@ -1522,7 +1523,7 @@ class TestApplyDocstringMatchesRaiseSites:
 
     An equality pin on a count, not a semantic check of the prose: the AST can enumerate
     raise sites reliably, but cannot answer whether the prose describes them accurately.
-    One of the 15 documented raise conditions -- the unmapped-surviving-port raise inside
+    One of the 21 documented raise conditions -- the unmapped-surviving-port raise inside
     ``_remap_endpoint``, called from step 5 -- is not counted, since it is not lexically
     inside ``apply``'s body and the AST walk below cannot see it.
     """
@@ -1530,7 +1531,7 @@ class TestApplyDocstringMatchesRaiseSites:
     #: Count of ``raise RewriteGrammarError(...)``/``raise RewriteDomainError(...)``
     #: statements lexically inside ``apply``'s own function body. Keep in sync with
     #: ``apply``'s docstring in archytaszx/rewrite/engine.py.
-    _EXPECTED_RAISE_SITE_COUNT = 14
+    _EXPECTED_RAISE_SITE_COUNT = 20
 
     def test_raise_site_count_matches_the_pinned_constant(self) -> None:
         source = inspect.getsource(engine_module.apply)
@@ -1859,3 +1860,292 @@ class TestVerifiedPhaseSubstitutionsMustNameConsumedNodes:
         (match,) = find_matches(diagram)
         result = apply(diagram, SPIDER_FUSION, match)
         assert set(result.step.phase_substitutions) <= {a_id, b_id}
+
+
+class TestApplyRejectsADuplicateConsumedWire:
+    """Step 4: ``consumed_wires`` naming one wire twice."""
+
+    def test_duplicate_consumed_wire_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        w = Wire(PortRef(s_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+        diagram.add_wire(w.a, w.b)
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(w, w),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_duplicate_consumed_wire",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="same wire more than once"):
+            apply(diagram, rule, _ScriptedMatch())
+
+
+class TestApplyRejectsAPreExistingNewNodeId:
+    """Step 4: ``new_node_ids`` naming a node the input diagram already held."""
+
+    def test_pre_existing_new_node_id_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(s_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(s_id,),
+                consumed_node_ids=(),
+                consumed_wires=(),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_pre_existing_new_node_id",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="already existed in the input diagram"):
+            apply(diagram, rule, _ScriptedMatch())
+
+
+class TestApplyRejectsAPortMappingKeyOnNoConsumedNode:
+    """Step 4: a ``port_mapping`` key ``_remap_endpoint`` would never consult."""
+
+    def test_unused_port_mapping_key_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(s_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            new_id = working.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(new_id,),
+                consumed_node_ids=(c_id,),
+                consumed_wires=(),
+                port_mapping={
+                    PortRef(c_id, Direction.INPUT, 0): PortRef(new_id, Direction.INPUT, 0),
+                    # s_id is not consumed, so this entry is never consulted.
+                    PortRef(s_id, Direction.OUTPUT, 0): PortRef(new_id, Direction.INPUT, 0),
+                },
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_unused_port_mapping_key",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="lie on no consumed node"):
+            apply(diagram, rule, _ScriptedMatch())
+
+
+class TestApplyRejectsAnInPlaceEditOfASurvivingNode:
+    """Step 3: a builder editing a node it neither consumes nor creates."""
+
+    def test_in_place_phase_edit_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        s_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        c_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        diagram.add_wire(PortRef(s_id, Direction.OUTPUT, 0), PortRef(c_id, Direction.INPUT, 0))
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            working.set_phase(s_id, PhaseVector(d, {}))
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(),
+                consumed_node_ids=(),
+                consumed_wires=(),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+            )
+
+        rule = Rule(
+            name="scripted_in_place_phase_edit",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="in place"):
+            apply(diagram, rule, _ScriptedMatch())
+
+
+class TestApplyAddsBuildResultNewWires:
+    """Step 5 adds every ``BuildResult.new_wires`` entry, and the wire-count postcondition
+    counts them.
+
+    Pins the silent-failure mode the ``new_wires`` channel exists to close: dropping the
+    wires leaves ``bialgebra``'s four replacement spiders mutually disconnected, which the
+    old postcondition accepted without an error while the denotation was wrong.
+    """
+
+    @staticmethod
+    def _bialgebra_diagram(d: int) -> Diagram:
+        dim = Dim.concrete(d)
+        diagram = Diagram()
+        x_id = diagram.add_node(X_SPIDER, input_dims=[dim, dim], output_dims=[dim])
+        z_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim])
+        diagram.add_wire(PortRef(x_id, Direction.OUTPUT, 0), PortRef(z_id, Direction.INPUT, 0))
+        diagram.set_boundary_inputs(
+            [PortRef(x_id, Direction.INPUT, 0), PortRef(x_id, Direction.INPUT, 1)]
+        )
+        diagram.set_boundary_outputs(
+            [PortRef(z_id, Direction.OUTPUT, 0), PortRef(z_id, Direction.OUTPUT, 1)]
+        )
+        return diagram
+
+    @pytest.mark.parametrize("d", [2, 3, 4, 5])
+    def test_bialgebra_through_apply_is_connected_and_matches_the_oracle(self, d: int) -> None:
+        from archytaszx.rewrite.match import find_bialgebra_matches
+        from archytaszx.rewrite.rules_library import BIALGEBRA
+        from archytaszx.semantics.check import compare
+
+        diagram = self._bialgebra_diagram(d)
+        match = find_bialgebra_matches(diagram)[0]
+
+        result = apply(diagram, BIALGEBRA, match)
+        post = result.diagram
+
+        assert len(post.nodes) == 4
+        # Four internal wires, one per (Z, X) pair, so every new node carries two of them.
+        assert len(post.wires) == 4
+        wired: collections.Counter[NodeId] = collections.Counter()
+        for wire in post.wires:
+            wired[wire.a.node_id] += 1
+            wired[wire.b.node_id] += 1
+        assert set(wired) == set(post.nodes)
+        assert all(count == 2 for count in wired.values())
+        assert validate(post).errors == ()
+        assert compare(diagram, post, {}).matched
+
+    def test_a_new_wire_on_no_real_port_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        keep_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        diagram.set_boundary_outputs([PortRef(keep_id, Direction.OUTPUT, 0)])
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            new_id = working.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(new_id,),
+                consumed_node_ids=(),
+                consumed_wires=(),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+                new_wires=(
+                    Wire(
+                        PortRef(keep_id, Direction.OUTPUT, 0), PortRef(new_id, Direction.INPUT, 7)
+                    ),
+                ),
+            )
+
+        rule = Rule(
+            name="scripted_new_wire_on_no_real_port",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="not a real port"):
+            apply(diagram, rule, _ScriptedMatch())
+
+    def test_a_new_wire_on_a_consumed_node_raises_rewrite_grammar_error(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        keep_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+        doomed_id = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+        w = Wire(PortRef(keep_id, Direction.OUTPUT, 0), PortRef(doomed_id, Direction.INPUT, 0))
+        diagram.add_wire(w.a, w.b)
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            new_id = working.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(new_id,),
+                consumed_node_ids=(doomed_id,),
+                consumed_wires=(w,),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+                new_wires=(
+                    Wire(
+                        PortRef(doomed_id, Direction.INPUT, 0),
+                        PortRef(new_id, Direction.INPUT, 0),
+                    ),
+                ),
+            )
+
+        rule = Rule(
+            name="scripted_new_wire_on_a_consumed_node",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        with pytest.raises(RewriteGrammarError, match="node this rewrite consumes"):
+            apply(diagram, rule, _ScriptedMatch())
+
+    def test_a_duplicated_new_wire_is_added_once_and_counted_once(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        keep_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+
+        def _builder(working: Diagram, match: Match) -> BuildResult:
+            new_id = working.add_node(Z_SPIDER, input_dims=[d], output_dims=[])
+            wire = Wire(PortRef(keep_id, Direction.OUTPUT, 0), PortRef(new_id, Direction.INPUT, 0))
+            return BuildResult(
+                diagram=working,
+                new_node_ids=(new_id,),
+                consumed_node_ids=(),
+                consumed_wires=(),
+                port_mapping={},
+                scalar_introduced=Scalar.one(),
+                new_wires=(wire, wire),
+            )
+
+        rule = Rule(
+            name="scripted_duplicated_new_wire",
+            pattern=_EmptyPattern(),
+            builder=_builder,
+            side_conditions=(),
+            quantifiers=Quantifiers(),
+            scalar_introduced=Scalar.one(),
+        )
+
+        result = apply(diagram, rule, _ScriptedMatch())
+        assert len(result.diagram.wires) == 1
