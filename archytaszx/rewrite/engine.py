@@ -71,18 +71,29 @@ from __future__ import annotations
 
 import enum
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TypeVar
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
 from archytaszx.diagram.validate import IssueKind, ValidationIssue, validate
+from archytaszx.rewrite.cache import (
+    CacheError,
+    DiagramFingerprint,
+    IncrementalMatcher,
+    RewriteCache,
+    keyable,
+    pattern_key,
+)
+from archytaszx.rewrite.cache import fingerprint as _fingerprint
 from archytaszx.rewrite.rule import (
     DimensionConstraint,
     Match,
+    Pattern,
     RewriteDomainError,
     RewriteError,
     RewriteGrammarError,
@@ -765,13 +776,111 @@ class StrategyOutcome:
     whenever the search itself, rather than a step, ended the run."""
 
 
-def _first_applicable(diagram: Diagram, rules: Sequence[Rule]) -> tuple[Rule, Match] | None:
-    """The first match of the first rule in ``rules`` that has one, or ``None``."""
+_T = TypeVar("_T")
+
+
+def _through_cache(what: str, call: Callable[[], _T]) -> _T:
+    """Run ``call``, re-raising a :class:`~archytaszx.rewrite.cache.CacheError` as a
+    :class:`~archytaszx.rewrite.rule.RewriteGrammarError` prefixed with ``what``."""
+    try:
+        return call()
+    except CacheError as exc:
+        raise RewriteGrammarError(f"{what}: {type(exc).__name__}: {exc}") from exc
+
+
+def _tracked(matcher: IncrementalMatcher, pattern: Pattern) -> bool:
+    """Whether ``matcher`` tracks ``pattern`` itself, or a pattern equal to it, under a key
+    :func:`~archytaszx.rewrite.cache.pattern_key` accepts."""
+    if not keyable(pattern):
+        return False
+    key = pattern_key(pattern)
+    return any(
+        (tracked is pattern or (type(tracked) is type(pattern) and tracked == pattern))
+        and keyable(tracked)
+        and pattern_key(tracked) == key
+        for tracked in matcher.patterns
+    )
+
+
+def _rule_matches(
+    diagram: Diagram,
+    rule: Rule,
+    cache: RewriteCache | None,
+    fingerprint: DiagramFingerprint | None,
+    incremental: Mapping[str, tuple[Match, ...]] | None,
+) -> tuple[Match, ...]:
+    """One rule's matches: from ``incremental`` when it covers the pattern, else from the memo,
+    else from ``rule.pattern.find_matches``."""
+    if cache is None:
+        return tuple(rule.pattern.find_matches(diagram))
+    matcher = cache.incremental
+    if incremental is not None and matcher is not None and _tracked(matcher, rule.pattern):
+        covered = incremental.get(pattern_key(rule.pattern))
+        if covered is not None:
+            return covered
+    try:
+        return cache.matches(rule.pattern, diagram, fingerprint=fingerprint)
+    except CacheError as exc:
+        raise RewriteGrammarError(
+            f"rule {rule.name!r}: the cache rejected its pattern: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _first_applicable(
+    diagram: Diagram,
+    rules: Sequence[Rule],
+    *,
+    cache: RewriteCache | None = None,
+    fingerprint: DiagramFingerprint | None = None,
+    incremental: Mapping[str, tuple[Match, ...]] | None = None,
+) -> tuple[Rule, Match] | None:
+    """The first match of the first rule in ``rules`` that has one, or ``None``.
+
+    With a ``cache`` each scan goes through :meth:`~archytaszx.rewrite.cache.RewriteCache.matches`
+    or, for a pattern ``incremental`` covers, through that mapping; without one it calls
+    ``rule.pattern.find_matches`` directly.
+    """
     for rule in rules:
-        matches = rule.pattern.find_matches(diagram)
+        matches = _rule_matches(diagram, rule, cache, fingerprint, incremental)
         if matches:
             return rule, matches[0]
     return None
+
+
+def _incremental_matches(
+    diagram: Diagram, cache: RewriteCache | None, fingerprint: DiagramFingerprint | None
+) -> Mapping[str, tuple[Match, ...]] | None:
+    """``cache.incremental.rematch(diagram)`` when the cache carries a matcher, else ``None``."""
+    if cache is None or cache.incremental is None:
+        return None
+    matcher = cache.incremental
+    return _through_cache(
+        "apply_until_fixpoint: the cache rejected this diagram",
+        lambda: matcher.rematch(diagram, fingerprint=fingerprint),
+    )
+
+
+def _fingerprint_for(diagram: Diagram, cache: RewriteCache | None) -> DiagramFingerprint | None:
+    """``fingerprint(diagram)`` when there is a cache, else ``None``."""
+    if cache is None:
+        return None
+    return _through_cache(
+        "apply_until_fixpoint: the cache rejected this diagram",
+        lambda: _fingerprint(diagram),
+    )
+
+
+def _canonical(
+    diagram: Diagram, cache: RewriteCache | None, fingerprint: DiagramFingerprint | None
+) -> str:
+    """``cache.canonical(diagram, fingerprint=fingerprint)`` when there is a cache, else
+    ``canonical_key(diagram)``."""
+    if cache is None:
+        return canonical_key(diagram)
+    return _through_cache(
+        "apply_until_fixpoint: the cache rejected this diagram",
+        lambda: cache.canonical(diagram, fingerprint=fingerprint),
+    )
 
 
 def apply_until_fixpoint(
@@ -780,6 +889,7 @@ def apply_until_fixpoint(
     *,
     guard: TerminationGuard = DEFAULT_GUARD,
     strict: bool = False,
+    cache: RewriteCache | None = None,
 ) -> StrategyOutcome:
     """Apply ``rules`` in order, first match first, until nothing matches or ``guard`` trips.
 
@@ -793,14 +903,27 @@ def apply_until_fixpoint(
     With ``strict=True`` any :attr:`~StopReason` other than ``FIXPOINT`` raises
     :class:`TerminationGuardTripped` carrying the outcome. Anything :func:`apply` raises
     propagates unchanged.
+
+    A ``cache`` fingerprints each diagram once and serves that iteration's pattern scans and
+    its loop-detection key from the memos; a :class:`~archytaszx.rewrite.cache.CacheError`
+    from any of them is re-raised as :class:`~archytaszx.rewrite.rule.RewriteGrammarError`.
+    A cache carrying an :class:`~archytaszx.rewrite.cache.IncrementalMatcher` re-matches through
+    it each iteration, and any rule whose pattern that matcher does not cover falls back to the
+    memo, a pattern the memo cannot key falling back to an uncached scan.
     """
     if not isinstance(guard, TerminationGuard):
         raise RewriteGrammarError(
             f"apply_until_fixpoint: guard must be a TerminationGuard, got {type(guard).__name__}"
         )
 
+    if cache is not None and not isinstance(cache, RewriteCache):
+        raise RewriteGrammarError(
+            f"apply_until_fixpoint: cache must be a RewriteCache, got {type(cache).__name__}"
+        )
+
     current = diagram
-    history: dict[str, list[Diagram]] = {canonical_key(diagram): [diagram]}
+    fp = _fingerprint_for(diagram, cache)
+    history: dict[str, list[Diagram]] = {_canonical(diagram, cache, fp): [diagram]}
     steps: list[RewriteStep] = []
     scalar_accumulated = Scalar.one()
     steps_attempted = 0
@@ -814,7 +937,13 @@ def apply_until_fixpoint(
         if len(steps) >= guard.max_steps:
             stop_reason = StopReason.STEP_LIMIT
             break
-        candidate = _first_applicable(current, rules)
+        candidate = _first_applicable(
+            current,
+            rules,
+            cache=cache,
+            fingerprint=fp,
+            incremental=_incremental_matches(current, cache, fp),
+        )
         if candidate is None:
             stop_reason = StopReason.FIXPOINT
             break
@@ -823,7 +952,8 @@ def apply_until_fixpoint(
         steps.append(result.step)
         scalar_accumulated = scalar_accumulated * result.step.scalar_introduced
         current = result.diagram
-        key = canonical_key(current)
+        fp = _fingerprint_for(current, cache)
+        key = _canonical(current, cache, fp)
         bucket = history.setdefault(key, [])
         if guard.detect_loops and any(isomorphic(current, seen) for seen in bucket):
             stop_reason = StopReason.LOOP_DETECTED
@@ -891,6 +1021,9 @@ def toward_normal_form(
     *,
     guard: TerminationGuard = DEFAULT_GUARD,
     strict: bool = False,
+    cache: RewriteCache | None = None,
 ) -> StrategyOutcome:
     """Run :func:`apply_until_fixpoint` over :func:`normal_form_rules`."""
-    return apply_until_fixpoint(diagram, normal_form_rules(), guard=guard, strict=strict)
+    return apply_until_fixpoint(
+        diagram, normal_form_rules(), guard=guard, strict=strict, cache=cache
+    )
