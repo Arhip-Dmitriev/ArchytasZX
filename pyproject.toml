@@ -71,9 +71,9 @@ testpaths = ["tests"]
 # Seed sweeps and oracle differentials are deselected by default. Run them with
 # `pytest -m slow` (sweeps only) or `pytest -m ""` (everything); CI runs `pytest -m ""`.
 # `-n 8` (pytest-xdist) runs either tier across cores.
-# Measured 2026-09-24 on 8 cores: the default tier is 2616 tests, 4m04s serial and 2m18s
-# at `-n 8`; `-m slow` is 36 tests, 32m03s serial and 13m37s at `-n 8`. The slow tier's
-# parallel floor is its longest single test, 500s, against 2646s of total work.
+# Measured 2026-09-25 on 8 cores: the default tier is 4538 tests (118 skipped), 1m00s
+# serial and 40s at `-n 8`; `-m slow` is 37 tests, 3m40s at `-n 8`. Wall times swing with
+# machine load -- the same default tier measured 1m48s at `-n 8` earlier the same day.
 addopts = ["-m", "not slow"]
 markers = [
     "slow: multi-thousand-seed fuzz sweep or oracle differential",

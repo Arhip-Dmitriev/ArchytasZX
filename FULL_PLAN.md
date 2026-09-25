@@ -158,7 +158,7 @@ iv. rewrite/rule.py and match.py
 
 PART 3: REWRITING POWER
 
-Phase 11: Rule library breadth and strategies [CURRENT]
+Phase 11: Rule library breadth and strategies [UNDER DEBUG]
 i. rewrite/rules_library.py
 - adds identity removal, copy and Hopf, bialgebra, and the qufinite normal-form-directed rules, each recording its exact scalar
 ii. rewrite/engine.py
@@ -167,16 +167,19 @@ ii. rewrite/engine.py
 - done when: the rule set is a usable rewriting toolkit
 - carry-over: the triangle, W, and dimension-connective normal-form-directed rules are not implemented here. They must be taken directly from Wang, arXiv:2104.06429, per the CONTEXT rule against reconstructing the qufinite generator set from memory, and that text was not available at implementation time. Phase 13's normal-form driver must not assume they exist.
 
-Phase 12: Rewrite caching and incrementality
+Phase 12: Rewrite caching and incrementality [UNDER DEBUG]
 i. rewrite/cache.py
 - matches and denotations are memoized
 - a local edit triggers incremental re-matching over the affected region rather than a full rescan
 - test and debug: confirm cached and uncached runs produce identical results and certificates; confirm an incremental re-match after a small edit matches a full re-match; measure that repeated matching on a stable region hits the cache
 - done when: interactive sessions stay responsive as diagrams grow, with no change in results and caching/memoization is implemented.
+- carry-over: the incremental rescan trigger is match relevance, not the full fingerprint. The scalar is excluded from the match key and a boundary edit is handled node-locally; only the parameter environment, the bang boxes and a boundary entry naming an absent node force a full rescan. Every other reader of DiagramFingerprint still sees the scalar through global_key, which is what canonical() and loop detection key on.
+- carry-over: a Pattern is cached by its repr, so only FusionPattern (the one frozen dataclass) keys on its field values; the other eight key on their type name alone, which is correct only while they stay stateless. A pattern carrying per-instance or mutable class state is refused and matched uncached, counted in CacheStats.unkeyable.
+- carry-over: the cache is a win from roughly forty nodes up (a cold z80 fixpoint run is 26 percent faster, a repeated run 2.2 times faster). Below that the fingerprint per iteration costs more than it saves and the plain memo is the better choice; the incremental matcher is for the interactive editing path, not for small cold runs.
 
 -- at this point do a full optimization sweep!
 
-Phase 13: Normal-form driver and decision procedure
+Phase 13: Normal-form driver and decision procedure [CURRENT]
 i. rewrite/normal_form.py
 - a driver reduces a diagram to the qufinite normal form
 - equality of two diagrams is decided by reducing both and comparing normal forms
@@ -223,7 +226,7 @@ i. repl/parser.py
 - test and debug: parse the GHZ-with-copy input and confirm it yields the same graph the Phase 3 tests build by hand
 - done when: text input produces valid diagrams, and every input form is accepted regardless of the session notation mode
 
-Phase 19: Commands and shell
+Phase 19: Commands and shell [PRE PRINT HERE]
 i. repl/commands.py
 - implements load, show, list-rules, match, apply (rule, optionally at a chosen match), check (with supplied counts and d), normalize, decide (equality via normal form), saturate (equality saturation), prove (tactic search), induct (symbolic-n proof), certificate (emit and verify), and translate (bang box to and from scalable)
 ii. repl/shell.py
