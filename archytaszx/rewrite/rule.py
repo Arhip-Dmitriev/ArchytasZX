@@ -386,6 +386,11 @@ class Match(Protocol):
         """
         ...
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """Every node id this match reads or rewrites, ascending and deduplicated."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class BuildResult:
@@ -417,6 +422,9 @@ class BuildResult:
 class Pattern(abc.ABC):
     """A left-hand-side pattern: locates every occurrence of some rewrite shape in a diagram."""
 
+    locality_radius: int = 3
+    """How many wire hops beyond a match's support this pattern's decision can read."""
+
     @abc.abstractmethod
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Return every occurrence of this pattern in ``diagram``, in a deterministic order.
@@ -425,6 +433,21 @@ class Pattern(abc.ABC):
         side conditions did not all pass -- see :attr:`Match.all_side_conditions_passed`.
         """
         raise NotImplementedError
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The key :meth:`find_matches` orders its result by: ``find_matches(D) ==
+        tuple(sorted(find_matches(D), key=self.order_key))``."""
+        return tuple(int(node_id) for node_id in match.support_node_ids)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Filters :meth:`find_matches` to the matches whose support meets ``anchors``."""
+        return tuple(
+            match
+            for match in self.find_matches(diagram)
+            if not anchors.isdisjoint(match.support_node_ids)
+        )
 
 
 RuleBuilder = Callable[[Diagram, Match], BuildResult]

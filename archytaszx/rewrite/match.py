@@ -71,7 +71,7 @@ hash-independent key.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -208,6 +208,11 @@ class FusionMatch:
         See :class:`archytaszx.rewrite.rule.Match`.
         """
         return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The two fused node ids, ascending."""
+        return _support_ids(self.a_id, self.b_id, self.wire.a.node_id, self.wire.b.node_id)
 
 
 _FUSABLE_GENERATOR_NAMES = frozenset((Z_SPIDER.name, X_SPIDER.name))
@@ -1258,8 +1263,54 @@ def resolve_fusion_match(
     )
 
 
+def _support_ids(*node_ids: NodeId) -> tuple[NodeId, ...]:
+    """The given node ids, deduplicated and ascending."""
+    return tuple(sorted(set(node_ids)))
+
+
+def _neighbour_ids(diagram: Diagram) -> dict[NodeId, set[NodeId]]:
+    """Each node id mapped to the node ids one wire hop away."""
+    neighbours: dict[NodeId, set[NodeId]] = {node_id: set() for node_id in diagram.nodes}
+    for wire in diagram.wires:
+        neighbours.setdefault(wire.a.node_id, set()).add(wire.b.node_id)
+        neighbours.setdefault(wire.b.node_id, set()).add(wire.a.node_id)
+    return neighbours
+
+
+def _within_hops(
+    neighbours: Mapping[NodeId, set[NodeId]], seeds: Iterable[NodeId], hops: int
+) -> set[NodeId]:
+    """Every node id reachable from ``seeds`` in at most ``hops`` wire hops."""
+    reached = set(seeds)
+    frontier = set(reached)
+    for _ in range(hops):
+        nxt = {other for node_id in frontier for other in neighbours.get(node_id, ())} - reached
+        if not nxt:
+            break
+        reached |= nxt
+        frontier = nxt
+    return reached
+
+
+def _seed_meets_anchors(
+    anchors: frozenset[NodeId] | None,
+    neighbours: Mapping[NodeId, set[NodeId]] | None,
+    seeds: tuple[NodeId, ...],
+    hops: int,
+) -> bool:
+    """True when ``anchors`` is None, or meets the ``hops``-hop closure of ``seeds``."""
+    if anchors is None:
+        return True
+    if hops == 0 or neighbours is None:
+        return not anchors.isdisjoint(seeds)
+    return not anchors.isdisjoint(_within_hops(neighbours, seeds, hops))
+
+
 def find_matches(
-    diagram: Diagram, *, dimension_guards: tuple[DimensionGuard, ...] = ()
+    diagram: Diagram,
+    *,
+    dimension_guards: tuple[DimensionGuard, ...] = (),
+    anchors: frozenset[NodeId] | None = None,
 ) -> tuple[FusionMatch, ...]:
     """Find every same-color spider fusion occurrence in ``diagram``. See the module docstring.
 
@@ -1303,6 +1354,8 @@ def find_matches(
     matches: list[FusionMatch] = []
     for wire in wire_candidates:
         a_id, b_id = _ordered_pair(wire)
+        if not _seed_meets_anchors(anchors, None, (a_id, b_id), 0):
+            continue
 
         # Conditions 2 and 4-7 are decided by exactly this call -- the same function
         # spider_fusion_builder calls again to re-verify the match.
@@ -1347,13 +1400,38 @@ def _ordered_pair(wire: Wire) -> tuple[NodeId, NodeId]:
 
 @dataclass(frozen=True, slots=True)
 class FusionPattern(Pattern):
-    """Same-color spider fusion, optionally restricted by :class:`DimensionGuard`\\ s."""
+    """Same-color spider fusion, optionally restricted by :class:`DimensionGuard`\\ s.
+
+    Locality radius 1.
+    """
 
     dimension_guards: tuple[DimensionGuard, ...] = ()
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_matches`. See the module docstring."""
         return find_matches(diagram, dimension_guards=self.dimension_guards)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_matches` with the candidate wires restricted to ``anchors``."""
+        return find_matches(diagram, dimension_guards=self.dimension_guards, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The pair's node ids, tiebroken by the consumed wire's per-side direction and index."""
+        fusion = cast(FusionMatch, match)
+        near = fusion.wire.a if fusion.wire.a.node_id == fusion.a_id else fusion.wire.b
+        far = fusion.wire.b if fusion.wire.a.node_id == fusion.a_id else fusion.wire.a
+        return (
+            int(fusion.a_id),
+            int(fusion.b_id),
+            near.direction.value,
+            near.index,
+            far.direction.value,
+            far.index,
+        )
 
 
 FOURIER_CHAIN_LENGTH = 4
@@ -1384,6 +1462,11 @@ class FourierMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The chain's four node ids, ascending."""
+        return _support_ids(*self.node_ids)
+
 
 def _wire_by_port(diagram: Diagram) -> dict[PortRef, Wire]:
     """Map every wired port to the wire carrying it."""
@@ -1410,7 +1493,9 @@ def _fourier_successor(
     return other.node_id, wire
 
 
-def find_fourier_matches(diagram: Diagram) -> tuple[FourierMatch, ...]:
+def find_fourier_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[FourierMatch, ...]:
     """Every chain of four Fourier boxes in series, ordered by the chain's first node id."""
     by_port = _wire_by_port(diagram)
     matches: list[FourierMatch] = []
@@ -1458,6 +1543,10 @@ def find_fourier_matches(diagram: Diagram) -> tuple[FourierMatch, ...]:
             )
         if failed:
             continue
+        # Applied here, downstream of every step that can raise on a malformed diagram, so
+        # an anchored scan raises exactly what the full scan raises.
+        if anchors is not None and anchors.isdisjoint(chain):
+            continue
         outcomes = (
             SideConditionOutcome(
                 "chain_is_series", True, f"{FOURIER_CHAIN_LENGTH} F boxes in series at {chain[0]}"
@@ -1482,11 +1571,26 @@ def find_fourier_matches(diagram: Diagram) -> tuple[FourierMatch, ...]:
 
 
 class FourierCancellationPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for F^4 cancellation."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for F^4 cancellation.
+
+    Locality radius 3.
+    """
+
+    locality_radius = 3
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_fourier_matches`."""
         return find_fourier_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_fourier_matches` with the resolved chains restricted."""
+        return find_fourier_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The chain's first node id."""
+        return (int(cast(FourierMatch, match).node_ids[0]),)
 
 
 CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -1514,8 +1618,15 @@ class CapMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The state's and the effect's node ids, ascending."""
+        return _support_ids(self.state_id, self.effect_id)
 
-def find_cap_matches(diagram: Diagram) -> tuple[CapMatch, ...]:
+
+def find_cap_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[CapMatch, ...]:
     """Every phaseless Z state wired into a phaseless X effect, ordered by the state's node id."""
     claimed: dict[PortRef, int] = {}
     for wire in diagram.wires:
@@ -1525,6 +1636,8 @@ def find_cap_matches(diagram: Diagram) -> tuple[CapMatch, ...]:
 
     matches: list[CapMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
         for state_ref, effect_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if state_ref.direction is not Direction.OUTPUT:
                 continue
@@ -1571,11 +1684,27 @@ def find_cap_matches(diagram: Diagram) -> tuple[CapMatch, ...]:
 
 
 class CapPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_cap_matches`."""
         return find_cap_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_cap_matches` with the candidate wires restricted."""
+        return find_cap_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The state's then the effect's node id."""
+        cap = cast(CapMatch, match)
+        return (int(cap.state_id), int(cap.effect_id))
 
 
 def _port_claims(diagram: Diagram) -> tuple[dict[PortRef, int], frozenset[PortRef]]:
@@ -1689,8 +1818,17 @@ class IdentityMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The removed node's id and the spliced wire's far node id, ascending."""
+        return _support_ids(
+            self.node_id, self.wire.a.node_id, self.wire.b.node_id, self.far_ref.node_id
+        )
 
-def find_identity_matches(diagram: Diagram) -> tuple[IdentityMatch, ...]:
+
+def find_identity_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[IdentityMatch, ...]:
     """Every phaseless one-in-one-out spider, ordered by node id.
 
     The output leg's wire is the spliced one whenever it has one; otherwise the input
@@ -1698,10 +1836,13 @@ def find_identity_matches(diagram: Diagram) -> tuple[IdentityMatch, ...]:
     """
     claims, boundary = _port_claims(diagram)
     by_port = _wire_by_port(diagram)
+    neighbours = _neighbour_ids(diagram) if anchors is not None else None
     matches: list[IdentityMatch] = []
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
         if not _is_spider(node) or not _is_phaseless(node):
+            continue
+        if not _seed_meets_anchors(anchors, neighbours, (node_id,), 1):
             continue
         if (node.num_inputs, node.num_outputs) != (1, 1):
             continue
@@ -1727,6 +1868,8 @@ def find_identity_matches(diagram: Diagram) -> tuple[IdentityMatch, ...]:
         far_ref = _far_end(wire, consumed_ref)
         if far_ref.node_id == node_id:
             continue
+        if anchors is not None and anchors.isdisjoint((node_id, far_ref.node_id)):
+            continue
         neighbour = by_port.get(surviving_ref)
         if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
             continue
@@ -1746,11 +1889,26 @@ def find_identity_matches(diagram: Diagram) -> tuple[IdentityMatch, ...]:
 
 
 class IdentityRemovalPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for identity removal."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for identity removal.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_identity_matches`."""
         return find_identity_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_identity_matches` with the candidate nodes restricted."""
+        return find_identity_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The removed node's id."""
+        return (int(cast(IdentityMatch, match).node_id),)
 
 
 TRIANGLE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -1796,12 +1954,27 @@ class TriangleMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The pair's node ids and the spliced wire's far node id, ascending."""
+        return _support_ids(
+            self.first_id,
+            self.second_id,
+            self.wire.a.node_id,
+            self.wire.b.node_id,
+            self.spliced_wire.a.node_id,
+            self.spliced_wire.b.node_id,
+            self.far_ref.node_id,
+        )
+
 
 _TRIANGLE_PAIR_NAMES = frozenset((TRIANGLE.name, TRIANGLE_INVERSE.name))
 """The two generator names a :class:`TriangleMatch` joins, one of each."""
 
 
-def find_triangle_matches(diagram: Diagram) -> tuple[TriangleMatch, ...]:
+def find_triangle_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[TriangleMatch, ...]:
     """Every T/Ti pair in series, ordered by the first node's id.
 
     The second node's output wire is the spliced one whenever it has one; otherwise the
@@ -1809,8 +1982,11 @@ def find_triangle_matches(diagram: Diagram) -> tuple[TriangleMatch, ...]:
     """
     claims, boundary = _port_claims(diagram)
     by_port = _wire_by_port(diagram)
+    neighbours = _neighbour_ids(diagram) if anchors is not None else None
     matches: list[TriangleMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, neighbours, (wire.a.node_id, wire.b.node_id), 1):
+            continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
                 continue
@@ -1858,6 +2034,8 @@ def find_triangle_matches(diagram: Diagram) -> tuple[TriangleMatch, ...]:
             far_ref = _far_end(spliced, consumed_ref)
             if far_ref.node_id in (first.id, second.id):
                 continue
+            if anchors is not None and anchors.isdisjoint((first.id, second.id, far_ref.node_id)):
+                continue
             neighbour = by_port.get(surviving_ref)
             if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
                 continue
@@ -1886,11 +2064,27 @@ def find_triangle_matches(diagram: Diagram) -> tuple[TriangleMatch, ...]:
 
 
 class TriangleInverseCancellationPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for T/Ti cancellation."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for T/Ti cancellation.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_triangle_matches`."""
         return find_triangle_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_triangle_matches` with the candidate wires restricted."""
+        return find_triangle_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The first then the second node id."""
+        triangle = cast(TriangleMatch, match)
+        return (int(triangle.first_id), int(triangle.second_id))
 
 
 STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -1924,12 +2118,21 @@ class StateCopyMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The state's and the spider's node ids, ascending."""
+        return _support_ids(self.state_id, self.spider_id)
 
-def find_state_copy_matches(diagram: Diagram) -> tuple[StateCopyMatch, ...]:
+
+def find_state_copy_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[StateCopyMatch, ...]:
     """Every phaseless X state wired into a phaseless Z spider's only input, by state id."""
     claims, boundary = _port_claims(diagram)
     matches: list[StateCopyMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
         for state_ref, spider_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if state_ref.direction is not Direction.OUTPUT:
                 continue
@@ -1975,11 +2178,27 @@ def find_state_copy_matches(diagram: Diagram) -> tuple[StateCopyMatch, ...]:
 
 
 class StateCopyPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for state copy."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for state copy.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_state_copy_matches`."""
         return find_state_copy_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_state_copy_matches` with the candidate wires restricted."""
+        return find_state_copy_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The state's then the spider's node id."""
+        copy = cast(StateCopyMatch, match)
+        return (int(copy.state_id), int(copy.spider_id))
 
 
 HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -2025,6 +2244,11 @@ class HopfMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The two spiders' and the two F boxes' node ids, ascending."""
+        return _support_ids(self.z_id, self.x_id, *self.fourier_ids)
+
 
 def _fourier_pair_path(
     diagram: Diagram,
@@ -2068,16 +2292,21 @@ def _fourier_pair_path(
     return (boxes[0], boxes[1]), (wires[0], wires[1], wires[2]), _far_end(final, current)
 
 
-def find_hopf_matches(diagram: Diagram) -> tuple[HopfMatch, ...]:
+def find_hopf_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[HopfMatch, ...]:
     """Every Z/X pair joined by one plain wire and one wire through two F boxes, by node id."""
     claims, boundary = _port_claims(diagram)
     by_port = _wire_by_port(diagram)
+    neighbours = _neighbour_ids(diagram) if anchors is not None else None
     matches: list[HopfMatch] = []
     for z_id in sorted(diagram.nodes):
         z_node = diagram.nodes[z_id]
         if not REGISTRY.is_registered(z_node.generator_type):
             continue
         if z_node.generator_type.name != Z_SPIDER.name:
+            continue
+        if not _seed_meets_anchors(anchors, neighbours, (z_id,), 3):
             continue
         z_dim = _uniform_leg_dim(z_node)
         if z_dim is None:
@@ -2113,6 +2342,8 @@ def find_hopf_matches(diagram: Diagram) -> tuple[HopfMatch, ...]:
                 if path is None:
                     continue
                 fourier_ids, fourier_wires, x_fourier = path
+                if anchors is not None and anchors.isdisjoint((z_id, x_node.id, *fourier_ids)):
+                    continue
                 if x_fourier.node_id != x_node.id or x_fourier.direction is not Direction.INPUT:
                     continue
                 if x_fourier == x_direct:
@@ -2144,11 +2375,27 @@ def find_hopf_matches(diagram: Diagram) -> tuple[HopfMatch, ...]:
 
 
 class HopfPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Hopf law."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Hopf law.
+
+    Locality radius 3.
+    """
+
+    locality_radius = 3
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_hopf_matches`."""
         return find_hopf_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_hopf_matches` with the Z seed nodes restricted."""
+        return find_hopf_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """Both spiders' node ids, then the Z-side and X-side leg indices."""
+        hopf = cast(HopfMatch, match)
+        return (int(hopf.z_id), int(hopf.x_id), hopf.z_leg_indices, hopf.x_leg_indices)
 
 
 BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -2183,12 +2430,21 @@ class BialgebraMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The X's and the Z's node ids, ascending."""
+        return _support_ids(self.x_id, self.z_id)
 
-def find_bialgebra_matches(diagram: Diagram) -> tuple[BialgebraMatch, ...]:
+
+def find_bialgebra_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[BialgebraMatch, ...]:
     """Every phaseless X_{2->1} whose output feeds a phaseless Z_{1->2}, by X node id."""
     claims, boundary = _port_claims(diagram)
     matches: list[BialgebraMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
         for x_ref, z_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if x_ref.direction is not Direction.OUTPUT or x_ref.index != 0:
                 continue
@@ -2235,11 +2491,27 @@ def find_bialgebra_matches(diagram: Diagram) -> tuple[BialgebraMatch, ...]:
 
 
 class BialgebraPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the bialgebra law."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the bialgebra law.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_bialgebra_matches`."""
         return find_bialgebra_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_bialgebra_matches` with the candidate wires restricted."""
+        return find_bialgebra_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The X's then the Z's node id."""
+        bialgebra = cast(BialgebraMatch, match)
+        return (int(bialgebra.x_id), int(bialgebra.z_id))
 
 
 FOURIER_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -2273,12 +2545,21 @@ class FourierStateMatch:
         """True iff every recorded side condition passed."""
         return all(outcome.passed for outcome in self.side_condition_outcomes)
 
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The spider's and the F box's node ids, ascending."""
+        return _support_ids(self.spider_id, self.fourier_id, self.free_ref.node_id)
 
-def find_fourier_state_matches(diagram: Diagram) -> tuple[FourierStateMatch, ...]:
+
+def find_fourier_state_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[FourierStateMatch, ...]:
     """Every F box in series with a phaseless Z state or Z effect, by spider node id."""
     claims, boundary = _port_claims(diagram)
     matches: list[FourierStateMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
         for spider_ref, fourier_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             spider = diagram.nodes.get(spider_ref.node_id)
             fourier = diagram.nodes.get(fourier_ref.node_id)
@@ -2345,8 +2626,24 @@ def find_fourier_state_matches(diagram: Diagram) -> tuple[FourierStateMatch, ...
 
 
 class FourierStateColorChangePattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the F-on-a-state rule."""
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the F-on-a-state rule.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_fourier_state_matches`."""
         return find_fourier_state_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_fourier_state_matches` with the candidate wires restricted."""
+        return find_fourier_state_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The spider's then the F box's node id."""
+        fourier_state = cast(FourierStateMatch, match)
+        return (int(fourier_state.spider_id), int(fourier_state.fourier_id))
