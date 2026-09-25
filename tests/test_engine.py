@@ -1097,6 +1097,7 @@ class _ScriptedMatch:
 
     side_condition_outcomes: tuple[SideConditionOutcome, ...] = ()
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    support_node_ids: tuple[NodeId, ...] = ()
 
     @property
     def all_side_conditions_passed(self) -> bool:

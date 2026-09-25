@@ -27,7 +27,7 @@ import pytest
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.rewrite.engine import (
     DEFAULT_GUARD,
     NORMAL_FORM_RULE_NAMES,
@@ -61,6 +61,7 @@ class _ScriptedMatch:
 
     side_condition_outcomes: tuple[SideConditionOutcome, ...] = ()
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    support_node_ids: tuple[NodeId, ...] = ()
 
     @property
     def all_side_conditions_passed(self) -> bool:
