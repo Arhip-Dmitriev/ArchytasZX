@@ -167,7 +167,7 @@ ii. rewrite/engine.py
 - done when: the rule set is a usable rewriting toolkit
 - carry-over: the triangle, W, and dimension-connective normal-form-directed rules are not implemented here. They must be taken directly from Wang, arXiv:2104.06429, per the CONTEXT rule against reconstructing the qufinite generator set from memory, and that text was not available at implementation time. Phase 13's normal-form driver must not assume they exist.
 
-Phase 12: Rewrite caching and incrementality [UNDER DEBUG]
+Phase 12: Rewrite caching and incrementality [UNDER DEBUG - can be  optimized (cache thing)]
 i. rewrite/cache.py
 - matches and denotations are memoized
 - a local edit triggers incremental re-matching over the affected region rather than a full rescan
@@ -179,14 +179,21 @@ i. rewrite/cache.py
 
 -- at this point do a full optimization sweep!
 
-Phase 13: Normal-form driver and decision procedure [CURRENT]
+Phase 13: Normal-form driver and decision procedure [UNDER DEBUG]
 i. rewrite/normal_form.py
 - a driver reduces a diagram to the qufinite normal form
 - equality of two diagrams is decided by reducing both and comparing normal forms
 - test and debug: reduce several diagrams known to be equal and confirm identical normal forms; reduce two known-unequal diagrams and confirm distinct normal forms; cross-check every decision against the oracle
 - done when: the engine can decide diagram equality
+- carry-over: the engine normal form is the fixpoint of the non-growing normal-form rule set plus canonicalisation, not Wang's eq. (4)/(7) normal form, which is built per amplitude from the dense vector.
+- carry-over: the decision is sound but incomplete. EQUAL needs a normal-form match, a symbolic-contraction match, or an induction proof; UNEQUAL needs an oracle counterexample on the original diagrams; anything else is UNKNOWN, and completeness waits on the ZXW-complete rule set.
+- carry-over: the decision procedure lives in semantics/decide.py, since rewrite/ never imports semantics/; rewrite/normal_form.py is the pure-rewrite driver.
+- carry-over: comparison_view breaks ties between interchangeable spider legs by original port index, so canonicalisation is not complete; equal diagrams whose legs tie may miss the normal-form rung and fall to a later one.
+- carry-over: the oracle rung counts a mismatch only above tolerance times the larger entry magnitude (at least 1), and samples each symbol within its sympy assumptions (integer symbols at integers, positive ones away from 0), never accepting a counterexample that breaks one; induction claims EQUAL only from base 0, and a proof from base 1 alone is UNKNOWN.
+- carry-over: the symbolic rung's cost grows exponentially in the number of contracted pairs (a scalar-only diagram of twenty Z-X loops does not finish in five minutes), so a large pair with no oracle counterexample can stall there; a budget or timeout on that rung is still owed.
+- carry-over: rewrite rules other than fusion and fourier_cancellation do not update the scopes of nested bang boxes, and spider_fusion raises bangbox_scope_unknown_node on some leftover nested boxes; the induction ladder now treats that as an unsettled tier rather than aborting.
 
-Phase 14: Equality saturation
+Phase 14: Equality saturation [CURRENT]
 i. rewrite/egraph.py
 - an e-graph applies rules non-destructively, growing a congruence closure of equal diagrams
 - an extraction step selects an optimal representative under a stated cost
