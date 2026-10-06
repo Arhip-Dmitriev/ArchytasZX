@@ -523,6 +523,12 @@ class Diagram:
             raise GraphGrammarError(f"multiply_scalar requires a Scalar, got {factor!r}")
         self._scalar = self._scalar * factor
 
+    def set_scalar(self, scalar: Scalar) -> None:
+        """Replace the scalar accumulator with ``scalar``."""
+        if not isinstance(scalar, Scalar):
+            raise GraphGrammarError(f"set_scalar requires a Scalar, got {scalar!r}")
+        self._scalar = scalar
+
     # -- parameter environment ----------------------------------------------------------
 
     def resolve_dim(self, dim: Dim) -> Dim:

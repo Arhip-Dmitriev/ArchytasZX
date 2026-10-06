@@ -890,6 +890,7 @@ def apply_until_fixpoint(
     guard: TerminationGuard = DEFAULT_GUARD,
     strict: bool = False,
     cache: RewriteCache | None = None,
+    on_result: Callable[[RewriteResult], None] | None = None,
 ) -> StrategyOutcome:
     """Apply ``rules`` in order, first match first, until nothing matches or ``guard`` trips.
 
@@ -910,6 +911,8 @@ def apply_until_fixpoint(
     A cache carrying an :class:`~archytaszx.rewrite.cache.IncrementalMatcher` re-matches through
     it each iteration, and any rule whose pattern that matcher does not cover falls back to the
     memo, a pattern the memo cannot key falling back to an uncached scan.
+
+    ``on_result`` receives every :class:`RewriteResult` in application order.
     """
     if not isinstance(guard, TerminationGuard):
         raise RewriteGrammarError(
@@ -919,6 +922,12 @@ def apply_until_fixpoint(
     if cache is not None and not isinstance(cache, RewriteCache):
         raise RewriteGrammarError(
             f"apply_until_fixpoint: cache must be a RewriteCache, got {type(cache).__name__}"
+        )
+
+    if on_result is not None and not callable(on_result):
+        raise RewriteGrammarError(
+            f"apply_until_fixpoint: on_result must be callable or None, got "
+            f"{type(on_result).__name__}"
         )
 
     current = diagram
@@ -949,6 +958,8 @@ def apply_until_fixpoint(
             break
         rule, match = candidate
         result = apply(current, rule, match)
+        if on_result is not None:
+            on_result(result)
         steps.append(result.step)
         scalar_accumulated = scalar_accumulated * result.step.scalar_introduced
         current = result.diagram
