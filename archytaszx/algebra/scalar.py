@@ -405,6 +405,45 @@ def _pull_constants(expr: sp.Expr) -> sp.Expr:
     return expr
 
 
+def _reduce_integer_phase(arg: sp.Expr) -> sp.Expr:
+    """``2*pi*i*q`` with each rational coefficient of ``q``'s integer-symbol monomials taken mod 1.
+
+    Returns ``arg`` unchanged unless ``q`` is a polynomial over the rationals in symbols all
+    assumed integer.
+    """
+    q = sp.expand(arg / (2 * sp.pi * sp.I))
+    symbols = sorted(q.free_symbols, key=lambda symbol: str(symbol.name))
+    if not all(symbol.is_integer is True for symbol in symbols):
+        return arg
+    try:
+        poly = sp.Poly(q, *symbols) if symbols else None
+    except sp.PolynomialError:
+        return arg
+    if poly is None:
+        return 2 * sp.pi * sp.I * (q % 1) if q.is_Rational else arg
+    if not all(coefficient.is_Rational for coefficient in poly.coeffs()):
+        return arg
+    reduced = sum(
+        (
+            (coefficient % 1) * sp.Mul(*(s**e for s, e in zip(symbols, monomial)))
+            for monomial, coefficient in poly.terms()
+        ),
+        sp.Integer(0),
+    )
+    return 2 * sp.pi * sp.I * reduced
+
+
+def _reduce_integer_phases(expr: sp.Expr) -> sp.Expr:
+    """Apply :func:`_reduce_integer_phase` to every exponential's argument in ``expr``."""
+    return cast(
+        sp.Expr,
+        expr.replace(
+            lambda node: isinstance(node, sp.exp),
+            lambda node: sp.exp(_reduce_integer_phase(node.args[0])),
+        ),
+    )
+
+
 def _close_all(expr: sp.Expr, budget: list[int]) -> tuple[sp.Expr, bool]:
     """Close every closable Sum in one bottom-up pass, reporting whether anything changed."""
     changed = False
@@ -561,7 +600,7 @@ class Scalar:
                     "simplification exceeded its step budget; the expression is left unsimplified"
                 )
             expr, changed = _close_all(expr, budget)
-            expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
+            expr = _pull_constants(sp.powsimp(sp.expand(_reduce_integer_phases(expr)), force=True))
             if not changed:
                 break
         return Scalar(_rename_indices(expr))
