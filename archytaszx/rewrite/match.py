@@ -1599,6 +1599,7 @@ CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("phaseless", "neither node carries a phase vector"),
     SideCondition("same_dimension", "both legs carry one dimension"),
+    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
 )
 
 
@@ -1666,6 +1667,8 @@ def find_cap_matches(
             state_dim = state.outputs[0].dim
             effect_dim = effect.inputs[0].dim
             if state_dim != effect_dim:
+                continue
+            if _in_any_node_scope_box(diagram, (state.id, effect.id)):
                 continue
             matches.append(
                 CapMatch(
