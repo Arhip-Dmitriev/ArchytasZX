@@ -141,6 +141,11 @@ class ContractionResult:
 
 
 def _check_concrete(diagram: Diagram) -> None:
+    if diagram.bang_boxes:
+        raise ContractDomainError(
+            f"diagram still carries bang box(es) {sorted(diagram.bang_boxes)}; expand them "
+            "(archytaszx.semantics.check.instantiate) before contracting numerically"
+        )
     if not diagram.scalar.is_concrete:
         raise ContractDomainError(
             f"diagram scalar {diagram.scalar} is not concrete; cannot contract numerically"

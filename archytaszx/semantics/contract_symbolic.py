@@ -363,8 +363,8 @@ def _closed_scope_subdiagram(
 ) -> Diagram:
     """The closed sub-diagram on ``node_scope``: its nodes, its wires, no boundary, scalar one.
 
-    ``exclude`` is the box being expanded; every other box lying inside the scope is carried
-    over, so a nested count is still there for the recursive contraction to meet.
+    ``exclude`` is the box being expanded; its descendants are carried over, its children
+    becoming top-level boxes.
     """
     extracted = Diagram()
     id_map: dict[NodeId, NodeId] = {}
@@ -382,12 +382,23 @@ def _closed_scope_subdiagram(
                 PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
                 PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
             )
-    for box_id in sorted(diagram.bang_boxes):
-        box = diagram.bang_boxes[box_id]
-        if box_id != exclude and box.node_scope and box.node_scope <= node_scope:
-            extracted.add_bang_box(
-                box.multiplicity, node_scope=frozenset(id_map[n] for n in box.node_scope)
+    box_map: dict[BangBoxId, BangBoxId | None] = {exclude: None}
+    pending = True
+    while pending:
+        pending = False
+        for box_id in sorted(diagram.bang_boxes):
+            box = diagram.bang_boxes[box_id]
+            if box_id in box_map or box.parent not in box_map:
+                continue
+            box_map[box_id] = extracted.add_bang_box(
+                box.multiplicity,
+                node_scope=frozenset(id_map[n] for n in box.node_scope),
+                port_scope=frozenset(
+                    PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
+                ),
+                parent=box_map[box.parent],
             )
+            pending = True
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
 
@@ -421,14 +432,17 @@ def contract_symbolic(
         working = diagram.copy()
         for box_id in sorted(diagram.bang_boxes):
             box = diagram.bang_boxes[box_id]
-            if box_id not in working.bang_boxes:
+            if box.parent is not None:
                 continue
             scope = box.node_scope
             inner = contract_symbolic(
                 _closed_scope_subdiagram(diagram, scope, box_id), max_steps=max_steps
             )
             box_factor = box_factor * sp.Pow(inner.entry.to_sympy(), box.multiplicity.to_sympy())
-            working.remove_bang_box(box_id)
+            for other_id, other in sorted(working.bang_boxes.items()):
+                footprint = other.node_scope | {ref.node_id for ref in other.port_scope}
+                if footprint <= scope:
+                    working.remove_bang_box(other_id)
             for node_id in sorted(scope):
                 if node_id in working.nodes:
                     working.remove_node(node_id)

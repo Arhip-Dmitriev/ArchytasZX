@@ -64,7 +64,12 @@ import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS
-from archytaszx.diagram.bangbox import BangBoxDomainError, free_mult_symbols, instantiate_symbol
+from archytaszx.diagram.bangbox import (
+    BangBoxDomainError,
+    expand_concrete_boxes,
+    free_mult_symbols,
+    instantiate_symbol,
+)
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
 from archytaszx.semantics.contract_symbolic import SymbolicTensor
@@ -113,7 +118,8 @@ def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
 
 
 def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentValue]) -> Diagram:
-    """Instantiate every bang-box multiplicity symbol named in ``resolved``, in turn.
+    """Instantiate every bang-box multiplicity symbol named in ``resolved``, in turn, then
+    expand every box whose multiplicity is concrete.
 
     Must run before :meth:`~archytaszx.diagram.graph.Diagram.substitute`: expansion can build
     fresh port/node structure whose dimensions still carry the very symbols ``resolved``
@@ -133,7 +139,7 @@ def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentV
         if name not in free_mult_symbols(working):
             continue
         working = instantiate_symbol(working, name, value)
-    return working
+    return expand_concrete_boxes(working)
 
 
 def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]) -> Diagram:
@@ -164,7 +170,12 @@ def instantiate(diagram: Diagram, assignment: Mapping[str, CheckAssignmentValue]
         )
     expanded = _expand_bang_boxes(diagram, resolved)
     mult_names = free_mult_symbols(diagram)
-    remaining = {name: value for name, value in resolved.items() if name not in mult_names}
+    still_free = _diagram_free_symbols(expanded)
+    remaining = {
+        name: value
+        for name, value in resolved.items()
+        if name not in mult_names or name in still_free
+    }
     return expanded.substitute(remaining)
 
 

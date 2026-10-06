@@ -27,11 +27,11 @@ from types import MappingProxyType
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import ScalarBudgetError
-from archytaszx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols, peel_one
-from archytaszx.diagram.graph import Diagram, NodeId, PortRef
+from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult, free_mult_symbols, peel_one
+from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
-from archytaszx.rewrite.rule import Match, Rule
+from archytaszx.rewrite.rule import Match, RewriteDomainError, Rule
 from archytaszx.rewrite.rules_library import SPIDER_FUSION
 from archytaszx.semantics.certificate import (
     Derivation,
@@ -51,7 +51,11 @@ from archytaszx.semantics.check import (
     instantiate,
     score,
 )
-from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
+from archytaszx.semantics.contract_numeric import (
+    DEFAULT_MAX_ELEMENTS,
+    ContractDomainError,
+    ContractError,
+)
 from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
     SymbolicContractionUnsupportedError,
@@ -459,9 +463,14 @@ def _hypothesis_inexpressible_reason(obligation: InductionObligation) -> str:
     return "the hypothesis left side already equals the successor left side field for field"
 
 
-def _extract(diagram: Diagram, node_ids: frozenset[NodeId]) -> Diagram:
+def _box_footprint(box: BangBox) -> frozenset[NodeId]:
+    """The nodes a box's scope touches."""
+    return box.node_scope | frozenset(ref.node_id for ref in box.port_scope)
+
+
+def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool = False) -> Diagram:
     """The sub-diagram on ``node_ids``: their wires among themselves, their boundary refs in
-    the enclosing order."""
+    the enclosing order, and with ``with_boxes`` every box lying wholly inside them."""
     extracted = Diagram()
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(node_ids):
@@ -492,6 +501,27 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId]) -> Diagram:
             if ref.node_id in node_ids
         ]
     )
+    if with_boxes:
+        box_map: dict[BangBoxId, BangBoxId] = {}
+        inside = [
+            (box_id, box)
+            for box_id, box in sorted(diagram.bang_boxes.items())
+            if _box_footprint(box) <= node_ids
+        ]
+        inside_ids = {box_id for box_id, _ in inside}
+        while len(box_map) < len(inside):
+            for box_id, box in inside:
+                parent = box.parent if box.parent in inside_ids else None
+                if box_id in box_map or (parent is not None and parent not in box_map):
+                    continue
+                box_map[box_id] = extracted.add_bang_box(
+                    box.multiplicity,
+                    node_scope=frozenset(id_map[n] for n in box.node_scope),
+                    port_scope=frozenset(
+                        PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
+                    ),
+                    parent=None if parent is None else box_map[parent],
+                )
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
 
@@ -505,11 +535,15 @@ def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Di
     reference = _extract(expected, frozenset(expected.nodes))
     if not compare_structure(residual, reference).identical:
         return False
+    if any(
+        _box_footprint(box) & copy_node_ids and not _box_footprint(box) <= copy_node_ids
+        for box in peeled.bang_boxes.values()
+    ):
+        return False
     peeled_boxes = {
         box_id: box
         for box_id, box in peeled.bang_boxes.items()
-        if not (box.node_scope & copy_node_ids)
-        and not any(ref.node_id in copy_node_ids for ref in box.port_scope)
+        if not _box_footprint(box) & copy_node_ids
     }
     if sorted(peeled_boxes) != sorted(expected.bang_boxes):
         return False
@@ -651,8 +685,8 @@ def discharge_peeled_hypothesis(
             f"{right_peeled.scalar}",
         )
 
-    left_extra = _extract(left_peeled, left_copy)
-    right_extra = _extract(right_peeled, right_copy)
+    left_extra = _extract(left_peeled, left_copy, with_boxes=True)
+    right_extra = _extract(right_peeled, right_copy, with_boxes=True)
 
     # compare_symbolic sees a rank and the axis dimensions, not which axes are inputs and
     # which outputs, so the interfaces are compared here before contracting.
@@ -662,6 +696,13 @@ def discharge_peeled_hypothesis(
             False,
             "the peeled copies do not share one boundary interface: "
             f"{_interface(left_extra)} against {_interface(right_extra)}",
+        )
+    if compare_structure(left_extra, right_extra).identical:
+        return TierOutcome(
+            StepDischarge.INDUCTION_REWRITE,
+            True,
+            "peeled one copy off each successor; the residuals are the hypothesis diagrams and "
+            "the peeled copies are structurally identical",
         )
     try:
         contracted_left = contract_symbolic(left_extra, max_steps=max_steps)
@@ -840,6 +881,8 @@ def _run_tier(
         return run(obligation, max_steps=max_steps)
     except InductionGrammarError as exc:
         return TierOutcome(discharge, False, f"tier refused the obligation: {exc}")
+    except (RewriteDomainError, SymbolicContractionDomainError, ContractDomainError) as exc:
+        return TierOutcome(discharge, False, f"tier hit a domain error: {exc}")
 
 
 def _concrete_child(

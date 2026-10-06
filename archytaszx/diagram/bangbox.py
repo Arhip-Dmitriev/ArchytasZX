@@ -596,6 +596,58 @@ def _children_of(diagram: Diagram, box_id: BangBoxId) -> tuple[BangBox, ...]:
     return tuple(box for _, box in sorted(diagram.bang_boxes.items()) if box.parent == box_id)
 
 
+def _descendants_of(diagram: Diagram, box_id: BangBoxId) -> tuple[BangBox, ...]:
+    """Every box below ``box_id`` in the parent forest, parents before children."""
+    found: list[BangBox] = []
+    frontier = [box_id]
+    while frontier:
+        children = _children_of(diagram, frontier.pop(0))
+        found.extend(children)
+        frontier.extend(child.id for child in children)
+    return tuple(found)
+
+
+def _copy_subtree(
+    diagram: Diagram, box_id: BangBoxId, id_map: Mapping[NodeId, NodeId], parent: BangBoxId | None
+) -> None:
+    """Add a remapped copy of every child of ``box_id`` (recursively) under ``parent``."""
+    for child in _children_of(diagram, box_id):
+        if child.is_node_scope:
+            new_id = diagram.add_bang_box(
+                child.multiplicity,
+                node_scope=frozenset(id_map[n] for n in child.node_scope),
+                parent=parent,
+            )
+        else:
+            new_id = diagram.add_bang_box(
+                child.multiplicity,
+                port_scope=frozenset(
+                    PortRef(id_map[r.node_id], r.direction, r.index) for r in child.port_scope
+                ),
+                parent=parent,
+            )
+        _copy_subtree(diagram, child.id, id_map, new_id)
+
+
+def _remove_subtree(diagram: Diagram, box_id: BangBoxId) -> None:
+    """Remove every box below ``box_id``, leaving ``box_id`` itself."""
+    for box in reversed(_descendants_of(diagram, box_id)):
+        diagram.remove_bang_box(box.id)
+
+
+def _rescope_others(diagram: Diagram, removed: frozenset[NodeId], added: frozenset[NodeId]) -> None:
+    """Replace ``removed`` by ``added`` in every live node scope; drop emptied boxes."""
+    for other_id, other in sorted(diagram.bang_boxes.items()):
+        if other_id not in diagram.bang_boxes or not (other.node_scope & removed):
+            continue
+        new_scope = (other.node_scope - removed) | added
+        if new_scope:
+            diagram.set_bang_box_node_scope(other_id, new_scope)
+        else:
+            _remove_subtree(diagram, other_id)
+            diagram.remove_bang_box(other_id)
+
+
 def _splice_boundary_block(
     refs: list[PortRef], all_old_refs: list[PortRef], id_maps: list[dict[NodeId, NodeId]]
 ) -> list[PortRef]:
@@ -660,6 +712,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         for node_id in scope:
             diagram.remove_node(node_id)
         diagram.remove_bang_box(box.id)
+        _rescope_others(diagram, scope, frozenset())
         return
 
     if k == 1:
@@ -676,14 +729,8 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         diagram.set_boundary_outputs(
             _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, [identity])
         )
-        for child in children:
-            diagram.remove_bang_box(child.id)
-            diagram.add_bang_box(
-                child.multiplicity,
-                node_scope=child.node_scope,
-                port_scope=child.port_scope,
-                parent=box.parent,
-            )
+        _copy_subtree(diagram, box.id, identity, box.parent)
+        _remove_subtree(diagram, box.id)
         diagram.remove_bang_box(box.id)
         return
 
@@ -719,29 +766,17 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         list(diagram.boundary_outputs), sorted_crossings, id_maps
     )
 
-    for child in children:
-        for id_map in id_maps:
-            if child.is_node_scope:
-                diagram.add_bang_box(
-                    child.multiplicity,
-                    node_scope=frozenset(id_map[n] for n in child.node_scope),
-                    parent=box.parent,
-                )
-            else:
-                diagram.add_bang_box(
-                    child.multiplicity,
-                    port_scope=frozenset(
-                        PortRef(id_map[r.node_id], r.direction, r.index) for r in child.port_scope
-                    ),
-                    parent=box.parent,
-                )
-        diagram.remove_bang_box(child.id)
+    for id_map in id_maps:
+        _copy_subtree(diagram, box.id, id_map, box.parent)
+    _remove_subtree(diagram, box.id)
+    diagram.remove_bang_box(box.id)
+    copies = frozenset(new_id for id_map in id_maps for new_id in id_map.values())
+    _rescope_others(diagram, scope, copies)
 
     for node_id in scope:
         diagram.remove_node(node_id)
     diagram.set_boundary_inputs(new_boundary_inputs)
     diagram.set_boundary_outputs(new_boundary_outputs)
-    diagram.remove_bang_box(box.id)
 
 
 def _kill_one(diagram: Diagram, box: BangBox) -> None:
@@ -846,7 +881,6 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
 
     internal = internal_wires(diagram, scope)
     boundary_crossings = boundary_refs_in_scope(diagram, scope)
-    children = _children_of(diagram, box.id)
 
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(scope):
@@ -874,21 +908,13 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
         _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, id_maps)
     )
 
-    for child in children:
-        if child.is_node_scope:
-            diagram.add_bang_box(
-                child.multiplicity,
-                node_scope=frozenset(id_map[n] for n in child.node_scope),
-                parent=box.parent,
-            )
-        else:
-            diagram.add_bang_box(
-                child.multiplicity,
-                port_scope=frozenset(
-                    PortRef(id_map[r.node_id], r.direction, r.index) for r in child.port_scope
-                ),
-                parent=box.parent,
-            )
+    _copy_subtree(diagram, box.id, id_map, box.parent)
+    ancestor = box.parent
+    while ancestor is not None:
+        outer = diagram.bang_boxes[ancestor]
+        if outer.is_node_scope:
+            diagram.set_bang_box_node_scope(ancestor, outer.node_scope | frozenset(id_map.values()))
+        ancestor = outer.parent
 
 
 @dataclass(frozen=True, slots=True)
