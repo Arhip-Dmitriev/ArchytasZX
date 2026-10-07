@@ -39,7 +39,7 @@ from archytaszx.diagram.bangbox import (
     merge,
     peel_one,
 )
-from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import validate
 from archytaszx.semantics.check import score
@@ -315,3 +315,97 @@ class TestBoundaryOrderIsContinuousAtOne:
         step = min(free_mult_symbols(successor))
         peeled = peel_one(successor, min(successor.bang_boxes)).diagram
         assert np.allclose(direct, score(instantiate_symbol(peeled, step, k), {}).tensor)
+
+
+def _leaf(diagram: Diagram, outputs: int = 1, generator: GeneratorType = Z_SPIDER) -> NodeId:
+    d = Dim(2)
+    return diagram.add_node(
+        generator, input_dims=[], output_dims=[d] * outputs, phase=PhaseVector(d)
+    )
+
+
+def _out(node: NodeId, index: int) -> PortRef:
+    return PortRef(node, Direction.OUTPUT, index)
+
+
+def _generators(diagram: Diagram) -> list[str]:
+    return [diagram.nodes[ref.node_id].generator_type.name for ref in diagram.boundary_outputs]
+
+
+class TestInstantiationEdgeCases:
+    def test_killing_purges_compound_and_deep_descendant_bindings(self) -> None:
+        diagram = Diagram()
+        a, b, c = _leaf(diagram), _leaf(diagram), _leaf(diagram)
+        diagram.set_boundary_outputs([_out(a, 0), _out(b, 0), _out(c, 0)])
+        outer = diagram.add_bang_box(Mult("a") + Mult("b"), node_scope=frozenset({a, b, c}))
+        middle = diagram.add_bang_box(Mult("k") * 2, node_scope=frozenset({a, b}), parent=outer)
+        diagram.add_bang_box(Mult("j") + 2, node_scope=frozenset({a}), parent=middle)
+        diagram.bind_parameter("j", 1)
+        diagram.bind_parameter("k", 1)
+        killed = instantiate_symbol(instantiate_symbol(diagram, "a", 0), "b", 0)
+        assert dict(killed.parameters) == {}
+        assert not killed.nodes
+        assert dict(kill(diagram, outer).parameters) == {}
+        assert score(killed, {}).shape == ()
+
+    def test_a_port_scope_box_over_two_legs_of_one_node_grows_both(self) -> None:
+        diagram = Diagram()
+        z = _leaf(diagram, 3)
+        diagram.set_boundary_outputs([_out(z, 0), _out(z, 1), _out(z, 2)])
+        diagram.add_bang_box(Mult("n"), port_scope=frozenset({_out(z, 0), _out(z, 2)}))
+        for n, legs in ((0, 1), (2, 5), (3, 7)):
+            grown = instantiate_symbol(diagram, "n", n)
+            (node,) = grown.nodes.values()
+            assert len(node.outputs) == legs
+            assert grown.boundary_outputs == tuple(_out(node.id, i) for i in range(legs))
+            assert validate(grown).is_valid
+
+    def test_killing_every_child_of_a_box_at_zero_empties_it_cleanly(self) -> None:
+        diagram = Diagram()
+        a, b, c = _leaf(diagram), _leaf(diagram, generator=X_SPIDER), _leaf(diagram)
+        diagram.set_boundary_outputs([_out(a, 0), _out(c, 0), _out(b, 0)])
+        outer = diagram.add_bang_box(Mult("k") * 2, node_scope=frozenset({a, b}))
+        diagram.add_bang_box(Mult("k"), node_scope=frozenset({a}), parent=outer)
+        diagram.add_bang_box(Mult("j"), node_scope=frozenset({b}), parent=outer)
+        diagram.bind_parameter("j", 2)
+        result = instantiate_symbol(diagram, "k", 0)
+        assert list(result.nodes) == [c] and not result.bang_boxes
+        assert result.boundary_outputs == (_out(c, 0),)
+        assert dict(result.parameters) == {}
+
+    def test_a_wire_looping_back_onto_a_grown_node_survives(self) -> None:
+        d = Dim(2)
+        diagram = Diagram()
+        z = diagram.add_node(Z_SPIDER, [d], [d, d], phase=PhaseVector(d))
+        diagram.add_wire(_out(z, 1), PortRef(z, Direction.INPUT, 0))
+        diagram.set_boundary_outputs([_out(z, 0)])
+        diagram.add_bang_box(Mult("n"), port_scope=frozenset({_out(z, 0)}))
+        grown = instantiate_symbol(diagram, "n", 2)
+        assert len(grown.wires) == 1
+        assert validate(grown).is_valid
+        assert np.allclose(score(grown, {}).tensor, score(diagram, {"n": 2}).tensor)
+
+    def test_a_nested_port_scope_box_moves_up_or_dies_with_its_parent(self) -> None:
+        diagram = Diagram()
+        z = _leaf(diagram, 2)
+        diagram.set_boundary_outputs([_out(z, 0), _out(z, 1)])
+        outer = diagram.add_bang_box(Mult("n"), port_scope=frozenset({_out(z, 0), _out(z, 1)}))
+        diagram.add_bang_box(Mult("m"), port_scope=frozenset({_out(z, 0)}), parent=outer)
+        grown = instantiate_symbol(diagram, "n", 2)
+        (child,) = grown.bang_boxes.values()
+        assert child.parent is None and len(child.port_scope) == 2
+        assert validate(grown).is_valid
+        killed = instantiate_symbol(diagram, "n", 0)
+        assert not killed.bang_boxes and validate(killed).is_valid
+        (node,) = killed.nodes.values()
+        assert node.outputs == ()
+
+    def test_killing_an_inner_box_first_keeps_the_outer_block_in_place(self) -> None:
+        diagram = Diagram()
+        a, x, b = _leaf(diagram), _leaf(diagram, generator=X_SPIDER), _leaf(diagram)
+        diagram.set_boundary_outputs([_out(b, 0), _out(x, 0), _out(a, 0)])
+        outer = diagram.add_bang_box(Mult("k"), node_scope=frozenset({a, b}))
+        diagram.add_bang_box(Mult("j"), node_scope=frozenset({b}), parent=outer)
+        inner_first = instantiate_symbol(instantiate_symbol(diagram, "j", 0), "k", 1)
+        outer_first = instantiate_symbol(instantiate_symbol(diagram, "k", 1), "j", 0)
+        assert _generators(inner_first) == _generators(outer_first) == ["Z", "X"]

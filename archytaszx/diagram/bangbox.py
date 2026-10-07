@@ -480,7 +480,7 @@ def _remap_grown_port(
 
 def _grow_port(
     diagram: Diagram, ref: PortRef, k: int, *, owner_box_id: BangBoxId | None = None
-) -> None:
+) -> NodeId:
     """Grow (or, at ``k == 0``, remove) the single leg at ``ref`` to ``k`` legs, in place.
 
     Requires ``ref`` to currently be a diagram boundary slot -- see the module
@@ -535,14 +535,12 @@ def _grow_port(
         return _remap_grown_port(old_ref, ref.node_id, new_node_id, ref.direction, ref.index, k)
 
     for wire in old_wires:
-        this_end = wire.a if wire.a.node_id == ref.node_id else wire.b
-        other_end = wire.b if wire.a.node_id == ref.node_id else wire.a
-        # this_end is never the grown port itself: that would require it to be both a
-        # wire endpoint and a boundary slot, which _check_port_usage already treats as
-        # ill-formed input, and the guard above already requires the grown port to be a
-        # boundary slot, so a wired grown port never reaches here in a well-formed diagram.
-        (remapped,) = remap(this_end)
-        diagram.add_wire(remapped, other_end)
+        # Neither end is the grown port itself: the guard above requires it to be a
+        # boundary slot, and _check_port_usage refuses a port both wired and on the boundary.
+        # Both ends are remapped, so a wire looping back onto this node survives.
+        (end_a,) = remap(wire.a)
+        (end_b,) = remap(wire.b)
+        diagram.add_wire(end_a, end_b)
 
     new_boundary_inputs = [
         new_ref
@@ -560,8 +558,8 @@ def _grow_port(
     # repointed at new_node_id too, or it goes stale the moment ref.node_id is removed
     # below -- this is exactly Phase 7's nested-family case: an outer node-scope box's
     # node_scope names this very node directly, not through a child-box declaration.
-    for other_id, other in list(diagram.bang_boxes.items()):
-        if other_id == owner_box_id:
+    for other_id, other in sorted(diagram.bang_boxes.items()):
+        if other_id == owner_box_id or other_id not in diagram.bang_boxes:
             continue
         if ref.node_id in other.node_scope:
             diagram.set_bang_box_node_scope(
@@ -569,24 +567,52 @@ def _grow_port(
                 frozenset(new_node_id if n == ref.node_id else n for n in other.node_scope),
             )
         if any(p.node_id == ref.node_id for p in other.port_scope):
-            diagram.set_bang_box_port_scope(
-                other_id,
-                frozenset(
-                    new_ref
-                    for p in other.port_scope
-                    for new_ref in (remap(p) if p.node_id == ref.node_id else [p])
-                ),
+            new_port_scope = frozenset(
+                new_ref
+                for p in other.port_scope
+                for new_ref in (remap(p) if p.node_id == ref.node_id else [p])
             )
+            if new_port_scope:
+                diagram.set_bang_box_port_scope(other_id, new_port_scope)
+            else:
+                # A nested port-scope box whose every leg was removed at k == 0.
+                _drop_box(diagram, other)
 
     diagram.remove_node(ref.node_id)
     diagram.set_boundary_inputs(new_boundary_inputs)
     diagram.set_boundary_outputs(new_boundary_outputs)
+    return new_node_id
 
 
 def _instantiate_port_scope(diagram: Diagram, box: BangBox, k: int) -> None:
-    for ref in sorted(box.port_scope, key=lambda r: r.sort_key()):
-        _grow_port(diagram, ref, k, owner_box_id=box.id)
+    if k == 0:
+        _gather_ancestors(diagram, box)
+    pending = sorted(box.port_scope, key=lambda r: r.sort_key())
+    while pending:
+        ref = pending.pop(0)
+        new_node_id = _grow_port(diagram, ref, k, owner_box_id=box.id)
+        # Later refs on the same node follow it to its replacement id and shifted index.
+        pending = [
+            moved
+            for old in pending
+            for moved in _remap_grown_port(
+                old, ref.node_id, new_node_id, ref.direction, ref.index, k
+            )
+        ]
+    # Surviving nested boxes move up to this box's parent, under fresh ids.
+    identity = {node_id: node_id for node_id in diagram.nodes}
+    _copy_subtree(diagram, box.id, identity, box.parent)
+    _remove_subtree(diagram, box.id)
     diagram.remove_bang_box(box.id)
+
+
+def _drop_box(diagram: Diagram, box: BangBox) -> None:
+    """Remove ``box`` and every box below it, purging their dead symbols."""
+    doomed = (*_descendants_of(diagram, box.id), box)
+    _remove_subtree(diagram, box.id)
+    diagram.remove_bang_box(box.id)
+    for name in sorted({name for gone in doomed for name in gone.multiplicity.free_symbols}):
+        _purge_symbol_if_dead(diagram, name)
 
 
 # -- node-scope instantiation (the repeated-subgraph mechanism) ------------------------
@@ -683,6 +709,26 @@ def _splice_boundary_block(
     return before + block + after
 
 
+def _gather_ancestors(diagram: Diagram, box: BangBox) -> None:
+    """Splice the boundary refs of each node-scope ancestor of ``box`` into one block at
+    its first ref, innermost ancestor first, as an expansion at one copy does."""
+    ancestor = box.parent
+    while ancestor is not None:
+        outer = diagram.bang_boxes[ancestor]
+        if outer.is_node_scope:
+            identity = {node_id: node_id for node_id in outer.node_scope}
+            crossings = sorted(
+                boundary_refs_in_scope(diagram, outer.node_scope), key=lambda r: r.sort_key()
+            )
+            diagram.set_boundary_inputs(
+                _splice_boundary_block(list(diagram.boundary_inputs), crossings, [identity])
+            )
+            diagram.set_boundary_outputs(
+                _splice_boundary_block(list(diagram.boundary_outputs), crossings, [identity])
+            )
+        ancestor = outer.parent
+
+
 def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
     scope = box.node_scope
     bad_wire = _non_boundary_crossing(diagram, scope)
@@ -696,12 +742,23 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
     children = _children_of(diagram, box.id)
 
     if k == 0:
+        _gather_ancestors(diagram, box)
+        nested_symbols = sorted(
+            {
+                name
+                for child in _descendants_of(diagram, box.id)
+                for name in child.multiplicity.free_symbols
+            }
+        )
         for child in children:
-            child_symbol = (
-                child.multiplicity.bare_symbol_name() if child.multiplicity.is_bare_symbol else None
-            )
+            if child.id not in diagram.bang_boxes:
+                continue
             _kill_one(diagram, child)
-            _purge_symbol_if_dead(diagram, child_symbol)
+        for name in nested_symbols:
+            _purge_symbol_if_dead(diagram, name)
+        if box.id not in diagram.bang_boxes:
+            # Killing the children emptied this box, and _rescope_others already dropped it.
+            return
         # Re-read: killing a port-scope child regrows (replaces) the node it names, and
         # that node may be exactly one of this box's own scope nodes -- box.node_scope,
         # captured above as `scope`, would otherwise still name the now-removed old id.
