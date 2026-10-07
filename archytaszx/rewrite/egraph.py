@@ -71,7 +71,7 @@ EClassId = NewType("EClassId", int)
 CostValue = int | float | tuple[int | float, ...]
 CostFunction = Callable[[Diagram], CostValue]
 
-_APPLICATION_ERRORS: tuple[type[Exception], ...] = (
+APPLICATION_ERRORS: tuple[type[Exception], ...] = (
     RewriteError,
     BangBoxError,
     DimensionError,
@@ -567,7 +567,7 @@ class EGraph:
                 counts["applications"] += 1
                 try:
                     result = apply(rep, rule, match)
-                except _APPLICATION_ERRORS as exc:
+                except APPLICATION_ERRORS as exc:
                     message = f"{type(exc).__name__}: {exc}"
                     failed.append(FailedApplication(ENodeId(index), rule.name, message))
                     continue
