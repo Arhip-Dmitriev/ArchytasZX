@@ -29,6 +29,7 @@ from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorError, GeneratorType
 from archytaszx.diagram.graph import Diagram, GraphDomainError, GraphError
 from archytaszx.diagram.validate import ValidateError
+from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationStop
 from archytaszx.rewrite.engine import DEFAULT_GUARD, TerminationGuard, apply
 from archytaszx.rewrite.normal_form import (
     NormalForm,
@@ -38,7 +39,7 @@ from archytaszx.rewrite.normal_form import (
     same_normal_form,
 )
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteGrammarError
-from archytaszx.rewrite.rules_library import STATE_COPY, lookup_rule
+from archytaszx.rewrite.rules_library import BIALGEBRA, STATE_COPY, lookup_rule
 from archytaszx.semantics import decide as decide_module
 from archytaszx.semantics.certificate import (
     CertificateDomainError,
@@ -49,6 +50,7 @@ from archytaszx.semantics.certificate import (
 from archytaszx.semantics.check import CheckError, compare, score
 from archytaszx.semantics.contract_numeric import ContractError
 from archytaszx.semantics.decide import (
+    DECIDE_SATURATION_LIMITS,
     DecideError,
     DecideGrammarError,
     Decision,
@@ -63,6 +65,7 @@ from . import test_phase8_oracle as T8
 from .helpers import build_ghz_with_copy
 from .test_normal_form import _deferred_fusion_diagram as deferred_fusion_diagram
 from .test_rules_library_phase11 import (
+    bialgebra_diagram,
     fourier_state_diagram,
     hopf_diagram,
     identity_chain,
@@ -226,9 +229,15 @@ def assert_oracle_agrees(left: Diagram, right: Diagram, decision: Decision) -> N
 
 
 def assert_certificates_verify(decision: Decision) -> None:
-    """Fail unless both normal-form certificates replay and verify at a concrete assignment."""
+    """Fail unless both normal-form certificates, or every saturation edge certificate, replay
+    and verify at a concrete assignment."""
     assert decision.left_nf is not None and decision.right_nf is not None
-    assert len(decision.certificates) == 2
+    if decision.method is DecisionMethod.SATURATION:
+        assert decision.saturation is not None
+        for certificate in decision.certificates:
+            assert certificate.derivation.label.startswith("saturation edge ")
+    else:
+        assert len(decision.certificates) == 2
     for certificate in decision.certificates:
         assert replay(certificate).reproduced
         verified = False
@@ -486,7 +495,7 @@ class TestLadder:
     @pytest.mark.parametrize("name", sorted(INDUCTION_EQUAL))
     def test_induction_equal(self, name: str) -> None:
         left, right = INDUCTION_EQUAL[name]()
-        decision = decide_equal(left, right, guard=NO_FUSION)
+        decision = decide_equal(left, right, guard=NO_FUSION, use_saturation=False)
         assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
         assert decision.method is DecisionMethod.INDUCTION
         assert decision.induction is not None and decision.induction.proved
@@ -506,7 +515,7 @@ class TestLadder:
 
     def test_induction_depth_zero_gives_unknown(self) -> None:
         left, right = T8._build_boxed_fusion_family()
-        decision = decide_equal(left, right, guard=NO_FUSION, max_depth=0)
+        decision = decide_equal(left, right, guard=NO_FUSION, max_depth=0, use_saturation=False)
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.method is DecisionMethod.NONE
         assert decision.samples_checked >= 1
@@ -732,8 +741,8 @@ class TestRegressions:
     @pytest.mark.parametrize("name", sorted(INDUCTION_EQUAL))
     def test_induction_pairs_swapped(self, name: str) -> None:
         left, right = INDUCTION_EQUAL[name]()
-        forward = decide_equal(left, right, guard=NO_FUSION)
-        backward = decide_equal(right, left, guard=NO_FUSION)
+        forward = decide_equal(left, right, guard=NO_FUSION, use_saturation=False)
+        backward = decide_equal(right, left, guard=NO_FUSION, use_saturation=False)
         assert backward.verdict is EqualityVerdict.EQUAL, backward.reason
         assert backward.method is DecisionMethod.INDUCTION
         assert "with sides reversed" in backward.reason
@@ -776,7 +785,7 @@ class TestRegressions:
             return inner(*args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(decide_module, "decide_equal", spy)
-        spy(*T8._build_boxed_fusion_family(), guard=NO_FUSION)
+        spy(*T8._build_boxed_fusion_family(), guard=NO_FUSION, use_saturation=False)
         assert seen == ["absent", None]
 
 
@@ -922,7 +931,7 @@ class TestReviewRegressions:
         monkeypatch.setattr(decide_module, "_instantiate_index", no_zero)
         monkeypatch.setattr(decide_module, "decide_equal", base_by_normal_form)
         left, right = T8._build_boxed_fusion_family()
-        decision = base_by_normal_form(left, right, guard=NO_FUSION)
+        decision = base_by_normal_form(left, right, guard=NO_FUSION, use_saturation=False)
         assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
         assert decision.method is DecisionMethod.NONE
         assert "proved for m >= 1 only" in decision.reason
@@ -961,7 +970,7 @@ class TestReviewRegressions:
 
         monkeypatch.setattr(decide_module, "decide_equal", spy)
         left, right = T8._build_boxed_fusion_family()
-        decision = spy(left, right, guard=NO_FUSION)
+        decision = spy(left, right, guard=NO_FUSION, use_saturation=False)
         assert decision.method is DecisionMethod.INDUCTION, decision.reason
         assert decision.induction is not None
         deferred = [
@@ -984,7 +993,7 @@ class TestReviewRegressions:
         monkeypatch.setattr(decide_module, "same_normal_form", lambda a, b: False)
         monkeypatch.setattr(decide_module, "_symbolic_match", lambda a, b: (True, "patched"))
         left, right = deferred_fusion_diagram(), deferred_fusion_diagram()
-        decision = decide_equal(left, right)
+        decision = decide_equal(left, right, use_saturation=False)
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION, decision.reason
         assert decision.left_nf is not None and decision.left_nf.assumed_constraints
         assert decision.assumptions == ()
@@ -1038,7 +1047,9 @@ class TestReviewRegressions:
 
         monkeypatch.setattr(decide_module, target, boom)
         left, right = ghz_pair(D)
-        decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
+        decision = decide_equal(
+            left, right, use_symbolic=False, use_induction=False, use_saturation=False
+        )
         assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
         assert f"normal form failed: {type(error).__name__}" in decision.reason
         assert decision.left_nf is None and decision.certificates == ()
@@ -1071,3 +1082,177 @@ class TestReviewRegressions:
         decision = decide_equal(*ghz_pair(D))
         assert decision.method is DecisionMethod.NORMAL_FORM
         assert seen == list(decision.certificates)
+
+
+# -- the saturation rung ----------------------------------------------------------------
+
+
+def bialgebra_pair(d: int = 2) -> Pair:
+    """``bialgebra_diagram(d)`` and its BIALGEBRA rewrite."""
+    left = bialgebra_diagram(d)
+    return left, apply(left, BIALGEBRA, BIALGEBRA.pattern.find_matches(left)[0]).diagram
+
+
+def deferred_fusion_pair() -> Pair:
+    """The deferred-fusion diagram and its one SPIDER_FUSION rewrite."""
+    left = deferred_fusion_diagram()
+    rule = lookup_rule("spider_fusion")
+    return left, apply(left, rule, rule.pattern.find_matches(left)[0]).diagram
+
+
+class TestSaturationRung:
+    """The SATURATION rung: settled pairs, fall-through, evidence and argument checks."""
+
+    @pytest.mark.parametrize("d", [2, 3])
+    def test_bialgebra_pair_settles_by_saturation_not_normal_form(self, d: int) -> None:
+        left, right = bialgebra_pair(d)
+        decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
+        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        assert decision.method is DecisionMethod.SATURATION
+        assert decision.left_nf is not None and decision.right_nf is not None
+        assert not same_normal_form(decision.left_nf, decision.right_nf)
+        assert decision.saturation is not None and decision.saturation.merges >= 1
+        assert decision.assumptions == ()
+        assert decision.samples_checked >= 1
+        assert "1 edge(s)" in decision.reason
+        assert_oracle_agrees(left, right, decision)
+
+    def test_edge_certificates_replay_verify_and_chain(self) -> None:
+        left, right = bialgebra_pair()
+        decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
+        assert len(decision.certificates) == 1
+        (certificate,) = decision.certificates
+        assert certificate.derivation.label == "saturation edge 0: bialgebra"
+        assert replay(certificate).reproduced
+        assert isomorphic(comparison_view(certificate.initial), comparison_view(left))
+        assert isomorphic(comparison_view(certificate.final), comparison_view(right))
+        assert verify(certificate, {}).verified
+
+    def test_deferred_constraints_become_assumptions(self) -> None:
+        left, right = deferred_fusion_pair()
+        decision = decide_equal(
+            left, right, guard=NO_FUSION, use_symbolic=False, use_induction=False
+        )
+        assert decision.method is DecisionMethod.SATURATION, decision.reason
+        assert decision.assumptions == (deferred_constraint(),)
+        assert "conditional on the 1 deferred dimension constraint(s)" in decision.reason
+        assert f"no oracle mismatch in {decision.samples_checked} sample(s)" in decision.reason
+        assert decision.samples_checked >= 1
+        assert_oracle_agrees(left, right, decision)
+
+    def test_sides_sharing_an_e_node_need_no_edge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(decide_module, "same_normal_form", lambda a, b: False)
+        left, right = ghz_pair(D)[0], ghz_pair(D)[0]
+        decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
+        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        assert decision.method is DecisionMethod.SATURATION
+        assert decision.certificates == () and decision.assumptions == ()
+        assert "0 edge(s), both sides one e-node" in decision.reason
+        assert_oracle_agrees(left, right, decision)
+
+    def test_disabled_saturation_falls_through(self) -> None:
+        left, right = bialgebra_pair()
+        decision = decide_equal(
+            left, right, use_saturation=False, use_symbolic=False, use_induction=False
+        )
+        assert decision.verdict is EqualityVerdict.UNKNOWN
+        assert decision.method is DecisionMethod.NONE
+        assert decision.saturation is None
+        assert "saturation disabled" in decision.reason
+
+    def test_disabled_saturation_leaves_the_symbolic_rung(self) -> None:
+        left, right = bialgebra_pair()
+        decision = decide_equal(left, right, use_saturation=False)
+        assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION, decision.reason
+        assert decision.saturation is None
+
+    def test_an_unsettled_rung_still_reports(self) -> None:
+        left, right = zero_phase_pair()
+        decision = decide_equal(left, right)
+        assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION, decision.reason
+        assert decision.saturation is not None and decision.saturation.merges == 0
+        unknown = decide_equal(left, right, use_symbolic=False, use_induction=False)
+        assert unknown.verdict is EqualityVerdict.UNKNOWN
+        assert unknown.saturation is not None
+        assert "saturation: no merge" in unknown.reason
+
+    def test_rungs_before_saturation_leave_no_report(self) -> None:
+        assert decide_equal(*ghz_pair(D)).saturation is None
+        assert decide_equal(*UNEQUAL_ORACLE["different_phases"]()).saturation is None
+        assert decide_equal(*UNEQUAL_INTERFACE["arity"]()).saturation is None
+
+    def test_limits_bound_the_rung(self) -> None:
+        left, right = bialgebra_pair()
+        limits = SaturationLimits(max_iterations=0)
+        decision = decide_equal(
+            left, right, saturation_limits=limits, use_symbolic=False, use_induction=False
+        )
+        assert decision.verdict is EqualityVerdict.UNKNOWN
+        assert decision.saturation is not None
+        assert decision.saturation.stop_reason is SaturationStop.ITERATION_LIMIT
+
+    def test_rules_replace_the_default_saturation_rules(self) -> None:
+        left, right = bialgebra_pair()
+        settled = decide_equal(
+            left, right, rules=[BIALGEBRA], guard=NO_FUSION, use_symbolic=False, use_induction=False
+        )
+        assert settled.method is DecisionMethod.SATURATION, settled.reason
+        decision = decide_equal(
+            left, right, rules=[STATE_COPY], use_symbolic=False, use_induction=False
+        )
+        assert decision.verdict is EqualityVerdict.UNKNOWN
+        assert decision.saturation is not None and decision.saturation.applications == 0
+
+    def test_a_saturation_error_becomes_a_note(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Failing(EGraph):
+            def saturate(self, *args: object, **kwargs: object) -> object:  # type: ignore[override]
+                raise GraphDomainError("patched")
+
+        monkeypatch.setattr(decide_module, "EGraph", Failing)
+        decision = decide_equal(*bialgebra_pair(), use_symbolic=False, use_induction=False)
+        assert decision.verdict is EqualityVerdict.UNKNOWN
+        assert decision.saturation is None
+        assert "saturation: failed: GraphDomainError: patched" in decision.reason
+
+    def test_an_edge_that_does_not_replay_blocks_equal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def failing(certificate: object, **kwargs: object) -> ReplayResult:
+            return ReplayResult(False, "patched", Diagram(), ())
+
+        monkeypatch.setattr(decide_module, "replay", failing)
+        decision = decide_equal(*bialgebra_pair(), use_symbolic=False, use_induction=False)
+        assert decision.verdict is EqualityVerdict.UNKNOWN
+        assert "edge 0 did not replay: patched" in decision.reason
+
+    def test_induction_forwards_the_saturation_arguments(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[tuple[object, object]] = []
+        inner = decide_module.decide_equal
+
+        def spy(*args: object, **kwargs: object) -> Decision:
+            seen.append((kwargs.get("use_saturation"), kwargs.get("saturation_limits")))
+            return inner(*args, **kwargs)  # type: ignore[arg-type]
+
+        limits = SaturationLimits(max_iterations=3)
+        monkeypatch.setattr(decide_module, "decide_equal", spy)
+        left, right = T8._build_boxed_fusion_family()
+        decision = spy(left, right, guard=NO_FUSION, use_saturation=False, saturation_limits=limits)
+        assert decision.method is DecisionMethod.INDUCTION, decision.reason
+        assert seen == [(False, limits), (False, limits)]
+
+    def test_default_limits(self) -> None:
+        assert DECIDE_SATURATION_LIMITS == SaturationLimits(
+            max_iterations=3, max_enodes=128, max_applications=1024, node_margin=4
+        )
+
+    @pytest.mark.parametrize("value", [1, 0, None, "yes"])
+    def test_use_saturation_must_be_a_bool(self, value: object) -> None:
+        with pytest.raises(DecideGrammarError, match="use_saturation"):
+            decide_equal(*ghz_pair(D), use_saturation=value)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("value", [None, 4, {}, (4, 256, 4096, 4)])
+    def test_saturation_limits_must_be_saturation_limits(self, value: object) -> None:
+        with pytest.raises(DecideGrammarError, match="saturation_limits"):
+            decide_equal(*ghz_pair(D), saturation_limits=value)  # type: ignore[arg-type]

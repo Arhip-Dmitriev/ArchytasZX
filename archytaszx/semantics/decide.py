@@ -19,18 +19,24 @@
 2. ``NORMAL_FORM``: both :func:`~archytaszx.rewrite.normal_form.normal_form` results agree.
 3. ``ORACLE_COUNTEREXAMPLE``: the numeric oracle, on the original diagrams, mismatches at a
    small deterministic assignment.
-4. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal.
-5. ``INDUCTION``: a recursively decided base case plus a proved step case on one
+4. ``SATURATION``: an :class:`~archytaszx.rewrite.egraph.EGraph` holding both original
+   diagrams, saturated within ``saturation_limits``, merges their e-classes.
+5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal.
+6. ``INDUCTION``: a recursively decided base case plus a proved step case on one
    multiplicity index.
 
-``EQUAL`` comes only from rungs 2, 4 and 5; ``UNEQUAL`` only from rung 1 or an oracle
+``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1 or an oracle
 counterexample; every other outcome is ``UNKNOWN``. A normal-form match needs both
 certificates to replay; one whose derivations assumed ``DEFERRED`` dimension constraints runs
 rung 3 before it is reported, and the constraints are carried in
-:attr:`Decision.assumptions`. An oracle mismatch counts only above ``tolerance`` times the
-larger entry magnitude (at least 1), at an assignment satisfying every symbol's sympy
-assumptions. Induction proves ``EQUAL`` only from base 0. The parameter environment never
-enters a verdict; :attr:`Decision.parameters_agree` reports it.
+:attr:`Decision.assumptions`. A saturation merge yields one certificate per edge of
+:meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its edge's parent to its
+child; each must replay onto a diagram whose comparison view is isomorphic to its child's, and
+their ``DEFERRED`` constraints become the assumptions; sides sharing one e-node need none.
+An oracle mismatch counts only above ``tolerance`` times the larger entry magnitude (at least
+1), at an assignment satisfying every symbol's sympy assumptions. Induction proves ``EQUAL``
+only from base 0. The parameter environment never enters a verdict;
+:attr:`Decision.parameters_agree` reports it.
 """
 
 from __future__ import annotations
@@ -49,11 +55,18 @@ from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols, instantiate_symbol
+from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
+from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationReport
 from archytaszx.rewrite.engine import DEFAULT_GUARD, TerminationGuard
-from archytaszx.rewrite.normal_form import NormalForm, normal_form, same_normal_form
+from archytaszx.rewrite.normal_form import (
+    NormalForm,
+    comparison_view,
+    normal_form,
+    same_normal_form,
+)
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError, Rule
 from archytaszx.semantics.certificate import Certificate, CertificateError, certify, replay
 from archytaszx.semantics.check import (
@@ -100,6 +113,7 @@ class DecisionMethod(enum.Enum):
 
     INTERFACE = "interface"
     NORMAL_FORM = "normal_form"
+    SATURATION = "saturation"
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
     INDUCTION = "induction"
     ORACLE_COUNTEREXAMPLE = "oracle_counterexample"
@@ -111,7 +125,8 @@ class Decision:
     """A verdict, the rung behind it, and the evidence each rung produced.
 
     ``induction_reversed`` is True when :attr:`induction` was run with ``right`` as its left
-    side.
+    side. ``saturation`` is the saturation rung's report whenever that rung's saturation
+    finished.
     """
 
     verdict: EqualityVerdict
@@ -127,6 +142,7 @@ class Decision:
     assumptions: tuple[DimensionConstraint, ...] = ()
     parameters_agree: bool = True
     induction_reversed: bool = False
+    saturation: SaturationReport | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -161,6 +177,9 @@ RATIONAL_SAMPLE_POOL: tuple[CheckAssignmentValue, ...] = (
     -1,
     sp.Rational(-1, 2),
     -2,
+)
+DECIDE_SATURATION_LIMITS = SaturationLimits(
+    max_iterations=3, max_enodes=128, max_applications=1024, node_margin=4
 )
 _MAX_GRID_PRODUCT = 4096
 _STEP_LADDER: tuple[StepDischarge, ...] = (
@@ -404,6 +423,8 @@ def _check_args(
     max_depth: object,
     tolerance: object,
     max_elements: object,
+    use_saturation: object,
+    saturation_limits: object,
 ) -> None:
     """Raise DecideGrammarError on any malformed :func:`decide_equal` argument."""
     for name, value in (("left", left), ("right", right)):
@@ -430,9 +451,17 @@ def _check_args(
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value < low:
             raise DecideGrammarError(f"{name} must be an int >= {low}, got {value!r}")
-    for name, value in (("use_symbolic", use_symbolic), ("use_induction", use_induction)):
+    for name, value in (
+        ("use_symbolic", use_symbolic),
+        ("use_induction", use_induction),
+        ("use_saturation", use_saturation),
+    ):
         if not isinstance(value, bool):
             raise DecideGrammarError(f"{name} must be a bool, got {value!r}")
+    if not isinstance(saturation_limits, SaturationLimits):
+        raise DecideGrammarError(
+            f"saturation_limits must be a SaturationLimits, got {type(saturation_limits).__name__}"
+        )
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not tolerance >= 0:
         raise DecideGrammarError(f"tolerance must be a non-negative float, got {tolerance!r}")
 
@@ -545,6 +574,70 @@ def _symbolic_match(left: Diagram, right: Diagram) -> tuple[bool, str]:
     return result.matched, result.reason
 
 
+@dataclass(frozen=True, slots=True)
+class _SaturationRun:
+    """The saturation rung's outcome: its report, the edge certificates and their ``DEFERRED``
+    constraints when the sides merged, and a reason."""
+
+    report: SaturationReport | None
+    certificates: tuple[Certificate, ...] | None
+    assumptions: tuple[DimensionConstraint, ...]
+    reason: str
+
+
+def _run_saturation(
+    left: Diagram, right: Diagram, rules: Sequence[Rule] | None, limits: SaturationLimits
+) -> _SaturationRun:
+    """Saturate an e-graph rooted at ``left`` and ``right``, then certify and replay every edge
+    of the path between them."""
+    graph = EGraph()
+    report: SaturationReport | None = None
+    try:
+        first = graph.add(left)
+        second = graph.add(right)
+        report = graph.saturate(rules, limits=limits)
+        edges = graph.explain(first, second)
+        if edges is None:
+            return _SaturationRun(
+                report,
+                None,
+                (),
+                f"no merge after {report.iterations} round(s) and {len(graph)} e-node(s), "
+                f"stopped by {report.stop_reason.value}",
+            )
+        certificates: list[Certificate] = []
+        for position, edge in enumerate(edges):
+            certificate = certify(
+                graph.diagram(edge.parent),
+                [edge.result],
+                label=f"saturation edge {position}: {edge.rule_name}",
+            )
+            replayed = replay(certificate, rediscover=False)
+            if not replayed.reproduced:
+                return _SaturationRun(
+                    report, None, (), f"edge {position} did not replay: {replayed.reason}"
+                )
+            child = comparison_view(graph.diagram(edge.child))
+            if not isomorphic(comparison_view(certificate.final), child):
+                return _SaturationRun(
+                    report, None, (), f"edge {position} does not reach its child e-node"
+                )
+            certificates.append(certificate)
+    except _NORMAL_FORM_ERRORS as exc:
+        return _SaturationRun(report, None, (), f"failed: {type(exc).__name__}: {exc}")
+    deferred = _dedupe(
+        [
+            constraint
+            for certificate in certificates
+            for step in certificate.steps
+            for constraint in step.dimension_constraints
+            if constraint.outcome is ConstraintOutcome.DEFERRED
+        ]
+    )
+    reason = f"{len(edges)} edge(s)" if edges else "0 edge(s), both sides one e-node"
+    return _SaturationRun(report, tuple(certificates), deferred, reason)
+
+
 def _dedupe(constraints: Sequence[DimensionConstraint]) -> tuple[DimensionConstraint, ...]:
     """``constraints`` without repeats, first occurrence order kept."""
     kept: list[DimensionConstraint] = []
@@ -635,12 +728,15 @@ def decide_equal(
     max_depth: int = 2,
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
+    use_saturation: bool = True,
+    saturation_limits: SaturationLimits = DECIDE_SATURATION_LIMITS,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols.
 
     Runs the module docstring's ladder; ``samples`` replaces :func:`sample_grid` for the
     oracle rung and, cut to its symbols, for the induction base case; ``max_depth`` bounds
-    nested induction. The induction step is tried left-to-right, then right-to-left.
+    nested induction; ``rules`` also replaces the saturation rung's default rules. The
+    induction step is tried left-to-right, then right-to-left.
     """
     _check_args(
         left,
@@ -654,6 +750,8 @@ def decide_equal(
         max_depth,
         tolerance,
         max_elements,
+        use_saturation,
+        saturation_limits,
     )
     parameters_agree = dict(left.parameters) == dict(right.parameters)
     family_l = _family(left)
@@ -700,12 +798,15 @@ def decide_equal(
         nf_equal = False
         nf_reason = f"normal form failed: {type(exc).__name__}: {exc}"
 
+    saturation: SaturationReport | None = None
+
     def finish(
         verdict: EqualityVerdict,
         method: DecisionMethod,
         reason: str,
         *,
         assumptions: tuple[DimensionConstraint, ...] = nf_assumptions,
+        proofs: tuple[Certificate, ...] = certificates,
         **evidence: object,
     ) -> Decision:
         return Decision(
@@ -714,9 +815,10 @@ def decide_equal(
             reason,
             left_nf=nf_l,
             right_nf=nf_r,
-            certificates=certificates,
+            certificates=proofs,
             assumptions=assumptions,
             parameters_agree=parameters_agree,
+            saturation=saturation,
             **evidence,  # type: ignore[arg-type]
         )
 
@@ -737,12 +839,12 @@ def decide_equal(
             comparison=oracle.comparison,
             samples_checked=checked,
         )
+    sampled = (
+        "no oracle sample evaluated"
+        if checked == 0
+        else f"no oracle mismatch in {checked} sample(s)"
+    )
     if nf_equal:
-        sampled = (
-            "no oracle sample evaluated"
-            if checked == 0
-            else f"no oracle mismatch in {checked} sample(s)"
-        )
         return finish(
             EqualityVerdict.EQUAL,
             DecisionMethod.NORMAL_FORM,
@@ -752,6 +854,27 @@ def decide_equal(
         )
 
     notes = [nf_reason, f"no oracle mismatch in {checked} sample(s)"]
+    if use_saturation:
+        run = _run_saturation(left, right, rules, saturation_limits)
+        saturation = run.report
+        if run.certificates is not None:
+            conditional = (
+                f", conditional on the {len(run.assumptions)} deferred dimension constraint(s) "
+                f"in assumptions; {sampled}"
+                if run.assumptions
+                else ""
+            )
+            return finish(
+                EqualityVerdict.EQUAL,
+                DecisionMethod.SATURATION,
+                f"saturation merged both sides along {run.reason}{conditional}",
+                assumptions=run.assumptions,
+                proofs=run.certificates,
+                samples_checked=checked,
+            )
+        notes.append(f"saturation: {run.reason}")
+    else:
+        notes.append("saturation disabled")
     if use_symbolic:
         matched, symbolic_reason = _symbolic_match(family_l, family_r)
         if matched:
@@ -780,6 +903,8 @@ def decide_equal(
             max_depth=max_depth,
             tolerance=tolerance,
             max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
         )
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
@@ -816,6 +941,8 @@ def _decide_by_induction(
     max_depth: int,
     tolerance: float,
     max_elements: int,
+    use_saturation: bool,
+    saturation_limits: SaturationLimits,
 ) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
     """The induction rung: a settled (verdict, method, reason, evidence), or why it did not
     settle."""
@@ -849,6 +976,8 @@ def _decide_by_induction(
         max_depth=max_depth - 1,
         tolerance=tolerance,
         max_elements=max_elements,
+        use_saturation=use_saturation,
+        saturation_limits=saturation_limits,
     )
     if (
         base_decision.verdict is EqualityVerdict.UNEQUAL

@@ -80,24 +80,25 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         EQUAL,
         DecisionMethod.SYMBOLIC_CONTRACTION,
     ),
+    ("bialgebra_saturation", TD.bialgebra_pair, {}, EQUAL, DecisionMethod.SATURATION),
     (
         "boxed_fusion_induction",
         T8._build_boxed_fusion_family,
-        {"guard": TD.NO_FUSION},
+        {"guard": TD.NO_FUSION, "use_saturation": False},
         EQUAL,
         DecisionMethod.INDUCTION,
     ),
     (
         "two_index_fusion_induction",
         T8._build_two_index_fusion_family,
-        {"guard": TD.NO_FUSION},
+        {"guard": TD.NO_FUSION, "use_saturation": False},
         EQUAL,
         DecisionMethod.INDUCTION,
     ),
     (
         "boxed_fusion_induction_swapped",
         lambda: T8._build_boxed_fusion_family()[1::-1],
-        {"guard": TD.NO_FUSION},
+        {"guard": TD.NO_FUSION, "use_saturation": False},
         EQUAL,
         DecisionMethod.INDUCTION,
     ),
@@ -262,7 +263,7 @@ class TestConcreteDimensionSweep:
     def test_bialgebra_rewrite_is_proved_by_symbolic_contraction(self) -> None:
         left = bialgebra_diagram(2)
         right = apply(left, BIALGEBRA, BIALGEBRA.pattern.find_matches(left)[0]).diagram
-        decision = decide_equal(left, right)
+        decision = decide_equal(left, right, use_saturation=False)
         assert decision.verdict is EQUAL, decision.reason
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert decision.samples_checked == 1
