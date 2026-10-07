@@ -192,6 +192,7 @@ i. rewrite/normal_form.py
 - carry-over: the oracle rung counts a mismatch only above tolerance times the larger entry magnitude (at least 1), and samples each symbol within its sympy assumptions (integer symbols at integers, positive ones away from 0), never accepting a counterexample that breaks one; induction claims EQUAL only from base 0, and a proof from base 1 alone is UNKNOWN.
 - carry-over: the symbolic rung's cost grows exponentially in the number of contracted pairs (a scalar-only diagram of twenty Z-X loops does not finish in five minutes), so a large pair with no oracle counterexample can stall there; a budget or timeout on that rung is still owed.
 - carry-over: rewrite rules other than fusion and fourier_cancellation do not update the scopes of nested bang boxes, and spider_fusion raises bangbox_scope_unknown_node on some leftover nested boxes; the induction ladder now treats that as an unsettled tier rather than aborting.
+- resolved in Phase 16: every rule that replaces nodes inside a node-scope box now rescopes the innermost box and every enclosing one (_rescope_boxes in rules_library); before, a rewrite under nested boxes failed apply's validation with bangbox_scope_unknown_node.
 
 Phase 14: Equality saturation [UNDER DEBUG]
 i. rewrite/egraph.py
@@ -219,17 +220,23 @@ i. rewrite/tactics.py
 - carry-over: check_proof rejects an invalid start or goal, a half not beginning at its end, a half that does not replay (rediscover on), meets that are not view-isomorphic, and an oracle counterexample on start and goal; a proof with no evaluated oracle sample rests on replay alone and says so. With rediscover off, a forged match claiming its side conditions passed replays, leaving only the oracle. prove raises ProveGrammarError on an invalid diagram where decide_equal returns UNKNOWN. A custom tactic whose results do not chain can make search report FOUND; check_proof then fails, and prove reports CHECK_FAILED.
 - carry-over: with default moves, normalize closes most catalogue identities at depth 0; the bialgebra-first cases prove as rule(bialgebra) then normalize at depth 1. An induction-only bang-box family (an X state copied through n port-boxed outputs) is NOT_FOUND, EXHAUSTED after 2 layers: symbolic-n equalities that need induction are not reached by search, and decide_equal's induction rung remains the route for them. decide_equal does not call proof search.
 
-Phase 16: Scalable notation interoperability [CURRENT]
+Phase 16: Scalable notation interoperability [UNDER DEBUG]
 i. diagram/scalable.py
 - the scalable sheet-wire notation is representable
 - translation runs both ways between bang boxes and scalable notation (arXiv:2204.11702)
 - a rewrite that is awkward in one notation may be performed after translating to the other and translating back
 - test and debug: round-trip several families through both notations and confirm the diagram and its denotation are preserved; confirm a rule easier in scalable form yields the same result as the bang-box path
 - done when: users may work in whichever notation suits a construction, losslessly
+- carry-over: diagram/scalable.py holds the notation (ScalableDiagram: scaled nodes, sheet wires, Scale table of COPIES and LEGS scales mirroring node-scope and port-scope boxes with the same ids, boundaries as nested Bundles giving the SZX wire type), to_scalable, from_scalable, validate_scalable, ScalableBuilder, and strip, the paper's wire-stripping functor, implemented natively. rewrite/sheet.py holds the rewrites done in scalable form (split_scale is the divider push, join_scales the gatherer, enclose, dissolve, kill_scale, fuse_sheet), each emitting a replayable SheetStep. semantics/interop.py holds check_round_trip, check_sheet_step and via_scalable.
+- carry-over: lossless means family-equal: for every concrete assignment of counts, instantiating a diagram and its round trip gives isomorphic diagrams. The round trip is identical id for id only when the boundary is bundle-normal (each box's boundary refs already contiguous, see is_bundle_normal); otherwise the boundary is regrouped the way instantiation would group it.
+- carry-over: what to_scalable cannot represent is refused: a node-scope box under a port-scope box, and a wire between nodes in different innermost node-scope boxes (both accepted by validate, refused by instantiation). Scaled generators carry one phase for all copies; the paper's per-copy phase lists and its matrix arrows are not represented, since our bang boxes have no indexed phases and no box-to-box crossings.
+- carry-over: dividers and gatherers are not generators here; they are the bundle structure plus split_scale and join_scales. split_scale of n+1 into n and 1 equals peel_one; join_scales undoes it, which bang boxes cannot do. join_scales pairs nodes by ascending id rather than searching for an isomorphism, and fuse_sheet needs exactly equal dimensions where the engine also accepts dimensions that unify.
+- carry-over: SheetStep is its own certificate kind (replay plus oracle), not a Derivation step. check_round_trip and check_sheet_step fail a check that evaluated no sample, skip only samples that raise a domain error, and check per-sample isomorphism as well as the exact oracle.
+- carry-over: bang-box fixes found by this phase: a port-scope box over several ports of one node, a self-loop on a grown node, nested port-scope boxes, a box emptied by its children at 0, instantiation order with non-contiguous boundaries, and leftover bindings of compound or deeper killed boxes. Validate still reports an outer box whose remaining nodes equal its child's as bangbox_nesting_mismatch, so some intermediate states are refused by to_scalable and by sheet operations.
 
 PART 4: THE REPL
 
-Phase 17: Printer and Dirac output
+Phase 17: Printer and Dirac output [CURRENT]
 i. repl/printer.py
 - pretty-prints a graph textually, showing nodes, symbolic phases, exact scalars, port dimensions, and bang boxes including nesting and multiple indices
 - renders every diagram back to Dirac: by its recognized name when the diagram is in a known normal form, otherwise as the structural index-sum form, one bound index per spider, valid for symbolic n and d and requiring no contraction
