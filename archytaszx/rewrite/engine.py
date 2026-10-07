@@ -995,10 +995,10 @@ NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
 )
 """:func:`toward_normal_form`'s rule set, in application order.
 
-Every entry is non-growing; ``bialgebra`` turns two nodes into four and is deliberately
-absent. A name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is
-skipped, so the ordering here is the target set and
-:func:`missing_normal_form_rule_names` reports what of it is not yet live.
+Every entry removes at least one wire; ``state_copy`` on a Z with n >= 3 legs adds nodes.
+``bialgebra`` turns two nodes into four and is absent. A name not yet registered in
+:data:`~archytaszx.rewrite.rules_library.RULES` is skipped, so the ordering here is the
+target set and :func:`missing_normal_form_rule_names` reports what of it is not yet live.
 """
 
 
