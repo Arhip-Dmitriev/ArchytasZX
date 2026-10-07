@@ -36,7 +36,8 @@ their ``DEFERRED`` constraints become the assumptions; sides sharing one e-node 
 An oracle mismatch counts only above ``tolerance`` times the larger entry magnitude (at least
 1), at an assignment satisfying every symbol's sympy assumptions. Induction proves ``EQUAL``
 only from base 0. The parameter environment never enters a verdict;
-:attr:`Decision.parameters_agree` reports it.
+:attr:`Decision.parameters_agree` reports it. :func:`interface_reason` and
+:func:`refute_by_oracle` run rungs 1 and 3 alone.
 """
 
 from __future__ import annotations
@@ -545,6 +546,61 @@ def _run_oracle(
         if mismatch is not None:
             return _OracleRun(tuple(evaluated), assignment, mismatch)
     return _OracleRun(tuple(evaluated), None, None)
+
+
+def interface_reason(left: Diagram, right: Diagram) -> str | None:
+    """Why the interfaces of ``left`` and ``right``, as families, can never agree, or None."""
+    for name, value in (("left", left), ("right", right)):
+        if not isinstance(value, Diagram):
+            raise DecideGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")
+    return _interface_reason(_family(left), _family(right))
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class OracleRefutation:
+    """The samples the oracle evaluated, and the first counterexample with its comparison."""
+
+    evaluated: tuple[Mapping[str, CheckAssignmentValue], ...]
+    counterexample: Mapping[str, CheckAssignmentValue] | None
+    comparison: ComparisonResult | None
+
+    @property
+    def refuted(self) -> bool:
+        """True when a counterexample was found."""
+        return self.counterexample is not None
+
+
+def refute_by_oracle(
+    left: Diagram,
+    right: Diagram,
+    *,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    max_samples: int = 24,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+) -> OracleRefutation:
+    """Rung 3 alone: compare both families at ``samples`` (default :func:`sample_grid`) until
+    ``max_samples`` evaluate or one mismatches."""
+    _check_args(
+        left,
+        right,
+        None,
+        DEFAULT_GUARD,
+        samples,
+        max_samples,
+        True,
+        True,
+        0,
+        tolerance,
+        max_elements,
+        True,
+        DECIDE_SATURATION_LIMITS,
+    )
+    family_l = _family(left)
+    family_r = _family(right)
+    candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
+    run = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
+    return OracleRefutation(run.evaluated, run.mismatch, run.comparison)
 
 
 def _confirm_mismatch(
