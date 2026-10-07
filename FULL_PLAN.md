@@ -185,22 +185,29 @@ i. rewrite/normal_form.py
 - equality of two diagrams is decided by reducing both and comparing normal forms
 - test and debug: reduce several diagrams known to be equal and confirm identical normal forms; reduce two known-unequal diagrams and confirm distinct normal forms; cross-check every decision against the oracle
 - done when: the engine can decide diagram equality
-- carry-over: the engine normal form is the fixpoint of the non-growing normal-form rule set plus canonicalisation, not Wang's eq. (4)/(7) normal form, which is built per amplitude from the dense vector.
-- carry-over: the decision is sound but incomplete. EQUAL needs a normal-form match, a symbolic-contraction match, or an induction proof; UNEQUAL needs an oracle counterexample on the original diagrams; anything else is UNKNOWN, and completeness waits on the ZXW-complete rule set.
+- carry-over: the engine normal form is the fixpoint of the wire-reducing normal-form rule set plus canonicalisation (state_copy on a Z with three or more legs adds nodes, so a normal form is not node-minimal), not Wang's eq. (4)/(7) normal form, which is built per amplitude from the dense vector.
+- carry-over: the decision is sound but incomplete. EQUAL needs a normal-form match, a saturation merge (Phase 14), a symbolic-contraction match, or an induction proof; UNEQUAL needs an oracle counterexample on the original diagrams; anything else is UNKNOWN, and completeness waits on the ZXW-complete rule set.
 - carry-over: the decision procedure lives in semantics/decide.py, since rewrite/ never imports semantics/; rewrite/normal_form.py is the pure-rewrite driver.
 - carry-over: comparison_view breaks ties between interchangeable spider legs by original port index, so canonicalisation is not complete; equal diagrams whose legs tie may miss the normal-form rung and fall to a later one.
 - carry-over: the oracle rung counts a mismatch only above tolerance times the larger entry magnitude (at least 1), and samples each symbol within its sympy assumptions (integer symbols at integers, positive ones away from 0), never accepting a counterexample that breaks one; induction claims EQUAL only from base 0, and a proof from base 1 alone is UNKNOWN.
 - carry-over: the symbolic rung's cost grows exponentially in the number of contracted pairs (a scalar-only diagram of twenty Z-X loops does not finish in five minutes), so a large pair with no oracle counterexample can stall there; a budget or timeout on that rung is still owed.
 - carry-over: rewrite rules other than fusion and fourier_cancellation do not update the scopes of nested bang boxes, and spider_fusion raises bangbox_scope_unknown_node on some leftover nested boxes; the induction ladder now treats that as an unsettled tier rather than aborting.
 
-Phase 14: Equality saturation [CURRENT]
+Phase 14: Equality saturation [UNDER DEBUG]
 i. rewrite/egraph.py
 - an e-graph applies rules non-destructively, growing a congruence closure of equal diagrams
 - an extraction step selects an optimal representative under a stated cost
 - test and debug: saturate a diagram where greedy rewriting gets stuck and confirm extraction finds the shorter form; confirm every equivalence class member is oracle-equal to the input
 - done when: saturation reaches simplifications a greedy strategy cannot
+- carry-over: the e-graph is diagram-level, not term-level. An e-node is one diagram up to isomorphism of its Phase 13 comparison_view, so congruence closure is hash-consing under isomorphism plus a union-find; leg ties in comparison_view can leave two equal diagrams as two e-nodes, never merge two unequal ones.
+- carry-over: every stored edge is one apply() on its parent's representative and certifies on its own; explain() returns a path of such edges, read undirected. Rules are one-directional, so a class is the forward closure of its roots, and two roots merge only when their forward closures meet.
+- carry-over: saturation is bounded, not complete: a diagram over the largest root's node count plus node_margin is pruned, and iteration, e-node and application limits stop a run. Extraction is the exact minimum over the members found, not over the true equivalence class.
+- carry-over: decide_equal gains a SATURATION rung after oracle refutation and before symbolic contraction, with limits of 3 rounds, 128 e-nodes and 1024 applications. Tests that target a later rung pass use_saturation=False.
+- carry-over: on symmetric diagrams most applications are redundant (225 of 231 on twenty Z-X scalar pairs), since a match is applied once per automorphic image; skipping matches whose result is already known is still owed. A saturate call that raises loses its partial report.
+- carry-over: the greedy-stuck cases are bialgebra-first: an X_{2->1} into Z_{1->2} pair with three or more same-colour neighbours is a local minimum of every cost-descending greedy strategy, and saturation leaves it through the growing bialgebra step. On random three-to-five-node diagrams saturation never beat the Phase 13 normal form.
+- carry-over: symbolic contraction cannot confirm bialgebra-derived class members with d formal (the difference keeps an index sum), so the class-member check is oracle-only, at d = 2 to 5.
 
-Phase 15: Proof search and tactics
+Phase 15: Proof search and tactics [CURRENT]
 i. rewrite/tactics.py
 - a tactic language composes rules into larger moves
 - a search finds a derivation between two stated diagrams and reports the path as a certificate
