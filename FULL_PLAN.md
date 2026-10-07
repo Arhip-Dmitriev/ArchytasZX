@@ -267,7 +267,7 @@ ii. CI configuration
 - pytest, ruff, and mypy run on every push
 - done when: the suite is broad and CI is green
 
-Phase 21: Performance pass, only if profiling demands it
+Phase 21: Performance pass.
 i. profile match.py and contract_numeric.py
 - the matcher and the numeric kernel sit behind narrow interfaces so a later port touches only them
 - done when: performance is acceptable at the working diagram sizes
