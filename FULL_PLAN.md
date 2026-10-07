@@ -207,14 +207,19 @@ i. rewrite/egraph.py
 - carry-over: the greedy-stuck cases are bialgebra-first: an X_{2->1} into Z_{1->2} pair with three or more same-colour neighbours is a local minimum of every cost-descending greedy strategy, and saturation leaves it through the growing bialgebra step. On random three-to-five-node diagrams saturation never beat the Phase 13 normal form.
 - carry-over: symbolic contraction cannot confirm bialgebra-derived class members with d formal (the difference keeps an index sum), so the class-member check is oracle-only, at d = 2 to 5.
 
-Phase 15: Proof search and tactics [CURRENT]
+Phase 15: Proof search and tactics [UNDER DEBUG]
 i. rewrite/tactics.py
 - a tactic language composes rules into larger moves
 - a search finds a derivation between two stated diagrams and reports the path as a certificate
 - test and debug: ask the searcher to prove a target identity from a start diagram and confirm the returned path replays and verifies; confirm it reports failure cleanly when no derivation is found within bounds
 - done when: the engine can be asked to prove a goal and returns a checkable derivation
+- carry-over: rewrite/tactics.py is pure rewriting and returns a ProofPath; certificates and checking live in semantics/prove.py (certify_proof, check_proof, prove), since rewrite/ never imports semantics/. decide.py gains public interface_reason and refute_by_oracle wrappers for it.
+- carry-over: a tactic is a lazy, deterministic stream of outcomes whose results chain id for id from the input (rule, identity, fail, seq, first, choice, attempt, once, repeat, fixpoint, normalize; >> is seq, | is first). fixpoint and normalize record an apply error as a TacticFailure named after the tactic, keeping the prefix; rule records it per rule. BudgetExhausted is a RewriteError and is re-raised before that catch.
+- carry-over: rules are one-directional, so a proof is two forward derivations, start to a meet and goal to a meet, whose comparison views are isomorphic; a ProofCertificate holds one STEP_SEQUENCE certificate per half. The search is a layered BFS over moves on both sides (default: normalize plus one move per saturation rule), hash-consed by comparison_view, bounded by depth 4 per side, 2048 states, 20000 applications and a node margin of 4; it is not shortest across sides and leg ties in comparison_view can miss a meet, never fake one.
+- carry-over: check_proof rejects an invalid start or goal, a half not beginning at its end, a half that does not replay (rediscover on), meets that are not view-isomorphic, and an oracle counterexample on start and goal; a proof with no evaluated oracle sample rests on replay alone and says so. With rediscover off, a forged match claiming its side conditions passed replays, leaving only the oracle. prove raises ProveGrammarError on an invalid diagram where decide_equal returns UNKNOWN. A custom tactic whose results do not chain can make search report FOUND; check_proof then fails, and prove reports CHECK_FAILED.
+- carry-over: with default moves, normalize closes most catalogue identities at depth 0; the bialgebra-first cases prove as rule(bialgebra) then normalize at depth 1. An induction-only bang-box family (an X state copied through n port-boxed outputs) is NOT_FOUND, EXHAUSTED after 2 layers: symbolic-n equalities that need induction are not reached by search, and decide_equal's induction rung remains the route for them. decide_equal does not call proof search.
 
-Phase 16: Scalable notation interoperability
+Phase 16: Scalable notation interoperability [CURRENT]
 i. diagram/scalable.py
 - the scalable sheet-wire notation is representable
 - translation runs both ways between bang boxes and scalable notation (arXiv:2204.11702)
