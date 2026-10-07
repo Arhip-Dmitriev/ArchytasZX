@@ -321,15 +321,11 @@ def spider_fusion_builder(
         port_mapping[old_ref] = PortRef(new_node_id, Direction.OUTPUT, new_index)
 
     # Bang box "left intact" (Phase 7): condition 6 already required both matched nodes
-    # to share one innermost node-scope box, or neither to have one. If they do, that
-    # box's scope drops the two consumed nodes and gains the merged one, in place --
+    # to share one innermost node-scope box, or neither to have one. That box and every box
+    # enclosing it drop the two consumed nodes and gain the merged one, in place --
     # multiplicity, and every other field, untouched, since this fusion is a single
     # symbolic rewrite standing for one fusion per future instantiated copy.
-    enclosing_box = innermost_node_scope_box(diagram, match.a_id)
-    if enclosing_box is not None:
-        box = diagram.bang_boxes[enclosing_box]
-        new_scope = (box.node_scope - {match.a_id, match.b_id}) | {new_node_id}
-        diagram.set_bang_box_node_scope(enclosing_box, frozenset(new_scope))
+    _rescope_boxes(diagram, (match.a_id, match.b_id), (new_node_id,), context)
 
     # A port-scope box names a leg of one of the merged nodes; that leg survives on the
     # merged node, so the box follows it through the same port_mapping the boundary does.
@@ -454,14 +450,6 @@ def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
                 f"fourier_cancellation_builder: node {node_id!r} is not an F box in this diagram"
             )
     dim = match.shared_dim
-    enclosing_boxes = {innermost_node_scope_box(diagram, node_id) for node_id in match.node_ids}
-    if len(enclosing_boxes) != 1:
-        found = sorted(box for box in enclosing_boxes if box is not None)
-        raise RewriteDomainError(
-            "fourier_cancellation_builder: the four F boxes do not share one innermost "
-            f"node-scope bang box (found {found!r}); the chain must be wholly inside one "
-            "box or wholly outside every box"
-        )
     new_id = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim])
     first, last = match.node_ids[0], match.node_ids[-1]
     port_mapping = {
@@ -469,13 +457,9 @@ def fourier_cancellation_builder(diagram: Diagram, match: Match) -> BuildResult:
         PortRef(last, Direction.OUTPUT, 0): PortRef(new_id, Direction.OUTPUT, 0),
     }
 
-    # Bang box "left intact" (Phase 7), as in spider_fusion_builder: the enclosing box drops
-    # the four consumed nodes and gains the identity spider, every other field untouched.
-    (enclosing_box,) = enclosing_boxes
-    if enclosing_box is not None:
-        box = diagram.bang_boxes[enclosing_box]
-        new_scope = (box.node_scope - set(match.node_ids)) | {new_id}
-        diagram.set_bang_box_node_scope(enclosing_box, frozenset(new_scope))
+    # Bang box "left intact" (Phase 7), as in spider_fusion_builder: the enclosing boxes drop
+    # the four consumed nodes and gain the identity spider, every other field untouched.
+    _rescope_boxes(diagram, tuple(match.node_ids), (new_id,), "fourier_cancellation_builder")
 
     return BuildResult(
         diagram=diagram,
@@ -557,33 +541,29 @@ factor changes the answer.
 """
 
 
-def _splice_out_box(diagram: Diagram, node_ids: tuple[NodeId, ...], context: str) -> None:
-    """Drop ``node_ids`` from their shared innermost node-scope bang box, if they have one."""
-    boxes = {innermost_node_scope_box(diagram, node_id) for node_id in node_ids}
+def _rescope_boxes(
+    diagram: Diagram,
+    consumed: tuple[NodeId, ...],
+    created: tuple[NodeId, ...],
+    context: str,
+) -> None:
+    """Replace ``consumed`` by ``created`` in every node-scope bang box holding all of ``consumed``.
+
+    These are the consumed nodes' shared innermost node-scope box and every box enclosing it.
+    Raises :class:`~archytaszx.rewrite.rule.RewriteDomainError` if the consumed nodes do not
+    share one innermost node-scope box.
+    """
+    boxes = {innermost_node_scope_box(diagram, node_id) for node_id in consumed}
     if len(boxes) != 1:
         found = sorted(box for box in boxes if box is not None)
         raise RewriteDomainError(
             f"{context}: the matched nodes do not share one innermost node-scope bang box "
             f"(found {found!r})"
         )
-    (box_id,) = boxes
-    if box_id is None:
-        return
-    box = diagram.bang_boxes[box_id]
-    diagram.set_bang_box_node_scope(box_id, frozenset(box.node_scope - set(node_ids)))
-
-
-def _adopt_into_box(
-    diagram: Diagram, consumed: tuple[NodeId, ...], created: tuple[NodeId, ...]
-) -> None:
-    """Replace ``consumed`` by ``created`` in their shared innermost node-scope bang box."""
-    box_id = innermost_node_scope_box(diagram, consumed[0])
-    if box_id is None:
-        return
-    box = diagram.bang_boxes[box_id]
-    diagram.set_bang_box_node_scope(
-        box_id, frozenset((box.node_scope - set(consumed)) | set(created))
-    )
+    removed = frozenset(consumed)
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.is_node_scope and removed <= box.node_scope:
+            diagram.set_bang_box_node_scope(box_id, (box.node_scope - removed) | set(created))
 
 
 def _follow_port_scopes(diagram: Diagram, port_mapping: Mapping[PortRef, PortRef]) -> None:
@@ -618,7 +598,7 @@ def identity_removal_builder(diagram: Diagram, match: Match) -> BuildResult:
     check_side_condition_coverage(match, IDENTITY_SIDE_CONDITIONS, "identity_removal_builder")
     _require_rediscovered(match, find_identity_matches(diagram), "identity_removal_builder")
     port_mapping = {match.surviving_ref: match.far_ref}
-    _splice_out_box(diagram, (match.node_id,), "identity_removal_builder")
+    _rescope_boxes(diagram, (match.node_id,), (), "identity_removal_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
@@ -664,7 +644,7 @@ def triangle_inverse_cancellation_builder(diagram: Diagram, match: Match) -> Bui
     )
     consumed = (match.first_id, match.second_id)
     port_mapping = {match.surviving_ref: match.far_ref}
-    _splice_out_box(diagram, consumed, "triangle_inverse_cancellation_builder")
+    _rescope_boxes(diagram, consumed, (), "triangle_inverse_cancellation_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
@@ -727,7 +707,7 @@ def state_copy_builder(diagram: Diagram, match: Match) -> BuildResult:
         for index, new_id in enumerate(new_ids)
     }
     consumed = (match.state_id, match.spider_id)
-    _adopt_into_box(diagram, consumed, new_ids)
+    _rescope_boxes(diagram, consumed, new_ids, "state_copy_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
@@ -812,7 +792,7 @@ def hopf_builder(diagram: Diagram, match: Match) -> BuildResult:
     )
     port_mapping = {**z_mapping, **x_mapping}
     consumed = (match.z_id, match.x_id, *match.fourier_ids)
-    _adopt_into_box(diagram, consumed, (new_z, new_x))
+    _rescope_boxes(diagram, consumed, (new_z, new_x), "hopf_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
@@ -884,7 +864,7 @@ def bialgebra_builder(diagram: Diagram, match: Match) -> BuildResult:
         for x_index in range(2)
     )
     consumed = (match.x_id, match.z_id)
-    _adopt_into_box(diagram, consumed, z_ids + x_ids)
+    _rescope_boxes(diagram, consumed, z_ids + x_ids, "bialgebra_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
@@ -940,7 +920,7 @@ def fourier_state_color_change_builder(diagram: Diagram, match: Match) -> BuildR
     )
     port_mapping = {match.free_ref: PortRef(new_id, direction, 0)}
     consumed = (match.spider_id, match.fourier_id)
-    _adopt_into_box(diagram, consumed, (new_id,))
+    _rescope_boxes(diagram, consumed, (new_id,), "fourier_state_color_change_builder")
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,
