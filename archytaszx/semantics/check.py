@@ -446,7 +446,9 @@ def compare_symbolic(
                 "indeterminate: the variable-rank layouts or shared indices differ",
                 float("inf"),
             )
-        if tuple(g.factor for g in left.groups) != tuple(g.factor for g in right.groups):
+        if tuple((g.factor, g.marked, g.inner) for g in left.groups) != tuple(
+            (g.factor, g.marked, g.inner) for g in right.groups
+        ):
             return ComparisonResult(
                 mode, False, "indeterminate: the replicated factors differ", float("inf")
             )

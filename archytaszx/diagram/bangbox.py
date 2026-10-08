@@ -766,7 +766,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         for child in children:
             if child.id not in diagram.bang_boxes:
                 continue
-            _kill_one(diagram, child)
+            _kill_one(diagram, diagram.bang_boxes[child.id])
         for name in nested_symbols:
             _purge_symbol_if_dead(diagram, name)
         if box.id not in diagram.bang_boxes:

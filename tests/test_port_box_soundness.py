@@ -275,3 +275,17 @@ def test_decide_equal_still_accepts_sound_normal_form() -> None:
     assert decision.verdict is EqualityVerdict.EQUAL
     assert decision.samples_checked > 0
     assert Scalar.one() == d.scalar
+
+
+def test_killing_parent_kills_sibling_port_boxes_on_one_node() -> None:
+    d = Diagram()
+    z = d.add_node(Z_SPIDER, [], [D2, D2])
+    d.set_boundary_outputs([_out(z, 0), _out(z, 1)])
+    parent = d.add_bang_box(Mult("m"), node_scope=frozenset({z}))
+    d.add_bang_box(Mult("n"), port_scope=frozenset({_out(z, 0)}), parent=parent)
+    d.add_bang_box(Mult("k"), port_scope=frozenset({_out(z, 1)}), parent=parent)
+    assert validate(d).is_valid
+    killed = instantiate_symbol(d, "m", 0)
+    assert not killed.nodes
+    assert not killed.bang_boxes
+    assert validate(killed).is_valid

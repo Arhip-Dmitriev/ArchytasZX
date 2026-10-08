@@ -357,7 +357,8 @@ def _split_term(
 
 
 def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | None:
-    """Close Sum_var omega_d^{s*var^2 + b*var + c} * constant for s = +-1 and integer b, or None."""
+    """Close Sum_var omega_d^{a*var^2 + b*var + c} * constant for nonzero integer a and
+    integer b, or None."""
     constant = sp.Integer(1)
     exponent: sp.Expr = sp.Integer(0)
     for factor in sp.Mul.make_args(term):
@@ -375,11 +376,18 @@ def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | Non
     if polynomial.degree() != 2:
         return None
     sign = polynomial.coeff_monomial(var**2)
-    if sign not in (sp.Integer(1), sp.Integer(-1)):
-        return None
     linear = sp.expand(polynomial.coeff_monomial(var))
     if linear.is_integer is not True:
         return None
+    if sign not in (sp.Integer(1), sp.Integer(-1)):
+        if not sign.is_Integer or sign == 0:
+            return None
+        return cast(
+            sp.Expr,
+            constant
+            * _reciprocal_gauss(int(sign), linear, d_expr)
+            * sp.exp(2 * sp.pi * sp.I * polynomial.coeff_monomial(1) / d_expr),
+        )
     half_linear = sp.expand(linear / 2)
     offset = polynomial.coeff_monomial(1)
     # s*k^2 + 2*h*k + c = s*(k + s*h)^2 - s*h^2 + c, using s^2 = 1.
@@ -391,6 +399,21 @@ def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | Non
     parity = sp.exp(sp.pi * sp.I * linear)
     gauss = sp.sqrt(d_expr) * (1 + sign * sp.I) * (1 + (sign * sp.I) ** (-d_expr) * parity) / 2
     return cast(sp.Expr, constant * shift * gauss)
+
+
+def _reciprocal_gauss(a: int, b: sp.Expr, d_expr: sp.Expr) -> sp.Expr:
+    """Sum_{k<d} omega_d^{a k^2 + b k} by Landsberg-Schaar reciprocity: sqrt(d/(2|a|))
+    e^{i pi sgn(a)/4} omega_d^{-b^2/(4a)} Sum_{n<2|a|} e^{-2 pi i (d n^2 + 2 b n)/(4a)}."""
+    size = 2 * abs(a)
+    dual = sp.Add(
+        *(
+            sp.exp(-2 * sp.pi * sp.I * sp.expand(d_expr * n * n + 2 * b * n) / (4 * a))
+            for n in range(size)
+        )
+    )
+    eighth = (1 + sp.I) / sp.sqrt(2) if a > 0 else (1 - sp.I) / sp.sqrt(2)
+    shift = sp.exp(-2 * sp.pi * sp.I * sp.expand(b**2) / (4 * a * d_expr))
+    return cast(sp.Expr, sp.sqrt(d_expr) / sp.sqrt(size) * eighth * shift * dual)
 
 
 def _unit_sign(coefficient: sp.Expr, modulus: sp.Expr) -> int | None:

@@ -110,20 +110,27 @@ class SymbolicAxis:
 
 @dataclass(frozen=True, slots=True)
 class ReplicatedBlock:
-    """A run of boundary axes laid out copy-major at one slot: per copy of group ``group``, one
-    axis per template axis in ``axes``."""
+    """A run of boundary slots laid out copy-major at one slot: per copy of group ``group``, one
+    slot per template slot in ``axes``; a nested block names a group of that group's ``inner``."""
 
     group: int
-    axes: tuple[SymbolicAxis, ...]
+    axes: tuple[LayoutSlot, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class ReplicatedFactor:
     """``factor`` over its template indices, once per copy for ``multiplicity`` copies, each
-    copy reading its own copy of every template index."""
+    copy reading its own copy of every template index.
+
+    With ``marked``, an entry term carrying the group's mark symbol ``_m<g>`` takes
+    ``Sum_p marked(p) prod_{q != p} factor(q)`` in place of the product. With ``inner``, each
+    copy is a copy of that self-contained variable-rank tensor and ``factor`` is unused.
+    """
 
     multiplicity: Mult
     factor: Scalar
+    marked: Scalar | None = None
+    inner: SymbolicTensor | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,20 +179,35 @@ class SymbolicTensor:
 
     def signature(self) -> tuple[object, ...]:
         """Every slot's dimensions and directions, with each block's group multiplicity."""
-        return tuple(
-            (slot.dim, slot.port.direction)
-            if isinstance(slot, SymbolicAxis)
-            else (
-                self.groups[slot.group].multiplicity,
-                tuple((axis.dim, axis.port.direction) for axis in slot.axes),
-            )
-            for slot in self.slots()
+        return tuple(self._slot_signature(slot) for slot in self.slots())
+
+    def _slot_signature(self, slot: LayoutSlot) -> object:
+        """One slot's dimension and direction, or a block's multiplicity and nested slots."""
+        if isinstance(slot, SymbolicAxis):
+            return (slot.dim, slot.port.direction)
+        group = self.groups[slot.group]
+        owner = self if group.inner is None else group.inner
+        return (group.multiplicity, tuple(owner._slot_signature(inner) for inner in slot.axes))
+
+    def multiplicities_concrete(self) -> bool:
+        """True when every multiplicity, nested ones included, is concrete."""
+        return all(
+            group.multiplicity.is_concrete
+            and (group.inner is None or group.inner.multiplicities_concrete())
+            for group in self.groups
         )
 
     def substitute(self, mapping: Mapping[str, int | sp.Rational]) -> SymbolicTensor:
         """Push a symbol-to-value mapping into every dimension, multiplicity, entry and factor;
         only integer values reach dimensions and multiplicities. Once every multiplicity is
         concrete the result is :meth:`flatten`-ed."""
+        result = self._substituted(mapping)
+        if result.groups and result.multiplicities_concrete():
+            return result.flatten()
+        return result
+
+    def _substituted(self, mapping: Mapping[str, int | sp.Rational]) -> SymbolicTensor:
+        """:meth:`substitute` without the final flatten, recursing into nested groups."""
         dim_mapping: dict[DimSymbolKey, DimSubstituteValue] = {
             name: value
             for name, value in mapping.items()
@@ -200,23 +222,15 @@ class SymbolicTensor:
             name: value for name, value in mapping.items()
         }
 
-        def axis_at(axis: SymbolicAxis) -> SymbolicAxis:
-            return SymbolicAxis(axis.port, axis.dim.substitute(dim_mapping), axis.index)
+        def slot_at(slot: LayoutSlot) -> LayoutSlot:
+            if isinstance(slot, SymbolicAxis):
+                return SymbolicAxis(slot.port, slot.dim.substitute(dim_mapping), slot.index)
+            return ReplicatedBlock(slot.group, tuple(slot_at(a) for a in slot.axes))
 
-        layout = (
-            None
-            if self.layout is None
-            else tuple(
-                axis_at(slot)
-                if isinstance(slot, SymbolicAxis)
-                else ReplicatedBlock(slot.group, tuple(axis_at(a) for a in slot.axes))
-                for slot in self.layout
-            )
-        )
-        result = SymbolicTensor(
-            tuple(axis_at(axis) for axis in self.axes),
+        return SymbolicTensor(
+            tuple(cast(SymbolicAxis, slot_at(axis)) for axis in self.axes),
             self.entry.substitute(scalar_mapping),
-            layout,
+            None if self.layout is None else tuple(slot_at(slot) for slot in self.layout),
             tuple(
                 ReplicatedFactor(
                     group.multiplicity.substitute(
@@ -227,6 +241,8 @@ class SymbolicTensor:
                         }
                     ),
                     group.factor.substitute(scalar_mapping),
+                    None if group.marked is None else group.marked.substitute(scalar_mapping),
+                    None if group.inner is None else group.inner._substituted(mapping),
                 )
                 for group in self.groups
             ),
@@ -234,9 +250,6 @@ class SymbolicTensor:
                 SharedIndex(index.name, index.dim.substitute(dim_mapping)) for index in self.shared
             ),
         )
-        if result.groups and all(group.multiplicity.is_concrete for group in result.groups):
-            return result.flatten()
-        return result
 
     def flatten(self, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS) -> SymbolicTensor:
         """The fixed-rank tensor of a variable-rank one whose every multiplicity is concrete:
@@ -251,6 +264,10 @@ class SymbolicTensor:
                     f"multiplicity {group.multiplicity} is symbolic; substitute it first"
                 )
             counts.append(group.multiplicity.to_int())
+        flat_inner = [
+            None if group.inner is None else group.inner.flatten(max_steps=max_steps)
+            for group in self.groups
+        ]
         axes: list[SymbolicAxis] = []
         fixed_names: dict[str, sp.Symbol] = {}
         copy_names: list[list[dict[str, sp.Symbol]]] = [[{} for _ in range(n)] for n in counts]
@@ -264,14 +281,39 @@ class SymbolicTensor:
             if isinstance(slot, SymbolicAxis):
                 fixed_names[slot.index] = fresh(slot)
                 continue
+            inner = flat_inner[slot.group]
             for copy in range(counts[slot.group]):
-                for axis in slot.axes:
-                    copy_names[slot.group][copy][axis.index] = fresh(axis)
+                if inner is None:
+                    for axis in cast(tuple[SymbolicAxis, ...], slot.axes):
+                        copy_names[slot.group][copy][axis.index] = fresh(axis)
+                    continue
+                direction = _block_direction(slot)
+                for axis in inner.axes:
+                    if axis.port.direction is direction:
+                        copy_names[slot.group][copy][axis.index] = fresh(axis)
         expr = _rename(self.entry.to_sympy(), fixed_names)
-        for group, copies in zip(self.groups, copy_names, strict=True):
-            factor = group.factor.to_sympy()
-            for names in copies:
-                expr = expr * _rename(factor, {**fixed_names, **names})
+        for g, (group, copies) in enumerate(zip(self.groups, copy_names, strict=True)):
+            inner = flat_inner[g]
+            factor = group.factor.to_sympy() if inner is None else inner.entry.to_sympy()
+            per_copy = [_rename(factor, {**fixed_names, **names}) for names in copies]
+            product = sp.Mul(*per_copy)
+            mark = _mark_symbol(g)
+            if group.marked is None or mark not in expr.free_symbols:
+                expr = expr * product
+                continue
+            marked = group.marked.to_sympy()
+            chosen = sp.Add(
+                *(
+                    _rename(marked, {**fixed_names, **copies[p]})
+                    * sp.Mul(*(per_copy[:p] + per_copy[p + 1 :]))
+                    for p in range(len(copies))
+                )
+            )
+            expanded = sp.expand(expr)
+            expr = (
+                expanded.xreplace({mark: sp.Integer(0)}) * product
+                + sp.diff(expanded, mark) * chosen
+            )
         for index in reversed(self.shared):
             expr = sp.Sum(expr, (_engine_index(index.name), 0, index.dim.to_sympy() - 1))
         return SymbolicTensor(tuple(axes), Scalar(expr).simplify(max_steps=max_steps))
@@ -283,7 +325,12 @@ class SymbolicTensor:
             self.entry.simplify(max_steps=max_steps, ranges=self.ranges()),
             self.layout,
             tuple(
-                ReplicatedFactor(group.multiplicity, group.factor.simplify(max_steps=max_steps))
+                ReplicatedFactor(
+                    group.multiplicity,
+                    group.factor.simplify(max_steps=max_steps),
+                    None if group.marked is None else group.marked.simplify(max_steps=max_steps),
+                    None if group.inner is None else group.inner.simplify(max_steps=max_steps),
+                )
                 for group in self.groups
             ),
             self.shared,
@@ -350,6 +397,17 @@ class SymbolicTensor:
             bound = dict(zip(symbols, (sp.Integer(v) for v in flat), strict=True))
             out[flat] = Scalar(expr.xreplace(bound)).simplify().to_complex()
         return out
+
+
+def _block_direction(block: ReplicatedBlock) -> Direction:
+    """The direction of a block's first axis, nested blocks included."""
+    first = block.axes[0]
+    return first.port.direction if isinstance(first, SymbolicAxis) else _block_direction(first)
+
+
+def _mark_symbol(group: int) -> sp.Symbol:
+    """The formal symbol marking an entry term that takes group ``group``'s marked copy."""
+    return _engine_index(f"_m{group}")
 
 
 def _engine_index(name: str) -> sp.Symbol:
@@ -614,6 +672,45 @@ def _shared_spider_entry(
     return entry, factors
 
 
+def _shared_w_entry(
+    node: Node,
+    node_id: NodeId,
+    port_index: Mapping[PortRef, sp.Symbol],
+    boxed: Mapping[PortRef, sp.Symbol],
+    shared: sp.Symbol,
+    marks: Sequence[sp.Symbol],
+) -> tuple[sp.Expr, dict[PortRef, tuple[sp.Expr, sp.Expr]]]:
+    """A W node some of whose outputs are replicated, written over its input value ``shared``:
+    the unreplicated part, and each replicated leg's (vacuum, excited) per-copy factors.
+
+    The part is ``[in = s] (W_F(s) + [s != 0] prod_F [f = 0] sum marks)``, ``W_F`` the W
+    entry over the fixed outputs ``F``.
+    """
+    dim = resolve_dim(node)
+    zero = sp.Integer(0)
+    fixed = [
+        port_index[PortRef(node_id, Direction.OUTPUT, position)]
+        for position in range(len(node.outputs))
+        if PortRef(node_id, Direction.OUTPUT, position) not in boxed
+    ]
+    vacuum = [_delta(dim, leg, zero) for leg in fixed]
+    w_fixed = -(len(fixed) - 1) * sp.Mul(*vacuum) * _delta(dim, shared, zero)
+    for position, leg in enumerate(fixed):
+        w_fixed = w_fixed + _delta(dim, leg, shared) * sp.Mul(
+            *(vacuum[:position] + vacuum[position + 1 :])
+        )
+    excited = (1 - _delta(dim, shared, zero)) * sp.Mul(*vacuum) * sp.Add(*marks)
+    entry = _delta(dim, port_index[PortRef(node_id, Direction.INPUT, 0)], shared) * (
+        w_fixed + excited
+    )
+    factors = {
+        ref: (_delta(dim, symbol, zero), _delta(dim, symbol, shared))
+        for ref, symbol in boxed.items()
+        if ref.node_id == node_id
+    }
+    return entry, factors
+
+
 def _pins(term: sp.Expr, shared: sp.Symbol, modulus: sp.Expr) -> list[sp.Expr]:
     """Every value ``e``, free of ``shared``, that a delta factor of ``term`` pins ``shared`` to
     with a unit coefficient."""
@@ -631,14 +728,8 @@ def _pins(term: sp.Expr, shared: sp.Symbol, modulus: sp.Expr) -> list[sp.Expr]:
     return found
 
 
-def _eliminate_shared(
-    entry: Scalar,
-    factors: list[sp.Expr],
-    index: SharedIndex,
-    max_steps: int,
-) -> tuple[Scalar, list[sp.Expr]] | None:
-    """``entry`` and ``factors`` with ``index`` set to the value every term of ``entry`` pins
-    it to, or None when no one value is pinned in every term."""
+def _pinned_value(entry: Scalar, index: SharedIndex, max_steps: int) -> sp.Expr | None:
+    """The value every term of ``entry`` pins ``index`` to, or None when there is none."""
     symbol = _engine_index(index.name)
     modulus = index.dim.to_sympy()
     terms = sp.Add.make_args(entry.to_sympy())
@@ -655,10 +746,7 @@ def _eliminate_shared(
             .is_zero
             for term in terms
         ):
-            return (
-                Scalar(entry.to_sympy().xreplace({symbol: value})).simplify(max_steps=max_steps),
-                [factor.xreplace({symbol: value}) for factor in factors],
-            )
+            return value
     return None
 
 
@@ -729,7 +817,8 @@ class _BoxPlan:
 
 def _plan_boxes(diagram: Diagram) -> _BoxPlan:
     """Sort every top-level box: a node scope closed off, a node scope meeting only the
-    boundary, or a port scope on Z and X spiders; raise on any other box."""
+    boundary, or a port scope on Z and X spiders and at most one W node; raise on any other
+    box."""
     closed: list[BangBoxId] = []
     replicated: list[BangBoxId] = []
     ported: list[BangBoxId] = []
@@ -759,12 +848,21 @@ def _plan_boxes(diagram: Diagram) -> _BoxPlan:
                     "the rest of the diagram at a wire"
                 )
             continue
+        w_nodes = {
+            ref.node_id
+            for ref in box.port_scope
+            if diagram.nodes[ref.node_id].generator_type.name == W_NODE.name
+        }
+        if len(w_nodes) > 1:
+            raise SymbolicContractionUnsupportedError(
+                f"bang box {box_id} replicates legs of {len(w_nodes)} W nodes"
+            )
         for ref in sorted(box.port_scope, key=lambda r: r.sort_key()):
             node = diagram.nodes[ref.node_id]
-            if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name):
+            if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name, W_NODE.name):
                 raise SymbolicContractionUnsupportedError(
                     f"bang box {box_id} replicates a leg of node {ref.node_id!r} "
-                    f"({node.generator_type.name}), which is not a Z or X spider"
+                    f"({node.generator_type.name}), which is not a Z or X spider or a W node"
                 )
             if ref.node_id in boxed_nodes:
                 raise SymbolicContractionUnsupportedError(
@@ -856,6 +954,7 @@ def contract_symbolic(
             layout.append(axis)
 
     factors: list[sp.Expr] = [sp.Integer(1) for _ in group_boxes]
+    inner_of: dict[int, SymbolicTensor] = {}
     for box_id in plan.replicated:
         box = diagram.bang_boxes[box_id]
         g = group(box_id)
@@ -868,15 +967,17 @@ def contract_symbolic(
             max_steps=max_steps,
         )
         if inner.is_variable_rank:
-            raise SymbolicContractionUnsupportedError(
-                f"bang box {box_id} replicates a scope whose own rank varies with a multiplicity"
-            )
+            inner_of[g] = inner
+            _drop_scope(working, box.node_scope)
+            continue
         names = {axis.index: _engine_index(t.index) for axis, t in zip(inner.axes, templates[g])}
         factors[g] = _rename(inner.entry.to_sympy(), names)
         _drop_scope(working, box.node_scope)
     for box_id in plan.ported:
         working.remove_bang_box(box_id)
 
+    marked: list[sp.Expr | None] = [None for _ in group_boxes]
+    w_legs: dict[int, list[tuple[sp.Expr, sp.Expr]]] = {}
     shared: list[SharedIndex] = []
     shared_of: dict[NodeId, sp.Symbol] = {}
     for ref in boxed:
@@ -903,6 +1004,20 @@ def contract_symbolic(
                     raise SymbolicContractionGrammarError(
                         f"port {ref} carries no index; validate should have refused this diagram"
                     )
+        if node_id in shared_of and node.generator_type.name == W_NODE.name:
+            touched = sorted({group_of[port_box[ref]] for ref in boxed if ref.node_id == node_id})
+            part, legs = _shared_w_entry(
+                node,
+                node_id,
+                port_index,
+                boxed,
+                shared_of[node_id],
+                [_mark_symbol(g) for g in touched],
+            )
+            entry = entry * part
+            for ref, pair in legs.items():
+                w_legs.setdefault(group_of[port_box[ref]], []).append(pair)
+            continue
         if node_id in shared_of:
             part, per_leg = _shared_spider_entry(
                 node, node_id, port_index, boxed, shared_of[node_id]
@@ -914,6 +1029,17 @@ def contract_symbolic(
             continue
         entry = entry * _node_entry(working, node_id, port_index)
 
+    for g, pairs in sorted(w_legs.items()):
+        vacuum = [zero for zero, _excited in pairs]
+        excited = sp.Add(
+            *(
+                pair[1] * sp.Mul(*(vacuum[:position] + vacuum[position + 1 :]))
+                for position, pair in enumerate(pairs)
+            )
+        )
+        marked[g] = factors[g] * excited
+        factors[g] = factors[g] * sp.Mul(*vacuum)
+
     for symbol, dim in reversed(wire_indices):
         entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))
     closed = Scalar(entry).simplify(max_steps=max_steps)
@@ -922,21 +1048,45 @@ def contract_symbolic(
 
     kept: list[SharedIndex] = []
     for index in shared:
-        eliminated = _eliminate_shared(closed, factors, index, max_steps)
-        if eliminated is None:
+        value = _pinned_value(closed, index, max_steps)
+        if value is None:
             kept.append(index)
-        else:
-            closed, factors = eliminated
+            continue
+        pin = {_engine_index(index.name): value}
+        closed = Scalar(closed.to_sympy().xreplace(pin)).simplify(max_steps=max_steps)
+        factors = [factor.xreplace(pin) for factor in factors]
+        marked = [None if m is None else m.xreplace(pin) for m in marked]
+
+    def nested(slot: LayoutSlot) -> LayoutSlot:
+        if isinstance(slot, SymbolicAxis) or inner_of.get(slot.group) is None:
+            return slot
+        direction = _block_direction(slot)
+        return ReplicatedBlock(
+            slot.group,
+            tuple(
+                inner
+                for inner in inner_of[slot.group].slots()
+                if (
+                    inner.port.direction
+                    if isinstance(inner, SymbolicAxis)
+                    else _block_direction(inner)
+                )
+                is direction
+            ),
+        )
+
     return SymbolicTensor(
         tuple(fixed_axes),
         closed,
-        tuple(layout),
+        tuple(nested(slot) for slot in layout),
         tuple(
             ReplicatedFactor(
                 diagram.bang_boxes[box_id].multiplicity,
                 Scalar(factor).simplify(max_steps=max_steps),
+                None if marked[g] is None else Scalar(marked[g]).simplify(max_steps=max_steps),
+                inner_of.get(g),
             )
-            for box_id, factor in zip(group_boxes, factors, strict=True)
+            for g, (box_id, factor) in enumerate(zip(group_boxes, factors, strict=True))
         ),
         tuple(kept),
     )

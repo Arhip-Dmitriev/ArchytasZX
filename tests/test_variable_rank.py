@@ -26,17 +26,19 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import Mult, free_mult_symbols
-from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.repl.parser import parse_dirac_source
 from archytaszx.semantics.check import compare_symbolic, score
 from archytaszx.semantics.contract_symbolic import (
     ReplicatedBlock,
     SymbolicContractionDomainError,
+    SymbolicContractionUnsupportedError,
     contract_symbolic,
 )
 
 D = Dim("d")
+DENSE_CAP = 2000
 
 
 def out(node: int, index: int) -> PortRef:
@@ -142,6 +144,75 @@ def shifted_count() -> Diagram:
     return diagram
 
 
+def w_boxed() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(W_NODE, [D], [D, D])
+    diagram.set_boundary_inputs([inp(node, 0)])
+    diagram.set_boundary_outputs([out(node, 0), out(node, 1)])
+    diagram.add_bang_box(Mult("n"), port_scope=frozenset({out(node, 1)}))
+    return diagram
+
+
+def w_only_boxed() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(W_NODE, [D], [D])
+    diagram.set_boundary_inputs([inp(node, 0)])
+    diagram.set_boundary_outputs([out(node, 0)])
+    diagram.add_bang_box(Mult("n"), port_scope=frozenset({out(node, 0)}))
+    return diagram
+
+
+def w_wired_with_z() -> Diagram:
+    diagram = Diagram()
+    state = diagram.add_node(Z_SPIDER, [], [D], phase=third())
+    node = diagram.add_node(W_NODE, [D], [D, D])
+    z = diagram.add_node(Z_SPIDER, [], [D, D])
+    diagram.add_wire(out(state, 0), inp(node, 0))
+    diagram.set_boundary_outputs([out(node, 0), out(z, 0), out(node, 1), out(z, 1)])
+    diagram.add_bang_box(Mult("n"), port_scope=frozenset({out(node, 1), out(z, 1)}))
+    return diagram
+
+
+def w_two_boxes() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(W_NODE, [D], [D, D])
+    diagram.set_boundary_inputs([inp(node, 0)])
+    diagram.set_boundary_outputs([out(node, 0), out(node, 1)])
+    diagram.add_bang_box(Mult("n"), port_scope=frozenset({out(node, 0)}))
+    diagram.add_bang_box(Mult("m"), port_scope=frozenset({out(node, 1)}))
+    return diagram
+
+
+def nested_ghz() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(Z_SPIDER, [], [D, D], phase=third())
+    diagram.set_boundary_outputs([out(node, 0), out(node, 1)])
+    outer = diagram.add_bang_box(Mult("n"), node_scope=frozenset({node}))
+    diagram.add_bang_box(Mult("m"), port_scope=frozenset({out(node, 1)}), parent=outer)
+    return diagram
+
+
+def nested_with_input() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(X_SPIDER, [D], [D, D])
+    z = diagram.add_node(Z_SPIDER, [], [D])
+    diagram.set_boundary_inputs([inp(node, 0)])
+    diagram.set_boundary_outputs([out(node, 0), out(z, 0), out(node, 1)])
+    outer = diagram.add_bang_box(Mult("n"), node_scope=frozenset({node}))
+    diagram.add_bang_box(Mult("m"), port_scope=frozenset({out(node, 0)}), parent=outer)
+    return diagram
+
+
+def nested_w() -> Diagram:
+    diagram = Diagram()
+    node = diagram.add_node(W_NODE, [D], [D, D])
+    diagram.set_boundary_inputs([inp(node, 0)])
+    diagram.set_boundary_outputs([out(node, 0), out(node, 1)])
+    outer = diagram.add_bang_box(Mult("n"), node_scope=frozenset({node}))
+    diagram.add_bang_box(Mult("m"), port_scope=frozenset({out(node, 1)}), parent=outer)
+    return diagram
+
+
 FAMILIES: dict[str, Callable[[], Diagram]] = {
     "z_with_input": z_with_input,
     "x_two_ports": x_two_ports,
@@ -152,6 +223,13 @@ FAMILIES: dict[str, Callable[[], Diagram]] = {
     "node_scope_with_fourier": node_scope_with_fourier,
     "node_scope_with_closed_child": node_scope_with_closed_child,
     "shifted_count": shifted_count,
+    "w_boxed": w_boxed,
+    "w_only_boxed": w_only_boxed,
+    "w_wired_with_z": w_wired_with_z,
+    "w_two_boxes": w_two_boxes,
+    "nested_ghz": nested_ghz,
+    "nested_with_input": nested_with_input,
+    "nested_w": nested_w,
 }
 
 
@@ -169,6 +247,8 @@ class TestAgainstTheOracle:
             assignment = {"d": d, **dict(zip(names, values, strict=True))}
             instance = family.substitute(assignment)
             assert not instance.is_variable_rank
+            if d**instance.rank > DENSE_CAP:
+                continue
             expected = score(diagram, assignment).tensor
             dense = instance.to_dense()
             assert isinstance(dense, np.ndarray)
@@ -229,3 +309,22 @@ class TestComparison:
         fixed = parse_dirac_source("sum_{k=0}^{d-1} |k,k>")
         result = compare_symbolic(contract_symbolic(fixed), contract_symbolic(z_alone()))
         assert not result.matched
+
+    def test_equal_nested_families_match(self) -> None:
+        result = compare_symbolic(contract_symbolic(nested_ghz()), contract_symbolic(nested_ghz()))
+        assert result.matched
+
+    def test_w_and_nested_families_differ_from_their_neighbours(self) -> None:
+        result = compare_symbolic(contract_symbolic(w_boxed()), contract_symbolic(z_with_input()))
+        assert not result.matched
+
+
+def test_a_box_over_two_w_nodes_is_refused() -> None:
+    diagram = Diagram()
+    first = diagram.add_node(W_NODE, [D], [D])
+    second = diagram.add_node(W_NODE, [D], [D])
+    diagram.set_boundary_inputs([inp(first, 0), inp(second, 0)])
+    diagram.set_boundary_outputs([out(first, 0), out(second, 0)])
+    diagram.add_bang_box(Mult("n"), port_scope=frozenset({out(first, 0), out(second, 0)}))
+    with pytest.raises(SymbolicContractionUnsupportedError):
+        contract_symbolic(diagram)

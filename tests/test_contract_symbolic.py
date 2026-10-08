@@ -34,7 +34,6 @@ from archytaszx.semantics.check import compare_symbolic, score
 from archytaszx.semantics.contract_numeric import ContractSizeError, contract
 from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
-    SymbolicContractionUnsupportedError,
     SymbolicContractionValidationError,
     SymbolicTensor,
     contract_symbolic,
@@ -246,7 +245,7 @@ class TestUnsupportedShapes:
         with pytest.raises(SymbolicContractionValidationError, match="bangbox_port_fixed_arity"):
             contract_symbolic(diagram)
 
-    def test_a_replicated_leg_on_a_w_node_is_unsupported(self) -> None:
+    def test_a_replicated_leg_on_a_w_node_contracts(self) -> None:
         diagram = Diagram()
         node_id = diagram.add_node(W_NODE, input_dims=[D], output_dims=[D])
         diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
@@ -254,18 +253,18 @@ class TestUnsupportedShapes:
         diagram.add_bang_box(
             Mult("n"), port_scope=frozenset({PortRef(node_id, Direction.OUTPUT, 0)})
         )
-        with pytest.raises(SymbolicContractionUnsupportedError, match="not a Z or X spider"):
-            contract_symbolic(diagram)
+        family = contract_symbolic(diagram)
+        assert family.is_variable_rank and family.groups[0].marked is not None
 
-    def test_a_replicated_scope_of_variable_rank_is_unsupported(self) -> None:
+    def test_a_replicated_scope_of_variable_rank_contracts(self) -> None:
         diagram = Diagram()
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[D])
         port = PortRef(node_id, Direction.OUTPUT, 0)
         diagram.set_boundary_outputs([port])
         outer = diagram.add_bang_box(Mult("n"), node_scope=frozenset({node_id}))
         diagram.add_bang_box(Mult("m"), port_scope=frozenset({port}), parent=outer)
-        with pytest.raises(SymbolicContractionUnsupportedError, match="own rank varies"):
-            contract_symbolic(diagram)
+        family = contract_symbolic(diagram)
+        assert family.is_variable_rank and family.groups[0].inner is not None
 
 
 class TestPhasedSpiders:
@@ -545,6 +544,33 @@ class TestClosedFormsAtLargeDimension:
                 cmath.exp(2j * cmath.pi * (sign * j * j + linear * j) / value) for j in range(value)
             )
             assert abs(gauss.substitute({"d": value}).to_complex() - direct) < 1e-9
+
+    @pytest.mark.parametrize("quadratic", [2, 3, -2, 5])
+    @pytest.mark.parametrize("linear", [0, 1, -4])
+    def test_non_unit_quadratic_coefficient_closes(self, quadratic: int, linear: int) -> None:
+        gauss = Scalar.index_sum(
+            D, lambda k: Scalar.omega(D, quadratic * k.to_sympy() ** 2 + linear * k.to_sympy())
+        ).simplify()
+        assert not gauss.to_sympy().atoms(sp.Sum)
+        for value in range(1, 17):
+            direct = sum(
+                cmath.exp(2j * cmath.pi * (quadratic * j * j + linear * j) / value)
+                for j in range(value)
+            )
+            assert abs(gauss.substitute({"d": value}).to_complex() - direct) < 1e-9
+
+    def test_non_unit_quadratic_with_free_linear_index_closes(self) -> None:
+        free = sp.Symbol("i", integer=True, nonnegative=True)
+        gauss = Scalar.index_sum(
+            D, lambda k: Scalar.omega(D, 2 * k.to_sympy() ** 2 + free * k.to_sympy())
+        ).simplify()
+        assert not gauss.to_sympy().atoms(sp.Sum)
+        for value in range(1, 9):
+            for b in range(value):
+                direct = sum(
+                    cmath.exp(2j * cmath.pi * (2 * j * j + b * j) / value) for j in range(value)
+                )
+                assert abs(gauss.substitute({"d": value, "i": b}).to_complex() - direct) < 1e-9
 
     @pytest.mark.parametrize(
         ("label", "build", "direct"),
