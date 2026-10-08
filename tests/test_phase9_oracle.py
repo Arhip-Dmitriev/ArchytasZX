@@ -24,7 +24,13 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
-from archytaszx.algebra.scalar import Scalar, ScalarBudgetError, ScalarGrammarError, ScalarSumError
+from archytaszx.algebra.scalar import (
+    ModDelta,
+    Scalar,
+    ScalarBudgetError,
+    ScalarGrammarError,
+    ScalarSumError,
+)
 from archytaszx.diagram.bangbox import Mult
 from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
@@ -103,11 +109,13 @@ class TestTheCharacterSum:
             direct = sum(np.exp(2j * np.pi * index * k / value) for k in range(value))
             assert np.isclose(closed.to_complex(), direct)
 
-    def test_a_concrete_index_at_symbolic_d_stays_unevaluated(self) -> None:
-        """The lemma: d = 1 is always live, so no universal negative is provable."""
+    def test_a_concrete_index_at_symbolic_d_closes_to_a_divisibility_atom(self) -> None:
+        """The lemma: d = 1 is always live, so the sum is d * [d | 3], never zero outright."""
         summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, 3 * k.to_sympy())).simplify()
-        assert summed != Scalar.zero()
-        assert summed.to_sympy().atoms(sp.Sum)
+        d = D.to_sympy()
+        assert summed == Scalar(d * ModDelta(3, d))
+        for value, expected in ((1, 1), (2, 0), (3, 3), (4, 0), (6, 0)):
+            assert summed.substitute({"d": value}) == Scalar.rational(expected)
 
     def test_the_degenerate_dimension_one_gives_one(self) -> None:
         one = Dim.concrete(1)
@@ -153,12 +161,13 @@ class TestTheScalarGrammar:
                 Scalar.symbol(name)
 
     def test_a_bound_index_cannot_be_substituted(self) -> None:
-        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, 3 * k.to_sympy())).simplify()
+        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + k.to_sympy()))
         with pytest.raises(ScalarSumError, match="bound summation index"):
             summed.substitute({"_k0": 1})
 
     def test_substituting_d_rewrites_the_limit_without_expanding(self) -> None:
-        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, 3 * k.to_sympy())).simplify()
+        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + k.to_sympy()))
+        summed = summed.simplify()
         answered = summed.substitute({"d": 4096})
         sums = answered.to_sympy().atoms(sp.Sum)
         assert len(sums) == 1

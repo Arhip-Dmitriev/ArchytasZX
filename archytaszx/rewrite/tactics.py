@@ -63,7 +63,7 @@ from archytaszx.rewrite.engine import (
     apply_until_fixpoint,
     normal_form_rules,
 )
-from archytaszx.rewrite.normal_form import comparison_view
+from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
 from archytaszx.rewrite.rule import Match, RewriteError, RewriteGrammarError, Rule
 from archytaszx.rewrite.rules_library import lookup_rule
 
@@ -780,9 +780,9 @@ class _Search:
 
     def find(self, view: Diagram) -> tuple[str, int | None]:
         """``view``'s key and the state whose view is isomorphic to it, if any."""
-        key = canonical_key(view)
+        key = view_key(view)
         for index in self.buckets.get(key, ()):
-            if isomorphic(view, self.states[index].view):
+            if views_isomorphic(view, self.states[index].view):
                 return key, index
         return key, None
 
@@ -877,7 +877,7 @@ def search(
     run = _Search(move_set, limits, bound, ctx)
     start_copy, goal_copy = start.copy(), goal.copy()
     start_view = comparison_view(start_copy)
-    run.insert(_State(Side.START, start_copy, start_view, None, None, 0), canonical_key(start_view))
+    run.insert(_State(Side.START, start_copy, start_view, None, None, 0), view_key(start_view))
     sides = (Side.START, Side.GOAL) if bidirectional else (Side.START,)
     status = SearchStatus.DEPTH_LIMIT
     forward: tuple[ProofStep, ...] = ()

@@ -28,7 +28,9 @@ steps: collecting like terms, folding concrete rational arithmetic, and reducing
 root-of-unity index modulo ``d`` only when ``d`` is concrete. Deciding whether a symbolic
 ``d`` divides a symbolic index is :meth:`Scalar.simplify`'s job, not this normalization's:
 it closes an index sum through the character-sum identity
-Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d]. As with :class:`~archytaszx.algebra.phase.Phase`,
+Sum_{k=0}^{d-1} omega_d^{jk} = d * [j == 0 mod d], the bracket being the exact atom
+:class:`ModDelta`, then removes the bound indices those deltas pin. As with
+:class:`~archytaszx.algebra.phase.Phase`,
 equality here is sound but incomplete: two Scalars that compare equal are exactly equal,
 but two exactly-equal Scalars may compare unequal if this module's cheap normalization
 cannot see it.
@@ -44,6 +46,7 @@ layer, where :class:`~archytaszx.semantics.check.EqualityMode` now carries it, n
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping
 from typing import Union, cast
@@ -153,7 +156,12 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
         _check_sum_structure(expr)
         _check_scalar_domain(expr.function)
         return
-    if expr.is_Add or expr.is_Mul or expr.is_Pow or isinstance(expr, (sp.exp, sp.conjugate)):
+    if (
+        expr.is_Add
+        or expr.is_Mul
+        or expr.is_Pow
+        or isinstance(expr, (sp.exp, sp.conjugate, ModDelta, ModGcd))
+    ):
         for arg in expr.args:
             _check_scalar_domain(arg)
         return
@@ -188,20 +196,91 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     return cast(sp.Expr, normalized)
 
 
-def _is_zero_mod(j_expr: sp.Expr, d_expr: sp.Expr) -> str:
-    """Decide whether j == 0 (mod d), returning "YES", "NO", or "UNDECIDABLE".
+_Limit = tuple[sp.Symbol, sp.Expr, sp.Expr]
 
-    Only a fully concrete pair can answer "NO": a free dimension symbol admits d = 1, where
-    every integer is 0 mod d, so no universal negative is available.
-    """
-    if j_expr.is_Integer and d_expr.is_Integer:
-        return "YES" if int(j_expr) % int(d_expr) == 0 else "NO"
-    if j_expr == sp.Integer(0):
-        return "YES"
-    ratio = sp.cancel(j_expr / d_expr)
-    if sp.expand(d_expr * ratio - j_expr) == 0 and ratio.is_integer is True:
-        return "YES"
-    return "UNDECIDABLE"
+
+def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
+    """``expr`` with every integer coefficient taken into ``(-modulus/2, modulus/2]``."""
+    symbols = sorted(expr.free_symbols, key=lambda symbol: str(symbol.name))
+    if not symbols:
+        if not expr.is_Integer:
+            return expr
+        residue = int(expr) % modulus
+        return sp.Integer(residue - modulus if 2 * residue > modulus else residue)
+    try:
+        poly = sp.Poly(expr, *symbols)
+    except sp.PolynomialError:
+        return expr
+    if not all(coefficient.is_Integer for coefficient in poly.coeffs()):
+        return expr
+    total: sp.Expr = sp.Integer(0)
+    for monomial, coefficient in poly.terms():
+        residue = int(coefficient) % modulus
+        if 2 * residue > modulus:
+            residue -= modulus
+        total += residue * sp.Mul(*(s**e for s, e in zip(symbols, monomial)))
+    return cast(sp.Expr, sp.expand(total))
+
+
+def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
+    """The representative of ``+-expr`` (reduced when ``modulus`` is concrete) a ModDelta keeps."""
+    candidates = [sp.expand(expr), sp.expand(-expr)]
+    if modulus.is_Integer:
+        candidates = [_reduce_mod(candidate, int(modulus)) for candidate in candidates]
+    preferred = [c for c in candidates if not c.could_extract_minus_sign()] or candidates
+    return cast(sp.Expr, min(preferred, key=sp.default_sort_key))
+
+
+class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
+    """``[j == 0 mod m]`` for an integer-valued ``j`` and a positive integer modulus ``m``."""
+
+    nargs = 2
+    is_integer = True
+    is_nonnegative = True
+
+    @classmethod
+    def eval(cls, j: sp.Expr, m: sp.Expr) -> sp.Expr | None:
+        """The value when decidable, else ``j`` moved to its canonical residue."""
+        args_j = j
+        j = sp.expand(j)
+        if j == 0 or m == 1:
+            return sp.Integer(1)
+        if m.is_Integer and j.is_Integer:
+            return sp.Integer(1 if int(j) % int(m) == 0 else 0)
+        if not m.is_Integer and sp.cancel(j / m).is_integer is True:
+            return sp.Integer(1)
+        if isinstance(m, ModGcd) and m.args[0].is_Integer:
+            j = _canonical_residue(_reduce_mod(j, int(m.args[0])), m)
+            if j == 0:
+                return sp.Integer(1)
+            return cast(sp.Expr, cls(j, m, evaluate=False)) if j != args_j else None
+        canonical = _canonical_residue(j, m)
+        if canonical != j:
+            return cast(sp.Expr, cls(canonical, m))
+        return None
+
+
+class ModGcd(sp.Function):  # type: ignore[misc]  # sympy is untyped
+    """``gcd(c, m)`` for an integer ``c`` and a positive integer modulus ``m``."""
+
+    nargs = 2
+    is_integer = True
+    is_positive = True
+
+    @classmethod
+    def eval(cls, c: sp.Expr, m: sp.Expr) -> sp.Expr | None:
+        """The value when decidable, else ``c`` made nonnegative."""
+        if c.is_Integer and m.is_Integer:
+            return sp.Integer(math.gcd(int(c), int(m)))
+        if c in (sp.Integer(1), sp.Integer(-1)) or m == 1:
+            return sp.Integer(1)
+        if c == 0:
+            return m
+        if c.is_Integer and c < 0:
+            return cast(sp.Expr, cls(-c, m))
+        if c.is_Integer and isinstance(m, ModGcd) and m.args[0].is_Integer:
+            return cast(sp.Expr, cls(math.gcd(int(c), int(m.args[0])), m.args[1]))
+        return None
 
 
 def _rename_indices(expr: sp.Expr) -> sp.Expr:
@@ -268,114 +347,377 @@ def _split_term(
     return constant, index, sp.expand(polynomial.coeff_monomial(1))
 
 
-def _close_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | None:
-    """Close one product term of a summand against the character sum, or return None."""
-    split = _split_term(term, var, d_expr)
-    if split is None:
+def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | None:
+    """Close Sum_var omega_d^{s*var^2 + b*var + c} * constant for s = +-1 and b even, or None.
+
+    Completing the square (var -> var - s*b/2, a bijection of the residues since the
+    exponent has integer coefficients) leaves the quadratic Gauss sum
+    G(d) = Sum_k omega_d^{k^2} = sqrt(d) * (1 + i) * (1 + i^{-d}) / 2, valid for every d >= 1,
+    or its conjugate for s = -1.
+    """
+    constant = sp.Integer(1)
+    exponent: sp.Expr = sp.Integer(0)
+    for factor in sp.Mul.make_args(term):
+        if var not in factor.free_symbols:
+            constant *= factor
+            continue
+        if not isinstance(factor, sp.exp):
+            return None
+        exponent = exponent + factor.args[0]
+    ratio = sp.expand(sp.cancel(exponent * d_expr / (2 * sp.pi * sp.I)))
+    try:
+        polynomial = sp.Poly(ratio, var)
+    except sp.PolynomialError:
         return None
-    constant, index, offset = split
-    if index == sp.Integer(0) and offset == sp.Integer(0):
-        return cast(sp.Expr, constant * d_expr)
-    verdict = _is_zero_mod(index, d_expr)
-    if verdict == "NO":
-        return sp.Integer(0)
-    if verdict == "UNDECIDABLE":
+    if polynomial.degree() != 2:
         return None
-    shift = sp.exp(2 * sp.pi * sp.I * offset / d_expr)
-    return cast(sp.Expr, constant * shift * d_expr)
+    sign = polynomial.coeff_monomial(var**2)
+    if sign not in (sp.Integer(1), sp.Integer(-1)):
+        return None
+    half_linear = sp.expand(polynomial.coeff_monomial(var) / 2)
+    if half_linear.is_integer is not True:
+        return None
+    offset = polynomial.coeff_monomial(1)
+    # s*k^2 + 2*h*k + c = s*(k + s*h)^2 - s*h^2 + c, using s^2 = 1.
+    shift = sp.exp(2 * sp.pi * sp.I * sp.expand(offset - sign * half_linear**2) / d_expr)
+    gauss = sp.sqrt(d_expr) * (1 + sign * sp.I) * (1 + (sign * sp.I) ** (-d_expr)) / 2
+    return cast(sp.Expr, constant * shift * gauss)
 
 
-def _close_sum(node: sp.Sum) -> sp.Expr | None:
-    """Evaluate one Sum node through the character-sum identity, or return None to leave it."""
-    outer = list(node.limits[:-1])
-    var, _, upper = node.limits[-1]
-    d_expr = sp.expand(upper + 1)
-
-    def rewrap(expr: sp.Expr) -> sp.Expr:
-        return cast(sp.Expr, sp.Sum(expr, *outer) if outer else expr)
-
-    body = sp.expand(sp.powsimp(sp.expand(node.function), force=True))
-    terms = sp.Add.make_args(body)
-    closed: list[sp.Expr] = []
-    changed = False
-    for term in terms:
-        result = _close_term(term, var, d_expr)
-        if result is None:
-            closed.append(sp.Sum(term, (var, 0, upper)))
-        else:
-            closed.append(result)
-            changed = True
-    if changed:
-        return rewrap(sp.Add(*closed))
-    if len(terms) == 1 and outer:
-        eliminated = _eliminate_via_delta(terms[0], var, d_expr, outer)
-        if eliminated is not None:
-            return eliminated
-    if d_expr.is_Integer:
-        return rewrap(
-            sp.Add(*(node.function.xreplace({var: sp.Integer(v)}) for v in range(int(d_expr))))
-        )
+def _unit_sign(coefficient: sp.Expr, modulus: sp.Expr) -> int | None:
+    """``+1`` or ``-1`` when ``coefficient`` is congruent to it mod ``modulus``, else None."""
+    if coefficient == 1:
+        return 1
+    if coefficient == -1:
+        return -1
+    if coefficient.is_Integer and modulus.is_Integer and int(modulus) > 1:
+        residue = int(coefficient) % int(modulus)
+        if residue == 1:
+            return 1
+        if residue == int(modulus) - 1:
+            return -1
     return None
+
+
+def _linear_in(expr: sp.Expr, var: sp.Symbol) -> tuple[int, sp.Expr] | None:
+    """``(c, rest)`` with ``expr == c*var + rest``, ``c`` a nonzero integer, or None."""
+    try:
+        polynomial = sp.Poly(expr, var)
+    except sp.PolynomialError:
+        return None
+    if polynomial.degree() != 1:
+        return None
+    coefficient = polynomial.coeff_monomial(var)
+    if not coefficient.is_Integer:
+        return None
+    rest = sp.expand(expr - coefficient * var)
+    if var in rest.free_symbols:
+        return None
+    return int(coefficient), rest
+
+
+def _integer_slope(expr: sp.Expr, var: sp.Symbol) -> bool:
+    """Whether ``expr`` is a polynomial in ``var`` whose var-dependent coefficients are integers."""
+    try:
+        polynomial = sp.Poly(sp.expand(expr), var)
+    except sp.PolynomialError:
+        return False
+    return all(
+        coefficient.is_integer is True
+        for monomial, coefficient in polynomial.terms()
+        if monomial[0] > 0
+    )
+
+
+def _divides(modulus: sp.Expr, d_expr: sp.Expr) -> bool:
+    """Whether ``modulus`` provably divides ``d_expr``."""
+    if sp.expand(modulus - d_expr) == 0:
+        return True
+    if isinstance(modulus, ModGcd) and sp.expand(modulus.args[1] - d_expr) == 0:
+        return True
+    return sp.cancel(d_expr / modulus).is_integer is True
 
 
 def _is_periodic_in(expr: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> bool:
-    """Whether every var-dependent factor of expr is an omega_d power of integer index."""
-    for factor in sp.Mul.make_args(expr):
-        if var not in factor.free_symbols:
-            continue
-        if not isinstance(factor, sp.exp):
-            return False
-        ratio = sp.expand(sp.cancel(factor.args[0] * d_expr / (2 * sp.pi * sp.I)))
-        try:
-            polynomial = sp.Poly(ratio, var)
-        except sp.PolynomialError:
-            return False
-        if polynomial.degree() > 1:
-            return False
-        if not polynomial.coeff_monomial(var).is_integer:
-            return False
-    return True
+    """Whether expr, read as a function of the integer var, provably has period d.
 
-
-def _eliminate_via_delta(
-    term: sp.Expr,
-    var: sp.Symbol,
-    d_expr: sp.Expr,
-    outer: list[tuple[sp.Symbol, sp.Expr, sp.Expr]],
-) -> sp.Expr | None:
-    """Close a sum whose index is an enclosing bound variable, collapsing that outer sum.
-
-    Sum_u Sum_k omega_d^{k*(u + rest)} f(u) closes to d * f(-rest), fired only when the
-    outer index runs over a full residue system mod d and f is d-periodic in it.
+    An omega_d power is periodic when its exponent is a polynomial in var whose
+    var-dependent coefficients are integers; a ModDelta likewise, when its modulus divides d.
+    Sums, products, integer-free powers, conjugates and nested index sums of periodic
+    pieces are periodic. Anything else answers False, which only ever withholds a closure.
     """
-    split = _split_term(term, var, d_expr)
-    if split is None:
-        return None
-    constant, index, offset = split
-    constant = constant * sp.exp(2 * sp.pi * sp.I * offset / d_expr)
-    for position, (candidate, _lower, upper) in enumerate(outer):
-        if candidate not in index.free_symbols:
-            continue
-        if sp.expand(upper + 1) != d_expr:
-            continue
-        try:
-            polynomial = sp.Poly(index, candidate)
-        except sp.PolynomialError:
-            continue
-        if polynomial.degree() != 1:
-            continue
-        coefficient = polynomial.coeff_monomial(candidate)
-        if coefficient not in (sp.Integer(1), sp.Integer(-1)):
-            continue
-        rest = sp.expand(index - coefficient * candidate)
-        if candidate in rest.free_symbols:
-            continue
-        if not _is_periodic_in(constant, candidate, d_expr):
-            continue
-        remaining = [limit for i, limit in enumerate(outer) if i != position]
-        collapsed = d_expr * constant.xreplace({candidate: sp.expand(-coefficient * rest)})
-        return cast(sp.Expr, sp.Sum(collapsed, *remaining) if remaining else collapsed)
+    if var not in expr.free_symbols:
+        return True
+    if isinstance(expr, sp.exp):
+        return _integer_slope(expr.args[0] * d_expr / (2 * sp.pi * sp.I), var)
+    if isinstance(expr, ModDelta):
+        frequency, modulus = expr.args
+        if var in modulus.free_symbols or not _divides(modulus, d_expr):
+            return False
+        return _integer_slope(frequency, var)
+    if expr.is_Mul or expr.is_Add:
+        return all(_is_periodic_in(cast(sp.Expr, arg), var, d_expr) for arg in expr.args)
+    if expr.is_Pow:
+        base, exponent = expr.args
+        return var not in exponent.free_symbols and _is_periodic_in(base, var, d_expr)
+    if isinstance(expr, sp.conjugate):
+        return _is_periodic_in(cast(sp.Expr, expr.args[0]), var, d_expr)
+    if isinstance(expr, sp.Sum):
+        for bound, _lower, upper in expr.limits:
+            if bound == var or var in upper.free_symbols:
+                return False
+        return _is_periodic_in(cast(sp.Expr, expr.function), var, d_expr)
+    return False
+
+
+def _bound_symbols(expr: sp.Expr) -> set[sp.Symbol]:
+    """Every index bound by a Sum anywhere inside expr."""
+    return {limit[0] for node in expr.atoms(sp.Sum) for limit in node.limits}
+
+
+def _delta_base(factor: sp.Expr) -> ModDelta | None:
+    """The ModDelta ``factor`` is, or is a positive integer power of, else None."""
+    if isinstance(factor, ModDelta):
+        return factor
+    if factor.is_Pow and isinstance(factor.base, ModDelta) and factor.exp.is_Integer:
+        return factor.base if factor.exp > 0 else None
     return None
+
+
+def _without(limits: list[_Limit], position: int) -> list[_Limit]:
+    return [limit for i, limit in enumerate(limits) if i != position]
+
+
+def _solve_congruence(
+    weight: sp.Expr, var: sp.Symbol, coefficient: int, rest: sp.Expr, size: int
+) -> sp.Expr:
+    """Sum_{var in Z_size} [coefficient*var + rest == 0 mod size] * weight, over its gcd roots."""
+    coefficient %= size
+    g = math.gcd(coefficient, size)
+    step = size // g
+    inverse = pow(coefficient // g, -1, step) if step > 1 else 0
+    if rest.is_Integer:
+        if int(rest) % g:
+            return sp.Integer(0)
+        base = (-(int(rest) // g) * inverse) % step if step > 1 else 0
+        return cast(
+            sp.Expr,
+            sp.Add(*(weight.xreplace({var: sp.Integer(base + t * step)}) for t in range(g))),
+        )
+    root = sp.expand(-rest * sp.Rational(inverse, g))
+    roots = sp.Add(*(weight.xreplace({var: sp.expand(root + t * step)}) for t in range(g)))
+    return cast(sp.Expr, ModDelta(rest, sp.Integer(g)) * roots)
+
+
+def _delta_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Remove one bound index pinned by a ModDelta factor over that index's own range.
+
+    Sum_u [c*u + r == 0 mod m] g(u), m dividing u's range d and g m-periodic in u, is
+    (d/m) times the sum over Z_m: c = +-1 substitutes u = -c*r; any other integer c gives
+    gcd(c, m) * [gcd(c, m) | r] g when g is free of u, or the gcd(c, m) roots one by one when
+    m is concrete.
+    """
+    factors = sp.Mul.make_args(term)
+    for position, factor in enumerate(factors):
+        delta = _delta_base(factor)
+        if delta is None:
+            continue
+        frequency, modulus = delta.args
+        weight = cast(sp.Expr, sp.Mul(*(f for i, f in enumerate(factors) if i != position)))
+        for index, (var, _lower, upper) in enumerate(limits):
+            size = sp.expand(upper + 1)
+            if var not in frequency.free_symbols or not _divides(modulus, size):
+                continue
+            linear = _linear_in(frequency, var)
+            if linear is None:
+                continue
+            coefficient, rest = linear
+            if rest.is_integer is not True or _bound_symbols(weight) & rest.free_symbols:
+                continue
+            if not _is_periodic_in(weight, var, modulus):
+                continue
+            scaled = weight * sp.cancel(size / modulus)
+            sign = _unit_sign(sp.Integer(coefficient), modulus)
+            if sign is not None:
+                return scaled.xreplace({var: sp.expand(-sign * rest)}), _without(limits, index)
+            if modulus.is_Integer:
+                closed = _solve_congruence(scaled, var, coefficient, rest, int(modulus))
+                return closed, _without(limits, index)
+            if var not in weight.free_symbols:
+                g = ModGcd(coefficient, modulus)
+                return scaled * g * ModDelta(rest, g), _without(limits, index)
+    return None
+
+
+def _character_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Close one index read only through omega powers:
+    Sum_u omega_d^{u*j + o} = omega_d^o * d * [d | j]."""
+    for index, (var, _lower, upper) in enumerate(limits):
+        size = sp.expand(upper + 1)
+        split = _split_term(term, var, size)
+        if split is None:
+            continue
+        constant, frequency, offset = split
+        if frequency.is_integer is not True:
+            continue
+        shift = sp.exp(2 * sp.pi * sp.I * offset / size)
+        return constant * shift * size * ModDelta(frequency, size), _without(limits, index)
+    return None
+
+
+def _gauss_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Close one index through :func:`_gauss_term`."""
+    for index, (var, _lower, upper) in enumerate(limits):
+        closed = _gauss_term(term, var, sp.expand(upper + 1))
+        if closed is not None:
+            return closed, _without(limits, index)
+    return None
+
+
+def _reduce_term(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, bool]:
+    """``Sum(term, *limits)`` with every closable index closed, and whether any was."""
+    if not limits:
+        return term, False
+    unused = [limit for limit in limits if limit[0] not in term.free_symbols]
+    if unused:
+        size = sp.Mul(*(sp.expand(upper + 1) for _var, _lower, upper in unused))
+        used = [limit for limit in limits if limit[0] in term.free_symbols]
+        step: tuple[sp.Expr, list[_Limit]] | None = (term * size, used)
+    else:
+        step = _delta_step(term, limits) or _character_step(term, limits)
+        step = step or _gauss_step(term, limits)
+    if step is None:
+        return cast(sp.Expr, sp.Sum(term, *limits)), False
+    closed, remaining = step
+    body = sp.expand(sp.powsimp(sp.expand(closed), force=True))
+    pieces = [_reduce_term(cast(sp.Expr, piece), remaining)[0] for piece in sp.Add.make_args(body)]
+    return cast(sp.Expr, sp.Add(*pieces)), True
+
+
+def _close_sum(node: sp.Sum) -> sp.Expr | None:
+    """Close what the identities reach of one Sum node, else enumerate one concrete index."""
+    limits: list[_Limit] = list(node.limits)
+    body = sp.expand(sp.powsimp(sp.expand(node.function), force=True))
+    pieces: list[sp.Expr] = []
+    changed = False
+    for term in sp.Add.make_args(body):
+        reduced, term_changed = _reduce_term(cast(sp.Expr, term), limits)
+        pieces.append(reduced)
+        changed = changed or term_changed
+    if changed:
+        return cast(sp.Expr, sp.Add(*pieces))
+    concrete = [i for i, limit in enumerate(limits) if sp.expand(limit[2] + 1).is_Integer]
+    if not concrete:
+        return None
+    position = min(concrete, key=lambda i: (int(sp.expand(limits[i][2] + 1)), -i))
+    var, _lower, upper = limits[position]
+    enumerated = sp.Add(
+        *(node.function.xreplace({var: sp.Integer(v)}) for v in range(int(upper) + 1))
+    )
+    others = _without(limits, position)
+    return cast(sp.Expr, sp.Sum(enumerated, *others) if others else enumerated)
+
+
+def _linear_form(expr: sp.Expr) -> dict[sp.Symbol, int] | None:
+    """The integer coefficient of each symbol in an integer-linear ``expr``, or None."""
+    symbols = sorted(expr.free_symbols, key=lambda symbol: str(symbol.name))
+    if not all(symbol.is_integer is True for symbol in symbols):
+        return None
+    if not symbols:
+        return {} if expr.is_Integer else None
+    try:
+        polynomial = sp.Poly(expr, *symbols)
+    except sp.PolynomialError:
+        return None
+    if polynomial.total_degree() > 1 or not all(c.is_Integer for c in polynomial.coeffs()):
+        return None
+    return {symbol: int(polynomial.coeff_monomial(symbol)) for symbol in symbols}
+
+
+def _pivot(row: sp.Expr, modulus: sp.Expr) -> tuple[sp.Symbol, sp.Expr] | None:
+    """``(var, value)`` with ``[row == 0] == [var == value]`` mod ``modulus``, var the
+    greatest-named engine index of unit coefficient, or None."""
+    form = _linear_form(row)
+    if form is None:
+        return None
+    candidates = [
+        symbol
+        for symbol, coefficient in form.items()
+        if _RESERVED_INDEX.match(str(symbol.name))
+        and _unit_sign(sp.Integer(coefficient), modulus) is not None
+    ]
+    if not candidates:
+        return None
+    var = max(candidates, key=lambda symbol: str(symbol.name))
+    sign = _unit_sign(sp.Integer(form[var]), modulus)
+    assert sign is not None
+    return var, sp.expand(-sign * (row - form[var] * var))
+
+
+def _echelon(
+    rows: list[sp.Expr], modulus: sp.Expr
+) -> tuple[dict[sp.Symbol, sp.Expr], list[sp.Expr]]:
+    """Gauss-Jordan reduction of ``rows`` mod ``modulus`` over unit pivots, as (pivots,
+    residual rows)."""
+    pivots: dict[sp.Symbol, sp.Expr] = {}
+    pending = list(rows)
+    while True:
+        residual: list[sp.Expr] = []
+        progressed = False
+        for row in pending:
+            row = sp.expand(row.xreplace(pivots))
+            found = _pivot(row, modulus)
+            if found is None:
+                residual.append(row)
+                continue
+            var, value = found
+            pivots = {s: sp.expand(v.xreplace({var: value})) for s, v in pivots.items()}
+            pivots[var] = value
+            progressed = True
+        pending = residual
+        if not progressed:
+            return pivots, pending
+
+
+def _canonical_deltas(term: sp.Expr) -> sp.Expr:
+    """A product with its linear ModDelta factors in echelon form, each pivot substituted
+    into the rest wherever that rest is periodic in it."""
+    by_modulus: dict[sp.Expr, list[sp.Expr]] = {}
+    others: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(term):
+        delta = _delta_base(factor)
+        if delta is not None and _linear_form(delta.args[0]) is not None:
+            by_modulus.setdefault(delta.args[1], []).append(delta.args[0])
+        else:
+            others.append(factor)
+    if not by_modulus:
+        return term
+    rest = cast(sp.Expr, sp.Mul(*others))
+    emitted: list[sp.Expr] = []
+    for modulus in sorted(by_modulus, key=sp.default_sort_key):
+        pivots, residual = _echelon(by_modulus[modulus], modulus)
+        for var in sorted(pivots, key=lambda symbol: str(symbol.name)):
+            value = pivots[var]
+            if (
+                var in rest.free_symbols
+                and var not in _bound_symbols(rest)
+                and not _bound_symbols(rest) & value.free_symbols
+                and _is_periodic_in(rest, var, modulus)
+            ):
+                rest = rest.xreplace({var: value})
+            emitted.append(ModDelta(var - value, modulus))
+        emitted.extend(ModDelta(row, modulus) for row in residual)
+    return cast(sp.Expr, rest * sp.Mul(*emitted))
+
+
+def _canonical_top(expr: sp.Expr) -> sp.Expr:
+    """:func:`_canonical_deltas` over every top-level term of ``expr``."""
+    collapsed = expr.replace(
+        lambda node: _delta_base(node) is not None and node.is_Pow,
+        lambda node: node.base,
+    )
+    terms = sp.Add.make_args(sp.expand(collapsed))
+    return cast(sp.Expr, sp.expand(sp.Add(*(_canonical_deltas(t) for t in terms))))
 
 
 def _pull_constants(expr: sp.Expr) -> sp.Expr:
@@ -590,7 +932,8 @@ class Scalar:
         return cls(sp.Pow(dim.to_sympy(), sp.Rational(numerator, denominator)))
 
     def simplify(self, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS) -> Scalar:
-        """Close every index sum this scalar carries whose character-sum verdict is decidable."""
+        """Close every index sum the character-sum, delta and Gauss identities reach, and put
+        the remaining deltas in echelon form."""
         budget = [max_steps]
         expr = _rename_indices(self._expr)
         while True:
@@ -600,10 +943,28 @@ class Scalar:
                     "simplification exceeded its step budget; the expression is left unsimplified"
                 )
             expr, changed = _close_all(expr, budget)
-            expr = _pull_constants(sp.powsimp(sp.expand(_reduce_integer_phases(expr)), force=True))
+            expr = _canonical_top(_reduce_integer_phases(expr))
+            expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
             if not changed:
                 break
         return Scalar(_rename_indices(expr))
+
+    def with_dimension_floors(self, floors: Mapping[str, int]) -> Scalar:
+        """This scalar with every ``[s | c]`` set to zero, ``c`` a nonzero integer and ``s`` a
+        dimension symbol whose floor in ``floors`` exceeds ``|c|``."""
+
+        def vanishes(node: sp.Expr) -> bool:
+            if not isinstance(node, ModDelta):
+                return False
+            frequency, modulus = node.args
+            return bool(
+                frequency.is_Integer
+                and frequency != 0
+                and modulus.is_Symbol
+                and abs(int(frequency)) < floors.get(str(modulus.name), 0)
+            )
+
+        return Scalar(self._expr.replace(vanishes, lambda _node: sp.Integer(0)))
 
     def to_sympy(self) -> sp.Expr:
         """Escape hatch returning the underlying canonical sympy expression."""

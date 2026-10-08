@@ -15,7 +15,8 @@
 
 Phase 5 registers one rule, :data:`SPIDER_FUSION`; Phase 11 adds :data:`IDENTITY_REMOVAL`,
 :data:`TRIANGLE_INVERSE_CANCELLATION`, :data:`STATE_COPY`, :data:`HOPF`, :data:`BIALGEBRA`
-and :data:`FOURIER_STATE_COLOR_CHANGE`, each carrying its own scalar derivation.
+and :data:`FOURIER_STATE_COLOR_CHANGE`, each carrying its own scalar derivation, and every
+colour-paired rule has a ``_swapped`` twin with Z and X exchanged.
 :data:`RULES` and :func:`lookup_rule`
 resolve a :class:`~archytaszx.rewrite.engine.RewriteStep`'s ``rule_name`` back to its
 :class:`~archytaszx.rewrite.rule.Rule`, keeping :mod:`archytaszx.rewrite.engine` generic.
@@ -74,13 +75,18 @@ from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 from archytaszx.rewrite.match import (
     BIALGEBRA_SIDE_CONDITIONS,
+    BIALGEBRA_SWAPPED_SIDE_CONDITIONS,
     CAP_SIDE_CONDITIONS,
+    CAP_SWAPPED_SIDE_CONDITIONS,
     FOURIER_SIDE_CONDITIONS,
     FOURIER_STATE_SIDE_CONDITIONS,
+    FOURIER_STATE_SWAPPED_SIDE_CONDITIONS,
     FUSION_SIDE_CONDITIONS,
     HOPF_SIDE_CONDITIONS,
+    HOPF_SWAPPED_SIDE_CONDITIONS,
     IDENTITY_SIDE_CONDITIONS,
     STATE_COPY_SIDE_CONDITIONS,
+    STATE_COPY_SWAPPED_SIDE_CONDITIONS,
     TRIANGLE_SIDE_CONDITIONS,
     BialgebraMatch,
     BialgebraPattern,
@@ -502,8 +508,9 @@ def zx_cap_builder(diagram: Diagram, match: Match) -> BuildResult:
     """
     if not isinstance(match, CapMatch):
         raise RewriteGrammarError(f"zx_cap_builder requires a CapMatch, got {type(match).__name__}")
-    check_side_condition_coverage(match, CAP_SIDE_CONDITIONS, "zx_cap_builder")
-    if match not in find_cap_matches(diagram):
+    conditions = CAP_SWAPPED_SIDE_CONDITIONS if match.swapped else CAP_SIDE_CONDITIONS
+    check_side_condition_coverage(match, conditions, "zx_cap_builder")
+    if match not in find_cap_matches(diagram, swapped=match.swapped):
         raise RewriteDomainError(
             "zx_cap_builder: the match is not among those rediscovered in this diagram, so "
             "it is not evidence of a Z state wired into an X effect"
@@ -540,6 +547,18 @@ The X effect reads ``sum_j conj(omega_d^{j k}) / sqrt(d)``, which the character 
 factor changes the answer.
 """
 
+ZX_CAP_SWAPPED = Rule(
+    name="zx_cap_swapped",
+    pattern=CapPattern(swapped=True),
+    builder=zx_cap_builder,
+    side_conditions=CAP_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=zx_cap_scalar(Dim.symbol("d")),
+    scalar_in_dim=zx_cap_scalar,
+)
+"""A phaseless X state capped by a phaseless Z effect: the X state is ``sqrt(d) |0>`` and the
+Z effect sums every entry, so the empty diagram times ``d ** (1/2)`` again."""
+
 
 def _rescope_boxes(
     diagram: Diagram,
@@ -574,6 +593,12 @@ def _follow_port_scopes(diagram: Diagram, port_mapping: Mapping[PortRef, PortRef
         diagram.set_bang_box_port_scope(
             box_id, frozenset(port_mapping.get(ref, ref) for ref in box.port_scope)
         )
+
+
+def _require_swapped(match: Match, context: str) -> None:
+    """Raise unless ``match`` is a colour-swapped match."""
+    if not getattr(match, "swapped", False):
+        raise RewriteGrammarError(f"{context} requires a colour-swapped match")
 
 
 def _require_rediscovered(match: Match, found: tuple[Match, ...], context: str) -> None:
@@ -690,17 +715,20 @@ def _state_copy_scalar_for(match: Match) -> Scalar:
 
 
 def state_copy_builder(diagram: Diagram, match: Match) -> BuildResult:
-    """The right-hand side of :data:`STATE_COPY`: one phaseless X state per former Z output."""
+    """The right-hand side of :data:`STATE_COPY`: one phaseless state of the copied colour per
+    former spider output."""
     if not isinstance(match, StateCopyMatch):
         raise RewriteGrammarError(
             f"state_copy_builder requires a StateCopyMatch, got {type(match).__name__}"
         )
-    check_side_condition_coverage(match, STATE_COPY_SIDE_CONDITIONS, "state_copy_builder")
-    _require_rediscovered(match, find_state_copy_matches(diagram), "state_copy_builder")
+    conditions = STATE_COPY_SWAPPED_SIDE_CONDITIONS if match.swapped else STATE_COPY_SIDE_CONDITIONS
+    check_side_condition_coverage(match, conditions, "state_copy_builder")
+    found = find_state_copy_matches(diagram, swapped=match.swapped)
+    _require_rediscovered(match, found, "state_copy_builder")
     dim = match.shared_dim
+    state = diagram.nodes[match.state_id].generator_type
     new_ids = tuple(
-        diagram.add_node(X_SPIDER, input_dims=[], output_dims=[dim])
-        for _ in range(match.output_count)
+        diagram.add_node(state, input_dims=[], output_dims=[dim]) for _ in range(match.output_count)
     )
     port_mapping = {
         PortRef(match.spider_id, Direction.OUTPUT, index): PortRef(new_id, Direction.OUTPUT, 0)
@@ -723,6 +751,17 @@ state_copy_builder.side_conditions = STATE_COPY_SIDE_CONDITIONS  # type: ignore[
 """The declared side-condition tuple this builder is meant to be paired with."""
 
 
+def state_copy_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`STATE_COPY_SWAPPED`: :func:`state_copy_builder` on a
+    swapped match."""
+    _require_swapped(match, "state_copy_swapped_builder")
+    return state_copy_builder(diagram, match)
+
+
+state_copy_swapped_builder.side_conditions = STATE_COPY_SWAPPED_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
 STATE_COPY = Rule(
     name="state_copy",
     pattern=StateCopyPattern(),
@@ -737,6 +776,21 @@ STATE_COPY = Rule(
 ``X_{0->1} = sqrt(d)|0>``, so the left side is ``sqrt(d) |0>^{ox n}`` and ``n`` fresh X
 states are ``d^{n/2} |0>^{ox n}``: the factor is ``d ** ((1 - n) / 2)``, which
 ``scalar_introduced`` writes at ``n = 0`` and ``scalar_in_match`` evaluates per match.
+"""
+
+STATE_COPY_SWAPPED = Rule(
+    name="state_copy_swapped",
+    pattern=StateCopyPattern(swapped=True),
+    builder=state_copy_swapped_builder,
+    side_conditions=STATE_COPY_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)),
+    scalar_introduced=state_copy_scalar(Dim.symbol("d"), 0),
+    scalar_in_match=_state_copy_scalar_for,
+)
+"""A phaseless Z state copies through a phaseless X spider into one Z state per output.
+
+The X spider contracted against the all-ones Z state is ``d^{-(n+1)/2} * d`` on every output
+tuple summing to zero, and ``n`` Z states are all-ones: the factor is ``d ** ((1 - n) / 2)``.
 """
 
 
@@ -781,8 +835,9 @@ def hopf_builder(diagram: Diagram, match: Match) -> BuildResult:
     """The right-hand side of :data:`HOPF`: the two spiders, disconnected, each two legs lighter."""
     if not isinstance(match, HopfMatch):
         raise RewriteGrammarError(f"hopf_builder requires a HopfMatch, got {type(match).__name__}")
-    check_side_condition_coverage(match, HOPF_SIDE_CONDITIONS, "hopf_builder")
-    _require_rediscovered(match, find_hopf_matches(diagram), "hopf_builder")
+    conditions = HOPF_SWAPPED_SIDE_CONDITIONS if match.swapped else HOPF_SIDE_CONDITIONS
+    check_side_condition_coverage(match, conditions, "hopf_builder")
+    _require_rediscovered(match, find_hopf_matches(diagram, swapped=match.swapped), "hopf_builder")
     dim = match.shared_dim
     new_z, z_mapping = _spider_without_legs(
         diagram, diagram.nodes[match.z_id], frozenset(), frozenset(match.z_leg_indices), dim
@@ -808,6 +863,16 @@ hopf_builder.side_conditions = HOPF_SIDE_CONDITIONS  # type: ignore[attr-defined
 """The declared side-condition tuple this builder is meant to be paired with."""
 
 
+def hopf_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`HOPF_SWAPPED`: :func:`hopf_builder` on a swapped match."""
+    _require_swapped(match, "hopf_swapped_builder")
+    return hopf_builder(diagram, match)
+
+
+hopf_swapped_builder.side_conditions = HOPF_SWAPPED_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
 HOPF = Rule(
     name="hopf",
     pattern=HopfPattern(),
@@ -825,6 +890,19 @@ legs. Without the F pair the same double edge contracts to ``d ** (-1/2) [o == 2
 is not disconnected, so the plain double edge is not a match.
 """
 
+HOPF_SWAPPED = Rule(
+    name="hopf_swapped",
+    pattern=HopfPattern(swapped=True),
+    builder=hopf_swapped_builder,
+    side_conditions=HOPF_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("m", "n", "p", "q"), dimensions=("d",)),
+    scalar_introduced=hopf_scalar(Dim.symbol("d")),
+    scalar_in_dim=hopf_scalar,
+)
+"""An X above a Z, joined by a plain wire and an F^2 antipode wire, fall apart times ``d ** -1``:
+the X's two legs carry ``z`` and ``-z`` and drop out of its total, and its normalisation loses
+two factors of ``d ** (-1/2)``."""
+
 
 def bialgebra_scalar(dim: Dim) -> Scalar:
     """The exact scalar the bialgebra law introduces at ``dim``: ``dim ** (1/2)``."""
@@ -832,7 +910,8 @@ def bialgebra_scalar(dim: Dim) -> Scalar:
 
 
 def bialgebra_builder(diagram: Diagram, match: Match) -> BuildResult:
-    """The right-hand side of :data:`BIALGEBRA`: two Z_{1->2} and two X_{2->1}, each Z feeding both.
+    """The right-hand side of :data:`BIALGEBRA`: two one-to-two and two two-to-one spiders of
+    the matched colours, each one-to-two feeding both.
 
     The only builder reporting :attr:`~archytaszx.rewrite.rule.BuildResult.new_wires`.
     """
@@ -840,14 +919,18 @@ def bialgebra_builder(diagram: Diagram, match: Match) -> BuildResult:
         raise RewriteGrammarError(
             f"bialgebra_builder requires a BialgebraMatch, got {type(match).__name__}"
         )
-    check_side_condition_coverage(match, BIALGEBRA_SIDE_CONDITIONS, "bialgebra_builder")
-    _require_rediscovered(match, find_bialgebra_matches(diagram), "bialgebra_builder")
+    conditions = BIALGEBRA_SWAPPED_SIDE_CONDITIONS if match.swapped else BIALGEBRA_SIDE_CONDITIONS
+    check_side_condition_coverage(match, conditions, "bialgebra_builder")
+    found = find_bialgebra_matches(diagram, swapped=match.swapped)
+    _require_rediscovered(match, found, "bialgebra_builder")
     dim = match.shared_dim
+    fan_out = diagram.nodes[match.z_id].generator_type
+    fan_in = diagram.nodes[match.x_id].generator_type
     z_ids = tuple(
-        diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim]) for _ in range(2)
+        diagram.add_node(fan_out, input_dims=[dim], output_dims=[dim, dim]) for _ in range(2)
     )
     x_ids = tuple(
-        diagram.add_node(X_SPIDER, input_dims=[dim, dim], output_dims=[dim]) for _ in range(2)
+        diagram.add_node(fan_in, input_dims=[dim, dim], output_dims=[dim]) for _ in range(2)
     )
     port_mapping = {
         PortRef(match.x_id, Direction.INPUT, 0): PortRef(z_ids[0], Direction.INPUT, 0),
@@ -881,6 +964,17 @@ bialgebra_builder.side_conditions = BIALGEBRA_SIDE_CONDITIONS  # type: ignore[at
 """The declared side-condition tuple this builder is meant to be paired with."""
 
 
+def bialgebra_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`BIALGEBRA_SWAPPED`: :func:`bialgebra_builder` on a
+    swapped match."""
+    _require_swapped(match, "bialgebra_swapped_builder")
+    return bialgebra_builder(diagram, match)
+
+
+bialgebra_swapped_builder.side_conditions = BIALGEBRA_SWAPPED_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
 BIALGEBRA = Rule(
     name="bialgebra",
     pattern=BialgebraPattern(),
@@ -897,24 +991,43 @@ i2] [o2 == i1 + i2]``. This rule grows the diagram from two nodes to four, so it
 from :func:`~archytaszx.rewrite.engine.toward_normal_form`'s default set.
 """
 
+BIALGEBRA_SWAPPED = Rule(
+    name="bialgebra_swapped",
+    pattern=BialgebraPattern(swapped=True),
+    builder=bialgebra_swapped_builder,
+    side_conditions=BIALGEBRA_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=bialgebra_scalar(Dim.symbol("d")),
+    scalar_in_dim=bialgebra_scalar,
+)
+"""Z_{2->1} into X_{1->2} crosses over into two X_{1->2} and two Z_{2->1}, times ``d ** (1/2)``.
+
+The left side is ``d ** (-1/2) [i1 == i2] [o1 + o2 == i1]`` and the right ``d ** -1
+[o1 + o2 == i1] [o1 + o2 == i2]``; like :data:`BIALGEBRA` it is outside the normal-form set.
+"""
+
 
 def fourier_state_color_change_builder(diagram: Diagram, match: Match) -> BuildResult:
-    """The right-hand side of :data:`FOURIER_STATE_COLOR_CHANGE`: a phaseless X state or effect."""
+    """The right-hand side of :data:`FOURIER_STATE_COLOR_CHANGE`: a phaseless state or effect of
+    the other colour."""
     if not isinstance(match, FourierStateMatch):
         raise RewriteGrammarError(
             "fourier_state_color_change_builder requires a FourierStateMatch, got "
             f"{type(match).__name__}"
         )
-    check_side_condition_coverage(
-        match, FOURIER_STATE_SIDE_CONDITIONS, "fourier_state_color_change_builder"
+    conditions = (
+        FOURIER_STATE_SWAPPED_SIDE_CONDITIONS if match.swapped else FOURIER_STATE_SIDE_CONDITIONS
     )
+    check_side_condition_coverage(match, conditions, "fourier_state_color_change_builder")
     _require_rediscovered(
-        match, find_fourier_state_matches(diagram), "fourier_state_color_change_builder"
+        match,
+        find_fourier_state_matches(diagram, swapped=match.swapped),
+        "fourier_state_color_change_builder",
     )
     dim = match.shared_dim
     direction = Direction.OUTPUT if match.is_state else Direction.INPUT
     new_id = diagram.add_node(
-        X_SPIDER,
+        Z_SPIDER if match.swapped else X_SPIDER,
         input_dims=[] if match.is_state else [dim],
         output_dims=[dim] if match.is_state else [],
     )
@@ -936,6 +1049,17 @@ fourier_state_color_change_builder.side_conditions = FOURIER_STATE_SIDE_CONDITIO
 """The declared side-condition tuple this builder is meant to be paired with."""
 
 
+def fourier_state_color_change_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`FOURIER_STATE_COLOR_CHANGE_SWAPPED`:
+    :func:`fourier_state_color_change_builder` on a swapped match."""
+    _require_swapped(match, "fourier_state_color_change_swapped_builder")
+    return fourier_state_color_change_builder(diagram, match)
+
+
+fourier_state_color_change_swapped_builder.side_conditions = FOURIER_STATE_SWAPPED_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
 FOURIER_STATE_COLOR_CHANGE = Rule(
     name="fourier_state_color_change",
     pattern=FourierStateColorChangePattern(),
@@ -950,6 +1074,17 @@ FOURIER_STATE_COLOR_CHANGE = Rule(
 phaseless Z effect's leg -- carries the same unit factor.
 """
 
+FOURIER_STATE_COLOR_CHANGE_SWAPPED = Rule(
+    name="fourier_state_color_change_swapped",
+    pattern=FourierStateColorChangePattern(swapped=True),
+    builder=fourier_state_color_change_swapped_builder,
+    side_conditions=FOURIER_STATE_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""An F box on a phaseless X state's leg is a phaseless Z state, introducing exactly one:
+``F . sqrt(d) |0> = sum_k |k>``, and dually for an X effect."""
+
 RULES: Mapping[str, Rule] = MappingProxyType(
     {
         SPIDER_FUSION.name: SPIDER_FUSION,
@@ -962,6 +1097,11 @@ RULES: Mapping[str, Rule] = MappingProxyType(
         HOPF.name: HOPF,
         BIALGEBRA.name: BIALGEBRA,
         FOURIER_STATE_COLOR_CHANGE.name: FOURIER_STATE_COLOR_CHANGE,
+        ZX_CAP_SWAPPED.name: ZX_CAP_SWAPPED,
+        STATE_COPY_SWAPPED.name: STATE_COPY_SWAPPED,
+        HOPF_SWAPPED.name: HOPF_SWAPPED,
+        BIALGEBRA_SWAPPED.name: BIALGEBRA_SWAPPED,
+        FOURIER_STATE_COLOR_CHANGE_SWAPPED.name: FOURIER_STATE_COLOR_CHANGE_SWAPPED,
     }
 )
 """Every rule this module registers, keyed by :attr:`~archytaszx.rewrite.rule.Rule.name`.

@@ -25,8 +25,8 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.compare import canonical_key, isomorphic
-from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
-from archytaszx.diagram.graph import Diagram
+from archytaszx.diagram.generators import TRIANGLE, W_NODE, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.rewrite.cache import IncrementalMatcher, RewriteCache
 from archytaszx.rewrite.engine import (
     RewriteResult,
@@ -42,6 +42,8 @@ from archytaszx.rewrite.normal_form import (
     isomorphic_up_to_scalar,
     normal_form,
     same_normal_form,
+    view_key,
+    views_isomorphic,
 )
 from archytaszx.rewrite.rule import ConstraintOutcome, RewriteGrammarError
 from archytaszx.rewrite.rules_library import SPIDER_FUSION, STATE_COPY
@@ -227,9 +229,9 @@ class TestNormalFormShape:
         assert nf.results[-1].diagram is nf.diagram
         assert nf.diagram is nf.outcome.diagram
 
-    def test_key_is_the_canonical_key_of_the_comparison_view(self) -> None:
+    def test_key_is_the_view_key_of_the_comparison_view(self) -> None:
         nf = normal_form(_chain((0, 1, 2), Dim("d")))
-        assert nf.key == canonical_key(comparison_view(nf.diagram))
+        assert nf.key == view_key(comparison_view(nf.diagram))
 
     def test_an_irreducible_diagram_is_its_own_normal_form(self) -> None:
         diagram = _single_spider(Dim("d"), 2)
@@ -405,3 +407,50 @@ class TestGrammar:
             NormalForm(nf.source, nf.diagram, nf.outcome, nf.results, key=3)  # type: ignore[arg-type]
         with pytest.raises(RewriteGrammarError):
             NormalForm(nf.source, nf.diagram, nf.outcome, [], nf.key)  # type: ignore[arg-type]
+
+
+def _fan(crossed: bool, dim: Dim) -> Diagram:
+    """A Z_{1->2} feeding two X_{1->2}, its outputs crossed or not, every X output on the
+    boundary in a fixed order."""
+    diagram = Diagram()
+    z = diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim])
+    a = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[dim, dim])
+    b = diagram.add_node(X_SPIDER, input_dims=[dim], output_dims=[dim, dim])
+    first, second = (b, a) if crossed else (a, b)
+    diagram.add_wire(PortRef(z, Direction.OUTPUT, 0), PortRef(first, Direction.INPUT, 0))
+    diagram.add_wire(PortRef(z, Direction.OUTPUT, 1), PortRef(second, Direction.INPUT, 0))
+    diagram.set_boundary_inputs([PortRef(z, Direction.INPUT, 0)])
+    diagram.set_boundary_outputs(
+        [PortRef(node, Direction.OUTPUT, leg) for node in (a, b) for leg in range(2)]
+    )
+    return diagram
+
+
+class TestLegTies:
+    """Two spider legs whose partners look alike leave a tie the leg sort cannot break; the
+    comparison is blind to leg order, so the tie never hides an equality."""
+
+    def test_crossed_legs_share_a_normal_form(self) -> None:
+        dim = Dim("d")
+        left, right = normal_form(_fan(False, dim)), normal_form(_fan(True, dim))
+        assert left.key == right.key
+        assert same_normal_form(left, right)
+
+    def test_the_exact_comparison_still_tells_them_apart(self) -> None:
+        dim = Dim("d")
+        left, right = comparison_view(_fan(False, dim)), comparison_view(_fan(True, dim))
+        assert not isomorphic(left, right)
+        assert views_isomorphic(left, right)
+
+    def test_a_non_spider_leg_order_still_counts(self) -> None:
+        dim = Dim("d")
+        left, right = Diagram(), Diagram()
+        for diagram, legs in ((left, (0, 1)), (right, (1, 0))):
+            w = diagram.add_node(W_NODE, input_dims=[dim], output_dims=[dim, dim])
+            t = diagram.add_node(TRIANGLE, input_dims=[dim], output_dims=[dim])
+            diagram.add_wire(PortRef(w, Direction.OUTPUT, legs[0]), PortRef(t, Direction.INPUT, 0))
+            diagram.set_boundary_inputs([PortRef(w, Direction.INPUT, 0)])
+            diagram.set_boundary_outputs(
+                [PortRef(t, Direction.OUTPUT, 0), PortRef(w, Direction.OUTPUT, legs[1])]
+            )
+        assert not views_isomorphic(comparison_view(left), comparison_view(right))

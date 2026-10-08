@@ -63,7 +63,7 @@ from typing import TypeAlias
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS
+from archytaszx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS, ModDelta, ModGcd
 from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
     expand_concrete_boxes,
@@ -414,13 +414,16 @@ def compare_symbolic(
     *,
     mode: EqualityMode = EqualityMode.EXACT,
     max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
+    dimension_floors: Mapping[str, int] | None = None,
 ) -> ComparisonResult:
     """Compare two symbolic tensors by simplifying the difference of their entries.
 
     Three outcomes, not two: equal, definitely unequal, and indeterminate -- the difference
     still carries an index sum whose character-sum verdict was undecidable. An indeterminate
     result reports ``matched=False`` with a reason naming the residual sum, so a caller that
-    treats "not matched" as "unequal" is wrong and must read ``reason``.
+    treats "not matched" as "unequal" is wrong and must read ``reason``. ``dimension_floors``
+    gives a least value per dimension symbol, applied through
+    :meth:`~archytaszx.algebra.scalar.Scalar.with_dimension_floors`.
     """
     if mode is not EqualityMode.EXACT:
         raise CheckDomainError(
@@ -436,12 +439,21 @@ def compare_symbolic(
     difference = (left.entry - right.entry).simplify(max_steps=max_steps)
     if difference.is_zero:
         return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
-    if difference.to_sympy().atoms(sp.Sum):
+    if dimension_floors:
+        difference = difference.with_dimension_floors(dimension_floors).simplify(
+            max_steps=max_steps
+        )
+        if difference.is_zero:
+            floors = ", ".join(f"{name} >= {low}" for name, low in sorted(dimension_floors.items()))
+            return ComparisonResult(
+                mode, True, f"entries are exactly equal with d formal, given {floors}", 0.0
+            )
+    if difference.to_sympy().atoms(sp.Sum, ModDelta, ModGcd):
         return ComparisonResult(
             mode,
             False,
             f"indeterminate: the difference {difference} still carries an unevaluated "
-            "index sum, so no conclusion is drawn",
+            "index sum or divisibility atom, so no conclusion is drawn",
             float("inf"),
         )
     return ComparisonResult(mode, False, f"entries differ by {difference}", float("inf"))

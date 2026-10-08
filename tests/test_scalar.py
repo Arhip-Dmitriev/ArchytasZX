@@ -20,7 +20,13 @@ import sympy as sp  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase
-from archytaszx.algebra.scalar import Scalar, ScalarDomainError, ScalarGrammarError
+from archytaszx.algebra.scalar import (
+    ModDelta,
+    ModGcd,
+    Scalar,
+    ScalarDomainError,
+    ScalarGrammarError,
+)
 
 
 class TestConstruction:
@@ -309,3 +315,64 @@ class TestAlphaEquivalentSumsCancel:
         )
         assert not Scalar(nested).is_zero
         assert Scalar(nested) == Scalar(nested)
+
+
+class TestModDelta:
+    """``ModDelta(j, m) = [j == 0 mod m]`` evaluates when decidable and is canonical otherwise."""
+
+    d = sp.Symbol("d", integer=True, positive=True)
+    x, y = sp.symbols("_i0 _i1", integer=True, nonnegative=True)
+
+    def test_concrete_arguments_evaluate(self) -> None:
+        assert ModDelta(6, 3) == 1
+        assert ModDelta(7, 3) == 0
+        assert ModDelta(5, 1) == 1
+        assert ModDelta(0, self.d) == 1
+
+    def test_a_multiple_of_the_modulus_is_one(self) -> None:
+        assert ModDelta(3 * self.d, self.d) == 1
+
+    def test_a_constant_index_at_symbolic_modulus_stays(self) -> None:
+        assert isinstance(ModDelta(3, self.d), ModDelta)
+
+    def test_sign_is_canonical(self) -> None:
+        assert ModDelta(self.x - self.y, self.d) == ModDelta(self.y - self.x, self.d)
+
+    def test_concrete_modulus_reduces_coefficients(self) -> None:
+        assert ModDelta(self.x + 4 * self.y, 5) == ModDelta(self.x - self.y, 5)
+        assert ModDelta(self.x + 7, 5) == ModDelta(self.x + 2, 5)
+
+    def test_gcd_evaluates_and_nests(self) -> None:
+        assert ModGcd(4, 6) == 2
+        assert ModGcd(1, self.d) == 1
+        assert ModGcd(0, self.d) == self.d
+        assert ModGcd(-2, self.d) == ModGcd(2, self.d)
+        assert ModGcd(2, ModGcd(4, self.d)) == ModGcd(2, self.d)
+
+    def test_a_gcd_modulus_reduces_its_index_mod_the_gcd_argument(self) -> None:
+        g = ModGcd(2, self.d)
+        assert ModDelta(2 * self.x, g) == 1
+        assert ModDelta(self.x + 2, g) == ModDelta(self.x, g)
+        assert isinstance(ModDelta(3, g), ModDelta)
+
+    def test_a_scalar_carrying_deltas_substitutes_to_a_number(self) -> None:
+        scalar = Scalar(self.d * ModDelta(3, self.d) + ModGcd(2, self.d))
+        assert scalar.substitute({"d": 3}).to_complex() == 4
+        assert scalar.substitute({"d": 4}).to_complex() == 2
+
+    def test_a_delta_squared_is_the_delta(self) -> None:
+        delta = ModDelta(self.x - self.y, self.d)
+        assert Scalar(delta**3).simplify() == Scalar(delta)
+
+    def test_deltas_reach_echelon_form(self) -> None:
+        z = sp.Symbol("_i2", integer=True, nonnegative=True)
+        chained = Scalar(ModDelta(self.x - self.y, self.d) * ModDelta(self.y - z, self.d))
+        starred = Scalar(ModDelta(self.x - self.y, self.d) * ModDelta(self.x - z, self.d))
+        assert chained.simplify() == starred.simplify()
+
+    def test_a_pivot_is_substituted_into_a_periodic_factor(self) -> None:
+        phase = sp.exp(2 * sp.pi * sp.I * self.y / self.d)
+        pinned = Scalar(ModDelta(self.x - self.y, self.d) * phase).simplify()
+        assert pinned == Scalar(
+            ModDelta(self.x - self.y, self.d) * sp.exp(2 * sp.pi * sp.I * self.x / self.d)
+        )

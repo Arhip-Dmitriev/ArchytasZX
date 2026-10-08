@@ -17,9 +17,9 @@
 A dense array is unavailable once ``d`` is symbolic, so a tensor is represented as an
 ordered list of axes plus one exact :class:`~archytaszx.algebra.scalar.Scalar` entry expression
 over per-axis index symbols. Wires become bound summation indices and every Kronecker delta
-is written as the character sum ``delta(a, b) = d^-1 * Sum_t omega_d^{t*(a-b)}``, so the
-Phase 9 simplifier in :mod:`archytaszx.algebra.scalar` is what closes a contraction rather than
-a separate tensor engine.
+is a :class:`~archytaszx.algebra.scalar.ModDelta`, ``delta(a, b) = [a - b == 0 mod d]``, so the
+simplifier in :mod:`archytaszx.algebra.scalar` is what closes a contraction rather than a
+separate tensor engine.
 
 Substituting a parameter environment into the returned entry is the path that answers a
 user-supplied concrete ``d`` or ``n`` at any size; this module never converts a ``Dim`` to
@@ -34,12 +34,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
+    ModDelta,
     Scalar,
     ScalarSubstituteValue,
     ScalarSymbolKey,
@@ -174,19 +176,9 @@ class _Indices:
         return symbol
 
 
-def _delta(dim: Dim, a: sp.Expr, b: sp.Expr, indices: _Indices) -> sp.Expr:
-    """The Kronecker delta of two index expressions, written as a character sum over dim.
-
-    The pair is ordered by ``srepr`` before the difference is formed, so the symmetry
-    ``delta(a, b) == delta(b, a)`` holds syntactically and two diagrams that agree up to
-    the orientation of a delta canonicalize to the same expression.
-    """
-    first, second = sorted((a, b), key=sp.srepr)
-    t = indices.fresh()
-    d_expr = dim.to_sympy()
-    return sp.Pow(d_expr, -1) * sp.Sum(
-        sp.exp(2 * sp.pi * sp.I * t * (first - second) / d_expr), (t, 0, d_expr - 1)
-    )
+def _delta(dim: Dim, a: sp.Expr, b: sp.Expr) -> sp.Expr:
+    """The Kronecker delta of two index expressions, as ``[a - b == 0 mod dim]``."""
+    return cast(sp.Expr, ModDelta(a - b, dim.to_sympy()))
 
 
 def _phase_corrections(node: Node) -> tuple[tuple[int, sp.Expr], ...]:
@@ -207,20 +199,20 @@ def _phase_corrections(node: Node) -> tuple[tuple[int, sp.Expr], ...]:
 
 
 def _z_entry(
-    dim: Dim, legs: list[sp.Symbol], corrections: tuple[tuple[int, sp.Expr], ...], indices: _Indices
+    dim: Dim, legs: list[sp.Symbol], corrections: tuple[tuple[int, sp.Expr], ...]
 ) -> sp.Expr:
     """The Z spider's entry: the phaseless spider plus one finite term per stored phase."""
     d_expr = dim.to_sympy()
     if legs:
         entry: sp.Expr = sp.Integer(1)
         for leg in legs[1:]:
-            entry = entry * _delta(dim, legs[0], leg, indices)
+            entry = entry * _delta(dim, legs[0], leg)
     else:
         entry = d_expr
     for index, factor in corrections:
         term = factor
         for leg in legs:
-            term = term * _delta(dim, leg, sp.Integer(index), indices)
+            term = term * _delta(dim, leg, sp.Integer(index))
         entry = entry + term
     return entry
 
@@ -230,16 +222,14 @@ def _x_entry(
     legs: list[sp.Symbol],
     total: sp.Expr,
     corrections: tuple[tuple[int, sp.Expr], ...],
-    indices: _Indices,
 ) -> sp.Expr:
     """The X spider's entry: the Z spider conjugated by a Fourier box on every leg.
 
-    Composing the two collapses every per-leg delta, leaving one character sum over the
-    signed index total, plus the same finite phase correction the Z spider carries.
+    Composing the two collapses every per-leg delta, leaving one delta on the signed index
+    total, plus the same finite phase correction the Z spider carries.
     """
     d_expr = dim.to_sympy()
-    k = indices.fresh()
-    entry: sp.Expr = sp.Sum(sp.exp(2 * sp.pi * sp.I * k * total / d_expr), (k, 0, d_expr - 1))
+    entry: sp.Expr = d_expr * ModDelta(total, d_expr)
     for index, factor in corrections:
         entry = entry + factor * sp.exp(2 * sp.pi * sp.I * sp.Integer(index) * total / d_expr)
     return sp.Pow(d_expr, sp.Rational(-len(legs), 2)) * entry
@@ -249,7 +239,6 @@ def _connective_entry(
     node: Node,
     node_id: NodeId,
     port_index: Mapping[PortRef, sp.Symbol],
-    indices: _Indices,
 ) -> sp.Expr:
     """B's or S's entry: one delta pairing the joint index against ``a * t + b``."""
     dims = _node_leg_dims(node)
@@ -264,13 +253,13 @@ def _connective_entry(
         out = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
         in0 = port_index[PortRef(node_id, Direction.INPUT, 0)]
         in1 = port_index[PortRef(node_id, Direction.INPUT, 1)]
-        return _delta(s_dim * t_dim, out, in0 * t_dim.to_sympy() + in1, indices)
+        return _delta(s_dim * t_dim, out, in0 * t_dim.to_sympy() + in1)
     s_dim, t_dim, _ = dims
     _check_connective_product(node, node_id, s_dim, t_dim, dims[2])
     out0 = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
     out1 = port_index[PortRef(node_id, Direction.OUTPUT, 1)]
     inp = port_index[PortRef(node_id, Direction.INPUT, 0)]
-    return _delta(s_dim * t_dim, inp, out0 * t_dim.to_sympy() + out1, indices)
+    return _delta(s_dim * t_dim, inp, out0 * t_dim.to_sympy() + out1)
 
 
 def _check_connective_product(
@@ -293,7 +282,6 @@ def _node_entry(
     diagram: Diagram,
     node_id: NodeId,
     port_index: Mapping[PortRef, sp.Symbol],
-    indices: _Indices,
 ) -> sp.Expr:
     """The symbolic denotation of one node, over the index symbols its ports carry."""
     node = diagram.nodes[node_id]
@@ -304,7 +292,7 @@ def _node_entry(
         )
     name = node.generator_type.name
     if name in (DIM_BINDER.name, DIM_SPLITTER.name):
-        return _connective_entry(node, node_id, port_index, indices)
+        return _connective_entry(node, node_id, port_index)
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     outputs = [port_index[PortRef(node_id, Direction.OUTPUT, i)] for i in range(node.num_outputs)]
@@ -316,32 +304,30 @@ def _node_entry(
         )
 
     if name == TRIANGLE.name:
-        return _delta(dim, outputs[0], inputs[0], indices) + _delta(
-            dim, outputs[0], sp.Integer(0), indices
-        ) * (1 - _delta(dim, inputs[0], sp.Integer(0), indices))
+        return _delta(dim, outputs[0], inputs[0]) + _delta(dim, outputs[0], sp.Integer(0)) * (
+            1 - _delta(dim, inputs[0], sp.Integer(0))
+        )
 
     if name == TRIANGLE_INVERSE.name:
-        return _delta(dim, outputs[0], inputs[0], indices) - _delta(
-            dim, outputs[0], sp.Integer(0), indices
-        ) * (1 - _delta(dim, inputs[0], sp.Integer(0), indices))
+        return _delta(dim, outputs[0], inputs[0]) - _delta(dim, outputs[0], sp.Integer(0)) * (
+            1 - _delta(dim, inputs[0], sp.Integer(0))
+        )
 
     if name == W_NODE.name:
         o0, o1 = outputs[0], outputs[1]
         i0 = inputs[0]
         zero = sp.Integer(0)
         return (
-            _delta(dim, o0, zero, indices) * _delta(dim, o1, i0, indices)
-            + _delta(dim, o1, zero, indices) * _delta(dim, o0, i0, indices)
-            - _delta(dim, o0, zero, indices)
-            * _delta(dim, o1, zero, indices)
-            * _delta(dim, i0, zero, indices)
+            _delta(dim, o0, zero) * _delta(dim, o1, i0)
+            + _delta(dim, o1, zero) * _delta(dim, o0, i0)
+            - _delta(dim, o0, zero) * _delta(dim, o1, zero) * _delta(dim, i0, zero)
         )
 
     corrections = _phase_corrections(node)
 
     if node.generator_type.name == X_SPIDER.name:
         total = sum(outputs, sp.Integer(0)) - sum(inputs, sp.Integer(0))
-        return _x_entry(dim, outputs + inputs, total, corrections, indices)
+        return _x_entry(dim, outputs + inputs, total, corrections)
 
     if node.generator_type.name != Z_SPIDER.name:
         raise SymbolicContractionGrammarError(
@@ -349,7 +335,7 @@ def _node_entry(
             "contract_symbolic() does not know how to denote"
         )
 
-    return _z_entry(dim, outputs + inputs, corrections, indices)
+    return _z_entry(dim, outputs + inputs, corrections)
 
 
 def _port_dim(diagram: Diagram, ref: PortRef) -> Dim:
@@ -476,7 +462,7 @@ def contract_symbolic(
                     raise SymbolicContractionGrammarError(
                         f"port {ref} carries no index; validate should have refused this diagram"
                     )
-        entry = entry * _node_entry(diagram, node_id, port_index, indices)
+        entry = entry * _node_entry(diagram, node_id, port_index)
 
     for symbol, dim in reversed(wire_indices):
         entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))

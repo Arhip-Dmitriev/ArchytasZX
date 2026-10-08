@@ -16,10 +16,15 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass
 
 from archytaszx.diagram.bangbox import BangBox
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef, Wire
+
+_SYMMETRIC_GENERATORS = frozenset((Z_SPIDER.name, X_SPIDER.name))
+"""The generators whose legs, within one direction, are interchangeable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,16 +158,28 @@ def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
     return tuple(chain)
 
 
-def _initial_colours(diagram: Diagram) -> dict[NodeId, str]:
+def _symmetric(diagram: Diagram, symmetric_legs: bool) -> bool:
+    """Whether leg order is ignored: requested, and no bang box scopes an individual port."""
+    return symmetric_legs and not any(box.port_scope for box in diagram.bang_boxes.values())
+
+
+def _leg(diagram: Diagram, ref: PortRef, symmetric: bool) -> int:
+    """``ref``'s index, or -1 for a leg of a symmetric generator when ``symmetric``."""
+    node = diagram.nodes.get(ref.node_id)
+    if symmetric and node is not None and node.generator_type.name in _SYMMETRIC_GENERATORS:
+        return -1
+    return ref.index
+
+
+def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
     """A colour per node from its own id-independent data: generator, port dims, phase,
     boundary positions and bang-box membership."""
     boundary: dict[NodeId, list[tuple[str, int, int]]] = {nid: [] for nid in diagram.nodes}
     for side, refs in (("in", diagram.boundary_inputs), ("out", diagram.boundary_outputs)):
         for position, ref in enumerate(refs):
             if ref.node_id in boundary:
-                boundary[ref.node_id].append(
-                    (f"{side}:{ref.direction.value}:{ref.index}", position, 0)
-                )
+                index = _leg(diagram, ref, symmetric)
+                boundary[ref.node_id].append((f"{side}:{ref.direction.value}:{index}", position, 0))
 
     membership: dict[NodeId, list[tuple[str, ...]]] = {nid: [] for nid in diagram.nodes}
     for box_id in sorted(diagram.bang_boxes):
@@ -180,11 +197,15 @@ def _initial_colours(diagram: Diagram) -> dict[NodeId, str]:
     colours: dict[NodeId, str] = {}
     for nid in sorted(diagram.nodes):
         node = diagram.nodes[nid]
+        inputs = [repr(port.dim) for port in node.inputs]
+        outputs = [repr(port.dim) for port in node.outputs]
+        if symmetric and node.generator_type.name in _SYMMETRIC_GENERATORS:
+            inputs, outputs = sorted(inputs), sorted(outputs)
         colours[nid] = _digest(
             (
                 node.generator_type.name,
-                tuple(repr(port.dim) for port in node.inputs),
-                tuple(repr(port.dim) for port in node.outputs),
+                tuple(inputs),
+                tuple(outputs),
                 repr(node.phase),
                 tuple(sorted(boundary[nid])),
                 tuple(sorted(membership[nid])),
@@ -193,7 +214,9 @@ def _initial_colours(diagram: Diagram) -> dict[NodeId, str]:
     return colours
 
 
-def _incidence(diagram: Diagram) -> dict[NodeId, list[tuple[str, int, NodeId, str, int]]]:
+def _incidence(
+    diagram: Diagram, symmetric: bool = False
+) -> dict[NodeId, list[tuple[str, int, NodeId, str, int]]]:
     """Each node's wire ends, as ``(own direction, own index, other node, other direction,
     other index)``."""
     incidence: dict[NodeId, list[tuple[str, int, NodeId, str, int]]] = {
@@ -203,16 +226,22 @@ def _incidence(diagram: Diagram) -> dict[NodeId, list[tuple[str, int, NodeId, st
         for near, far in ((wire.a, wire.b), (wire.b, wire.a)):
             if near.node_id in incidence:
                 incidence[near.node_id].append(
-                    (near.direction.value, near.index, far.node_id, far.direction.value, far.index)
+                    (
+                        near.direction.value,
+                        _leg(diagram, near, symmetric),
+                        far.node_id,
+                        far.direction.value,
+                        _leg(diagram, far, symmetric),
+                    )
                 )
     return incidence
 
 
-def _refine(diagram: Diagram) -> dict[NodeId, str]:
+def _refine(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
     """Colours refined by repeated rounds of folding each node's neighbours' colours into
     its own, until the partition stops splitting."""
-    colours = _initial_colours(diagram)
-    incidence = _incidence(diagram)
+    colours = _initial_colours(diagram, symmetric)
+    incidence = _incidence(diagram, symmetric)
     for _round in range(len(colours) + 1):
         updated = {
             nid: _digest(
@@ -264,45 +293,59 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
     return tuple(sorted(descriptors, key=repr))
 
 
-def _profile(diagram: Diagram, label: dict[NodeId, str]) -> tuple[object, ...]:
+def _profile(
+    diagram: Diagram, label: dict[NodeId, str], symmetric: bool = False
+) -> tuple[object, ...]:
     """The whole diagram rewritten in terms of ``label`` instead of node ids."""
+
+    def end(ref: PortRef) -> tuple[str, str, int]:
+        return (label[ref.node_id], ref.direction.value, _leg(diagram, ref, symmetric))
+
     wires = sorted(
-        tuple(
-            sorted(
-                (
-                    (label[wire.a.node_id], wire.a.direction.value, wire.a.index),
-                    (label[wire.b.node_id], wire.b.direction.value, wire.b.index),
-                )
-            )
-        )
+        tuple(sorted((end(wire.a), end(wire.b))))
         for wire in diagram.wires
         if wire.a.node_id in label and wire.b.node_id in label
     )
     return (
         tuple(sorted(label[nid] for nid in label)),
         tuple(wires),
-        tuple(
-            (label[ref.node_id], ref.direction.value, ref.index) for ref in diagram.boundary_inputs
-        ),
-        tuple(
-            (label[ref.node_id], ref.direction.value, ref.index) for ref in diagram.boundary_outputs
-        ),
+        tuple(end(ref) for ref in diagram.boundary_inputs),
+        tuple(end(ref) for ref in diagram.boundary_outputs),
         _box_descriptors(diagram, label),
         repr(diagram.scalar),
         tuple(sorted(diagram.parameters.items())),
     )
 
 
-def canonical_key(diagram: Diagram) -> str:
+def canonical_key(diagram: Diagram, *, symmetric_legs: bool = False) -> str:
     """A hashable key for ``diagram`` up to node-id and bang-box-id renaming, from colour
-    refinement over the graph's invariants.
+    refinement over the graph's invariants; up to each Z and X spider's leg order per
+    direction too when ``symmetric_legs``.
 
     Isomorphic diagrams always share a key; distinct diagrams may collide, so a key match is
     a candidate that :func:`isomorphic` decides.
     """
     if not isinstance(diagram, Diagram):
         raise TypeError(f"canonical_key requires a Diagram, got {type(diagram).__name__}")
-    return _digest(_profile(diagram, _refine(diagram)))
+    symmetric = _symmetric(diagram, symmetric_legs)
+    return _digest(_profile(diagram, _refine(diagram, symmetric), symmetric))
+
+
+_Incidence = dict[NodeId, list[tuple[str, int, NodeId, str, int]]]
+
+
+def _edges_to(
+    near_id: NodeId, ends: list[tuple[str, int, NodeId, str, int]], image: dict[NodeId, NodeId]
+) -> Counter[tuple[tuple[int, str, int], tuple[int, str, int]]]:
+    """The multiset of wires in ``ends`` whose far node ``image`` maps, as ordered port pairs
+    with the near end at ``near_id`` and the far end at its image."""
+    edges: Counter[tuple[tuple[int, str, int], tuple[int, str, int]]] = Counter()
+    for own_dir, own_index, other, other_dir, other_index in ends:
+        if other in image:
+            near = (int(near_id), own_dir, own_index)
+            far = (int(image[other]), other_dir, other_index)
+            edges[(min(near, far), max(near, far))] += 1
+    return edges
 
 
 def _extend(
@@ -311,54 +354,34 @@ def _extend(
     mapping: dict[NodeId, NodeId],
     used: set[NodeId],
     candidates: dict[NodeId, tuple[NodeId, ...]],
-    incidence_a: dict[NodeId, list[tuple[str, int, NodeId, str, int]]],
-    wires_b: frozenset[tuple[tuple[int, str, int], tuple[int, str, int]]],
-    degree_b: dict[NodeId, int],
+    incidence_a: _Incidence,
+    incidence_b: _Incidence,
 ) -> bool:
-    """Search for a node bijection extending ``mapping``, consistent on every wire whose
-    ends are both already assigned."""
+    """Search for a node bijection extending ``mapping`` under which each assigned node's
+    wires to assigned nodes are, as a multiset, its image's wires to their images."""
     if depth == len(order):
         return True
     source = order[depth]
     for target in candidates[source]:
-        if target in used or degree_b[target] != len(incidence_a[source]):
+        if target in used or len(incidence_b[target]) != len(incidence_a[source]):
             continue
         mapping[source] = target
-        if all(
-            (
-                min(
-                    (int(target), own_dir, own_index),
-                    (int(mapping[other]), other_dir, other_index),
-                ),
-                max(
-                    (int(target), own_dir, own_index),
-                    (int(mapping[other]), other_dir, other_index),
-                ),
-            )
-            in wires_b
-            for own_dir, own_index, other, other_dir, other_index in incidence_a[source]
-            if other in mapping
+        used.add(target)
+        forward = _edges_to(target, incidence_a[source], mapping)
+        backward = _edges_to(target, incidence_b[target], {node: node for node in used})
+        if forward == backward and _extend(
+            order, depth + 1, mapping, used, candidates, incidence_a, incidence_b
         ):
-            used.add(target)
-            if _extend(
-                order,
-                depth + 1,
-                mapping,
-                used,
-                candidates,
-                incidence_a,
-                wires_b,
-                degree_b,
-            ):
-                return True
-            used.discard(target)
+            return True
+        used.discard(target)
         del mapping[source]
     return False
 
 
-def isomorphic(a: Diagram, b: Diagram) -> bool:
+def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
     """Whether a node-id and bang-box-id renaming carries ``a`` onto ``b`` exactly, scalar
-    and parameter environment included."""
+    and parameter environment included; up to each Z and X spider's leg order per direction
+    too when ``symmetric_legs``."""
     if not isinstance(a, Diagram) or not isinstance(b, Diagram):
         raise TypeError(
             f"isomorphic requires two Diagram instances, got {type(a).__name__} "
@@ -374,9 +397,10 @@ def isomorphic(a: Diagram, b: Diagram) -> bool:
         or sorted(a.parameters.items()) != sorted(b.parameters.items())
     ):
         return False
+    symmetric = _symmetric(a, symmetric_legs) and _symmetric(b, symmetric_legs)
 
-    colours_a = _refine(a)
-    colours_b = _refine(b)
+    colours_a = _refine(a, symmetric)
+    colours_b = _refine(b, symmetric)
     by_colour: dict[str, list[NodeId]] = {}
     for nid in sorted(colours_b):
         by_colour.setdefault(colours_b[nid], []).append(nid)
@@ -384,15 +408,13 @@ def isomorphic(a: Diagram, b: Diagram) -> bool:
     if any(not choices for choices in candidates.values()):
         return False
 
-    incidence_a = _incidence(a)
-    incidence_b = _incidence(b)
-    degree_b = {nid: len(ends) for nid, ends in incidence_b.items()}
-    wires_b = frozenset(wire.sort_key() for wire in b.wires)
+    incidence_a = _incidence(a, symmetric)
+    incidence_b = _incidence(b, symmetric)
     order = tuple(sorted(colours_a, key=lambda nid: (len(candidates[nid]), colours_a[nid], nid)))
 
     mapping: dict[NodeId, NodeId] = {}
-    if not _extend(order, 0, mapping, set(), candidates, incidence_a, wires_b, degree_b):
+    if not _extend(order, 0, mapping, set(), candidates, incidence_a, incidence_b):
         return False
     label = {nid: str(int(mapping[nid])) for nid in mapping}
     identity = {nid: str(int(nid)) for nid in b.nodes}
-    return _profile(a, label) == _profile(b, identity)
+    return _profile(a, label, symmetric) == _profile(b, identity, symmetric)

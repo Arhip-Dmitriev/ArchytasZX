@@ -1593,6 +1593,12 @@ class FourierCancellationPattern(Pattern):
         return (int(cast(FourierMatch, match).node_ids[0]),)
 
 
+def colour_pair(swapped: bool) -> tuple[str, str]:
+    """The generator names a colour-paired pattern reads as its (first, second) spider: Z then
+    X, or X then Z when ``swapped``."""
+    return (X_SPIDER.name, Z_SPIDER.name) if swapped else (Z_SPIDER.name, X_SPIDER.name)
+
+
 CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("state_is_a_z_spider", "a Z spider with no input and one output"),
     SideCondition("effect_is_an_x_spider", "an X spider with one input and no output"),
@@ -1602,10 +1608,17 @@ CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
 )
 
+CAP_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("state_is_an_x_spider", "an X spider with no input and one output"),
+    SideCondition("effect_is_a_z_spider", "a Z spider with one input and no output"),
+    *CAP_SIDE_CONDITIONS[2:],
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CapMatch:
-    """One located Z-state-into-X-effect cap: its two node ids and the wire joining them."""
+    """One located Z-state-into-X-effect cap (X into Z when ``swapped``): its two node ids and
+    the wire joining them."""
 
     state_id: NodeId
     effect_id: NodeId
@@ -1613,6 +1626,7 @@ class CapMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    swapped: bool = False
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -1626,9 +1640,12 @@ class CapMatch:
 
 
 def find_cap_matches(
-    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None, swapped: bool = False
 ) -> tuple[CapMatch, ...]:
-    """Every phaseless Z state wired into a phaseless X effect, ordered by the state's node id."""
+    """Every phaseless Z state wired into a phaseless X effect (X into Z when ``swapped``),
+    ordered by the state's node id."""
+    state_name, effect_name = colour_pair(swapped)
+    conditions = CAP_SWAPPED_SIDE_CONDITIONS if swapped else CAP_SIDE_CONDITIONS
     claimed: dict[PortRef, int] = {}
     for wire in diagram.wires:
         claimed[wire.a] = claimed.get(wire.a, 0) + 1
@@ -1650,9 +1667,9 @@ def find_cap_matches(
                 continue
             if not REGISTRY.is_registered(effect.generator_type):
                 continue
-            if state.generator_type.name != Z_SPIDER.name:
+            if state.generator_type.name != state_name:
                 continue
-            if effect.generator_type.name != X_SPIDER.name:
+            if effect.generator_type.name != effect_name:
                 continue
             if (state.num_inputs, state.num_outputs) != (0, 1):
                 continue
@@ -1676,33 +1693,35 @@ def find_cap_matches(
                     effect_id=effect_ref.node_id,
                     wire=wire,
                     shared_dim=state_dim,
-                    side_condition_outcomes=tuple(
-                        SideConditionOutcome(condition.name, True, "re-derived from the diagram")
-                        for condition in CAP_SIDE_CONDITIONS
-                    ),
+                    side_condition_outcomes=_all_passed(conditions),
+                    swapped=swapped,
                 )
             )
     matches.sort(key=lambda m: (m.state_id, m.effect_id))
     return tuple(matches)
 
 
+@dataclass(frozen=True, slots=True)
 class CapPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap.
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Z-state/X-effect cap,
+    or the X-state/Z-effect cap when ``swapped``.
 
     Locality radius 1.
     """
+
+    swapped: bool = False
 
     locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_cap_matches`."""
-        return find_cap_matches(diagram)
+        return find_cap_matches(diagram, swapped=self.swapped)
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
         """Delegate to :func:`find_cap_matches` with the candidate wires restricted."""
-        return find_cap_matches(diagram, anchors=anchors)
+        return find_cap_matches(diagram, anchors=anchors, swapped=self.swapped)
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The state's then the effect's node id."""
@@ -2103,10 +2122,19 @@ STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
 )
 
+STATE_COPY_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "state_is_a_phaseless_z_spider", "a Z spider with no input, one output, and no phase"
+    ),
+    SideCondition("spider_is_a_phaseless_x_spider", "an X spider with one input and no phase"),
+    *STATE_COPY_SIDE_CONDITIONS[2:],
+)
+
 
 @dataclass(frozen=True, slots=True)
 class StateCopyMatch:
-    """One located X state feeding a Z spider: both node ids, the wire, and the Z's output count."""
+    """One located X state feeding a Z spider (Z into X when ``swapped``): both node ids, the
+    wire, and the spider's output count."""
 
     state_id: NodeId
     spider_id: NodeId
@@ -2115,6 +2143,7 @@ class StateCopyMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    swapped: bool = False
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -2128,9 +2157,12 @@ class StateCopyMatch:
 
 
 def find_state_copy_matches(
-    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None, swapped: bool = False
 ) -> tuple[StateCopyMatch, ...]:
-    """Every phaseless X state wired into a phaseless Z spider's only input, by state id."""
+    """Every phaseless X state wired into a phaseless Z spider's only input (Z into X when
+    ``swapped``), by state id."""
+    spider_name, state_name = colour_pair(swapped)
+    conditions = STATE_COPY_SWAPPED_SIDE_CONDITIONS if swapped else STATE_COPY_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[StateCopyMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
@@ -2149,9 +2181,9 @@ def find_state_copy_matches(
                 continue
             if not REGISTRY.is_registered(spider.generator_type):
                 continue
-            if state.generator_type.name != X_SPIDER.name:
+            if state.generator_type.name != state_name:
                 continue
-            if spider.generator_type.name != Z_SPIDER.name:
+            if spider.generator_type.name != spider_name:
                 continue
             if (state.num_inputs, state.num_outputs) != (0, 1) or spider.num_inputs != 1:
                 continue
@@ -2173,30 +2205,35 @@ def find_state_copy_matches(
                     wire=wire,
                     output_count=spider.num_outputs,
                     shared_dim=next(iter(dims)),
-                    side_condition_outcomes=_all_passed(STATE_COPY_SIDE_CONDITIONS),
+                    side_condition_outcomes=_all_passed(conditions),
+                    swapped=swapped,
                 )
             )
     matches.sort(key=lambda m: (int(m.state_id), int(m.spider_id)))
     return tuple(matches)
 
 
+@dataclass(frozen=True, slots=True)
 class StateCopyPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for state copy.
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for state copy, colours
+    exchanged when ``swapped``.
 
     Locality radius 1.
     """
+
+    swapped: bool = False
 
     locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_state_copy_matches`."""
-        return find_state_copy_matches(diagram)
+        return find_state_copy_matches(diagram, swapped=self.swapped)
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
         """Delegate to :func:`find_state_copy_matches` with the candidate wires restricted."""
-        return find_state_copy_matches(diagram, anchors=anchors)
+        return find_state_copy_matches(diagram, anchors=anchors, swapped=self.swapped)
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The state's then the spider's node id."""
@@ -2227,10 +2264,24 @@ HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
 )
 
+HOPF_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("x_and_z_spiders", "a registered X spider and a registered Z spider"),
+    SideCondition(
+        "two_paths",
+        "one X output runs straight into a Z input, a second X output runs into that same "
+        "Z through two Fourier boxes in series",
+    ),
+    *HOPF_SIDE_CONDITIONS[2:],
+)
+
 
 @dataclass(frozen=True, slots=True)
 class HopfMatch:
-    """One located Hopf pair: the two spiders, the two F boxes, and the four consumed wires."""
+    """One located Hopf pair: the two spiders, the two F boxes, and the four consumed wires.
+
+    ``z_id`` names the spider whose outputs leave and ``x_id`` the one they enter: a Z and an
+    X, or an X and a Z when ``swapped``.
+    """
 
     z_id: NodeId
     x_id: NodeId
@@ -2241,6 +2292,7 @@ class HopfMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    swapped: bool = False
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -2296,9 +2348,12 @@ def _fourier_pair_path(
 
 
 def find_hopf_matches(
-    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None, swapped: bool = False
 ) -> tuple[HopfMatch, ...]:
-    """Every Z/X pair joined by one plain wire and one wire through two F boxes, by node id."""
+    """Every Z/X pair (X/Z when ``swapped``) joined by one plain wire and one wire through two
+    F boxes, by node id."""
+    upper_name, lower_name = colour_pair(swapped)
+    conditions = HOPF_SWAPPED_SIDE_CONDITIONS if swapped else HOPF_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     by_port = _wire_by_port(diagram)
     neighbours = _neighbour_ids(diagram) if anchors is not None else None
@@ -2307,7 +2362,7 @@ def find_hopf_matches(
         z_node = diagram.nodes[z_id]
         if not REGISTRY.is_registered(z_node.generator_type):
             continue
-        if z_node.generator_type.name != Z_SPIDER.name:
+        if z_node.generator_type.name != upper_name:
             continue
         if not _seed_meets_anchors(anchors, neighbours, (z_id,), 3):
             continue
@@ -2327,7 +2382,7 @@ def find_hopf_matches(
                 continue
             if not REGISTRY.is_registered(x_node.generator_type):
                 continue
-            if x_node.generator_type.name != X_SPIDER.name:
+            if x_node.generator_type.name != lower_name:
                 continue
             if x_direct.direction is not Direction.INPUT:
                 continue
@@ -2370,30 +2425,35 @@ def find_hopf_matches(
                         z_leg_indices=(direct_index, fourier_index),
                         x_leg_indices=(x_direct.index, x_fourier.index),
                         shared_dim=z_dim,
-                        side_condition_outcomes=_all_passed(HOPF_SIDE_CONDITIONS),
+                        side_condition_outcomes=_all_passed(conditions),
+                        swapped=swapped,
                     )
                 )
     matches.sort(key=lambda m: (int(m.z_id), int(m.x_id), m.z_leg_indices, m.x_leg_indices))
     return tuple(matches)
 
 
+@dataclass(frozen=True, slots=True)
 class HopfPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Hopf law.
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the Hopf law, colours
+    exchanged when ``swapped``.
 
     Locality radius 3.
     """
+
+    swapped: bool = False
 
     locality_radius = 3
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_hopf_matches`."""
-        return find_hopf_matches(diagram)
+        return find_hopf_matches(diagram, swapped=self.swapped)
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
-        """Delegate to :func:`find_hopf_matches` with the Z seed nodes restricted."""
-        return find_hopf_matches(diagram, anchors=anchors)
+        """Delegate to :func:`find_hopf_matches` with the seed nodes restricted."""
+        return find_hopf_matches(diagram, anchors=anchors, swapped=self.swapped)
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """Both spiders' node ids, then the Z-side and X-side leg indices."""
@@ -2416,10 +2476,21 @@ BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
 )
 
+BIALGEBRA_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "z_is_a_phaseless_two_to_one", "a Z spider with two inputs, one output, and no phase"
+    ),
+    SideCondition(
+        "x_is_a_phaseless_one_to_two", "an X spider with one input, two outputs, and no phase"
+    ),
+    *BIALGEBRA_SIDE_CONDITIONS[2:],
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BialgebraMatch:
-    """One located X_{2->1} into Z_{1->2}: both node ids and the wire joining them."""
+    """One located X_{2->1} into Z_{1->2} (Z_{2->1} into X_{1->2} when ``swapped``): both node
+    ids and the wire joining them, ``x_id`` naming the two-to-one spider."""
 
     x_id: NodeId
     z_id: NodeId
@@ -2427,6 +2498,7 @@ class BialgebraMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    swapped: bool = False
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -2440,9 +2512,12 @@ class BialgebraMatch:
 
 
 def find_bialgebra_matches(
-    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None, swapped: bool = False
 ) -> tuple[BialgebraMatch, ...]:
-    """Every phaseless X_{2->1} whose output feeds a phaseless Z_{1->2}, by X node id."""
+    """Every phaseless X_{2->1} whose output feeds a phaseless Z_{1->2} (Z into X when
+    ``swapped``), by the two-to-one node's id."""
+    fan_out_name, fan_in_name = colour_pair(swapped)
+    conditions = BIALGEBRA_SWAPPED_SIDE_CONDITIONS if swapped else BIALGEBRA_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[BialgebraMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
@@ -2461,9 +2536,9 @@ def find_bialgebra_matches(
                 continue
             if not REGISTRY.is_registered(z_node.generator_type):
                 continue
-            if x_node.generator_type.name != X_SPIDER.name:
+            if x_node.generator_type.name != fan_in_name:
                 continue
-            if z_node.generator_type.name != Z_SPIDER.name:
+            if z_node.generator_type.name != fan_out_name:
                 continue
             if (x_node.num_inputs, x_node.num_outputs) != (2, 1):
                 continue
@@ -2486,30 +2561,35 @@ def find_bialgebra_matches(
                     z_id=z_node.id,
                     wire=wire,
                     shared_dim=x_dim,
-                    side_condition_outcomes=_all_passed(BIALGEBRA_SIDE_CONDITIONS),
+                    side_condition_outcomes=_all_passed(conditions),
+                    swapped=swapped,
                 )
             )
     matches.sort(key=lambda m: (int(m.x_id), int(m.z_id)))
     return tuple(matches)
 
 
+@dataclass(frozen=True, slots=True)
 class BialgebraPattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the bialgebra law.
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the bialgebra law,
+    colours exchanged when ``swapped``.
 
     Locality radius 1.
     """
+
+    swapped: bool = False
 
     locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_bialgebra_matches`."""
-        return find_bialgebra_matches(diagram)
+        return find_bialgebra_matches(diagram, swapped=self.swapped)
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
         """Delegate to :func:`find_bialgebra_matches` with the candidate wires restricted."""
-        return find_bialgebra_matches(diagram, anchors=anchors)
+        return find_bialgebra_matches(diagram, anchors=anchors, swapped=self.swapped)
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The X's then the Z's node id."""
@@ -2529,10 +2609,16 @@ FOURIER_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
 )
 
+FOURIER_STATE_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("spider_is_a_phaseless_x_state", "an X spider with no phase and a single leg"),
+    *FOURIER_STATE_SIDE_CONDITIONS[1:],
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FourierStateMatch:
-    """One located F box on a phaseless Z state's output, or on a Z effect's input."""
+    """One located F box on a phaseless Z state's output, or on a Z effect's input; an X
+    state's or effect's when ``swapped``."""
 
     spider_id: NodeId
     fourier_id: NodeId
@@ -2542,6 +2628,7 @@ class FourierStateMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    swapped: bool = False
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -2555,9 +2642,12 @@ class FourierStateMatch:
 
 
 def find_fourier_state_matches(
-    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None, swapped: bool = False
 ) -> tuple[FourierStateMatch, ...]:
-    """Every F box in series with a phaseless Z state or Z effect, by spider node id."""
+    """Every F box in series with a phaseless Z state or Z effect (X when ``swapped``), by
+    spider node id."""
+    spider_name = colour_pair(swapped)[0]
+    conditions = FOURIER_STATE_SWAPPED_SIDE_CONDITIONS if swapped else FOURIER_STATE_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[FourierStateMatch] = []
     for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
@@ -2572,7 +2662,7 @@ def find_fourier_state_matches(
                 continue
             if not REGISTRY.is_registered(fourier.generator_type):
                 continue
-            if spider.generator_type.name != Z_SPIDER.name:
+            if spider.generator_type.name != spider_name:
                 continue
             if fourier.generator_type.name != FOURIER_BOX.name:
                 continue
@@ -2621,30 +2711,35 @@ def find_fourier_state_matches(
                     free_ref=free_ref,
                     is_state=is_state,
                     shared_dim=next(iter(dims)),
-                    side_condition_outcomes=_all_passed(FOURIER_STATE_SIDE_CONDITIONS),
+                    side_condition_outcomes=_all_passed(conditions),
+                    swapped=swapped,
                 )
             )
     matches.sort(key=lambda m: (int(m.spider_id), int(m.fourier_id)))
     return tuple(matches)
 
 
+@dataclass(frozen=True, slots=True)
 class FourierStateColorChangePattern(Pattern):
-    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the F-on-a-state rule.
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the F-on-a-state rule,
+    on an X state or effect when ``swapped``.
 
     Locality radius 1.
     """
+
+    swapped: bool = False
 
     locality_radius = 1
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         """Delegate to the module-level :func:`find_fourier_state_matches`."""
-        return find_fourier_state_matches(diagram)
+        return find_fourier_state_matches(diagram, swapped=self.swapped)
 
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
         """Delegate to :func:`find_fourier_state_matches` with the candidate wires restricted."""
-        return find_fourier_state_matches(diagram, anchors=anchors)
+        return find_fourier_state_matches(diagram, anchors=anchors, swapped=self.swapped)
 
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The spider's then the F box's node id."""

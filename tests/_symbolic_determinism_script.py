@@ -15,9 +15,9 @@
 """Standalone driver for ``TestCrossProcessDeterminism`` in ``test_contract_symbolic.py``.
 
 Not a pytest module: run as a plain script, once per ``PYTHONHASHSEED``, via ``subprocess``.
-Contracts a diagram whose entry keeps a residual unevaluated index sum inside a larger
-product, then prints the ``repr`` of the tensor and of a separately simplified scalar. Prints
-no ``hash()``, which legitimately varies across processes.
+Contracts a diagram whose entry keeps a residual delta inside a larger product, then prints
+the ``repr`` of the tensor and of a separately simplified scalar. Prints no ``hash()``, which
+legitimately varies across processes.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _build_diagram() -> Diagram:
 
 
 def _residual_product() -> Scalar:
-    """A product of a closable sum and one the simplifier must leave standing."""
+    """A product of a closable sum and two that close only to deltas with ``d`` formal."""
     dim = Dim.symbol("d")
     a = sp.Symbol("a", integer=True, nonnegative=True)
     closable = Scalar.index_sum(dim, lambda _k: Scalar.one())

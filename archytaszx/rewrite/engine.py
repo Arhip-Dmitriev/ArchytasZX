@@ -988,17 +988,22 @@ NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
     "triangle_inverse_cancellation",
     "fourier_cancellation",
     "fourier_state_color_change",
+    "fourier_state_color_change_swapped",
     "spider_fusion",
     "hopf",
+    "hopf_swapped",
     "state_copy",
+    "state_copy_swapped",
     "zx_cap",
+    "zx_cap_swapped",
 )
 """:func:`toward_normal_form`'s rule set, in application order.
 
-Every entry removes at least one wire; ``state_copy`` on a Z with n >= 3 legs adds nodes.
-``bialgebra`` turns two nodes into four and is absent. A name not yet registered in
-:data:`~archytaszx.rewrite.rules_library.RULES` is skipped, so the ordering here is the
-target set and :func:`missing_normal_form_rule_names` reports what of it is not yet live.
+Every entry removes at least one wire; ``state_copy`` and its swapped twin on a spider with
+n >= 3 legs add nodes. ``bialgebra`` and its twin turn two nodes into four and are absent. A
+name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is skipped, so the
+ordering here is the target set and :func:`missing_normal_form_rule_names` reports what of it
+is not yet live.
 """
 
 

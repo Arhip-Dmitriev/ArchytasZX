@@ -43,12 +43,11 @@ from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError
-from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError
 from archytaszx.diagram.validate import ValidateError, validate
 from archytaszx.rewrite.cache import RewriteCache
-from archytaszx.rewrite.normal_form import comparison_view
+from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError
 from archytaszx.rewrite.tactics import (
     DEFAULT_SEARCH_LIMITS,
@@ -69,7 +68,12 @@ from archytaszx.semantics.certificate import (
 )
 from archytaszx.semantics.check import DEFAULT_TOLERANCE, CheckAssignmentValue, ComparisonResult
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS
-from archytaszx.semantics.decide import OracleRefutation, interface_reason, refute_by_oracle
+from archytaszx.semantics.decide import (
+    OracleRefutation,
+    interface_reason,
+    oracle_summary,
+    refute_by_oracle,
+)
 
 _CHECK_ERRORS: tuple[type[Exception], ...] = (
     BangBoxError,
@@ -242,7 +246,9 @@ def _check(
         if not replayed.reproduced:
             return failed(f"the {label} half did not replay: {replayed.reason}")
     try:
-        meet = isomorphic(comparison_view(replays[0].diagram), comparison_view(replays[1].diagram))
+        meet = views_isomorphic(
+            comparison_view(replays[0].diagram), comparison_view(replays[1].diagram)
+        )
     except _CHECK_ERRORS as exc:
         return failed(f"comparing the meet raised {type(exc).__name__}: {exc}")
     if not meet:
@@ -269,11 +275,7 @@ def _check(
             oracle.counterexample,
             oracle.comparison,
         )
-    sampled = (
-        "no oracle sample evaluated"
-        if checked == 0
-        else f"no oracle mismatch in {checked} sample(s)"
-    )
+    sampled = oracle_summary(checked, oracle.refusals)
     return ProofCheck(
         True,
         f"both halves replay and meet; {sampled}",

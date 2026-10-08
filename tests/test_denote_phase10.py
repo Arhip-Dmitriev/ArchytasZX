@@ -31,7 +31,7 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
 )
 from archytaszx.diagram.graph import Diagram, Direction, Node, PortRef
-from archytaszx.semantics.contract_symbolic import _Indices, _node_entry
+from archytaszx.semantics.contract_symbolic import _node_entry
 from archytaszx.semantics.denote import (
     DenoteDomainError,
     DenoteGrammarError,
@@ -286,7 +286,7 @@ class TestSymbolicEntriesAgreeWithDenote:
                 for i in range(len(input_dims))
             }
         )
-        entry = _node_entry(diagram, node_id, port_index, _Indices())
+        entry = _node_entry(diagram, node_id, port_index)
         order = [PortRef(node_id, Direction.OUTPUT, i) for i in range(len(output_dims))] + [
             PortRef(node_id, Direction.INPUT, i) for i in range(len(input_dims))
         ]

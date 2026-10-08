@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
@@ -22,7 +24,7 @@ import sympy as sp  # type: ignore[import-untyped]
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.generators import Z_SPIDER
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.semantics.contract_numeric import (
     ContractDomainError,
@@ -245,3 +247,53 @@ class TestAssignLabelsUnionFind:
         labels = _assign_labels(diagram)
 
         assert labels[p1] == labels[p2] == labels[p3] == labels[p4]
+
+
+class TestManyLabels:
+    """A diagram with far more wires than einsum's 52-letter alphabet contracts pair by pair."""
+
+    @pytest.mark.parametrize("d_value", [1, 2, 3])
+    def test_a_long_identity_chain_is_the_identity(self, d_value: int) -> None:
+        d = Dim.concrete(d_value)
+        diagram = Diagram()
+        nodes = [diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[d]) for _ in range(200)]
+        for first, second in itertools.pairwise(nodes):
+            diagram.add_wire(
+                PortRef(first, Direction.OUTPUT, 0), PortRef(second, Direction.INPUT, 0)
+            )
+        diagram.set_boundary_outputs([PortRef(nodes[-1], Direction.OUTPUT, 0)])
+        diagram.set_boundary_inputs([PortRef(nodes[0], Direction.INPUT, 0)])
+        np.testing.assert_allclose(contract(diagram).tensor, np.eye(d_value))
+
+    def test_sixty_disjoint_loops_multiply(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        for _ in range(60):
+            z = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
+            x = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[])
+            diagram.add_wire(PortRef(z, Direction.OUTPUT, 0), PortRef(x, Direction.INPUT, 0))
+        assert complex(contract(diagram).tensor) == pytest.approx(2.0**30)
+
+    def test_an_oversized_intermediate_is_refused(self) -> None:
+        d = Dim.concrete(2)
+        diagram = Diagram()
+        nodes = [diagram.add_node(Z_SPIDER, input_dims=[d] * 9, output_dims=[]) for _ in range(4)]
+        used = dict.fromkeys(nodes, 0)
+        for a in range(4):
+            for b in range(a + 1, 4):
+                for _ in range(3):
+                    first, second = nodes[a], nodes[b]
+                    hub = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+                    diagram.add_wire(
+                        PortRef(hub, Direction.OUTPUT, 0),
+                        PortRef(first, Direction.INPUT, used[first]),
+                    )
+                    diagram.add_wire(
+                        PortRef(hub, Direction.OUTPUT, 1),
+                        PortRef(second, Direction.INPUT, used[second]),
+                    )
+                    used[first] += 1
+                    used[second] += 1
+        assert contract(diagram).tensor.shape == ()
+        with pytest.raises(ContractSizeError, match="intermediate"):
+            contract(diagram, max_elements=1_000)

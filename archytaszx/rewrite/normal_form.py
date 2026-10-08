@@ -22,7 +22,8 @@
 it id for id. :func:`comparison_view` sorts each Z and X spider's legs per direction, clears
 the parameter environment and replaces the scalar by its
 :meth:`~archytaszx.algebra.scalar.Scalar.simplify` form; two normal forms are the same when
-their views share a key and are :func:`~archytaszx.diagram.compare.isomorphic`.
+their views share a :func:`view_key` and are :func:`views_isomorphic`, both blind to the
+order of a spider's legs within a direction.
 """
 
 from __future__ import annotations
@@ -195,6 +196,18 @@ def comparison_view(diagram: Diagram) -> Diagram:
     return view
 
 
+def view_key(view: Diagram) -> str:
+    """The :func:`~archytaszx.diagram.compare.canonical_key` of a comparison view, up to spider
+    leg order."""
+    return canonical_key(view, symmetric_legs=True)
+
+
+def views_isomorphic(a: Diagram, b: Diagram) -> bool:
+    """Whether two comparison views are :func:`~archytaszx.diagram.compare.isomorphic` up to
+    spider leg order."""
+    return isomorphic(a, b, symmetric_legs=True)
+
+
 def _graph_view(diagram: Diagram) -> Diagram:
     """A copy of ``diagram`` with an empty parameter environment and scalar one."""
     view = diagram.copy()
@@ -232,7 +245,7 @@ def normal_form(
         diagram=outcome.diagram,
         outcome=outcome,
         results=tuple(results),
-        key=canonical_key(comparison_view(outcome.diagram)),
+        key=view_key(comparison_view(outcome.diagram)),
     )
 
 
@@ -245,7 +258,7 @@ def same_normal_form(a: NormalForm, b: NormalForm) -> bool:
         )
     if a.key != b.key:
         return False
-    return isomorphic(comparison_view(a.diagram), comparison_view(b.diagram))
+    return views_isomorphic(comparison_view(a.diagram), comparison_view(b.diagram))
 
 
 def isomorphic_up_to_scalar(a: Diagram, b: Diagram) -> bool:

@@ -27,7 +27,7 @@ from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, Mult
 from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorError, GeneratorType
-from archytaszx.diagram.graph import Diagram, GraphDomainError, GraphError
+from archytaszx.diagram.graph import Diagram, Direction, GraphDomainError, GraphError, PortRef
 from archytaszx.diagram.validate import ValidateError
 from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationStop
 from archytaszx.rewrite.engine import DEFAULT_GUARD, TerminationGuard, apply
@@ -37,6 +37,7 @@ from archytaszx.rewrite.normal_form import (
     isomorphic_up_to_scalar,
     normal_form,
     same_normal_form,
+    view_key,
 )
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteGrammarError
 from archytaszx.rewrite.rules_library import BIALGEBRA, STATE_COPY, lookup_rule
@@ -57,6 +58,8 @@ from archytaszx.semantics.decide import (
     DecisionMethod,
     EqualityVerdict,
     decide_equal,
+    dimension_floors,
+    refute_by_oracle,
     sample_grid,
 )
 from archytaszx.semantics.denote import DenoteError
@@ -343,9 +346,9 @@ class TestNormalForm:
         assert isomorphic(nf.source, left)
         assert_unchanged(left, before)
 
-    def test_key_is_the_canonical_key_of_the_comparison_view(self) -> None:
+    def test_key_is_the_view_key_of_the_comparison_view(self) -> None:
         nf = normal_form(hopf_diagram(3, 1, 1, 1, 1))
-        assert nf.key == canonical_key(comparison_view(nf.diagram))
+        assert nf.key == view_key(comparison_view(nf.diagram))
 
     @pytest.mark.parametrize("order", ["sme", "mse", "esm", "ems", "sem", "mes"])
     def test_node_insertion_order_does_not_change_the_key(self, order: str) -> None:
@@ -745,8 +748,8 @@ class TestRegressions:
         backward = decide_equal(right, left, guard=NO_FUSION, use_saturation=False)
         assert backward.verdict is EqualityVerdict.EQUAL, backward.reason
         assert backward.method is DecisionMethod.INDUCTION
-        assert "with sides reversed" in backward.reason
-        assert not forward.induction_reversed and backward.induction_reversed
+        assert ("with sides reversed" in backward.reason) is backward.induction_reversed
+        assert not forward.induction_reversed
         assert forward.induction is not None and backward.induction is not None
         assert backward.induction.proved
         assert isomorphic(
@@ -1256,3 +1259,83 @@ class TestSaturationRung:
     def test_saturation_limits_must_be_saturation_limits(self, value: object) -> None:
         with pytest.raises(DecideGrammarError, match="saturation_limits"):
             decide_equal(*ghz_pair(D), saturation_limits=value)  # type: ignore[arg-type]
+
+
+def _phased_cap(phase: PhaseVector | None) -> Diagram:
+    """A Z state, phased by ``phase`` when given, capped by a phaseless X effect."""
+    diagram = Diagram()
+    if phase is None:
+        z = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[D])
+    else:
+        z = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[D], phase=phase)
+    x = diagram.add_node(X_SPIDER, input_dims=[D], output_dims=[])
+    diagram.add_wire(PortRef(z, Direction.OUTPUT, 0), PortRef(x, Direction.INPUT, 0))
+    return diagram
+
+
+def _ring(size: int, phase: PhaseVector | None) -> Diagram:
+    """``size`` alternating Z and X spiders in a closed ring, the first with a second output on
+    the boundary and carrying ``phase`` when given, every other capped by its own colour."""
+    diagram = Diagram()
+    nodes = []
+    for position in range(size):
+        generator = Z_SPIDER if position % 2 == 0 else X_SPIDER
+        if position == 0 and phase is not None:
+            nodes.append(diagram.add_node(generator, [D], [D, D], phase=phase))
+        else:
+            nodes.append(diagram.add_node(generator, [D], [D, D]))
+    for position, node in enumerate(nodes):
+        following = nodes[(position + 1) % size]
+        diagram.add_wire(PortRef(node, Direction.OUTPUT, 1), PortRef(following, Direction.INPUT, 0))
+    diagram.set_boundary_outputs([PortRef(nodes[0], Direction.OUTPUT, 0)])
+    for position, node in enumerate(nodes[1:], start=1):
+        colour = Z_SPIDER if position % 2 == 0 else X_SPIDER
+        cap = diagram.add_node(colour, input_dims=[D], output_dims=[])
+        diagram.add_wire(PortRef(node, Direction.OUTPUT, 0), PortRef(cap, Direction.INPUT, 0))
+    return diagram
+
+
+def _phased_ring(size: int) -> Diagram:
+    return _ring(size, PhaseVector(D, {1: Phase.turns(sp.Rational(1, 3))}))
+
+
+class TestOracleAtScale:
+    """The oracle evaluates diagrams past einsum's 52 labels, and says why it skips a sample."""
+
+    def test_an_extra_phase_on_a_large_ring_is_refuted(self) -> None:
+        phase = PhaseVector(D, {1: Phase.turns(sp.Rational(1, 3))})
+        left, right = _ring(30, None), _ring(30, phase)
+        assert len(left.wires) > 52
+        decision = decide_equal(left, right)
+        assert decision.verdict is EqualityVerdict.UNEQUAL, decision.reason
+        assert decision.method is DecisionMethod.ORACLE_COUNTEREXAMPLE
+        assert decision.samples_checked >= 1
+
+    def test_refused_samples_carry_their_reason(self) -> None:
+        samples = [{"d": 2}, {"d": 3}]
+        refutation = refute_by_oracle(
+            _ring(30, None), _ring(30, None), samples=samples, max_elements=1
+        )
+        assert not refutation.evaluated
+        assert refutation.refusals and "ContractSizeError" in refutation.refusals[0]
+        decision = decide_equal(_ring(4, None), _phased_ring(4), samples=samples, max_elements=1)
+        assert decision.samples_checked == 0
+        assert "no oracle sample evaluated; 2 sample(s) refused" in decision.reason
+
+
+class TestDimensionFloors:
+    """A phase index k over a bare dimension symbol d confines the family to d > k."""
+
+    def test_floors_come_from_phase_indices(self) -> None:
+        phase = PhaseVector(
+            D, {1: Phase.turns(sp.Rational(1, 3)), 3: Phase.turns(1 / sp.Integer(2))}
+        )
+        assert dimension_floors(_phased_cap(phase), _phased_cap(None)) == {"d": 4}
+        assert dimension_floors(_phased_cap(None)) == {}
+
+    def test_a_difference_living_only_below_the_floor_is_equal(self) -> None:
+        phase = PhaseVector(D, {1: Phase.turns(sp.Rational(1, 3))})
+        decision = decide_equal(_phased_cap(phase), _phased_cap(None), use_saturation=False)
+        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
+        assert "given d >= 2" in decision.reason

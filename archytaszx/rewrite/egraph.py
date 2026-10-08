@@ -55,13 +55,12 @@ from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError
-from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError
 from archytaszx.diagram.validate import ValidateError
 from archytaszx.rewrite.cache import CacheError, RewriteCache
 from archytaszx.rewrite.engine import RewriteResult, apply
-from archytaszx.rewrite.normal_form import comparison_view
+from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
 from archytaszx.rewrite.rule import Match, RewriteError, RewriteGrammarError, Rule
 from archytaszx.rewrite.rules_library import RULES
 
@@ -384,9 +383,9 @@ class EGraph:
 
     def _find_view(self, view: Diagram) -> tuple[str, int | None]:
         """``view``'s key and the e-node whose view is isomorphic to it, if any."""
-        key = canonical_key(view)
+        key = view_key(view)
         for index in self._buckets.get(key, ()):
-            if isomorphic(view, self._views[index]):
+            if views_isomorphic(view, self._views[index]):
                 return key, index
         return key, None
 

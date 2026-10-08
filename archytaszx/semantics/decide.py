@@ -56,7 +56,6 @@ from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols, instantiate_symbol
-from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
@@ -67,6 +66,7 @@ from archytaszx.rewrite.normal_form import (
     comparison_view,
     normal_form,
     same_normal_form,
+    views_isomorphic,
 )
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError, Rule
 from archytaszx.semantics.certificate import Certificate, CertificateError, certify, replay
@@ -469,11 +469,13 @@ def _check_args(
 
 @dataclass(frozen=True, slots=True)
 class _OracleRun:
-    """The oracle rung's outcome: evaluated samples, and the first mismatch if any."""
+    """The oracle rung's outcome: evaluated samples, the first mismatch if any, and why each
+    refused sample was refused."""
 
     evaluated: tuple[Mapping[str, CheckAssignmentValue], ...]
     mismatch: Mapping[str, CheckAssignmentValue] | None
     comparison: ComparisonResult | None
+    refusals: tuple[str, ...] = ()
 
 
 def _magnitude(
@@ -491,11 +493,12 @@ def _oracle_compare(
     table: Mapping[str, frozenset[sp.Symbol]],
     tolerance: float,
     max_elements: int,
-) -> tuple[bool, ComparisonResult | None]:
-    """(evaluated, mismatch): the oracle's EXACT comparison at ``assignment``, a mismatch kept
-    only when its deviation exceeds ``tolerance * max(1, largest entry modulus)``."""
+) -> tuple[str | None, ComparisonResult | None]:
+    """(refusal, mismatch): why the oracle could not evaluate ``assignment`` (None when it did),
+    and its EXACT comparison's mismatch, kept only when the deviation exceeds
+    ``tolerance * max(1, largest entry modulus)``."""
     if not _admissible(assignment, table):
-        return False, None
+        return "breaks a symbol's assumptions", None
     try:
         result = compare(
             left,
@@ -505,10 +508,10 @@ def _oracle_compare(
             tolerance=tolerance,
             max_elements=max_elements,
         )
-    except _ORACLE_ERRORS:
-        return False, None
+    except _ORACLE_ERRORS as exc:
+        return f"{type(exc).__name__}: {exc}", None
     if result.matched:
-        return True, None
+        return None, None
     if math.isfinite(result.max_abs_deviation):
         try:
             scale = max(
@@ -517,10 +520,10 @@ def _oracle_compare(
                 _magnitude(right, assignment, max_elements),
             )
         except _ORACLE_ERRORS:
-            return True, None
+            return None, None
         if result.max_abs_deviation <= tolerance * scale:
-            return True, None
-    return True, result
+            return None, None
+    return None, result
 
 
 def _run_oracle(
@@ -535,17 +538,32 @@ def _run_oracle(
     mismatches; a candidate the oracle refuses or that breaks an assumption is skipped."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
+    refusals: list[str] = []
     for candidate in candidates:
         if len(evaluated) >= max_samples:
             break
         assignment = MappingProxyType(dict(candidate))
-        done, mismatch = _oracle_compare(left, right, assignment, table, tolerance, max_elements)
-        if not done:
+        refusal, mismatch = _oracle_compare(left, right, assignment, table, tolerance, max_elements)
+        if refusal is not None:
+            refusals.append(f"{dict(assignment)!r}: {refusal}")
             continue
         evaluated.append(assignment)
         if mismatch is not None:
-            return _OracleRun(tuple(evaluated), assignment, mismatch)
-    return _OracleRun(tuple(evaluated), None, None)
+            return _OracleRun(tuple(evaluated), assignment, mismatch, tuple(refusals))
+    return _OracleRun(tuple(evaluated), None, None, tuple(refusals))
+
+
+def oracle_summary(checked: int, refusals: Sequence[str]) -> str:
+    """One line on an oracle run that found no mismatch: how many samples evaluated, and how
+    many were refused, with the first refusal."""
+    head = (
+        "no oracle sample evaluated"
+        if checked == 0
+        else (f"no oracle mismatch in {checked} sample(s)")
+    )
+    if not refusals:
+        return head
+    return f"{head}; {len(refusals)} sample(s) refused, first at {refusals[0]}"
 
 
 def interface_reason(left: Diagram, right: Diagram) -> str | None:
@@ -563,6 +581,7 @@ class OracleRefutation:
     evaluated: tuple[Mapping[str, CheckAssignmentValue], ...]
     counterexample: Mapping[str, CheckAssignmentValue] | None
     comparison: ComparisonResult | None
+    refusals: tuple[str, ...] = ()
 
     @property
     def refuted(self) -> bool:
@@ -600,7 +619,7 @@ def refute_by_oracle(
     family_r = _family(right)
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
     run = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
-    return OracleRefutation(run.evaluated, run.mismatch, run.comparison)
+    return OracleRefutation(run.evaluated, run.mismatch, run.comparison, run.refusals)
 
 
 def _confirm_mismatch(
@@ -616,6 +635,21 @@ def _confirm_mismatch(
     return _oracle_compare(left, right, assignment, table, tolerance, max_elements)[1]
 
 
+def dimension_floors(*diagrams: Diagram) -> dict[str, int]:
+    """The least value each bare dimension symbol can take for every phase vector over it in
+    ``diagrams`` to be defined: one above its largest stored index."""
+    floors: dict[str, int] = {}
+    for diagram in diagrams:
+        for node in diagram.nodes.values():
+            if node.phase is None or not node.phase.entries():
+                continue
+            dim = node.phase.dim.to_sympy()
+            if dim.is_Symbol:
+                name = str(dim.name)
+                floors[name] = max(floors.get(name, 1), max(node.phase.entries()) + 1)
+    return floors
+
+
 def _symbolic_match(left: Diagram, right: Diagram) -> tuple[bool, str]:
     """Whether both symbolic contractions agree exactly over equal boundaries, and a reason."""
     interface = _symbolic_interface_reason(left, right)
@@ -624,7 +658,9 @@ def _symbolic_match(left: Diagram, right: Diagram) -> tuple[bool, str]:
     try:
         tensor_l = contract_symbolic(left)
         tensor_r = contract_symbolic(right)
-        result = compare_symbolic(tensor_l, tensor_r)
+        result = compare_symbolic(
+            tensor_l, tensor_r, dimension_floors=dimension_floors(left, right)
+        )
     except _SYMBOLIC_ERRORS as exc:
         return False, f"symbolic contraction declined: {type(exc).__name__}: {exc}"
     return result.matched, result.reason
@@ -674,7 +710,7 @@ def _run_saturation(
                     report, None, (), f"edge {position} did not replay: {replayed.reason}"
                 )
             child = comparison_view(graph.diagram(edge.child))
-            if not isomorphic(comparison_view(certificate.final), child):
+            if not views_isomorphic(comparison_view(certificate.final), child):
                 return _SaturationRun(
                     report, None, (), f"edge {position} does not reach its child e-node"
                 )
@@ -895,11 +931,7 @@ def decide_equal(
             comparison=oracle.comparison,
             samples_checked=checked,
         )
-    sampled = (
-        "no oracle sample evaluated"
-        if checked == 0
-        else f"no oracle mismatch in {checked} sample(s)"
-    )
+    sampled = oracle_summary(checked, oracle.refusals)
     if nf_equal:
         return finish(
             EqualityVerdict.EQUAL,
@@ -909,7 +941,7 @@ def decide_equal(
             samples_checked=checked,
         )
 
-    notes = [nf_reason, f"no oracle mismatch in {checked} sample(s)"]
+    notes = [nf_reason, sampled]
     if use_saturation:
         run = _run_saturation(left, right, rules, saturation_limits)
         saturation = run.report

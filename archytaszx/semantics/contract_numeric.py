@@ -27,9 +27,11 @@ Then refuse any non-concrete port dimension, phase vector, or diagram
 Each node's axes get their own integer label, and a :class:`~archytaszx.diagram.graph.Wire`
 unifies its two ports' labels, regardless of direction. A self-loop unifies two labels
 already on the same tensor, which is exactly a partial trace. Free ports keep a distinct
-label. The contraction is one ``numpy.einsum`` call in interleaved form with plain ``int``
-labels rather than the 52-letter subscript alphabet. Output axes are ordered
-``boundary_outputs`` then ``boundary_inputs``, per ``denote``'s axis convention.
+label. The network is contracted pair by pair: extent-one axes are dropped, then the two
+tensors sharing a label whose result is smallest are merged by one two-operand
+``numpy.einsum`` over locally renumbered labels, so the diagram's label count is unbounded.
+Output axes are ordered ``boundary_outputs`` then ``boundary_inputs``, per ``denote``'s axis
+convention.
 ``validate`` guarantees every port is wired exactly once or on exactly one boundary list;
 two consistency checks stand behind that guarantee rather than resting on it -- each node's
 port-label count against its tensor's rank, and every boundary ref confirmed labelled --
@@ -41,8 +43,8 @@ An empty diagram evaluates directly to the rank-0 array holding
 
 Size guard. A node's element count is the product of its per-leg dimensions.
 ``max_elements`` (default ``10_000_000``, about 160 MB of ``complex128``) is checked
-against each node's own tensor before it is denoted and against the output tensor before
-contraction, raising :class:`ContractSizeError`.
+against each node's own tensor before it is denoted, against the output tensor before
+contraction, and against every intermediate, raising :class:`ContractSizeError`.
 
 Return type. :func:`contract` returns a :class:`ContractionResult`: the tensor, the ordered
 :class:`~archytaszx.diagram.graph.PortRef`\\ s that produced its axes, and the count of leading
@@ -64,18 +66,8 @@ from archytaszx.diagram.validate import ValidationReport, validate
 from archytaszx.semantics.denote import denote, leg_dimensions
 
 DEFAULT_MAX_ELEMENTS = 10_000_000
-"""The default cap on the element count of any single tensor this module allocates.
-
-Also the memory limit handed to :func:`numpy.einsum_path`, so it bounds the contraction's
-intermediates as well as its inputs and its output."""
-
-_MAX_EINSUM_LABELS = 52
-"""The exclusive upper bound :func:`numpy.einsum`'s sublist interface puts on an axis label.
-
-It maps each integer label onto a fixed 52-character alphabet, raising ``ValueError:
-subscript is not within the valid range [0, 52)`` for anything outside it. :func:`contract`
-checks both the label count and the largest label first, raising
-:class:`ContractSizeError` instead."""
+"""The default cap on the element count of any single tensor this module allocates, inputs,
+intermediates and output alike."""
 
 
 class ContractError(Exception):
@@ -212,6 +204,93 @@ def _check_size(elements: int, *, max_elements: int, what: str) -> None:
         )
 
 
+def _squeezed(tensor: np.ndarray, axis_labels: list[int]) -> tuple[np.ndarray, list[int]]:
+    """``tensor`` without its extent-one axes, and the labels of the axes kept."""
+    kept = [i for i, extent in enumerate(tensor.shape) if extent != 1]
+    return tensor.reshape([tensor.shape[i] for i in kept]), [axis_labels[i] for i in kept]
+
+
+def _einsum_local(
+    operands: list[tuple[np.ndarray, list[int]]], output_labels: list[int]
+) -> np.ndarray:
+    """One ``numpy.einsum`` over ``operands`` with labels renumbered from zero."""
+    local: dict[int, int] = {}
+    arguments: list[Any] = []
+    for tensor, axis_labels in operands:
+        arguments.append(tensor)
+        arguments.append([local.setdefault(label, len(local)) for label in axis_labels])
+    arguments.append([local.setdefault(label, len(local)) for label in output_labels])
+    return np.asarray(np.einsum(*arguments, optimize=len(operands) > 1))
+
+
+def _contract_network(
+    operands: list[tuple[np.ndarray, list[int]]],
+    output_labels: list[int],
+    extents: dict[int, int],
+    max_elements: int,
+) -> np.ndarray:
+    """Contract ``operands`` into one tensor over ``output_labels``, greedily pair by pair.
+
+    Each step merges the two live tensors sharing a label whose merged tensor is smallest,
+    keeping every label still read by another tensor or by the output; with no shared label
+    left, the two smallest tensors are merged by outer product.
+    """
+    live: dict[int, tuple[np.ndarray, list[int]]] = dict(
+        enumerate(_squeezed(tensor, axis_labels) for tensor, axis_labels in operands)
+    )
+    wanted = [label for label in output_labels if extents[label] != 1]
+    readers: dict[int, int] = {label: 1 for label in wanted}
+    for _tensor, axis_labels in live.values():
+        for label in set(axis_labels):
+            readers[label] = readers.get(label, 0) + 1
+    next_key = len(live)
+
+    def merged_labels(first: int, second: int) -> list[int]:
+        own = set(live[first][1]) | set(live[second][1])
+        local = {label: (label in live[first][1]) + (label in live[second][1]) for label in own}
+        result: list[int] = []
+        for label in (*live[first][1], *live[second][1]):
+            if readers[label] > local[label] and label not in result:
+                result.append(label)
+        return result
+
+    while len(live) > 1:
+        owners: dict[int, list[int]] = {}
+        for key in sorted(live):
+            for label in set(live[key][1]):
+                owners.setdefault(label, []).append(key)
+        pairs = {
+            (keys[i], keys[j])
+            for keys in owners.values()
+            for i in range(len(keys))
+            for j in range(i + 1, len(keys))
+        }
+        if not pairs:
+            first, second = sorted(live, key=lambda key: (live[key][0].size, key))[:2]
+            pairs = {(min(first, second), max(first, second))}
+        best: tuple[int, int, int, list[int]] | None = None
+        for first, second in sorted(pairs):
+            result = merged_labels(first, second)
+            cost = math.prod(extents[label] for label in result)
+            if best is None or cost < best[0]:
+                best = (cost, first, second, result)
+        assert best is not None
+        cost, first, second, result = best
+        _check_size(cost, max_elements=max_elements, what="an intermediate tensor")
+        pair = [live.pop(first), live.pop(second)]
+        for _tensor, axis_labels in pair:
+            for label in set(axis_labels):
+                readers[label] -= 1
+        for label in result:
+            readers[label] += 1
+        live[next_key] = (_einsum_local(pair, result), result)
+        next_key += 1
+
+    tensor, axis_labels = next(iter(live.values()))
+    tensor = _einsum_local([(tensor, axis_labels)], wanted)
+    return tensor.reshape([extents[label] for label in output_labels])
+
+
 def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> ContractionResult:
     """Contract a fully concrete, bang-box-free diagram into one tensor.
 
@@ -234,20 +313,7 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
 
     labels = _assign_labels(diagram)
 
-    # Both the count and the largest value: numpy validates each subscript integer against
-    # [0, _MAX_EINSUM_LABELS), and _assign_labels draws from a counter that skips a value
-    # whenever two equivalence classes merge, so the two bounds are not the same check.
-    distinct_labels = len(set(labels.values()))
-    highest_label = max(labels.values(), default=-1)
-    if distinct_labels > _MAX_EINSUM_LABELS or highest_label >= _MAX_EINSUM_LABELS:
-        raise ContractSizeError(
-            f"diagram contracts over {distinct_labels} distinct axis labels, the highest "
-            f"being {highest_label}, against numpy.einsum's sublist-interface range of "
-            f"[0, {_MAX_EINSUM_LABELS}) (see _MAX_EINSUM_LABELS); every wire equivalence "
-            "class and every boundary port takes one label"
-        )
-
-    einsum_args: list[Any] = []
+    operands: list[tuple[np.ndarray, list[int]]] = []
     for node_id, node in diagram.nodes.items():
         elements = math.prod(leg_dimensions(node))
         _check_size(elements, max_elements=max_elements, what=f"node {node_id!r}'s tensor")
@@ -268,8 +334,7 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
                 f"node {node_id!r} has {tensor.ndim} tensor axes but {len(axis_labels)} "
                 "port labels; this indicates an internal bookkeeping inconsistency"
             )
-        einsum_args.append(tensor)
-        einsum_args.append(axis_labels)
+        operands.append((tensor, axis_labels))
 
     missing = [ref for ref in axis_refs if ref not in labels]
     if missing:
@@ -285,13 +350,10 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
         output_elements *= port.dim.to_int()
     _check_size(output_elements, max_elements=max_elements, what="the contracted output tensor")
 
-    # optimize=("greedy", max_elements): the planner contracts pairwise instead of
-    # iterating the full index space, and declines any pairing whose intermediate exceeds
-    # the same cap _check_size applies to the inputs and the output.
-    path, _path_info = np.einsum_path(
-        *einsum_args, output_labels, optimize=("greedy", max_elements)
-    )
-    raw_tensor = np.einsum(*einsum_args, output_labels, optimize=path)
+    extents: dict[int, int] = {}
+    for tensor, axis_labels in operands:
+        extents.update(zip(axis_labels, tensor.shape, strict=True))
+    raw_tensor = _contract_network(operands, output_labels, extents, max_elements)
     tensor = np.asarray(raw_tensor, dtype=np.complex128) * diagram.scalar.to_complex()
     return ContractionResult(
         tensor=tensor, axis_refs=axis_refs, num_boundary_outputs=num_boundary_outputs

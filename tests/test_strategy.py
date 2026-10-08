@@ -313,10 +313,14 @@ class TestNormalFormRuleResolution:
             "triangle_inverse_cancellation",
             "fourier_cancellation",
             "fourier_state_color_change",
+            "fourier_state_color_change_swapped",
             "spider_fusion",
             "hopf",
+            "hopf_swapped",
             "state_copy",
+            "state_copy_swapped",
             "zx_cap",
+            "zx_cap_swapped",
         )
 
     def test_resolved_and_skipped_names_partition_the_declared_tuple(self) -> None:

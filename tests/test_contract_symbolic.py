@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import cmath
 import itertools
+import math
 
 import numpy as np
 import pytest
@@ -25,10 +26,11 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.scalar import ModDelta, ModGcd, Scalar
 from archytaszx.diagram.bangbox import Mult, expand_concrete_boxes
 from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER, GeneratorType
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
-from archytaszx.semantics.check import score
+from archytaszx.semantics.check import compare_symbolic, score
 from archytaszx.semantics.contract_numeric import ContractSizeError, contract
 from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
@@ -355,7 +357,7 @@ class TestCrossProcessDeterminism:
     def test_output_is_identical_across_hash_seeds(self) -> None:
         outputs = {self._run(seed) for seed in ("0", "1", "17", "424242")}
         assert len(outputs) == 1
-        assert "Sum" in next(iter(outputs))
+        assert "ModDelta" in next(iter(outputs))
 
     def test_no_dummy_symbol_is_ever_constructed(self) -> None:
         import pathlib
@@ -435,3 +437,157 @@ class TestBangBoxesInSymbolicContraction:
         diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset({state}))
         with pytest.raises(SymbolicContractionUnsupportedError):
             contract_symbolic(diagram)
+
+
+def _zx_loops(dim: Dim, count: int, legs: int = 1) -> Diagram:
+    """``count`` disjoint scalars, each a Z state joined to an X effect by ``legs`` wires."""
+    diagram = Diagram()
+    for _ in range(count):
+        z = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim] * legs)
+        x = diagram.add_node(X_SPIDER, input_dims=[dim] * legs, output_dims=[])
+        for leg in range(legs):
+            diagram.add_wire(PortRef(z, Direction.OUTPUT, leg), PortRef(x, Direction.INPUT, leg))
+    return diagram
+
+
+def _residual_sums(tensor: SymbolicTensor) -> set[sp.Sum]:
+    return set(tensor.entry.to_sympy().atoms(sp.Sum))
+
+
+class TestClosedFormsAtLargeDimension:
+    """A diagram whose value has a closed form in d closes with d formal, so substituting a
+    large d costs nothing in its size, rather than enumerating d terms per bound index."""
+
+    @pytest.mark.parametrize("count", [1, 2, 3, 4, 6])
+    def test_disjoint_loops_close_to_a_power_of_d(self, count: int) -> None:
+        symbolic = contract_symbolic(_zx_loops(D, count)).simplify()
+        assert not _residual_sums(symbolic)
+        assert sp.simplify(symbolic.entry.to_sympy() - D.to_sympy() ** sp.Rational(count, 2)) == 0
+
+    @pytest.mark.parametrize("count", [1, 2, 3])
+    @pytest.mark.parametrize("value", [2, 3, 5])
+    def test_closed_loops_agree_with_the_oracle(self, count: int, value: int) -> None:
+        symbolic = contract_symbolic(_zx_loops(D, count)).simplify()
+        numeric = score(_zx_loops(D, count), {"d": value}).tensor
+        assert np.allclose(np.asarray(symbolic.substitute({"d": value}).to_dense()), numeric)
+
+    def test_a_million_dimensional_value_is_a_substitution(self) -> None:
+        closed = contract_symbolic(_zx_loops(D, 2)).simplify()
+        assert closed.substitute({"d": 10**6}).entry.to_sympy() == sp.Integer(10**6)
+
+    def test_substituting_first_still_closes_without_enumeration(self) -> None:
+        # Before inner-delta elimination this enumerated d**2 terms; at d = 10**4 it would
+        # not finish.
+        raw = contract_symbolic(_zx_loops(D, 2)).substitute({"d": 10**4})
+        assert raw.simplify().entry.to_sympy() == sp.Integer(10**4)
+
+    def test_squared_delta_closes(self) -> None:
+        k, u = sp.symbols("_k1 _k0", integer=True, nonnegative=True)
+        d = D.to_sympy()
+        delta = sp.Sum(sp.exp(2 * sp.pi * sp.I * k * u / d), (k, 0, d - 1))
+        closed = Scalar(sp.Sum(delta**2, (u, 0, d - 1))).simplify().to_sympy()
+        assert closed == d**2
+
+    def test_an_unread_bound_index_contributes_its_range(self) -> None:
+        k, u = sp.symbols("_k1 _k0", integer=True, nonnegative=True)
+        d = D.to_sympy()
+        body = sp.exp(2 * sp.pi * sp.I * k**2 / d)
+        expected = Scalar(d * sp.Sum(body, (k, 0, d - 1))).simplify()
+        assert Scalar(sp.Sum(body, (u, 0, d - 1), (k, 0, d - 1))).simplify() == expected
+
+    @pytest.mark.parametrize("sign", [1, -1])
+    @pytest.mark.parametrize("linear", [0, 2, -4])
+    def test_quadratic_gauss_sum_has_a_closed_form(self, sign: int, linear: int) -> None:
+        gauss = Scalar.index_sum(
+            D, lambda k: Scalar.omega(D, sign * k.to_sympy() ** 2 + linear * k.to_sympy())
+        ).simplify()
+        assert not gauss.to_sympy().atoms(sp.Sum)
+        for value in range(1, 13):
+            direct = sum(
+                cmath.exp(2j * cmath.pi * (sign * j * j + linear * j) / value) for j in range(value)
+            )
+            assert abs(gauss.substitute({"d": value}).to_complex() - direct) < 1e-9
+
+    def test_odd_linear_term_is_left_open(self) -> None:
+        # Completing the square needs half the linear coefficient to be an integer.
+        gauss = Scalar.index_sum(
+            D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + k.to_sympy())
+        ).simplify()
+        assert gauss.to_sympy().atoms(sp.Sum)
+
+    @pytest.mark.parametrize("value", [1, 2, 3, 4, 5, 1000])
+    def test_hopf_pair_closes_to_a_gcd(self, value: int) -> None:
+        symbolic = contract_symbolic(_zx_loops(D, 1, legs=2)).simplify()
+        assert not _residual_sums(symbolic)
+        assert symbolic.entry == Scalar(ModGcd(2, D.to_sympy()))
+        assert symbolic.substitute({"d": value}).entry == Scalar.rational(math.gcd(2, value))
+        if value <= 5:
+            numeric = score(_zx_loops(D, 1, legs=2), {"d": value}).tensor
+            assert np.allclose(np.asarray(symbolic.substitute({"d": value}).to_dense()), numeric)
+
+    @pytest.mark.parametrize("legs", [3, 4, 6])
+    def test_parallel_wires_close_to_a_gcd_at_large_concrete_d(self, legs: int) -> None:
+        raw = contract_symbolic(_zx_loops(D, 2, legs=legs)).substitute({"d": 10**6})
+        expected = math.gcd(legs, 10**6) ** 2 * sp.Integer(10**6) ** (2 - legs)
+        assert raw.simplify().entry == Scalar(expected)
+
+
+def _z_chain(dim: Dim, count: int) -> Diagram:
+    """``count`` Z spiders in series, each with one extra boundary output."""
+    diagram = Diagram()
+    nodes = [
+        diagram.add_node(Z_SPIDER, input_dims=[dim], output_dims=[dim, dim]) for _ in range(count)
+    ]
+    for first, second in itertools.pairwise(nodes):
+        diagram.add_wire(PortRef(first, Direction.OUTPUT, 1), PortRef(second, Direction.INPUT, 0))
+    diagram.set_boundary_outputs(
+        [PortRef(node, Direction.OUTPUT, 0) for node in nodes]
+        + [PortRef(nodes[-1], Direction.OUTPUT, 1)]
+    )
+    diagram.set_boundary_inputs([PortRef(nodes[0], Direction.INPUT, 0)])
+    return diagram
+
+
+class TestOpenTensorsCloseToDeltas:
+    """An open diagram's entry closes to Kronecker deltas over its free indices, no sums left."""
+
+    @staticmethod
+    def _index(position: int) -> sp.Symbol:
+        return sp.Symbol(f"_i{position}", integer=True, nonnegative=True)
+
+    def test_a_three_leg_z_spider_is_a_product_of_deltas(self) -> None:
+        d = D.to_sympy()
+        i0, i1, i2 = (self._index(n) for n in range(3))
+        entry = contract_symbolic(_single(Z_SPIDER, 0, 3, D)).entry
+        assert entry == Scalar(ModDelta(i0 - i1, d) * ModDelta(i0 - i2, d))
+
+    def test_a_three_leg_x_spider_is_one_delta_on_the_total(self) -> None:
+        d = D.to_sympy()
+        i0, i1, i2 = (self._index(n) for n in range(3))
+        entry = contract_symbolic(_single(X_SPIDER, 1, 2, D)).entry
+        assert entry == Scalar(ModDelta(i0 + i1 - i2, d) / sp.sqrt(d))
+
+    @pytest.mark.parametrize("count", [2, 3, 5])
+    def test_a_z_chain_equals_its_fused_spider(self, count: int) -> None:
+        chain = contract_symbolic(_z_chain(D, count))
+        fused = contract_symbolic(_single(Z_SPIDER, 1, count + 1, D))
+        assert not _residual_sums(chain)
+        assert compare_symbolic(chain, fused).matched
+
+    @pytest.mark.parametrize("value", [10**3, 10**6])
+    def test_a_large_concrete_d_is_a_substitution(self, value: int) -> None:
+        symbolic = contract_symbolic(_z_chain(D, 4))
+        assert not _residual_sums(symbolic.substitute({"d": value}).simplify())
+
+    def test_substituting_before_simplifying_never_enumerates(self) -> None:
+        diagram = _z_chain(D, 3)
+        diagram.set_scalar(Scalar.one())
+        raw = contract_symbolic(diagram).substitute({"d": 10**5}).simplify()
+        assert not _residual_sums(raw)
+
+    @pytest.mark.parametrize("value", [2, 3, 4])
+    def test_open_networks_agree_with_the_oracle(self, value: int) -> None:
+        for diagram in (_z_chain(D, 3), _ghz_with_copy(D), _single(X_SPIDER, 2, 2, D)):
+            symbolic = contract_symbolic(diagram).substitute({"d": value})
+            numeric = score(diagram, {"d": value}).tensor
+            assert np.allclose(np.asarray(symbolic.to_dense()), numeric)
