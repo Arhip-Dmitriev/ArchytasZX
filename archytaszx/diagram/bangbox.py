@@ -23,10 +23,10 @@ operation as a fused pair being replicated wholesale (fusion under a box).
 * :attr:`BangBox.node_scope` -- whole nodes; instantiating at k builds k independent
   fresh copies of the scope and its internal wiring.
 
-Exactly one is non-empty per box (:meth:`BangBox.__post_init__`). A crossing attachment
-(a wire leaving scope, or a scoped port) is only supported when it lands on the diagram's
-own boundary lists -- both Phase 7 worked examples only ever cross there; wiring a box's
-interior to an untouched sibling node is future work.
+Exactly one is non-empty per box (:meth:`BangBox.__post_init__`). A scoped port must be a
+diagram boundary slot. A node-scope box may also be wired to a node outside it: each such
+outside port fans out to one leg per copy, so a hub spider wired to a boxed satellite
+denotes the hub wired to k satellites.
 
 Nesting. A child's ``parent`` names its enclosing box. Instantiating a node-scope box at
 k >= 2 also replicates every child once per new copy, *keeping its multiplicity symbol
@@ -354,20 +354,15 @@ def boundary_refs_in_scope(diagram: Diagram, node_scope: frozenset[NodeId]) -> f
     )
 
 
-def _non_boundary_crossing(diagram: Diagram, node_scope: frozenset[NodeId]) -> Wire | None:
-    """The first crossing wire (if any) that does not land on the diagram boundary.
-
-    Every crossing wire's outside endpoint is on some other live node; a crossing wire is
-    only supported here when that outside endpoint is a diagram boundary port -- see the
-    module docstring's Phase 7 scope restriction. Returns ``None`` when every crossing is
-    boundary-only.
-    """
-    boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
-    for wire in crossing_wires(diagram, node_scope):
-        outside_ref = wire.a if wire.a.node_id not in node_scope else wire.b
-        if outside_ref not in boundary:
-            return wire
-    return None
+def outside_crossings(
+    diagram: Diagram, node_scope: frozenset[NodeId]
+) -> tuple[tuple[PortRef, PortRef], ...]:
+    """Every crossing wire as an ``(inside, outside)`` port pair, sorted by the outside port."""
+    pairs = (
+        (w.a, w.b) if w.a.node_id in node_scope else (w.b, w.a)
+        for w in crossing_wires(diagram, node_scope)
+    )
+    return tuple(sorted(pairs, key=lambda pair: pair[1].sort_key()))
 
 
 # -- abstraction ------------------------------------------------------------------------
@@ -483,11 +478,7 @@ def _remap_grown_port(
 def _grow_port(
     diagram: Diagram, ref: PortRef, k: int, *, owner_box_id: BangBoxId | None = None
 ) -> NodeId:
-    """Grow (or, at ``k == 0``, remove) the single leg at ``ref`` to ``k`` legs, in place.
-
-    Requires ``ref`` to currently be a diagram boundary slot -- see the module
-    docstring's Phase 7 scope restriction; a leg wired to another node cannot grow
-    without that node growing too, which this phase does not attempt.
+    """Grow (or, at ``k == 0``, remove) the single boundary leg at ``ref`` to ``k`` legs, in place.
 
     A phaseless spider left with no legs takes the zero phase vector at the removed leg's
     dimension.
@@ -502,16 +493,22 @@ def _grow_port(
     node = diagram.nodes.get(ref.node_id)
     if node is None:
         raise BangBoxGrammarError(f"port-scope bang box references unknown node {ref.node_id!r}")
-    legs = node.legs(ref.direction)
-    if ref.index >= len(legs):
+    if ref.index >= len(node.legs(ref.direction)):
         raise BangBoxGrammarError(f"port-scope bang box port {ref!r} is out of range")
     if ref not in diagram.boundary_inputs and ref not in diagram.boundary_outputs:
         raise BangBoxGrammarError(
             f"port-scope instantiate only supports a scoped port that is a diagram "
-            f"boundary slot; {ref!r} is wired internally, which this phase does not "
-            "support (see archytaszx.diagram.bangbox's module docstring)"
+            f"boundary slot; {ref!r} is wired internally"
         )
+    return _regrow_port(diagram, ref, k, owner_box_id=owner_box_id)
 
+
+def _regrow_port(
+    diagram: Diagram, ref: PortRef, k: int, *, owner_box_id: BangBoxId | None = None
+) -> NodeId:
+    """Replace ``ref``'s node by one whose leg at ``ref`` is ``k`` legs; ``ref`` must be unwired."""
+    node = diagram.nodes[ref.node_id]
+    legs = node.legs(ref.direction)
     target_dim = legs[ref.index].dim
     old_input_dims = [p.dim for p in node.inputs]
     old_output_dims = [p.dim for p in node.outputs]
@@ -548,8 +545,6 @@ def _grow_port(
         return _remap_grown_port(old_ref, ref.node_id, new_node_id, ref.direction, ref.index, k)
 
     for wire in old_wires:
-        # Neither end is the grown port itself: the guard above requires it to be a
-        # boundary slot, and _check_port_usage refuses a port both wired and on the boundary.
         # Both ends are remapped, so a wire looping back onto this node survives.
         (end_a,) = remap(wire.a)
         (end_b,) = remap(wire.b)
@@ -674,6 +669,32 @@ def _remove_subtree(diagram: Diagram, box_id: BangBoxId) -> None:
         diagram.remove_bang_box(box.id)
 
 
+def _fan_out(
+    diagram: Diagram,
+    crossings: Iterable[tuple[PortRef, PortRef]],
+    id_maps: list[dict[NodeId, NodeId]],
+) -> None:
+    """Rewire each ``(inside, outside)`` crossing as one outside leg per copy in ``id_maps``."""
+    k = len(id_maps)
+    pending = list(crossings)
+    while pending:
+        inside, outside = pending.pop(0)
+        diagram.remove_wire(inside, outside)
+        new_node_id = _regrow_port(diagram, outside, k)
+        for j, id_map in enumerate(id_maps):
+            diagram.add_wire(
+                PortRef(id_map[inside.node_id], inside.direction, inside.index),
+                PortRef(new_node_id, outside.direction, outside.index + j),
+            )
+        pending = [
+            (other_inside, moved)
+            for other_inside, other_outside in pending
+            for moved in _remap_grown_port(
+                other_outside, outside.node_id, new_node_id, outside.direction, outside.index, k
+            )
+        ]
+
+
 def _rescope_others(diagram: Diagram, removed: frozenset[NodeId], added: frozenset[NodeId]) -> None:
     """Replace ``removed`` by ``added`` in every live node scope; drop emptied boxes."""
     for other_id, other in sorted(diagram.bang_boxes.items()):
@@ -744,14 +765,6 @@ def _gather_ancestors(diagram: Diagram, box: BangBox) -> None:
 
 def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
     scope = box.node_scope
-    bad_wire = _non_boundary_crossing(diagram, scope)
-    if bad_wire is not None:
-        raise BangBoxGrammarError(
-            f"node-scope instantiate only supports a crossing that lands on the diagram "
-            f"boundary; {bad_wire!r} crosses to another live node, which this phase does "
-            "not support (see archytaszx.diagram.bangbox's module docstring)"
-        )
-
     children = _children_of(diagram, box.id)
 
     if k == 0:
@@ -779,6 +792,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         # _grow_port) already repointed diagram.bang_boxes[box.id] itself; only this
         # function's own local snapshot goes stale.
         scope = diagram.bang_boxes[box.id].node_scope
+        _fan_out(diagram, outside_crossings(diagram, scope), [])
         for node_id in scope:
             diagram.remove_node(node_id)
         diagram.remove_bang_box(box.id)
@@ -805,7 +819,6 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
         return
 
     internal = internal_wires(diagram, scope)
-    boundary_crossings = boundary_refs_in_scope(diagram, scope)
 
     id_maps: list[dict[NodeId, NodeId]] = []
     for _ in range(k):
@@ -827,8 +840,9 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
     for id_map in id_maps:
         for wire in sorted(internal, key=lambda w: w.sort_key()):
             diagram.add_wire(remap_ref(wire.a, id_map), remap_ref(wire.b, id_map))
+    _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
 
-    sorted_crossings = sorted(boundary_crossings, key=lambda r: r.sort_key())
+    sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     new_boundary_inputs = _splice_boundary_block(
         list(diagram.boundary_inputs), sorted_crossings, id_maps
     )
@@ -942,15 +956,7 @@ def _peel_port_scope(diagram: Diagram, box: BangBox) -> None:
 def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
     """Add one concrete copy of the scope, after the box's own boundary block."""
     scope = box.node_scope
-    bad_wire = _non_boundary_crossing(diagram, scope)
-    if bad_wire is not None:
-        raise BangBoxGrammarError(
-            f"node-scope peel only supports a crossing that lands on the diagram boundary; "
-            f"{bad_wire!r} crosses to another live node"
-        )
-
     internal = internal_wires(diagram, scope)
-    boundary_crossings = boundary_refs_in_scope(diagram, scope)
 
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(scope):
@@ -969,8 +975,9 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
         )
 
     identity = {old_id: old_id for old_id in scope}
-    sorted_crossings = sorted(boundary_crossings, key=lambda r: r.sort_key())
     id_maps = [identity, id_map]
+    _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
+    sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     diagram.set_boundary_inputs(
         _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, id_maps)
     )
@@ -1075,8 +1082,8 @@ def copy_box(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, BangBoxId]:
     Node-scope only -- a port-scope box has no subgraph to duplicate independently of
     the single node it grows (see the module docstring); calling this on a port-scope
     box raises BangBoxGrammarError. Boundary crossings of the duplicated scope are left
-    dangling on fresh diagram boundary slots appended to the appropriate list, so the
-    result is always well formed without guessing where the caller wants them wired.
+    dangling on fresh diagram boundary slots appended to the appropriate list; each wire
+    to an outside node fans out to one outside leg per copy.
     """
     working = diagram.copy()
     box = working.bang_boxes.get(box_id)
@@ -1084,13 +1091,6 @@ def copy_box(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, BangBoxId]:
         raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
     if not box.is_node_scope:
         raise BangBoxGrammarError("copy_box only supports a node-scope bang box")
-    bad_wire = _non_boundary_crossing(working, box.node_scope)
-    if bad_wire is not None:
-        raise BangBoxGrammarError(
-            f"copy_box only supports a crossing that lands on the diagram boundary; "
-            f"{bad_wire!r} crosses to another live node"
-        )
-
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(box.node_scope):
         node = working.nodes[old_id]
@@ -1107,6 +1107,8 @@ def copy_box(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, BangBoxId]:
             PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
             PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
         )
+    identity = {old_id: old_id for old_id in box.node_scope}
+    _fan_out(working, outside_crossings(working, box.node_scope), [identity, id_map])
 
     scope_boundary_refs = boundary_refs_in_scope(working, box.node_scope)
     for old_ref in sorted(scope_boundary_refs, key=lambda r: r.sort_key()):

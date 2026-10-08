@@ -29,7 +29,6 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
-    BangBoxGrammarError,
     abstract_port_count,
     abstract_subgraph_count,
     free_mult_symbols,
@@ -254,18 +253,17 @@ class TestNegativeAndRegressionControls:
         pre, _box_id, _m = abstract_subgraph_count(pre, frozenset({a_id}), 1, stem="m")
         assert find_matches(pre) == ()
 
-    def test_wire_crossing_to_another_live_node_is_refused_at_instantiation(self) -> None:
-        """A node-scope box's crossing wire must land on the diagram boundary (module
-        docstring's Phase 7 scope restriction); a crossing to another live node is
-        refused with a clear error rather than mishandled."""
+    def test_wire_crossing_to_another_live_node_fans_that_node_out(self) -> None:
+        """A crossing to a live node outside the box gives that node one leg per copy."""
         d = Dim(2)
         diagram = Diagram()
         a = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {}))
         b = diagram.add_node(Z_SPIDER, input_dims=[d], output_dims=[], phase=PhaseVector(d, {}))
         diagram.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
         diagram, _box_id, _m = abstract_subgraph_count(diagram, frozenset({a}), 1, stem="m")
-        with pytest.raises(BangBoxGrammarError):
-            instantiate_symbol(diagram, "m", 2)
+        expanded = instantiate_symbol(diagram, "m", 2)
+        assert validate(expanded).is_valid
+        assert sorted(len(node.inputs) for node in expanded.nodes.values()) == [0, 0, 2]
 
     @pytest.mark.parametrize("k", [0, 1, 2, 3])
     def test_two_boxes_sharing_one_count_symbol_expand_together(self, k: int) -> None:

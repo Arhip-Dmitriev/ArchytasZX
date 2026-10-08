@@ -409,3 +409,119 @@ class TestInstantiationEdgeCases:
         inner_first = instantiate_symbol(instantiate_symbol(diagram, "j", 0), "k", 1)
         outer_first = instantiate_symbol(instantiate_symbol(diagram, "k", 1), "j", 0)
         assert _generators(inner_first) == _generators(outer_first) == ["Z", "X"]
+
+
+def _hub_family(outside_generator: GeneratorType = Z_SPIDER) -> tuple[Diagram, NodeId, NodeId]:
+    """A hub wired to one boxed X satellite, both with a boundary leg."""
+    d = Dim(2)
+    diagram = Diagram()
+    hub = diagram.add_node(
+        outside_generator, input_dims=[], output_dims=[d, d], phase=PhaseVector(d)
+    )
+    satellite = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[d], phase=PhaseVector(d))
+    diagram.add_wire(_out(hub, 1), PortRef(satellite, Direction.INPUT, 0))
+    diagram.set_boundary_outputs([_out(hub, 0), _out(satellite, 0)])
+    diagram.add_bang_box(Mult("n"), node_scope=frozenset({satellite}))
+    return diagram, hub, satellite
+
+
+def _ghz(legs: int) -> Diagram:
+    d = Dim(2)
+    diagram = Diagram()
+    node = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d] * legs, phase=PhaseVector(d))
+    diagram.set_boundary_outputs([_out(node, i) for i in range(legs)])
+    return diagram
+
+
+class TestOutsideCrossing:
+    """A node-scope box wired to a node outside it fans that node's port out per copy."""
+
+    def test_validate_and_instantiate_agree(self) -> None:
+        diagram, _hub, _satellite = _hub_family()
+        assert validate(diagram).is_valid
+        for k in range(5):
+            expanded = instantiate_symbol(diagram, "n", k)
+            assert validate(expanded).is_valid
+            assert np.allclose(score(expanded, {}).tensor, score(_ghz(k + 1), {}).tensor)
+
+    def test_hub_legs_are_copy_ordered(self) -> None:
+        diagram, _hub, _satellite = _hub_family()
+        expanded = instantiate_symbol(diagram, "n", 3)
+        (hub,) = (n for n in expanded.nodes.values() if n.generator_type.name == "Z")
+        assert len(hub.outputs) == 4
+        satellites = [
+            w.b.node_id if w.a.node_id == hub.id else w.a.node_id
+            for i in range(1, 4)
+            for w in expanded.wires
+            if _out(hub.id, i) in (w.a, w.b)
+        ]
+        assert satellites == [ref.node_id for ref in expanded.boundary_outputs[1:]]
+
+    def test_kill_removes_the_hub_leg(self) -> None:
+        diagram, _hub, _satellite = _hub_family()
+        killed = kill(diagram, min(diagram.bang_boxes))
+        (hub,) = killed.nodes.values()
+        assert len(hub.outputs) == 1 and not killed.wires
+
+    @pytest.mark.parametrize("k", [0, 1, 2, 3])
+    def test_peel_then_instantiate_matches_instantiate_at_one_more(self, k: int) -> None:
+        diagram, _hub, _satellite = _hub_family()
+        diagram.set_bang_box_multiplicity(min(diagram.bang_boxes), Mult("n") + 1)
+        peeled = peel_one(diagram, min(diagram.bang_boxes)).diagram
+        assert validate(peeled).is_valid
+        assert np.allclose(
+            score(instantiate_symbol(peeled, "n", k), {}).tensor,
+            score(instantiate_symbol(diagram, "n", k), {}).tensor,
+        )
+
+    def test_nested_family_is_order_independent(self) -> None:
+        diagram, hub, satellite = _hub_family()
+        diagram.set_boundary_outputs([_out(hub, 0), _out(satellite, 0)])
+        (inner,) = diagram.bang_boxes
+        diagram.remove_bang_box(inner)
+        outer = diagram.add_bang_box(Mult("m"), node_scope=frozenset({hub, satellite}))
+        diagram.add_bang_box(Mult("n"), node_scope=frozenset({satellite}), parent=outer)
+        assert validate(diagram).is_valid
+        for m, n in [(1, 0), (1, 2), (2, 2), (2, 3)]:
+            inner_first = instantiate_symbol(instantiate_symbol(diagram, "n", n), "m", m)
+            outer_first = instantiate_symbol(instantiate_symbol(diagram, "m", m), "n", n)
+            assert np.allclose(score(inner_first, {}).tensor, score(outer_first, {}).tensor)
+            assert [len(node.outputs) for node in inner_first.nodes.values()].count(n + 1) == m
+
+    def test_two_wired_sibling_boxes_expand_to_a_complete_bipartite_graph(self) -> None:
+        diagram = Diagram()
+        d = Dim(2)
+        left = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d))
+        right = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[], phase=PhaseVector(d))
+        diagram.add_wire(_out(left, 0), PortRef(right, Direction.INPUT, 0))
+        diagram.add_bang_box(Mult("a"), node_scope=frozenset({left}))
+        diagram.add_bang_box(Mult("b"), node_scope=frozenset({right}))
+        assert validate(diagram).is_valid
+        a_first = instantiate_symbol(instantiate_symbol(diagram, "a", 2), "b", 3)
+        b_first = instantiate_symbol(instantiate_symbol(diagram, "b", 3), "a", 2)
+        for expanded in (a_first, b_first):
+            assert validate(expanded).is_valid
+            assert len(expanded.nodes) == 5 and len(expanded.wires) == 6
+
+    def test_copy_box_fans_the_hub_out_too(self) -> None:
+        from archytaszx.diagram.bangbox import copy_box
+
+        diagram, _hub, _satellite = _hub_family()
+        copied, _box = copy_box(diagram, min(diagram.bang_boxes))
+        assert validate(copied).is_valid
+        (hub,) = (n for n in copied.nodes.values() if n.generator_type.name == "Z")
+        assert len(hub.outputs) == 3
+
+    def test_a_fixed_arity_outside_node_is_refused_by_validate(self) -> None:
+        from archytaszx.diagram.generators import FOURIER_BOX
+        from archytaszx.diagram.validate import IssueKind
+
+        d = Dim(2)
+        diagram = Diagram()
+        box = diagram.add_node(FOURIER_BOX, input_dims=[d], output_dims=[d])
+        satellite = diagram.add_node(X_SPIDER, input_dims=[d], output_dims=[], phase=PhaseVector(d))
+        diagram.add_wire(_out(box, 0), PortRef(satellite, Direction.INPUT, 0))
+        diagram.set_boundary_inputs([PortRef(box, Direction.INPUT, 0)])
+        diagram.add_bang_box(Mult("n"), node_scope=frozenset({satellite}))
+        kinds = {issue.kind for issue in validate(diagram).errors}
+        assert IssueKind.BANGBOX_CROSSING_FIXED_ARITY in kinds

@@ -87,7 +87,7 @@ from archytaszx.algebra.dimension import (
     solve,
     unify_all,
 )
-from archytaszx.diagram.bangbox import BangBox
+from archytaszx.diagram.bangbox import BangBox, outside_crossings
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
     BangBoxId,
@@ -146,6 +146,7 @@ class IssueKind(enum.Enum):
     BANGBOX_PORT_UNKNOWN = "bangbox_port_unknown"
     BANGBOX_PORT_NOT_BOUNDARY = "bangbox_port_not_boundary"
     BANGBOX_PORT_FIXED_ARITY = "bangbox_port_fixed_arity"
+    BANGBOX_CROSSING_FIXED_ARITY = "bangbox_crossing_fixed_arity"
     BANGBOX_SCOPE_OVERLAP = "bangbox_scope_overlap"
     BANGBOX_UNKNOWN_PARENT = "bangbox_unknown_parent"
     BANGBOX_PARENT_CYCLE = "bangbox_parent_cycle"
@@ -911,6 +912,39 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
                 )
 
 
+def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """Every node outside a node-scope box wired into it must admit any leg count on that side."""
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if not box.node_scope <= diagram.nodes.keys():
+            continue
+        fanned: dict[tuple[NodeId, Direction], int] = {}
+        for _inside, outside in outside_crossings(diagram, box.node_scope):
+            side = (outside.node_id, outside.direction)
+            fanned[side] = fanned.get(side, 0) + 1
+        for (node_id, direction), count in sorted(
+            fanned.items(), key=lambda item: (item[0][0], item[0][1].value)
+        ):
+            node = diagram.nodes[node_id]
+            policy = node.generator_type.leg_policy
+            if direction is Direction.INPUT:
+                bound, floor = policy.max_inputs, policy.min_inputs
+            else:
+                bound, floor = policy.max_outputs, policy.min_outputs
+            if bound is not None or floor > len(node.legs(direction)) - count:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_CROSSING_FIXED_ARITY,
+                        message=(
+                            f"bang box {box_id!r} is wired to {direction.value} legs of "
+                            f"{node.generator_type.name} node {node_id!r}, whose leg count "
+                            "cannot take one leg per copy"
+                        ),
+                        bang_box_id=box_id,
+                        node_id=node_id,
+                    )
+                )
+
+
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
     return frozenset(
         issue.bang_box_id
@@ -921,6 +955,7 @@ def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
             IssueKind.BANGBOX_PORT_UNKNOWN,
             IssueKind.BANGBOX_PORT_NOT_BOUNDARY,
             IssueKind.BANGBOX_PORT_FIXED_ARITY,
+            IssueKind.BANGBOX_CROSSING_FIXED_ARITY,
             IssueKind.BANGBOX_UNKNOWN_PARENT,
             IssueKind.BANGBOX_PARENT_CYCLE,
         )
@@ -1078,6 +1113,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     for node in diagram.nodes.values():
         _check_generator_policy(node, issues)
     _check_bangbox_scopes(diagram, issues)
+    _check_bangbox_crossings(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)
