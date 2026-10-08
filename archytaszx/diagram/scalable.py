@@ -716,7 +716,7 @@ class _Open:
     items: list[PortRef | _Open]
 
 
-def _group(
+def group_boundary(
     refs: Sequence[PortRef], chains: Mapping[NodeId, tuple[ScaleId, ...]]
 ) -> tuple[BoundaryItem, ...]:
     """``refs`` regrouped into nested bundles, each placed where its first ref is met."""
@@ -800,8 +800,8 @@ def to_scalable(diagram: Diagram) -> ScalableDiagram:
         nodes=nodes,
         wires=diagram.wires,
         scales=tuple(scales),
-        inputs=_group(diagram.boundary_inputs, chains),
-        outputs=_group(diagram.boundary_outputs, chains),
+        inputs=group_boundary(diagram.boundary_inputs, chains),
+        outputs=group_boundary(diagram.boundary_outputs, chains),
         scalar=diagram.scalar,
         parameters=diagram.parameters,
     )
