@@ -196,12 +196,11 @@ class TestErrorTaxonomy:
         with pytest.raises(InductionGrammarError, match="uninstantiated"):
             build_obligation(pre, post)
 
-    def test_symbolic_contraction_falls_through_on_a_variable_rank(self) -> None:
+    def test_symbolic_contraction_settles_a_variable_rank_step(self) -> None:
         pre, post = _build_boxed_fusion_family()
         obligation = build_obligation(pre, post, witness={"d": 2})
         outcome = induction.discharge_symbolic_contraction(obligation)
-        assert not outcome.settled
-        assert "out of scope for Phase 9" in outcome.reason
+        assert outcome.settled, outcome.reason
 
     def test_symbolic_contraction_is_in_the_default_ladder_before_the_oracle_window(
         self,

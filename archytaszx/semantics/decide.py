@@ -21,14 +21,16 @@
    small deterministic assignment.
 4. ``SATURATION``: an :class:`~archytaszx.rewrite.egraph.EGraph` holding both original
    diagrams, saturated within ``saturation_limits``, merges their e-classes.
-5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal.
+5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal;
+   ``SYMBOLIC_WITNESS``: otherwise, one entry of the two contractions, evaluated at a sample
+   assignment and an index tuple the difference's deltas pin, differs.
 6. ``INDUCTION``: a recursively decided base case plus a proved step case on one
    multiplicity index.
 
-``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1 or an oracle
-counterexample; every other outcome is ``UNKNOWN``. A normal-form match needs both
-certificates to replay; one whose derivations assumed ``DEFERRED`` dimension constraints runs
-rung 3 before it is reported, and the constraints are carried in
+``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
+counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form
+match needs both certificates to replay; one whose derivations assumed ``DEFERRED``
+dimension constraints runs rung 3 before it is reported, and the constraints are carried in
 :attr:`Decision.assumptions`. A saturation merge yields one certificate per edge of
 :meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its edge's parent to its
 child; each must replay onto a diagram whose comparison view is isomorphic to its child's, and
@@ -36,8 +38,9 @@ their ``DEFERRED`` constraints become the assumptions; sides sharing one e-node 
 An oracle mismatch counts only above ``tolerance`` times the larger entry magnitude (at least
 1), at an assignment satisfying every symbol's sympy assumptions. Induction proves ``EQUAL``
 only from base 0. The parameter environment never enters a verdict;
-:attr:`Decision.parameters_agree` reports it. :func:`interface_reason` and
-:func:`refute_by_oracle` run rungs 1 and 3 alone.
+:attr:`Decision.parameters_agree` reports it. :func:`interface_reason`,
+:func:`refute_by_oracle` and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the
+witness search alone.
 """
 
 from __future__ import annotations
@@ -75,13 +78,19 @@ from archytaszx.semantics.check import (
     CheckAssignmentValue,
     CheckError,
     ComparisonResult,
+    EntryWitness,
     EqualityMode,
     compare,
     compare_symbolic,
+    find_entry_witness,
     score,
 )
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractError
-from archytaszx.semantics.contract_symbolic import SymbolicContractionError, contract_symbolic
+from archytaszx.semantics.contract_symbolic import (
+    SymbolicContractionError,
+    SymbolicTensor,
+    contract_symbolic,
+)
 from archytaszx.semantics.denote import DenoteError
 from archytaszx.semantics.induction import (
     InductionError,
@@ -118,6 +127,7 @@ class DecisionMethod(enum.Enum):
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
     INDUCTION = "induction"
     ORACLE_COUNTEREXAMPLE = "oracle_counterexample"
+    SYMBOLIC_WITNESS = "symbolic_witness"
     NONE = "none"
 
 
@@ -127,7 +137,8 @@ class Decision:
 
     ``induction_reversed`` is True when :attr:`induction` was run with ``right`` as its left
     side. ``saturation`` is the saturation rung's report whenever that rung's saturation
-    finished.
+    finished. ``witness`` is the differing entry behind a ``SYMBOLIC_WITNESS`` verdict, whose
+    assignment is also :attr:`counterexample`.
     """
 
     verdict: EqualityVerdict
@@ -144,6 +155,7 @@ class Decision:
     parameters_agree: bool = True
     induction_reversed: bool = False
     saturation: SaturationReport | None = None
+    witness: EntryWitness | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -395,10 +407,8 @@ def _interface_reason(left: Diagram, right: Diagram) -> str | None:
 
 
 def _symbolic_interface_reason(left: Diagram, right: Diagram) -> str | None:
-    """Why the symbolic rung cannot trust a match: a boxed boundary port, or a boundary
-    input/output count or per-position dimension that differs; None when none applies."""
-    if _in_box_scope(left) or _in_box_scope(right):
-        return "a boundary port lies in a bang box's scope"
+    """Why the symbolic rung cannot trust a match: a boundary input/output count or
+    per-position dimension that differs; None when none applies."""
     for label, refs_l, refs_r in (
         ("input", left.boundary_inputs, right.boundary_inputs),
         ("output", left.boundary_outputs, right.boundary_outputs),
@@ -650,11 +660,21 @@ def dimension_floors(*diagrams: Diagram) -> dict[str, int]:
     return floors
 
 
-def _symbolic_match(left: Diagram, right: Diagram) -> tuple[bool, str]:
+@dataclass(frozen=True, slots=True)
+class _SymbolicRun:
+    """The symbolic rung's outcome: whether the contractions matched, a reason, and both
+    contractions when they were built over equal boundaries."""
+
+    matched: bool
+    reason: str
+    tensors: tuple[SymbolicTensor, SymbolicTensor] | None = None
+
+
+def _symbolic_match(left: Diagram, right: Diagram) -> _SymbolicRun:
     """Whether both symbolic contractions agree exactly over equal boundaries, and a reason."""
     interface = _symbolic_interface_reason(left, right)
     if interface is not None:
-        return False, f"symbolic contraction skipped: {interface}"
+        return _SymbolicRun(False, f"symbolic contraction skipped: {interface}")
     try:
         tensor_l = contract_symbolic(left)
         tensor_r = contract_symbolic(right)
@@ -662,8 +682,76 @@ def _symbolic_match(left: Diagram, right: Diagram) -> tuple[bool, str]:
             tensor_l, tensor_r, dimension_floors=dimension_floors(left, right)
         )
     except _SYMBOLIC_ERRORS as exc:
-        return False, f"symbolic contraction declined: {type(exc).__name__}: {exc}"
-    return result.matched, result.reason
+        return _SymbolicRun(False, f"symbolic contraction declined: {type(exc).__name__}: {exc}")
+    return _SymbolicRun(result.matched, result.reason, (tensor_l, tensor_r))
+
+
+def _witness_assignments(
+    left: Diagram,
+    right: Diagram,
+    candidates: Sequence[Mapping[str, CheckAssignmentValue]],
+) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
+    """``candidates`` that meet every symbol's assumptions and every dimension floor."""
+    table = _symbol_table(left, right)
+    floors = dimension_floors(left, right)
+    return tuple(
+        candidate
+        for candidate in candidates
+        if _admissible(candidate, table)
+        and all(
+            not isinstance(candidate.get(name), int) or candidate[name] >= low
+            for name, low in floors.items()
+        )
+    )
+
+
+def _symbolic_witness(
+    left: Diagram,
+    right: Diagram,
+    tensors: tuple[SymbolicTensor, SymbolicTensor],
+    candidates: Sequence[Mapping[str, CheckAssignmentValue]],
+    tolerance: float,
+) -> EntryWitness | None:
+    """The first entry where the two contractions differ at an admissible candidate."""
+    try:
+        return find_entry_witness(
+            *tensors, _witness_assignments(left, right, candidates), tolerance=tolerance
+        )
+    except _SYMBOLIC_ERRORS:
+        return None
+
+
+def refute_by_symbolic_witness(
+    left: Diagram,
+    right: Diagram,
+    *,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    tolerance: float = DEFAULT_TOLERANCE,
+) -> EntryWitness | None:
+    """The symbolic witness search alone, at ``samples`` (default :func:`sample_grid`); None
+    when the contractions are unavailable, agree, or no differing entry is found."""
+    _check_args(
+        left,
+        right,
+        None,
+        DEFAULT_GUARD,
+        samples,
+        0,
+        True,
+        True,
+        0,
+        tolerance,
+        1,
+        True,
+        DECIDE_SATURATION_LIMITS,
+    )
+    family_l = _family(left)
+    family_r = _family(right)
+    run = _symbolic_match(family_l, family_r)
+    if run.matched or run.tensors is None:
+        return None
+    candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
+    return _symbolic_witness(family_l, family_r, run.tensors, candidates, tolerance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -964,16 +1052,38 @@ def decide_equal(
     else:
         notes.append("saturation disabled")
     if use_symbolic:
-        matched, symbolic_reason = _symbolic_match(family_l, family_r)
-        if matched:
+        symbolic = _symbolic_match(family_l, family_r)
+        if symbolic.matched:
             return finish(
                 EqualityVerdict.EQUAL,
                 DecisionMethod.SYMBOLIC_CONTRACTION,
-                f"symbolic contractions agree: {symbolic_reason}",
+                f"symbolic contractions agree: {symbolic.reason}",
                 assumptions=(),
                 samples_checked=checked,
             )
-        notes.append(f"symbolic: {symbolic_reason}")
+        witness = (
+            None
+            if symbolic.tensors is None
+            else _symbolic_witness(family_l, family_r, symbolic.tensors, candidates, tolerance)
+        )
+        if witness is not None:
+            return finish(
+                EqualityVerdict.UNEQUAL,
+                DecisionMethod.SYMBOLIC_WITNESS,
+                f"symbolic contractions differ at {dict(witness.assignment)!r}, boundary index "
+                f"{witness.index}: {witness.left} vs {witness.right}",
+                assumptions=(),
+                counterexample=witness.assignment,
+                comparison=ComparisonResult(
+                    EqualityMode.EXACT,
+                    False,
+                    f"entry {witness.index} differs by {witness.deviation}",
+                    witness.deviation,
+                ),
+                samples_checked=checked,
+                witness=witness,
+            )
+        notes.append(f"symbolic: {symbolic.reason}")
     else:
         notes.append("symbolic contraction disabled")
 

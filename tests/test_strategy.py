@@ -311,6 +311,14 @@ class TestNormalFormRuleResolution:
         assert NORMAL_FORM_RULE_NAMES == (
             "identity_removal",
             "triangle_inverse_cancellation",
+            "w_identity",
+            "w_fusion",
+            "connective_inverse",
+            "connective_inverse_bind_first",
+            "connective_states",
+            "connective_states_swapped",
+            "triangle_zero_state",
+            "triangle_zero_effect",
             "fourier_cancellation",
             "fourier_state_color_change",
             "fourier_state_color_change_swapped",
@@ -319,6 +327,7 @@ class TestNormalFormRuleResolution:
             "hopf_swapped",
             "state_copy",
             "state_copy_swapped",
+            "w_zero_copy",
             "zx_cap",
             "zx_cap_swapped",
         )

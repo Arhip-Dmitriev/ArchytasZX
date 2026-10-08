@@ -84,9 +84,16 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
     (
         "boxed_fusion_induction",
         T8._build_boxed_fusion_family,
-        {"guard": TD.NO_FUSION, "use_saturation": False},
+        {"guard": TD.NO_FUSION, "use_saturation": False, "use_symbolic": False},
         EQUAL,
         DecisionMethod.INDUCTION,
+    ),
+    (
+        "boxed_fusion_symbolic",
+        T8._build_boxed_fusion_family,
+        {"guard": TD.NO_FUSION, "use_saturation": False},
+        EQUAL,
+        DecisionMethod.SYMBOLIC_CONTRACTION,
     ),
     (
         "two_index_fusion_induction",
@@ -98,7 +105,7 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
     (
         "boxed_fusion_induction_swapped",
         lambda: T8._build_boxed_fusion_family()[1::-1],
-        {"guard": TD.NO_FUSION, "use_saturation": False},
+        {"guard": TD.NO_FUSION, "use_saturation": False, "use_symbolic": False},
         EQUAL,
         DecisionMethod.INDUCTION,
     ),
@@ -108,6 +115,13 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         {"samples": [{}]},
         UNEQUAL,
         ORACLE,
+    ),
+    (
+        "refused_ghz_phase",
+        lambda: TD.wide_ghz_phase_pair(4),
+        {"max_elements": 1},
+        UNEQUAL,
+        DecisionMethod.SYMBOLIC_WITNESS,
     ),
     (
         "zero_phase_rungs_disabled",

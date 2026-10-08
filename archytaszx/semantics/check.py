@@ -56,14 +56,21 @@ input and output boundaries and the engine to assert it, feeding Phase 6.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TypeAlias
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.scalar import DEFAULT_MAX_SIMPLIFY_STEPS, ModDelta, ModGcd
+from archytaszx.algebra.scalar import (
+    DEFAULT_MAX_SIMPLIFY_STEPS,
+    ModDelta,
+    ModGcd,
+    Scalar,
+    ScalarError,
+)
 from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
     expand_concrete_boxes,
@@ -72,7 +79,7 @@ from archytaszx.diagram.bangbox import (
 )
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
-from archytaszx.semantics.contract_symbolic import SymbolicTensor
+from archytaszx.semantics.contract_symbolic import SymbolicContractionError, SymbolicTensor
 
 CheckAssignmentValue: TypeAlias = "int | sp.Rational"
 DEFAULT_TOLERANCE = 1e-9
@@ -419,7 +426,8 @@ def compare_symbolic(
     """Compare two symbolic tensors by simplifying the difference of their entries.
 
     Three outcomes, not two: equal, definitely unequal, and indeterminate -- the difference
-    still carries an index sum whose character-sum verdict was undecidable. An indeterminate
+    still carries an index sum whose character-sum verdict was undecidable. Variable-rank
+    tensors match only with equal layouts, shared indices and replicated factors. An indeterminate
     result reports ``matched=False`` with a reason naming the residual sum, so a caller that
     treats "not matched" as "unequal" is wrong and must read ``reason``. ``dimension_floors``
     gives a least value per dimension symbol, applied through
@@ -430,6 +438,18 @@ def compare_symbolic(
             "up-to-global-phase comparison requires concrete entries; substitute the "
             "parameter environment first"
         )
+    if left.is_variable_rank or right.is_variable_rank:
+        if left.signature() != right.signature() or left.shared != right.shared:
+            return ComparisonResult(
+                mode,
+                False,
+                "indeterminate: the variable-rank layouts or shared indices differ",
+                float("inf"),
+            )
+        if tuple(g.factor for g in left.groups) != tuple(g.factor for g in right.groups):
+            return ComparisonResult(
+                mode, False, "indeterminate: the replicated factors differ", float("inf")
+            )
     if left.rank != right.rank:
         return ComparisonResult(mode, False, f"rank {left.rank} != rank {right.rank}", float("inf"))
     if left.dims() != right.dims():
@@ -448,6 +468,13 @@ def compare_symbolic(
             return ComparisonResult(
                 mode, True, f"entries are exactly equal with d formal, given {floors}", 0.0
             )
+    if left.is_variable_rank:
+        return ComparisonResult(
+            mode,
+            False,
+            f"indeterminate: the entries differ by {difference} under shared replicated factors",
+            float("inf"),
+        )
     if difference.to_sympy().atoms(sp.Sum, ModDelta, ModGcd):
         return ComparisonResult(
             mode,
@@ -457,3 +484,116 @@ def compare_symbolic(
             float("inf"),
         )
     return ComparisonResult(mode, False, f"entries differ by {difference}", float("inf"))
+
+
+@dataclass(frozen=True, slots=True)
+class EntryWitness:
+    """One symbol assignment and boundary index tuple, in axis order, at which two symbolic
+    tensors' entries differ, with both entries."""
+
+    assignment: Mapping[str, CheckAssignmentValue]
+    index: tuple[int, ...]
+    left: complex
+    right: complex
+
+    @property
+    def deviation(self) -> float:
+        """The modulus of the entries' difference."""
+        return abs(self.left - self.right)
+
+
+def _pin(delta: ModDelta, pins: Mapping[sp.Symbol, int]) -> tuple[sp.Symbol, int] | None:
+    """The one unpinned index ``delta`` fixes with a unit coefficient, and its residue."""
+    argument, modulus = delta.args
+    if not modulus.is_Integer:
+        return None
+    argument = sp.expand(argument.xreplace({s: sp.Integer(v) for s, v in pins.items()}))
+    free = sorted(argument.free_symbols, key=lambda symbol: str(symbol.name))
+    if len(free) != 1:
+        return None
+    (symbol,) = free
+    coefficient = argument.coeff(symbol)
+    rest = sp.expand(argument - coefficient * symbol)
+    if coefficient not in (1, -1) or not rest.is_Integer:
+        return None
+    return symbol, int(-rest * coefficient) % int(modulus)
+
+
+def support_points(
+    difference: Scalar, indices: Sequence[str], extents: Sequence[int]
+) -> tuple[tuple[int, ...], ...]:
+    """Index tuples at which ``difference`` is likely nonzero: all zeros, all ones, then per
+    term the point its unit-coefficient deltas pin, every other index 0, deduplicated."""
+    expr = difference.to_sympy()
+    symbols = {str(symbol.name): symbol for symbol in expr.free_symbols}
+    ordered = [symbols.get(name) for name in indices]
+    points: list[tuple[int, ...]] = [
+        tuple(0 for _ in extents),
+        tuple(1 % extent for extent in extents),
+    ]
+    for term in sp.Add.make_args(sp.expand(expr)):
+        deltas = [factor for factor in sp.Mul.make_args(term) if isinstance(factor, ModDelta)]
+        pins: dict[sp.Symbol, int] = {}
+        progress = True
+        while progress:
+            progress = False
+            for delta in deltas:
+                pinned = _pin(delta, pins)
+                if pinned is not None and pinned[0] not in pins:
+                    pins[pinned[0]] = pinned[1]
+                    progress = True
+        points.append(
+            tuple(
+                (pins.get(symbol, 0) if symbol is not None else 0) % extent
+                for symbol, extent in zip(ordered, extents, strict=True)
+            )
+        )
+    return tuple(dict.fromkeys(points))
+
+
+def find_entry_witness(
+    left: SymbolicTensor,
+    right: SymbolicTensor,
+    assignments: Sequence[Mapping[str, CheckAssignmentValue]],
+    *,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
+) -> EntryWitness | None:
+    """The first entry, over ``assignments`` and then :func:`support_points` of the simplified
+    difference, where the tensors differ by more than ``tolerance`` times the larger entry
+    modulus (at least 1); None when none does.
+
+    An assignment leaving a dimension or entry symbol free, or whose axis dimensions differ
+    between the sides, is skipped.
+    """
+    for assignment in assignments:
+        try:
+            at_l = left.substitute(assignment)
+            at_r = right.substitute(assignment)
+        except (SymbolicContractionError, ScalarError, TypeError, ValueError):
+            continue
+        dims = at_l.dims()
+        if at_r.dims() != dims or not all(dim.is_concrete for dim in dims):
+            continue
+        names = tuple(axis.index for axis in at_l.axes)
+        if tuple(axis.index for axis in at_r.axes) != names:
+            continue
+        if (at_l.entry.free_symbols | at_r.entry.free_symbols) - set(names):
+            continue
+        try:
+            difference = (at_l.entry - at_r.entry).simplify(max_steps=max_steps)
+        except ScalarError:
+            continue
+        if difference.is_zero:
+            continue
+        extents = tuple(dim.to_int() for dim in dims)
+        for point in support_points(difference, names, extents):
+            try:
+                value_l = at_l.value_at(point, max_steps=max_steps).to_complex()
+                value_r = at_r.value_at(point, max_steps=max_steps).to_complex()
+            except (SymbolicContractionError, ScalarError, TypeError, ValueError):
+                continue
+            scale = max(1.0, abs(value_l), abs(value_r))
+            if abs(value_l - value_r) > tolerance * scale:
+                return EntryWitness(MappingProxyType(dict(assignment)), point, value_l, value_r)
+    return None

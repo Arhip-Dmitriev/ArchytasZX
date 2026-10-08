@@ -249,11 +249,17 @@ class TestArityGuards:
         with pytest.raises(DenoteGrammarError):
             denote(node)
 
-    def test_w_rejects_one_output(self) -> None:
+    def test_w_rejects_two_inputs(self) -> None:
         dim = Dim.concrete(3)
-        node = _node(W_NODE, [dim], [dim])
+        node = _node(W_NODE, [dim, dim], [dim])
         with pytest.raises(DenoteGrammarError):
             denote(node)
+
+    @pytest.mark.parametrize("outputs", [0, 1, 3])
+    def test_w_takes_any_output_count(self, outputs: int) -> None:
+        tensor = denote(_node(W_NODE, [Dim.concrete(3)], [Dim.concrete(3)] * outputs))
+        assert tensor.shape == (3,) * (outputs + 1)
+        assert tensor[(0,) * (outputs + 1)] == 1
 
     def test_binder_rejects_one_input(self) -> None:
         node = _node(DIM_BINDER, [Dim.concrete(6)], [Dim.concrete(6)])

@@ -299,13 +299,15 @@ def _triangle_inverse_tensor(d: int) -> np.ndarray:
     return tensor
 
 
-def _w_tensor(d: int) -> np.ndarray:
-    """W at concrete dimension ``d``: shape (d, d, d), tensor[out0][out1][in]."""
-    tensor = np.zeros((d, d, d), dtype=np.complex128)
-    tensor[0][0][0] = 1
+def _w_tensor(d: int, outputs: int) -> np.ndarray:
+    """W with ``outputs`` outputs at concrete dimension ``d``: tensor[out0]...[in]."""
+    tensor = np.zeros((d,) * (outputs + 1), dtype=np.complex128)
+    tensor[(0,) * (outputs + 1)] = 1
     for i in range(1, d):
-        tensor[0][i][i] = 1
-        tensor[i][0][i] = 1
+        for position in range(outputs):
+            index = [0] * outputs + [i]
+            index[position] = i
+            tensor[tuple(index)] = 1
     return tensor
 
 
@@ -370,8 +372,8 @@ def denote(node: Node) -> np.ndarray:
         _check_arity(node, 1, 1)
         return _triangle_inverse_tensor(d)
     if name == W_NODE.name:
-        _check_arity(node, 1, 2)
-        return _w_tensor(d)
+        _check_arity(node, 1, node.num_outputs)
+        return _w_tensor(d, node.num_outputs)
     raise DenoteGrammarError(
         f"node {node.id!r} has generator type {name!r}, which denote() does not know how to denote"
     )

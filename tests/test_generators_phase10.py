@@ -77,7 +77,14 @@ class TestLegPolicies:
         assert not policy.allows(1, 2)
         assert not policy.allows(2, 1)
 
-    @pytest.mark.parametrize("gen", (W_NODE, DIM_SPLITTER), ids=lambda g: g.name)
+    def test_w_is_one_in_any_out(self) -> None:
+        policy = W_NODE.leg_policy
+        assert (policy.min_inputs, policy.max_inputs) == (1, 1)
+        assert (policy.min_outputs, policy.max_outputs) == (0, None)
+        assert all(policy.allows(1, n) for n in (0, 1, 2, 5))
+        assert not policy.allows(2, 2)
+
+    @pytest.mark.parametrize("gen", (DIM_SPLITTER,), ids=lambda g: g.name)
     def test_one_in_two_out(self, gen: GeneratorType) -> None:
         policy = gen.leg_policy
         assert (policy.min_inputs, policy.max_inputs) == (1, 1)

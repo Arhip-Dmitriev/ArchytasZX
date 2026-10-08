@@ -986,6 +986,14 @@ def apply_until_fixpoint(
 NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
     "identity_removal",
     "triangle_inverse_cancellation",
+    "w_identity",
+    "w_fusion",
+    "connective_inverse",
+    "connective_inverse_bind_first",
+    "connective_states",
+    "connective_states_swapped",
+    "triangle_zero_state",
+    "triangle_zero_effect",
     "fourier_cancellation",
     "fourier_state_color_change",
     "fourier_state_color_change_swapped",
@@ -994,16 +1002,17 @@ NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
     "hopf_swapped",
     "state_copy",
     "state_copy_swapped",
+    "w_zero_copy",
     "zx_cap",
     "zx_cap_swapped",
 )
 """:func:`toward_normal_form`'s rule set, in application order.
 
-Every entry removes at least one wire; ``state_copy`` and its swapped twin on a spider with
-n >= 3 legs add nodes. ``bialgebra`` and its twin turn two nodes into four and are absent. A
-name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is skipped, so the
-ordering here is the target set and :func:`missing_normal_form_rule_names` reports what of it
-is not yet live.
+Every entry removes at least one wire; ``state_copy``, its swapped twin and ``w_zero_copy``
+on a node with n >= 3 legs add nodes. ``bialgebra`` and its twin turn two nodes into four and
+are absent. A name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is
+skipped, so the ordering here is the target set and :func:`missing_normal_form_rule_names`
+reports what of it is not yet live.
 """
 
 

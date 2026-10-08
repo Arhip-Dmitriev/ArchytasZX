@@ -16,7 +16,8 @@
 Phase 5 registers one rule, :data:`SPIDER_FUSION`; Phase 11 adds :data:`IDENTITY_REMOVAL`,
 :data:`TRIANGLE_INVERSE_CANCELLATION`, :data:`STATE_COPY`, :data:`HOPF`, :data:`BIALGEBRA`
 and :data:`FOURIER_STATE_COLOR_CHANGE`, each carrying its own scalar derivation, and every
-colour-paired rule has a ``_swapped`` twin with Z and X exchanged.
+colour-paired rule has a ``_swapped`` twin with Z and X exchanged. The W, triangle and
+connective rules, matched in :mod:`archytaszx.rewrite.match_zxw`, follow them.
 :data:`RULES` and :func:`lookup_rule`
 resolve a :class:`~archytaszx.rewrite.engine.RewriteStep`'s ``rule_name`` back to its
 :class:`~archytaszx.rewrite.rule.Rule`, keeping :mod:`archytaszx.rewrite.engine` generic.
@@ -71,7 +72,7 @@ from types import MappingProxyType
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseDomainError, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 from archytaszx.rewrite.match import (
     BIALGEBRA_SIDE_CONDITIONS,
@@ -117,6 +118,33 @@ from archytaszx.rewrite.match import (
     innermost_node_scope_box,
     reattach_phase,
     resolve_fusion_match,
+)
+from archytaszx.rewrite.match_zxw import (
+    CONNECTIVE_INVERSE_SIDE_CONDITIONS,
+    CONNECTIVE_STATES_SIDE_CONDITIONS,
+    CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS,
+    TRIANGLE_EFFECT_SIDE_CONDITIONS,
+    TRIANGLE_STATE_SIDE_CONDITIONS,
+    W_COPY_SIDE_CONDITIONS,
+    W_FUSION_SIDE_CONDITIONS,
+    W_IDENTITY_SIDE_CONDITIONS,
+    ConnectiveInverseMatch,
+    ConnectiveInversePattern,
+    ConnectiveStatesMatch,
+    ConnectiveStatesPattern,
+    FedStateMatch,
+    FedStatePattern,
+    TriangleEffectMatch,
+    TriangleEffectPattern,
+    WFusionMatch,
+    WFusionPattern,
+    WIdentityPattern,
+    find_connective_inverse_matches,
+    find_connective_states_matches,
+    find_fed_state_matches,
+    find_triangle_effect_matches,
+    find_w_fusion_matches,
+    find_w_identity_matches,
 )
 from archytaszx.rewrite.rule import (
     BuildResult,
@@ -1085,6 +1113,379 @@ FOURIER_STATE_COLOR_CHANGE_SWAPPED = Rule(
 """An F box on a phaseless X state's leg is a phaseless Z state, introducing exactly one:
 ``F . sqrt(d) |0> = sum_k |k>``, and dually for an X effect."""
 
+
+def w_fusion_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`W_FUSION`: one W whose outputs are the first's, with the
+    joined output replaced by the second's outputs in order."""
+    if not isinstance(match, WFusionMatch):
+        raise RewriteGrammarError(
+            f"w_fusion_builder requires a WFusionMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(match, W_FUSION_SIDE_CONDITIONS, "w_fusion_builder")
+    _require_rediscovered(match, find_w_fusion_matches(diagram), "w_fusion_builder")
+    first = diagram.nodes[match.first_id]
+    second = diagram.nodes[match.second_id]
+    outer = [
+        PortRef(match.first_id, Direction.OUTPUT, index)
+        for index in range(first.num_outputs)
+        if index != match.position
+    ]
+    inner = [PortRef(match.second_id, Direction.OUTPUT, i) for i in range(second.num_outputs)]
+    ordered = outer[: match.position] + inner + outer[match.position :]
+    fused = diagram.add_node(
+        W_NODE, input_dims=[match.shared_dim], output_dims=[match.shared_dim] * len(ordered)
+    )
+    port_mapping = {PortRef(match.first_id, Direction.INPUT, 0): PortRef(fused, Direction.INPUT, 0)}
+    for index, ref in enumerate(ordered):
+        port_mapping[ref] = PortRef(fused, Direction.OUTPUT, index)
+    consumed = (match.first_id, match.second_id)
+    _rescope_boxes(diagram, consumed, (fused,), "w_fusion_builder")
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(fused,),
+        consumed_node_ids=consumed,
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+    )
+
+
+w_fusion_builder.side_conditions = W_FUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+W_FUSION = Rule(
+    name="w_fusion",
+    pattern=WFusionPattern(),
+    builder=w_fusion_builder,
+    side_conditions=W_FUSION_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("m", "n"), dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A W fed by a W's output is one W, introducing exactly one; with a zero-output second W,
+the counit ``<0|``, the joined output is dropped."""
+
+
+def w_identity_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`W_IDENTITY`: the wire spliced through."""
+    if not isinstance(match, IdentityMatch):
+        raise RewriteGrammarError(
+            f"w_identity_builder requires an IdentityMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(match, W_IDENTITY_SIDE_CONDITIONS, "w_identity_builder")
+    _require_rediscovered(match, find_w_identity_matches(diagram), "w_identity_builder")
+    port_mapping = {match.surviving_ref: match.far_ref}
+    _rescope_boxes(diagram, (match.node_id,), (), "w_identity_builder")
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(),
+        consumed_node_ids=(match.node_id,),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+    )
+
+
+w_identity_builder.side_conditions = W_IDENTITY_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+W_IDENTITY = Rule(
+    name="w_identity",
+    pattern=WIdentityPattern(),
+    builder=w_identity_builder,
+    side_conditions=W_IDENTITY_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A one-output W is the identity on its wire, introducing exactly one."""
+
+
+def _w_copy_scalar_for(match: Match) -> Scalar:
+    """:func:`state_copy_scalar` read off a :class:`FedStateMatch`."""
+    if not isinstance(match, FedStateMatch):
+        raise RewriteGrammarError(
+            f"w_zero_copy requires a FedStateMatch, got {type(match).__name__}"
+        )
+    return state_copy_scalar(match.shared_dim, match.output_count)
+
+
+def w_zero_copy_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`W_ZERO_COPY`: one phaseless X state per W output."""
+    if not isinstance(match, FedStateMatch):
+        raise RewriteGrammarError(
+            f"w_zero_copy_builder requires a FedStateMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(match, W_COPY_SIDE_CONDITIONS, "w_zero_copy_builder")
+    found = find_fed_state_matches(diagram, triangle=False)
+    _require_rediscovered(match, found, "w_zero_copy_builder")
+    dim = match.shared_dim
+    new_ids = tuple(
+        diagram.add_node(X_SPIDER, input_dims=[], output_dims=[dim])
+        for _ in range(match.output_count)
+    )
+    port_mapping = {
+        PortRef(match.target_id, Direction.OUTPUT, index): PortRef(new_id, Direction.OUTPUT, 0)
+        for index, new_id in enumerate(new_ids)
+    }
+    consumed = (match.state_id, match.target_id)
+    _rescope_boxes(diagram, consumed, new_ids, "w_zero_copy_builder")
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=new_ids,
+        consumed_node_ids=consumed,
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=state_copy_scalar(dim, match.output_count),
+    )
+
+
+w_zero_copy_builder.side_conditions = W_COPY_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+W_ZERO_COPY = Rule(
+    name="w_zero_copy",
+    pattern=FedStatePattern(),
+    builder=w_zero_copy_builder,
+    side_conditions=W_COPY_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)),
+    scalar_introduced=state_copy_scalar(Dim.symbol("d"), 0),
+    scalar_in_match=_w_copy_scalar_for,
+)
+"""A phaseless X state into an n-output W is n phaseless X states, scaled by
+``d ** ((1 - n) / 2)``: ``W |0> = |0...0>`` and ``X_{0->1} = sqrt(d) |0>``."""
+
+
+def triangle_zero_state_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`TRIANGLE_ZERO_STATE`: the state, wired where the
+    triangle's output was."""
+    if not isinstance(match, FedStateMatch):
+        raise RewriteGrammarError(
+            f"triangle_zero_state_builder requires a FedStateMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(
+        match, TRIANGLE_STATE_SIDE_CONDITIONS, "triangle_zero_state_builder"
+    )
+    found = find_fed_state_matches(diagram, triangle=True)
+    _require_rediscovered(match, found, "triangle_zero_state_builder")
+    port_mapping = {
+        PortRef(match.target_id, Direction.OUTPUT, 0): PortRef(match.state_id, Direction.OUTPUT, 0)
+    }
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(),
+        consumed_node_ids=(match.target_id,),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+    )
+
+
+triangle_zero_state_builder.side_conditions = TRIANGLE_STATE_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+TRIANGLE_ZERO_STATE = Rule(
+    name="triangle_zero_state",
+    pattern=FedStatePattern(triangle=True),
+    builder=triangle_zero_state_builder,
+    side_conditions=TRIANGLE_STATE_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A T or Ti fixes the phaseless X state ``sqrt(d) |0>``, introducing exactly one."""
+
+
+def triangle_zero_effect_scalar(dim: Dim) -> Scalar:
+    """The exact scalar :data:`TRIANGLE_ZERO_EFFECT` introduces: ``dim ** (1/2)``."""
+    return Scalar.dim_power(dim, 1, 2)
+
+
+def _triangle_effect_scalar_for(match: Match) -> Scalar:
+    """:func:`triangle_zero_effect_scalar` read off a :class:`TriangleEffectMatch`."""
+    if not isinstance(match, TriangleEffectMatch):
+        raise RewriteGrammarError(
+            f"triangle_zero_effect requires a TriangleEffectMatch, got {type(match).__name__}"
+        )
+    return triangle_zero_effect_scalar(match.shared_dim)
+
+
+def triangle_zero_effect_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`TRIANGLE_ZERO_EFFECT`: a phaseless Z effect on the
+    triangle's input."""
+    if not isinstance(match, TriangleEffectMatch):
+        raise RewriteGrammarError(
+            "triangle_zero_effect_builder requires a TriangleEffectMatch, got "
+            f"{type(match).__name__}"
+        )
+    check_side_condition_coverage(
+        match, TRIANGLE_EFFECT_SIDE_CONDITIONS, "triangle_zero_effect_builder"
+    )
+    _require_rediscovered(
+        match, find_triangle_effect_matches(diagram), "triangle_zero_effect_builder"
+    )
+    effect = diagram.add_node(Z_SPIDER, input_dims=[match.shared_dim], output_dims=[])
+    port_mapping = {
+        PortRef(match.triangle_id, Direction.INPUT, 0): PortRef(effect, Direction.INPUT, 0)
+    }
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(effect,),
+        consumed_node_ids=(match.triangle_id, match.effect_id),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=triangle_zero_effect_scalar(match.shared_dim),
+    )
+
+
+triangle_zero_effect_builder.side_conditions = TRIANGLE_EFFECT_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+TRIANGLE_ZERO_EFFECT = Rule(
+    name="triangle_zero_effect",
+    pattern=TriangleEffectPattern(),
+    builder=triangle_zero_effect_builder,
+    side_conditions=TRIANGLE_EFFECT_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("d",)),
+    scalar_introduced=triangle_zero_effect_scalar(Dim.symbol("d")),
+    scalar_in_match=_triangle_effect_scalar_for,
+)
+"""A T into a phaseless X effect is a phaseless Z effect times ``d ** (1/2)``:
+``<0| T`` is the all-ones row, and the X effect is ``sqrt(d) <0|``."""
+
+
+def connective_inverse_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`CONNECTIVE_INVERSE` and its B-first twin: one spliced
+    wire per outer pair of legs."""
+    if not isinstance(match, ConnectiveInverseMatch):
+        raise RewriteGrammarError(
+            "connective_inverse_builder requires a ConnectiveInverseMatch, got "
+            f"{type(match).__name__}"
+        )
+    check_side_condition_coverage(
+        match, CONNECTIVE_INVERSE_SIDE_CONDITIONS, "connective_inverse_builder"
+    )
+    found = find_connective_inverse_matches(diagram, bind_first=match.bind_first)
+    _require_rediscovered(match, found, "connective_inverse_builder")
+    port_mapping = {splice.surviving_ref: splice.far_ref for splice in match.splices}
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(),
+        consumed_node_ids=(match.first_id, match.second_id),
+        consumed_wires=(*match.joining, *(splice.wire for splice in match.splices)),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+    )
+
+
+connective_inverse_builder.side_conditions = CONNECTIVE_INVERSE_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+CONNECTIVE_INVERSE = Rule(
+    name="connective_inverse",
+    pattern=ConnectiveInversePattern(),
+    builder=connective_inverse_builder,
+    side_conditions=CONNECTIVE_INVERSE_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("s", "t")),
+    scalar_introduced=Scalar.one(),
+)
+"""An S splitting ``s*t`` into ``s`` and ``t``, both fed in order into a B, is the identity on
+``s*t``, introducing exactly one."""
+
+CONNECTIVE_INVERSE_BIND_FIRST = Rule(
+    name="connective_inverse_bind_first",
+    pattern=ConnectiveInversePattern(bind_first=True),
+    builder=connective_inverse_builder,
+    side_conditions=CONNECTIVE_INVERSE_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("s", "t")),
+    scalar_introduced=Scalar.one(),
+)
+"""A B binding ``s`` and ``t`` into ``s*t``, fed into an S, is the identity on ``s`` and on
+``t``, introducing exactly one."""
+
+
+def connective_states_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`CONNECTIVE_STATES` and its twin: one phaseless state, or
+    effect, of the same colour on the joint leg."""
+    if not isinstance(match, ConnectiveStatesMatch):
+        raise RewriteGrammarError(
+            "connective_states_builder requires a ConnectiveStatesMatch, got "
+            f"{type(match).__name__}"
+        )
+    conditions = (
+        CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS
+        if match.swapped
+        else CONNECTIVE_STATES_SIDE_CONDITIONS
+    )
+    check_side_condition_coverage(match, conditions, "connective_states_builder")
+    found = find_connective_states_matches(diagram, swapped=match.swapped)
+    _require_rediscovered(match, found, "connective_states_builder")
+    colour = X_SPIDER if match.swapped else Z_SPIDER
+    if match.effects:
+        merged = diagram.add_node(colour, input_dims=[match.joint_dim], output_dims=[])
+        joint = PortRef(match.connective_id, Direction.INPUT, 0)
+        port_mapping = {joint: PortRef(merged, Direction.INPUT, 0)}
+    else:
+        merged = diagram.add_node(colour, input_dims=[], output_dims=[match.joint_dim])
+        joint = PortRef(match.connective_id, Direction.OUTPUT, 0)
+        port_mapping = {joint: PortRef(merged, Direction.OUTPUT, 0)}
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(merged,),
+        consumed_node_ids=(match.connective_id, *match.end_ids),
+        consumed_wires=match.wires,
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+    )
+
+
+connective_states_builder.side_conditions = CONNECTIVE_STATES_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+def connective_states_swapped_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`CONNECTIVE_STATES_SWAPPED`:
+    :func:`connective_states_builder` on a swapped match."""
+    _require_swapped(match, "connective_states_swapped_builder")
+    return connective_states_builder(diagram, match)
+
+
+connective_states_swapped_builder.side_conditions = CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+CONNECTIVE_STATES = Rule(
+    name="connective_states",
+    pattern=ConnectiveStatesPattern(),
+    builder=connective_states_builder,
+    side_conditions=CONNECTIVE_STATES_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("s", "t")),
+    scalar_introduced=Scalar.one(),
+)
+"""Phaseless Z states on both inputs of a B are one phaseless Z state on its ``s*t`` output,
+and dually for Z effects on an S, introducing exactly one."""
+
+CONNECTIVE_STATES_SWAPPED = Rule(
+    name="connective_states_swapped",
+    pattern=ConnectiveStatesPattern(swapped=True),
+    builder=connective_states_swapped_builder,
+    side_conditions=CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(dimensions=("s", "t")),
+    scalar_introduced=Scalar.one(),
+)
+"""Phaseless X states on both inputs of a B are one phaseless X state on its output:
+``sqrt(s) |0> (x) sqrt(t) |0>`` binds to ``sqrt(s*t) |0>``; dually for X effects on an S."""
+
 RULES: Mapping[str, Rule] = MappingProxyType(
     {
         SPIDER_FUSION.name: SPIDER_FUSION,
@@ -1102,6 +1503,15 @@ RULES: Mapping[str, Rule] = MappingProxyType(
         HOPF_SWAPPED.name: HOPF_SWAPPED,
         BIALGEBRA_SWAPPED.name: BIALGEBRA_SWAPPED,
         FOURIER_STATE_COLOR_CHANGE_SWAPPED.name: FOURIER_STATE_COLOR_CHANGE_SWAPPED,
+        W_FUSION.name: W_FUSION,
+        W_IDENTITY.name: W_IDENTITY,
+        W_ZERO_COPY.name: W_ZERO_COPY,
+        TRIANGLE_ZERO_STATE.name: TRIANGLE_ZERO_STATE,
+        TRIANGLE_ZERO_EFFECT.name: TRIANGLE_ZERO_EFFECT,
+        CONNECTIVE_INVERSE.name: CONNECTIVE_INVERSE,
+        CONNECTIVE_INVERSE_BIND_FIRST.name: CONNECTIVE_INVERSE_BIND_FIRST,
+        CONNECTIVE_STATES.name: CONNECTIVE_STATES,
+        CONNECTIVE_STATES_SWAPPED.name: CONNECTIVE_STATES_SWAPPED,
     }
 )
 """Every rule this module registers, keyed by :attr:`~archytaszx.rewrite.rule.Rule.name`.

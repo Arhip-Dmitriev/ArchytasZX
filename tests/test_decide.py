@@ -60,6 +60,7 @@ from archytaszx.semantics.decide import (
     decide_equal,
     dimension_floors,
     refute_by_oracle,
+    refute_by_symbolic_witness,
     sample_grid,
 )
 from archytaszx.semantics.denote import DenoteError
@@ -225,6 +226,9 @@ def assert_oracle_agrees(left: Diagram, right: Diagram, decision: Decision) -> N
         assert decision.counterexample is not None
         result = compare(family(left), family(right), decision.counterexample)
         assert not result.matched, result.reason
+    elif decision.method is DecisionMethod.SYMBOLIC_WITNESS:
+        assert decision.witness is not None and decision.witness.deviation > 0
+        assert decision.counterexample == decision.witness.assignment
     elif decision.method is DecisionMethod.INTERFACE:
         evaluated = oracle_samples(left, right)
         assert evaluated, "the oracle evaluated no assignment"
@@ -498,7 +502,9 @@ class TestLadder:
     @pytest.mark.parametrize("name", sorted(INDUCTION_EQUAL))
     def test_induction_equal(self, name: str) -> None:
         left, right = INDUCTION_EQUAL[name]()
-        decision = decide_equal(left, right, guard=NO_FUSION, use_saturation=False)
+        decision = decide_equal(
+            left, right, guard=NO_FUSION, use_saturation=False, use_symbolic=False
+        )
         assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
         assert decision.method is DecisionMethod.INDUCTION
         assert decision.induction is not None and decision.induction.proved
@@ -518,7 +524,9 @@ class TestLadder:
 
     def test_induction_depth_zero_gives_unknown(self) -> None:
         left, right = T8._build_boxed_fusion_family()
-        decision = decide_equal(left, right, guard=NO_FUSION, max_depth=0, use_saturation=False)
+        decision = decide_equal(
+            left, right, guard=NO_FUSION, max_depth=0, use_saturation=False, use_symbolic=False
+        )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.method is DecisionMethod.NONE
         assert decision.samples_checked >= 1
@@ -569,7 +577,7 @@ class TestSamples:
 
     def test_max_samples_caps_the_oracle(self) -> None:
         left, right = cup(Z_SPIDER, D), cup(X_SPIDER, D)
-        decision = decide_equal(left, right, max_samples=1)
+        decision = decide_equal(left, right, max_samples=1, use_symbolic=False)
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.samples_checked == 1
         assert not compare(left, right, {"d": 3}).matched
@@ -744,8 +752,12 @@ class TestRegressions:
     @pytest.mark.parametrize("name", sorted(INDUCTION_EQUAL))
     def test_induction_pairs_swapped(self, name: str) -> None:
         left, right = INDUCTION_EQUAL[name]()
-        forward = decide_equal(left, right, guard=NO_FUSION, use_saturation=False)
-        backward = decide_equal(right, left, guard=NO_FUSION, use_saturation=False)
+        forward = decide_equal(
+            left, right, guard=NO_FUSION, use_saturation=False, use_symbolic=False
+        )
+        backward = decide_equal(
+            right, left, guard=NO_FUSION, use_saturation=False, use_symbolic=False
+        )
         assert backward.verdict is EqualityVerdict.EQUAL, backward.reason
         assert backward.method is DecisionMethod.INDUCTION
         assert ("with sides reversed" in backward.reason) is backward.induction_reversed
@@ -788,7 +800,12 @@ class TestRegressions:
             return inner(*args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(decide_module, "decide_equal", spy)
-        spy(*T8._build_boxed_fusion_family(), guard=NO_FUSION, use_saturation=False)
+        spy(
+            *T8._build_boxed_fusion_family(),
+            guard=NO_FUSION,
+            use_saturation=False,
+            use_symbolic=False,
+        )
         assert seen == ["absent", None]
 
 
@@ -934,7 +951,9 @@ class TestReviewRegressions:
         monkeypatch.setattr(decide_module, "_instantiate_index", no_zero)
         monkeypatch.setattr(decide_module, "decide_equal", base_by_normal_form)
         left, right = T8._build_boxed_fusion_family()
-        decision = base_by_normal_form(left, right, guard=NO_FUSION, use_saturation=False)
+        decision = base_by_normal_form(
+            left, right, guard=NO_FUSION, use_saturation=False, use_symbolic=False
+        )
         assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
         assert decision.method is DecisionMethod.NONE
         assert "proved for m >= 1 only" in decision.reason
@@ -973,7 +992,7 @@ class TestReviewRegressions:
 
         monkeypatch.setattr(decide_module, "decide_equal", spy)
         left, right = T8._build_boxed_fusion_family()
-        decision = spy(left, right, guard=NO_FUSION, use_saturation=False)
+        decision = spy(left, right, guard=NO_FUSION, use_saturation=False, use_symbolic=False)
         assert decision.method is DecisionMethod.INDUCTION, decision.reason
         assert decision.induction is not None
         deferred = [
@@ -994,7 +1013,11 @@ class TestReviewRegressions:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(decide_module, "same_normal_form", lambda a, b: False)
-        monkeypatch.setattr(decide_module, "_symbolic_match", lambda a, b: (True, "patched"))
+        monkeypatch.setattr(
+            decide_module,
+            "_symbolic_match",
+            lambda a, b: decide_module._SymbolicRun(True, "patched"),
+        )
         left, right = deferred_fusion_diagram(), deferred_fusion_diagram()
         decision = decide_equal(left, right, use_saturation=False)
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION, decision.reason
@@ -1015,13 +1038,13 @@ class TestReviewRegressions:
         assert_oracle_agrees(left, right, decision)
 
     @pytest.mark.parametrize("cap", [0, 24])
-    def test_symbolic_rung_skips_a_boxed_boundary(self, cap: int) -> None:
+    def test_symbolic_rung_skips_a_boxed_boundary_of_another_interface(self, cap: int) -> None:
         left, right = boxed_cup_vs_identity()
         decision = decide_equal(left, right, max_samples=cap)
         assert decision.verdict is not EqualityVerdict.EQUAL, decision.reason
         if cap == 0:
             assert decision.verdict is EqualityVerdict.UNKNOWN
-            assert "bang box's scope" in decision.reason
+            assert "boundary input dimensions" in decision.reason
         else:
             assert decision.method is DecisionMethod.ORACLE_COUNTEREXAMPLE
         assert_oracle_agrees(left, right, decision)
@@ -1241,7 +1264,14 @@ class TestSaturationRung:
         limits = SaturationLimits(max_iterations=3)
         monkeypatch.setattr(decide_module, "decide_equal", spy)
         left, right = T8._build_boxed_fusion_family()
-        decision = spy(left, right, guard=NO_FUSION, use_saturation=False, saturation_limits=limits)
+        decision = spy(
+            left,
+            right,
+            guard=NO_FUSION,
+            use_saturation=False,
+            saturation_limits=limits,
+            use_symbolic=False,
+        )
         assert decision.method is DecisionMethod.INDUCTION, decision.reason
         assert seen == [(False, limits), (False, limits)]
 
@@ -1318,9 +1348,72 @@ class TestOracleAtScale:
         )
         assert not refutation.evaluated
         assert refutation.refusals and "ContractSizeError" in refutation.refusals[0]
-        decision = decide_equal(_ring(4, None), _phased_ring(4), samples=samples, max_elements=1)
+        decision = decide_equal(
+            _ring(4, None), _phased_ring(4), samples=samples, max_elements=1, use_symbolic=False
+        )
         assert decision.samples_checked == 0
         assert "no oracle sample evaluated; 2 sample(s) refused" in decision.reason
+
+
+def wide_ghz(legs: int, dim: Dim, phase: PhaseVector | None = None) -> Diagram:
+    """One Z spider with ``legs`` boundary outputs over ``dim``, carrying ``phase``."""
+    diagram = Diagram()
+    node = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[dim] * legs, phase=phase)
+    diagram.set_boundary_outputs([out(node, i) for i in range(legs)])
+    return diagram
+
+
+def wide_ghz_phase_pair(legs: int = 24, dim: Dim = D) -> Pair:
+    """A ``legs``-leg GHZ spider against itself with a quarter-turn phase at index 1."""
+    return wide_ghz(legs, dim), wide_ghz(legs, dim, phase_turns(dim, sp.Rational(1, 4)))
+
+
+class TestSymbolicWitness:
+    """An entry of two differing symbolic contractions refutes a pair the oracle refuses."""
+
+    @pytest.mark.parametrize("legs", [24, 40])
+    @pytest.mark.parametrize("dim", [D, Dim.concrete(2)], ids=["d", "2"])
+    def test_wide_ghz_with_one_phase_is_unequal(self, legs: int, dim: Dim) -> None:
+        decision = decide_equal(*wide_ghz_phase_pair(legs, dim))
+        assert decision.verdict is EqualityVerdict.UNEQUAL, decision.reason
+        assert decision.method is DecisionMethod.SYMBOLIC_WITNESS
+        assert decision.samples_checked == 0
+        witness = decision.witness
+        assert witness is not None and witness.index == (1,) * legs
+        assert witness.left == 1 and abs(witness.right - 1j) < 1e-12
+        assert decision.counterexample == witness.assignment
+
+    def test_the_witness_matches_the_oracle_at_small_size(self) -> None:
+        left, right = wide_ghz_phase_pair(3)
+        decision = decide_equal(left, right, use_saturation=False, max_samples=0)
+        assert decision.method is DecisionMethod.SYMBOLIC_WITNESS, decision.reason
+        witness = decision.witness
+        assert witness is not None
+        tensor_l = score(left, witness.assignment).tensor
+        tensor_r = score(right, witness.assignment).tensor
+        assert abs(tensor_l[witness.index] - witness.left) < 1e-12
+        assert abs(tensor_r[witness.index] - witness.right) < 1e-12
+
+    def test_a_ring_the_oracle_refuses_is_refuted(self) -> None:
+        decision = decide_equal(
+            _ring(4, None), _phased_ring(4), samples=[{"d": 2}, {"d": 3}], max_elements=1
+        )
+        assert decision.method is DecisionMethod.SYMBOLIC_WITNESS, decision.reason
+        assert decision.samples_checked == 0
+
+    def test_equal_pairs_have_no_witness(self) -> None:
+        assert refute_by_symbolic_witness(*zero_phase_pair()) is None
+        assert refute_by_symbolic_witness(wide_ghz(24, D), wide_ghz(24, D)) is None
+
+    def test_a_difference_below_the_dimension_floor_is_no_witness(self) -> None:
+        phase = PhaseVector(D, {1: Phase.turns(sp.Rational(1, 3))})
+        assert refute_by_symbolic_witness(_phased_cap(phase), _phased_cap(None)) is None
+
+    def test_refute_by_symbolic_witness_takes_samples(self) -> None:
+        left, right = wide_ghz_phase_pair(30)
+        witness = refute_by_symbolic_witness(left, right, samples=[{"d": 5}])
+        assert witness is not None and dict(witness.assignment) == {"d": 5}
+        assert refute_by_symbolic_witness(left, right, samples=[{"d": 1}]) is None
 
 
 class TestDimensionFloors:

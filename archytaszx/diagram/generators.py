@@ -256,11 +256,12 @@ TRIANGLE_INVERSE = GeneratorType(
 
 W_NODE = GeneratorType(
     name="W",
-    leg_policy=LegPolicy(min_inputs=1, max_inputs=1, min_outputs=2, max_outputs=2),
+    leg_policy=LegPolicy(min_inputs=1, max_inputs=1),
     phase_schema=PhaseSchema.NONE,
     dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
 )
-"""The W node: one in, two out, the qudit generalisation of |00><0| + (|01> + |10>)<1|."""
+"""The W node: one in, any number out; ``|0> -> |0...0>`` and, for ``i != 0``, ``|i>`` to the sum
+of ``|i>`` on one output and ``|0>`` on the rest. Zero outputs is ``<0|``, one the identity."""
 
 DIM_BINDER = GeneratorType(
     name="B",

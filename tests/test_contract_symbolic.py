@@ -235,14 +235,25 @@ class TestRefusals:
 
 
 class TestUnsupportedShapes:
-    def test_a_symbolic_multiplicity_with_an_open_boundary_is_unsupported(self) -> None:
-        from archytaszx.diagram.bangbox import Mult
+    def test_a_replicated_leg_on_a_fourier_box_is_unsupported(self) -> None:
+        diagram = Diagram()
+        node_id = diagram.add_node(FOURIER_BOX, input_dims=[D], output_dims=[D])
+        diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(node_id, Direction.OUTPUT, 0)])
+        diagram.add_bang_box(
+            Mult("n"), port_scope=frozenset({PortRef(node_id, Direction.OUTPUT, 0)})
+        )
+        with pytest.raises(SymbolicContractionUnsupportedError, match="not a Z or X spider"):
+            contract_symbolic(diagram)
 
+    def test_a_replicated_scope_of_variable_rank_is_unsupported(self) -> None:
         diagram = Diagram()
         node_id = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[D])
-        diagram.set_boundary_outputs([PortRef(node_id, Direction.OUTPUT, 0)])
-        diagram.add_bang_box(node_scope=frozenset({node_id}), multiplicity=Mult("n"))
-        with pytest.raises(SymbolicContractionUnsupportedError, match="variable rank"):
+        port = PortRef(node_id, Direction.OUTPUT, 0)
+        diagram.set_boundary_outputs([port])
+        outer = diagram.add_bang_box(Mult("n"), node_scope=frozenset({node_id}))
+        diagram.add_bang_box(Mult("m"), port_scope=frozenset({port}), parent=outer)
+        with pytest.raises(SymbolicContractionUnsupportedError, match="own rank varies"):
             contract_symbolic(diagram)
 
 
@@ -429,14 +440,17 @@ class TestBangBoxesInSymbolicContraction:
             got = complex(sp.N(substituted.doit()))
             assert cmath.isclose(got, complex(truth[index]) if k else complex(truth), abs_tol=1e-9)
 
-    def test_a_box_meeting_the_boundary_is_refused_not_ignored(self) -> None:
+    def test_a_box_meeting_the_boundary_replicates_its_scope(self) -> None:
         d = Dim.symbol("d")
         diagram = Diagram()
         state = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d])
         diagram.set_boundary_outputs([PortRef(state, Direction.OUTPUT, 0)])
         diagram.add_bang_box(Mult.symbol("m"), node_scope=frozenset({state}))
-        with pytest.raises(SymbolicContractionUnsupportedError):
-            contract_symbolic(diagram)
+        tensor = contract_symbolic(diagram)
+        assert tensor.is_variable_rank and tensor.rank == 0
+        assert [group.multiplicity for group in tensor.groups] == [Mult.symbol("m")]
+        assert tensor.groups[0].factor == Scalar.one()
+        assert tensor.substitute({"m": 3, "d": 2}).to_dense().shape == (2, 2, 2)
 
 
 def _zx_loops(dim: Dim, count: int, legs: int = 1) -> Diagram:
