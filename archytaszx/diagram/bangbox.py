@@ -52,6 +52,8 @@ from types import MappingProxyType
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.diagram.generators import PhaseSchema
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
 
 
@@ -487,6 +489,9 @@ def _grow_port(
     docstring's Phase 7 scope restriction; a leg wired to another node cannot grow
     without that node growing too, which this phase does not attempt.
 
+    A phaseless spider left with no legs takes the zero phase vector at the removed leg's
+    dimension.
+
     ``owner_box_id``, when given, is excluded from the "repoint every other box that
     named this node/port" fixup below: it is the box currently being instantiated (the
     caller deletes it immediately afterwards regardless of what its scope says), and at
@@ -527,8 +532,16 @@ def _grow_port(
     old_boundary_inputs = list(diagram.boundary_inputs)
     old_boundary_outputs = list(diagram.boundary_outputs)
 
+    phase = node.phase
+    if (
+        phase is None
+        and not new_input_dims
+        and not new_output_dims
+        and node.generator_type.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
+    ):
+        phase = PhaseVector(target_dim)
     new_node_id = diagram.add_node(
-        node.generator_type, new_input_dims, new_output_dims, phase=node.phase
+        node.generator_type, new_input_dims, new_output_dims, phase=phase
     )
 
     def remap(old_ref: PortRef) -> list[PortRef]:

@@ -42,6 +42,7 @@ other side's peeled successor. :func:`check_proof` rebuilds and re-checks every 
 from __future__ import annotations
 
 import enum
+import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -109,6 +110,7 @@ _CHECK_ERRORS: tuple[type[Exception], ...] = (
     ScalarError,
     ValidateError,
 )
+_INDUCTION_ERRORS: tuple[type[Exception], ...] = (*_CHECK_ERRORS, InductionError)
 
 
 class ProveError(Exception):
@@ -482,7 +484,7 @@ def _check_induction(
         failure = _check_piece(proof.step, *args)
         if failure is not None:
             return f"the step fails: {failure}"
-    except (*_CHECK_ERRORS, InductionError) as exc:
+    except _INDUCTION_ERRORS as exc:
         return f"rebuilding the induction raised {type(exc).__name__}: {exc}"
     return None
 
@@ -659,7 +661,7 @@ def _induct(start: Diagram, goal: Diagram, run: _Searcher, depth: int) -> Induct
                 hypothesis = induction_hypothesis(own, index, k)
                 _, hit = search_for(
                     peeled,
-                    lambda diagram, h=hypothesis: find_hypothesis_region(diagram, h),
+                    functools.partial(find_hypothesis_region, hypothesis=hypothesis),
                     moves=run.moves,
                     limits=run.limits,
                     cache=run.cache,
@@ -684,7 +686,7 @@ def _induct(start: Diagram, goal: Diagram, run: _Searcher, depth: int) -> Induct
                     region=region,
                     step=step,
                 )
-        except (*_CHECK_ERRORS, InductionError):
+        except _INDUCTION_ERRORS:
             continue
     return None
 

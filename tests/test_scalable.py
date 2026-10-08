@@ -319,10 +319,22 @@ def nested_sheets() -> ScalableDiagram:
     return b.build()
 
 
+def two_fans_on_one_node() -> ScalableDiagram:
+    b = ScalableBuilder()
+    left = b.add_scale(ScaleKind.LEGS, "n")
+    right = b.add_scale(ScaleKind.LEGS, "m")
+    z = b.add_node(Z_SPIDER, [], [D2, D2], PhaseVector(D2))
+    b.set_fan(_out(z, 0), left)
+    b.set_fan(_out(z, 1), right)
+    b.set_outputs([_out(z, 0), _out(z, 1)])
+    return b.build()
+
+
 SCALABLE_FAMILIES: dict[str, Callable[[], ScalableDiagram]] = {
     "sheet_family": sheet_family,
     "legs_under_legs": legs_under_legs,
     "nested_sheets": nested_sheets,
+    "two_fans_on_one_node": two_fans_on_one_node,
 }
 
 
@@ -749,16 +761,6 @@ INVALID: dict[str, tuple[ScalableDiagram, str]] = {
     ),
     "output_port_on_input_side": (
         ScalableDiagram((_node(0),), frozenset(), (), (R0,), ()),
-        "bang-box form",
-    ),
-    "overlapping_legs_on_one_node": (
-        ScalableDiagram(
-            (_node(0, 2, fans={0: 0, 1: 1}),),
-            frozenset(),
-            (_scale(0, L), _scale(1, L)),
-            (),
-            (R0, _out(NodeId(0), 1)),
-        ),
         "bang-box form",
     ),
 }

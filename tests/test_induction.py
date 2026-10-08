@@ -20,7 +20,7 @@ Covers PHASE8_SPEC.md sections 10, 12, 13 and 14.2.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import numpy as np
 import pytest
@@ -55,7 +55,7 @@ from archytaszx.rewrite.rule import BuildResult, Match, Rule
 from archytaszx.rewrite.rules_library import SPIDER_FUSION, spider_fusion_builder
 from archytaszx.semantics import induction
 from archytaszx.semantics.certificate import compare_structure
-from archytaszx.semantics.check import compare, score
+from archytaszx.semantics.check import CheckDomainError, compare, score
 from archytaszx.semantics.contract_numeric import ContractSizeError
 from archytaszx.semantics.induction import (
     InductionDomainError,
@@ -117,8 +117,7 @@ def _build_boxed_product_family(dim_stem: str = "d") -> Diagram:
 
 
 def _build_phaseless_boxed_family() -> Diagram:
-    """One phaseless Z spider whose single output leg is port-scope boxed under ``n``, so the
-    instance at ``n = 0`` is a legless phaseless node."""
+    """One phaseless Z spider whose single output leg is port-scope boxed under ``n``."""
     d = Dim("d")
     diagram = Diagram()
     node = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=None)
@@ -126,6 +125,19 @@ def _build_phaseless_boxed_family() -> Diagram:
     diagram.set_boundary_outputs([ref])
     diagram, _box_id, _n = abstract_port_count(diagram, ref, 1, stem="n")
     return diagram
+
+
+def _refuse_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make :mod:`archytaszx.semantics.induction`'s ``compare`` refuse every ``n = 0`` sample."""
+
+    def refusing(
+        left: Diagram, right: Diagram, assignment: Mapping[str, object], **kw: object
+    ) -> object:
+        if assignment.get("n") == 0:
+            raise CheckDomainError("no instance at n = 0")
+        return compare(left, right, assignment, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(induction, "compare", refusing)
 
 
 def _build_non_bare_multiplicity_diagram() -> Diagram:
@@ -226,9 +238,10 @@ class TestErrorTaxonomy:
             induction.prove_by_induction(pre, post)
 
     def test_a_base_forced_onto_an_unavailable_instance_raises_an_induction_error(
-        self,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A named base with no evaluable instance fails as this module's own error."""
+        _refuse_at_zero(monkeypatch)
         family = _build_phaseless_boxed_family()
         with pytest.raises(InductionDomainError, match="no evaluable instance"):
             induction.prove_by_induction(family, family, base=0, witness={"d": 2})
@@ -285,10 +298,18 @@ class TestBaseCase:
         pre, post = _build_boxed_fusion_family()
         assert choose_base_value(pre, post, "m", {"d": 2}) == 0
 
-    def test_the_base_falls_back_to_one_when_zero_is_structurally_unavailable(self) -> None:
+    def test_the_base_falls_back_to_one_when_zero_is_structurally_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _refuse_at_zero(monkeypatch)
         left = _build_phaseless_boxed_family()
         right = _build_phaseless_boxed_family()
         assert choose_base_value(left, right, "n", {"d": 2}) == 1
+
+    def test_killing_the_last_leg_leaves_zero_evaluable(self) -> None:
+        left = _build_phaseless_boxed_family()
+        right = _build_phaseless_boxed_family()
+        assert choose_base_value(left, right, "n", {"d": 2}) == 0
 
     @pytest.mark.parametrize("d_value", [2, 3])
     def test_a_mismatch_at_zero_does_not_advance_the_base_to_one(self, d_value: int) -> None:

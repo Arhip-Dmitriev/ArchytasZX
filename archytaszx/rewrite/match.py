@@ -1605,7 +1605,10 @@ CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("phaseless", "neither node carries a phase vector"),
     SideCondition("same_dimension", "both legs carry one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 CAP_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -1685,7 +1688,7 @@ def find_cap_matches(
             effect_dim = effect.inputs[0].dim
             if state_dim != effect_dim:
                 continue
-            if _in_any_node_scope_box(diagram, (state.id, effect.id)):
+            if _in_any_bang_box(diagram, (state.id, effect.id)):
                 continue
             matches.append(
                 CapMatch(
@@ -1789,6 +1792,18 @@ def _in_any_node_scope_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bo
     )
 
 
+def _has_port_boxed_leg(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
+    """True iff any leg of any of ``node_ids`` sits in a port-scope bang box."""
+    return any(
+        ref.node_id in node_ids for box in diagram.bang_boxes.values() for ref in box.port_scope
+    )
+
+
+def _in_any_bang_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
+    """True iff any of ``node_ids`` sits in a node-scope bang box or has a port-boxed leg."""
+    return _in_any_node_scope_box(diagram, node_ids) or _has_port_boxed_leg(diagram, node_ids)
+
+
 def _is_phaseless(node: Node) -> bool:
     """True iff ``node`` carries no phase vector, or an all-zero one."""
     return node.phase is None or node.phase.is_zero
@@ -1820,6 +1835,7 @@ IDENTITY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "leaves_every_bang_box_populated",
         "no node-scope bang box holds the node and nothing else",
     ),
+    SideCondition("no_port_boxed_leg", "neither leg lies in a port-scope bang box"),
 )
 
 
@@ -1896,6 +1912,8 @@ def find_identity_matches(
         if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
             continue
         if _exhausts_a_node_scope_box(diagram, (node_id,)):
+            continue
+        if _has_port_boxed_leg(diagram, (node_id,)):
             continue
         matches.append(
             IdentityMatch(
@@ -2118,7 +2136,7 @@ STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
     ),
 )
 
@@ -2196,7 +2214,7 @@ def find_state_copy_matches(
             dims = {port.dim for port in (*state.outputs, *spider.inputs, *spider.outputs)}
             if len(dims) != 1:
                 continue
-            if _in_any_node_scope_box(diagram, (state.id, spider.id)):
+            if _in_any_bang_box(diagram, (state.id, spider.id)):
                 continue
             matches.append(
                 StateCopyMatch(
@@ -2260,7 +2278,7 @@ HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition(
         "outside_every_bang_box",
-        "none of the four nodes lies in any node-scope bang box",
+        "none of the four nodes lies in any node-scope bang box or has a port-boxed leg",
     ),
 )
 
@@ -2414,7 +2432,7 @@ def find_hopf_matches(
                     node.phase is not None and node.phase.dim != z_dim for node in (z_node, x_node)
                 ):
                     continue
-                if _in_any_node_scope_box(diagram, (z_id, x_node.id, *fourier_ids)):
+                if _in_any_bang_box(diagram, (z_id, x_node.id, *fourier_ids)):
                     continue
                 matches.append(
                     HopfMatch(
@@ -2472,7 +2490,7 @@ BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
     ),
 )
 
@@ -2553,7 +2571,7 @@ def find_bialgebra_matches(
             x_dim = _uniform_leg_dim(x_node)
             if x_dim is None or _uniform_leg_dim(z_node) != x_dim:
                 continue
-            if _in_any_node_scope_box(diagram, (x_node.id, z_node.id)):
+            if _in_any_bang_box(diagram, (x_node.id, z_node.id)):
                 continue
             matches.append(
                 BialgebraMatch(

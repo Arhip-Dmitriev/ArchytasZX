@@ -292,7 +292,7 @@ class TestNotFoundCatalogue:
         result = outcome.search
         assert result is not None and not result.found
         assert result.states >= 2 and result.expanded >= 1
-        assert result.applications >= 1 and result.depth >= 1
+        assert result.depth >= 1
         assert outcome.counterexample is None
 
     def test_boxed_state_copy_is_oracle_equal(self) -> None:

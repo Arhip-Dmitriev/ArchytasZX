@@ -440,7 +440,7 @@ class TestLadder:
         assert decision.decided
         assert decision.left_nf is not None and decision.right_nf is not None
         assert decision.left_nf.key == decision.right_nf.key
-        assert decision.samples_checked == 0
+        assert decision.samples_checked > 0
         assert decision.assumptions == ()
         assert decision.counterexample is None
         assert_oracle_agrees(left, right, decision)
@@ -594,10 +594,10 @@ class TestSamples:
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert decision.samples_checked == 1
 
-    def test_normal_form_match_skips_the_oracle(self) -> None:
+    def test_normal_form_match_runs_the_oracle(self) -> None:
         decision = decide_equal(*ghz_pair(D), samples=[{"d": 2}, {"d": 3}])
         assert decision.method is DecisionMethod.NORMAL_FORM
-        assert decision.samples_checked == 0
+        assert decision.samples_checked == 2
 
 
 class TestParameters:

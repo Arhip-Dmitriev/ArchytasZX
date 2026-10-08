@@ -57,7 +57,8 @@ from archytaszx.rewrite.match import (
     _claimed_exactly_once_by_a_wire,
     _exhausts_a_node_scope_box,
     _far_end,
-    _in_any_node_scope_box,
+    _has_port_boxed_leg,
+    _in_any_bang_box,
     _is_phaseless,
     _neighbour_ids,
     _port_claims,
@@ -225,6 +226,7 @@ W_IDENTITY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "leaves_every_bang_box_populated",
         "no node-scope bang box holds the node and nothing else",
     ),
+    SideCondition("no_port_boxed_leg", "neither leg lies in a port-scope bang box"),
 )
 
 
@@ -272,6 +274,8 @@ def find_w_identity_matches(
             continue
         if _exhausts_a_node_scope_box(diagram, (node_id,)):
             continue
+        if _has_port_boxed_leg(diagram, (node_id,)):
+            continue
         matches.append(
             IdentityMatch(
                 node_id=node_id,
@@ -315,7 +319,10 @@ W_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("target_is_a_w_node", "a registered W node, fed at its input"),
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 TRIANGLE_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -325,7 +332,10 @@ TRIANGLE_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("target_is_a_triangle", "a registered T or Ti, fed at its input"),
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 
@@ -387,7 +397,7 @@ def find_fed_state_matches(
             if not _claimed_exactly_once_by_a_wire(target_ref, claims, boundary):
                 continue
             dim = _shared_dim(state, target)
-            if dim is None or _in_any_node_scope_box(diagram, (state.id, target.id)):
+            if dim is None or _in_any_bang_box(diagram, (state.id, target.id)):
                 continue
             matches.append(
                 FedStateMatch(
@@ -438,7 +448,10 @@ TRIANGLE_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 
@@ -489,7 +502,7 @@ def find_triangle_effect_matches(
             if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
                 continue
             dim = _shared_dim(triangle, effect)
-            if dim is None or _in_any_node_scope_box(diagram, (triangle.id, effect.id)):
+            if dim is None or _in_any_bang_box(diagram, (triangle.id, effect.id)):
                 continue
             matches.append(
                 TriangleEffectMatch(
@@ -546,7 +559,10 @@ CONNECTIVE_INVERSE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "splice_keeps_two_ports",
         "no spliced wire's far port is on the pair or is the surviving leg's own neighbour",
     ),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 
@@ -663,7 +679,7 @@ def _connective_candidate(
     far = [s.far_ref for s in splices]
     if len(set(far)) != len(far):
         return None
-    if _in_any_node_scope_box(diagram, (first.id, second.id)):
+    if _in_any_bang_box(diagram, (first.id, second.id)):
         return None
     return ConnectiveInverseMatch(
         first_id=first.id,
@@ -739,7 +755,9 @@ CONNECTIVE_STATES_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition(
         "matching_dimensions", "each state or effect carries its connective leg's dimension"
     ),
-    SideCondition("outside_every_bang_box", "no node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box", "no node lies in any node-scope bang box or has a port-boxed leg"
+    ),
 )
 
 CONNECTIVE_STATES_SWAPPED_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -822,7 +840,7 @@ def find_connective_states_matches(
             wires.append(wire)
         if len(ends) != 2:
             continue
-        if _in_any_node_scope_box(diagram, (node_id, *ends)):
+        if _in_any_bang_box(diagram, (node_id, *ends)):
             continue
         joint = node.legs(Direction.INPUT if effects else Direction.OUTPUT)
         if len(joint) != 1:
@@ -876,7 +894,10 @@ WZ_BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("w_is_a_fan_out", "a registered W node with at least two outputs"),
     SideCondition("joining_wire_unclaimed", "neither joined port carries a second claim"),
     SideCondition("same_dimension", "every leg of both nodes carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 
@@ -931,7 +952,7 @@ def find_wz_bialgebra_matches(
             if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
                 continue
             dim = _shared_dim(z, w)
-            if dim is None or _in_any_node_scope_box(diagram, (z.id, w.id)):
+            if dim is None or _in_any_bang_box(diagram, (z.id, w.id)):
                 continue
             matches.append(
                 WZBialgebraMatch(
@@ -979,7 +1000,10 @@ W_Z_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 W_ZERO_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
@@ -989,7 +1013,10 @@ W_ZERO_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
-    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+    SideCondition(
+        "outside_every_bang_box",
+        "neither node lies in any node-scope bang box or has a port-boxed leg",
+    ),
 )
 
 
@@ -1050,7 +1077,7 @@ def find_w_effect_matches(
             if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
                 continue
             dim = _shared_dim(w, effect)
-            if dim is None or _in_any_node_scope_box(diagram, (w.id, effect.id)):
+            if dim is None or _in_any_bang_box(diagram, (w.id, effect.id)):
                 continue
             matches.append(
                 WEffectMatch(

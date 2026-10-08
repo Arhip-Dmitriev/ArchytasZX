@@ -28,7 +28,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import ModDelta, ModGcd, Scalar
 from archytaszx.diagram.bangbox import Mult, expand_concrete_boxes
-from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER, GeneratorType
+from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER, GeneratorType
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.semantics.check import compare_symbolic, score
 from archytaszx.semantics.contract_numeric import ContractSizeError, contract
@@ -235,9 +235,20 @@ class TestRefusals:
 
 
 class TestUnsupportedShapes:
-    def test_a_replicated_leg_on_a_fourier_box_is_unsupported(self) -> None:
+    def test_a_replicated_leg_on_a_fourier_box_fails_validation(self) -> None:
         diagram = Diagram()
         node_id = diagram.add_node(FOURIER_BOX, input_dims=[D], output_dims=[D])
+        diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
+        diagram.set_boundary_outputs([PortRef(node_id, Direction.OUTPUT, 0)])
+        diagram.add_bang_box(
+            Mult("n"), port_scope=frozenset({PortRef(node_id, Direction.OUTPUT, 0)})
+        )
+        with pytest.raises(SymbolicContractionValidationError, match="bangbox_port_fixed_arity"):
+            contract_symbolic(diagram)
+
+    def test_a_replicated_leg_on_a_w_node_is_unsupported(self) -> None:
+        diagram = Diagram()
+        node_id = diagram.add_node(W_NODE, input_dims=[D], output_dims=[D])
         diagram.set_boundary_inputs([PortRef(node_id, Direction.INPUT, 0)])
         diagram.set_boundary_outputs([PortRef(node_id, Direction.OUTPUT, 0)])
         diagram.add_bang_box(

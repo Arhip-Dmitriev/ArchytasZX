@@ -63,7 +63,13 @@ from archytaszx.rewrite.sheet import (
     split_scale,
 )
 from archytaszx.semantics import interop
-from archytaszx.semantics.check import CheckAssignmentValue, ComparisonResult, compare, score
+from archytaszx.semantics.check import (
+    CheckAssignmentValue,
+    CheckDomainError,
+    ComparisonResult,
+    compare,
+    score,
+)
 from archytaszx.semantics.contract_numeric import ContractSizeError
 from archytaszx.semantics.interop import (
     InteropGrammarError,
@@ -473,7 +479,17 @@ class TestTamperedSteps:
         assert not check.oracle_ok and dict(check.counterexample or {}) == {"k": 2}
         assert check.samples_evaluated == 2
 
-    def test_a_sample_only_before_evaluates_at_is_skipped_and_noted(self) -> None:
+    def test_a_sample_only_before_evaluates_at_is_skipped_and_noted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def one_sided(
+            reference: Diagram, other: Diagram, sample: Mapping[str, object], **kw: object
+        ) -> ComparisonResult:
+            if sample.get("n") == 0:
+                raise CheckDomainError("other side outside its domain at n = 0")
+            return compare(reference, other, sample, **kw)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(interop, "compare", one_sided)
         d = Diagram()
         a = d.add_node(Z_SPIDER, [], [D2])
         b = d.add_node(Z_SPIDER, [D2], [D2])

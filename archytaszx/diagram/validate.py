@@ -145,6 +145,7 @@ class IssueKind(enum.Enum):
     BANGBOX_SCOPE_UNKNOWN_NODE = "bangbox_scope_unknown_node"
     BANGBOX_PORT_UNKNOWN = "bangbox_port_unknown"
     BANGBOX_PORT_NOT_BOUNDARY = "bangbox_port_not_boundary"
+    BANGBOX_PORT_FIXED_ARITY = "bangbox_port_fixed_arity"
     BANGBOX_SCOPE_OVERLAP = "bangbox_scope_overlap"
     BANGBOX_UNKNOWN_PARENT = "bangbox_unknown_parent"
     BANGBOX_PARENT_CYCLE = "bangbox_parent_cycle"
@@ -846,7 +847,8 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
 
     A port-scope box's port must additionally currently be a diagram boundary slot --
     :mod:`archytaszx.diagram.bangbox`'s instantiate/kill mechanism has no other way to grow
-    or remove it (see that module's docstring). Boxes failing either check are excluded
+    or remove it (see that module's docstring) -- on a side whose leg policy admits any
+    count from one below its current one upward. Boxes failing any check are excluded
     from :func:`_check_bangbox_nesting`, mirroring :func:`_check_port_usage`'s
     ``broken_node_ids`` skip pattern.
     """
@@ -889,6 +891,24 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
                         port_ref=ref,
                     )
                 )
+            policy = node.generator_type.leg_policy
+            if ref.direction is Direction.INPUT:
+                bound, floor = policy.max_inputs, policy.min_inputs
+            else:
+                bound, floor = policy.max_outputs, policy.min_outputs
+            if bound is not None or floor > len(node.legs(ref.direction)) - 1:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.BANGBOX_PORT_FIXED_ARITY,
+                        message=(
+                            f"bang box {box_id!r} port_scope port {ref!r} is on a "
+                            f"{node.generator_type.name} node whose {ref.direction.value} "
+                            "leg count cannot take every multiplicity"
+                        ),
+                        bang_box_id=box_id,
+                        port_ref=ref,
+                    )
+                )
 
 
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
@@ -900,6 +920,7 @@ def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
             IssueKind.BANGBOX_SCOPE_UNKNOWN_NODE,
             IssueKind.BANGBOX_PORT_UNKNOWN,
             IssueKind.BANGBOX_PORT_NOT_BOUNDARY,
+            IssueKind.BANGBOX_PORT_FIXED_ARITY,
             IssueKind.BANGBOX_UNKNOWN_PARENT,
             IssueKind.BANGBOX_PARENT_CYCLE,
         )
@@ -953,7 +974,8 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
     contains its child (Phase 7).
 
     Two boxes with no declared parent/child relationship along the ``parent`` chain
-    must have disjoint footprints -- an undeclared overlap can only mean two
+    must have disjoint footprints, or, when both are port-scope, disjoint port scopes --
+    an undeclared overlap can only mean two
     independent boxes were built over the same node in error, since a legitimate nested
     relationship is always recorded via ``parent`` (see
     :mod:`archytaszx.diagram.bangbox`'s module docstring).
@@ -1026,6 +1048,8 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
         box_1, box_2 = boxes[box_id_1], boxes[box_id_2]
         related = box_id_2 in ancestors.get(box_id_1, ()) or box_id_1 in ancestors.get(box_id_2, ())
         if related:
+            continue
+        if box_1.port_scope and box_2.port_scope and box_1.port_scope.isdisjoint(box_2.port_scope):
             continue
         overlap = _bangbox_footprint(box_1) & _bangbox_footprint(box_2)
         if overlap:

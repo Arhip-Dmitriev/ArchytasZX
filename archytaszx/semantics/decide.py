@@ -29,8 +29,8 @@
 
 ``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
 counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form
-match needs both certificates to replay; one whose derivations assumed ``DEFERRED``
-dimension constraints runs rung 3 before it is reported, and the constraints are carried in
+match needs both certificates to replay and rung 3 to find no mismatch before it is
+reported; ``DEFERRED`` dimension constraints its derivations assumed are carried in
 :attr:`Decision.assumptions`. A saturation merge yields one certificate per edge of
 :meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its edge's parent to its
 child; each must replay onto a diagram whose comparison view is isomorphic to its child's, and
@@ -1002,9 +1002,6 @@ def decide_equal(
             **evidence,  # type: ignore[arg-type]
         )
 
-    if nf_equal and not nf_assumptions:
-        return finish(EqualityVerdict.EQUAL, DecisionMethod.NORMAL_FORM, "normal forms agree")
-
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
     oracle = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
     checked = len(oracle.evaluated)
@@ -1021,11 +1018,16 @@ def decide_equal(
         )
     sampled = oracle_summary(checked, oracle.refusals)
     if nf_equal:
+        conditional = (
+            f", conditional on the {len(nf_assumptions)} deferred dimension constraint(s) in "
+            "assumptions"
+            if nf_assumptions
+            else ""
+        )
         return finish(
             EqualityVerdict.EQUAL,
             DecisionMethod.NORMAL_FORM,
-            f"normal forms agree, conditional on the {len(nf_assumptions)} deferred dimension "
-            f"constraint(s) in assumptions; {sampled}",
+            f"normal forms agree{conditional}; {sampled}",
             samples_checked=checked,
         )
 
