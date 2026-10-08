@@ -280,7 +280,7 @@ class SymbolicTensor:
         """Run the character-sum simplifier over the entry and every replicated factor."""
         return SymbolicTensor(
             self.axes,
-            self.entry.simplify(max_steps=max_steps),
+            self.entry.simplify(max_steps=max_steps, ranges=self.ranges()),
             self.layout,
             tuple(
                 ReplicatedFactor(group.multiplicity, group.factor.simplify(max_steps=max_steps))
@@ -288,6 +288,12 @@ class SymbolicTensor:
             ),
             self.shared,
         )
+
+    def ranges(self) -> dict[str, Dim]:
+        """The dimension each fixed axis index and shared index runs over."""
+        sized = {axis.index: axis.dim for axis in self.axes}
+        sized.update({index.name: index.dim for index in self.shared})
+        return sized
 
     def _require_fixed_rank(self) -> None:
         """Raise unless this tensor has a fixed rank."""

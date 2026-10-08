@@ -522,12 +522,102 @@ class TestClosedFormsAtLargeDimension:
             )
             assert abs(gauss.substitute({"d": value}).to_complex() - direct) < 1e-9
 
-    def test_odd_linear_term_is_left_open(self) -> None:
-        # Completing the square needs half the linear coefficient to be an integer.
+    @pytest.mark.parametrize("sign", [1, -1])
+    @pytest.mark.parametrize("linear", [1, -3, 5])
+    def test_odd_linear_term_closes(self, sign: int, linear: int) -> None:
         gauss = Scalar.index_sum(
-            D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + k.to_sympy())
+            D, lambda k: Scalar.omega(D, sign * k.to_sympy() ** 2 + linear * k.to_sympy())
         ).simplify()
-        assert gauss.to_sympy().atoms(sp.Sum)
+        assert not gauss.to_sympy().atoms(sp.Sum)
+        for value in range(1, 13):
+            direct = sum(
+                cmath.exp(2j * cmath.pi * (sign * j * j + linear * j) / value) for j in range(value)
+            )
+            assert abs(gauss.substitute({"d": value}).to_complex() - direct) < 1e-9
+
+    @pytest.mark.parametrize(
+        ("label", "build", "direct"),
+        [
+            (
+                "non-unit coefficient over d",
+                lambda d, k, v: sp.Sum(
+                    sp.exp(2 * sp.pi * sp.I * 3 * k / d) * ModDelta(2 * k, d), (k, 0, d - 1)
+                ),
+                lambda n: sum(
+                    cmath.exp(2j * cmath.pi * 3 * j / n) for j in range(n) if 2 * j % n == 0
+                ),
+            ),
+            (
+                "coefficient 3 with an offset",
+                lambda d, k, v: sp.Sum(
+                    sp.exp(2 * sp.pi * sp.I * k / d) * ModDelta(3 * k + 1, d), (k, 0, d - 1)
+                ),
+                lambda n: sum(
+                    cmath.exp(2j * cmath.pi * j / n) for j in range(n) if (3 * j + 1) % n == 0
+                ),
+            ),
+            (
+                "gcd modulus against a d-periodic summand",
+                lambda d, k, v: sp.Sum(
+                    sp.exp(2 * sp.pi * sp.I * k / d) * ModDelta(k + 1, ModGcd(2, d)), (k, 0, d - 1)
+                ),
+                lambda n: sum(
+                    cmath.exp(2j * cmath.pi * j / n)
+                    for j in range(n)
+                    if (j + 1) % math.gcd(2, n) == 0
+                ),
+            ),
+            (
+                "non-unit delta beside a second index",
+                lambda d, k, v: sp.Sum(
+                    sp.exp(2 * sp.pi * sp.I * (k * v + v) / d) * ModDelta(2 * k, d),
+                    (k, 0, d - 1),
+                    (v, 0, d - 1),
+                ),
+                lambda n: sum(
+                    cmath.exp(2j * cmath.pi * (j * u + u) / n)
+                    for j in range(n)
+                    for u in range(n)
+                    if 2 * j % n == 0
+                ),
+            ),
+        ],
+    )
+    def test_a_stuck_delta_closes_by_residue_cases(self, label: str, build, direct) -> None:
+        k, v = sp.symbols("_k0 _k1", integer=True, nonnegative=True)
+        closed = Scalar(build(D.to_sympy(), k, v)).simplify()
+        assert not closed.to_sympy().atoms(sp.Sum), label
+        for value in range(1, 13):
+            assert abs(closed.substitute({"d": value}).to_complex() - direct(value)) < 1e-9
+
+    def test_two_case_split_closures_of_one_sum_cancel(self) -> None:
+        k = sp.Symbol("_k0", integer=True, nonnegative=True)
+        d = D.to_sympy()
+        first = Scalar(
+            sp.Sum(sp.exp(2 * sp.pi * sp.I * k / d) * ModDelta(3 * k + 1, d), (k, 0, d - 1))
+        )
+        # The same sum with k -> d - 1 - k, closed along another route.
+        second = Scalar(
+            sp.Sum(
+                sp.exp(2 * sp.pi * sp.I * (-1 - k) / d) * ModDelta(3 * k + 2 - 3 * d, d),
+                (k, 0, d - 1),
+            )
+        )
+        assert (first.simplify() - second.simplify()).simplify().is_zero
+
+    def test_a_linear_term_reading_a_free_index_closes(self) -> None:
+        free = sp.Symbol("i", integer=True, nonnegative=True)
+        gauss = Scalar.index_sum(
+            D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + free * k.to_sympy())
+        ).simplify()
+        assert not gauss.to_sympy().atoms(sp.Sum)
+        for value in range(1, 9):
+            for b in range(value):
+                direct = sum(
+                    cmath.exp(2j * cmath.pi * (j * j + b * j) / value) for j in range(value)
+                )
+                closed = gauss.substitute({"d": value, "i": b}).to_complex()
+                assert abs(closed - direct) < 1e-9
 
     @pytest.mark.parametrize("value", [1, 2, 3, 4, 5, 1000])
     def test_hopf_pair_closes_to_a_gcd(self, value: int) -> None:

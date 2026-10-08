@@ -319,6 +319,8 @@ class TestNormalFormRuleResolution:
             "connective_states_swapped",
             "triangle_zero_state",
             "triangle_zero_effect",
+            "w_zero_effect",
+            "w_z_effect",
             "fourier_cancellation",
             "fourier_state_color_change",
             "fourier_state_color_change_swapped",

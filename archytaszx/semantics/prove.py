@@ -31,6 +31,12 @@ reason.
 :func:`prove` raises :class:`ProveGrammarError` when ``start`` or ``goal`` fails validation.
 A ``PROVED`` outcome whose steps recorded ``DEFERRED`` dimension constraints is conditional on
 them; they are listed in :attr:`ProofOutcome.assumptions`.
+
+When search finds no path and a multiplicity is free, :func:`prove` tries an
+:class:`InductionProof`: the base case at 0 is proved the same way; for the step, one side's
+peeled successor at ``k + 1`` is searched until a union of its regions is that side at ``k``,
+the hypothesis replaces it by the other side at ``k``, and the result is proved against the
+other side's peeled successor. :func:`check_proof` rebuilds and re-checks every piece.
 """
 
 from __future__ import annotations
@@ -38,13 +44,21 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
-from archytaszx.algebra.scalar import ScalarError
-from archytaszx.diagram.bangbox import BangBoxError
+from archytaszx.algebra.scalar import Scalar, ScalarError
+from archytaszx.diagram.bangbox import (
+    BangBoxError,
+    Mult,
+    free_mult_symbols,
+    instantiate_symbol,
+    peel_one,
+)
+from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
-from archytaszx.diagram.graph import Diagram, GraphError
+from archytaszx.diagram.graph import Diagram, GraphError, NodeId
 from archytaszx.diagram.validate import ValidateError, validate
 from archytaszx.rewrite.cache import RewriteCache
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
@@ -56,6 +70,7 @@ from archytaszx.rewrite.tactics import (
     SearchResult,
     Tactic,
     search,
+    search_for,
 )
 from archytaszx.semantics.certificate import (
     Certificate,
@@ -73,6 +88,14 @@ from archytaszx.semantics.decide import (
     interface_reason,
     oracle_summary,
     refute_by_oracle,
+)
+from archytaszx.semantics.induction import (
+    InductionError,
+    _bare,
+    _extract,
+    find_hypothesis_region,
+    rename_multiplicity,
+    replace_region,
 )
 
 _CHECK_ERRORS: tuple[type[Exception], ...] = (
@@ -152,6 +175,96 @@ class ProofCertificate:
     def length(self) -> int:
         """The total number of steps in both halves."""
         return len(self.forward.steps) + len(self.backward.steps)
+
+
+class InductionSide(enum.Enum):
+    """Which side's successor the induction hypothesis rewrote."""
+
+    START = "start"
+    GOAL = "goal"
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class InductionProof:
+    """``start == goal`` for every value of ``index`` from 0: ``base`` at 0; ``expose`` from
+    ``side``'s peeled successor to a diagram whose ``region`` is that side at ``step_symbol``;
+    ``step`` from that region replaced by the other side to the other peeled successor."""
+
+    start: Diagram
+    goal: Diagram
+    index: str
+    step_symbol: str
+    base: ProofCertificate | InductionProof
+    side: InductionSide
+    expose: Certificate
+    region: frozenset[NodeId]
+    step: ProofCertificate | InductionProof
+
+    @property
+    def assumptions(self) -> tuple[DimensionConstraint, ...]:
+        """Every ``DEFERRED`` dimension constraint of every piece, deduplicated in order."""
+        kept = list(self.base.assumptions)
+        for constraint in (*_deferred((self.expose,)), *self.step.assumptions):
+            if constraint not in kept:
+                kept.append(constraint)
+        return tuple(kept)
+
+    @property
+    def length(self) -> int:
+        """The total number of rewrite steps in every piece."""
+        return self.base.length + len(self.expose.steps) + self.step.length
+
+
+Proof = ProofCertificate | InductionProof
+
+
+def _with_scalar_index(diagram: Diagram, index: str, value: Mult) -> Diagram:
+    """``diagram`` with ``index`` replaced by ``value`` in its scalar too."""
+    if index not in diagram.scalar.free_symbols:
+        return diagram
+    working = diagram.copy()
+    working.set_scalar(diagram.scalar.substitute({index: Scalar(value.to_sympy())}))
+    return working
+
+
+def induction_base(diagram: Diagram, index: str) -> Diagram:
+    """``diagram`` with the multiplicity ``index`` at 0, boxes expanded and scalar substituted."""
+    based = instantiate_symbol(diagram, index, 0)
+    if index in based.scalar.free_symbols:
+        based.set_scalar(based.scalar.substitute({index: 0}))
+    return based
+
+
+def induction_hypothesis(diagram: Diagram, index: str, step_symbol: str) -> Diagram:
+    """``diagram`` with ``index`` renamed to ``step_symbol``, scalar included."""
+    renamed = rename_multiplicity(diagram, index, Mult(step_symbol))
+    return _with_scalar_index(renamed, index, Mult(step_symbol))
+
+
+def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagram | None:
+    """``diagram`` at ``step_symbol + 1`` with one copy peeled off its one box carrying the
+    index, or None when no single box carries it."""
+    value = Mult(step_symbol) + 1
+    renamed = _with_scalar_index(rename_multiplicity(diagram, index, value), index, value)
+    owners = [
+        box_id
+        for box_id, box in sorted(renamed.bang_boxes.items())
+        if step_symbol in box.multiplicity.free_symbols
+    ]
+    if len(owners) != 1:
+        return None
+    return peel_one(renamed, owners[0]).diagram
+
+
+def _step_symbol(start: Diagram, goal: Diagram, index: str) -> str:
+    """A multiplicity name free in neither diagram."""
+    taken = free_mult_symbols(start) | free_mult_symbols(goal)
+    taken |= start.scalar.free_symbols | goal.scalar.free_symbols
+    name, suffix = "k", 0
+    while name in taken or name == index:
+        suffix += 1
+        name = f"k{suffix}"
+    return name
 
 
 def certify_proof(path: ProofPath) -> ProofCertificate:
@@ -288,8 +401,94 @@ def _check(
     )
 
 
+def _crosses(diagram: Diagram, region: frozenset[NodeId]) -> bool:
+    """Whether a wire joins ``region`` to a node outside it."""
+    return any((w.a.node_id in region) != (w.b.node_id in region) for w in diagram.wires)
+
+
+def _check_piece(
+    proof: Proof,
+    rediscover: bool,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    tolerance: float,
+    max_elements: int,
+) -> str | None:
+    """Why ``proof`` fails its check, or None when it passes."""
+    if isinstance(proof, ProofCertificate):
+        check = _check(proof, rediscover, None, samples, max_samples, tolerance, max_elements)
+        return None if check.verified else check.reason
+    return _check_induction(proof, rediscover, samples, max_samples, tolerance, max_elements)
+
+
+def _check_induction(
+    proof: InductionProof,
+    rediscover: bool,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    tolerance: float,
+    max_elements: int,
+) -> str | None:
+    """Why the induction ``proof`` fails, or None; every diagram is rebuilt from its two sides."""
+    args = (rediscover, samples, max_samples, tolerance, max_elements)
+    for which, diagram in (("start", proof.start), ("goal", proof.goal)):
+        invalid = _invalid_reason(diagram)
+        if invalid is not None:
+            return f"{which} {invalid}"
+    index, k = proof.index, proof.step_symbol
+    live = free_mult_symbols(proof.start) | free_mult_symbols(proof.goal)
+    if index not in live or k in live:
+        return f"{index!r} is not a free multiplicity or {k!r} is not fresh"
+    try:
+        base_start = induction_base(proof.start, index)
+        base_goal = induction_base(proof.goal, index)
+        if not (
+            compare_structure(proof.base.start, base_start).identical
+            and compare_structure(proof.base.goal, base_goal).identical
+        ):
+            return "the base case is not the two sides at multiplicity 0"
+        failure = _check_piece(proof.base, *args)
+        if failure is not None:
+            return f"the base case fails: {failure}"
+        own, other = (
+            (proof.start, proof.goal)
+            if proof.side is InductionSide.START
+            else (proof.goal, proof.start)
+        )
+        peeled = induction_successor(own, index, k)
+        other_peeled = induction_successor(other, index, k)
+        if peeled is None or other_peeled is None:
+            return "a successor has no single box to peel"
+        if not compare_structure(proof.expose.initial, peeled).identical:
+            return "the exposing derivation does not begin at the peeled successor"
+        replayed = replay(proof.expose, rediscover=rediscover)
+        if not replayed.reproduced:
+            return f"the exposing derivation did not replay: {replayed.reason}"
+        exposed = replayed.diagram
+        hypothesis = induction_hypothesis(own, index, k)
+        if not proof.region <= frozenset(exposed.nodes) or _crosses(exposed, proof.region):
+            return "the hypothesis region is not a closed part of the exposed diagram"
+        region_diagram = _bare(_extract(exposed, proof.region, with_boxes=True))
+        if not isomorphic(region_diagram, _bare(hypothesis), symmetric_legs=True):
+            return "the hypothesis region is not the hypothesis diagram"
+        replaced = replace_region(
+            exposed, proof.region, hypothesis, induction_hypothesis(other, index, k)
+        )
+        if not (
+            compare_structure(proof.step.start, replaced).identical
+            and compare_structure(proof.step.goal, other_peeled).identical
+        ):
+            return "the step does not run from the rewritten successor to the other side's"
+        failure = _check_piece(proof.step, *args)
+        if failure is not None:
+            return f"the step fails: {failure}"
+    except (*_CHECK_ERRORS, InductionError) as exc:
+        return f"rebuilding the induction raised {type(exc).__name__}: {exc}"
+    return None
+
+
 def check_proof(
-    certificate: ProofCertificate,
+    certificate: Proof,
     *,
     samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
     max_samples: int = 24,
@@ -297,15 +496,69 @@ def check_proof(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     rediscover: bool = True,
 ) -> ProofCheck:
-    """Check ``certificate`` by the module docstring's steps (a) to (d)."""
-    if not isinstance(certificate, ProofCertificate):
+    """Check ``certificate`` by the module docstring's steps (a) to (d); an
+    :class:`InductionProof` piece by piece, then the oracle on its two sides."""
+    if not isinstance(certificate, (ProofCertificate, InductionProof)):
         raise ProveGrammarError(
-            f"certificate must be a ProofCertificate, got {type(certificate).__name__}"
+            f"certificate must be a ProofCertificate or InductionProof, got "
+            f"{type(certificate).__name__}"
         )
     _check_oracle_args(samples, max_samples, tolerance, max_elements)
     if not isinstance(rediscover, bool):
         raise ProveGrammarError(f"rediscover must be a bool, got {rediscover!r}")
+    if isinstance(certificate, InductionProof):
+        return _check_whole_induction(
+            certificate, rediscover, None, samples, max_samples, tolerance, max_elements
+        )
     return _check(certificate, rediscover, None, samples, max_samples, tolerance, max_elements)
+
+
+def _check_whole_induction(
+    proof: InductionProof,
+    rediscover: bool,
+    oracle: OracleRefutation | None,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    tolerance: float,
+    max_elements: int,
+) -> ProofCheck:
+    """:func:`check_proof` of an induction proof, reusing ``oracle`` when given."""
+    failure = _check_induction(proof, rediscover, samples, max_samples, tolerance, max_elements)
+    if failure is not None:
+        return ProofCheck(False, failure, None, None, False, 0, None, None)
+    if oracle is None:
+        oracle = refute_by_oracle(
+            proof.start,
+            proof.goal,
+            samples=samples,
+            max_samples=max_samples,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
+    checked = len(oracle.evaluated)
+    if oracle.counterexample is not None:
+        detail = oracle.comparison.reason if oracle.comparison is not None else ""
+        return ProofCheck(
+            False,
+            f"oracle mismatch at {dict(oracle.counterexample)!r}: {detail}",
+            None,
+            None,
+            True,
+            checked,
+            oracle.counterexample,
+            oracle.comparison,
+        )
+    return ProofCheck(
+        True,
+        f"base and step check by replay and the hypothesis; "
+        f"{oracle_summary(checked, oracle.refusals)}",
+        None,
+        None,
+        True,
+        checked,
+        None,
+        None,
+    )
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -319,6 +572,7 @@ class ProofOutcome:
     search: SearchResult | None = None
     counterexample: Mapping[str, CheckAssignmentValue] | None = None
     assumptions: tuple[DimensionConstraint, ...] = ()
+    induction: InductionProof | None = None
 
     def __post_init__(self) -> None:
         """Validate every field's type, in declaration order."""
@@ -340,6 +594,8 @@ class ProofOutcome:
             isinstance(item, DimensionConstraint) for item in self.assumptions
         ):
             raise ProveGrammarError("assumptions must be a tuple of DimensionConstraint")
+        if self.induction is not None and not isinstance(self.induction, InductionProof):
+            raise ProveGrammarError("induction must be an InductionProof or None")
 
     @property
     def proved(self) -> bool:
@@ -356,6 +612,86 @@ def _search_summary(result: SearchResult) -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Searcher:
+    """The search settings every piece of one :func:`prove` call shares."""
+
+    moves: Sequence[Tactic] | None
+    limits: SearchLimits
+    bidirectional: bool
+    cache: RewriteCache | None
+
+
+def _prove_piece(start: Diagram, goal: Diagram, run: _Searcher, depth: int) -> Proof | None:
+    """A search proof of ``start == goal``, else an induction proof ``depth`` levels deep."""
+    found = search(
+        start,
+        goal,
+        moves=run.moves,
+        limits=run.limits,
+        bidirectional=run.bidirectional,
+        cache=run.cache,
+    )
+    if found.path is not None:
+        return certify_proof(found.path)
+    if depth <= 0:
+        return None
+    return _induct(start, goal, run, depth)
+
+
+def _induct(start: Diagram, goal: Diagram, run: _Searcher, depth: int) -> InductionProof | None:
+    """An :class:`InductionProof` of ``start == goal`` on some free multiplicity, or None."""
+    for index in sorted(free_mult_symbols(start) | free_mult_symbols(goal)):
+        try:
+            k = _step_symbol(start, goal, index)
+            base_start, base_goal = induction_base(start, index), induction_base(goal, index)
+            if _invalid_reason(base_start) or _invalid_reason(base_goal):
+                continue
+            base = _prove_piece(base_start, base_goal, run, depth - 1)
+            if base is None:
+                continue
+            for side in (InductionSide.START, InductionSide.GOAL):
+                own, other = (start, goal) if side is InductionSide.START else (goal, start)
+                peeled = induction_successor(own, index, k)
+                other_peeled = induction_successor(other, index, k)
+                if peeled is None or other_peeled is None:
+                    continue
+                hypothesis = induction_hypothesis(own, index, k)
+                _, hit = search_for(
+                    peeled,
+                    lambda diagram, h=hypothesis: find_hypothesis_region(diagram, h),
+                    moves=run.moves,
+                    limits=run.limits,
+                    cache=run.cache,
+                )
+                if hit is None:
+                    continue
+                region = cast(frozenset[NodeId], hit.value)
+                replaced = replace_region(
+                    hit.path.goal, region, hypothesis, induction_hypothesis(other, index, k)
+                )
+                step = _prove_piece(replaced, other_peeled, run, depth - 1)
+                if step is None:
+                    continue
+                return InductionProof(
+                    start=start.copy(),
+                    goal=goal.copy(),
+                    index=index,
+                    step_symbol=k,
+                    base=base,
+                    side=side,
+                    expose=certify(peeled, hit.path.forward_results, label="expose"),
+                    region=region,
+                    step=step,
+                )
+        except (*_CHECK_ERRORS, InductionError):
+            continue
+    return None
+
+
+DEFAULT_INDUCTION_DEPTH = 2
+
+
 def prove(
     start: Diagram,
     goal: Diagram,
@@ -369,9 +705,11 @@ def prove(
     max_samples: int = 24,
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
+    induction_depth: int = DEFAULT_INDUCTION_DEPTH,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by the module docstring's order: interface, oracle,
-    search, certification and check."""
+    search, certification and check, then induction over a free multiplicity when search
+    finds no path, nesting at most ``induction_depth`` inductions (0 turns it off)."""
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
             raise ProveGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")
@@ -389,6 +727,12 @@ def prove(
     if cache is not None and not isinstance(cache, RewriteCache):
         raise ProveGrammarError(f"cache must be a RewriteCache, got {type(cache).__name__}")
     _check_oracle_args(samples, max_samples, tolerance, max_elements)
+    if (
+        isinstance(induction_depth, bool)
+        or not isinstance(induction_depth, int)
+        or induction_depth < 0
+    ):
+        raise ProveGrammarError(f"induction_depth must be an int >= 0, got {induction_depth!r}")
     for name, value in (("start", start), ("goal", goal)):
         invalid = _invalid_reason(value)
         if invalid is not None:
@@ -418,7 +762,32 @@ def prove(
         start, goal, moves=moves, limits=limits, bidirectional=bidirectional, cache=cache
     )
     if found.path is None:
-        return ProofOutcome(ProofStatus.NOT_FOUND, _search_summary(found), search=found)
+        run = _Searcher(moves, limits, bidirectional, cache)
+        inducted = _induct(start, goal, run, induction_depth) if induction_depth else None
+        if inducted is None:
+            return ProofOutcome(ProofStatus.NOT_FOUND, _search_summary(found), search=found)
+        check = _check_whole_induction(
+            inducted, True, oracle, samples, max_samples, tolerance, max_elements
+        )
+        if not check.verified:
+            return ProofOutcome(
+                ProofStatus.CHECK_FAILED,
+                f"induction proof check failed: {check.reason}",
+                check=check,
+                search=found,
+                counterexample=check.counterexample,
+                induction=inducted,
+            )
+        assumptions = inducted.assumptions
+        return ProofOutcome(
+            ProofStatus.PROVED,
+            f"proved by induction on {inducted.index} from 0 in {inducted.length} step(s) after "
+            f"{_search_summary(found)}; {check.reason}",
+            check=check,
+            search=found,
+            assumptions=assumptions,
+            induction=inducted,
+        )
     certificate = certify_proof(found.path)
     check = _check(certificate, True, oracle, samples, max_samples, tolerance, max_elements)
     if not check.verified:

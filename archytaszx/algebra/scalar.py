@@ -89,6 +89,7 @@ class ScalarBudgetError(ScalarError):
 DEFAULT_MAX_SIMPLIFY_STEPS = 1024
 
 _RESERVED_INDEX = re.compile(r"^_[ik][0-9]+$")
+_CASE_SYMBOL = re.compile(r"^_q[0-9]+$")
 
 ScalarSymbolKey = Union[str, "Scalar"]
 ScalarSubstituteValue = Union[int, "sp.Rational", "Scalar"]
@@ -102,7 +103,7 @@ def _check_symbol_name(name: str, *, allow_reserved: bool = False) -> None:
             "operator characters builds a symbol that renders identically to an "
             "expression but is a different Scalar"
         )
-    if not allow_reserved and _RESERVED_INDEX.match(name):
+    if not allow_reserved and (_RESERVED_INDEX.match(name) or _CASE_SYMBOL.match(name)):
         raise ScalarGrammarError(f"symbol name {name!r} is reserved for engine-generated indices")
 
 
@@ -249,6 +250,10 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
             return sp.Integer(1 if int(j) % int(m) == 0 else 0)
         if not m.is_Integer and sp.cancel(j / m).is_integer is True:
             return sp.Integer(1)
+        if not m.is_Integer and j.is_Add:
+            kept = [t for t in j.args if sp.cancel(t / m).is_integer is not True]
+            if len(kept) < len(j.args):
+                return cast(sp.Expr, cls(sp.Add(*kept), m))
         if isinstance(m, ModGcd) and m.args[0].is_Integer:
             j = _canonical_residue(_reduce_mod(j, int(m.args[0])), m)
             if j == 0:
@@ -280,6 +285,10 @@ class ModGcd(sp.Function):  # type: ignore[misc]  # sympy is untyped
             return cast(sp.Expr, cls(-c, m))
         if c.is_Integer and isinstance(m, ModGcd) and m.args[0].is_Integer:
             return cast(sp.Expr, cls(math.gcd(int(c), int(m.args[0])), m.args[1]))
+        if c.is_Integer and m.is_integer is True:
+            residue = _reduce_mod(sp.expand(m), int(c))
+            if residue.is_Integer:
+                return sp.Integer(math.gcd(int(c), int(residue)))
         return None
 
 
@@ -348,13 +357,7 @@ def _split_term(
 
 
 def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | None:
-    """Close Sum_var omega_d^{s*var^2 + b*var + c} * constant for s = +-1 and b even, or None.
-
-    Completing the square (var -> var - s*b/2, a bijection of the residues since the
-    exponent has integer coefficients) leaves the quadratic Gauss sum
-    G(d) = Sum_k omega_d^{k^2} = sqrt(d) * (1 + i) * (1 + i^{-d}) / 2, valid for every d >= 1,
-    or its conjugate for s = -1.
-    """
+    """Close Sum_var omega_d^{s*var^2 + b*var + c} * constant for s = +-1 and integer b, or None."""
     constant = sp.Integer(1)
     exponent: sp.Expr = sp.Integer(0)
     for factor in sp.Mul.make_args(term):
@@ -374,13 +377,19 @@ def _gauss_term(term: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> sp.Expr | Non
     sign = polynomial.coeff_monomial(var**2)
     if sign not in (sp.Integer(1), sp.Integer(-1)):
         return None
-    half_linear = sp.expand(polynomial.coeff_monomial(var) / 2)
-    if half_linear.is_integer is not True:
+    linear = sp.expand(polynomial.coeff_monomial(var))
+    if linear.is_integer is not True:
         return None
+    half_linear = sp.expand(linear / 2)
     offset = polynomial.coeff_monomial(1)
     # s*k^2 + 2*h*k + c = s*(k + s*h)^2 - s*h^2 + c, using s^2 = 1.
     shift = sp.exp(2 * sp.pi * sp.I * sp.expand(offset - sign * half_linear**2) / d_expr)
-    gauss = sp.sqrt(d_expr) * (1 + sign * sp.I) * (1 + (sign * sp.I) ** (-d_expr)) / 2
+    if half_linear.is_integer is True:
+        gauss = sp.sqrt(d_expr) * (1 + sign * sp.I) * (1 + (sign * sp.I) ** (-d_expr)) / 2
+        return cast(sp.Expr, constant * shift * gauss)
+    # sqrt(d) (1 + s*i)/2 omega_d^{-s*b^2/4} (1 + (-s*i)^d (-1)^b)
+    parity = sp.exp(sp.pi * sp.I * linear)
+    gauss = sp.sqrt(d_expr) * (1 + sign * sp.I) * (1 + (sign * sp.I) ** (-d_expr) * parity) / 2
     return cast(sp.Expr, constant * shift * gauss)
 
 
@@ -452,9 +461,22 @@ def _is_periodic_in(expr: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> bool:
         return _integer_slope(expr.args[0] * d_expr / (2 * sp.pi * sp.I), var)
     if isinstance(expr, ModDelta):
         frequency, modulus = expr.args
-        if var in modulus.free_symbols or not _divides(modulus, d_expr):
+        if var in modulus.free_symbols:
             return False
-        return _integer_slope(frequency, var)
+        if _divides(modulus, d_expr):
+            return _integer_slope(frequency, var)
+        linear = _linear_in(sp.expand(frequency), var) if frequency.is_integer else None
+        if linear is None:
+            try:
+                polynomial = sp.Poly(sp.expand(frequency), var)
+            except sp.PolynomialError:
+                return False
+            if polynomial.degree() != 1:
+                return False
+            slope = polynomial.coeff_monomial(var)
+        else:
+            slope = sp.Integer(linear[0])
+        return bool(sp.cancel(slope * d_expr / modulus).is_integer)
     if expr.is_Mul or expr.is_Add:
         return all(_is_periodic_in(cast(sp.Expr, arg), var, d_expr) for arg in expr.args)
     if expr.is_Pow:
@@ -509,13 +531,237 @@ def _solve_congruence(
     return cast(sp.Expr, ModDelta(rest, sp.Integer(g)) * roots)
 
 
-def _delta_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
+def _residue_roots(
+    coefficient: int, rest: sp.Expr, modulus: sp.Expr
+) -> tuple[sp.Expr, list[sp.Expr]] | None:
+    """``(guard, roots)`` solving ``c*u + r == 0 mod M`` when ``M mod |c|`` is a known residue, else
+    None."""
+    c = abs(coefficient)
+    if c < 2 or modulus.is_integer is not True:
+        return None
+    residue = _reduce_mod(sp.expand(modulus), c)
+    if not residue.is_Integer:
+        return None
+    e = math.gcd(c, int(residue))
+    reduced_c = c // e
+    reduced_modulus = sp.expand(modulus / e)
+    if reduced_c == 1:
+        inverse: sp.Expr = sp.Integer(1)
+    else:
+        y0 = (-pow((int(residue) // e) % reduced_c, -1, reduced_c)) % reduced_c
+        inverse = sp.expand((1 + reduced_modulus * y0) / reduced_c)
+    target = -rest if coefficient > 0 else rest
+    root = sp.expand(target * inverse / e)
+    roots = [sp.expand(root + t * reduced_modulus) for t in range(e)]
+    return ModDelta(rest, sp.Integer(e)), roots
+
+
+def _expand_delta(
+    term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Close an index pinned by a concrete-modulus ModDelta by expanding the delta into characters,
+    else None."""
+    factors = sp.Mul.make_args(term)
+    for position, factor in enumerate(factors):
+        delta = _delta_base(factor)
+        if delta is None:
+            continue
+        frequency, modulus = delta.args
+        if not modulus.is_Integer or int(modulus) < 2:
+            continue
+        weight = cast(sp.Expr, sp.Mul(*(f for i, f in enumerate(factors) if i != position)))
+        for index, (var, _lower, upper) in enumerate(limits):
+            size = sp.expand(upper + 1)
+            if var not in frequency.free_symbols or not _divides(modulus, size):
+                continue
+            if not _integer_slope(frequency, var) or not _is_periodic_in(weight, var, size):
+                continue
+            m = int(modulus)
+            characters = sp.Add(
+                *(sp.exp(2 * sp.pi * sp.I * j * sp.expand(frequency) / m) for j in range(m))
+            )
+            expanded = sp.expand(sp.powsimp(sp.expand(weight * characters / m), force=True))
+            closed = sp.Add(
+                *(
+                    _reduce_term(cast(sp.Expr, piece), limits, ranges)[0]
+                    for piece in sp.Add.make_args(expanded)
+                )
+            )
+            if var in closed.free_symbols or var in _bound_symbols(closed):
+                continue
+            return cast(sp.Expr, closed), []
+    return None
+
+
+def _fresh_index(expr: sp.Expr) -> sp.Symbol:
+    """An engine index ``_k<n>`` named after every reserved index in ``expr``."""
+    taken = [
+        int(str(s.name)[2:]) for s in expr.atoms(sp.Symbol) if _RESERVED_INDEX.match(str(s.name))
+    ]
+    return sp.Symbol(f"_k{max(taken, default=-1) + 1}", integer=True, nonnegative=True)
+
+
+def _radix_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Merge two bound indices ``a``, ``b`` read only as ``a*R_b + b`` into one index over
+    ``R_a*R_b``, else None."""
+    whole = cast(sp.Expr, sp.Sum(term, *limits))
+    for i, (a, _lo_a, upper_a) in enumerate(limits):
+        for j, (b, _lo_b, upper_b) in enumerate(limits):
+            if i == j or a not in term.free_symbols or b not in term.free_symbols:
+                continue
+            size_a, size_b = sp.expand(upper_a + 1), sp.expand(upper_b + 1)
+            if size_b.is_Integer or a in size_b.free_symbols or b in size_a.free_symbols:
+                continue
+            u = _fresh_index(whole)
+            merged = sp.powsimp(sp.expand(term.xreplace({b: u - a * size_b})), force=True)
+            if a in merged.free_symbols:
+                continue
+            rest = [limit for k, limit in enumerate(limits) if k not in (i, j)]
+            return cast(sp.Expr, merged), [
+                *rest,
+                (u, sp.Integer(0), sp.expand(size_a * size_b - 1)),
+            ]
+    return None
+
+
+def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr, sp.Expr] | None:
+    """``(least, greatest)`` of an integer-linear ``expr`` over indices sized in ``ranges``, else
+    None."""
+    form = _linear_form(expr)
+    if form is None:
+        return None
+    least = greatest = sp.expand(expr - sum((c * v for v, c in form.items()), sp.Integer(0)))
+    for var, coefficient in form.items():
+        size = ranges.get(var)
+        if size is None:
+            return None
+        if coefficient > 0:
+            greatest += coefficient * (size - 1)
+        else:
+            least += coefficient * (size - 1)
+    return sp.expand(least), sp.expand(greatest)
+
+
+def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
+    """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B|
+    < t``, else None."""
+    frequency, modulus = delta.args
+    if modulus.is_Integer or len(sp.Mul.make_args(modulus)) < 2:
+        return None
+    for t in (f for f in sp.Mul.make_args(modulus) if not f.is_Integer):
+        carry: sp.Expr = sp.Integer(0)
+        digit: sp.Expr = sp.Integer(0)
+        for piece in sp.Add.make_args(sp.expand(frequency)):
+            if sp.denom(sp.cancel(piece / t)) == 1:
+                carry += sp.cancel(piece / t)
+            else:
+                digit += piece
+        if digit != 0:
+            bounds = _bounds(digit, ranges)
+            if bounds is None:
+                continue
+            least, greatest = bounds
+            if not (
+                sp.expand(t - greatest).is_positive is True
+                and sp.expand(t + least).is_positive is True
+            ):
+                continue
+        rest = sp.cancel(modulus / t)
+        return cast(sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), rest))
+    return None
+
+
+def _split_radix_deltas(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """:func:`_radix_split` on every ModDelta, bound indices sized by their limits."""
+    if isinstance(expr, sp.Sum):
+        inner = dict(ranges)
+        for var, _lower, upper in expr.limits:
+            inner[var] = sp.expand(upper + 1)
+        return cast(sp.Expr, sp.Sum(_split_radix_deltas(expr.function, inner), *expr.limits))
+    if isinstance(expr, ModDelta):
+        return _radix_split(expr, ranges) or expr
+    if not expr.args:
+        return expr
+    return cast(sp.Expr, expr.func(*(_split_radix_deltas(arg, ranges) for arg in expr.args)))
+
+
+def _case_candidates(term: sp.Expr, limits: list[_Limit]) -> list[tuple[sp.Symbol, int]]:
+    """``(d, L)`` pairs whose residue cases ``d = L*q + rho`` can close a stuck delta in
+    ``term``."""
+    bound = {limit[0] for limit in limits}
+    found: list[tuple[sp.Symbol, int]] = []
+    for factor in sp.Mul.make_args(term):
+        delta = _delta_base(factor)
+        if delta is None:
+            continue
+        frequency, modulus = delta.args
+        for var in bound & frequency.free_symbols:
+            linear = _linear_in(frequency, var)
+            if linear is None:
+                continue
+            if isinstance(modulus, ModGcd) and modulus.args[0].is_Integer:
+                period, carrier = int(modulus.args[0]), modulus.args[1]
+            elif not modulus.is_Integer and abs(linear[0]) >= 2:
+                period, carrier = abs(linear[0]), modulus
+            else:
+                continue
+            symbols = [
+                s
+                for s in carrier.free_symbols
+                if s.is_integer is True
+                and not _RESERVED_INDEX.match(str(s.name))
+                and not _CASE_SYMBOL.match(str(s.name))
+            ]
+            single = len(symbols) == 1 and len(carrier.free_symbols) == 1
+            if period >= 2 and single and (symbols[0], period) not in found:
+                found.append((symbols[0], period))
+    return found
+
+
+def _fresh_case_symbol(expr: sp.Expr) -> sp.Symbol:
+    taken = {str(s.name) for s in expr.atoms(sp.Symbol) if _CASE_SYMBOL.match(str(s.name))}
+    n = 0
+    while f"_q{n}" in taken:
+        n += 1
+    return sp.Symbol(f"_q{n}", integer=True, nonnegative=True)
+
+
+def _case_step(
+    term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, list[_Limit]] | None:
+    """Close a stuck delta by splitting a dimension into its residue cases, else None."""
+    whole = cast(sp.Expr, sp.Sum(term, *limits))
+    for symbol, period in _case_candidates(term, limits):
+        q = _fresh_case_symbol(whole)
+        cases: list[sp.Expr] = []
+        progressed = False
+        for rho in range(period):
+            value = sp.expand(period * q + rho)
+            case_term = cast(sp.Expr, term.xreplace({symbol: value}))
+            case_limits = [(v, lo, sp.expand(up.xreplace({symbol: value}))) for v, lo, up in limits]
+            case_ranges = {v: sp.expand(r.xreplace({symbol: value})) for v, r in ranges.items()}
+            body = sp.expand(sp.powsimp(sp.expand(case_term), force=True))
+            reduced = []
+            for piece in sp.Add.make_args(body):
+                closed, changed = _reduce_term(cast(sp.Expr, piece), case_limits, case_ranges)
+                reduced.append(closed)
+                progressed = progressed or changed
+            back = sp.Add(*reduced).xreplace({q: (symbol - rho) / sp.Integer(period)})
+            cases.append(ModDelta(symbol - rho, sp.Integer(period)) * back)
+        if progressed:
+            return cast(sp.Expr, sp.Add(*cases)), []
+    return None
+
+
+def _delta_step(
+    term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, list[_Limit]] | None:
     """Remove one bound index pinned by a ModDelta factor over that index's own range.
 
     Sum_u [c*u + r == 0 mod m] g(u), m dividing u's range d and g m-periodic in u, is
     (d/m) times the sum over Z_m: c = +-1 substitutes u = -c*r; any other integer c gives
     gcd(c, m) * [gcd(c, m) | r] g when g is free of u, or the gcd(c, m) roots one by one when
-    m is concrete.
+    m is concrete or its residue mod c is known (:func:`_residue_roots`).
     """
     factors = sp.Mul.make_args(term)
     for position, factor in enumerate(factors):
@@ -534,10 +780,19 @@ def _delta_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Lim
             coefficient, rest = linear
             if rest.is_integer is not True or _bound_symbols(weight) & rest.free_symbols:
                 continue
-            if not _is_periodic_in(weight, var, modulus):
-                continue
-            scaled = weight * sp.cancel(size / modulus)
             sign = _unit_sign(sp.Integer(coefficient), modulus)
+            if not _is_periodic_in(weight, var, modulus):
+                if sign is None or sp.expand(modulus - size) != 0:
+                    continue
+                known = {**ranges, **{v: sp.expand(u + 1) for v, _l, u in limits if v != var}}
+                bounds = _bounds(sp.expand(-sign * rest), known)
+                if bounds is None or not (
+                    bounds[0].is_nonnegative is True
+                    and sp.expand(size - 1 - bounds[1]).is_nonnegative is True
+                ):
+                    continue
+                return weight.xreplace({var: sp.expand(-sign * rest)}), _without(limits, index)
+            scaled = weight * sp.cancel(size / modulus)
             if sign is not None:
                 return scaled.xreplace({var: sp.expand(-sign * rest)}), _without(limits, index)
             if modulus.is_Integer:
@@ -546,6 +801,11 @@ def _delta_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Lim
             if var not in weight.free_symbols:
                 g = ModGcd(coefficient, modulus)
                 return scaled * g * ModDelta(rest, g), _without(limits, index)
+            roots = _residue_roots(coefficient, rest, modulus)
+            if roots is not None:
+                guard, values = roots
+                pinned = sp.Add(*(scaled.xreplace({var: value}) for value in values))
+                return guard * pinned, _without(limits, index)
     return None
 
 
@@ -574,7 +834,9 @@ def _gauss_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Lim
     return None
 
 
-def _reduce_term(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, bool]:
+def _reduce_term(
+    term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, bool]:
     """``Sum(term, *limits)`` with every closable index closed, and whether any was."""
     if not limits:
         return term, False
@@ -584,24 +846,27 @@ def _reduce_term(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, bool]:
         used = [limit for limit in limits if limit[0] in term.free_symbols]
         step: tuple[sp.Expr, list[_Limit]] | None = (term * size, used)
     else:
-        step = _delta_step(term, limits) or _character_step(term, limits)
-        step = step or _gauss_step(term, limits)
+        step = _delta_step(term, limits, ranges) or _character_step(term, limits)
+        step = step or _gauss_step(term, limits) or _radix_step(term, limits)
+        step = step or _expand_delta(term, limits, ranges) or _case_step(term, limits, ranges)
     if step is None:
         return cast(sp.Expr, sp.Sum(term, *limits)), False
     closed, remaining = step
     body = sp.expand(sp.powsimp(sp.expand(closed), force=True))
-    pieces = [_reduce_term(cast(sp.Expr, piece), remaining)[0] for piece in sp.Add.make_args(body)]
+    pieces = [
+        _reduce_term(cast(sp.Expr, piece), remaining, ranges)[0] for piece in sp.Add.make_args(body)
+    ]
     return cast(sp.Expr, sp.Add(*pieces)), True
 
 
-def _close_sum(node: sp.Sum) -> sp.Expr | None:
+def _close_sum(node: sp.Sum, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
     """Close what the identities reach of one Sum node, else enumerate one concrete index."""
     limits: list[_Limit] = list(node.limits)
     body = sp.expand(sp.powsimp(sp.expand(node.function), force=True))
     pieces: list[sp.Expr] = []
     changed = False
     for term in sp.Add.make_args(body):
-        reduced, term_changed = _reduce_term(cast(sp.Expr, term), limits)
+        reduced, term_changed = _reduce_term(cast(sp.Expr, term), limits, ranges)
         pieces.append(reduced)
         changed = changed or term_changed
     if changed:
@@ -786,15 +1051,21 @@ def _reduce_integer_phases(expr: sp.Expr) -> sp.Expr:
     )
 
 
-def _close_all(expr: sp.Expr, budget: list[int]) -> tuple[sp.Expr, bool]:
-    """Close every closable Sum in one bottom-up pass, reporting whether anything changed."""
+def _close_all(
+    expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, bool]:
+    """Close every closable Sum bottom-up, sizing free indices by ``ranges``; reports whether
+    anything changed."""
     changed = False
+    inner = ranges
+    if isinstance(expr, sp.Sum):
+        inner = {**ranges, **{var: sp.expand(upper + 1) for var, _lower, upper in expr.limits}}
     if expr.args:
         new_args = list(expr.args)
         for position, arg in enumerate(expr.args):
             if isinstance(expr, sp.Sum) and position != 0:
                 continue  # limit tuples carry bound symbols, never sub-expressions to close
-            replaced, sub_changed = _close_all(cast(sp.Expr, arg), budget)
+            replaced, sub_changed = _close_all(cast(sp.Expr, arg), budget, inner)
             new_args[position] = replaced
             changed = changed or sub_changed
         expr = cast(sp.Expr, expr.func(*new_args))
@@ -804,10 +1075,80 @@ def _close_all(expr: sp.Expr, budget: list[int]) -> tuple[sp.Expr, bool]:
             raise ScalarBudgetError(
                 "simplification exceeded its step budget; the expression is left unsimplified"
             )
-        result = _close_sum(expr)
+        result = _close_sum(expr, ranges)
         if result is not None:
             return result, True
     return expr, changed
+
+
+def _case_delta_symbol(node: sp.Expr) -> tuple[sp.Symbol, int] | None:
+    """``(d, L)`` when ``node`` is ``[p(d) == 0 mod L]`` for a concrete ``L`` and integer polynomial
+    ``p``, else None."""
+    if not isinstance(node, ModDelta):
+        return None
+    frequency, modulus = node.args
+    if not modulus.is_Integer or int(modulus) < 2 or len(frequency.free_symbols) != 1:
+        return None
+    (symbol,) = frequency.free_symbols
+    name = str(symbol.name)
+    if symbol.is_integer is not True or _RESERVED_INDEX.match(name) or _CASE_SYMBOL.match(name):
+        return None
+    try:
+        polynomial = sp.Poly(frequency, symbol)
+    except sp.PolynomialError:
+        return None
+    if not all(coefficient.is_Integer for coefficient in polynomial.coeffs()):
+        return None
+    return symbol, int(modulus)
+
+
+def _split_cases(expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``expr`` as ``Sum_rho [d == rho mod L] * expr|_{d = L*q + rho}``, each case simplified."""
+    moduli: dict[sp.Symbol, int] = {}
+    for node in expr.atoms(ModDelta):
+        found = _case_delta_symbol(node)
+        if found is not None:
+            symbol, modulus = found
+            moduli[symbol] = math.lcm(moduli.get(symbol, 1), modulus)
+    if not moduli:
+        return expr
+    symbol = min(moduli, key=lambda s: str(s.name))
+    period = moduli[symbol]
+    q = _fresh_case_symbol(expr)
+    cases: list[sp.Expr] = []
+    for rho in range(period):
+        value = sp.expand(period * q + rho)
+        case = expr.xreplace({symbol: value})
+        case_ranges = {
+            var: sp.expand(size.xreplace({symbol: value})) for var, size in ranges.items()
+        }
+        case = _simplify_expr(_rename_indices(cast(sp.Expr, case)), budget, case_ranges)
+        if case != 0:
+            back = case.xreplace({q: (symbol - rho) / sp.Integer(period)})
+            cases.append(ModDelta(symbol - rho, sp.Integer(period)) * back)
+    return cast(sp.Expr, sp.expand(sp.Add(*cases)))
+
+
+def _simplify_expr(
+    expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> sp.Expr:
+    """The fixpoint of radix splitting, :func:`_close_all` and canonicalisation, then residue cases
+    split."""
+    while True:
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise ScalarBudgetError(
+                "simplification exceeded its step budget; the expression is left unsimplified"
+            )
+        split = _split_radix_deltas(expr, ranges)
+        radix_changed = split != expr
+        expr, changed = _close_all(split, budget, ranges)
+        changed = changed or radix_changed
+        expr = _canonical_top(_reduce_integer_phases(expr))
+        expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
+        if not changed:
+            break
+    return _split_cases(expr, budget, ranges)
 
 
 class Scalar:
@@ -931,23 +1272,18 @@ class Scalar:
             raise ScalarDomainError("dim_power() denominator must be nonzero")
         return cls(sp.Pow(dim.to_sympy(), sp.Rational(numerator, denominator)))
 
-    def simplify(self, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS) -> Scalar:
-        """Close every index sum the character-sum, delta and Gauss identities reach, and put
-        the remaining deltas in echelon form."""
-        budget = [max_steps]
-        expr = _rename_indices(self._expr)
-        while True:
-            budget[0] -= 1
-            if budget[0] < 0:
-                raise ScalarBudgetError(
-                    "simplification exceeded its step budget; the expression is left unsimplified"
-                )
-            expr, changed = _close_all(expr, budget)
-            expr = _canonical_top(_reduce_integer_phases(expr))
-            expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
-            if not changed:
-                break
-        return Scalar(_rename_indices(expr))
+    def simplify(
+        self,
+        *,
+        max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
+        ranges: Mapping[str, Dim] | None = None,
+    ) -> Scalar:
+        """Close every index sum the identities reach and put the remaining deltas in echelon form;
+        ``ranges`` sizes free indices."""
+        known = {_index_symbol(name): dim.to_sympy() for name, dim in (ranges or {}).items()}
+        return Scalar(
+            _rename_indices(_simplify_expr(_rename_indices(self._expr), [max_steps], known))
+        )
 
     def with_dimension_floors(self, floors: Mapping[str, int]) -> Scalar:
         """This scalar with every ``[s | c]`` set to zero, ``c`` a nonzero integer and ``s`` a

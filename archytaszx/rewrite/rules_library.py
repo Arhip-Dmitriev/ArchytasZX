@@ -72,7 +72,7 @@ from types import MappingProxyType
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseDomainError, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import FOURIER_BOX, TRIANGLE, W_NODE, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, Port, PortRef, Wire
 from archytaszx.rewrite.match import (
     BIALGEBRA_SIDE_CONDITIONS,
@@ -119,6 +119,12 @@ from archytaszx.rewrite.match import (
     reattach_phase,
     resolve_fusion_match,
 )
+from archytaszx.rewrite.match_box import (
+    PORT_BOX_UNFUSION_SIDE_CONDITIONS,
+    PortBoxUnfusionMatch,
+    PortBoxUnfusionPattern,
+    find_port_box_unfusion_matches,
+)
 from archytaszx.rewrite.match_zxw import (
     CONNECTIVE_INVERSE_SIDE_CONDITIONS,
     CONNECTIVE_STATES_SIDE_CONDITIONS,
@@ -128,6 +134,9 @@ from archytaszx.rewrite.match_zxw import (
     W_COPY_SIDE_CONDITIONS,
     W_FUSION_SIDE_CONDITIONS,
     W_IDENTITY_SIDE_CONDITIONS,
+    W_Z_EFFECT_SIDE_CONDITIONS,
+    W_ZERO_EFFECT_SIDE_CONDITIONS,
+    WZ_BIALGEBRA_SIDE_CONDITIONS,
     ConnectiveInverseMatch,
     ConnectiveInversePattern,
     ConnectiveStatesMatch,
@@ -136,15 +145,21 @@ from archytaszx.rewrite.match_zxw import (
     FedStatePattern,
     TriangleEffectMatch,
     TriangleEffectPattern,
+    WEffectMatch,
+    WEffectPattern,
     WFusionMatch,
     WFusionPattern,
     WIdentityPattern,
+    WZBialgebraMatch,
+    WZBialgebraPattern,
     find_connective_inverse_matches,
     find_connective_states_matches,
     find_fed_state_matches,
     find_triangle_effect_matches,
+    find_w_effect_matches,
     find_w_fusion_matches,
     find_w_identity_matches,
+    find_wz_bialgebra_matches,
 )
 from archytaszx.rewrite.rule import (
     BuildResult,
@@ -1486,6 +1501,241 @@ CONNECTIVE_STATES_SWAPPED = Rule(
 """Phaseless X states on both inputs of a B are one phaseless X state on its output:
 ``sqrt(s) |0> (x) sqrt(t) |0>`` binds to ``sqrt(s*t) |0>``; dually for X effects on an S."""
 
+
+def wz_bialgebra_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`WZ_BIALGEBRA`: one W_{1->m} per Z input and one phaseless
+    Z_{n->1} per W output, W ``a``'s output ``b`` feeding Z ``b``'s input ``a``."""
+    if not isinstance(match, WZBialgebraMatch):
+        raise RewriteGrammarError(
+            f"wz_bialgebra_builder requires a WZBialgebraMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(match, WZ_BIALGEBRA_SIDE_CONDITIONS, "wz_bialgebra_builder")
+    _require_rediscovered(match, find_wz_bialgebra_matches(diagram), "wz_bialgebra_builder")
+    dim = match.shared_dim
+    n, m = match.input_count, match.output_count
+    w_ids = tuple(
+        diagram.add_node(W_NODE, input_dims=[dim], output_dims=[dim] * m) for _ in range(n)
+    )
+    z_ids = tuple(
+        diagram.add_node(Z_SPIDER, input_dims=[dim] * n, output_dims=[dim]) for _ in range(m)
+    )
+    port_mapping = {
+        **{
+            PortRef(match.z_id, Direction.INPUT, a): PortRef(w_ids[a], Direction.INPUT, 0)
+            for a in range(n)
+        },
+        **{
+            PortRef(match.w_id, Direction.OUTPUT, b): PortRef(z_ids[b], Direction.OUTPUT, 0)
+            for b in range(m)
+        },
+    }
+    new_wires = tuple(
+        Wire(PortRef(w_ids[a], Direction.OUTPUT, b), PortRef(z_ids[b], Direction.INPUT, a))
+        for a in range(n)
+        for b in range(m)
+    )
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=w_ids + z_ids,
+        consumed_node_ids=(match.z_id, match.w_id),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+        new_wires=new_wires,
+    )
+
+
+wz_bialgebra_builder.side_conditions = WZ_BIALGEBRA_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+WZ_BIALGEBRA = Rule(
+    name="wz_bialgebra",
+    pattern=WZBialgebraPattern(),
+    builder=wz_bialgebra_builder,
+    side_conditions=WZ_BIALGEBRA_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("n", "m"), dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A phaseless Z_{n->1} into W_{1->m} is n W_{1->m} crossed into m Z_{n->1}, scalar 1."""
+
+
+def _remaining_w(diagram: Diagram, match: WEffectMatch) -> tuple[NodeId, dict[PortRef, PortRef]]:
+    """A W with every output of ``match``'s W but the capped one, and the outputs' mapping."""
+    dim = match.shared_dim
+    kept = [k for k in range(match.output_count) if k != match.position]
+    w = diagram.add_node(W_NODE, input_dims=[dim], output_dims=[dim] * len(kept))
+    mapping = {
+        PortRef(match.w_id, Direction.OUTPUT, old): PortRef(w, Direction.OUTPUT, new)
+        for new, old in enumerate(kept)
+    }
+    return w, mapping
+
+
+def w_z_effect_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`W_Z_EFFECT`: a T feeding a W without the capped output."""
+    if not isinstance(match, WEffectMatch) or match.zero:
+        raise RewriteGrammarError(
+            f"w_z_effect_builder requires a Z-effect WEffectMatch, got {match!r}"
+        )
+    check_side_condition_coverage(match, W_Z_EFFECT_SIDE_CONDITIONS, "w_z_effect_builder")
+    _require_rediscovered(match, find_w_effect_matches(diagram, zero=False), "w_z_effect_builder")
+    dim = match.shared_dim
+    triangle = diagram.add_node(TRIANGLE, input_dims=[dim], output_dims=[dim])
+    w, port_mapping = _remaining_w(diagram, match)
+    port_mapping[PortRef(match.w_id, Direction.INPUT, 0)] = PortRef(triangle, Direction.INPUT, 0)
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(triangle, w),
+        consumed_node_ids=(match.w_id, match.effect_id),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+        new_wires=(Wire(PortRef(triangle, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0)),),
+    )
+
+
+w_z_effect_builder.side_conditions = W_Z_EFFECT_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+W_Z_EFFECT = Rule(
+    name="w_z_effect",
+    pattern=WEffectPattern(),
+    builder=w_z_effect_builder,
+    side_conditions=W_Z_EFFECT_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("m",), dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A W_{1->m} output into a phaseless Z effect is T followed by W_{1->m-1}, scalar 1."""
+
+
+def w_zero_effect_scalar(dim: Dim) -> Scalar:
+    """The exact scalar :data:`W_ZERO_EFFECT` introduces: ``dim ** (1/2)``."""
+    return Scalar.dim_power(dim, 1, 2)
+
+
+def _w_zero_effect_scalar_for(match: Match) -> Scalar:
+    """:func:`w_zero_effect_scalar` read off a :class:`WEffectMatch`."""
+    if not isinstance(match, WEffectMatch):
+        raise RewriteGrammarError(
+            f"w_zero_effect requires a WEffectMatch, got {type(match).__name__}"
+        )
+    return w_zero_effect_scalar(match.shared_dim)
+
+
+def w_zero_effect_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`W_ZERO_EFFECT`: the W without the capped output."""
+    if not isinstance(match, WEffectMatch) or not match.zero:
+        raise RewriteGrammarError(
+            f"w_zero_effect_builder requires an X-effect WEffectMatch, got {match!r}"
+        )
+    check_side_condition_coverage(match, W_ZERO_EFFECT_SIDE_CONDITIONS, "w_zero_effect_builder")
+    _require_rediscovered(match, find_w_effect_matches(diagram, zero=True), "w_zero_effect_builder")
+    w, port_mapping = _remaining_w(diagram, match)
+    port_mapping[PortRef(match.w_id, Direction.INPUT, 0)] = PortRef(w, Direction.INPUT, 0)
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(w,),
+        consumed_node_ids=(match.w_id, match.effect_id),
+        consumed_wires=(match.wire,),
+        port_mapping=port_mapping,
+        scalar_introduced=w_zero_effect_scalar(match.shared_dim),
+    )
+
+
+w_zero_effect_builder.side_conditions = W_ZERO_EFFECT_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+W_ZERO_EFFECT = Rule(
+    name="w_zero_effect",
+    pattern=WEffectPattern(zero=True),
+    builder=w_zero_effect_builder,
+    side_conditions=W_ZERO_EFFECT_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("m",), dimensions=("d",)),
+    scalar_introduced=w_zero_effect_scalar(Dim.symbol("d")),
+    scalar_in_match=_w_zero_effect_scalar_for,
+)
+"""A W_{1->m} output into a phaseless X effect is W_{1->m-1} times ``d ** (1/2)``."""
+
+
+def port_box_unfusion_builder(diagram: Diagram, match: Match) -> BuildResult:
+    """The right-hand side of :data:`PORT_BOX_UNFUSION`: the spider without its boxed leg plus
+    one new leg, wired to a new phaseless spider of its colour holding the boxed leg."""
+    if not isinstance(match, PortBoxUnfusionMatch):
+        raise RewriteGrammarError(
+            f"port_box_unfusion_builder requires a PortBoxUnfusionMatch, got {type(match).__name__}"
+        )
+    check_side_condition_coverage(
+        match, PORT_BOX_UNFUSION_SIDE_CONDITIONS, "port_box_unfusion_builder"
+    )
+    _require_rediscovered(
+        match, find_port_box_unfusion_matches(diagram), "port_box_unfusion_builder"
+    )
+    node = diagram.nodes[match.node_id]
+    dim = match.shared_dim
+    boxed = match.boxed
+    is_output = boxed.direction is Direction.OUTPUT
+    inputs = [port.dim for port in node.inputs]
+    outputs = [port.dim for port in node.outputs]
+    kept = outputs if is_output else inputs
+    del kept[boxed.index]
+    kept.append(dim)
+    main = diagram.add_node(node.generator_type, input_dims=inputs, output_dims=outputs)
+    if node.phase is not None:
+        diagram.set_phase(main, node.phase)
+    side = diagram.add_node(
+        node.generator_type,
+        input_dims=[dim],
+        output_dims=[dim],
+    )
+    port_mapping: dict[PortRef, PortRef] = {}
+    for direction, legs in ((Direction.INPUT, node.inputs), (Direction.OUTPUT, node.outputs)):
+        for index in range(len(legs)):
+            old = PortRef(match.node_id, direction, index)
+            if old == boxed:
+                port_mapping[old] = PortRef(side, direction, 0)
+            elif direction is boxed.direction and index > boxed.index:
+                port_mapping[old] = PortRef(main, direction, index - 1)
+            else:
+                port_mapping[old] = PortRef(main, direction, index)
+    joint = len(kept) - 1
+    if is_output:
+        wire = Wire(PortRef(main, Direction.OUTPUT, joint), PortRef(side, Direction.INPUT, 0))
+    else:
+        wire = Wire(PortRef(side, Direction.OUTPUT, 0), PortRef(main, Direction.INPUT, joint))
+    _follow_port_scopes(diagram, port_mapping)
+    return BuildResult(
+        diagram=diagram,
+        new_node_ids=(main, side),
+        consumed_node_ids=(match.node_id,),
+        consumed_wires=(),
+        port_mapping=port_mapping,
+        scalar_introduced=Scalar.one(),
+        new_wires=(wire,),
+    )
+
+
+port_box_unfusion_builder.side_conditions = PORT_BOX_UNFUSION_SIDE_CONDITIONS  # type: ignore[attr-defined]
+"""The declared side-condition tuple this builder is meant to be paired with."""
+
+
+PORT_BOX_UNFUSION = Rule(
+    name="port_box_unfusion",
+    pattern=PortBoxUnfusionPattern(),
+    builder=port_box_unfusion_builder,
+    side_conditions=PORT_BOX_UNFUSION_SIDE_CONDITIONS,
+    quantifiers=Quantifiers(leg_counts=("n",), dimensions=("d",)),
+    scalar_introduced=Scalar.one(),
+)
+"""A spider with a port-boxed leg and two other legs is two spiders of its colour joined by
+one wire, the boxed leg on a new phaseless one, scalar 1."""
+
+
 RULES: Mapping[str, Rule] = MappingProxyType(
     {
         SPIDER_FUSION.name: SPIDER_FUSION,
@@ -1512,6 +1762,10 @@ RULES: Mapping[str, Rule] = MappingProxyType(
         CONNECTIVE_INVERSE_BIND_FIRST.name: CONNECTIVE_INVERSE_BIND_FIRST,
         CONNECTIVE_STATES.name: CONNECTIVE_STATES,
         CONNECTIVE_STATES_SWAPPED.name: CONNECTIVE_STATES_SWAPPED,
+        WZ_BIALGEBRA.name: WZ_BIALGEBRA,
+        W_Z_EFFECT.name: W_Z_EFFECT,
+        W_ZERO_EFFECT.name: W_ZERO_EFFECT,
+        PORT_BOX_UNFUSION.name: PORT_BOX_UNFUSION,
     }
 )
 """Every rule this module registers, keyed by :attr:`~archytaszx.rewrite.rule.Rule.name`.

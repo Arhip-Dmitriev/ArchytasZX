@@ -48,10 +48,14 @@ from archytaszx.rewrite.rules_library import (
     TRIANGLE_ZERO_STATE,
     W_FUSION,
     W_IDENTITY,
+    W_Z_EFFECT,
     W_ZERO_COPY,
+    W_ZERO_EFFECT,
+    WZ_BIALGEBRA,
 )
 from archytaszx.semantics.certificate import certify, replay
-from archytaszx.semantics.check import compare
+from archytaszx.semantics.check import compare, compare_symbolic
+from archytaszx.semantics.contract_symbolic import contract_symbolic
 from archytaszx.semantics.decide import DecisionMethod, EqualityVerdict, decide_equal
 
 D = Dim("d")
@@ -162,6 +166,28 @@ def connective_ends(colour: GeneratorType, effects: bool) -> Diagram:
     return diagram
 
 
+def z_into_w(inputs: int, outputs: int) -> Diagram:
+    """A phaseless Z_{inputs->1} feeding a W_{1->outputs}."""
+    diagram = Diagram()
+    z = diagram.add_node(Z_SPIDER, [D] * inputs, [D])
+    w = diagram.add_node(W_NODE, [D], [D] * outputs)
+    diagram.add_wire(out(z, 0), inp(w, 0))
+    diagram.set_boundary_inputs([inp(z, k) for k in range(inputs)])
+    diagram.set_boundary_outputs([out(w, k) for k in range(outputs)])
+    return diagram
+
+
+def w_into_effect(outputs: int, position: int, colour: GeneratorType) -> Diagram:
+    """A W_{1->outputs} whose output ``position`` feeds a phaseless ``colour`` effect."""
+    diagram = Diagram()
+    w = diagram.add_node(W_NODE, [D], [D] * outputs)
+    effect = diagram.add_node(colour, [D], [])
+    diagram.add_wire(out(w, position), inp(effect, 0))
+    diagram.set_boundary_inputs([inp(w, 0)])
+    diagram.set_boundary_outputs([out(w, k) for k in range(outputs) if k != position])
+    return diagram
+
+
 CASES: dict[str, tuple[Rule, Callable[[], Diagram], int, tuple[dict[str, int], ...]]] = {
     "w_fusion": (W_FUSION, w_into_w, 1, SINGLE),
     "w_fusion_counit": (W_FUSION, lambda: w_into_w(3, 0, 0), 1, SINGLE),
@@ -193,6 +219,13 @@ CASES: dict[str, tuple[Rule, Callable[[], Diagram], int, tuple[dict[str, int], .
         1,
         MIXED,
     ),
+    "wz_bialgebra": (WZ_BIALGEBRA, lambda: z_into_w(2, 2), 4, SINGLE),
+    "wz_bialgebra_wide": (WZ_BIALGEBRA, lambda: z_into_w(3, 2), 5, SINGLE),
+    "wz_bialgebra_tall": (WZ_BIALGEBRA, lambda: z_into_w(2, 3), 5, SINGLE),
+    "w_z_effect": (W_Z_EFFECT, lambda: w_into_effect(2, 1, Z_SPIDER), 2, SINGLE),
+    "w_z_effect_middle": (W_Z_EFFECT, lambda: w_into_effect(4, 1, Z_SPIDER), 2, SINGLE),
+    "w_zero_effect": (W_ZERO_EFFECT, lambda: w_into_effect(3, 0, X_SPIDER), 1, SINGLE),
+    "w_zero_effect_last": (W_ZERO_EFFECT, lambda: w_into_effect(1, 0, X_SPIDER), 1, SINGLE),
 }
 
 
@@ -216,6 +249,16 @@ class TestEachRuleAgainstTheOracle:
         diagram = build()
         result = apply(diagram, rule, rule.pattern.find_matches(diagram)[0])
         assert replay(certify(diagram, [result], label=name)).reproduced
+
+    @pytest.mark.parametrize("name", sorted(CASES))
+    def test_the_rewrite_preserves_the_map_with_dimensions_formal(self, name: str) -> None:
+        rule, build, _, _ = CASES[name]
+        diagram = build()
+        result = apply(diagram, rule, rule.pattern.find_matches(diagram)[0])
+        before = contract_symbolic(diagram).simplify()
+        after = contract_symbolic(result.diagram).simplify()
+        outcome = compare_symbolic(before, after)
+        assert outcome.matched, outcome.reason
 
     def test_every_new_rule_is_registered(self) -> None:
         for rule, *_ in CASES.values():
@@ -249,6 +292,15 @@ class TestNonMatches:
         diagram.set_boundary_outputs([out(bind, 0), out(z, 1)])
         assert not CONNECTIVE_INVERSE.pattern.find_matches(diagram)
         assert not compare(diagram, split_then_bind_over(S), {"s": 2}).matched
+
+    def test_a_phased_z_does_not_cross_a_w(self) -> None:
+        diagram = z_into_w(2, 2)
+        z = next(i for i, n in diagram.nodes.items() if n.generator_type.name == "Z")
+        diagram.set_phase(z, PhaseVector(D, {1: Phase.turns(sp.Rational(1, 3))}))
+        assert not WZ_BIALGEBRA.pattern.find_matches(diagram)
+
+    def test_a_two_output_w_is_needed_for_the_triangle(self) -> None:
+        assert not W_Z_EFFECT.pattern.find_matches(w_into_effect(1, 0, Z_SPIDER))
 
     def test_a_lone_w_is_not_fused(self) -> None:
         assert not W_FUSION.pattern.find_matches(single_w(3))
@@ -285,6 +337,15 @@ class TestNormalForms:
         state.set_boundary_outputs([out(x, 0)])
         decision = decide_equal(state_into(TRIANGLE, 1), state)
         assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+
+    def test_a_capped_w_decides_equal_to_the_triangle(self) -> None:
+        triangle = Diagram()
+        t = triangle.add_node(TRIANGLE, [D], [D])
+        triangle.set_boundary_inputs([inp(t, 0)])
+        triangle.set_boundary_outputs([out(t, 0)])
+        decision = decide_equal(w_into_effect(2, 1, Z_SPIDER), triangle)
+        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        assert decision.method is DecisionMethod.NORMAL_FORM
 
     def test_the_triangle_effect_carries_its_scalar(self) -> None:
         nf = normal_form(triangle_into_effect())

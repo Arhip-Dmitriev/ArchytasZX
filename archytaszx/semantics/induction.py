@@ -26,8 +26,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from archytaszx.algebra.dimension import Dim
-from archytaszx.algebra.scalar import ScalarBudgetError
+from archytaszx.algebra.scalar import Scalar, ScalarBudgetError
 from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult, free_mult_symbols, peel_one
+from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
@@ -524,6 +525,128 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool 
                 )
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
+
+
+def connected_regions(diagram: Diagram) -> tuple[frozenset[NodeId], ...]:
+    """The node sets closed under wires and bang-box footprints, smallest id first."""
+    parent: dict[NodeId, NodeId] = {node_id: node_id for node_id in diagram.nodes}
+
+    def root(node_id: NodeId) -> NodeId:
+        while parent[node_id] != node_id:
+            parent[node_id] = parent[parent[node_id]]
+            node_id = parent[node_id]
+        return node_id
+
+    def join(a: NodeId, b: NodeId) -> None:
+        ra, rb = root(a), root(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    for wire in diagram.wires:
+        join(wire.a.node_id, wire.b.node_id)
+    for box in diagram.bang_boxes.values():
+        footprint = sorted(_box_footprint(box))
+        for node_id in footprint[1:]:
+            join(footprint[0], node_id)
+    groups: dict[NodeId, set[NodeId]] = {}
+    for node_id in diagram.nodes:
+        groups.setdefault(root(node_id), set()).add(node_id)
+    return tuple(frozenset(group) for _, group in sorted(groups.items()))
+
+
+def _bare(diagram: Diagram) -> Diagram:
+    """``diagram`` with scalar one and no parameter environment."""
+    working = diagram.copy()
+    working.set_scalar(Scalar.one())
+    working.set_parameters({})
+    return working
+
+
+def find_hypothesis_region(
+    diagram: Diagram, hypothesis: Diagram, *, max_regions: int = 12
+) -> frozenset[NodeId] | None:
+    """The smallest union of :func:`connected_regions` whose extraction is isomorphic to
+    ``hypothesis`` up to scalar and spider leg order, or None; single regions only past
+    ``max_regions``."""
+    from itertools import combinations
+
+    regions = connected_regions(diagram)
+    target = _bare(hypothesis)
+    wanted = sorted(node.generator_type.name for node in target.nodes.values())
+    sizes = range(1, len(regions) + 1) if len(regions) <= max_regions else range(1, 2)
+    for size in sizes:
+        for chosen in combinations(regions, size):
+            region = frozenset().union(*chosen)
+            if len(region) != len(target.nodes):
+                continue
+            names = sorted(diagram.nodes[n].generator_type.name for n in region)
+            if names != wanted:
+                continue
+            extracted = _bare(_extract(diagram, region, with_boxes=True))
+            if isomorphic(extracted, target, symmetric_legs=True):
+                return region
+    return None
+
+
+def replace_region(
+    diagram: Diagram, region: frozenset[NodeId], hypothesis: Diagram, replacement: Diagram
+) -> Diagram:
+    """``diagram`` with ``region`` swapped for ``replacement`` in its boundary slots, the scalar
+    times ``replacement.scalar / hypothesis.scalar``."""
+    if len(replacement.boundary_inputs) != sum(
+        ref.node_id in region for ref in diagram.boundary_inputs
+    ) or len(replacement.boundary_outputs) != sum(
+        ref.node_id in region for ref in diagram.boundary_outputs
+    ):
+        raise InductionDomainError("the replacement's interface does not fit the region's slots")
+    working = diagram.copy()
+    inputs = list(working.boundary_inputs)
+    outputs = list(working.boundary_outputs)
+    inside = [box_id for box_id, box in working.bang_boxes.items() if _box_footprint(box) & region]
+    for box_id in inside:
+        if not _box_footprint(working.bang_boxes[box_id]) <= region:
+            raise InductionDomainError(f"bang box {box_id!r} straddles the replaced region")
+    for box_id in sorted(inside, reverse=True):
+        working.remove_bang_box(box_id)
+    for node_id in sorted(region):
+        working.remove_node(node_id)
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(replacement.nodes):
+        node = replacement.nodes[old_id]
+        id_map[old_id] = working.add_node(
+            node.generator_type,
+            [port.dim for port in node.inputs],
+            [port.dim for port in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(replacement.wires, key=lambda w: w.sort_key()):
+        working.add_wire(
+            PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
+            PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
+        )
+    box_map: dict[BangBoxId, BangBoxId] = {}
+    pending = sorted(replacement.bang_boxes.items())
+    while len(box_map) < len(pending):
+        for box_id, box in pending:
+            if box_id in box_map or (box.parent is not None and box.parent not in box_map):
+                continue
+            box_map[box_id] = working.add_bang_box(
+                box.multiplicity,
+                node_scope=frozenset(id_map[n] for n in box.node_scope),
+                port_scope=frozenset(
+                    PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
+                ),
+                parent=None if box.parent is None else box_map[box.parent],
+            )
+
+    def refill(slots: list[PortRef], fresh: tuple[PortRef, ...]) -> list[PortRef]:
+        queue = [PortRef(id_map[r.node_id], r.direction, r.index) for r in fresh]
+        return [queue.pop(0) if ref.node_id in region else ref for ref in slots]
+
+    working.set_boundary_inputs(refill(inputs, replacement.boundary_inputs))
+    working.set_boundary_outputs(refill(outputs, replacement.boundary_outputs))
+    working.multiply_scalar(replacement.scalar * hypothesis.scalar**-1)
+    return working
 
 
 def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Diagram) -> bool:

@@ -47,7 +47,7 @@ from __future__ import annotations
 import abc
 import enum
 import itertools
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 
 from archytaszx.diagram.compare import canonical_key, isomorphic
@@ -755,6 +755,16 @@ class _Found(Exception):
         self.backward = backward
 
 
+class _Accepted(Exception):
+    """Internal signal carrying the step chain to a state the predicate accepted."""
+
+    def __init__(self, forward: tuple[ProofStep, ...], diagram: Diagram, value: object) -> None:
+        super().__init__("accepted")
+        self.forward = forward
+        self.diagram = diagram
+        self.value = value
+
+
 class _Limit(Exception):
     """Internal signal ending a search with ``status``."""
 
@@ -767,8 +777,14 @@ class _Search:
     """The mutable state of one :func:`search` run."""
 
     def __init__(
-        self, moves: tuple[Tactic, ...], limits: SearchLimits, bound: int, ctx: TacticContext
+        self,
+        moves: tuple[Tactic, ...],
+        limits: SearchLimits,
+        bound: int,
+        ctx: TacticContext,
+        accept: Callable[[Diagram], object] | None = None,
     ) -> None:
+        self.accept = accept
         self.moves = moves
         self.limits = limits
         self.bound = bound
@@ -816,6 +832,10 @@ class _Search:
                 view = comparison_view(outcome.diagram)
                 key, found = self.find(view)
                 step = ProofStep(move.name, outcome.results)
+                if found is None and self.accept is not None:
+                    value = self.accept(outcome.diagram)
+                    if value is not None:
+                        raise _Accepted(self.chain(index) + (step,), outcome.diagram, value)
                 if found is not None:
                     if self.states[found].side is state.side:
                         continue
@@ -930,3 +950,77 @@ def search(
         depth=depth,
         failures=tuple(ctx.failures),
     )
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class AcceptedState:
+    """A :func:`search_for` hit: the path from the start, and what the predicate returned."""
+
+    path: ProofPath
+    value: object
+
+
+def search_for(
+    start: Diagram,
+    accept: Callable[[Diagram], object],
+    *,
+    moves: Sequence[Tactic] | None = None,
+    limits: SearchLimits = DEFAULT_SEARCH_LIMITS,
+    cache: RewriteCache | None = None,
+) -> tuple[SearchResult, AcceptedState | None]:
+    """The first diagram reachable from ``start``, ``start`` included, on which ``accept``
+    returns a value other than None, with the forward path to it as a :class:`ProofPath`."""
+    _require_diagram("search_for: start", start)
+    if not callable(accept):
+        raise RewriteGrammarError("search_for: accept must be callable")
+    move_set = default_moves() if moves is None else tuple(moves)
+    if not all(isinstance(move, Tactic) for move in move_set):
+        raise RewriteGrammarError("search_for: every element of moves must be a Tactic")
+    if not isinstance(limits, SearchLimits):
+        raise RewriteGrammarError(
+            f"search_for: limits must be a SearchLimits, got {type(limits).__name__}"
+        )
+    ctx = TacticContext(cache=cache, max_applications=limits.max_applications)
+    run = _Search(move_set, limits, len(start.nodes) + limits.node_margin, ctx, accept)
+    start_copy = start.copy()
+    start_view = comparison_view(start_copy)
+    run.insert(_State(Side.START, start_copy, start_view, None, None, 0), view_key(start_view))
+    status = SearchStatus.DEPTH_LIMIT
+    hit: AcceptedState | None = None
+    depth = 0
+    first = accept(start_copy)
+    if first is not None:
+        status = SearchStatus.FOUND
+        hit = AcceptedState(ProofPath(start.copy(), start.copy(), (), ()), first)
+    else:
+        try:
+            for depth in range(limits.max_depth):
+                for index in [i for i, st in enumerate(run.states) if st.depth == depth]:
+                    run.expand(index)
+                if not any(st.depth == depth + 1 for st in run.states):
+                    status = SearchStatus.EXHAUSTED
+                    depth += 1
+                    break
+            else:
+                depth = limits.max_depth
+        except _Accepted as accepted:
+            status = SearchStatus.FOUND
+            steps = _detached_steps(accepted.forward)
+            hit = AcceptedState(
+                ProofPath(start.copy(), accepted.diagram.copy(), steps, ()), accepted.value
+            )
+        except _Limit as signal:
+            status = signal.status
+        except BudgetExhausted:
+            status = SearchStatus.APPLICATION_LIMIT
+    result = SearchResult(
+        status=status,
+        path=hit.path if hit is not None else None,
+        states=len(run.states),
+        expanded=run.expanded,
+        applications=ctx.applications,
+        pruned=run.pruned,
+        depth=depth,
+        failures=tuple(ctx.failures),
+    )
+    return result, hit

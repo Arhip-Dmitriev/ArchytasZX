@@ -22,6 +22,10 @@
   feeds an S, is the identity on its outer legs.
 * Connective states: two phaseless same-colour states into a B, or an S into two such
   effects, are one state or effect on the joint leg.
+* W/Z bialgebra: a phaseless n-input Z feeding an m-output W crosses over into n W nodes and
+  m Z spiders.
+* W effect: a W output into a phaseless Z effect is a T before the remaining W; into a
+  phaseless X effect, the remaining W alone.
 
 Every pattern requires its legs to carry exactly equal dimensions. Only W fusion fires
 inside a node-scope bang box, both nodes sharing their innermost one; every other pattern
@@ -862,3 +866,231 @@ class ConnectiveStatesPattern(Pattern):
     def order_key(self, match: Match) -> tuple[object, ...]:
         """The connective's node id."""
         return (int(cast(ConnectiveStatesMatch, match).connective_id),)
+
+
+WZ_BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition(
+        "z_is_a_phaseless_fan_in",
+        "a phaseless Z spider with at least two inputs and exactly one output",
+    ),
+    SideCondition("w_is_a_fan_out", "a registered W node with at least two outputs"),
+    SideCondition("joining_wire_unclaimed", "neither joined port carries a second claim"),
+    SideCondition("same_dimension", "every leg of both nodes carries one dimension"),
+    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WZBialgebraMatch:
+    """A phaseless Z_{n->1} (``z_id``) whose output feeds the input of W_{1->m} (``w_id``)."""
+
+    z_id: NodeId
+    w_id: NodeId
+    wire: Wire
+    input_count: int
+    output_count: int
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """Both node ids, ascending."""
+        return _support_ids(self.z_id, self.w_id)
+
+
+def find_wz_bialgebra_matches(
+    diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
+) -> tuple[WZBialgebraMatch, ...]:
+    """Every phaseless Z_{n->1}, n >= 2, wired into a W_{1->m}, m >= 2, by (Z, W) id."""
+    claims, boundary = _port_claims(diagram)
+    matches: list[WZBialgebraMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
+        for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
+                continue
+            z = diagram.nodes.get(out_ref.node_id)
+            w = diagram.nodes.get(in_ref.node_id)
+            if z is None or w is None or z.id == w.id:
+                continue
+            if not _is(z, Z_SPIDER) or not _is_phaseless(z):
+                continue
+            if z.num_outputs != 1 or z.num_inputs < 2:
+                continue
+            if not _is(w, W_NODE) or w.num_inputs != 1 or w.num_outputs < 2:
+                continue
+            if not _claimed_exactly_once_by_a_wire(out_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
+                continue
+            dim = _shared_dim(z, w)
+            if dim is None or _in_any_node_scope_box(diagram, (z.id, w.id)):
+                continue
+            matches.append(
+                WZBialgebraMatch(
+                    z_id=z.id,
+                    w_id=w.id,
+                    wire=wire,
+                    input_count=z.num_inputs,
+                    output_count=w.num_outputs,
+                    shared_dim=dim,
+                    side_condition_outcomes=_all_passed(WZ_BIALGEBRA_SIDE_CONDITIONS),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.z_id), int(m.w_id)))
+    return tuple(matches)
+
+
+class WZBialgebraPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for the W/Z bialgebra.
+
+    Locality radius 1.
+    """
+
+    locality_radius = 1
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to :func:`find_wz_bialgebra_matches`."""
+        return find_wz_bialgebra_matches(diagram)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_wz_bialgebra_matches` with the candidate wires restricted."""
+        return find_wz_bialgebra_matches(diagram, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The Z's then the W's node id."""
+        pair = cast(WZBialgebraMatch, match)
+        return (int(pair.z_id), int(pair.w_id))
+
+
+W_Z_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("node_is_a_w_node", "a registered W node with at least two outputs"),
+    SideCondition(
+        "effect_is_a_phaseless_z_spider", "a Z spider with one input, no output, and no phase"
+    ),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+)
+
+W_ZERO_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
+    SideCondition("node_is_a_w_node", "a registered W node with at least one output"),
+    SideCondition(
+        "effect_is_a_phaseless_x_spider", "an X spider with one input, no output, and no phase"
+    ),
+    SideCondition("joined_and_unclaimed", "one wire joins them and neither port is otherwise used"),
+    SideCondition("same_dimension", "every leg of the pair carries one dimension"),
+    SideCondition("outside_every_bang_box", "neither node lies in any node-scope bang box"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WEffectMatch:
+    """Output ``position`` of the W ``w_id`` feeding the phaseless effect ``effect_id``, a Z
+    effect unless ``zero`` (an X effect)."""
+
+    w_id: NodeId
+    effect_id: NodeId
+    position: int
+    wire: Wire
+    output_count: int
+    zero: bool
+    shared_dim: Dim
+    side_condition_outcomes: tuple[SideConditionOutcome, ...]
+    dimension_constraints: tuple[DimensionConstraint, ...] = ()
+
+    @property
+    def all_side_conditions_passed(self) -> bool:
+        """True iff every recorded side condition passed."""
+        return all(outcome.passed for outcome in self.side_condition_outcomes)
+
+    @property
+    def support_node_ids(self) -> tuple[NodeId, ...]:
+        """The W's and the effect's node ids, ascending."""
+        return _support_ids(self.w_id, self.effect_id)
+
+
+def find_w_effect_matches(
+    diagram: Diagram, *, zero: bool, anchors: frozenset[NodeId] | None = None
+) -> tuple[WEffectMatch, ...]:
+    """Every W output into a phaseless Z effect (an X effect when ``zero``), by (W id, output).
+
+    A Z effect needs at least two W outputs, so that a W remains after the T.
+    """
+    colour = X_SPIDER if zero else Z_SPIDER
+    conditions = W_ZERO_EFFECT_SIDE_CONDITIONS if zero else W_Z_EFFECT_SIDE_CONDITIONS
+    least_outputs = 1 if zero else 2
+    claims, boundary = _port_claims(diagram)
+    matches: list[WEffectMatch] = []
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
+            continue
+        for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+            if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
+                continue
+            w = diagram.nodes.get(out_ref.node_id)
+            effect = diagram.nodes.get(in_ref.node_id)
+            if w is None or effect is None or w.id == effect.id:
+                continue
+            if not _is(w, W_NODE) or w.num_inputs != 1 or w.num_outputs < least_outputs:
+                continue
+            if not _is_phaseless_end(effect, colour, state=False):
+                continue
+            if not _claimed_exactly_once_by_a_wire(out_ref, claims, boundary):
+                continue
+            if not _claimed_exactly_once_by_a_wire(in_ref, claims, boundary):
+                continue
+            dim = _shared_dim(w, effect)
+            if dim is None or _in_any_node_scope_box(diagram, (w.id, effect.id)):
+                continue
+            matches.append(
+                WEffectMatch(
+                    w_id=w.id,
+                    effect_id=effect.id,
+                    position=out_ref.index,
+                    wire=wire,
+                    output_count=w.num_outputs,
+                    zero=zero,
+                    shared_dim=dim,
+                    side_condition_outcomes=_all_passed(conditions),
+                )
+            )
+    matches.sort(key=lambda m: (int(m.w_id), m.position))
+    return tuple(matches)
+
+
+@dataclass(frozen=True, slots=True)
+class WEffectPattern(Pattern):
+    """The :class:`~archytaszx.rewrite.rule.Pattern` implementation for a W output into a
+    phaseless Z effect, or an X effect when ``zero``.
+
+    Locality radius 1.
+    """
+
+    zero: bool = False
+
+    locality_radius = 1
+
+    def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        """Delegate to :func:`find_w_effect_matches`."""
+        return find_w_effect_matches(diagram, zero=self.zero)
+
+    def find_matches_anchored(
+        self, diagram: Diagram, anchors: frozenset[NodeId]
+    ) -> tuple[Match, ...]:
+        """Delegate to :func:`find_w_effect_matches` with the candidate wires restricted."""
+        return find_w_effect_matches(diagram, zero=self.zero, anchors=anchors)
+
+    def order_key(self, match: Match) -> tuple[object, ...]:
+        """The W's node id, then the capped output."""
+        effect = cast(WEffectMatch, match)
+        return (int(effect.w_id), effect.position)

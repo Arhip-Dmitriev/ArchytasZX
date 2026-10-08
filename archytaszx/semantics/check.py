@@ -456,12 +456,13 @@ def compare_symbolic(
         return ComparisonResult(
             mode, False, f"axis dimensions {left.dims()} != {right.dims()}", float("inf")
         )
-    difference = (left.entry - right.entry).simplify(max_steps=max_steps)
+    ranges = left.ranges() if left.ranges() == right.ranges() else None
+    difference = (left.entry - right.entry).simplify(max_steps=max_steps, ranges=ranges)
     if difference.is_zero:
         return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
     if dimension_floors:
         difference = difference.with_dimension_floors(dimension_floors).simplify(
-            max_steps=max_steps
+            max_steps=max_steps, ranges=ranges
         )
         if difference.is_zero:
             floors = ", ".join(f"{name} >= {low}" for name, low in sorted(dimension_floors.items()))

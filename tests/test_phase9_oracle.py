@@ -166,7 +166,7 @@ class TestTheScalarGrammar:
             summed.substitute({"_k0": 1})
 
     def test_substituting_d_rewrites_the_limit_without_expanding(self) -> None:
-        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, k.to_sympy() ** 2 + k.to_sympy()))
+        summed = Scalar.index_sum(D, lambda k: Scalar.omega(D, 2 * k.to_sympy() ** 2))
         summed = summed.simplify()
         answered = summed.substitute({"d": 4096})
         sums = answered.to_sympy().atoms(sp.Sum)

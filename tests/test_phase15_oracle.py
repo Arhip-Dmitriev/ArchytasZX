@@ -287,7 +287,7 @@ class TestNotFoundCatalogue:
     @pytest.mark.parametrize("name", sorted(NOT_FOUND))
     def test_ends_not_found(self, name: str) -> None:
         start, goal = NOT_FOUND[name]()
-        outcome = prove(start, goal)
+        outcome = prove(start, goal, induction_depth=0)
         assert outcome.status is ProofStatus.NOT_FOUND, outcome.reason
         result = outcome.search
         assert result is not None and not result.found
@@ -300,6 +300,50 @@ class TestNotFoundCatalogue:
         check = TD.oracle_samples(start, goal)
         assert len(check) >= 2
         assert all(matched for _, matched in check), check
+
+
+class TestInduction:
+    """A symbolic-n identity search cannot reach is proved by induction on its multiplicity."""
+
+    def test_the_boxed_state_copy_is_proved_by_induction(self) -> None:
+        outcome = prove(*boxed_state_copy())
+        assert outcome.status is ProofStatus.PROVED, outcome.reason
+        assert outcome.certificate is None and outcome.induction is not None
+        assert outcome.induction.index == "n"
+        assert outcome.check is not None and outcome.check.verified
+        assert outcome.check.samples_checked >= 2
+
+    def test_the_step_exposes_the_hypothesis_by_rewriting(self) -> None:
+        induction = prove(*boxed_state_copy()).induction
+        assert induction is not None
+        assert [step.rule_name for step in induction.expose.steps] == [
+            "port_box_unfusion",
+            "state_copy",
+        ]
+
+    def test_the_proof_rechecks(self) -> None:
+        induction = prove(*boxed_state_copy()).induction
+        assert induction is not None
+        check = check_proof(induction)
+        assert check.verified, check.reason
+
+    def test_a_moved_region_fails_the_check(self) -> None:
+        induction = prove(*boxed_state_copy()).induction
+        assert induction is not None
+        check = check_proof(replace(induction, region=frozenset()))
+        assert not check.verified
+
+    def test_a_base_case_from_the_wrong_sides_fails_the_check(self) -> None:
+        induction = prove(*boxed_state_copy()).induction
+        assert induction is not None
+        check = check_proof(replace(induction, base=induction.step))
+        assert not check.verified
+        assert "base case" in check.reason
+
+    def test_a_false_family_is_not_proved_without_the_oracle(self) -> None:
+        start, goal = T8._build_false_near_identity()
+        outcome = prove(start, goal, refute=False)
+        assert outcome.status is not ProofStatus.PROVED, outcome.reason
 
 
 class TestUnequalCatalogue:
