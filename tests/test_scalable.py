@@ -813,8 +813,8 @@ class TestRefusals:
         d.set_boundary_outputs([_out(a, 0), _out(b, 0)])
         legs = d.add_bang_box(Mult("n"), port_scope=frozenset({_out(a, 0), _out(b, 0)}))
         d.add_bang_box(Mult("k"), node_scope=frozenset({a}), parent=legs)
-        assert validate(d).is_valid
-        with pytest.raises(ScalableGrammarError, match="LEGS parent"):
+        assert not validate(d).is_valid
+        with pytest.raises(ScalableGrammarError, match="under a port-scope box"):
             to_scalable(d)
 
     def test_to_scalable_refuses_a_wire_crossing_a_node_scope_box(self) -> None:

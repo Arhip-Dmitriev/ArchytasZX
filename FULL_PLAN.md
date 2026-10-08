@@ -205,7 +205,7 @@ i. diagram/scalable.py
 
 PART 4: THE REPL
 
-Phase 17: Printer and Dirac output [CURRENT]
+Phase 17: Printer and Dirac output [DONE]
 i. repl/printer.py
 - pretty-prints a graph textually, showing nodes, symbolic phases, exact scalars, port dimensions, and bang boxes including nesting and multiple indices
 - renders every diagram back to Dirac: by its recognized name when the diagram is in a known normal form, otherwise as the structural index-sum form, one bound index per spider, valid for symbolic n and d and requiring no contraction
@@ -213,7 +213,7 @@ i. repl/printer.py
 - test and debug: confirm the printer round-trips the fusion example and that the Dirac output of a single Z spider matches the expected sum; confirm every state of a multi-step derivation has a Dirac rendering in Dirac mode
 - done when: any engine state can be shown as text, always as Dirac and always as a graph
 
-Phase 18: Parser and input DSL
+Phase 18: Parser and input DSL [CURRENT]
 i. repl/parser.py
 - the file already exists, carrying Phase 5's Dirac slice (see Phase 5, item v); this phase widens it, and the existing ket-sum grammar and its "copy" keyword must survive as a strict subset of the DSL below
 - a small DSL can declare spiders, wires, symbolic phases, bang boxes (nested and multi-index), and dimensions

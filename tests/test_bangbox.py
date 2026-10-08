@@ -41,7 +41,7 @@ from archytaszx.diagram.bangbox import (
 )
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER, GeneratorType
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
-from archytaszx.diagram.validate import validate
+from archytaszx.diagram.validate import IssueKind, validate
 from archytaszx.semantics.check import score
 
 
@@ -399,6 +399,15 @@ class TestInstantiationEdgeCases:
         assert not killed.bang_boxes and validate(killed).is_valid
         (node,) = killed.nodes.values()
         assert node.outputs == ()
+
+    def test_validate_rejects_a_node_scope_box_under_a_port_scope_box(self) -> None:
+        diagram = Diagram()
+        a, b = _leaf(diagram), _leaf(diagram)
+        diagram.set_boundary_outputs([_out(a, 0), _out(b, 0)])
+        legs = diagram.add_bang_box(Mult("n"), port_scope=frozenset({_out(a, 0), _out(b, 0)}))
+        child = diagram.add_bang_box(Mult("k"), node_scope=frozenset({a}), parent=legs)
+        (issue,) = validate(diagram).errors
+        assert issue.kind is IssueKind.BANGBOX_NESTING_MISMATCH and issue.bang_box_id == child
 
     def test_killing_an_inner_box_first_keeps_the_outer_block_in_place(self) -> None:
         diagram = Diagram()

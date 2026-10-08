@@ -988,6 +988,8 @@ def _nesting_refusal(box: BangBox, parent: BangBox) -> str | None:
             f"{sorted(parent_footprint)}"
         )
     if box.is_node_scope:
+        if not parent.is_node_scope:
+            return "a node-scope box cannot nest under a port-scope box"
         if footprint == parent_footprint:
             return (
                 f"its node scope {sorted(footprint)} is not a proper subset of the "
