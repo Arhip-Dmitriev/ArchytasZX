@@ -24,6 +24,12 @@ builds the worked example the same way.
 
 from __future__ import annotations
 
+import signal
+import time
+from collections.abc import Callable
+
+import pytest
+
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.generators import Z_SPIDER, GeneratorType
@@ -64,3 +70,32 @@ def build_ghz_with_copy(
         ]
     )
     return diagram, a_id, b_id
+
+
+class Overrun(BaseException):
+    """The SIGALRM expiry of :func:`bounded`."""
+
+
+def bounded(func: Callable[[], object], seconds: float, hard: int = 5) -> tuple[object, float]:
+    """``func()``'s outcome (its result or raised exception) and wall time, asserted under
+    ``seconds``; SIGALRM aborts it after ``hard`` seconds."""
+
+    def expire(signum: int, frame: object) -> None:
+        raise Overrun(f"still running after {hard} s")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.alarm(hard)
+    start = time.perf_counter()
+    try:
+        try:
+            outcome: object = func()
+        except Exception as exc:  # noqa: BLE001
+            outcome = exc
+    except Overrun:
+        pytest.fail(f"no result within {hard} s")
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+    elapsed = time.perf_counter() - start
+    assert elapsed < seconds, f"took {elapsed:.2f} s, bound {seconds} s"
+    return outcome, elapsed
