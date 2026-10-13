@@ -55,6 +55,9 @@ Homepage = "https://github.com/Arhip-Dmitriev/ArchytasZX"
 Repository = "https://github.com/Arhip-Dmitriev/ArchytasZX"
 Issues = "https://github.com/Arhip-Dmitriev/ArchytasZX/issues"
 
+[project.scripts]
+archytaszx = "archytaszx.repl.shell:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
