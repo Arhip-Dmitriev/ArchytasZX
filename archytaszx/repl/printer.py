@@ -48,14 +48,14 @@ from __future__ import annotations
 import enum
 import itertools
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionError
-from archytaszx.algebra.phase import PhaseError, PhaseVector
+from archytaszx.algebra.phase import Phase, PhaseError, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult
 from archytaszx.diagram.compare import compare_structure
@@ -1126,6 +1126,85 @@ def _listing_parameters(parameters: Mapping[str, int]) -> str:
     return "parameters: " + ", ".join(f"{k} = {v}" for k, v in sorted(parameters.items()))
 
 
+_ROLE_SYMBOLS: dict[str, Callable[[str], sp.Symbol]] = {
+    "dimension": lambda name: Dim.symbol(name).to_sympy(),
+    "multiplicity": lambda name: Mult.symbol(name).to_sympy(),
+    "exponent": lambda name: sp.Symbol(name, integer=True, nonnegative=True),
+    "phase": lambda name: Phase.symbol(name).to_sympy_turns(),
+    "scalar": lambda name: Scalar.symbol(name).to_sympy(),
+}
+
+
+def _role_of(symbol: sp.Symbol) -> str | None:
+    for role, make in _ROLE_SYMBOLS.items():
+        try:
+            if make(str(symbol.name)) == symbol:
+                return role
+        except (*_FOREIGN, TypeError, ValueError):
+            return None
+    return None
+
+
+def _inferred_roles(
+    dims: Sequence[Dim], mults: Sequence[Mult], phases: Sequence[Phase]
+) -> dict[str, sp.Symbol]:
+    """Symbol per name as a listing reader infers it: dimension, multiplicity, exponent,
+    phase, first wins."""
+    dim_symbols = [s for dim in dims for s in dim.to_sympy().free_symbols]
+    groups = [
+        [s for s in dim_symbols if s.is_positive],
+        [s for mult in mults for s in mult.to_sympy().free_symbols],
+        [s for s in dim_symbols if not s.is_positive],
+        [s for phase in phases for s in phase.to_sympy_turns().free_symbols],
+    ]
+    table: dict[str, sp.Symbol] = {}
+    for group in groups:
+        for symbol in sorted(group, key=lambda s: str(s.name)):
+            table.setdefault(str(symbol.name), symbol)
+    return table
+
+
+def _listing_roles(diagram: Diagram) -> str | None:
+    """``roles: NAME = ROLE, ...`` for each scalar or phase symbol a listing reader would
+    infer differently, or None when there is none."""
+    dims: list[Dim] = []
+    phases: list[Phase] = []
+    for node in diagram.nodes.values():
+        dims.extend(port.dim for port in (*node.inputs, *node.outputs))
+        if node.phase is not None:
+            dims.append(node.phase.dim)
+            phases.extend(node.phase.entries().values())
+    mults = [box.multiplicity for box in diagram.bang_boxes.values()]
+    wrong: dict[str, sp.Symbol] = {}
+    for table, symbols, default in (
+        (
+            _inferred_roles(dims, mults, []),
+            {s for p in phases for s in p.to_sympy_turns().free_symbols},
+            "phase",
+        ),
+        (
+            _inferred_roles(dims, mults, phases),
+            diagram.scalar.to_sympy().free_symbols,
+            "scalar",
+        ),
+    ):
+        for symbol in symbols:
+            if not isinstance(symbol, sp.Symbol):
+                continue
+            name = str(symbol.name)
+            inferred = table.get(name)
+            if inferred is None:
+                try:
+                    inferred = _ROLE_SYMBOLS[default](name)
+                except (*_FOREIGN, TypeError, ValueError):
+                    continue
+            if inferred != symbol and _role_of(symbol) is not None:
+                wrong.setdefault(name, symbol)
+    if not wrong:
+        return None
+    return "roles: " + ", ".join(f"{n} = {_role_of(s)}" for n, s in sorted(wrong.items()))
+
+
 _ForestEntry: TypeAlias = tuple[int, int, object, str | None]
 
 
@@ -1206,6 +1285,9 @@ def render_graph(diagram: Diagram) -> str:
         f"scalar: {_listing_expr(diagram.scalar)}",
         _listing_parameters(diagram.parameters),
     ]
+    roles = _listing_roles(diagram)
+    if roles is not None:
+        lines.append(roles)
     lines.append("nodes:" if diagram.nodes else "nodes: none")
     for nid in sorted(diagram.nodes, key=int):
         node = diagram.nodes[nid]
