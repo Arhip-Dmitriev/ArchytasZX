@@ -378,6 +378,21 @@ class Diagram:
         self._nodes[node_id] = node
         return node_id
 
+    def advance_ids(self, *, node_id: int | None = None, bang_box_id: int | None = None) -> None:
+        """Set the next fresh node id and/or bang-box id; GraphGrammarError if either would
+        move backwards or is not an int."""
+        for value, current in ((node_id, self._next_id), (bang_box_id, self._next_bang_box_id)):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise GraphGrammarError(f"advance_ids takes an int, got {value!r}")
+            if value < current:
+                raise GraphGrammarError(f"advance_ids cannot move id {current} back to {value}")
+        if node_id is not None:
+            self._next_id = node_id
+        if bang_box_id is not None:
+            self._next_bang_box_id = bang_box_id
+
     def remove_node(self, node_id: NodeId) -> None:
         """Remove a node, cascading to drop every incident wire and boundary entry.
 
