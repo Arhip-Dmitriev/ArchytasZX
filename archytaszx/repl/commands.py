@@ -104,6 +104,7 @@ from archytaszx.semantics.certificate import (
     CertificateError,
     CheckMethod,
     Derivation,
+    DerivationKind,
     VerificationReport,
     certify,
     compare_structure,
@@ -221,7 +222,14 @@ class State:
     state: object
 
 
-Block: TypeAlias = "Text | State"
+@dataclass(frozen=True, slots=True)
+class Proof:
+    """A proof artefact that :func:`format_outcome` writes out with :func:`proof_text`."""
+
+    proof: object
+
+
+Block: TypeAlias = "Text | State | Proof"
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,9 +250,9 @@ class Outcome:
         if not isinstance(self.ok, bool) or not isinstance(self.changed, bool):
             raise CommandGrammarError("Outcome.ok and Outcome.changed must be bool")
         if not isinstance(self.blocks, tuple) or not all(
-            isinstance(b, (Text, State)) for b in self.blocks
+            isinstance(b, (Text, State, Proof)) for b in self.blocks
         ):
-            raise CommandGrammarError("Outcome.blocks must be a tuple of Text or State")
+            raise CommandGrammarError("Outcome.blocks must be a tuple of Text, State or Proof")
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,7 +621,7 @@ def _cmd_show(session: Session, args: str) -> Outcome:
     if what == "certificate":
         if session.certificate is None:
             raise CommandDomainError("no certificate; use certificate emit")
-        return _ok("show", [State(session.certificate)], session.certificate)
+        return _ok("show", [Proof(session.certificate)], session.certificate)
     diagram, _origin = _resolve(session, what)
     return _ok("show", [State(diagram)], diagram)
 
@@ -974,6 +982,131 @@ def _artefact_line(artefact: ProofArtefact) -> str:
     return f"certificate: induction proof over {artefact.index}, {_count(artefact.length, 'step')}"
 
 
+def _math(diagram: Diagram, u: bool) -> str:
+    """The Dirac line of ``diagram`` without a leading catalog name."""
+    try:
+        text = " ".join(render_dirac(diagram, unicode=u).splitlines())
+    except PrinterError as exc:
+        return f"[no Dirac form: {_one_line(exc)}]"
+    named = re.match(r"[^\s|<>⟨⟩=]+ = (.+)", text)
+    return named.group(1) if named else text
+
+
+def _because(step: RewriteStep, backwards: bool) -> str:
+    nodes = ", ".join(f"n{int(n)}" for n in sorted(step.consumed_node_ids, key=int))
+    where = f" at {nodes}" if nodes else ""
+    return f"by {step.rule_name}{where}{', read backwards' if backwards else ''}"
+
+
+def _chain(derivation: Derivation, u: bool, backwards: bool = False) -> list[tuple[str, str]]:
+    """``(diagram, justification)`` rows of a step sequence, reversed when ``backwards``."""
+    states, _failure = _replayed_states(derivation)
+    texts = [_math(x, u) if isinstance(x, Diagram) else f"[{x}]" for x in states]
+    rows = [(texts[0], "")]
+    rows += [(texts[k], _because(step, False)) for k, step in enumerate(derivation.steps, 1)]
+    if not backwards:
+        return rows
+    flipped = [(rows[-1][0], "")]
+    for k in range(len(rows) - 1, 0, -1):
+        flipped.append((rows[k - 1][0], _because(derivation.steps[k - 1], True)))
+    return flipped
+
+
+def _display(rows: list[tuple[str, str]], u: bool) -> list[str]:
+    """Rows as ``  A`` then ``= B    (by rule)`` lines, justifications aligned."""
+    width = max(len(text) for text, _ in rows)
+    out = []
+    for k, (text, why) in enumerate(rows):
+        head = f"{'  ' if k == 0 else '= '}{text}"
+        out.append(f"{head.ljust(width + 2)}    ({why})" if why else head)
+    return out
+
+
+def _merge(rows: list[tuple[str, str]], more: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``rows`` then ``more``, joined at a shared diagram or by the meeting of the halves."""
+    if rows and more and rows[-1][0] == more[0][0]:
+        return rows + more[1:]
+    return rows + [(more[0][0], "the same diagram"), *more[1:]] if more else rows
+
+
+def _proof_rows(proof: ProofArtefact, u: bool) -> list[tuple[str, str]] | None:
+    """The equality chain of a step-sequence proof, None for an induction."""
+    if isinstance(proof, Certificate):
+        if proof.derivation.kind is DerivationKind.STEP_SEQUENCE:
+            return _chain(proof.derivation, u)
+        return None
+    if isinstance(proof, ProofCertificate):
+        forward = _chain(proof.forward.derivation, u)
+        return _merge(forward, _chain(proof.backward.derivation, u, backwards=True))
+    return None
+
+
+def proof_text(proof: ProofArtefact, *, unicode: bool = False) -> str:
+    """``proof`` written as a theorem and its proof: a chain of equalities, each justified by
+    the rule applied, or a base case and an inductive step; closed by an end mark."""
+    u = unicode
+    end = "∎" if u else "QED"
+    if isinstance(proof, Certificate):
+        left, right = proof.initial, proof.final
+    else:
+        left, right = proof.start, proof.goal
+    lines = [
+        "Theorem.",
+        f"  {_math(left, u)}",
+        f"    = {_math(right, u)}",
+        "",
+        *_proof_body(proof, u),
+    ]
+    method = proof.check_method.value if isinstance(proof, Certificate) else "replay"
+    lines.append(f"{end}  (checked by {method.replace('_', ' ')})")
+    return "\n".join(lines)
+
+
+def _proof_body(proof: ProofArtefact, u: bool, depth: int = 0) -> list[str]:
+    pad = _INDENT * depth
+    rows = _proof_rows(proof, u)
+    if rows is not None:
+        if len(rows) == 1:
+            return [f"{pad}Proof. Both sides are the same diagram."]
+        return [f"{pad}Proof.", *(pad + _INDENT + line for line in _display(rows, u))]
+    if isinstance(proof, Certificate):
+        d = proof.derivation
+        claim = d.induction
+        index = claim.symbol if claim else "n"
+        base = claim.base_value if claim else 0
+        lines = [f"{pad}Proof by induction on {index}."]
+        held = ", ".join(claim.held_symbolic) if claim and claim.held_symbolic else ""
+        if held:
+            lines.append(f"{pad}{_INDENT}({held} held symbolic.)")
+        names = ("Base case", "Inductive step") if len(d.children) == 2 else None
+        for k, child in enumerate(d.children):
+            title = names[k] if names else f"Part {k + 1}"
+            if names and k == 0:
+                title += f" ({index} = {base})"
+            if names and k == 1:
+                title += f" (assume the claim at {index}, show it at {index} + 1)"
+            how = claim.step_discharge if (names and k == 1 and claim) else ""
+            lines.append(f"{pad}{_INDENT}{title}{', by ' + how if how else ''}.")
+            lines += _proof_body(Certificate(child), u, depth + 2)[1:] or [
+                f"{pad}{_INDENT * 2}(no rewrite steps)"
+            ]
+        return lines
+    assert isinstance(proof, InductionProof)
+    region = ", ".join(f"n{int(n)}" for n in sorted(proof.region, key=int))
+    side = "left" if proof.side.value == "start" else "right"
+    idx, sym = proof.index, proof.step_symbol
+    return [
+        f"{pad}Proof by induction on {idx}.",
+        f"{pad}{_INDENT}Base case ({idx} = 0).",
+        *_proof_body(proof.base, u, depth + 2)[1:],
+        f"{pad}{_INDENT}Inductive step. Assume the claim at {idx} = {sym}; at {idx} = {sym} + 1:",
+        f"{pad}{_INDENT * 2}the {side} side contains its own instance at {sym} (nodes {region}):",
+        *(pad + _INDENT * 3 + line for line in _display(_chain(proof.expose.derivation, u), u)),
+        f"{pad}{_INDENT * 2}replacing it by the induction hypothesis, the other side follows:",
+        *_proof_body(proof.step, u, depth + 3)[1:],
+    ]
+
+
 def _cmd_certificate(session: Session, args: str) -> Outcome:
     words = args.split(None, 1)
     action = words[0] if words else "emit"
@@ -984,17 +1117,21 @@ def _cmd_certificate(session: Session, args: str) -> Outcome:
             raise CommandGrammarError("certificate emit [derivation|induction|proof]")
         artefact, witness = _emit(session, which)
         session.certificate, session.certificate_witness = artefact, witness
-        return _ok("certificate", [Text(_artefact_line(artefact)), State(artefact)], artefact)
+        return _ok("certificate", _proof_blocks(artefact), artefact)
     if action == "show":
         if rest.strip():
             raise CommandGrammarError("certificate show takes no arguments")
         if session.certificate is None:
             raise CommandDomainError("no certificate; use certificate emit")
         artefact = session.certificate
-        return _ok("certificate", [Text(_artefact_line(artefact)), State(artefact)], artefact)
+        return _ok("certificate", _proof_blocks(artefact), artefact)
     if action == "verify":
         return _verify(session, rest)
     raise CommandGrammarError(f"unknown certificate action {action!r}; use emit, verify or show")
+
+
+def _proof_blocks(artefact: ProofArtefact) -> list[Block]:
+    return [Text(_artefact_line(artefact)), Proof(artefact)]
 
 
 def _verify(session: Session, args: str) -> Outcome:
@@ -1430,7 +1567,7 @@ def format_outcome(
     outcome: Outcome, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False
 ) -> str:
     """``outcome``'s blocks joined by newlines: Text as is, State via ``printer.render`` in
-    ``mode``."""
+    ``mode``, Proof via :func:`proof_text`."""
     if not isinstance(outcome, Outcome):
         raise CommandGrammarError(f"outcome must be an Outcome, got {type(outcome).__name__}")
     if not isinstance(mode, NotationMode):
@@ -1441,6 +1578,9 @@ def format_outcome(
             parts.append(block.text)
             continue
         try:
+            if isinstance(block, Proof):
+                parts.append(proof_text(block.proof, unicode=unicode))  # type: ignore[arg-type]
+                continue
             parts.append(render(block.state, mode, unicode=unicode))
         except Exception as exc:  # noqa: BLE001
             parts.append(f"render: unavailable ({type(exc).__name__}: {_one_line(exc)})")

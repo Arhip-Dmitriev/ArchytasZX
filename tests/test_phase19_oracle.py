@@ -43,7 +43,7 @@ D = Dim.symbol("d")
 EXAMPLE = "sum_{k=0}^{3-1} |k>^{30}; copy"
 GHZ_DSL = "a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0; outputs a.out1, b.out0, b.out1"
 UNEQUAL = "sum_{k=0}^{d-1} |k>^{n} |k, k, k>"
-MODES = (NotationMode.DIRAC, NotationMode.ZX)
+MODES = (NotationMode.DIRAC, NotationMode.BOTH)
 SMALL = [{"d": d, "n": n} for d in (2, 3) for n in (0, 1, 2, 3)]
 
 WORKED_SCRIPT = f"""\
@@ -359,11 +359,11 @@ def test_errors_before_any_load_are_clean() -> None:
 class TestModeIndependence:
     def test_same_lines_in_both_modes(self, worked) -> None:
         a = [r.line for r in worked[NotationMode.DIRAC][1]]
-        b = [r.line for r in worked[NotationMode.ZX][1]]
+        b = [r.line for r in worked[NotationMode.BOTH][1]]
         assert a == b
 
     def test_final_session_state_identical(self, worked) -> None:
-        sa, sb = worked[NotationMode.DIRAC][0].session, worked[NotationMode.ZX][0].session
+        sa, sb = worked[NotationMode.DIRAC][0].session, worked[NotationMode.BOTH][0].session
         assert render_graph(sa.current) == render_graph(sb.current)
         assert render_graph(sa.start) == render_graph(sb.start)
         assert [r.step for r in sa.results] == [r.step for r in sb.results]
@@ -372,7 +372,7 @@ class TestModeIndependence:
         assert len(sa.undo_stack) == len(sb.undo_stack)
 
     def test_engine_outcomes_identical(self, worked) -> None:
-        ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.ZX][1]
+        ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.BOTH][1]
         for a, b in zip(ra, rb, strict=True):
             assert a.outcome is not None and b.outcome is not None
             assert (a.outcome.command, a.outcome.ok, a.outcome.changed) == (
@@ -385,7 +385,7 @@ class TestModeIndependence:
             assert C.detail_text(a.outcome.detail) == C.detail_text(b.outcome.detail)
 
     def test_outputs_differ_only_in_rendering(self, worked) -> None:
-        ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.ZX][1]
+        ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.BOTH][1]
         for a, b in zip(ra, rb, strict=True):
             if a.line == "detail":
                 assert a.output == b.output
@@ -399,7 +399,7 @@ class TestModeIndependence:
         for mode in MODES:
             out = record(worked[mode][1], "apply spider_fusion").output
             assert "GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>" in out
-        assert listing_lines(record(worked[NotationMode.ZX][1], "apply spider_fusion").output)
+        assert listing_lines(record(worked[NotationMode.BOTH][1], "apply spider_fusion").output)
 
     def test_switching_mode_mid_session_changes_rendering_only(self) -> None:
         shell = Shell(commands=True)
@@ -407,8 +407,11 @@ class TestModeIndependence:
         dirac = shell.run_line("show")
         assert shell.run_line("mode zx") == "mode: zx"
         zx = shell.run_line("show")
-        assert not listing_lines(dirac) and listing_lines(zx)
-        assert is_subsequence(lines_of(dirac), lines_of(zx))
+        assert listing_lines(zx) and not is_subsequence(lines_of(dirac), lines_of(zx))
+        assert shell.run_line("mode both") == "mode: both"
+        both = shell.run_line("show")
+        assert not listing_lines(dirac) and listing_lines(both)
+        assert is_subsequence(lines_of(dirac), lines_of(both))
         assert shell.run_line("mode dirac") == "mode: dirac"
         assert shell.run_line("show") == dirac
 
@@ -452,9 +455,15 @@ class TestZxCommandsInDiracMode:
 
     @pytest.mark.parametrize("index", range(len(ZX_COMMANDS)))
     def test_zx_mode_adds_the_listing(self, zx_commands, index) -> None:
-        r = zx_commands[NotationMode.ZX][1][index]
-        assert listing_lines(r.output), r.output
+        r = zx_commands[NotationMode.BOTH][1][index]
         assert re.search(r"sum_|GHZ_|Z_\{", r.output), r.output
+        if r.line.startswith("certificate"):
+            assert (
+                "Proof." in r.output
+                and r.output == zx_commands[NotationMode.DIRAC][1][index].output
+            )
+            return
+        assert listing_lines(r.output), r.output
 
     def test_listing_input_in_dirac_mode_answers_in_dirac(self) -> None:
         listing = render_graph(build_ghz_with_copy(D)[0])
@@ -506,7 +515,7 @@ def details() -> dict[NotationMode, dict[str, str]]:
 @pytest.mark.parametrize("label", sorted(DETAIL_LINES))
 class TestDetailPayloads:
     def test_identical_in_both_modes(self, details, label) -> None:
-        assert details[NotationMode.DIRAC][label] == details[NotationMode.ZX][label]
+        assert details[NotationMode.DIRAC][label] == details[NotationMode.BOTH][label]
 
     def test_side_by_side_listing_and_dirac(self, details, label) -> None:
         text = details[NotationMode.DIRAC][label]
@@ -597,7 +606,7 @@ class TestFailureReports:
         assert "furthest-simplified right (normal form" in out
         assert "bound: saturation stop" in out
         assert "counterexample" not in out
-        assert bool(listing_lines(out)) is (mode is NotationMode.ZX)
+        assert bool(listing_lines(out)) is (mode is NotationMode.BOTH)
 
     def test_not_found_prove_shows_simplified_state_and_bound(self, mode, monkeypatch) -> None:
         monkeypatch.setattr(C, "prove", functools.partial(prove, refute=False, moves=()))
@@ -609,7 +618,7 @@ class TestFailureReports:
         assert "furthest-simplified left (normal form, 1 step, stop fixpoint):" in out
         assert "GHZ_{n+2}" in out.split("furthest-simplified left", 1)[1]
         assert re.search(r"bound: search exhausted \(limits depth \d+", out)
-        assert bool(listing_lines(out)) is (mode is NotationMode.ZX)
+        assert bool(listing_lines(out)) is (mode is NotationMode.BOTH)
 
 
 # -- the mode gates nothing ----------------------------------------------------------------
@@ -655,8 +664,8 @@ def test_every_command_accepted_in_both_modes(name: str) -> None:
         outcomes[mode] = shell.last_outcome
         assert shell.last_outcome.command == name
         assert shell.last_outcome.ok, (mode, outputs[mode])
-    a, b = outcomes[NotationMode.DIRAC], outcomes[NotationMode.ZX]
-    assert C.format_outcome(a, NotationMode.ZX) == outputs[NotationMode.ZX]
+    a, b = outcomes[NotationMode.DIRAC], outcomes[NotationMode.BOTH]
+    assert C.format_outcome(a, NotationMode.BOTH) == outputs[NotationMode.BOTH]
     assert C.format_outcome(b, NotationMode.DIRAC) == outputs[NotationMode.DIRAC]
     assert not listing_lines(outputs[NotationMode.DIRAC]) or name == "detail"
 

@@ -34,6 +34,7 @@ from archytaszx.repl.commands import (
     CommandGrammarError,
     ErrorDetail,
     Outcome,
+    Proof,
     Session,
     State,
     Text,
@@ -75,6 +76,7 @@ KILLABLE = "a = Z(0 -> 1, d); b = Z(0 -> 1, d); box p x literal 0 nodes a"
 UNEQUAL = "sum_{k=0}^{3-1} |k>^{30}"
 DIRAC = NotationMode.DIRAC
 ZX = NotationMode.ZX
+BOTH = NotationMode.BOTH
 LISTING_HEADS = ("graph:", "scalable:")
 HINT = "(detail shows the engine detail)"
 EXPECTED_COMMANDS = {
@@ -193,6 +195,8 @@ def signature(outcome: Outcome) -> tuple[object, ...]:
     for block in outcome.blocks:
         if isinstance(block, Text):
             blocks.append(block.text)
+        elif isinstance(block, Proof):
+            blocks.append(("proof", type(block.proof).__name__))
         elif isinstance(block.state, Diagram):
             blocks.append(("state", render_graph(block.state)))
         else:
@@ -1205,12 +1209,12 @@ class TestModeIndependence:
             assert listing_lines(format_outcome(outcome, DIRAC)) == [], line
             assert listing_lines(format_outcome(outcome, DIRAC, unicode=True)) == [], line
 
-    def test_zx_output_has_listing_and_dirac(
+    def test_both_output_has_listing_and_dirac(
         self, mode_runs: tuple[list[Outcome], list[Outcome]]
     ) -> None:
         with_states = 0
         for line, outcome in zip(MODE_SCRIPT, mode_runs[0], strict=True):
-            zx = format_outcome(outcome, ZX)
+            zx = format_outcome(outcome, BOTH)
             for diagram in diagram_states(outcome):
                 with_states += 1
                 assert listing_lines(zx), line
@@ -1517,3 +1521,34 @@ class TestDetailText:
         for line in ("check", "decide", "prove", "certificate emit", "translate"):
             outcome = ok(s, line)
             assert texts(ok(s, "detail")) == detail_text(outcome.detail).splitlines()
+
+
+class TestProofText:
+    def test_derivation_reads_as_a_proof(self) -> None:
+        session = Session()
+        run(
+            session,
+            "load a = Z(1 -> 1, d); b = Z(1 -> 1, d); wire a.out0 -- b.in0; "
+            "inputs a.in0; outputs b.out0",
+        )
+        run(session, "apply spider_fusion")
+        out = format_outcome(run(session, "certificate emit derivation"), unicode=True)
+        lines = out.splitlines()
+        assert lines[0] == "certificate: numeric_oracle, step_sequence, 1 step"
+        assert lines[1] == "Theorem." and "Proof." in lines
+        assert lines[-2].rstrip().endswith("(by spider_fusion at n0, n1)")
+        assert lines[-1] == "∎  (checked by numeric oracle)"
+        shown = format_outcome(run(session, "show certificate"), unicode=True)
+        assert shown == "\n".join(lines[1:])
+
+    def test_induction_proof(self) -> None:
+        from archytaszx.repl.commands import proof_text
+        from archytaszx.semantics.prove import prove
+        from tests.test_phase15_oracle import boxed_state_copy
+
+        outcome = prove(*boxed_state_copy())
+        assert outcome.induction is not None
+        text = proof_text(outcome.induction)
+        assert "Proof by induction on n." in text
+        assert "Base case (n = 0)." in text and "Inductive step." in text
+        assert text.endswith("QED  (checked by replay)")
