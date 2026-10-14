@@ -38,7 +38,7 @@ var q = 2^n
 func f(x) = a^x % N
 
 gate U_f = |x>|y> -> |x>|y xor f(x)>
-gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
+gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*x*y/q) |y> }
 
 |psi_0> = |0>^@n @ |0>^@m
 |psi_1> = (H^@n @ I)|psi_0>
@@ -52,10 +52,10 @@ var y = measure|psi_2>
 
 SHOR_ASCII = """\
 |psi_0> = |0>^@n @ |0>^@m
-|psi_1> = 1/sqrt(q) sum(x in 0..q - 1){ |x> @ |0>^@m }
+|psi_1> = 1/sqrt(q) sum(x in 0..q){ |x> @ |0>^@m }
 |psi_2> = |z[:n]> @ |f(z[:n])>
 |psi_2> = |z[:n]> @ |f(z[:n])>
-|psi_3> = 1/sqrt(q) sum(y in 0..q - 1){ e^(2*pi*i*y*z[:n]/q) |y> @ |f(z[:n])> }"""
+|psi_3> = 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*y*z[:n]/q) |y> @ |f(z[:n])> }"""
 
 SHOR_UNICODE = """\
 |ψ_0⟩ = |0⟩^⊗n ⊗ |0⟩^⊗m
@@ -109,7 +109,11 @@ class TestShorNumeric:
         assert isinstance(z, Bits) and z.width == 7 and y == z
         x, fx = int(z) >> 4, int(z) & 15
         assert fx == pow(7, x, 15)
-        assert interp.execute("show(|psi_2>)") == f"|psi_2> = |{x}> @ |{fx}>"
+
+        def reg(v: int, w: int) -> str:
+            return {0: f"|0>^@{w}", 2**w - 1: f"|1>^@{w}"}.get(v, f"|{v} : {w}>")
+
+        assert interp.execute("show(|psi_2>)") == f"|psi_2> = {reg(x, 3)} @ {reg(fx, 4)}"
         assert interp.execute("show(<psi_3|psi_3>, <psi_1|psi_1>)") == (
             "<psi_3|psi_3> = 1\n<psi_1|psi_1> = 1"
         )
@@ -117,7 +121,7 @@ class TestShorNumeric:
     def test_display_is_numeric(self) -> None:
         out = run(numeric_shor())[1].splitlines()
         assert out[0] == "|psi_0> = |0>^@3 @ |0>^@4"
-        assert out[1] == "|psi_1> = sqrt(2)/4 sum(x in 0..7){ |x> @ |0>^@4 }"
+        assert out[1] == "|psi_1> = sqrt(2)/4 sum(x in 0..8){ |x> @ |0>^@4 }"
         assert not any(line.lstrip().startswith("where") for line in out)
 
     def test_measurement_statistics(self) -> None:
@@ -142,19 +146,25 @@ class TestShorNumeric:
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("|a> = H|0>", "|a> = sqrt(2)/2 sum(y in 0..1){ |y> }"),
+        ("|a> = H|0>", "|a> = sqrt(2)/2 sum(y in 0..2){ |y> }"),
         ("|a> = H |+>", "|a> = |0>"),
         ("|a> = H|->", "|a> = |1>"),
         ("|a> = X|0> @ |1>", "|a> = |1> @ |1>"),
-        ("|a> = CNOT (H|0> @ |0>)", "|a> = sqrt(2)/2 sum(y in 0..1){ |y> @ |y> }"),
-        ("|a> = sum(y in 0..1){ |y> } + |1>", "|a> = |0> + 2 |1>"),
+        ("|a> = CNOT (H|0> @ |0>)", "|a> = sqrt(2)/2 sum(y in 0..2){ |y> @ |y> }"),
+        ("|a> = sum(y in 0..2){ |y> } + |1>", "|a> = |0> + 2 |1>"),
         ("|a> = 1/sqrt(2) (|0> - |1>)", "|a> = sqrt(2)/2 |0> - sqrt(2)/2 |1>"),
         ("|a> = |1>^@3", "|a> = |1>^@3"),
-        ("|a> = |5>", "|a> = |5>"),
+        ("|a> = |5>", "|a>_6 = |5>_6"),
+        ("|a> = |0> + |2>", "|a>_3 = |0>_3 + |2>_3"),
+        ("|a> = |0> + |1>", "|a> = |0> + |1>"),
+        ("|a>_3 = |0> + |1>", "|a>_3 = |0>_3 + |1>_3"),
+        ("|a> = |0>_3 + |1>", "|a>_3 = |0>_3 + |1>_3"),
+        ("|a> = |5 : 3>", "|a> = |5 : 3>"),
+        ("|a> = |0>|2> - |1>|0>", "|a> = |0> @ |2>_3 - |1> @ |0>_3"),
         ("|a> = |i>", "|a> = sqrt(2)/2 |0> + sqrt(2)*i/2 |1>"),
         ("|a> = |-i>", "|a> = sqrt(2)/2 |0> - sqrt(2)*i/2 |1>"),
-        ("|a> = HX|0>", "|a> = sqrt(2)/2 sum(y in 0..1){ (-1)^y |y> }"),
-        ("|a> = sum(i in 0..1){ |i> }", "|a> = sum(i in 0..1){ |i> }"),
+        ("|a> = H*X|0>", "|a> = sqrt(2)/2 sum(y in 0..2){ (-1)^y |y> }"),
+        ("|a> = sum(i in 0..2){ |i> }", "|a> = sum(i in 0..2){ |i> }"),
         ("|a> = |0>|1>", "|a> = |0> @ |1>"),
         ("|a> = (|0><1|) |1>", "|a> = |0>"),
         ("|a> = (X @ I) |0>|0>|0>", "|a> = |1> @ |0> @ |0>"),
@@ -177,14 +187,14 @@ class TestSymbolic:
 
     def test_hadamard_power_without_sugar(self) -> None:
         out = run("var n\n|a> = H^@n |0>^@n\nshow(|a>)")[1]
-        assert out == "|a> = 2^(-n/2) sum(x in 0..2^n - 1){ |x> }"
+        assert out == "|a> = 2^(-n/2) sum(x in 0..2^n){ |x> }"
 
     def test_norm(self) -> None:
         assert run("var n\n|a> = H^@n |0>^@n\nshow(<a|a>)")[1] == "<a|a> = 1"
 
     def test_ket_power_of_plus(self) -> None:
         out = run("var n\nvar q = 2^n\n|a> = |+>^@n\nshow(|a>)")[1]
-        assert out.startswith("|a> = 1/sqrt(q) sum(x in 0..q - 1){ |x> }")
+        assert out.startswith("|a> = 1/sqrt(q) sum(x in 0..q){ |x> }")
 
     def test_real_parameter(self) -> None:
         source = "var t: real\ngate R = |x> -> e^(i*t*x) |x>\n|r> = R|1>\nshow(|r>, <r|r>)"
@@ -197,8 +207,8 @@ class TestSymbolic:
     def test_qft_inverse_contracts(self) -> None:
         source = (
             "var n\nvar q = 2^n\n"
-            "gate F = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }\n"
-            "gate G = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(-2*pi*i*x*y/q) |y> }\n"
+            "gate F = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*x*y/q) |y> }\n"
+            "gate G = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(-2*pi*i*x*y/q) |y> }\n"
             "|a> = G F |0>^@n\n|b> = F G |1>^@n\nshow(|a>, |b>)"
         )
         assert run(source)[1] == "|a> = |0>^@n\n|b> = |1>^@n"
@@ -209,7 +219,7 @@ class TestSymbolic:
         assert interp.execute("var c = b + 1\nshow(c)") == "c = 2"
 
     def test_bits_act_as_numbers(self) -> None:
-        interp, _ = run("|a> = |5>\nvar b = measure|a>\nvar c = b * 2\nshow(b, c)")
+        interp, _ = run("|a> = |5 : 3>\nvar b = measure|a>\nvar c = b * 2\nshow(b, c)")
         assert interp.execute("show(b, c)") == "b = 101 (5)\nc = 10"
 
     def test_symbolic_measure_of_basis_state(self) -> None:
@@ -222,14 +232,14 @@ class TestSymbolic:
         assert interp.execute("show(|a>)") in ("|a> = |0>", "|a> = |1>")
 
 
-FOURIER = "gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d-1){ e^(2*pi*i*x*y/d) |y>_d }\n"
+FOURIER = "gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }\n"
 
 
 class TestQudits:
     def test_symbolic_fourier_power(self) -> None:
         source = "var d, n\nvar q = d^n\n" + FOURIER + "|chi>_d = F^@n |0>_d^@n\n"
         out = run(source + "show(|chi>_d, <chi|chi>_d)")[1]
-        assert out == "|chi>_d = 1/sqrt(q) sum(x in 0..q - 1){ |x>_d }\n<chi|chi>_d = 1"
+        assert out == "|chi>_d = 1/sqrt(q) sum(x in 0..q){ |x>_d }\n<chi|chi>_d = 1"
 
     def test_fourier_twice_reflects_zero(self) -> None:
         source = "var d, n\n" + FOURIER + "|b>_d = F^@n F^@n |0>_d^@n\nshow(|b>_d)"
@@ -251,7 +261,8 @@ class TestQudits:
         [
             ("|a>_3 = |2>_3", "|a>_3 = |2>_3"),
             ("|a>_3 = |2>_3 @ |1>_3", "|a>_3 = |2>_3 @ |1>_3"),
-            ("|a>_3 = |5>_3", "|a>_3 = |5>_3"),
+            ("|a>_3 = |5 : 2>_3", "|a>_3 = |5 : 2>_3"),
+            ("gate F3 = |x>_3 -> |x>_3\n|a> = F3|1>", "|a>_3 = |1>_3"),
             ("|a>_3 = |0>_3^@2", "|a>_3 = |0>_3^@2"),
             ("gate X3 = |x>_3 -> |(x + 1) % 3>_3\n|a>_3 = X3^@4 |0 : 4>_3", "|a>_3 = |1>_3^@4"),
             (
@@ -259,8 +270,8 @@ class TestQudits:
                 "|a>_3 = |0>_3 @ |1>_3",
             ),
             ("|a> = |1>_3 @ |0>", "|a> = |1>_3 @ |0>"),
-            ("|a>_3 = sum(y in 0..2){ |y>_3 }", "|a>_3 = sum(y in 0..2){ |y>_3 }"),
-            ("|a>_3 = sum(y in 0..2){ |y>_3 } + |1>_3", "|a>_3 = |0>_3 + 2 |1>_3 + |2>_3"),
+            ("|a>_3 = sum(y in 0..3){ |y>_3 }", "|a>_3 = sum(y in 0..3){ |y>_3 }"),
+            ("|a>_3 = sum(y in 0..3){ |y>_3 } + |1>_3", "|a>_3 = |0>_3 + 2 |1>_3 + |2>_3"),
         ],
     )
     def test_concrete(self, source: str, expected: str) -> None:
@@ -269,15 +280,15 @@ class TestQudits:
 
     def test_qutrit_fourier_numeric(self) -> None:
         source = (
-            "gate F3 = |x>_3 -> 1/sqrt(3) sum(y in 0..2){ e^(2*pi*i*x*y/3) |y>_3 }\n"
+            "gate F3 = |x>_3 -> 1/sqrt(3) sum(y in 0..3){ e^(2*pi*i*x*y/3) |y>_3 }\n"
             "|g>_3 = F3^@2 |0>_3^@2\nshow(|g>_3, <g|g>_3)"
         )
-        assert run(source)[1] == "|g>_3 = 1/3 sum(x in 0..8){ |x>_3 }\n<g|g>_3 = 1"
+        assert run(source)[1] == "|g>_3 = 1/3 sum(x in 0..9){ |x>_3 }\n<g|g>_3 = 1"
 
     def test_numeric_measurement_digits(self) -> None:
         seen = set()
         for seed in range(60):
-            interp, _ = run("|a>_3 = sum(y in 0..2){ |y>_3 }\nvar r = measure|a>_3", seed=seed)
+            interp, _ = run("|a>_3 = sum(y in 0..3){ |y>_3 }\nvar r = measure|a>_3", seed=seed)
             r = interp.values["r"]
             assert isinstance(r, Bits) and r.radix == (3,)
             seen.add(str(r))
@@ -294,14 +305,16 @@ class TestQudits:
     @pytest.mark.parametrize(
         ("source", "match"),
         [
-            ("|a> = |2>_3", "write \\|a>_3"),
+            ("|a>_2 = |2>", "does not fit in dimension 2"),
+            ("|a> = |0>_3 + |5>", "does not fit in dimension 3"),
+            ("|a> = |0> + |2>\n|b> = |a> + |5>", "does not fit in dimension 3"),
+            ("|a> = |5>_3", "does not fit in one digit"),
             ("|a>_4 = |2>_3", "dimension 3"),
-            ("|a>_3 = |2>_3\nshow(|a>)", "write \\|a>_3"),
             ("|a>_3 = |2>_3\nshow(|a>_5)", "does not match"),
             ("|a>_3 = H|0>_3", "single qubits"),
             ("|a>_3 = |3 : 1>_3", "does not fit"),
             ("|a>_1 = |0>_1", "at least 2"),
-            ("|a> = |0>_3 + |0>", "dimensions"),
+            ("|a> = |0>_3 + |0>_4", "dimensions"),
             ("var d, n\n" + FOURIER + "|a>_3 = F|0>_3", "dimension-3"),
             ("|a>_3 = |+>_3", "qubit state"),
         ],
@@ -339,7 +352,7 @@ class TestErrors:
             ("var k\n|a> = |k>", LangTypeError, "register width"),
             ("|a> = (H @ H) |0>", LangError, "registers"),
             ("func f(x) = |x>", LangTypeError, "width"),
-            ("|a> = |4 : 2>", LangTypeError, "does not fit"),
+            ("|a> = |4 : 2>_2", LangTypeError, "does not fit"),
         ],
     )
     def test_error(self, source: str, error: type[Exception], match: str) -> None:
@@ -366,11 +379,11 @@ class TestShellLanguage:
     def test_language_is_the_default(self) -> None:
         shell = Shell(display="ascii")
         assert shell.run_line("|a> = H|0>") == ""
-        assert shell.run_line("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..1){ |y> }"
+        assert shell.run_line("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..2){ |y> }"
 
     def test_engine_commands_take_a_colon(self) -> None:
         shell = Shell(display="ascii")
-        assert shell.run_line(":mode").startswith("mode: ")
+        assert shell.run_line(":zx") == "mode: zx"
         assert "spider_fusion" in shell.run_line(":rules")
 
     def test_errors_are_counted(self) -> None:
@@ -409,7 +422,7 @@ class TestShorsScript:
         out = capsys.readouterr().out.splitlines()
         assert out[0] == "state before measurement"
         assert out[1] == (
-            "|psi> = 1/Q sum(x' in 0..Q - 1, k in 0..Q - 1){ e^(-2*pi*i*k*x'/Q) |k> @ |a^x' % N> }"
+            "|psi> = 1/Q sum(x' in 0..Q, k in 0..Q){ e^(-2*pi*i*k*x'/Q) |k> @ |a^x' % N> }"
         )
         assert out[2] == "result"
         assert "p = gcd(h - 1, N)" in out and "|psi> = |z[:n]> @ |z[n:]>" in out
@@ -424,7 +437,7 @@ class TestShorsScript:
 class TestControlFlow:
     def test_for_while_if(self) -> None:
         source = (
-            "var s = 0\nfor j in 1..4 {\n  var s = s + j\n}\nvar k = 0\n"
+            "var s = 0\nfor j in 1..=4 {\n  var s = s + j\n}\nvar k = 0\n"
             "while k < 3 { var k = k + 1 }\nif s == 10 { var t = 1 } else { var t = 2 }\n"
             "show(s, k, t, s > 9 and not k == 2)"
         )
@@ -434,9 +447,9 @@ class TestControlFlow:
         source = (
             "var n, a, N\n"
             "gate M = |x>|y> -> |x>|(y * powmod(a, 2^j, N)^bit(x, j)) % N>\n"
-            "|s> = H^@n |0>^@n @ |1 : n>\nfor j in 0..n-1 { |s> = M |s> }\nshow(|s>)"
+            "|s> = H^@n |0>^@n @ |1 : n>\nfor j in 0..n { |s> = M |s> }\nshow(|s>)"
         )
-        assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n - 1){ |x> @ |a^x % N> }"
+        assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n){ |x> @ |a^x % N> }"
 
     def test_assume_and_assert(self) -> None:
         interp, _ = run("var r\nassume r > 2\nshow(r > 2, r > 3)")
@@ -499,18 +512,66 @@ class TestOracleCheck:
     def test_quantum_gates_pass(self) -> None:
         interp = Interpreter(style="ascii", check_oracles=True)
         interp.execute("gate G = |x> -> H|x>\ngate N = |x> -> |1 - x>\n|a> = G N|0>")
-        assert interp.execute("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..1){ (-1)^y |y> }"
+        assert interp.execute("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..2){ (-1)^y |y> }"
 
 
 class TestCompose:
-    def test_concatenated_names_compose(self) -> None:
-        assert run("|a> = XX|0>\nshow(|a>)")[1] == "|a> = |0>"
+    def test_star_composes(self) -> None:
+        assert run("|a> = (X*X)|0>\nshow(|a>)")[1] == "|a> = |0>"
 
-    def test_ambiguous_split_is_refused(self) -> None:
-        source = "gate A = |x> -> |x>\ngate AB = |x> -> |x>\ngate BC = |x> -> |x>\n"
-        source += "gate C = |x> -> |x>\ngate B = |x> -> |x>\n|a> = ABC|0>"
-        with pytest.raises(LangError, match="more than one way"):
+    def test_concatenated_names_do_not_compose(self) -> None:
+        with pytest.raises(LangError, match="'XX' is not defined"):
+            run("|a> = XX|0>")
+
+
+class TestFormat:
+    @pytest.mark.parametrize(
+        ("source", "printed"),
+        [
+            ('print(f"x = {1/3:.3f}")', "x = 0.333"),
+            ('var z = 5\nprint(f"{z} and {z:03d}, {{z}}")', "5 and 005, {z}"),
+            ('|a> = |1>\nvar b = measure|a>\nprint(f"b={b}")', "b=true"),
+            ('var n\nprint(f"n+1 is {n + 1}")', "n+1 is n + 1"),
+            ('|a> = |0> + |2>\nprint(f"{|a>}")', "|0>_3 + |2>_3"),
+            ('print(f"{2:>4}|")', "   2|"),
+            ('print("# and ;", f"{1}") # comment', "# and ; 1"),
+        ],
+    )
+    def test_print(self, source: str, printed: str) -> None:
+        assert run(source)[1] == printed
+
+    @pytest.mark.parametrize(
+        ("source", "match"),
+        [
+            ('print(f"{1")', "unclosed"),
+            ('print(f"1}")', "single }"),
+            ('print(f"{}")', "empty"),
+            ('var n\nprint(f"{n:.2f}")', "concrete"),
+            ('show(f"x")', "show takes values"),
+        ],
+    )
+    def test_errors(self, source: str, match: str) -> None:
+        with pytest.raises(LangError, match=match):
             run(source)
+
+
+class TestRanges:
+    def test_exclusive_and_inclusive(self) -> None:
+        assert run("for j in 0..3 { print(j) }")[1] == "0\n1\n2"
+        assert run("for j in 0..=3 { print(j) }")[1] == "0\n1\n2\n3"
+        assert run("show(sum(k in 1..4){ k })")[1] == "sum(k in 1..4){ k } = 6"
+        assert run("show(sum(k in 1..=4){ k })")[1] == "sum(k in 1..=4){ k } = 10"
+
+    def test_else_on_a_later_line(self) -> None:
+        source = (
+            "var t = 2\nif t == 1 {\n  print(1)\n}\n"
+            "else if t == 2 { print(2) }\nelse {\n  print(3)\n}"
+        )
+        assert run(source)[1] == "2"
+
+    def test_lone_else(self) -> None:
+        with pytest.raises(LangError, match="else without an if"):
+            run("else { print(1) }")
 
 
 class TestShowModes:

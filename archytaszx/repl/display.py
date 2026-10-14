@@ -13,7 +13,7 @@
 
 """Dirac rendering of :mod:`archytaszx.repl.lang` values in three styles.
 
-* ``ascii``: the input syntax (``|0>^@n @ |0>^@m``, ``sum(x in 0..q-1){ ... }``);
+* ``ascii``: the input syntax (``|0>^@n @ |0>^@m``, ``sum(x in 0..q){ ... }``);
 * ``unicode``: ``|0⟩^⊗n ⊗ |0⟩^⊗m``, ``Σ_{x=0}^{q-1} ...``;
 * ``plot``: matplotlib mathtext, one line per entry, drawn off-screen and shown inline in the
   terminal (kitty, iTerm2 or sixel image protocol).
@@ -521,6 +521,8 @@ class Renderer:
             digit = _repeated_digit(v, w, d)
             if digit is not None:
                 return self._tpow(wrap(self.expr(digit)), w)
+            if v.is_Integer and w.is_Integer:
+                return wrap(f"{self.expr(v)} : {self.expr(w)}")
         return wrap(self.expr(v))
 
     def _tensor(self) -> str:
@@ -559,7 +561,7 @@ class Renderer:
                 (
                     name_text(name, self.style),
                     self.expr(b.lo.xreplace(mapping)),
-                    self.expr(b.hi.xreplace(mapping)),
+                    self.expr(b.hi.xreplace(mapping) + int(self.style == "ascii")),
                 )
             )
         amp = t.amp.xreplace(mapping)
@@ -637,7 +639,7 @@ class Renderer:
         return text if simple else f"({text})"
 
     def measured(self, z: sympy.Symbol) -> str:
-        """``z in {0,1}^(w)``, ``z in {0..d-1}^(w)`` or ``z in {0..L-1}``."""
+        """``z in {0,1}^(w)``, ``z in {0..=d-1}^(w)`` or ``z in {0..=L-1}``."""
         info = self.ctx.measured[z]
         zt = self.expr(z)
         if info.dim is None:
@@ -648,7 +650,7 @@ class Renderer:
             base = {"ascii": "{0,1}", "unicode": "{0,1}", "plot": r"\{0,1\}"}[self.style]
         else:
             base = {
-                "ascii": f"{{0..{top}}}",
+                "ascii": f"{{0..={top}}}",
                 "unicode": f"{{0,…,{top}}}",
                 "plot": rf"\{{0,\ldots,{top}\}}",
             }[self.style]

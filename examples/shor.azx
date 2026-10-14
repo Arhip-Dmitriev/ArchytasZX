@@ -5,7 +5,7 @@ var q = 2^n
 func f(x) = a^x % N
 
 gate U_f = |x>|y> -> |x>|y xor f(x)>
-gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
+gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*x*y/q) |y> }
 
 |psi_0> = |0>^@n @ |0>^@m
 |psi_1> = (H^@n @ I)|psi_0>
