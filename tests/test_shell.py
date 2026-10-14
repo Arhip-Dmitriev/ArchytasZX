@@ -25,7 +25,7 @@ import pytest
 from archytaszx.repl import commands as C
 from archytaszx.repl import shell as S
 from archytaszx.repl.printer import NotationMode
-from archytaszx.repl.shell import PROMPT, Shell, main
+from archytaszx.repl.shell import Shell, main
 
 EXAMPLE = "sum_{k=0}^{3-1} |k>^{30}; copy"
 REPO = Path(__file__).resolve().parent.parent
@@ -75,7 +75,7 @@ class TestConstruction:
 
     @pytest.mark.parametrize(
         "kwargs",
-        [{"mode": "zx"}, {"unicode": 1}, {"session": object()}],
+        [{"dirac": "zx"}, {"unicode": 1}, {"session": object()}],
         ids=["mode", "unicode", "session"],
     )
     def test_type_errors(self, kwargs: dict[str, object]) -> None:
@@ -96,42 +96,43 @@ class TestRunLine:
     def test_history_records_stripped_lines(self) -> None:
         shell = Shell(commands=True)
         shell.run_line("  help  ")
-        shell.run_line("mode")
+        shell.run_line("dirac")
         shell.run_line("apply nosuchrule")
-        assert shell.history == ["help", "mode", "apply nosuchrule"]
+        assert shell.history == ["help", "dirac", "apply nosuchrule"]
 
     def test_history_listing(self) -> None:
         shell = Shell(commands=True)
-        for line in ("help", "mode", "", "# no", "rules"):
+        for line in ("help", "dirac", "", "# no", "rules"):
             shell.run_line(line)
-        assert shell.run_line("history") == "1  help\n2  mode\n3  rules\n4  history"
+        assert shell.run_line("history") == "1  help\n2  dirac\n3  rules\n4  history"
 
     def test_history_listing_widths(self) -> None:
         shell = Shell(commands=True)
         for _ in range(9):
-            shell.run_line("mode")
+            shell.run_line("dirac")
         lines = shell.run_line("history").splitlines()
-        assert lines[0] == " 1  mode" and lines[-1] == "10  history"
+        assert lines[0] == " 1  dirac" and lines[-1] == "10  history"
 
     def test_mode_get_and_set(self) -> None:
         shell = Shell(commands=True)
-        assert shell.run_line("mode") == "mode: dirac"
-        assert shell.run_line("mode zx") == "mode: zx"
+        assert shell.run_line("dirac") == "mode: dirac"
+        assert shell.run_line("zx") == "mode: zx"
         assert shell.mode is NotationMode.ZX
-        assert shell.run_line("MODE Dirac") == "mode: dirac"
+        assert shell.run_line("BOTH") == "mode: both"
+        assert shell.mode is NotationMode.BOTH
+        assert shell.run_line("Dirac") == "mode: dirac"
         assert shell.mode is NotationMode.DIRAC
         assert shell.errors == 0
 
     def test_mode_bad_value(self) -> None:
         shell = Shell(commands=True, mode=NotationMode.ZX)
-        out = shell.run_line("mode latex")
-        assert out == "error: unknown mode 'latex'; usage: mode [dirac|zx|both]"
+        assert shell.run_line("dirac now").startswith("error: ")
         assert shell.mode is NotationMode.ZX and shell.errors == 1
 
     def test_mode_drives_rendering(self) -> None:
         shell = Shell(commands=True)
         dirac = shell.run_line(EXAMPLE)
-        shell.run_line("mode zx")
+        shell.run_line("zx")
         zx = shell.run_line("show")
         assert not listing(dirac) and listing(zx)
 
@@ -149,12 +150,20 @@ class TestRunLine:
 
     def test_help_lists_commands_and_shell_commands(self) -> None:
         out = Shell(commands=True).run_line("help")
-        for usage in ("mode [dirac|zx]", "history --", "quit --", "apply RULE", "induct"):
+        for usage in (
+            "zx -- ZX",
+            "verbose_on --",
+            "config [KEY",
+            "history --",
+            "quit --",
+            "apply RULE",
+            "induct",
+        ):
             assert usage in out
         assert "aliases: list-rules = rules" in out
 
     def test_help_for_one_command(self) -> None:
-        assert Shell(commands=True).run_line("help mode").startswith("mode [dirac|zx]")
+        assert Shell(commands=True).run_line("help zx").startswith("zx -- ")
 
     def test_command_output_and_last_outcome(self) -> None:
         shell = Shell(commands=True)
@@ -169,7 +178,7 @@ class TestRunLine:
         assert shell.errors == 1 and not shell.last_outcome.ok
         shell.run_line(EXAMPLE)
         assert shell.errors == 1 and shell.last_outcome.ok
-        shell.run_line("mode wrong")
+        shell.run_line("zx wrong")
         shell.run_line("check d=x")
         assert shell.errors == 3
 
@@ -217,41 +226,41 @@ class TestRunLine:
 class TestScripts:
     def test_run_script_skips_blank_and_comment_lines(self) -> None:
         shell = Shell(commands=True)
-        outs = shell.run_script(["# header", "", "mode", "   ", "mode zx"])
+        outs = shell.run_script(["# header", "", "dirac", "   ", "zx"])
         assert outs == ["mode: dirac", "mode: zx"]
-        assert shell.history == ["mode", "mode zx"]
+        assert shell.history == ["dirac", "zx"]
 
     def test_str_input_is_split(self) -> None:
-        assert Shell(commands=True).run_script("mode\n\n# c\nmode zx\n") == [
+        assert Shell(commands=True).run_script("dirac\n\n# c\nzx\n") == [
             "mode: dirac",
             "mode: zx",
         ]
 
     def test_continuation_joins_lines(self) -> None:
         shell = Shell(commands=True)
-        outs = shell.run_script(["sum_{k=0}^{3-1} \\", "  |k>^{30}; \\", "copy", "mode"])
+        outs = shell.run_script(["sum_{k=0}^{3-1} \\", "  |k>^{30}; \\", "copy", "dirac"])
         assert len(outs) == 2
         assert shell.history[0] == EXAMPLE
         assert shell.session.current is not None and shell.errors == 0
 
     def test_trailing_continuation_at_end_of_input(self) -> None:
         shell = Shell(commands=True)
-        assert shell.run_script(["mode \\", "zx \\"]) == ["mode: zx"]
+        assert shell.run_script(["help \\", "zx \\"]) == ["zx -- ZX graph listings"]
 
     def test_comment_line_never_continues(self) -> None:
         shell = Shell(commands=True)
-        assert shell.run_script(["# note \\", "mode"]) == ["mode: dirac"]
+        assert shell.run_script(["# note \\", "dirac"]) == ["mode: dirac"]
 
     def test_stops_at_quit(self) -> None:
         shell = Shell(commands=True)
-        outs = shell.run_script(["mode", "quit", "mode zx", "help"])
+        outs = shell.run_script(["dirac", "quit", "zx", "help"])
         assert outs == ["mode: dirac", ""]
         assert shell.done and shell.mode is NotationMode.DIRAC
-        assert shell.history == ["mode", "quit"]
+        assert shell.history == ["dirac", "quit"]
 
     def test_iter_script_yields_line_output_pairs(self) -> None:
-        pairs = list(Shell(commands=True).iter_script("mode\nmode \\\n zx\n"))
-        assert pairs == [("mode", "mode: dirac"), ("mode zx", "mode: zx")]
+        pairs = list(Shell(commands=True).iter_script("dirac\nhelp \\\n zx\n"))
+        assert pairs == [("dirac", "mode: dirac"), ("help zx", "zx -- ZX graph listings")]
 
     def test_errors_do_not_stop_a_script(self) -> None:
         shell = Shell(commands=True)
@@ -261,7 +270,9 @@ class TestScripts:
         assert shell.errors == 1
 
     def test_crlf_lines(self) -> None:
-        assert Shell(commands=True).run_script(["mode \\\r\n", "zx\r\n"]) == ["mode: zx"]
+        assert Shell(commands=True).run_script(["help \\\r\n", "zx\r\n"]) == [
+            "zx -- ZX graph listings"
+        ]
 
 
 # -- loop ----------------------------------------------------------------------------------
@@ -271,25 +282,25 @@ class TestLoop:
     def test_non_tty_has_no_prompt_and_eof_returns_zero(self) -> None:
         stdout = io.StringIO()
         shell = Shell(commands=True)
-        assert shell.loop(io.StringIO("mode\n\n# c\nmode zx\n"), stdout) == 0
+        assert shell.loop(io.StringIO("dirac\n\n# c\nzx\n"), stdout) == 0
         assert stdout.getvalue() == "mode: dirac\nmode: zx\n"
-        assert PROMPT not in stdout.getvalue()
+        assert "(1): " not in stdout.getvalue()
         assert not shell.done
 
     def test_quit_stops_reading(self) -> None:
         stdout = io.StringIO()
         shell = Shell(commands=True)
-        assert shell.loop(io.StringIO("mode\nquit\nmode zx\n"), stdout) == 0
+        assert shell.loop(io.StringIO("dirac\nquit\nzx\n"), stdout) == 0
         assert stdout.getvalue() == "mode: dirac\n"
         assert shell.done and shell.mode is NotationMode.DIRAC
 
     def test_continuation_lines(self) -> None:
         stdout = io.StringIO()
         shell = Shell(commands=True)
-        shell.loop(io.StringIO("sum_{k=0}^{3-1} \\\n|k>^{30}; copy\nmode \\\n"), stdout)
+        shell.loop(io.StringIO("sum_{k=0}^{3-1} \\\n|k>^{30}; copy\ndirac \\\n"), stdout)
         assert stdout.getvalue().startswith("loaded dirac input")
         assert stdout.getvalue().endswith("mode: dirac\n")
-        assert shell.history == [EXAMPLE, "mode"]
+        assert shell.history == [EXAMPLE, "dirac"]
 
     def test_empty_input(self) -> None:
         stdout = io.StringIO()
@@ -298,7 +309,7 @@ class TestLoop:
 
     def test_keyboard_interrupt_while_reading(self) -> None:
         stdout = io.StringIO()
-        stdin = FakeStdin("mode\n", [KeyboardInterrupt()])
+        stdin = FakeStdin("dirac\n", [KeyboardInterrupt()])
         assert Shell(commands=True).loop(stdin, stdout) == 0
         assert stdout.getvalue() == "interrupted\nmode: dirac\n"
 
@@ -312,19 +323,19 @@ class TestLoop:
         monkeypatch.setattr(S, "run", interrupted)
         stdout = io.StringIO()
         shell = Shell(commands=True)
-        assert shell.loop(io.StringIO("help\nmode\n"), stdout) == 0
+        assert shell.loop(io.StringIO("help\ndirac\n"), stdout) == 0
         assert stdout.getvalue() == "interrupted\nmode: dirac\n"
         assert calls == ["help"]
 
     def test_tty_shows_banner_and_prompts(self) -> None:
         stdout = io.StringIO()
-        stdin = FakeStdin("mode \\\nzx\n", [], tty=True)
+        stdin = FakeStdin("help \\\nzx\n", [], tty=True)
         assert Shell(commands=True).loop(stdin, stdout) == 0
         text = stdout.getvalue()
         assert text.startswith("ArchytasZX shell, mode dirac; type help for commands.\n")
         name = S._place()
         assert f"{name}(1): " in text and f"{'.' * len(name)}(1): " in text
-        assert "mode: zx\n" in text
+        assert "zx -- ZX graph listings\n" in text
         assert text.endswith(f"{name}(2): \n")
 
     def test_tty_interrupt_message(self) -> None:
@@ -341,12 +352,12 @@ class TestLoop:
         assert shell.errors == 1
 
     def test_unwritable_output_returns_one(self) -> None:
-        assert Shell(commands=True).loop(io.StringIO("mode\n"), BrokenStdout()) == 1
+        assert Shell(commands=True).loop(io.StringIO("dirac\n"), BrokenStdout()) == 1
 
     def test_errors_continue_the_loop(self) -> None:
         stdout = io.StringIO()
         shell = Shell(commands=True)
-        assert shell.loop(io.StringIO("apply x\nmode\n"), stdout) == 0
+        assert shell.loop(io.StringIO("apply x\ndirac\n"), stdout) == 0
         lines = stdout.getvalue().splitlines()
         assert lines[0].startswith("error: ") and lines[-1] == "mode: dirac"
         assert shell.errors == 1
@@ -363,16 +374,18 @@ class TestMain:
         assert not listing(out)
 
     def test_mode_zx(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--commands", "--mode", "zx", "-c", EXAMPLE]) == 0
+        assert main(["--commands", "--zx", "-c", EXAMPLE]) == 0
+        assert listing(capsys.readouterr().out)
+        assert main(["--commands", "-zx", "-c", EXAMPLE]) == 0
         assert listing(capsys.readouterr().out)
 
-    def test_bad_mode_is_a_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--commands", "--mode", "latex", "-c", "help"]) == 2
-        assert "invalid choice" in capsys.readouterr().err
+    def test_two_modes_are_a_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["--commands", "--zx", "--dirac", "-c", "help"]) == 2
+        assert "not allowed with" in capsys.readouterr().err
 
-    def test_echo(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--commands", "--echo", "-c", "mode", "-c", "# skipped"]) == 0
-        assert capsys.readouterr().out == f"{PROMPT}mode\nmode: dirac\n"
+    @pytest.mark.parametrize("flag", ["--echo", "--mode", "--output", "--oracle"])
+    def test_removed_flags(self, flag: str) -> None:
+        assert main(["--commands", flag, "-c", "help"]) == 2
 
     def test_unicode(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--commands", "--unicode", "-c", EXAMPLE]) == 0
@@ -402,22 +415,22 @@ class TestMain:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         script = tmp_path / "later.azx"
-        script.write_text("mode zx\n", encoding="utf-8")
+        script.write_text("zx\n", encoding="utf-8")
         assert (
-            main(["--commands", "-c", "mode", "-c", "quit", "-c", "apply nosuchrule", str(script)])
+            main(["--commands", "-c", "dirac", "-c", "quit", "-c", "apply nosuchrule", str(script)])
             == 0
         )
         assert capsys.readouterr().out == "mode: dirac\n"
 
     def test_missing_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         missing = tmp_path / "nope.azx"
-        assert main(["--commands", "-c", "mode", str(missing)]) == 2
+        assert main(["--commands", "-c", "dirac", str(missing)]) == 2
         captured = capsys.readouterr()
         assert captured.out == ""
         assert f"archytaszx: cannot read {missing}" in captured.err
 
     def test_error_exits_one(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--commands", "-c", "apply nosuchrule", "-c", "mode"]) == 1
+        assert main(["--commands", "-c", "apply nosuchrule", "-c", "dirac"]) == 1
         out = capsys.readouterr().out
         assert out.startswith("error: ") and out.endswith("mode: dirac\n")
         assert "Traceback" not in out
@@ -425,7 +438,7 @@ class TestMain:
     def test_help(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--commands", "--help"]) == 0
         out = capsys.readouterr().out
-        assert "usage: archytaszx" in out and "--mode" in out
+        assert "usage: archytaszx" in out and "--zx" in out and "--verbose" in out
 
     def test_interrupt_returns_130(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -434,14 +447,14 @@ class TestMain:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(S, "run", interrupted)
-        assert main(["--commands", "-c", "help", "-c", "mode"]) == 130
+        assert main(["--commands", "-c", "help", "-c", "dirac"]) == 130
         captured = capsys.readouterr()
         assert captured.err == "interrupted\n" and captured.out == ""
 
     def test_interactive_without_commands(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(sys, "stdin", io.StringIO("mode\napply nosuchrule\nquit\nmode\n"))
+        monkeypatch.setattr(sys, "stdin", io.StringIO("dirac\napply nosuchrule\nquit\ndirac\n"))
         assert main(["--commands"]) == 0
         out = capsys.readouterr().out
         assert out.startswith("mode: dirac\nerror: ")
@@ -483,9 +496,9 @@ def test_module_runs_as_a_script() -> None:
     assert failed.stdout.startswith("error: ") and "Traceback" not in failed.stderr
 
 
-class TestOutputMode:
+class TestVerboseMode:
     def test_echoes_the_last_statement(self) -> None:
-        shell = Shell(display="ascii", output=True)
+        shell = Shell(display="ascii", verbose=True)
         assert shell.run_line("var n") == "val n : nat"
         assert shell.run_line("var a = 1; var b = 2") == "val b : nat = 2"
         assert shell.run_line("|p> = X|0>") == "val |p> : ket = |1>"
@@ -495,24 +508,23 @@ class TestOutputMode:
     def test_toggle(self) -> None:
         shell = Shell(display="ascii")
         assert shell.run_line("var n") == ""
-        assert shell.run_line(":output on") == "output: on"
+        assert shell.run_line(":verbose_on") == "verbose: on"
         assert shell.run_line("var m") == "val m : nat"
-        assert shell.run_line(":output") == "output: on"
-        assert shell.run_line(":output off") == "output: off"
-        assert shell.run_line(":output maybe") == "error: usage: output [on|off]"
+        assert shell.run_line(":verbose_off") == "verbose: off"
+        assert shell.run_line("var k") == ""
 
     def test_show_still_prints_with_the_echo_off(self) -> None:
-        shell = Shell(display="ascii", output=True)
+        shell = Shell(display="ascii", verbose=True)
         assert shell.run_line("show(1 + 1)") == "1 + 1 = 2"
 
     def test_mode_drives_the_echo(self) -> None:
-        shell = Shell(display="ascii", output=True)
-        shell.run_line(":mode zx")
+        shell = Shell(display="ascii", verbose=True)
+        shell.run_line(":zx")
         out = shell.run_line("|p> = |1>").splitlines()
         assert out[0] == "val |p> : ket =" and out[1].startswith("  graph:")
 
     def test_colour_codes(self) -> None:
-        shell = Shell(display="ascii", output=True, color=True)
+        shell = Shell(display="ascii", verbose=True, color=True)
         assert shell.run_line("var n") == "\x1b[1mval\x1b[0m n : \x1b[36mnat\x1b[0m"
 
     def test_bar_shape(self) -> None:
@@ -522,7 +534,7 @@ class TestOutputMode:
 
     def test_tty_prints_the_bar_before_each_prompt(self) -> None:
         stdout = io.StringIO()
-        Shell(output=True, display="ascii").loop(FakeStdin("var n\n", [], tty=True), stdout)
+        Shell(verbose=True, display="ascii").loop(FakeStdin("var n\n", [], tty=True), stdout)
         text = stdout.getvalue()
         assert text.count("< command 1 >") == 1 and text.count("< command 2 >") == 1
         assert "val n : nat\n" in text
@@ -545,13 +557,57 @@ class TestPrompt:
         assert S._place() == "home"
 
 
-class TestOracleFlag:
-    def test_interactive_refused(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--oracle"]) == 2
-        assert "scripts" in capsys.readouterr().err
+class TestElse:
+    def test_else_on_the_next_line(self) -> None:
+        shell = Shell(display="ascii")
+        lines = ["var t = 0", "if t == 1 { print(1) }", "else { print(2) }"]
+        assert shell.run_script(lines) == ["", "", "2"]
 
-    def test_script_checks_gates(self, capsys: pytest.CaptureFixture[str]) -> None:
-        source = ["gate B = |x> -> |0>", "|a> = B|1>"]
-        assert main(["--oracle", *(arg for line in source for arg in ("-c", line))]) == 1
-        assert "not reversible" in capsys.readouterr().out
-        assert main([*(arg for line in source for arg in ("-c", line))]) == 0
+    def test_blank_lines_before_else_in_a_script(self) -> None:
+        shell = Shell(display="ascii")
+        assert shell.run_script("if 1 == 0 { print(1) }\n\n# c\nelse { print(2) }") == ["", "2"]
+
+    def test_a_closed_if_runs_at_the_next_other_line(self) -> None:
+        shell = Shell(display="ascii")
+        assert shell.run_line("if 1 == 1 { print(1) }") == ""
+        assert shell.run_line("print(2)") == "1\n2"
+
+    def test_a_blank_line_runs_a_closed_if(self) -> None:
+        shell = Shell(display="ascii")
+        assert shell.run_line("if 1 == 1 { print(1) }") == ""
+        assert shell.run_line("") == "1"
+
+    def test_a_closed_if_runs_at_the_end_of_a_script(self) -> None:
+        assert Shell(display="ascii").run_script(["if 1 == 1 { print(1) }"]) == ["", "1"]
+
+    def test_header_brace_on_the_next_line(self) -> None:
+        assert Shell(display="ascii").run_script(["if 1 == 1", "{ print(1) }"]) == ["", "", "1"]
+
+
+class TestConfig:
+    def test_show_set_and_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(S.D, "CONFIG", S.D.Config())
+        shell = Shell(display="ascii")
+        assert shell.run_line(":config").startswith("size = 1\ncolor = auto\nfile: ")
+        assert shell.run_line(":config size 1.5").startswith("size = 1.5\n")
+        assert shell.run_line(":config color #ff8800").splitlines()[1] == "color = #ff8800"
+        assert shell.run_line(":config size huge").startswith("error: size must be a number")
+        assert shell.run_line(":config shade red").startswith("error: unknown setting")
+        assert shell.run_line(":config reset").startswith("size = 1\ncolor = auto")
+        assert shell.errors == 2
+
+    def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(S.D, "CONFIG", S.D.Config())
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        shell = Shell(display="ascii")
+        shell.run_line(":config size 2")
+        assert shell.run_line(":config save") == f"saved {tmp_path}/archytaszx/config.toml"
+        loaded = S.D.load_config()
+        assert loaded.size == 2.0 and loaded.color == "auto"
+
+    def test_bad_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.toml"
+        path.write_text("size = -1\n", encoding="utf-8")
+        with pytest.raises(ValueError):
+            S.D.load_config(str(path))
+        assert S.D.load_config(str(tmp_path / "none.toml")) == S.D.Config()

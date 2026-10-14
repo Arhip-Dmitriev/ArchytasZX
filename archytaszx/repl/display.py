@@ -36,6 +36,7 @@ import select
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -794,6 +795,81 @@ _DPI = 100
 _WARM: list[threading.Thread] = []
 
 
+@dataclass
+class Config:
+    """Image settings: ``size`` scales the text (1 = the terminal's cell height) and ``color``
+    is ``auto`` (the terminal's text colour) or a colour such as ``#ff8800``."""
+
+    size: float = 1.0
+    color: str = "auto"
+
+
+CONFIG = Config()
+"""The settings :func:`render_png` uses."""
+
+_HEX = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+
+
+def config_path(environ: Mapping[str, str] | None = None) -> str:
+    """``$XDG_CONFIG_HOME/archytaszx/config.toml``, ``~/.config`` without XDG_CONFIG_HOME."""
+    env = os.environ if environ is None else environ
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "archytaszx", "config.toml")
+
+
+def set_config(config: Config, key: str, value: object) -> None:
+    """Sets one setting; ValueError on an unknown key or a bad value."""
+    if key == "size":
+        try:
+            size = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise ValueError(f"size must be a number, got {value!r}") from None
+        if not 0 < size <= 10:
+            raise ValueError("size must be in (0, 10]")
+        config.size = size
+    elif key == "color":
+        text = str(value).strip()
+        if text != "auto" and not _HEX.fullmatch(text) and not _named_colour(text):
+            raise ValueError(f"color must be auto, #rgb, #rrggbb or a colour name, got {text!r}")
+        config.color = text
+    else:
+        raise ValueError(f"unknown setting {key!r}; settings: size, color")
+
+
+def _named_colour(text: str) -> bool:
+    try:
+        from matplotlib.colors import is_color_like
+    except ImportError:
+        return False
+    return bool(is_color_like(text))
+
+
+def load_config(path: str | None = None) -> Config:
+    """The settings in the TOML file at ``path`` (default :func:`config_path`); defaults when it
+    is missing; ValueError when it is unreadable or holds a bad setting."""
+    path = config_path() if path is None else path
+    config = Config()
+    try:
+        with open(path, "rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError:
+        return config
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    for key, value in data.items():
+        set_config(config, key, value)
+    return config
+
+
+def save_config(config: Config, path: str | None = None) -> str:
+    """Writes ``config`` as TOML to ``path`` (default :func:`config_path`); returns the path."""
+    path = config_path() if path is None else path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(f'size = {config.size!r}\ncolor = "{config.color}"\n')
+    return path
+
+
 def _query(fd: int, request: str, pattern: str) -> re.Match[str] | None:
     """The terminal's reply to ``request`` matching ``pattern``, read for at most 0.2 s."""
     os.write(fd, request.encode())
@@ -867,14 +943,17 @@ def colours(dark_theme: bool, environ: Mapping[str, str] | None = None) -> tuple
 
 def render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False) -> bytes:
     """Off-screen PNG of mathtext lines, left aligned, each row as tall as its ink plus a gap
-    of a third of the font size; the font matches the terminal cell height when known."""
+    of a third of the font size; the font matches the terminal cell height when known, times
+    :data:`CONFIG` size, in :data:`CONFIG` color unless that is ``auto``."""
     if _WARM and _WARM[0] is not threading.current_thread():
         _WARM[0].join()
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
     fg, bg = colours(dark_theme)
-    px = 0.75 * TERMINAL.cell if TERMINAL.cell else 14.0
+    if CONFIG.color != "auto":
+        fg = CONFIG.color
+    px = (0.75 * TERMINAL.cell if TERMINAL.cell else 14.0) * CONFIG.size
     size = px * 72 / _DPI
     fig = Figure(dpi=_DPI)
     canvas = FigureCanvasAgg(fig)

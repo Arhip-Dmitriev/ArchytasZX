@@ -405,14 +405,14 @@ class TestModeIndependence:
         shell = Shell(commands=True)
         shell.run_line(EXAMPLE)
         dirac = shell.run_line("show")
-        assert shell.run_line("mode zx") == "mode: zx"
+        assert shell.run_line("zx") == "mode: zx"
         zx = shell.run_line("show")
         assert listing_lines(zx) and not is_subsequence(lines_of(dirac), lines_of(zx))
-        assert shell.run_line("mode both") == "mode: both"
+        assert shell.run_line("both") == "mode: both"
         both = shell.run_line("show")
         assert not listing_lines(dirac) and listing_lines(both)
         assert is_subsequence(lines_of(dirac), lines_of(both))
-        assert shell.run_line("mode dirac") == "mode: dirac"
+        assert shell.run_line("dirac") == "mode: dirac"
         assert shell.run_line("show") == dirac
 
 
@@ -688,8 +688,8 @@ def test_bare_command_name_dispatches_in_both_modes(name: str) -> None:
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 def test_shell_commands_in_both_modes(mode: NotationMode) -> None:
     shell = Shell(commands=True, mode=mode)
-    assert shell.run_line("mode") == f"mode: {mode.value}"
-    assert shell.run_line("history") == "1  mode\n2  history"
+    assert shell.run_line(mode.value) == f"mode: {mode.value}"
+    assert shell.run_line("history") == f"1  {mode.value}\n2  history"
     assert shell.run_line("list-rules spider_fusion").startswith("rule: spider_fusion")
     assert shell.run_line("quit") == ""
     assert shell.done and shell.errors == 0
