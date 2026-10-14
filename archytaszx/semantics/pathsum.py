@@ -11,18 +11,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Symbolic path-sum states and operators over qubit registers.
+"""Symbolic path-sum states and operators over qudit registers.
 
-A :class:`State` is a tuple of register widths and a sum of :class:`Term` s; a term is
+A :class:`State` is a tuple of registers and a sum of :class:`Term` s; a term is
 ``amp * sum_{bound} |k_1>|k_2>...`` with sympy expressions for the amplitude, the register
-values and the bound ranges. Register values are big-endian integers of their register's
-width. Widths and values may be symbolic.
+values and the bound ranges. Register r holds ``widths[r]`` qudits of dimension ``dims[r]``
+(2 by default); its value is a big-endian base-``dims[r]`` integer in ``0..d^w-1``. Widths,
+dimensions and values may be symbolic.
 
 Operators (:class:`Gate`, :class:`Identity`, :class:`Power`, :class:`Tensor`,
 :class:`Compose`, :class:`Outer`, :class:`Scaled`, :class:`OpSum`) act through
-:func:`apply`. A gate is a callable from register values to a state, so applying it is
-substitution. The tensor power of a one-qubit gate or state uses the closed form over bits
-(``pop`` and ``bitdot`` exponents).
+:func:`apply`. A gate is a callable from register values, widths and dimensions to a state,
+so applying it is substitution. The tensor power of a one-qudit gate or state factors its
+amplitude digit by digit: exponents linear in the input digit a, the output digit y and
+``a*y`` become :class:`dsum` and :class:`ddot` (``pop`` and ``bitdot`` for qubits).
 
 :func:`measure` measures every register: numerically (sampled with a numpy generator) when
 the state is concrete, otherwise symbolically (an outcome symbol, the projected state and the
@@ -34,12 +36,19 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import TypeAlias
 
 import numpy as np
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 Expr: TypeAlias = sympy.Expr
+GateFn: TypeAlias = Callable[[tuple[Expr, ...], tuple[Expr, ...], tuple[Expr, ...]], "State"]
+
+
+def expand(e: object) -> Expr:
+    """``sympy.expand`` keeping logarithms, power sums and power bases intact."""
+    return sympy.expand(e, log=False, power_exp=False, power_base=False)
 
 
 class PathSumError(Exception):
@@ -50,14 +59,32 @@ def _bit_count(v: int) -> int:
     return int(v).bit_count()
 
 
-class xor(sympy.Function):  # type: ignore[misc]
+def _digits(v: int, d: int) -> Iterator[int]:
+    v = int(v)
+    while v:
+        v, r = divmod(v, d)
+        yield r
+
+
+def _ints(*args: Expr) -> bool:
+    return all(a.is_Integer for a in args)
+
+
+class _IntFunction(sympy.Function):  # type: ignore[misc]
+    """An integer-valued function."""
+
+    def _eval_is_integer(self) -> bool:
+        return True
+
+
+class xor(_IntFunction):
     """Bitwise exclusive or of two non-negative integers."""
 
     nargs = 2
 
     @classmethod
     def eval(cls, a: Expr, b: Expr) -> Expr | None:
-        if a.is_Integer and b.is_Integer:
+        if _ints(a, b):
             return sympy.Integer(int(a) ^ int(b))
         if a == 0:
             return b
@@ -67,11 +94,8 @@ class xor(sympy.Function):  # type: ignore[misc]
             return sympy.S.Zero
         return None
 
-    def _eval_is_integer(self) -> bool:
-        return True
 
-
-class pop(sympy.Function):  # type: ignore[misc]
+class pop(_IntFunction):
     """Population count of a non-negative integer."""
 
     nargs = 1
@@ -80,74 +104,184 @@ class pop(sympy.Function):  # type: ignore[misc]
     def eval(cls, v: Expr) -> Expr | None:
         return sympy.Integer(_bit_count(int(v))) if v.is_Integer else None
 
-    def _eval_is_integer(self) -> bool:
-        return True
 
-
-class bitdot(sympy.Function):  # type: ignore[misc]
+class bitdot(_IntFunction):
     """Population count of the bitwise and of two non-negative integers."""
 
     nargs = 2
 
     @classmethod
     def eval(cls, a: Expr, b: Expr) -> Expr | None:
-        if a.is_Integer and b.is_Integer:
+        if _ints(a, b):
             return sympy.Integer(_bit_count(int(a) & int(b)))
         if a == 0 or b == 0:
             return sympy.S.Zero
         return None
 
-    def _eval_is_integer(self) -> bool:
-        return True
+
+class dsum(_IntFunction):
+    """``dsum(v, d)``: the sum of the base-d digits of v; :class:`pop` for d = 2."""
+
+    nargs = 2
+
+    @classmethod
+    def eval(cls, v: Expr, d: Expr) -> Expr | None:
+        if d == 2:
+            return pop(v)
+        if _ints(v, d):
+            return sympy.Integer(sum(_digits(int(v), int(d))))
+        return sympy.S.Zero if v == 0 else None
 
 
-class bits(sympy.Function):  # type: ignore[misc]
+class ddot(_IntFunction):
+    """``ddot(a, b, d)``: the sum of products of aligned base-d digits; :class:`bitdot` for
+    d = 2."""
+
+    nargs = 3
+
+    @classmethod
+    def eval(cls, a: Expr, b: Expr, d: Expr) -> Expr | None:
+        if d == 2:
+            return bitdot(a, b)
+        if _ints(a, b, d):
+            pairs = itertools.zip_longest(
+                _digits(int(a), int(d)), _digits(int(b), int(d)), fillvalue=0
+            )
+            return sympy.Integer(sum(x * y for x, y in pairs))
+        return sympy.S.Zero if a == 0 or b == 0 else None
+
+
+class bits(_IntFunction):
     """``bits(z, lo, hi, w)``: bits ``lo..hi-1`` of the width-``w`` big-endian bitstring z."""
 
     nargs = 4
 
     @classmethod
     def eval(cls, z: Expr, lo: Expr, hi: Expr, w: Expr) -> Expr | None:
-        if lo == 0 and sympy.expand(hi - w) == 0:
+        if lo == 0 and expand(hi - w) == 0:
             return z
-        if all(a.is_Integer for a in (z, lo, hi, w)):
+        if _ints(z, lo, hi, w):
             return sympy.Integer((int(z) >> (int(w) - int(hi))) & ((1 << (int(hi) - int(lo))) - 1))
         return None
 
-    def _eval_is_integer(self) -> bool:
-        return True
 
+class digits(_IntFunction):
+    """``digits(z, lo, hi, w, d)``: digits ``lo..hi-1`` of the width-``w`` base-d string z;
+    :class:`bits` for d = 2."""
 
-class shr(sympy.Function):  # type: ignore[misc]
-    """``shr(v, k)``: v shifted right by k bits."""
-
-    nargs = 2
+    nargs = 5
 
     @classmethod
-    def eval(cls, v: Expr, k: Expr) -> Expr | None:
-        if v.is_Integer and k.is_Integer:
-            return sympy.Integer(int(v) >> int(k))
+    def eval(cls, z: Expr, lo: Expr, hi: Expr, w: Expr, d: Expr) -> Expr | None:
+        if d == 2:
+            return bits(z, lo, hi, w)
+        if lo == 0 and expand(hi - w) == 0:
+            return z
+        if _ints(z, lo, hi, w, d):
+            base = int(d)
+            return sympy.Integer(
+                (int(z) // base ** (int(w) - int(hi))) % base ** (int(hi) - int(lo))
+            )
+        return None
+
+
+class part(_IntFunction):
+    """``part(z, k, below, levels)``: register k of a mixed-radix outcome z."""
+
+    nargs = 4
+
+    @classmethod
+    def eval(cls, z: Expr, k: Expr, below: Expr, levels: Expr) -> Expr | None:
+        if _ints(z, below, levels):
+            return sympy.Integer((int(z) // int(below)) % int(levels))
+        return None
+
+
+class shr(_IntFunction):
+    """``shr(v, k, d)``: v with its k lowest base-d digits dropped."""
+
+    nargs = 3
+
+    @classmethod
+    def eval(cls, v: Expr, k: Expr, d: Expr) -> Expr | None:
+        if _ints(v, k, d):
+            return sympy.Integer(int(v) // int(d) ** int(k))
         if v == 0 or k == 0:
             return v
         return None
 
-    def _eval_is_integer(self) -> bool:
-        return True
+
+class dshift(_IntFunction):
+    """``dshift(v, k, d, w)``: every base-d digit of the w-digit v increased by k mod d."""
+
+    nargs = 4
+
+    @classmethod
+    def eval(cls, v: Expr, k: Expr, d: Expr, w: Expr) -> Expr | None:
+        if k == 0:
+            return v
+        small = k.is_Integer and int(k) > 0 and (int(k) == 1 or (d.is_Integer and int(k) < int(d)))
+        if v == 0 and small and not _ints(d, w):
+            return k * (d**w - 1) / (d - 1)
+        if _ints(v, k, d, w):
+            base, out = int(d), 0
+            for pos in range(int(w)):
+                digit = (int(v) // base**pos) % base
+                out += ((digit + int(k)) % base) * base**pos
+            return sympy.Integer(out)
+        return None
 
 
-class powmod(sympy.Function):  # type: ignore[misc]
+class bit(_IntFunction):
+    """``bit(x, j)``: bit j of x, counted from the least significant bit."""
+
+    nargs = 2
+
+    @classmethod
+    def eval(cls, x: Expr, j: Expr) -> Expr | None:
+        if _ints(x, j):
+            return sympy.Integer((int(x) >> int(j)) & 1)
+        return sympy.S.Zero if x == 0 else None
+
+
+class powmod(_IntFunction):
     """``powmod(b, e, m)``: ``b**e % m`` by modular exponentiation."""
 
     nargs = 3
 
     @classmethod
     def eval(cls, b: Expr, e: Expr, m: Expr) -> Expr | None:
-        if b.is_Integer and e.is_Integer and m.is_Integer and int(e) >= 0 and int(m) != 0:
+        if _ints(b, e, m) and int(e) >= 0 and int(m) != 0:
             return sympy.Integer(pow(int(b), int(e), int(m)))
         return None
 
-    def _eval_is_integer(self) -> bool:
-        return True
+
+class igcd(_IntFunction):
+    """Greatest common divisor of integers; unevaluated on symbolic arguments."""
+
+    nargs = 2
+
+    @classmethod
+    def eval(cls, a: Expr, b: Expr) -> Expr | None:
+        if _ints(a, b):
+            return sympy.Integer(sympy.igcd(int(a), int(b)))
+        if a == b:
+            return a
+        return None
+
+
+class denom(_IntFunction):
+    """``denom(x, limit)``: the denominator of the best approximation of x with denominator at
+    most limit (continued fractions)."""
+
+    nargs = 2
+
+    @classmethod
+    def eval(cls, x: Expr, limit: Expr) -> Expr | None:
+        if x.is_Rational and limit.is_Integer and int(limit) >= 1:
+            frac = Fraction(int(x.p), int(x.q)).limit_denominator(int(limit))
+            return sympy.Integer(frac.denominator)
+        return None
 
 
 def to_powmod(expr: Expr) -> Expr:
@@ -158,24 +292,67 @@ def to_powmod(expr: Expr) -> Expr:
     )
 
 
-_POP = np.frompyfunc(_bit_count, 1, 1)
-_BITDOT = np.frompyfunc(lambda a, b: _bit_count(int(a) & int(b)), 2, 1)
-_POWMOD = np.frompyfunc(lambda b, e, m: pow(int(b), int(e), int(m)), 3, 1)
-
-
-def _bits_impl(z: object, lo: object, hi: object, w: object) -> object:
-    zs = np.asarray(z, dtype=object)
-    return (zs >> (w - hi)) & ((1 << (hi - lo)) - 1)  # type: ignore[operator]
+def _obj(x: object) -> np.ndarray:
+    return np.asarray(x, dtype=object)
 
 
 _IMPLS: dict[str, object] = {
-    "xor": lambda a, b: np.bitwise_xor(np.asarray(a, dtype=object), np.asarray(b, dtype=object)),
-    "pop": _POP,
-    "bitdot": _BITDOT,
-    "bits": _bits_impl,
-    "shr": lambda v, k: np.right_shift(np.asarray(v, dtype=object), np.asarray(k, dtype=object)),
-    "powmod": _POWMOD,
+    "xor": lambda a, b: np.bitwise_xor(_obj(a), _obj(b)),
+    "pop": np.frompyfunc(_bit_count, 1, 1),
+    "bitdot": np.frompyfunc(lambda a, b: _bit_count(int(a) & int(b)), 2, 1),
+    "dsum": np.frompyfunc(
+        lambda v, d: int(dsum(sympy.Integer(int(v)), sympy.Integer(int(d)))), 2, 1
+    ),
+    "ddot": np.frompyfunc(
+        lambda a, b, d: int(
+            ddot(sympy.Integer(int(a)), sympy.Integer(int(b)), sympy.Integer(int(d)))
+        ),
+        3,
+        1,
+    ),
+    "bits": lambda z, lo, hi, w: (_obj(z) >> (w - hi)) & ((1 << (hi - lo)) - 1),
+    "digits": lambda z, lo, hi, w, d: (_obj(z) // d ** (w - hi)) % d ** (hi - lo),
+    "part": lambda z, k, below, levels: (_obj(z) // below) % levels,
+    "shr": lambda v, k, d: _obj(v) // _obj(d) ** k,
+    "dshift": np.frompyfunc(
+        lambda v, k, d, w: int(dshift(*(sympy.Integer(int(x)) for x in (v, k, d, w)))), 4, 1
+    ),
+    "powmod": np.frompyfunc(lambda b, e, m: pow(int(b), int(e), int(m)), 3, 1),
+    "bit": lambda x, j: (_obj(x) >> j) & 1,
 }
+
+
+def _scalar_of(cls: type) -> Callable[..., int]:
+    def run(*args: object) -> int:
+        return int(cls(*(sympy.Integer(int(a)) for a in args)))  # type: ignore[call-overload]
+
+    return run
+
+
+_SCALAR: dict[str, object] = {
+    "xor": lambda a, b: int(a) ^ int(b),
+    "pop": _bit_count,
+    "bitdot": lambda a, b: _bit_count(int(a) & int(b)),
+    "dsum": _scalar_of(dsum),
+    "ddot": _scalar_of(ddot),
+    "bits": lambda z, lo, hi, w: (int(z) >> (int(w) - int(hi))) & ((1 << (int(hi) - int(lo))) - 1),
+    "digits": _scalar_of(digits),
+    "part": lambda z, k, below, levels: (int(z) // int(below)) % int(levels),
+    "shr": lambda v, k, d: int(v) // int(d) ** int(k),
+    "dshift": _scalar_of(dshift),
+    "powmod": lambda b, e, m: pow(int(b), int(e), int(m)),
+    "bit": lambda x, j: (int(x) >> int(j)) & 1,
+}
+
+
+def scalar_impls(expr: Expr) -> dict[str, object]:
+    """Python-int lambdify namespace for the integer functions in ``expr``."""
+    names = dict(_SCALAR)
+    for app in expr.atoms(sympy.Function):
+        impl = getattr(type(app), "_scalar", None)
+        if impl is not None:
+            names[type(app).__name__] = impl
+    return names
 
 
 def numeric_impls(expr: Expr) -> dict[str, object]:
@@ -206,19 +383,59 @@ class Term:
     kets: tuple[Expr, ...]
 
 
+TWO = sympy.Integer(2)
+
+
 @dataclass(frozen=True)
 class State:
-    """Register widths (``None`` while unresolved) and a sum of terms; a bra when ``bra``."""
+    """Register widths and dimensions (``None`` while unresolved) and a sum of terms; a bra
+    when ``bra``. Omitted dimensions are 2."""
 
     widths: tuple[Expr | None, ...]
     terms: tuple[Term, ...]
     bra: bool = False
+    dims: tuple[Expr | None, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.dims and self.widths:
+            object.__setattr__(self, "dims", (TWO,) * len(self.widths))
+        if len(self.dims) != len(self.widths):
+            raise PathSumError("one dimension per register")
 
     @property
     def total_width(self) -> Expr:
         if any(w is None for w in self.widths):
             raise PathSumError("a register width is unresolved")
         return sympy.Add(*self.widths) if self.widths else sympy.S.Zero
+
+    def levels(self, k: int) -> Expr:
+        """``d^w`` of register k."""
+        d, w = self.dims[k], self.widths[k]
+        if d is None or w is None:
+            raise PathSumError("a register width or dimension is unresolved")
+        return d**w
+
+    def uniform_dim(self) -> Expr | None:
+        """The common dimension of every register, or None when they differ."""
+        if not self.dims:
+            return TWO
+        first = self.dims[0]
+        return first if all(same(d, first) for d in self.dims) else None
+
+
+def _with(
+    s: State,
+    widths: tuple[Expr | None, ...] | None = None,
+    terms: Sequence[Term] | None = None,
+    bra: bool | None = None,
+    dims: tuple[Expr | None, ...] | None = None,
+) -> State:
+    return State(
+        s.widths if widths is None else widths,
+        s.terms if terms is None else tuple(terms),
+        s.bra if bra is None else bra,
+        s.dims if dims is None else dims,
+    )
 
 
 def new_bound(name: str, lo: Expr, hi: Expr) -> Bound:
@@ -227,11 +444,19 @@ def new_bound(name: str, lo: Expr, hi: Expr) -> Bound:
 
 
 def same(a: Expr | None, b: Expr | None) -> bool:
-    """Symbolic equality of two widths or values."""
+    """Symbolic equality of two widths, dimensions or values."""
     if a is None or b is None:
         return False
-    diff = sympy.expand(sympy.sympify(a) - sympy.sympify(b))
+    diff = expand(sympy.sympify(a) - sympy.sympify(b))
     return bool(diff == 0 or sympy.simplify(diff) == 0)
+
+
+def _same_layout(a: State, b: State) -> bool:
+    return (
+        len(a.widths) == len(b.widths)
+        and all(map(same, a.widths, b.widths))
+        and all(map(same, a.dims, b.dims))
+    )
 
 
 def _subs_term(term: Term, mapping: dict[sympy.Basic, Expr]) -> Term:
@@ -251,7 +476,7 @@ def fresh(term: Term) -> Term:
     if not term.bound:
         return term
     mapping = {b.symbol: sympy.Dummy(b.symbol.name, integer=True) for b in term.bound}
-    renamed = Term(
+    return Term(
         term.amp.xreplace(mapping),
         tuple(
             Bound(mapping[b.symbol], b.lo.xreplace(mapping), b.hi.xreplace(mapping))
@@ -259,17 +484,18 @@ def fresh(term: Term) -> Term:
         ),
         tuple(k.xreplace(mapping) for k in term.kets),
     )
-    return renamed
 
 
-def basis(value: Expr, width: Expr | None) -> State:
+def basis(value: Expr, width: Expr | None, dim: Expr | None = TWO) -> State:
     """The basis ket ``|value>`` on one register."""
-    return State((width,), (Term(sympy.S.One, (), (sympy.sympify(value),)),))
+    return State((width,), (Term(sympy.S.One, (), (sympy.sympify(value),)),), False, (dim,))
 
 
-def basis_kets(values: Sequence[Expr], widths: Sequence[Expr | None]) -> State:
+def basis_kets(
+    values: Sequence[Expr], widths: Sequence[Expr | None], dims: Sequence[Expr | None] = ()
+) -> State:
     """The basis ket with one register per value."""
-    return State(tuple(widths), (Term(sympy.S.One, (), tuple(values)),))
+    return State(tuple(widths), (Term(sympy.S.One, (), tuple(values)),), False, tuple(dims))
 
 
 EMPTY = State((), (Term(sympy.S.One, (), ()),))
@@ -286,72 +512,93 @@ def tensor(a: State, b: State) -> State:
         for ta in a.terms
         for tb in right
     )
-    return State(a.widths + b.widths, terms, a.bra)
+    return State(a.widths + b.widths, terms, a.bra, a.dims + b.dims)
 
 
 def scale(c: Expr, s: State) -> State:
     """``c * s``."""
-    return State(s.widths, tuple(Term(c * t.amp, t.bound, t.kets) for t in s.terms), s.bra)
+    return _with(s, terms=[Term(c * t.amp, t.bound, t.kets) for t in s.terms])
 
 
 def add(a: State, b: State) -> State:
-    """``a + b``; register layouts must agree or have the same total width."""
+    """``a + b``; register layouts must agree or join into one register of one dimension."""
     if a.bra != b.bra:
         raise PathSumError("cannot add a ket and a bra")
-    if len(a.widths) != len(b.widths) or not all(map(same, a.widths, b.widths)):
-        if not same(a.total_width, b.total_width):
-            raise PathSumError("cannot add states of different widths")
+    if not _same_layout(a, b):
+        da, db = a.uniform_dim(), b.uniform_dim()
+        if not (same(a.total_width, b.total_width) and same(da, db)):
+            raise PathSumError("cannot add states of different widths or dimensions")
         a, b = merge(a, 0, len(a.widths)), merge(b, 0, len(b.widths))
-    return State(a.widths, a.terms + b.terms, a.bra)
+    return _with(a, terms=a.terms + b.terms)
+
+
+def conjugate(expr: Expr) -> Expr:
+    """The complex conjugate, with non-negative symbols read as positive."""
+    reps = {
+        x: sympy.Dummy(x.name, positive=True, integer=x.is_integer)
+        for x in expr.free_symbols
+        if x.is_nonnegative and not isinstance(x, sympy.Dummy)
+    }
+    return sympy.conjugate(expr.xreplace(reps)).xreplace({v: k for k, v in reps.items()})
 
 
 def dagger(s: State) -> State:
     """The conjugate transpose: ket to bra and bra to ket."""
-    return State(
-        s.widths,
-        tuple(Term(sympy.conjugate(t.amp), t.bound, t.kets) for t in s.terms),
-        not s.bra,
-    )
+    terms = [Term(conjugate(t.amp), t.bound, t.kets) for t in s.terms]
+    return _with(s, terms=terms, bra=not s.bra)
 
 
 def merge(s: State, i: int, j: int) -> State:
-    """Registers ``i..j-1`` joined into one big-endian register."""
+    """Registers ``i..j-1``, of one dimension, joined into one big-endian register."""
     if j - i <= 1:
         return s
-    widths = s.widths[i:j]
-    if any(w is None for w in widths):
-        raise PathSumError("a register width is unresolved")
+    widths, dims = s.widths[i:j], s.dims[i:j]
+    if any(w is None for w in widths) or any(d is None for d in dims):
+        raise PathSumError("a register width or dimension is unresolved")
+    d = dims[0]
+    if not all(same(x, d) for x in dims):
+        raise PathSumError("cannot join registers of different dimensions")
     shifts = [sympy.Add(*widths[k + 1 :]) for k in range(len(widths))]
     terms = []
     for t in s.terms:
-        value = sympy.Add(*(v * 2**sh for v, sh in zip(t.kets[i:j], shifts, strict=True)))
+        value = sympy.Add(*(v * d**sh for v, sh in zip(t.kets[i:j], shifts, strict=True)))
         terms.append(Term(t.amp, t.bound, t.kets[:i] + (value,) + t.kets[j:]))
-    return State(s.widths[:i] + (sympy.Add(*widths),) + s.widths[j:], tuple(terms), s.bra)
+    return _with(
+        s,
+        widths=s.widths[:i] + (sympy.Add(*widths),) + s.widths[j:],
+        terms=terms,
+        dims=s.dims[:i] + (d,) + s.dims[j:],
+    )
 
 
-def _full_range(b: Bound, width: Expr) -> bool:
-    return b.lo == 0 and same(b.hi, 2**width - 1)
+def _full_range(b: Bound, width: Expr | None, dim: Expr | None) -> bool:
+    return width is not None and dim is not None and b.lo == 0 and same(b.hi, dim**width - 1)
 
 
 def split(s: State, i: int, high: Expr) -> State:
-    """Register ``i`` split into a ``high``-bit register and the remaining low bits."""
-    width = s.widths[i]
-    if width is None:
-        raise PathSumError("a register width is unresolved")
-    low = sympy.expand(width - high)
+    """Register ``i`` split into a ``high``-qudit register and the remaining low qudits."""
+    width, d = s.widths[i], s.dims[i]
+    if width is None or d is None:
+        raise PathSumError("a register width or dimension is unresolved")
+    low = expand(width - high)
     terms = []
     for t in s.terms:
         v = t.kets[i]
         bound = next((b for b in t.bound if b.symbol == v), None)
-        if bound is not None and _full_range(bound, width):
-            hb, lb = new_bound(v.name, 0, 2**high - 1), new_bound(v.name, 0, 2**low - 1)
-            t = _subs_term(t, {v: hb.symbol * 2**low + lb.symbol})
+        if bound is not None and _full_range(bound, width, d):
+            hb, lb = new_bound(v.name, 0, d**high - 1), new_bound(v.name, 0, d**low - 1)
+            t = _subs_term(t, {v: hb.symbol * d**low + lb.symbol})
             t = Term(t.amp, t.bound + (hb, lb), t.kets)
-            parts = (hb.symbol, lb.symbol)
+            parts: tuple[Expr, ...] = (hb.symbol, lb.symbol)
         else:
-            parts = (shr(v, low), sympy.Mod(v, 2**low))
+            parts = (shr(v, low, d), sympy.Mod(v, d**low))
         terms.append(Term(t.amp, t.bound, t.kets[:i] + parts + t.kets[i + 1 :]))
-    return State(s.widths[:i] + (high, low) + s.widths[i + 1 :], tuple(terms), s.bra)
+    return _with(
+        s,
+        widths=s.widths[:i] + (high, low) + s.widths[i + 1 :],
+        terms=terms,
+        dims=s.dims[:i] + (d, d) + s.dims[i + 1 :],
+    )
 
 
 def _ranges(term: Term) -> list[range]:
@@ -372,36 +619,6 @@ def expand_terms(s: State) -> Iterator[tuple[Expr, tuple[Expr, ...]]]:
             yield t.amp.xreplace(mapping), tuple(k.xreplace(mapping) for k in t.kets)
 
 
-def table(s0: State, s1: State) -> list[list[Expr]]:
-    """``A[a][b]``: the amplitude of ``|b>`` in the one-qubit states ``s0`` (a=0), ``s1``."""
-    out = []
-    for s in (s0, s1):
-        row = [sympy.S.Zero, sympy.S.Zero]
-        for amp, kets in expand_terms(s):
-            if len(kets) != 1 or kets[0] not in (0, 1):
-                raise PathSumError("not a one-qubit map")
-            row[int(kets[0])] += amp
-        out.append([sympy.simplify(x) for x in row])
-    return out
-
-
-def _power_from_table(a: list[list[Expr]], v: Expr, w: Expr, hint: str) -> State:
-    a00, a01, a10, a11 = a[0][0], a[0][1], a[1][0], a[1][1]
-    if all(x != 0 for x in (a00, a01, a10, a11)):
-        y = new_bound(hint, 0, 2**w - 1)
-        t = sympy.simplify(a11 * a00 / (a10 * a01))
-        amp = (
-            a00**w * (a10 / a00) ** pop(v) * (a01 / a00) ** pop(y.symbol) * t ** bitdot(v, y.symbol)
-        )
-        return State((w,), (Term(tidy(amp), (y,), (y.symbol,)),))
-    if a01 == 0 and a10 == 0 and a00 != 0:
-        return State((w,), (Term(tidy(a00**w * (a11 / a00) ** pop(v)), (), (v,)),))
-    if a00 == 0 and a11 == 0 and a01 != 0:
-        amp = a01**w * (a10 / a01) ** pop(v)
-        return State((w,), (Term(tidy(amp), (), (2**w - 1 - v,)),))
-    raise PathSumError("no closed-form tensor power for this one-qubit map")
-
-
 def _prime_powers(b: Expr) -> dict[int, Expr] | None:
     """``b`` as ``{prime: exponent}`` when it is a positive product of rational powers."""
     out: dict[int, Expr] = {}
@@ -416,6 +633,15 @@ def _prime_powers(b: Expr) -> dict[int, Expr] | None:
     return out
 
 
+def denest(expr: Expr) -> Expr:
+    """``(b^e1)^e2`` as ``b^(e1 e2)`` when b is non-negative or e2 is an integer."""
+
+    def ok(p: sympy.Basic) -> bool:
+        return bool(p.is_Pow and p.base.is_Pow and (p.base.base.is_nonnegative or p.exp.is_integer))
+
+    return expr.replace(ok, lambda p: p.base.base ** expand(p.base.exp * p.exp))
+
+
 def tidy(expr: Expr) -> Expr:
     """``expr`` with numeric bases of symbolic powers split into prime powers."""
 
@@ -423,35 +649,119 @@ def tidy(expr: Expr) -> Expr:
         primes = _prime_powers(p.base)
         if primes is None:
             return p
-        return sympy.Mul(*(sympy.Integer(q) ** sympy.expand(k * p.exp) for q, k in primes.items()))
+        return sympy.Mul(*(sympy.Integer(q) ** expand(k * p.exp) for q, k in primes.items()))
 
-    expr = sympy.sympify(expr)
+    expr = sympy.powsimp(denest(sympy.sympify(expr)), combine="exp")
     return expr.replace(
         lambda e: e.is_Pow and e.base.is_number and not e.exp.is_number and e.base != -1,
         rewrite,
     )
 
 
+def _digitwise(
+    expr: Expr, n: Expr, a: sympy.Symbol | None, v: Expr, y: sympy.Symbol | None, yv: Expr, d: Expr
+) -> Expr | None:
+    """``prod_j expr(a = v_j, y = Y_j)`` over n base-d digits; None without a closed form."""
+    syms = {s for s in (a, y) if s is not None}
+    out = sympy.S.One
+    for f in sympy.Mul.make_args(sympy.powsimp(expr)):
+        if not f.free_symbols & syms:
+            out *= f**n
+            continue
+        if isinstance(f, sympy.exp):
+            base, e = sympy.E, f.args[0]
+        elif f.is_Pow and not f.base.free_symbols & syms:
+            base, e = f.base, f.exp
+        else:
+            return None
+        gens = [s for s in (a, y) if s is not None]
+        try:
+            poly = sympy.Poly(expand(e), *gens)
+        except sympy.PolynomialError:
+            return None
+        coeffs = {
+            (0, 0): sympy.S.Zero,
+            (1, 0): sympy.S.Zero,
+            (0, 1): sympy.S.Zero,
+            (1, 1): sympy.S.Zero,
+        }
+        for monom, c in poly.terms():
+            key = (monom[0], monom[1] if len(monom) > 1 else 0) if a is not None else (0, monom[0])
+            if key not in coeffs or any(m > 1 for m in monom):
+                return None
+            coeffs[key] = c
+        integral = all(coeffs[k].is_integer for k in ((1, 0), (0, 1), (1, 1)))
+        if base != sympy.E and not base.is_positive and not integral:
+            return None
+        exponent = (
+            coeffs[(1, 0)] * dsum(v, d)
+            + coeffs[(0, 1)] * dsum(yv, d)
+            + coeffs[(1, 1)] * ddot(v, yv, d)
+        )
+        if coeffs[(0, 0)] != 0:
+            out *= (base ** coeffs[(0, 0)]) ** n
+        out *= base**exponent
+    return out
+
+
+def _repeat_digit(k: Expr, d: Expr, n: Expr) -> Expr:
+    if k == 0:
+        return sympy.S.Zero
+    return sympy.factor(k * (d**n - 1) / (d - 1)) if d != 2 else k * (2**n - 1)
+
+
 def power_state(s: State, n: Expr, hint: str = "x") -> State:
-    """``s^(x)n``; closed form for one-qubit states, repeated tensor for concrete n."""
+    """``s^(x)n``; closed form for one-qudit states, repeated tensor for concrete n."""
     n = sympy.sympify(n)
     if len(s.widths) == 1 and same(s.widths[0], 1):
-        row = [sympy.S.Zero, sympy.S.Zero]
-        for amp, kets in expand_terms(s):
-            row[int(kets[0])] += amp
-        a0, a1 = (sympy.simplify(x) for x in row)
-        if a0 != 0 and a1 != 0:
-            y = new_bound(hint, 0, 2**n - 1)
-            amp = tidy(a0**n * (a1 / a0) ** pop(y.symbol))
-            return State((n,), (Term(amp, (y,), (y.symbol,)),), s.bra)
-        value, amp = (sympy.S.Zero, a0) if a1 == 0 else (2**n - 1, a1)
-        return State((n,), (Term(tidy(amp**n), (), (value,)),), s.bra)
+        out = _power_one(simplify(s), n, hint)
+        if out is not None:
+            return out
     if n.is_Integer and n >= 0:
-        out = State((), (Term(sympy.S.One, (), ()),), s.bra)
+        acc = State((), (Term(sympy.S.One, (), ()),), s.bra)
         for _ in range(int(n)):
-            out = tensor(out, s)
-        return out
-    raise PathSumError("a symbolic tensor power needs a one-qubit state")
+            acc = tensor(acc, s)
+        return acc
+    raise PathSumError("a symbolic tensor power needs a one-qudit state with a closed form")
+
+
+def _power_one(s: State, n: Expr, hint: str) -> State | None:
+    d = s.dims[0]
+    assert d is not None
+    if len(s.terms) == 1:
+        t = s.terms[0]
+        if not t.bound:
+            value = _repeat_digit(t.kets[0], d, n)
+            return State((n,), (Term(tidy(t.amp**n), (), (value,)),), s.bra, (d,))
+        if len(t.bound) == 1 and t.kets[0] == t.bound[0].symbol and _full_range(t.bound[0], 1, d):
+            y = new_bound(hint, 0, d**n - 1)
+            amp = _digitwise(t.amp, n, None, sympy.S.Zero, t.bound[0].symbol, y.symbol, d)
+            if amp is not None:
+                return State((n,), (Term(tidy(amp), (y,), (y.symbol,)),), s.bra, (d,))
+        return None
+    if not (d.is_Integer and is_concrete(s)):
+        return None
+    row = [sympy.S.Zero] * int(d)
+    for amp, kets in expand_terms(s):
+        row[int(kets[0])] += amp
+    row = [sympy.simplify(x) for x in row]
+    nonzero = [k for k, x in enumerate(row) if x != 0]
+    if len(nonzero) == 1:
+        k = nonzero[0]
+        return State(
+            (n,),
+            (Term(tidy(row[k] ** n), (), (_repeat_digit(sympy.Integer(k), d, n),)),),
+            s.bra,
+            (d,),
+        )
+    if len(nonzero) != len(row):
+        return None
+    r = sympy.simplify(row[1] / row[0])
+    if any(sympy.simplify(row[k] - row[0] * r**k) != 0 for k in range(len(row))):
+        return None
+    y = new_bound(hint, 0, d**n - 1)
+    amp = tidy(row[0] ** n * r ** dsum(y.symbol, d))
+    return State((n,), (Term(amp, (y,), (y.symbol,)),), s.bra, (d,))
 
 
 class Operator:
@@ -460,11 +770,12 @@ class Operator:
 
 @dataclass(frozen=True, eq=False)
 class Gate(Operator):
-    """``fn(values, widths) -> State`` on ``arity`` registers; ``qubit`` gates take width 1."""
+    """``fn(values, widths, dims) -> State`` on ``arity`` registers; ``qubit`` gates take single
+    qubits."""
 
     name: str
     arity: int
-    fn: Callable[[tuple[Expr, ...], tuple[Expr, ...]], State]
+    fn: GateFn
     qubit: bool = False
     oracle: bool = False
     source: str = ""
@@ -473,7 +784,7 @@ class Gate(Operator):
 
 @dataclass(frozen=True)
 class Identity(Operator):
-    """The identity on ``width`` qubits, or on whatever it is aligned with."""
+    """The identity on ``width`` qudits, or on whatever it is aligned with."""
 
     width: Expr | None = None
 
@@ -530,21 +841,27 @@ def apply(op: Operator, s: State) -> State:
     return simplify(_apply(op, s, 0, len(s.widths)))
 
 
-def _apply_map(
-    s: State, i: int, j: int, fn: Callable[[tuple[Expr, ...], tuple[Expr, ...]], State]
-) -> State:
-    out_widths: tuple[Expr | None, ...] | None = None
+SliceFn: TypeAlias = Callable[[tuple[Expr, ...], tuple[Expr, ...], tuple[Expr, ...]], State]
+
+
+def _apply_map(s: State, i: int, j: int, fn: SliceFn) -> State:
+    out: State | None = None
     terms: list[Term] = []
     for t in s.terms:
-        res = fn(t.kets[i:j], s.widths[i:j])
-        if out_widths is None:
-            out_widths = res.widths
-        elif len(res.widths) != len(out_widths) or not all(map(same, res.widths, out_widths)):
-            raise PathSumError("an operator gave different output widths on different terms")
+        res = fn(t.kets[i:j], s.widths[i:j], s.dims[i:j])
+        if out is None:
+            out = res
+        elif not _same_layout(res, out):
+            raise PathSumError("an operator gave different output registers on different terms")
         for r in (fresh(x) for x in res.terms):
             terms.append(Term(t.amp * r.amp, t.bound + r.bound, t.kets[:i] + r.kets + t.kets[j:]))
-    assert out_widths is not None
-    return State(s.widths[:i] + out_widths + s.widths[j:], tuple(terms), s.bra)
+    assert out is not None
+    return _with(
+        s,
+        widths=s.widths[:i] + out.widths + s.widths[j:],
+        terms=terms,
+        dims=s.dims[:i] + out.dims + s.dims[j:],
+    )
 
 
 def _apply(op: Operator, s: State, i: int, j: int) -> State:
@@ -569,7 +886,9 @@ def _apply(op: Operator, s: State, i: int, j: int) -> State:
         return s
     if isinstance(op, Outer):
         bra = op.bra
-        return _apply_map(s, i, j, lambda vals, ws: scale(inner(bra, basis_kets(vals, ws)), op.ket))
+        return _apply_map(
+            s, i, j, lambda vals, ws, ds: scale(inner(bra, basis_kets(vals, ws, ds)), op.ket)
+        )
     if isinstance(op, Scaled):
         return scale(op.factor, _apply(op.op, s, i, j))
     if isinstance(op, OpSum):
@@ -586,11 +905,13 @@ def _apply_gate(g: Gate, s: State, i: int, j: int) -> State:
         s, j = merge(s, i, j), i + 1
     if j - i != g.arity:
         raise PathSumError(f"{g.name} acts on {g.arity} register(s), got {j - i}")
-    if g.qubit and not all(same(w, 1) for w in s.widths[i:j]):
+    if g.qubit and not all(
+        same(w, 1) and same(d, 2) for w, d in zip(s.widths[i:j], s.dims[i:j], strict=True)
+    ):
         raise PathSumError(f"{g.name} acts on single qubits; use {g.name}^@w for a register")
 
-    def run(vals: tuple[Expr, ...], ws: tuple[Expr, ...]) -> State:
-        res = g.fn(vals, ws)
+    def run(vals: tuple[Expr, ...], ws: tuple[Expr, ...], ds: tuple[Expr, ...]) -> State:
+        res = g.fn(vals, ws, ds)
         if g.oracle and (
             len(res.terms) != 1 or res.terms[0].bound or sympy.simplify(res.terms[0].amp) != 1
         ):
@@ -599,58 +920,116 @@ def _apply_gate(g: Gate, s: State, i: int, j: int) -> State:
 
     out = _apply_map(s, i, j, run)
     if g.oracle:
-        _check_oracle(g, s.widths[i:j], run)
+        _check_oracle(g, s.widths[i:j], s.dims[i:j], run)
     return out
 
 
-def _check_oracle(g: Gate, widths: Sequence[Expr | None], run: Callable[..., State]) -> None:
-    """Raises unless the oracle permutes basis states; concrete widths only."""
-    if not all(w is not None and w.is_Integer for w in widths):
+def _check_oracle(
+    g: Gate, widths: Sequence[Expr | None], dims: Sequence[Expr | None], run: SliceFn
+) -> None:
+    """Raises unless the oracle permutes basis states; concrete widths and dimensions only."""
+    pairs = list(zip(widths, dims, strict=True))
+    if not all(w is not None and w.is_Integer and d is not None and d.is_Integer for w, d in pairs):
         return
-    key = tuple(int(w) for w in widths)  # type: ignore[arg-type]
+    key = tuple(int(x) for pair in pairs for x in pair)  # type: ignore[arg-type]
     if key in g.checked:
         return
-    bounds = [new_bound("x", 0, 2**w - 1) for w in key]
+    bounds = [new_bound("x", 0, d**w - 1) for w, d in pairs]  # type: ignore[operator]
     probe = State(
-        tuple(widths), (Term(sympy.S.One, tuple(bounds), tuple(b.symbol for b in bounds)),)
+        tuple(widths),
+        (Term(sympy.S.One, tuple(bounds), tuple(b.symbol for b in bounds)),),
+        False,
+        tuple(dims),
     )
-    out = _apply_map(probe, 0, len(key), run)
+    out = _apply_map(probe, 0, len(pairs), run)
     if not is_concrete(out):
         return
     keys, _ = enumerate_state(out)
     if len(np.unique(keys)) != len(keys):
-        raise PathSumError(f"oracle {g.name} is not reversible on widths {key}")
+        raise PathSumError(f"oracle {g.name} is not reversible on widths {tuple(widths)}")
     g.checked.add(key)
+
+
+def _shift_amount(val: Expr, a: sympy.Symbol, d: Expr) -> Expr | None:
+    if isinstance(val, sympy.Mod) and same(val.args[1], d):
+        k = expand(val.args[0] - a)
+        if a not in k.free_symbols:
+            return k
+    return None
+
+
+def _power_gate(g: Gate, v: Expr, w: Expr, d: Expr, hint: str) -> State | None:
+    """``g^(x)w |v>`` in closed form, or None."""
+    a = sympy.Dummy("a", integer=True, nonnegative=True)
+    res = simplify(g.fn((a,), (sympy.S.One,), (d,)))
+    if len(res.terms) != 1 or len(res.widths) != 1:
+        return None
+    t = res.terms[0]
+    if not t.bound:
+        amp = _digitwise(t.amp, w, a, v, None, sympy.S.Zero, d)
+        val = t.kets[0]
+        if amp is None:
+            return None
+        if val == a:
+            out = v
+        elif same(val, d - 1 - a):
+            out = d**w - 1 - v
+        elif (k := _shift_amount(val, a, d)) is not None:
+            out = dshift(v, k, d, w)
+        else:
+            return None
+        return State((w,), (Term(tidy(amp), (), (out,)),), False, (d,))
+    if len(t.bound) == 1 and t.kets[0] == t.bound[0].symbol and _full_range(t.bound[0], 1, d):
+        y = new_bound(hint, 0, d**w - 1)
+        amp = _digitwise(t.amp, w, a, v, t.bound[0].symbol, y.symbol, d)
+        if amp is not None:
+            return State((w,), (Term(tidy(amp), (y,), (y.symbol,)),), False, (d,))
+    return None
 
 
 def _apply_power(p: Power, s: State, i: int, j: int) -> State:
     inner_op = p.op
     if isinstance(inner_op, Identity):
         return s
-    if isinstance(inner_op, Gate) and inner_op.arity == 1 and inner_op.qubit:
-        s = merge(s, i, j)
-        if not same(s.widths[i], p.count):
-            raise PathSumError(f"{inner_op.name}^@{p.count} does not match register width")
-        one = sympy.Integer(1)
-        a = table(inner_op.fn((sympy.S.Zero,), (one,)), inner_op.fn((one,), (one,)))
-        return _apply_map(s, i, i + 1, lambda vals, ws: _power_from_table(a, vals[0], ws[0], "x"))
     count = sympy.sympify(p.count)
+    if isinstance(inner_op, Gate) and inner_op.arity == 1:
+        s = merge(s, i, j)
+        width, d = s.widths[i], s.dims[i]
+        if not same(width, count):
+            raise PathSumError(f"{inner_op.name}^@{count} does not match register width {width}")
+        if inner_op.qubit and not same(d, 2):
+            raise PathSumError(f"{inner_op.name} acts on qubits, not dimension {d}")
+        assert d is not None
+        probe = _power_gate(inner_op, sympy.Dummy("v", integer=True), count, d, "x")
+        if probe is not None:
+
+            def closed(vals: tuple[Expr, ...], ws: tuple[Expr, ...], ds: tuple[Expr, ...]) -> State:
+                out = _power_gate(inner_op, vals[0], ws[0], ds[0], "x")
+                assert out is not None
+                return out
+
+            return _apply_map(s, i, i + 1, closed)
+        if count.is_Integer and count >= 0:
+            return _apply(Tensor((inner_op,) * int(count)), s, i, i + 1)
+        raise PathSumError(f"no closed form for the symbolic tensor power of {inner_op.name}")
     if count.is_Integer and count >= 0:
         return _apply(Tensor((inner_op,) * int(count)), s, i, j)
-    raise PathSumError("a symbolic tensor power needs a one-qubit gate")
+    raise PathSumError("a symbolic tensor power needs a one-register gate")
 
 
 def _span_width(op: Operator) -> Expr | None:
     if isinstance(op, Power):
+        if isinstance(op.op, Gate) and op.op.arity == 1:
+            return sympy.sympify(op.count)
         inner_w = _span_width(op.op)
-        return None if inner_w is None else sympy.expand(inner_w * op.count)
+        return None if inner_w is None else expand(inner_w * op.count)
     if isinstance(op, Identity):
         return op.width
     if isinstance(op, Gate) and op.qubit:
         return sympy.Integer(op.arity)
     if isinstance(op, Outer):
         return op.bra.total_width
-    if isinstance(op, (Scaled,)):
+    if isinstance(op, Scaled):
         return _span_width(op.op)
     if isinstance(op, Compose):
         return _span_width(op.ops[-1])
@@ -699,58 +1078,59 @@ def _consume(s: State, k: int, j: int, width: Expr) -> tuple[State, int, int]:
         w = s.widths[r]
         if w is None:
             raise PathSumError("a register width is unresolved")
-        acc = sympy.expand(acc + w)
+        acc = expand(acc + w)
         r += 1
         if same(acc, width):
             return s, r, j
-        over = sympy.expand(acc - width)
+        over = expand(acc - width)
         if over.is_Integer and over > 0:
-            s = split(s, r - 1, sympy.expand(w - over))
+            s = split(s, r - 1, expand(w - over))
             return s, r, j + 1
     raise PathSumError(f"no registers of total width {width} to act on")
 
 
-def _bound_ok(sym: Expr, other: Expr, bound: list[Bound], width: Expr) -> bool:
+def _bound_ok(sym: Expr, other: Expr, bound: list[Bound], width: Expr, dim: Expr) -> bool:
     b = next((x for x in bound if x.symbol == sym), None)
-    return b is not None and _full_range(b, width) and sym not in other.free_symbols
+    return b is not None and _full_range(b, width, dim) and sym not in other.free_symbols
 
 
 def inner(a: State, b: State) -> Expr:
     """``<a|b>`` for a bra ``a`` and a ket ``b``."""
     if not a.bra or b.bra:
         raise PathSumError("an inner product needs a bra then a ket")
-    if len(a.widths) != len(b.widths) or not all(map(same, a.widths, b.widths)):
-        if not same(a.total_width, b.total_width):
-            raise PathSumError("cannot contract states of different widths")
+    if not _same_layout(a, b):
+        if not (same(a.total_width, b.total_width) and same(a.uniform_dim(), b.uniform_dim())):
+            raise PathSumError("cannot contract states of different widths or dimensions")
         a, b = merge(a, 0, len(a.widths)), merge(b, 0, len(b.widths))
-    widths = a.widths
     if is_concrete(a) and is_concrete(b):
         return _inner_numeric(a, b)
     total: Expr = sympy.S.Zero
     for ta in a.terms:
         for tb in (fresh(t) for t in b.terms):
-            total += _contract(ta, tb, widths)
+            total += _contract(ta, tb, a.widths, a.dims)
     return sympy.simplify(total)
 
 
-def _contract(ta: Term, tb: Term, widths: Sequence[Expr | None]) -> Expr:
+def _contract(
+    ta: Term, tb: Term, widths: Sequence[Expr | None], dims: Sequence[Expr | None]
+) -> Expr:
     amp = ta.amp * tb.amp
     bound = list(ta.bound + tb.bound)
-    eqs = [(lk, rk, w) for lk, rk, w in zip(ta.kets, tb.kets, widths, strict=True)]
+    eqs = list(zip(ta.kets, tb.kets, widths, dims, strict=True))
     deltas: list[Expr] = []
     while eqs:
-        lhs, rhs, w = eqs.pop()
-        if sympy.expand(lhs - rhs) == 0:
+        lhs, rhs, w, d = eqs.pop()
+        if expand(lhs - rhs) == 0:
             continue
         pick = next(
-            ((x, y) for x, y in ((lhs, rhs), (rhs, lhs)) if _bound_ok(x, y, bound, w)), None
+            ((x, y) for x, y in ((lhs, rhs), (rhs, lhs)) if _bound_ok(x, y, bound, w, d)), None
         )
         if pick is not None:
             sym, val = pick
             mapping = {sym: val}
             amp = amp.xreplace(mapping)
-            eqs = [(x.xreplace(mapping), y.xreplace(mapping), ww) for x, y, ww in eqs]
-            deltas = [d.xreplace(mapping) for d in deltas]
+            eqs = [(x.xreplace(mapping), y.xreplace(mapping), ww, dd) for x, y, ww, dd in eqs]
+            deltas = [e.xreplace(mapping) for e in deltas]
             bound = [x for x in bound if x.symbol != sym]
             continue
         if lhs.is_Integer and rhs.is_Integer:
@@ -768,16 +1148,16 @@ def _geometric(amp: Expr, b: Bound) -> Expr | None:
     rest = sympy.Mul(*(f for f in sympy.Mul.make_args(amp) if not isinstance(f, sympy.exp)))
     if sym in rest.free_symbols or not exps:
         return None
-    arg = sympy.expand(sympy.Add(*(e.args[0] for e in exps)) / (2 * sympy.pi * sympy.I))
-    coeff = sympy.expand(sympy.diff(arg, sym))
-    if sym in coeff.free_symbols:
+    arg = expand(sympy.Add(*(e.args[0] for e in exps)) / (2 * sympy.pi * sympy.I))
+    coeff = expand(sympy.diff(arg, sym))
+    if sym in coeff.free_symbols or coeff.has(sympy.Derivative):
         return None
     count = b.hi + 1
-    level = sympy.expand(coeff * count)
+    level = expand(coeff * count)
     if not level.is_integer:
         return None
     level = sympy.Add(*(p for p in sympy.Add.make_args(level) if not (p / count).is_integer))
-    other = sympy.exp(2 * sympy.pi * sympy.I * sympy.expand(arg - coeff * sym))
+    other = sympy.exp(2 * sympy.pi * sympy.I * expand(arg - coeff * sym))
     parts = sympy.Add.make_args(level)
     signs = [p.as_coeff_Mul() for p in parts]
     if not level.is_Integer and len(parts) <= 2 and all(abs(c) == 1 for c, _ in signs):
@@ -785,22 +1165,18 @@ def _geometric(amp: Expr, b: Bound) -> Expr | None:
         neg = [x for c, x in signs if c == -1]
         if len(parts) == 1:
             return rest * other * count * sympy.KroneckerDelta(parts[0] * signs[0][0], 0)
+        if len(pos) == 1 and len(neg) == 1:
+            return rest * other * count * sympy.KroneckerDelta(pos[0], neg[0])
     terms = [p for p in parts if not p.is_Integer]
     const = sympy.Add(*(p for p in parts if p.is_Integer))
     if len(terms) == 1 and const != 0 and abs(terms[0].as_coeff_Mul()[0]) == 1:
         c, u = terms[0].as_coeff_Mul()
         target = -c * const
         if target.is_negative:
-            target = sympy.expand(count + target)
+            target = expand(count + target)
         return rest * other * count * sympy.KroneckerDelta(u, target)
-        if len(pos) == 1 and len(neg) == 1:
-            return rest * other * count * sympy.KroneckerDelta(pos[0], neg[0])
-    if level.is_Integer:
-        return (
-            rest * other * (count if int(level) % int(count) == 0 else 0)
-            if count.is_Integer
-            else None
-        )
+    if level.is_Integer and count.is_Integer:
+        return rest * other * (count if int(level) % int(count) == 0 else 0)
     return None
 
 
@@ -814,21 +1190,32 @@ def _sum_out(amp: Expr, bound: list[Bound]) -> Expr:
     return amp
 
 
+def _character(f: Expr, sym: sympy.Symbol) -> Expr | None:
+    """The partner v of a factor ``(-1)^bitdot(sym, v)`` or ``e^{+-2 pi i ddot(sym, v, d)/d}``."""
+    if f.is_Pow and f.base == -1 and isinstance(f.exp, bitdot) and sym in f.exp.args:
+        return next((x for x in f.exp.args if x != sym), sym)
+    if isinstance(f, sympy.exp):
+        hits = [x for x in f.args[0].atoms(ddot) if sym in x.args[:2]]
+        if len(hits) == 1:
+            dd = hits[0]
+            c = sympy.simplify(f.args[0] / dd * dd.args[2] / (2 * sympy.pi * sympy.I))
+            if c in (1, -1):
+                return next((x for x in dd.args[:2] if x != sym), sym)
+    return None
+
+
 def _parity(amp: Expr, b: Bound, bound: Sequence[Bound]) -> Expr | None:
-    """``sum_b C (-1)^{b.v}`` over a full ``2^w`` range as ``2^w C [v = 0]``; else None."""
+    """``sum_b C chi(b, v)`` over a full ``d^w`` range, for a digit character chi, as
+    ``d^w C [v = 0]``; else None."""
     sym = b.symbol
     if b.lo != 0:
         return None
     factors = sympy.Mul.make_args(amp)
-    hits = [
-        f
-        for f in factors
-        if f.is_Pow and f.base == -1 and isinstance(f.exp, bitdot) and sym in f.exp.args
-    ]
+    hits = [(f, v) for f in factors if (v := _character(f, sym)) is not None]
     if len(hits) != 1:
         return None
-    rest = sympy.Mul(*(f for f in factors if f is not hits[0]))
-    v = next((x for x in hits[0].exp.args if x != sym), sym)
+    hit, v = hits[0]
+    rest = sympy.Mul(*(f for f in factors if f is not hit))
     if sym in rest.free_symbols or v == sym:
         return None
     partner = next((x for x in bound if x.symbol == v), None)
@@ -865,10 +1252,25 @@ def _eliminate_deltas(t: Term) -> Term:
     return t
 
 
+def _reduce_mods(t: Term) -> Term:
+    """``Mod(b, D)`` with b a bound index over ``0..D-1`` replaced by b."""
+    ranges = {b.symbol: b for b in t.bound if b.lo == 0}
+
+    def plain(e: sympy.Mod) -> bool:
+        b = ranges.get(e.args[0])
+        return b is not None and same(b.hi + 1, e.args[1])
+
+    def rewrite(e: Expr) -> Expr:
+        return e.replace(lambda x: isinstance(x, sympy.Mod) and plain(x), lambda x: x.args[0])
+
+    return Term(rewrite(t.amp), t.bound, tuple(rewrite(k) for k in t.kets))
+
+
 def simplify(s: State) -> State:
     """Terms tidied, zero terms dropped, and bound indices outside every ket summed out."""
     terms = []
     for t in s.terms:
+        t = _reduce_mods(t)
         amp = tidy(t.amp)
         bound = list(t.bound)
         for b in list(bound):
@@ -891,7 +1293,7 @@ def simplify(s: State) -> State:
         terms.append(Term(amp, t.bound, t.kets))
     if not terms:
         terms = [Term(sympy.S.Zero, (), s.terms[0].kets if s.terms else ())]
-    out = State(s.widths, tuple(terms), s.bra)
+    out = _with(s, terms=terms)
     return _combine(out) if len(terms) > 1 and is_concrete(out) else out
 
 
@@ -908,13 +1310,15 @@ def _combine(s: State) -> State:
             terms.append(Term(amp, (), tuple(sympy.Integer(k) for k in key)))
     if not terms:
         terms = [Term(sympy.S.Zero, (), s.terms[0].kets)]
-    return State(s.widths, tuple(terms), s.bra)
+    return _with(s, terms=terms)
 
 
 def is_concrete(s: State) -> bool:
-    """Every width, range, amplitude and value is a number once bound indices are fixed."""
-    if not all(w is not None and sympy.sympify(w).is_Integer for w in s.widths):
-        return False
+    """Every width, dimension, range, amplitude and value is a number once bound indices are
+    fixed."""
+    for x in (*s.widths, *s.dims):
+        if x is None or not sympy.sympify(x).is_Integer:
+            return False
     for t in s.terms:
         syms = {b.symbol for b in t.bound}
         for b in t.bound:
@@ -943,9 +1347,14 @@ def _evaluate(
     expr: Expr, syms: list[sympy.Symbol], grid: list[np.ndarray], size: int, dtype: object
 ) -> np.ndarray:
     expr = to_powmod(expr)
+    if dtype is object:
+        exact = sympy.lambdify(syms, expr, modules=[scalar_impls(expr), "math"])
+        if not syms:
+            return np.full(size, int(exact()), dtype=object)
+        out = np.frompyfunc(exact, len(syms), 1)(*grid)
+        return np.broadcast_to(out, (size,)).copy() if np.shape(out) != (size,) else out
     fn = sympy.lambdify(syms, expr, modules=[numeric_impls(expr), "numpy"])
-    args = grid if dtype is object else [_as_numeric(g) for g in grid]
-    out = np.asarray(fn(*args), dtype=dtype)  # type: ignore[call-overload]
+    out = np.asarray(fn(*[_as_numeric(g) for g in grid]), dtype=dtype)  # type: ignore[call-overload]
     return np.broadcast_to(out, (size,)).copy() if out.shape != (size,) else out
 
 
@@ -955,21 +1364,32 @@ def _as_numeric(g: np.ndarray) -> np.ndarray:
     return g.astype(float)
 
 
+def _suffixes(levels: Sequence[int]) -> list[int]:
+    out, acc = [], 1
+    for lv in reversed(levels):
+        out.append(acc)
+        acc *= lv
+    return out[::-1]
+
+
+def concrete_levels(s: State) -> list[int]:
+    """``d^w`` per register of a concrete state."""
+    return [int(s.levels(k)) for k in range(len(s.widths))]
+
+
 def enumerate_state(s: State) -> tuple[np.ndarray, np.ndarray]:
-    """``(keys, amps)`` for every basis path of a concrete state; keys concatenate registers."""
-    widths = [int(w) for w in s.widths]  # type: ignore[arg-type]
-    shifts = [sum(widths[k + 1 :]) for k in range(len(widths))]
+    """``(keys, amps)`` for every basis path of a concrete state; keys are mixed-radix
+    concatenations of the registers."""
+    shifts = _suffixes(concrete_levels(s))
     all_keys, all_amps = [], []
     for t in s.terms:
         syms = [b.symbol for b in t.bound]
         grid, size = _grid(t)
         key = np.zeros(size, dtype=object)
         for k, sh in zip(t.kets, shifts, strict=True):
-            vals = _evaluate(k, syms, grid, size, object)
-            key = key + np.left_shift(vals, sh)
-        amps = _evaluate(t.amp, syms, grid, size, complex)
+            key = key + _evaluate(k, syms, grid, size, object) * sh
         all_keys.append(key)
-        all_amps.append(amps)
+        all_amps.append(_evaluate(t.amp, syms, grid, size, complex))
     keys = np.concatenate(all_keys) if all_keys else np.zeros(0, dtype=object)
     amps = np.concatenate(all_amps) if all_amps else np.zeros(0, dtype=complex)
     return keys, amps
@@ -995,14 +1415,11 @@ def _inner_numeric(a: State, b: State) -> Expr:
     return exact[0] + sympy.I * exact[1]
 
 
-def decode(key: int, widths: Sequence[int]) -> tuple[sympy.Integer, ...]:
-    """Register values of a concatenated key."""
-    out = []
-    shift = sum(widths)
-    for w in widths:
-        shift -= w
-        out.append(sympy.Integer((key >> shift) & ((1 << w) - 1)))
-    return tuple(out)
+def decode(key: int, levels: Sequence[int]) -> tuple[sympy.Integer, ...]:
+    """Register values of a mixed-radix key."""
+    return tuple(
+        sympy.Integer((key // sh) % lv) for lv, sh in zip(levels, _suffixes(levels), strict=True)
+    )
 
 
 @dataclass(frozen=True)
@@ -1034,26 +1451,36 @@ def measure(
     if len(s.terms) == 1 and not s.terms[0].bound:
         values = s.terms[0].kets
         named = tuple(v.xreplace({b: a for a, b in facts}) for v in values)
-        return Measurement(_concat(named, s.widths), width, basis_kets(values, s.widths))
+        return Measurement(_concat(named, s), width, basis_kets(values, s.widths, s.dims))
     if is_concrete(s):
         return _measure_numeric(s, rng)
     return _measure_symbolic(s, symbol)
 
 
-def _concat(values: Sequence[Expr], widths: Sequence[Expr | None]) -> Expr:
-    total = sympy.Add(*widths)
-    offsets = [sympy.Add(*widths[:k]) for k in range(len(widths))]
-    zs = {v.args[0] for v in values if isinstance(v, bits)}
-    if len(zs) == 1 and all(
-        isinstance(v, bits)
-        and same(v.args[1], off)
-        and same(v.args[2], off + w)
-        and same(v.args[3], total)
-        for v, off, w in zip(values, offsets, widths, strict=True)
-    ):
-        return next(iter(zs))
-    shifts = [sympy.Add(*widths[k + 1 :]) for k in range(len(widths))]
-    return sympy.Add(*(v * 2**sh for v, sh in zip(values, shifts, strict=True)))
+def _slices(s: State, z: Expr) -> list[Expr]:
+    total = s.total_width
+    d = s.uniform_dim()
+    if d is not None:
+        offsets = [sympy.Add(*s.widths[:k]) for k in range(len(s.widths))]
+        return [
+            digits(z, off, expand(off + w), total, d)
+            for off, w in zip(offsets, s.widths, strict=True)
+        ]
+    levels = [s.levels(k) for k in range(len(s.widths))]
+    return [part(z, k, sympy.Mul(*levels[k + 1 :]), levels[k]) for k in range(len(levels))]
+
+
+def _concat(values: Sequence[Expr], s: State) -> Expr:
+    z = sympy.Dummy("z")
+    pattern = _slices(s, z)
+    heads = {v.args[0] for v in values if isinstance(v, (bits, digits, part))}
+    if len(heads) == 1:
+        head = next(iter(heads))
+        if all(same(v, p.xreplace({z: head})) for v, p in zip(values, pattern, strict=True)):
+            return head
+    levels = [s.levels(k) for k in range(len(s.widths))]
+    shifts = [sympy.Mul(*levels[k + 1 :]) for k in range(len(levels))]
+    return sympy.Add(*(v * sh for v, sh in zip(values, shifts, strict=True)))
 
 
 def _measure_numeric(s: State, rng: np.random.Generator) -> Measurement:
@@ -1064,25 +1491,22 @@ def _measure_numeric(s: State, rng: np.random.Generator) -> Measurement:
         raise PathSumError("cannot measure the zero vector")
     pick = int(rng.choice(len(keys), p=probs / total))
     key = int(keys[pick])
-    widths = [int(w) for w in s.widths]  # type: ignore[arg-type]
-    values = decode(key, widths)
-    return Measurement(sympy.Integer(key), s.total_width, basis_kets(values, s.widths), random=True)
+    values = decode(key, concrete_levels(s))
+    post = basis_kets(values, s.widths, s.dims)
+    return Measurement(sympy.Integer(key), s.total_width, post, random=True)
 
 
 def _measure_symbolic(s: State, z: sympy.Symbol) -> Measurement:
-    widths = s.widths
+    widths, dims = s.widths, s.dims
     total = s.total_width
-    offsets = [sympy.Add(*widths[:k]) for k in range(len(widths))]
-    slices = [
-        bits(z, off, sympy.expand(off + w), total) for off, w in zip(offsets, widths, strict=True)
-    ]
+    slices = _slices(s, z)
     if len(s.terms) != 1:
-        return Measurement(z, total, basis_kets(slices, widths))
+        return Measurement(z, total, basis_kets(slices, widths, dims))
     t = s.terms[0]
     mapping: dict[sympy.Basic, Expr] = {}
-    for v, w, sl in zip(t.kets, widths, slices, strict=True):
+    for v, w, d, sl in zip(t.kets, widths, dims, slices, strict=True):
         b = next((x for x in t.bound if x.symbol == v), None)
-        if b is not None and v not in mapping and _full_range(b, w):
+        if b is not None and v not in mapping and _full_range(b, w, d):
             mapping[v] = sl
     bound_syms = {b.symbol for b in t.bound}
     values, constraints = [], []
@@ -1093,4 +1517,111 @@ def _measure_symbolic(s: State, z: sympy.Symbol) -> Measurement:
         elif val != sl:
             constraints.append((sl, val))
         values.append(val)
-    return Measurement(z, total, basis_kets(values, widths), tuple(constraints))
+    return Measurement(z, total, basis_kets(values, widths, dims), tuple(constraints))
+
+
+def inline(expr: Expr) -> Expr:
+    """``expr`` with user-function applications replaced by their bodies."""
+    while True:
+        apps = [a for a in expr.atoms(sympy.Function) if hasattr(type(a), "_body")]
+        if not apps:
+            return expr
+        expr = expr.xreplace(
+            {
+                a: type(a)._body.xreplace(dict(zip(type(a)._params, a.args, strict=True)))
+                for a in apps
+            }
+        )
+
+
+def _multiplicative(w: Expr, u: sympy.Symbol) -> tuple[Expr, Expr] | None:
+    """``(G, M)`` when ``w = Mod(u * G, M)`` (a ``u < M`` guard allowed), G free of u."""
+    if isinstance(w, sympy.Piecewise) and len(w.args) == 2:
+        (inside, cond), (outside, rest) = w.args
+        if not (rest == sympy.true and outside == u and isinstance(cond, sympy.StrictLessThan)):
+            return None
+        if cond.args[0] != u:
+            return None
+        w = inside
+        guard = cond.args[1]
+    else:
+        guard = None
+    if not isinstance(w, sympy.Mod) or (guard is not None and not same(w.args[1], guard)):
+        return None
+    g = sympy.simplify(w.args[0] / u)
+    if u in g.free_symbols:
+        return None
+    return g, w.args[1]
+
+
+def _bit_sum(e: Expr, j: sympy.Symbol, lo: Expr, hi: Expr) -> Expr:
+    """``sum_{j=lo}^{hi} e``, with ``sum_{j=0}^{hi} 2^j bit(x, j) = x mod 2^(hi+1)``."""
+    e = expand(e)
+    for b in e.atoms(bit):
+        if b.args[1] == j and lo == 0 and sympy.simplify(e - 2**j * b) == 0:
+            return sympy.Mod(b.args[0], 2 ** expand(hi + 1))
+    return sympy.Sum(e, (j, lo, hi)).doit()
+
+
+def _product_mod(g: Expr, j: sympy.Symbol, lo: Expr, hi: Expr, modulus: Expr) -> Expr:
+    """``prod_{j=lo}^{hi} g`` up to congruence mod ``modulus``."""
+    g = g.replace(
+        lambda e: isinstance(e, powmod) and same(e.args[2], modulus),
+        lambda e: e.args[0] ** e.args[1],
+    )
+    out = sympy.S.One
+    for f in sympy.Mul.make_args(sympy.powsimp(denest(g))):
+        if j not in f.free_symbols:
+            out *= f ** expand(hi - lo + 1)
+            continue
+        base, e = f.as_base_exp()
+        if j in base.free_symbols:
+            return sympy.Product(g, (j, lo, hi))
+        out *= base ** _bit_sum(e, j, lo, hi)
+    return out
+
+
+def _below(value: Expr, modulus: Expr) -> bool:
+    """Whether a register value is known to lie in ``0..modulus-1`` (modulus at least 2)."""
+    if isinstance(value, sympy.Mod) and same(value.args[1], modulus):
+        return True
+    if value.is_Integer and modulus.is_Integer:
+        return 0 <= int(value) < int(modulus)
+    return bool(value.is_Integer and int(value) in (0, 1))
+
+
+def fold(
+    cur: State, step: State, probes: Sequence[sympy.Symbol], j: sympy.Symbol, lo: Expr, hi: Expr
+) -> State:
+    """``cur`` after ``step`` for ``j = lo..hi``; ``step`` is one iteration on the probe basis
+    state ``|probes>``. Registers must stay fixed or update as ``y -> y G(j) mod M``."""
+    if step.bra or len(step.terms) != 1 or step.terms[0].bound or not _same_layout(cur, step):
+        raise PathSumError("a symbolic loop step must map basis states to basis states")
+    t = step.terms[0]
+    updates: dict[int, tuple[Expr, Expr]] = {}
+    for k, (u, w) in enumerate(zip(probes, t.kets, strict=True)):
+        w = inline(w)
+        if w == u:
+            continue
+        found = _multiplicative(w, u)
+        if found is None:
+            raise PathSumError(f"register {k} does not update as y -> y*G mod M in the loop")
+        updates[k] = found
+    moving = {probes[k] for k in updates}
+    if any(g.free_symbols & moving for g, _ in updates.values()):
+        raise PathSumError("loop updates of different registers depend on each other")
+    amp = inline(t.amp)
+    if amp.free_symbols & moving:
+        raise PathSumError("the loop phase depends on a register the loop changes")
+    terms = []
+    for term in cur.terms:
+        fixed = {probes[k]: v for k, v in enumerate(term.kets) if k not in updates}
+        kets = list(term.kets)
+        for k, (g, modulus) in updates.items():
+            if not _below(term.kets[k], modulus):
+                raise PathSumError(f"register {k} is not known to start below {modulus}")
+            product = _product_mod(g.xreplace(fixed), j, lo, hi, modulus)
+            kets[k] = sympy.Mod(term.kets[k] * product, modulus)
+        total = sympy.Product(amp.xreplace(fixed), (j, lo, hi)).doit() if amp != 1 else 1
+        terms.append(Term(term.amp * total, term.bound, tuple(kets)))
+    return _with(cur, terms=terms)

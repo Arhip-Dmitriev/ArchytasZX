@@ -12,6 +12,6 @@ gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
 |psi_2> = U_f|psi_1>
 var z = measure|psi_2>
 |psi_3> = (QFT @ I) |psi_2>
-states = {|psi_0>, |psi_1>, |psi_2>, |psi_2>, |psi_3>}
+list states = {|psi_0>, |psi_1>, |psi_2>, |psi_2>, |psi_3>}
 show(states)
 var y = measure|psi_2>

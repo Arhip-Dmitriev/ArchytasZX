@@ -20,6 +20,8 @@ Statements (newline or ``;`` separated, ``#`` comments)::
     oracle U = |x>|y> -> |x>|y xor f(x)>
     gate QFT = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
     |psi> = (H^@n @ I)|0>^@n @ |0>^@m          <phi| = ...       |k : n>
+    gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d-1){ e^(2*pi*i*x*y/d) |y>_d }
+    |chi>_d = F^@n |0>_d^@n                    |2>_3
     var z = measure|psi>      measure|psi>
     list L = {|psi>, <phi|, z}
     show(L)  show(|psi>, ascii)                seed 7
@@ -27,7 +29,9 @@ Statements (newline or ``;`` separated, ``#`` comments)::
 Every state is named ``|name>``; ``<name|`` is its conjugate transpose. Classical values are
 declared with ``var`` (types ``nat`` (default), ``int``, ``real``, ``complex``); measurement
 results are booleans (one qubit) or :class:`Bits`, both usable as numbers. ``|v : w>`` gives
-the basis ket v a register of width w.
+the basis ket v a register of width w. A ``_d`` suffix (a numeral or a variable) makes a
+ket, bra or pattern a dimension-d qudit; a state whose registers share a dimension other than
+2 is always written ``|name>_d``.
 
 Expression precedence, loosest first: ``xor``; ``+ -``; ``@``; juxtaposition (operator
 application, scalar multiplication, ``|a>|b>`` tensor, ``<a|b>``, ``|a><b|``; grouped from
@@ -67,10 +71,15 @@ class LangTypeError(LangError):
 
 @dataclass(frozen=True)
 class Bits:
-    """A measured bitstring; acts as its integer value."""
+    """A measured digit string, one radix per digit (all 2 for qubits); acts as its integer
+    value."""
 
     value: int
-    width: int
+    radix: tuple[int, ...]
+
+    @property
+    def width(self) -> int:
+        return len(self.radix)
 
     def __int__(self) -> int:
         return self.value
@@ -79,7 +88,12 @@ class Bits:
         return self.value
 
     def __str__(self) -> str:
-        return format(self.value, f"0{self.width}b")
+        out, v = [], self.value
+        for r in reversed(self.radix):
+            v, digit = divmod(v, r)
+            out.append(digit)
+        sep = "" if all(r <= 10 for r in self.radix) else "."
+        return sep.join(str(x) for x in reversed(out))
 
 
 @dataclass(frozen=True)
@@ -87,18 +101,28 @@ class Tok:
     kind: str
     text: str
     pos: int
+    dim: str | None = None
 
 
 _SIMPLE = re.compile(
     r"(?P<ws>\s+)|(?P<num>\d+(?:\.\d+)?)|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<op>->|\.\.|\^@|[-+*/%^@(){}\[\],=:])"
+    r"|(?P<op>->|\.\.|\^@|==|!=|>=|[-+*/%^@(){}\[\],=:>])"
 )
 _BRAKET_TAIL = re.compile(r"([^\s|<>][^|<>]*)>")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_DIM = re.compile(r"_(\d+|[A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _with_dim(src: str, i: int, kind: str, text: str, pos: int) -> tuple[Tok, int]:
+    m = _DIM.match(src, i)
+    if m:
+        return Tok(kind, text, pos, m.group(1)), m.end()
+    return Tok(kind, text, pos), i
 
 
 def tokenize(src: str) -> list[Tok]:
-    """Tokens of one statement; ``|..>`` and ``<..|`` are single tokens."""
+    """Tokens of one statement; ``|..>`` and ``<..|``, with an optional ``_dim``, are single
+    tokens."""
     out: list[Tok] = []
     i = 0
     while i < len(src):
@@ -107,19 +131,34 @@ def tokenize(src: str) -> list[Tok]:
             j = src.find(">", i + 1)
             if j < 0 or "|" in src[i + 1 : j] or "<" in src[i + 1 : j]:
                 raise LangSyntaxError(f"unclosed ket at column {i + 1}")
-            out.append(Tok("ket", src[i + 1 : j], i))
-            i = j + 1
+            tok, i = _with_dim(src, j + 1, "ket", src[i + 1 : j], i)
+            out.append(tok)
+            continue
+        if c == "<" and (src[i + 1 : i + 2].isspace() or src[i + 1 : i + 2] == "="):
+            op = "<=" if src[i + 1 : i + 2] == "=" else "<"
+            out.append(Tok("op", op, i))
+            i += len(op)
             continue
         if c == "<":
             j = src.find("|", i + 1)
             if j < 0 or ">" in src[i + 1 : j]:
                 raise LangSyntaxError(f"unclosed bra at column {i + 1}")
-            out.append(Tok("bra", src[i + 1 : j], i))
-            i = j + 1
-            tail = _BRAKET_TAIL.match(src, i)
+            tok, i = _with_dim(src, j + 1, "bra", src[i + 1 : j], i)
+            out.append(tok)
+            tail = _BRAKET_TAIL.match(src, i) if tok.dim is None else None
             if tail:
-                out.append(Tok("ket", tail.group(1), i))
-                i = tail.end()
+                tok, i = _with_dim(src, tail.end(), "ket", tail.group(1), i)
+                if tok.dim is not None:
+                    bra = out.pop()
+                    out.append(Tok(bra.kind, bra.text, bra.pos, tok.dim))
+                out.append(tok)
+            continue
+        if c == '"':
+            j = src.find('"', i + 1)
+            if j < 0:
+                raise LangSyntaxError(f"unclosed string at column {i + 1}")
+            out.append(Tok("str", src[i + 1 : j], i))
+            i = j + 1
             continue
         m = _SIMPLE.match(src, i)
         if not m:
@@ -154,6 +193,16 @@ class Bin:
 
 
 @dataclass(frozen=True)
+class Str:
+    text: str
+
+
+@dataclass(frozen=True)
+class Not:
+    arg: object
+
+
+@dataclass(frozen=True)
 class Neg:
     arg: object
 
@@ -166,10 +215,11 @@ class Juxt:
 
 @dataclass(frozen=True)
 class Braket:
-    """``|content>`` (``bra=False``) or ``<content|``."""
+    """``|content>_dim`` (``bra=False``) or ``<content|_dim``; ``dim`` is None when absent."""
 
     content: str
     bra: bool
+    dim: str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,7 +230,8 @@ class SumNode:
     body: object
 
 
-_KEYWORDS = {"xor", "in"}
+_KEYWORDS = {"xor", "in", "and", "or", "not", "else"}
+_COMPARE = {"==", "!=", "<", "<=", ">", ">="}
 _STARTERS = {"num", "ket", "bra"}
 
 
@@ -215,6 +266,34 @@ class Parser:
         return self.i >= len(self.toks)
 
     def expr(self) -> object:
+        node = self.conj()
+        while self.at("or"):
+            self.take()
+            node = Bin("or", node, self.conj())
+        return node
+
+    def conj(self) -> object:
+        node = self.negation()
+        while self.at("and"):
+            self.take()
+            node = Bin("and", node, self.negation())
+        return node
+
+    def negation(self) -> object:
+        if self.at("not"):
+            self.take()
+            return Not(self.negation())
+        return self.compare()
+
+    def compare(self) -> object:
+        node = self.xor()
+        t = self.peek()
+        if t is not None and t.kind == "op" and t.text in _COMPARE:
+            self.take()
+            node = Bin(t.text, node, self.xor())
+        return node
+
+    def xor(self) -> object:
         node = self.add()
         while self.at("xor"):
             self.take()
@@ -293,7 +372,10 @@ class Parser:
             return Num(sympy.Rational(t.text) if "." in t.text else sympy.Integer(t.text))
         if t.kind in ("ket", "bra"):
             self.i += 1
-            return Braket(t.text, t.kind == "bra")
+            return Braket(t.text, t.kind == "bra", t.dim)
+        if t.kind == "str":
+            self.i += 1
+            return Str(t.text)
         if t.kind == "ident":
             if t.text == "sum":
                 return self.sum()
@@ -342,6 +424,7 @@ class Local:
     value: sympy.Expr
     width: sympy.Expr | None = None
     bound: P.Bound | None = None
+    dim: sympy.Expr | None = None
 
 
 @dataclass
@@ -359,16 +442,54 @@ _TYPES = {
     "real": {"real": True},
     "complex": {},
 }
+
+
+def _bitlen(v: sympy.Expr) -> sympy.Expr:
+    if v.is_Integer:
+        return sympy.Integer(int(v).bit_length())
+    return sympy.floor(sympy.log(v, 2)) + 1
+
+
+def _known(v: sympy.Expr) -> sympy.Basic:
+    return sympy.true if not v.free_symbols else sympy.false
+
+
 _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "sqrt": sympy.sqrt,
     "exp": sympy.exp,
     "abs": sympy.Abs,
     "floor": sympy.floor,
     "ceil": sympy.ceiling,
+    "gcd": P.igcd,
+    "min": sympy.Min,
+    "max": sympy.Max,
+    "bit": P.bit,
+    "powmod": P.powmod,
+    "bitlen": _bitlen,
+    "denom": P.denom,
+    "known": _known,
+    "ifelse": lambda c, a, b: sympy.Piecewise((a, c), (b, True)),
 }
+_SPECIAL = {"arg", "rand"}
 _CONSTANTS = {"pi": sympy.pi, "e": sympy.E, "i": sympy.I}
-_STATEMENTS = {"var", "func", "oracle", "gate", "list", "show", "measure", "seed"}
-_RESERVED = _STATEMENTS | _KEYWORDS | set(_FUNCS) | set(_CONSTANTS) | {"sum"} | set(D.STYLES)
+_STATEMENTS = {
+    "var",
+    "func",
+    "oracle",
+    "gate",
+    "list",
+    "show",
+    "measure",
+    "seed",
+    "for",
+    "while",
+    "if",
+    "assert",
+    "assume",
+}
+_RESERVED = (
+    _STATEMENTS | _KEYWORDS | set(_FUNCS) | _SPECIAL | set(_CONSTANTS) | {"sum"} | set(D.STYLES)
+)
 
 PRELUDE = """
 gate H = |x> -> 1/sqrt(2) sum(y in 0..1){ (-1)^(x*y) |y> }
@@ -384,29 +505,56 @@ gate SWAP = |a>|b> -> |b>|a>
 
 
 def _split_statements(source: str) -> Iterator[str]:
-    for line in source.splitlines():
-        line = line.split("#", 1)[0]
-        depth = 0
-        start = 0
-        for k, c in enumerate(line):
-            depth += c in "({["
-            depth -= c in ")}]"
-            if c == ";" and depth == 0:
-                yield line[start:k]
-                start = k + 1
-        yield line[start:]
+    """Statements split at newlines and ``;`` outside brackets; ``#`` comments dropped."""
+    text = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+    depth, start = 0, 0
+    for k, c in enumerate(text):
+        depth += c in "({["
+        depth -= c in ")}]"
+        if c in ";\n" and depth <= 0:
+            yield text[start:k]
+            start = k + 1
+    yield text[start:]
 
 
-def _range_width(lo: sympy.Expr, hi: sympy.Expr) -> sympy.Expr:
+def brace_depth(source: str) -> int:
+    """Unclosed ``{`` count of ``source``, comments ignored."""
+    text = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+    return text.count("{") - text.count("}")
+
+
+def _block(text: str, start: int) -> tuple[str, int]:
+    """The body of the ``{...}`` opening at ``text[start]`` and the index after its ``}``."""
+    depth = 0
+    for k in range(start, len(text)):
+        depth += text[k] == "{"
+        depth -= text[k] == "}"
+        if depth == 0:
+            return text[start + 1 : k], k + 1
+    raise LangSyntaxError("unclosed {")
+
+
+def _concrete_width(top: int, d: int) -> sympy.Expr:
+    """Fewest base-d digits holding ``0..top``."""
+    w, cap = 1, d
+    while cap <= top:
+        w, cap = w + 1, cap * d
+    return sympy.Integer(w)
+
+
+def _range_width(lo: sympy.Expr, hi: sympy.Expr, d: sympy.Expr) -> sympy.Expr:
     if lo != 0:
-        if hi.is_Integer:
-            return sympy.Integer(max(1, int(hi).bit_length()))
+        if hi.is_Integer and d.is_Integer:
+            return _concrete_width(int(hi), int(d))
         raise LangTypeError("a ket over a symbolic range needs the range to start at 0")
-    count = sympy.expand(hi + 1)
-    if count.is_Integer:
-        return sympy.Integer(max(1, (int(count) - 1).bit_length()))
-    w = sympy.simplify(sympy.expand_log(sympy.log(count, 2), force=True))
-    if w.has(sympy.log):
+    count = hi + 1
+    if count.is_Integer and d.is_Integer:
+        return _concrete_width(int(count) - 1, int(d))
+    power = sympy.powsimp(count)
+    if power.is_Pow and P.same(power.base, d):
+        return power.exp
+    w = sympy.simplify(sympy.expand_log(sympy.log(count, d), force=True))
+    if not P.same(d**w, count):
         raise LangTypeError(f"cannot infer a register width from the range 0..{hi}")
     return w
 
@@ -421,15 +569,20 @@ def make_function(name: str, params: list[sympy.Dummy], body: sympy.Expr) -> typ
             return None
         return fast.xreplace(dict(zip(params, args, strict=True)))
 
-    def _numeric(*args: object) -> object:
-        fn = sympy.lambdify(params, fast, modules=[P.numeric_impls(fast), "numpy"])
-        return fn(*(np.asarray(a, dtype=object) for a in args))
+    exact = sympy.lambdify(params, fast, modules=[P.scalar_impls(fast), "math"])
+
+    def _scalar(*args: int) -> object:
+        out = exact(*(int(a) for a in args))
+        if isinstance(out, int) or not float(out).is_integer():
+            return out
+        return int(out)
 
     cls = type(name, (sympy.Function,), {"eval": classmethod(_eval), "nargs": len(params)})
     cls._params = tuple(params)  # type: ignore[attr-defined]
     cls._body = body  # type: ignore[attr-defined]
     cls._free = free  # type: ignore[attr-defined]
-    cls._numeric = staticmethod(_numeric)  # type: ignore[attr-defined]
+    cls._scalar = staticmethod(_scalar)  # type: ignore[attr-defined]
+    cls._numeric = np.frompyfunc(_scalar, len(params), 1)  # type: ignore[attr-defined]
     return cls
 
 
@@ -437,22 +590,28 @@ class Interpreter:
     """Executes statements against named states, variables, functions and operators."""
 
     def __init__(
-        self, *, style: str = "plot", seed: int | None = None, plotter: D.Plotter | None = None
+        self,
+        *,
+        style: str = "plot",
+        seed: int | None = None,
+        plotter: D.Plotter | None = None,
+        args: tuple[str, ...] = (),
     ) -> None:
+        """``args`` are the command-line arguments read by ``arg(k)``."""
         if style not in D.STYLES:
             raise ValueError(f"unknown display style {style!r}")
         self.style = style
         self.plotter = plotter if plotter is not None else D.terminal_image
         self.rng = np.random.default_rng(seed)
+        self.args = tuple(args)
+        self.assumptions: list[sympy.Basic] = []
         self.values: dict[str, object] = {}
         self.sugar: list[tuple[str, sympy.Expr]] = []
         self.funcs: dict[str, type] = {}
         self.ops: dict[str, P.Operator] = {"I": P.Identity()}
         self.states: dict[str, P.State] = {}
         self.lists: dict[str, list[tuple[D.Label | None, object]]] = {}
-        self.measured: dict[
-            sympy.Symbol, tuple[sympy.Expr, str, tuple[tuple[sympy.Expr, sympy.Expr], ...]]
-        ] = {}
+        self.measured: dict[sympy.Symbol, D.Outcome] = {}
         self._count = 0
         for stmt in _split_statements(PRELUDE):
             if stmt.strip():
@@ -471,9 +630,14 @@ class Interpreter:
         return "\n".join(out)
 
     def _parser(self, toks: list[Tok]) -> Parser:
-        return Parser(toks, lambda name: name in _FUNCS or name in self.funcs)
+        return Parser(toks, lambda name: name in _FUNCS or name in _SPECIAL or name in self.funcs)
 
     def _statement(self, text: str, builtin: bool = False) -> str:
+        word = text.split(None, 1)[0]
+        if word in ("for", "while", "if"):
+            return getattr(self, f"_stmt_{word}")(text)  # type: ignore[no-any-return]
+        if word == "else" or word.startswith("else{"):
+            raise LangSyntaxError("else must follow the closing } of an if on the same line")
         toks = tokenize(text)
         head = toks[0]
         if head.kind == "ident" and head.text in _STATEMENTS:
@@ -482,9 +646,137 @@ class Interpreter:
             self._assign_state(head, toks[2:])
             return ""
         raise LangSyntaxError(
-            "a statement starts with var, func, oracle, gate, list, show, measure, seed, "
-            "|name> = or <name| ="
+            "a statement starts with var, func, oracle, gate, list, show, measure, seed, for, "
+            "while, if, assert, |name> = or <name| ="
         )
+
+    def _header(self, text: str, word: str) -> tuple[str, str, str]:
+        """``(header, body, rest)`` of ``WORD header { body } rest``."""
+        brace = text.find("{")
+        if brace < 0:
+            raise LangSyntaxError(f"{word} needs a {{ block }}")
+        body, end = _block(text, brace)
+        return text[len(word) : brace].strip(), body, text[end:].strip()
+
+    def _truth(self, node: object, what: str) -> bool:
+        value = self._eval(node, Ctx())
+        if isinstance(value, (bool, sympy.logic.boolalg.BooleanAtom)):
+            return bool(value)
+        if any(value == known for known in self.assumptions):
+            return True
+        if isinstance(value, sympy.Basic) and value.is_number:
+            return bool(value != 0)
+        raise LangTypeError(f"the {what} is not a concrete truth value: {value}")
+
+    def _condition(self, text: str, what: str) -> object:
+        p = self._parser(tokenize(text))
+        node = p.expr()
+        if not p.done():
+            raise LangSyntaxError(f"unexpected {p.peek().text!r} in the {what}")  # type: ignore[union-attr]
+        return node
+
+    def _stmt_for(self, text: str) -> str:
+        header, body, rest = self._header(text, "for")
+        if rest:
+            raise LangSyntaxError(f"unexpected {rest!r} after the for block")
+        p = self._parser(tokenize(header))
+        var = p.take()
+        p.take("in")
+        lo = self._scalar(self._eval(p.add(), Ctx()), "a for bound")
+        p.take("..")
+        hi = self._scalar(self._eval(p.add(), Ctx()), "a for bound")
+        if not p.done():
+            raise LangSyntaxError("usage: for NAME in LO..HI { ... }")
+        self._check_name(var.text, "var")
+        if not (lo.is_Integer and hi.is_Integer):
+            self._fold_loop(var.text, lo, hi, body)
+            return ""
+        out = []
+        for k in range(int(lo), int(hi) + 1):
+            self._forget(var.text)
+            self.values[var.text] = sympy.Integer(k)
+            out.append(self.execute(body))
+        return "\n".join(x for x in out if x)
+
+    def _stmt_while(self, text: str) -> str:
+        header, body, rest = self._header(text, "while")
+        if rest:
+            raise LangSyntaxError(f"unexpected {rest!r} after the while block")
+        cond = self._condition(header, "while condition")
+        out = []
+        while self._truth(cond, "while condition"):
+            out.append(self.execute(body))
+        return "\n".join(x for x in out if x)
+
+    def _stmt_if(self, text: str) -> str:
+        header, body, rest = self._header(text, "if")
+        if self._truth(self._condition(header, "if condition"), "if condition"):
+            return self.execute(body)
+        if not rest:
+            return ""
+        if not rest.startswith("else"):
+            raise LangSyntaxError(f"unexpected {rest!r} after the if block")
+        rest = rest[4:].strip()
+        if rest.startswith("if"):
+            return self._stmt_if(rest)
+        if not rest.startswith("{"):
+            raise LangSyntaxError("else needs a { block } or another if")
+        inner, end = _block(rest, 0)
+        if rest[end:].strip():
+            raise LangSyntaxError(f"unexpected {rest[end:].strip()!r} after the else block")
+        return self.execute(inner)
+
+    def _fold_loop(self, var: str, lo: sympy.Expr, hi: sympy.Expr, body: str) -> None:
+        """A loop over a symbolic range: each ``|s> = ...`` step is run once with the loop
+        variable symbolic on a probe basis state, then folded over the range."""
+        j = sympy.Symbol(var, integer=True, nonnegative=True)
+        for stmt in _split_statements(body):
+            text = stmt.strip()
+            if not text:
+                continue
+            toks = tokenize(text)
+            if not (toks[0].kind == "ket" and len(toks) > 1 and toks[1].text == "="):
+                raise LangError(
+                    f"a loop over the symbolic range {lo}..{hi} may only update states (|s> = ...)"
+                )
+            name = toks[0].text.strip()
+            if name not in self.states:
+                raise LangTypeError(f"|{name}> is not defined")
+            cur = self.states[name]
+            probes = [
+                sympy.Dummy(f"u{k}", integer=True, nonnegative=True) for k in range(len(cur.widths))
+            ]
+            saved = self.values.get(var)
+            self.values[var] = j
+            self.states[name] = P.basis_kets(probes, cur.widths, cur.dims)
+            try:
+                step = self._eval(self._parser(toks[2:]).expr(), Ctx())
+            finally:
+                self.states[name] = cur
+                if saved is None:
+                    self.values.pop(var, None)
+                else:
+                    self.values[var] = saved
+            if not isinstance(step, P.State):
+                raise LangTypeError(f"|{name}> must be assigned a state")
+            try:
+                self.states[name] = P.simplify(P.fold(cur, step, probes, j, lo, hi))
+            except P.PathSumError as exc:
+                raise LangError(f"cannot run the loop symbolically: {exc}") from exc
+
+    def _stmt_assume(self, toks: list[Tok], text: str, builtin: bool) -> None:
+        source = text[len("assume") :].strip()
+        value = self._eval(self._condition(source, "assumption"), Ctx())
+        if isinstance(value, (bool, sympy.logic.boolalg.BooleanAtom)):
+            if not value:
+                raise LangError(f"assumption is false: {source}")
+            return
+        self.assumptions.append(value)
+
+    def _stmt_assert(self, toks: list[Tok], text: str, builtin: bool) -> None:
+        source = text[len("assert") :].strip()
+        if not self._truth(self._condition(source, "assertion"), "assertion"):
+            raise LangError(f"assertion failed: {source}")
 
     def _check_name(self, name: str, kind: str) -> None:
         if not _IDENT.fullmatch(name):
@@ -549,6 +841,7 @@ class Interpreter:
         label = t.text.strip()
         if label not in self.states:
             raise LangTypeError(f"|{label}> is not defined")
+        self._check_dim(label, self._dim(t.dim, Ctx()))
         if not p.done() and not p.at(","):
             raise LangSyntaxError("measure takes exactly one named ket")
         if name is None:
@@ -557,9 +850,10 @@ class Interpreter:
         else:
             sym_name = name
         symbol = sympy.Symbol(sym_name, integer=True, nonnegative=True)
-        facts = [f for info in self.measured.values() for f in info[2]]
+        facts = [f for info in self.measured.values() for f in info.facts]
+        state = self.states[label]
         try:
-            m = P.measure(self.states[label], symbol, self.rng, facts)
+            m = P.measure(state, symbol, self.rng, facts)
         except P.PathSumError as exc:
             raise LangError(str(exc)) from exc
         self.states[label] = m.post
@@ -567,12 +861,24 @@ class Interpreter:
             return
         self._forget(name)
         outcome = m.outcome
-        if outcome.is_Integer and m.width.is_Integer:
-            self.values[name] = bool(outcome) if m.width == 1 else Bits(int(outcome), int(m.width))
+        if outcome.is_Integer and P.is_concrete(m.post):
+            radix = tuple(
+                int(d)  # type: ignore[arg-type]
+                for d, w in zip(m.post.dims, m.post.widths, strict=True)
+                for _ in range(int(w))  # type: ignore[arg-type]
+            )
+            single_qubit = radix == (2,)
+            self.values[name] = bool(outcome) if single_qubit else Bits(int(outcome), radix)
             return
         self.values[name] = outcome
         if outcome == symbol:
-            self.measured[symbol] = (m.width, label, m.constraints)
+            dim = state.uniform_dim()
+            size = (
+                m.width
+                if dim is not None
+                else sympy.Mul(*(state.levels(k) for k in range(len(state.widths))))
+            )
+            self.measured[symbol] = D.Outcome(size, label, m.constraints, dim)
 
     def _stmt_measure(self, toks: list[Tok], text: str, builtin: bool) -> None:
         p = self._parser(toks[1:])
@@ -618,50 +924,74 @@ class Interpreter:
         body = p.expr()
         if not p.done():
             raise LangSyntaxError(f"unexpected {p.peek().text!r} in {name}")  # type: ignore[union-attr]
-        names = self._pattern(pattern)
+        slots = self._pattern(pattern)
+        names = [q for q, _ in slots]
         source = text.split("=", 1)[1].strip()
 
-        def fn(vals: tuple[sympy.Expr, ...], widths: tuple[sympy.Expr, ...]) -> P.State:
-            ctx = Ctx({q: Local(v, w) for q, v, w in zip(names, vals, widths, strict=True)}, True)
+        def fn(
+            vals: tuple[sympy.Expr, ...],
+            widths: tuple[sympy.Expr, ...],
+            dims: tuple[sympy.Expr, ...],
+        ) -> P.State:
+            for (q, want), d in zip(slots, dims, strict=True):
+                if want is not None and not P.same(self._dim(want, Ctx()), d):
+                    raise LangTypeError(f"{name}: |{q}>_{want} applied to a dimension-{d} register")
+            ctx = Ctx(
+                {
+                    q: Local(v, w, dim=d)
+                    for q, v, w, d in zip(names, vals, widths, dims, strict=True)
+                },
+                True,
+            )
             res = self._eval(body, ctx)
             if not isinstance(res, P.State) or res.bra:
                 raise LangTypeError(f"the body of {name} must be a ket")
-            return self._fix_widths(res, widths)
+            return self._fix_widths(res, widths, dims)
 
         self.ops[name] = P.Gate(name, len(names), fn, qubit=builtin, oracle=oracle, source=source)
 
     def _stmt_oracle(self, toks: list[Tok], text: str, builtin: bool) -> None:
         self._stmt_gate(toks, text, builtin, oracle=True)
 
-    def _pattern(self, node: object) -> list[str]:
+    def _pattern(self, node: object) -> list[tuple[str, str | None]]:
         if isinstance(node, Braket) and not node.bra:
             content = node.content.strip()
             if not _IDENT.fullmatch(content) or content in _RESERVED:
                 raise LangSyntaxError(f"a pattern ket holds one variable name, got |{content}>")
-            return [content]
+            return [(content, node.dim)]
         if isinstance(node, Juxt) or (isinstance(node, Bin) and node.op == "@"):
-            names = self._pattern(node.left) + self._pattern(node.right)
+            slots = self._pattern(node.left) + self._pattern(node.right)
+            names = [q for q, _ in slots]
             if len(set(names)) != len(names):
                 raise LangSyntaxError("pattern variables must be distinct")
-            return names
+            return slots
         raise LangSyntaxError("a gate pattern is a product of kets, e.g. |x>|y>")
 
-    def _fix_widths(self, s: P.State, defaults: tuple[sympy.Expr | None, ...]) -> P.State:
-        if all(w is not None for w in s.widths):
-            return s
+    def _fix_widths(
+        self,
+        s: P.State,
+        defaults: tuple[sympy.Expr | None, ...],
+        default_dims: tuple[sympy.Expr | None, ...],
+    ) -> P.State:
+        positional = len(s.widths) == len(defaults)
+        dims = [
+            d if d is not None else (default_dims[k] if positional else P.TWO)
+            for k, d in enumerate(s.dims)
+        ]
         widths = list(s.widths)
         for k, w in enumerate(widths):
             if w is not None:
                 continue
-            if len(widths) == len(defaults):
+            if positional:
                 widths[k] = defaults[k]
                 continue
             values = [t.kets[k] for t in s.terms]
-            if all(v.is_Integer for v in values):
-                widths[k] = sympy.Integer(max(1, max(int(v) for v in values).bit_length()))
+            d = dims[k]
+            if all(v.is_Integer for v in values) and d is not None and d.is_Integer:
+                widths[k] = _concrete_width(max(int(v) for v in values), int(d))
             else:
                 raise LangTypeError("cannot infer an output register width")
-        return P.State(tuple(widths), s.terms, s.bra)
+        return P.State(tuple(widths), s.terms, s.bra, tuple(dims))
 
     def _stmt_list(self, toks: list[Tok], text: str, builtin: bool) -> None:
         p = self._parser(toks[1:])
@@ -684,17 +1014,24 @@ class Interpreter:
         paren = p.at("(")
         if paren:
             p.take("(")
-        nodes = [] if p.done() or p.at(")") else p.args()
+        nodes: list[tuple[object, str]] = []
+        while not (p.done() or p.at(")")):
+            start = p.i
+            node = p.expr()
+            stop = p.toks[p.i].pos if p.i < len(p.toks) else len(text)
+            nodes.append((node, text[p.toks[start].pos : stop].strip()))
+            if p.at(","):
+                p.take(",")
         if paren:
             p.take(")")
         if not p.done():
             raise LangSyntaxError("unexpected text after show(...)")
         style = self.style
-        if nodes and isinstance(nodes[-1], Name) and nodes[-1].id in D.STYLES:
-            style = nodes.pop().id  # type: ignore[attr-defined]
+        if nodes and isinstance(nodes[-1][0], Name) and nodes[-1][0].id in D.STYLES:
+            style = nodes.pop()[0].id  # type: ignore[attr-defined]
         entries: list[tuple[D.Label | None, object]] = []
-        for node in nodes:
-            entries.extend(self._entries(node))
+        for node, source in nodes:
+            entries.extend(self._entries(node, source))
         return self._render(entries, style)
 
     def _context(self) -> D.Context:
@@ -703,7 +1040,36 @@ class Interpreter:
             key=lambda pair: -sympy.count_ops(pair[0]),
         )
         taken = frozenset(self.values) | frozenset(self.states) | frozenset(self.funcs)
-        return D.Context(sugar, self.measured, taken | frozenset(self.ops))
+        order = {sympy.Symbol(n): k for k, (n, _) in enumerate(self.sugar)}
+        return D.Context(
+            sugar, self.measured, taken | frozenset(self.ops), tuple(self.assumptions), order
+        )
+
+    def _dim(self, text: str | None, ctx: Ctx) -> sympy.Expr | None:
+        """The dimension named by a ``_dim`` suffix, or None without one."""
+        if text is None:
+            return None
+        d = sympy.Integer(text) if text.isdigit() else self._name(text, ctx)
+        if not isinstance(d, sympy.Basic) or d.is_integer is False or (d.is_Integer and d < 2):
+            raise LangTypeError(f"_{text} must name an integer dimension of at least 2")
+        return d
+
+    def _check_dim(self, name: str, dim: sympy.Expr | None) -> None:
+        """Requires ``_dim`` exactly when the state's registers share a dimension other than 2."""
+        have = self.states[name].uniform_dim()
+        if dim is None:
+            if have is not None and not P.same(have, 2):
+                raise LangTypeError(
+                    f"|{name}> holds dimension-{have} qudits; write |{name}>_{have}"
+                )
+            return
+        if have is None or not P.same(have, dim):
+            got = "mixed dimensions" if have is None else f"dimension {have}"
+            raise LangTypeError(f"|{name}>_{dim} does not match its {got}")
+
+    def _label(self, kind: str, name: str) -> D.Label:
+        have = self.states[name].uniform_dim()
+        return D.Label(kind, name, None if have is None or P.same(have, 2) else have)
 
     def _render(self, entries: list[tuple[D.Label | None, object]], style: str) -> str:
         if style == "plot":
@@ -719,14 +1085,14 @@ class Interpreter:
         where = r.where()
         return "\n".join(lines + ([where] if where else []))
 
-    def _entries(self, node: object) -> list[tuple[D.Label | None, object]]:
+    def _entries(self, node: object, source: str = "") -> list[tuple[D.Label | None, object]]:
         if isinstance(node, Braket) and _IDENT.fullmatch(node.content.strip()):
             name = node.content.strip()
             if name in self.states:
                 s = self.states[name]
-                return [
-                    (D.Label("bra" if node.bra else "ket", name), P.dagger(s) if node.bra else s)
-                ]
+                self._check_dim(name, self._dim(node.dim, Ctx()))
+                kind = "bra" if node.bra else "ket"
+                return [(self._label(kind, name), P.dagger(s) if node.bra else s)]
         if isinstance(node, Name):
             n = node.id
             if n in self.lists:
@@ -737,7 +1103,10 @@ class Interpreter:
                 return [(D.Label("op", n), self.ops[n])]
             if n in self.values:
                 return [(D.Label("var", n), self.values[n])]
-        return [(None, self._eval(node, Ctx()))]
+        if isinstance(node, Str):
+            return [(None, D.Text(node.text))]
+        label = D.Label("expr", source) if source and not isinstance(node, Num) else None
+        return [(label, self._eval(node, Ctx()))]
 
     def _assign_state(self, head: Tok, rest: list[Tok]) -> None:
         name = head.text.strip()
@@ -763,6 +1132,13 @@ class Interpreter:
             raise LangTypeError(
                 "cannot infer every register width; use a sum range or |v> inside a gate"
             )
+        dim = self._dim(head.dim, Ctx())
+        have = value.uniform_dim()
+        if dim is not None and (have is None or not P.same(have, dim)):
+            got = "mixed dimensions" if have is None else f"dimension {have}"
+            raise LangTypeError(f"cannot assign a state of {got} to |{name}>_{dim}")
+        if dim is None and have is not None and not P.same(have, 2):
+            raise LangTypeError(f"the state holds dimension-{have} qudits; write |{name}>_{have} =")
         state = P.dagger(value) if want_bra else value
         self.states[name] = P.simplify(state)
 
@@ -790,6 +1166,8 @@ class Interpreter:
             return node.value
         if isinstance(node, Name):
             return self._name(node.id, ctx)
+        if isinstance(node, Call) and node.name in _SPECIAL:
+            return self._special(node, ctx)
         if isinstance(node, Call):
             args = [
                 self._scalar(self._eval_node(a, ctx), f"an argument of {node.name}")
@@ -802,6 +1180,10 @@ class Interpreter:
                 raise LangTypeError(f"{node.name}: {exc}") from exc
         if isinstance(node, Neg):
             return self._mul(sympy.Integer(-1), self._eval_node(node.arg, ctx))
+        if isinstance(node, Str):
+            raise LangTypeError("a string can only be shown")
+        if isinstance(node, Not):
+            return sympy.Not(_boolean(self._scalar(self._eval_node(node.arg, ctx), "not")))
         if isinstance(node, Braket):
             return self._braket(node, ctx)
         if isinstance(node, SumNode):
@@ -836,20 +1218,24 @@ class Interpreter:
 
     def _braket(self, node: Braket, ctx: Ctx) -> P.State:
         content = node.content.strip()
+        dim = self._dim(node.dim, ctx)
         if _IDENT.fullmatch(content) and content in self.states and content not in ctx.locals:
+            self._check_dim(content, dim)
             s = self.states[content]
         elif content in ("+", "-"):
+            if dim is not None and not P.same(dim, 2):
+                raise LangTypeError(f"|{content}> is a qubit state")
             sign = 1 if content == "+" else -1
             s = P.scale(1 / sympy.sqrt(2), P.add(P.basis(0, 1), P.scale(sign, P.basis(1, 1))))
         else:
             s = P.EMPTY
             for item in _split_items(content):
-                s = P.tensor(s, self._basis(item, ctx))
+                s = P.tensor(s, self._basis(item, ctx, dim))
             if not s.widths:
                 raise LangSyntaxError("an empty ket")
         return P.dagger(s) if node.bra else s
 
-    def _basis(self, text: str, ctx: Ctx) -> P.State:
+    def _basis(self, text: str, ctx: Ctx, dim: sympy.Expr | None) -> P.State:
         p = self._parser(tokenize(text))
         ast = p.expr()
         width: sympy.Expr | None = None
@@ -863,20 +1249,32 @@ class Interpreter:
         value = self._scalar(self._eval_node(ast, ctx), f"|{text}>")
         if value.is_integer is False or (value.is_Integer and value < 0):
             raise LangTypeError(f"|{text}> needs a non-negative integer value")
+        local = ctx.locals.get(ast.id) if isinstance(ast, Name) else None
+        explicit = dim is not None
+        if dim is None and local is not None and local.dim is not None:
+            dim = local.dim
+        if dim is None and not ctx.body:
+            dim = P.TWO
         if width is not None:
-            if value.is_Integer and width.is_Integer and int(value) >= 2 ** int(width):
-                raise LangTypeError(f"|{text}>: {value} does not fit in {width} bits")
-        elif isinstance(ast, Name) and ast.id in ctx.locals:
-            local = ctx.locals[ast.id]
-            if local.width is not None:
-                width = local.width
-            elif local.bound is not None:
-                width = _range_width(local.bound.lo, local.bound.hi)
-        elif value.is_Integer and not ctx.body:
-            width = sympy.Integer(max(1, int(value).bit_length()))
+            if (
+                dim is not None
+                and _ints(value, width, dim)
+                and int(value) >= int(dim) ** int(width)
+            ):
+                raise LangTypeError(
+                    f"|{text}>: {value} does not fit in {width} digits of base {dim}"
+                )
+        elif local is not None and local.width is not None:
+            width = local.width
+        elif local is not None and local.bound is not None:
+            width = _range_width(local.bound.lo, local.bound.hi, dim if dim is not None else P.TWO)
+        elif value.is_Integer and dim is not None and dim.is_Integer and not ctx.body:
+            width = _concrete_width(int(value), int(dim))
+        elif explicit:
+            width = sympy.Integer(1)
         if width is None and not ctx.body:
             raise LangTypeError(f"cannot infer the register width of |{text}>; write |{text} : w>")
-        return P.basis(value, width)
+        return P.basis(value, width, dim)
 
     def _sum(self, node: SumNode, ctx: Ctx) -> object:
         lo = self._scalar(self._eval_node(node.lo, ctx), "a sum bound")
@@ -885,7 +1283,7 @@ class Interpreter:
         body = self._eval_node(node.body, ctx.child(node.var, Local(b.symbol, bound=b)))
         if isinstance(body, P.State):
             terms = tuple(P.Term(t.amp, (b,) + t.bound, t.kets) for t in body.terms)
-            return P.simplify(P.State(body.widths, terms, body.bra))
+            return P.simplify(P.State(body.widths, terms, body.bra, body.dims))
         if isinstance(body, sympy.Basic):
             return sympy.Sum(body, (b.symbol, lo, hi)).doit()
         raise LangTypeError("a sum body must be a state or a scalar")
@@ -919,8 +1317,50 @@ class Interpreter:
             return P.tensor(a, b)
         raise LangTypeError(f"cannot apply {self._kind(a)} to {self._kind(b)}")
 
+    def _special(self, node: Call, ctx: Ctx) -> sympy.Expr:
+        args = [
+            self._scalar(self._eval_node(a, ctx), f"an argument of {node.name}") for a in node.args
+        ]
+        if not all(a.is_Integer for a in args):
+            raise LangTypeError(f"{node.name} takes concrete integers")
+        if node.name == "rand":
+            if len(args) != 2 or args[0] > args[1]:
+                raise LangTypeError("usage: rand(LO, HI) with LO <= HI")
+            return sympy.Integer(int(self.rng.integers(int(args[0]), int(args[1]) + 1)))
+        if len(args) not in (1, 2) or args[0] < 1:
+            raise LangTypeError("usage: arg(K) or arg(K, DEFAULT), K counting from 1")
+        k = int(args[0])
+        if k > len(self.args):
+            if len(args) == 2:
+                return args[1]
+            raise LangError(f"missing command-line argument {k}")
+        text = self.args[k - 1]
+        if text.lstrip("-").isdigit():
+            return sympy.Integer(int(text))
+        if not _IDENT.fullmatch(text) or text in _RESERVED:
+            raise LangTypeError(f"argument {k} is neither an integer nor a name: {text!r}")
+        return sympy.Symbol(text, integer=True, positive=True)
+
     def _binary(self, op: str, a: object, b: object) -> object:
         scalars = isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic)
+        if op in _COMPARE or op in ("and", "or"):
+            if not scalars:
+                raise LangTypeError(
+                    f"{op} compares scalars, got {self._kind(a)} and {self._kind(b)}"
+                )
+            if op == "and":
+                return sympy.And(_boolean(a), _boolean(b))
+            if op == "or":
+                return sympy.Or(_boolean(a), _boolean(b))
+            rel = {
+                "==": sympy.Eq,
+                "!=": sympy.Ne,
+                "<": sympy.Lt,
+                "<=": sympy.Le,
+                ">": sympy.Gt,
+                ">=": sympy.Ge,
+            }[op]
+            return rel(a, b)
         if op == "*":
             if isinstance(a, P.Operator) and isinstance(b, P.Operator):
                 return P.Compose((a, b))
@@ -966,6 +1406,19 @@ class Interpreter:
         if op == "xor":
             return P.xor(a, b)
         raise LangSyntaxError(f"unknown operator {op}")
+
+
+def _boolean(v: sympy.Basic) -> sympy.Basic:
+    """A truth value from a boolean or a number (nonzero is true)."""
+    if isinstance(v, sympy.logic.boolalg.Boolean):
+        return v
+    if v.is_number:
+        return sympy.true if v != 0 else sympy.false
+    return sympy.Ne(v, 0)
+
+
+def _ints(*xs: sympy.Expr) -> bool:
+    return all(x.is_Integer for x in xs)
 
 
 def _split_items(content: str) -> list[str]:

@@ -31,34 +31,10 @@ def dense(s: P.State) -> np.ndarray:
     return out
 
 
-def one_qubit_gate(name: str, matrix: np.ndarray) -> P.Gate:
-    def fn(vals: tuple, widths: tuple) -> P.State:
-        (v,) = vals
-        if not v.is_Integer:
-            b = P.new_bound("y", 0, 1)
-            col = sympy.Matrix(matrix.tolist())
-            amp = sympy.Piecewise(
-                *[
-                    (col[r, c], sympy.And(sympy.Eq(b.symbol, r), sympy.Eq(v, c)))
-                    for r in range(2)
-                    for c in range(2)
-                ]
-            )
-            return P.State((sympy.Integer(1),), (P.Term(amp, (b,), (b.symbol,)),))
-        terms = tuple(
-            P.Term(sympy.nsimplify(matrix[r, int(v)]), (), (sympy.Integer(r),))
-            for r in range(2)
-            if matrix[r, int(v)] != 0
-        )
-        return P.State((sympy.Integer(1),), terms)
-
-    return P.Gate(name, 1, fn, qubit=True)
-
-
 HADAMARD = P.Gate(
     "H",
     1,
-    lambda vals, ws: P.State(
+    lambda vals, ws, ds: P.State(
         (sympy.Integer(1),),
         (
             P.Term(
@@ -158,12 +134,17 @@ def test_integer_functions() -> None:
     x = sympy.Symbol("x", integer=True)
     assert P.xor(5, 3) == 6 and P.xor(0, x) == x and P.xor(x, x) == 0
     assert P.pop(7) == 3 and P.bitdot(6, 3) == 1 and P.bitdot(0, x) == 0
-    assert P.bits(0b1011, 1, 3, 4) == 0b01 and P.shr(12, 2) == 3
+    assert (
+        P.bits(0b1011, 1, 3, 4) == 0b01
+        and P.shr(12, 2, 2) == 3
+        and P.dsum(5, 3) == 3
+        and P.ddot(4, 5, 3) == 3
+    )
     assert P.powmod(7, 4, 15) == 1
 
 
 def test_oracle_must_be_reversible() -> None:
-    bad = P.Gate("B", 1, lambda vals, ws: P.basis(0, ws[0]), oracle=True)
+    bad = P.Gate("B", 1, lambda vals, ws, ds: P.basis(0, ws[0]), oracle=True)
     with pytest.raises(P.PathSumError, match="not reversible"):
         P.apply(bad, P.basis(1, sympy.Integer(2)))
 

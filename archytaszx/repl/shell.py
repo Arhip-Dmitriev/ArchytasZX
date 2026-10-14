@@ -43,7 +43,7 @@ from typing import TextIO
 
 from archytaszx.repl import display as D
 from archytaszx.repl.commands import Outcome, Session, detail_text, format_outcome, run
-from archytaszx.repl.lang import Interpreter, LangError
+from archytaszx.repl.lang import Interpreter, LangError, brace_depth
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 
 PROMPT = "azx> "
@@ -72,11 +72,13 @@ class Shell:
         display: str | None = None,
         seed: int | None = None,
         plotter: D.Plotter | None = None,
+        args: Sequence[str] = (),
     ) -> None:
         """Type checks: TypeError on a mode that is not a NotationMode, a non-bool unicode or
         a session that is not a Session; ValueError on an unknown display style.
 
-        ``display`` defaults to ``unicode`` when ``unicode`` is set, else ``plot``.
+        ``display`` defaults to ``unicode`` when ``unicode`` is set, else ``plot``; ``args`` are
+        the script arguments read by ``arg(k)``.
         """
         if not isinstance(mode, NotationMode):
             raise TypeError(f"mode must be a NotationMode, got {mode!r}")
@@ -89,7 +91,9 @@ class Shell:
         self.session = session if session is not None else Session()
         self.commands = commands
         style = display if display is not None else ("unicode" if unicode else "plot")
-        self.interpreter = Interpreter(style=style, seed=seed, plotter=plotter)
+        self.interpreter = Interpreter(style=style, seed=seed, plotter=plotter, args=tuple(args))
+        self.pending: list[str] = []
+        """Lines of a language block whose ``{`` is not yet closed."""
         self.history: list[str] = []
         self.errors = 0
         """Count of lines whose outcome had ``ok=False``, shell errors included."""
@@ -104,7 +108,17 @@ class Shell:
             self.errors += 1
             return f"error: a line must be a str, got {type(line).__name__}"
         text = line.strip()
+        if self.pending:
+            self.pending.append(text)
+            if brace_depth("\n".join(self.pending)) > 0:
+                return ""
+            block, self.pending = "\n".join(self.pending), []
+            self.history.append(block)
+            return self._statement(block)
         if not text or text.startswith("#"):
+            return ""
+        if not self.commands and not text.startswith(":") and brace_depth(text) > 0:
+            self.pending = [text]
             return ""
         self.history.append(text)
         word, rest = (text.split(maxsplit=1) + [""])[:2]
@@ -170,9 +184,13 @@ class Shell:
             if self.done:
                 return
             text = logical.strip()
-            if not text or text.startswith("#"):
+            if (not text or text.startswith("#")) and not self.pending:
                 continue
             yield text, self.run_line(text)
+        if self.pending and not self.done:
+            self.errors += 1
+            self.pending = []
+            yield "", "error: unclosed { at the end of the input"
 
     def loop(self, stdin: TextIO | None = None, stdout: TextIO | None = None) -> int:
         """Read-eval-print until EOF or ``quit`` (returns 0), or until input cannot be read or
@@ -230,7 +248,7 @@ class Shell:
         """Reads physical lines up to one without a trailing ``\\`` (a comment line never
         continues); ``None`` at EOF."""
         parts: list[str] = []
-        prompt = PROMPT
+        prompt = CONTINUATION_PROMPT if self.pending else PROMPT
         while True:
             raw = _read_physical(source, sink, prompt if interactive else "", use_input)
             if raw is None:
@@ -364,7 +382,12 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="run CMD (repeatable, in order) instead of the interactive loop",
     )
     parser.add_argument("--echo", action="store_true", help="print 'azx> LINE' before each output")
-    parser.add_argument("scripts", nargs="*", metavar="FILE", help="script files to run")
+    parser.add_argument(
+        "scripts",
+        nargs="*",
+        metavar="FILE|ARG",
+        help="script files (*.azx) to run; other values are arguments read by arg(k)",
+    )
     return parser
 
 
@@ -381,16 +404,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 2)
     display = "ascii" if args.ascii else None
+    paths = [p for p in args.scripts if args.commands or p.endswith(".azx")]
+    script_args = [p for p in args.scripts if not (args.commands or p.endswith(".azx"))]
     shell = Shell(
         mode=NotationMode(args.mode),
         unicode=args.unicode,
         commands=args.commands,
         display=display,
         seed=args.seed,
+        args=script_args,
     )
     commands: list[str] = list(args.command)
     scripts: list[list[str]] = []
-    for path in args.scripts:
+    for path in paths:
         try:
             with open(path, encoding="utf-8") as handle:
                 scripts.append(handle.read().splitlines())

@@ -31,6 +31,7 @@ import base64
 import io
 import itertools
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -101,6 +102,110 @@ def _user(e: sympy.Basic) -> bool:
     return hasattr(type(e), "_body")
 
 
+_UNICODE_SOURCE = [
+    ("==", "="),
+    ("!=", "≠"),
+    ("<=", "≤"),
+    (">=", "≥"),
+    ("*", "·"),
+    ("%", "mod"),
+    ("@", "⊗"),
+    ("sqrt", "√"),
+    ("pi", "π"),
+]
+_LATEX_SOURCE = [
+    ("==", "="),
+    ("!=", r"\neq "),
+    ("<=", r"\leq "),
+    (">=", r"\geq "),
+    ("*", r"\cdot "),
+    ("%", r"\ \mathrm{mod}\ "),
+    ("@", r"\otimes "),
+    (" and ", r"\ \mathrm{and}\ "),
+    (" or ", r"\ \mathrm{or}\ "),
+    ("pi", r"\pi "),
+]
+
+
+def _braces(text: str, opener: str, replacement: str) -> str:
+    """``opener(...)`` rewritten as ``replacement{...}`` with matched parentheses."""
+    out, i = [], 0
+    while i < len(text):
+        if text.startswith(opener + "(", i):
+            depth, j = 0, i + len(opener)
+            while j < len(text):
+                depth += text[j] == "("
+                depth -= text[j] == ")"
+                if depth == 0:
+                    break
+                j += 1
+            inner = _braces(text[i + len(opener) + 1 : j], opener, replacement)
+            out.append(f"{replacement}{{{inner}}}")
+            i = j + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def source_text(source: str, style: str) -> str:
+    """Input text shown in a style: kets, operators and powers in that style's notation."""
+    if style == "ascii":
+        return source
+    if style == "unicode":
+        text = re.sub(r"\|([^|<>]*)>", r"|\1⟩", source)
+        text = re.sub(r"<([^\s|<>=][^|<>]*)\|", r"⟨\1|", text)
+        for a, b in _UNICODE_SOURCE:
+            text = text.replace(a, b)
+        return text
+    text = re.sub(r"\|([^|<>]*)>", r"|\1\\rangle ", source)
+    text = re.sub(r"<([^\s|<>=][^|<>]*)\|", r"\\langle \1|", text)
+    for a, b in _LATEX_SOURCE:
+        text = text.replace(a, b)
+    return _braces(_braces(text, "sqrt", r"\sqrt"), "^", "^")
+
+
+def _repeated_digit(v: sympy.Expr, w: sympy.Expr, d: sympy.Expr) -> sympy.Expr | None:
+    """k when the w-digit base-d value v is ``kk...k``, else None."""
+    if v == 0:
+        return sympy.S.Zero
+    if v.is_Integer and w.is_Integer and d.is_Integer:
+        found = {(int(v) // int(d) ** p) % int(d) for p in range(int(w))}
+        return sympy.Integer(found.pop()) if len(found) == 1 else None
+    k = sympy.simplify(v * (d - 1) / (d**w - 1))
+    if k.free_symbols & w.free_symbols or not (k.is_Integer or k == d - 1):
+        return None
+    return k
+
+
+def _fold_linear(e: sympy.Basic, value: sympy.Basic, sym: sympy.Symbol) -> sympy.Basic:
+    """``e`` rewritten through ``sym = c*t + d`` when that removes the term t and shortens e."""
+    if not isinstance(e, sympy.Expr) or not isinstance(value, sympy.Add):
+        return e
+    terms = [x for x in value.args if not x.is_number]
+    if len(terms) != 1:
+        return e
+    c, t = terms[0].as_coeff_Mul()
+    if t.is_Symbol or t not in e.atoms(type(t)) or e.is_Atom:
+        return e
+    d = value - terms[0]
+    out = P.expand(e.xreplace({t: (sym - d) / c}))
+    if t in out.atoms(type(t)) or sympy.count_ops(out) >= sympy.count_ops(e):
+        return e
+    return out
+
+
+def _slice(show: Callable[[sympy.Basic], str], args: tuple[sympy.Basic, ...], name: str) -> str:
+    """``z[lo:hi]`` for bits and digits slices, ``z[#k]`` for a mixed-radix register."""
+    z = show(args[0])
+    if name == "part":
+        return f"{z}[#{show(args[1])}]"
+    lo, hi = show(args[1]), show(args[2])
+    if args[1] == 0:
+        return f"{z}[:{hi}]"
+    return f"{z}[{lo}:]" if P.same(args[2], args[3]) else f"{z}[{lo}:{hi}]"
+
+
 class _Text(StrPrinter):  # type: ignore[misc]
     """ASCII (``uni=False``) or Unicode expression text."""
 
@@ -137,7 +242,7 @@ class _Text(StrPrinter):  # type: ignore[misc]
         return f"√{self._print(b)}" if b.is_Atom else f"√({self._print(b)})"
 
     def _exp(self, arg: sympy.Expr) -> str:
-        c = sympy.factor_terms(sympy.expand(arg / (2 * sympy.pi * sympy.I)))
+        c = sympy.factor_terms(P.expand(arg / (2 * sympy.pi * sympy.I)))
         if c.has(sympy.I) or c.has(sympy.pi):
             body = self._print(arg)
         else:
@@ -188,19 +293,23 @@ class _Text(StrPrinter):  # type: ignore[misc]
         args = e.args
         if name == "xor":
             return f"({self._print(args[0])} {'⊕' if self.uni else 'xor'} {self._print(args[1])})"
-        if name == "bits":
-            z, lo, hi = (self._print(a) for a in args[:3])
-            if args[1] == 0:
-                return f"{z}[:{hi}]"
-            if P.same(args[2], args[3]):
-                return f"{z}[{lo}:]"
-            return f"{z}[{lo}:{hi}]"
+        if name in ("bits", "digits", "part"):
+            return _slice(self._print, args, name)
         if name == "shr":
-            return f"({self._print(args[0])} >> {self._print(args[1])})"
+            if args[2] == 2:
+                return f"({self._print(args[0])} >> {self._print(args[1])})"
+            return f"floor({self._print(args[0])}/{self._paren(args[2] ** args[1])})"
+        if name == "igcd":
+            return f"gcd({self._print(args[0])}, {self._print(args[1])})"
         if name == "pop":
             return f"popcount({self._print(args[0])})"
-        if name == "bitdot":
+        if name == "dsum":
+            return f"dsum({self._print(args[0])})"
+        if name in ("bitdot", "ddot"):
             return f"{self._paren(args[0])}{'·' if self.uni else '.'}{self._paren(args[1])}"
+        if name == "dshift":
+            op = "⊞" if self.uni else "++"
+            return f"({self._print(args[0])} {op} {self._print(args[1])})"
         if name == "powmod":
             return str(self._print(sympy.Mod(sympy.Pow(args[0], args[1], evaluate=False), args[2])))
         return str(super()._print_Function(e))
@@ -223,7 +332,7 @@ class _Latex(LatexPrinter):  # type: ignore[misc]
 
     def _print_exp(self, e: sympy.exp, exp: str | None = None) -> str:
         arg = e.args[0]
-        c = sympy.factor_terms(sympy.expand(arg / (2 * sympy.pi * sympy.I)))
+        c = sympy.factor_terms(P.expand(arg / (2 * sympy.pi * sympy.I)))
         if c.has(sympy.I) or c.has(sympy.pi):
             return str(super()._print_exp(e, exp))
         sign, c = ("-", -c) if c.could_extract_minus_sign() else ("", c)
@@ -239,17 +348,20 @@ class _Latex(LatexPrinter):  # type: ignore[misc]
         args = e.args
         if name == "xor":
             return rf"({self._print(args[0])} \oplus {self._print(args[1])})"
-        if name == "bits":
-            z, lo, hi = (self._print(a) for a in args[:3])
-            if args[1] == 0:
-                return f"{z}[:{hi}]"
-            return f"{z}[{lo}:]" if P.same(args[2], args[3]) else f"{z}[{lo}:{hi}]"
+        if name in ("bits", "digits", "part"):
+            return _slice(self._print, args, name)
         if name == "shr":
-            return rf"({self._print(args[0])} \gg {self._print(args[1])})"
-        if name == "pop":
-            return rf"\mathrm{{pop}}({self._print(args[0])})"
-        if name == "bitdot":
+            if args[2] == 2:
+                return rf"({self._print(args[0])} \gg {self._print(args[1])})"
+            return rf"\lfloor {self._print(args[0])}/{self._print(args[2] ** args[1])} \rfloor"
+        if name == "igcd":
+            return rf"\gcd({self._print(args[0])}, {self._print(args[1])})"
+        if name in ("pop", "dsum"):
+            return rf"\mathrm{{{name}}}({self._print(args[0])})"
+        if name in ("bitdot", "ddot"):
             return rf"{self._print(args[0])} \cdot {self._print(args[1])}"
+        if name == "dshift":
+            return rf"({self._print(args[0])} \boxplus {self._print(args[1])})"
         if name == "powmod":
             return str(self._print(sympy.Mod(sympy.Pow(args[0], args[1], evaluate=False), args[2])))
         if _user(e):
@@ -263,10 +375,30 @@ class _Latex(LatexPrinter):  # type: ignore[misc]
 
 @dataclass(frozen=True)
 class Label:
-    """How an entry is named: ``kind`` is ket, bra, var, func, op or list."""
+    """How an entry is named: ``kind`` is ket, bra, var, func, op or list; ``dim`` is shown as
+    ``_dim`` on a qudit state."""
 
     kind: str
     name: str
+    dim: sympy.Expr | None = None
+
+
+@dataclass(frozen=True)
+class Text:
+    """A literal line of text."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """A symbolic measurement outcome: ``size`` digits of base ``dim``, or ``size`` values when
+    ``dim`` is None (mixed dimensions), measured from ``|source>``."""
+
+    size: sympy.Expr
+    source: str
+    facts: tuple[tuple[sympy.Expr, sympy.Expr], ...]
+    dim: sympy.Expr | None = P.TWO
 
 
 @dataclass
@@ -274,10 +406,10 @@ class Context:
     """Interpreter facts a renderer consults."""
 
     sugar: Sequence[tuple[sympy.Expr, sympy.Symbol]] = ()
-    measured: dict[
-        sympy.Symbol, tuple[sympy.Expr, str, tuple[tuple[sympy.Expr, sympy.Expr], ...]]
-    ] = field(default_factory=dict)
+    measured: dict[sympy.Symbol, Outcome] = field(default_factory=dict)
     taken: frozenset[str] = frozenset()
+    assumptions: tuple[sympy.Basic, ...] = ()
+    order: dict[sympy.Symbol, int] = field(default_factory=dict)
 
 
 class Renderer:
@@ -303,11 +435,29 @@ class Renderer:
                 self._record(arg)
 
     def sugar(self, e: sympy.Basic, skip: sympy.Symbol | None = None) -> sympy.Basic:
-        """``e`` with defined variables other than ``skip`` folded back in."""
-        for value, sym in self.ctx.sugar:
-            if sym != skip:
-                e = e.subs(value, sym)
-        return e
+        """``e`` with defined variables folded back in: plain substitutions, then the shortest
+        linear rewrite. With ``skip``, only variables defined before ``skip`` are used."""
+        order = self.ctx.order
+        limit = order.get(skip, len(order)) if skip is not None else len(order) + 1
+        items = [(v, s) for v, s in self.ctx.sugar if s != skip and order.get(s, 0) < limit]
+        normal = []
+        for value, sym in items:
+            for other, osym in items:
+                if osym != sym:
+                    value = value.subs(other, osym)
+            normal.append((value, sym))
+        for _ in range(4):
+            before = e
+            for (value, sym), (norm, _) in zip(items, normal, strict=True):
+                e = e.subs(value, sym).subs(norm, sym)
+            if e == before:
+                break
+        best = e
+        for value, sym in normal:
+            cand = _fold_linear(e, value, sym)
+            if cand is not e and sympy.count_ops(cand) < sympy.count_ops(best):
+                best = cand
+        return best
 
     def expr(self, e: sympy.Basic, skip: sympy.Symbol | None = None) -> str:
         """Expression text; records what it mentions."""
@@ -321,12 +471,22 @@ class Renderer:
 
     def label(self, label: Label) -> str:
         """``|psi>``, ``<psi|`` or the bare name."""
+        if label.kind == "expr":
+            return source_text(label.name, self.style)
         name = name_text(label.name, self.style)
         if label.kind == "ket":
-            return self._ket(name)
+            return self._ket(name) + self._dim(label.dim)
         if label.kind == "bra":
-            return self._bra(name)
+            return self._bra(name) + self._dim(label.dim)
         return name
+
+    def _dim(self, d: sympy.Expr | None) -> str:
+        if d is None or P.same(d, 2):
+            return ""
+        text = self.expr(d)
+        if self.style == "plot":
+            return f"_{{{text}}}"
+        return f"_{text}" if sympy.sympify(self.sugar(d)).is_Atom else f"_({text})"
 
     def _ket(self, inner: str) -> str:
         return {"ascii": f"|{inner}>", "unicode": f"|{inner}⟩", "plot": rf"|{inner}\rangle"}[
@@ -346,13 +506,18 @@ class Renderer:
             wt = f"({wt})"
         return f"{base}^{'⊗' if self.style == 'unicode' else '@'}{wt}"
 
-    def _register(self, v: sympy.Expr, w: sympy.Expr | None, bra: bool) -> str:
-        wrap = self._bra if bra else self._ket
-        if w is not None and not P.same(w, 1):
-            if v == 0:
-                return self._tpow(wrap("0"), w)
-            if P.same(v, 2**w - 1):
-                return self._tpow(wrap("1"), w)
+    def _register(
+        self, v: sympy.Expr, w: sympy.Expr | None, d: sympy.Expr | None, bra: bool
+    ) -> str:
+        suffix = self._dim(d)
+
+        def wrap(text: str) -> str:
+            return (self._bra(text) if bra else self._ket(text)) + suffix
+
+        if w is not None and d is not None and not P.same(w, 1):
+            digit = _repeated_digit(v, w, d)
+            if digit is not None:
+                return self._tpow(wrap(self.expr(digit)), w)
         return wrap(self.expr(v))
 
     def _tensor(self) -> str:
@@ -399,7 +564,7 @@ class Renderer:
         syms = [mapping[b.symbol] for b in t.bound]
         scalar, rest = amp.as_independent(*syms, as_Add=False) if syms else (amp, sympy.S.One)
         regs = self._tensor().join(
-            self._register(k, w, s.bra) for k, w in zip(kets, s.widths, strict=True)
+            self._register(k, w, d, s.bra) for k, w, d in zip(kets, s.widths, s.dims, strict=True)
         )
         body = regs
         if rest != 1:
@@ -418,11 +583,16 @@ class Renderer:
         """Any interpreter value."""
         from archytaszx.repl import lang
 
+        if isinstance(v, Text):
+            if self.style != "plot":
+                return v.text
+            escaped = re.sub(r"([#$%&_{}])", r"\\\1", v.text).replace(" ", r"\ ")
+            return rf"\mathrm{{{escaped}}}"
         if isinstance(v, P.State):
             return self.state(v)
         if isinstance(v, lang.Bits):
             return f"{v} ({int(v)})"
-        if isinstance(v, bool):
+        if isinstance(v, (bool, sympy.logic.boolalg.BooleanAtom)):
             return "true" if v else "false"
         if isinstance(v, P.Operator):
             return self.operator(v)
@@ -464,17 +634,29 @@ class Renderer:
         return text if simple else f"({text})"
 
     def measured(self, z: sympy.Symbol) -> str:
-        """``z in {0,1}^(w)``."""
-        width = self.ctx.measured[z][0]
+        """``z in {0,1}^(w)``, ``z in {0..d-1}^(w)`` or ``z in {0..L-1}``."""
+        info = self.ctx.measured[z]
         zt = self.expr(z)
-        if P.same(width, 1):
-            dom = {"ascii": "{0,1}", "unicode": "{0,1}", "plot": r"\{0,1\}"}[self.style]
+        if info.dim is None:
+            top, width = self.expr(info.size - 1), None
+        else:
+            top, width = self.expr(info.dim - 1), info.size
+        if info.dim is not None and P.same(info.dim, 2):
+            base = {"ascii": "{0,1}", "unicode": "{0,1}", "plot": r"\{0,1\}"}[self.style]
+        else:
+            base = {
+                "ascii": f"{{0..{top}}}",
+                "unicode": f"{{0,…,{top}}}",
+                "plot": rf"\{{0,\ldots,{top}\}}",
+            }[self.style]
+        if width is None or P.same(width, 1):
+            dom = base
         else:
             wt = self.expr(width)
             if self.style == "plot":
-                dom = rf"\{{0,1\}}^{{{wt}}}"
+                dom = rf"{base}^{{{wt}}}"
             else:
-                dom = "{0,1}^" + (wt if sympy.sympify(width).is_Atom else f"({wt})")
+                dom = base + "^" + (wt if sympy.sympify(width).is_Atom else f"({wt})")
         mem = {"ascii": " in ", "unicode": " ∈ ", "plot": r" \in "}[self.style]
         return zt + mem + dom
 
@@ -496,10 +678,11 @@ class Renderer:
                     done_funcs.add(f)
                     items.append(self.function(f))
                     progress = True
-            for z, (_, source, facts) in self.ctx.measured.items():
+            for z, info in self.ctx.measured.items():
                 if z in self.seen_symbols and z not in done_syms:
                     done_syms.add(z)
-                    src = self._ket(name_text(source, self.style))
+                    facts = info.facts
+                    src = self._ket(name_text(info.source, self.style)) + self._dim(info.dim)
                     word = (
                         r"\ \mathrm{measured\ from}\ "
                         if self.style == "plot"
@@ -524,8 +707,25 @@ class Renderer:
             and value.name == label.name
         ):
             return self.measured(value)
+        if label is not None and label.kind == "var" and isinstance(value, sympy.Basic):
+            if isinstance(value, sympy.Symbol) and value.name == label.name:
+                return f"{self.label(label)} (symbolic)"
+            return f"{self.label(label)} = {self.expr(value, sympy.Symbol(label.name))}"
+        if isinstance(value, sympy.logic.boolalg.Boolean) and not isinstance(
+            value, sympy.logic.boolalg.BooleanAtom
+        ):
+            status = "assumed" if any(value == a for a in self.ctx.assumptions) else "open"
+            self._record(self.sugar(value))
+            shown = self.label(label) if label is not None else self.expr(value)
+            colon = r"\colon\ " if self.style == "plot" else ": "
+            return f"{shown}{colon}{status}"
         text = self.value(value)
-        return f"{self.label(label)} = {text}" if label is not None else text
+        if label is None:
+            return text
+        if isinstance(value, (bool, sympy.logic.boolalg.BooleanAtom)):
+            colon = r"\colon\ " if self.style == "plot" else ": "
+            return f"{self.label(label)}{colon}{text}"
+        return f"{self.label(label)} = {text}"
 
 
 Plotter = Callable[[list[str]], "str | None"]
