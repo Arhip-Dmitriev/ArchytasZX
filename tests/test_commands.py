@@ -329,7 +329,17 @@ class TestRegistry:
         assert dict(ALIASES) == {"list-rules": "rules"}
 
     def test_help_covers_commands_and_shell_commands(self) -> None:
-        assert EXPECTED_COMMANDS | {"mode", "history", "quit", "exit"} == set(HELP)
+        assert EXPECTED_COMMANDS | {
+            "dirac",
+            "zx",
+            "both",
+            "verbose_on",
+            "verbose_off",
+            "config",
+            "history",
+            "quit",
+            "exit",
+        } == set(HELP)
         for name, usage in HELP.items():
             assert usage.startswith(name), usage
 
@@ -346,7 +356,7 @@ class TestRegistry:
         assert lines[-1] == "any other line is load <line>"
         assert not outcome.changed
 
-    @pytest.mark.parametrize("word", ["apply", "mode", "quit"])
+    @pytest.mark.parametrize("word", ["apply", "zx", "config", "quit"])
     def test_help_command(self, word: str) -> None:
         assert texts(ok(Session(), f"help {word}")) == [HELP[word]]
 
