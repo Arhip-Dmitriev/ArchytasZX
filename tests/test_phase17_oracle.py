@@ -731,7 +731,7 @@ class TestDerivationRendering:
 
     def test_zx_mode_has_both(self) -> None:
         initial, results = _derivation()
-        text = P.render_derivation(initial, results, P.NotationMode.ZX)
+        text = P.render_derivation(initial, results, P.NotationMode.BOTH)
         assert text.count("graph:") == len(results) + 1
         for state in (initial, *(r.diagram for r in results)):
             assert P.render_term(P.dirac_term(state)) in text
@@ -742,8 +742,10 @@ class TestDerivationRendering:
         assert not any(line.startswith(("graph:", "scalable:")) for line in dirac_text.splitlines())
         assert dirac_text == P.render(diagram, P.NotationMode.DIRAC)
         zx_text = P.render(diagram, P.NotationMode.ZX)
-        assert zx_text.startswith("graph:")
-        assert P.render_dirac(diagram) in zx_text
+        assert zx_text == P.render_graph(diagram)
+        both_text = P.render(diagram, P.NotationMode.BOTH)
+        assert both_text.startswith("graph:")
+        assert P.render_dirac(diagram) in both_text
 
 
 def _sibling(gen_a: GeneratorType, gen_b: GeneratorType, mult_b: str) -> Builder:

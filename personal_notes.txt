@@ -1,53 +1,8 @@
-Pre POC (0.19.1):
+POC (1.19.2):
 
-- Dirac is not how I want it at all, not intuitive.
-- Engine is ok, some bugs.
-- I dont want unprompted output
-- all dirac states must be bound to a |name> or <name|
-- then you can do operations on them in dirac notation
-- then print with a command
-- input is ascii as below, the repl prints by default in matplotlib then by fallback/flag in pretty print unicode and then by further fallback or flag in ASCII
-- we have to be able to oraclise, make operators into reusable funcitons like for Shors.
-- I want explicit typing always (incl |> or <| for a quantum state, with ket bra conversion built in)
-- measure on a n=1 system returns a boolean, on n>1 returns a bitstring, and both of those can be implictly converted to numerical value as shown below, and it obviously modifies the state inside
-
-Shor, w/ copy states.
-
-  var n, m, N, a
-  var q = 2^n
-  func f(x) = a^x % N
-
-  oracle U_f = |x>|y> -> |x>|y xor f(x)>
-  gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
-
-  |psi_0> = |0>^@n @ |0>^@m
-  |psi_1> = (H^@n @ I)|psi_0>
-  |psi_2> = U_f|psi_1>
-  var z = measure|psi_2>
-  |psi_3> = (QFT @ I) |psi_2>
-  some sort of collection = {|psi_0>, |psi_1>, |psi_2>, |psi_2>, |psi_3>}
-  show(some sort of collection)
-  var y = measure|psi_2>
-
-Expected output of show:
-
-  (matplotlib: one figure, one typeset line per entry, same content as below;
-   unicode fallback / --unicode:)
-
-  |ψ_0⟩ = |0⟩^⊗n ⊗ |0⟩^⊗m
-  |ψ_1⟩ = 1/√q Σ_{x=0}^{q-1} |x⟩ ⊗ |0⟩^⊗m
-  |ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
-  |ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
-  |ψ_3⟩ = 1/√q Σ_{y=0}^{q-1} e^{2πi·z[:n]·y/q} |y⟩ ⊗ |f(z[:n])⟩
-    where q = 2^n, f(x) = a^x mod N, z ∈ {0,1}^(n+m) measured from |ψ_2⟩, z[n:] = f(z[:n])
-
-  (ascii fallback / --ascii:)
-
-  |psi_0> = |0>^@n @ |0>^@m
-  |psi_1> = 1/sqrt(q) sum(x in 0..q-1){ |x> @ |0>^@m }
-  |psi_2> = |z[:n]> @ |f(z[:n])>
-  |psi_2> = |z[:n]> @ |f(z[:n])>
-  |psi_3> = 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*z[:n]*y/q) |y> @ |f(z[:n])> }
-    where q = 2^n, f(x) = a^x % N, z in {0,1}^(n+m) measured from |psi_2>, z[n:] = f(z[:n])
-
-  y == z afterwards (|psi_2> is already collapsed to a basis state); nothing else prints.
+Issues:
+- matplotlib text needs to match terminal color
+- matplotlib text is too big and has too much space between lines
+- for state we just need the state in output, not the where part
+- for proof output I want like a seperate thing formated more or less in the style of a mathematical proof
+- 

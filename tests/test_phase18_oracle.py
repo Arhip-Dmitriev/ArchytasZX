@@ -562,7 +562,7 @@ def test_every_form_is_stable_and_renders_in_both_modes(name: str) -> None:
     assert_identical(first.diagram, second.diagram)
     assert validate(first.diagram).is_valid
     dirac_text = render(first.diagram, NotationMode.DIRAC)
-    zx_text = render(first.diagram, NotationMode.ZX)
+    zx_text = render(first.diagram, NotationMode.BOTH)
     assert "graph:" not in dirac_text
     assert zx_text.startswith("graph:")
     assert dirac_text.strip() and dirac_text.strip() in zx_text

@@ -131,6 +131,7 @@ class NotationMode(enum.Enum):
 
     DIRAC = "dirac"
     ZX = "zx"
+    BOTH = "both"
 
 
 DEFAULT_MODE = NotationMode.DIRAC
@@ -1418,15 +1419,19 @@ def _mode_scalable_dirac_lines(s: ScalableDiagram, unicode: bool) -> list[str]:
 
 
 def _mode_diagram(diagram: Diagram, mode: NotationMode, unicode: bool) -> str:
-    dirac_lines = _mode_dirac_lines(diagram, unicode)
     if mode is NotationMode.ZX:
+        return render_graph(diagram)
+    dirac_lines = _mode_dirac_lines(diagram, unicode)
+    if mode is NotationMode.BOTH:
         return _listing_join([render_graph(diagram), *dirac_lines])
     return _listing_join(dirac_lines)
 
 
 def _mode_scalable(s: ScalableDiagram, mode: NotationMode, unicode: bool) -> str:
-    dirac_lines = _mode_scalable_dirac_lines(s, unicode)
     if mode is NotationMode.ZX:
+        return render_scalable_graph(s)
+    dirac_lines = _mode_scalable_dirac_lines(s, unicode)
+    if mode is NotationMode.BOTH:
         return _listing_join([render_scalable_graph(s), *dirac_lines])
     return _listing_join(dirac_lines)
 
@@ -1636,9 +1641,9 @@ def _mode_sheet_step(step: SheetStep, mode: NotationMode, unicode: bool) -> str:
 
 
 def render(state: object, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False) -> str:
-    """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX the graph listing then the Dirac
-    block. Accepts Diagram, ScalableDiagram, NormalForm, RewriteResult, Derivation,
-    Certificate, ProofCertificate, InductionProof and SheetStep."""
+    """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX the graph listing only, BOTH the
+    graph listing then the Dirac block. Accepts Diagram, ScalableDiagram, NormalForm,
+    RewriteResult, Derivation, Certificate, ProofCertificate, InductionProof and SheetStep."""
     mode = _mode_check(mode, unicode)
     if isinstance(state, Diagram):
         return _mode_diagram(state, mode, unicode)

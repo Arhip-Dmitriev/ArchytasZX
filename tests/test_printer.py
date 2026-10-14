@@ -545,7 +545,9 @@ class TestRender:
         assert "sum_{" in dirac_text
         zx_text = render(state, NotationMode.ZX)
         assert any(line.lstrip().startswith(GRAPH_PREFIXES) for line in lines_of(zx_text))
-        assert "sum_{" in zx_text
+        both_text = render(state, NotationMode.BOTH)
+        assert any(line.lstrip().startswith(GRAPH_PREFIXES) for line in lines_of(both_text))
+        assert "sum_{" in both_text
         uni = render(state, unicode=True)
         assert "Σ" in uni
 
