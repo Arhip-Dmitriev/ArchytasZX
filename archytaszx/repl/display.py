@@ -15,18 +15,24 @@
 
 * ``ascii``: the input syntax (``|0>^@n @ |0>^@m``, ``sum(x in 0..q-1){ ... }``);
 * ``unicode``: ``|0⟩^⊗n ⊗ |0⟩^⊗m``, ``Σ_{x=0}^{q-1} ...``;
-* ``plot``: matplotlib mathtext, one line per entry, in a figure.
+* ``plot``: matplotlib mathtext, one line per entry, drawn off-screen and shown inline in the
+  terminal (kitty, iTerm2 or sixel image protocol).
 
 A :class:`Renderer` renders entries and records the defined variables, functions and
 measurement outcomes they mention; :meth:`Renderer.where` lists those as a ``where`` line.
 Defined variables are folded back into expressions (``2^(-n/2)`` shows as ``1/sqrt(q)``
-under ``var q = 2^n``). :func:`plot_lines` draws ``plot`` output and returns False when no
-interactive matplotlib backend is available.
+under ``var q = 2^n``). :func:`terminal_image` returns ``plot`` output as an inline image escape
+sequence, or None when the terminal has no image protocol.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import base64
+import io
+import itertools
+import os
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -203,8 +209,8 @@ class _Text(StrPrinter):  # type: ignore[misc]
 class _Latex(LatexPrinter):  # type: ignore[misc]
     """Matplotlib-mathtext expression text."""
 
-    def __init__(self) -> None:
-        super().__init__({"imaginary_unit": "i"})
+    def __init__(self, settings: dict[str, object] | None = None) -> None:
+        super().__init__(settings or {"imaginary_unit": "i"})
 
     def _print_Symbol(self, e: sympy.Symbol, style: str = "plain") -> str:
         return name_text(e.name, "plot")
@@ -214,6 +220,16 @@ class _Latex(LatexPrinter):  # type: ignore[misc]
     def _print_Mod(self, e: sympy.Mod, exp: str | None = None) -> str:
         a, m = e.args
         return rf"{self._print(a)}\ \mathrm{{mod}}\ {self._print(m)}"
+
+    def _print_exp(self, e: sympy.exp, exp: str | None = None) -> str:
+        arg = e.args[0]
+        c = sympy.factor_terms(sympy.expand(arg / (2 * sympy.pi * sympy.I)))
+        if c.has(sympy.I) or c.has(sympy.pi):
+            return str(super()._print_exp(e, exp))
+        sign, c = ("-", -c) if c.could_extract_minus_sign() else ("", c)
+        inline = _Latex({"fold_short_frac": True, "imaginary_unit": "i"})
+        body = "" if c == 1 else r"\," + inline.doprint(c)
+        return rf"e^{{{sign}2\pi i{body}}}"
 
     def _print_KroneckerDelta(self, e: sympy.KroneckerDelta, exp: str | None = None) -> str:
         return rf"[{self._print(e.args[0])} = {self._print(e.args[1])}]"
@@ -512,64 +528,120 @@ class Renderer:
         return f"{self.label(label)} = {text}" if label is not None else text
 
 
-Plotter = Callable[[list[str]], bool]
+Plotter = Callable[[list[str]], "str | None"]
+"""Turns mathtext lines into terminal output, or None to fall back to Unicode text."""
+
+PROTOCOLS = ("kitty", "iterm", "sixel", "none")
+"""Terminal image protocols; ``ARCHYTASZX_IMAGES`` selects one explicitly."""
+
+_SIXEL_LEVELS = 16
 
 
-def plot_lines(lines: list[str]) -> bool:
-    """Draws mathtext lines in a matplotlib figure; False without an interactive backend."""
-    try:
-        import matplotlib
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return False
-    if matplotlib.get_backend().lower() not in _interactive_backends():
-        return False
-    try:
-        fig = figure(lines)
-        fig.canvas.draw()  # type: ignore[attr-defined]
-        plt.show(block=False)
-        plt.pause(0.001)
-    except Exception:  # noqa: BLE001
-        plt.close("all")
-        return False
-    return True
+def protocol(environ: Mapping[str, str] | None = None, tty: bool | None = None) -> str:
+    """The image protocol of the terminal on standard output, ``none`` when unsupported."""
+    env = os.environ if environ is None else environ
+    forced = env.get("ARCHYTASZX_IMAGES", "").lower()
+    if forced in PROTOCOLS:
+        return forced
+    if not (sys.stdout.isatty() if tty is None else tty):
+        return "none"
+    term, program = env.get("TERM", ""), env.get("TERM_PROGRAM", "")
+    if "KITTY_WINDOW_ID" in env or term in ("xterm-kitty", "xterm-ghostty") or program == "ghostty":
+        return "kitty"
+    if program in ("iTerm.app", "WezTerm", "vscode") or env.get("LC_TERMINAL") == "iTerm2":
+        return "iterm"
+    if "sixel" in term or term.startswith(("foot", "mlterm")) or program == "mlterm":
+        return "sixel"
+    return "none"
 
 
-def _interactive_backends() -> set[str]:
-    try:
-        from matplotlib.backends import (  # type: ignore[attr-defined]
-            BackendFilter,
-            backend_registry,
-        )
-
-        names = backend_registry.list_builtin(  # type: ignore[no-untyped-call]
-            BackendFilter.INTERACTIVE
-        )
-    except ImportError:
-        from matplotlib import rcsetup
-
-        names = rcsetup.interactive_bk  # type: ignore[attr-defined]
-    return {b.lower() for b in names}
+def dark(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether the terminal background is dark: ``ARCHYTASZX_IMAGE_THEME``, then ``COLORFGBG``."""
+    env = os.environ if environ is None else environ
+    theme = env.get("ARCHYTASZX_IMAGE_THEME", "").lower()
+    if theme in ("dark", "light"):
+        return theme == "dark"
+    bg = env.get("COLORFGBG", "").rpartition(";")[2]
+    return not (bg.isdigit() and int(bg) in (7, 15))
 
 
-def figure(lines: list[str]) -> object:
-    """A matplotlib figure with one mathtext line per entry."""
-    import matplotlib.pyplot as plt
+def render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False) -> bytes:
+    """Off-screen PNG of mathtext lines, one per row, left aligned."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
-    height = 0.6 * len(lines) + 0.4
-    fig = plt.figure(figsize=(10, height))
+    fg, bg = ("#e6e6e6", "#1e1e1e") if dark_theme else ("#111111", "#ffffff")
+    fig = Figure(figsize=(1, 0.6 * len(lines) + 0.1), dpi=110)
+    FigureCanvasAgg(fig)
     for k, line in enumerate(lines):
-        y = 1 - (k + 0.8) / (len(lines) + 0.4)
-        text = line.strip()
-        fig.text(0.02, y, f"${text}$", fontsize=14, va="center")
-    return fig
+        y = 1 - (k + 0.5) / len(lines)
+        fig.text(0, y, f"${line.strip()}$", fontsize=13, color=fg, va="center")
+    out = io.BytesIO()
+    fig.savefig(
+        out,
+        format="png",
+        bbox_inches="tight",
+        pad_inches=0.08,
+        transparent=not opaque,
+        facecolor=bg if opaque else "none",
+    )
+    return out.getvalue()
 
 
-def finish() -> None:
-    """Blocks on any open matplotlib figures."""
+def _kitty(png: bytes) -> str:
+    data = base64.standard_b64encode(png).decode("ascii")
+    chunks = [data[k : k + 4096] for k in range(0, len(data), 4096)] or [""]
+    out = []
+    for k, chunk in enumerate(chunks):
+        more = 1 if k < len(chunks) - 1 else 0
+        head = f"a=T,f=100,m={more}" if k == 0 else f"m={more}"
+        out.append(f"\x1b_G{head};{chunk}\x1b\\")
+    return "".join(out)
+
+
+def _iterm(png: bytes) -> str:
+    data = base64.standard_b64encode(png).decode("ascii")
+    return f"\x1b]1337;File=inline=1;size={len(png)};preserveAspectRatio=1:{data}\x07"
+
+
+def _sixel(png: bytes) -> str:
+    """Grey-quantised sixel image."""
+    import matplotlib.image as mpimg
+    import numpy as np
+
+    rgba = mpimg.imread(io.BytesIO(png), format="png")
+    grey = rgba[..., :3].mean(axis=2)
+    idx = np.rint(grey * (_SIXEL_LEVELS - 1)).astype(int)
+    height, width = idx.shape
+    palette = "".join(
+        f"#{c};2;{round(100 * c / (_SIXEL_LEVELS - 1))};"
+        f"{round(100 * c / (_SIXEL_LEVELS - 1))};{round(100 * c / (_SIXEL_LEVELS - 1))}"
+        for c in range(_SIXEL_LEVELS)
+    )
+    weights = (1 << np.arange(6))[:, None]
+    bands = []
+    for y0 in range(0, height, 6):
+        band = idx[y0 : y0 + 6]
+        rows = []
+        for c in np.unique(band):
+            mask = band == c
+            codes = (mask * weights[: len(band)]).sum(axis=0)
+            text = []
+            for ch, run in itertools.groupby(chr(63 + int(v)) for v in codes):
+                n = len(list(run))
+                text.append(f"!{n}{ch}" if n > 3 else ch * n)
+            rows.append(f"#{c}" + "".join(text))
+        bands.append("$".join(rows))
+    return f'\x1bPq"1;1;{width};{height}{palette}' + "-".join(bands) + "\x1b\\"
+
+
+def terminal_image(lines: list[str]) -> str | None:
+    """Mathtext lines as an inline terminal image; None when the terminal shows no images."""
+    proto = protocol()
+    if proto == "none":
+        return None
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return
-    if plt.get_fignums():
-        plt.show()
+        png = render_png(lines, dark_theme=dark(), opaque=proto == "sixel")
+    except Exception:  # noqa: BLE001
+        return None
+    return {"kitty": _kitty, "iterm": _iterm, "sixel": _sixel}[proto](png)

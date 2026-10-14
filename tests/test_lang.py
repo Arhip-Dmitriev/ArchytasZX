@@ -89,13 +89,13 @@ class TestShorSymbolic:
         assert run(SHOR, "unicode")[1] == SHOR_UNICODE
 
     def test_plot_falls_back_to_unicode_without_a_backend(self) -> None:
-        interp = Interpreter(style="plot", plotter=lambda lines: False)
+        interp = Interpreter(style="plot", plotter=lambda lines: None)
         assert interp.execute(SHOR) == SHOR_UNICODE
 
-    def test_plot_draws_and_prints_nothing(self) -> None:
+    def test_plot_prints_only_the_image(self) -> None:
         drawn: list[list[str]] = []
-        interp = Interpreter(style="plot", plotter=lambda lines: drawn.append(lines) or True)
-        assert interp.execute(SHOR) == ""
+        interp = Interpreter(style="plot", plotter=lambda lines: drawn.append(lines) or "IMG")
+        assert interp.execute(SHOR) == "IMG"
         assert len(drawn) == 1 and len(drawn[0]) == 6
         assert drawn[0][1].startswith(r"|\psi_{1}\rangle = \frac{1}{\sqrt{q}} \sum_{x=0}^{q - 1}")
 

@@ -412,7 +412,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     break
             code = 1 if shell.errors else 0
         sys.stdout.flush()
-        D.finish()
     except KeyboardInterrupt:
         sys.stderr.write("interrupted\n")
         return 130

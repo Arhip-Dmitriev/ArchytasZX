@@ -442,7 +442,7 @@ class Interpreter:
         if style not in D.STYLES:
             raise ValueError(f"unknown display style {style!r}")
         self.style = style
-        self.plotter = plotter if plotter is not None else D.plot_lines
+        self.plotter = plotter if plotter is not None else D.terminal_image
         self.rng = np.random.default_rng(seed)
         self.values: dict[str, object] = {}
         self.sugar: list[tuple[str, sympy.Expr]] = []
@@ -710,8 +710,9 @@ class Interpreter:
             r = D.Renderer("plot", self._context())
             lines = [r.entry(lab, v) for lab, v in entries]
             where = r.where()
-            if self.plotter(lines + ([where] if where else [])):
-                return ""
+            image = self.plotter(lines + ([where] if where else []))
+            if image is not None:
+                return image
             style = "unicode"
         r = D.Renderer(style, self._context())
         lines = [r.entry(lab, v) for lab, v in entries]

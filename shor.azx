@@ -1,0 +1,17 @@
+# Shor, w/ copy states.
+
+var n, m, N, a
+var q = 2^n
+func f(x) = a^x % N
+
+oracle U_f = |x>|y> -> |x>|y xor f(x)>
+gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
+
+|psi_0> = |0>^@n @ |0>^@m
+|psi_1> = (H^@n @ I)|psi_0>
+|psi_2> = U_f|psi_1>
+var z = measure|psi_2>
+|psi_3> = (QFT @ I) |psi_2>
+states = {|psi_0>, |psi_1>, |psi_2>, |psi_2>, |psi_3>}
+show(states)
+var y = measure|psi_2>
