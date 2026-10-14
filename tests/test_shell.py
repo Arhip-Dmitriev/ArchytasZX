@@ -125,7 +125,7 @@ class TestRunLine:
     def test_mode_bad_value(self) -> None:
         shell = Shell(commands=True, mode=NotationMode.ZX)
         out = shell.run_line("mode latex")
-        assert out == "error: unknown mode 'latex'; usage: mode [dirac|zx]"
+        assert out == "error: unknown mode 'latex'; usage: mode [dirac|zx|both]"
         assert shell.mode is NotationMode.ZX and shell.errors == 1
 
     def test_mode_drives_rendering(self) -> None:
@@ -322,9 +322,10 @@ class TestLoop:
         assert Shell(commands=True).loop(stdin, stdout) == 0
         text = stdout.getvalue()
         assert text.startswith("ArchytasZX shell, mode dirac; type help for commands.\n")
-        assert PROMPT in text and S.CONTINUATION_PROMPT in text
+        name = S._place()
+        assert f"{name}(1): " in text and f"{'.' * len(name)}(1): " in text
         assert "mode: zx\n" in text
-        assert text.endswith(PROMPT + "\n")
+        assert text.endswith(f"{name}(2): \n")
 
     def test_tty_interrupt_message(self) -> None:
         stdout = io.StringIO()
@@ -480,3 +481,77 @@ def test_module_runs_as_a_script() -> None:
     )
     assert failed.returncode == 1
     assert failed.stdout.startswith("error: ") and "Traceback" not in failed.stderr
+
+
+class TestOutputMode:
+    def test_echoes_the_last_statement(self) -> None:
+        shell = Shell(display="ascii", output=True)
+        assert shell.run_line("var n") == "val n : nat"
+        assert shell.run_line("var a = 1; var b = 2") == "val b : nat = 2"
+        assert shell.run_line("|p> = X|0>") == "val |p> : ket = |1>"
+        assert shell.run_line("<p|p>") == "- : nat = 1"
+        assert shell.run_line("seed 1") == ""
+
+    def test_toggle(self) -> None:
+        shell = Shell(display="ascii")
+        assert shell.run_line("var n") == ""
+        assert shell.run_line(":output on") == "output: on"
+        assert shell.run_line("var m") == "val m : nat"
+        assert shell.run_line(":output") == "output: on"
+        assert shell.run_line(":output off") == "output: off"
+        assert shell.run_line(":output maybe") == "error: usage: output [on|off]"
+
+    def test_show_still_prints_with_the_echo_off(self) -> None:
+        shell = Shell(display="ascii", output=True)
+        assert shell.run_line("show(1 + 1)") == "1 + 1 = 2"
+
+    def test_mode_drives_the_echo(self) -> None:
+        shell = Shell(display="ascii", output=True)
+        shell.run_line(":mode zx")
+        out = shell.run_line("|p> = |1>").splitlines()
+        assert out[0] == "val |p> : ket =" and out[1].startswith("  graph:")
+
+    def test_colour_codes(self) -> None:
+        shell = Shell(display="ascii", output=True, color=True)
+        assert shell.run_line("var n") == "\x1b[1mval\x1b[0m n : \x1b[36mnat\x1b[0m"
+
+    def test_bar_shape(self) -> None:
+        bar = Shell().bar(60)
+        assert len(bar) == 60 and bar.startswith("─( ") and "< command 1 >" in bar
+        assert bar.endswith(f"{{ {S._place()} }}─")
+
+    def test_tty_prints_the_bar_before_each_prompt(self) -> None:
+        stdout = io.StringIO()
+        Shell(output=True, display="ascii").loop(FakeStdin("var n\n", [], tty=True), stdout)
+        text = stdout.getvalue()
+        assert text.count("< command 1 >") == 1 and text.count("< command 2 >") == 1
+        assert "val n : nat\n" in text
+
+
+class TestPrompt:
+    def test_counts_lines(self) -> None:
+        shell = Shell(display="ascii")
+        name = S._place()
+        assert shell.prompt() == f"{name}(1): "
+        shell.run_line("var n")
+        shell.run_line("")
+        assert shell.prompt() == f"{name}(2): "
+        assert shell.prompt(True) == f"{'.' * len(name)}(2): "
+
+    def test_place(self, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.chdir(tmp_path)
+        assert S._place() == tmp_path.name
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert S._place() == "home"
+
+
+class TestOracleFlag:
+    def test_interactive_refused(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["--oracle"]) == 2
+        assert "scripts" in capsys.readouterr().err
+
+    def test_script_checks_gates(self, capsys: pytest.CaptureFixture[str]) -> None:
+        source = ["gate B = |x> -> |0>", "|a> = B|1>"]
+        assert main(["--oracle", *(arg for line in source for arg in ("-c", line))]) == 1
+        assert "not reversible" in capsys.readouterr().out
+        assert main([*(arg for line in source for arg in ("-c", line))]) == 0

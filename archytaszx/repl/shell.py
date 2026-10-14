@@ -20,24 +20,30 @@ A :class:`Shell` owns one :class:`~archytaszx.repl.lang.Interpreter`, one
 
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
 * ``history`` and ``quit``/``exit`` are handled here;
-* a line starting with ``:`` is an engine command (``:mode [dirac|zx]`` included), the rest
-  of the line going to :func:`~archytaszx.repl.commands.run` and its outcome printed by
+* ``:mode [dirac|zx|both]`` picks what ``show``, output mode and engine commands print, and
+  ``:output [on|off]`` switches output mode;
+* any other line starting with ``:`` is an engine command, the rest of the line going to
+  :func:`~archytaszx.repl.commands.run` and its outcome printed by
   :func:`~archytaszx.repl.commands.format_outcome` in the current mode;
-* every other line is a :mod:`~archytaszx.repl.lang` statement; only ``show`` prints.
+* every other line is a :mod:`~archytaszx.repl.lang` statement; ``show`` and ``print`` print.
 
-With ``commands=True`` every line is an engine command, without the ``:``.
+With ``commands=True`` every line is an engine command, without the ``:``. In output mode the
+last statement of each line is echoed utop style (``val x : nat = 3``, ``- : ket = ...``) and,
+interactively, a ``─( time )─< command n >──{ dir }─`` bar precedes each prompt.
 
-The mode is passed to ``format_outcome`` only; commands never see it. A line ending in ``\\``
-is joined to the next one with a single space. :func:`main` is the ``archytaszx`` console
-script: ``-c`` commands and script files run non-interactively, otherwise :meth:`Shell.loop`
-reads from standard input (prompt ``azx> ``, readline history on a terminal).
+A line ending in ``\\`` is joined to the next one with a single space. :func:`main` is the
+``archytaszx`` console script: ``-c`` commands and script files run non-interactively,
+otherwise :meth:`Shell.loop` reads from standard input (prompt ``dir(n): ``, readline history
+on a terminal).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
+import time
 from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
 
@@ -47,10 +53,7 @@ from archytaszx.repl.lang import Interpreter, LangError, brace_depth
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 
 PROMPT = "azx> "
-"""The primary interactive prompt."""
-
-CONTINUATION_PROMPT = "...> "
-"""The prompt after a line ending in ``\\``."""
+"""The prompt :func:`main` echoes before each script line with ``--echo``."""
 
 HISTORY_FILE = "~/.archytaszx_history"
 """The readline history file, user-expanded."""
@@ -73,12 +76,16 @@ class Shell:
         seed: int | None = None,
         plotter: D.Plotter | None = None,
         args: Sequence[str] = (),
+        check_oracles: bool = False,
+        output: bool = False,
+        color: bool = False,
     ) -> None:
         """Type checks: TypeError on a mode that is not a NotationMode, a non-bool unicode or
         a session that is not a Session; ValueError on an unknown display style.
 
         ``display`` defaults to ``unicode`` when ``unicode`` is set, else ``plot``; ``args`` are
-        the script arguments read by ``arg(k)``.
+        the script arguments read by ``arg(k)``; ``check_oracles`` checks classical gates for
+        reversibility; ``output`` starts in output mode; ``color`` colours its echoes.
         """
         if not isinstance(mode, NotationMode):
             raise TypeError(f"mode must be a NotationMode, got {mode!r}")
@@ -91,7 +98,16 @@ class Shell:
         self.session = session if session is not None else Session()
         self.commands = commands
         style = display if display is not None else ("unicode" if unicode else "plot")
-        self.interpreter = Interpreter(style=style, seed=seed, plotter=plotter, args=tuple(args))
+        self.interpreter = Interpreter(
+            style=style,
+            seed=seed,
+            plotter=plotter,
+            args=tuple(args),
+            check_oracles=check_oracles,
+            mode=mode,
+        )
+        self.output = output
+        self.color = color
         self.pending: list[str] = []
         """Lines of a language block whose ``{`` is not yet closed."""
         self.history: list[str] = []
@@ -140,6 +156,8 @@ class Shell:
             rest = rest.strip()
         if word == "mode":
             return self._mode(rest)
+        if word == "output":
+            return self._output(rest)
         try:
             outcome = run(self.session, text)
         except KeyboardInterrupt:
@@ -161,7 +179,9 @@ class Shell:
     def _statement(self, text: str) -> str:
         """Runs a language statement; errors become ``error: ...`` lines."""
         try:
-            return self.interpreter.execute(text)
+            printed = self.interpreter.execute(text)
+            echo = self._echo() if self.output else ""
+            return "\n".join(x for x in (printed, echo) if x)
         except KeyboardInterrupt:
             raise
         except LangError as exc:
@@ -203,6 +223,8 @@ class Shell:
         source = sys.stdin if stdin is None else stdin
         sink = sys.stdout if stdout is None else stdout
         interactive = _isatty(source)
+        if interactive and self.interpreter.style == "plot":
+            D.prepare()
         use_input = interactive and source is sys.stdin and sink is sys.stdout
         readline_module = _start_readline() if use_input else None
         try:
@@ -248,7 +270,9 @@ class Shell:
         """Reads physical lines up to one without a trailing ``\\`` (a comment line never
         continues); ``None`` at EOF."""
         parts: list[str] = []
-        prompt = CONTINUATION_PROMPT if self.pending else PROMPT
+        if self.output and interactive and not self.pending:
+            _write(sink, self.bar() + "\n")
+        prompt = self.prompt(bool(self.pending))
         while True:
             raw = _read_physical(source, sink, prompt if interactive else "", use_input)
             if raw is None:
@@ -256,7 +280,7 @@ class Shell:
             stripped = raw.rstrip("\r\n").rstrip()
             if stripped.endswith("\\") and (parts or not stripped.lstrip().startswith("#")):
                 parts.append(stripped[:-1].strip())
-                prompt = CONTINUATION_PROMPT
+                prompt = self.prompt(True)
                 continue
             parts.append(stripped.strip())
             return " ".join(part for part in parts if part)
@@ -270,7 +294,53 @@ class Shell:
                 self.errors += 1
                 choices = "|".join(m.value for m in NotationMode)
                 return f"error: unknown mode {rest!r}; usage: mode [{choices}]"
+            self.interpreter.mode = self.mode
         return f"mode: {self.mode.value}"
+
+    def _output(self, rest: str) -> str:
+        """Shows or switches output mode."""
+        if rest.lower() in ("on", "off"):
+            self.output = rest.lower() == "on"
+        elif rest:
+            self.errors += 1
+            return "error: usage: output [on|off]"
+        return f"output: {'on' if self.output else 'off'}"
+
+    def _paint(self, text: str, code: str) -> str:
+        return f"\x1b[{code}m{text}\x1b[0m" if self.color else text
+
+    def _echo(self) -> str:
+        """``val name : type = value`` or ``- : type = value`` for the last statement."""
+        last = self.interpreter.last
+        if last is None:
+            return ""
+        name, kind, value = self.interpreter.echo_parts(last)
+        head = "-" if name == "-" else f"{self._paint('val', '1')} {name}"
+        line = f"{head} : {self._paint(kind, '36')}"
+        if value is None:
+            return line
+        if "\n" in value:
+            return f"{line} =\n{value}"
+        return f"{line} = {value}"
+
+    def prompt(self, continuation: bool = False) -> str:
+        """``dir(n): ``, the working directory's name and the next line number; dots replace
+        the name on a continuation line."""
+        number = len(self.history) + 1
+        name = _place()
+        if continuation:
+            name = "." * len(name)
+        return f"{name}({number}): "
+
+    def bar(self, width: int | None = None) -> str:
+        """The utop-style rule shown above each prompt in output mode."""
+        width = width or shutil.get_terminal_size((80, 24)).columns
+        left = f"─( {time.strftime('%H:%M:%S')} )─< command {len(self.history) + 1} >"
+        right = f"{{ {_place()} }}─"
+        fill = "─" * max(1, width - len(left) - len(right))
+        if not self.color:
+            return left + fill + right
+        return self._paint(left, "33") + self._paint(fill, "2") + self._paint(right, "32")
 
     def _history(self) -> str:
         """Numbered list of recorded lines."""
@@ -281,6 +351,17 @@ class Shell:
         """Clean one-line report of an unexpected exception."""
         self.errors += 1
         return f"error: internal: {_failure_text(exc)}"
+
+
+def _place() -> str:
+    """The working directory's name: ``home`` for the home directory, ``/`` for the root."""
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return "?"
+    if cwd == os.path.expanduser("~"):
+        return "home"
+    return os.path.basename(cwd) or cwd
 
 
 def _logical_lines(lines: Iterable[str]) -> Iterator[str]:
@@ -383,6 +464,14 @@ def _argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--echo", action="store_true", help="print 'azx> LINE' before each output")
     parser.add_argument(
+        "--output", action="store_true", help="output mode: echo each line's value, utop style"
+    )
+    parser.add_argument(
+        "--oracle",
+        action="store_true",
+        help="scripts only: check every classical gate for reversibility",
+    )
+    parser.add_argument(
         "scripts",
         nargs="*",
         metavar="FILE|ARG",
@@ -406,6 +495,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     display = "ascii" if args.ascii else None
     paths = [p for p in args.scripts if args.commands or p.endswith(".azx")]
     script_args = [p for p in args.scripts if not (args.commands or p.endswith(".azx"))]
+    if args.oracle and not (paths or args.command):
+        sys.stderr.write("archytaszx: --oracle applies to scripts and -c commands only\n")
+        return 2
     shell = Shell(
         mode=NotationMode(args.mode),
         unicode=args.unicode,
@@ -413,7 +505,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         display=display,
         seed=args.seed,
         args=script_args,
+        check_oracles=args.oracle,
+        output=args.output,
+        color=_isatty(sys.stdout) and not os.environ.get("NO_COLOR"),
     )
+    if shell.interpreter.style == "plot" and (paths or args.command):
+        D.prepare()
     commands: list[str] = list(args.command)
     scripts: list[list[str]] = []
     for path in paths:
