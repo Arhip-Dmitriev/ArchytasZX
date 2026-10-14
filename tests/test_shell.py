@@ -62,7 +62,7 @@ class BrokenStdout(io.StringIO):
 
 class TestConstruction:
     def test_defaults(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.mode is NotationMode.DIRAC
         assert shell.unicode is False
         assert isinstance(shell.session, C.Session)
@@ -71,7 +71,7 @@ class TestConstruction:
 
     def test_given_session_is_used(self) -> None:
         session = C.Session()
-        assert Shell(session=session).session is session
+        assert Shell(commands=True, session=session).session is session
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -80,7 +80,7 @@ class TestConstruction:
     )
     def test_type_errors(self, kwargs: dict[str, object]) -> None:
         with pytest.raises(TypeError):
-            Shell(**kwargs)  # type: ignore[arg-type]
+            Shell(commands=True, **kwargs)  # type: ignore[arg-type]
 
 
 # -- run_line ------------------------------------------------------------------------------
@@ -89,32 +89,32 @@ class TestConstruction:
 class TestRunLine:
     @pytest.mark.parametrize("line", ["", "   ", "\t", "# a comment", "   # indented comment"])
     def test_blank_and_comment_lines(self, line: str) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_line(line) == ""
         assert shell.history == [] and shell.errors == 0 and shell.last_outcome is None
 
     def test_history_records_stripped_lines(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         shell.run_line("  help  ")
         shell.run_line("mode")
         shell.run_line("apply nosuchrule")
         assert shell.history == ["help", "mode", "apply nosuchrule"]
 
     def test_history_listing(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         for line in ("help", "mode", "", "# no", "rules"):
             shell.run_line(line)
         assert shell.run_line("history") == "1  help\n2  mode\n3  rules\n4  history"
 
     def test_history_listing_widths(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         for _ in range(9):
             shell.run_line("mode")
         lines = shell.run_line("history").splitlines()
         assert lines[0] == " 1  mode" and lines[-1] == "10  history"
 
     def test_mode_get_and_set(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_line("mode") == "mode: dirac"
         assert shell.run_line("mode zx") == "mode: zx"
         assert shell.mode is NotationMode.ZX
@@ -123,13 +123,13 @@ class TestRunLine:
         assert shell.errors == 0
 
     def test_mode_bad_value(self) -> None:
-        shell = Shell(mode=NotationMode.ZX)
+        shell = Shell(commands=True, mode=NotationMode.ZX)
         out = shell.run_line("mode latex")
         assert out == "error: unknown mode 'latex'; usage: mode [dirac|zx]"
         assert shell.mode is NotationMode.ZX and shell.errors == 1
 
     def test_mode_drives_rendering(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         dirac = shell.run_line(EXAMPLE)
         shell.run_line("mode zx")
         zx = shell.run_line("show")
@@ -137,34 +137,34 @@ class TestRunLine:
 
     @pytest.mark.parametrize("word", ["quit", "exit", "QUIT", "  exit  "])
     def test_quit_and_exit(self, word: str) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_line(word) == ""
         assert shell.done and shell.errors == 0
 
     def test_quit_with_arguments_is_not_quit(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         out = shell.run_line("quit now")
         assert not shell.done
         assert out.startswith("error: ")
 
     def test_help_lists_commands_and_shell_commands(self) -> None:
-        out = Shell().run_line("help")
+        out = Shell(commands=True).run_line("help")
         for usage in ("mode [dirac|zx]", "history --", "quit --", "apply RULE", "induct"):
             assert usage in out
         assert "aliases: list-rules = rules" in out
 
     def test_help_for_one_command(self) -> None:
-        assert Shell().run_line("help mode").startswith("mode [dirac|zx]")
+        assert Shell(commands=True).run_line("help mode").startswith("mode [dirac|zx]")
 
     def test_command_output_and_last_outcome(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         out = shell.run_line(EXAMPLE)
         assert out.startswith("loaded dirac input")
         assert shell.last_outcome is not None and shell.last_outcome.command == "load"
         assert shell.last_outcome.ok and shell.errors == 0
 
     def test_errors_counter(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         shell.run_line("apply spider_fusion")
         assert shell.errors == 1 and not shell.last_outcome.ok
         shell.run_line(EXAMPLE)
@@ -174,13 +174,13 @@ class TestRunLine:
         assert shell.errors == 3
 
     def test_failure_report_counts_as_error(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         shell.run_line(EXAMPLE)
         shell.run_line("check against sum_{k=0}^{d-1} |k>^{n} |k, k, k>")
         assert shell.errors == 1 and shell.last_outcome.command == "check"
 
     def test_non_str_line(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_line(3) == "error: a line must be a str, got int"  # type: ignore[arg-type]
         assert shell.errors == 1 and shell.history == []
 
@@ -189,7 +189,7 @@ class TestRunLine:
             raise RuntimeError("boom\n  here")
 
         monkeypatch.setattr(S, "run", broken)
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_line("help") == "error: internal: RuntimeError: boom here"
         assert shell.errors == 1
 
@@ -199,14 +199,14 @@ class TestRunLine:
 
         monkeypatch.setattr(S, "run", interrupted)
         with pytest.raises(KeyboardInterrupt):
-            Shell().run_line("help")
+            Shell(commands=True).run_line("help")
 
     def test_unicode_detail(self) -> None:
-        shell = Shell(unicode=True)
+        shell = Shell(commands=True, unicode=True)
         shell.run_line(EXAMPLE)
         out = shell.run_line("detail")
         assert "graph:" in out and "Σ" in out
-        plain = Shell()
+        plain = Shell(commands=True)
         plain.run_line(EXAMPLE)
         assert "Σ" not in plain.run_line("detail")
 
@@ -216,49 +216,52 @@ class TestRunLine:
 
 class TestScripts:
     def test_run_script_skips_blank_and_comment_lines(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         outs = shell.run_script(["# header", "", "mode", "   ", "mode zx"])
         assert outs == ["mode: dirac", "mode: zx"]
         assert shell.history == ["mode", "mode zx"]
 
     def test_str_input_is_split(self) -> None:
-        assert Shell().run_script("mode\n\n# c\nmode zx\n") == ["mode: dirac", "mode: zx"]
+        assert Shell(commands=True).run_script("mode\n\n# c\nmode zx\n") == [
+            "mode: dirac",
+            "mode: zx",
+        ]
 
     def test_continuation_joins_lines(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         outs = shell.run_script(["sum_{k=0}^{3-1} \\", "  |k>^{30}; \\", "copy", "mode"])
         assert len(outs) == 2
         assert shell.history[0] == EXAMPLE
         assert shell.session.current is not None and shell.errors == 0
 
     def test_trailing_continuation_at_end_of_input(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_script(["mode \\", "zx \\"]) == ["mode: zx"]
 
     def test_comment_line_never_continues(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.run_script(["# note \\", "mode"]) == ["mode: dirac"]
 
     def test_stops_at_quit(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         outs = shell.run_script(["mode", "quit", "mode zx", "help"])
         assert outs == ["mode: dirac", ""]
         assert shell.done and shell.mode is NotationMode.DIRAC
         assert shell.history == ["mode", "quit"]
 
     def test_iter_script_yields_line_output_pairs(self) -> None:
-        pairs = list(Shell().iter_script("mode\nmode \\\n zx\n"))
+        pairs = list(Shell(commands=True).iter_script("mode\nmode \\\n zx\n"))
         assert pairs == [("mode", "mode: dirac"), ("mode zx", "mode: zx")]
 
     def test_errors_do_not_stop_a_script(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         outs = shell.run_script(["apply nosuchrule", EXAMPLE, "apply spider_fusion"])
         assert outs[0].startswith("error: ")
         assert "GHZ_{n+2}" in outs[2]
         assert shell.errors == 1
 
     def test_crlf_lines(self) -> None:
-        assert Shell().run_script(["mode \\\r\n", "zx\r\n"]) == ["mode: zx"]
+        assert Shell(commands=True).run_script(["mode \\\r\n", "zx\r\n"]) == ["mode: zx"]
 
 
 # -- loop ----------------------------------------------------------------------------------
@@ -267,7 +270,7 @@ class TestScripts:
 class TestLoop:
     def test_non_tty_has_no_prompt_and_eof_returns_zero(self) -> None:
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.loop(io.StringIO("mode\n\n# c\nmode zx\n"), stdout) == 0
         assert stdout.getvalue() == "mode: dirac\nmode: zx\n"
         assert PROMPT not in stdout.getvalue()
@@ -275,14 +278,14 @@ class TestLoop:
 
     def test_quit_stops_reading(self) -> None:
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.loop(io.StringIO("mode\nquit\nmode zx\n"), stdout) == 0
         assert stdout.getvalue() == "mode: dirac\n"
         assert shell.done and shell.mode is NotationMode.DIRAC
 
     def test_continuation_lines(self) -> None:
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         shell.loop(io.StringIO("sum_{k=0}^{3-1} \\\n|k>^{30}; copy\nmode \\\n"), stdout)
         assert stdout.getvalue().startswith("loaded dirac input")
         assert stdout.getvalue().endswith("mode: dirac\n")
@@ -290,13 +293,13 @@ class TestLoop:
 
     def test_empty_input(self) -> None:
         stdout = io.StringIO()
-        assert Shell().loop(io.StringIO(""), stdout) == 0
+        assert Shell(commands=True).loop(io.StringIO(""), stdout) == 0
         assert stdout.getvalue() == ""
 
     def test_keyboard_interrupt_while_reading(self) -> None:
         stdout = io.StringIO()
         stdin = FakeStdin("mode\n", [KeyboardInterrupt()])
-        assert Shell().loop(stdin, stdout) == 0
+        assert Shell(commands=True).loop(stdin, stdout) == 0
         assert stdout.getvalue() == "interrupted\nmode: dirac\n"
 
     def test_keyboard_interrupt_while_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,7 +311,7 @@ class TestLoop:
 
         monkeypatch.setattr(S, "run", interrupted)
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.loop(io.StringIO("help\nmode\n"), stdout) == 0
         assert stdout.getvalue() == "interrupted\nmode: dirac\n"
         assert calls == ["help"]
@@ -316,7 +319,7 @@ class TestLoop:
     def test_tty_shows_banner_and_prompts(self) -> None:
         stdout = io.StringIO()
         stdin = FakeStdin("mode \\\nzx\n", [], tty=True)
-        assert Shell().loop(stdin, stdout) == 0
+        assert Shell(commands=True).loop(stdin, stdout) == 0
         text = stdout.getvalue()
         assert text.startswith("ArchytasZX shell, mode dirac; type help for commands.\n")
         assert PROMPT in text and S.CONTINUATION_PROMPT in text
@@ -326,22 +329,22 @@ class TestLoop:
     def test_tty_interrupt_message(self) -> None:
         stdout = io.StringIO()
         stdin = FakeStdin("", [KeyboardInterrupt()], tty=True)
-        assert Shell().loop(stdin, stdout) == 0
+        assert Shell(commands=True).loop(stdin, stdout) == 0
         assert "\ninterrupted\n" in stdout.getvalue()
 
     def test_unreadable_input_returns_one(self) -> None:
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.loop(FakeStdin("", [OSError("gone")]), stdout) == 1
         assert stdout.getvalue() == "error: cannot read input: OSError: gone\n"
         assert shell.errors == 1
 
     def test_unwritable_output_returns_one(self) -> None:
-        assert Shell().loop(io.StringIO("mode\n"), BrokenStdout()) == 1
+        assert Shell(commands=True).loop(io.StringIO("mode\n"), BrokenStdout()) == 1
 
     def test_errors_continue_the_loop(self) -> None:
         stdout = io.StringIO()
-        shell = Shell()
+        shell = Shell(commands=True)
         assert shell.loop(io.StringIO("apply x\nmode\n"), stdout) == 0
         lines = stdout.getvalue().splitlines()
         assert lines[0].startswith("error: ") and lines[-1] == "mode: dirac"
@@ -353,25 +356,25 @@ class TestLoop:
 
 class TestMain:
     def test_repeated_c(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["-c", EXAMPLE, "-c", "apply spider_fusion", "-c", "induct"]) == 0
+        assert main(["--commands", "-c", EXAMPLE, "-c", "apply spider_fusion", "-c", "induct"]) == 0
         out = capsys.readouterr().out
         assert "GHZ_{n+2}" in out and "induct: proved" in out
         assert not listing(out)
 
     def test_mode_zx(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--mode", "zx", "-c", EXAMPLE]) == 0
+        assert main(["--commands", "--mode", "zx", "-c", EXAMPLE]) == 0
         assert listing(capsys.readouterr().out)
 
     def test_bad_mode_is_a_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--mode", "latex", "-c", "help"]) == 2
+        assert main(["--commands", "--mode", "latex", "-c", "help"]) == 2
         assert "invalid choice" in capsys.readouterr().err
 
     def test_echo(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--echo", "-c", "mode", "-c", "# skipped"]) == 0
+        assert main(["--commands", "--echo", "-c", "mode", "-c", "# skipped"]) == 0
         assert capsys.readouterr().out == f"{PROMPT}mode\nmode: dirac\n"
 
     def test_unicode(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--unicode", "-c", EXAMPLE]) == 0
+        assert main(["--commands", "--unicode", "-c", EXAMPLE]) == 0
         assert "Σ" in capsys.readouterr().out
 
     def test_script_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -379,7 +382,7 @@ class TestMain:
         script.write_text(
             f"# worked example\n{EXAMPLE}\napply \\\n  spider_fusion\ncheck\n", encoding="utf-8"
         )
-        assert main([str(script)]) == 0
+        assert main(["--commands", str(script)]) == 0
         out = capsys.readouterr().out
         assert "check: no mismatch" in out and "GHZ_{n+2}" in out
 
@@ -390,7 +393,7 @@ class TestMain:
         second = tmp_path / "b.azx"
         first.write_text("apply spider_fusion\n", encoding="utf-8")
         second.write_text("check\n", encoding="utf-8")
-        assert main(["-c", EXAMPLE, str(first), str(second)]) == 0
+        assert main(["--commands", "-c", EXAMPLE, str(first), str(second)]) == 0
         out = capsys.readouterr().out
         assert out.index("loaded") < out.index("spider_fusion") < out.index("check:")
 
@@ -399,24 +402,27 @@ class TestMain:
     ) -> None:
         script = tmp_path / "later.azx"
         script.write_text("mode zx\n", encoding="utf-8")
-        assert main(["-c", "mode", "-c", "quit", "-c", "apply nosuchrule", str(script)]) == 0
+        assert (
+            main(["--commands", "-c", "mode", "-c", "quit", "-c", "apply nosuchrule", str(script)])
+            == 0
+        )
         assert capsys.readouterr().out == "mode: dirac\n"
 
     def test_missing_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         missing = tmp_path / "nope.azx"
-        assert main(["-c", "mode", str(missing)]) == 2
+        assert main(["--commands", "-c", "mode", str(missing)]) == 2
         captured = capsys.readouterr()
         assert captured.out == ""
         assert f"archytaszx: cannot read {missing}" in captured.err
 
     def test_error_exits_one(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["-c", "apply nosuchrule", "-c", "mode"]) == 1
+        assert main(["--commands", "-c", "apply nosuchrule", "-c", "mode"]) == 1
         out = capsys.readouterr().out
         assert out.startswith("error: ") and out.endswith("mode: dirac\n")
         assert "Traceback" not in out
 
     def test_help(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main(["--help"]) == 0
+        assert main(["--commands", "--help"]) == 0
         out = capsys.readouterr().out
         assert "usage: archytaszx" in out and "--mode" in out
 
@@ -427,7 +433,7 @@ class TestMain:
             raise KeyboardInterrupt
 
         monkeypatch.setattr(S, "run", interrupted)
-        assert main(["-c", "help", "-c", "mode"]) == 130
+        assert main(["--commands", "-c", "help", "-c", "mode"]) == 130
         captured = capsys.readouterr()
         assert captured.err == "interrupted\n" and captured.out == ""
 
@@ -435,7 +441,7 @@ class TestMain:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setattr(sys, "stdin", io.StringIO("mode\napply nosuchrule\nquit\nmode\n"))
-        assert main([]) == 0
+        assert main(["--commands"]) == 0
         out = capsys.readouterr().out
         assert out.startswith("mode: dirac\nerror: ")
         assert out.count("mode: dirac") == 1
@@ -447,6 +453,7 @@ def test_module_runs_as_a_script() -> None:
             sys.executable,
             "-m",
             "archytaszx.repl.shell",
+            "--commands",
             "-c",
             EXAMPLE,
             "-c",
@@ -464,7 +471,7 @@ def test_module_runs_as_a_script() -> None:
     assert "GHZ_{n+2}" in ok.stdout and "induct: proved" in ok.stdout
     assert ok.stderr == ""
     failed = subprocess.run(
-        [sys.executable, "-m", "archytaszx.repl.shell", "-c", "apply nosuchrule"],
+        [sys.executable, "-m", "archytaszx.repl.shell", "--commands", "-c", "apply nosuchrule"],
         cwd=REPO,
         capture_output=True,
         text=True,

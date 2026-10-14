@@ -88,7 +88,7 @@ class Record:
 
 def run_session(mode: NotationMode, script: str) -> tuple[Shell, list[Record]]:
     """A fresh shell in ``mode`` and one record per executed logical line."""
-    shell = Shell(mode=mode)
+    shell = Shell(commands=True, mode=mode)
     records: list[Record] = []
     for line, output in shell.iter_script(script):
         records.append(Record(line, output, shell.last_outcome))
@@ -259,7 +259,7 @@ class TestDslWorkedExample:
 
     def test_induct_without_a_bang_box_is_a_clean_error(self, dsl_worked, mode) -> None:
         shell, _ = dsl_worked[mode]
-        probe = Shell(mode=mode, session=C.Session())
+        probe = Shell(commands=True, mode=mode, session=C.Session())
         probe.run_line(f"load {GHZ_DSL}")
         out = probe.run_line("induct")
         assert out.startswith("error: no bang box")
@@ -269,7 +269,7 @@ class TestDslWorkedExample:
 def test_worked_example_runs_interactively() -> None:
     stdin = io.StringIO(WORKED_SCRIPT + "quit\nshow\n")
     stdout = io.StringIO()
-    shell = Shell()
+    shell = Shell(commands=True)
     assert shell.loop(stdin, stdout) == 0
     text = stdout.getvalue()
     assert "induct: proved" in text
@@ -314,7 +314,7 @@ MALFORMED = [
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 @pytest.mark.parametrize("line", MALFORMED)
 def test_malformed_input_gives_a_clean_error(mode: NotationMode, line: str) -> None:
-    shell = Shell(mode=mode)
+    shell = Shell(commands=True, mode=mode)
     shell.run_script([EXAMPLE, "apply spider_fusion"])
     session = shell.session
     before = (
@@ -345,7 +345,7 @@ def test_malformed_input_gives_a_clean_error(mode: NotationMode, line: str) -> N
 
 
 def test_errors_before_any_load_are_clean() -> None:
-    shell = Shell()
+    shell = Shell(commands=True)
     for line in ("show", "apply spider_fusion", "check", "induct", "certificate", "undo"):
         out = shell.run_line(line)
         assert out.startswith("error: "), (line, out)
@@ -402,7 +402,7 @@ class TestModeIndependence:
         assert listing_lines(record(worked[NotationMode.ZX][1], "apply spider_fusion").output)
 
     def test_switching_mode_mid_session_changes_rendering_only(self) -> None:
-        shell = Shell()
+        shell = Shell(commands=True)
         shell.run_line(EXAMPLE)
         dirac = shell.run_line("show")
         assert shell.run_line("mode zx") == "mode: zx"
@@ -458,7 +458,7 @@ class TestZxCommandsInDiracMode:
 
     def test_listing_input_in_dirac_mode_answers_in_dirac(self) -> None:
         listing = render_graph(build_ghz_with_copy(D)[0])
-        shell = Shell()
+        shell = Shell(commands=True)
         session = shell.session
         outcome = C.run(session, f"load {listing}")
         assert outcome.ok, C.format_outcome(outcome)
@@ -492,7 +492,7 @@ def side_by_side(text: str) -> bool:
 def details() -> dict[NotationMode, dict[str, str]]:
     found: dict[NotationMode, dict[str, str]] = {}
     for mode in MODES:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_line(EXAMPLE)
         found[mode] = {}
         for label, line in DETAIL_LINES.items():
@@ -529,7 +529,7 @@ class TestDetailPayloads:
 
 
 def test_detail_is_not_shown_by_default() -> None:
-    shell = Shell()
+    shell = Shell(commands=True)
     shell.run_line(EXAMPLE)
     out = shell.run_line("prove")
     assert "graph:" not in out and "proof:" not in out
@@ -549,7 +549,7 @@ def counterexample(text: str) -> dict[str, int]:
 class TestFailureReports:
     @pytest.mark.parametrize("command", ["decide", "check", "prove"])
     def test_unequal_target_reports_dirac_and_counterexample(self, mode, command) -> None:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_script([EXAMPLE, "apply spider_fusion"])
         out = shell.run_line(f"{command} against {UNEQUAL}")
         assert not shell.last_outcome.ok
@@ -564,7 +564,7 @@ class TestFailureReports:
         assert recognize(shell.session.current) == "GHZ_{n+2}"
 
     def test_value_counterexample_is_an_oracle_mismatch(self, mode) -> None:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_line("Z_{0->3}[d]")
         for command in ("check", "decide"):
             out = shell.run_line(f"{command} against X_{{0->3}}[d]")
@@ -576,7 +576,7 @@ class TestFailureReports:
             assert not result.matched and result.max_abs_deviation > 0.5
 
     def test_induct_refutation_has_a_counterexample(self, mode) -> None:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_script([EXAMPLE, "apply spider_fusion"])
         out = shell.run_line("induct against sum_{k=0}^{d-1} |k>^{n} |k>")
         assert out.startswith("induct: refuted")
@@ -588,7 +588,7 @@ class TestFailureReports:
             decide_equal, samples=[], use_symbolic=False, use_induction=False
         )
         monkeypatch.setattr(C, "decide_equal", patched)
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_line("Z_{0->3}[d]")
         out = shell.run_line("decide against X_{0->3}[d]")
         assert out.startswith("decide: unknown")
@@ -601,7 +601,7 @@ class TestFailureReports:
 
     def test_not_found_prove_shows_simplified_state_and_bound(self, mode, monkeypatch) -> None:
         monkeypatch.setattr(C, "prove", functools.partial(prove, refute=False, moves=()))
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_line(EXAMPLE)
         out = shell.run_line("prove against sum_{k=0}^{d-1} |k>^{n} |k> |k>")
         assert out.startswith("prove: not_found")
@@ -646,7 +646,7 @@ def test_every_command_accepted_in_both_modes(name: str) -> None:
     outputs: dict[NotationMode, str] = {}
     outcomes: dict[NotationMode, C.Outcome] = {}
     for mode in MODES:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_script(
             [EXAMPLE] if name in ("apply", "undo") else [EXAMPLE, "apply spider_fusion"]
         )
@@ -665,7 +665,7 @@ def test_every_command_accepted_in_both_modes(name: str) -> None:
 def test_bare_command_name_dispatches_in_both_modes(name: str) -> None:
     results = []
     for mode in MODES:
-        shell = Shell(mode=mode)
+        shell = Shell(commands=True, mode=mode)
         shell.run_line(EXAMPLE)
         out = shell.run_line(name)
         assert shell.last_outcome is not None and shell.last_outcome.command == name
@@ -678,7 +678,7 @@ def test_bare_command_name_dispatches_in_both_modes(name: str) -> None:
 
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 def test_shell_commands_in_both_modes(mode: NotationMode) -> None:
-    shell = Shell(mode=mode)
+    shell = Shell(commands=True, mode=mode)
     assert shell.run_line("mode") == f"mode: {mode.value}"
     assert shell.run_line("history") == "1  mode\n2  history"
     assert shell.run_line("list-rules spider_fusion").startswith("rule: spider_fusion")

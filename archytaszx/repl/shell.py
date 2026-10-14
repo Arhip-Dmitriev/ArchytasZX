@@ -11,16 +11,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive shell over :mod:`archytaszx.repl.commands`: notation mode, history, scripts and
-the console entry point.
+"""Interactive shell over :mod:`archytaszx.repl.lang` and :mod:`archytaszx.repl.commands`:
+history, scripts and the console entry point.
 
-A :class:`Shell` owns one :class:`~archytaszx.repl.commands.Session` and a notation mode. Each
-input line goes through :meth:`Shell.run_line`:
+A :class:`Shell` owns one :class:`~archytaszx.repl.lang.Interpreter`, one
+:class:`~archytaszx.repl.commands.Session` and a notation mode. Each input line goes through
+:meth:`Shell.run_line`:
 
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
-* ``mode [dirac|zx]``, ``history`` and ``quit``/``exit`` are handled here;
-* every other line goes to :func:`~archytaszx.repl.commands.run` and its outcome is printed by
-  :func:`~archytaszx.repl.commands.format_outcome` in the current mode.
+* ``history`` and ``quit``/``exit`` are handled here;
+* a line starting with ``:`` is an engine command (``:mode [dirac|zx]`` included), the rest
+  of the line going to :func:`~archytaszx.repl.commands.run` and its outcome printed by
+  :func:`~archytaszx.repl.commands.format_outcome` in the current mode;
+* every other line is a :mod:`~archytaszx.repl.lang` statement; only ``show`` prints.
+
+With ``commands=True`` every line is an engine command, without the ``:``.
 
 The mode is passed to ``format_outcome`` only; commands never see it. A line ending in ``\\``
 is joined to the next one with a single space. :func:`main` is the ``archytaszx`` console
@@ -36,7 +41,9 @@ import sys
 from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
 
+from archytaszx.repl import display as D
 from archytaszx.repl.commands import Outcome, Session, detail_text, format_outcome, run
+from archytaszx.repl.lang import Interpreter, LangError
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 
 PROMPT = "azx> "
@@ -61,9 +68,16 @@ class Shell:
         mode: NotationMode = DEFAULT_MODE,
         unicode: bool = False,
         session: Session | None = None,
+        commands: bool = False,
+        display: str | None = None,
+        seed: int | None = None,
+        plotter: D.Plotter | None = None,
     ) -> None:
         """Type checks: TypeError on a mode that is not a NotationMode, a non-bool unicode or
-        a session that is not a Session."""
+        a session that is not a Session; ValueError on an unknown display style.
+
+        ``display`` defaults to ``unicode`` when ``unicode`` is set, else ``plot``.
+        """
         if not isinstance(mode, NotationMode):
             raise TypeError(f"mode must be a NotationMode, got {mode!r}")
         if not isinstance(unicode, bool):
@@ -73,6 +87,9 @@ class Shell:
         self.mode = mode
         self.unicode = unicode
         self.session = session if session is not None else Session()
+        self.commands = commands
+        style = display if display is not None else ("unicode" if unicode else "plot")
+        self.interpreter = Interpreter(style=style, seed=seed, plotter=plotter)
         self.history: list[str] = []
         self.errors = 0
         """Count of lines whose outcome had ``ok=False``, shell errors included."""
@@ -96,10 +113,19 @@ class Shell:
         if word in _QUIT_WORDS and not rest:
             self.done = True
             return ""
-        if word == "mode":
-            return self._mode(rest)
         if word == "history" and not rest:
             return self._history()
+        if not self.commands:
+            if not text.startswith(":"):
+                return self._statement(text)
+            text = text[1:].strip()
+            if not text:
+                return ""
+            word, rest = (text.split(maxsplit=1) + [""])[:2]
+            word = word.lower()
+            rest = rest.strip()
+        if word == "mode":
+            return self._mode(rest)
         try:
             outcome = run(self.session, text)
         except KeyboardInterrupt:
@@ -115,6 +141,18 @@ class Shell:
             return format_outcome(outcome, self.mode, unicode=self.unicode)
         except KeyboardInterrupt:
             raise
+        except Exception as exc:  # noqa: BLE001
+            return self._internal(exc)
+
+    def _statement(self, text: str) -> str:
+        """Runs a language statement; errors become ``error: ...`` lines."""
+        try:
+            return self.interpreter.execute(text)
+        except KeyboardInterrupt:
+            raise
+        except LangError as exc:
+            self.errors += 1
+            return f"error: {exc}"
         except Exception as exc:  # noqa: BLE001
             return self._internal(exc)
 
@@ -160,7 +198,11 @@ class Shell:
     def _repl(self, source: TextIO, sink: TextIO, interactive: bool, use_input: bool) -> int:
         """The body of :meth:`loop`; output errors propagate."""
         if interactive:
-            _write(sink, f"ArchytasZX shell, mode {self.mode.value}; type help for commands.\n")
+            if self.commands:
+                banner = f"ArchytasZX shell, mode {self.mode.value}; type help for commands.\n"
+            else:
+                banner = "ArchytasZX Dirac shell; ':help' lists engine commands.\n"
+            _write(sink, banner)
         while not self.done:
             try:
                 try:
@@ -308,6 +350,11 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="output notation (default: %(default)s)",
     )
     parser.add_argument("--unicode", action="store_true", help="render with Unicode symbols")
+    parser.add_argument("--ascii", action="store_true", help="show in ASCII, without plots")
+    parser.add_argument(
+        "--commands", action="store_true", help="read engine commands instead of the language"
+    )
+    parser.add_argument("--seed", type=int, default=None, help="seed for numeric measurement")
     parser.add_argument(
         "-c",
         "--command",
@@ -333,7 +380,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = _argument_parser().parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 2)
-    shell = Shell(mode=NotationMode(args.mode), unicode=args.unicode)
+    display = "ascii" if args.ascii else None
+    shell = Shell(
+        mode=NotationMode(args.mode),
+        unicode=args.unicode,
+        commands=args.commands,
+        display=display,
+        seed=args.seed,
+    )
     commands: list[str] = list(args.command)
     scripts: list[list[str]] = []
     for path in args.scripts:
@@ -358,6 +412,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     break
             code = 1 if shell.errors else 0
         sys.stdout.flush()
+        D.finish()
     except KeyboardInterrupt:
         sys.stderr.write("interrupted\n")
         return 130
