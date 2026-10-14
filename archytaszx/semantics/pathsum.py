@@ -771,7 +771,7 @@ class Operator:
 @dataclass(frozen=True, eq=False)
 class Gate(Operator):
     """``fn(values, widths, dims) -> State`` on ``arity`` registers; ``qubit`` gates take single
-    qubits."""
+    qubits; an ``oracle`` gate that maps basis states to basis states is checked reversible."""
 
     name: str
     arity: int
@@ -910,16 +910,20 @@ def _apply_gate(g: Gate, s: State, i: int, j: int) -> State:
     ):
         raise PathSumError(f"{g.name} acts on single qubits; use {g.name}^@w for a register")
 
+    classical = [True]
+
     def run(vals: tuple[Expr, ...], ws: tuple[Expr, ...], ds: tuple[Expr, ...]) -> State:
         res = g.fn(vals, ws, ds)
-        if g.oracle and (
-            len(res.terms) != 1 or res.terms[0].bound or sympy.simplify(res.terms[0].amp) != 1
-        ):
-            raise PathSumError(f"oracle {g.name} must map basis states to basis states")
+        if g.oracle and classical[0]:
+            classical[0] = (
+                len(res.terms) == 1
+                and not res.terms[0].bound
+                and sympy.simplify(res.terms[0].amp) == 1
+            )
         return res
 
     out = _apply_map(s, i, j, run)
-    if g.oracle:
+    if g.oracle and classical[0]:
         _check_oracle(g, s.widths[i:j], s.dims[i:j], run)
     return out
 

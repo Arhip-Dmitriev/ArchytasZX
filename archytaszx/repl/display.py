@@ -32,7 +32,10 @@ import io
 import itertools
 import os
 import re
+import select
 import sys
+import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -696,8 +699,15 @@ class Renderer:
         word = r"\mathrm{where}\ " if self.style == "plot" else "where "
         return "  " + word + (r",\ " if self.style == "plot" else ", ").join(items)
 
-    def entry(self, label: Label | None, value: object) -> str:
-        """``label = value`` or the bare value."""
+    def entry(self, label: Label | None, value: object, record: bool = True) -> str:
+        """``label = value`` or the bare value; with ``record=False`` its names stay out of
+        :meth:`where`."""
+        if not record:
+            symbols, funcs = list(self.seen_symbols), list(self.seen_funcs)
+            try:
+                return self.entry(label, value)
+            finally:
+                self.seen_symbols, self.seen_funcs = symbols, funcs
         if label is not None and label.kind == "func":
             return self.function(value)  # type: ignore[arg-type]
         if (
@@ -765,25 +775,124 @@ def dark(environ: Mapping[str, str] | None = None) -> bool:
     return not (bg.isdigit() and int(bg) in (7, 15))
 
 
+@dataclass
+class Terminal:
+    """What the terminal reported: foreground and background as ``#rrggbb`` and the character
+    cell height in pixels, each None when unknown."""
+
+    fg: str | None = None
+    bg: str | None = None
+    cell: int | None = None
+
+
+TERMINAL = Terminal()
+"""The terminal facts :func:`prepare` found."""
+
+_DPI = 100
+_WARM: list[threading.Thread] = []
+
+
+def _query(fd: int, request: str, pattern: str) -> re.Match[str] | None:
+    """The terminal's reply to ``request`` matching ``pattern``, read for at most 0.2 s."""
+    os.write(fd, request.encode())
+    reply, deadline = "", time.monotonic() + 0.2
+    while (left := deadline - time.monotonic()) > 0:
+        if not select.select([fd], [], [], left)[0]:
+            break
+        reply += os.read(fd, 256).decode(errors="replace")
+        found = re.search(pattern, reply)
+        if found:
+            return found
+    return None
+
+
+def _rgb(found: re.Match[str] | None) -> str | None:
+    if found is None:
+        return None
+    return "#" + "".join(f"{int(h, 16) * 255 // (16 ** len(h) - 1):02x}" for h in found.groups())
+
+
+def query_terminal() -> Terminal:
+    """Asks the controlling terminal for its colours (OSC 10/11) and cell size (CSI 16 t)."""
+    try:
+        import termios
+        import tty
+
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except (ImportError, OSError):
+        return Terminal()
+    try:
+        saved = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        try:
+            rgb = r"rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)"
+            fg = _rgb(_query(fd, "\x1b]10;?\x1b\\", "\x1b]10;" + rgb))
+            bg = _rgb(_query(fd, "\x1b]11;?\x1b\\", "\x1b]11;" + rgb))
+            cell = _query(fd, "\x1b[16t", r"\x1b\[6;(\d+);(\d+)t")
+        finally:
+            termios.tcsetattr(fd, termios.TCSAFLUSH, saved)
+    except (termios.error, OSError):
+        return Terminal()
+    finally:
+        os.close(fd)
+    return Terminal(fg, bg, int(cell.group(1)) if cell and int(cell.group(1)) > 0 else None)
+
+
+def _warm() -> None:
+    render_png([r"\sum_{x=0}^{q-1} |x\rangle"], dark_theme=True)
+
+
+def prepare(environ: Mapping[str, str] | None = None) -> None:
+    """Reads :data:`TERMINAL` and loads matplotlib in the background when the terminal shows
+    images."""
+    global TERMINAL
+    if protocol(environ) == "none":
+        return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        TERMINAL = query_terminal()
+    if not _WARM:
+        thread = threading.Thread(target=_warm, daemon=True)
+        _WARM.append(thread)
+        thread.start()
+
+
+def colours(dark_theme: bool, environ: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """``(fg, bg)``: ``ARCHYTASZX_IMAGE_FG``, then the terminal's own, then a theme default."""
+    env = os.environ if environ is None else environ
+    fg, bg = ("#e6e6e6", "#1e1e1e") if dark_theme else ("#111111", "#ffffff")
+    return env.get("ARCHYTASZX_IMAGE_FG") or TERMINAL.fg or fg, TERMINAL.bg or bg
+
+
 def render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False) -> bytes:
-    """Off-screen PNG of mathtext lines, one per row, left aligned."""
+    """Off-screen PNG of mathtext lines, left aligned, each row as tall as its ink plus a gap
+    of a third of the font size; the font matches the terminal cell height when known."""
+    if _WARM and _WARM[0] is not threading.current_thread():
+        _WARM[0].join()
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    fg, bg = ("#e6e6e6", "#1e1e1e") if dark_theme else ("#111111", "#ffffff")
-    fig = Figure(figsize=(1, 0.6 * len(lines) + 0.1), dpi=110)
-    FigureCanvasAgg(fig)
-    for k, line in enumerate(lines):
-        y = 1 - (k + 0.5) / len(lines)
-        fig.text(0, y, f"${line.strip()}$", fontsize=13, color=fg, va="center")
+    fg, bg = colours(dark_theme)
+    px = 0.75 * TERMINAL.cell if TERMINAL.cell else 14.0
+    size = px * 72 / _DPI
+    fig = Figure(dpi=_DPI)
+    canvas = FigureCanvasAgg(fig)
+    renderer = canvas.get_renderer()  # type: ignore[no-untyped-call]
+    texts = [
+        fig.text(0, 0, f"${line.strip()}$", fontsize=size, color=fg, va="bottom") for line in lines
+    ]
+    boxes = [t.get_window_extent(renderer) for t in texts]
+    pad, gap = px / 3, px / 3
+    width = max(b.width for b in boxes) + 2 * pad
+    height = sum(b.height for b in boxes) + gap * (len(boxes) - 1) + 2 * pad
+    fig.set_size_inches(width / _DPI, height / _DPI)
+    y = height - pad
+    for t, b in zip(texts, boxes, strict=True):
+        y -= b.height
+        t.set_position((pad / width, y / height))
+        y -= gap
     out = io.BytesIO()
     fig.savefig(
-        out,
-        format="png",
-        bbox_inches="tight",
-        pad_inches=0.08,
-        transparent=not opaque,
-        facecolor=bg if opaque else "none",
+        out, format="png", dpi=_DPI, transparent=not opaque, facecolor=bg if opaque else "none"
     )
     return out.getvalue()
 

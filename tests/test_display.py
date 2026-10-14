@@ -34,7 +34,7 @@ def plot_lines(source: str) -> list[str]:
 def test_shor_lines_render_in_mathtext() -> None:
     mathtext = pytest.importorskip("matplotlib.mathtext")
     lines = plot_lines(SHOR + "show(y, z, f, QFT)\n")
-    assert len(lines) == 11
+    assert len(lines) == 10
     for line in lines:
         mathtext.math_to_image(f"${line.strip()}$", io.BytesIO(), format="png")
 

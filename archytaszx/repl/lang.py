@@ -17,21 +17,21 @@ Statements (newline or ``;`` separated, ``#`` comments)::
 
     var n, m                  var q = 2^n          var t: real
     func f(x) = a^x % N
-    oracle U = |x>|y> -> |x>|y xor f(x)>
+    gate U = |x>|y> -> |x>|y xor f(x)>
     gate QFT = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
     |psi> = (H^@n @ I)|0>^@n @ |0>^@m          <phi| = ...       |k : n>
     gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d-1){ e^(2*pi*i*x*y/d) |y>_d }
     |chi>_d = F^@n |0>_d^@n                    |2>_3
     var z = measure|psi>      measure|psi>
     list L = {|psi>, <phi|, z}
-    show(L)  show(|psi>, ascii)                seed 7
+    show(L)  show(|psi>, ascii)  print("z =", z)  seed 7
 
 Every state is named ``|name>``; ``<name|`` is its conjugate transpose. Classical values are
 declared with ``var`` (types ``nat`` (default), ``int``, ``real``, ``complex``); measurement
 results are booleans (one qubit) or :class:`Bits`, both usable as numbers. ``|v : w>`` gives
 the basis ket v a register of width w. A ``_d`` suffix (a numeral or a variable) makes a
 ket, bra or pattern a dimension-d qudit; a state whose registers share a dimension other than
-2 is always written ``|name>_d``.
+2 is always written ``|name>_d``. A bare expression is a statement too.
 
 Expression precedence, loosest first: ``xor``; ``+ -``; ``@``; juxtaposition (operator
 application, scalar multiplication, ``|a>|b>`` tensor, ``<a|b>``, ``|a><b|``; grouped from
@@ -39,9 +39,12 @@ the right, so ``U |x>|y>`` applies U to both kets); ``* / %``;
 unary ``-``; ``^`` (right associative) and postfix ``^@``. Constants ``pi``, ``e``, ``i``;
 functions ``sqrt exp abs floor ceil`` and user ``func`` s. Built-in gates ``H X Y Z S T
 CNOT SWAP`` (one-qubit registers; ``H^@n`` for a register) and the identity ``I`` (absorbs
-the remaining registers when last in a tensor). Built-in states ``|+>``, ``|->``.
+the remaining registers when last in a tensor); ``AB`` is ``A B`` for operator names A, B.
+Built-in states ``|+>``, ``|->``, ``|i>``, ``|-i>``.
 
-Only ``show`` prints. Values are symbolic exactly when their inputs are.
+``show`` prints mathematical values, ``print`` strings and concrete values. Values are
+symbolic exactly when their inputs are. :attr:`Interpreter.last` is the :class:`Echo` of the
+latest statement.
 """
 
 from __future__ import annotations
@@ -54,6 +57,8 @@ import numpy as np
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.repl import display as D
+from archytaszx.repl import zxview
+from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 from archytaszx.semantics import pathsum as P
 
 
@@ -94,6 +99,16 @@ class Bits:
             out.append(digit)
         sep = "" if all(r <= 10 for r in self.radix) else "."
         return sep.join(str(x) for x in reversed(out))
+
+
+@dataclass(frozen=True)
+class Echo:
+    """A statement's result: ``val label : type = value``, or ``- : type = value`` without a
+    label; ``value`` is None for a bare symbol."""
+
+    label: D.Label | None
+    type: str
+    value: object = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +246,8 @@ class SumNode:
 
 
 _KEYWORDS = {"xor", "in", "and", "or", "not", "else"}
+_NAMED_STATES = {"+": sympy.Integer(1), "-": sympy.Integer(-1), "i": sympy.I, "-i": -sympy.I}
+"""Built-in qubit states ``(|0> + c|1>)/sqrt(2)`` by their coefficient c."""
 _COMPARE = {"==", "!=", "<", "<=", ">", ">="}
 _STARTERS = {"num", "ket", "bra"}
 
@@ -475,10 +492,10 @@ _CONSTANTS = {"pi": sympy.pi, "e": sympy.E, "i": sympy.I}
 _STATEMENTS = {
     "var",
     "func",
-    "oracle",
     "gate",
     "list",
     "show",
+    "print",
     "measure",
     "seed",
     "for",
@@ -596,11 +613,18 @@ class Interpreter:
         seed: int | None = None,
         plotter: D.Plotter | None = None,
         args: tuple[str, ...] = (),
+        check_oracles: bool = False,
+        mode: NotationMode = DEFAULT_MODE,
     ) -> None:
-        """``args`` are the command-line arguments read by ``arg(k)``."""
+        """``args`` are the command-line arguments read by ``arg(k)``; ``check_oracles`` checks
+        every gate that maps basis states to basis states for reversibility; ``mode`` picks
+        Dirac text, the ZX listing or both for ``show``."""
         if style not in D.STYLES:
             raise ValueError(f"unknown display style {style!r}")
         self.style = style
+        self.check_oracles = check_oracles
+        self.mode = mode
+        self.last: Echo | None = None
         self.plotter = plotter if plotter is not None else D.terminal_image
         self.rng = np.random.default_rng(seed)
         self.args = tuple(args)
@@ -635,9 +659,14 @@ class Interpreter:
     def _statement(self, text: str, builtin: bool = False) -> str:
         word = text.split(None, 1)[0]
         if word in ("for", "while", "if"):
-            return getattr(self, f"_stmt_{word}")(text)  # type: ignore[no-any-return]
+            out: str = getattr(self, f"_stmt_{word}")(text)
+            self.last = None
+            return out
         if word == "else" or word.startswith("else{"):
             raise LangSyntaxError("else must follow the closing } of an if on the same line")
+        self.last = None
+        if word == "oracle":
+            raise LangSyntaxError("oracle is gone; write gate (every gate is an oracle)")
         toks = tokenize(text)
         head = toks[0]
         if head.kind == "ident" and head.text in _STATEMENTS:
@@ -645,10 +674,34 @@ class Interpreter:
         if head.kind in ("ket", "bra") and len(toks) > 1 and toks[1].text == "=":
             self._assign_state(head, toks[2:])
             return ""
-        raise LangSyntaxError(
-            "a statement starts with var, func, oracle, gate, list, show, measure, seed, for, "
-            "while, if, assert, |name> = or <name| ="
-        )
+        p = self._parser(toks)
+        value = self._eval(p.expr(), Ctx())
+        if not p.done():
+            raise LangSyntaxError(
+                f"unexpected {p.peek().text!r}; a statement starts with var, func, gate, "  # type: ignore[union-attr]
+                "list, show, print, measure, seed, for, while, if, assert, assume, |name> =, "
+                "<name| = or is an expression"
+            )
+        self.last = Echo(None, self._type(value), value)
+        return ""
+
+    def _type(self, v: object) -> str:
+        """The type word of a value: ket, bra, op, bool, bits, nat, int, real or complex."""
+        if isinstance(v, P.State):
+            return "bra" if v.bra else "ket"
+        if isinstance(v, P.Operator):
+            return "op"
+        if isinstance(v, Bits):
+            return "bits"
+        if isinstance(v, (bool, sympy.logic.boolalg.Boolean)):
+            return "bool"
+        if isinstance(v, sympy.Basic):
+            if v.is_integer and v.is_nonnegative:
+                return "nat"
+            if v.is_integer:
+                return "int"
+            return "real" if v.is_real else "complex"
+        return type(v).__name__
 
     def _header(self, text: str, word: str) -> tuple[str, str, str]:
         """``(header, body, rest)`` of ``WORD header { body } rest``."""
@@ -817,9 +870,12 @@ class Interpreter:
                     self._measure(p, name)
                 else:
                     self._define(name, p.expr())
+                value = self.values[name]
+                self.last = Echo(D.Label("var", name), self._type(value), value)
             else:
                 self._forget(name)
                 self.values[name] = sympy.Symbol(name, **_TYPES[kind])
+                self.last = Echo(D.Label("var", name), kind)
             if p.done():
                 return
             p.take(",")
@@ -834,7 +890,8 @@ class Interpreter:
         if value.free_symbols and not value.is_Symbol:
             self.sugar.append((name, value))
 
-    def _measure(self, p: Parser, name: str | None) -> None:
+    def _measure(self, p: Parser, name: str | None) -> object:
+        """Measures the named ket of ``p``; returns the outcome and binds it to ``name``."""
         t = p.take()
         if t.kind != "ket" or not _IDENT.fullmatch(t.text.strip()):
             raise LangSyntaxError("measure takes a named ket, e.g. measure|psi>")
@@ -857,20 +914,18 @@ class Interpreter:
         except P.PathSumError as exc:
             raise LangError(str(exc)) from exc
         self.states[label] = m.post
-        if name is None:
-            return
-        self._forget(name)
         outcome = m.outcome
+        value: object = outcome
         if outcome.is_Integer and P.is_concrete(m.post):
             radix = tuple(
                 int(d)  # type: ignore[arg-type]
                 for d, w in zip(m.post.dims, m.post.widths, strict=True)
                 for _ in range(int(w))  # type: ignore[arg-type]
             )
-            single_qubit = radix == (2,)
-            self.values[name] = bool(outcome) if single_qubit else Bits(int(outcome), radix)
-            return
-        self.values[name] = outcome
+            value = bool(outcome) if radix == (2,) else Bits(int(outcome), radix)
+        if name is not None:
+            self._forget(name)
+            self.values[name] = value
         if outcome == symbol:
             dim = state.uniform_dim()
             size = (
@@ -879,10 +934,12 @@ class Interpreter:
                 else sympy.Mul(*(state.levels(k) for k in range(len(state.widths))))
             )
             self.measured[symbol] = D.Outcome(size, label, m.constraints, dim)
+        return value
 
     def _stmt_measure(self, toks: list[Tok], text: str, builtin: bool) -> None:
         p = self._parser(toks[1:])
-        self._measure(p, None)
+        value = self._measure(p, None)
+        self.last = Echo(None, self._type(value), value)
 
     def _stmt_seed(self, toks: list[Tok], text: str, builtin: bool) -> None:
         if len(toks) != 2 or toks[1].kind != "num" or "." in toks[1].text:
@@ -912,8 +969,9 @@ class Interpreter:
         if not p.done():
             raise LangSyntaxError(f"unexpected {p.peek().text!r} in func {name}")  # type: ignore[union-attr]
         self.funcs[name] = make_function(name, dummies, body)
+        self.last = Echo(D.Label("func", name), "func", self.funcs[name])
 
-    def _stmt_gate(self, toks: list[Tok], text: str, builtin: bool, oracle: bool = False) -> None:
+    def _stmt_gate(self, toks: list[Tok], text: str, builtin: bool) -> None:
         p = self._parser(toks[1:])
         name = p.take().text
         if not builtin:
@@ -948,10 +1006,9 @@ class Interpreter:
                 raise LangTypeError(f"the body of {name} must be a ket")
             return self._fix_widths(res, widths, dims)
 
+        oracle = self.check_oracles and not builtin
         self.ops[name] = P.Gate(name, len(names), fn, qubit=builtin, oracle=oracle, source=source)
-
-    def _stmt_oracle(self, toks: list[Tok], text: str, builtin: bool) -> None:
-        self._stmt_gate(toks, text, builtin, oracle=True)
+        self.last = Echo(D.Label("op", name), "gate", self.ops[name])
 
     def _pattern(self, node: object) -> list[tuple[str, str | None]]:
         if isinstance(node, Braket) and not node.bra:
@@ -1008,8 +1065,10 @@ class Interpreter:
         if not p.done():
             raise LangSyntaxError("unexpected text after the list")
         self.lists[name] = items
+        self.last = Echo(D.Label("list", name), "list", items)
 
-    def _stmt_show(self, toks: list[Tok], text: str, builtin: bool) -> str:
+    def _arguments(self, toks: list[Tok], text: str, word: str) -> list[tuple[object, str]]:
+        """``(node, source text)`` per argument of ``WORD(a, b, ...)`` or ``WORD a, b``."""
         p = self._parser(toks[1:])
         paren = p.at("(")
         if paren:
@@ -1025,14 +1084,30 @@ class Interpreter:
         if paren:
             p.take(")")
         if not p.done():
-            raise LangSyntaxError("unexpected text after show(...)")
+            raise LangSyntaxError(f"unexpected text after {word}(...)")
+        return nodes
+
+    def _stmt_show(self, toks: list[Tok], text: str, builtin: bool) -> str:
+        nodes = self._arguments(toks, text, "show")
         style = self.style
         if nodes and isinstance(nodes[-1][0], Name) and nodes[-1][0].id in D.STYLES:
             style = nodes.pop()[0].id  # type: ignore[attr-defined]
         entries: list[tuple[D.Label | None, object]] = []
         for node, source in nodes:
+            if isinstance(node, Str):
+                raise LangTypeError(f'show takes values; write print("{node.text}")')
             entries.extend(self._entries(node, source))
-        return self._render(entries, style)
+        return self.render(entries, style)
+
+    def _stmt_print(self, toks: list[Tok], text: str, builtin: bool) -> str:
+        parts: list[str] = []
+        for node, source in self._arguments(toks, text, "print"):
+            if isinstance(node, Str):
+                parts.append(node.text)
+                continue
+            for _, value in self._entries(node, source):
+                parts.append(_plain(value, source))
+        return " ".join(parts)
 
     def _context(self) -> D.Context:
         sugar = sorted(
@@ -1071,19 +1146,100 @@ class Interpreter:
         have = self.states[name].uniform_dim()
         return D.Label(kind, name, None if have is None or P.same(have, 2) else have)
 
-    def _render(self, entries: list[tuple[D.Label | None, object]], style: str) -> str:
+    def render(
+        self,
+        entries: list[tuple[D.Label | None, object]],
+        style: str | None = None,
+        mode: NotationMode | None = None,
+    ) -> str:
+        """Entries as Dirac lines (an image in ``plot`` style), ZX listings of states, or both,
+        then a ``where`` line for what the non-state entries mention."""
+        style = self.style if style is None else style
+        mode = self.mode if mode is None else mode
         if style == "plot":
-            r = D.Renderer("plot", self._context())
-            lines = [r.entry(lab, v) for lab, v in entries]
-            where = r.where()
-            image = self.plotter(lines + ([where] if where else []))
+            image = self._blocks(entries, "plot", mode)
             if image is not None:
                 return image
             style = "unicode"
+        return self._blocks(entries, style, mode) or ""
+
+    def _blocks(
+        self, entries: list[tuple[D.Label | None, object]], style: str, mode: NotationMode
+    ) -> str | None:
+        """Rendered entries; None when a plot cannot be drawn."""
         r = D.Renderer(style, self._context())
-        lines = [r.entry(lab, v) for lab, v in entries]
+        out: list[str] = []
+        math: list[str] = []
+
+        def flush() -> bool:
+            if math and style == "plot":
+                image = self.plotter(list(math))
+                if image is None:
+                    return False
+                out.append(image)
+            else:
+                out.extend(math)
+            math.clear()
+            return True
+
+        for lab, v in entries:
+            state = isinstance(v, P.State)
+            if not state or mode is not NotationMode.ZX:
+                math.append(r.entry(lab, v, record=not state))
+            if state and mode is not NotationMode.DIRAC:
+                if not flush():
+                    return None
+                out.append(self._zx_text(lab, v))  # type: ignore[arg-type]
         where = r.where()
-        return "\n".join(lines + ([where] if where else []))
+        if where:
+            math.append(where)
+        if not flush():
+            return None
+        return "\n".join(out)
+
+    def echo_parts(self, e: Echo, style: str | None = None) -> tuple[str, str, str | None]:
+        """``(name, type, value text)`` of ``e`` in a text style; the name is ``-`` without a
+        label and the value text None for a bare symbol."""
+        style = self.style if style is None else style
+        style = "unicode" if style == "plot" else style
+        r = D.Renderer(style, self._context())
+        lab, v = e.label, e.value
+        name = "-" if lab is None else r.label(lab)
+        if lab is not None and lab.kind == "func":
+            params = ", ".join(D.name_text(q.name, style) for q in v._params)  # type: ignore[attr-defined]
+            return f"{name}({params})", e.type, r.expr(v._body)  # type: ignore[attr-defined]
+        if lab is not None and lab.kind == "op" and isinstance(v, P.Gate):
+            return name, e.type, D.source_text(v.source, style)
+        if lab is not None and lab.kind == "list":
+            items = [r.label(x) if x is not None else r.value(y) for x, y in v]  # type: ignore[attr-defined]
+            return name, e.type, "{" + ", ".join(items) + "}"
+        if v is None:
+            return name, e.type, None
+        if isinstance(v, sympy.Symbol) and v in self.measured:
+            return name, e.type, r.measured(v)
+        if lab is not None and lab.kind == "var" and isinstance(v, sympy.Expr):
+            return name, e.type, r.expr(v, sympy.Symbol(lab.name))
+        if isinstance(v, P.State) and self.mode is not NotationMode.DIRAC:
+            listing = self._zx_body(v)
+            if self.mode is NotationMode.ZX:
+                return name, e.type, listing
+            return name, e.type, r.value(v) + "\n" + listing
+        return name, e.type, r.value(v)
+
+    def _zx_text(self, label: D.Label | None, s: P.State) -> str:
+        """``label =`` then the indented ZX listing of ``s``."""
+        style = "ascii" if self.style == "ascii" else "unicode"
+        head = D.Renderer(style).label(label) if label is not None else ""
+        return f"{head} =\n{self._zx_body(s)}".lstrip()
+
+    @staticmethod
+    def _zx_body(s: P.State) -> str:
+        """The ZX listing of ``s`` indented by two spaces, or ``no ZX form (reason)``."""
+        try:
+            body = zxview.listing(s)
+        except zxview.ZXViewError as exc:
+            return f"  no ZX form ({exc})"
+        return "\n".join("  " + line for line in body.splitlines())
 
     def _entries(self, node: object, source: str = "") -> list[tuple[D.Label | None, object]]:
         if isinstance(node, Braket) and _IDENT.fullmatch(node.content.strip()):
@@ -1141,6 +1297,8 @@ class Interpreter:
             raise LangTypeError(f"the state holds dimension-{have} qudits; write |{name}>_{have} =")
         state = P.dagger(value) if want_bra else value
         self.states[name] = P.simplify(state)
+        shown = P.dagger(self.states[name]) if want_bra else self.states[name]
+        self.last = Echo(self._label(head.kind, name), head.kind, shown)
 
     @staticmethod
     def _kind(v: object) -> str:
@@ -1213,8 +1371,23 @@ class Interpreter:
         if name in self.states:
             raise LangTypeError(f"{name} is a state; write |{name}> or <{name}|")
         if name in self.lists:
-            raise LangTypeError(f"{name} is a list; only show takes lists")
+            raise LangTypeError(f"{name} is a list; only show and print take lists")
+        ops = self._split_ops(name)
+        if ops is not None:
+            return P.Compose(tuple(self.ops[o] for o in ops))
         raise LangError(f"{name!r} is not defined; declare it with var")
+
+    def _split_ops(self, name: str) -> list[str] | None:
+        """The only way to write ``name`` as two or more operator names, or None."""
+        ways: dict[int, list[list[str]]] = {0: [[]]}
+        for end in range(1, len(name) + 1):
+            ways[end] = [
+                w + [name[k:end]] for k in range(end) if name[k:end] in self.ops for w in ways[k]
+            ][:2]
+        found = [w for w in ways[len(name)] if len(w) > 1]
+        if len(found) > 1:
+            raise LangError(f"{name!r} splits into operators in more than one way; use spaces")
+        return found[0] if found else None
 
     def _braket(self, node: Braket, ctx: Ctx) -> P.State:
         content = node.content.strip()
@@ -1222,17 +1395,18 @@ class Interpreter:
         if _IDENT.fullmatch(content) and content in self.states and content not in ctx.locals:
             self._check_dim(content, dim)
             s = self.states[content]
-        elif content in ("+", "-"):
+        elif content in _NAMED_STATES and not (content == "i" and "i" in ctx.locals):
             if dim is not None and not P.same(dim, 2):
                 raise LangTypeError(f"|{content}> is a qubit state")
-            sign = 1 if content == "+" else -1
-            s = P.scale(1 / sympy.sqrt(2), P.add(P.basis(0, 1), P.scale(sign, P.basis(1, 1))))
+            one = P.scale(_NAMED_STATES[content], P.basis(1, 1))
+            s = P.scale(1 / sympy.sqrt(2), P.add(P.basis(0, 1), one))
         else:
-            s = P.EMPTY
-            for item in _split_items(content):
-                s = P.tensor(s, self._basis(item, ctx, dim))
-            if not s.widths:
+            if not content:
                 raise LangSyntaxError("an empty ket")
+            if len(_split_items(content)) > 1:
+                parts = "".join(f"|{x}>" for x in _split_items(content))
+                raise LangSyntaxError(f"|{content}> is not a ket; write {parts}")
+            s = self._basis(content, ctx, dim)
         return P.dagger(s) if node.bra else s
 
     def _basis(self, text: str, ctx: Ctx, dim: sympy.Expr | None) -> P.State:
@@ -1406,6 +1580,30 @@ class Interpreter:
         if op == "xor":
             return P.xor(a, b)
         raise LangSyntaxError(f"unknown operator {op}")
+
+
+def _plain(v: object, source: str) -> str:
+    """A concrete value as plain text: true/false, integers, fractions or decimals."""
+    if isinstance(v, D.Text):
+        return v.text
+    if isinstance(v, (bool, sympy.logic.boolalg.BooleanAtom)):
+        return "true" if v else "false"
+    if isinstance(v, Bits):
+        return str(int(v))
+    if isinstance(v, sympy.Basic) and v.is_number:
+        if v.is_Rational:
+            return str(v)
+        z = complex(v.evalf())
+
+        def num(x: float) -> str:
+            return str(int(x)) if x.is_integer() else repr(x)
+
+        if z.imag == 0:
+            return num(z.real)
+        sign = "-" if z.imag < 0 else "+"
+        return f"{num(z.real)} {sign} {num(abs(z.imag))}i" if z.real else f"{num(z.imag)}i"
+    what = "symbolic" if isinstance(v, sympy.Basic) else "not a concrete value"
+    raise LangTypeError(f"print takes strings and concrete values; {source} is {what}, use show")
 
 
 def _boolean(v: sympy.Basic) -> sympy.Basic:

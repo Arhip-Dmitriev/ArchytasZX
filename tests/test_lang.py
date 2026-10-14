@@ -37,7 +37,7 @@ var n, m, N, a
 var q = 2^n
 func f(x) = a^x % N
 
-oracle U_f = |x>|y> -> |x>|y xor f(x)>
+gate U_f = |x>|y> -> |x>|y xor f(x)>
 gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q-1){ e^(2*pi*i*x*y/q) |y> }
 
 |psi_0> = |0>^@n @ |0>^@m
@@ -55,16 +55,14 @@ SHOR_ASCII = """\
 |psi_1> = 1/sqrt(q) sum(x in 0..q - 1){ |x> @ |0>^@m }
 |psi_2> = |z[:n]> @ |f(z[:n])>
 |psi_2> = |z[:n]> @ |f(z[:n])>
-|psi_3> = 1/sqrt(q) sum(y in 0..q - 1){ e^(2*pi*i*y*z[:n]/q) |y> @ |f(z[:n])> }
-  where q = 2^n, f(x) = a^x % N, z in {0,1}^(m + n) measured from |psi_2>, z[n:] = f(z[:n])"""
+|psi_3> = 1/sqrt(q) sum(y in 0..q - 1){ e^(2*pi*i*y*z[:n]/q) |y> @ |f(z[:n])> }"""
 
 SHOR_UNICODE = """\
 |ψ_0⟩ = |0⟩^⊗n ⊗ |0⟩^⊗m
 |ψ_1⟩ = 1/√q Σ_{x=0}^{q - 1} |x⟩ ⊗ |0⟩^⊗m
 |ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
 |ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
-|ψ_3⟩ = 1/√q Σ_{y=0}^{q - 1} e^{2πi·y·z[:n]/q} |y⟩ ⊗ |f(z[:n])⟩
-  where q = 2^n, f(x) = a^x mod N, z ∈ {0,1}^(m + n) measured from |ψ_2⟩, z[n:] = f(z[:n])"""
+|ψ_3⟩ = 1/√q Σ_{y=0}^{q - 1} e^{2πi·y·z[:n]/q} |y⟩ ⊗ |f(z[:n])⟩"""
 
 
 def numeric_shor(n: int = 3, m: int = 4, big_n: int = 15, a: int = 7) -> str:
@@ -97,7 +95,7 @@ class TestShorSymbolic:
         drawn: list[list[str]] = []
         interp = Interpreter(style="plot", plotter=lambda lines: drawn.append(lines) or "IMG")
         assert interp.execute(SHOR) == "IMG"
-        assert len(drawn) == 1 and len(drawn[0]) == 6
+        assert len(drawn) == 1 and len(drawn[0]) == 5
         assert drawn[0][1].startswith(r"|\psi_{1}\rangle = \frac{1}{\sqrt{q}} \sum_{x=0}^{q - 1}")
 
     def test_no_output_without_show(self) -> None:
@@ -153,7 +151,10 @@ class TestShorNumeric:
         ("|a> = 1/sqrt(2) (|0> - |1>)", "|a> = sqrt(2)/2 |0> - sqrt(2)/2 |1>"),
         ("|a> = |1>^@3", "|a> = |1>^@3"),
         ("|a> = |5>", "|a> = |5>"),
-        ("|a> = |0, 1>", "|a> = |0> @ |1>"),
+        ("|a> = |i>", "|a> = sqrt(2)/2 |0> + sqrt(2)*i/2 |1>"),
+        ("|a> = |-i>", "|a> = sqrt(2)/2 |0> - sqrt(2)*i/2 |1>"),
+        ("|a> = HX|0>", "|a> = sqrt(2)/2 sum(y in 0..1){ (-1)^y |y> }"),
+        ("|a> = sum(i in 0..1){ |i> }", "|a> = sum(i in 0..1){ |i> }"),
         ("|a> = |0>|1>", "|a> = |0> @ |1>"),
         ("|a> = (|0><1|) |1>", "|a> = |0>"),
         ("|a> = (X @ I) |0>|0>|0>", "|a> = |1> @ |0> @ |0>"),
@@ -212,7 +213,7 @@ class TestSymbolic:
         assert interp.execute("show(b, c)") == "b = 101 (5)\nc = 10"
 
     def test_symbolic_measure_of_basis_state(self) -> None:
-        interp, _ = run("var n, k\n|a> = |k : n, 0>\nvar b = measure|a>")
+        interp, _ = run("var n, k\n|a> = |k : n>|0>\nvar b = measure|a>")
         assert interp.execute("show(b, |a>)") == "b = 2*k\n|a> = |k> @ |0>"
 
     def test_measure_collapses(self) -> None:
@@ -228,10 +229,7 @@ class TestQudits:
     def test_symbolic_fourier_power(self) -> None:
         source = "var d, n\nvar q = d^n\n" + FOURIER + "|chi>_d = F^@n |0>_d^@n\n"
         out = run(source + "show(|chi>_d, <chi|chi>_d)")[1]
-        assert (
-            out
-            == "|chi>_d = 1/sqrt(q) sum(x in 0..q - 1){ |x>_d }\n<chi|chi>_d = 1\n  where q = d^n"
-        )
+        assert out == "|chi>_d = 1/sqrt(q) sum(x in 0..q - 1){ |x>_d }\n<chi|chi>_d = 1"
 
     def test_fourier_twice_reflects_zero(self) -> None:
         source = "var d, n\n" + FOURIER + "|b>_d = F^@n F^@n |0>_d^@n\nshow(|b>_d)"
@@ -240,7 +238,9 @@ class TestQudits:
     def test_symbolic_measurement_domain(self) -> None:
         source = "var d, n\n" + FOURIER + "|chi>_d = F^@n |0>_d^@n\nvar z = measure|chi>_d\n"
         out = run(source + "show(|chi>_d)", "unicode")[1]
-        assert out == "|χ⟩_d = |z⟩_d\n  where z ∈ {0,…,d - 1}^n measured from |χ⟩_d"
+        assert out == "|χ⟩_d = |z⟩_d"
+        z = run(source + "show(z)", "unicode")[1]
+        assert z == "z ∈ {0,…,d - 1}^n\n  where z ∈ {0,…,d - 1}^n measured from |χ⟩_d"
 
     def test_digit_shift_power(self) -> None:
         source = "var d, n\ngate Xd = |x>_d -> |(x + 1) % d>_d\n|v>_d = Xd^@n |0>_d^@n\n"
@@ -325,10 +325,14 @@ class TestErrors:
             ("var H", LangTypeError, "already a op"),
             ("var pi", LangSyntaxError, "reserved"),
             ("gate H = |x> -> |x>", LangTypeError, "built-in"),
-            ("oracle B = |x> -> |0>\n|a> = B|1>", LangError, "not reversible"),
-            ("oracle B = |x> -> H|x>\n|a> = B|1>", LangError, "basis states"),
+            ("oracle B = |x> -> |0>", LangSyntaxError, "oracle is gone"),
+            ("|a> = |0, 1>", LangSyntaxError, "write \\|0>\\|1>"),
+            ('show("x")', LangTypeError, "print"),
+            ("var n\nprint(n)", LangTypeError, "symbolic"),
+            ("print(|0>)", LangTypeError, "not a concrete value"),
             ("|a> = |0\nshow(|a>)", LangSyntaxError, "unclosed ket"),
-            ("hello", LangSyntaxError, "a statement starts"),
+            ("hello", LangError, "not defined"),
+            ("var x = 1\nx x x =", LangSyntaxError, "a statement starts"),
             ("var x: float", LangTypeError, "unknown type"),
             ("|a> = |0>\nvar z = measure|b>", LangTypeError, "not defined"),
             ("|a> = |0>\nshow(a)", LangTypeError, "is a state"),
@@ -403,10 +407,11 @@ class TestShorsScript:
     def test_symbolic_two_inputs(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main([SHORS, "x", "y", "--ascii"]) == 0
         out = capsys.readouterr().out.splitlines()
+        assert out[0] == "state before measurement"
         assert out[1] == (
             "|psi> = 1/Q sum(x' in 0..Q - 1, k in 0..Q - 1){ e^(-2*pi*i*k*x'/Q) |k> @ |a^x' % N> }"
         )
-        assert out[2] == "  where Q = 2^n, n = 2*m, m = floor(log(N)/log(2)) + 1, N = x*y"
+        assert out[2] == "result"
         assert "p = gcd(h - 1, N)" in out and "|psi> = |z[:n]> @ |z[n:]>" in out
         assert "r % 2 == 0: assumed" in out and "p * q == N: true" in out
 
@@ -428,7 +433,7 @@ class TestControlFlow:
     def test_symbolic_loop_folds(self) -> None:
         source = (
             "var n, a, N\n"
-            "oracle M = |x>|y> -> |x>|(y * powmod(a, 2^j, N)^bit(x, j)) % N>\n"
+            "gate M = |x>|y> -> |x>|(y * powmod(a, 2^j, N)^bit(x, j)) % N>\n"
             "|s> = H^@n |0>^@n @ |1 : n>\nfor j in 0..n-1 { |s> = M |s> }\nshow(|s>)"
         )
         assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n - 1){ |x> @ |a^x % N> }"
@@ -444,3 +449,84 @@ class TestControlFlow:
         assert interp.execute(
             "var a = arg(1)\nvar b = arg(2)\nvar c = arg(3, 7)\nshow(a, b, c)"
         ) == ("a = 21\nb = x\nc = 7")
+
+
+class TestPrintAndEcho:
+    def test_print_strings_and_concrete_values(self) -> None:
+        out = run('var t = 3/4\nprint("t is", t, 2 + 3*i, sqrt(4), 1 == 1)')[1]
+        assert out == "t is 3/4 2 + 3i 2 true"
+
+    def test_print_measured_bits_as_integer(self) -> None:
+        out = run("|a> = |1>|0>|1>\nvar z = measure|a>\nprint(z)")[1]
+        assert out == "5"
+
+    def test_echo_of_each_statement_kind(self) -> None:
+        interp = Interpreter(style="ascii")
+        cases = [
+            ("var n", ("n", "nat", None)),
+            ("var q = 2^n", ("q", "nat", "2^n")),
+            ("func f(x) = x + 1", ("f(x)", "func", "x + 1")),
+            ("gate U = |x> -> |x xor 1>", ("U", "gate", "|x> -> |x xor 1>")),
+            ("|a> = X|0>", ("|a>", "ket", "|1>")),
+            ("<b| = <0|", ("<b|", "bra", "<0|")),
+            ("<a|a>", ("-", "nat", "1")),
+            ("H", ("-", "op", "H")),
+            ("list L = {|a>}", ("L", "list", "{|a>}")),
+            ("var z = measure|a>", ("z", "bool", "true")),
+        ]
+        for source, expected in cases:
+            interp.execute(source)
+            assert interp.last is not None, source
+            assert interp.echo_parts(interp.last) == expected, source
+        interp.execute("seed 3")
+        assert interp.last is None
+
+    def test_only_the_last_statement_echoes(self) -> None:
+        interp = Interpreter(style="ascii")
+        interp.execute("var a = 1; var b = 2")
+        assert interp.echo_parts(interp.last) == ("b", "nat", "2")  # type: ignore[arg-type]
+
+
+class TestOracleCheck:
+    def test_off_by_default(self) -> None:
+        assert run("gate B = |x> -> |0>\n|a> = B|1>\nshow(|a>)")[1] == "|a> = |0>"
+
+    def test_irreversible_classical_gate_is_refused(self) -> None:
+        interp = Interpreter(style="ascii", check_oracles=True)
+        with pytest.raises(LangError, match="not reversible"):
+            interp.execute("gate B = |x> -> |0>\n|a> = B|1>")
+
+    def test_quantum_gates_pass(self) -> None:
+        interp = Interpreter(style="ascii", check_oracles=True)
+        interp.execute("gate G = |x> -> H|x>\ngate N = |x> -> |1 - x>\n|a> = G N|0>")
+        assert interp.execute("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..1){ (-1)^y |y> }"
+
+
+class TestCompose:
+    def test_concatenated_names_compose(self) -> None:
+        assert run("|a> = XX|0>\nshow(|a>)")[1] == "|a> = |0>"
+
+    def test_ambiguous_split_is_refused(self) -> None:
+        source = "gate A = |x> -> |x>\ngate AB = |x> -> |x>\ngate BC = |x> -> |x>\n"
+        source += "gate C = |x> -> |x>\ngate B = |x> -> |x>\n|a> = ABC|0>"
+        with pytest.raises(LangError, match="more than one way"):
+            run(source)
+
+
+class TestShowModes:
+    def test_zx_and_both(self) -> None:
+        from archytaszx.repl.printer import NotationMode
+
+        interp, _ = run("|a> = |1>")
+        zx = interp.render([(None, interp.states["a"])], "ascii", NotationMode.ZX)
+        assert zx.splitlines()[0] == "=" and zx.splitlines()[1].startswith("  graph:")
+        interp.mode = NotationMode.BOTH
+        both = interp.execute("show(|a>)").splitlines()
+        assert both[0] == "|a> = |1>" and both[1] == "|a> =" and both[2].startswith("  graph:")
+
+    def test_symbolic_state_has_no_zx_form(self) -> None:
+        from archytaszx.repl.printer import NotationMode
+
+        interp = Interpreter(style="ascii", mode=NotationMode.ZX)
+        out = interp.execute("var n\n|a> = |0>^@n\nshow(|a>)")
+        assert out == "|a> =\n  no ZX form (symbolic widths, dimensions or ranges)"

@@ -9,7 +9,7 @@ var n = 2*m
 var Q = 2^n
 
 func cmul(c, y, k) = ifelse(y < N, (y * k^c) % N, y)
-oracle CU = |x>|y> -> |x>|cmul(bit(x, j), y, powmod(a, 2^j, N))>
+gate CU = |x>|y> -> |x>|cmul(bit(x, j), y, powmod(a, 2^j, N))>
 gate IQFT = |x> -> 1/sqrt(Q) sum(k in 0..Q-1){ e^(-2*pi*i*x*k/Q) |k> }
 
 var a
@@ -29,7 +29,7 @@ while tries == 0 or (known(N) and p == 0 and tries < 20) {
       |psi> = CU |psi>
     }
     |psi> = (IQFT @ I) |psi>
-    if not known(N) { show("state before measurement", |psi>) }
+    if not known(N) { print("state before measurement"); show(|psi>) }
     var z = measure|psi>
     var c = floor(z / 2^m)
     var r = denom(c / Q, N)
@@ -55,9 +55,12 @@ if not known(N) {
   assume p > 1 and p < N
 }
 
-show("result", N, p, q)
-show("final state", |psi>)
+print("result")
+show(N, p, q)
+print("final state")
+show(|psi>)
 if how == 3 {
-  show("proof", a, z, c, r, powmod(a, r, N) == 1, r % 2 == 0, h, p > 1 and p < N, p * q == N)
+  print("proof")
+  show(a, z, c, r, powmod(a, r, N) == 1, r % 2 == 0, h, p > 1 and p < N, p * q == N)
 }
-if how == 1 { show("proof", N % 2 == 0, p * q == N) }
+if how == 1 { print("proof"); show(N % 2 == 0, p * q == N) }
