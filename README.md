@@ -45,7 +45,9 @@ python -m pytest
 The distribution is named `ArchytasZX` and installs from PyPI as `archytaszx` (the index
 normalizes the two to the same name); the importable package is `archytaszx`. The
 `archytaszx` command starts an interactive shell for the Dirac language (or runs `.azx`
-scripts such as [`examples/shor.azx`](examples/shor.azx)); `SYNTAX.txt` is its quick manual.
+scripts such as [`examples/shor.azx`](examples/shor.azx)); the language is summarised in the
+docstring of [`archytaszx/repl/lang.py`](archytaszx/repl/lang.py) and `:help` lists the engine
+commands.
 Engine commands start with `:` in the shell.
 
 ### Imports
