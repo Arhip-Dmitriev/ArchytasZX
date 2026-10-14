@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ArchytasZX"
-version = "0.19.2"
+version = "0.19.3"
 description = "A qufinite ZX-calculus engine with symbolic qudit count and dimension"
 readme = "README.md"
 requires-python = ">=3.11"
