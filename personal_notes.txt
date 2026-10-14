@@ -4,5 +4,5 @@ Issues:
 - matplotlib text needs to match terminal color
 - matplotlib text is too big and has too much space between lines
 - for state we just need the state in output, not the where part
-- for proof output I want like a seperate thing formated more or less in the style of a mathematical proof
+- for proof output I want like a seperate thing formated more or less in the style of a mathematical proof (this may just be called certificate)
 - 
