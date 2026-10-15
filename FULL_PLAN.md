@@ -248,13 +248,6 @@ i. profile match.py and contract_numeric.py
 - the matcher and the numeric kernel sit behind narrow interfaces so a later port touches only them
 - done when: performance is acceptable at the working diagram sizes
 
-Phase 22: Documentation and examples
-i. README and an examples script
-- there is a quickstart and a runnable script reproducing the Dirac to ZX to rewrite to Dirac example, including a symbolic-n proof and a certificate
-- there is a rule reference listing each rule, its side conditions, and its exact scalar
-- done when: a new reader can reproduce the example unaided
-- actually we want several examples
-
 ===============================================================
 CONTEXT
 

@@ -1,0 +1,10 @@
+# State copy for every n and every qudit dimension d, proved by induction on n:
+# an X state into a Z spider with n outputs = n X states, scaled by d^((1-n)/2).
+
+:load count n; c = X(0 -> 1, d); scalar d^((1-n)/2); box q x n nodes c
+:name copies
+:load count n; s = X(0 -> 1, d); z = Z(1 -> 1, d); wire s.out0 -- z.in0; box p x n ports z.out0
+:prove against @copies
+:certificate emit induction
+:certificate kernel
+:certificate lean copy_induction.lean

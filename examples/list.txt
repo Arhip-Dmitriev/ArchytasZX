@@ -1,0 +1,17 @@
+I want these example in as basic python with azx import and .azx scripts, and attempted in Qiskit, PyZX, and Quantomatic.
+
+1.  Prove CNOT Ladder vs fanout for symbolic n and D
+2.  prove the output of deutsch Jozsa over Z_d^N
+3.  prove across symoblic d and n that telopering along n hops is identity
+4.  prove that log-depth GHZ tree equals linear ladder (at this point just assume symbolic n and d for all the examples)
+5.  prove that parralized fanout = sequential fanout
+6.  prove standard decomp into controlled phases + a swap network equal DFT.
+7.  prove that reversing n wires with adjacent swaps = target permutation
+8.  prove that a cyclic shift composed with itself n times is the identity.
+9.  prove what X^a Z^b becomes after passing through H^@n
+10. prove what X^a Z^b becomes after passing through a CNOT ladder
+11. prove H^⊗n (2|0⟩⟨0| − I) H^⊗n = 2|s⟩⟨s| − I
+12. prove that controlled-U^(2^k) stages followd by inverse QFT gives psi exactly for an eigenphase with n bits
+13. prove that ripple carry adder implements  |x⟩ → |x+1 mod d^n⟩ for every width.
+14. prove that qft adder implements  |x⟩ → |x+1 mod d^n⟩ for every width.
+15. prove that the repetition code or a qudit surface-code patch's encoder maps logical states correctly, for code distance as a symbol.

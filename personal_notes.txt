@@ -1,16 +1,16 @@
-0.19.4 -> 0.19.5:
-- we should be able to emit latex source code as another alternate to unicode,ascii
-- several of the unicode, ascii, mathtext (new flag needed even though default), latex flags just emits all of them.
-    - --order flag means that we hold output until erorr or exit and then emits all output categorised by format. 
-    - so by default it will do prompting->format1->format2->prompting->format1->format2. but then with order, it will wait till the end and emit them all in format1all->format2all
-- need to be able to define gates via matrices, that fully support symbolic inputs.
-    - even function return values based on state in matrix that then acts on state and shit
-- --verbose not -v, only --help not -h.
-- we need proper proofs on a native kernel thing, but properly mathematical, and then we need export to lean.
-- I want a public embedding layer so that it can be used directly in normal python code as well
-    - this would be stuff like azx.|psi> = ...
-    - y = azx.measure|psi>
-    - azx.A|psi> *applies A to psi
-    - and so forth.
-- no WHERE lines in the output of show!!!!!!
-- it would be nice if errors displayed in terminal-error or terminal-red or smth like system native, but red or error-like
+Pre QuRise
+ - run phases 20 & 21
+ - make wonderful readme
+ - make examples with commented tutorial like code style and awesome output formatting
+ - proper set of citations
+ - benchmarking
+ - pretty pictures
+ - Spend all my claude credits on extreme debugging
+
+
+
+
+future only:
+ - add compatibility for python 3.8 up 
+ - port to rust or c if it gives benefits
+ - make available without python as a binary like ocaml is
