@@ -20,9 +20,11 @@ A :class:`Shell` owns one :class:`~archytaszx.repl.lang.Interpreter`, one
 
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
 * ``history`` and ``quit``/``exit`` are handled here;
-* ``:dirac``, ``:zx`` and ``:both`` pick what ``show``, verbose mode and engine commands
-  print, ``:verbose_on``/``:verbose_off`` switch verbose mode and ``:config`` shows or sets
-  the image size and colour;
+* ``:dirac``, ``:zx`` (``:zxmatplot``), ``:zxunicode``, ``:zxascii``, ``:both`` and ``:raw``
+  pick what
+  ``show``, verbose mode and engine commands print and how ZX diagrams are drawn, ``:listing``
+  toggles the graph listing under each drawing, ``:verbose_on``/``:verbose_off`` switch verbose
+  mode and ``:config`` shows or sets the image size and colour;
 * any other line starting with ``:`` is an engine command, the rest of the line going to
   :func:`~archytaszx.repl.commands.run` and its outcome printed by
   :func:`~archytaszx.repl.commands.format_outcome` in the current mode;
@@ -59,11 +61,25 @@ HISTORY_FILE = "~/.archytaszx_history"
 
 _HISTORY_LENGTH = 1000
 _QUIT_WORDS = frozenset({"quit", "exit"})
-_MODE_WORDS = frozenset(m.value for m in NotationMode)
-_MODE_HELP = {
+VIEWS: dict[str, tuple[NotationMode, str | None]] = {
+    "dirac": (NotationMode.DIRAC, None),
+    "zx": (NotationMode.ZX, "matplot"),
+    "zxmatplot": (NotationMode.ZX, "matplot"),
+    "zxunicode": (NotationMode.ZX, "unicode"),
+    "zxascii": (NotationMode.ZX, "ascii"),
+    "both": (NotationMode.BOTH, "matplot"),
+    "raw": (NotationMode.RAW, None),
+}
+"""Each view word: the notation mode and the ZX drawing style it selects."""
+
+_VIEW_HELP = {
     "dirac": "show Dirac notation",
-    "zx": "show ZX graph listings",
-    "both": "show ZX graph listings and Dirac notation",
+    "zx": "draw ZX diagrams with matplotlib (alias of --zxmatplot)",
+    "zxmatplot": "draw ZX diagrams with matplotlib, Unicode without an image protocol",
+    "zxunicode": "draw ZX diagrams on a Unicode character grid",
+    "zxascii": "draw ZX diagrams on an ASCII character grid",
+    "both": "show Dirac notation and the matplotlib ZX drawing",
+    "raw": "print full ZX graph listings, nothing summarised or capped",
 }
 
 
@@ -74,6 +90,7 @@ class Shell:
         self,
         *,
         mode: NotationMode = DEFAULT_MODE,
+        zx_style: str = "matplot",
         unicode: bool = False,
         session: Session | None = None,
         commands: bool = False,
@@ -84,13 +101,15 @@ class Shell:
         check_oracles: bool = False,
         verbose: bool = False,
         color: bool = False,
+        listing: bool = False,
     ) -> None:
         """Type checks: TypeError on a mode that is not a NotationMode, a non-bool unicode or
         a session that is not a Session; ValueError on an unknown display style.
 
         ``display`` defaults to ``unicode`` when ``unicode`` is set, else ``plot``; ``args`` are
         the script arguments read by ``arg(k)``; ``check_oracles`` checks classical gates for
-        reversibility; ``verbose`` starts in verbose mode; ``color`` colours its echoes.
+        reversibility; ``verbose`` starts in verbose mode; ``color`` colours its echoes; ``listing``
+        starts with graph listings under ZX drawings.
         """
         if not isinstance(mode, NotationMode):
             raise TypeError(f"mode must be a NotationMode, got {mode!r}")
@@ -110,7 +129,9 @@ class Shell:
             args=tuple(args),
             check_oracles=check_oracles,
             mode=mode,
+            zx_style=zx_style,
         )
+        self.interpreter.listing = listing
         self.verbose = verbose
         self.color = color
         self.pending: list[str] = []
@@ -164,8 +185,11 @@ class Shell:
             word, rest = (text.split(maxsplit=1) + [""])[:2]
             word = word.lower()
             rest = rest.strip()
-        if word in _MODE_WORDS and not rest:
+        if word in VIEWS and not rest:
             return self._mode(word)
+        if word == "listing" and not rest:
+            self.interpreter.listing = not self.interpreter.listing
+            return f"listing: {'on' if self.interpreter.listing else 'off'}"
         if word in ("verbose_on", "verbose_off") and not rest:
             self.verbose = word == "verbose_on"
             return f"verbose: {'on' if self.verbose else 'off'}"
@@ -183,7 +207,15 @@ class Shell:
         try:
             if outcome.ok and outcome.command == "detail" and self.unicode:
                 return detail_text(outcome.detail, unicode=True)
-            return format_outcome(outcome, self.mode, unicode=self.unicode)
+            interp = self.interpreter
+            style = "ascii" if interp.style == "ascii" else interp.zx_style
+            return format_outcome(
+                outcome,
+                self.mode,
+                unicode=self.unicode,
+                zx_style=style,
+                listing=interp.listing,
+            )
         except KeyboardInterrupt:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -320,10 +352,12 @@ class Shell:
             return " ".join(part for part in parts if part)
 
     def _mode(self, word: str) -> str:
-        """Sets the notation mode."""
-        self.mode = NotationMode(word)
+        """Sets the notation mode and the ZX drawing style of a view word."""
+        self.mode, style = VIEWS[word]
         self.interpreter.mode = self.mode
-        return f"mode: {self.mode.value}"
+        if style is not None:
+            self.interpreter.zx_style = style
+        return f"mode: {word}"
 
     def _config(self, rest: str) -> str:
         """``config`` lists the image settings; ``config KEY VALUE`` sets one, ``config save``
@@ -481,14 +515,14 @@ def _argument_parser() -> argparse.ArgumentParser:
         prog="archytaszx", description="ArchytasZX symbolic qufinite ZX-calculus shell."
     )
     modes = parser.add_mutually_exclusive_group()
-    for m in NotationMode:
+    for word in VIEWS:
         modes.add_argument(
-            f"--{m.value}",
-            f"-{m.value}",
+            f"--{word}",
+            f"-{word}",
             dest="mode",
             action="store_const",
-            const=m.value,
-            help=_MODE_HELP[m.value] + (" (default)" if m is DEFAULT_MODE else ""),
+            const=word,
+            help=_VIEW_HELP[word] + (" (default)" if word == DEFAULT_MODE.value else ""),
         )
     parser.set_defaults(mode=DEFAULT_MODE.value)
     parser.add_argument("--unicode", action="store_true", help="render with Unicode symbols")
@@ -536,8 +570,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         D.CONFIG = D.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
+    mode, zx_style = VIEWS[args.mode]
     shell = Shell(
-        mode=NotationMode(args.mode),
+        mode=mode,
+        zx_style=zx_style or "matplot",
         unicode=args.unicode,
         commands=args.commands,
         display=display,
@@ -546,7 +582,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         verbose=args.verbose,
         color=_isatty(sys.stdout) and not os.environ.get("NO_COLOR"),
     )
-    if shell.interpreter.style == "plot" and (paths or args.command):
+    drawn = mode is not NotationMode.DIRAC and zx_style == "matplot"
+    if (shell.interpreter.style == "plot" or drawn) and (paths or args.command):
         D.prepare()
     commands: list[str] = list(args.command)
     scripts: list[list[str]] = []

@@ -48,7 +48,9 @@ from __future__ import annotations
 import enum
 import itertools
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -132,6 +134,7 @@ class NotationMode(enum.Enum):
     DIRAC = "dirac"
     ZX = "zx"
     BOTH = "both"
+    RAW = "raw"
 
 
 DEFAULT_MODE = NotationMode.DIRAC
@@ -1433,21 +1436,54 @@ def _mode_scalable_dirac_lines(s: ScalableDiagram, unicode: bool) -> list[str]:
     return _mode_dirac_lines(diagram, unicode)
 
 
+_DRAWER: ContextVar[Callable[[Diagram], str] | None] = ContextVar("printer_drawer", default=None)
+
+
+@contextmanager
+def drawing(draw: Callable[[Diagram], str] | None) -> Iterator[None]:
+    """Within the block, ZX and BOTH show each diagram as ``draw(diagram)`` instead of its
+    graph listing."""
+    token = _DRAWER.set(draw)
+    try:
+        yield
+    finally:
+        _DRAWER.reset(token)
+
+
+def _zx_block(diagram: Diagram) -> str:
+    draw = _DRAWER.get()
+    return render_graph(diagram) if draw is None else draw(diagram)
+
+
+def _zx_scalable_block(s: ScalableDiagram) -> str:
+    if _DRAWER.get() is None:
+        return render_scalable_graph(s)
+    try:
+        diagram = from_scalable(s)
+    except _FOREIGN:
+        return render_scalable_graph(s)
+    return _zx_block(diagram)
+
+
 def _mode_diagram(diagram: Diagram, mode: NotationMode, unicode: bool) -> str:
-    if mode is NotationMode.ZX:
+    if mode is NotationMode.RAW:
         return render_graph(diagram)
+    if mode is NotationMode.ZX:
+        return _zx_block(diagram)
     dirac_lines = _mode_dirac_lines(diagram, unicode)
     if mode is NotationMode.BOTH:
-        return _listing_join([render_graph(diagram), *dirac_lines])
+        return _listing_join([_zx_block(diagram), *dirac_lines])
     return _listing_join(dirac_lines)
 
 
 def _mode_scalable(s: ScalableDiagram, mode: NotationMode, unicode: bool) -> str:
-    if mode is NotationMode.ZX:
+    if mode is NotationMode.RAW:
         return render_scalable_graph(s)
+    if mode is NotationMode.ZX:
+        return _zx_scalable_block(s)
     dirac_lines = _mode_scalable_dirac_lines(s, unicode)
     if mode is NotationMode.BOTH:
-        return _listing_join([render_scalable_graph(s), *dirac_lines])
+        return _listing_join([_zx_scalable_block(s), *dirac_lines])
     return _listing_join(dirac_lines)
 
 
@@ -1656,8 +1692,8 @@ def _mode_sheet_step(step: SheetStep, mode: NotationMode, unicode: bool) -> str:
 
 
 def render(state: object, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False) -> str:
-    """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX the graph listing only, BOTH the
-    graph listing then the Dirac block. Accepts Diagram, ScalableDiagram, NormalForm,
+    """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX each diagram's drawing (its graph
+    listing outside :func:`drawing`), BOTH that then the Dirac block, RAW the graph listing. Accepts Diagram, ScalableDiagram, NormalForm,
     RewriteResult, Derivation, Certificate, ProofCertificate, InductionProof and SheetStep."""
     mode = _mode_check(mode, unicode)
     if isinstance(state, Diagram):

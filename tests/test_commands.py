@@ -332,7 +332,12 @@ class TestRegistry:
         assert EXPECTED_COMMANDS | {
             "dirac",
             "zx",
+            "zxmatplot",
+            "zxunicode",
+            "zxascii",
             "both",
+            "listing",
+            "raw",
             "verbose_on",
             "verbose_off",
             "config",
@@ -1224,7 +1229,7 @@ class TestModeIndependence:
     ) -> None:
         with_states = 0
         for line, outcome in zip(MODE_SCRIPT, mode_runs[0], strict=True):
-            zx = format_outcome(outcome, BOTH)
+            zx = format_outcome(outcome, BOTH, listing=True)
             for diagram in diagram_states(outcome):
                 with_states += 1
                 assert listing_lines(zx), line

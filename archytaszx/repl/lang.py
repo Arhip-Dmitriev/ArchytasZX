@@ -58,7 +58,7 @@ import numpy as np
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.repl import display as D
-from archytaszx.repl import zxview
+from archytaszx.repl import zxdraw, zxview
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 from archytaszx.semantics import pathsum as P
 
@@ -776,12 +776,18 @@ class Interpreter:
         args: tuple[str, ...] = (),
         check_oracles: bool = False,
         mode: NotationMode = DEFAULT_MODE,
+        zx_style: str = "matplot",
     ) -> None:
         """``args`` are the command-line arguments read by ``arg(k)``; ``check_oracles`` checks
         every gate that maps basis states to basis states for reversibility; ``mode`` picks
-        Dirac text, the ZX listing or both for ``show``."""
+        Dirac text, the ZX drawing, both, or the raw graph listing for ``show``; ``zx_style`` draws ZX diagrams with
+        matplotlib, Unicode or ASCII."""
         if style not in D.STYLES:
             raise ValueError(f"unknown display style {style!r}")
+        if zx_style not in zxdraw.STYLES:
+            raise ValueError(f"unknown ZX drawing style {zx_style!r}")
+        self.zx_style = zx_style
+        self.listing = False
         self.style = style
         self.check_oracles = check_oracles
         self.mode = mode
@@ -1407,12 +1413,12 @@ class Interpreter:
 
         for lab, v in entries:
             state = isinstance(v, P.State)
-            if not state or mode is not NotationMode.ZX:
+            if not state or mode in (NotationMode.DIRAC, NotationMode.BOTH):
                 math.append(r.entry(lab, v, record=not state))
             if state and mode is not NotationMode.DIRAC:
                 if not flush():
                     return None
-                out.append(self._zx_text(lab, v))  # type: ignore[arg-type]
+                out.append(self._zx_text(lab, v, raw=mode is NotationMode.RAW))  # type: ignore[arg-type]
         where = r.where()
         if where:
             math.append(where)
@@ -1443,23 +1449,43 @@ class Interpreter:
         if lab is not None and lab.kind == "var" and isinstance(v, sympy.Expr):
             return name, e.type, r.expr(v, sympy.Symbol(lab.name))
         if isinstance(v, P.State) and self.mode is not NotationMode.DIRAC:
-            listing = self._zx_body(v)
-            if self.mode is NotationMode.ZX:
+            raw = self.mode is NotationMode.RAW
+            listing = self._zx_body(v, limited=not raw)
+            if self.mode in (NotationMode.ZX, NotationMode.RAW):
                 return name, e.type, listing
             return name, e.type, r.value(v) + "\n" + listing
         return name, e.type, r.value(v)
 
-    def _zx_text(self, label: D.Label | None, s: P.State) -> str:
-        """``label =`` then the indented ZX listing of ``s``."""
+    def _zx_text(self, label: D.Label | None, s: P.State, raw: bool = False) -> str:
+        """``label =`` then the ZX drawing of ``s``, and its listing when :attr:`listing`;
+        with ``raw`` only its uncapped listing."""
         style = "ascii" if self.style == "ascii" else "unicode"
         head = D.Renderer(style).label(label) if label is not None else ""
-        return f"{head} =\n{self._zx_body(s)}".lstrip()
+        if raw:
+            return "\n".join([f"{head} =".lstrip(), self._zx_body(s, limited=False)])
+        parts = [f"{head} =".lstrip(), self._zx_drawing(s)]
+        if self.listing:
+            parts.append(self._zx_body(s))
+        return "\n".join(parts)
+
+    def _zx_drawing(self, s: P.State) -> str:
+        """The ZX drawing of ``s`` in :attr:`zx_style`, ASCII under the ascii display style;
+        text drawings indented by two spaces."""
+        style = "ascii" if self.style == "ascii" else self.zx_style
+        try:
+            drawing = zxdraw.draw(zxview.view(s), style)
+        except zxview.ZXViewError as exc:
+            return f"  no ZX form ({exc})"
+        if drawing.startswith("\x1b"):
+            return drawing
+        return "\n".join("  " + line for line in drawing.splitlines())
 
     @staticmethod
-    def _zx_body(s: P.State) -> str:
-        """The ZX listing of ``s`` indented by two spaces, or ``no ZX form (reason)``."""
+    def _zx_body(s: P.State, limited: bool = True) -> str:
+        """The ZX listing of ``s`` indented by two spaces, or ``no ZX form (reason)``; without
+        ``limited`` the dense fallback is uncapped."""
         try:
-            body = zxview.listing(s)
+            body = zxview.listing(s, limited)
         except zxview.ZXViewError as exc:
             return f"  no ZX form ({exc})"
         return "\n".join("  " + line for line in body.splitlines())

@@ -70,13 +70,16 @@ from archytaszx.repl.parser import (
     parse,
     parse_step,
 )
+from archytaszx.repl import zxdraw, zxview
 from archytaszx.repl.printer import (
     DEFAULT_MODE,
     NotationMode,
     PrinterError,
+    drawing,
     render,
     render_detail,
     render_dirac,
+    render_graph,
 )
 from archytaszx.rewrite.cache import CacheError
 from archytaszx.rewrite.egraph import (
@@ -1462,8 +1465,13 @@ HELP: Mapping[str, str] = MappingProxyType(
         "detail": "detail -- the last command's full payload, listing and Dirac side by side",
         "help": "help [CMD] -- this text, or one command's usage",
         "dirac": "dirac -- Dirac notation",
-        "zx": "zx -- ZX graph listings",
-        "both": "both -- ZX graph listings and Dirac notation",
+        "zx": "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)",
+        "zxmatplot": "zxmatplot -- ZX diagrams drawn with matplotlib",
+        "zxunicode": "zxunicode -- ZX diagrams drawn on a Unicode grid",
+        "zxascii": "zxascii -- ZX diagrams drawn on an ASCII grid",
+        "both": "both -- Dirac notation and ZX drawings",
+        "raw": "raw -- full ZX graph listings, nothing summarised or capped",
+        "listing": "listing -- toggle the ZX graph listing under each drawing",
         "verbose_on": "verbose_on -- echo each line's value, utop style",
         "verbose_off": "verbose_off -- stop echoing values",
         "config": "config [KEY VALUE | save | reset] -- image settings: size, color",
@@ -1569,26 +1577,40 @@ def run(session: Session, line: str) -> Outcome:
 
 
 def format_outcome(
-    outcome: Outcome, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False
+    outcome: Outcome,
+    mode: NotationMode = DEFAULT_MODE,
+    *,
+    unicode: bool = False,
+    zx_style: str = "matplot",
+    listing: bool = False,
 ) -> str:
     """``outcome``'s blocks joined by newlines: Text as is, State via ``printer.render`` in
-    ``mode``, Proof via :func:`proof_text`."""
+    ``mode``, Proof via :func:`proof_text`; ZX and BOTH draw each diagram in ``zx_style``, its
+    graph listing under it when ``listing``."""
     if not isinstance(outcome, Outcome):
         raise CommandGrammarError(f"outcome must be an Outcome, got {type(outcome).__name__}")
     if not isinstance(mode, NotationMode):
         raise CommandGrammarError(f"mode must be a NotationMode, got {mode!r}")
+    if zx_style not in zxdraw.STYLES:
+        raise CommandGrammarError(f"unknown ZX drawing style {zx_style!r}")
+
+    def draw(diagram: Diagram) -> str:
+        text = zxdraw.draw(zxview.View(diagram), zx_style)
+        return f"{text}\n{render_graph(diagram)}" if listing else text
+
     parts: list[str] = []
-    for block in outcome.blocks:
-        if isinstance(block, Text):
-            parts.append(block.text)
-            continue
-        try:
-            if isinstance(block, Proof):
-                parts.append(proof_text(block.proof, unicode=unicode))  # type: ignore[arg-type]
+    with drawing(draw if mode in (NotationMode.ZX, NotationMode.BOTH) else None):
+        for block in outcome.blocks:
+            if isinstance(block, Text):
+                parts.append(block.text)
                 continue
-            parts.append(render(block.state, mode, unicode=unicode))
-        except Exception as exc:  # noqa: BLE001
-            parts.append(f"render: unavailable ({type(exc).__name__}: {_one_line(exc)})")
+            try:
+                if isinstance(block, Proof):
+                    parts.append(proof_text(block.proof, unicode=unicode))  # type: ignore[arg-type]
+                    continue
+                parts.append(render(block.state, mode, unicode=unicode))
+            except Exception as exc:  # noqa: BLE001
+                parts.append(f"render: unavailable ({type(exc).__name__}: {_one_line(exc)})")
     return "\n".join(parts)
 
 

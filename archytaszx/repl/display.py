@@ -1025,6 +1025,15 @@ def _sixel(png: bytes) -> str:
     return f'\x1bPq"1;1;{width};{height}{palette}' + "-".join(bands) + "\x1b\\"
 
 
+def encode_image(png: bytes, proto: str | None = None) -> str | None:
+    """``png`` as inline-image escape text for ``proto`` (default :func:`protocol`); None
+    for ``none``."""
+    proto = protocol() if proto is None else proto
+    if proto == "none":
+        return None
+    return {"kitty": _kitty, "iterm": _iterm, "sixel": _sixel}[proto](png)
+
+
 def terminal_image(lines: list[str]) -> str | None:
     """Mathtext lines as an inline terminal image; None when the terminal shows no images."""
     proto = protocol()

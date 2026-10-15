@@ -616,14 +616,35 @@ class TestShowModes:
 
         interp, _ = run("|a> = |1>")
         zx = interp.render([(None, interp.states["a"])], "ascii", NotationMode.ZX)
-        assert zx.splitlines()[0] == "=" and zx.splitlines()[1].startswith("  graph:")
+        assert zx.splitlines()[0] == "=" and zx.splitlines()[1].startswith("  scalar:")
+        assert "(x 1)" in zx and "out 0" in zx
         interp.mode = NotationMode.BOTH
         both = interp.execute("show(|a>)").splitlines()
-        assert both[0] == "|a> = |1>" and both[1] == "|a> =" and both[2].startswith("  graph:")
+        assert both[0] == "|a> = |1>" and both[1] == "|a> =" and both[2].startswith("  scalar:")
+        interp.listing = True
+        listed = interp.execute("show(|a>)")
+        assert "  graph:" in listed
 
-    def test_symbolic_state_has_no_zx_form(self) -> None:
+    def test_raw_listing_has_no_caps(self) -> None:
+        from archytaszx.repl.printer import NotationMode
+
+        source = "|a> = sum(x in 0..128){ 1/(x + 1) |x : 7> }\nshow(|a>)"
+        zx = Interpreter(style="ascii", mode=NotationMode.ZX).execute(source)
+        assert "no ZX form" in zx
+        raw = Interpreter(style="ascii", mode=NotationMode.RAW).execute(source)
+        assert raw.splitlines()[1].startswith("  graph:") and "|a> = " not in raw
+
+    def test_zx_drawing_styles(self) -> None:
+        from archytaszx.repl.printer import NotationMode
+
+        for zx_style, mark in (("unicode", "○1"), ("ascii", "(x 1)"), ("matplot", "○1")):
+            interp = Interpreter(style="unicode", mode=NotationMode.ZX, zx_style=zx_style)
+            out = interp.execute("|a> = |1>\nshow(|a>)")
+            assert mark in out
+
+    def test_symbolic_state_draws_a_bang_box(self) -> None:
         from archytaszx.repl.printer import NotationMode
 
         interp = Interpreter(style="ascii", mode=NotationMode.ZX)
         out = interp.execute("var n\n|a> = |0>^@n\nshow(|a>)")
-        assert out == "|a> =\n  no ZX form (symbolic widths, dimensions or ranges)"
+        assert "+-- n --+" in out and "(x)" in out

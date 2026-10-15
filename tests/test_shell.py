@@ -134,7 +134,13 @@ class TestRunLine:
         dirac = shell.run_line(EXAMPLE)
         shell.run_line("zx")
         zx = shell.run_line("show")
-        assert not listing(dirac) and listing(zx)
+        assert not listing(dirac) and not listing(zx) and zx.startswith("scalar:")
+        shell.run_line("raw")
+        assert listing(shell.run_line("show"))
+        shell.run_line("listing")
+        shell.run_line("zx")
+        both = shell.run_line("show")
+        assert both.startswith("scalar:") and listing(both)
 
     @pytest.mark.parametrize("word", ["quit", "exit", "QUIT", "  exit  "])
     def test_quit_and_exit(self, word: str) -> None:
@@ -245,7 +251,7 @@ class TestScripts:
 
     def test_trailing_continuation_at_end_of_input(self) -> None:
         shell = Shell(commands=True)
-        assert shell.run_script(["help \\", "zx \\"]) == ["zx -- ZX graph listings"]
+        assert shell.run_script(["help \\", "zx \\"]) == ["zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)"]
 
     def test_comment_line_never_continues(self) -> None:
         shell = Shell(commands=True)
@@ -260,7 +266,7 @@ class TestScripts:
 
     def test_iter_script_yields_line_output_pairs(self) -> None:
         pairs = list(Shell(commands=True).iter_script("dirac\nhelp \\\n zx\n"))
-        assert pairs == [("dirac", "mode: dirac"), ("help zx", "zx -- ZX graph listings")]
+        assert pairs == [("dirac", "mode: dirac"), ("help zx", "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)")]
 
     def test_errors_do_not_stop_a_script(self) -> None:
         shell = Shell(commands=True)
@@ -271,7 +277,7 @@ class TestScripts:
 
     def test_crlf_lines(self) -> None:
         assert Shell(commands=True).run_script(["help \\\r\n", "zx\r\n"]) == [
-            "zx -- ZX graph listings"
+            "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)"
         ]
 
 
@@ -335,7 +341,7 @@ class TestLoop:
         assert text.startswith("ArchytasZX shell, mode dirac; type help for commands.\n")
         name = S._place()
         assert f"{name}(1): " in text and f"{'.' * len(name)}(1): " in text
-        assert "zx -- ZX graph listings\n" in text
+        assert "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)\n" in text
         assert text.endswith(f"{name}(2): \n")
 
     def test_tty_interrupt_message(self) -> None:
@@ -375,8 +381,11 @@ class TestMain:
 
     def test_mode_zx(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--commands", "--zx", "-c", EXAMPLE]) == 0
-        assert listing(capsys.readouterr().out)
-        assert main(["--commands", "-zx", "-c", EXAMPLE]) == 0
+        drawn = capsys.readouterr().out
+        assert "scalar:" in drawn and not listing(drawn)
+        assert main(["--commands", "-zxmatplot", "-c", EXAMPLE]) == 0
+        assert capsys.readouterr().out == drawn
+        assert main(["--commands", "--raw", "-c", EXAMPLE]) == 0
         assert listing(capsys.readouterr().out)
 
     def test_two_modes_are_a_usage_error(self, capsys: pytest.CaptureFixture[str]) -> None:
