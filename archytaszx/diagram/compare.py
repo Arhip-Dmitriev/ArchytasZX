@@ -382,6 +382,13 @@ def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
     """Whether a node-id and bang-box-id renaming carries ``a`` onto ``b`` exactly, scalar
     and parameter environment included; up to each Z and X spider's leg order per direction
     too when ``symmetric_legs``."""
+    return isomorphism(a, b, symmetric_legs=symmetric_legs) is not None
+
+
+def isomorphism(
+    a: Diagram, b: Diagram, *, symmetric_legs: bool = False
+) -> dict[NodeId, NodeId] | None:
+    """The node-id renaming under which :func:`isomorphic` holds, or None."""
     if not isinstance(a, Diagram) or not isinstance(b, Diagram):
         raise TypeError(
             f"isomorphic requires two Diagram instances, got {type(a).__name__} "
@@ -396,7 +403,7 @@ def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
         or a.scalar != b.scalar
         or sorted(a.parameters.items()) != sorted(b.parameters.items())
     ):
-        return False
+        return None
     symmetric = _symmetric(a, symmetric_legs) and _symmetric(b, symmetric_legs)
 
     colours_a = _refine(a, symmetric)
@@ -406,7 +413,7 @@ def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
         by_colour.setdefault(colours_b[nid], []).append(nid)
     candidates = {nid: tuple(by_colour.get(colours_a[nid], ())) for nid in sorted(colours_a)}
     if any(not choices for choices in candidates.values()):
-        return False
+        return None
 
     incidence_a = _incidence(a, symmetric)
     incidence_b = _incidence(b, symmetric)
@@ -414,7 +421,7 @@ def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
 
     mapping: dict[NodeId, NodeId] = {}
     if not _extend(order, 0, mapping, set(), candidates, incidence_a, incidence_b):
-        return False
+        return None
     label = {nid: str(int(mapping[nid])) for nid in mapping}
     identity = {nid: str(int(nid)) for nid in b.nodes}
-    return _profile(a, label, symmetric) == _profile(b, identity, symmetric)
+    return mapping if _profile(a, label, symmetric) == _profile(b, identity, symmetric) else None
