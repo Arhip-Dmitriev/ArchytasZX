@@ -15,7 +15,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import replace
 
 import pytest
@@ -107,3 +110,34 @@ def test_repl_kernel_and_lean(tmp_path: object) -> None:
     assert wrote.ok
     with open(target, encoding="utf-8") as handle:
         assert "induction n with" in handle.read()
+
+
+def _lean() -> str | None:
+    found = shutil.which("lean")
+    home = os.path.expanduser("~/.elan/bin/lean")
+    return found or (home if os.path.exists(home) else None)
+
+
+@pytest.mark.skipif(_lean() is None, reason="Lean 4 is not installed")
+@pytest.mark.parametrize("which", ["chain", "two_sided", "induction"])
+def test_lean_accepts_the_export(which: str, tmp_path: object) -> None:
+    if which == "induction":
+        artefact: object = prove(*boxed_state_copy()).induction
+    else:
+        artefact = _certificate() if which == "chain" else _two_sided()
+    source = K.lean(K.check(artefact))
+    path = f"{tmp_path}/{which}.lean"
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(source)
+    done = subprocess.run([_lean(), path], capture_output=True, text=True, timeout=300, check=False)  # type: ignore[list-item]
+    assert done.returncode == 0, done.stdout + done.stderr
+    bad = source.replace("ih).trans", "ih.symm).trans").replace("theorem main", "theorem main'")
+    if bad != source.replace("theorem main", "theorem main'"):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(bad)
+        assert (
+            subprocess.run(
+                [_lean(), path], capture_output=True, timeout=300, check=False
+            ).returncode
+            != 0
+        )  # type: ignore[list-item]
