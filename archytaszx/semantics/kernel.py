@@ -32,10 +32,13 @@ quantified over the naturals. Only the rules below construct one:
 :class:`KernelError` at the first piece that does not check. An induction certificate of
 :mod:`archytaszx.semantics.induction` carries no re-checkable step and is refused.
 
-:func:`lean` emits Lean 4 source without imports: an opaque ``Diagram`` type, one constant
-per diagram (a function of its free multiplicities), one axiom per rule instance,
-isomorphism, instantiation at 0, peeling and context plug the kernel checked, and the
-theorem as their composition by ``Eq.trans``, ``Eq.symm``, ``congrArg`` and ``induction``.
+:func:`lean` emits Lean 4 source. A theorem without free multiplicities goes through
+:mod:`archytaszx.semantics.lean_net`: diagrams as tensor networks over ℂ in the bundled
+``ArchytasZX`` library, each rule step an instance of a lemma proved there. Otherwise, or when
+that export does not cover the theorem, the source has no imports: an opaque ``Diagram``
+type, one constant per diagram (a function of its free multiplicities), one axiom per rule
+instance, isomorphism, instantiation at 0, peeling and context plug the kernel checked, and
+the theorem as their composition by ``Eq.trans``, ``Eq.symm``, ``congrArg`` and ``induction``.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import ConstraintOutcome
+from archytaszx.semantics import lean_net
 from archytaszx.semantics.certificate import (
     Certificate,
     DerivationKind,
@@ -147,7 +151,8 @@ def rule(d: Diagram, step: RewriteStep) -> Theorem:
     deferred = tuple(
         str(c) for c in step.dimension_constraints if c.outcome is ConstraintOutcome.DEFERRED
     )
-    return Theorem(_TOKEN, d, after, Inference("rule", rule=step.rule_name, detail=nodes), deferred)
+    inference = Inference("rule", rule=step.rule_name, detail=nodes, data={"step": step})
+    return Theorem(_TOKEN, d, after, inference, deferred)
 
 
 def iso(a: Diagram, b: Diagram) -> Theorem:
@@ -425,12 +430,21 @@ def _summary(d: Diagram) -> str:
 
 
 def lean(
-    theorem: Theorem, name: str = "main", describe: Callable[[Diagram], str] | None = None
+    theorem: Theorem,
+    name: str = "main",
+    describe: Callable[[Diagram], str] | None = None,
+    *,
+    semantic: bool = True,
 ) -> str:
     """Lean 4 source stating and proving ``theorem`` (see the module docstring); ``describe``
-    gives each diagram constant's doc comment."""
+    gives each diagram's doc comment, ``semantic=False`` forces the opaque export."""
     if not isinstance(theorem, Theorem):
         raise KernelError(f"lean takes a Theorem, got {type(theorem).__name__}")
+    if semantic:
+        try:
+            return lean_net.export(theorem, name, describe)
+        except lean_net.NetUnsupported:
+            pass
     out = _Lean(describe or _summary)
     if theorem.inference.kind == "induction":
         out.induction(theorem, name)

@@ -62,6 +62,7 @@ from archytaszx.diagram.scalable import (
     to_scalable,
 )
 from archytaszx.diagram.validate import ValidateError
+from archytaszx.repl import zxdraw, zxview
 from archytaszx.repl.parser import (
     ParseError,
     ParseGrammarError,
@@ -70,7 +71,6 @@ from archytaszx.repl.parser import (
     parse,
     parse_step,
 )
-from archytaszx.repl import zxdraw, zxview
 from archytaszx.repl.printer import (
     DEFAULT_MODE,
     NotationMode,
@@ -102,6 +102,7 @@ from archytaszx.rewrite.sheet import (
     split_scale,
 )
 from archytaszx.rewrite.tactics import DEFAULT_SEARCH_LIMITS
+from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import (
     Certificate,
     CertificateError,
@@ -139,7 +140,6 @@ from archytaszx.semantics.interop import (
     check_round_trip,
     check_sheet_step,
 )
-from archytaszx.semantics import kernel
 from archytaszx.semantics.prove import (
     InductionProof,
     ProofCertificate,
@@ -1161,6 +1161,12 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
     blocks += [Text(f"  assumes {a}") for a in theorem.assumptions]
     if action == "lean":
         source = kernel.lean(theorem, describe=lambda d: _math(d, True))
+        if "import ArchytasZX" in source:
+            unproved = source.count("\naxiom unproved_")
+            note = f"{unproved} unproved step(s)" if unproved else "every step proved"
+            blocks.append(Text(f"lean: tensor-network semantics, {note}"))
+        else:
+            blocks.append(Text("lean: opaque diagrams, every step an axiom"))
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as handle:

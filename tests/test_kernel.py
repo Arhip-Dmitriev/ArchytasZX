@@ -23,13 +23,16 @@ from dataclasses import replace
 
 import pytest
 
+from archytaszx.diagram.generators import X_SPIDER
 from archytaszx.repl.commands import Session, run
 from archytaszx.semantics import kernel as K
 from archytaszx.semantics.certificate import Certificate, Derivation, DerivationKind
+from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import prove
 
 from .test_phase15_oracle import boxed_state_copy
 from .test_prove import _certificate, _two_sided
+from .test_rules_library_phase11 import identity_chain
 
 
 def test_theorem_needs_the_kernel() -> None:
@@ -77,12 +80,19 @@ def _declared(source: str) -> set[str]:
 
 
 @pytest.mark.parametrize("make", [_certificate, _two_sided])
-def test_lean_chain(make: object) -> None:
-    source = K.lean(K.check(make()))  # type: ignore[operator]
+def test_lean_chain_opaque(make: object) -> None:
+    source = K.lean(K.check(make()), semantic=False)  # type: ignore[operator]
     assert source.startswith("/-") and "namespace ArchytasZX" in source
     assert "axiom Diagram : Type" in source and "theorem main :" in source
     used = set(re.findall(r"\b((?:ax|iso|d)\d+)\b", source))
     assert used <= _declared(source)
+
+
+@pytest.mark.parametrize("make", [_certificate, _two_sided])
+def test_lean_chain_semantic(make: object) -> None:
+    source = K.lean(K.check(make()))  # type: ignore[operator]
+    assert "import ArchytasZX" in source and "\naxiom " not in source
+    assert re.search(r"^theorem main .*:\n    Equal ", source, re.MULTILINE)
 
 
 def test_lean_induction() -> None:
@@ -118,26 +128,43 @@ def _lean() -> str | None:
     return found or (home if os.path.exists(home) else None)
 
 
+def _mathlib() -> bool:
+    return os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib"))
+
+
 @pytest.mark.skipif(_lean() is None, reason="Lean 4 is not installed")
-@pytest.mark.parametrize("which", ["chain", "two_sided", "induction"])
-def test_lean_accepts_the_export(which: str, tmp_path: object) -> None:
-    if which == "induction":
-        artefact: object = prove(*boxed_state_copy()).induction
-    else:
-        artefact = _certificate() if which == "chain" else _two_sided()
-    source = K.lean(K.check(artefact))
-    path = f"{tmp_path}/{which}.lean"
+def test_lean_accepts_the_opaque_induction(tmp_path: object) -> None:
+    source = K.lean(K.check(prove(*boxed_state_copy()).induction))
+    assert "axiom Diagram : Type" in source
+    path = f"{tmp_path}/induction.lean"
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(source)
     done = subprocess.run([_lean(), path], capture_output=True, text=True, timeout=300, check=False)  # type: ignore[list-item]
     assert done.returncode == 0, done.stdout + done.stderr
-    bad = source.replace("ih).trans", "ih.symm).trans").replace("theorem main", "theorem main'")
-    if bad != source.replace("theorem main", "theorem main'"):
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(bad)
-        assert (
-            subprocess.run(
-                [_lean(), path], capture_output=True, timeout=300, check=False
-            ).returncode
-            != 0
-        )  # type: ignore[list-item]
+    bad = source.replace("ih).trans", "ih.symm).trans")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(bad)
+    assert (
+        subprocess.run([_lean(), path], capture_output=True, timeout=300, check=False).returncode
+        != 0
+    )  # type: ignore[list-item]
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+@pytest.mark.parametrize("which", ["chain", "two_sided"])
+def test_lean_proves_the_semantic_export(which: str, tmp_path: object) -> None:
+    artefact = _certificate() if which == "chain" else _two_sided()
+    source = K.lean(K.check(artefact)).replace(
+        "end ArchytasZX.Export", "#print axioms main\nend ArchytasZX.Export"
+    )
+    ok, output = check(source, f"{tmp_path}/{which}.lean")
+    assert ok, output
+    assert "depends on axioms: [propext, Classical.choice, Quot.sound]" in " ".join(output.split())
+
+
+def test_repl_reports_the_semantic_export() -> None:
+    s = Session()
+    s.names.update(l=identity_chain(3), r=identity_chain(3, X_SPIDER))
+    assert run(s, "load @l").ok and run(s, "prove against @r").ok
+    lines = [b.text for b in run(s, "certificate lean").blocks]  # type: ignore[union-attr]
+    assert "lean: tensor-network semantics, every step proved" in lines
