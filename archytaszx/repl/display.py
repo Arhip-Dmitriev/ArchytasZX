@@ -16,7 +16,8 @@
 * ``ascii``: the input syntax (``|0>^@n @ |0>^@m``, ``sum(x in 0..q){ ... }``);
 * ``unicode``: ``|0⟩^⊗n ⊗ |0⟩^⊗m``, ``Σ_{x=0}^{q-1} ...``;
 * ``plot``: matplotlib mathtext, one line per entry, drawn off-screen and shown inline in the
-  terminal (kitty, iTerm2 or sixel image protocol).
+  terminal (kitty, iTerm2 or sixel image protocol);
+* ``latex``: the ``plot`` text as LaTeX source.
 
 A :class:`Renderer` renders entries and records the defined variables, functions and
 measurement outcomes they mention; :meth:`Renderer.where` lists those as a ``where`` line.
@@ -46,8 +47,8 @@ from sympy.printing.str import StrPrinter  # type: ignore[import-untyped]
 
 from archytaszx.semantics import pathsum as P
 
-STYLES = ("plot", "unicode", "ascii")
-"""The display styles, most to least rich."""
+STYLES = ("plot", "unicode", "ascii", "latex")
+"""The display styles: mathtext images, Unicode text, ASCII input syntax, LaTeX source."""
 
 _GREEK = {
     name: (uni, "\\" + name)
@@ -422,9 +423,9 @@ class Renderer:
     def __init__(self, style: str, context: Context | None = None) -> None:
         if style not in STYLES:
             raise ValueError(f"unknown style {style!r}")
-        self.style = style
+        self.style = "plot" if style == "latex" else style
         self.ctx = context or Context()
-        self._text = _Latex() if style == "plot" else _Text(style == "unicode")
+        self._text = _Latex() if self.style == "plot" else _Text(style == "unicode")
         self.seen_symbols: list[sympy.Symbol] = []
         self.seen_funcs: list[type] = []
 
@@ -522,8 +523,6 @@ class Renderer:
             digit = _repeated_digit(v, w, d)
             if digit is not None:
                 return self._tpow(wrap(self.expr(digit)), w)
-            if v.is_Integer and w.is_Integer:
-                return wrap(f"{self.expr(v)} : {self.expr(w)}")
         return wrap(self.expr(v))
 
     def _tensor(self) -> str:
@@ -722,7 +721,8 @@ class Renderer:
             return self.measured(value)
         if label is not None and label.kind == "var" and isinstance(value, sympy.Basic):
             if isinstance(value, sympy.Symbol) and value.name == label.name:
-                return f"{self.label(label)} (symbolic)"
+                word = r"\ (\mathrm{symbolic})" if self.style == "plot" else " (symbolic)"
+                return f"{self.label(label)}{word}"
             return f"{self.label(label)} = {self.expr(value, sympy.Symbol(label.name))}"
         if isinstance(value, sympy.logic.boolalg.Boolean) and not isinstance(
             value, sympy.logic.boolalg.BooleanAtom

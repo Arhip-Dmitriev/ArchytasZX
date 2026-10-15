@@ -19,8 +19,10 @@ Statements (newline or ``;`` separated, ``#`` comments)::
     func f(x) = a^x % N
     gate U = |x>|y> -> |x>|y xor f(x)>
     gate QFT = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*x*y/q) |y> }
-    |psi> = (H^@n @ I)|0>^@n @ |0>^@m          <phi| = ...       |k : n>
+    |psi> = (H^@n @ I)|0>^@n @ |0>^@m          <phi| = ...       |psi> - 2 |w><w|psi>
     gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+    gate R = [[cos(t), -sin(t)], [sin(t), cos(t)]]      |v> = [a, b]
+    gate G = matrix(r, c in 0..d){ e^(2*pi*i*r*c/d) / sqrt(d) }
     |chi>_d = F^@n |0>_d^@n                    |2>_3     |0> + |2>
     var z = measure|psi>      measure|psi>
     list L = {|psi>, <phi|, z}
@@ -30,18 +32,20 @@ Statements (newline or ``;`` separated, ``#`` comments)::
 Every state is named ``|name>``; ``<name|`` is its conjugate transpose. Classical values are
 declared with ``var`` (types ``nat`` (default), ``int``, ``real``, ``complex``); measurement
 results are booleans (one qubit) or :class:`Bits`, both usable as numbers. A literal ``|v>`` is
-one register of the lowest dimension holding v, raised as far as a sum, inner product, gate
-pattern or ``|name>_d =`` needs; ``|v : w>`` has w digits. A ``_d`` suffix (a numeral or a
-variable) fixes a ket, bra or pattern to dimension d. Ranges ``a..b`` exclude b, ``a..=b``
-include it. A bare expression is a statement too.
+one register of the lowest dimension holding v (of unresolved width for a symbolic v), laid
+out as a sum, inner product, gate or ``|name>_d =`` needs. A ``_d`` suffix (a numeral or a
+variable) fixes a ket, bra or pattern to dimension d. A matrix gate maps ``|c>`` to
+``sum_r M[r][c] |r>`` over the registers it meets; ``|x>|y> -> [[...]]`` fixes them. Ranges
+``a..b`` exclude b, ``a..=b`` include it. A bare expression is a statement too.
 
 Expression precedence, loosest first: ``xor``; ``+ -``; ``@``; juxtaposition (operator
 application, scalar multiplication, ``|a>|b>`` tensor, ``<a|b>``, ``|a><b|``; grouped from
 the right, so ``U |x>|y>`` applies U to both kets); ``* / %``;
 unary ``-``; ``^`` (right associative) and postfix ``^@``. Constants ``pi``, ``e``, ``i``;
-functions ``sqrt exp abs floor ceil`` and user ``func`` s. Built-in gates ``H X Y Z S T
-CNOT SWAP`` (one-qubit registers; ``H^@n`` for a register) and the identity ``I`` (absorbs
-the remaining registers when last in a tensor). Built-in states ``|+>``, ``|->``, ``|i>``, ``|-i>``.
+functions ``sqrt exp abs floor ceil cos sin tan log`` and user ``func`` s. Built-in gates
+``H X Y Z S T CNOT SWAP`` (one-qubit registers; ``H^@n`` for a register) and the identity
+``I`` (absorbs the remaining registers when last in a tensor). Built-in states ``|+>``,
+``|->``, ``|i>``, ``|-i>``.
 
 ``show`` prints mathematical values, ``print`` strings and concrete values. Values are
 symbolic exactly when their inputs are. :attr:`Interpreter.last` is the :class:`Echo` of the
@@ -248,6 +252,32 @@ class Braket:
 
 
 @dataclass(frozen=True)
+class MatrixNode:
+    """``[[a, b], [c, d]]``: rows of entry expressions."""
+
+    rows: tuple[tuple[object, ...], ...]
+
+
+@dataclass(frozen=True)
+class VectorNode:
+    """``[a, b, ...]``: amplitudes of a state."""
+
+    items: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class MatrixFor:
+    """``matrix(row, col in lo..hi){ entry }``; ``hi`` excluded unless ``inclusive``."""
+
+    row: str
+    col: str
+    lo: object
+    hi: object
+    body: object
+    inclusive: bool = False
+
+
+@dataclass(frozen=True)
 class SumNode:
     """``sum(var in lo..hi){ body }``; ``hi`` excluded unless ``inclusive`` (``..=``)."""
 
@@ -352,7 +382,7 @@ class Parser:
             return True
         if t.kind == "ident":
             return t.text not in _KEYWORDS
-        return t.kind == "op" and t.text == "("
+        return t.kind == "op" and t.text in ("(", "[")
 
     def juxt(self) -> object:
         nodes = [self.mul()]
@@ -412,6 +442,8 @@ class Parser:
         if t.kind == "ident":
             if t.text == "sum":
                 return self.sum()
+            if t.text == "matrix":
+                return self.matrix()
             self.i += 1
             if self.at("(") and self.is_func(t.text):
                 self.take("(")
@@ -424,7 +456,52 @@ class Parser:
             node = self.expr()
             self.take(")")
             return node
+        if t.kind == "op" and t.text == "[":
+            return self.brackets()
         raise LangSyntaxError(f"unexpected {t.text!r} at column {t.pos + 1}")
+
+    def brackets(self) -> MatrixNode | VectorNode:
+        """``[[...], ...]`` (a matrix, rows of equal length) or ``[a, b, ...]`` (a vector)."""
+        self.take("[")
+        if not self.at("["):
+            items = self.args()
+            self.take("]")
+            return VectorNode(tuple(items))
+        rows: list[tuple[object, ...]] = []
+        while True:
+            self.take("[")
+            rows.append(tuple(self.args()))
+            self.take("]")
+            if not self.at(","):
+                break
+            self.take(",")
+        self.take("]")
+        if any(len(row) != len(rows) for row in rows):
+            raise LangSyntaxError(
+                f"a matrix needs {len(rows)} entries in each of its {len(rows)} rows"
+            )
+        return MatrixNode(tuple(rows))
+
+    def matrix(self) -> MatrixFor:
+        self.take("matrix")
+        self.take("(")
+        names = []
+        for k in range(2):
+            t = self.take()
+            if t.kind != "ident":
+                raise LangSyntaxError(f"expected an index name at column {t.pos + 1}")
+            names.append(t.text)
+            if k == 0:
+                self.take(",")
+        self.take("in")
+        lo = self.add()
+        inclusive = self.range_op()
+        hi = self.add()
+        self.take(")")
+        self.take("{")
+        body = self.expr()
+        self.take("}")
+        return MatrixFor(names[0], names[1], lo, hi, body, inclusive)
 
     def args(self) -> list[object]:
         out = [self.expr()]
@@ -510,6 +587,10 @@ _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "denom": P.denom,
     "known": _known,
     "ifelse": lambda c, a, b: sympy.Piecewise((a, c), (b, True)),
+    "cos": sympy.cos,
+    "sin": sympy.sin,
+    "tan": sympy.tan,
+    "log": sympy.log,
 }
 _SPECIAL = {"arg", "rand"}
 _CONSTANTS = {"pi": sympy.pi, "e": sympy.E, "i": sympy.I}
@@ -529,7 +610,13 @@ _STATEMENTS = {
     "assume",
 }
 _RESERVED = (
-    _STATEMENTS | _KEYWORDS | set(_FUNCS) | _SPECIAL | set(_CONSTANTS) | {"sum"} | set(D.STYLES)
+    _STATEMENTS
+    | _KEYWORDS
+    | set(_FUNCS)
+    | _SPECIAL
+    | set(_CONSTANTS)
+    | {"sum", "matrix"}
+    | set(D.STYLES)
 )
 
 PRELUDE = """
@@ -699,42 +786,76 @@ def _least_dim(value: int, width: int) -> sympy.Integer:
 
 def _promote(s: P.State, k: int, d: sympy.Expr) -> P.State:
     """``s`` with register k in dimension d; LangTypeError when one of its values cannot fit."""
-    w = s.widths[k]
+    return _relayout(s, k, s.widths[k], d)
+
+
+def _relayout(s: P.State, k: int, w: sympy.Expr | None, d: sympy.Expr | None) -> P.State:
+    """``s`` with register k as w digits of base d; LangTypeError when a value cannot fit."""
+    if w is None or d is None:
+        raise LangTypeError("cannot infer a register width; give the ket a dimension |v>_d")
     for t in s.terms:
         v = t.kets[k]
-        if not (v.is_Integer and w is not None and w.is_Integer):
+        if not v.is_Integer:
+            continue
+        if not w.is_Integer and not d.is_Integer:
             raise LangTypeError(f"cannot give a symbolic register dimension {d}")
-        cap = d**w if d.is_Integer else sympy.Integer(2) ** w
-        if v >= cap:
-            ket = f"|{v}>" if w == 1 else f"|{v} : {w}>"
-            raise LangTypeError(f"{ket} does not fit in dimension {d}")
+        cap = d**w if d.is_Integer and w.is_Integer else None
+        if cap is not None and v >= cap:
+            where = f"dimension {d}" if P.same(w, 1) else f"{w} digits of base {d}"
+            raise LangTypeError(f"|{v}> does not fit in {where}")
+    widths = s.widths[:k] + (w,) + s.widths[k + 1 :]
     dims = s.dims[:k] + (d,) + s.dims[k + 1 :]
-    return _Flex(s.widths, s.terms, s.bra, dims, _flags(s))
+    return _Flex(widths, s.terms, s.bra, dims, _flags(s))
+
+
+def _merged(s: P.State) -> tuple[sympy.Expr, sympy.Expr] | None:
+    """``(total width, dimension)`` of a state with resolved widths and one dimension."""
+    d = s.uniform_dim()
+    if d is None or any(w is None for w in s.widths):
+        return None
+    return sympy.Add(*s.widths), d
 
 
 def _unify(a: P.State, b: P.State) -> tuple[P.State, P.State, list[bool]]:
-    """``a`` and ``b`` with flexible registers raised to their counterpart's dimension, the
-    lower dimension giving way; and the registers that stay flexible."""
+    """``a`` and ``b`` with flexible registers raised to their counterpart's layout, the
+    lower dimension giving way; and the registers that stay flexible. A lone flexible register
+    against several registers takes their joint width."""
     if len(a.widths) != len(b.widths):
+        for one, many in ((a, b), (b, a)):
+            if len(one.widths) == 1 and _flags(one)[0] and _merged(many) is not None:
+                w, d = _merged(many)  # type: ignore[misc]
+                one = _relayout(one, 0, w, d)
+                return (one, b, []) if many is b else (a, one, [])
         return a, b, []
     flags: list[bool] = []
     for k in range(len(a.widths)):
         fa, fb = _flags(a)[k], _flags(b)[k]
         da, db = a.dims[k], b.dims[k]
-        if P.same(da, db) or not P.same(a.widths[k], b.widths[k]):
-            flags.append(fa and fb and P.same(da, db))
+        wa, wb = a.widths[k], b.widths[k]
+        if P.same(da, db) and P.same(wa, wb):
+            flags.append(fa and fb)
             continue
-        if fa and fb:
+        if fa and fb and wa is not None and wb is not None and P.same(wa, wb):
             if int(da) < int(db):  # type: ignore[arg-type]
                 a = _promote(a, k, db)
             else:
                 b = _promote(b, k, da)
-        elif fa:
-            a = _promote(a, k, db)
+        elif fa and fb and wa is None and wb is None:
+            pass
+        elif fa and (not fb or wa is None or (wb is not None and P.same(wa, 1))):
+            a = _relayout(a, k, wb, db)
         elif fb:
-            b = _promote(b, k, da)
+            b = _relayout(b, k, wa, da)
         flags.append(fa and fb)
     return a, b, flags
+
+
+@dataclass(frozen=True, eq=False)
+class _MatrixGate(P.Gate):
+    """A gate given by a matrix of ``size`` levels; ``slots`` is its pattern, if any."""
+
+    size: sympy.Expr | None = None
+    slots: tuple[tuple[str, str | None], ...] | None = None
 
 
 def make_function(name: str, params: list[sympy.Dummy], body: sympy.Expr) -> type:
@@ -780,8 +901,8 @@ class Interpreter:
     ) -> None:
         """``args`` are the command-line arguments read by ``arg(k)``; ``check_oracles`` checks
         every gate that maps basis states to basis states for reversibility; ``mode`` picks
-        Dirac text, the ZX drawing, both, or the raw graph listing for ``show``; ``zx_style`` draws ZX diagrams with
-        matplotlib, Unicode or ASCII."""
+        Dirac text, the ZX drawing, both, or the raw graph listing for ``show``; ``zx_style``
+        draws ZX diagrams with matplotlib, Unicode or ASCII."""
         if style not in D.STYLES:
             raise ValueError(f"unknown display style {style!r}")
         if zx_style not in zxdraw.STYLES:
@@ -789,6 +910,10 @@ class Interpreter:
         self.zx_style = zx_style
         self.listing = False
         self.style = style
+        self.styles: tuple[str, ...] = (style,)
+        """The styles each ``show`` is rendered in, in order."""
+        self._out: list[tuple[str | None, str]] = []
+        self.parts: list[tuple[str | None, str]] = []
         self.check_oracles = check_oracles
         self.mode = mode
         self.last: Echo | None = None
@@ -811,15 +936,28 @@ class Interpreter:
         self.builtins = set(self.ops)
 
     def execute(self, source: str) -> str:
-        """Runs every statement of ``source``; returns what ``show`` printed."""
-        out: list[str] = []
+        """Runs every statement of ``source``; returns what ``show`` and ``print`` printed,
+        each ``show`` once per style of :attr:`styles`."""
+        return "\n".join(text for _, text in self.execute_parts(source))
+
+    def execute_parts(self, source: str) -> list[tuple[str | None, str]]:
+        """Runs ``source``; returns ``(style, text)`` per printed piece, style None for text
+        shared by every style. :attr:`parts` keeps the pieces printed before an error."""
+        start = len(self._out)
+        try:
+            self._run(source)
+        finally:
+            self.parts = self._out[start:]
+            del self._out[start:]
+        return list(self.parts)
+
+    def _run(self, source: str) -> None:
         for stmt in _split_statements(source):
             text = stmt.strip()
             if text:
                 printed = self._statement(text)
                 if printed:
-                    out.append(printed)
-        return "\n".join(out)
+                    self._out.append((None, printed))
 
     def _parser(self, toks: list[Tok]) -> Parser:
         return Parser(toks, lambda name: name in _FUNCS or name in _SPECIAL or name in self.funcs)
@@ -914,27 +1052,26 @@ class Interpreter:
         if not (lo.is_Integer and hi.is_Integer):
             self._fold_loop(var.text, lo, hi, body)
             return ""
-        out = []
         for k in range(int(lo), int(hi) + 1):
             self._forget(var.text)
             self.values[var.text] = sympy.Integer(k)
-            out.append(self.execute(body))
-        return "\n".join(x for x in out if x)
+            self._run(body)
+        return ""
 
     def _stmt_while(self, text: str) -> str:
         header, body, rest = self._header(text, "while")
         if rest:
             raise LangSyntaxError(f"unexpected {rest!r} after the while block")
         cond = self._condition(header, "while condition")
-        out = []
         while self._truth(cond, "while condition"):
-            out.append(self.execute(body))
-        return "\n".join(x for x in out if x)
+            self._run(body)
+        return ""
 
     def _stmt_if(self, text: str) -> str:
         header, body, rest = self._header(text, "if")
         if self._truth(self._condition(header, "if condition"), "if condition"):
-            return self.execute(body)
+            self._run(body)
+            return ""
         if not rest:
             return ""
         if not rest.startswith("else"):
@@ -947,7 +1084,8 @@ class Interpreter:
         inner, end = _block(rest, 0)
         if rest[end:].strip():
             raise LangSyntaxError(f"unexpected {rest[end:].strip()!r} after the else block")
-        return self.execute(inner)
+        self._run(inner)
+        return ""
 
     def _fold_loop(self, var: str, lo: sympy.Expr, hi: sympy.Expr, body: str) -> None:
         """A loop over a symbolic range: each ``|s> = ...`` step is run once with the loop
@@ -1148,13 +1286,22 @@ class Interpreter:
             self._check_name(name, "op")
         p.take("=")
         pattern = p.expr()
+        source = text.split("=", 1)[1].strip()
+        if isinstance(pattern, (MatrixNode, MatrixFor)) and p.done():
+            self.ops[name] = self._matrix_gate(name, pattern, Ctx(), None, source)
+            self.last = Echo(D.Label("op", name), "gate", self.ops[name])
+            return
         p.take("->")
         body = p.expr()
         if not p.done():
             raise LangSyntaxError(f"unexpected {p.peek().text!r} in {name}")  # type: ignore[union-attr]
         slots = self._pattern(pattern)
         names = [q for q, _ in slots]
-        source = text.split("=", 1)[1].strip()
+        if isinstance(body, (MatrixNode, MatrixFor)):
+            self.ops[name] = self._matrix_gate(name, body, Ctx(), slots, source)
+            self.slots[name] = slots
+            self.last = Echo(D.Label("op", name), "gate", self.ops[name])
+            return
 
         def fn(
             vals: tuple[sympy.Expr, ...],
@@ -1180,6 +1327,80 @@ class Interpreter:
         self.ops[name] = P.Gate(name, len(names), fn, qubit=builtin, oracle=oracle, source=source)
         self.slots[name] = slots
         self.last = Echo(D.Label("op", name), "gate", self.ops[name])
+
+    def _matrix_gate(
+        self,
+        name: str,
+        node: MatrixNode | MatrixFor,
+        ctx: Ctx,
+        slots: list[tuple[str, str | None]] | None,
+        source: str = "",
+    ) -> _MatrixGate:
+        """The gate ``|c> -> sum_r M[r][c] |r>`` over the registers it is applied to (one
+        merged register without ``slots``); entries are evaluated at each application."""
+        size = sympy.Integer(len(node.rows)) if isinstance(node, MatrixNode) else None
+        if isinstance(node, MatrixFor):
+            lo = self._scalar(self._eval_node(node.lo, ctx), "a matrix bound")
+            hi = self._scalar(self._eval_node(node.hi, ctx), "a matrix bound")
+            if lo != 0:
+                raise LangTypeError("a matrix index range starts at 0")
+            size = hi + 1 if node.inclusive else hi
+
+        def fn(
+            vals: tuple[sympy.Expr, ...],
+            widths: tuple[sympy.Expr, ...],
+            dims: tuple[sympy.Expr, ...],
+        ) -> P.State:
+            for (q, want), d in zip(slots or (), dims, strict=False):
+                if want is not None and not P.bind(self._dim(want, ctx), d):
+                    raise LangTypeError(f"{name}: |{q}>_{want} applied to a dimension-{d} register")
+            if any(w is None or d is None for w, d in zip(widths, dims, strict=True)):
+                raise LangTypeError(f"{name}: a register width is unresolved")
+            levels = [d**w for w, d in zip(widths, dims, strict=True)]
+            total = sympy.Mul(*levels)
+            if not (P.same(total, size) or P.bind(size, total)):
+                raise LangTypeError(f"{name}: a matrix of {size} levels applied to {total} levels")
+            col = _mixed(vals, levels)
+            if isinstance(node, MatrixFor):
+                bounds = [P.new_bound(node.row, 0, n - 1) for n in levels]
+                row = _mixed([b.symbol for b in bounds], levels)
+                inner = Ctx({**ctx.locals, node.row: Local(row), node.col: Local(col)}, ctx.body)
+                amp = self._scalar(self._eval_node(node.body, inner), "a matrix entry")
+                term = P.Term(amp, tuple(bounds), tuple(b.symbol for b in bounds))
+                return P.State(widths, (term,), False, dims)
+            sizes = [int(n) for n in levels]
+            rows = [
+                [self._scalar(self._eval_node(e, ctx), "a matrix entry") for e in r]
+                for r in node.rows
+            ]
+            terms = []
+            for r, entries in enumerate(rows):
+                if col.is_Integer:
+                    amp = entries[int(col)]
+                else:
+                    amp = sympy.Add(
+                        *(m * sympy.KroneckerDelta(col, c) for c, m in enumerate(entries) if m != 0)
+                    )
+                if amp != 0:
+                    terms.append(P.Term(amp, (), _split(r, sizes)))
+            if not terms:
+                terms.append(P.Term(sympy.S.Zero, (), _split(0, sizes)))
+            return P.State(widths, tuple(terms), False, dims)
+
+        arity = len(slots) if slots else 1
+        frozen = tuple(slots) if slots else None
+        return _MatrixGate(name, arity, fn, source=source or name, size=size, slots=frozen)
+
+    def _vector(self, node: VectorNode, ctx: Ctx) -> P.State:
+        """``[a, b, ...]`` as ``a|0> + b|1> + ...`` on one register of that many levels."""
+        amps = [self._scalar(self._eval_node(e, ctx), "a vector entry") for e in node.items]
+        if len(amps) < 2:
+            raise LangTypeError("a vector needs at least 2 entries")
+        w, d = _matrix_layout(sympy.Integer(len(amps)))
+        terms = [P.Term(a, (), (sympy.Integer(k),)) for k, a in enumerate(amps) if a != 0]
+        if not terms:
+            terms = [P.Term(sympy.S.Zero, (), (sympy.S.Zero,))]
+        return P.State((w,), tuple(terms), False, (d,))
 
     def _pattern(self, node: object) -> list[tuple[str, str | None]]:
         if isinstance(node, Braket) and not node.bra:
@@ -1260,7 +1481,7 @@ class Interpreter:
 
     def _stmt_show(self, toks: list[Tok], text: str, builtin: bool) -> str:
         nodes = self._arguments(toks, text, "show")
-        style = self.style
+        style = None
         if nodes and isinstance(nodes[-1][0], Name) and nodes[-1][0].id in D.STYLES:
             style = nodes.pop()[0].id  # type: ignore[attr-defined]
         entries: list[tuple[D.Label | None, object]] = []
@@ -1268,7 +1489,11 @@ class Interpreter:
             if isinstance(node, (Str, Fstr)):
                 raise LangTypeError(f'show takes values; write print("{node.text}")')
             entries.extend(self._entries(node, source))
-        return self.render(entries, style)
+        if style is not None:
+            return self.render(entries, style)
+        for each in self.styles:
+            self._out.append((each, self.render(entries, each)))
+        return ""
 
     def _stmt_print(self, toks: list[Tok], text: str, builtin: bool) -> str:
         parts: list[str] = []
@@ -1381,8 +1606,8 @@ class Interpreter:
         style: str | None = None,
         mode: NotationMode | None = None,
     ) -> str:
-        """Entries as Dirac lines (an image in ``plot`` style), ZX listings of states, or both,
-        then a ``where`` line for what the non-state entries mention."""
+        """Entries as Dirac lines (an image in ``plot`` style, ``$...$`` LaTeX lines in
+        ``latex`` style), ZX drawings of states, or both."""
         style = self.style if style is None else style
         mode = self.mode if mode is None else mode
         if style == "plot":
@@ -1406,6 +1631,8 @@ class Interpreter:
                 if image is None:
                     return False
                 out.append(image)
+            elif style == "latex":
+                out.extend(f"${line.strip()}$" for line in math)
             else:
                 out.extend(math)
             math.clear()
@@ -1418,10 +1645,8 @@ class Interpreter:
             if state and mode is not NotationMode.DIRAC:
                 if not flush():
                     return None
-                out.append(self._zx_text(lab, v, raw=mode is NotationMode.RAW))  # type: ignore[arg-type]
-        where = r.where()
-        if where:
-            math.append(where)
+                raw = mode is NotationMode.RAW
+                out.append(self._zx_text(lab, v, raw=raw, style=style))  # type: ignore[arg-type]
         if not flush():
             return None
         return "\n".join(out)
@@ -1456,22 +1681,26 @@ class Interpreter:
             return name, e.type, r.value(v) + "\n" + listing
         return name, e.type, r.value(v)
 
-    def _zx_text(self, label: D.Label | None, s: P.State, raw: bool = False) -> str:
+    def _zx_text(
+        self, label: D.Label | None, s: P.State, raw: bool = False, style: str | None = None
+    ) -> str:
         """``label =`` then the ZX drawing of ``s``, and its listing when :attr:`listing`;
         with ``raw`` only its uncapped listing."""
-        style = "ascii" if self.style == "ascii" else "unicode"
-        head = D.Renderer(style).label(label) if label is not None else ""
+        style = self.style if style is None else style
+        text = "ascii" if style == "ascii" else "unicode"
+        head = D.Renderer(text).label(label) if label is not None else ""
         if raw:
             return "\n".join([f"{head} =".lstrip(), self._zx_body(s, limited=False)])
-        parts = [f"{head} =".lstrip(), self._zx_drawing(s)]
+        parts = [f"{head} =".lstrip(), self._zx_drawing(s, style)]
         if self.listing:
             parts.append(self._zx_body(s))
         return "\n".join(parts)
 
-    def _zx_drawing(self, s: P.State) -> str:
+    def _zx_drawing(self, s: P.State, display: str | None = None) -> str:
         """The ZX drawing of ``s`` in :attr:`zx_style`, ASCII under the ascii display style;
         text drawings indented by two spaces."""
-        style = "ascii" if self.style == "ascii" else self.zx_style
+        display = self.style if display is None else display
+        style = "ascii" if display == "ascii" else self.zx_style
         try:
             drawing = zxdraw.draw(zxview.view(s), style)
         except zxview.ZXViewError as exc:
@@ -1598,6 +1827,10 @@ class Interpreter:
             return self._braket(node, ctx)
         if isinstance(node, SumNode):
             return self._sum(node, ctx)
+        if isinstance(node, (MatrixNode, MatrixFor)):
+            return self._matrix_gate(_matrix_text(node), node, ctx, None)
+        if isinstance(node, VectorNode):
+            return self._vector(node, ctx)
         if isinstance(node, Juxt):
             return self._juxt(self._eval_node(node.left, ctx), self._eval_node(node.right, ctx))
         if isinstance(node, Bin):
@@ -1649,12 +1882,11 @@ class Interpreter:
     def _basis(self, text: str, ctx: Ctx, dim: sympy.Expr | None) -> P.State:
         p = self._parser(tokenize(text))
         ast = p.expr()
-        width: sympy.Expr | None = None
         if p.at(":"):
-            p.take()
-            width = self._scalar(self._eval_node(p.expr(), ctx), f"the width in |{text}>")
-            if width.is_integer is False or (width.is_Integer and width < 1):
-                raise LangTypeError(f"|{text}> needs a positive integer width")
+            raise LangSyntaxError(
+                f"|{text}> is not a ket; write |v> (raised to fit where it is used), |v>_d "
+                "or |v>_d^@n"
+            )
         if not p.done():
             raise LangSyntaxError(f"cannot read the ket |{text}>")
         value = self._scalar(self._eval_node(ast, ctx), f"|{text}>")
@@ -1665,23 +1897,21 @@ class Interpreter:
         if dim is None and local is not None and local.dim is not None:
             dim = local.dim
         literal = local is None or (local.width is None and local.bound is None)
-        if dim is None and not ctx.body and literal and value.is_Integer:
-            if width is None:
-                width = sympy.Integer(1)
-            if width.is_Integer:
-                return _flex(P.basis(value, width, _least_dim(int(value), int(width))), [True])
+        if dim is None and not ctx.body and literal:
+            if value.is_Integer:
+                return _flex(P.basis(value, sympy.Integer(1), _least_dim(int(value), 1)), [True])
+            return _flex(P.basis(value, None, None), [True])
         if dim is None and not ctx.body:
             dim = P.TWO
-        if width is not None:
-            pass
-        elif local is not None and local.width is not None:
+        width: sympy.Expr | None = None
+        if local is not None and local.width is not None:
             width = local.width
         elif local is not None and local.bound is not None:
             width = _range_width(local.bound.lo, local.bound.hi, dim if dim is not None else P.TWO)
         elif explicit:
             width = sympy.Integer(1)
         if width is None and not ctx.body:
-            raise LangTypeError(f"cannot infer the register width of |{text}>; write |{text} : w>")
+            raise LangTypeError(f"cannot infer the register width of |{text}>; write |{text}>_d")
         concrete = dim is not None and width is not None and _ints(value, width, dim)
         if concrete and int(value) >= int(dim) ** int(width):  # type: ignore[arg-type]
             digits = "one digit" if width == 1 else f"{width} digits"
@@ -1720,7 +1950,16 @@ class Interpreter:
         if isinstance(a, P.Operator) and isinstance(b, P.State):
             if b.bra:
                 raise LangTypeError("an operator applies to a ket; write U|psi>")
-            return P.apply(a, self._fit_gate(a, b))
+            b = self._fit_gate(a, b)
+            if any(w is None for w in b.widths):
+                raise LangTypeError("cannot infer a register width; give the ket a dimension |v>_d")
+            try:
+                return _collect(P.apply(_fit_outer(a, b), b))
+            except P.PathSumError:
+                power = _power_of_digit(a, b)
+                if power is None:
+                    raise
+                return power
         if isinstance(a, P.Operator) and isinstance(b, P.Operator):
             return P.Compose((a, b))
         if isinstance(a, P.State) and isinstance(b, P.State):
@@ -1733,15 +1972,29 @@ class Interpreter:
         raise LangTypeError(f"cannot apply {self._kind(a)} to {self._kind(b)}")
 
     def _fit_gate(self, op: P.Operator, s: P.State) -> P.State:
-        """``s`` with flexible registers raised to the dimensions a gate's pattern names."""
+        """``s`` with flexible registers raised to the layout a gate's pattern or matrix
+        names; an unresolved one becomes one digit of the slot's dimension (2 by default)."""
+        if isinstance(op, _MatrixGate) and op.slots is None:
+            return _fit_matrix(op, s)
         if not isinstance(op, P.Gate):
             return s
-        slots = self.slots.get(op.name)
-        if slots is None or self.ops.get(op.name) is not op or len(slots) != len(s.widths):
+        known = self.slots.get(op.name)
+        slots: Sequence[tuple[str, str | None]]
+        if isinstance(op, _MatrixGate) and op.slots is not None:
+            slots = op.slots
+        elif known is None or self.ops.get(op.name) is not op:
+            slots = [("", None)] * op.arity
+        else:
+            slots = known
+        if len(slots) != len(s.widths):
             return s
         for k, (_, want) in enumerate(slots):
             d = self._dim(want, Ctx())
-            if d is not None and d.is_Integer and _flags(s)[k] and not P.same(d, s.dims[k]):
+            if not _flags(s)[k]:
+                continue
+            if s.widths[k] is None:
+                s = _relayout(s, k, sympy.Integer(1), d if d is not None else P.TWO)
+            elif d is not None and d.is_Integer and not P.same(d, s.dims[k]):
                 s = _promote(s, k, d)
         return s
 
@@ -1804,7 +2057,8 @@ class Interpreter:
                 b = self._mul(sympy.Integer(-1), b)
             if isinstance(a, P.State) and isinstance(b, P.State):
                 a, b, flags = _unify(a, b)
-                return _flex(P.simplify(P.add(a, b)), flags)
+                total = P.simplify(P.add(a, b))
+                return _flex(total if any(flags) else _collect(total), flags)
             if isinstance(a, P.Operator) and isinstance(b, P.Operator):
                 return P.OpSum((a, b))
             raise LangTypeError(f"cannot add {self._kind(a)} and {self._kind(b)}")
@@ -1836,6 +2090,98 @@ class Interpreter:
         if op == "xor":
             return P.xor(a, b)
         raise LangSyntaxError(f"unknown operator {op}")
+
+
+def _power_of_digit(op: P.Operator, s: P.State) -> P.State | None:
+    """``U^@n |v>^@n`` as ``(U|v>)^@n`` for a one-register gate U and a repeated digit v."""
+    if not (isinstance(op, P.Power) and isinstance(op.op, P.Gate) and op.op.arity == 1):
+        return None
+    if len(s.widths) != 1 or len(s.terms) != 1 or s.terms[0].bound:
+        return None
+    w, d, t = s.widths[0], s.dims[0], s.terms[0]
+    digit = None if w is None or d is None else D._repeated_digit(t.kets[0], w, d)
+    if digit is None or not P.same(op.count, w):
+        return None
+    one = _collect(P.apply(op.op, P.basis(digit, sympy.Integer(1), d)))
+    return P.scale(t.amp, P.power_state(one, w))
+
+
+def _collect(s: P.State) -> P.State:
+    """``s`` with the unsummed terms on equal kets added together."""
+    if isinstance(s, _Flex) or sum(not t.bound for t in s.terms) < 2:
+        return s
+    amps: dict[tuple[sympy.Expr, ...], sympy.Expr] = {}
+    rest: list[P.Term] = []
+    for t in s.terms:
+        if t.bound:
+            rest.append(t)
+        else:
+            amps[t.kets] = amps.get(t.kets, sympy.S.Zero) + t.amp
+    terms = [P.Term(P.tidy(a), (), k) for k, a in amps.items()]
+    terms = [t for t in terms if t.amp != 0] + rest
+    if not terms:
+        terms = [P.Term(sympy.S.Zero, (), s.terms[0].kets)]
+    return P.State(s.widths, tuple(terms), s.bra, s.dims)
+
+
+def _matrix_text(node: MatrixNode | MatrixFor) -> str:
+    """A short name for an anonymous matrix."""
+    if isinstance(node, MatrixFor):
+        return f"matrix({node.row}, {node.col})"
+    return f"M{len(node.rows)}"
+
+
+def _fit_outer(op: P.Operator, s: P.State) -> P.Operator:
+    """``op`` with the flexible kets and bras of its outer products laid out like ``s``."""
+    if isinstance(op, P.Outer):
+        bra, _, _ = _unify(op.bra, s)
+        ket, _, _ = _unify(op.ket, s)
+        return P.Outer(ket, bra)
+    if isinstance(op, P.Scaled):
+        return P.Scaled(op.factor, _fit_outer(op.op, s))
+    if isinstance(op, P.OpSum):
+        return P.OpSum(tuple(_fit_outer(o, s) for o in op.ops))
+    if isinstance(op, P.Compose):
+        return P.Compose(tuple(_fit_outer(o, s) for o in op.ops))
+    return op
+
+
+def _matrix_layout(size: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
+    """``(width, dim)`` of one register with ``size`` levels: qubits for a power of 2."""
+    power = sympy.powsimp(sympy.sympify(size))
+    if power.is_Integer and int(power) >= 2 and int(power) & (int(power) - 1) == 0:
+        return sympy.Integer(int(power).bit_length() - 1), P.TWO
+    if power.is_Pow and P.same(power.base, 2):
+        return power.exp, P.TWO
+    return sympy.Integer(1), power
+
+
+def _fit_matrix(op: _MatrixGate, s: P.State) -> P.State:
+    """``s`` with a lone flexible register laid out to the matrix size."""
+    if len(s.widths) != 1 or not _flags(s)[0] or op.size is None:
+        return s
+    w, d = s.widths[0], s.dims[0]
+    if w is not None and d is not None and P.same(d**w, op.size):
+        return s
+    return _relayout(s, 0, *_matrix_layout(op.size))
+
+
+def _mixed(values: Sequence[sympy.Expr], levels: Sequence[sympy.Expr]) -> sympy.Expr:
+    """The index of ``values`` read as digits of the radices ``levels``, first most
+    significant."""
+    total: sympy.Expr = sympy.Integer(0)
+    for v, n in zip(values, levels, strict=True):
+        total = total * n + v
+    return total
+
+
+def _split(index: int, levels: Sequence[int]) -> tuple[sympy.Integer, ...]:
+    """``index`` as one digit per radix of ``levels``, first most significant."""
+    out = []
+    for n in reversed(levels):
+        index, digit = divmod(index, n)
+        out.append(sympy.Integer(digit))
+    return tuple(reversed(out))
 
 
 def _plain(v: object, source: str) -> str:

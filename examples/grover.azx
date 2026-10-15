@@ -7,7 +7,7 @@ var r = floor(pi/4 * sqrt(N))
 
 |s> = H^@n |0>^@n
 |psi> = |s>
-|psi> = |psi> - 2 |w : n><w : n|psi>
+|psi> = |psi> - 2 |w><w|psi>
 |psi> = 2 |s><s|psi> - |psi>
 show(r, |psi>)
 var z = measure|psi>

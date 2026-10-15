@@ -34,7 +34,7 @@ def plot_lines(source: str) -> list[str]:
 def test_shor_lines_render_in_mathtext() -> None:
     mathtext = pytest.importorskip("matplotlib.mathtext")
     lines = plot_lines(SHOR + "show(y, z, f, QFT)\n")
-    assert len(lines) == 10
+    assert len(lines) == 9
     for line in lines:
         mathtext.math_to_image(f"${line.strip()}$", io.BytesIO(), format="png")
 
@@ -107,6 +107,6 @@ def test_expressions(expr: sympy.Expr, ascii: str, uni: str) -> None:
 
 def test_unknown_style() -> None:
     with pytest.raises(ValueError):
-        D.Renderer("latex")
+        D.Renderer("fancy")
     with pytest.raises(ValueError):
-        Interpreter(style="latex")
+        Interpreter(style="fancy")

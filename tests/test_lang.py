@@ -115,7 +115,7 @@ class TestShorNumeric:
         assert fx == pow(7, x, 15)
 
         def reg(v: int, w: int) -> str:
-            return {0: f"|0>^@{w}", 2**w - 1: f"|1>^@{w}"}.get(v, f"|{v} : {w}>")
+            return {0: f"|0>^@{w}", 2**w - 1: f"|1>^@{w}"}.get(v, f"|{v}>")
 
         assert interp.execute("show(|psi_2>)") == f"|psi_2> = {reg(x, 3)} @ {reg(fx, 4)}"
         assert interp.execute("show(<psi_3|psi_3>, <psi_1|psi_1>)") == (
@@ -163,7 +163,8 @@ class TestShorNumeric:
         ("|a> = |0> + |1>", "|a> = |0> + |1>"),
         ("|a>_3 = |0> + |1>", "|a>_3 = |0>_3 + |1>_3"),
         ("|a> = |0>_3 + |1>", "|a>_3 = |0>_3 + |1>_3"),
-        ("|a> = |5 : 3>", "|a> = |5 : 3>"),
+        ("|a> = |1>|0>|1>", "|a> = |1> @ |0> @ |1>"),
+        ("|a> = |0> + |0>|0>", "|a> = 2 |0>^@2"),
         ("|a> = |0>|2> - |1>|0>", "|a> = |0> @ |2>_3 - |1> @ |0>_3"),
         ("|a> = |i>", "|a> = sqrt(2)/2 |0> + sqrt(2)*i/2 |1>"),
         ("|a> = |-i>", "|a> = sqrt(2)/2 |0> - sqrt(2)*i/2 |1>"),
@@ -223,11 +224,11 @@ class TestSymbolic:
         assert interp.execute("var c = b + 1\nshow(c)") == "c = 2"
 
     def test_bits_act_as_numbers(self) -> None:
-        interp, _ = run("|a> = |5 : 3>\nvar b = measure|a>\nvar c = b * 2\nshow(b, c)")
+        interp, _ = run("|a> = |1>|0>|1>\nvar b = measure|a>\nvar c = b * 2\nshow(b, c)")
         assert interp.execute("show(b, c)") == "b = 101 (5)\nc = 10"
 
     def test_symbolic_measure_of_basis_state(self) -> None:
-        interp, _ = run("var n, k\n|a> = |k : n>|0>\nvar b = measure|a>")
+        interp, _ = run("var n, k\n|o> = |0>^@n\n|a> = (|o> - |o> + |k>)|0>\nvar b = measure|a>")
         assert interp.execute("show(b, |a>)") == "b = 2*k\n|a> = |k> @ |0>"
 
     def test_measure_collapses(self) -> None:
@@ -261,7 +262,7 @@ class TestQudits:
         out = run(source + "show(|chi>_d)", "unicode")[1]
         assert out == "|χ⟩_d = |z⟩_d"
         z = run(source + "show(z)", "unicode")[1]
-        assert z == "z ∈ {0,…,d - 1}^n\n  where z ∈ {0,…,d - 1}^n measured from |χ⟩_d"
+        assert z == "z ∈ {0,…,d - 1}^n"
 
     def test_free_parameters_bind_to_concrete_registers(self) -> None:
         source = (
@@ -304,10 +305,10 @@ class TestQudits:
         [
             ("|a>_3 = |2>_3", "|a>_3 = |2>_3"),
             ("|a>_3 = |2>_3 @ |1>_3", "|a>_3 = |2>_3 @ |1>_3"),
-            ("|a>_3 = |5 : 2>_3", "|a>_3 = |5 : 2>_3"),
+            ("|a>_3 = |1>_3|2>_3", "|a>_3 = |1>_3 @ |2>_3"),
             ("gate F3 = |x>_3 -> |x>_3\n|a> = F3|1>", "|a>_3 = |1>_3"),
             ("|a>_3 = |0>_3^@2", "|a>_3 = |0>_3^@2"),
-            ("gate X3 = |x>_3 -> |(x + 1) % 3>_3\n|a>_3 = X3^@4 |0 : 4>_3", "|a>_3 = |1>_3^@4"),
+            ("gate X3 = |x>_3 -> |(x + 1) % 3>_3\n|a>_3 = X3^@4 |0>_3^@4", "|a>_3 = |1>_3^@4"),
             (
                 "gate X3 = |x>_3 -> |(x + 1) % 3>_3\n|a>_3 = (X3 @ I) |2>_3|1>_3",
                 "|a>_3 = |0>_3 @ |1>_3",
@@ -355,7 +356,8 @@ class TestQudits:
             ("|a>_4 = |2>_3", "dimension 3"),
             ("|a>_3 = |2>_3\nshow(|a>_5)", "does not match"),
             ("|a>_3 = H|0>_3", "single qubits"),
-            ("|a>_3 = |3 : 1>_3", "does not fit"),
+            ("|a>_3 = |3>_3", "does not fit"),
+            ("|a> = |3 : 1>", "not a ket"),
             ("|a>_1 = |0>_1", "at least 2"),
             ("|a> = |0>_3 + |0>_4", "dimensions"),
             ("gate F3 = |x>_3 -> |x>_3\n|a>_7 = F3|0>_7", "dimension-7"),
@@ -376,7 +378,7 @@ class TestErrors:
             ("var x = |0>", LangTypeError, "must be a scalar"),
             ("|a> = <0|", LangTypeError, "cannot assign a bra"),
             ("|a> = H|0> @ H", LangTypeError, "cannot tensor"),
-            ("|a> = |0> + |0>|0>", LangError, "different widths"),
+            ("|a> = |0>_2 + |0>|0>", LangError, "different widths"),
             ("var n\n|a> = H|0>^@n", LangError, "single qubits"),
             ("|a> = QQ|0>", LangError, "not defined"),
             ("var H", LangTypeError, "already a op"),
@@ -395,8 +397,9 @@ class TestErrors:
             ("|a> = |0>\nshow(a)", LangTypeError, "is a state"),
             ("var k\n|a> = |k>", LangTypeError, "register width"),
             ("|a> = (H @ H) |0>", LangError, "registers"),
-            ("func f(x) = |x>", LangTypeError, "width"),
-            ("|a> = |4 : 2>_2", LangTypeError, "does not fit"),
+            ("func f(x) = |x>", LangTypeError, "scalar"),
+            ("|a> = |4>_2", LangTypeError, "does not fit"),
+            ("|a> = |4 : 2>", LangSyntaxError, "not a ket"),
         ],
     )
     def test_error(self, source: str, error: type[Exception], match: str) -> None:
@@ -483,7 +486,8 @@ class TestControlFlow:
         source = (
             "var n, a, N\n"
             "gate M = |x>|y> -> |x>|(y * powmod(a, 2^j, N)^bit(x, j)) % N>\n"
-            "|s> = H^@n |0>^@n @ |1 : n>\nfor j in 0..n { |s> = M |s> }\nshow(|s>)"
+            "|o> = |0>^@n\n|s> = H^@n |0>^@n @ (|o> - |o> + |1>)\n"
+            "for j in 0..n { |s> = M |s> }\nshow(|s>)"
         )
         assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n){ |x> @ |a^x % N> }"
 
@@ -628,7 +632,7 @@ class TestShowModes:
     def test_raw_listing_has_no_caps(self) -> None:
         from archytaszx.repl.printer import NotationMode
 
-        source = "|a> = sum(x in 0..128){ 1/(x + 1) |x : 7> }\nshow(|a>)"
+        source = "|a> = sum(x in 0..128){ 1/(x + 1) |x> }\nshow(|a>)"
         zx = Interpreter(style="ascii", mode=NotationMode.ZX).execute(source)
         assert "no ZX form" in zx
         raw = Interpreter(style="ascii", mode=NotationMode.RAW).execute(source)
@@ -648,3 +652,75 @@ class TestShowModes:
         interp = Interpreter(style="ascii", mode=NotationMode.ZX)
         out = interp.execute("var n\n|a> = |0>^@n\nshow(|a>)")
         assert "+-- n --+" in out and "(x)" in out
+
+
+CYCLE_SUM = "gate G = [[0,0,1],[1,0,0],[0,1,0]]\n|s>_3 = sum(x in 0..3){ x |x>_3 }\n|a> = G |s>"
+
+
+class TestMatrixGates:
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("gate U = [[0, 1], [1, 0]]\n|a> = U |0>", "|a> = |1>"),
+            ("gate C = [[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]]\n|a> = C |1>|0>", "|a> = |1>^@2"),
+            (
+                "gate C = |x>|y> -> [[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]]\n|a> = C |1>|0>",
+                "|a> = |1> @ |1>",
+            ),
+            ("gate G = [[0,0,1],[1,0,0],[0,1,0]]\n|a> = G |0>", "|a>_3 = |1>_3"),
+            (
+                CYCLE_SUM,
+                "|a>_3 = 2 |0>_3 + |2>_3",
+            ),
+            ("|a> = [[0, 1], [1, 0]] |0>", "|a> = |1>"),
+            ("|a> = [1, i]", "|a> = |0> + i |1>"),
+            (
+                "gate U = [[1, 2], [3, 4]]\nvar n\n|a> = U^@n |0>^@n",
+                "|a> = sum(x in 0..2^n){ 3^(popcount(x)) |x> }",
+            ),
+            (
+                "var d\ngate F = matrix(r, c in 0..d){ e^(2*pi*i*r*c/d)/sqrt(d) }\n|a>_d = F |0>_d",
+                "|a>_d = 1/sqrt(d) sum(r in 0..d){ |r>_d }",
+            ),
+            (
+                "var t: real\ngate R = [[cos(t), -sin(t)], [sin(t), cos(t)]]\n|a> = R |0>",
+                "|a> = cos(t) |0> + sin(t) |1>",
+            ),
+        ],
+    )
+    def test_matrix(self, source: str, expected: str) -> None:
+        assert run(source + "\nshow(|a>)")[1] == expected
+
+    def test_entries_read_values_at_application(self) -> None:
+        source = (
+            "|m> = |1>\nvar z = measure|m>\nfunc f(x) = x + z\n"
+            "gate P = [[f(1), 0], [0, f(2)]]\n|a> = P |1>\nshow(|a>)"
+        )
+        assert run(source)[1] == "|a> = 3 |1>"
+
+    @pytest.mark.parametrize(
+        ("source", "match"),
+        [
+            ("gate U = [[0, 1], [1, 0]]\n|a> = U |0>_3", "2 levels applied to 3"),
+            ("gate U = [[0, 1], [1]]", "entries"),
+            ("|a> = [1]", "at least 2"),
+            ("var d\ngate F = matrix(r, c in 1..d){ r }", "starts at 0"),
+        ],
+    )
+    def test_errors(self, source: str, match: str) -> None:
+        with pytest.raises(LangError, match=match):
+            run(source)
+
+
+class TestFlexibleWidth:
+    def test_grover_reflection(self) -> None:
+        source = "var n, w\n|s> = H^@n |0>^@n\n|p> = |s> - 2 |w><w|s>\nshow(|p>)"
+        assert run(source)[1] == "|p> = 2^(-n/2) sum(x in 0..2^n){ |x> } - 2^(1 - n/2) |w>"
+
+    def test_literal_joins_a_wider_register(self) -> None:
+        source = "|s> = H^@3 |0>^@3\n|k> = (|5><5|) |s>\nshow(|k>)"
+        assert run(source)[1] == "|k> = sqrt(2)/4 |5>"
+
+    def test_unresolved_width_is_an_error(self) -> None:
+        with pytest.raises(LangTypeError, match="width"):
+            run("var w\n|a> = |w>")

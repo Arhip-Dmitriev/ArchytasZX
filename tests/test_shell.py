@@ -251,7 +251,9 @@ class TestScripts:
 
     def test_trailing_continuation_at_end_of_input(self) -> None:
         shell = Shell(commands=True)
-        assert shell.run_script(["help \\", "zx \\"]) == ["zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)"]
+        assert shell.run_script(["help \\", "zx \\"]) == [
+            "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)"
+        ]
 
     def test_comment_line_never_continues(self) -> None:
         shell = Shell(commands=True)
@@ -266,7 +268,10 @@ class TestScripts:
 
     def test_iter_script_yields_line_output_pairs(self) -> None:
         pairs = list(Shell(commands=True).iter_script("dirac\nhelp \\\n zx\n"))
-        assert pairs == [("dirac", "mode: dirac"), ("help zx", "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)")]
+        assert pairs == [
+            ("dirac", "mode: dirac"),
+            ("help zx", "zx -- ZX diagrams drawn with matplotlib (alias of zxmatplot)"),
+        ]
 
     def test_errors_do_not_stop_a_script(self) -> None:
         shell = Shell(commands=True)
@@ -620,3 +625,73 @@ class TestConfig:
         with pytest.raises(ValueError):
             S.D.load_config(str(path))
         assert S.D.load_config(str(tmp_path / "none.toml")) == S.D.Config()
+
+
+class TestStyles:
+    def test_several_styles_print_each_in_order(self) -> None:
+        shell = Shell(styles=("unicode", "latex", "ascii"))
+        out = shell.run_line("|s> = H|0>; show(|s>)").splitlines()
+        assert out[0].startswith("|s⟩ =") and out[1].startswith("$|s\\rangle")
+        assert out[2].startswith("|s> =")
+
+    def test_shared_text_once(self) -> None:
+        shell = Shell(styles=("unicode", "ascii"))
+        assert shell.run_line('print("hi")') == "hi"
+
+    def test_order_holds_until_error_and_finish(self) -> None:
+        shell = Shell(styles=("unicode", "ascii"), order=True)
+        assert shell.run_line("|s> = |1>; show(|s>)") == ""
+        assert shell.run_line('print("x")') == ""
+        flushed = shell.run_line("show(|q>)").splitlines()
+        assert flushed == [
+            "── unicode ──",
+            "|s⟩ = |1⟩",
+            "x",
+            "── ascii ──",
+            "|s> = |1>",
+            "x",
+            "error: 'q' is not defined; declare it with var",
+        ]
+        shell.run_line("show(|s>)")
+        assert shell.finish().splitlines() == [
+            "── unicode ──",
+            "|s⟩ = |1⟩",
+            "── ascii ──",
+            "|s> = |1>",
+        ]
+        assert shell.finish() == ""
+
+    def test_style_word(self) -> None:
+        shell = Shell(display="ascii")
+        assert shell.run_line(":style latex mathtext") == "style: latex mathtext"
+        assert shell.interpreter.styles == ("latex", "plot")
+        assert shell.run_line(":style fancy").startswith("error: unknown style")
+
+    def test_errors_are_red_with_colour(self) -> None:
+        shell = Shell(display="ascii", color=True)
+        assert shell.run_line("show(|q>)").startswith("\x1b[31merror:")
+        assert Shell(display="ascii").run_line("show(|q>)").startswith("error:")
+
+    def test_partial_output_before_an_error(self) -> None:
+        shell = Shell(display="ascii")
+        out = shell.run_line("|s> = |1>; show(|s>); show(|q>)").splitlines()
+        assert out[0] == "|s> = |1>" and out[1].startswith("error:")
+
+
+class TestFlags:
+    @pytest.mark.parametrize("flag", ["-v", "-h"])
+    def test_short_flags_are_gone(self, flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main([flag, "-c", "var n"]) == 2
+
+    def test_latex_and_order_flags(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["--latex", "--ascii", "--order", "-c", "|s> = |1>", "-c", "show(|s>)"]) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "── latex ──",
+            "$|s\\rangle = |1\\rangle$",
+            "── ascii ──",
+            "|s> = |1>",
+        ]
+
+    def test_verbose_long_flag(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main(["--verbose", "--ascii", "-c", "var x = 3"]) == 0
+        assert "val x : nat = 3" in capsys.readouterr().out
