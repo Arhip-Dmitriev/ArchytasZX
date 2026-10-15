@@ -20,6 +20,7 @@ import io
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from archytaszx.repl.lang import (
@@ -31,6 +32,9 @@ from archytaszx.repl.lang import (
     tokenize,
 )
 from archytaszx.repl.shell import Shell, main
+from archytaszx.semantics import pathsum as P
+
+HORRIBLE = str(Path(__file__).resolve().parent.parent / "examples" / "horrible_state.azx")
 
 SHOR = """\
 var n, m, N, a
@@ -232,6 +236,13 @@ class TestSymbolic:
         assert interp.execute("show(|a>)") in ("|a> = |0>", "|a> = |1>")
 
 
+def dense_qudit(s: P.State) -> np.ndarray:
+    keys, amps = P.enumerate_state(s)
+    out = np.zeros(int(np.prod(P.concrete_levels(s))), dtype=complex)
+    np.add.at(out, keys.astype(np.int64), amps)
+    return out
+
+
 FOURIER = "gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }\n"
 
 
@@ -251,6 +262,38 @@ class TestQudits:
         assert out == "|χ⟩_d = |z⟩_d"
         z = run(source + "show(z)", "unicode")[1]
         assert z == "z ∈ {0,…,d - 1}^n\n  where z ∈ {0,…,d - 1}^n measured from |χ⟩_d"
+
+    def test_free_parameters_bind_to_concrete_registers(self) -> None:
+        source = (
+            "var d, n\n" + FOURIER + "|p> = (1 + i)|1>_3|2>_3|0>_3|1>_3 - 2|2>_3|2>_3|0>_3|0>_3"
+            " + sum(k in 0..3){ |k>_3^@4 / (k + 1) }\n|q> = F^@n |p>\n"
+        )
+        interp, _ = run(source)
+        p, q = interp.states["p"], interp.states["q"]
+        assert q.widths == (4,) and q.dims == (3,)
+        f3 = np.exp(2j * np.pi * np.outer(range(3), range(3)) / 3) / np.sqrt(3)
+        full = f3
+        for _ in range(3):
+            full = np.kron(full, f3)
+        assert np.allclose(dense_qudit(q), full @ dense_qudit(p))
+
+    def test_bound_parameters_keep_the_closed_form(self) -> None:
+        kets = "".join(f"|{k % 7}>_7" for k in range(22))
+        for head, power in (("var d, n\n", "n"), ("var d = 7\n", "22")):
+            source = head + FOURIER + f"|p> = |0>_7^@22 + {kets}\n|q> = F^@{power} |p>\n"
+            interp, _ = run(source + "show(|q>)")
+            q = interp.states["q"]
+            assert len(q.terms) == 2 and all(t.bound for t in q.terms)
+            interp.execute("var m = measure|q>")
+            assert not interp.values["m"].is_Integer
+
+    def test_horrible_state_runs(self) -> None:
+        source = Path(HORRIBLE).read_text() + "|phi> = F^@n |psi>\nshow(|phi>)\n"
+        interp, out = run(source)
+        phi = interp.states["phi"]
+        assert phi.widths == (22,) and phi.dims == (7,)
+        assert all(t.bound for t in phi.terms)
+        assert out.count("sum(x in 0..3909821048582988049){") == len(phi.terms)
 
     def test_digit_shift_power(self) -> None:
         source = "var d, n\ngate Xd = |x>_d -> |(x + 1) % d>_d\n|v>_d = Xd^@n |0>_d^@n\n"
@@ -315,7 +358,8 @@ class TestQudits:
             ("|a>_3 = |3 : 1>_3", "does not fit"),
             ("|a>_1 = |0>_1", "at least 2"),
             ("|a> = |0>_3 + |0>_4", "dimensions"),
-            ("var d, n\n" + FOURIER + "|a>_3 = F|0>_3", "dimension-3"),
+            ("gate F3 = |x>_3 -> |x>_3\n|a>_7 = F3|0>_7", "dimension-7"),
+            ("var d\ngate G = |x>_d|y>_d -> |x>_d|y>_d\n|a> = G|0>_3|0>_5", "dimension-5"),
             ("|a>_3 = |+>_3", "qubit state"),
         ],
     )

@@ -1156,7 +1156,7 @@ class Interpreter:
             dims: tuple[sympy.Expr, ...],
         ) -> P.State:
             for (q, want), d in zip(slots, dims, strict=True):
-                if want is not None and not P.same(self._dim(want, Ctx()), d):
+                if want is not None and not P.bind(self._dim(want, Ctx()), d):
                     raise LangTypeError(f"{name}: |{q}>_{want} applied to a dimension-{d} register")
             ctx = Ctx(
                 {
@@ -1715,7 +1715,7 @@ class Interpreter:
             return s
         for k, (_, want) in enumerate(slots):
             d = self._dim(want, Ctx())
-            if d is not None and _flags(s)[k] and not P.same(d, s.dims[k]):
+            if d is not None and d.is_Integer and _flags(s)[k] and not P.same(d, s.dims[k]):
                 s = _promote(s, k, d)
         return s
 

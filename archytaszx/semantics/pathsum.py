@@ -26,15 +26,21 @@ so applying it is substitution. The tensor power of a one-qudit gate or state fa
 amplitude digit by digit: exponents linear in the input digit a, the output digit y and
 ``a*y`` become :class:`dsum` and :class:`ddot` (``pop`` and ``bitdot`` for qubits).
 
+While :func:`apply` runs, a free symbol of an operator that meets a register of another
+width or dimension is bound to that value (:func:`bind`), and the bound values are substituted
+into the operator's output.
+
 :func:`measure` measures every register: numerically (sampled with a numpy generator) when
-the state is concrete, otherwise symbolically (an outcome symbol, the projected state and the
+the state is concrete and has at most :data:`PATH_LIMIT` basis paths, otherwise symbolically (an outcome symbol, the projected state and the
 constraints it implies). :func:`inner` contracts a bra with a ket.
 """
 
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Callable, Iterator, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import TypeAlias
@@ -385,6 +391,12 @@ class Term:
 
 TWO = sympy.Integer(2)
 
+PATH_LIMIT = 1 << 22
+"""The most basis paths a concrete state is enumerated over numerically."""
+
+LIST_LIMIT = 1 << 12
+"""The most basis paths a concrete state is listed over, one term per basis ket."""
+
 
 @dataclass(frozen=True)
 class State:
@@ -449,6 +461,83 @@ def same(a: Expr | None, b: Expr | None) -> bool:
         return False
     diff = expand(sympy.sympify(a) - sympy.sympify(b))
     return bool(diff == 0 or sympy.simplify(diff) == 0)
+
+
+@dataclass
+class Params:
+    """Values bound to free symbols during one :func:`apply`; ``fixed`` symbols never bind."""
+
+    fixed: frozenset[sympy.Symbol] = frozenset()
+    values: dict[sympy.Symbol, Expr] = field(default_factory=dict)
+
+    def resolve(self, e: Expr) -> Expr:
+        """``e`` with the bound values substituted."""
+        return sympy.sympify(e).xreplace(self.values)
+
+    def unify(self, want: Expr, have: Expr) -> bool:
+        """Whether ``want`` equals ``have``, binding the one free symbol of ``want`` if needed."""
+        want, have = self.resolve(want), sympy.sympify(have)
+        if same(want, have):
+            return True
+        free = [x for x in want.free_symbols if not isinstance(x, sympy.Dummy)]
+        if len(free) != 1 or free[0] in self.fixed or free[0] in have.free_symbols:
+            return False
+        sols = sympy.solve(sympy.Eq(want, have), free[0])
+        if len(sols) != 1 or any(isinstance(x, sympy.Dummy) for x in sols[0].free_symbols):
+            return False
+        self.values[free[0]] = sols[0]
+        return True
+
+
+_SCOPE: ContextVar[Params | None] = ContextVar("pathsum_params", default=None)
+
+
+def bind(want: Expr | None, have: Expr | None) -> bool:
+    """``same(want, have)``, binding a free symbol of ``want`` inside a running :func:`apply`."""
+    params = _SCOPE.get()
+    if params is None or want is None or have is None:
+        return same(want, have)
+    return params.unify(want, have)
+
+
+def resolve(e: Expr) -> Expr:
+    """``e`` with the values bound in the running :func:`apply` substituted."""
+    params = _SCOPE.get()
+    return sympy.sympify(e) if params is None else params.resolve(e)
+
+
+def free_symbols(s: State) -> frozenset[sympy.Symbol]:
+    """The non-dummy symbols of every width, dimension, range, amplitude and value of ``s``."""
+    exprs: list[Expr] = [x for x in (*s.widths, *s.dims) if x is not None]
+    for t in s.terms:
+        exprs.extend((t.amp, *t.kets, *(b.lo for b in t.bound), *(b.hi for b in t.bound)))
+    return frozenset(
+        x
+        for e in exprs
+        for x in sympy.sympify(e).free_symbols
+        if isinstance(x, sympy.Symbol) and not isinstance(x, sympy.Dummy)
+    )
+
+
+def substitute(s: State, mapping: dict[sympy.Symbol, Expr]) -> State:
+    """``s`` with ``mapping`` applied to its widths, dimensions and terms."""
+    if not mapping:
+        return s
+
+    def sub(x: Expr | None) -> Expr | None:
+        return None if x is None else sympy.sympify(x).xreplace(mapping)
+
+    return State(
+        tuple(map(sub, s.widths)),
+        tuple(_subs_term(t, mapping) for t in s.terms),  # type: ignore[arg-type]
+        s.bra,
+        tuple(map(sub, s.dims)),
+    )
+
+
+def _resolved(s: State) -> State:
+    params = _SCOPE.get()
+    return s if params is None else substitute(s, params.values)
 
 
 def _same_layout(a: State, b: State) -> bool:
@@ -838,7 +927,12 @@ def apply(op: Operator, s: State) -> State:
     """``op |s>`` over all registers of the ket ``s``."""
     if s.bra:
         raise PathSumError("operators act on kets; apply to |psi>, not <psi|")
-    return simplify(_apply(op, s, 0, len(s.widths)))
+    token = _SCOPE.set(Params(free_symbols(s))) if _SCOPE.get() is None else None
+    try:
+        return simplify(_resolved(_apply(op, s, 0, len(s.widths))))
+    finally:
+        if token is not None:
+            _SCOPE.reset(token)
 
 
 SliceFn: TypeAlias = Callable[[tuple[Expr, ...], tuple[Expr, ...], tuple[Expr, ...]], State]
@@ -868,7 +962,7 @@ def _apply(op: Operator, s: State, i: int, j: int) -> State:
     if isinstance(op, Gate):
         return _apply_gate(op, s, i, j)
     if isinstance(op, Identity):
-        if op.width is not None and not same(sympy.Add(*s.widths[i:j]), op.width):
+        if op.width is not None and not bind(op.width, sympy.Add(*s.widths[i:j])):
             raise PathSumError(f"I^@{op.width} does not match the register width")
         return s
     if isinstance(op, Power):
@@ -913,7 +1007,7 @@ def _apply_gate(g: Gate, s: State, i: int, j: int) -> State:
     classical = [True]
 
     def run(vals: tuple[Expr, ...], ws: tuple[Expr, ...], ds: tuple[Expr, ...]) -> State:
-        res = g.fn(vals, ws, ds)
+        res = _resolved(g.fn(vals, ws, ds))
         if g.oracle and classical[0]:
             classical[0] = (
                 len(res.terms) == 1
@@ -965,7 +1059,7 @@ def _shift_amount(val: Expr, a: sympy.Symbol, d: Expr) -> Expr | None:
 def _power_gate(g: Gate, v: Expr, w: Expr, d: Expr, hint: str) -> State | None:
     """``g^(x)w |v>`` in closed form, or None."""
     a = sympy.Dummy("a", integer=True, nonnegative=True)
-    res = simplify(g.fn((a,), (sympy.S.One,), (d,)))
+    res = simplify(_resolved(g.fn((a,), (sympy.S.One,), (d,))))
     if len(res.terms) != 1 or len(res.widths) != 1:
         return None
     t = res.terms[0]
@@ -999,8 +1093,9 @@ def _apply_power(p: Power, s: State, i: int, j: int) -> State:
     if isinstance(inner_op, Gate) and inner_op.arity == 1:
         s = merge(s, i, j)
         width, d = s.widths[i], s.dims[i]
-        if not same(width, count):
+        if not bind(count, width):
             raise PathSumError(f"{inner_op.name}^@{count} does not match register width {width}")
+        count = resolve(count)
         if inner_op.qubit and not same(d, 2):
             raise PathSumError(f"{inner_op.name} acts on qubits, not dimension {d}")
         assert d is not None
@@ -1106,7 +1201,7 @@ def inner(a: State, b: State) -> Expr:
         if not (same(a.total_width, b.total_width) and same(a.uniform_dim(), b.uniform_dim())):
             raise PathSumError("cannot contract states of different widths or dimensions")
         a, b = merge(a, 0, len(a.widths)), merge(b, 0, len(b.widths))
-    if is_concrete(a) and is_concrete(b):
+    if enumerable(a) and enumerable(b):
         return _inner_numeric(a, b)
     total: Expr = sympy.S.Zero
     for ta in a.terms:
@@ -1298,7 +1393,8 @@ def simplify(s: State) -> State:
     if not terms:
         terms = [Term(sympy.S.Zero, (), s.terms[0].kets if s.terms else ())]
     out = _with(s, terms=terms)
-    return _combine(out) if len(terms) > 1 and is_concrete(out) else out
+    listable = len(terms) > 1 and is_concrete(out) and paths(out) <= LIST_LIMIT
+    return _combine(out) if listable else out
 
 
 def _combine(s: State) -> State:
@@ -1335,6 +1431,16 @@ def is_concrete(s: State) -> bool:
                 if getattr(type(app), "_free", None):
                     return False
     return True
+
+
+def paths(s: State) -> int:
+    """The number of basis paths of ``s``; its bound ranges are concrete."""
+    return sum(math.prod(max(0, int(b.hi) - int(b.lo) + 1) for b in t.bound) for t in s.terms)
+
+
+def enumerable(s: State) -> bool:
+    """Whether ``s`` is concrete with at most :data:`PATH_LIMIT` basis paths."""
+    return is_concrete(s) and paths(s) <= PATH_LIMIT
 
 
 def _grid(term: Term) -> tuple[list[np.ndarray], int]:
@@ -1456,7 +1562,7 @@ def measure(
         values = s.terms[0].kets
         named = tuple(v.xreplace({b: a for a, b in facts}) for v in values)
         return Measurement(_concat(named, s), width, basis_kets(values, s.widths, s.dims))
-    if is_concrete(s):
+    if enumerable(s):
         return _measure_numeric(s, rng)
     return _measure_symbolic(s, symbol)
 
