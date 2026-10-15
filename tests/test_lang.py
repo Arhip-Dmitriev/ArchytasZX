@@ -407,31 +407,23 @@ class TestShellLanguage:
         assert out.getvalue() == "|a> = |1>\n"
 
 
-SHORS = str(Path(__file__).resolve().parent.parent / "examples" / "shors.azx")
+SHOR_SCRIPT = Path(__file__).resolve().parent.parent / "examples" / "shor.azx"
 
 
 class TestShorsScript:
-    def test_numeric(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main([SHORS, "15", "--ascii", "--seed", "3"]) == 0
-        out = capsys.readouterr().out
-        assert "N = 15\np = 3\nq = 5" in out
-        assert "p * q == N: true" in out
-
-    def test_symbolic_two_inputs(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main([SHORS, "x", "y", "--ascii"]) == 0
+    def test_symbolic(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert main([str(SHOR_SCRIPT), "--ascii"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == "state before measurement"
-        assert out[1] == (
-            "|psi> = 1/Q sum(x' in 0..Q, k in 0..Q){ e^(-2*pi*i*k*x'/Q) |k> @ |a^x' % N> }"
+        assert out[0] == (
+            "|psi> = 1/Q sum(x in 0..Q, k in 0..Q){ e^(-2*pi*i*k*x/Q) |k> @ |a^x % N> }"
         )
-        assert out[2] == "result"
-        assert "p = gcd(h - 1, N)" in out and "|psi> = |z[:n]> @ |z[n:]>" in out
-        assert "r % 2 == 0: assumed" in out and "p * q == N: true" in out
+        assert "p = gcd(h - 1, N)" in out and "q = N/p" in out
 
-    def test_symbolic_one_input(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main([SHORS, "x", "--ascii"]) == 0
-        out = capsys.readouterr().out
-        assert "N = x" in out and "|a^x' % x>" in out
+    def test_numeric(self) -> None:
+        source = SHOR_SCRIPT.read_text().replace("var N, a ", "var N = 15, a = 7 ", 1)
+        interp, out = run(source, seed=0)
+        assert interp.values["p"] * interp.values["q"] == 15
+        assert out.endswith("p = 3\nq = 5")
 
 
 class TestControlFlow:

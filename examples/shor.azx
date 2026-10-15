@@ -1,17 +1,22 @@
-# Shor, w/ copy states.
+# Shor's: factor N via the period r of a^x mod N.
 
-var n, m, N, a
-var q = 2^n
-func f(x) = a^x % N
+var N, a            #a is the pick with gcd(a, N) = 1 that in real life is non-trivial to find
+var m = bitlen(N)
+var n = 2*m
+var Q = 2^n
 
-gate U_f = |x>|y> -> |x>|y xor f(x)>
-gate QFT  = |x> -> 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*x*y/q) |y> }
+gate U_f = |x>|y> -> |x>|y xor powmod(a, x, N)>
+gate IQFT = |x> -> 1/sqrt(Q) sum(k in 0..Q){ e^(-2*pi*i*x*k/Q) |k> }
 
-|psi_0> = |0>^@n @ |0>^@m
-|psi_1> = (H^@n @ I)|psi_0>
-|psi_2> = U_f|psi_1>
-var z = measure|psi_2>
-|psi_3> = (QFT @ I) |psi_2>
-list states = {|psi_0>, |psi_1>, |psi_2>, |psi_2>, |psi_3>}
-show(states)
-var y = measure|psi_2>
+|psi> = |0>^@n @ |0>^@m
+|psi> = (H^@n @ I) |psi>
+|psi> = U_f |psi>
+|psi> = (IQFT @ I) |psi>
+show(|psi>)
+
+var z = measure|psi> 
+var r = denom(floor(z / 2^m) / Q, N)
+var h = powmod(a, r/2, N)
+var p = gcd(h - 1, N)
+var q = N / p
+show(r, p, q)

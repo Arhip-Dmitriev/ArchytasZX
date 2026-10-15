@@ -1,0 +1,14 @@
+# Grover: find the marked w among N = 2^n items with G^r H^@n |0>, G = D O.
+# O = I - 2|w><w| (oracle), D = 2|s><s| - I (diffusion), r = floor(pi/4 sqrt(N)).
+
+var n, w
+var N = 2^n
+var r = floor(pi/4 * sqrt(N))
+
+|s> = H^@n |0>^@n
+|psi> = |s>
+|psi> = |psi> - 2 |w : n><w : n|psi>
+|psi> = 2 |s><s|psi> - |psi>
+show(r, |psi>)
+var z = measure|psi>
+show(z)
