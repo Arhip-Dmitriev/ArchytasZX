@@ -50,7 +50,7 @@ from typing import ParamSpec, TypeAlias, TypeVar
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError
-from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBoxError, Mult, abstract_port_count
 from archytaszx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER, GeneratorType
@@ -889,17 +889,31 @@ def _scalar_of(node: _Expr, table: Mapping[str, sp.Symbol]) -> Scalar:
 
 
 def _phase_entries(text: str, table: Mapping[str, sp.Symbol]) -> dict[int, Phase]:
-    """``i: expr, ...`` as index -> Phase."""
+    """``i: expr, ...`` as index -> Phase, without a ``k: rule`` item."""
+    return _phase_vector_parts(text, table)[0]
+
+
+def _phase_vector_parts(
+    text: str, table: Mapping[str, sp.Symbol]
+) -> tuple[dict[int, Phase], Phase | None]:
+    """``i: expr, ..., k: rule`` as index -> Phase and the rule in :data:`INDEX`."""
     entries: dict[int, Phase] = {}
+    rule: Phase | None = None
     for item in _split_top(text):
         index, colon, expr = item.partition(":")
         if not colon:
             raise ParseGrammarError(f"phase entry {item!r} is not 'INDEX: EXPR'")
+        if index.strip() == "k":
+            if rule is not None:
+                raise ParseGrammarError("the phase rule k appears twice")
+            turns = _phase_of(_parse_expr(expr, "phase"), {**table, "k": INDEX})
+            rule = Phase(turns.to_sympy_turns().xreplace({sp.Symbol("k", real=True): INDEX}))
+            continue
         i = _int_token(index, "phase index")
         if i in entries:
             raise ParseGrammarError(f"phase index {i} appears twice")
         entries[i] = _phase_of(_parse_expr(expr, "phase"), table)
-    return entries
+    return entries, rule
 
 
 def _carried(diagram: Diagram) -> frozenset[str]:
@@ -964,8 +978,8 @@ def _set_phases(
 ) -> None:
     for i, draft in sorted(drafts.items()):
         if draft.phase_dim is not None:
-            entries = _phase_entries(draft.phase_entries or "", table)
-            diagram.set_phase(NodeId(i), PhaseVector(draft.phase_dim, entries))
+            entries, rule = _phase_vector_parts(draft.phase_entries or "", table)
+            diagram.set_phase(NodeId(i), PhaseVector(draft.phase_dim, entries, rule))
 
 
 # -- form 1: graph listing -----------------------------------------------------------------

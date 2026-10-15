@@ -48,7 +48,7 @@ from types import MappingProxyType
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import DimensionDomainError, DimensionError
-from archytaszx.algebra.phase import PhaseDomainError, PhaseError
+from archytaszx.algebra.phase import INDEX, PhaseDomainError, PhaseError
 from archytaszx.algebra.scalar import ScalarDomainError, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
@@ -168,6 +168,8 @@ def _sympy_symbols(diagrams: Sequence[Diagram]) -> dict[str, list[sp.Symbol]]:
             if node.phase is not None:
                 exprs.append(node.phase.dim.to_sympy())
                 exprs.extend(p.to_sympy_turns() for p in node.phase.entries().values())
+                if node.phase.rule is not None:
+                    exprs.append(node.phase.rule.to_sympy_turns().xreplace({INDEX: 1}))
     table: dict[str, list[sp.Symbol]] = {}
     for expr in exprs:
         for symbol in sorted(expr.free_symbols, key=str):

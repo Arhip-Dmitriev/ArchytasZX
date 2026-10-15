@@ -56,7 +56,7 @@ import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
-from archytaszx.algebra.phase import PhaseError
+from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols, instantiate_symbol
 from archytaszx.diagram.generators import GeneratorError
@@ -261,6 +261,8 @@ def _symbol_table(*diagrams: Diagram) -> dict[str, frozenset[sp.Symbol]]:
             if node.phase is not None:
                 exprs.append(node.phase.dim.to_sympy())
                 exprs.extend(phase.to_sympy_turns() for phase in node.phase.entries().values())
+                if node.phase.rule is not None:
+                    exprs.append(node.phase.rule.to_sympy_turns().xreplace({INDEX: 1}))
     table: dict[str, set[sp.Symbol]] = {}
     for expr in exprs:
         for symbol in expr.free_symbols:

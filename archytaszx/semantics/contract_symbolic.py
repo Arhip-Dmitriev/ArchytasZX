@@ -600,6 +600,9 @@ def _node_entry(
             entry = entry + _delta(dim, leg, inputs[0]) * sp.Mul(*rest)
         return entry
 
+    if node.phase is not None and node.phase.rule is not None:
+        return _ruled_entry(node, node_id, dim, outputs, inputs)
+
     corrections = _phase_corrections(node)
 
     if node.generator_type.name == X_SPIDER.name:
@@ -613,6 +616,37 @@ def _node_entry(
         )
 
     return _z_entry(dim, outputs + inputs, corrections)
+
+
+def _rule_weight(node: Node, value: sp.Expr) -> sp.Expr:
+    """``e^{i*alpha}`` of ``node``'s phase vector at a possibly symbolic ``value``."""
+    assert node.phase is not None
+    return cast(sp.Expr, sp.exp(2 * sp.pi * sp.I * node.phase.at(value)))
+
+
+def _ruled_entry(
+    node: Node, node_id: NodeId, dim: Dim, outputs: list[sp.Symbol], inputs: list[sp.Symbol]
+) -> sp.Expr:
+    """A Z or X spider entry whose phase vector carries a rule, summed over the spider value."""
+    d_expr = dim.to_sympy()
+    legs = outputs + inputs
+    if node.generator_type.name == X_SPIDER.name:
+        s = sp.Symbol("_phase_s", integer=True, nonnegative=True)
+        total = sum(outputs, sp.Integer(0)) - sum(inputs, sp.Integer(0))
+        body = _rule_weight(node, s) * sp.exp(2 * sp.pi * sp.I * s * total / d_expr)
+        return sp.Pow(d_expr, sp.Rational(-len(legs), 2)) * sp.Sum(body, (s, 0, d_expr - 1))
+    if node.generator_type.name != Z_SPIDER.name:
+        raise SymbolicContractionGrammarError(
+            f"node {node_id!r} has generator type {node.generator_type.name!r}, which "
+            "contract_symbolic() does not know how to denote"
+        )
+    if not legs:
+        k = sp.Symbol("_phase_s", integer=True, nonnegative=True)
+        return cast(sp.Expr, sp.Sum(_rule_weight(node, k), (k, 0, d_expr - 1)))
+    entry = _rule_weight(node, legs[0])
+    for leg in legs[1:]:
+        entry = entry * _delta(dim, legs[0], leg)
+    return entry
 
 
 def _port_dim(diagram: Diagram, ref: PortRef) -> Dim:
@@ -638,7 +672,9 @@ def _shared_spider_entry(
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     weight: sp.Expr = sp.Integer(1)
-    for index, factor in _phase_corrections(node):
+    if node.phase is not None and node.phase.rule is not None:
+        weight = _rule_weight(node, shared)
+    for index, factor in _phase_corrections(node) if weight == 1 else ():
         weight = weight + factor * _delta(dim, shared, sp.Integer(index))
     legs = [
         (PortRef(node_id, direction, position), sign)

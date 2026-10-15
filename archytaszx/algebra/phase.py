@@ -218,6 +218,10 @@ class Phase:
         """Negate this phase."""
         return Phase(-self._turns)
 
+    def at(self, index: int) -> Phase:
+        """This phase with :data:`INDEX` replaced by ``index``."""
+        return Phase(self._turns.xreplace({INDEX: sp.Integer(index)}))
+
     def scale(self, factor: int) -> Phase:
         """Scale this phase by an exact integer (e.g. doubling for a squared spider)."""
         if isinstance(factor, bool) or not isinstance(factor, int):
@@ -303,8 +307,13 @@ class Phase:
         return f"{self._turns} turns"
 
 
+INDEX = sp.Symbol("_phase_k", integer=True, nonnegative=True)
+"""The index symbol a :class:`PhaseVector` rule is written in."""
+
+
 class PhaseVector:
-    """The phase data of one spider: a mapping from leg index to :class:`Phase`.
+    """The phase data of one spider: a mapping from leg index to :class:`Phase`, plus an
+    optional ``rule``, a Phase in :data:`INDEX` that holds at every index.
 
     Entries are stored sparsely as ``index -> Phase`` with an implicit ``Phase.zero()``
     everywhere else. Sparse storage is the only representation under which a phase
@@ -321,16 +330,21 @@ class PhaseVector:
     trying to construct a ``Dim`` for it.
     """
 
-    __slots__ = ("_dim", "_entries")
+    __slots__ = ("_dim", "_entries", "_rule")
     _dim: Dim
     _entries: Mapping[int, Phase]
+    _rule: Phase | None
 
-    def __init__(self, dim: Dim, entries: Mapping[int, Phase] | None = None) -> None:
-        """Build a PhaseVector over ``dim`` from a sparse index -> Phase mapping.
+    def __init__(
+        self, dim: Dim, entries: Mapping[int, Phase] | None = None, rule: Phase | None = None
+    ) -> None:
+        """Build a PhaseVector over ``dim`` from a sparse index -> Phase mapping and a ``rule``.
 
         Every index must be >= 1 and, when ``dim`` is concrete, <= dim - 1; violations
         raise PhaseDomainError. Explicit zero entries are dropped (they are equivalent
-        to absence). An explicit nonzero entry at index 0 raises PhaseDomainError.
+        to absence). An explicit nonzero entry at index 0 raises PhaseDomainError, as does
+        a rule that is not zero at index 0. At a concrete ``dim`` the rule is expanded into
+        entries.
         """
         if not isinstance(dim, Dim):
             raise TypeError(f"PhaseVector requires a Dim, got {type(dim).__name__}")
@@ -357,7 +371,23 @@ class PhaseVector:
             if phase.is_zero:
                 continue
             cleaned[index] = phase
+        if rule is not None:
+            if not isinstance(rule, Phase):
+                raise PhaseGrammarError(f"phase-vector rule must be a Phase, got {rule!r}")
+            if not Phase(rule.to_sympy_turns().subs(INDEX, 0)).is_zero:
+                raise PhaseDomainError("a phase-vector rule must be zero at index 0")
+            if rule.is_zero:
+                rule = None
+            elif dim.is_concrete:
+                for index in range(1, dim.to_int()):
+                    phase = cleaned.get(index, Phase.zero()) + rule.at(index)
+                    if phase.is_zero:
+                        cleaned.pop(index, None)
+                    else:
+                        cleaned[index] = phase
+                rule = None
         self._entries = cleaned
+        self._rule = rule
 
     @property
     def dim(self) -> Dim:
@@ -376,19 +406,34 @@ class PhaseVector:
         return self._dim.to_int() - 1
 
     def entries(self) -> Mapping[int, Phase]:
-        """The sparse nonzero entries of this vector, index -> Phase."""
+        """The sparse nonzero entries of this vector, index -> Phase; the rule not included."""
         return dict(self._entries)
+
+    @property
+    def rule(self) -> Phase | None:
+        """The Phase in :data:`INDEX` added at every index; only at a symbolic dimension."""
+        return self._rule
 
     def get(self, index: int) -> Phase:
         """The phase at ``index`` (Phase.zero() if absent or index == 0)."""
         if index == 0:
             return Phase.zero()
-        return self._entries.get(index, Phase.zero())
+        phase = self._entries.get(index, Phase.zero())
+        return phase if self._rule is None else phase + self._rule.at(index)
+
+    def at(self, index: sp.Expr) -> sp.Expr:
+        """The turns-expression of the phase at a possibly symbolic ``index``."""
+        expr = sp.Integer(0)
+        for k, phase in self._entries.items():
+            expr += sp.KroneckerDelta(index, k) * phase.to_sympy_turns()
+        if self._rule is not None:
+            expr += self._rule.to_sympy_turns().xreplace({INDEX: index})
+        return cast(sp.Expr, expr)
 
     @property
     def is_zero(self) -> bool:
-        """True iff every entry is provably zero (i.e. there are no stored entries)."""
-        return not self._entries
+        """True iff every entry is provably zero (no stored entries and no rule)."""
+        return not self._entries and self._rule is None
 
     @property
     def is_concrete(self) -> bool:
@@ -397,10 +442,12 @@ class PhaseVector:
 
     @property
     def free_symbols(self) -> frozenset[str]:
-        """All free symbols appearing in the dimension or in any stored phase."""
+        """All free symbols appearing in the dimension, any stored phase, or the rule."""
         symbols = set(self._dim.free_symbols)
         for phase in self._entries.values():
             symbols |= phase.free_symbols
+        if self._rule is not None:
+            symbols |= {str(x.name) for x in self._rule.to_sympy_turns().free_symbols - {INDEX}}
         return frozenset(symbols)
 
     def __add__(self, other: PhaseVector) -> PhaseVector:
@@ -417,8 +464,13 @@ class PhaseVector:
                 f"cannot add phase vectors over mismatched dimensions {self._dim} and {other._dim}"
             )
         indices = set(self._entries) | set(other._entries)
-        merged = {i: self.get(i) + other.get(i) for i in indices}
-        return PhaseVector(self._dim, merged)
+        merged = {
+            i: self._entries.get(i, Phase.zero()) + other._entries.get(i, Phase.zero())
+            for i in indices
+        }
+        rules = [r for r in (self._rule, other._rule) if r is not None]
+        rule = rules[0] + rules[1] if len(rules) == 2 else (rules[0] if rules else None)
+        return PhaseVector(self._dim, merged, rule)
 
     def substitute(self, mapping: Mapping[PhaseSymbolKey, PhaseSubstituteValue]) -> PhaseVector:
         """Return a new PhaseVector with symbols substituted into both dim and entries.
@@ -472,22 +524,34 @@ class PhaseVector:
                 )
         new_dim = self._dim.substitute(dim_mapping) if dim_mapping else self._dim
         new_entries = {index: phase.substitute(mapping) for index, phase in self._entries.items()}
-        return PhaseVector(new_dim, new_entries)
+        rule = None
+        if self._rule is not None:
+            own = {k: v for k, v in mapping.items() if k != INDEX.name}
+            rule = self._rule.substitute(own)
+        return PhaseVector(new_dim, new_entries, rule)
 
     def __eq__(self, other: object) -> bool:
         """Equal iff same Dim and same entries after dropping implicit zeros."""
         if not isinstance(other, PhaseVector):
             return NotImplemented
-        return self._dim == other._dim and self._entries == other._entries
+        return (
+            self._dim == other._dim
+            and self._entries == other._entries
+            and self._rule == other._rule
+        )
 
     def __hash__(self) -> int:
         """Hash agrees with __eq__: equal PhaseVectors hash equal."""
-        return hash((self._dim, tuple(sorted(self._entries.items(), key=lambda kv: kv[0]))))
+        entries = tuple(sorted(self._entries.items(), key=lambda kv: kv[0]))
+        return hash((self._dim, entries, self._rule))
 
     def __repr__(self) -> str:
         entries_repr = ", ".join(f"{i}: {p!r}" for i, p in sorted(self._entries.items()))
-        return f"PhaseVector(dim={self._dim!r}, entries={{{entries_repr}}})"
+        rule = "" if self._rule is None else f", rule={self._rule!r}"
+        return f"PhaseVector(dim={self._dim!r}, entries={{{entries_repr}}}{rule})"
 
     def __str__(self) -> str:
-        entries_str = ", ".join(f"{i}: {p}" for i, p in sorted(self._entries.items()))
-        return f"PhaseVector[{self._dim}]({{{entries_str}}})"
+        parts = [f"{i}: {p}" for i, p in sorted(self._entries.items())]
+        if self._rule is not None:
+            parts.append(f"k: {self._rule.to_sympy_turns().xreplace({INDEX: sp.Symbol('k')})}")
+        return f"PhaseVector[{self._dim}]({{{', '.join(parts)}}})"

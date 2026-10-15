@@ -660,7 +660,11 @@ def reattach_phase(
     for entry in phase.entries().values():
         entry_symbols |= entry.free_symbols
     applied = {name: bindings[name] for name in concrete_bindings if name in entry_symbols}
-    return PhaseVector(shared_dim, substituted.entries()), MappingProxyType(applied)
+    if phase.rule is not None:
+        entry_symbols |= phase.free_symbols
+        applied = {name: bindings[name] for name in concrete_bindings if name in entry_symbols}
+    reattached = PhaseVector(shared_dim, substituted.entries(), substituted.rule)
+    return reattached, MappingProxyType(applied)
 
 
 def _validate_wire_endpoint(

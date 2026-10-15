@@ -55,7 +55,7 @@ from typing import TypeAlias
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionError
-from archytaszx.algebra.phase import Phase, PhaseError, PhaseVector
+from archytaszx.algebra.phase import INDEX, Phase, PhaseError, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult
 from archytaszx.diagram.compare import compare_structure
@@ -724,6 +724,9 @@ class _Renderer:
             f"{self.atom(entry.to_sympy_turns())} [{self.index(index)}={k}]"
             for k, entry in sorted(phase.entries().items())
         ]
+        if phase.rule is not None:
+            at = sp.Symbol(self.index(index))
+            terms.append(self.atom(phase.rule.to_sympy_turns().xreplace({INDEX: at})))
         return f"e^{{2 {self.g.pi} i ({' + '.join(terms)})}}"
 
     def x_factor(self, f: XFactor) -> str:
@@ -870,9 +873,16 @@ def _at_least_two(value: sp.Expr) -> bool:
 
 
 def _phase_label(phase: PhaseVector) -> str:
-    return ", ".join(
-        f"{k}: {_plain(p.to_sympy_turns())}" for k, p in sorted(phase.entries().items())
-    )
+    parts = [f"{k}: {_plain(p.to_sympy_turns())}" for k, p in sorted(phase.entries().items())]
+    if phase.rule is not None:
+        parts.append(f"k: {_plain(rule_turns(phase))}")
+    return ", ".join(parts)
+
+
+def rule_turns(phase: PhaseVector) -> sp.Expr:
+    """The rule of ``phase`` written in the index symbol ``k``."""
+    assert phase.rule is not None
+    return phase.rule.to_sympy_turns().xreplace({INDEX: sp.Symbol("k", integer=True)})
 
 
 def _z_name(m: sp.Expr, n: sp.Expr, phase: PhaseVector | None) -> str:
@@ -1105,12 +1115,15 @@ def _listing_phase(phase: PhaseVector | None) -> str:
     """``  phase[d]: {1: 1/3} turns``, ``  phase[d]: 0`` for a zero vector, empty for None."""
     if phase is None:
         return ""
-    if not phase.entries():
+    if phase.is_zero:
         return f"  phase[{_listing_expr(phase.dim)}]: 0"
-    entries = ", ".join(
+    parts = [
         f"{index}: {_listing_expr(sp.sstr(p.to_sympy_turns()))}"
         for index, p in sorted(phase.entries().items())
-    )
+    ]
+    if phase.rule is not None:
+        parts.append(f"k: {_listing_expr(sp.sstr(rule_turns(phase)))}")
+    entries = ", ".join(parts)
     return f"  phase[{_listing_expr(phase.dim)}]: {{{entries}}} turns"
 
 
@@ -1175,6 +1188,8 @@ def _listing_roles(diagram: Diagram) -> str | None:
         if node.phase is not None:
             dims.append(node.phase.dim)
             phases.extend(node.phase.entries().values())
+            if node.phase.rule is not None:
+                phases.append(node.phase.rule.at(1))
     mults = [box.multiplicity for box in diagram.bang_boxes.values()]
     wrong: dict[str, sp.Symbol] = {}
     for table, symbols, default in (
