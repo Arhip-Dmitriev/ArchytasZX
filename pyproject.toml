@@ -68,6 +68,16 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["archytaszx*"]
+exclude = ["archytaszx.lean*"]
+
+[tool.setuptools.package-data]
+archytaszx = [
+    "lean/*.lean",
+    "lean/ArchytasZX/*.lean",
+    "lean/lakefile.toml",
+    "lean/lean-toolchain",
+    "lean/lake-manifest.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

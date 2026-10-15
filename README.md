@@ -67,6 +67,24 @@ Proofs found by the engine can be re-checked by the proof kernel
 (`archytaszx.semantics.kernel`, `:certificate kernel`) and exported to Lean 4
 (`:certificate lean proof.lean`).
 
+The export targets the Lean library bundled in `archytaszx/lean` (Lean 4.35, Mathlib). There a
+diagram is a tensor network over ℂ: the sum, over its wire labels, of the product of its
+generators' tensors. Every rewrite rule is a lemma proved there once. An exported proof states
+`Equal E s N s' N'` (`s·⟦N⟧ = s'·⟦N'⟧`) between the start and goal diagrams. Each step is an
+instance of a rule lemma, applied inside the rest of the diagram by a frame lemma, plus a
+relabelling checked by `decide`. Lean then re-checks the whole proof independently of the
+engine. What remains trusted is how a diagram is written as a network. `wz_bialgebra` has no
+lemma yet; a step using it becomes an axiom named `unproved_*`, which `#print axioms` lists.
+Theorems over free multiplicities (bang boxes, induction) use the earlier export, with opaque
+diagrams and one axiom per step.
+
+```sh
+cd archytaszx/lean && lake exe cache get && lake build      # once
+lake env lean /path/to/proof.lean
+```
+
+From Python, `archytaszx.semantics.lean_net.check(source, path)` does both steps.
+
 ### Imports
 
 The sub-package `__init__.py` files are empty. The only re-exports are `Program`, `Value`
