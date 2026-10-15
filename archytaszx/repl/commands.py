@@ -139,6 +139,7 @@ from archytaszx.semantics.interop import (
     check_round_trip,
     check_sheet_step,
 )
+from archytaszx.semantics import kernel
 from archytaszx.semantics.prove import (
     InductionProof,
     ProofCertificate,
@@ -1130,7 +1131,46 @@ def _cmd_certificate(session: Session, args: str) -> Outcome:
         return _ok("certificate", _proof_blocks(artefact), artefact)
     if action == "verify":
         return _verify(session, rest)
-    raise CommandGrammarError(f"unknown certificate action {action!r}; use emit, verify or show")
+    if action in ("kernel", "lean"):
+        return _kernel(session, action, rest.strip())
+    raise CommandGrammarError(
+        f"unknown certificate action {action!r}; use emit, verify, show, kernel or lean"
+    )
+
+
+def _kernel(session: Session, action: str, path: str) -> Outcome:
+    """``certificate kernel`` checks the certificate in the proof kernel; ``certificate lean
+    [FILE]`` also prints its Lean 4 export, or writes it to FILE."""
+    if action == "kernel" and path:
+        raise CommandGrammarError("certificate kernel takes no arguments")
+    blocks: list[Block] = []
+    if session.certificate is None:
+        artefact, witness = _emit(session, "")
+        session.certificate, session.certificate_witness = artefact, witness
+        blocks.append(Text(f"emitted {_artefact_line(session.certificate)}"))
+    try:
+        theorem = kernel.check(session.certificate)
+    except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
+        text = f"kernel: rejected: {_one_line(exc)}"
+        return _fail("certificate", [*blocks, Text(text)], Text(text))
+    left, right = _math(theorem.lhs, False), _math(theorem.rhs, False)
+    names = ", ".join(dict.fromkeys(theorem.axioms())) or "none"
+    over = f" for all {', '.join(theorem.variables)}" if theorem.variables else ""
+    blocks.append(Text(f"kernel: theorem {left} = {right}{over}"))
+    blocks.append(Text(f"  {_count(theorem.size(), 'inference')}; rules: {names}"))
+    blocks += [Text(f"  assumes {a}") for a in theorem.assumptions]
+    if action == "lean":
+        source = kernel.lean(theorem, describe=lambda d: _math(d, True))
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(source)
+            except OSError as exc:
+                raise CommandDomainError(f"cannot write {path}: {exc}") from exc
+            blocks.append(Text(f"lean: wrote {path}"))
+        else:
+            blocks.append(Text(source.rstrip("\n")))
+    return _ok("certificate", blocks, theorem)
 
 
 def _proof_blocks(artefact: ProofArtefact) -> list[Block]:
@@ -1455,7 +1495,8 @@ HELP: Mapping[str, str] = MappingProxyType(
         "induct": "induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by "
         "induction",
         "certificate": "certificate [emit [derivation|induction|proof] | verify [NAME=VALUE "
-        "...] | show] -- emit, verify or show a certificate",
+        "...] | show | kernel | lean [FILE]] -- emit, verify, show, kernel-check or export a "
+        "certificate to Lean 4",
         "translate": "translate [back | dissolve S | split S FIRST | join S S | enclose nA, nB "
         "[x MULT] | kill S | fuse nA.outI -- nB.inJ] -- scalable notation and sheet steps",
         "name": "name NAME -- store the current diagram as @NAME",
