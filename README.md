@@ -48,12 +48,29 @@ normalizes the two to the same name); the importable package is `archytaszx`. Th
 scripts such as [`examples/shor.azx`](examples/shor.azx)); the language is summarised in the
 docstring of [`archytaszx/repl/lang.py`](archytaszx/repl/lang.py) and `:help` lists the engine
 commands.
-Engine commands start with `:` in the shell.
+Engine commands start with `:` in the shell. Output styles are `--mathtext` (default),
+`--unicode`, `--ascii` and `--latex`; several flags print every output in each style, and
+`--order` holds the output until an error or the end and then groups it by style.
+
+The same language is usable from Python:
+
+```python
+from archytaszx import azx               # a shared Program; archytaszx.Program() for a fresh one
+azx("var n")
+azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n      # |psi> = H^@n |0>^@n
+azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
+y = azx.measure | azx.psi
+azx.phi.latex()                          # also rendered by Jupyter
+```
+
+Proofs found by the engine can be re-checked by the proof kernel
+(`archytaszx.semantics.kernel`, `:certificate kernel`) and exported to Lean 4
+(`:certificate lean proof.lean`).
 
 ### Imports
 
-The sub-package `__init__.py` files are empty. There are **no re-exports**, so
-`from archytaszx import Diagram` will fail — import by full module path. It is verbose during the
+The sub-package `__init__.py` files are empty. The only re-exports are `Program`, `Value`
+and `azx` of `archytaszx.embed`, so `from archytaszx import Diagram` will fail — import by full module path. It is verbose during the
 development phase:
 
 ```python
