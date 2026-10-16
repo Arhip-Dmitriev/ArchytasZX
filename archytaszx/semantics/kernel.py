@@ -237,6 +237,8 @@ def induction(
         "own_k": hypothesis,
         "other_k": induction_hypothesis(other, index, k),
         "replaced": replaced,
+        "region": region,
+        "exposed": exposed,
     }
     assumptions = _merge(base.assumptions, expose.assumptions, step.assumptions)
     return Theorem(

@@ -72,11 +72,23 @@ diagram is a tensor network over ℂ: the sum, over its wire labels, of the prod
 generators' tensors. Every rewrite rule is a lemma proved there once. An exported proof states
 `Equal E s N s' N'` (`s·⟦N⟧ = s'·⟦N'⟧`) between the start and goal diagrams. Each step is an
 instance of a rule lemma, applied inside the rest of the diagram by a frame lemma, plus a
-relabelling checked by `decide`. Lean then re-checks the whole proof independently of the
-engine. What remains trusted is how a diagram is written as a network. `wz_bialgebra` has no
-lemma yet; a step using it becomes an axiom named `unproved_*`, which `#print axioms` lists.
-Theorems over free multiplicities (bang boxes, induction) use the earlier export, with opaque
-diagrams and one axiom per step.
+relabelling checked by `decide`. The theorem states the diagrams' own scalars; their identity
+is a `linear_combination` whose coefficients the engine computes and Lean's `ring` checks.
+
+Families over bang-box multiplicities are networks whose bundled wires carry a chain of
+multiplicities and a value below `d^(k₁⋯kₙ)`, read as nested base-`d` digits. Spiders may bundle
+any number of legs; a node in node boxes is copies of copies (`Bun`); the environment holds every
+multiplicity as a list (`F.env (ksOf [k, j])`). A rule applied inside node boxes is lifted to
+every multiplicity by induction, one box at a time, peeling one copy per step. An induction proof,
+nested ones included, becomes a Lean `induction` over the same peeling. Dimension equalities a
+rewrite assumed are listed in the file's header and identified in the theorem; a scalar outside
+the exact model (π, irrational powers, conjugates, sums) is an opaque complex variable, named in
+the header, over which the theorem is stated.
+
+Lean re-checks the whole proof independently of the engine; `#print axioms main` should list
+only `propext`, `Classical.choice` and `Quot.sound`. What remains trusted is how a diagram is
+written as a network. A step with no lemma becomes an axiom named `unproved_*`, listed in the
+header; the REPL reports their number.
 
 ```sh
 cd archytaszx/lean && lake exe cache get && lake build      # once

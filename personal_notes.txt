@@ -1,3 +1,13 @@
+0.19.6:
+ - Full lean (engine is untrusted)
+
+0.19.7:
+  - normalise func
+  - bitwise states
+    - illegal to have a purely numeric or numeric + ' or ' state name.
+    - |000> = |0>, |000'> = |0>|0>|0> the ' is the differniator.
+  -instantiate states as density matrices
+
 Pre QuRise
  - run phases 20 & 21
  - make wonderful readme
@@ -7,8 +17,8 @@ Pre QuRise
  - pretty pictures
  - Spend all my claude credits on extreme debugging
 
-
-
+Right after QuRise:
+- Preprint
 
 future only:
  - add compatibility for python 3.8 up 

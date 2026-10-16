@@ -114,7 +114,7 @@ theorem wire_elim (E : Env) (s : ℂ) (ns₁ ns₂ : List Node) (int bnd : List 
     (hda : labIdx E.labs a = dz) (hdb : labIdx E.labs b = dz) :
     Equal E s ⟨ns₁ ++ ⟨.I, [a], [b], dz, 0⟩ :: ns₂, int, bnd⟩
       s ⟨(ns₁ ++ ns₂).map (Node.rename (ren [(b, a)])), int.erase b, bnd⟩ := by
-  refine ⟨rfl, fun σ hσ => ?_⟩
+  refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩
   congr 1
   simp only [eval]
   have hD : ∀ l, labIdx E.labs l = dz → labDim E l = E.dimv dz := by

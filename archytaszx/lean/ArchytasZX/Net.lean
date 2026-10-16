@@ -17,9 +17,12 @@ namespace ArchytasZX
 open Complex Finset
 
 /-- Generator kinds: spiders, Fourier box, triangle and inverse, W node, dimension binder
-and splitter, and the bare wire. -/
+and splitter, the bare wire, a Z, X or W whose last legs bundle along the chains of
+multiplicities `cs` (outermost first), and copies of a generator along multiplicity `m`. -/
 inductive Kind
   | Z | X | F | T | Ti | W | B | S | I
+  | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
+  | Bun (m : ℕ) (base : Kind)
   deriving DecidableEq, Repr
 
 /-- One generator instance: output and input leg labels, dimension index, phase index. -/
@@ -38,11 +41,13 @@ structure Net where
   bnd : List ℕ
   deriving DecidableEq, Repr
 
-/-- Dimension values, phase vectors in turns, and each label's dimension index. -/
+/-- Dimension values, phase vectors in turns, each label's dimension index, and each
+multiplicity symbol's value. -/
 structure Env where
   dimv : ℕ → ℕ
   phase : ℕ → ℕ → ℝ
   labs : List (ℕ × ℕ)
+  mult : ℕ → ℕ := fun _ => 0
 
 /-- `e^{2πiθ}`. -/
 noncomputable def ex (θ : ℝ) : ℂ := Complex.exp (2 * Real.pi * Complex.I * θ)
@@ -79,6 +84,67 @@ def tB (s t k a b : ℕ) : ℂ := if a < s ∧ b < t ∧ k = a * t + b then 1 el
 /-- The bare wire on dimension `d`. -/
 def tI (d a b : ℕ) : ℂ := if a = b ∧ a < d then 1 else 0
 
+/-- Digit `i` of `v` in base `d`. -/
+def digit (d i v : ℕ) : ℕ := v / d ^ i % d
+
+/-- The first `k` digits of `v` in base `d`. -/
+def digs (d k v : ℕ) : List ℕ := (List.range k).map fun i => digit d i v
+
+/-- A leg value bundling along the chain `c` (outermost first) as its base-`d` digits. -/
+def digsC (mult : ℕ → ℕ) (d : ℕ) : List ℕ → ℕ → List ℕ
+  | [], v => [v]
+  | m :: c, v => (digs (d ^ (c.map mult).prod) (mult m) v).flatMap (digsC mult d c)
+
+/-- The digits of the bundled legs `vs` along the chains `cs`. -/
+def tailVals (mult : ℕ → ℕ) (d : ℕ) (vs : List ℕ) (cs : List (List ℕ)) : List ℕ :=
+  (List.zipWith (fun v c => digsC mult d c v) vs cs).flatten
+
+/-- Leg values whose last `cs.length` legs bundle along the chains `cs`. -/
+def bundled (mult : ℕ → ℕ) (d : ℕ) (vs : List ℕ) (cs : List (List ℕ)) : List ℕ :=
+  vs.take (vs.length - cs.length) ++ tailVals mult d (vs.drop (vs.length - cs.length)) cs
+
+/-- The chains of a copied generator's `n` outputs. -/
+def Kind.outCs : Kind → ℕ → List (List ℕ)
+  | .XB co _, n => List.replicate (n - co.length) [] ++ co
+  | .WB cs, n => List.replicate (n - cs.length) [] ++ cs
+  | .Bun m b, n => (b.outCs n).map (m :: ·)
+  | _, n => List.replicate n []
+
+/-- The chains of a copied generator's `n` inputs. -/
+def Kind.inCs : Kind → ℕ → List (List ℕ)
+  | .ZB cs, n => List.replicate (n - cs.length) [] ++ cs
+  | .XB _ ci, n => List.replicate (n - ci.length) [] ++ ci
+  | .Bun m b, n => (b.inCs n).map (m :: ·)
+  | _, n => List.replicate n []
+
+/-- Digit `i` of each leg value, in base `d` to the multiplicities of its chain. -/
+def copyLegs (mult : ℕ → ℕ) (d i : ℕ) (cs : List (List ℕ)) (vs : List ℕ) : List ℕ :=
+  List.zipWith (fun c v => digit (d ^ (c.map mult).prod) i v) cs vs
+
+/-- Copy `i`'s output values. -/
+def copyOuts (E : Env) (base : Kind) (d i : ℕ) (os : List ℕ) : List ℕ :=
+  copyLegs E.mult d i (base.outCs os.length) os
+
+/-- Copy `i`'s input values. -/
+def copyIns (E : Env) (base : Kind) (d i : ℕ) (is : List ℕ) : List ℕ :=
+  copyLegs E.mult d i (base.inCs is.length) is
+
+/-- A generator's tensor entry at the leg values `os`, `is`. -/
+noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List ℕ → ℂ
+  | .Z, d, ph, os, is => tZ d (E.phase ph) (os ++ is)
+  | .X, d, ph, os, is => tX d (E.phase ph) os is
+  | .F, d, _, [o], [i] => fou d o i
+  | .T, _, _, [o], [i] => tT o i
+  | .Ti, _, _, [o], [i] => tTi o i
+  | .W, d, _, os, [i] => tW d os i
+  | .I, d, _, [a], [b] => tI d a b
+  | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
+  | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
+  | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
+  | .Bun m b, d, ph, os, is => ((List.range (E.mult m)).map fun i =>
+      tensor E b d ph (copyOuts E b d i os) (copyIns E b d i is)).prod
+  | _, _, _, _, _ => 0
+
 /-- One node's tensor entry under the label assignment `σ`. -/
 noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   let d := E.dimv n.dim
@@ -94,6 +160,10 @@ noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   | .B, [k], [a, b] => tB d (E.dimv n.ph) k a b
   | .S, [a, b], [k] => tB d (E.dimv n.ph) k a b
   | .I, [a], [b] => tI d a b
+  | .ZB cs, os, is => tZ d (E.phase n.ph) (os ++ bundled E.mult d is cs)
+  | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
+  | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w
+  | .Bun m b, os, is => tensor E (.Bun m b) d n.ph os is
   | _, _, _ => 0
 
 /-- A label's dimension. -/
@@ -117,29 +187,43 @@ def InRange (E : Env) (ls : List ℕ) (σ : ℕ → ℕ) : Prop := ∀ l ∈ ls,
 
 /-- `s₁ • N₁` and `s₂ • N₂` are the same tensor. -/
 def Equal (E : Env) (s₁ : ℂ) (N₁ : Net) (s₂ : ℂ) (N₂ : Net) : Prop :=
-  N₁.bnd = N₂.bnd ∧ ∀ σ, InRange E N₁.bnd σ → s₁ * eval E N₁ σ = s₂ * eval E N₂ σ
+  N₁.bnd.Perm N₂.bnd ∧ ∀ σ, InRange E N₁.bnd σ → s₁ * eval E N₁ σ = s₂ * eval E N₂ σ
 
-theorem Equal.refl (E : Env) (s : ℂ) (N : Net) : Equal E s N s N := ⟨rfl, fun _ _ => rfl⟩
+theorem InRange.perm {E : Env} {a b : List ℕ} {σ : ℕ → ℕ} (h : a.Perm b) (ha : InRange E a σ) :
+    InRange E b σ := fun l hl => ha l (h.mem_iff.2 hl)
+
+theorem Equal.refl (E : Env) (s : ℂ) (N : Net) : Equal E s N s N :=
+  ⟨List.Perm.refl _, fun _ _ => rfl⟩
 
 theorem Equal.symm {E : Env} {s₁ s₂ : ℂ} {N₁ N₂ : Net} (h : Equal E s₁ N₁ s₂ N₂) :
     Equal E s₂ N₂ s₁ N₁ :=
-  ⟨h.1.symm, fun σ hσ => (h.2 σ (h.1 ▸ hσ)).symm⟩
+  ⟨h.1.symm, fun σ hσ => (h.2 σ (hσ.perm h.1.symm)).symm⟩
 
 theorem Equal.trans {E : Env} {s₁ s₂ s₃ : ℂ} {N₁ N₂ N₃ : Net} (h : Equal E s₁ N₁ s₂ N₂)
     (h' : Equal E s₂ N₂ s₃ N₃) : Equal E s₁ N₁ s₃ N₃ :=
-  ⟨h.1.trans h'.1, fun σ hσ => (h.2 σ hσ).trans (h'.2 σ (h.1 ▸ hσ))⟩
+  ⟨h.1.trans h'.1, fun σ hσ => (h.2 σ hσ).trans (h'.2 σ (hσ.perm h.1))⟩
 
 /-- Chaining two scaled equations through their shared network. -/
 theorem Equal.mul_trans {E : Env} {a b c e : ℂ} {X Y Z : Net} (h : Equal E a X b Y)
     (h' : Equal E c Y e Z) : Equal E (a * c) X (b * e) Z := by
   refine ⟨h.1.trans h'.1, fun σ hσ => ?_⟩
   have h1 := h.2 σ hσ
-  have h2 := h'.2 σ (h.1 ▸ hσ)
+  have h2 := h'.2 σ (hσ.perm h.1)
   calc a * c * eval E X σ = c * (a * eval E X σ) := by ring
     _ = c * (b * eval E Y σ) := by rw [h1]
     _ = b * (c * eval E Y σ) := by ring
     _ = b * (e * eval E Z σ) := by rw [h2]
     _ = b * e * eval E Z σ := by ring
+
+/-- The same equation under other scalars, given `s b = t a` and `a ≠ 0`. -/
+theorem Equal.rescale {E : Env} {a b s t : ℂ} {X Y : Net} (h : Equal E a X b Y) (ha : a ≠ 0)
+    (hst : s * b = t * a) : Equal E s X t Y := by
+  refine ⟨h.1, fun σ hσ => ?_⟩
+  have h1 := h.2 σ hσ
+  calc s * eval E X σ = s / a * (a * eval E X σ) := by field_simp
+    _ = s / a * (b * eval E Y σ) := by rw [h1]
+    _ = (s * b) / a * eval E Y σ := by ring
+    _ = t * eval E Y σ := by rw [hst]; field_simp
 
 /-! ## Sums over labels -/
 
@@ -320,7 +404,7 @@ theorem rewrite (E : Env) (C L R : List Node) (iC iL iR bnd iface : List ℕ) (s
     (hL : ∀ x ∈ labelsOf C, x ∉ iL) (hR : ∀ x ∈ labelsOf C, x ∉ iR)
     (hface : ∀ x ∈ iface, x ∈ iC ∨ x ∈ bnd) (hs : s' = s * k) :
     Equal E s ⟨C ++ L, iC ++ iL, bnd⟩ s' ⟨C ++ R, iC ++ iR, bnd⟩ := by
-  refine ⟨rfl, fun σ hσ => ?_⟩
+  refine ⟨List.Perm.refl _, fun σ hσ => ?_⟩
   have := frame E C L R iC iL iR bnd iface 1 k hloc hL hR hface σ hσ
   rw [one_mul] at this
   rw [this, hs, mul_assoc]

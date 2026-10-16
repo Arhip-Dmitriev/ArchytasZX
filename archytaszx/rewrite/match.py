@@ -1551,6 +1551,18 @@ def find_fourier_matches(
         # an anchored scan raises exactly what the full scan raises.
         if anchors is not None and anchors.isdisjoint(chain):
             continue
+        if len({_node_boxes(diagram, node_id) for node_id in chain}) != 1:
+            continue
+        if _exhausts_a_node_scope_box(diagram, tuple(chain)):
+            continue
+        head = by_port.get(PortRef(chain[0], Direction.INPUT, 0))
+        tail = by_port.get(PortRef(chain[-1], Direction.OUTPUT, 0))
+        ends = (
+            None if head is None else _far_end(head, PortRef(chain[0], Direction.INPUT, 0)).node_id,
+            None if tail is None else _far_end(tail, PortRef(chain[-1], Direction.OUTPUT, 0)).node_id,
+        )
+        if not _splice_keeps_copies(diagram, chain[0], ends):
+            continue
         outcomes = (
             SideConditionOutcome(
                 "chain_is_series", True, f"{FOURIER_CHAIN_LENGTH} F boxes in series at {chain[0]}"
@@ -1611,7 +1623,7 @@ CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "both legs carry one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box or has a port-boxed leg",
+        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -1803,9 +1815,44 @@ def _has_port_boxed_leg(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
     )
 
 
+def _node_boxes(diagram: Diagram, node_id: NodeId) -> frozenset[BangBoxId]:
+    """Every node-scope bang box holding ``node_id``."""
+    return frozenset(
+        b.id for b in diagram.bang_boxes.values() if b.is_node_scope and node_id in b.node_scope
+    )
+
+
+def _splice_keeps_copies(
+    diagram: Diagram, node_id: NodeId, far: tuple[NodeId | None, NodeId | None]
+) -> bool:
+    """True iff removing ``node_id`` keeps every copy of its legs paired: no neighbour sits in a
+    deeper node-scope box, and some wired neighbour shares the node's boxes."""
+    mine = _node_boxes(diagram, node_id)
+    sides = [_node_boxes(diagram, other) for other in far if other is not None]
+    if any(not (s <= mine) for s in sides):
+        return False
+    return not mine or any(s == mine for s in sides)
+
+
+def _has_crossing_leg(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
+    """True iff a wire joins one of ``node_ids`` to a node in other node-scope bang boxes."""
+    for wire in diagram.wires:
+        for here, there in ((wire.a, wire.b), (wire.b, wire.a)):
+            if here.node_id in node_ids and _node_boxes(diagram, here.node_id) != _node_boxes(
+                diagram, there.node_id
+            ):
+                return True
+    return False
+
+
 def _in_any_bang_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
-    """True iff any of ``node_ids`` sits in a node-scope bang box or has a port-boxed leg."""
-    return _in_any_node_scope_box(diagram, node_ids) or _has_port_boxed_leg(diagram, node_ids)
+    """True iff any of ``node_ids`` sits in a node-scope bang box, has a port-boxed leg, or has a
+    leg wired into a node-scope box it is not in."""
+    return (
+        _in_any_node_scope_box(diagram, node_ids)
+        or _has_port_boxed_leg(diagram, node_ids)
+        or _has_crossing_leg(diagram, node_ids)
+    )
 
 
 def _is_phaseless(node: Node) -> bool:
@@ -1840,6 +1887,11 @@ IDENTITY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "no node-scope bang box holds the node and nothing else",
     ),
     SideCondition("no_port_boxed_leg", "neither leg lies in a port-scope bang box"),
+    SideCondition(
+        "splice_keeps_copies",
+        "no neighbour lies in a node-scope bang box nested inside the node's, and some wired "
+        "neighbour shares the node's boxes",
+    ),
 )
 
 
@@ -1918,6 +1970,15 @@ def find_identity_matches(
         if _exhausts_a_node_scope_box(diagram, (node_id,)):
             continue
         if _has_port_boxed_leg(diagram, (node_id,)):
+            continue
+        if not _splice_keeps_copies(
+            diagram,
+            node_id,
+            tuple(  # type: ignore[arg-type]
+                None if w is None else _far_end(w, ref).node_id
+                for ref, w in ((port_in, wire_in), (port_out, wire_out))
+            ),
+        ):
             continue
         matches.append(
             IdentityMatch(
@@ -2091,6 +2152,12 @@ def find_triangle_matches(
                 continue
             if _exhausts_a_node_scope_box(diagram, (first.id, second.id)):
                 continue
+            ends = tuple(
+                None if w is None else _far_end(w, ref).node_id
+                for ref, w in ((outer_in, wire_head), (outer_out, wire_tail))
+            )
+            if not _splice_keeps_copies(diagram, first.id, ends):  # type: ignore[arg-type]
+                continue
             matches.append(
                 TriangleMatch(
                     first_id=first.id,
@@ -2140,7 +2207,7 @@ STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box or has a port-boxed leg",
+        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -2282,7 +2349,7 @@ HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition(
         "outside_every_bang_box",
-        "none of the four nodes lies in any node-scope bang box or has a port-boxed leg",
+        "none of the four nodes lies in any node-scope bang box has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -2494,7 +2561,7 @@ BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box or has a port-boxed leg",
+        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
     ),
 )
 

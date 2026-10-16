@@ -208,14 +208,22 @@ def dense_diagram(s: P.State, limited: bool = True) -> Diagram:
     u = [sympy.simplify(c[(k + shift) % size] / c[shift]) for k in range(size)]
     dim = Dim.concrete(size)
     g = Diagram()
-    cup = g.add_node(Z_SPIDER, [], [dim, dim])
     effects = _effects(u)
-    w = g.add_node(W_NODE, [dim], [dim] * len(effects))
-    g.add_wire(PortRef(cup, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0))
-    for j, phases in enumerate(effects):
-        z = g.add_node(Z_SPIDER, [dim], [], _vector(dim, phases))
-        g.add_wire(PortRef(w, Direction.OUTPUT, j), PortRef(z, Direction.INPUT, 0))
-    out = PortRef(cup, Direction.OUTPUT, 1)
+    if not effects:
+        out, norm = _basis(g, shift, size)
+        g.set_boundary_outputs(_split(g, out, _qudits(s)))
+        g.set_scalar(Scalar(c[shift] * norm))
+        return g
+    if len(effects) == 1:
+        out = _out(g.add_node(Z_SPIDER, [], [dim], _vector(dim, effects[0])), 0)
+    else:
+        cup = g.add_node(Z_SPIDER, [], [dim, dim])
+        w = g.add_node(W_NODE, [dim], [dim] * len(effects))
+        g.add_wire(PortRef(cup, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0))
+        for j, phases in enumerate(effects):
+            z = g.add_node(Z_SPIDER, [dim], [], _vector(dim, phases))
+            g.add_wire(PortRef(w, Direction.OUTPUT, j), PortRef(z, Direction.INPUT, 0))
+        out = PortRef(cup, Direction.OUTPUT, 1)
     if shift:
         vector = PhaseVector(
             dim, {k: Phase(sympy.Rational(-k * shift, size)) for k in range(1, size)}
@@ -752,7 +760,11 @@ def view(s: P.State, limited: bool = True) -> View:
             return View(_single(s, plans[0]))
         out = View(Diagram())
         _sum(s, plans, out)
-        return out
+        try:
+            dense = dense_diagram(s, limited)
+        except ZXViewError:
+            return out
+        return View(dense) if len(dense.nodes) < len(out.diagram.nodes) else out
     except _NoForm as exc:
         try:
             return View(dense_diagram(s, limited))

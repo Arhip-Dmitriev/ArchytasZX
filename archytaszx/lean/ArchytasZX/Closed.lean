@@ -34,6 +34,19 @@ theorem rt_sq (d : ℕ) : rt d * rt d = d := sqrt_mul_sqrt d
 
 theorem rt_sq' (d : ℕ) : rt d ^ 2 = d := by rw [sq, rt_sq]
 
+theorem om_ne_zero (d : ℕ) (hd : 0 < d) : om d ≠ 0 := (om_prim d hd).ne_zero hd.ne'
+
+theorem om_pow_self (d : ℕ) (hd : 0 < d) : om d ^ d = 1 := (om_prim d hd).pow_eq_one
+
+theorem om_geom (m p : ℕ) (hm : 0 < m) (hp : 1 < p) (hpm : p ∣ m) :
+    ∑ j ∈ range p, om m ^ (j * (m / p)) = 0 := by
+  have hζ : IsPrimitiveRoot (om m ^ (m / p)) p := by
+    have := (om_prim m hm).pow_of_dvd (Nat.div_pos (Nat.le_of_dvd hm hpm) (by omega)).ne'
+      (Nat.div_dvd_of_dvd hpm)
+    rwa [Nat.div_div_self hpm hm.ne'] at this
+  have := hζ.geom_sum_eq_zero hp
+  simpa [← pow_mul, mul_comm] using this
+
 theorem om_pow_mod (d : ℕ) (hd : 0 < d) (n : ℕ) : om d ^ n = om d ^ (n % d) := by
   conv_lhs => rw [← Nat.div_add_mod n d]
   rw [pow_add, pow_mul, (om_prim d hd).pow_eq_one, one_pow, one_mul]

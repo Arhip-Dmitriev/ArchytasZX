@@ -133,7 +133,7 @@ theorem iso (E : Env) (s : ℂ) (A B : Net) (π : List (ℕ × ℕ)) (p : List �
     (h : isoOK E.labs A B π p = true) : Equal E s A s B := by
   refine ⟨?_, fun σ _ => by rw [iso_eval E A B π p h σ]⟩
   simp only [isoOK, Bool.and_eq_true, beq_iff_eq] at h
-  exact h.1.1.1.1.2
+  exact List.Perm.of_eq h.1.1.1.1.2
 
 /-- Equal networks under scalars proven equal. -/
 theorem iso_scalar (E : Env) (s s' : ℂ) (A B : Net) (π : List (ℕ × ℕ)) (p : List ℕ)

@@ -169,3 +169,18 @@ def test_nested_fusion_is_deterministic() -> None:
     b = apply(pre, rule, first).diagram
     assert a.bang_boxes == b.bang_boxes
     assert a.nodes == b.nodes
+
+
+def test_identity_removal_skips_a_spider_fed_from_a_deeper_box() -> None:
+    dim = Dim(3)
+    g = Diagram()
+    a = g.add_node(Z_SPIDER, [], [dim])
+    b = g.add_node(Z_SPIDER, [dim], [dim])
+    c = g.add_node(X_SPIDER, [dim], [dim])
+    g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+    g.add_wire(PortRef(b, Direction.OUTPUT, 0), PortRef(c, Direction.INPUT, 0))
+    g.set_boundary_outputs([PortRef(c, Direction.OUTPUT, 0)])
+    outer = g.add_bang_box(Mult("k"), node_scope=frozenset({a, b, c}))
+    g.add_bang_box(Mult("j"), node_scope=frozenset({a}), parent=outer)
+    matches = RULES["identity_removal"].pattern.find_matches(g)
+    assert all(m.node_id != b for m in matches)

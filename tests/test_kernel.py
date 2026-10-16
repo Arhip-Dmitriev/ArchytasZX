@@ -98,7 +98,7 @@ def test_lean_chain_semantic(make: object) -> None:
 def test_lean_induction() -> None:
     induction = prove(*boxed_state_copy()).induction
     assert induction is not None
-    source = K.lean(K.check(induction), name="copy")
+    source = K.lean(K.check(induction), name="copy", semantic=False)
     assert "theorem copy : ∀ (n : Nat)," in source
     assert "induction n with" in source and "| succ k ih =>" in source
     assert "congrArg" in source
@@ -134,7 +134,7 @@ def _mathlib() -> bool:
 
 @pytest.mark.skipif(_lean() is None, reason="Lean 4 is not installed")
 def test_lean_accepts_the_opaque_induction(tmp_path: object) -> None:
-    source = K.lean(K.check(prove(*boxed_state_copy()).induction))
+    source = K.lean(K.check(prove(*boxed_state_copy()).induction), semantic=False)
     assert "axiom Diagram : Type" in source
     path = f"{tmp_path}/induction.lean"
     with open(path, "w", encoding="utf-8") as handle:

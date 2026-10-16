@@ -1164,6 +1164,8 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
         if "import ArchytasZX" in source:
             unproved = source.count("\naxiom unproved_")
             note = f"{unproved} unproved step(s)" if unproved else "every step proved"
+            if "scalars are not compared" in source.split("-/")[0]:
+                note += ", the diagrams' scalars not compared"
             blocks.append(Text(f"lean: tensor-network semantics, {note}"))
         else:
             blocks.append(Text("lean: opaque diagrams, every step an axiom"))

@@ -7,3 +7,7 @@ import ArchytasZX.Bialgebra
 import ArchytasZX.Hopf
 import ArchytasZX.WRules
 import ArchytasZX.Connective
+import ArchytasZX.WZ
+import ArchytasZX.Bundle
+import ArchytasZX.Unfuse
+import ArchytasZX.FuseB

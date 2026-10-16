@@ -1,0 +1,125 @@
+ARCHYTASZX SYNTAX CHEAT SHEET (internal)
+=======================================
+
+Run:  archytaszx [FILE.azx ...] [args]      scripts; extra args read by arg(k)
+      archytaszx -c "STMT" -c "STMT"        one-off statements
+      archytaszx                            interactive shell
+Flags: --mathtext --unicode --ascii --latex (output styles, stackable), --order,
+       --verbose, --seed N, --commands, view flags (--dirac --zx --both --raw ...)
+
+
+1. THE .azx LANGUAGE
+--------------------
+Statements split by newline or ';'.  '#' starts a comment.  Trailing '\' joins lines.
+
+Variables
+  var n, m                 declare symbolic (type nat by default)
+  var t: real              types: nat int real complex
+  var N = 2^n              define / reassign (reassign also uses 'var')
+  var z = measure|psi>     measure (collapses |psi>); result = bool or bit string
+  measure|psi>             measure without binding
+  seed 7                   fix RNG
+
+Functions / gates
+  func f(x) = a^x % N
+  gate U = |x>|y> -> |x>|y xor f(x)>                        basis map
+  gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+  gate R = [[cos(t), -sin(t)], [sin(t), cos(t)]]            explicit matrix
+  gate G = matrix(r, c in 0..d){ e^(2*pi*i*r*c/d) / sqrt(d) }
+  gate C = |x>|y> -> [[...]]                                matrix, fixed registers
+
+States
+  |psi> = |0>^@n @ |1>     named ket
+  <phi| = ...              named bra;  <name| is always conj-transpose of |name>
+  |v> = [a, b]             amplitude vector
+  |chi>_d = F^@n |0>_d^@n  '_d' fixes dimension (numeral or variable)
+  |2>_3   |0> + |2>        literal kets; unsuffixed |v> = lowest dim holding v
+  |+> |-> |i> |-i>         built-in states
+
+Operators
+  @          tensor product           ^@n   tensor power
+  juxtapose  apply / multiply / tensor: U |x>|y>, <a|b>, |a><b|, 2 |s><s|psi>
+             (groups from the right: U |x>|y> applies U to both)
+  + - * / % ^ (right assoc)   xor   == != < <= > >=   and or not
+  Precedence, loosest first: xor; + -; @; juxtaposition; * / %; unary -; ^ and ^@
+
+Ranges / sums
+  a..b  excludes b      a..=b  includes b
+  sum(k in 0..d){ expr }
+
+Built-ins
+  constants  pi e i
+  math       sqrt exp abs floor ceil cos sin tan log min max
+  integer    gcd bit(x,k) powmod(a,x,N) bitlen(N) denom(x,N)
+  special    arg(K[,DEFAULT]) (script args, from 1)   rand(LO, HI)
+  gates      H X Y Z S T CNOT SWAP (qubit; H^@n for registers), I (identity,
+             absorbs remaining registers when last in a tensor)
+
+Collections / output
+  list L = {|psi>, <phi|, z}
+  show(x, |psi>, L)        print mathematical values
+  show(|psi>, ascii)       force a style: mathtext unicode ascii latex
+  print("text")  print(f"z = {z}")
+  A bare expression is a statement (echoed in verbose mode).
+
+Control flow
+  for j in 0..n { ... }
+  while k < 2 { var k = k + 1 }
+  if c { ... } else { ... }
+  assume n > 2             add assumption (error if concretely false)
+  assert k == 2            error if false
+
+Example
+  var n
+  |psi> = (H^@n @ I) |0>^@n @ |0>
+  var z = measure|psi>
+  show(|psi>, z)
+
+
+2. SHELL META-COMMANDS (lines starting with ':')
+------------------------------------------------
+  :dirac :zx (:zxmatplot) :zxunicode :zxascii :both :raw   view mode
+  :listing                 toggle graph listing under drawings
+  :verbose_on :verbose_off utop-style echo (val x : nat = 3)
+  :style S [S ...]         mathtext unicode ascii latex
+  :config [KEY VALUE | save | reset]   image size, color
+  history  quit  exit
+  :<engine command>        anything else after ':' goes to the engine (section 3)
+
+
+3. ENGINE COMMANDS (':cmd' in shell, or bare with --commands)
+-------------------------------------------------------------
+  load SOURCE|@NAME        read a diagram (Dirac slice, DSL, or listing);
+                           a non-command line is treated as load
+  show [derivation|start|scalable|certificate|@NAME|SOURCE]
+  rules [RULE]             (alias list-rules)
+  match [RULE]
+  apply RULE [at INT | at nI, nJ]
+  check [NAME=VALUE ...] [against TARGET]
+  normalize   saturate
+  decide [against] [TARGET]
+  prove  [against] [TARGET]
+  induct [on SYMBOL] [NAME=VALUE ...] [against TARGET]
+  certificate [emit [derivation|induction|proof] | verify [NAME=VALUE ...]
+               | show | kernel | lean [FILE]]
+  translate [back | dissolve S | split S FIRST | join S S
+             | enclose nA, nB [x MULT] | kill S | fuse nA.outI -- nB.inJ]
+  name NAME   names   undo   reset   detail   help [CMD]
+  @start @current          built-in diagram names
+
+Diagram input forms for 'load':
+  Dirac slice:  sum_{k=0}^{D-1} |k,k,...>     |k>^{n}     ... ; copy
+                'literal N' keeps a numeral concrete (else numerals become symbols)
+  DSL:          node / wire / inputs / outputs / scalar / box / dim / count / let
+                statements, ';' or newline separated, '#' comments
+  Listing:      exact output of the graph listing (round-trips)
+
+
+4. PYTHON EMBEDDING
+-------------------
+  from archytaszx import azx            # or azx = archytaszx.Program()
+  azx("var n")                          # run statements, returns printed text
+  azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n    # |psi> = H^@n |0>^@n
+  azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]        # language syntax in []
+  y = azx.measure | azx.psi             # or azx.measure(azx.psi)
+  '|' = juxtaposition, '@' = tensor, '**' = tensor power, .dag() = adjoint

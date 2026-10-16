@@ -91,8 +91,8 @@ def test_structural_diagram_contracts_to_the_state(
 ) -> None:
     s = state(source)
 
-    def refuse(_s: object) -> None:
-        raise AssertionError("dense fallback used")
+    def refuse(*_a: object) -> None:
+        raise zxview.ZXViewError("dense fallback used")
 
     monkeypatch.setattr(zxview, "dense_diagram", refuse)
     d = zxview.diagram(s)
@@ -153,3 +153,19 @@ def test_refusals(source: str, match: str) -> None:
     s = next(iter(interp.states.values()))
     with pytest.raises(zxview.ZXViewError, match=match):
         zxview.diagram(s)
+
+
+@pytest.mark.parametrize(
+    ("source", "kind"),
+    [
+        ("|s> = |0> + |1>", "Z"),
+        ("|s> = |0> - i |1>", "Z"),
+        ("|s> = |1>_3 + |1>_3", "X"),
+    ],
+)
+def test_small_sum_is_one_spider(source: str, kind: str) -> None:
+    s = state(source)
+    d = zxview.diagram(s)
+    assert validate(d).is_valid
+    assert [n.generator_type.name for n in d.nodes.values()] == [kind]
+    assert np.allclose(contract(d).tensor.reshape(-1), dense(s))
