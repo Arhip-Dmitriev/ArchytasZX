@@ -4,8 +4,9 @@ ARCHYTASZX SYNTAX CHEAT SHEET (internal)
 Run:  archytaszx [FILE.azx ...] [args]      scripts; extra args read by arg(k)
       archytaszx -c "STMT" -c "STMT"        one-off statements
       archytaszx                            interactive shell
-Flags: --mathtext --unicode --ascii --latex (output styles, stackable), --order,
-       --verbose, --seed N, --commands, view flags (--dirac --zx --both --raw ...)
+Flags: --render --unicode --ascii --latex (output styles, stackable), --order,
+       --verbose, --seed N (rand), --images DIR (save every rendered image as a PNG),
+       --commands, view flags (--dirac --zx --zxrender --zxunicode --zxascii --both --raw)
 
 
 1. THE .azx LANGUAGE
@@ -16,9 +17,11 @@ Variables
   var n, m                 declare symbolic (type nat by default)
   var t: real              types: nat int real complex
   var N = 2^n              define / reassign (reassign also uses 'var')
-  var z = measure|psi>     measure (collapses |psi>); result = bool or bit string
+  var z = measure|psi>     Born distribution [(value, p), ...], derived symbolically;
+                           |psi> becomes the mixed state sum_z p_z |z><z|
+  floor(measure|psi>/2)    measure is an expression; functions map over outcomes
   measure|psi>             measure without binding
-  seed 7                   fix RNG
+  seed 7                   fix the RNG of rand
 
 Functions / gates
   func f(x) = a^x % N
@@ -34,6 +37,10 @@ States
   |v> = [a, b]             amplitude vector
   |chi>_d = F^@n |0>_d^@n  '_d' fixes dimension (numeral or variable)
   |2>_3   |0> + |2>        literal kets; unsuffixed |v> = lowest dim holding v
+  |000> = |0>              a numeral is one value
+  |010`> = |0>|1>|0>       trailing ` makes a digit string, one register per digit
+                           (state names cannot be numerals, numeral` or `)
+  U|psi>                   as a statement: applies U to |psi> in place
   |+> |-> |i> |-i>         built-in states
 
 Operators
@@ -49,6 +56,7 @@ Ranges / sums
 
 Built-ins
   constants  pi e i
+  states     normalise(|psi>)  (also a density matrix: divides by its trace)
   math       sqrt exp abs floor ceil cos sin tan log min max
   integer    gcd bit(x,k) powmod(a,x,N) bitlen(N) denom(x,N)
   special    arg(K[,DEFAULT]) (script args, from 1)   rand(LO, HI)
@@ -58,7 +66,7 @@ Built-ins
 Collections / output
   list L = {|psi>, <phi|, z}
   show(x, |psi>, L)        print mathematical values
-  show(|psi>, ascii)       force a style: mathtext unicode ascii latex
+  show(|psi>, ascii)       force a style: render unicode ascii latex
   print("text")  print(f"z = {z}")
   A bare expression is a statement (echoed in verbose mode).
 
@@ -78,10 +86,10 @@ Example
 
 2. SHELL META-COMMANDS (lines starting with ':')
 ------------------------------------------------
-  :dirac :zx (:zxmatplot) :zxunicode :zxascii :both :raw   view mode
+  :dirac :zx (:zxrender) :zxunicode :zxascii :both :raw   view mode
   :listing                 toggle graph listing under drawings
   :verbose_on :verbose_off utop-style echo (val x : nat = 3)
-  :style S [S ...]         mathtext unicode ascii latex
+  :style S [S ...]         render unicode ascii latex
   :config [KEY VALUE | save | reset]   image size, color
   history  quit  exit
   :<engine command>        anything else after ':' goes to the engine (section 3)

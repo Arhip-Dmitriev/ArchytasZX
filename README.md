@@ -48,7 +48,7 @@ normalizes the two to the same name); the importable package is `archytaszx`. Th
 scripts such as [`examples/shor.azx`](examples/shor.azx)); the language is summarised in the
 docstring of [`archytaszx/repl/lang.py`](archytaszx/repl/lang.py) and `:help` lists the engine
 commands.
-Engine commands start with `:` in the shell. Output styles are `--mathtext` (default),
+Engine commands start with `:` in the shell. Output styles are `--render` (default),
 `--unicode`, `--ascii` and `--latex`; several flags print every output in each style, and
 `--order` holds the output until an error or the end and then groups it by style.
 
