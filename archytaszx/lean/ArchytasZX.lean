@@ -15,3 +15,5 @@ import ArchytasZX.Cyclo
 import ArchytasZX.Refute
 import ArchytasZX.Ball
 import ArchytasZX.Contract
+import ArchytasZX.SymNet
+import ArchytasZX.Port
