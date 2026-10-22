@@ -99,13 +99,19 @@ def _check_mult_domain(expr: sp.Expr) -> None:
             )
         _check_symbol_name(str(expr.name))
         return
-    if expr.is_Add or expr.is_Mul:
+    if expr.is_Add:
+        for arg in expr.args:
+            if not arg.is_Integer:
+                _check_mult_domain(arg)
+        return
+    if expr.is_Mul:
         for arg in expr.args:
             _check_mult_domain(arg)
         return
     raise BangBoxGrammarError(
         f"expression {expr} is outside the multiplicity grammar "
-        "(only concrete non-negative integers, symbols, sums, and products are allowed)"
+        "(only concrete non-negative integers, symbols, sums with integer offsets, and products "
+        "are allowed)"
     )
 
 

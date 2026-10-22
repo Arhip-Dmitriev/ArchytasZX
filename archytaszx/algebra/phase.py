@@ -336,7 +336,11 @@ class PhaseVector:
     _rule: Phase | None
 
     def __init__(
-        self, dim: Dim, entries: Mapping[int, Phase] | None = None, rule: Phase | None = None
+        self,
+        dim: Dim,
+        entries: Mapping[int, Phase] | None = None,
+        rule: Phase | None = None,
+        expand: bool = True,
     ) -> None:
         """Build a PhaseVector over ``dim`` from a sparse index -> Phase mapping and a ``rule``.
 
@@ -344,7 +348,7 @@ class PhaseVector:
         raise PhaseDomainError. Explicit zero entries are dropped (they are equivalent
         to absence). An explicit nonzero entry at index 0 raises PhaseDomainError, as does
         a rule that is not zero at index 0. At a concrete ``dim`` the rule is expanded into
-        entries.
+        entries unless ``expand`` is False.
         """
         if not isinstance(dim, Dim):
             raise TypeError(f"PhaseVector requires a Dim, got {type(dim).__name__}")
@@ -378,7 +382,7 @@ class PhaseVector:
                 raise PhaseDomainError("a phase-vector rule must be zero at index 0")
             if rule.is_zero:
                 rule = None
-            elif dim.is_concrete:
+            elif dim.is_concrete and expand:
                 for index in range(1, dim.to_int()):
                     phase = cleaned.get(index, Phase.zero()) + rule.at(index)
                     if phase.is_zero:
@@ -411,7 +415,8 @@ class PhaseVector:
 
     @property
     def rule(self) -> Phase | None:
-        """The Phase in :data:`INDEX` added at every index; only at a symbolic dimension."""
+        """The Phase in :data:`INDEX` added at every index: at a symbolic dimension, or at a
+        concrete one built with ``expand=False``."""
         return self._rule
 
     def get(self, index: int) -> Phase:
@@ -437,8 +442,11 @@ class PhaseVector:
 
     @property
     def is_concrete(self) -> bool:
-        """True iff the dimension and every stored phase are concrete."""
-        return self._dim.is_concrete and all(p.is_concrete for p in self._entries.values())
+        """True iff the dimension, every stored phase and the rule are concrete."""
+        rule = self._rule is None or not (self._rule.to_sympy_turns().free_symbols - {INDEX})
+        return (
+            self._dim.is_concrete and rule and all(p.is_concrete for p in self._entries.values())
+        )
 
     @property
     def free_symbols(self) -> frozenset[str]:

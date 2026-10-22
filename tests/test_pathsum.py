@@ -109,25 +109,39 @@ def test_inner_symbolic_and_numeric() -> None:
     assert P.inner(P.dagger(c), c) == 1
 
 
-def test_numeric_measurement_distribution() -> None:
+def test_measurement_distribution_is_derived() -> None:
     s = P.apply(P.Power(HADAMARD, sympy.Integer(2)), P.basis(0, sympy.Integer(2)))
-    rng = np.random.default_rng(3)
-    seen = {int(P.measure(s, sympy.Symbol("z"), rng).outcome) for _ in range(200)}
-    assert seen == {0, 1, 2, 3}
+    (branch,) = P.distribution(s).branches
+    (k,) = branch.free
+    assert branch.value == k.symbol and branch.prob == sympy.Rational(1, 4)
+    assert (k.lo, k.hi) == (0, 3)
 
 
-def test_symbolic_measurement_solves_registers() -> None:
+def test_symbolic_measurement_pins_dependent_registers() -> None:
     n, m = sympy.symbols("n m", integer=True, nonnegative=True)
     b = P.new_bound("x", 0, 2**n - 1)
     f = sympy.Function("f")
     s = P.State((n, m), (P.Term(2 ** (-n / 2), (b,), (b.symbol, f(b.symbol))),))
-    z = sympy.Symbol("z", integer=True, nonnegative=True)
-    res = P.measure(s, z, np.random.default_rng(0))
-    head = P.bits(z, 0, n, n + m)
-    assert res.post.terms[0].kets == (head, f(head))
-    assert res.constraints == ((P.bits(z, n, n + m, n + m), f(head)),)
-    again = P.measure(res.post, sympy.Symbol("y"), np.random.default_rng(0), res.constraints)
-    assert again.outcome == z
+    d = P.distribution(s)
+    (branch,) = d.branches
+    (k,) = branch.free
+    assert branch.registers == (k.symbol, f(k.symbol))
+    assert P.same(branch.prob, 2**-n)
+    mixed = P.collapse(d, s)
+    again = P.distribution(mixed)
+    (other,) = again.branches
+    assert P.same(other.prob, 2**-n) and len(other.free) == 1
+
+
+def test_measure_mixture_is_stable_under_remeasurement() -> None:
+    s = P.add(P.basis(0, sympy.Integer(1)), P.scale(sympy.I, P.basis(1, sympy.Integer(1))))
+    d = P.distribution(s)
+    m = P.collapse(d, s)
+    for dist in (P.distribution(m), P.distribution(P.collapse(P.distribution(m), m.layout()))):
+        (branch,) = dist.branches
+        (k,) = branch.free
+        assert branch.value == k.symbol and branch.prob == sympy.Rational(1, 2)
+    assert P.same(P.trace(m), 1)
 
 
 def test_integer_functions() -> None:
