@@ -1,0 +1,50 @@
+Cases the engine can produce that have no Lean proof path
+
+1. Dimension binder and splitter (B, S) under the normaliser.
+The binder's entry is [k = a*t + b] with a < s, b < t, k < s*t, where t is a dimension symbol.
+The normaliser's index polynomials have integer coefficients, so the delta needs t as a
+coefficient. Eliminating it needs div/mod terms (k div t, k mod t). An X spider or Fourier box on
+an s*t wire also needs characters omega_s^(t*k1*l1), whose sums depend on gcd(t, s), and gcd is
+not determined by symbolic monomials. Verdicts reached by rewriting are proved by the connective
+lemmas (Connective.lean). Verdicts that need the normaliser on B or S nodes are not.
+
+2. Evaluated quadratic Gauss sums.
+The symbolic simplifier closes sum_{k<d} omega_d^(a*k^2 + b*k + c) by the classical formula
+sqrt(d)(1+i)(1+i^(-d))/2, including Gauss's sign, and by Landsberg-Schaar reciprocity for |a| >= 2.
+Neither theorem is in Mathlib, which has finite-field Gauss sums without the sign and the Jacobi
+theta transformation. No formalization was found in Lean, Isabelle, Coq or HOL. Quadratic phases
+are proved only when their sums cancel between the two sides.
+
+3. Phase rules with a symbolic coefficient (for example theta*k).
+At the spider's bound index s the rule contributes ex(theta)^s, an atom raised to a summed
+variable. Summing it gives a geometric series (ex(theta)^D - 1)/(ex(theta) - 1). That is a
+rational function of the atom, outside the normaliser's monomial coefficients.
+
+4. Scalars depending on a multiplicity non-geometrically, with port boxes.
+For node boxes, eval X(n) = x0*t0^n, so a non-geometric ratio between the two sides' scalars
+forces both networks to vanish. Port-box families have no such product form, and their induction
+step needs the two sides' scalars to grow by the same constant factor per copy.
+
+5. Scalars outside the exact model whose ratio is outside it too.
+Opaque scalars (pi, roots of non-monomials, and the like) are handled when the two sides' scalars
+differ by an exact factor. Otherwise the verdict asserts an identity between transcendental
+constants. Deciding such identities is undecidable in general (Richardson's theorem).
+
+6. Node boxes meeting the rest of the diagram at a wire, and port boxes inside port boxes, under
+the normaliser.
+The symbolic contraction declines both, so no symbolic-contraction verdict contains them. Verdicts
+reached by rewriting use the lifted rule lemmas. A family whose copies share a wire with the rest
+does not split into a peeled copy beside the rest, which the normaliser's induction step needs.
+
+7. Deferred dimension constraints in families.
+Outside bang boxes a rewrite proof that assumed two dimensions equal states the equalities as
+hypotheses: the proof over the merged network is transported to the networks at their own
+dimensions (Equal.of_mapDim'). The transport maps plain dimension indices only. A family's bundle
+indices are derived from them, and the transport does not map those, so such a family has no
+export with the constraint as a hypothesis.
+
+8. Nodes whose legs differ in dimension, in families.
+A spider whose legs have dimensions such as d^p and d^q is proved under the hypothesis
+d^p = d^q, but only outside bang boxes. Inside a family the positivity of every dimension value
+is stated over the family's natural-number parameters, and the exponent symbols carry no
+positivity hypothesis.
