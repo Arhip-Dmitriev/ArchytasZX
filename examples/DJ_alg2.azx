@@ -1,0 +1,13 @@
+var n
+func f(x) = bit(x, 0)
+gate U_f = |x>|y> -> |x>|y xor f(x)>
+
+|psi_0> = |0>^@n @ |1>
+|psi_1> = (H^@n @ H) |psi_0>
+|psi_2> = U_f |psi_1>
+|psi_3> = (H^@n @ I) |psi_2>
+show(|psi_0>, |psi_1>, |psi_2>, |psi_3>)
+
+var z = measure|psi_3>
+var x = floor(z / 2)
+show(x)

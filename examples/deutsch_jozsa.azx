@@ -1,16 +1,11 @@
-# Deutsch-Jozsa: one query to U_f tells constant f from balanced f.
-# x = 0 iff f is constant.
-
 var n
-func f(x) = bit(x, 0)
-gate U_f = |x>|y> -> |x>|y xor f(x)>
-
-|psi_0> = |0>^@n @ |1>
-|psi_1> = (H^@n @ H) |psi_0>
-|psi_2> = U_f |psi_1>
-|psi_3> = (H^@n @ I) |psi_2>
-show(|psi_1>, |psi_2>, |psi_3>)
-
-var z = measure|psi_3>
-var x = floor(z / 2)
-show(x)
+gate U_f = |x>|y> -> |x>|y xor bit(x, 0)>
+|psi> = |0>^@n @ |1>
+show(|psi>)
+(H^@n @ H)|psi>
+show(|psi>)
+U_f|psi>
+show(|psi>)
+(H^@n @ I)|psi>
+show(|psi>)
+var z = floor(measure|psi>/2)
