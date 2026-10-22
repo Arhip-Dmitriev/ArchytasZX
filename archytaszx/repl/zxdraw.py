@@ -27,13 +27,14 @@ splitters or binders one node.
 from __future__ import annotations
 
 import io
+import math
+import shutil
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.graph import Diagram, Node, NodeId, PortRef
 from archytaszx.repl import display as D
 from archytaszx.repl.printer import rule_turns
@@ -114,7 +115,14 @@ class _Labels:
         if pv is None or pv.is_zero:
             return ""
         if pv.rule is not None and not pv.entries():
-            return f"{_plain(rule_turns(pv))}"
+            text = _plain(rule_turns(pv))
+            if len(text) <= 14:
+                return text
+            if text not in self._seen:
+                name = f"α{len(self._seen) + 1}"
+                self._seen[text] = name
+                self.legend.append(f"{name} = {text} turns at index k")
+            return self._seen[text]
         value = _basis_value(node)
         if value is not None:
             return str(value)
@@ -199,7 +207,8 @@ def _items(view: View, max_nodes: int) -> tuple[dict[str, Item], list[Edge], lis
         edges.append(Edge([a, b], _dim_text(g.nodes[wire.a.node_id], wire.a)))
     for k, ref in enumerate(g.boundary_outputs):
         key = f"o{k}"
-        items[key] = Item(key, "out", f"out {k}")
+        name = view.outputs[k] if k < len(view.outputs) else f"out {k}"
+        items[key] = Item(key, "out", name)
         edges.append(Edge([owner[ref.node_id], key], _dim_text(g.nodes[ref.node_id], ref)))
     for k, ref in enumerate(g.boundary_inputs):
         key = f"i{k}"
@@ -214,7 +223,7 @@ def _items(view: View, max_nodes: int) -> tuple[dict[str, Item], list[Edge], lis
         else:
             keys = {terminal.get(ref, owner[ref.node_id]) for ref in box.port_scope}
         frames.append(Frame(sorted(keys), str(box.multiplicity)))
-    return items, edges, frames, summary, labels.legend
+    return items, edges, frames, summary, labels.legend + list(view.notes)
 
 
 def _merge_chains(g: Diagram, owner: dict[NodeId, str], items: dict[str, Item]) -> None:
@@ -385,7 +394,7 @@ _BOX = {
     _L | _R | _U | _D: "┼", _L: "─", _R: "─", _U: "│", _D: "│",
 }
 _GLYPHS = {
-    True: {"Z": "●", "X": "○", "W": "▷W", "F": "[F]", "T": "[T]", "Ti": "[T⁻¹]", "S": "◁S",
+    True: {"Z": "Ⓩ", "X": "Ⓧ", "W": "▷W", "F": "[F]", "T": "[T]", "Ti": "[T⁻¹]", "S": "◁S",
            "B": "▷B"},
     False: {"Z": "(", "X": "(", "W": ">W", "F": "[F]", "T": "[T]", "Ti": "[T^-1]", "S": "<S",
             "B": ">B"},
@@ -401,7 +410,7 @@ def _cell(it: Item, unicode: bool) -> str:
     if it.kind in ("Z", "X"):
         if unicode:
             return glyph + it.label
-        return f"({it.kind.lower()}{' ' + _ascii(it.label) if it.label else ''})"
+        return f"({it.kind}{' ' + _ascii(it.label) if it.label else ''})"
     return glyph
 
 
@@ -427,8 +436,10 @@ def grid(lay: Layout, unicode: bool = True) -> str:
         xs.append(x)
         x += widths[c] + 3 + tracks[c]
     y0 = 2
+    step = 3 if len(lay.frames) > 1 else 2
+
     def ypos(it: Item) -> int:
-        return y0 + 2 * it.row
+        return y0 + step * it.row
     lines: dict[tuple[int, int], int] = {}
 
     def mark(px: int, py: int, bits: int) -> None:
@@ -522,8 +533,23 @@ def grid(lay: Layout, unicode: bool = True) -> str:
 _FILL = {"Z": "#8fd18f", "X": "#ef8f8f", "F": "#f2e07a", "T": "#f2e07a", "Ti": "#f2e07a"}
 
 
-def figure(lay: Layout, *, dark_theme: bool, opaque: bool = False) -> bytes:
-    """The layout drawn with matplotlib as a PNG."""
+def density(lay: Layout) -> float:
+    """Pixels rendered per displayed pixel: 2, growing with the square root of the drawn
+    items beyond 40 and with the scale-down a figure wider than the terminal needs."""
+    items = sum(1 for it in lay.items.values() if it.kind != "dummy")
+    value = 2 * max(1.0, math.sqrt(items / 40))
+    cell = D.TERMINAL.cell_width
+    if cell:
+        room = max(10, shutil.get_terminal_size().columns - 1) * cell
+        natural = (lay.columns * 1.6 + 2) * 0.9 * D.CONFIG.size * 100
+        value *= max(1.0, natural / room)
+    return min(value, 8.0)
+
+
+def figure(
+    lay: Layout, *, dark_theme: bool, opaque: bool = False, density: float = 1
+) -> bytes:
+    """The layout drawn with matplotlib as a PNG at ``density`` times 100 dpi."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
@@ -535,9 +561,10 @@ def figure(lay: Layout, *, dark_theme: bool, opaque: bool = False) -> bytes:
     ncol = lay.columns
     nrow = 1 + max((i.row for i in lay.items.values()), default=0)
     dx, dy = 1.6, 0.9
-    width = min(40.0, (ncol * dx + 2) * 0.9 * scale)
-    height = min(40.0, (nrow * dy + 1.5) * 0.9 * scale)
-    fig = Figure(figsize=(width, height), dpi=100)
+    width = (ncol * dx + 2) * 0.9 * scale
+    height = (nrow * dy + 1.5) * 0.9 * scale
+    dpi = 100 * min(density, D._MAX_PIXELS / (100 * max(width, height)))
+    fig = Figure(figsize=(width, height), dpi=dpi)
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_axis_off()
@@ -581,6 +608,8 @@ def figure(lay: Layout, *, dark_theme: bool, opaque: bool = False) -> bytes:
             continue
         if it.kind in ("Z", "X"):
             ax.add_patch(Circle((x, y), 0.17, fc=_FILL[it.kind], ec=fg, lw=0.8, zorder=2))
+            ax.text(x, y, it.kind, color="#111111", fontsize=font * 0.75, ha="center",
+                    va="center", zorder=3)
             if it.label:
                 ax.text(x, y + 0.22, it.label, color=fg, fontsize=font * 0.8, ha="center",
                         va="bottom", zorder=3)
@@ -610,7 +639,7 @@ def figure(lay: Layout, *, dark_theme: bool, opaque: bool = False) -> bytes:
         corner += "\n" + "\n".join(lay.legend)
     fig.text(0.01, 0.99, corner, color=fg, fontsize=font * 0.8, ha="left", va="top")
     out = io.BytesIO()
-    fig.savefig(out, format="png", dpi=100, transparent=not opaque,
+    fig.savefig(out, format="png", dpi=dpi, transparent=not opaque,
                 facecolor=bg if opaque else "none")
     return out.getvalue()
 
@@ -622,21 +651,29 @@ def _utf8() -> bool:
 
 def draw(view: View, style: str = "matplot") -> str:
     """``view`` drawn in ``style``; matplot falls back to Unicode without an image protocol
-    or matplotlib, Unicode to ASCII on a terminal that is not UTF-8."""
+    or matplotlib, Unicode to ASCII on a terminal that is not UTF-8. With
+    :data:`~archytaszx.repl.display.SAVE_DIR` set the matplotlib drawing is also saved there."""
     if style not in STYLES:
         raise ValueError(f"unknown drawing style {style!r}")
     lay = layout(view)
+    proto = D.protocol() if style == "matplot" else "none"
+    if proto != "none" or D.SAVE_DIR is not None:
+        dense = density(lay) if proto == "none" or D.scalable(proto) else 1
+        try:
+            png = figure(
+                lay,
+                dark_theme=D.dark(),
+                opaque=proto == "sixel" or D.SAVE_DIR is not None,
+                density=dense,
+            )
+        except Exception:  # noqa: BLE001
+            png = None
+        if png is not None:
+            D.keep(png, "zx")
+            image = D.encode_image(png, proto, dense) if style == "matplot" else None
+            if image is not None:
+                return image
     if style == "matplot":
-        proto = D.protocol()
-        if proto != "none":
-            try:
-                png = figure(lay, dark_theme=D.dark(), opaque=proto == "sixel")
-            except Exception:  # noqa: BLE001
-                png = None
-            if png is not None:
-                image = D.encode_image(png, proto)
-                if image is not None:
-                    return image
         style = "unicode"
     if style == "unicode" and not _utf8():
         style = "ascii"

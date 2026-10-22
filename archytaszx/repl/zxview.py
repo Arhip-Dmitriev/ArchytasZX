@@ -12,32 +12,24 @@
 # limitations under the License.
 
 
-"""ZXW diagrams of :mod:`archytaszx.semantics.pathsum` states, built from the path sum's
-structure rather than from its amplitudes.
+"""ZXW diagrams of :mod:`archytaszx.semantics.pathsum` states and density matrices, built
+from the path sum's structure rather than from its amplitudes.
 
-One term ``c * sum_{bound} amp |kets>`` becomes a block: each summation index is split into
-digits, one Z spider per digit, whose legs are the output qudits it fills; a literal digit v
-is an X spider ``|v>``; the amplitude, factored digit by digit, becomes phases on the digit
-spiders (a W node over Z effects for a non-phase weight, see :func:`_effects`) and
-``omega^{m x y}`` couplings, m Fourier boxes between two digit spiders.
-
-Several terms are summed exactly by a selector: a W node fans ``|1, payload>`` out to one copy
-per term, so exactly one term is active and reads the payload as its digits while the others
-read 0 (their literal digits are multiplied by the active bit, so they too become 0); a second
-W node, read backwards, merges the terms' joined output wires, and splitters cut the result
-into qudits.
-
-A register of symbolic width n becomes a bang box of multiplicity n around one digit's
-spiders; a symbolic dimension d carries its digit phases as a :class:`PhaseVector` rule.
-
-:func:`dense_diagram` keeps the amplitude-vector construction for tiny states with no
-structural form: pick the first s with ``c_s != 0`` and set ``u_k = c_{k+s mod D} / c_s``; a W
-node read backwards adds the components of the Z effects on its outputs::
+One term is translated by :mod:`archytaszx.repl.zxsym`: digit indices are Z spiders in bang
+boxes of the register widths, any other index or amplitude factor a gadget, the same graph
+for every value of the sizes. Several terms of a concrete state are summed exactly by a
+selector: a W node fans ``|1, payload>`` out to one copy per term (see :func:`_sum`), each
+term a block of digit spiders (:class:`_Planner`); a sum without that form is folded into one
+term by :mod:`~archytaszx.repl.zxsym`. A one-register ket of literal terms is drawn from its
+amplitude vector: pick the first s with ``c_s != 0`` and set ``u_k = c_{k+s mod D} / c_s``; a
+W node read backwards adds the components of the Z effects on its outputs::
 
     u = W^T (z_1 (x) ... (x) z_m),  z_j = sum_k e^{i alpha_j[k]} |k>,  u_k = sum_j e^{i alpha_j[k]}
 
 with m = 0 for ``u = |0>``, m = 1 when every ``|u_k| = 1``, and otherwise m even, m >= max
 ``|u_k|``, and pairs of phases ``arg u_k +- acos(|u_k| / m)``.
+
+A density matrix is drawn from its vectorisation, the ket registers then the bra registers.
 """
 
 from __future__ import annotations
@@ -50,9 +42,8 @@ from dataclasses import dataclass, field
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim
-from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
+from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
-from archytaszx.diagram.bangbox import Mult
 from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
@@ -62,22 +53,16 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
 )
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+from archytaszx.repl import zxsym
 from archytaszx.repl.printer import render_graph
 from archytaszx.semantics import pathsum as P
-
-MAX_LEVELS = 64
-"""The largest total dimension the dense construction draws."""
-
-MAX_PATHS = 4096
-"""The largest number of basis paths the dense construction sums."""
 
 MAX_TABLE = 256
 """The largest digit range whose weights are tabulated one value at a time."""
 
 
 class ZXViewError(Exception):
-    """A state with no ZX diagram here: a bra, or no structural form and too large for the
-    dense construction."""
+    """A state with no ZX diagram here."""
 
 
 class _NoForm(Exception):
@@ -87,34 +72,31 @@ class _NoForm(Exception):
 @dataclass
 class View:
     """A diagram with the nodes of each summed term grouped: ``groups`` maps a node to its
-    term and ``labels`` names each term."""
+    term, ``labels`` names each term, ``outputs`` names the outputs (``out k`` when empty) and
+    ``notes`` define dimension names."""
 
     diagram: Diagram
     groups: dict[NodeId, int] = field(default_factory=dict)
     labels: dict[int, str] = field(default_factory=dict)
+    outputs: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 # -- dense construction ----------------------------------------------------------------------
 
 
-def amplitudes(s: P.State, limited: bool = True) -> list[sympy.Expr]:
-    """The exact amplitude of every basis state of a concrete ket, in mixed-radix order;
-    without ``limited`` neither :data:`MAX_LEVELS` nor :data:`MAX_PATHS` applies."""
+def amplitudes(s: P.State) -> list[sympy.Expr]:
+    """The exact amplitude of every basis state of a concrete ket, in mixed-radix order, by
+    enumerating its paths (a reference for tests, not used to draw)."""
     if s.bra:
         raise ZXViewError("a bra")
     if not P.is_concrete(s):
         raise ZXViewError("symbolic widths, dimensions or ranges")
     levels = P.concrete_levels(s)
     size = math.prod(levels)
-    if limited and size > MAX_LEVELS:
-        raise ZXViewError(f"{size} basis states, more than {MAX_LEVELS}")
     out = [sympy.S.Zero] * size
-    paths = 0
     for t in s.terms:
         ranges = [range(int(b.lo), int(b.hi) + 1) for b in t.bound]
-        paths += math.prod(len(r) for r in ranges)
-        if limited and paths > MAX_PATHS:
-            raise ZXViewError(f"more than {MAX_PATHS} basis paths")
         for point in itertools.product(*ranges):
             env = {b.symbol: sympy.Integer(v) for b, v in zip(t.bound, point, strict=True)}
             key = 0
@@ -195,45 +177,6 @@ def _qudits(s: P.State) -> list[int]:
 
 def _vector(dim: Dim, phases: dict[int, sympy.Expr]) -> PhaseVector:
     return PhaseVector(dim, {k: Phase(t) for k, t in phases.items()})
-
-
-def dense_diagram(s: P.State, limited: bool = True) -> Diagram:
-    """A ZX diagram of the concrete ket ``s`` built from its full amplitude vector."""
-    c = amplitudes(s, limited)
-    size = len(c)
-    nonzero = [k for k, z in enumerate(c) if z != 0]
-    if not nonzero:
-        raise ZXViewError("the zero vector")
-    shift = nonzero[0]
-    u = [sympy.simplify(c[(k + shift) % size] / c[shift]) for k in range(size)]
-    dim = Dim.concrete(size)
-    g = Diagram()
-    effects = _effects(u)
-    if not effects:
-        out, norm = _basis(g, shift, size)
-        g.set_boundary_outputs(_split(g, out, _qudits(s)))
-        g.set_scalar(Scalar(c[shift] * norm))
-        return g
-    if len(effects) == 1:
-        out = _out(g.add_node(Z_SPIDER, [], [dim], _vector(dim, effects[0])), 0)
-    else:
-        cup = g.add_node(Z_SPIDER, [], [dim, dim])
-        w = g.add_node(W_NODE, [dim], [dim] * len(effects))
-        g.add_wire(PortRef(cup, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0))
-        for j, phases in enumerate(effects):
-            z = g.add_node(Z_SPIDER, [dim], [], _vector(dim, phases))
-            g.add_wire(PortRef(w, Direction.OUTPUT, j), PortRef(z, Direction.INPUT, 0))
-        out = PortRef(cup, Direction.OUTPUT, 1)
-    if shift:
-        vector = PhaseVector(
-            dim, {k: Phase(sympy.Rational(-k * shift, size)) for k in range(1, size)}
-        )
-        x = g.add_node(X_SPIDER, [dim], [dim], vector)
-        g.add_wire(out, PortRef(x, Direction.INPUT, 0))
-        out = PortRef(x, Direction.OUTPUT, 0)
-    g.set_boundary_outputs(_split(g, out, _qudits(s)))
-    g.set_scalar(Scalar(c[shift]))
-    return g
 
 
 # -- term plans ------------------------------------------------------------------------------
@@ -741,128 +684,143 @@ def _sum(s: P.State, plans: list[_Plan], view: View) -> Diagram:
     return g
 
 
-def diagram(s: P.State) -> Diagram:
-    """A ZXW diagram whose outputs are the qudits of the ket ``s``."""
+def diagram(s: P.State | P.Mixed) -> Diagram:
+    """A ZXW diagram whose outputs are the qudits of the ket or density matrix ``s``."""
     return view(s).diagram
 
 
-def view(s: P.State, limited: bool = True) -> View:
-    """:func:`diagram` with the nodes of each summed term grouped; without ``limited`` the
-    dense fallback has no size caps."""
-    if s.bra:
-        raise ZXViewError("a bra")
+def _literal_vector(s: P.State) -> list[sympy.Expr] | None:
+    """The amplitude vector of a one-register ket of concrete dimension made of literal terms;
+    None for any other ket."""
+    if len(s.widths) != 1 or not P.is_concrete(s) or any(t.bound for t in s.terms):
+        return None
+    size = int(s.levels(0))
+    out = [sympy.S.Zero] * size
+    for t in s.terms:
+        out[int(t.kets[0])] += t.amp
+    return [sympy.simplify(a) for a in out]
+
+
+def view(s: P.State | P.Mixed) -> View:
+    """:func:`diagram` with the nodes of each summed term grouped and the outputs named:
+    ``bra k`` for a bra, ``ket k`` and ``bra k`` for the two sides of a density matrix."""
+    names: list[str] = []
+    if isinstance(s, P.Mixed) and s.factors is not None:
+        a, b = s.factors
+        left, right = view(a), view(b)
+        out = _juxtapose(left, right)
+        out.outputs = [n.replace("out", "ket") for n in _names(left)] + [
+            n.replace("out", "bra") for n in _names(right)
+        ]
+        return out
+    if isinstance(s, P.Mixed):
+        k = s.count
+        widths = s.vec.widths
+        per = [_count(w) for w in widths]
+        names = [f"ket {r}" for r in range(k) for _ in range(per[r])]
+        names += [f"bra {r}" for r in range(k) for _ in range(per[r + k])]
+        s = s.vec
+    elif s.bra:
+        s = P.dagger(s)
+        names = [f"bra {r}" for r in range(len(s.widths)) for _ in range(_count(s.widths[r]))]
     s = P.simplify(s)
-    if not P.is_concrete(s):
-        return View(_symbolic(s))
-    try:
-        plans = [_plan(t, s) for t in s.terms]
-        if len(plans) == 1:
-            return View(_single(s, plans[0]))
-        out = View(Diagram())
-        _sum(s, plans, out)
+    out = _view(s)
+    if names and len(names) == len(out.diagram.boundary_outputs):
+        out.outputs = names
+    return out
+
+
+def _names(v: View) -> list[str]:
+    return v.outputs or [f"out {k}" for k in range(len(v.diagram.boundary_outputs))]
+
+
+def _juxtapose(a: View, b: View) -> View:
+    """The two diagrams side by side: nodes, wires, boxes and outputs of ``a`` then ``b``,
+    scalars multiplied."""
+    g = Diagram()
+    outputs: list[PortRef] = []
+    for part in (a.diagram, b.diagram):
+        ids = {
+            nid: g.add_node(
+                node.generator_type,
+                [port.dim for port in node.inputs],
+                [port.dim for port in node.outputs],
+                node.phase,
+            )
+            for nid, node in sorted(part.nodes.items())
+        }
+        for wire in sorted(part.wires, key=lambda w: w.sort_key()):
+            g.add_wire(
+                PortRef(ids[wire.a.node_id], wire.a.direction, wire.a.index),
+                PortRef(ids[wire.b.node_id], wire.b.direction, wire.b.index),
+            )
+        for _, box in sorted(part.bang_boxes.items()):
+            g.add_bang_box(box.multiplicity, node_scope=frozenset(ids[n] for n in box.node_scope))
+        outputs.extend(PortRef(ids[r.node_id], r.direction, r.index) for r in part.boundary_outputs)
+    g.set_boundary_outputs(outputs)
+    g.set_scalar(Scalar(sympy.simplify(a.diagram.scalar.to_sympy() * b.diagram.scalar.to_sympy())))
+    return View(g, notes=a.notes + [n for n in b.notes if n not in a.notes])
+
+
+def _count(w: sympy.Expr | None) -> int:
+    return int(w) if w is not None and sympy.sympify(w).is_Integer else 1
+
+
+def _view(s: P.State) -> View:
+    vector = _literal_vector(s)
+    if vector is not None and any(a != 0 for a in vector):
+        return View(_vector_diagram(vector, s))
+    if len(s.terms) > 1 and P.is_concrete(s):
         try:
-            dense = dense_diagram(s, limited)
-        except ZXViewError:
+            plans = [_plan(t, s) for t in s.terms]
+            out = View(Diagram())
+            _sum(s, plans, out)
             return out
-        return View(dense) if len(dense.nodes) < len(out.diagram.nodes) else out
-    except _NoForm as exc:
-        try:
-            return View(dense_diagram(s, limited))
-        except ZXViewError:
-            raise ZXViewError(f"no structural form for {exc}") from None
+        except _NoForm:
+            pass
+    d, notes = zxsym.diagram(s)
+    return View(d, notes=notes)
 
 
 # -- symbolic widths and dimensions ----------------------------------------------------------
 
 
-def _symbolic(s: P.State) -> Diagram:
-    """One term on registers of symbolic width or dimension, as boxed digit spiders."""
-    if len(s.terms) != 1:
-        raise ZXViewError("a symbolic state with several terms")
-    t = s.terms[0]
-    bounds = {b.symbol: b for b in t.bound}
+def _vector_diagram(c: list[sympy.Expr], s: P.State) -> Diagram:
+    """A ZX diagram of one register from its literal amplitude vector."""
+    size = len(c)
+    nonzero = [k for k, z in enumerate(c) if z != 0]
+    shift = nonzero[0]
+    u = [sympy.simplify(c[(k + shift) % size] / c[shift]) for k in range(size)]
+    dim = Dim.concrete(size)
     g = Diagram()
-    scalar = sympy.S.One
-    outputs: list[PortRef] = []
-    box_symbols: list[str] = []
-    rules: dict[sympy.Symbol, sympy.Expr] = {}
-    owners: dict[sympy.Symbol, tuple[sympy.Expr, sympy.Expr]] = {}
-    amp = t.amp
-    for e, w, d in zip(t.kets, s.widths, s.dims, strict=True):
-        if w is None or d is None:
-            raise ZXViewError("an unresolved register")
-        e = sympy.sympify(e)
-        if e in bounds and bounds[e].lo == 0 and P.same(bounds[e].hi, d**w - 1):
-            owners[e] = (w, d)
-            continue
-        if not e.free_symbols & set(bounds):
-            c = sympy.simplify(e * (d - 1) / (d**w - 1))
-            if not (c.is_integer or c.is_Integer) or c.free_symbols & set(bounds):
-                raise ZXViewError(f"no symbolic form for the ket value {e}")
-            owners[sympy.Dummy("c")] = (w, d, c)  # type: ignore[assignment]
-            continue
-        raise ZXViewError(f"no symbolic form for the ket value {e}")
-    for sym, (w, d) in [(k, v) for k, v in owners.items() if len(v) == 2]:
-        rules[sym] = sympy.S.Zero
-    for f in sympy.Mul.make_args(amp):
-        syms = f.free_symbols & set(bounds)
-        if not syms:
-            scalar *= f
-            continue
-        if not isinstance(f, sympy.exp) or len(syms) != 1:
-            raise ZXViewError(f"no symbolic form for the amplitude factor {f}")
-        (sym,) = syms
-        w, d = owners[sym]
-        expo = sympy.expand(f.args[0] / (2 * sympy.pi * sympy.I))
-        rest = sympy.S.Zero
-        for term in sympy.Add.make_args(expo):
-            fn = [a for a in sympy.Mul.make_args(term) if isinstance(a, (P.dsum, P.ddot))]
-            coef = sympy.Mul(*[a for a in sympy.Mul.make_args(term) if a not in fn])
-            if len(fn) != 1 or coef.free_symbols & set(bounds):
-                raise ZXViewError(f"no symbolic form for the amplitude factor {f}")
-            a = fn[0]
-            if isinstance(a, P.dsum) and a.args[0] == sym and P.same(a.args[1], d):
-                rest += coef * INDEX
-                continue
-            if isinstance(a, P.ddot) and P.same(a.args[2], d):
-                other = a.args[0] if a.args[1] == sym else a.args[1]
-                c = sympy.simplify(other * (d - 1) / (d**w - 1))
-                if sym in a.args[:2] and not c.free_symbols & set(bounds) and c.is_integer is not False:
-                    rest += coef * c * INDEX
-                    continue
-            raise ZXViewError(f"no symbolic form for the amplitude factor {f}")
-        rules[sym] = rules[sym] + rest
-    for key, spec in owners.items():
-        if len(spec) == 2:
-            w, d = spec
-            dim = _dim(d)
-            vector = PhaseVector(dim, {}, Phase(rules[key])) if rules[key] != 0 else None
-            node = g.add_node(Z_SPIDER, [], [dim], vector)
-        else:
-            w, d, c = spec  # type: ignore[misc]
-            dim = _dim(d)
-            vector = PhaseVector(dim, {}, Phase(-c * INDEX / d)) if c != 0 else None
-            node = g.add_node(X_SPIDER, [], [dim], vector)
-            scalar *= sympy.Pow(d, -w / 2)
-        outputs.append(_out(node, 0))
-        if w != 1:
-            if not w.is_Symbol:
-                raise ZXViewError(f"no symbolic form for the width {w}")
-            g.add_bang_box(Mult.symbol(str(w)), node_scope=frozenset({node}))
-            box_symbols.append(str(w))
-    g.set_boundary_outputs(outputs)
-    g.set_scalar(Scalar(sympy.simplify(scalar)))
+    effects = _effects(u)
+    if not effects:
+        out, norm = _basis(g, shift, size)
+        g.set_boundary_outputs(_split(g, out, _qudits(s)))
+        g.set_scalar(Scalar(c[shift] * norm))
+        return g
+    if len(effects) == 1:
+        out = _out(g.add_node(Z_SPIDER, [], [dim], _vector(dim, effects[0])), 0)
+    else:
+        cup = g.add_node(Z_SPIDER, [], [dim, dim])
+        w = g.add_node(W_NODE, [dim], [dim] * len(effects))
+        g.add_wire(PortRef(cup, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0))
+        for j, phases in enumerate(effects):
+            z = g.add_node(Z_SPIDER, [dim], [], _vector(dim, phases))
+            g.add_wire(PortRef(w, Direction.OUTPUT, j), PortRef(z, Direction.INPUT, 0))
+        out = PortRef(cup, Direction.OUTPUT, 1)
+    if shift:
+        vector = PhaseVector(
+            dim, {k: Phase(sympy.Rational(-k * shift, size)) for k in range(1, size)}
+        )
+        x = g.add_node(X_SPIDER, [dim], [dim], vector)
+        g.add_wire(out, PortRef(x, Direction.INPUT, 0))
+        out = PortRef(x, Direction.OUTPUT, 0)
+    g.set_boundary_outputs(_split(g, out, _qudits(s)))
+    g.set_scalar(Scalar(c[shift]))
     return g
 
 
-def _dim(d: sympy.Expr) -> Dim:
-    if d.is_Integer:
-        return Dim.concrete(int(d))
-    if d.is_Symbol:
-        return Dim.symbol(str(d))
-    raise ZXViewError(f"no symbolic form for the dimension {d}")
-
-
-def listing(s: P.State, limited: bool = True) -> str:
+def listing(s: P.State | P.Mixed) -> str:
     """The graph listing of :func:`view`."""
-    return render_graph(view(s, limited).diagram)
+    return render_graph(view(s).diagram)

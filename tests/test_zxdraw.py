@@ -49,14 +49,14 @@ def test_renderers_share_the_layout() -> None:
     lay = zxdraw.layout(view("|s> = CNOT (H@I)|0>|0>"))
     uni, asc = zxdraw.grid(lay, unicode=True), zxdraw.grid(lay, unicode=False)
     assert len(uni.splitlines()) == len(asc.splitlines())
-    assert "●" in uni and "(z)" in asc and "out 1" in uni and "out 1" in asc
+    assert "Ⓩ" in uni and "(Z)" in asc and "out 1" in uni and "out 1" in asc
     assert zxdraw.figure(lay, dark_theme=True).startswith(b"\x89PNG")
 
 
 def test_symbolic_fourier_draws_a_bang_box() -> None:
     lay = zxdraw.layout(view("var d, n\n" + FOURIER + "|s> = F^@n |1>_d^@n"))
     text = zxdraw.grid(lay)
-    assert "┌── n ──┐" in text and "●k/d" in text and "d^(-n/2)" in text
+    assert "┌── n ──┐" in text and "Ⓩk/d" in text and "d^(-n/2)" in text
     assert "+-- n --+" in zxdraw.grid(lay, unicode=False)
 
 
@@ -78,7 +78,7 @@ def test_no_image_protocol_falls_back_to_unicode(
     monkeypatch: pytest.MonkeyPatch, utf8: None
 ) -> None:
     monkeypatch.setenv("ARCHYTASZX_IMAGES", "none")
-    assert "●" in zxdraw.draw(view("|s> = H|0>"), "matplot")
+    assert "Ⓩ" in zxdraw.draw(view("|s> = H|0>"), "matplot")
 
 
 def test_matplotlib_failure_falls_back_to_unicode(
@@ -90,7 +90,7 @@ def test_matplotlib_failure_falls_back_to_unicode(
         raise ImportError("no matplotlib")
 
     monkeypatch.setattr(zxdraw, "figure", broken)
-    assert "●" in zxdraw.draw(view("|s> = H|0>"), "matplot")
+    assert "Ⓩ" in zxdraw.draw(view("|s> = H|0>"), "matplot")
 
 
 def test_image_protocol_draws_an_image(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,12 +101,12 @@ def test_image_protocol_draws_an_image(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_non_utf8_terminal_falls_back_to_ascii(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdout", io.TextIOWrapper(io.BytesIO(), encoding="latin-1"))
     out = zxdraw.draw(view("|s> = H|0>"), "unicode")
-    assert "(z" in out and "●" not in out
+    assert "(Z" in out and "Ⓩ" not in out
 
 
-def test_zx_is_zxmatplot() -> None:
+def test_zx_is_zxrender() -> None:
     parser = _argument_parser()
-    a, b = parser.parse_args(["--zx"]), parser.parse_args(["--zxmatplot"])
+    a, b = parser.parse_args(["--zx"]), parser.parse_args(["--zxrender"])
     assert VIEWS[a.mode] == VIEWS[b.mode]
     assert VIEWS[parser.parse_args(["--both"]).mode][1] == "matplot"
     assert VIEWS[parser.parse_args(["--raw"]).mode][0].value == "raw"
