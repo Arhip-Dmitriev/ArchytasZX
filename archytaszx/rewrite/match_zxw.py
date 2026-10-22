@@ -59,11 +59,11 @@ from archytaszx.rewrite.match import (
     _far_end,
     _has_port_boxed_leg,
     _in_any_bang_box,
-    _splice_keeps_copies,
     _is_phaseless,
     _neighbour_ids,
     _port_claims,
     _seed_meets_anchors,
+    _splice_keeps_copies,
     _support_ids,
     _uniform_leg_dim,
     _wire_by_port,
@@ -331,7 +331,7 @@ W_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -344,7 +344,7 @@ TRIANGLE_STATE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -460,7 +460,7 @@ TRIANGLE_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -571,7 +571,7 @@ CONNECTIVE_INVERSE_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -766,7 +766,8 @@ CONNECTIVE_STATES_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
         "matching_dimensions", "each state or effect carries its connective leg's dimension"
     ),
     SideCondition(
-        "outside_every_bang_box", "no node lies in any node-scope bang box has a port-boxed leg, or is wired into one"
+        "outside_every_bang_box",
+        "no node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -906,7 +907,7 @@ WZ_BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of both nodes carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -1012,7 +1013,7 @@ W_Z_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -1025,7 +1026,7 @@ W_ZERO_EFFECT_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 

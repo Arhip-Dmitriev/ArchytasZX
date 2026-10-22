@@ -1553,16 +1553,6 @@ def find_fourier_matches(
             continue
         if len({_node_boxes(diagram, node_id) for node_id in chain}) != 1:
             continue
-        if _exhausts_a_node_scope_box(diagram, tuple(chain)):
-            continue
-        head = by_port.get(PortRef(chain[0], Direction.INPUT, 0))
-        tail = by_port.get(PortRef(chain[-1], Direction.OUTPUT, 0))
-        ends = (
-            None if head is None else _far_end(head, PortRef(chain[0], Direction.INPUT, 0)).node_id,
-            None if tail is None else _far_end(tail, PortRef(chain[-1], Direction.OUTPUT, 0)).node_id,
-        )
-        if not _splice_keeps_copies(diagram, chain[0], ends):
-            continue
         outcomes = (
             SideConditionOutcome(
                 "chain_is_series", True, f"{FOURIER_CHAIN_LENGTH} F boxes in series at {chain[0]}"
@@ -1623,7 +1613,7 @@ CAP_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "both legs carry one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -2207,7 +2197,7 @@ STATE_COPY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
@@ -2349,7 +2339,8 @@ HOPF_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     ),
     SideCondition(
         "outside_every_bang_box",
-        "none of the four nodes lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "none of the four nodes lies in a node-scope bang box, has a port-boxed leg, "
+        "or is wired into one",
     ),
 )
 
@@ -2561,7 +2552,7 @@ BIALGEBRA_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "every leg of the pair carries one dimension"),
     SideCondition(
         "outside_every_bang_box",
-        "neither node lies in any node-scope bang box has a port-boxed leg, or is wired into one",
+        "neither node lies in a node-scope bang box, has a port-boxed leg, or is wired into one",
     ),
 )
 
