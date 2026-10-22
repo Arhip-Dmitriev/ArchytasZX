@@ -16,8 +16,11 @@ invariants, mode independence, the error contract and the detail payloads."""
 
 from __future__ import annotations
 
+import functools
+import os
 import re
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +52,7 @@ from archytaszx.repl.printer import NotationMode, render, render_dirac, render_g
 from archytaszx.rewrite.engine import RewriteResult
 from archytaszx.rewrite.normal_form import NormalForm
 from archytaszx.rewrite.rules_library import RULES
+from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import (
     Certificate,
     Derivation,
@@ -58,12 +62,14 @@ from archytaszx.semantics.certificate import (
     verify,
 )
 from archytaszx.semantics.check import compare
-from archytaszx.semantics.decide import sample_grid
+from archytaszx.semantics.decide import decide_equal, sample_grid
 from archytaszx.semantics.interop import RoundTripReport, SheetCheck
+from archytaszx.semantics.lean_net import check, lean_project
 from archytaszx.semantics.prove import InductionProof, ProofCertificate, ProofCheck
 
 from .helpers import build_ghz_with_copy
-from .test_phase15_oracle import boxed_state_copy
+from .test_lean_sym import BUILT
+from .test_phase15_oracle import PROVED, boxed_state_copy
 
 WORKED = "sum_{k=0}^{3-1} |k>^{30}; copy"
 DSL_GHZ = "a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0; outputs a.out1, b.out0, b.out1"
@@ -624,8 +630,9 @@ class TestCheck:
         assert lines[1] == "dirac outcome: left != right"
         assert lines[2] == "  left:  GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>"
         assert lines[3] == "  right: Z_{0->n} = sum_{k=0}^{d-1} |k>^{n}"
-        assert lines[4].startswith("counterexample: ")
-        sample = assignment_of(lines[4])
+        assert lines[4] == "disproof: re-checkable; certificate lean"
+        assert lines[5].startswith("counterexample: ")
+        sample = assignment_of(lines[5])
         assert s.current is not None
         assert not compare(s.current, parse_diagram(UNEQUAL), sample).matched
 
@@ -834,6 +841,141 @@ class TestInduct:
 
 
 # -- certificate -----------------------------------------------------------------------------
+
+
+class TestDecisionProofs:
+    """decide and induct verdicts hand the kernel a re-checkable theorem."""
+
+    @pytest.mark.parametrize("name", ["state_copy", "bialgebra_once"])
+    def test_decide_equal_is_kernel_checked(self, name: str) -> None:
+        left, right = PROVED[name]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        lines = texts(ok(s, "decide against @r"))
+        assert "proof: re-checkable; certificate kernel / certificate lean" in lines
+        kernel_lines = texts(ok(s, "certificate kernel"))
+        assert any(line.startswith("kernel: theorem ") for line in kernel_lines)
+
+    def test_symbolic_contraction_verdict_is_a_normal_form_proof(self, tmp_path: Path) -> None:
+        left, right = PROVED["bialgebra_4"]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        lines = texts(ok(s, "decide against @r"))
+        assert lines[0].startswith("decide: equal by symbolic_contraction")
+        assert "proof: re-checkable; certificate kernel / certificate lean" in lines
+        assert isinstance(s.last_proof, kernel.Symbolic)
+        kernel_lines = texts(ok(s, "certificate kernel"))
+        assert kernel_lines[-1].endswith("by the normal form of symbolic sums")
+        target = tmp_path / "sym.lean"
+        lean_lines = texts(ok(s, f"certificate lean {target}"))
+        assert lean_lines[-1] == f"lean: wrote {target}"
+        assert "equal_sym" in target.read_text(encoding="utf-8")
+        verified = texts(ok(s, "certificate verify"))[-1]
+        assert verified.startswith("verify: verified: certificate lean")
+
+    @staticmethod
+    def _boxed_symbolic(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+        """The Lean file of a boxed family decided by symbolic contraction."""
+        monkeypatch.setattr(C, "decide_equal",
+                            functools.partial(decide_equal, rules=(), use_saturation=False))
+        left, right = BUILT[name]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        lines = texts(ok(s, "decide against @r"))
+        assert lines[0].startswith("decide: equal by symbolic_contraction")
+        assert "proof: re-checkable; certificate kernel / certificate lean" in lines
+        assert isinstance(s.last_proof, kernel.Symbolic)
+        target = tmp_path / "family.lean"
+        assert texts(ok(s, f"certificate lean {target}"))[-1] == f"lean: wrote {target}"
+        return target.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("name", ["nested_boxes", "x_port_box"])
+    def test_boxed_symbolic_verdict_is_an_induction(self, name: str, tmp_path: Path,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+        source = self._boxed_symbolic(name, tmp_path, monkeypatch)
+        assert "induction " in source and "symCheck" in source
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+        reason="the ArchytasZX Lean project has no Mathlib",
+    )
+    @pytest.mark.parametrize("name", ["nested_boxes", "x_port_box"])
+    def test_boxed_symbolic_verdict_lean_checks(self, name: str, tmp_path: Path,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+        source = self._boxed_symbolic(name, tmp_path, monkeypatch)
+        passed, message = check(source, str(tmp_path / "check.lean"))
+        assert passed, message
+
+    def test_a_conditional_proof_says_so(self, tmp_path: Path) -> None:
+        left, right = BUILT["mixed_legs"]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        ok(s, "decide against @r")
+        lines = texts(ok(s, f"certificate lean {tmp_path / 'mixed.lean'}"))
+        assert "lean: conditional on (d ^ p) = (d ^ q)" in lines
+
+    def test_induct_rederives_a_theorem(self) -> None:
+        s = session(BOXED, "name b", "induct d=2 against @b")
+        lines = texts(ok(s, "certificate kernel"))
+        assert any("re-derived a re-checkable proof by search" in line for line in lines)
+        theorems = [line for line in lines if line.startswith("kernel: theorem ")]
+        assert len(theorems) == 1 and theorems[0].endswith(" for all n")
+
+    @pytest.mark.parametrize("verb", ["decide against", "prove"])
+    def test_unequal_verdict_is_a_refutation(self, verb: str) -> None:
+        s = session("a = Z(0 -> 1, d)", "name l", "a = X(0 -> 1, d)", "name r", "load @l")
+        lines = texts(failed(s, f"{verb} @r"))
+        assert "disproof: re-checkable; certificate lean" in lines
+        assert isinstance(s.last_proof, kernel.Refutation)
+        kernel_lines = texts(ok(s, "certificate kernel"))
+        assert kernel_lines[0] == "emitted certificate: refutation at d = 2"
+        assert kernel_lines[1].startswith("kernel: refutation of ")
+        assert texts(ok(s, "certificate verify"))[-1].startswith("verify: verified: the diagrams")
+        lean_lines = texts(ok(s, "certificate lean"))
+        assert "lean: tensor-network semantics, refuted exactly at d = 2" in lean_lines
+
+    def test_boundary_sizes_refute(self) -> None:
+        s = session("a = Z(0 -> 1, d)", "name l", "a = Z(0 -> 2, d)", "name r", "load @l")
+        assert "disproof: re-checkable; certificate lean" in texts(failed(s, "decide against @r"))
+        lines = texts(ok(s, "certificate lean"))
+        assert "lean: tensor-network semantics, the boundaries differ in size" in lines
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+        reason="the ArchytasZX Lean project has no Mathlib",
+    )
+    def test_unequal_verdict_lean_checks(self, tmp_path: Path) -> None:
+        s = session("a = Z(0 -> 1, d) phase {1: theta}", "name l", "a = Z(0 -> 1, d)",
+                    "name r", "load @l")
+        failed(s, "decide against @r")
+        target = tmp_path / "refute.lean"
+        ok(s, f"certificate lean {target}")
+        passed, message = check(target.read_text(encoding="utf-8"), str(target))
+        assert passed, message
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+        reason="the ArchytasZX Lean project has no Mathlib",
+    )
+    @pytest.mark.parametrize("name", ["state_copy", "bialgebra_once", "bialgebra_4"])
+    def test_decide_equal_lean_checks(self, name: str, tmp_path: Path) -> None:
+        left, right = PROVED[name]()
+        s = Session()
+        s.names.update(l=left, r=right)
+        ok(s, "load @l")
+        ok(s, "decide against @r")
+        target = tmp_path / "decide.lean"
+        lines = texts(ok(s, f"certificate lean {target}"))
+        assert "lean: tensor-network semantics, every step proved" in lines
+        passed, message = check(target.read_text(encoding="utf-8"), str(target))
+        assert passed, message
 
 
 class TestCertificate:

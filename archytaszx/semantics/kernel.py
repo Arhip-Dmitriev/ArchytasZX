@@ -39,12 +39,19 @@ that export does not cover the theorem, the source has no imports: an opaque ``D
 type, one constant per diagram (a function of its free multiplicities), one axiom per rule
 instance, isomorphism, instantiation at 0, peeling and context plug the kernel checked, and
 the theorem as their composition by ``Eq.trans``, ``Eq.symm``, ``congrArg`` and ``induction``.
+
+:func:`symbolic` proves ``left = right`` for every value of the dimensions and phases by the
+normaliser of symbolic sums in ``ArchytasZX.SymNet`` (:class:`Symbolic`), through
+:mod:`archytaszx.semantics.lean_sym`.
+:func:`refutation` reads an UNEQUAL decision's counterexample as a :class:`Refutation`, which
+:func:`lean` writes through :mod:`archytaszx.semantics.lean_refute` as a Lean proof that the
+diagrams are not equal for every parameter value.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from archytaszx.diagram.bangbox import free_mult_symbols
@@ -53,7 +60,7 @@ from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import ConstraintOutcome
-from archytaszx.semantics import lean_net
+from archytaszx.semantics import lean_net, lean_refute, lean_sym
 from archytaszx.semantics.certificate import (
     Certificate,
     DerivationKind,
@@ -248,6 +255,8 @@ def induction(
 
 def check(artefact: object) -> Theorem:
     """The theorem a certificate, proof certificate or induction proof establishes."""
+    if isinstance(artefact, Theorem):
+        return artefact
     if isinstance(artefact, Certificate):
         if artefact.derivation.kind is not DerivationKind.STEP_SEQUENCE:
             raise KernelError("an induction certificate carries no re-checkable step")
@@ -275,6 +284,74 @@ def check(artefact: object) -> Theorem:
             check(artefact.step),
         )
     raise KernelError(f"cannot check a {type(artefact).__name__}")
+
+
+@dataclass(frozen=True, eq=False)
+class Refutation:
+    """The claim ``lhs = rhs`` for every parameter value, refuted at the values ``point``;
+    ``source`` is its Lean export when already written."""
+
+    lhs: Diagram
+    rhs: Diagram
+    point: Mapping[str, object]
+    source: str = ""
+
+
+@dataclass(frozen=True, eq=False)
+class Symbolic:
+    """``lhs = rhs`` for every value of the dimensions and phases; ``source`` is its Lean
+    proof by the normaliser of symbolic sums."""
+
+    lhs: Diagram
+    rhs: Diagram
+    source: str
+
+
+def symbolic(left: Diagram, right: Diagram,
+             describe: Callable[[Diagram], str] | None = None) -> Symbolic:
+    """The normaliser's proof of ``left = right``."""
+    try:
+        return Symbolic(left, right, lean_sym.export_symbolic(left, right, describe=describe))
+    except lean_net.NetUnsupported as exc:
+        raise KernelError(f"no symbolic proof: {exc}") from exc
+
+
+def refutation(decision: object, left: Diagram, right: Diagram) -> Refutation:
+    """The refutation an UNEQUAL decision's counterexample gives."""
+    from archytaszx.semantics.decide import Decision, EqualityVerdict
+
+    if not isinstance(decision, Decision):
+        raise KernelError(f"cannot read a {type(decision).__name__}")
+    if decision.verdict is not EqualityVerdict.UNEQUAL or decision.counterexample is None:
+        raise KernelError("the decision carries no counterexample")
+    return Refutation(left, right, dict(decision.counterexample))
+
+
+def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
+    """``left = right`` from a decision's normal-form or saturation certificates."""
+    from archytaszx.semantics.decide import Decision, DecisionMethod
+
+    if not isinstance(decision, Decision):
+        raise KernelError(f"cannot read a {type(decision).__name__}")
+    if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
+        to_l, to_r = (check(c) for c in decision.certificates)
+        return trans(
+            trans(iso(left, to_l.lhs), to_l),
+            trans(iso(to_l.rhs, to_r.rhs), trans(symm(to_r), iso(to_r.lhs, right))),
+        )
+    if decision.method is DecisionMethod.SATURATION:
+        out = refl(left)
+        for certificate in decision.certificates:
+            edge = check(certificate)
+            cur = out.rhs
+            if views_isomorphic(comparison_view(cur), comparison_view(edge.lhs)):
+                out = trans(out, trans(iso(cur, edge.lhs), edge))
+            elif views_isomorphic(comparison_view(cur), comparison_view(edge.rhs)):
+                out = trans(out, trans(iso(cur, edge.rhs), symm(edge)))
+            else:
+                raise KernelError("a saturation edge does not continue the path")
+        return trans(out, iso(out.rhs, right))
+    raise KernelError(f"a {decision.method.value} verdict carries no re-checkable proof")
 
 
 _LEAN_KEYWORDS = frozenset(
@@ -432,7 +509,7 @@ def _summary(d: Diagram) -> str:
 
 
 def lean(
-    theorem: Theorem,
+    theorem: Theorem | Refutation | Symbolic,
     name: str = "main",
     describe: Callable[[Diagram], str] | None = None,
     *,
@@ -440,13 +517,37 @@ def lean(
 ) -> str:
     """Lean 4 source stating and proving ``theorem`` (see the module docstring); ``describe``
     gives each diagram's doc comment, ``semantic=False`` forces the opaque export."""
+    if isinstance(theorem, Symbolic):
+        if name == "main":
+            return theorem.source
+        try:
+            return lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)
+        except lean_net.NetUnsupported as exc:
+            raise KernelError(f"no symbolic proof: {exc}") from exc
+    if isinstance(theorem, Refutation):
+        if theorem.source and name == "main":
+            return theorem.source
+        try:
+            return lean_refute.export_refutation(theorem.lhs, theorem.rhs, theorem.point, name,
+                                                 describe)
+        except lean_net.NetUnsupported as exc:
+            raise KernelError(f"no Lean refutation: {exc}") from exc
     if not isinstance(theorem, Theorem):
         raise KernelError(f"lean takes a Theorem, got {type(theorem).__name__}")
     if semantic:
+        source: str | None = None
         try:
-            return lean_net.export(theorem, name, describe)
+            source = lean_net.export(theorem, name, describe)
         except lean_net.NetUnsupported:
             pass
+        if source is not None and "\naxiom unproved_" not in source:
+            return source
+        try:
+            return lean_sym.export_symbolic(theorem.lhs, theorem.rhs, name, describe)
+        except lean_net.NetUnsupported:
+            pass
+        if source is not None:
+            return source
     out = _Lean(describe or _summary)
     if theorem.inference.kind == "induction":
         out.induction(theorem, name)
