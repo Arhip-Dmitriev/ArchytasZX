@@ -17,3 +17,4 @@ import ArchytasZX.Ball
 import ArchytasZX.Contract
 import ArchytasZX.SymNet
 import ArchytasZX.Port
+import ArchytasZX.Assume

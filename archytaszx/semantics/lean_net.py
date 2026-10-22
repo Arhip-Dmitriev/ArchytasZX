@@ -233,7 +233,7 @@ class _Sym:
             name = self.name(expr, kind)
             if kind == ty:
                 return name
-            if (kind, ty) in {("ℕ", "ℝ"), ("ℕ", "ℂ"), ("ℝ", "ℂ")}:
+            if (kind, ty) in {("ℕ", "ℝ"), ("ℕ", "ℂ"), ("ℝ", "ℂ"), ("ℤ", "ℝ"), ("ℤ", "ℂ")}:
                 return f"({name} : {ty})"
             raise NetUnsupported(f"symbol {expr} of type {kind} used as {ty}")
         if expr.is_Add:
@@ -282,6 +282,7 @@ class _Export:
         self.dims: list[str] = []
         self.dim_key: dict[str, int] = {}
         self.phases: list[str] = ["fun _ => 0"]
+        self.phase_specs: list[tuple[dict[int, sp.Expr], sp.Expr | None]] = [({}, None)]
         self.phase_key: dict[str, int] = {"": 0}
         self.labs: dict[int, int] = {}
         self.nb: int | None = None
@@ -303,6 +304,8 @@ class _Export:
         self.ks_syms: list[sp.Expr] = []
         self.slots: tuple[int, ...] | None = None
         self.alias: dict[str, sp.Expr] = {}
+        self.shadow: dict[str, int] = {}
+        self.shadow_pairs: list[tuple[int, int]] = []
         self.mults: set[str] = set()
         self.sp_binders = self.sp_args = ""
         self.sp_hyps = self.sp_hyp_args = ""
@@ -325,6 +328,43 @@ class _Export:
         while str(e) in self.alias:
             e = self.alias[str(e)]
         return e
+
+    def raw_dim(self, d: Dim) -> int:
+        """The index of ``d`` itself, apart from the dimensions assumed equal to it."""
+        i = self.dim(d)
+        e0 = d.to_sympy()
+        if str(self.canon(e0)) == str(e0):
+            return i
+        key = str(e0)
+        if key not in self.shadow:
+            self.shadow[key] = len(self.dims)
+            self.dims.append(self.sym.render(e0, "ℕ", "ℕ"))
+            self.dim_exprs.append(e0)
+            self.sc.nats |= {str(x) for x in e0.free_symbols}
+            self.shadow_pairs.append((self.shadow[key], i))
+        return self.shadow[key]
+
+    def faithful(self, d: Diagram, lab: Labelled) -> tuple[LNet, dict[int, int]]:
+        """``lab``'s network with each node and label at its own dimension's index."""
+        labs: dict[int, int] = {}
+        for ref, x in lab.port.items():
+            j = self.raw_dim(_port_dim(d, ref))
+            if labs.setdefault(x, j) != j:
+                raise NetUnsupported("a wire joins dimensions assumed equal")
+        nodes = []
+        for nid, n in zip(lab.order, lab.net.nodes, strict=True):
+            node = d.nodes[nid]
+            legs = (*node.inputs, *node.outputs)
+            if node.generator_type.name == "B":
+                n = replace(n, dim=self.raw_dim(node.inputs[0].dim),
+                            ph=self.raw_dim(node.inputs[1].dim))
+            elif node.generator_type.name == "S":
+                n = replace(n, dim=self.raw_dim(node.outputs[0].dim),
+                            ph=self.raw_dim(node.outputs[1].dim))
+            elif legs:
+                n = replace(n, dim=self.raw_dim(legs[0].dim))
+            nodes.append(n)
+        return LNet(tuple(nodes), lab.net.summed, lab.net.bnd), labs
 
     def assume(self, a: sp.Expr, b: sp.Expr) -> None:
         """Identify the dimensions ``a`` and ``b``."""
@@ -362,6 +402,10 @@ class _Export:
         if key not in self.phase_key:
             self.phase_key[key] = len(self.phases)
             self.phases.append(f"fun k => {body}")
+            self.phase_specs.append((
+                {i: ph.to_sympy_turns() for i, ph in pv.entries().items()},
+                None if pv.rule is None else pv.rule.to_sympy_turns(),
+            ))
         return self.phase_key[key]
 
     def label(self, dim: int) -> int:
@@ -432,7 +476,11 @@ class _Export:
             if node.phase is not None:
                 legs.add(self.dim(node.phase.dim))
             if len(legs) != 1:
-                raise NetUnsupported(f"node {nid} has legs of different dimensions") from None
+                if not getattr(self, "mixed_ok", False):
+                    raise NetUnsupported(f"node {nid} has legs of different dimensions") from None
+                first = self.dim(next(iter((*node.inputs, *node.outputs))).dim)
+                self.mixed |= {(i, first) for i in legs if i != first}
+                return first, 0
             return legs.pop(), 0
 
     def mult_index(self, name: str) -> int:
@@ -983,6 +1031,9 @@ class _Export:
         for v in theorem.variables:
             self.mult_index(str(v))
         start, goal = self.labelled(theorem.lhs), self.labelled(theorem.rhs)
+        if self.alias:
+            self.faithful(theorem.lhs, start)
+            self.faithful(theorem.rhs, goal)
         self.collect(theorem)
         try:
             self.engine_scalars: tuple[sp.Expr, sp.Expr] | None = (
@@ -1001,6 +1052,11 @@ class _Export:
             self.binders = _join(self.binders, *(f"({n} : ℕ)" for n in bare))
             self.args = _join(self.args, *bare)
             self.env = self.env_text(self.ks_vals)
+        if self.alias and self.family:
+            raise NetUnsupported("a family whose proof assumes dimensions equal")
+        outer = name
+        if self.alias:
+            name = f"{name}M"
         proof = self.term(theorem)
         head = f"theorem {_join(name, self.binders, self.hyps)} :\n    "
         try:
@@ -1026,7 +1082,56 @@ class _Export:
                 f"{head}{self.statement(left, start, right, goal)} := by\n"
                 f"  simpa only [one_mul, mul_one] using {proof.term}"
             )
+        if self.alias:
+            self.unmerge(theorem, outer, name, start, goal)
         return self.render(theorem)
+
+    def unmerge(self, theorem: object, outer: str, inner: str, start: Labelled,
+                goal: Labelled) -> None:
+        """The theorem ``outer`` over the networks at their own dimensions, the assumed
+        equalities as hypotheses, from ``inner`` over the merged networks."""
+        from archytaszx.semantics.kernel import Theorem
+
+        assert isinstance(theorem, Theorem)
+        fa, la = self.faithful(theorem.lhs, start)
+        fb, lb = self.faithful(theorem.rhs, goal)
+        for x, j in lb.items():
+            la.setdefault(x, j)
+        if not self.shadow_pairs:
+            raise NetUnsupported("no dimension of the start or goal is assumed equal to another")
+        labs_f = dict(self.labs)
+        labs_f.update(la)
+        pairs = self.shadow_pairs
+        self.constraints = [f"{_paren(self.dims[i])} = {_paren(self.dims[j])}" for j, i in pairs]
+        hyps = " ".join(f"(hc{k} : {c})" for k, c in enumerate(self.constraints))
+        hcs = ", ".join(f"hc{k}" for k in range(len(pairs)))
+        envf = f"(EF {self.args})" if self.args else "EF"
+        envm = f"(E {self.args})" if self.args else "E"
+        ps = _pairs(pairs)
+        alts = " | ".join(["rfl"] * len(pairs))
+        sl = self.sc.text(self.engine_scalars[0]) if self.engine_scalars else "1"
+        sr = self.sc.text(self.engine_scalars[1]) if self.engine_scalars else "1"
+        if self.scalar_gap:
+            raise NetUnsupported("the diagrams' scalars are not compared")
+        self.decls += [
+            (f"/-- Each label's own dimension index. -/\ndef labsF : List (ℕ × ℕ) := "
+             f"{_pairs(sorted(labs_f.items()))}"),
+            (f"/-- The environment at the diagrams' own dimensions. -/\nnoncomputable def EF "
+             f"{self.binders} : Env := {{ dimv := Δ {self.args}, phase := Φ {self.args}, "
+             f"labs := labsF }}").replace("  ", " "),
+            *([f"/-- The start at its own dimensions. -/\ndef {start.name}F : Net := {fa.lean()}"]),
+            *([f"/-- The goal at its own dimensions. -/\ndef {goal.name}F : Net := {fb.lean()}"]
+              if goal.name != start.name else []),
+            (f"/-- The diagrams are equal wherever the assumed dimension equalities hold. -/\n"
+             f"theorem {_join(outer, self.binders, self.hyps, hyps)} :\n"
+             f"    Equal {envf} {_paren(sl)} {start.name}F {_paren(sr)} {goal.name}F :=\n"
+             f"  Equal.of_mapDim' {envf} {envm} {ps} (by\n"
+             f"    intro p hp\n    simp only [List.mem_cons, List.not_mem_nil, or_false] at hp\n"
+             f"    rcases hp with {alts} <;> simp [EF, Δ, {hcs}])\n"
+             f"    {start.name}F {goal.name}F {start.name} {goal.name} (by decide) (by decide)\n"
+             f"    (by simp only [EF, E]; congr 1)\n"
+             f"    {_paren(_join(inner, self.args, self.hyp_args))}"),
+        ]
 
     # families
 
@@ -1544,6 +1649,10 @@ class _Export:
         from archytaszx.semantics.kernel import Theorem
 
         assert isinstance(theorem, Theorem)
+        return self.source(theorem.assumptions)
+
+    def source(self, assumptions: Sequence[object] = (), lead: str = "") -> str:
+        """The file: header with ``lead`` and notes, tables and declarations."""
         params = [(n, ty) for raw, (n, ty) in self.sym.params.items()
                   if raw != "k_lean_index" and raw not in self.mults]
         binders = " ".join(f"({n} : {ty})" for n, ty in params)
@@ -1586,10 +1695,13 @@ class _Export:
                 "/-- The family's structure along multiplicity `m`. -/\n"
                 "noncomputable def SpC (m : ℕ) : Spec := ⟨FC, m, ksOf []⟩",
             ]
-        notes = [f"  assumes {a}" for a in theorem.assumptions]
+        notes = [f"  assumes {a}" for a in assumptions]
         if self.alias:
             notes.append("  dimensions assumed equal are one dimension here: " + ", ".join(
                 f"{k} = {self.canon(v)}" for k, v in sorted(self.alias.items())))
+        if getattr(self, "constraints", None):
+            notes.append("  assumes the dimension constraints " + ", ".join(self.constraints)
+                         + " (hypotheses of the theorem)")
         for sym, expr in self.sc.opaques.values():
             notes.append(f"  {self.sym.name(sym, 'ℂ')} stands for the scalar {expr}")
         if self.unproved:
@@ -1601,6 +1713,7 @@ class _Export:
             "  ArchytasZX proof export over the tensor-network semantics of the ArchytasZX Lean",
             "  library: every diagram is a Net, every rule step an instance of a lemma proved",
             "  there. `#print axioms` lists any step stated without proof.",
+            *([lead] if lead else []),
             *notes,
             "-/",
             "",
