@@ -1,4 +1,4 @@
-var n
+var n = 6
 func f(x) = bit(x, 0)
 gate U_f = |x>|y> -> |x>|y xor f(x)>
 

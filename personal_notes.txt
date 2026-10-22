@@ -1,6 +1,3 @@
-0.19.6:
- - Full lean (engine is untrusted)
-
 0.19.7:
   - we shouldnt have anything probabilistic, measure should collpase wave funciton, but kind of have both possile and return a probability distribution, no just one value.
   - can we add the letters Z and X into the spiders on --zx output
@@ -28,6 +25,7 @@ Right after QuRise:
 - Preprint
 
 future only:
+ - make it so .azx is known extension, maybe vs picture and recog, etc.
  - add compatibility for python 3.8 up 
  - port to rust or c if it gives benefits
  - make available without python as a binary like ocaml is
