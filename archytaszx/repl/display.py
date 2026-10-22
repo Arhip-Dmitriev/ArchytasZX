@@ -19,8 +19,9 @@
   terminal (kitty, iTerm2 or sixel image protocol);
 * ``latex``: the ``plot`` text as LaTeX source.
 
-A :class:`Renderer` renders entries and records the defined variables, functions and
-measurement outcomes they mention; :meth:`Renderer.where` lists those as a ``where`` line.
+A :class:`Renderer` renders entries and records the defined variables and functions they
+mention; :meth:`Renderer.where` lists those as a ``where`` line. A measured distribution is
+``[(value, probability), ...]``, a branch over free indices with their ranges after a colon.
 Defined variables are folded back into expressions (``2^(-n/2)`` shows as ``1/sqrt(q)``
 under ``var q = 2^n``). :func:`terminal_image` returns ``plot`` output as an inline image escape
 sequence, or None when the terminal has no image protocol.
@@ -31,9 +32,11 @@ from __future__ import annotations
 import base64
 import io
 import itertools
+import math
 import os
 import re
 import select
+import shutil
 import sys
 import threading
 import time
@@ -395,23 +398,11 @@ class Text:
     text: str
 
 
-@dataclass(frozen=True)
-class Outcome:
-    """A symbolic measurement outcome: ``size`` digits of base ``dim``, or ``size`` values when
-    ``dim`` is None (mixed dimensions), measured from ``|source>``."""
-
-    size: sympy.Expr
-    source: str
-    facts: tuple[tuple[sympy.Expr, sympy.Expr], ...]
-    dim: sympy.Expr | None = P.TWO
-
-
 @dataclass
 class Context:
     """Interpreter facts a renderer consults."""
 
     sugar: Sequence[tuple[sympy.Expr, sympy.Symbol]] = ()
-    measured: dict[sympy.Symbol, Outcome] = field(default_factory=dict)
     taken: frozenset[str] = frozenset()
     assumptions: tuple[sympy.Basic, ...] = ()
     order: dict[sympy.Symbol, int] = field(default_factory=dict)
@@ -543,7 +534,82 @@ class Renderer:
             text += f" - {p[1:]}" if p.startswith("-") else f" + {p}"
         return text
 
-    def _term(self, t: P.Term, s: P.State) -> str:
+    def mixed(self, m: P.Mixed) -> str:
+        """A density matrix as a sum of path-sum terms of ``|k><b|`` per register."""
+        k = m.count
+        parts = [self._term(t, m.vec, pairs=k) for t in m.vec.terms]
+        text = parts[0]
+        for p in parts[1:]:
+            text += f" - {p[1:]}" if p.startswith("-") else f" + {p}"
+        return text
+
+    def _names(self, bound: Sequence[P.Bound], taken: set[str]) -> tuple[
+        dict[sympy.Basic, sympy.Expr], list[tuple[str, str, str]]
+    ]:
+        """Display symbols for summation indices and their ``(name, lo, hi)`` texts."""
+        taken |= {sym.name for _, sym in self.ctx.sugar} | set(self.ctx.taken)
+        mapping: dict[sympy.Basic, sympy.Expr] = {}
+        names = []
+        for b in bound:
+            name = b.symbol.name
+            while name in taken:
+                name += "'"
+            taken.add(name)
+            mapping[b.symbol] = sympy.Symbol(name, integer=True)
+            names.append(
+                (
+                    name_text(name, self.style),
+                    self.expr(b.lo.xreplace(mapping)),
+                    self.expr(b.hi.xreplace(mapping) + int(self.style == "ascii")),
+                )
+            )
+        return mapping, names
+
+    def probability(self, p: sympy.Expr) -> str:
+        """A probability, a fraction with a terminating decimal expansion as that decimal."""
+        if p.is_Rational and not p.is_Integer:
+            q = int(p.q)
+            while q % 2 == 0:
+                q //= 2
+            while q % 5 == 0:
+                q //= 5
+            if q == 1:
+                digits = len(str(int(p.q))) + 2
+                text = format(sympy.Float(p, digits), "f").rstrip("0")
+                return text
+        return self.expr(p)
+
+    def distribution(self, d: P.Distribution) -> str:
+        """``[(value, p), ...]``; a branch over free indices as ``[(v(k), p(k)) : k in ...]``."""
+        items = []
+        for br in d.branches:
+            taken = {x.name for x in (br.value.free_symbols | br.prob.free_symbols)}
+            taken -= {b.symbol.name for b in br.free}
+            mapping, names = self._names(br.free, taken)
+            value = self.expr(sympy.sympify(br.value).xreplace(mapping))
+            prob = self.probability(sympy.sympify(br.prob).xreplace(mapping))
+            pair = f"({value}, {prob})"
+            if names:
+                ranges = ", ".join(self._range(n, lo, hi) for n, lo, hi in names)
+                colon = r" \colon " if self.style == "plot" else " : "
+                pair = f"{pair}{colon}{ranges}"
+            items.append(pair)
+        if self.style == "plot":
+            return r"\left[" + ", ".join(items) + r"\right]"
+        return "[" + ", ".join(items) + "]"
+
+    def _range(self, name: str, lo: str, hi: str) -> str:
+        if self.style == "ascii":
+            return f"{name} in {lo}..{hi}"
+        if self.style == "plot":
+            if (lo, hi) == ("0", "1"):
+                return rf"{name} \in \{{0, 1\}}"
+            return rf"{name} \in \{{{lo}, \ldots, {hi}\}}"
+        if (lo, hi) == ("0", "1"):
+            return f"{name} ∈ {{0,1}}"
+        return f"{name} ∈ {{{lo},…,{hi}}}"
+
+    def _term(self, t: P.Term, s: P.State, pairs: int | None = None) -> str:
         own = {b.symbol for b in t.bound}
         taken = {x.name for e in (t.amp, *t.kets) for x in e.free_symbols if x not in own}
         taken |= {sym.name for _, sym in self.ctx.sugar} | set(self.ctx.taken)
@@ -568,9 +634,17 @@ class Renderer:
         kets = [k.xreplace(mapping) for k in t.kets]
         syms = [mapping[b.symbol] for b in t.bound]
         scalar, rest = amp.as_independent(*syms, as_Add=False) if syms else (amp, sympy.S.One)
-        regs = self._tensor().join(
-            self._register(k, w, d, s.bra) for k, w, d in zip(kets, s.widths, s.dims, strict=True)
-        )
+        if pairs is None:
+            regs = self._tensor().join(
+                self._register(k, w, d, s.bra)
+                for k, w, d in zip(kets, s.widths, s.dims, strict=True)
+            )
+        else:
+            regs = self._tensor().join(
+                self._register(kets[j], s.widths[j], s.dims[j], False)
+                + self._register(kets[j + pairs], s.widths[j], s.dims[j], True)
+                for j in range(pairs)
+            )
         body = regs
         if rest != 1:
             body = f"{self._wrap(rest)} {regs}" if regs else self._wrap(rest)
@@ -586,8 +660,6 @@ class Renderer:
 
     def value(self, v: object) -> str:
         """Any interpreter value."""
-        from archytaszx.repl import lang
-
         if isinstance(v, Text):
             if self.style != "plot":
                 return v.text
@@ -595,8 +667,10 @@ class Renderer:
             return rf"\mathrm{{{escaped}}}"
         if isinstance(v, P.State):
             return self.state(v)
-        if isinstance(v, lang.Bits):
-            return f"{v} ({int(v)})"
+        if isinstance(v, P.Mixed):
+            return self.mixed(v)
+        if isinstance(v, P.Distribution):
+            return self.distribution(v)
         if isinstance(v, (bool, sympy.logic.boolalg.BooleanAtom)):
             return "true" if v else "false"
         if isinstance(v, P.Operator):
@@ -638,33 +712,6 @@ class Renderer:
         simple = isinstance(op, (P.Gate, P.Identity, P.Power))
         return text if simple else f"({text})"
 
-    def measured(self, z: sympy.Symbol) -> str:
-        """``z in {0,1}^(w)``, ``z in {0..=d-1}^(w)`` or ``z in {0..=L-1}``."""
-        info = self.ctx.measured[z]
-        zt = self.expr(z)
-        if info.dim is None:
-            top, width = self.expr(info.size - 1), None
-        else:
-            top, width = self.expr(info.dim - 1), info.size
-        if info.dim is not None and P.same(info.dim, 2):
-            base = {"ascii": "{0,1}", "unicode": "{0,1}", "plot": r"\{0,1\}"}[self.style]
-        else:
-            base = {
-                "ascii": f"{{0..={top}}}",
-                "unicode": f"{{0,…,{top}}}",
-                "plot": rf"\{{0,\ldots,{top}\}}",
-            }[self.style]
-        if width is None or P.same(width, 1):
-            dom = base
-        else:
-            wt = self.expr(width)
-            if self.style == "plot":
-                dom = rf"{base}^{{{wt}}}"
-            else:
-                dom = base + "^" + (wt if sympy.sympify(width).is_Atom else f"({wt})")
-        mem = {"ascii": " in ", "unicode": " ∈ ", "plot": r" \in "}[self.style]
-        return zt + mem + dom
-
     def where(self) -> str | None:
         """The ``where`` line for everything rendered so far, or None."""
         items: list[str] = []
@@ -683,19 +730,6 @@ class Renderer:
                     done_funcs.add(f)
                     items.append(self.function(f))
                     progress = True
-            for z, info in self.ctx.measured.items():
-                if z in self.seen_symbols and z not in done_syms:
-                    done_syms.add(z)
-                    facts = info.facts
-                    src = self._ket(name_text(info.source, self.style)) + self._dim(info.dim)
-                    word = (
-                        r"\ \mathrm{measured\ from}\ "
-                        if self.style == "plot"
-                        else " measured from "
-                    )
-                    items.append(f"{self.measured(z)}{word}{src}")
-                    items.extend(f"{self.expr(a)} = {self.expr(b)}" for a, b in facts)
-                    progress = True
         if not items:
             return None
         word = r"\mathrm{where}\ " if self.style == "plot" else "where "
@@ -712,13 +746,6 @@ class Renderer:
                 self.seen_symbols, self.seen_funcs = symbols, funcs
         if label is not None and label.kind == "func":
             return self.function(value)  # type: ignore[arg-type]
-        if (
-            label is not None
-            and isinstance(value, sympy.Symbol)
-            and value in self.ctx.measured
-            and value.name == label.name
-        ):
-            return self.measured(value)
         if label is not None and label.kind == "var" and isinstance(value, sympy.Basic):
             if isinstance(value, sympy.Symbol) and value.name == label.name:
                 word = r"\ (\mathrm{symbolic})" if self.style == "plot" else " (symbolic)"
@@ -735,6 +762,9 @@ class Renderer:
         text = self.value(value)
         if label is None:
             return text
+        if isinstance(value, P.Mixed) and label.kind == "ket":
+            name = name_text(label.name, self.style)
+            return f"{self._ket(name)}{self._bra(name)}{self._dim(label.dim)} = {text}"
         if isinstance(value, (bool, sympy.logic.boolalg.BooleanAtom)):
             colon = r"\colon\ " if self.style == "plot" else ": "
             return f"{self.label(label)}{colon}{text}"
@@ -781,17 +811,39 @@ def dark(environ: Mapping[str, str] | None = None) -> bool:
 @dataclass
 class Terminal:
     """What the terminal reported: foreground and background as ``#rrggbb`` and the character
-    cell height in pixels, each None when unknown."""
+    cell height and width in pixels, each None when unknown."""
 
     fg: str | None = None
     bg: str | None = None
     cell: int | None = None
+    cell_width: int | None = None
 
 
 TERMINAL = Terminal()
 """The terminal facts :func:`prepare` found."""
 
+SAVE_DIR: str | None = None
+"""The folder every rendered image is also written to, or None."""
+_SAVED: list[int] = [0]
+
+
+def keep(png: bytes, kind: str) -> str | None:
+    """Writes ``png`` to :data:`SAVE_DIR` as ``NNNN-kind.png``; returns the path, None without
+    a folder."""
+    if SAVE_DIR is None:
+        return None
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    _SAVED[0] += 1
+    path = os.path.join(SAVE_DIR, f"{_SAVED[0]:04d}-{kind}.png")
+    with open(path, "wb") as handle:
+        handle.write(png)
+    return path
+
 _DPI = 100
+_DENSITY = 2
+"""Pixels rendered per displayed pixel for a mathtext image."""
+_MAX_PIXELS = 12000
+"""The longest side, in pixels, of a rendered image."""
 _WARM: list[threading.Thread] = []
 
 
@@ -913,7 +965,9 @@ def query_terminal() -> Terminal:
         return Terminal()
     finally:
         os.close(fd)
-    return Terminal(fg, bg, int(cell.group(1)) if cell and int(cell.group(1)) > 0 else None)
+    height = int(cell.group(1)) if cell and int(cell.group(1)) > 0 else None
+    width = int(cell.group(2)) if cell and int(cell.group(2)) > 0 else None
+    return Terminal(fg, bg, height, width)
 
 
 def _warm() -> None:
@@ -941,10 +995,13 @@ def colours(dark_theme: bool, environ: Mapping[str, str] | None = None) -> tuple
     return env.get("ARCHYTASZX_IMAGE_FG") or TERMINAL.fg or fg, TERMINAL.bg or bg
 
 
-def render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False) -> bytes:
+def render_png(
+    lines: list[str], *, dark_theme: bool, opaque: bool = False, density: float = 1
+) -> bytes:
     """Off-screen PNG of mathtext lines, left aligned, each row as tall as its ink plus a gap
     of a third of the font size; the font matches the terminal cell height when known, times
-    :data:`CONFIG` size, in :data:`CONFIG` color unless that is ``auto``."""
+    :data:`CONFIG` size, in :data:`CONFIG` color unless that is ``auto``; ``density`` pixels
+    per displayed pixel."""
     if _WARM and _WARM[0] is not threading.current_thread():
         _WARM[0].join()
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -971,30 +1028,53 @@ def render_png(lines: list[str], *, dark_theme: bool, opaque: bool = False) -> b
         y -= b.height
         t.set_position((pad / width, y / height))
         y -= gap
+    dpi = _DPI * min(density, _MAX_PIXELS / max(width, height))
     out = io.BytesIO()
     fig.savefig(
-        out, format="png", dpi=_DPI, transparent=not opaque, facecolor=bg if opaque else "none"
+        out, format="png", dpi=dpi, transparent=not opaque, facecolor=bg if opaque else "none"
     )
     return out.getvalue()
 
 
-def _kitty(png: bytes) -> str:
+def cells(png: bytes, density: float) -> tuple[int, int] | None:
+    """The terminal ``(columns, rows)`` that show ``png`` at 1/``density`` of its pixel size
+    when the cell size is known, capped at the terminal width keeping the aspect ratio."""
+    if not (TERMINAL.cell and TERMINAL.cell_width) or len(png) < 24:
+        return None
+    width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    cols = width / density / TERMINAL.cell_width
+    rows = height / density / TERMINAL.cell
+    room = max(10, shutil.get_terminal_size().columns - 1)
+    if cols > room:
+        cols, rows = room, rows * room / cols
+    return max(1, math.ceil(cols)), max(1, math.ceil(rows))
+
+
+def _kitty(png: bytes, size: tuple[int, int] | None = None) -> str:
     data = base64.standard_b64encode(png).decode("ascii")
     chunks = [data[k : k + 4096] for k in range(0, len(data), 4096)] or [""]
+    fit = f",c={size[0]},r={size[1]}" if size else ""
     out = []
     for k, chunk in enumerate(chunks):
         more = 1 if k < len(chunks) - 1 else 0
-        head = f"a=T,f=100,m={more}" if k == 0 else f"m={more}"
+        head = f"a=T,f=100{fit},m={more}" if k == 0 else f"m={more}"
         out.append(f"\x1b_G{head};{chunk}\x1b\\")
     return "".join(out)
 
 
-def _iterm(png: bytes) -> str:
+def _iterm(png: bytes, size: tuple[int, int] | None = None, density: float = 1) -> str:
     data = base64.standard_b64encode(png).decode("ascii")
-    return f"\x1b]1337;File=inline=1;size={len(png)};preserveAspectRatio=1:{data}\x07"
+    if size:
+        fit = f";width={size[0]};height={size[1]}"
+    elif density != 1 and len(png) >= 24:
+        width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+        fit = f";width={round(width / density)}px;height={round(height / density)}px"
+    else:
+        fit = ""
+    return f"\x1b]1337;File=inline=1;size={len(png)}{fit};preserveAspectRatio=1:{data}\x07"
 
 
-def _sixel(png: bytes) -> str:
+def _sixel(png: bytes, size: tuple[int, int] | None = None) -> str:
     """Grey-quantised sixel image."""
     import matplotlib.image as mpimg
     import numpy as np
@@ -1025,22 +1105,33 @@ def _sixel(png: bytes) -> str:
     return f'\x1bPq"1;1;{width};{height}{palette}' + "-".join(bands) + "\x1b\\"
 
 
-def encode_image(png: bytes, proto: str | None = None) -> str | None:
-    """``png`` as inline-image escape text for ``proto`` (default :func:`protocol`); None
-    for ``none``."""
+def encode_image(png: bytes, proto: str | None = None, density: float = 1) -> str | None:
+    """``png`` as inline-image escape text for ``proto`` (default :func:`protocol`), shown at
+    1/``density`` of its pixel size where the protocol can scale; None for ``none``."""
     proto = protocol() if proto is None else proto
     if proto == "none":
         return None
-    return {"kitty": _kitty, "iterm": _iterm, "sixel": _sixel}[proto](png)
+    size = cells(png, density) if proto != "sixel" else None
+    if proto == "iterm":
+        return _iterm(png, size, density)
+    return {"kitty": _kitty, "sixel": _sixel}[proto](png, size)
+
+
+def scalable(proto: str) -> bool:
+    """Whether images on ``proto`` can be shown smaller than their pixel size."""
+    return proto == "iterm" or (proto == "kitty" and bool(TERMINAL.cell_width))
 
 
 def terminal_image(lines: list[str]) -> str | None:
     """Mathtext lines as an inline terminal image; None when the terminal shows no images."""
     proto = protocol()
-    if proto == "none":
+    if proto == "none" and SAVE_DIR is None:
         return None
+    density = _DENSITY if proto == "none" or scalable(proto) else 1
     try:
-        png = render_png(lines, dark_theme=dark(), opaque=proto == "sixel")
+        opaque = proto == "sixel" or SAVE_DIR is not None
+        png = render_png(lines, dark_theme=dark(), opaque=opaque, density=density)
     except Exception:  # noqa: BLE001
         return None
-    return {"kitty": _kitty, "iterm": _iterm, "sixel": _sixel}[proto](png)
+    keep(png, "dirac")
+    return encode_image(png, proto, density)

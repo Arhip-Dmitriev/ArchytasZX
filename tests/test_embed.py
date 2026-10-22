@@ -20,7 +20,7 @@ import pytest
 
 import archytaszx
 from archytaszx.embed import Program, Value
-from archytaszx.repl.lang import Bits, LangError
+from archytaszx.repl.lang import LangError
 
 
 def test_default_program_is_shared() -> None:
@@ -64,14 +64,14 @@ def test_matrix_and_names() -> None:
     assert set(p.names()) >= {"U", "t", "k"}
 
 
-def test_measure_collapses_named_and_anonymous() -> None:
-    p = Program(seed=3)
+def test_measure_returns_the_distribution_named_and_anonymous() -> None:
+    p = Program()
     p.q = p.H | p.ket(0)
     y = p.measure | p.q
-    assert isinstance(y, bool)
-    assert p.q.ascii() == f"|q> = |{int(y)}>"
+    assert y.ascii() == "[(k, 0.5) : k in 0..2]"
+    assert p.q.ascii() == "|q><q| = 1/2 sum(k in 0..2){ |k><k| }"
     z = p.measure(p.ket(1) @ p.ket(0))
-    assert isinstance(z, Bits) and int(z) == 2
+    assert z.ascii() == "[(2, 1)]" and int(z) == 2
 
 
 def test_errors() -> None:

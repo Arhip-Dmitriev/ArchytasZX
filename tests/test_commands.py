@@ -338,7 +338,7 @@ class TestRegistry:
         assert EXPECTED_COMMANDS | {
             "dirac",
             "zx",
-            "zxmatplot",
+            "zxrender",
             "zxunicode",
             "zxascii",
             "both",

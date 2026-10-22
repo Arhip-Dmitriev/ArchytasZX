@@ -20,10 +20,10 @@ A :class:`Shell` owns one :class:`~archytaszx.repl.lang.Interpreter`, one
 
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
 * ``history`` and ``quit``/``exit`` are handled here;
-* ``:dirac``, ``:zx`` (``:zxmatplot``), ``:zxunicode``, ``:zxascii``, ``:both`` and ``:raw``
+* ``:dirac``, ``:zx`` (``:zxrender``), ``:zxunicode``, ``:zxascii``, ``:both`` and ``:raw``
   pick what ``show``, verbose mode and engine commands print and how ZX diagrams are drawn,
   ``:listing`` toggles the graph listing under each drawing, ``:verbose_on``/``:verbose_off``
-  switch verbose mode, ``:style`` names the display styles (mathtext, unicode, ascii, latex;
+  switch verbose mode, ``:style`` names the display styles (render, unicode, ascii, latex;
   several print every output in each, in order) and ``:config`` shows or sets the image size
   and colour;
 * any other line starting with ``:`` is an engine command, the rest of the line going to
@@ -65,13 +65,13 @@ HISTORY_FILE = "~/.archytaszx_history"
 ERROR = "error"
 """The piece kind of an error line."""
 
-_STYLE_WORDS = ("mathtext", "unicode", "ascii", "latex")
+_STYLE_WORDS = ("render", "unicode", "ascii", "latex")
 _HISTORY_LENGTH = 1000
 _QUIT_WORDS = frozenset({"quit", "exit"})
 VIEWS: dict[str, tuple[NotationMode, str | None]] = {
     "dirac": (NotationMode.DIRAC, None),
     "zx": (NotationMode.ZX, "matplot"),
-    "zxmatplot": (NotationMode.ZX, "matplot"),
+    "zxrender": (NotationMode.ZX, "matplot"),
     "zxunicode": (NotationMode.ZX, "unicode"),
     "zxascii": (NotationMode.ZX, "ascii"),
     "both": (NotationMode.BOTH, "matplot"),
@@ -81,8 +81,8 @@ VIEWS: dict[str, tuple[NotationMode, str | None]] = {
 
 _VIEW_HELP = {
     "dirac": "show Dirac notation",
-    "zx": "draw ZX diagrams with matplotlib (alias of --zxmatplot)",
-    "zxmatplot": "draw ZX diagrams with matplotlib, Unicode without an image protocol",
+    "zx": "draw ZX diagrams with matplotlib (alias of --zxrender)",
+    "zxrender": "draw ZX diagrams with matplotlib, Unicode without an image protocol",
     "zxunicode": "draw ZX diagrams on a Unicode character grid",
     "zxascii": "draw ZX diagrams on an ASCII character grid",
     "both": "show Dirac notation and the matplotlib ZX drawing",
@@ -445,15 +445,15 @@ class Shell:
     def _style(self, rest: str) -> list[tuple[str | None, str]]:
         """``style`` names the display styles; ``style WORD ...`` sets them, in order."""
         words = rest.lower().split()
-        bad = [w for w in words if w not in D.STYLES and w != "mathtext"]
+        bad = [w for w in words if w not in D.STYLES and w != "render"]
         if bad:
             self.errors += 1
             return [(ERROR, f"error: unknown style {bad[0]!r}; use {', '.join(_STYLE_WORDS)}")]
         if words:
-            chosen = tuple(dict.fromkeys("plot" if w == "mathtext" else w for w in words))
+            chosen = tuple(dict.fromkeys("plot" if w == "render" else w for w in words))
             self.interpreter.styles = chosen
             self.interpreter.style = chosen[0]
-        names = ("mathtext" if st == "plot" else st for st in self.interpreter.styles)
+        names = ("render" if st == "plot" else st for st in self.interpreter.styles)
         return _shared(f"style: {' '.join(names)}")
 
     def _config(self, rest: str) -> str:
@@ -633,7 +633,7 @@ def _argument_parser() -> argparse.ArgumentParser:
         )
     parser.set_defaults(mode=DEFAULT_MODE.value)
     for word, style, text in (
-        ("mathtext", "plot", "show matplotlib mathtext images (default)"),
+        ("render", "plot", "show rendered matplotlib mathtext images (default)"),
         ("unicode", "unicode", "show Unicode text"),
         ("ascii", "ascii", "show ASCII text in the input syntax, without plots"),
         ("latex", "latex", "show LaTeX source"),
@@ -653,7 +653,13 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--commands", action="store_true", help="read engine commands instead of the language"
     )
-    parser.add_argument("--seed", type=int, default=None, help="seed for numeric measurement")
+    parser.add_argument("--seed", type=int, default=None, help="seed for rand")
+    parser.add_argument(
+        "--images",
+        metavar="DIR",
+        default=None,
+        help="also save every rendered image (formulas and ZX drawings) as a PNG in DIR",
+    )
     parser.add_argument(
         "-c",
         "--command",
@@ -691,6 +697,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         D.CONFIG = D.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
+    D.SAVE_DIR = args.images
     mode, zx_style = VIEWS[args.mode]
     shell = Shell(
         mode=mode,

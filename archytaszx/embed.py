@@ -26,8 +26,8 @@ A :class:`Value` wraps a state, operator or scalar. ``|`` is juxtaposition (appl
 inner and outer products, tensor of kets), ``@`` the tensor product, ``**`` the tensor power
 of states and operators (the power of scalars), ``+ - * /`` the arithmetic and ``.dag()`` the
 conjugate transpose. Python numbers become exact sympy numbers. Attribute and item
-assignment name a state, operator or variable in the program. Measurement needs a named
-state and collapses it.
+assignment name a state, operator or variable in the program. Measurement returns the Born
+distribution and leaves the named state as the mixture of its outcomes.
 """
 
 from __future__ import annotations
@@ -162,7 +162,9 @@ class Value:
         return f"<azx {self.program._interp._type(self.value)}: {self.ascii()}>"
 
     def sympy(self) -> sympy.Basic:
-        """The sympy expression of a scalar."""
+        """The sympy expression of a scalar or of a certain measured outcome."""
+        if isinstance(self.value, P.Distribution) and P.certain(self.value) is not None:
+            return P.certain(self.value)
         if not isinstance(self.value, sympy.Basic):
             raise L.LangTypeError("sympy() takes a scalar")
         return self.value
@@ -340,25 +342,22 @@ class Program:
         return out[0] if len(out) == 1 else out
 
     def seed(self, value: int) -> None:
-        """Seeds measurement and ``rand``."""
+        """Seeds ``rand``."""
         self._interp.execute(f"seed {int(value)}")
 
-    def _measure(self, state: Value | str) -> object:
-        """Measures a named state in place; returns the outcome (bool, Bits or a symbol)."""
+    def _measure(self, state: Value | str) -> Value:
+        """Measures a named state in place, leaving the mixture of its outcomes; returns the
+        Born distribution."""
         if isinstance(state, str):
             state = self[state if state.startswith("|") else f"|{state}>"]
-        if not isinstance(state, Value) or not isinstance(state.value, P.State):
+        if not isinstance(state, Value) or not isinstance(state.value, (P.State, P.Mixed)):
             raise L.LangTypeError("measure takes a state")
         name = state.name
         if name is None or self._interp.states.get(name) is not state.value:
             self._count += 1
             name = f"_m{self._count}"
             self._state(name, state, bra=False)
-        p = self._interp._parser(L.tokenize(f"|{name}>"))
-        out = self._interp._measure(p, None)
-        if isinstance(out, sympy.Basic):
-            return Value(self, out)
-        return out
+        return Value(self, self._interp._measure(L.Braket(name, False)))
 
     def render(self, *values: object, style: str = "unicode") -> str:
         """The values in a display style, one line each."""

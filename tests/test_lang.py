@@ -17,14 +17,12 @@ symbolic and numeric form, typing errors, and the shell's language mode."""
 from __future__ import annotations
 
 import io
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from archytaszx.repl.lang import (
-    Bits,
     Interpreter,
     LangError,
     LangSyntaxError,
@@ -57,16 +55,18 @@ var y = measure|psi_2>
 SHOR_ASCII = """\
 |psi_0> = |0>^@n @ |0>^@m
 |psi_1> = 1/sqrt(q) sum(x in 0..q){ |x> @ |0>^@m }
-|psi_2> = |z[:n]> @ |f(z[:n])>
-|psi_2> = |z[:n]> @ |f(z[:n])>
-|psi_3> = 1/sqrt(q) sum(y in 0..q){ e^(2*pi*i*y*z[:n]/q) |y> @ |f(z[:n])> }"""
+|psi_2><psi_2| = 1/q sum(k0 in 0..q){ |k0><k0| @ |f(k0)><f(k0)| }
+|psi_2><psi_2| = 1/q sum(k0 in 0..q){ |k0><k0| @ |f(k0)><f(k0)| }
+|psi_3><psi_3| = q^(-2) sum(k0 in 0..q, y in 0..q, y' in 0..q){ e^(2*pi*i*k0*(y - y')/q) \
+|y><y'| @ |f(k0)><f(k0)| }"""
 
 SHOR_UNICODE = """\
 |ψ_0⟩ = |0⟩^⊗n ⊗ |0⟩^⊗m
 |ψ_1⟩ = 1/√q Σ_{x=0}^{q - 1} |x⟩ ⊗ |0⟩^⊗m
-|ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
-|ψ_2⟩ = |z[:n]⟩ ⊗ |f(z[:n])⟩
-|ψ_3⟩ = 1/√q Σ_{y=0}^{q - 1} e^{2πi·y·z[:n]/q} |y⟩ ⊗ |f(z[:n])⟩"""
+|ψ_2⟩⟨ψ_2| = 1/q Σ_{k0=0}^{q - 1} |k0⟩⟨k0| ⊗ |f(k0)⟩⟨f(k0)|
+|ψ_2⟩⟨ψ_2| = 1/q Σ_{k0=0}^{q - 1} |k0⟩⟨k0| ⊗ |f(k0)⟩⟨f(k0)|
+|ψ_3⟩⟨ψ_3| = q^(-2) Σ_{k0=0}^{q - 1} Σ_{y=0}^{q - 1} Σ_{y'=0}^{q - 1} e^{2πi·k0·(y - y')/q} \
+|y⟩⟨y'| ⊗ |f(k0)⟩⟨f(k0)|"""
 
 
 def numeric_shor(n: int = 3, m: int = 4, big_n: int = 15, a: int = 7) -> str:
@@ -86,7 +86,7 @@ class TestShorSymbolic:
     def test_ascii(self) -> None:
         interp, out = run(SHOR)
         assert out == SHOR_ASCII
-        assert interp.execute("show(y)").splitlines()[0] == "y = z"
+        assert interp.execute("show(y)") == "y = [(2^m*k0 + f(k0), 1/q) : k0 in 0..q]"
 
     def test_unicode(self) -> None:
         assert run(SHOR, "unicode")[1] == SHOR_UNICODE
@@ -109,17 +109,16 @@ class TestShorSymbolic:
 class TestShorNumeric:
     def test_states_and_outcomes(self) -> None:
         interp, _ = run(numeric_shor())
-        z, y = interp.values["z"], interp.values["y"]
-        assert isinstance(z, Bits) and z.width == 7 and y == z
-        x, fx = int(z) >> 4, int(z) & 15
-        assert fx == pow(7, x, 15)
-
-        def reg(v: int, w: int) -> str:
-            return {0: f"|0>^@{w}", 2**w - 1: f"|1>^@{w}"}.get(v, f"|{v}>")
-
-        assert interp.execute("show(|psi_2>)") == f"|psi_2> = {reg(x, 3)} @ {reg(fx, 4)}"
-        assert interp.execute("show(<psi_3|psi_3>, <psi_1|psi_1>)") == (
-            "<psi_3|psi_3> = 1\n<psi_1|psi_1> = 1"
+        assert interp.execute("show(z, y)") == (
+            "z = [(16*k0 + f(k0), 0.125) : k0 in 0..8]\ny = [(16*k0 + f(k0), 0.125) : k0 in 0..8]"
+        )
+        (branch,) = interp.values["z"].branches  # type: ignore[union-attr]
+        (k,) = branch.free
+        for x in range(8):
+            z = int(branch.value.xreplace({k.symbol: x}))
+            assert z >> 4 == x and z & 15 == pow(7, x, 15)
+        assert interp.execute("show(|psi_2>, <psi_1|psi_1>)") == (
+            "|psi_2><psi_2| = 1/8 sum(k0 in 0..8){ |k0><k0| @ |f(k0)><f(k0)| }\n<psi_1|psi_1> = 1"
         )
 
     def test_display_is_numeric(self) -> None:
@@ -128,20 +127,14 @@ class TestShorNumeric:
         assert out[1] == "|psi_1> = sqrt(2)/4 sum(x in 0..8){ |x> @ |0>^@4 }"
         assert not any(line.lstrip().startswith("where") for line in out)
 
-    def test_measurement_statistics(self) -> None:
-        counts: Counter[int] = Counter()
-        for seed in range(400):
-            interp, _ = run(numeric_shor(), seed=seed)
-            z = int(interp.values["z"])  # type: ignore[call-overload]
-            assert z & 15 == pow(7, z >> 4, 15)
-            counts[z >> 4] += 1
-        assert set(counts) == set(range(8))
-        assert all(25 <= c <= 75 for c in counts.values())
+    def test_measurement_is_the_same_for_every_seed(self) -> None:
+        a = run(numeric_shor(), seed=5)[0].execute("show(z)")
+        b = run(numeric_shor(), seed=9)[0].execute("show(z)")
+        assert a == b == "z = [(16*k0 + f(k0), 0.125) : k0 in 0..8]"
 
-    def test_seed_reproduces(self) -> None:
-        a = run(numeric_shor(), seed=5)[0].values["z"]
-        b = run(numeric_shor(), seed=5)[0].values["z"]
-        assert a == b
+    def test_symbolic_and_concrete_sizes_agree(self) -> None:
+        symbolic = run(SHOR)[0].execute("show(z)")
+        assert symbolic == "z = [(2^m*k0 + f(k0), 1/q) : k0 in 0..q]"
 
 
 # -- language ------------------------------------------------------------------------------
@@ -155,7 +148,11 @@ class TestShorNumeric:
         ("|a> = H|->", "|a> = |1>"),
         ("|a> = X|0> @ |1>", "|a> = |1> @ |1>"),
         ("|a> = CNOT (H|0> @ |0>)", "|a> = sqrt(2)/2 sum(y in 0..2){ |y> @ |y> }"),
-        ("|a> = sum(y in 0..2){ |y> } + |1>", "|a> = |0> + 2 |1>"),
+        ("|a> = sum(y in 0..2){ |y> } + |1>", "|a> = sum(y in 0..2){ |y> } + |1>"),
+        ("|a> = H|0> + H|1>", "|a> = sqrt(2) |0>"),
+        ("|a> = |010`>", "|a> = |0> @ |1> @ |0>"),
+        ("|a> = |000>", "|a> = |0>"),
+        ("|a> = normalise(3 |0> + 4 |1>)", "|a> = 3/5 |0> + 4/5 |1>"),
         ("|a> = 1/sqrt(2) (|0> - |1>)", "|a> = sqrt(2)/2 |0> - sqrt(2)/2 |1>"),
         ("|a> = |1>^@3", "|a> = |1>^@3"),
         ("|a> = |5>", "|a>_6 = |5>_6"),
@@ -218,23 +215,55 @@ class TestSymbolic:
         )
         assert run(source)[1] == "|a> = |0>^@n\n|b> = |1>^@n"
 
-    def test_measure_one_qubit_is_bool(self) -> None:
+    def test_measure_of_a_basis_state_is_certain(self) -> None:
         interp, _ = run("|a> = |1>\nvar b = measure|a>")
-        assert interp.values["b"] is True
+        assert interp.execute("show(b)") == "b = [(1, 1)]"
         assert interp.execute("var c = b + 1\nshow(c)") == "c = 2"
 
-    def test_bits_act_as_numbers(self) -> None:
+    def test_certain_outcomes_act_as_numbers(self) -> None:
         interp, _ = run("|a> = |1>|0>|1>\nvar b = measure|a>\nvar c = b * 2\nshow(b, c)")
-        assert interp.execute("show(b, c)") == "b = 101 (5)\nc = 10"
+        assert interp.execute("show(b, c)") == "b = [(5, 1)]\nc = 10"
 
     def test_symbolic_measure_of_basis_state(self) -> None:
         interp, _ = run("var n, k\n|o> = |0>^@n\n|a> = (|o> - |o> + |k>)|0>\nvar b = measure|a>")
-        assert interp.execute("show(b, |a>)") == "b = 2*k\n|a> = |k> @ |0>"
+        assert interp.execute("show(b, |a>)") == "b = [(2*k, 1)]\n|a><a| = |k><k| @ |0><0|"
 
-    def test_measure_collapses(self) -> None:
+    def test_measure_leaves_the_mixture(self) -> None:
         interp, _ = run("|a> = H|0>\nvar b = measure|a>\nvar c = measure|a>")
-        assert interp.values["b"] == interp.values["c"]
-        assert interp.execute("show(|a>)") in ("|a> = |0>", "|a> = |1>")
+        assert interp.execute("show(b, c, |a>)") == (
+            "b = [(k, 0.5) : k in 0..2]\nc = [(k, 0.5) : k in 0..2]\n"
+            "|a><a| = 1/2 sum(k in 0..2){ |k><k| }"
+        )
+
+    def test_measure_is_an_expression(self) -> None:
+        source = (
+            "var n\n|p> = |0>^@n @ |1>\n(H^@n @ H)|p>\ngate U = |x>|y> -> |x>|y xor bit(x, 0)>\n"
+            "U|p>\n(H^@n @ I)|p>\nvar x = floor(measure|p> / 2)\nshow(x)"
+        )
+        assert run(source)[1] == "x = [(1, 1)]"
+
+    def test_measure_is_the_same_for_every_size(self) -> None:
+        source = (
+            "func f(x) = bit(x, 0)\ngate U = |x>|y> -> |x>|y xor f(x)>\n"
+            "|p> = (H^@n @ I) U (H^@n @ H) (|0>^@n @ |1>)\nvar z = measure|p>\nshow(z)"
+        )
+        for head in ("var n\n", "var n = 3\n", "var n = 40\n"):
+            assert run(head + source)[1] == "z = [(k1 + 2, 0.5) : k1 in 0..2]", head
+
+    def test_operators_act_on_the_mixture(self) -> None:
+        interp, _ = run("var n\n|p> = H^@n |0>^@n @ |->\nvar z = measure|p>\n(H^@n @ H)|p>")
+        assert interp.execute("show(|p>)") == (
+            "|p><p| = 2^(-n - 1) sum(y in 0..2, x in 0..2^n){ |x><x| @ |y><y| }"
+        )
+
+    def test_density_matrix_from_outer_products(self) -> None:
+        interp, out = run("|r> = 1/2|0><0| + 1/2|1><1|\nshow(|r>)")
+        assert out == "|r><r| = 1/2 |0><0| + 1/2 |1><1|"
+        assert interp.execute("show(measure|r>)") == "measure|r> = [(k, 0.5) : k in 0..2]"
+
+    def test_apply_in_place(self) -> None:
+        interp, _ = run("|a> = |0>\nX|a>\nH X|a>\nshow(|a>)")
+        assert interp.execute("show(|a>)") == "|a> = sqrt(2)/2 sum(y in 0..2){ |y> }"
 
 
 def dense_qudit(s: P.State) -> np.ndarray:
@@ -260,9 +289,9 @@ class TestQudits:
     def test_symbolic_measurement_domain(self) -> None:
         source = "var d, n\n" + FOURIER + "|chi>_d = F^@n |0>_d^@n\nvar z = measure|chi>_d\n"
         out = run(source + "show(|chi>_d)", "unicode")[1]
-        assert out == "|χ⟩_d = |z⟩_d"
+        assert out == "|χ⟩⟨χ|_d = d^(-n) Σ_{k=0}^{d^n - 1} |k⟩_d⟨k|_d"
         z = run(source + "show(z)", "unicode")[1]
-        assert z == "z ∈ {0,…,d - 1}^n"
+        assert z == "z = [(k, d^(-n)) : k ∈ {0,…,d^n - 1}]"
 
     def test_free_parameters_bind_to_concrete_registers(self) -> None:
         source = (
@@ -286,15 +315,18 @@ class TestQudits:
             q = interp.states["q"]
             assert len(q.terms) == 2 and all(t.bound for t in q.terms)
             interp.execute("var m = measure|q>")
-            assert not interp.values["m"].is_Integer
+            m = interp.values["m"]
+            assert isinstance(m, P.Distribution) and P.certain(m) is None
 
     def test_horrible_state_runs(self) -> None:
-        source = Path(HORRIBLE).read_text() + "|phi> = F^@n |psi>\nshow(|phi>)\n"
-        interp, out = run(source)
+        interp, out = run(Path(HORRIBLE).read_text())
+        psi = interp.states["psi"]
+        assert psi.widths == (22,) and psi.dims == (7,)
+        assert all(t.bound for t in psi.terms)
+        assert out.splitlines()[1].count("sum(") == len(psi.terms) == 38
+        interp.execute("|phi> = F^@n |psi>")
         phi = interp.states["phi"]
-        assert phi.widths == (22,) and phi.dims == (7,)
-        assert all(t.bound for t in phi.terms)
-        assert out.count("sum(x in 0..3909821048582988049){") == len(phi.terms)
+        assert sum(not t.bound for t in phi.terms) == 37
 
     def test_digit_shift_power(self) -> None:
         source = "var d, n\ngate Xd = |x>_d -> |(x + 1) % d>_d\n|v>_d = Xd^@n |0>_d^@n\n"
@@ -315,7 +347,10 @@ class TestQudits:
             ),
             ("|a> = |1>_3 @ |0>", "|a> = |1>_3 @ |0>"),
             ("|a>_3 = sum(y in 0..3){ |y>_3 }", "|a>_3 = sum(y in 0..3){ |y>_3 }"),
-            ("|a>_3 = sum(y in 0..3){ |y>_3 } + |1>_3", "|a>_3 = |0>_3 + 2 |1>_3 + |2>_3"),
+            (
+                "|a>_3 = sum(y in 0..3){ |y>_3 } + |1>_3",
+                "|a>_3 = sum(y in 0..3){ |y>_3 } + |1>_3",
+            ),
         ],
     )
     def test_concrete(self, source: str, expected: str) -> None:
@@ -329,19 +364,14 @@ class TestQudits:
         )
         assert run(source)[1] == "|g>_3 = 1/3 sum(x in 0..9){ |x>_3 }\n<g|g>_3 = 1"
 
-    def test_numeric_measurement_digits(self) -> None:
-        seen = set()
-        for seed in range(60):
-            interp, _ = run("|a>_3 = sum(y in 0..3){ |y>_3 }\nvar r = measure|a>_3", seed=seed)
-            r = interp.values["r"]
-            assert isinstance(r, Bits) and r.radix == (3,)
-            seen.add(str(r))
-        assert seen == {"0", "1", "2"}
+    def test_qutrit_measurement(self) -> None:
+        interp, _ = run("|a>_3 = sum(y in 0..3){ |y>_3 }\nvar r = measure|a>_3")
+        assert interp.execute("show(r)") == "r = [(k, 1/3) : k in 0..3]"
 
     def test_mixed_radix_outcome(self) -> None:
         interp, _ = run("|m> = |2>_3 @ |1>\nvar k = measure|m>")
-        k = interp.values["k"]
-        assert isinstance(k, Bits) and k.radix == (3, 2) and str(k) == "21" and int(k) == 5
+        (branch,) = interp.values["k"].branches  # type: ignore[union-attr]
+        assert branch.value == 5 and branch.registers == (2, 1) and branch.prob == 1
 
     def test_inner_shorthand_suffix(self) -> None:
         assert run("|a>_5 = |3>_5\nshow(<a|a>_5)")[1] == "<a|a>_5 = 1"
@@ -464,13 +494,17 @@ class TestShorsScript:
         assert out[0] == (
             "|psi> = 1/Q sum(x in 0..Q, k in 0..Q){ e^(-2*pi*i*k*x/Q) |k> @ |a^x % N> }"
         )
-        assert "p = gcd(h - 1, N)" in out and "q = N/p" in out
+        assert out[1].startswith("r = [(denom(k0/Q + floor(k1/2^m)/Q, N), ")
+        assert out[2].startswith("p = [(gcd(a^(denom(") and out[3].startswith("q = [(N/gcd(")
 
     def test_numeric(self) -> None:
         source = SHOR_SCRIPT.read_text().replace("var N, a ", "var N = 15, a = 7 ", 1)
         interp, out = run(source, seed=0)
-        assert interp.values["p"] * interp.values["q"] == 15
-        assert out.endswith("p = 3\nq = 5")
+        lines = out.splitlines()
+        assert lines[1].startswith("r = [(denom(k0/256, 15), ")
+        (p,) = interp.values["p"].branches  # type: ignore[union-attr]
+        (q,) = interp.values["q"].branches  # type: ignore[union-attr]
+        assert p.free == q.free and P.same(p.value * q.value, 15)
 
 
 class TestControlFlow:
@@ -509,9 +543,9 @@ class TestPrintAndEcho:
         out = run('var t = 3/4\nprint("t is", t, 2 + 3*i, sqrt(4), 1 == 1)')[1]
         assert out == "t is 3/4 2 + 3i 2 true"
 
-    def test_print_measured_bits_as_integer(self) -> None:
+    def test_print_measured_distribution(self) -> None:
         out = run("|a> = |1>|0>|1>\nvar z = measure|a>\nprint(z)")[1]
-        assert out == "5"
+        assert out == "[(5, 1)]"
 
     def test_echo_of_each_statement_kind(self) -> None:
         interp = Interpreter(style="ascii")
@@ -525,7 +559,7 @@ class TestPrintAndEcho:
             ("<a|a>", ("-", "nat", "1")),
             ("H", ("-", "op", "H")),
             ("list L = {|a>}", ("L", "list", "{|a>}")),
-            ("var z = measure|a>", ("z", "bool", "true")),
+            ("var z = measure|a>", ("z", "dist", "[(1, 1)]")),
         ]
         for source, expected in cases:
             interp.execute(source)
@@ -570,7 +604,8 @@ class TestFormat:
         [
             ('print(f"x = {1/3:.3f}")', "x = 0.333"),
             ('var z = 5\nprint(f"{z} and {z:03d}, {{z}}")', "5 and 005, {z}"),
-            ('|a> = |1>\nvar b = measure|a>\nprint(f"b={b}")', "b=true"),
+            ('|a> = |1>\nvar b = measure|a>\nprint(f"b={b}")', "b=[(1, 1)]"),
+            ('|a> = |1>\nvar b = measure|a>\nprint(f"{b:d}")', "1"),
             ('var n\nprint(f"n+1 is {n + 1}")', "n+1 is n + 1"),
             ('|a> = |0> + |2>\nprint(f"{|a>}")', "|0>_3 + |2>_3"),
             ('print(f"{2:>4}|")', "   2|"),
@@ -621,7 +656,7 @@ class TestShowModes:
         interp, _ = run("|a> = |1>")
         zx = interp.render([(None, interp.states["a"])], "ascii", NotationMode.ZX)
         assert zx.splitlines()[0] == "=" and zx.splitlines()[1].startswith("  scalar:")
-        assert "(x 1)" in zx and "out 0" in zx
+        assert "(X 1)" in zx and "out 0" in zx
         interp.mode = NotationMode.BOTH
         both = interp.execute("show(|a>)").splitlines()
         assert both[0] == "|a> = |1>" and both[1] == "|a> =" and both[2].startswith("  scalar:")
@@ -629,19 +664,34 @@ class TestShowModes:
         listed = interp.execute("show(|a>)")
         assert "  graph:" in listed
 
-    def test_raw_listing_has_no_caps(self) -> None:
+    def test_any_state_has_a_drawing(self) -> None:
         from archytaszx.repl.printer import NotationMode
 
         source = "|a> = sum(x in 0..128){ 1/(x + 1) |x> }\nshow(|a>)"
         zx = Interpreter(style="ascii", mode=NotationMode.ZX).execute(source)
-        assert "no ZX form" in zx
+        assert "no ZX form" not in zx and "out 0" in zx
         raw = Interpreter(style="ascii", mode=NotationMode.RAW).execute(source)
         assert raw.splitlines()[1].startswith("  graph:") and "|a> = " not in raw
+
+    def test_drawing_is_the_same_for_every_size(self) -> None:
+        from archytaszx.repl.printer import NotationMode
+
+        source = (
+            "func f(x) = bit(x, 0)\ngate U = |x>|y> -> |x>|y xor f(x)>\n"
+            "|p> = (H^@n @ I) U (H^@n @ H) (|0>^@n @ |1>)\nshow(|p>)"
+        )
+        drawings = []
+        for head, box in (("var n\n", "n - 1"), ("var n = 6\n", "5"), ("var n = 50\n", "49")):
+            out = Interpreter(style="ascii", mode=NotationMode.ZX).execute(head + source)
+            drawings.append(out.split("\n", 2)[2].replace(f"- {box} -", "- B -"))
+        assert drawings[0].replace("-", "") == drawings[1].replace("-", "") == (
+            drawings[2].replace("-", "")
+        )
 
     def test_zx_drawing_styles(self) -> None:
         from archytaszx.repl.printer import NotationMode
 
-        for zx_style, mark in (("unicode", "○1"), ("ascii", "(x 1)"), ("matplot", "○1")):
+        for zx_style, mark in (("unicode", "Ⓧ1"), ("ascii", "(X 1)"), ("matplot", "Ⓧ1")):
             interp = Interpreter(style="unicode", mode=NotationMode.ZX, zx_style=zx_style)
             out = interp.execute("|a> = |1>\nshow(|a>)")
             assert mark in out
@@ -651,7 +701,7 @@ class TestShowModes:
 
         interp = Interpreter(style="ascii", mode=NotationMode.ZX)
         out = interp.execute("var n\n|a> = |0>^@n\nshow(|a>)")
-        assert "+-- n --+" in out and "(x)" in out
+        assert "+-- n --+" in out and "(X)" in out
 
 
 CYCLE_SUM = "gate G = [[0,0,1],[1,0,0],[0,1,0]]\n|s>_3 = sum(x in 0..3){ x |x>_3 }\n|a> = G |s>"

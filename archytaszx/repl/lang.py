@@ -23,18 +23,25 @@ Statements (newline or ``;`` separated, ``#`` comments)::
     gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
     gate R = [[cos(t), -sin(t)], [sin(t), cos(t)]]      |v> = [a, b]
     gate G = matrix(r, c in 0..d){ e^(2*pi*i*r*c/d) / sqrt(d) }
-    |chi>_d = F^@n |0>_d^@n                    |2>_3     |0> + |2>
-    var z = measure|psi>      measure|psi>
+    |chi>_d = F^@n |0>_d^@n                    |2>_3     |0> + |2>     |010`>
+    (H^@n @ I)|psi>           var z = measure|psi>      var x = floor(measure|psi> / 2)
     list L = {|psi>, <phi|, z}
     show(L)  show(|psi>, ascii)  print(f"z = {z}")  seed 7
     for j in 0..n { ... }     sum(y in 0..=q-1){ ... }
 
-Every state is named ``|name>``; ``<name|`` is its conjugate transpose. Classical values are
-declared with ``var`` (types ``nat`` (default), ``int``, ``real``, ``complex``); measurement
-results are booleans (one qubit) or :class:`Bits`, both usable as numbers. A literal ``|v>`` is
-one register of the lowest dimension holding v (of unresolved width for a symbolic v), laid
-out as a sum, inner product, gate or ``|name>_d =`` needs. A ``_d`` suffix (a numeral or a
-variable) fixes a ket, bra or pattern to dimension d. A matrix gate maps ``|c>`` to
+Every state is named ``|name>``; ``<name|`` is its conjugate transpose. A statement that is
+operators applied to a named state, ``U V|name>``, replaces that state by the result. Classical
+values are declared with ``var`` (types ``nat`` (default), ``int``, ``real``, ``complex``).
+``measure|name>`` is an expression: the Born distribution of every register, derived from the
+path sum, as ``[(value, probability), ...]`` (a branch over free indices stands for all their
+values); the state becomes the density matrix of the mixture of its outcomes, which gates act
+on as ``U rho U^dagger``. ``|rho> = |a><a| + ...`` (scaled outer products) names a density
+matrix directly. Scalar functions and operators map over a distribution's outcomes,
+merging equal ones. A literal ``|v>`` is one register of the lowest dimension holding v (of
+unresolved width for a symbolic v), laid out as a sum, inner product, gate or ``|name>_d =``
+needs: ``|000>`` is ``|0>``. A trailing backtick makes a digit string, one register per
+digit: ``|010`>`` is ``|0>|1>|0>``. A ``_d`` suffix (a numeral or a variable) fixes a ket,
+bra or pattern to dimension d. A matrix gate maps ``|c>`` to
 ``sum_r M[r][c] |r>`` over the registers it meets; ``|x>|y> -> [[...]]`` fixes them. Ranges
 ``a..b`` exclude b, ``a..=b`` include it. A bare expression is a statement too.
 
@@ -45,7 +52,7 @@ unary ``-``; ``^`` (right associative) and postfix ``^@``. Constants ``pi``, ``e
 functions ``sqrt exp abs floor ceil cos sin tan log`` and user ``func`` s. Built-in gates
 ``H X Y Z S T CNOT SWAP`` (one-qubit registers; ``H^@n`` for a register) and the identity
 ``I`` (absorbs the remaining registers when last in a tensor). Built-in states ``|+>``,
-``|->``, ``|i>``, ``|-i>``.
+``|->``, ``|i>``, ``|-i>``. ``normalise(s)`` divides a state by its norm.
 
 ``show`` prints mathematical values, ``print`` strings and concrete values. Values are
 symbolic exactly when their inputs are. :attr:`Interpreter.last` is the :class:`Echo` of the
@@ -62,7 +69,7 @@ import numpy as np
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.repl import display as D
-from archytaszx.repl import zxdraw, zxview
+from archytaszx.repl import zxdraw, zxsym, zxview
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 from archytaszx.semantics import pathsum as P
 
@@ -77,33 +84,6 @@ class LangSyntaxError(LangError):
 
 class LangTypeError(LangError):
     """A value used where its type is not allowed."""
-
-
-@dataclass(frozen=True)
-class Bits:
-    """A measured digit string, one radix per digit (all 2 for qubits); acts as its integer
-    value."""
-
-    value: int
-    radix: tuple[int, ...]
-
-    @property
-    def width(self) -> int:
-        return len(self.radix)
-
-    def __int__(self) -> int:
-        return self.value
-
-    def __index__(self) -> int:
-        return self.value
-
-    def __str__(self) -> str:
-        out, v = [], self.value
-        for r in reversed(self.radix):
-            v, digit = divmod(v, r)
-            out.append(digit)
-        sep = "" if all(r <= 10 for r in self.radix) else "."
-        return sep.join(str(x) for x in reversed(out))
 
 
 @dataclass(frozen=True)
@@ -131,6 +111,7 @@ _SIMPLE = re.compile(
 _BRAKET_TAIL = re.compile(r"([^\s|<>][^|<>]*)>")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DIM = re.compile(r"_(\d+|[A-Za-z_][A-Za-z0-9_]*)")
+_DIGIT_STRING = re.compile(r"\d*`")
 
 
 def _with_dim(src: str, i: int, kind: str, text: str, pos: int) -> tuple[Tok, int]:
@@ -249,6 +230,13 @@ class Braket:
     content: str
     bra: bool
     dim: str | None = None
+
+
+@dataclass(frozen=True)
+class MeasureNode:
+    """``measure|name>``."""
+
+    target: Braket
 
 
 @dataclass(frozen=True)
@@ -444,6 +432,13 @@ class Parser:
                 return self.sum()
             if t.text == "matrix":
                 return self.matrix()
+            if t.text == "measure":
+                self.i += 1
+                target = self.peek()
+                if target is None or target.kind != "ket":
+                    raise LangSyntaxError("measure takes a named ket, e.g. measure|psi>")
+                self.i += 1
+                return MeasureNode(Braket(target.text, False, target.dim))
             self.i += 1
             if self.at("(") and self.is_func(t.text):
                 self.take("(")
@@ -593,6 +588,7 @@ _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "log": sympy.log,
 }
 _SPECIAL = {"arg", "rand"}
+_STATE_FUNCS = {"normalise"}
 _CONSTANTS = {"pi": sympy.pi, "e": sympy.E, "i": sympy.I}
 _STATEMENTS = {
     "var",
@@ -614,6 +610,7 @@ _RESERVED = (
     | _KEYWORDS
     | set(_FUNCS)
     | _SPECIAL
+    | _STATE_FUNCS
     | set(_CONSTANTS)
     | {"sum", "matrix"}
     | set(D.STYLES)
@@ -926,10 +923,8 @@ class Interpreter:
         self.funcs: dict[str, type] = {}
         self.ops: dict[str, P.Operator] = {"I": P.Identity()}
         self.slots: dict[str, list[tuple[str, str | None]]] = {}
-        self.states: dict[str, P.State] = {}
+        self.states: dict[str, P.State | P.Mixed] = {}
         self.lists: dict[str, list[tuple[D.Label | None, object]]] = {}
-        self.measured: dict[sympy.Symbol, D.Outcome] = {}
-        self._count = 0
         for stmt in _split_statements(PRELUDE):
             if stmt.strip():
                 self._statement(stmt.strip(), builtin=True)
@@ -960,7 +955,13 @@ class Interpreter:
                     self._out.append((None, printed))
 
     def _parser(self, toks: list[Tok]) -> Parser:
-        return Parser(toks, lambda name: name in _FUNCS or name in _SPECIAL or name in self.funcs)
+        return Parser(
+            toks,
+            lambda name: name in _FUNCS
+            or name in _SPECIAL
+            or name in _STATE_FUNCS
+            or name in self.funcs,
+        )
 
     def _statement(self, text: str, builtin: bool = False) -> str:
         word = text.split(None, 1)[0]
@@ -981,24 +982,61 @@ class Interpreter:
             self._assign_state(head, toks[2:])
             return ""
         p = self._parser(toks)
-        value = self._eval(p.expr(), Ctx())
+        node = p.expr()
         if not p.done():
             raise LangSyntaxError(
                 f"unexpected {p.peek().text!r}; a statement starts with var, func, gate, "  # type: ignore[union-attr]
                 "list, show, print, measure, seed, for, while, if, assert, assume, |name> =, "
                 "<name| = or is an expression"
             )
+        if self._apply_in_place(node):
+            return ""
+        value = self._eval(node, Ctx())
         self.last = Echo(None, self._type(value), value)
         return ""
 
+    def _apply_in_place(self, node: object) -> bool:
+        """``U V |name>`` as a statement: the operators applied to the named state, which is
+        replaced by the result; False for any other expression."""
+        lefts: list[object] = []
+        while isinstance(node, Juxt):
+            lefts.append(node.left)
+            node = node.right
+        if not (lefts and isinstance(node, Braket) and not node.bra):
+            return False
+        name = node.content.strip()
+        if not _IDENT.fullmatch(name) or name not in self.states:
+            return False
+        ops = [self._eval(left, Ctx()) for left in lefts]
+        if not all(isinstance(op, P.Operator) for op in ops):
+            return False
+        value: object = self._eval(node, Ctx())
+        for op in reversed(ops):
+            try:
+                value = self._juxt(op, value)
+            except P.PathSumError as exc:
+                raise LangError(str(exc)) from exc
+        if isinstance(value, P.Mixed):
+            self.states[name] = value
+            self.last = Echo(self._label("ket", name), "density", value)
+            return True
+        if not isinstance(value, P.State) or value.bra:
+            return False
+        self.states[name] = P.simplify(_flex(value, ()))
+        self.last = Echo(self._label("ket", name), "ket", self.states[name])
+        return True
+
     def _type(self, v: object) -> str:
-        """The type word of a value: ket, bra, op, bool, bits, nat, int, real or complex."""
+        """The type word of a value: ket, density, dist, bra, op, bool, nat, int, real or
+        complex."""
         if isinstance(v, P.State):
             return "bra" if v.bra else "ket"
+        if isinstance(v, P.Mixed):
+            return "density"
+        if isinstance(v, P.Distribution):
+            return "dist"
         if isinstance(v, P.Operator):
             return "op"
-        if isinstance(v, Bits):
-            return "bits"
         if isinstance(v, (bool, sympy.logic.boolalg.Boolean)):
             return "bool"
         if isinstance(v, sympy.Basic):
@@ -1019,6 +1057,11 @@ class Interpreter:
 
     def _truth(self, node: object, what: str) -> bool:
         value = self._eval(node, Ctx())
+        if isinstance(value, P.Distribution):
+            certain = P.certain(value)
+            if certain is None:
+                raise LangTypeError(f"the {what} depends on a measured outcome")
+            value = certain
         if isinstance(value, (bool, sympy.logic.boolalg.BooleanAtom)):
             return bool(value)
         if any(value == known for known in self.assumptions):
@@ -1104,6 +1147,11 @@ class Interpreter:
             if name not in self.states:
                 raise LangTypeError(f"|{name}> is not defined")
             cur = self.states[name]
+            if isinstance(cur, P.Mixed):
+                raise LangError(
+                    f"a loop over the symbolic range {lo}..={hi} cannot update the density "
+                    f"matrix |{name}>"
+                )
             probes = [
                 sympy.Dummy(f"u{k}", integer=True, nonnegative=True) for k in range(len(cur.widths))
             ]
@@ -1173,11 +1221,7 @@ class Interpreter:
                     raise LangTypeError(f"unknown type {kind!r}; use {', '.join(_TYPES)}")
             if p.at("="):
                 p.take()
-                if p.at("measure"):
-                    p.take()
-                    self._measure(p, name)
-                else:
-                    self._define(name, p.expr())
+                self._define(name, p.expr())
                 value = self.values[name]
                 self.last = Echo(D.Label("var", name), self._type(value), value)
             else:
@@ -1192,61 +1236,40 @@ class Interpreter:
         self.sugar = [(n, v) for n, v in self.sugar if n != name]
 
     def _define(self, name: str, node: object) -> None:
-        value = self._scalar(self._eval(node, Ctx()), f"var {name}")
+        raw = self._eval(node, Ctx())
+        if isinstance(raw, P.Distribution):
+            self._forget(name)
+            self.values[name] = raw
+            return
+        value = self._scalar(raw, f"var {name}")
         self._forget(name)
         self.values[name] = value
         if value.free_symbols and not value.is_Symbol:
             self.sugar.append((name, value))
 
-    def _measure(self, p: Parser, name: str | None) -> object:
-        """Measures the named ket of ``p``; returns the outcome and binds it to ``name``."""
-        t = p.take()
-        if t.kind != "ket" or not _IDENT.fullmatch(t.text.strip()):
+    def _measure(self, node: Braket) -> P.Distribution:
+        """Measures every register of the named state ``node``: returns the Born distribution
+        and leaves the state as the mixture of its outcomes."""
+        label = node.content.strip()
+        if node.bra or not _IDENT.fullmatch(label):
             raise LangSyntaxError("measure takes a named ket, e.g. measure|psi>")
-        label = t.text.strip()
         if label not in self.states:
             raise LangTypeError(f"|{label}> is not defined")
-        self._check_dim(label, self._dim(t.dim, Ctx()))
-        if not p.done() and not p.at(","):
-            raise LangSyntaxError("measure takes exactly one named ket")
-        if name is None:
-            self._count += 1
-            sym_name = f"m{self._count}"
-        else:
-            sym_name = name
-        symbol = sympy.Symbol(sym_name, integer=True, nonnegative=True)
-        facts = [f for info in self.measured.values() for f in info.facts]
+        self._check_dim(label, self._dim(node.dim, Ctx()))
         state = self.states[label]
         try:
-            m = P.measure(state, symbol, self.rng, facts)
+            dist = P.distribution(state)
+            layout = state.layout() if isinstance(state, P.Mixed) else state
+            self.states[label] = P.collapse(dist, layout)
         except P.PathSumError as exc:
             raise LangError(str(exc)) from exc
-        self.states[label] = m.post
-        outcome = m.outcome
-        value: object = outcome
-        if outcome.is_Integer and P.is_concrete(m.post):
-            radix = tuple(
-                int(d)  # type: ignore[arg-type]
-                for d, w in zip(m.post.dims, m.post.widths, strict=True)
-                for _ in range(int(w))  # type: ignore[arg-type]
-            )
-            value = bool(outcome) if radix == (2,) else Bits(int(outcome), radix)
-        if name is not None:
-            self._forget(name)
-            self.values[name] = value
-        if outcome == symbol:
-            dim = state.uniform_dim()
-            size = (
-                m.width
-                if dim is not None
-                else sympy.Mul(*(state.levels(k) for k in range(len(state.widths))))
-            )
-            self.measured[symbol] = D.Outcome(size, label, m.constraints, dim)
-        return value
+        return P.joined(dist, layout)
 
     def _stmt_measure(self, toks: list[Tok], text: str, builtin: bool) -> None:
-        p = self._parser(toks[1:])
-        value = self._measure(p, None)
+        p = self._parser(toks)
+        value = self._eval(p.expr(), Ctx())
+        if not p.done():
+            raise LangSyntaxError("measure takes exactly one named ket")
         self.last = Echo(None, self._type(value), value)
 
     def _stmt_seed(self, toks: list[Tok], text: str, builtin: bool) -> None:
@@ -1575,7 +1598,7 @@ class Interpreter:
         taken = frozenset(self.values) | frozenset(self.states) | frozenset(self.funcs)
         order = {sympy.Symbol(n): k for k, (n, _) in enumerate(self.sugar)}
         return D.Context(
-            sugar, self.measured, taken | frozenset(self.ops), tuple(self.assumptions), order
+            sugar, taken | frozenset(self.ops), tuple(self.assumptions), order
         )
 
     def _dim(self, text: str | None, ctx: Ctx) -> sympy.Expr | None:
@@ -1639,7 +1662,7 @@ class Interpreter:
             return True
 
         for lab, v in entries:
-            state = isinstance(v, P.State)
+            state = isinstance(v, (P.State, P.Mixed))
             if not state or mode in (NotationMode.DIRAC, NotationMode.BOTH):
                 math.append(r.entry(lab, v, record=not state))
             if state and mode is not NotationMode.DIRAC:
@@ -1669,13 +1692,10 @@ class Interpreter:
             return name, e.type, "{" + ", ".join(items) + "}"
         if v is None:
             return name, e.type, None
-        if isinstance(v, sympy.Symbol) and v in self.measured:
-            return name, e.type, r.measured(v)
         if lab is not None and lab.kind == "var" and isinstance(v, sympy.Expr):
             return name, e.type, r.expr(v, sympy.Symbol(lab.name))
-        if isinstance(v, P.State) and self.mode is not NotationMode.DIRAC:
-            raw = self.mode is NotationMode.RAW
-            listing = self._zx_body(v, limited=not raw)
+        if isinstance(v, (P.State, P.Mixed)) and self.mode is not NotationMode.DIRAC:
+            listing = self._zx_body(v)
             if self.mode in (NotationMode.ZX, NotationMode.RAW):
                 return name, e.type, listing
             return name, e.type, r.value(v) + "\n" + listing
@@ -1690,7 +1710,7 @@ class Interpreter:
         text = "ascii" if style == "ascii" else "unicode"
         head = D.Renderer(text).label(label) if label is not None else ""
         if raw:
-            return "\n".join([f"{head} =".lstrip(), self._zx_body(s, limited=False)])
+            return "\n".join([f"{head} =".lstrip(), self._zx_body(s)])
         parts = [f"{head} =".lstrip(), self._zx_drawing(s, style)]
         if self.listing:
             parts.append(self._zx_body(s))
@@ -1703,19 +1723,18 @@ class Interpreter:
         style = "ascii" if display == "ascii" else self.zx_style
         try:
             drawing = zxdraw.draw(zxview.view(s), style)
-        except zxview.ZXViewError as exc:
+        except (zxview.ZXViewError, zxsym.Unsupported) as exc:
             return f"  no ZX form ({exc})"
         if drawing.startswith("\x1b"):
             return drawing
         return "\n".join("  " + line for line in drawing.splitlines())
 
     @staticmethod
-    def _zx_body(s: P.State, limited: bool = True) -> str:
-        """The ZX listing of ``s`` indented by two spaces, or ``no ZX form (reason)``; without
-        ``limited`` the dense fallback is uncapped."""
+    def _zx_body(s: P.State | P.Mixed) -> str:
+        """The ZX listing of ``s`` indented by two spaces, or ``no ZX form (reason)``."""
         try:
-            body = zxview.listing(s, limited)
-        except zxview.ZXViewError as exc:
+            body = zxview.listing(s)
+        except (zxview.ZXViewError, zxsym.Unsupported) as exc:
             return f"  no ZX form ({exc})"
         return "\n".join("  " + line for line in body.splitlines())
 
@@ -1726,6 +1745,10 @@ class Interpreter:
                 s = self.states[name]
                 self._check_dim(name, self._dim(node.dim, Ctx()))
                 kind = "bra" if node.bra else "ket"
+                if isinstance(s, P.Mixed):
+                    if node.bra:
+                        raise LangTypeError(f"|{name}> is a density matrix; it has no bra")
+                    return [(self._label(kind, name), s)]
                 return [(self._label(kind, name), P.dagger(s) if node.bra else s)]
         if isinstance(node, Name):
             n = node.id
@@ -1744,6 +1767,10 @@ class Interpreter:
 
     def _assign_state(self, head: Tok, rest: list[Tok]) -> None:
         name = head.text.strip()
+        if re.fullmatch(r"\d+`?|`", name):
+            raise LangSyntaxError(
+                f"|{name}> is a literal ket, not a name; a state name starts with a letter or _"
+            )
         self._check_name(name, "state")
         p = self._parser(rest)
         if p.done():
@@ -1751,6 +1778,14 @@ class Interpreter:
         value = self._eval(p.expr(), Ctx())
         if not p.done():
             raise LangSyntaxError(f"unexpected {p.peek().text!r}")  # type: ignore[union-attr]
+        if isinstance(value, P.Operator) and head.kind == "ket":
+            density = P.density_of(value)
+            if density is not None:
+                value = density
+        if isinstance(value, P.Mixed) and head.kind == "ket" and head.dim is None:
+            self.states[name] = value
+            self.last = Echo(self._label("ket", name), "density", value)
+            return
         if not isinstance(value, P.State):
             raise LangTypeError(
                 f"{'<' + name + '|' if head.kind == 'bra' else '|' + name + '>'} "
@@ -1776,22 +1811,33 @@ class Interpreter:
             got = "mixed dimensions" if have is None else f"dimension {have}"
             raise LangTypeError(f"cannot assign a state of {got} to |{name}>_{dim}")
         value = _flex(value, ())
-        state = P.dagger(value) if want_bra else value
-        self.states[name] = P.simplify(state)
-        shown = P.dagger(self.states[name]) if want_bra else self.states[name]
+        state = P.simplify(P.dagger(value) if want_bra else value)
+        self.states[name] = state
+        shown = P.dagger(state) if want_bra else state
         self.last = Echo(self._label(head.kind, name), head.kind, shown)
 
     @staticmethod
     def _kind(v: object) -> str:
         if isinstance(v, P.State):
             return "a bra" if v.bra else "a ket"
+        if isinstance(v, P.Mixed):
+            return "a density matrix"
         if isinstance(v, P.Operator):
             return "an operator"
+        if isinstance(v, P.Distribution):
+            return "a measured distribution"
         return "a scalar"
 
     def _scalar(self, v: object, where: str) -> sympy.Expr:
         if isinstance(v, sympy.Basic):
             return v
+        if isinstance(v, P.Distribution):
+            value = P.certain(v)
+            if value is not None:
+                return value
+            raise LangTypeError(
+                f"{where} must be a scalar, got a measured distribution with several outcomes"
+            )
         raise LangTypeError(f"{where} must be a scalar, got {self._kind(v)}")
 
     def _eval(self, node: object, ctx: Ctx) -> object:
@@ -1807,22 +1853,32 @@ class Interpreter:
             return self._name(node.id, ctx)
         if isinstance(node, Call) and node.name in _SPECIAL:
             return self._special(node, ctx)
+        if isinstance(node, Call) and node.name == "normalise":
+            return self._normalise(node, ctx)
+        if isinstance(node, MeasureNode):
+            return self._measure(node.target)
         if isinstance(node, Call):
-            args = [
-                self._scalar(self._eval_node(a, ctx), f"an argument of {node.name}")
-                for a in node.args
-            ]
             fn = _FUNCS.get(node.name) or self.funcs[node.name]
-            try:
-                return fn(*args)
-            except (TypeError, ValueError) as exc:
-                raise LangTypeError(f"{node.name}: {exc}") from exc
+
+            def call(*args: object) -> object:
+                vals = [self._scalar(a, f"an argument of {node.name}") for a in args]
+                try:
+                    return fn(*vals)
+                except (TypeError, ValueError) as exc:
+                    raise LangTypeError(f"{node.name}: {exc}") from exc
+
+            return self._lift(call, [self._eval_node(a, ctx) for a in node.args])
         if isinstance(node, Neg):
-            return self._mul(sympy.Integer(-1), self._eval_node(node.arg, ctx))
+            return self._lift(
+                lambda v: self._mul(sympy.Integer(-1), v), [self._eval_node(node.arg, ctx)]
+            )
         if isinstance(node, (Str, Fstr)):
             raise LangTypeError("a string can only be printed")
         if isinstance(node, Not):
-            return sympy.Not(_boolean(self._scalar(self._eval_node(node.arg, ctx), "not")))
+            return self._lift(
+                lambda v: sympy.Not(_boolean(self._scalar(v, "not"))),
+                [self._eval_node(node.arg, ctx)],
+            )
         if isinstance(node, Braket):
             return self._braket(node, ctx)
         if isinstance(node, SumNode):
@@ -1839,12 +1895,34 @@ class Interpreter:
             )
         raise LangSyntaxError(f"cannot evaluate {node!r}")
 
+    def _lift(self, fn: Callable[..., object], args: list[object]) -> object:
+        """``fn(*args)``, mapped over the outcomes of the one argument that is a measured
+        distribution; a certain distribution counts as its value."""
+        args = [
+            P.certain(a) if isinstance(a, P.Distribution) and P.certain(a) is not None else a
+            for a in args
+        ]
+        dists = [k for k, a in enumerate(args) if isinstance(a, P.Distribution)]
+        if not dists:
+            return fn(*args)
+        if len(dists) > 1:
+            raise LangTypeError(
+                "cannot combine two measured distributions; their joint distribution is unknown"
+            )
+        k = dists[0]
+
+        def one(x: sympy.Expr) -> sympy.Expr:
+            out = fn(*args[:k], x, *args[k + 1 :])
+            return self._scalar(out, "a function of a measured outcome")
+
+        return P.map_outcomes(args[k], one)  # type: ignore[arg-type]
+
     def _name(self, name: str, ctx: Ctx) -> object:
         if name in ctx.locals:
             return ctx.locals[name].value
         if name in self.values:
             v = self.values[name]
-            if isinstance(v, (Bits, bool)):
+            if isinstance(v, bool):
                 return sympy.Integer(int(v))
             return v
         if name in _CONSTANTS:
@@ -1859,17 +1937,28 @@ class Interpreter:
             raise LangTypeError(f"{name} is a list; only show and print take lists")
         raise LangError(f"{name!r} is not defined; declare it with var")
 
-    def _braket(self, node: Braket, ctx: Ctx) -> P.State:
+    def _braket(self, node: Braket, ctx: Ctx) -> P.State | P.Mixed:
         content = node.content.strip()
         dim = self._dim(node.dim, ctx)
         if _IDENT.fullmatch(content) and content in self.states and content not in ctx.locals:
             self._check_dim(content, dim)
             s = self.states[content]
+            if isinstance(s, P.Mixed):
+                if node.bra:
+                    raise LangTypeError(f"|{content}> is a density matrix; it has no bra")
+                return s
         elif content in _NAMED_STATES and not (content == "i" and "i" in ctx.locals):
             if dim is not None and not P.same(dim, 2):
                 raise LangTypeError(f"|{content}> is a qubit state")
             one = P.scale(_NAMED_STATES[content], P.basis(1, 1))
             s = P.scale(1 / sympy.sqrt(2), P.add(P.basis(0, 1), one))
+        elif _DIGIT_STRING.fullmatch(content):
+            if content == "`":
+                raise LangSyntaxError("|`> is not a ket; write digits before the `, e.g. |01`>")
+            digit_kets = [self._basis(c, ctx, dim) for c in content[:-1]]
+            s = digit_kets[0]
+            for part in digit_kets[1:]:
+                s = _flex(P.tensor(s, part), _flags(s) + _flags(part))
         else:
             if not content:
                 raise LangSyntaxError("an empty ket")
@@ -1932,12 +2021,25 @@ class Interpreter:
             return sympy.Sum(body, (b.symbol, lo, hi)).doit()
         raise LangTypeError("a sum body must be a state or a scalar")
 
+    def _mixed_binary(self, op: str, a: object, b: object) -> object:
+        """``+ - * /`` on density matrices: sums of equal layouts and scalar multiples."""
+        if op in ("+", "-") and isinstance(a, P.Mixed) and isinstance(b, P.Mixed):
+            other = b.vec if op == "+" else P.scale(sympy.Integer(-1), b.vec)
+            return P.Mixed(P.simplify(P.add(a.vec, other)))
+        if op == "*":
+            return self._mul(a, b)
+        if op == "/" and isinstance(b, sympy.Basic):
+            return self._mul(a, 1 / b)
+        raise LangTypeError(f"{op} on {self._kind(a)} and {self._kind(b)} is not defined")
+
     def _mul(self, a: object, b: object) -> object:
         if isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic):
             return a * b
         if isinstance(a, sympy.Basic):
             a, b = b, a
         if isinstance(b, sympy.Basic):
+            if isinstance(a, P.Mixed):
+                return P.Mixed(P.scale(b, a.vec))
             if isinstance(a, P.State):
                 return _flex(P.scale(b, a), _flags(a))
             if isinstance(a, P.Operator):
@@ -1945,8 +2047,16 @@ class Interpreter:
         raise LangTypeError(f"cannot multiply {self._kind(a)} by {self._kind(b)}")
 
     def _juxt(self, a: object, b: object) -> object:
+        if isinstance(a, P.Distribution) or isinstance(b, P.Distribution):
+            return self._lift(self._juxt, [a, b])
         if isinstance(a, sympy.Basic) or isinstance(b, sympy.Basic):
             return self._mul(a, b)
+        if isinstance(b, P.Mixed):
+            if not isinstance(a, P.Operator):
+                raise LangTypeError(f"cannot apply {self._kind(a)} to a density matrix")
+            return P.apply_mixed(a, b)
+        if isinstance(a, P.Mixed):
+            raise LangTypeError("a density matrix is acted on from the left: U|rho>")
         if isinstance(a, P.Operator) and isinstance(b, P.State):
             if b.bra:
                 raise LangTypeError("an operator applies to a ket; write U|psi>")
@@ -1998,6 +2108,24 @@ class Interpreter:
                 s = _promote(s, k, d)
         return s
 
+    def _normalise(self, node: Call, ctx: Ctx) -> P.State:
+        """``normalise(s)``: the state ``s`` divided by its norm."""
+        if len(node.args) != 1:
+            raise LangTypeError("usage: normalise(STATE)")
+        s = self._eval_node(node.args[0], ctx)
+        if isinstance(s, P.Mixed):
+            tr = P.tidy(P.trace(s))
+            if tr == 0:
+                raise LangTypeError("cannot normalise the zero matrix")
+            return P.Mixed(P.simplify(P.scale(1 / tr, s.vec)))  # type: ignore[return-value]
+        if not isinstance(s, P.State):
+            raise LangTypeError(f"normalise takes a state, got {self._kind(s)}")
+        ket = P.dagger(s) if s.bra else s
+        norm = P.tidy(sympy.sqrt(P.inner(P.dagger(ket), ket)))
+        if norm == 0:
+            raise LangTypeError("cannot normalise the zero vector")
+        return _flex(P.simplify(P.scale(1 / norm, s)), _flags(s))
+
     def _special(self, node: Call, ctx: Ctx) -> sympy.Expr:
         args = [
             self._scalar(self._eval_node(a, ctx), f"an argument of {node.name}") for a in node.args
@@ -2023,6 +2151,10 @@ class Interpreter:
         return sympy.Symbol(text, integer=True, positive=True)
 
     def _binary(self, op: str, a: object, b: object) -> object:
+        if isinstance(a, P.Distribution) or isinstance(b, P.Distribution):
+            return self._lift(lambda x, y: self._binary(op, x, y), [a, b])
+        if isinstance(a, P.Mixed) or isinstance(b, P.Mixed):
+            return self._mixed_binary(op, a, b)
         scalars = isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic)
         if op in _COMPARE or op in ("and", "or"):
             if not scalars:
@@ -2185,13 +2317,14 @@ def _split(index: int, levels: Sequence[int]) -> tuple[sympy.Integer, ...]:
 
 
 def _plain(v: object, source: str) -> str:
-    """A concrete value as plain text: true/false, integers, fractions or decimals."""
+    """A concrete value as plain text: true/false, integers, fractions or decimals; a measured
+    distribution as its outcome list."""
     if isinstance(v, D.Text):
         return v.text
+    if isinstance(v, P.Distribution):
+        return D.Renderer("unicode").value(v)
     if isinstance(v, (bool, sympy.logic.boolalg.BooleanAtom)):
         return "true" if v else "false"
-    if isinstance(v, Bits):
-        return str(int(v))
     if isinstance(v, sympy.Basic) and v.is_number:
         if v.is_Rational:
             return str(v)
@@ -2216,8 +2349,8 @@ def _python(v: object, source: str) -> object:
     """A concrete value as a Python bool, int, float or complex."""
     if isinstance(v, (bool, sympy.logic.boolalg.BooleanAtom)):
         return bool(v)
-    if isinstance(v, Bits):
-        return int(v)
+    if isinstance(v, P.Distribution) and P.certain(v) is not None:
+        v = P.certain(v)
     if isinstance(v, sympy.Basic) and v.is_number:
         if v.is_Integer:
             return int(v)
