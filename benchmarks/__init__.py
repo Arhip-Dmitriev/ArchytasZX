@@ -19,6 +19,7 @@
     python -m benchmarks run -j 8 --timeout 60 --quick
     python -m benchmarks plot               # replot from benchmarks/results/algorithms.json
 
-Each case runs in its own worker process under a wall-clock and memory cap; its status is one
-of :data:`harness.STATUSES`. Results go to ``benchmarks/results/``, plots to ``benchmarks/plots/``.
+Each run is a fresh worker process under a CPU-time and resident-memory cap, in interleaved
+passes over every case; a case's status is one of :data:`harness.STATUSES`. Results go to
+``benchmarks/results/``, plots to ``benchmarks/plots/``.
 """
