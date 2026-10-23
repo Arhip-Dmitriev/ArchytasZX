@@ -394,8 +394,6 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   [doi:10.1007/978-3-030-79876-5_37](https://doi.org/10.1007/978-3-030-79876-5_37)
 - The mathlib Community, *The Lean mathematical library*, CPP 2020 —
   [arXiv:1910.09336](https://arxiv.org/abs/1910.09336)
-- Lehmann, Caldwell, Shah, Spencer & Rand, *VyZX: formal verification of a graphical quantum
-  language* — [arXiv:2311.11571](https://arxiv.org/abs/2311.11571)
 
 **Algorithms in the examples**
 - Deutsch & Jozsa, *Rapid solution of problems by quantum computation*, Proc. R. Soc. A 439 (1992) —
@@ -409,8 +407,7 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
 
 **Software**
 - Kissinger & van de Wetering, *PyZX*, EPTCS 318 (2020) — [arXiv:1904.04735](https://arxiv.org/abs/1904.04735)
-- Kissinger & Zamdzhiev, *Quantomatic*, CADE-25 (2015) — [arXiv:1503.01034](https://arxiv.org/abs/1503.01034)
-- de Felice, Toumi & Coecke, *DisCoPy*, EPTCS 333 (2021) — [arXiv:2005.02975](https://arxiv.org/abs/2005.02975)
+- Javadi-Abhari et al., *Quantum computing with Qiskit* (2024) — [arXiv:2405.08810](https://arxiv.org/abs/2405.08810)
 - Harris et al., *Array programming with NumPy*, Nature 585 (2020) —
   [doi:10.1038/s41586-020-2649-2](https://doi.org/10.1038/s41586-020-2649-2)
 - Meurer et al., *SymPy*, PeerJ Comput. Sci. 3 (2017) — [doi:10.7717/peerj-cs.103](https://doi.org/10.7717/peerj-cs.103)
