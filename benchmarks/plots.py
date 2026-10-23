@@ -31,27 +31,17 @@ from matplotlib.lines import Line2D
 
 from benchmarks.harness import PLOTS, load
 
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK_2 = "#52514e"
-MUTED = "#8a8984"
-GRID = "#e4e3df"
+SURFACE = "#ffffff"
+INK = "#000000"
+INK_2 = "#333333"
+GRID = "#d9d9d9"
 TOOL_STYLE = {
-    "archytaszx": ("#2a78d6", "o", "ArchytasZX (light to dark: d = 2 to 16)"),
-    "qiskit": ("#eb6834", "s", "Qiskit (d = 2 only)"),
-    "pyzx": ("#1baf7a", "^", "PyZX (d = 2 only)"),
+    "archytaszx": ("#0072b2", "o", "-", "ArchytasZX (light to dark: d = 2 to 16)"),
+    "qiskit": ("#d55e00", "s", "-", "Qiskit (d = 2 only)"),
+    "pyzx": ("#009e73", "^", "-", "PyZX (d = 2 only)"),
 }
 BLUE_RAMP = [
-    "#86b6ef",
-    "#6da7ec",
-    "#5598e7",
-    "#3987e5",
-    "#2a78d6",
-    "#256abf",
-    "#1c5cab",
-    "#184f95",
-    "#104281",
-    "#0d366b",
+    matplotlib.colors.to_hex(matplotlib.colormaps["Blues"](0.6 + 0.4 * i / 9)) for i in range(10)
 ]
 FIG_WIDTH = 17.5
 ASPECT_W, ASPECT_H = 3.0, 2.0
@@ -69,14 +59,22 @@ plt.rcParams.update(
         "savefig.facecolor": SURFACE,
         "axes.labelcolor": INK_2,
         "axes.titlecolor": INK,
-        "axes.titlesize": 14,
+        "axes.titlesize": 15,
         "axes.titleweight": "bold",
+        "axes.labelsize": 12.5,
         "xtick.color": INK_2,
         "ytick.color": INK_2,
-        "font.size": 11,
+        "xtick.labelsize": 11.5,
+        "ytick.labelsize": 11.5,
+        "font.family": "DejaVu Sans",
+        "font.size": 12,
         "legend.frameon": False,
-        "lines.linewidth": 1.8,
-        "lines.markersize": 4,
+        "legend.fontsize": 12.5,
+        "lines.linewidth": 2.0,
+        "lines.markersize": 4.5,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
     }
 )
 
@@ -109,7 +107,7 @@ def plot_algorithms() -> list[Path]:
         for (tool, d), rs in sorted(
             lines.items(), key=lambda kv: (list(TOOL_STYLE).index(kv[0][0]), kv[0][1])
         ):
-            color, marker, _ = TOOL_STYLE[tool]
+            color, marker, linestyle, _ = TOOL_STYLE[tool]
             if tool == "archytaszx":
                 color = BLUE_RAMP[round(ds.index(d) * (len(BLUE_RAMP) - 1) / max(1, len(ds) - 1))]
             y = ds.index(d)
@@ -122,6 +120,7 @@ def plot_algorithms() -> list[Path]:
                 [math.log10(r["time"]) for r in done],
                 color=color,
                 marker=marker,
+                linestyle=linestyle,
                 markeredgecolor=SURFACE,
                 markeredgewidth=0.6,
             )
@@ -132,7 +131,8 @@ def plot_algorithms() -> list[Path]:
                 [cap] * len(failed),
                 color=color,
                 marker="x",
-                s=22,
+                s=30,
+                linewidths=1.6,
                 depthshade=False,
             )
         xt = [t for t in _log_ticks(math.log10(ns[0]), math.log10(ns[-1])) if 10**t >= ns[0]]
@@ -154,7 +154,8 @@ def plot_algorithms() -> list[Path]:
             axis.pane.set_edgecolor(GRID)
             axis._axinfo["grid"]["color"] = GRID
     handles = [
-        Line2D([], [], color=c, marker=m, label=label) for c, m, label in TOOL_STYLE.values()
+        Line2D([], [], color=c, marker=m, linestyle=ls, label=label)
+        for c, m, ls, label in TOOL_STYLE.values()
     ]
     handles.append(
         Line2D(
@@ -165,15 +166,17 @@ def plot_algorithms() -> list[Path]:
     fig.suptitle(
         "Algorithm output: time over qudit count n and dimension d (all concrete)",
         y=0.99,
-        fontsize=12.5,
+        fontsize=15,
         fontweight="bold",
         color=INK,
     )
     PLOTS.mkdir(exist_ok=True)
     path = PLOTS / "algorithms_n_d.png"
-    fig.savefig(path, dpi=160)
+    fig.savefig(path, dpi=300)
+    pdf = path.with_suffix(".pdf")
+    fig.savefig(pdf)
     plt.close(fig)
-    return [path]
+    return [path, pdf]
 
 
 def plot(suite: str) -> list[Path]:
