@@ -1,9 +1,7 @@
 0.21.? -> 1.1.1
  - run phases 20 & 21
- - make wonderful readme
- - make examples with commented tutorial like code style and awesome output formatting
- - what are our docs
  - benchmarking
+ - example set
 
 Right after QuRise:
 - Preprint
