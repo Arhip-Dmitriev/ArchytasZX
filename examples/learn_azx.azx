@@ -1,0 +1,161 @@
+# A guided tour of the .azx language, ending in Deutsch-Jozsa for a symbolic number of qubits.
+# Run:  archytaszx examples/learn_azx.azx
+#
+# '#' starts a comment. Statements end at a newline or ';'. A trailing '\' joins two lines.
+
+
+# ---- 1. Variables -------------------------------------------------------------------------
+# 'var' declares a name. Without a value it is a symbol; the default type is nat.
+var a = 3
+var b = a^2 + 1                 # ^ is power (right associative)
+var t: real                     # types: nat int real complex
+var n, d                        # several symbols at once
+var b = b + 1                   # reassignment also uses 'var'
+show(a, b, t)                   # show prints values; a symbol shows as "(symbolic)"
+print(f"a = {a}, b = {b}")      # print takes text; f-strings splice values in {}
+
+# assume adds a fact about symbols. assert reports an error (and exit code 1) unless the
+# condition is true; a symbolic condition that cannot be decided also counts as an error.
+assume n > 0
+assert b == 11
+
+
+# ---- 2. Arithmetic and built-in functions -------------------------------------------------
+# + - * / % ^, comparisons == != < <= > >=, logic and or not, and xor on integers.
+show(7 % 3, 5 xor 3, floor(7/2), sqrt(8), gcd(12, 18), bit(6, 1), powmod(3, 4, 5))
+# constants: pi, e, i (so e and i cannot be reused as names)
+show(e^(i*pi))
+# Sums: a..b excludes b, a..=b includes it.
+show(sum(k in 0..4){ k }, sum(k in 0..=4){ k })
+
+# func defines a function of integers.
+func sq(x) = x * x
+show(sq(5))
+
+
+# ---- 3. Kets and bras ---------------------------------------------------------------------
+# |name> = ... names a state; <name| is then its conjugate transpose automatically.
+|p> = |0> + |1>                 # literal kets, unnormalised
+show(|p>, normalise(|p>))
+|v> = |2>_3                     # _3 fixes the dimension (a qutrit); unsuffixed = smallest fit
+|q> = |010`>                    # a trailing ` makes a digit string: |0> @ |1> @ |0>
+|amp> = [1/sqrt(2), -1/sqrt(2)] # a state from its amplitude vector
+show(|v>, |q>, |amp>)
+show(|+>, |->, |i>, |-i>)       # built-in states
+
+# Juxtaposition (writing things next to each other) means apply, multiply or pair up:
+show(<+|->, <0|+>)              # inner products
+show(|0><1|)                    # outer product: an operator
+show(<amp|amp>)
+
+
+# ---- 4. Tensor products and symbolic sizes ------------------------------------------------
+# @ is the tensor product, ^@n the tensor power. n can stay symbolic.
+|pair> = |0> @ |1>
+|zeros> = |0>^@n                # n qubits, n unknown
+show(|pair>, |zeros>)
+# Precedence, loosest first: xor; + -; @; juxtaposition; * / %; unary -; ^ and ^@.
+# So  U |a> @ |b>  is  (U |a>) @ |b>;  write  U (|a> @ |b>)  to feed U both.
+
+# |name>_d states live in dimension d; d can be symbolic too.
+|bell_d>_d = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }
+show(|bell_d>, <bell_d|bell_d>)
+
+
+# ---- 5. Gates -----------------------------------------------------------------------------
+# Built in: H X Y Z S T CNOT SWAP on qubits, and I (identity).
+|c> = H |0>
+show(|c>)
+|bell> = CNOT (H @ I) |0>|0>    # juxtaposition groups from the right: CNOT((H@I)(|0>|0>))
+show(|bell>)
+|plus_n> = H^@n |0>^@n          # a gate's tensor power acts on n registers at once
+show(|plus_n>)
+
+# A gate can be a basis map: each input pattern goes to an output expression.
+func f(x) = bit(x, 0)
+gate U_f = |x>|y> -> |x>|y xor f(x)>
+# or a sum over a symbolic dimension:
+gate QFT = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+show(QFT |0>_d)
+# or an explicit matrix:
+gate NOT = [[0, 1], [1, 0]]
+show(NOT |0>)
+
+# A bare 'GATE |name>' statement applies the gate to the named state in place.
+X |c>
+show(|c>)
+
+
+# ---- 6. Lists and control flow ------------------------------------------------------------
+list L = {|p>, a, <v|}
+show(L)
+
+var s = 0
+for j in 0..4 {
+  var s = s + j
+}
+var k = 0
+while k < 3 { var k = k + 1 }
+if s == 6 and k == 3 {
+  print("loops done")
+} else {
+  print("something is off")
+}
+
+
+# ---- 7. Measurement -----------------------------------------------------------------------
+# measure gives the Born distribution [(outcome, probability), ...], derived symbolically.
+# Afterwards the state is the mixture of its outcomes (a density matrix).
+|coin> = H |0>
+var m = measure|coin>
+show(m, |coin>)
+# measure is an expression: functions apply to every outcome.
+|two> = H |0> @ |1>
+var top = floor(measure|two> / 2)
+show(top)
+
+
+# ---- 8. Deutsch-Jozsa for n qubits, n symbolic --------------------------------------------
+# f : {0,1}^n -> {0,1} is promised constant or balanced. One query of
+#   U_f |x>|y> = |x>|y xor f(x)>
+# inside H^@n ... H^@n decides which: the first register reads all zeros iff f is constant.
+
+func f_zero(x) = 0              # constant
+func f_one(x) = 1               # constant
+func f_bal(x) = bit(x, 0)       # balanced: the lowest bit of x
+gate O_zero = |x>|y> -> |x>|y xor f_zero(x)>
+gate O_one = |x>|y> -> |x>|y xor f_one(x)>
+gate O_bal = |x>|y> -> |x>|y xor f_bal(x)>
+
+# The circuit, step by step for the balanced oracle.
+|psi> = |0>^@n @ |1>
+show(|psi>)
+(H^@n @ H) |psi>
+show(|psi>)
+O_bal |psi>
+show(|psi>)
+(H^@n @ I) |psi>
+show(|psi>)
+
+# The same circuit in one line for each oracle.
+|out_zero> = (H^@n @ I) O_zero (H^@n @ H) (|0>^@n @ |1>)
+|out_one> = (H^@n @ I) O_one (H^@n @ H) (|0>^@n @ |1>)
+|out_bal> = (H^@n @ I) O_bal (H^@n @ H) (|0>^@n @ |1>)
+
+# Proof for every n: the amplitude of |0...0>|-> is +-1 for a constant f and 0 for a balanced f.
+|target> = |0>^@n @ |->
+var a_zero = <target|out_zero>
+var a_one = <target|out_one>
+var a_bal = <target|out_bal>
+show(a_zero, a_one, a_bal)
+assert abs(a_zero) == 1
+assert abs(a_one) == 1
+assert a_bal == 0
+
+# Measuring the first register: 0 means constant, anything else means balanced.
+# The outcome of the n+1 qubits is 2x + y; floor(./2) keeps x.
+var x_zero = floor(measure|out_zero> / 2)
+var x_one = floor(measure|out_one> / 2)
+var x_bal = floor(measure|out_bal> / 2)
+show(x_zero, x_one, x_bal)
+print("Deutsch-Jozsa: one query separates constant from balanced, for every n")

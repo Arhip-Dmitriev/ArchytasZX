@@ -1,0 +1,7 @@
+# Deutsch-Jozsa over Z_d^n, constant oracle: the data register F^@n, F^dag^@n (= F^3) maps |0>^n back to |0>^n, for every n and d.
+:load count n; c = X(0 -> 1, d); box q x n nodes c
+:name zeros
+:load count n; s = X(0 -> 1, d); f1 = F(1 -> 1, d); f2 = F(1 -> 1, d); f3 = F(1 -> 1, d); f4 = F(1 -> 1, d); wire s.out0 -- f1.in0; wire f1.out0 -- f2.in0; wire f2.out0 -- f3.in0; wire f3.out0 -- f4.in0; box p x n nodes s, f1, f2, f3, f4
+:prove against @zeros
+:certificate kernel
+:certificate lean deutsch_jozsa_constant.lean

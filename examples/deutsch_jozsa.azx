@@ -9,3 +9,5 @@ show(|psi>)
 (H^@n @ I)|psi>
 show(|psi>)
 var z = floor(measure|psi>/2)
+show(z)
+show(|psi>)

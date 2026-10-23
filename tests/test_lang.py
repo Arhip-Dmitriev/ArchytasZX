@@ -484,12 +484,35 @@ class TestShellLanguage:
         assert out.getvalue() == "|a> = |1>\n"
 
 
-SHOR_SCRIPT = Path(__file__).resolve().parent.parent / "examples" / "shor.azx"
+SHOR_SOURCE = """\
+var N, a
+var m = bitlen(N)
+var n = 2*m
+var Q = 2^n
+
+gate U_f = |x>|y> -> |x>|y xor powmod(a, x, N)>
+gate IQFT = |x> -> 1/sqrt(Q) sum(k in 0..Q){ e^(-2*pi*i*x*k/Q) |k> }
+
+|psi> = |0>^@n @ |0>^@m
+|psi> = (H^@n @ I) |psi>
+|psi> = U_f |psi>
+|psi> = (IQFT @ I) |psi>
+show(|psi>)
+
+var z = measure|psi>
+var r = denom(floor(z / 2^m) / Q, N)
+var h = powmod(a, r/2, N)
+var p = gcd(h - 1, N)
+var q = N / p
+show(r, p, q)
+"""
 
 
 class TestShorsScript:
-    def test_symbolic(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert main([str(SHOR_SCRIPT), "--ascii"]) == 0
+    def test_symbolic(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        script = tmp_path / "shor.azx"
+        script.write_text(SHOR_SOURCE)
+        assert main([str(script), "--ascii"]) == 0
         out = capsys.readouterr().out.splitlines()
         assert out[0] == (
             "|psi> = 1/Q sum(x in 0..Q, k in 0..Q){ e^(-2*pi*i*k*x/Q) |k> @ |a^x % N> }"
@@ -498,7 +521,7 @@ class TestShorsScript:
         assert out[2].startswith("p = [(gcd(a^(denom(") and out[3].startswith("q = [(N/gcd(")
 
     def test_numeric(self) -> None:
-        source = SHOR_SCRIPT.read_text().replace("var N, a ", "var N = 15, a = 7 ", 1)
+        source = SHOR_SOURCE.replace("var N, a\n", "var N = 15, a = 7\n", 1)
         interp, out = run(source, seed=0)
         lines = out.splitlines()
         assert lines[1].startswith("r = [(denom(k0/256, 15), ")
