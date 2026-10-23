@@ -20,7 +20,7 @@ name = "ArchytasZX"
 version = "0.19.7"
 description = "Size-agnostic quantum algorithm development: symbolic qufinite ZX-calculus for any qudit count and dimension, with proofs checked in Lean"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Arkhip Alekseyevich Dmitriev" }]
 # Kept in sync with CITATION.cff.
@@ -43,6 +43,8 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Environment :: Console",
@@ -120,6 +122,7 @@ extend-select = ["E501"]
 # E501 (line-too-long) is not in ruff's default select set (line length is usually left to
 # a formatter), which is how a declared line-length of 100 sat unenforced. Extending, not
 # replacing, the default select set, so no other rule category's behavior changes.
+extend-ignore = ["UP040", "UP046", "UP047"]
 
 [tool.mypy]
 python_version = "3.12"

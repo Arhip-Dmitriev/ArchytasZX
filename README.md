@@ -5,7 +5,7 @@ for `n` qudits of dimension `d`, and get its states, measurement statistics and 
 identities as closed forms that hold for every `n` and every `d` at once.
 
 [![PyPI](https://img.shields.io/pypi/v/archytaszx.svg)](https://pypi.org/project/archytaszx/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/LICENSE)
 [![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt)
 [![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
@@ -68,7 +68,7 @@ out as a Lean 4 file.
 
 ## Install
 
-Python ≥ 3.11. `numpy` and `sympy` are the only runtime dependencies. With `matplotlib`
+Python ≥ 3.12. `numpy` and `sympy` are the only runtime dependencies. With `matplotlib`
 installed, output is typeset and ZX diagrams are drawn as images in terminals that show them;
 without it, both fall back to Unicode text.
 

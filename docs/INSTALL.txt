@@ -11,7 +11,7 @@ Applies to: ArchytasZX 0.19.x
 
   Component     Requirement
   ------------  -------------------------------------------------------------------------
-  Python        3.11 or later.
+  Python        3.12 or later.
   Required      numpy, sympy (installed automatically).
   Optional      matplotlib, for typeset output and drawn ZX diagrams.
   Optional      Lean 4 (via elan) and Mathlib, to re-check exported proofs.
