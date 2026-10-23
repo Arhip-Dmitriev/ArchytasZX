@@ -18,7 +18,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ArchytasZX"
 version = "0.19.6"
-description = "A qufinite ZX-calculus engine with symbolic qudit count and dimension"
+description = "Size-agnostic quantum algorithm development: symbolic qufinite ZX-calculus for any qudit count and dimension, with proofs checked in Lean"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -34,6 +34,9 @@ keywords = [
     "quantum algorithms",
     "symbolic quantum",
     "graphical calculus",
+    "dirac notation",
+    "formal verification",
+    "lean",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -41,6 +44,9 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Framework :: Jupyter",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Quantum Computing",
@@ -53,12 +59,16 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/Arhip-Dmitriev/ArchytasZX"
 Repository = "https://github.com/Arhip-Dmitriev/ArchytasZX"
+Documentation = "https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/TUTORIAL.md"
 Issues = "https://github.com/Arhip-Dmitriev/ArchytasZX/issues"
 
 [project.scripts]
 archytaszx = "archytaszx.repl.shell:main"
 
 [project.optional-dependencies]
+viz = [
+    "matplotlib",
+]
 dev = [
     "pytest",
     "pytest-xdist",

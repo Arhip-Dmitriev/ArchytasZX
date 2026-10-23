@@ -21,11 +21,13 @@ authors:
 repository-code: "https://github.com/Arhip-Dmitriev/ArchytasZX"
 url: "https://github.com/Arhip-Dmitriev/ArchytasZX"
 abstract: >-
-  A qufinite ZX-calculus engine for reasoning about quantum states with support
-  for symbolic qudit count and dimension. Supports diagram rewriting with bang
-  boxes and per-port dimensions, an exact scalar accumulator, symbolic and
-  numeric contraction oracles, proof by induction over a symbolic multiplicity,
-  and replayable certificates.
+  A symbolic engine for developing quantum algorithms without fixing the qudit
+  count or dimension, built on the qufinite ZX(W)-calculus with its own Dirac
+  notation language. States, Born distributions and proofs are derived as closed
+  forms by exact rewriting, never by simulation. Includes bang boxes and scalable
+  notation, a normal-form procedure, equality saturation, proof search,
+  induction over symbolic multiplicities, replayable certificates, a proof
+  kernel, and export of proofs and refutations to Lean 4 and Mathlib.
 keywords:
   - zx-calculus
   - qufinite
@@ -36,6 +38,9 @@ keywords:
   - quantum algorithms
   - symbolic quantum
   - graphical calculus
+  - dirac notation
+  - formal verification
+  - lean
 license: Apache-2.0
 version: 0.19.6
 date-released: "2026-10-22"
