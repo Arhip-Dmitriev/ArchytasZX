@@ -1,25 +1,9 @@
-0.19.7:
-  - we shouldnt have anything probabilistic, measure should collpase wave funciton, but kind of have both possile and return a probability distribution, no just one value.
-  - can we add the letters Z and X into the spiders on --zx output
-  - deutsch jozsa issue (should work as writen)
-  - --zxmatplot -> --zxrender, --mathtext -> --render
-  - DJ_alg2 also showcases the issue of some numerical limiting on n > 5, we dont want that. and why cant we represent it symbolically, since we do it in the backend
-  - The backend is fully symbolic, so the graph shouldnt change across values of n, even n left symbolic
-  - mathtext resolution too low
-  - normalise func
-  - bitwise states
-    - illegal to have a purely numeric or numeric + ' or ' state name.
-    - |000> = |0>, |000'> = |0>|0>|0> the ' is the differniator.
-  -instantiate states as density matrices
-
 0.21.? -> 1.1.1
  - run phases 20 & 21
  - make wonderful readme
  - make examples with commented tutorial like code style and awesome output formatting
- - proper set of citations
+ - what are our docs
  - benchmarking
- - pretty pictures
- - Spend all my claude credits on extreme debugging (verify lean)
 
 Right after QuRise:
 - Preprint
