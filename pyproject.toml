@@ -59,7 +59,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/Arhip-Dmitriev/ArchytasZX"
 Repository = "https://github.com/Arhip-Dmitriev/ArchytasZX"
-Documentation = "https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/TUTORIAL.md"
+Documentation = "https://github.com/Arhip-Dmitriev/ArchytasZX#quickstart"
 Issues = "https://github.com/Arhip-Dmitriev/ArchytasZX/issues"
 
 [project.scripts]
@@ -74,6 +74,12 @@ dev = [
     "pytest-xdist",
     "ruff",
     "mypy",
+]
+bench = [
+    "matplotlib",
+    "pyzx",
+    "mqt.qcec",
+    "qiskit",
 ]
 
 [tool.setuptools.packages.find]

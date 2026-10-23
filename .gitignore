@@ -44,3 +44,6 @@ playground.py
 
 # lean
 .lake/
+
+# benchmarks
+benchmarks/
