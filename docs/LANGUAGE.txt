@@ -75,7 +75,7 @@ The following names cannot be used as variable, function, gate or state names:
 
   Statements    var func gate list show print measure seed for while if assert assume
   Keywords      xor in and or not else sum matrix
-  Functions     sqrt exp abs floor ceil gcd min max bit powmod bitlen denom known ifelse
+  Functions     sqrt exp abs floor ceil gcd min max bit dot powmod bitlen denom known ifelse
                 cos sin tan log arg rand normalise
   Constants     pi e i
   Styles        render plot unicode ascii latex
@@ -545,6 +545,9 @@ which is never sampled.
   max(a, b)         maximum
   gcd(a, b)         greatest common divisor; unevaluated on symbolic arguments
   bit(x, j)         bit j of x, counted from the least significant bit
+  dot(x, y)         the number of bits set in both x and y; (-1)^dot(x, y) is a Pauli Z
+                    string
+  dot(x, y, d)      the sum of products of aligned base-d digits of x and y
   powmod(b, e, m)   b^e mod m, by modular exponentiation
   bitlen(N)         the number of bits of N; floor(log2 N) + 1 for symbolic N
   denom(x, N)       the denominator of the best rational approximation of x with

@@ -548,6 +548,53 @@ class TestControlFlow:
         )
         assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n){ |x> @ |a^x % N> }"
 
+    def test_guarded_rotation_loop_folds(self) -> None:
+        source = (
+            "var n, d, x\nvar M = d^n - 1\nfunc rot(y) = ifelse(y < M, (y*d) % M, y)\n"
+            "gate ROT = |y> -> |rot(y)>\n|z>_d = |0>_d^@n\n|s>_d = 0 |z> + |x>\n"
+            "for j in 0..n { |s> = ROT |s> }\nshow(|s>)"
+        )
+        assert run(source)[1] == "|s>_d = |x>_d"
+
+    def test_xor_loop_folds(self) -> None:
+        source = (
+            "var n, t\ngate CX = |c>|y> -> |c>|y xor c*2^j>\n|z> = |0>^@n\n"
+            "|s> = H|0> @ (0 |z> + |t>)\nfor j in 0..n { |s> = CX |s> }\nshow(|s>)"
+        )
+        assert run(source)[1] == "|s> = sqrt(2)/2 sum(y in 0..2){ |y> @ |(t xor y*(2^n - 1))> }"
+
+    def test_digit_phase_loop_folds(self) -> None:
+        source = (
+            "var n, d, x\nvar Q = d^n\n"
+            "gate QFT = |x>_d -> 1/sqrt(Q) sum(k in 0..Q){ e^(2*pi*i*x*k/Q) |k>_d }\n"
+            "gate IQFT = |x>_d -> 1/sqrt(Q) sum(k in 0..Q){ e^(-2*pi*i*x*k/Q) |k>_d }\n"
+            "gate P = |k> -> e^(2*pi*i*d^j*(floor(k/d^j) % d)/Q) |k>\n"
+            "|z>_d = |0>_d^@n\n|a>_d = 0 |z> + |x>\n|a> = QFT |a>\n"
+            "for j in 0..n { |a> = P |a> }\n|a> = IQFT |a>\nshow(|a>)"
+        )
+        assert run(source)[1] == "|a>_d = |(x + 1) % Q>_d"
+
+    def test_qudit_phase_kickback(self) -> None:
+        source = (
+            "var n, d, c\n" + FOURIER
+            + "gate Fd = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(-2*pi*i*x*y/d) |y>_d }\n"
+            "gate U_c = |x>|y>_d -> |x>|(y + c) % d>_d\n"
+            "gate U_b = |x>|y>_d -> |x>|(y + x) % d>_d\n|p>_d = |0>_d^@n @ |1>_d\n"
+            "|t>_d = |0>_d^@n @ Fd |1>_d\n"
+            "|q> = (Fd^@n @ I) U_c (F^@n @ Fd) |p>\n|r> = (Fd^@n @ I) U_b (F^@n @ Fd) |p>\n"
+            "show(<t|q>, <t|r>)"
+        )
+        assert run(source)[1] == "<t|q> = e^(2*pi*i*c/d)\n<t|r> = 0"
+
+    def test_bit_dot(self) -> None:
+        source = (
+            "var n, x, a, b\ngate XA = |y> -> |y xor a>\ngate ZB = |y> -> (-1)^dot(y, b) |y>\n"
+            "gate XB = |y> -> |y xor b>\ngate ZA = |y> -> (-1)^dot(y, a) |y>\n"
+            "|z> = |0>^@n\n|w> = 0 |z> + |x>\n|l> = H^@n XA ZB H^@n |w>\n|r> = ZA XB |w>\n"
+            "show(<r|l>, dot(6, 3), dot(5, 7, 3))"
+        )
+        assert run(source)[1] == "<r|l> = 1\ndot(6, 3) = 1\ndot(5, 7, 3) = 4"
+
     def test_teleport_loop_folds(self) -> None:
         source = (
             "var n, d, x\n|B>_d = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }\n"

@@ -1299,6 +1299,14 @@ def _geometric(amp: Expr, b: Bound, others: Sequence[Bound] = ()) -> Expr | None
     other = sympy.exp(2 * sympy.pi * sympy.I * expand(arg - coeff * sym))
     parts = sympy.Add.make_args(level)
     signs = [p.as_coeff_Mul() for p in parts]
+    for p, (c, u) in zip(parts, signs, strict=True):
+        partner = next((x for x in others if x.symbol == u and x.symbol != sym), None)
+        if partner is None or abs(c) != 1 or partner.lo != 0 or not same(partner.hi + 1, count):
+            continue
+        residue = expand(-c * (level - p))
+        if u in residue.free_symbols or not residue.is_integer:
+            continue
+        return rest * other * count * sympy.KroneckerDelta(u, sympy.Mod(residue, count))
     if not level.is_Integer and len(parts) <= 2 and all(abs(c) == 1 for c, _ in signs):
         pos = [x for c, x in signs if c == 1]
         neg = [x for c, x in signs if c == -1]
@@ -1316,14 +1324,6 @@ def _geometric(amp: Expr, b: Bound, others: Sequence[Bound] = ()) -> Expr | None
         return rest * other * count * sympy.KroneckerDelta(u, target)
     if level.is_Integer and count.is_Integer:
         return rest * other * (count if int(level) % int(count) == 0 else 0)
-    for p, (c, u) in zip(parts, signs, strict=True):
-        partner = next((x for x in others if x.symbol == u and x.symbol != sym), None)
-        if partner is None or abs(c) != 1 or partner.lo != 0 or not same(partner.hi + 1, count):
-            continue
-        residue = expand(-c * (level - p))
-        if u in residue.free_symbols or not residue.is_integer:
-            continue
-        return rest * other * count * sympy.KroneckerDelta(u, sympy.Mod(residue, count))
     return None
 
 
