@@ -53,6 +53,8 @@ BLUE_RAMP = [
     "#104281",
     "#0d366b",
 ]
+FIG_WIDTH = 17.5
+ASPECT_W, ASPECT_H = 3.0, 2.0
 TITLES = {
     "ghz": "GHZ",
     "dj": "Deutsch-Jozsa",
@@ -67,11 +69,11 @@ plt.rcParams.update(
         "savefig.facecolor": SURFACE,
         "axes.labelcolor": INK_2,
         "axes.titlecolor": INK,
-        "axes.titlesize": 11,
+        "axes.titlesize": 14,
         "axes.titleweight": "bold",
         "xtick.color": INK_2,
         "ytick.color": INK_2,
-        "font.size": 9,
+        "font.size": 11,
         "legend.frameon": False,
         "lines.linewidth": 1.8,
         "lines.markersize": 4,
@@ -95,7 +97,8 @@ def plot_algorithms() -> list[Path]:
     ds = sorted({r["d"] for r in rows})
     cols = 2 if len(algs) > 3 else len(algs)
     nrows = -(-len(algs) // cols)
-    fig = plt.figure(figsize=(6.2 * cols, 6.0 * nrows))
+    fig = plt.figure(figsize=(FIG_WIDTH, FIG_WIDTH * ASPECT_H / ASPECT_W))
+    fig.subplots_adjust(left=0.0, right=0.96, bottom=0.03, top=0.93, wspace=0.04, hspace=0.06)
     for k, alg in enumerate(algs):
         ax = fig.add_subplot(nrows, cols, k + 1, projection="3d")
         ax.set_facecolor(SURFACE)
@@ -143,8 +146,9 @@ def plot_algorithms() -> list[Path]:
         ax.set_xlabel("qudits n (log)")
         ax.set_ylabel("dimension d")
         ax.set_zlabel("CPU time (s, log)")
-        ax.set_title(TITLES[alg])
+        ax.set_title(TITLES[alg], y=0.96)
         ax.view_init(elev=22, azim=-58)
+        ax.set_box_aspect((2.1, 1.0, 0.85), zoom=1.3)
         for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
             axis.pane.set_facecolor(SURFACE)
             axis.pane.set_edgecolor(GRID)
@@ -157,17 +161,17 @@ def plot_algorithms() -> list[Path]:
             [], [], color=INK_2, marker="x", linestyle="none", label="did not finish (top plane)"
         )
     )
-    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.97))
+    fig.legend(handles=handles, loc="upper center", ncol=len(handles), bbox_to_anchor=(0.5, 0.955))
     fig.suptitle(
         "Algorithm output: time over qudit count n and dimension d (all concrete)",
-        y=1.0,
+        y=0.99,
         fontsize=12.5,
         fontweight="bold",
         color=INK,
     )
     PLOTS.mkdir(exist_ok=True)
     path = PLOTS / "algorithms_n_d.png"
-    fig.savefig(path, dpi=160, bbox_inches="tight")
+    fig.savefig(path, dpi=160)
     plt.close(fig)
     return [path]
 
