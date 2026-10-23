@@ -1,0 +1,208 @@
+ArchytasZX references
+=====================
+
+BibTeX for every entry is in REFERENCES.bib.
+
+
+Dirac notation and quantum foundations
+--------------------------------------
+
+[1]  P. A. M. Dirac. A new notation for quantum mechanics.
+     Mathematical Proceedings of the Cambridge Philosophical Society 35(3):416-418, 1939.
+     doi:10.1017/S0305004100021162
+
+[2]  M. Born. Zur Quantenmechanik der Stossvorgaenge.
+     Zeitschrift fuer Physik 37(12):863-867, 1926.
+     doi:10.1007/BF01397477
+
+[3]  M. A. Nielsen, I. L. Chuang. Quantum Computation and Quantum Information,
+     10th anniversary edition. Cambridge University Press, 2010.
+     doi:10.1017/CBO9780511976667
+
+[4]  D. Gottesman. Fault-tolerant quantum computation with higher-dimensional systems.
+     Chaos, Solitons & Fractals 10(10):1749-1758, 1999.
+     doi:10.1016/S0960-0779(98)00218-5, arXiv:quant-ph/9802007
+
+
+Diagrams, ZX-calculus, qudit and qufinite ZX/ZXW
+------------------------------------------------
+
+[5]  R. Penrose. Applications of negative dimensional tensors.
+     In D. J. A. Welsh (ed.), Combinatorial Mathematics and its Applications,
+     pp. 221-244. Academic Press, 1971.
+
+[6]  B. Coecke, R. Duncan. Interacting quantum observables.
+     ICALP 2008, LNCS 5126, pp. 298-310. Springer, 2008.
+     doi:10.1007/978-3-540-70583-3_25
+
+[7]  B. Coecke, R. Duncan. Interacting quantum observables: categorical algebra and
+     diagrammatics. New Journal of Physics 13:043016, 2011.
+     doi:10.1088/1367-2630/13/4/043016, arXiv:0906.4725
+
+[8]  B. Coecke, A. Kissinger. Picturing Quantum Processes: A First Course in Quantum
+     Theory and Diagrammatic Reasoning. Cambridge University Press, 2017.
+     doi:10.1017/9781316219317
+
+[9]  J. van de Wetering. ZX-calculus for the working quantum computer scientist, 2020.
+     arXiv:2012.13966
+
+[10] A. Ranchin. Depicting qudit quantum mechanics and mutually unbiased qudit theories.
+     EPTCS 172:68-91, 2014.
+     doi:10.4204/EPTCS.172.6, arXiv:1404.1288
+
+[11] A. Hadzihasanovic. A diagrammatic axiomatisation for qubit entanglement.
+     LICS 2015.
+     arXiv:1501.07082
+
+[12] Q. Wang. Qufinite ZX-calculus: a unified framework of qudit ZX-calculi, 2021.
+     arXiv:2104.06429
+
+[13] B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke. Completeness for
+     arbitrary finite dimensions of ZXW-calculus, a unifying calculus. LICS 2023.
+     doi:10.1109/LICS56636.2023.10175672, arXiv:2302.12135
+
+[14] Q. Wang, B. Poor, R. A. Shaikh. Completeness of qufinite ZXW calculus, a graphical
+     language for finite-dimensional quantum theory, 2023.
+     arXiv:2309.13014
+
+[15] R. A. Shaikh, Q. Wang, R. Yeung. How to sum and exponentiate Hamiltonians in ZXW
+     calculus. EPTCS 394:236-261, 2023.
+     doi:10.4204/EPTCS.394.14, arXiv:2212.04462
+
+[16] Q. Wang, R. Yeung, M. Koch. Differentiating and integrating ZX diagrams with
+     applications to quantum machine learning. Quantum 8:1491, 2024.
+     doi:10.22331/q-2024-10-04-1491, arXiv:2201.13250
+
+
+Bang boxes and scalable notation
+--------------------------------
+
+[17] L. Dixon, R. Duncan. Graphical reasoning in compact closed categories for quantum
+     computation. Annals of Mathematics and Artificial Intelligence 56(1):23-42, 2009.
+     doi:10.1007/s10472-009-9141-x
+
+[18] L. Dixon, R. Duncan, A. Kissinger. Open graphs and computational reasoning.
+     EPTCS 26:169-180, 2010.
+     doi:10.4204/EPTCS.26.16, arXiv:1007.3794
+
+[19] A. Kissinger, A. Merry, M. Soloviev. Pattern graph rewrite systems.
+     EPTCS 143:54-66, 2014.
+     doi:10.4204/EPTCS.143.5, arXiv:1204.6695
+
+[20] A. Kissinger, V. Zamdzhiev. Equational reasoning with context-free families of
+     string diagrams. ICGT 2015, LNCS. Springer, 2015.
+     doi:10.1007/978-3-319-21145-9_9, arXiv:1504.02716
+
+[21] T. Carette, D. Horsman, S. Perdrix. SZX-calculus: scalable graphical quantum
+     reasoning. MFCS 2019, LIPIcs.
+     doi:10.4230/LIPIcs.MFCS.2019.55, arXiv:1905.00041
+
+[22] T. Carette, L. Lemonnier. Large-scale quantum diagrammatic reasoning tools,
+     !-boxes vs. scalable notations, 2022.
+     arXiv:2204.11702
+
+
+Path sums and exact symbolic sums
+---------------------------------
+
+[23] M. Amy. Towards large-scale functional verification of universal quantum circuits.
+     EPTCS 287:1-21, 2019.
+     doi:10.4204/EPTCS.287.1, arXiv:1805.06908
+
+[24] R. Vilmart. The structure of sum-over-paths, its consequences, and completeness for
+     Clifford. FoSSaCS 2021, LNCS 12650, pp. 531-550. Springer, 2021.
+     doi:10.1007/978-3-030-71995-1_27, arXiv:2003.05678
+
+[25] B. C. Berndt, R. J. Evans, K. S. Williams. Gauss and Jacobi Sums. Wiley, 1998.
+     ISBN 978-0-471-12807-6
+
+[26] G. Landsberg. Zur Theorie der Gaussschen Summen und der linearen Transformation der
+     Thetafunctionen. Journal fuer die reine und angewandte Mathematik 111:234-253, 1893.
+     doi:10.1515/crll.1893.111.234
+
+[27] D. Richardson. Some undecidable problems involving elementary functions of a real
+     variable. Journal of Symbolic Logic 33(4):514-520, 1968.
+     doi:10.2307/2271358
+
+[28] R. Dechter. Bucket elimination: a unifying framework for reasoning.
+     Artificial Intelligence 113(1-2):41-85, 1999.
+     doi:10.1016/S0004-3702(99)00059-4
+
+
+Rewriting and equality saturation
+---------------------------------
+
+[29] R. Tate, M. Stepp, Z. Tatlock, S. Lerner. Equality saturation: a new approach to
+     optimization. Logical Methods in Computer Science 7(1), 2011.
+     doi:10.2168/LMCS-7(1:10)2011, arXiv:1012.1802
+
+[30] M. Willsey, C. Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, P. Panchekha. egg: fast and
+     extensible equality saturation. Proceedings of the ACM on Programming Languages
+     5(POPL), 2021.
+     doi:10.1145/3434304, arXiv:2004.03082
+
+[31] G. Nelson, D. C. Oppen. Fast decision procedures based on congruence closure.
+     Journal of the ACM 27(2):356-364, 1980.
+     doi:10.1145/322186.322198
+
+[32] R. E. Tarjan. Efficiency of a good but not linear set union algorithm.
+     Journal of the ACM 22(2):215-225, 1975.
+     doi:10.1145/321879.321884
+
+
+Lean formalisation
+------------------
+
+[33] L. de Moura, S. Ullrich. The Lean 4 theorem prover and programming language.
+     CADE-28, LNCS 12699, pp. 625-635. Springer, 2021.
+     doi:10.1007/978-3-030-79876-5_37
+
+[34] The mathlib Community. The Lean mathematical library. CPP 2020, pp. 367-381.
+     doi:10.1145/3372885.3373824, arXiv:1910.09336
+
+[35] A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of
+     a graphical quantum language, 2023.
+     arXiv:2311.11571
+
+
+Algorithms in the examples
+--------------------------
+
+[36] D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
+     Proceedings of the Royal Society of London A 439(1907):553-558, 1992.
+     doi:10.1098/rspa.1992.0167
+
+[37] L. K. Grover. A fast quantum mechanical algorithm for database search.
+     STOC 1996, pp. 212-219.
+     doi:10.1145/237814.237866, arXiv:quant-ph/9605043
+
+[38] P. W. Shor. Polynomial-time algorithms for prime factorization and discrete
+     logarithms on a quantum computer. SIAM Journal on Computing 26(5):1484-1509, 1997.
+     doi:10.1137/S0097539795293172, arXiv:quant-ph/9508027
+
+[39] D. Coppersmith. An approximate Fourier transform useful in quantum factoring.
+     IBM Research Report RC19642, 1994.
+     arXiv:quant-ph/0201067
+
+
+Software
+--------
+
+[40] A. Kissinger, J. van de Wetering. PyZX: large scale automated diagrammatic
+     reasoning. EPTCS 318:229-241, 2020.
+     doi:10.4204/EPTCS.318.14, arXiv:1904.04735
+
+[41] A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic
+     reasoning. CADE-25, LNCS. Springer, 2015.
+     doi:10.1007/978-3-319-21401-6_22, arXiv:1503.01034
+
+[42] G. de Felice, A. Toumi, B. Coecke. DisCoPy: monoidal categories in Python.
+     EPTCS 333:183-197, 2021.
+     doi:10.4204/EPTCS.333.13, arXiv:2005.02975
+
+[43] C. R. Harris et al. Array programming with NumPy. Nature 585(7825):357-362, 2020.
+     doi:10.1038/s41586-020-2649-2
+
+[44] A. Meurer et al. SymPy: symbolic computing in Python.
+     PeerJ Computer Science 3:e103, 2017.
+     doi:10.7717/peerj-cs.103
