@@ -1639,15 +1639,49 @@ def _pin_digits(t: Term, s: State) -> Term:
         ]
         if not regs or b.symbol not in t.amp.free_symbols:
             continue
-        alive = [
-            v
-            for v in range(int(b.lo), int(b.hi) + 1)
-            if sympy.simplify(t.amp.xreplace({b.symbol: sympy.Integer(v)})) != 0
-        ]
-        if len(alive) == 1:
-            t = _subs_term(t, {b.symbol: sympy.Integer(alive[0])})
+        v = _pinned_digit(t.amp, b.symbol, b.lo, int(b.hi - b.lo) + 1)
+        if v is not None:
+            t = _subs_term(t, {b.symbol: v})
             return _pin_digits(Term(tidy(sympy.simplify(t.amp)), t.bound, t.kets), s)
     return t
+
+
+def _pinned_digit(amp: Expr, sym: sympy.Symbol, lo: Expr, size: int) -> Expr | None:
+    """The one value of ``sym`` in ``lo .. lo + size - 1`` where ``amp`` does not vanish, when
+    ``amp`` is a character sum ``sum_j c_j w^(j (sym - lo))``, ``w = e^(2 pi i / size)``, with
+    ``c_j = c_0 w^(-j k)`` for every ``j``."""
+    coeffs: dict[int, Expr] = {}
+    for term in sympy.Add.make_args(sympy.expand(amp)):
+        c, dep = term.as_independent(sym, as_Add=False)
+        dep = sympy.powsimp(dep.rewrite(sympy.exp), combine="exp")
+        if dep == 1:
+            j, phase = 0, sympy.S.Zero
+        elif isinstance(dep, sympy.exp):
+            turns = sympy.expand(dep.args[0] / (2 * sympy.pi * sympy.I))
+            a = turns.coeff(sym, 1)
+            phase = sympy.expand(turns - a * sym)
+            j_val = sympy.nsimplify(a * size)
+            if phase.has(sym) or not j_val.is_Integer:
+                return None
+            phase += a * lo
+            j = int(j_val) % size
+        else:
+            return None
+        coeffs[j] = coeffs.get(j, sympy.S.Zero) + c * sympy.exp(2 * sympy.pi * sympy.I * phase)
+    if len(coeffs) < size or any(sympy.simplify(c) == 0 for c in coeffs.values()):
+        return None
+    ratio = sympy.simplify(coeffs[1] / coeffs[0]) if size > 1 else sympy.S.One
+    turns = sympy.nsimplify(sympy.arg(ratio) / (2 * sympy.pi))
+    if not turns.is_Rational or sympy.simplify(sympy.Abs(ratio) - 1) != 0:
+        return None
+    shift = -turns * size
+    if not shift.is_Integer:
+        return None
+    k = int(shift) % size
+    w = sympy.exp(-2 * sympy.pi * sympy.I * k / size)
+    if any(sympy.simplify(coeffs[j] - coeffs[0] * w**j) != 0 for j in range(size)):
+        return None
+    return lo + k
 
 
 def is_concrete(s: State) -> bool:
