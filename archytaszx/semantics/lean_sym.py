@@ -38,7 +38,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.lean_net import NetUnsupported, _Export, _join, _paren
-from archytaszx.semantics.lean_scalar import II, NC, Ex, Inv, Om, Rt
+from archytaszx.semantics.lean_scalar import II, NC, Ex, Inv, Om, Rt, ScalarUnsupported
 
 DMon = tuple[int, tuple[int, ...]]
 IPoly = tuple[tuple[tuple[int, ...], int], ...]
@@ -1154,6 +1154,19 @@ def _family_mults(left: Diagram, right: Diagram) -> list[sp.Expr]:
     return sorted(names, key=lambda m: (not m.is_Symbol, str(m)))
 
 
+def _no_negative_powers(model: sp.Expr) -> sp.Expr:
+    """``model`` with every ``a^(-k)`` written as ``Inv(a)^k`` and ``Inv(a)^(-k)`` as ``a^k``."""
+
+    def flip(e: sp.Expr) -> sp.Expr:
+        base, k = e.args[0], -int(e.args[1])
+        return base.args[0] ** k if isinstance(base, Inv) else Inv(base) ** k
+
+    return sp.sympify(model).replace(
+        lambda e: e.is_Pow and e.args[1].is_Integer and e.args[1] < 0 and not e.args[0].is_Number,
+        flip,
+    )
+
+
 def _peeled(split: Any, net: Any) -> Any:
     """The nodes, summed and boundary labels of ``split`` that ``net`` lacks."""
     from archytaszx.semantics.lean_net import LNet
@@ -1263,10 +1276,11 @@ class _SymExport:
         varying = set(out.mult_exprs)
         m0, m1 = sp.sympify(self.m0), sp.sympify(self.m1)
         if (m0.free_symbols | m1.free_symbols) & (opaque | varying) and m1 != 0:
-            ratio = sp.simplify(sp.powsimp(m0 / m1, force=True))
+            ratio = _no_negative_powers(sp.simplify(sp.powsimp(m0 / m1, force=True)))
             if not ratio.free_symbols & (opaque | varying):
                 self.common = m1
                 self.stated = (_paren(out.text(m0)), _paren(out.text(m1)))
+                self.stated_models = (m0, m1)
                 self.m0, self.m1 = ratio, sp.Integer(1)
         if out.sc.opaques and self.common is None:
             raise NetUnsupported("the diagrams' scalars differ by a factor outside the exact model")
@@ -1504,7 +1518,13 @@ class _SymExport:
         if self.common is None:
             return None, proof
         ct = _paren(self.out.text(self.common))
-        return ct, f"Equal.congr_s (Equal.smul {ct} ({proof})) (by ring) (by ring)"
+        tactics = []
+        for model, stated in zip((self.m0, self.m1), self.stated_models, strict=True):
+            try:
+                tactics.append(self.out.sc.prove(self.common * model, stated))
+            except ScalarUnsupported:
+                tactics.append("by ring")
+        return ct, f"Equal.congr_s (Equal.smul {ct} ({proof})) ({tactics[0]}) ({tactics[1]})"
 
     def stated_s(self, side: int) -> str:
         """The scalar the theorem states for ``side``."""

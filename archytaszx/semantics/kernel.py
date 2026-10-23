@@ -68,6 +68,7 @@ from archytaszx.semantics.certificate import (
     compare_structure,
 )
 from archytaszx.semantics.induction import _bare, _extract, replace_region
+from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import (
     _INDUCTION_ERRORS,
     InductionProof,
@@ -313,7 +314,7 @@ def symbolic(
     """The normaliser's proof of ``left = right``."""
     try:
         return Symbolic(left, right, lean_sym.export_symbolic(left, right, describe=describe))
-    except lean_net.NetUnsupported as exc:
+    except (lean_net.NetUnsupported, ScalarUnsupported) as exc:
         raise KernelError(f"no symbolic proof: {exc}") from exc
 
 

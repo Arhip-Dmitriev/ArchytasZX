@@ -517,7 +517,10 @@ class _Term:
         if turns is not None:
             rest: Expr = sympy.S.Zero
             for mono in sympy.Add.make_args(sympy.expand(turns)):
-                if not self._monomial(mono, dry):
+                if not mono.free_symbols & set(self.indices):
+                    if not dry:
+                        self.b.scalar *= sympy.exp(2 * sympy.pi * sympy.I * mono)
+                elif not self._monomial(mono, dry):
                     rest += mono
             if rest != 0:
                 self._gadget(rest, dry, phase=True)
