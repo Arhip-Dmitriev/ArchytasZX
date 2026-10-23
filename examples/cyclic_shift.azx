@@ -1,0 +1,16 @@
+# The cyclic shift of n qudits, composed with itself n times, is the identity, for every n and d.
+# On a value x < d^n - 1 the shift is x -> d x mod (d^n - 1); d^n - 1 is fixed.
+var n, d, x
+var M = d^n - 1
+
+func rot(y) = ifelse(y < M, (y*d) % M, y)
+gate ROT = |y> -> |rot(y)>
+
+|zeros>_d = |0>_d^@n
+|s>_d = 0 |zeros> + |x>
+show(ROT |s>)
+
+for j in 0..n { |s> = ROT |s> }
+show(|s>)
+|x0>_d = 0 |zeros> + |x>
+assert <x0|s> == 1

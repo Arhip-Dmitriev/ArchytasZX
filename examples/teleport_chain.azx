@@ -1,0 +1,19 @@
+# Teleporting a qudit along n hops is the identity, for every n and d and every Bell outcome
+# (u, v) with its Pauli correction.
+var n, d, u, v
+
+|B>_d = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }
+|Buv>_d = 1/sqrt(d) sum(k in 0..d){ e^(2*pi*i*v*k/d) |(k + u) % d>_d @ |k>_d }
+
+# One hop: a fresh Bell pair, the Bell measurement reading (u, v), then the correction.
+gate HOP = |a>_d -> d sum(c in 0..d){ ((<Buv| @ <c|_d)(|a>_d @ |B>)) |c>_d }
+gate FIX = |c>_d -> e^(2*pi*i*v*c/d) |(c + u) % d>_d
+
+|psi>_d = 1/sqrt(d) sum(k in 0..d){ e^(2*pi*i*k^2/d) |k>_d }
+show(FIX HOP |psi>)
+
+|chain> = |psi>
+for j in 0..n { |chain> = FIX HOP |chain> }
+show(|chain>)
+assert <psi|chain> == 1
+assert <chain|chain> == 1

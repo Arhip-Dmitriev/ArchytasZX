@@ -1,0 +1,17 @@
+# X^a Z^b passed through H^@n becomes Z^a X^b, for every n and all n-bit strings a, b:
+#   H^@n X^a Z^b H^@n = Z^a X^b
+var n, x, a, b
+
+gate XA = |y> -> |y xor a>
+gate ZB = |y> -> (-1)^dot(y, b) |y>
+gate XB = |y> -> |y xor b>
+gate ZA = |y> -> (-1)^dot(y, a) |y>
+
+|zeros> = |0>^@n
+|w> = 0 |zeros> + |x>                              # an arbitrary basis state
+
+|lhs> = H^@n XA ZB H^@n |w>
+|rhs> = ZA XB |w>
+show(|rhs>)
+assert <rhs|lhs> == 1
+assert <rhs|rhs> == 1

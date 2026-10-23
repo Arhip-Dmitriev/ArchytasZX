@@ -1,0 +1,15 @@
+# The repetition-code encoder maps a logical qubit a|0> + b|1> to a|0...0> + b|1...1>, for a
+# symbolic code distance n + 1: CNOTs from the logical qubit onto n ancillas in |0>.
+var n
+var a: complex
+var b: complex
+
+gate CX = |c>|y> -> |c>|y xor c*2^j>              # CNOT onto ancilla j
+
+|enc> = (a |0> + b |1>) @ |0>^@n
+for j in 0..n { |enc> = CX |enc> }
+show(|enc>)
+
+|want> = a |0> @ |0>^@n + b |1> @ |1>^@n
+assert <want|enc> == <want|want>
+assert <enc|enc> == <want|want>

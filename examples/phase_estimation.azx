@@ -1,0 +1,22 @@
+# Phase estimation with n qudits of dimension d, n and d symbolic: for an eigenphase m/d^n the
+# controlled-U^(d^j) stages followed by the inverse QFT give |m> exactly (m read mod d^n, its n digits).
+var n, d, m
+var Q = d^n
+
+gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+gate IQFT = |x>_d -> 1/sqrt(Q) sum(k in 0..Q){ e^(-2*pi*i*x*k/Q) |k>_d }
+gate U = |y> -> e^(2*pi*i*m*y/Q) |y>               # U|1> = e^(2 pi i m/Q) |1>
+# U^(d^j) controlled by digit j of the counting register
+gate CU = |x>|y> -> e^(2*pi*i*m*y*d^j*(floor(x/d^j) % d)/Q) |x>|y>
+
+show(U |1>)
+|p> = F^@n |0>_d^@n @ |1>
+for j in 0..n { |p> = CU |p> }
+show(|p>)
+|p> = (IQFT @ I) |p>
+show(|p>)
+
+|zeros>_d = |0>_d^@n
+|want> = (0 |zeros> + |m % Q>) @ |1>
+assert <want|p> == 1
+assert <p|p> == 1

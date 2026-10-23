@@ -1,0 +1,16 @@
+# n CNOTs from one control applied one after another equal the fanout gate that applies all of
+# them in one layer, for every n.
+var n, t
+
+gate CX = |c>|y> -> |c>|y xor c*2^j>              # CNOT onto bit j of the target register
+gate FAN = |c>|y> -> |c>|y xor c*(2^n - 1)>       # every target bit at once
+
+|zeros> = |0>^@n
+|start> = H|0> @ (0 |zeros> + |t>)                 # control |+>, targets an arbitrary |t>
+
+|seq> = |start>
+for j in 0..n { |seq> = CX |seq> }
+|par> = FAN |start>
+show(|seq>, |par>)
+assert <par|seq> == 1
+assert <seq|seq> == 1

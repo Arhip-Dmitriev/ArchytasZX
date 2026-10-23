@@ -1,0 +1,14 @@
+# The Grover diffusion operator, for every n:
+#   H^@n (2|0><0| - I) H^@n = 2|s><s| - I,   |s> = H^@n |0>^@n
+var n, x
+
+|zeros> = |0>^@n
+|s> = H^@n |zeros>
+|w> = 0 |zeros> + |x>                              # an arbitrary basis state
+
+|lhs> = H^@n (2 |zeros><zeros| - I) H^@n |w>
+|rhs> = (2 |s><s| - I) |w>
+show(|rhs>)
+assert <lhs|rhs> == 1
+assert <lhs|lhs> == 1
+assert <rhs|rhs> == 1

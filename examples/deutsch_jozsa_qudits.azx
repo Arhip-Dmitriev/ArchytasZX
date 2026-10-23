@@ -1,0 +1,21 @@
+# Deutsch-Jozsa over Z_d^n, n and d symbolic: one oracle query separates a constant f from a
+# balanced f. The oracle adds f(x) to the target mod d.
+var n, d, c
+
+gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+gate Fd = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(-2*pi*i*x*y/d) |y>_d }
+gate U_const = |x>|y>_d -> |x>|(y + c) % d>_d      # f(x) = c
+gate U_bal = |x>|y>_d -> |x>|(y + x) % d>_d        # f(x) = x mod d, balanced
+
+|start>_d = |0>_d^@n @ |1>_d
+|out_const> = (Fd^@n @ I) U_const (F^@n @ Fd) |start>
+|out_bal> = (Fd^@n @ I) U_bal (F^@n @ Fd) |start>
+show(|out_const>, |out_bal>)
+
+# Amplitude of the all-zeros outcome with the target left in Fd|1>.
+|target>_d = |0>_d^@n @ Fd |1>_d
+var a_const = <target|out_const>
+var a_bal = <target|out_bal>
+show(a_const, a_bal)
+assert abs(a_const) == 1
+assert a_bal == 0
