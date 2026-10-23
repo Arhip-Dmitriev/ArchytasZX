@@ -547,9 +547,15 @@ def density(lay: Layout) -> float:
 
 
 def figure(
-    lay: Layout, *, dark_theme: bool, opaque: bool = False, density: float = 1
+    lay: Layout,
+    *,
+    dark_theme: bool,
+    opaque: bool = False,
+    density: float = 1,
+    palette: tuple[str, str] | None = None,
 ) -> bytes:
-    """The layout drawn with matplotlib as a PNG at ``density`` times 100 dpi."""
+    """The layout drawn with matplotlib as a PNG at ``density`` times 100 dpi, in ``palette``
+    ``(fg, bg)`` when given."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
@@ -557,6 +563,8 @@ def figure(
     fg, bg = D.colours(dark_theme)
     if D.CONFIG.color != "auto":
         fg = D.CONFIG.color
+    if palette is not None:
+        fg, bg = palette
     scale = D.CONFIG.size
     ncol = lay.columns
     nrow = 1 + max((i.row for i in lay.items.values()), default=0)
@@ -652,7 +660,8 @@ def _utf8() -> bool:
 def draw(view: View, style: str = "matplot") -> str:
     """``view`` drawn in ``style``; matplot falls back to Unicode without an image protocol
     or matplotlib, Unicode to ASCII on a terminal that is not UTF-8. With
-    :data:`~archytaszx.repl.display.SAVE_DIR` set the matplotlib drawing is also saved there."""
+    :data:`~archytaszx.repl.display.SAVE_DIR` set the matplotlib drawing is also saved there,
+    black on white with :data:`~archytaszx.repl.display.SAVE_WHITE`."""
     if style not in STYLES:
         raise ValueError(f"unknown drawing style {style!r}")
     lay = layout(view)
@@ -660,16 +669,23 @@ def draw(view: View, style: str = "matplot") -> str:
     if proto != "none" or D.SAVE_DIR is not None:
         dense = density(lay) if proto == "none" or D.scalable(proto) else 1
         try:
-            png = figure(
-                lay,
-                dark_theme=D.dark(),
-                opaque=proto == "sixel" or D.SAVE_DIR is not None,
-                density=dense,
-            )
+            if D.SAVE_WHITE:
+                D.keep(figure(lay, dark_theme=False, opaque=True, density=density(lay),
+                              palette=D.WHITE), "zx")
+                png = None if proto == "none" else figure(
+                    lay, dark_theme=D.dark(), opaque=proto == "sixel", density=dense
+                )
+            else:
+                png = figure(
+                    lay,
+                    dark_theme=D.dark(),
+                    opaque=proto == "sixel" or D.SAVE_DIR is not None,
+                    density=dense,
+                )
+                D.keep(png, "zx")
         except Exception:  # noqa: BLE001
             png = None
         if png is not None:
-            D.keep(png, "zx")
             image = D.encode_image(png, proto, dense) if style == "matplot" else None
             if image is not None:
                 return image

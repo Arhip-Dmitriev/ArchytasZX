@@ -824,6 +824,10 @@ TERMINAL = Terminal()
 
 SAVE_DIR: str | None = None
 """The folder every rendered image is also written to, or None."""
+SAVE_WHITE = False
+"""Whether saved images are black on white instead of the terminal's colours."""
+WHITE = ("#000000", "#ffffff")
+"""Black ink on a white page, as ``(fg, bg)``."""
 _SAVED: list[int] = [0]
 
 
@@ -996,12 +1000,17 @@ def colours(dark_theme: bool, environ: Mapping[str, str] | None = None) -> tuple
 
 
 def render_png(
-    lines: list[str], *, dark_theme: bool, opaque: bool = False, density: float = 1
+    lines: list[str],
+    *,
+    dark_theme: bool,
+    opaque: bool = False,
+    density: float = 1,
+    palette: tuple[str, str] | None = None,
 ) -> bytes:
     """Off-screen PNG of mathtext lines, left aligned, each row as tall as its ink plus a gap
     of a third of the font size; the font matches the terminal cell height when known, times
-    :data:`CONFIG` size, in :data:`CONFIG` color unless that is ``auto``; ``density`` pixels
-    per displayed pixel."""
+    :data:`CONFIG` size, in :data:`CONFIG` color unless that is ``auto``, or in ``palette``
+    ``(fg, bg)`` when given; ``density`` pixels per displayed pixel."""
     if _WARM and _WARM[0] is not threading.current_thread():
         _WARM[0].join()
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -1010,6 +1019,8 @@ def render_png(
     fg, bg = colours(dark_theme)
     if CONFIG.color != "auto":
         fg = CONFIG.color
+    if palette is not None:
+        fg, bg = palette
     px = (0.75 * TERMINAL.cell if TERMINAL.cell else 14.0) * CONFIG.size
     size = px * 72 / _DPI
     fig = Figure(dpi=_DPI)
@@ -1129,9 +1140,16 @@ def terminal_image(lines: list[str]) -> str | None:
         return None
     density = _DENSITY if proto == "none" or scalable(proto) else 1
     try:
-        opaque = proto == "sixel" or SAVE_DIR is not None
-        png = render_png(lines, dark_theme=dark(), opaque=opaque, density=density)
+        if SAVE_WHITE:
+            keep(render_png(lines, dark_theme=False, opaque=True, density=_DENSITY,
+                            palette=WHITE), "dirac")
+            if proto == "none":
+                return None
+            png = render_png(lines, dark_theme=dark(), opaque=proto == "sixel", density=density)
+        else:
+            opaque = proto == "sixel" or SAVE_DIR is not None
+            png = render_png(lines, dark_theme=dark(), opaque=opaque, density=density)
+            keep(png, "dirac")
     except Exception:  # noqa: BLE001
         return None
-    keep(png, "dirac")
     return encode_image(png, proto, density)

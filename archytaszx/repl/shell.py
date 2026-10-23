@@ -654,11 +654,18 @@ def _argument_parser() -> argparse.ArgumentParser:
         "--commands", action="store_true", help="read engine commands instead of the language"
     )
     parser.add_argument("--seed", type=int, default=None, help="seed for rand")
-    parser.add_argument(
+    saving = parser.add_mutually_exclusive_group()
+    saving.add_argument(
         "--images",
         metavar="DIR",
         default=None,
         help="also save every rendered image (formulas and ZX drawings) as a PNG in DIR",
+    )
+    saving.add_argument(
+        "--images_white",
+        metavar="DIR",
+        default=None,
+        help="as --images, with black text and drawings on a white background",
     )
     parser.add_argument(
         "-c",
@@ -697,7 +704,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         D.CONFIG = D.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
-    D.SAVE_DIR = args.images
+    D.SAVE_DIR = args.images or args.images_white
+    D.SAVE_WHITE = args.images_white is not None
     mode, zx_style = VIEWS[args.mode]
     shell = Shell(
         mode=mode,

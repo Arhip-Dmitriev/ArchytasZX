@@ -6,6 +6,7 @@ Run:  archytaszx [FILE.azx ...] [args]      scripts; extra args read by arg(k)
       archytaszx                            interactive shell
 Flags: --render --unicode --ascii --latex (output styles, stackable), --order,
        --verbose, --seed N (rand), --images DIR (save every rendered image as a PNG),
+       --images_white DIR (the same, black on white),
        --commands, view flags (--dirac --zx --zxrender --zxunicode --zxascii --both --raw)
 
 
