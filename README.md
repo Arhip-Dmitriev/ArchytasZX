@@ -10,8 +10,7 @@ identities as closed forms that hold for every `n` and every `d` at once.
 [![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.md)
 [![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
-ArchytasZX is a symbolic engine built on the qufinite ZX(W)-calculus, with its own Dirac-notation
-language. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
+ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with intergation into Dirac-notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
 simulated: every result comes from exact rewriting and has the same shape for every size.
 
 ## Example: Deutsch–Jozsa for every `n`
