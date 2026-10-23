@@ -10,7 +10,7 @@ identities as closed forms that hold for every `n` and every `d` at once.
 [![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.md)
 [![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
-ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with intergation into Dirac-notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
+ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with integration into Dirac notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
 simulated: every result comes from exact rewriting and has the same shape for every size.
 
 ## Example: Deutsch–Jozsa for every `n`
@@ -48,7 +48,7 @@ register is a bang box of multiplicity `n - 1` rather than `n` copies:
 </p>
 
 The constant-oracle case over qudits,
-[`examples/deutsch_jozsa_constant.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_constant.azx),
+[`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx),
 proves that `F†^⊗n F^⊗n |0⟩^⊗n = |0⟩^⊗n` for every `n` and every `d` and writes the proof
 out as a Lean 4 file.
 
@@ -95,10 +95,11 @@ Output styles are `--render` (default, typeset images), `--unicode`, `--ascii` a
 several style flags print every output in each style, and `--order` groups the output by style
 at the end. `--zx`, `--both` and `--raw` switch between Dirac notation and ZX diagrams, and
 `--images DIR` saves every rendered image as a PNG. In the shell, commands starting with `:`
-drive the engine directly (`:help` lists them). The full syntax is in
-[`SYNTAX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/SYNTAX.txt), and
-[`examples/`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/examples) has Shor, Grover,
-Deutsch–Jozsa and `n`-hop teleportation.
+drive the engine directly (`:help` lists them).
+
+[`examples/learn_azx.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/learn_azx.azx)
+is a guided tour of the whole language, ending in Deutsch–Jozsa for every `n`; the full syntax is
+in [`SYNTAX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/SYNTAX.txt).
 
 ### From Python
 
@@ -114,6 +115,9 @@ azx.phi.latex()                          # also rendered by Jupyter
 y = azx.measure | azx.psi
 y             # [(k, 2^(-n)) : k ∈ {0,…,2^n - 1}]
 ```
+
+[`examples/learn_azx.py`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/learn_azx.py)
+is the same tour from Python.
 
 ### The diagram engine
 
@@ -189,9 +193,6 @@ p = parse_dirac_source("sum_{k=0}^{3-1} |k>^{30}; copy")
 dict(p.parameters)   # {'d': 3, 'n': 29}
 ```
 
-[`docs/TUTORIAL.md`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/TUTORIAL.md)
-walks through the API layer by layer.
-
 ## Formal proofs in Lean
 
 Proofs found by the engine are exported to Lean 4 (`:certificate lean proof.lean`) against a
@@ -234,8 +235,8 @@ releases. Equality checking is sound but not complete, so `decide` and `prove` c
 "unknown". Known limits:
 
 - Symbolic contraction slows sharply as the number of phased spiders grows.
-- Some bang-box shapes are refused: a box wired to an outside node is only schema-checked by
-  induction, and a port box over two W nodes is not supported.
+- Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two
+  W nodes.
 - The dimension unifier reports `DEFERRED` where an equation has several solution branches
   (`d1*d2 == 6`, `d**n == d**m`); deferred dimensions are recorded as assumptions and appear in
   certificates and Lean theorems as hypotheses.
@@ -269,7 +270,7 @@ If you use ArchytasZX in academic work, please cite it via
 ```bibtex
 @software{dmitriev_archytaszx,
   author  = {Dmitriev, Arkhip Alekseyevich},
-  title   = {ArchytasZX: a qufinite ZX-calculus engine with symbolic qudit count and dimension},
+  title   = {ArchytasZX: size-agnostic quantum algorithm development with the symbolic qufinite ZX-calculus},
   year    = {2026},
   url     = {https://github.com/Arhip-Dmitriev/ArchytasZX},
   license = {Apache-2.0}
