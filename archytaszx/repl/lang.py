@@ -951,9 +951,20 @@ class Interpreter:
         for stmt in _split_statements(source):
             text = stmt.strip()
             if text:
-                printed = self._statement(text)
+                with P.divisible(self._divisibility()):
+                    printed = self._statement(text)
                 if printed:
                     self._out.append((None, printed))
+
+    def _divisibility(self) -> list[tuple[sympy.Expr, sympy.Expr]]:
+        """``(a, b)`` for each assumption ``a % b == 0``."""
+        out = []
+        for fact in self.assumptions:
+            if isinstance(fact, sympy.Eq) and 0 in fact.args:
+                m = fact.args[0] if fact.args[1] == 0 else fact.args[1]
+                if isinstance(m, sympy.Mod):
+                    out.append((m.args[0], m.args[1]))
+        return out
 
     def _parser(self, toks: list[Tok]) -> Parser:
         return Parser(

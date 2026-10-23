@@ -502,7 +502,10 @@ remains symbolic is an error. Variables assigned inside a block remain assigned 
     assume CONDITION
 
 records a fact about symbols, which later simplifications may use. A condition that is
-concretely false is an error.
+concretely false is an error. A divisibility assumption a % b == 0 lets the engine treat a/b
+as an integer when it closes the geometric sums of a state, an inner product or a
+measurement, bounds their indices, and simplifies floor and % of measured outcomes
+(examples/shor.azx).
 
     assert CONDITION
 

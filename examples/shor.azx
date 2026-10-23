@@ -1,0 +1,26 @@
+ # Shor's order finding in one shot, with n counting qudits of dimension d, n and d symbolic. U_a
+# acts on its eigenbasis |u_t> with eigenvalue e^(2 pi i t/r), and |1> = 1/sqrt(r) sum_t |u_t>.
+# When the order r divides Q = d^n, the inverse QFT leaves t*Q/r exactly, t uniform in 0..r-1.
+var n, d, r
+var Q = d^n
+assume Q % r == 0
+
+gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+gate IQFT = |x>_d -> 1/sqrt(Q) sum(k in 0..Q){ e^(-2*pi*i*x*k/Q) |k>_d }
+# U_a^(d^j) controlled by digit j of the counting register; |t>_r labels |u_t>
+gate CU = |x>|t>_r -> e^(2*pi*i*t*d^j*(floor(x/d^j) % d)/r) |x>|t>_r
+
+|one>_r = 1/sqrt(r) sum(t in 0..r){ |t>_r }
+|psi> = F^@n |0>_d^@n @ |one>
+for j in 0..n { |psi> = CU |psi> }
+(IQFT @ I) |psi>
+
+|zeros>_d = |0>_d^@n
+|want> = 1/sqrt(r) sum(t in 0..r){ (0 |zeros> + |t*Q/r>) @ |t>_r }
+assert <want|psi> == 1
+assert <psi|psi> == 1
+
+# Counting register and the fraction it gives
+show(|psi>)
+var m = floor(measure|psi> / r)
+show(|psi>, m, m / Q)

@@ -501,6 +501,17 @@ _SCOPE: ContextVar[Params | None] = ContextVar("pathsum_params", default=None)
 _RANGES: ContextVar[dict[sympy.Symbol, tuple[Expr, Expr]] | None] = ContextVar(
     "pathsum_ranges", default=None
 )
+_DIVISIBLE: ContextVar[tuple[tuple[Expr, Expr], ...]] = ContextVar("pathsum_divisible", default=())
+
+
+@contextmanager
+def divisible(facts: Sequence[tuple[Expr, Expr]]) -> Iterator[None]:
+    """A scope in which each ``(a, b)`` of ``facts`` has b dividing a."""
+    token = _DIVISIBLE.set((*_DIVISIBLE.get(), *facts))
+    try:
+        yield
+    finally:
+        _DIVISIBLE.reset(token)
 
 
 @contextmanager
@@ -1277,7 +1288,27 @@ def _contract(
 
 def _geometric(amp: Expr, b: Bound, others: Sequence[Bound] = ()) -> Expr | None:
     """``sum_b amp`` for ``amp = C e^{2 pi i b L / R}`` over ``0..R-1``; else None. An index
-    of ``others`` over ``0..R-1`` with unit weight in L is pinned to the rest of L mod R."""
+    of ``others`` over ``0..R-1`` with unit weight in L is pinned to the rest of L mod R.
+    Under :func:`divisible`, a dividend a of b | a is read as ``b q`` with q an integer."""
+    done = _geometric_core(amp, b, others)
+    if done is not None or b.symbol not in amp.free_symbols:
+        return done
+    for a, d in _DIVISIBLE.get():
+        if not a.free_symbols <= amp.free_symbols:
+            continue
+        q = sympy.Dummy("q", integer=True, positive=True)
+        to, back = {a: d * q}, {q: a / d}
+        done = _geometric_core(
+            expand(amp.subs(to)),
+            Bound(b.symbol, b.lo, expand(b.hi.subs(to))),
+            [Bound(x.symbol, x.lo, expand(x.hi.subs(to))) for x in others],
+        )
+        if done is not None:
+            return done.xreplace(back)
+    return None
+
+
+def _geometric_core(amp: Expr, b: Bound, others: Sequence[Bound]) -> Expr | None:
     if b.lo != 0:
         return None
     sym = b.symbol
@@ -1486,7 +1517,23 @@ def _span(e: Expr, bounds: Sequence[Bound]) -> tuple[Expr, Expr] | None:
 
 
 def _inside(val: Expr, b: Bound, bounds: Sequence[Bound]) -> bool:
-    """Whether ``val`` provably stays in the range of ``b`` over the other ``bounds``."""
+    """Whether ``val`` provably stays in the range of ``b`` over the other ``bounds``, also
+    with a dividend a of each :func:`divisible` fact b | a read as ``b q``."""
+    if _inside_plain(val, b, bounds):
+        return True
+    for a, d in _DIVISIBLE.get():
+        q = sympy.Dummy("q", integer=True, positive=True)
+        to = {a: d * q}
+
+        def sub(x: Bound, to: dict[Expr, Expr] = to) -> Bound:
+            return Bound(x.symbol, expand(x.lo.subs(to)), expand(x.hi.subs(to)))
+
+        if _inside_plain(expand(val.subs(to)), sub(b), [sub(x) for x in bounds]):
+            return True
+    return False
+
+
+def _inside_plain(val: Expr, b: Bound, bounds: Sequence[Bound]) -> bool:
     span = _span(val, [x for x in bounds if x.symbol != b.symbol])
     if span is None:
         return False
@@ -2560,23 +2607,62 @@ def _interval(e: Expr, free: dict[sympy.Symbol, Bound]) -> tuple[Expr, Expr] | N
 
 def settle(e: Expr, free: Sequence[Bound]) -> Expr:
     """``e`` with each ``floor(u)`` replaced by the integer it takes over the ranges of the
-    indices ``free``, when u stays within one unit interval."""
+    indices ``free``, when u less an integer part stays within one unit interval, and each
+    ``Mod(u, m)`` by u less a multiple of m when that stays in ``0..m-1``."""
     table = {b.symbol: b for b in free}
+    sizes = {
+        b.hi + 1: sympy.Dummy(str(b.hi + 1), integer=True, positive=True)
+        for b in free
+        if b.lo == 0 and (b.hi + 1).is_Symbol
+    }
+
+    sized = {
+        k: Bound(b.symbol, b.lo.xreplace(sizes), b.hi.xreplace(sizes)) for k, b in table.items()
+    }
+    unsized = {v: k for k, v in sizes.items()}
 
     def fold(f: sympy.floor) -> Expr:
-        span = _interval(f.args[0], table)
-        if span is None:
-            return f
-        lo, hi = span
-        base = sympy.floor(lo)
-        if base.has(sympy.floor):
-            return f
-        gap = sympy.simplify(hi - base - 1)
-        if gap.is_negative and sympy.simplify(lo - base).is_nonnegative:
-            return base
+        for whole, part in _integer_parts(f.args[0], 1):
+            span = _interval(part.xreplace(sizes), sized)
+            if span is None:
+                continue
+            lo, hi = span
+            base = sympy.floor(lo)
+            if base.has(sympy.floor):
+                continue
+            gap = sympy.simplify(hi - base - 1)
+            if gap.is_negative and sympy.simplify(lo - base).is_nonnegative:
+                return whole + base.xreplace(unsized)
         return f
 
-    return e.replace(lambda x: isinstance(x, sympy.floor), fold)
+    def fold_mod(f: sympy.Mod) -> Expr:
+        top, m = f.args
+        for _, part in _integer_parts(top, m):
+            span = _interval(part, table)
+            if span is None:
+                continue
+            lo, hi = span
+            if sympy.simplify(lo).is_nonnegative and sympy.simplify(m - 1 - hi).is_nonnegative:
+                return part
+        return f
+
+    e = e.replace(lambda x: isinstance(x, sympy.floor), fold)
+    return e.replace(lambda x: isinstance(x, sympy.Mod), fold_mod)
+
+
+def _integer_parts(u: Expr, m: Expr) -> Iterator[tuple[Expr, Expr]]:
+    """``(w, u - m w)`` with w the sum of the terms of ``u / m`` that are integers, plainly
+    and with a dividend a of each :func:`divisible` fact b | a read as ``b q``."""
+    yield sympy.S.Zero, u
+    for a, d in [(None, None), *_DIVISIBLE.get()]:
+        q = sympy.Dummy("q", integer=True, positive=True)
+        to, back = ({a: d * q}, {q: a / d}) if a is not None else ({}, {})
+        terms = sympy.Add.make_args(expand(sympy.sympify(u).subs(to) / m))
+        whole = sympy.Add(*(t for t in terms if t.is_integer))
+        if whole == 0:
+            continue
+        whole = expand(whole.xreplace(back))
+        yield whole, expand(u - m * whole)
 
 
 def map_outcomes(d: Distribution, fn: Callable[[Expr], Expr]) -> Distribution:
