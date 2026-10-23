@@ -4,7 +4,7 @@
 Right after QuRise:
 - Finish list
 - hardening
-perfomance phase 21
+- perfomance phase 21
 - Preprint
 
 future only:
