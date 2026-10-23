@@ -1,0 +1,150 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Overview
+
+Applies to: ArchytasZX 0.19.x
+
+
+1. SCOPE
+--------
+
+ArchytasZX is a symbolic engine for developing and verifying quantum algorithms whose size is
+not fixed. The number of qudits, their dimension, and the number of repetitions of a
+sub-circuit may all be symbols. Every result the engine reports, whether a state, a
+measurement distribution or a proof of an identity, is a closed form that holds for every value
+of those symbols.
+
+The engine is written in Python (numpy and sympy are its only runtime dependencies) and ships
+a Lean 4 library against which its proofs can be re-checked independently.
+
+
+2. ARCHITECTURE
+---------------
+
+The package archytaszx is organised in four engine layers and one front-end layer. Each layer
+depends only on the layers below it.
+
+  Layer  Package               Responsibility
+  -----  --------------------  -------------------------------------------------------------
+  A      archytaszx.algebra    Dimension expressions, phases, exact scalars.
+  B      archytaszx.diagram    Generators, diagrams, bang boxes, scalable notation,
+                               validation, structural comparison.
+  C      archytaszx.rewrite    Rules, matching, the rewrite engine, strategies, normal form,
+                               equality saturation, tactics, caching.
+  D      archytaszx.semantics  Denotation, contraction, the oracle, path sums, deciding
+                               equality, proof search, induction, certificates, proof kernel,
+                               Lean export.
+  -      archytaszx.repl       The .azx language, the diagram parser and printer, the ZX view
+                               and drawing, the engine commands, the shell.
+  -      archytaszx.embed      The Python embedding of the language.
+
+
+3. THE TWO FRONT ENDS
+---------------------
+
+3.1 The .azx language
+
+The language (LANGUAGE.txt) is Dirac notation with variables, gates, sums, measurement and
+control flow. Its values are symbolic path sums (archytaszx.semantics.pathsum): a state is a sum
+of terms, each an amplitude times a sum over bound indices of a product of kets. Applying a gate
+is substitution into that form, and measurement is the Born distribution derived from it in
+closed form. The same program text therefore yields the same closed form for every value of
+its size symbols.
+
+The language is used through the archytaszx command (SHELL.txt) or from Python
+(PYTHON_API.txt). Any state can also be shown as a ZXW diagram (ZX_VIEW.txt).
+
+3.2 The diagram engine
+
+The engine commands (ENGINE_COMMANDS.txt) operate on qufinite ZXW diagrams: graphs of Z and X
+spiders, Fourier boxes, triangles, W nodes and dimension connectives, in which every port
+carries its own dimension and bang boxes stand for a symbolic number of copies or legs. On such
+diagrams the engine applies rewrite rules (RULES.txt), reduces to a normal form, saturates an
+e-graph, searches for proofs, proves families by induction over multiplicities, issues
+replayable certificates, re-checks proofs in a small kernel and exports them to Lean 4
+(PROOFS.txt, LEAN.txt).
+
+In the shell, language statements and engine commands can be mixed: a line beginning with ":"
+is an engine command.
+
+
+4. DESIGN PRINCIPLES
+--------------------
+
+4.1 Sizes are symbols
+
+A dimension is a Dim (ALGEBRA.txt): a positive integer, a symbol, or a product or power of
+these. A multiplicity is a Mult (DIAGRAM.txt). A concrete value typed by the user is abstracted
+into a fresh symbol on entry, with the value recorded in the diagram's parameter environment
+and substituted back only when output requires it. Representing |k>^30 therefore costs one
+leg under a bang box, not thirty legs.
+
+4.2 Scalars are exact
+
+Every scalar is an exact expression over rationals, roots of unity, dimension powers and free
+symbols. No module provides any way to drop a global factor or to normalise to a leading
+coefficient. Rewrite rules that change the scalar record the exact factor they introduce, so a
+derivation proves an equality, not a proportionality. Comparison up to a global phase exists
+only as an explicit opt-in mode of the numeric oracle.
+
+4.3 Results are derived, not sampled
+
+Language results are obtained by symbolic rewriting of path sums and closed-form summation.
+No state is expanded into an amplitude vector to produce a result, and measurement
+distributions are derived, not sampled. Numeric evaluation exists in the engine only as an
+oracle: it evaluates small concrete instances to look for counterexamples and to cross-check
+derivations, and its findings are reported as such.
+
+4.4 Sound, not complete
+
+Deciding equality of diagrams is undecidable in the generality the engine accepts (symbolic
+dimensions, symbolic phases, sums). Every decision procedure is therefore sound but
+incomplete: "equal" is reported only with a proof, "unequal" only with a counterexample, and
+everything else is "unknown". The same holds for scalars and phases, whose equality tests
+report "not equal" whenever equality cannot be verified.
+
+4.5 Every proof can be re-checked
+
+A derivation is recorded step by step with full provenance. A certificate replays it from the
+recorded steps; the proof kernel rebuilds it from a small set of inference rules; the Lean
+export restates it over a tensor-network semantics proved in Lean and Mathlib. Assumptions a
+derivation relied on (dimension equalities it could not decide) are carried into the
+certificate and into the Lean theorem as hypotheses.
+
+
+5. WHAT THE ENGINE GUARANTEES
+-----------------------------
+
+  - A rewrite never mutates its input diagram, and never produces a diagram with a hard
+    validation error that its input did not have.
+  - A rule fires only when every one of its declared side conditions has been checked and
+    passed; the outcome of each is recorded.
+  - A reported EQUAL verdict rests on a replayable derivation, a symbolic contraction with
+    every symbol formal, or an induction whose base and step are both settled.
+  - A reported UNEQUAL verdict rests on an interface mismatch, a numeric counterexample at an
+    assignment satisfying every symbol's assumptions, or a symbolic witness entry.
+  - A proof exported to Lean is checked by Lean independently of the engine. A step for which
+    no Lean lemma exists appears as an explicitly named axiom (unproved_*), never silently.
+
+
+6. CURRENT LIMITS
+-----------------
+
+  - Decision procedures can return UNKNOWN; read the reason they give.
+  - Symbolic contraction becomes slow as the number of phased spiders grows (roughly a factor
+    of four per symbolic phase in a chain).
+  - Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two
+    W nodes.
+  - The dimension unifier defers equations with several solution branches, such as
+    d1*d2 == 6 or d^n == d^m; such equalities become recorded assumptions.
+  - A rule restricted to prime dimensions does not fire at a symbolic dimension.
+  - Some proof steps have no Lean lemma yet; they are listed in LEAN_GAPS.txt.
+  - The Python API is not yet stable between releases.
+
+
+7. WHERE TO GO NEXT
+-------------------
+
+  INSTALL.txt to install; LANGUAGE.txt and examples/learn_azx.azx to write programs;
+  ENGINE_COMMANDS.txt and PROOFS.txt to prove identities.

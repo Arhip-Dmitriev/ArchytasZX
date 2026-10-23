@@ -1,0 +1,299 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Layer D (part 2): Deciding and Proving Equality
+
+Applies to: ArchytasZX 0.19.x
+Modules: archytaszx.semantics.decide, prove, induction, certificate, kernel
+
+
+1. THE QUESTION AND THE ANSWERS
+-------------------------------
+
+The central question is whether two diagrams denote the same linear map, scalar included, for
+every value of their free symbols: dimensions, phases, scalars and multiplicities. In this
+generality the question is undecidable, so every procedure below is sound and incomplete:
+
+  - EQUAL is reported only with evidence that holds for every value: a replayable derivation,
+    a symbolic contraction with every symbol formal, or an induction whose base and step are
+    both settled.
+  - UNEQUAL is reported only with a refutation: interfaces that can never agree, an oracle
+    counterexample at an assignment that satisfies every symbol's assumptions, or a symbolic
+    witness entry.
+  - Every other outcome is UNKNOWN, with the reason the procedure stopped.
+
+Equalities that a derivation assumed rather than verified (deferred dimension constraints) are
+reported with the verdict as its assumptions; the verdict is conditional on them.
+
+
+2. DECIDING EQUALITY: archytaszx.semantics.decide
+-------------------------------------------------
+
+    decide_equal(left, right, *, rules=None, guard=DEFAULT_GUARD, samples=None,
+                 max_samples=24, use_symbolic=True, use_induction=True, max_depth=2,
+                 tolerance=1e-9, max_elements=10_000_000, use_saturation=True,
+                 saturation_limits=DECIDE_SATURATION_LIMITS) -> Decision
+
+2.1 The ladder
+
+decide_equal tries the following rungs in order and stops at the first that settles:
+
+  1. INTERFACE              The numbers of boundary inputs or outputs differ, or a pair of
+                            boundary dimensions has no solution: UNEQUAL.
+  2. NORMAL_FORM            Both diagrams are reduced to normal form (REWRITE.txt, section 6).
+                            When the normal forms agree, both derivations replay, and rung 3
+                            finds no mismatch: EQUAL.
+  3. ORACLE_COUNTEREXAMPLE  The numeric oracle evaluates both diagrams at the sample grid; a
+                            mismatch above tolerance (relative to the larger entry, at least 1)
+                            is UNEQUAL.
+  4. SATURATION             Both diagrams are added to one e-graph, saturated within
+                            saturation_limits; when their classes merge: EQUAL. Each edge of
+                            the explaining path yields a certificate that must replay.
+  5. SYMBOLIC_CONTRACTION   Both diagrams are contracted with every symbol formal; equal
+                            tensors are EQUAL. Otherwise SYMBOLIC_WITNESS: an entry at a sample
+                            assignment and an index tuple where the two differ is UNEQUAL.
+  6. INDUCTION              A base case decided recursively plus a step case proved on one
+                            multiplicity index: EQUAL. Induction proves EQUAL only from base 0.
+                            The step is tried left to right, then right to left; nesting is
+                            bounded by max_depth.
+
+2.2 The Decision
+
+    Decision.verdict          EqualityVerdict: EQUAL, UNEQUAL, UNKNOWN
+    Decision.method           DecisionMethod: INTERFACE, NORMAL_FORM, SATURATION,
+                              SYMBOLIC_CONTRACTION, INDUCTION, ORACLE_COUNTEREXAMPLE,
+                              SYMBOLIC_WITNESS, NONE
+    Decision.reason           a sentence explaining the verdict
+    Decision.certificates     the certificates behind a NORMAL_FORM or SATURATION verdict
+    Decision.counterexample   the assignment behind an UNEQUAL verdict
+    Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
+    Decision.assumptions      deferred dimension constraints the verdict rests on
+    Decision.samples_checked  oracle samples evaluated
+    Decision.parameters_agree whether the two parameter environments agree
+    Decision.left_nf, right_nf, comparison, induction, saturation, decided
+
+The parameter environment never enters a verdict; parameters_agree reports it separately.
+
+2.3 The sample grid
+
+    sample_grid(left, right) -> tuple[assignment, ...]
+
+The default assignments range over every free symbol of both diagrams:
+
+  Symbol kind      Values, in order
+  ---------------  ---------------------------------------------
+  dimension        2, 3, 4, 1
+  multiplicity     0, 1, 2, 3
+  phase            1/3, 1/4, 0, 1/2
+  integer          1, 2, 0, 3, -1, 4, 5, -2, 6, 7, -3, 8
+  rational         the phase values, then 1, 2, -1/3, -1/4, -1, -1/2, -2
+
+Diagonal assignments come first, then the remaining tuples by largest index, index sum and
+tuple. Only values satisfying each symbol's sympy assumptions are used. A sample at which a
+diagram is outside its domain (for example a phase index above d - 1) is refused and counted;
+the summary line reports how many samples were evaluated and refused, and the first refusal.
+
+2.4 Partial procedures
+
+    interface_reason(left, right) -> str | None              rung 1 alone
+    refute_by_oracle(left, right, *, samples=None, max_samples=24, ...) -> OracleRefutation
+    refute_by_symbolic_witness(left, right, *, samples=None, ...) -> EntryWitness | None
+    dimension_floors(*diagrams) -> dict[str, int]
+            the least value of each dimension symbol for which every phase vector over it is
+            defined (one above its largest stored index)
+
+
+3. PROOF SEARCH: archytaszx.semantics.prove
+-------------------------------------------
+
+    prove(start, goal, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, bidirectional=True,
+          cache=None, refute=True, samples=None, max_samples=24, tolerance=1e-9,
+          max_elements=10_000_000, induction_depth=2) -> ProofOutcome
+
+prove settles a goal in this order:
+
+  1. Interfaces that can never agree: REFUTED.
+  2. With refute, an oracle counterexample: REFUTED.
+  3. Bidirectional tactic search (REWRITE.txt, section 8). A path found is certified and
+     checked: PROVED, or CHECK_FAILED if the check fails.
+  4. When search finds no path and a multiplicity is free, induction: the base case at 0 is
+     proved the same way; for the step, one side's peeled successor at k + 1 is searched until
+     a union of its regions is that side at k; the hypothesis replaces it by the other side at
+     k; the result is proved equal to the other side's peeled successor.
+  5. Otherwise: NOT_FOUND.
+
+    ProofStatus: PROVED | REFUTED | NOT_FOUND | CHECK_FAILED
+    ProofOutcome(status, reason, certificate, check, search, counterexample, assumptions,
+                 induction)
+
+3.1 Proof certificates
+
+A ProofCertificate holds two step-sequence certificates: forward from start and backward from
+goal, with the tactic names of their moves.
+
+    check_proof(certificate, *, samples=None, max_samples=24, tolerance=1e-9, ...)
+        -> ProofCheck
+
+check_proof verifies, stopping at the first failure: (a) start and goal pass validation and
+each half begins at its end diagram, id for id; (b) each half replays; (c) the two replayed
+diagrams have isomorphic comparison views; (d) the oracle finds no counterexample between
+start and goal. An InductionProof is checked piece by piece, then the oracle is run on its two
+sides.
+
+
+4. INDUCTION OVER MULTIPLICITIES: archytaszx.semantics.induction
+----------------------------------------------------------------
+
+    prove_by_induction(left, right, *, index=None, base=None, witness={},
+                       ladder=DEFAULT_LADDER, rules=None, step_symbol="k", width=4,
+                       max_steps=64, certify_proof=True, mode=EXACT, tolerance=1e-9,
+                       max_elements=10_000_000) -> InductionResult
+
+proves an equality between two families for every value of one multiplicity symbol, index
+(by default the lexicographically least free multiplicity). Every other symbol is either held
+symbolic or fixed at the value witness gives it, for the tiers that need concrete values.
+
+4.1 The obligation
+
+build_obligation constructs six diagrams: both sides at the base value (0 when both evaluate
+there, otherwise 1), both sides at the step symbol k (the hypothesis), and both sides at k + 1
+(the successor).
+
+4.2 The step tiers
+
+The base case is compared by the oracle. The step case is then discharged by the tiers of the
+ladder, in order, until one settles:
+
+  Tier                  Method                                                Verdict
+  --------------------  ----------------------------------------------------  ----------------
+  UNIFORM_REWRITE       rewrite the hypothesis diagrams into each other with  PROVED_UNIFORM
+                        the multiplicity never instantiated
+  INDUCTION_REWRITE     rewrite the successor diagrams into each other with   PROVED_INDUCTION
+                        the hypothesis available as a rule; otherwise peel
+                        one copy off each successor, discharge the residual
+                        by the hypothesis and compare the peeled copies by
+                        symbolic contraction
+  SYMBOLIC_CONTRACTION  contract both successors with every symbol formal     PROVED_INDUCTION
+  ORACLE_WINDOW         compare by the oracle at every multiplicity in a      SCHEMA_CHECKED
+                        window of width values
+
+    Verdict: PROVED_UNIFORM | PROVED_INDUCTION | SCHEMA_CHECKED | REFUTED | INCONCLUSIVE
+
+PROVED_UNIFORM and PROVED_INDUCTION are proofs for every value of the index. SCHEMA_CHECKED is
+a finite check and is reported as such, never as a proof. REFUTED carries the counterexample
+value of the index.
+
+    InductionResult.verdict, index, base_value, reason, obligation, witness, base, tiers,
+                    comparison, counterexample, derivation
+    InductionResult.proved, discharge, held_symbolic
+
+held_symbolic names the symbols the settling tier left universally quantified.
+
+4.3 Building blocks
+
+    choose_index, choose_base_value, build_obligation, discharge_base
+    hypothesis_diagram, successor_diagram, rename_multiplicity
+    hypothesis_rule(obligation)          the hypothesis as a rewrite rule, when matchable
+    find_hypothesis_region, replace_region, connected_regions
+    discharge_uniform_rewrite, discharge_induction_rewrite, discharge_peeled_hypothesis,
+    discharge_symbolic_contraction, discharge_oracle_window
+
+
+5. CERTIFICATES: archytaszx.semantics.certificate
+-------------------------------------------------
+
+5.1 Structure
+
+A Derivation is one node of a proof tree: an initial diagram, a final diagram and the evidence
+between them. A STEP_SEQUENCE derivation carries RewriteSteps; an INDUCTION derivation carries
+those over a free multiplicity, a base child, a step child and an InductionClaim (the symbol,
+the base value, the symbols held symbolic, the tier that discharged the step). A Certificate
+pairs a derivation with its CheckMethod: NUMERIC_ORACLE or INDUCTION.
+
+    certify(initial, results, *, label="", check_method=NUMERIC_ORACLE) -> Certificate
+    certify_induction(initial, final, results, base, step, claim, *, label="", ...)
+
+5.2 Replay and verification
+
+    replay(certificate, source=None, *, rediscover=True) -> ReplayResult
+    verify(certificate, assignment, *, mode=EXACT, tolerance=1e-9, ...)
+        -> VerificationReport
+
+replay re-applies every recorded step to a fresh copy of the initial diagram and checks, per
+step, that the rule still exists by name, that the consumed nodes and wires are present, that
+the matcher rediscovers the recorded match, and that the step apply produces equals the
+recorded step; finally that the diagram reached is identical, id for id, to the recorded final
+diagram. verify runs replay and then compares the two ends with the oracle at the assignment.
+
+5.3 What a verified certificate establishes
+
+  - The recorded steps re-derive the recorded final diagram exactly.
+  - Every rule named still exists.
+  - Every match is still found in the diagram it was recorded against.
+  - Every recorded side-condition outcome and dimension constraint is what the matcher
+    derives afresh.
+  - For a NUMERIC_ORACLE certificate, the two ends denote the same tensor at the assignment.
+
+It establishes nothing about other assignments, about the satisfiability of a deferred
+dimension constraint, or about a rule whose meaning changed under a name it kept. For an
+INDUCTION certificate, the checked parts are the base case and one concrete instance of the
+step; the step schema itself is discharged by the induction module and is not recorded in
+re-checkable form. Tampering with any recorded field makes replay fail.
+
+
+6. THE PROOF KERNEL: archytaszx.semantics.kernel
+------------------------------------------------
+
+The kernel is a small set of inference rules. A Theorem states lhs = rhs for diagrams, every
+free multiplicity universally quantified over the naturals, under listed assumptions. Only
+these functions construct a Theorem:
+
+  refl(d)                            d = d
+  rule(d, step)                      d = d' by re-applying one recorded step at a match the
+                                     matcher rediscovers in d
+  iso(a, b)                          a = b when their comparison views are isomorphic
+  symm(t)                            rhs = lhs
+  trans(a, b)                        a.lhs = b.rhs when a.rhs and b.lhs are identical
+  induction(start, goal, index, step_symbol, base, side, expose, region, step)
+                                     start = goal for every value of index, from a base
+                                     theorem at 0, a theorem exposing one side's peeled
+                                     successor at k + 1 as a context around that side at k,
+                                     and a theorem from that context around the other side at
+                                     k to the other peeled successor
+
+    chain(start, steps) -> Theorem   start = d_n through every step
+    check(artefact) -> Theorem       the theorem a certificate, proof certificate or induction
+                                     proof establishes; KernelError at the first piece that
+                                     does not check
+    from_decision(decision, left, right) -> Theorem
+                                     from a NORMAL_FORM or SATURATION decision's certificates
+    symbolic(left, right) -> Symbolic
+                                     left = right for every value of the dimensions and
+                                     phases, by the Lean normaliser of symbolic sums
+    refutation(decision, left, right) -> Refutation
+                                     an UNEQUAL decision's counterexample as a refutation
+    lean(theorem | refutation | symbolic, name="main", ...) -> str
+                                     Lean 4 source (LEAN.txt)
+
+Theorem.size() is the number of inferences, Theorem.axioms() the rule names of every rule
+inference in proof order, and Theorem.variables() the free multiplicities of both sides. An
+induction certificate of the induction module carries no re-checkable step and is refused by
+check; the shell then re-derives a re-checkable proof by search.
+
+
+7. TRUST MODEL
+--------------
+
+From least to most independent of the engine:
+
+  1. A verdict of decide_equal or prove: trusts the engine's rewriting, matching and
+     contraction code.
+  2. A replayed certificate: trusts the rule definitions and the matcher, but re-derives every
+     step.
+  3. A kernel theorem: trusts the kernel's inference rules and the rule implementations it
+     re-applies.
+  4. A Lean proof over the tensor-network semantics: trusted are only Lean, Mathlib, the
+     bundled library's definitions, and the translation of a diagram into a network. Every rule
+     is a lemma proved in Lean; any step without one is an explicit axiom named unproved_*.
+
+The oracle at every level is evidence at the points it evaluates, never a proof.

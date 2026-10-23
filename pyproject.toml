@@ -59,7 +59,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/Arhip-Dmitriev/ArchytasZX"
 Repository = "https://github.com/Arhip-Dmitriev/ArchytasZX"
-Documentation = "https://github.com/Arhip-Dmitriev/ArchytasZX#quickstart"
+Documentation = "https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INDEX.txt"
 Issues = "https://github.com/Arhip-Dmitriev/ArchytasZX/issues"
 
 [project.scripts]

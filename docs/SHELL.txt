@@ -1,0 +1,202 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+The archytaszx Command and Shell
+
+Applies to: ArchytasZX 0.19.x
+Implementation: archytaszx.repl.shell
+
+
+1. SYNOPSIS
+-----------
+
+    archytaszx [OPTIONS]                          interactive shell
+    archytaszx [OPTIONS] FILE.azx ... [ARG ...]   run scripts
+    archytaszx [OPTIONS] -c STATEMENT [-c ...]    run statements given on the command line
+
+
+2. OPERANDS
+-----------
+
+Positional operands ending in .azx are script files. They are run in the order given, in one
+session, after every -c statement. Every other positional operand is a script argument,
+available to programs through arg(K) (LANGUAGE.txt, section 15), counted from 1 in the order
+given.
+
+With --commands, every positional operand is a file of engine commands.
+
+When neither a -c option nor a script file is given, the interactive shell starts.
+
+
+3. OPTIONS
+----------
+
+3.1 General
+
+  --help                 Print the usage summary and exit.
+  -c CMD, --command CMD  Run CMD as one line. Repeatable; the lines run in order, before any
+                         script file.
+  --commands             Read engine commands instead of language statements: every line
+                         is an engine command, written without the leading colon.
+  --seed SEED            Seed the generator used by rand.
+  --verbose              Echo the value of each line, in the style "val x : nat = 3".
+
+3.2 Views
+
+The view decides how states, and the diagrams engine commands print, are shown. Exactly one
+may be given; the default is --dirac.
+
+  --dirac,     -dirac      Dirac notation.
+  --zx,        -zx         ZX diagrams drawn with matplotlib (same as --zxrender).
+  --zxrender,  -zxrender   ZX diagrams drawn with matplotlib; Unicode where the terminal
+                           cannot show images.
+  --zxunicode, -zxunicode  ZX diagrams drawn on a Unicode character grid.
+  --zxascii,   -zxascii    ZX diagrams drawn on an ASCII character grid.
+  --both,      -both       Dirac notation and the matplotlib ZX drawing.
+  --raw,       -raw        Full ZX graph listings, nothing summarised or capped.
+
+3.3 Output styles
+
+A style decides how one value is typeset. Style flags can be combined; with several, every
+output is printed once in each selected style, in the order the flags were given. The default
+is --render.
+
+  --render    Typeset images (matplotlib mathtext), shown inline in a terminal that supports
+              images; Unicode text otherwise.
+  --unicode   Unicode text: |0⟩^⊗n, Σ, ⊗.
+  --ascii     ASCII text in the input syntax: |0>^@n, sum(x in 0..q){ ... }.
+  --latex     LaTeX source.
+  --order     Hold all output until an error or the end of input, then print it grouped by
+              style.
+
+3.4 Saving images
+
+The two options below are mutually exclusive.
+
+  --images DIR        Also save every rendered image (formulas and ZX drawings) as a PNG file
+                      in DIR, numbered in order of output (0001-zx.png, 0002-dirac.png, ...).
+  --images_white DIR  As --images, with black ink on a white background.
+
+
+4. EXIT STATUS
+--------------
+
+  0     Every line ran without error.
+  1     At least one line reported an error, or standard output was closed.
+  2     Usage error, or a script file could not be read (nothing is run in that case).
+  130   Interrupted by Ctrl-C outside a running command.
+
+A line that fails reports its error and execution continues with the next line; the status is
+determined at the end.
+
+
+5. THE INTERACTIVE SHELL
+------------------------
+
+5.1 Prompt
+
+The prompt is the name of the working directory followed by the number of the next line:
+
+    Архитас(1):
+
+A continuation line (an unclosed brace, or a closed if that an else may follow) is prompted
+with dots in place of the name. In verbose mode a rule showing the time, the command number and
+the directory precedes each prompt.
+
+5.2 Input lines
+
+Each input line is handled as follows:
+
+  - A blank line or a line starting with # does nothing and is not recorded.
+  - history lists the lines entered in this session.
+  - quit or exit leaves the shell (as does end of input).
+  - A line starting with : is a meta-command (section 6) or an engine command
+    (ENGINE_COMMANDS.txt).
+  - Any other line is a language statement (LANGUAGE.txt).
+
+A line ending in a backslash is joined to the next. A block opened with { continues until its
+closing }. After a closed if block, the shell waits for the next line in case it begins with
+else.
+
+5.3 History
+
+On a terminal, line editing and history are provided by readline. The history persists across
+sessions in ~/.archytaszx_history, at most 1000 lines.
+
+5.4 Errors
+
+Errors are printed as lines beginning with "error:", in red when colour is enabled (standard
+output is a terminal and NO_COLOR is not set). After a failed engine command,
+the ":detail" command shows the engine's full error record.
+
+
+6. META-COMMANDS
+----------------
+
+Meta-commands change the shell's own settings. They begin with a colon.
+
+  Command                Effect
+  ---------------------  ------------------------------------------------------------------
+  :dirac                 View Dirac notation.
+  :zx, :zxrender         View ZX diagrams drawn with matplotlib.
+  :zxunicode             View ZX diagrams on a Unicode grid.
+  :zxascii               View ZX diagrams on an ASCII grid.
+  :both                  View Dirac notation and the matplotlib ZX drawing.
+  :raw                   View full ZX graph listings.
+  :listing               Toggle the graph listing printed under each ZX drawing.
+  :verbose_on            Echo each line's value, utop style.
+  :verbose_off           Stop echoing values.
+  :style S [S ...]       Select the output styles: render, unicode, ascii, latex. Several
+                         styles print every output in each.
+  :config                Show the image settings and the configuration file path.
+  :config KEY VALUE      Set an image setting: size (a positive number) or color ("auto" or
+                         a matplotlib colour).
+  :config save           Write the settings to the configuration file.
+  :config reset          Restore the default settings.
+  :help [CMD]            List every command, or show one command's usage.
+
+Any other line beginning with a colon is passed, without the colon, to the engine; see
+ENGINE_COMMANDS.txt.
+
+
+7. VERBOSE MODE
+---------------
+
+With --verbose or :verbose_on, the value of the last statement of each line is echoed:
+
+    val c : nat = 0                    a variable
+    val |s⟩ : ket = √2/2 Σ_{y=0}^{1} |y⟩
+    - : nat = 5                        a bare expression
+    - : dist = [(k, 0.5) : k ∈ {0,1}]  a measurement
+    val n : nat                        a symbol without a value
+
+The type names are nat, int, real, complex and bool for scalars, ket, bra, density, dist, op
+for an operator value, gate for a gate definition and func for a function definition.
+
+
+8. SCRIPTS
+----------
+
+A script file is UTF-8 text in the .azx language. It may contain meta-commands and engine
+commands (lines starting with a colon) as well as statements, so a script can switch views,
+load diagrams and run proofs. Scripts given together share one session: names defined by an
+earlier script are visible to a later one.
+
+Example, examples/deutsch_jozsa_proof.azx, consists of engine commands only:
+
+    :load count n; c = X(0 -> 1, d); box q x n nodes c
+    :name zeros
+    :load count n; s = X(0 -> 1, d); f1 = F(1 -> 1, d); ... ; box p x n nodes s, f1, ...
+    :prove against @zeros
+    :certificate kernel
+    :certificate lean deutsch_jozsa_constant.lean
+
+
+9. TERMINAL IMAGES
+------------------
+
+Rendered output is shown inline in terminals implementing the kitty graphics protocol, the
+iTerm2 inline image protocol, or sixel; the protocol is detected from the environment, or
+forced with ARCHYTASZX_IMAGES (INSTALL.txt, section 4.3). Where no protocol is available, or
+standard output is not a terminal, rendered output is replaced by Unicode text. Image size and
+colour are set by the configuration file (INSTALL.txt, section 4.1).

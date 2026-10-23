@@ -1,0 +1,443 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+The Rule Library
+
+Applies to: ArchytasZX 0.19.x
+Implementation: archytaszx.rewrite.rules_library (RULES, lookup_rule), with the patterns of
+                archytaszx.rewrite.match, match_zxw and match_box
+
+
+1. CONVENTIONS
+--------------
+
+Every rule states an exact equality between its left- and right-hand sides, including the
+scalar: the right-hand side is multiplied by the rule's scalar. d is the dimension of the
+matched legs; s and t are the dimensions of a connective's split legs. "Phaseless" means the
+spider carries no phase vector or the zero one. A state is a spider with no input and one
+output; an effect a spider with one input and no output.
+
+Unless stated otherwise, the matched nodes must lie outside every node-scope bang box
+(condition outside_every_bang_box), the legs involved must carry exactly equal dimensions
+(same_dimension), and the wires consumed must not be claimed by a second wire or a boundary
+(joined_and_unclaimed and similar).
+
+Rules are looked up by name with lookup_rule(name); RULES maps every name to its Rule in the
+order below. In the shell, ":rules NAME" prints the metadata given here.
+
+Each entry gives:
+
+  Scalar           the factor the rule introduces (per match: computed from the match)
+  Quantifiers      the leg-count and dimension variables the equation ranges over
+  Guards           arithmetic restrictions on the matched dimension
+  Normal-form set  whether the rule belongs to the normal-form set (REWRITE.txt, section 6)
+  Side conditions  the conditions every match is checked against, in order
+
+
+2. RULES
+--------
+
+2.1 spider_fusion
+~~~~~~~~~~~~~~~~~
+
+Two spiders of the same colour joined by a wire are one spider: its legs are the surviving legs
+of the lower-id spider followed by those of the other, and its phase vector is the sum of
+theirs. Z spiders may be joined in any direction; X spiders by an output-to-input wire. Any
+further wire joining the pair survives as a self-loop on the fused spider.
+
+  Scalar:           1
+  Quantifiers:      leg counts m_a, n_a, m_b, n_b; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  distinct_nodes, same_generator_type, parallel_wires_become_self_loops,
+                    consumed_wire_direction_permitted_for_color, consumed_ports_singly_claimed,
+                    bang_box_scope_agreement, dimension_agreement, phase_dimension_agreement,
+                    dimension_guards_satisfied
+
+
+2.2 z_fusion_prime_d
+~~~~~~~~~~~~~~~~~~~~
+
+Spider fusion restricted to a prime shared dimension: same builder and scalar as spider_fusion.
+A composite or symbolic shared dimension is not a match.
+
+  Scalar:           1
+  Quantifiers:      leg counts m_a, n_a, m_b, n_b; dimensions d
+  Guards:           prime
+  Normal-form set:  no
+  Side conditions:  distinct_nodes, same_generator_type, parallel_wires_become_self_loops,
+                    consumed_wire_direction_permitted_for_color, consumed_ports_singly_claimed,
+                    bang_box_scope_agreement, dimension_agreement, phase_dimension_agreement,
+                    dimension_guards_satisfied
+
+
+2.3 fourier_cancellation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Four Fourier boxes in series are the identity wire: F^4 = id.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  chain_is_series, same_dimension
+
+
+2.4 zx_cap
+~~~~~~~~~~
+
+A phaseless Z state wired into a phaseless X effect is the empty diagram times d^(1/2). The X
+effect contracts by the character sum to sqrt(d) [k == 0 mod d], and summing that against the Z
+state's all-ones vector leaves sqrt(d).
+
+  Scalar:           sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_a_z_spider, effect_is_an_x_spider, joined_and_unclaimed, phaseless,
+                    same_dimension, outside_every_bang_box
+
+
+2.5 identity_removal
+~~~~~~~~~~~~~~~~~~~~
+
+A phaseless spider with one input and one output is the identity on its wire, and is removed.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  node_is_a_phaseless_spider, one_in_one_out, not_a_self_loop,
+                    legs_singly_claimed, splice_keeps_two_ports, same_dimension,
+                    leaves_every_bang_box_populated, no_port_boxed_leg, splice_keeps_copies
+
+
+2.6 triangle_inverse_cancellation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A triangle T and its inverse Ti in series, in either order, are the identity wire at every
+dimension.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  inverse_pair_in_series, joining_wire_unclaimed, outer_legs_singly_claimed,
+                    splice_keeps_two_ports, same_dimension, bang_box_scope_agreement,
+                    leaves_every_bang_box_populated
+
+
+2.7 state_copy
+~~~~~~~~~~~~~~
+
+A phaseless X state wired into a phaseless Z spider with n outputs is n phaseless X states.
+Since X_{0->1} = sqrt(d)|0>, the factor is d^((1 - n)/2), computed per match from n.
+
+  Scalar:           d^((1 - n)/2), per match (sqrt(d) at n = 0)
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_a_phaseless_x_spider, spider_is_a_phaseless_z_spider,
+                    joined_and_unclaimed, same_dimension, outside_every_bang_box
+
+
+2.8 hopf
+~~~~~~~~
+
+A Z spider and an X spider joined by one plain wire and by one wire through F^2 (the antipode)
+fall apart into the two spiders with their remaining legs, times d^(-1). A plain double edge
+without the F pair is not a match.
+
+  Scalar:           1/d
+  Quantifiers:      leg counts m, n, p, q; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  z_and_x_spiders, two_paths, path_ports_unclaimed, same_dimension,
+                    phase_dimension_agreement, outside_every_bang_box
+
+
+2.9 bialgebra
+~~~~~~~~~~~~~
+
+X_{2->1} wired into Z_{1->2}, both phaseless, crosses over into two Z_{1->2} and two X_{2->1},
+times d^(1/2). This rule grows the diagram.
+
+  Scalar:           sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no
+  Side conditions:  x_is_a_phaseless_two_to_one, z_is_a_phaseless_one_to_two,
+                    joined_and_unclaimed, same_dimension, outside_every_bang_box
+
+
+2.10 fourier_state_color_change
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A Fourier box on the leg of a phaseless Z state is a phaseless X state: F (sum_k |k>) =
+sqrt(d)|0> = X_{0->1}. The dual form, a Fourier box on a phaseless Z effect, is covered too.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  spider_is_a_phaseless_z_state, fourier_box_on_that_leg,
+                    joined_and_unclaimed, free_leg_singly_claimed, same_dimension,
+                    bang_box_scope_agreement
+
+
+2.11 zx_cap_swapped
+~~~~~~~~~~~~~~~~~~~
+
+A phaseless X state wired into a phaseless Z effect is the empty diagram times d^(1/2).
+
+  Scalar:           sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_an_x_spider, effect_is_a_z_spider, joined_and_unclaimed, phaseless,
+                    same_dimension, outside_every_bang_box
+
+
+2.12 state_copy_swapped
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A phaseless Z state wired into a phaseless X spider with n outputs is n phaseless Z states,
+times d^((1 - n)/2), computed per match.
+
+  Scalar:           d^((1 - n)/2), per match (sqrt(d) at n = 0)
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_a_phaseless_z_spider, spider_is_a_phaseless_x_spider,
+                    joined_and_unclaimed, same_dimension, outside_every_bang_box
+
+
+2.13 hopf_swapped
+~~~~~~~~~~~~~~~~~
+
+An X spider above a Z spider, joined by a plain wire and an F^2 antipode wire, fall apart times
+d^(-1).
+
+  Scalar:           1/d
+  Quantifiers:      leg counts m, n, p, q; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  x_and_z_spiders, two_paths, path_ports_unclaimed, same_dimension,
+                    phase_dimension_agreement, outside_every_bang_box
+
+
+2.14 bialgebra_swapped
+~~~~~~~~~~~~~~~~~~~~~~
+
+Z_{2->1} wired into X_{1->2}, both phaseless, crosses over into two X_{1->2} and two Z_{2->1},
+times d^(1/2). This rule grows the diagram.
+
+  Scalar:           sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no
+  Side conditions:  z_is_a_phaseless_two_to_one, x_is_a_phaseless_one_to_two,
+                    joined_and_unclaimed, same_dimension, outside_every_bang_box
+
+
+2.15 fourier_state_color_change_swapped
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A Fourier box on the leg of a phaseless X state is a phaseless Z state: F sqrt(d)|0> = sum_k
+|k>; dually for an X effect.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  spider_is_a_phaseless_x_state, fourier_box_on_that_leg,
+                    joined_and_unclaimed, free_leg_singly_claimed, same_dimension,
+                    bang_box_scope_agreement
+
+
+2.16 w_fusion
+~~~~~~~~~~~~~
+
+A W node fed by an output of another W node is one W node. When the second W has no outputs (the
+counit <0|), the joined output is dropped.
+
+  Scalar:           1
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  two_w_nodes, joining_wire_unclaimed, same_dimension,
+                    bang_box_scope_agreement, leaves_every_bang_box_populated
+
+
+2.17 w_identity
+~~~~~~~~~~~~~~~
+
+A W node with one output is the identity on its wire, and is removed.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  node_is_a_w_node, one_in_one_out, not_a_self_loop, legs_singly_claimed,
+                    splice_keeps_two_ports, same_dimension, leaves_every_bang_box_populated,
+                    no_port_boxed_leg
+
+
+2.18 w_zero_copy
+~~~~~~~~~~~~~~~~
+
+A phaseless X state wired into a W node with n outputs is n phaseless X states, times d^((1 -
+n)/2), computed per match: W|0> = |0...0> and X_{0->1} = sqrt(d)|0>.
+
+  Scalar:           d^((1 - n)/2), per match (sqrt(d) at n = 0)
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_a_phaseless_x_spider, target_is_a_w_node, joined_and_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.19 triangle_zero_state
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A triangle T or Ti fixes the phaseless X state sqrt(d)|0>.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  state_is_a_phaseless_x_spider, target_is_a_triangle, joined_and_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.20 triangle_zero_effect
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A triangle T wired into a phaseless X effect is a phaseless Z effect times d^(1/2): <0|T is the
+all-ones row and the X effect is sqrt(d)<0|.
+
+  Scalar:           sqrt(d), d read off the match
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  node_is_a_triangle, effect_is_a_phaseless_x_spider, joined_and_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.21 connective_inverse
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A splitter S taking s*t to s and t, both outputs fed in order into a binder B, is the identity
+on s*t.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions s, t
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  inverse_pair, joining_wires_unclaimed, matching_dimensions,
+                    outer_legs_singly_claimed, splice_keeps_two_ports, outside_every_bang_box
+
+
+2.22 connective_inverse_bind_first
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A binder B taking s and t to s*t, fed into a splitter S, is the identity on s and on t.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions s, t
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  inverse_pair, joining_wires_unclaimed, matching_dimensions,
+                    outer_legs_singly_claimed, splice_keeps_two_ports, outside_every_bang_box
+
+
+2.23 connective_states
+~~~~~~~~~~~~~~~~~~~~~~
+
+Phaseless Z states on both inputs of a binder are one phaseless Z state on its s*t output;
+dually, phaseless Z effects on both outputs of a splitter are one Z effect on its input.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions s, t
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  connective_with_two_ends, joined_and_unclaimed, matching_dimensions,
+                    outside_every_bang_box
+
+
+2.24 connective_states_swapped
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Phaseless X states on both inputs of a binder are one phaseless X state on its output:
+sqrt(s)|0> (x) sqrt(t)|0> binds to sqrt(s*t)|0>; dually for X effects on a splitter.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions s, t
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  connective_with_two_ends, joined_and_unclaimed, matching_dimensions,
+                    outside_every_bang_box
+
+
+2.25 wz_bialgebra
+~~~~~~~~~~~~~~~~~
+
+A phaseless Z_{n->1} wired into W_{1->m} is n copies of W_{1->m} crossed into m copies of
+Z_{n->1}. This rule grows the diagram.
+
+  Scalar:           1
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no
+  Side conditions:  z_is_a_phaseless_fan_in, w_is_a_fan_out, joining_wire_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.26 w_z_effect
+~~~~~~~~~~~~~~~
+
+An output of W_{1->m} wired into a phaseless Z effect is a triangle T followed by W_{1->m-1}.
+
+  Scalar:           1
+  Quantifiers:      leg counts m; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  node_is_a_w_node, effect_is_a_phaseless_z_spider, joined_and_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.27 w_zero_effect
+~~~~~~~~~~~~~~~~~~
+
+An output of W_{1->m} wired into a phaseless X effect is W_{1->m-1} times d^(1/2).
+
+  Scalar:           sqrt(d), d read off the match
+  Quantifiers:      leg counts m; dimensions d
+  Guards:           none
+  Normal-form set:  yes
+  Side conditions:  node_is_a_w_node, effect_is_a_phaseless_x_spider, joined_and_unclaimed,
+                    same_dimension, outside_every_bang_box
+
+
+2.28 port_box_unfusion
+~~~~~~~~~~~~~~~~~~~~~~
+
+A spider with one port-boxed leg and two other legs is two spiders of its colour joined by one
+wire, the boxed leg moved onto the new, phaseless one. This rule grows the diagram.
+
+  Scalar:           1
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  no
+  Side conditions:  node_is_a_spider, one_leg_port_boxed, two_other_legs, same_dimension,
+                    outside_every_bang_box
+
+
+3. SOUNDNESS
+------------
+
+Each rule's equation, scalar included, is checked against the numeric oracle by the test
+suite over sweeps of dimensions and leg counts, and most rules are lemmas of the bundled Lean
+library (LEAN.txt); the rules and constructs without a Lean lemma are listed in LEAN_GAPS.txt.
+A rewrite that changes the denoted linear map, scalar included, is a soundness bug; see
+CONTRIBUTING.md for how to report one.

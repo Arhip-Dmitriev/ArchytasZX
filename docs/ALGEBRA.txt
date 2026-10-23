@@ -1,0 +1,226 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Layer A: Symbolic Algebra
+
+Applies to: ArchytasZX 0.19.x
+Package: archytaszx.algebra (modules dimension, phase, scalar)
+
+
+1. PURPOSE
+----------
+
+Layer A supplies the three kinds of exact value every other layer is built from:
+
+  - Dim, a dimension: a positive integer that may be symbolic;
+  - Phase and PhaseVector, the phase data of a spider;
+  - Scalar, an exact complex number that may be symbolic.
+
+Each is immutable and hashable and is backed by one canonical sympy expression. Equality of
+these values is sound and incomplete: values that compare equal are mathematically equal,
+but mathematically equal values may compare unequal when the cheap canonicalisation cannot
+show it. No value of this layer is ever approximated, and none of its operations discards a
+factor.
+
+
+2. DIMENSIONS: archytaszx.algebra.dimension
+-------------------------------------------
+
+2.1 The grammar of dimensions
+
+A Dim is one of:
+
+  - a concrete positive integer (>= 1);
+  - a symbol, which carries the assumptions positive and integer;
+  - a product of dimensions;
+  - a power of a dimension by a non-negative integer exponent, the exponent itself concrete
+    or a symbol (assumptions integer and non-negative).
+
+Sums, quotients, roots and floats are outside the grammar and are rejected with
+DimensionGrammarError. Values outside the domain (zero, negative integers, negative exponents)
+raise DimensionDomainError.
+
+A dimension is stored on each port of a diagram. There is no global or default dimension.
+
+2.2 class Dim
+
+    Dim(value: int | str | Dim)
+    Dim.concrete(value: int) -> Dim
+    Dim.symbol(name: str) -> Dim
+    Dim.from_sympy(expr) -> Dim                 rejects anything outside the grammar
+
+    a * b, a ** e                               products and powers
+    a == b                                      d1*d2 == d2*d1, d*d == d**2
+
+    dim.to_sympy()                              the canonical sympy expression
+    dim.is_concrete -> bool                     no free symbols
+    dim.free_symbols -> frozenset[str]
+    dim.to_int() -> int                         the value of a concrete dimension
+    dim.substitute(mapping) -> Dim              symbols replaced by integers
+    dim.rewrite(mapping) -> Dim                 symbols replaced by other Dims
+    dim.abstract(*, avoid=(), stem="d")         a fresh symbol for a concrete dimension and
+        -> (Dim, Mapping[str, int])             the binding that recovers its value
+    dim.unify(other: Dim) -> UnifyResult        decide dim == other
+
+abstract is the inverse of substitute. It is how a user's literal 3 is made to behave as a
+symbol: the fresh name avoids every name in avoid and the binding records the value.
+
+2.3 Unification
+
+unify decides one equation over the positive integers. It first cancels common factors, then
+either decides the reduced equation or reports it as a residual constraint. Its result is a
+UnifyResult with a status:
+
+  Status    Meaning
+  --------  ---------------------------------------------------------------------------------
+  SUCCESS   The equation holds, possibly under the bindings reported in result.bindings.
+  FAILURE   The equation has no solution over the positive integers.
+  DEFERRED  The equation could not be decided; result.constraints holds the reduced pairs.
+
+unify never reports SUCCESS for an equation it did not verify and never FAILURE for one that
+has a solution. An equation with several solution branches is DEFERRED, for example a product
+of symbols against a constant (d1*d2 == 6) or equal bases with symbolic exponents
+(d^n == d^m).
+
+2.4 Systems of equations
+
+    solve(constraints: Sequence[tuple[Dim, Dim]], *, max_passes=None) -> SolveResult
+    unify_all(dims: Sequence[Dim]) -> UnifyAllResult
+
+solve resolves a system of asserted equalities to a monotone fixpoint: each pass resolves both
+sides of every pair through the bindings found so far and unifies them. The result depends
+only on the set of constraints. A symbol bound to two values that do not unify is FAILURE. A
+converged system with residual pairs is DEFERRED with exhausted=False; a system that did not
+converge within the pass budget (32 passes by default) is DEFERRED with exhausted=True.
+
+unify_all resolves a multiset of dimensions that must all be equal. Concrete bindings are
+reported in bindings, non-concrete ones in declined_bindings. Callers must distinguish an
+exhausted result from an ordinary deferred one; the diagram validator treats exhaustion as a
+hard error.
+
+
+3. PHASES: archytaszx.algebra.phase
+-----------------------------------
+
+3.1 The mathematical model
+
+A qudit Z spider with phase vector (alpha_1, ..., alpha_{d-1}) denotes
+
+    sum_{k=0}^{d-1} e^{i alpha_k} |k>^(tensor n) <k|^(tensor m)
+
+with alpha_0 = 0 fixed as gauge. Fusing two spiders of the same colour adds their phase
+vectors entrywise, which is why Phase and PhaseVector support addition.
+
+3.2 class Phase
+
+A Phase is an angle stored in turns: the angle of t turns is 2*pi*t.
+
+    Phase(turns: sympy.Expr)
+    Phase.zero()
+    Phase.turns(value: Rational | int)          an exact fraction of a turn
+    Phase.root_of_unity(index, dim: Dim)        the phase of omega_d^index, index/d turns
+    Phase.symbol(name: str)                     a free phase parameter, in turns
+
+    p + q, p - q, -p
+    p.to_sympy_turns()
+    p.is_zero, p.is_concrete, p.free_symbols
+    p.at(index)                                 the phase with INDEX replaced by index
+    p.scale(factor: int)
+    p.substitute(mapping) -> Phase
+    p.to_radians()                              the exact angle 2*pi*t
+    p.to_complex() -> complex                   e^{i angle}; requires a concrete phase
+
+A concrete rational number of turns is reduced modulo 1. A symbolic expression is never
+reduced: j/d with d symbolic, or a free symbol, is left as it is. Consequently two phases that
+differ by a whole number of turns symbolically may compare unequal.
+
+3.3 class PhaseVector
+
+    PhaseVector(dim: Dim, entries: Mapping[int, Phase] | None = None,
+                rule: Phase | None = None, expand: bool = True)
+
+The phase data of one spider: a sparse map from index to Phase, implicitly zero elsewhere,
+plus an optional rule, a Phase in the symbol INDEX that gives the phase at every index. Sparse
+storage is what allows a phase vector at a symbolic dimension to exist.
+
+  - Index 0 is the gauge and must not carry a nonzero entry.
+  - At a concrete dimension, indices must lie in 1 .. d-1.
+  - At a symbolic dimension a rule is kept as a rule; at a concrete dimension it is expanded
+    into entries unless expand=False.
+
+    v.dim, v.length                             length is d - 1, or None when d is symbolic
+    v.entries() -> Mapping[int, Phase]          the stored entries, the rule excluded
+    v.rule -> Phase | None
+    v.get(index) -> Phase                       zero when absent or at index 0
+    v.at(index) -> sympy.Expr                   the turns at a possibly symbolic index
+    v.is_zero, v.is_concrete, v.free_symbols
+    v.substitute(mapping) -> PhaseVector
+    v + w                                       entrywise sum; the dimensions must agree
+
+Errors: PhaseDomainError for an index out of range, a gauge violation, mismatched dimensions or
+numeric evaluation of a symbolic phase; PhaseGrammarError for inexact input such as a float.
+
+
+4. SCALARS: archytaszx.algebra.scalar
+-------------------------------------
+
+4.1 The model
+
+A Scalar is an exact complex number built from Gaussian rationals, roots of unity
+omega_d^j = e^{2*pi*i*j/d} (d and j possibly symbolic), powers of dimensions and free symbols.
+Scalars are closed under sum, product, integer power and complex conjugation.
+
+The standing rule of this module is that nothing quotients a global factor: s and 2*s are
+unequal, s and omega_d*s are unequal, and there is no method, public or private, that makes
+them equal. Comparison up to a global phase is a mode of the numeric oracle only (SEMANTICS.txt,
+section 4).
+
+4.2 class Scalar
+
+    Scalar.zero(), Scalar.one()
+    Scalar.rational(p, q=1)
+    Scalar.gaussian_rational(real, imag)
+    Scalar.omega(dim: Dim, index=1)             omega_d^index
+    Scalar.from_dim(dim: Dim)                   the factor d
+    Scalar.dim_power(dim, numerator, denominator=1)
+                                                d^(numerator/denominator), e.g. d^(-1/2)
+    Scalar.symbol(name)                         a free scalar parameter
+    Scalar.from_phase(phase: Phase)             e^{i angle}
+    Scalar.index_sum(dim, body)                 sum_{k=0}^{d-1} body(k), left unevaluated
+
+    a + b, a - b, a * b, a ** n, -a
+    s.conjugate()
+    s.to_sympy()
+    s.is_concrete, s.free_symbols
+    s.is_zero, s.is_one                         True only when provable
+    s.substitute(mapping) -> Scalar
+    s.to_complex() -> complex                   requires a concrete scalar
+    s.simplify(*, max_steps=1024, ranges=None) -> Scalar
+    s.with_dimension_floors(floors) -> Scalar
+
+4.3 Normalisation and simplification
+
+Construction performs only cheap, always-sound normalisation: collecting like terms, concrete
+rational arithmetic, and reducing a root-of-unity index modulo d when d is concrete.
+
+simplify closes index sums. Its central identity is the character sum
+
+    sum_{k=0}^{d-1} omega_d^{j k} = d * [j == 0 mod d]
+
+where the bracket is the exact atom ModDelta(j, d). After closing sums it removes the bound
+indices the resulting deltas pin and puts the remaining deltas in echelon form. ranges gives
+the extents of free indices. A simplification that exceeds max_steps raises
+ScalarBudgetError.
+
+with_dimension_floors sets to zero every [s | c] whose modulus symbol s has, by the given
+floors, a least value above |c|; it is how facts such as "d >= 3" enter a comparison.
+
+4.4 Auxiliary functions
+
+    ModDelta(j, m)     [j == 0 mod m]; evaluates when decidable, otherwise moves j to a
+                       canonical residue
+    ModGcd(c, m)       gcd(c, m); evaluates when decidable
+
+Errors: ScalarDomainError (numeric evaluation of a symbolic scalar, zero denominator, zero to a
+negative power), ScalarGrammarError (inexact input), ScalarSumError (a malformed index sum),
+ScalarBudgetError (simplification budget exceeded).

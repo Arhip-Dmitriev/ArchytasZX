@@ -1,0 +1,328 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Engine Commands and Diagram Input
+
+Applies to: ArchytasZX 0.19.x
+Implementation: archytaszx.repl.commands (commands), archytaszx.repl.parser (input forms),
+                archytaszx.repl.printer (output)
+
+
+1. INTRODUCTION
+---------------
+
+The engine commands operate on qufinite ZXW diagrams (DIAGRAM.txt). In the shell they are
+written after a colon (":decide"); with the --commands flag, or in a file run with
+--commands, they are written without it. A line whose first word is not a command name is
+read as "load LINE".
+
+A session (archytaszx.repl.commands.Session) holds:
+
+  - the current diagram;
+  - the start diagram of the derivation, and the rewrite results that lead from it to the
+    current diagram;
+  - named diagrams;
+  - the scalable form of the current diagram, and the sheet steps applied to it;
+  - the latest certificate, proof, and detail record;
+  - an undo stack.
+
+Wherever a diagram source is expected, @NAME refers to a named diagram. Two names are built
+in: @start (the start of the derivation) and @current (the current diagram).
+
+Assignments are written NAME=VALUE, where VALUE is an integer or a fraction p/q.
+
+
+2. COMMAND REFERENCE
+--------------------
+
+2.1 load
+
+    load SOURCE | @NAME
+
+Reads a diagram in any of the three input forms of section 3 and makes it the current
+diagram and the start of a new derivation. Any line that is not a command is a load.
+
+2.2 show
+
+    show [derivation | start | scalable | certificate | @NAME | SOURCE]
+
+Shows the current diagram, or: the whole derivation (every state and step); the start
+diagram; the scalable form (after translate); the stored certificate as a theorem and proof;
+a named diagram; or a diagram given inline.
+
+2.3 rules, list-rules
+
+    rules [RULE]
+
+Lists the names of all rules, or one rule's quantifiers, side conditions, dimension guards and
+scalar. RULES.txt documents every rule.
+
+2.4 match
+
+    match [RULE]
+
+Lists the matches of RULE, or of every rule, in the current diagram, numbered from 0, with
+the nodes each one involves:
+
+    #0 spider_fusion at n0, n1
+
+2.5 apply
+
+    apply RULE [at INDEX | at nI, nJ, ...]
+
+Rewrites the current diagram at a match of RULE: the match numbered INDEX (default 0), or the
+match whose node set is exactly nI, nJ, .... The result becomes the current diagram and the
+step is appended to the derivation. Output:
+
+    step: spider_fusion (consumed n0, n1, new n2, scalar 1)
+
+2.6 check
+
+    check [NAME=VALUE ...] [against TARGET]
+
+Compares, with the numeric oracle, the start diagram with the current one, or the current
+diagram with TARGET. The comparison runs at the default sample grid of assignments
+(PROOFS.txt, section 2.3); values supplied on the line override the grid for those symbols.
+Reports the number of samples and the first mismatch, if any.
+
+2.7 normalize
+
+    normalize
+
+Reduces the current diagram to the fixpoint of the normal-form rule set (REWRITE.txt,
+section 6), appending every step to the derivation.
+
+2.8 saturate
+
+    saturate
+
+Runs equality saturation on the current diagram (REWRITE.txt, section 7), then replaces it by
+the cheapest equivalent diagram found, appending the steps that reach it.
+
+2.9 decide
+
+    decide [against] [TARGET]
+
+Decides whether the start and current diagrams, or the current diagram and TARGET, are equal
+for every value of their free symbols, by the ladder of PROOFS.txt, section 2. The verdict is
+equal, unequal or unknown, with the method that settled it and the oracle summary:
+
+    decide: equal by normal_form: normal forms agree; no oracle mismatch in 12 sample(s)
+
+2.10 prove
+
+    prove [against] [TARGET]
+
+Searches for a derivation between the two diagrams by bidirectional tactic search, certifies
+and checks it; when no path is found and a multiplicity is free, tries induction (PROOFS.txt,
+section 3). The proof is stored and can be shown, kernel-checked and exported.
+
+2.11 induct
+
+    induct [on SYMBOL] [NAME=VALUE ...] [against TARGET]
+
+Proves the equality for every value of one multiplicity symbol by induction (PROOFS.txt,
+section 4). Every other symbol is held at a supplied value used as the witness for the
+oracle tiers; supply one NAME=VALUE for each.
+
+2.12 certificate
+
+    certificate emit [derivation | induction | proof]
+    certificate verify [NAME=VALUE ...]
+    certificate show
+    certificate kernel
+    certificate lean [FILE]
+
+emit stores a certificate: of the current derivation, of the last induction, or of the last
+proof; without a word, of the latest proof artefact, falling back to the derivation. verify
+replays the stored certificate and oracle-checks it at the given assignment. show prints it
+as a theorem and its proof. kernel re-checks it in the proof kernel and prints the theorem,
+its number of inferences, the rules used and any assumptions. lean exports it to Lean 4,
+writing the source to FILE, or printing it when FILE is omitted, and reports which semantics
+the export uses and how many steps remain unproved; see LEAN.txt. kernel and lean emit a
+certificate first when none is stored.
+
+2.13 translate
+
+    translate
+    translate back
+    translate dissolve S
+    translate split S FIRST
+    translate join S S
+    translate enclose nA, nB [x MULT]
+    translate kill S
+    translate fuse nA.outI -- nB.inJ
+
+translate alone converts the current diagram to scalable notation (DIAGRAM.txt, section 6)
+and checks the round trip. The other forms apply one sheet operation to the scalable form
+(REWRITE.txt, section 9), S being a scale id; translate back converts the result back to a
+bang-box diagram, which becomes current.
+
+2.14 Session commands
+
+  Command      Effect
+  -----------  ---------------------------------------------------------------------------
+  name NAME    Store the current diagram as @NAME.
+  names        List the named diagrams.
+  undo         Revert the last state-changing command (load, apply, normalize, saturate,
+               translate, reset).
+  reset        Start a new derivation at the current diagram.
+  detail       Show the last command's full payload: every diagram as its graph listing and
+               Dirac form side by side; after an error, the exception chain and messages.
+  help [CMD]   List every command, or show one command's usage.
+
+2.15 Failure
+
+A command that fails prints "error: MESSAGE" and leaves the session as it was. Failure
+reports state the Dirac-level outcome of both sides, an oracle counterexample where one
+exists, otherwise the furthest-simplified states and the bound that was reached.
+
+
+3. DIAGRAM INPUT FORMS
+----------------------
+
+load, show and every command that takes a TARGET accept a diagram in one of three forms. The
+form is recognised automatically. "#" starts a comment in every form.
+
+Abstraction on entry. In the DSL and Dirac forms a numeral dimension becomes a fresh symbol
+bound in the diagram's parameter environment (one symbol per distinct value), and a concrete
+count becomes a fresh multiplicity symbol. The numeral is kept concrete when preceded by the
+word literal. Every diagram read passes validation without a hard error.
+
+3.1 The DSL form
+
+A DSL program is a sequence of statements separated by newlines or semicolons.
+
+Node declarations:
+
+    NAME = GEN(M -> N, D) [PHASE]          M inputs and N outputs, all of dimension D
+    NAME = GEN(in: [D, ...], out: [D, ...]) [PHASE]
+                                           explicit leg dimensions
+    NAME = GEN(D)                          F, T and Ti: one input and one output of D
+    NAME = B(S, T)                         binder: inputs S and T, output S*T
+    NAME = S(S, T)                         splitter: input S*T, outputs S and T
+
+GEN is a generator name: Z, X, F, T, Ti, W, B or S (DIAGRAM.txt, section 2). PHASE is
+
+    phase{I: EXPR, ...}                    phase entries in turns at indices I >= 1
+    phase[D]{I: EXPR, ...}                 the same, with an explicit phase dimension
+    phase 0                                the zero phase vector
+
+Other statements:
+
+    wire A.outI -- B.inJ [, ...]           wires, ports numbered from 0
+    inputs A.inI, ...                      the ordered boundary inputs
+    outputs A.outI, ...                    the ordered boundary outputs
+    scalar EXPR                            the scalar factor
+    box NAME x MULT nodes A, B, ... [in P] a node-scope bang box, optionally nested in box P
+    box NAME x MULT ports A.outI, ... [in P]
+                                           a port-scope bang box
+    dim NAME [= INT], ...                  declares dimension symbols, optionally bound
+    count NAME [= INT], ...                declares multiplicity symbols, optionally bound
+    let NAME = INT, ...                    binds a symbol to a value
+
+When inputs or outputs is omitted, every port not otherwise wired becomes a boundary port, in
+order of node declaration and port index.
+
+Expressions (dimensions, multiplicities, phases, scalars) are built from integers, names,
++ - * / ^ ** and parentheses, the constants I, pi (or π) and E, and the functions exp and
+sqrt.
+
+Example: two Z spiders over a symbolic dimension, the first with phase alpha at index 1:
+
+    dim d; a = Z(0 -> 2, d) phase{1: alpha}; b = Z(1 -> 2, d); wire a.out0 -- b.in0
+
+Example: the same pair repeated n times:
+
+    count n; dim d; a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0
+    box m x n nodes a, b
+
+3.2 The Dirac form
+
+A Dirac expression is built from catalog atoms and index sums with two operators:
+
+    A (x) B      or  A ⊗ B     tensor product
+    A ; B                       composition, diagrammatic order: B's inputs are wired to A's
+                                leading outputs
+    (EXPR) A                    A scaled by a scalar expression
+    ( ... )                     grouping
+
+Catalog atoms carry their dimension in brackets:
+
+    plus[D]                     the phaseless Z state, sum_k |k>
+    zero[D]                     the phaseless X state
+    id[D]                       the identity
+    copy[D]                     the Z spider with one input and two outputs
+    F[D]                        the Fourier box
+    triangle[D]                 the triangle
+    bind[S, T]                  the binder
+    split[S, T]                 the splitter
+    GHZ_{N}[D]                  the Z spider with N outputs
+    copy_{N}[D]                 the Z spider with one input and N outputs
+    W_{N}[D]                    the W node with N outputs
+    Z_{M->N}(I: EXPR, ...)[D]   a Z spider with phase entries
+    X_{M->N}(I: EXPR, ...)[D]   an X spider with phase entries
+
+N and M may be numerals (abstracted into a multiplicity symbol) or symbols.
+
+Index sums are written as the printer writes them, for example
+
+    sum_{k=0}^{d-1} |k,k>
+    Σ_{k=0}^{d-1} e^{2 π i (alpha [k=1])} |k, k, k⟩
+
+The legacy slice sum_{k=0}^{D-1} |k,k,...>, sum_{k=0}^{D-1} |k>^{n} and either followed by
+"; copy" is accepted. |k>^{n} becomes one leg in a port-scope bang box of multiplicity n.
+
+A leading "NAME = " is dropped when NAME is a catalog name, so a line printed by the engine,
+such as "GHZ_{2} = Σ_{k=0}^{d-1} |k, k⟩", loads as it stands.
+
+3.3 The listing form
+
+A listing is the exact text the engine prints in the raw view (:raw or --raw), and reads back
+to the same diagram with node and box ids kept and nothing abstracted:
+
+    graph: 2 nodes, 1 wire, 0 inputs -> 3 outputs
+      scalar: 1
+      parameters: d = 3, n = 29
+      nodes:
+        n0  Z  in: []  out: [d, d!0]
+        n1  Z  in: [d]  out: [d, d]
+      wires:
+        n0.out0 -- n1.in0
+      inputs: []
+      outputs: [n0.out1, n1.out0, n1.out1]
+      bang boxes:
+        !0  x n  ports: n0.out1
+
+A port dimension followed by !B marks a port in the scope of bang box B. A node with a phase
+lists it as "phase[D]: {I: EXPR} turns".
+
+
+4. OUTPUT
+---------
+
+Command output is independent of the view except for diagrams, which are printed in the
+current view: Dirac notation (default), a ZX drawing, both, or the raw listing. In the Dirac
+view a diagram is printed as its structural index sum, prefixed by a catalog name when every
+connected component is one bare generator:
+
+    Z_{0->3}(1: alpha) = Σ_{k=0}^{d-1} e^{2 π i (alpha [k=1])} |k, k, k⟩
+
+A family under a bang box is printed with copy indices:
+
+    Σ_{k2[i0]=0, i0=1..n}^{d-1} ⊗_{i0=1}^{n}( |k2[i0], k2[i0], k2[i0]⟩ )
+
+
+5. WORKED SESSION
+-----------------
+
+    :load dim d; a = Z(0 -> 2, d) phase{1: alpha}; b = Z(1 -> 2, d); wire a.out0 -- b.in0
+    :apply spider_fusion
+    :decide
+    :certificate emit
+    :certificate verify d=3
+    :certificate kernel
+
+loads two spiders, fuses them, decides that the result equals the start for every d and
+alpha, stores the derivation as a certificate, replays and oracle-checks it at d = 3, and
+re-checks it in the proof kernel.

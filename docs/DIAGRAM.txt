@@ -1,0 +1,262 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Layer B: The Diagram Data Model
+
+Applies to: ArchytasZX 0.19.x
+Package: archytaszx.diagram (modules generators, graph, bangbox, scalable, validate, compare)
+
+
+1. PURPOSE
+----------
+
+Layer B represents qufinite ZXW diagrams: open graphs of generators whose ports each carry a
+dimension, with an exact scalar factor, a parameter environment and bang boxes that stand for
+a symbolic number of copies or legs. It records structure only. What a generator means is
+defined in Layer D (SEMANTICS.txt, section 2); whether a diagram is well formed is decided by
+the validator (section 5).
+
+
+2. GENERATORS: archytaszx.diagram.generators
+--------------------------------------------
+
+2.1 The registered generators
+
+  Name  Constant          Inputs  Outputs  Phase        Dimension policy
+  ----  ----------------  ------  -------  -----------  -----------------------------------
+  Z     Z_SPIDER          any     any      tied to leg  all legs equal
+  X     X_SPIDER          any     any      tied to leg  all legs equal
+  F     FOURIER_BOX       1       1        none         all legs equal
+  T     TRIANGLE          1       1        none         all legs equal
+  Ti    TRIANGLE_INVERSE  1       1        none         all legs equal
+  W     W_NODE            1       any      none         all legs equal
+  B     DIM_BINDER        2       1        none         product of inputs = product of outputs
+  S     DIM_SPLITTER      1       2        none         product of inputs = product of outputs
+
+"Tied to leg" means a phase vector, when present, is built over the same dimension as the
+node's legs. The binder takes legs of dimensions s and t to one leg of dimension s*t, the
+splitter the reverse.
+
+2.2 Types
+
+    class GeneratorType(name, leg_policy, phase_schema, dimension_policy)
+    class LegPolicy(min_inputs, max_inputs, min_outputs, max_outputs)
+        allows(num_inputs, num_outputs) -> bool         None as a maximum means unbounded
+    enum PhaseSchema: TIED_TO_LEG_DIM, NONE
+    enum DimensionPolicy: ALL_LEGS_EQUAL, PRODUCT_OF_LEGS_EQUAL
+
+    REGISTRY: GeneratorRegistry
+        get(name) -> GeneratorType          GeneratorGrammarError for an unknown name
+        names() -> frozenset[str]
+        all_types() -> Mapping[str, GeneratorType]
+        register(generator_type)            GeneratorGrammarError for a duplicate name
+
+A GeneratorType carries no formula: it answers whether a node's shape is legal, never what the
+node means.
+
+
+3. DIAGRAMS: archytaszx.diagram.graph
+-------------------------------------
+
+3.1 Value types
+
+    enum Direction: INPUT, OUTPUT
+    PortRef(node_id, direction, index)      the address of one port
+    Port(dim: Dim)                          one port and its dimension
+    Wire(a: PortRef, b: PortRef)            an unordered pair; Wire(a, b) == Wire(b, a)
+    Node(id, generator_type, inputs, outputs, phase)
+        num_inputs, num_outputs, legs(direction), with_phase(phase)
+
+These are value objects: equal and hashable by value. A wire may join two distinct ports of the
+same node (a self-loop); it may not name the same port twice.
+
+3.2 class Diagram
+
+A Diagram is an open graph with:
+
+  - nodes, keyed by NodeId;
+  - wires;
+  - two ordered boundary lists, boundary_inputs and boundary_outputs, of PortRefs;
+  - an exact Scalar factor;
+  - a parameter environment: symbol name -> supplied integer value;
+  - bang boxes, keyed by BangBoxId.
+
+State is private and exposed through read-only views. Mutation happens only through the
+methods below:
+
+    Diagram()                                         empty; scalar 1
+    add_node(generator_type, input_dims, output_dims, phase=None) -> NodeId
+    remove_node(node_id)                              also drops incident wires and boundary
+                                                      entries
+    set_phase(node_id, phase)
+    add_wire(a, b), remove_wire(a, b)
+    set_boundary_inputs(refs), set_boundary_outputs(refs)
+    multiply_scalar(factor), set_scalar(scalar)
+    bind_parameter(name, value), set_parameters(mapping)
+    resolve_dim(dim) -> Dim                           the environment substituted into dim
+    add_bang_box(multiplicity, *, node_scope=..., port_scope=..., parent=None) -> BangBoxId
+    remove_bang_box(box_id)
+    set_bang_box_node_scope, set_bang_box_port_scope, set_bang_box_multiplicity
+    advance_ids(*, node_id=None, bang_box_id=None)
+    substitute(mapping) -> Diagram                    a new diagram, node ids preserved
+    copy() -> Diagram                                 a deep copy, node ids preserved
+
+Construction and mutation check only the integrity of the data structure (an index is a
+non-negative int, a wire does not join a port to itself, a node exists). Every other kind of
+well-formedness is the validator's responsibility, so that one validation pass reports every
+problem at once.
+
+Diagram has no ==. Whether two diagrams mean the same map is the subject of PROOFS.txt;
+whether they are the same graph up to renaming is decided by archytaszx.diagram.compare
+(section 7).
+
+3.3 The parameter environment
+
+The environment maps a symbol to the concrete value a user supplied for it. It records a
+pending substitution: ports keep their symbolic dimensions, copy carries the environment over,
+and substitute consumes exactly the entries its mapping names. This is how a literal typed by
+the user is kept symbolic inside the engine and restored on output.
+
+3.4 Limitation
+
+A bare identity wire from a boundary input directly to a boundary output cannot be expressed:
+every boundary entry addresses a port of some node.
+
+
+4. BANG BOXES: archytaszx.diagram.bangbox
+-----------------------------------------
+
+4.1 Multiplicities
+
+    class Mult(value: int | str | Mult)
+
+A multiplicity is a non-negative integer, possibly symbolic, built from integers, symbols,
+sums and products. It is deliberately not a Dim: a multiplicity admits 0 and sums, a dimension
+does not. Mult offers concrete, symbol, to_sympy, is_concrete, is_bare_symbol,
+bare_symbol_name, free_symbols, to_int, substitute and abstract, mirroring Dim.
+
+4.2 The two scopes
+
+    BangBox(id, multiplicity, node_scope, port_scope, parent)
+
+Exactly one scope is non-empty.
+
+  - A node-scope box replicates whole nodes: at multiplicity k it denotes k independent
+    copies of its nodes and their internal wiring. A wire from a boxed node to a node outside
+    the box fans out: the outside node receives one leg per copy.
+  - A port-scope box grows ports in place: at multiplicity k each scoped port of a node
+    becomes k legs of that node. No node is copied. A scoped port must be a boundary port.
+    A Z spider with one port-boxed output denotes the whole GHZ family.
+
+Boxes nest through parent. Instantiating a node-scope box at k >= 2 replicates each child
+once per new copy, keeping the child's multiplicity symbol: the copies still denote one shared
+count.
+
+4.3 Operations
+
+    abstract_port_count(diagram, ref, k, *, stem="n") -> (Diagram, BangBoxId, Mult)
+    abstract_subgraph_count(diagram, node_scope, k, *, parent=None, stem="n")
+        -> (Diagram, BangBoxId, Mult)
+            Replace a concrete count k by a fresh multiplicity symbol bound to k in the
+            environment, wrapping the port or the nodes in a new box.
+    instantiate_symbol(diagram, name, value) -> Diagram
+            Substitute value for name in every box carrying it and expand every box that
+            becomes concrete. This, not a single box, is the unit of instantiation.
+    expand_concrete_boxes(diagram) -> Diagram
+    peel_one(diagram, box_id) -> PeelResult
+            Split one copy off: multiplicity m becomes m - 1 beside one bare copy, laid out so
+            that instantiating the rest at k reproduces the original at k + 1.
+    kill(diagram, box_id) -> Diagram
+            Instantiate at 0: the scope and its children vanish.
+    copy_box(diagram, box_id) -> (Diagram, BangBoxId)
+            An independent copy of a node-scope box under a fresh symbol.
+    merge(diagram, box1, box2, *, assume_equal=False) -> Diagram
+            Merge two sibling, disjoint node-scope boxes; their multiplicities must be the same
+            symbol unless assume_equal asserts the counts equal.
+    crossing_wires, internal_wires, outside_crossings, boundary_refs_in_scope
+    scope_is_closed(diagram, node_scope) -> bool
+    free_mult_symbols(diagram) -> frozenset[str]
+
+4.4 Layout
+
+Instantiation lays out boundary slots copy-major: copy 0 of every slot in order, then copy 1,
+and so on. Every component of the engine (printer, scalable notation, contraction, the Lean
+export) follows this convention.
+
+
+5. VALIDATION: archytaszx.diagram.validate
+------------------------------------------
+
+    validate(diagram) -> ValidationReport
+    validate_or_raise(diagram) -> ValidationReport    raises ValidationFailedError on a hard
+                                                      error
+
+validate is a pure function reporting every problem as a typed ValidationIssue (kind, message,
+the offending node, port, wire or box, and a deferred flag). report.errors are the hard
+failures; report.deferred are assumed constraints, which never fail validation; report.is_valid
+is true when there is no hard failure.
+
+5.1 What is checked
+
+  - Port usage: every port is the endpoint of exactly one wire or appears in exactly one
+    boundary list (PORT_WIRED_TWICE, PORT_WIRED_AND_BOUNDARY, DUPLICATE_BOUNDARY_ENTRY,
+    PORT_UNUSED, BOUNDARY_DIRECTION_MISMATCH).
+  - References: UNKNOWN_NODE, PORT_INDEX_OUT_OF_RANGE.
+  - Generator policy: LEG_POLICY_VIOLATION, DIMENSION_POLICY_VIOLATION, PHASE_NOT_PERMITTED,
+    PHASE_DIMENSION_MISMATCH, NODE_DIMENSION_UNDETERMINED (a node with no legs and no phase).
+  - Dimensions: two dimensions joined by a wire, shared by a node's legs, or tied to its phase
+    are unified. Unequal and not unifiable is DIMENSION_MISMATCH (hard). Undecided is
+    DIMENSION_DEFERRED and holding only under a binding is DIMENSION_BOUND (both deferred).
+  - A diagram-wide pass solves all dimension equalities as one system:
+    DIMENSION_GLOBALLY_INCONSISTENT, DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED and
+    DIMENSION_RESOLUTION_EXHAUSTED are hard.
+  - Symbols: SYMBOL_ROLE_COLLISION when one name is used in two roles (dimension, exponent,
+    phase, scalar, multiplicity).
+  - Parameter environment: PARAMETER_UNKNOWN_SYMBOL (deferred) for a name the diagram does not
+    carry; PARAMETER_VALUE_OUT_OF_DOMAIN (hard).
+  - Bang boxes: BANGBOX_SCOPE_UNKNOWN_NODE, BANGBOX_PORT_UNKNOWN, BANGBOX_PORT_NOT_BOUNDARY,
+    BANGBOX_PORT_FIXED_ARITY, BANGBOX_CROSSING_FIXED_ARITY, BANGBOX_SCOPE_OVERLAP,
+    BANGBOX_UNKNOWN_PARENT, BANGBOX_PARENT_CYCLE, BANGBOX_NESTING_MISMATCH.
+
+Issues are reported in a deterministic order.
+
+
+6. SCALABLE NOTATION: archytaszx.diagram.scalable
+-------------------------------------------------
+
+A ScalableDiagram is the sheet-wire (SZX) reading of a bang-boxed diagram.
+
+  - A Scale is one scaling index. ScaleKind.COPIES corresponds to a node-scope box: every node
+    in it is a scaled generator, k parallel copies. ScaleKind.LEGS corresponds to a port-scope
+    box: a fanned leg gathered into one sheet of width k.
+  - A ScaledNode carries its generator, ports (SheetPort: dimension and the innermost LEGS
+    scale fanning it), phase and innermost COPIES scale.
+  - A Bundle is a gathered sheet wire on the boundary: the boundary items of one COPIES scale,
+    expanded copy-major.
+
+    to_scalable(diagram) -> ScalableDiagram
+    from_scalable(s) -> Diagram
+    strip(s, assignment=None) -> Diagram        the plain diagram at concrete multiplicities
+    validate_scalable(s) -> tuple[str, ...]     every structural problem; empty when valid
+    is_bundle_normal(diagram) -> bool
+    ScalableBuilder                             assembles a ScalableDiagram by hand
+
+The translation preserves node ids, scale ids (bang-box ids), phases, dimensions, wires, scalar
+and parameters. to_scalable refuses a diagram with a bang-box validation error, a node-scope
+box inside a port-scope box, or a wire between nodes of different innermost node-scope boxes.
+input_type() and output_type() give the SZX wire sizes of the boundary.
+
+
+7. STRUCTURAL COMPARISON: archytaszx.diagram.compare
+----------------------------------------------------
+
+    compare_structure(a, b) -> StructuralComparison
+            Node id for node id; reports the first difference.
+    canonical_key(diagram, *, symmetric_legs=False) -> str
+            A key invariant under renaming of node and box ids, from colour refinement.
+            Isomorphic diagrams always share a key; distinct diagrams may collide.
+    isomorphic(a, b, *, symmetric_legs=False) -> bool
+    isomorphism(a, b, *, symmetric_legs=False) -> dict[NodeId, NodeId] | None
+            Whether a renaming carries a onto b exactly, scalar and environment included.
+
+With symmetric_legs, the order of each Z and X spider's legs within a direction is ignored.

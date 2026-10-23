@@ -7,7 +7,7 @@ identities as closed forms that hold for every `n` and every `d` at once.
 [![PyPI](https://img.shields.io/pypi/v/archytaszx.svg)](https://pypi.org/project/archytaszx/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/LICENSE)
-[![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.md)
+[![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt)
 [![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
 ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with integration into Dirac notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
@@ -98,8 +98,8 @@ at the end. `--zx`, `--both` and `--raw` switch between Dirac notation and ZX di
 drive the engine directly (`:help` lists them).
 
 [`examples/learn_azx.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/learn_azx.azx)
-is a guided tour of the whole language, ending in Deutsch–Jozsa for every `n`; the full syntax is
-in [`SYNTAX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/SYNTAX.txt).
+is a guided tour of the whole language, ending in Deutsch–Jozsa for every `n`; the complete
+reference is [`docs/LANGUAGE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LANGUAGE.txt).
 
 ### From Python
 
@@ -193,6 +193,30 @@ p = parse_dirac_source("sum_{k=0}^{3-1} |k>^{30}; copy")
 dict(p.parameters)   # {'d': 3, 'n': 29}
 ```
 
+## Documentation
+
+The full reference documentation is in [`docs/`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/docs):
+
+| Document | Contents |
+|---|---|
+| [`INDEX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INDEX.txt) | Index of the documentation, conventions and reading order |
+| [`OVERVIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/OVERVIEW.txt) | What the engine is, its guarantees and its limits |
+| [`INSTALL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INSTALL.txt) | Installation, the Lean library, configuration and environment variables |
+| [`LANGUAGE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LANGUAGE.txt) | The `.azx` language reference |
+| [`SHELL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SHELL.txt) | The `archytaszx` command: flags, views, styles, meta-commands, exit codes |
+| [`ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt) | The `:` engine commands and the diagram input forms |
+| [`PYTHON_API.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PYTHON_API.txt) | The Python embedding and the engine import map |
+| [`ALGEBRA.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ALGEBRA.txt) | Layer A: dimensions, phases, exact scalars |
+| [`DIAGRAM.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/DIAGRAM.txt) | Layer B: generators, diagrams, bang boxes, scalable notation, validation |
+| [`REWRITE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/REWRITE.txt) | Layer C: rules, matching, strategies, normal form, e-graph, tactics |
+| [`RULES.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/RULES.txt) | Every rewrite rule with its scalar and side conditions |
+| [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle, path sums, measurement |
+| [`PROOFS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PROOFS.txt) | Deciding equality, proof search, induction, certificates, the kernel |
+| [`LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) | The Lean 4 library and the export of proofs and refutations |
+| [`ZX_VIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ZX_VIEW.txt) | How language states become ZX diagrams and how they are drawn |
+| [`ERRORS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ERRORS.txt) | The exception hierarchy of every module |
+| [`GLOSSARY.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/GLOSSARY.txt) | Definitions of the terms used throughout |
+
 ## Formal proofs in Lean
 
 Proofs found by the engine are exported to Lean 4 (`:certificate lean proof.lean`) against a
@@ -208,7 +232,7 @@ cd archytaszx/lean && lake exe cache get && lake build      # once
 lake env lean /path/to/proof.lean
 ```
 
-[`docs/LEAN.md`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.md) has the
+[`docs/LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) has the
 semantics, the trust boundary, the normaliser and the refutation method.
 
 ## Architecture

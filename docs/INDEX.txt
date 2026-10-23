@@ -1,0 +1,97 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Index and Conventions
+
+Applies to: ArchytasZX 0.19.x (main branch, October 2026)
+License:    Apache License 2.0
+
+
+1. PURPOSE OF THIS DOCUMENTATION SET
+------------------------------------
+
+This directory is the reference documentation of ArchytasZX, a symbolic engine for developing
+quantum algorithms without fixing the number of qudits or their dimension. The documents
+specify the behaviour of the software as implemented: the input language, the command-line
+shell, the engine commands, the Python interfaces, the mathematical model, the proof machinery
+and the Lean 4 export.
+
+Where a document states a rule ("must", "never", "always"), that rule is enforced by the code.
+Where behaviour is a current limitation rather than a design rule, the document says so
+explicitly.
+
+
+2. DOCUMENTS
+------------
+
+  File                 Contents
+  -------------------  ----------------------------------------------------------------------
+  INDEX.txt            This file: the list of documents, conventions, reading order.
+  OVERVIEW.txt         What the engine is, its two front ends, its guarantees, its limits.
+  INSTALL.txt          Requirements, installation, optional components, configuration file.
+  LANGUAGE.txt         The .azx language: complete reference of statements and expressions.
+  SHELL.txt            The archytaszx command: flags, modes, styles, meta-commands, exit codes.
+  ENGINE_COMMANDS.txt  The engine commands (":load", ":decide", ":prove", ...) and the three
+                       diagram input forms (DSL, Dirac, graph listing).
+  PYTHON_API.txt       Python use: the Program/Value embedding and the engine import map.
+  ALGEBRA.txt          Layer A: dimensions, phases and exact scalars.
+  DIAGRAM.txt          Layer B: generators, diagrams, bang boxes, scalable notation,
+                       validation and structural comparison.
+  REWRITE.txt          Layer C: rules, matching, the rewrite engine, strategies, normal form,
+                       equality saturation, tactics, sheet operations and caching.
+  RULES.txt            The rule library: every rule, its meaning, scalar and side conditions.
+  SEMANTICS.txt        Layer D: denotation, numeric and symbolic contraction, the oracle,
+                       path sums and measurement.
+  PROOFS.txt           Deciding equality, proof search, induction, certificates and the
+                       proof kernel; the trust model.
+  LEAN.txt             The bundled Lean 4 library and the export of proofs and refutations.
+  ZX_VIEW.txt          How language states are translated to ZX diagrams and drawn.
+  ERRORS.txt           The exception hierarchy of every module.
+  GLOSSARY.txt         Definitions of the terms used throughout.
+
+
+3. READING ORDER
+----------------
+
+  Using the language:      OVERVIEW, INSTALL, LANGUAGE, SHELL, then examples/learn_azx.azx.
+  Using it from Python:    OVERVIEW, INSTALL, PYTHON_API, then examples/learn_azx.py.
+  Proving identities:      OVERVIEW, ENGINE_COMMANDS, RULES, PROOFS, LEAN.
+  Working on the engine:   OVERVIEW, ALGEBRA, DIAGRAM, REWRITE, SEMANTICS, PROOFS, ERRORS.
+
+
+4. TYPOGRAPHICAL CONVENTIONS
+----------------------------
+
+  - Text to be typed literally, names of functions, files and values are written as they
+    appear in the source, without quotation, or between double quotes when ambiguous.
+  - In grammar summaries, square brackets [ ] enclose optional parts, a vertical bar |
+    separates alternatives, and an ellipsis ... marks repetition. Upper-case words (NAME, RULE,
+    SOURCE) are placeholders.
+  - Dirac notation is written in ASCII where the input syntax is meant (|0>^@n) and in Unicode
+    where engine output is quoted (|0⟩^⊗n).
+  - "d" denotes a qudit dimension, "n" a count of qudits or copies, unless a section says
+    otherwise. Both may be symbols.
+  - Module paths are written in dotted form, e.g. archytaszx.semantics.decide.
+
+
+5. NOTATIONAL CONVENTIONS OF THE MATHEMATICS
+--------------------------------------------
+
+  - omega_d = e^(2*pi*i/d), the principal d-th root of unity.
+  - Phases are measured in turns: a phase t denotes the angle 2*pi*t.
+  - [P] is 1 when the proposition P holds and 0 otherwise (Iverson bracket).
+  - [j == 0 mod m] is written ModDelta(j, m) in the code.
+  - Tensor axes of a diagram are ordered outputs first, then inputs (see SEMANTICS.txt).
+  - A register of width w and dimension d holds a value in 0 .. d^w - 1, read big-endian in
+    base d.
+
+
+6. RELATED FILES OUTSIDE THIS DIRECTORY
+---------------------------------------
+
+  README.md            Project summary and quick start.
+  CONTRIBUTING.md      How to report bugs, in particular soundness bugs.
+  FULL_PLAN.txt        The development plan of the project.
+  LEAN_GAPS.txt        Rule steps and constructs without a Lean proof path.
+  REFERENCES.bib/.txt  Bibliography.
+  examples/            Runnable scripts; learn_azx.azx and learn_azx.py are guided tours.

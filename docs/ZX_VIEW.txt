@@ -1,0 +1,114 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+The ZX View: Language States as Diagrams
+
+Applies to: ArchytasZX 0.19.x
+Modules: archytaszx.repl.zxview, archytaszx.repl.zxsym, archytaszx.repl.zxdraw,
+         archytaszx.repl.printer
+
+
+1. PURPOSE
+----------
+
+Any state or density matrix of the .azx language can be shown as a ZXW diagram (views --zx,
+--zxunicode, --zxascii, --both and --raw; SHELL.txt, section 3.2). The diagram is built from
+the structure of the path sum, not from its amplitudes, so a state of symbolic size has a
+diagram of fixed size: the same graph for every value of the size symbols, with bang boxes
+carrying the symbolic counts.
+
+
+2. TRANSLATION OF ONE TERM (archytaszx.repl.zxsym)
+--------------------------------------------------
+
+A path-sum term is an amplitude times a sum over bound indices of register values. It is
+translated as follows.
+
+  - Registers of one shape (w digits of base d) form a family. The digits of a family share
+    bang boxes of multiplicity w, split where a single digit is singled out (bit(x, k), a
+    literal digit, or bitdot(x, c)).
+  - A summation index ranging over a whole register is a digit index: one Z spider per digit
+    inside the boxes.
+  - Phases acting digit by digit (digit sums dsum, digit products ddot, a digit's own value)
+    become phases on those spiders and Fourier boxes between them.
+  - A qubit ket whose value is an xor of digits is an X spider; a literal digit is an X spider.
+  - Any other index is a wide index: one Z spider on a wire of its whole range.
+  - Any other amplitude factor is a gadget: the wires of the indices it reads are bound into
+    one wire ending in a Z effect whose phase rule is the factor's turns (complex turns for a
+    weight that is not a phase).
+  - Any other ket value v on a register of L levels is an output spider u read through
+    [u = v] = (1/L) sum_t omega^{t (u - v)}: a Fourier box between u and t, and a gadget on t
+    and the indices of v.
+
+Several terms are folded into one with a selector index s: the factors of term i read s == i,
+and each register's value becomes a function of s and the term indices.
+
+
+3. SUMS OF TERMS AND LITERAL VECTORS (archytaszx.repl.zxview)
+-------------------------------------------------------------
+
+Several terms of a concrete state are summed exactly by a selector: a W node fans
+|1, payload> out to one copy per term, each term being a block of digit spiders. A sum without
+that form is folded into one term as in section 2.
+
+A one-register ket given by literal amplitudes c_k is drawn from its amplitude vector: with s
+the first index such that c_s != 0, set u_k = c_{(k+s) mod D} / c_s. A W node read backwards
+adds the components of the Z effects on its outputs,
+
+    u = W^T (z_1 (x) ... (x) z_m),   z_j = sum_k e^{i alpha_j[k]} |k>,
+    u_k = sum_j e^{i alpha_j[k]},
+
+with m = 0 for u = |0>, m = 1 when every |u_k| = 1, and otherwise m even, m >= max |u_k|, the
+phases coming in pairs arg u_k +- acos(|u_k| / m).
+
+A density matrix is drawn from its vectorisation: the ket registers, then the bra registers.
+
+A state with no structural translation raises ZXViewError; the shell then reports that the
+state has no ZX diagram.
+
+
+4. DRAWING (archytaszx.repl.zxdraw)
+-----------------------------------
+
+The layout places nodes in columns by their distance from the outputs, outputs rightmost,
+splits wires that skip columns with dummy points, and orders each column by barycentre sweeps
+to reduce crossings. A diagram of more than 150 nodes is summarised: each summed term becomes
+one box, and chains of splitters or binders one node.
+
+Three renderers share the layout:
+
+  matplot   a matplotlib figure (Z spiders green, X spiders red, Fourier boxes yellow,
+            bang boxes dashed with their multiplicity, the scalar above), shown inline in the
+            terminal or saved by --images
+  unicode   a character grid; Z and X spiders as Ⓩ and Ⓧ, crossings as ┼
+  ascii     the same in ASCII, spiders as (Z ..) and (X ..), crossings as +
+
+Long phase rules are listed in a legend. Boundary wires are labelled out i, or ket i and bra i
+for a density matrix. With :listing the graph listing (ENGINE_COMMANDS.txt, section 3.3) is
+printed under each drawing; the raw view prints only the listing, nothing summarised.
+
+
+5. DIRAC RENDERING OF ENGINE DIAGRAMS (archytaszx.repl.printer)
+---------------------------------------------------------------
+
+In the opposite direction, engine diagrams are printed in Dirac notation by reading each
+diagram into its structural index sum, one bound index per spider, without contracting or
+rewriting. A diagram each of whose connected components is one bare generator is also named
+from a catalog (GHZ_{n}, copy_{n}, W_{n}, Z_{m->n}(phases), X_{m->n}, F, plus, zero, id,
+triangle, bind, split). Per generator, matching the denotation axis for axis:
+
+  Z    every leg carries the spider index k, weighted e^{2 pi i alpha(k)}
+  X    d^{-(m+n)/2} sum_q e^{2 pi i alpha(q)} omega_d^{q (sum outs - sum ins)}
+  F    d^{-1/2} omega_d^{o i}
+  T    [o = 0 or o = i]
+  Ti   [o = i] - [o = 0][i >= 1]
+  W    [in = sum outs][at most one output nonzero]
+  B, S [ab = a*t + b]
+
+A node inside node-scope boxes has its indices and factor taken once per copy, written with
+copy indices i0 = 1..n; a fanned leg is one leg per copy, laid out copy-major. Output is ASCII
+by default, Unicode with unicode=True:
+
+    render(state, mode, *, unicode=False)     a state in a notation mode
+    render_graph(diagram)                     the graph listing
+    dirac_term(diagram), render_term(term), recognize(diagram)

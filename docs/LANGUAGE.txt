@@ -1,0 +1,619 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+The .azx Language Reference
+
+Applies to: ArchytasZX 0.19.x
+Implementation: archytaszx.repl.lang (parser and interpreter),
+                archytaszx.semantics.pathsum (values), archytaszx.repl.display (output)
+
+
+CONTENTS
+--------
+
+   1. Introduction
+   2. Lexical structure
+   3. Program structure
+   4. Values and types
+   5. Variables
+   6. Functions
+   7. States
+   8. Gates
+   9. Expressions and operators
+  10. Sums, ranges and matrices
+  11. Measurement and mixed states
+  12. Collections and output
+  13. Control flow
+  14. Assumptions and assertions
+  15. Randomness and script arguments
+  16. Built-in names
+  17. Size symbols and binding
+  18. Errors
+  19. Complete example
+
+
+1. INTRODUCTION
+---------------
+
+The .azx language is Dirac notation made executable. A program declares symbols, defines
+functions and gates, builds states, applies gates to them, measures them and prints the
+results. Every value is exact and may depend on symbols; in particular the number of qudits in
+a register and the dimension of a qudit may be symbols, and the printed result is then a closed
+form valid for every value of those symbols.
+
+Programs are run by the archytaszx command (SHELL.txt), either from a file with the extension
+.azx or interactively, or from Python (PYTHON_API.txt). The guided tour examples/learn_azx.azx
+exercises every construct described here.
+
+
+2. LEXICAL STRUCTURE
+--------------------
+
+2.1 Characters and lines
+
+A program is a sequence of lines. A "#" begins a comment that extends to the end of the line,
+except inside a string. A line ending in a backslash "\" is joined to the next line with a
+single space.
+
+2.2 Tokens
+
+  Identifiers   A letter or underscore, followed by letters, digits or underscores.
+                Identifiers are case sensitive.
+  Numbers       A decimal integer (42) or a decimal fraction (2.5). A decimal fraction
+                denotes the exact rational it spells: 2.5 is 5/2.
+  Strings       Text between double quotes: "text". A string prefixed with f is a formatted
+                string (section 12.3).
+  Kets          | content > with an optional dimension suffix _d: |0>, |x>, |psi>_d, |2>_3.
+  Bras          < content | with an optional suffix: <0|, <phi|, <x|_d.
+  Operators     + - * / % ^ @ ^@ == != < <= > >= -> .. ..= ( ) [ ] { } , : ;
+
+A ket or bra, including its suffix, is a single token.
+
+2.3 Reserved words
+
+The following names cannot be used as variable, function, gate or state names:
+
+  Statements    var func gate list show print measure seed for while if assert assume
+  Keywords      xor in and or not else sum matrix
+  Functions     sqrt exp abs floor ceil gcd min max bit powmod bitlen denom known ifelse
+                cos sin tan log arg rand normalise
+  Constants     pi e i
+  Styles        render plot unicode ascii latex
+
+
+3. PROGRAM STRUCTURE
+--------------------
+
+3.1 Statements
+
+Statements are separated by newlines or by semicolons. A statement is one of:
+
+  - a declaration: var, func, gate, list;
+  - a state definition: |name> = expression, <name| = expression;
+  - an in-place application: operators applied to a named state, U |name>;
+  - an output statement: show, print;
+  - a control statement: for, while, if;
+  - assume, assert, seed;
+  - a bare expression.
+
+3.2 Blocks
+
+The body of for, while and if is a block enclosed in braces { }. A block may span several
+lines. The opening brace may stand on a later line than the header, and an else clause may
+begin on the line after the closing brace of its if:
+
+    if c == 1 {
+      print("one")
+    }
+    else {
+      print("not one")
+    }
+
+3.3 Bare expressions
+
+An expression on its own is a statement. It is evaluated; in verbose mode its value is
+echoed (SHELL.txt, section 7).
+
+
+4. VALUES AND TYPES
+-------------------
+
+Every value has one of the following kinds.
+
+  Kind      Description
+  --------  -------------------------------------------------------------------------------
+  scalar    An exact complex number, possibly symbolic: 3, 1/sqrt(2), e^(2*pi*i/d), n + 1.
+  ket       A state: a sum of terms, each an amplitude times a sum over bound indices of a
+            tensor product of register values.
+  bra       The conjugate transpose of a ket.
+  operator  A gate, a product, tensor product, power, sum or scaling of gates, or an outer
+            product |a><b|.
+  density   A mixed state: the density matrix sum_k p_k |k><k| a measurement leaves, or one
+            written directly as a sum of outer products.
+  dist      A measurement distribution: a list of (outcome, probability) pairs.
+  list      An ordered collection of values (section 12.1).
+
+4.1 Scalar types
+
+Scalar variables carry one of four types, which constrain the symbols they introduce:
+
+  Type     Domain
+  -------  ---------------------------------------------
+  nat      Non-negative integers (the default).
+  int      Integers.
+  real     Real numbers.
+  complex  Complex numbers.
+
+4.2 Registers
+
+A ket is a tensor product of registers. Register r has a width w_r (a number of qudits) and a
+dimension d_r (the levels of each qudit, 2 unless stated). Its value is an integer in
+0 .. d_r^(w_r) - 1, read as w_r base-d_r digits, most significant first. Widths, dimensions
+and values may all be symbols. |0>^@n is one register of width n.
+
+4.3 Symbolic and concrete values
+
+A value is symbolic exactly when its inputs are. Operations on concrete values produce
+concrete values; nothing is evaluated numerically in floating point.
+
+
+5. VARIABLES
+------------
+
+5.1 Declaration
+
+    var n                    declares the symbol n, of type nat
+    var n, m                 declares several symbols
+    var t: real              declares a symbol of the given type
+    var N = 2^n              declares N with a value
+
+A declared variable without a value is a symbol. Its value is printed as "(symbolic)".
+
+5.2 Reassignment
+
+Reassignment also uses var:
+
+    var b = b + 1
+
+5.3 Restrictions
+
+The value of a var must be a scalar or a measurement distribution; a state is named with the
+|name> = ... form instead. Names must not be reserved (section 2.3).
+
+
+6. FUNCTIONS
+------------
+
+    func NAME(PARAM, ...) = EXPRESSION
+
+defines a scalar function of integer arguments. The body may refer to the parameters, to
+declared variables and to other functions. A function applied to symbolic arguments stays
+unevaluated in the output; applied to integers it evaluates.
+
+    func f(x) = a^x % N
+    func sq(x) = x * x
+    show(sq(5))                              sq(5) = 25
+
+Functions are used inside gate definitions (section 8.1), in sums and in expressions.
+
+
+7. STATES
+---------
+
+7.1 Named states
+
+    |NAME> = EXPRESSION          names a ket
+    <NAME| = EXPRESSION          names a bra; |NAME> becomes its conjugate transpose
+    |NAME>_D = EXPRESSION        names a ket whose registers have dimension D
+
+The bra <NAME| is always the conjugate transpose of |NAME>, and the reverse. A state name
+begins with a letter or underscore; numerals and names containing a backtick are not state
+names.
+
+7.2 Literal kets
+
+    |v>        one register holding the value v, of the lowest dimension that holds v
+               (2 for v = 0 or 1, otherwise v + 1)
+    |v>_D      one qudit of dimension D holding v (an error if v >= D)
+    |b1b2...`> a digit string: one register per digit, |010`> is |0>|1>|0>
+    |000>      a numeral is one value: |000> is |0>
+
+An undimensioned literal is flexible: where it meets another register of higher dimension
+(in a sum, an inner product, a gate pattern with a fixed dimension, or a dimensioned
+definition) it is promoted to that dimension. |0> + |2> is |0>_3 + |2>_3. A state once stored
+under a name is no longer flexible.
+
+7.3 Built-in states
+
+    |+>  = (|0> + |1>)/sqrt(2)          |->  = (|0> - |1>)/sqrt(2)
+    |i>  = (|0> + i|1>)/sqrt(2)         |-i> = (|0> - i|1>)/sqrt(2)
+
+7.4 States from amplitudes
+
+    |v> = [a0, a1, ..., a(D-1)]
+
+builds the state sum_k a_k |k> of one register of dimension D, the length of the list.
+
+7.5 Tensor products and powers
+
+    |a> @ |b>       tensor product
+    |a>|b>          tensor product by juxtaposition
+    |a>^@n          tensor power; for a one-qudit state this is one register of width n
+
+7.6 Normalisation
+
+normalise(s) divides a state by its norm; applied to a density matrix it divides by the trace.
+
+7.7 In-place application
+
+A statement consisting of operators applied to a named state replaces that state by the
+result:
+
+    (H^@n @ H) |psi>             |psi> becomes (H^@n @ H)|psi>
+    U_f |psi>
+
+7.8 Density matrices
+
+A density matrix may be written directly as a sum of scaled outer products:
+
+    |rho> = 1/2 |0><0| + 1/2 |1><1|
+
+A gate applied to a density matrix acts by conjugation, rho -> U rho U^dagger.
+
+
+8. GATES
+--------
+
+A gate is a linear operator defined in one of four ways.
+
+8.1 Basis maps
+
+    gate NAME = PATTERN -> EXPRESSION
+
+The pattern is a juxtaposition of kets whose contents are names; each name binds the value of
+one input register. The expression gives the image of that basis state:
+
+    gate U_f  = |x>|y> -> |x>|y xor f(x)>
+    gate CNOT = |c>|t> -> |c>|t xor c>
+    gate F    = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+
+A pattern ket may carry a dimension suffix, a numeral or a variable. Since the gate is defined
+on basis states, applying it is substitution, and the result stays in closed form.
+
+8.2 Explicit matrices
+
+    gate R = [[cos(t), -sin(t)], [sin(t), cos(t)]]
+
+A square matrix of expressions, rows of equal length. The gate maps |c> to
+sum_r M[r][c] |r> over the registers it meets.
+
+8.3 Matrix comprehensions
+
+    gate G = matrix(r, c in 0..d){ e^(2*pi*i*r*c/d) / sqrt(d) }
+
+defines the matrix whose entry in row r, column c is the body. The range follows the rules of
+section 10.1.
+
+8.4 Matrices on fixed registers
+
+    gate C = |x>|y> -> [[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]]
+
+fixes the registers the matrix acts on to those of the pattern.
+
+8.5 Built-in gates
+
+The following gates are predefined; they act on one-qubit registers, and on a register of
+width n through a tensor power (H^@n).
+
+    gate H    = |x> -> 1/sqrt(2) sum(y in 0..2){ (-1)^(x*y) |y> }
+    gate X    = |x> -> |1 - x>
+    gate Y    = |x> -> i*(-1)^x |1 - x>
+    gate Z    = |x> -> (-1)^x |x>
+    gate S    = |x> -> i^x |x>
+    gate T    = |x> -> e^(i*pi*x/4) |x>
+    gate CNOT = |c>|t> -> |c>|t xor c>
+    gate SWAP = |a>|b> -> |b>|a>
+
+I is the identity. When I is the last factor of a tensor product of gates, it absorbs every
+remaining register: (H @ I) applied to |0>|0>|0> applies H to the first register only.
+
+8.6 Operator algebra
+
+    A @ B        tensor product
+    A^@n         tensor power
+    A B          composition by juxtaposition (B first)
+    A * B        composition
+    A + B        sum
+    c A          scaling by a scalar
+    |a><b|       outer product
+    A^n          integer power
+
+The conjugate transpose of a state is its bra (section 7.1).
+
+
+9. EXPRESSIONS AND OPERATORS
+----------------------------
+
+9.1 Precedence
+
+From loosest to tightest binding:
+
+   1. or
+   2. and
+   3. not
+   4. comparisons  == != < <= > >=
+   5. xor
+   6. + -
+   7. @                          tensor product
+   8. juxtaposition              application, multiplication, tensor of kets, products
+   9. * / %
+  10. unary -
+  11. ^ (right associative) and postfix ^@
+
+9.2 Juxtaposition
+
+Writing two values next to each other applies, multiplies or pairs them, according to their
+kinds:
+
+    U |x>            operator applied to a ket
+    2 |s>            scalar times a value
+    |x>|y>           tensor product of kets
+    <a|b>            inner product
+    |a><b|           outer product
+    2 |s><s|psi>     scaled projector applied to a ket
+
+Juxtaposition groups from the right: U |x>|y> is U applied to |x>|y>, both registers. Because
+@ binds looser than juxtaposition, U |a> @ |b> is (U |a>) @ |b>; write U (|a> @ |b>) to apply U
+to both.
+
+9.3 Arithmetic
+
++ - * / % ^ act on scalars with their usual meaning; / is exact division and % the remainder.
+^ is power and associates to the right: 2^3^2 is 2^9. xor is the bitwise exclusive or of
+integers. Comparisons yield truth values, combined with and, or and not.
+
+9.4 Constants
+
+    pi     the circle constant
+    e      Euler's number; e^(i*x) is the complex exponential
+    i      the imaginary unit
+
+The names e and i are therefore not available as variable names.
+
+
+10. SUMS, RANGES AND MATRICES
+-----------------------------
+
+10.1 Ranges
+
+    a..b     the integers a, a+1, ..., b-1   (b excluded)
+    a..=b    the integers a, a+1, ..., b     (b included)
+
+Bounds may be symbolic.
+
+10.2 Sums
+
+    sum(k in a..b){ EXPRESSION }
+
+is the sum of the body over the range. The body may be a scalar or a state:
+
+    sum(k in 0..=4){ k }                         = 10
+    1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }    a maximally entangled state
+
+Sums over symbolic ranges are kept symbolic and closed by the engine where an identity
+applies (geometric sums, character sums, digit sums).
+
+10.3 Matrix comprehensions
+
+See section 8.3.
+
+
+11. MEASUREMENT AND MIXED STATES
+--------------------------------
+
+11.1 The measure expression
+
+    measure|NAME>
+
+is the Born distribution of measuring every register of the named state in the
+computational basis: a list of (outcome, probability) pairs. The outcome is the value of all
+registers read together as one integer, the first register most significant. The
+distribution is derived from the path sum in closed form; no outcome is sampled and no
+amplitude vector is built.
+
+A distribution whose outcomes depend on free indices is printed as one branch with the
+ranges of those indices:
+
+    var m = measure|coin>          m = [(k, 0.5) : k ∈ {0,1}]
+
+Probabilities are printed as exact fractions of 1, as terminating decimals where possible.
+
+11.2 The post-measurement state
+
+Measuring replaces the named state by the mixture of its outcomes, the density matrix
+sum_z p_z |z><z|, whether or not the distribution is bound to a variable. Subsequent gates act
+on the mixture by conjugation.
+
+11.3 Functions of outcomes
+
+measure is an expression. Scalar functions and operators applied to a distribution are
+applied to each outcome, and equal outcomes are merged:
+
+    var x = floor(measure|psi> / 2)       drops the last qubit of the outcome
+
+Two distributions that are not certain cannot be combined, since their correlation is not
+known; a certain distribution (one outcome of probability 1) acts as its value.
+
+
+12. COLLECTIONS AND OUTPUT
+--------------------------
+
+12.1 Lists
+
+    list L = {|psi>, <phi|, z}
+
+names an ordered collection of values. show(L) shows each element.
+
+12.2 show
+
+    show(VALUE, ...)
+    show(VALUE, ..., STYLE)
+
+prints each value as a labelled mathematical expression, "label = value". The label is the
+source text of the argument. A STYLE word (render, unicode, ascii, latex) as the last argument
+forces that style for this statement; otherwise every style selected for the session is
+printed (SHELL.txt, section 3.3). Values are shown in closed form with defined variables folded
+back in: under var q = 2^n, a factor 2^(-n/2) is shown as 1/sqrt(q).
+
+12.3 print
+
+    print("text")
+    print(f"z = {z}, w = {w:.3f}")
+
+prints text. In a formatted string, each {expression} or {expression:spec} field is replaced
+by the value of the expression. A spec in Python's format-specification syntax applies to
+concrete numeric values; other values are rendered as text.
+
+12.4 Bare expressions
+
+A bare expression prints nothing unless verbose mode is on, in which case it is echoed as
+"- : type = value"; a statement that names a value is echoed as "val name : type = value".
+
+
+13. CONTROL FLOW
+----------------
+
+    for VAR in RANGE { STATEMENTS }
+    while CONDITION { STATEMENTS }
+    if CONDITION { STATEMENTS } [else { STATEMENTS }]
+
+The range of a for loop follows section 10.1. Over a concrete range the body runs once per
+value. Over a symbolic range the body may contain only state updates, |s> = EXPRESSION; each
+update is evaluated once with the loop variable symbolic and folded over the whole range, so
+the result is again a closed form. Any other statement in such a loop is an error.
+
+The condition of while and if must evaluate to a concrete truth value; a condition that
+remains symbolic is an error. Variables assigned inside a block remain assigned after it.
+
+
+14. ASSUMPTIONS AND ASSERTIONS
+------------------------------
+
+    assume CONDITION
+
+records a fact about symbols, which later simplifications may use. A condition that is
+concretely false is an error.
+
+    assert CONDITION
+
+is an error unless the condition holds. A symbolic condition that cannot be decided also
+counts as a failure. In a script, a failed assertion makes the archytaszx command exit with
+status 1.
+
+
+15. RANDOMNESS AND SCRIPT ARGUMENTS
+-----------------------------------
+
+    rand(LO, HI)          a uniformly random integer in LO ..= HI (both ends included);
+                          LO and HI must be concrete integers with LO <= HI
+    seed N                fixes the random generator (also the --seed flag)
+    arg(K)                the K-th command-line argument that is not a script file,
+                          counting from 1. An integer argument is that integer; an argument
+                          that is a name becomes a positive-integer symbol of that name; any
+                          other argument is an error, as is a missing one
+    arg(K, DEFAULT)       the same, or DEFAULT when fewer than K arguments were given
+
+rand is an explicit source of randomness for program logic. It plays no part in measurement,
+which is never sampled.
+
+
+16. BUILT-IN NAMES
+------------------
+
+16.1 Scalar functions
+
+  Function          Meaning
+  ----------------  ------------------------------------------------------------------------
+  sqrt(x)           square root
+  exp(x)            exponential
+  abs(x)            absolute value
+  floor(x)          greatest integer not above x
+  ceil(x)           least integer not below x
+  cos(x) sin(x)
+  tan(x) log(x)     trigonometric functions and natural logarithm
+  min(a, b)         minimum
+  max(a, b)         maximum
+  gcd(a, b)         greatest common divisor; unevaluated on symbolic arguments
+  bit(x, j)         bit j of x, counted from the least significant bit
+  powmod(b, e, m)   b^e mod m, by modular exponentiation
+  bitlen(N)         the number of bits of N; floor(log2 N) + 1 for symbolic N
+  denom(x, N)       the denominator of the best rational approximation of x with
+                    denominator at most N (continued fractions)
+  known(x)          true when x has no free symbols
+  ifelse(c, a, b)   a when c holds, b otherwise
+
+16.2 State functions
+
+  normalise(s)      s divided by its norm; a density matrix divided by its trace
+
+16.3 Gates
+
+  H X Y Z S T CNOT SWAP I       see section 8.5
+
+16.4 States
+
+  |+> |-> |i> |-i>              see section 7.3
+
+16.5 Constants
+
+  pi e i                        see section 9.4
+
+
+17. SIZE SYMBOLS AND BINDING
+----------------------------
+
+Symbols declared by var may appear as register widths (|0>^@n), dimensions (|x>_d), range
+bounds and values. A gate whose definition contains a free symbol that is not declared at the
+point of application is bound, at each application, to the width or dimension of the register
+it meets, and that value is substituted into its output. The binding holds for that application
+only; a later application to a register of another size binds again.
+
+
+18. ERRORS
+----------
+
+Errors are reported as one line beginning with "error:" and do not end an interactive session.
+In a script, the line in error is skipped, the error is reported, and execution continues with
+the next line; the archytaszx command then exits with status 1. Typical messages:
+
+    error: 'foo' is not defined; declare it with var
+    error: cannot add a ket and a scalar
+    error: var x must be a scalar, got a ket
+    error: unclosed ket at column 17
+    error: 'pi' is reserved
+    error: assertion failed: x == 2
+
+The interpreter raises LangSyntaxError for text that does not parse, LangTypeError for a value
+of the wrong kind, and LangError for any other statement that cannot be executed (ERRORS.txt).
+
+
+19. COMPLETE EXAMPLE
+--------------------
+
+Deutsch-Jozsa for an n-qubit register, n symbolic, with a balanced oracle:
+
+    var n
+    gate U_f = |x>|y> -> |x>|y xor bit(x, 0)>
+    |psi> = |0>^@n @ |1>
+    (H^@n @ H)|psi>
+    U_f|psi>
+    (H^@n @ I)|psi>
+    var z = floor(measure|psi>/2)
+    show(z)
+
+Output (unicode style):
+
+    z = [(1, 1)]
+
+The first register reads 1 with probability 1 for every n: the oracle is balanced.
+examples/deutsch_jozsa.azx shows every intermediate state.

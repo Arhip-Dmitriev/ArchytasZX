@@ -1,0 +1,259 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Python Interfaces
+
+Applies to: ArchytasZX 0.19.x
+Implementation: archytaszx.embed (embedding), every engine module (engine API)
+
+The Python interfaces are not yet stable between releases.
+
+
+PART I. THE LANGUAGE EMBEDDING
+==============================
+
+1. OVERVIEW
+-----------
+
+The embedding runs the .azx language (LANGUAGE.txt) from Python. A Program is one
+interpreter; its values are wrapped as Value objects that support Python operators standing
+for the language's operators.
+
+    from archytaszx import azx               # a shared default Program
+    from archytaszx import Program           # or a fresh one: azx = Program()
+
+The package archytaszx exports exactly three names: Program, Value and azx. They are loaded on
+first access. The guided tour examples/learn_azx.py exercises the whole embedding.
+
+
+2. class Program
+----------------
+
+    Program(*, seed: int | None = None, style: str = "unicode")
+
+One interpreter with its own variables, functions, gates and states. seed seeds rand; style
+is the default display style for render and show ("unicode", "ascii" or "latex").
+
+2.1 Running statements
+
+    program(source: str) -> str
+    program.run(source: str) -> str
+
+Runs one or more statements and returns what show and print printed. Errors raise LangError
+or a subclass (ERRORS.txt).
+
+    azx("var n")
+    azx("|psi> = H^@n |0>^@n\nshow(|psi>)")
+
+2.2 Evaluating and assigning in the language syntax
+
+    program[EXPRESSION] -> Value
+    program["|NAME>"] = value
+    program["<NAME|"] = value
+    program["NAME"] = value
+
+Indexing evaluates one expression in the language syntax. Item assignment names a ket, a
+bra (whose ket becomes its conjugate transpose), or a variable.
+
+    azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
+    azx["sum(k in 0..=4){ k }"]               a Value holding 10
+
+2.3 Attributes
+
+    program.NAME -> Value
+    program.NAME = value
+
+Reading an attribute returns the named state, gate, variable, constant (pi, e, i) or function.
+Assigning an attribute names the value by its kind: a state becomes |NAME>, an operator a
+gate, a scalar a variable. Wherever a value is expected, a Python int, complex or sympy
+expression is taken exactly; a Python float is replaced by the simplest rational or radical
+expression sympy's nsimplify finds for it (0.5 becomes 1/2); a bool becomes a truth value; and
+a str is evaluated as an expression in the language syntax.
+
+    azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n      |psi> = H^@n |0>^@n
+
+2.4 Constructors
+
+    program.ket(value, dim=None) -> Value       |value> or |value>_dim
+    program.bra(value, dim=None) -> Value       <value| or <value|_dim
+    program.var(*names, type="nat")             declares symbols; returns a Value, or a tuple
+                                                of Values for several names
+    program.seed(value: int)                    seeds rand
+
+value may be an integer, a symbol name, or the name of a built-in state: "+", "-", "i", "-i".
+type is one of nat, int, real, complex.
+
+2.5 Measurement
+
+    program.measure(state) -> Value
+    program.measure | state -> Value
+
+Returns the Born distribution of the state and replaces the named state by the mixture of its
+outcomes. state may be a Value or a state name. An unnamed state is first stored under a
+fresh name.
+
+2.6 Output
+
+    program.render(*values, style="unicode") -> str     the values, one line each
+    program.show(*values, style="unicode")              prints them
+    program.names() -> Iterable[str]                    every user-defined name
+    program.interpreter                                 the underlying Interpreter
+
+
+3. class Value
+--------------
+
+A Value wraps one language value: a scalar, ket, bra, operator, density matrix or
+distribution. Value.name is set when the Value is a named state.
+
+3.1 Operators
+
+  Python    Language        Meaning
+  --------  --------------  ---------------------------------------------------------------
+  a | b     a b             juxtaposition: application, inner and outer product, tensor of
+                            kets, multiplication
+  a @ b     a @ b           tensor product
+  a ** n    a^@n or a^n     tensor power of a state or operator; power of a scalar
+  a + b     a + b           sum
+  a - b     a - b           difference
+  a * b     a * b           product, composition
+  a / b     a / b           division
+  -a        -a              negation
+  a.dag()   <a|             conjugate transpose
+
+Python operators group differently from the language. Python's | groups from the left, so
+the language's CNOT (H @ I) |0>|0> is written
+
+    azx.CNOT | (azx.H @ azx.I) | (azx.ket(0) @ azx.ket(0))
+
+and Python's @ binds tighter than |, so (H |0>) @ |1> needs its parentheses:
+
+    (azx.H | azx.ket(0)) @ azx.ket(1)
+
+3.2 Conversion
+
+    value.text(style="unicode") -> str      the value in a display style
+    value.unicode() / value.ascii() / value.latex() -> str
+    value.sympy()                           the sympy expression of a scalar, or of the single
+                                            outcome of a certain distribution
+    int(value), float(value), complex(value)
+    bool(value)
+    value.vector()                          the amplitudes of a concrete state as a complex
+                                            numpy vector
+
+A Value has no ==; compare value.sympy() instead. In Jupyter a Value is rendered from its
+LaTeX form.
+
+vector() is an export of a concrete state for use outside the engine. The engine itself never
+builds amplitude vectors to compute results.
+
+
+4. EXAMPLE
+----------
+
+    from archytaszx import Program
+
+    azx = Program()
+    n = azx.var("n")
+    azx("func f(x) = bit(x, 0)")
+    azx("gate O = |x>|y> -> |x>|y xor f(x)>")
+
+    start  = azx.ket(0) ** n @ azx.ket(1)
+    first  = azx.H ** n @ azx.H
+    last   = azx.H ** n @ azx.I
+    target = azx.bra(0) ** n @ azx.bra("-")
+
+    azx["|out>"] = last | azx.O | first | start
+    amplitude = (target | azx.out).sympy()     0: the oracle is balanced, for every n
+
+
+PART II. THE ENGINE API
+=======================
+
+5. IMPORT CONVENTIONS
+---------------------
+
+Engine objects are imported by full module path. The sub-package __init__ files are empty;
+from archytaszx import Diagram fails.
+
+    # Layer A: algebra
+    from archytaszx.algebra.dimension import Dim, solve, unify_all
+    from archytaszx.algebra.phase import Phase, PhaseVector
+    from archytaszx.algebra.scalar import Scalar
+
+    # Layer B: diagrams
+    from archytaszx.diagram.graph import Diagram, Direction, PortRef
+    from archytaszx.diagram.generators import (
+        Z_SPIDER, X_SPIDER, FOURIER_BOX, TRIANGLE, TRIANGLE_INVERSE, W_NODE,
+        DIM_BINDER, DIM_SPLITTER)
+    from archytaszx.diagram.bangbox import (
+        Mult, abstract_port_count, abstract_subgraph_count, instantiate_symbol, peel_one)
+    from archytaszx.diagram.validate import validate, validate_or_raise
+    from archytaszx.diagram.scalable import to_scalable, from_scalable, strip
+    from archytaszx.diagram.compare import isomorphic, canonical_key
+
+    # Layer C: rewriting
+    from archytaszx.rewrite.rules_library import RULES, lookup_rule, SPIDER_FUSION
+    from archytaszx.rewrite.engine import apply, apply_until_fixpoint, toward_normal_form
+    from archytaszx.rewrite.normal_form import normal_form
+    from archytaszx.rewrite.egraph import EGraph, simplify
+    from archytaszx.rewrite import tactics
+
+    # Layer D: semantics and proof
+    from archytaszx.semantics.check import compare, score, compare_symbolic
+    from archytaszx.semantics.contract_symbolic import contract_symbolic
+    from archytaszx.semantics.decide import decide_equal
+    from archytaszx.semantics.prove import prove, check_proof
+    from archytaszx.semantics.induction import prove_by_induction
+    from archytaszx.semantics.certificate import certify, verify, replay
+    from archytaszx.semantics import kernel
+
+    # Text input and output
+    from archytaszx.repl.parser import parse, parse_dsl, parse_dirac, parse_listing
+    from archytaszx.repl.printer import render, render_graph
+
+Each module raises only exceptions of its own hierarchy (ERRORS.txt).
+
+
+6. WORKED EXAMPLE
+-----------------
+
+Build two Z spiders over a symbolic dimension, fuse them, check, certify, and prove the
+fusion for every number of copies.
+
+    from archytaszx.algebra.dimension import Dim
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.diagram.graph import Diagram, Direction, PortRef
+    from archytaszx.rewrite.match import find_matches
+    from archytaszx.rewrite.engine import apply
+    from archytaszx.rewrite.rules_library import SPIDER_FUSION
+
+    d = Dim.symbol("d")
+    g = Diagram()
+    a = g.add_node(Z_SPIDER, input_dims=[], output_dims=[d, d])
+    b = g.add_node(Z_SPIDER, input_dims=[d], output_dims=[d, d])
+    g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+    g.set_boundary_outputs([PortRef(a, Direction.OUTPUT, 1),
+                            PortRef(b, Direction.OUTPUT, 0),
+                            PortRef(b, Direction.OUTPUT, 1)])
+
+    result = apply(g, SPIDER_FUSION, find_matches(g)[0])
+    len(result.diagram.nodes)                       1
+    result.diagram.scalar                           Scalar(1)
+
+    from archytaszx.semantics.check import compare
+    from archytaszx.semantics.certificate import certify, verify
+    compare(g, result.diagram, {"d": 5}).matched    True
+    certificate = certify(g, [result], label="fuse A into B")
+    verify(certificate, {"d": 3}).verified          True
+
+    from archytaszx.diagram.bangbox import abstract_subgraph_count
+    from archytaszx.semantics.induction import prove_by_induction
+    boxed, box_id, mult = abstract_subgraph_count(g, frozenset({a, b}), 1, stem="m")
+    fused = apply(boxed, SPIDER_FUSION, find_matches(boxed)[0]).diagram
+    proof = prove_by_induction(boxed, fused, witness={"d": 2})
+    proof.verdict                                   Verdict.PROVED_UNIFORM
+    proof.held_symbolic                             frozenset({'d'})
+
+The layer documents (ALGEBRA.txt, DIAGRAM.txt, REWRITE.txt, SEMANTICS.txt, PROOFS.txt) specify
+every public class and function used here.

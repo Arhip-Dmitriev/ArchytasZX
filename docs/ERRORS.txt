@@ -1,0 +1,178 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Errors and Exceptions
+
+Applies to: ArchytasZX 0.19.x
+
+
+1. PRINCIPLES
+-------------
+
+  - By design, every module raises only exceptions of its own hierarchy, rooted at one base
+    class <Area>Error. The command layer additionally chains the engine error it wraps as
+    __cause__ (section 2.5).
+  - Most hierarchies split into a grammar error and a domain error:
+      <Area>GrammarError  the request is malformed: a wrong type, an unknown name, a reference
+                          to something absent, text that does not parse;
+      <Area>DomainError   the request is well formed but outside what the operation accepts:
+                          a value out of range, a symbolic value where a concrete one is
+                          needed, a shape not supported.
+  - A failed operation leaves its inputs unchanged. No function mutates a diagram it was
+    handed, except the documented mutators of Diagram itself.
+  - Not finding something is a result, not an exception: decide_equal returns UNKNOWN, search
+    returns a status, compare_symbolic returns an indeterminate result.
+
+In the shell, an exception is shown as one "error:" line; ":detail" shows the full chain.
+
+
+2. HIERARCHIES
+--------------
+
+Each entry: class (base) - when it is raised.
+
+2.1 Layer A: archytaszx.algebra
+
+  dimension
+    DimensionError (Exception)
+      DimensionDomainError     a dimension not a positive integer, an exponent not a
+                               non-negative integer, an out-of-domain substitution
+      DimensionGrammarError    an expression outside the dimension grammar (sums, quotients,
+                               roots, floats)
+  phase
+    PhaseError (Exception)
+      PhaseDomainError         an index out of range, a nonzero gauge entry, mismatched
+                               dimensions, numeric evaluation of a symbolic phase
+      PhaseGrammarError        inexact or malformed input
+  scalar
+    ScalarError (Exception)
+      ScalarDomainError        numeric evaluation of a symbolic scalar, a zero denominator,
+                               zero to a negative power
+      ScalarGrammarError       inexact or malformed input
+      ScalarSumError           a malformed index sum, or a bound index used as a free symbol
+      ScalarBudgetError        simplification exceeded its step budget
+
+2.2 Layer B: archytaszx.diagram
+
+  generators
+    GeneratorError (Exception)
+      GeneratorDomainError     an inconsistent leg policy
+      GeneratorGrammarError    an unknown or duplicate generator name
+  graph
+    GraphError (Exception)
+      GraphDomainError         a negative port index, a wire from a port to itself
+      GraphGrammarError        a wrong argument type, a reference to an absent node or wire
+  bangbox
+    BangBoxError (Exception)
+      BangBoxDomainError       a negative multiplicity; instantiating a symbolic count
+      BangBoxGrammarError      an empty or mixed scope, an unknown box or symbol, boxes that
+                               are not siblings, an unsupported crossing
+  scalable
+    ScalableError (Exception)
+      ScalableGrammarError     a wrong type, an unknown id, invalid nesting
+      ScalableDomainError      an unresolved multiplicity in strip
+  validate
+    ValidateError (Exception)
+      ValidationFailedError    validate_or_raise found a hard error; carries .report
+
+2.3 Layer C: archytaszx.rewrite
+
+  rule (the base of every module in archytaszx.rewrite)
+    RewriteError (Exception)
+      RewriteDomainError       a match whose conditions did not all pass, a scalar
+                               disagreeing with the rule's, a phase outside the shared
+                               dimension, a rewrite that would introduce a hard validation
+                               error
+      RewriteGrammarError      a malformed value object, a match of the wrong type, a build
+                               result that breaks the engine's contract, an unknown rule name
+      TerminationGuardTripped  (engine) a strict strategy hit its guard; carries the outcome
+      BudgetExhausted          (tactics) a tactic context's application budget ran out
+      SheetError               (sheet)
+        SheetGrammarError      (also a RewriteGrammarError) unknown id, wrong scale kind,
+                               no correspondence
+        SheetDomainError       (also a RewriteDomainError) a multiplicity outside the
+                               operation's domain
+  cache
+    CacheError (Exception)
+      CacheGrammarError        a cache argument of the wrong type or shape
+      CacheDomainError         a cache argument naming something the diagram lacks
+
+2.4 Layer D: archytaszx.semantics
+
+  denote
+    DenoteError (Exception)
+      DenoteDomainError        a non-concrete dimension or phase, disagreeing legs
+      DenoteGrammarError       an unknown generator, a wrong leg count, a node with no
+                               dimension
+  contract_numeric
+    ContractError (Exception)
+      ContractDomainError      a non-concrete dimension, phase or scalar
+        ContractValidationError  the diagram failed validation; carries .report
+        ContractSizeError      a tensor above max_elements entries
+      ContractGrammarError     internal bookkeeping failure (not expected from a valid
+                               diagram)
+  contract_symbolic
+    SymbolicContractionError (Exception)
+      SymbolicContractionDomainError
+        SymbolicContractionValidationError   the diagram failed validation
+        SymbolicContractionUnsupportedError  a shape not covered (section 5 of
+                                             SEMANTICS.txt)
+      SymbolicContractionGrammarError        a malformed diagram
+  check
+    CheckError (Exception)
+      CheckGrammarError        an incomplete assignment, an unknown mode
+      CheckDomainError         declared; currently not raised
+  decide
+    DecideError (Exception)
+      DecideGrammarError       a wrong argument type or an out-of-range bound
+  prove
+    ProveError (Exception)
+      ProveGrammarError        a wrong argument, or a start or goal failing validation
+  induction
+    InductionError (Exception)
+      InductionDomainError     a value outside the module's domain
+      InductionGrammarError    a malformed request
+  certificate
+    CertificateError (Exception)
+      CertificateDomainError   a value outside a certificate operation's domain
+      CertificateGrammarError  a malformed certificate request
+  kernel
+    KernelError (Exception)    a proof piece the kernel does not accept
+  interop
+    InteropError (Exception)
+      InteropGrammarError      a wrong argument, a bad limit, an unknown operation
+  pathsum
+    PathSumError (Exception)   a path-sum operation undefined on its inputs
+  lean_net
+    NetUnsupported (Exception) a theorem outside the network semantics
+  lean_scalar
+    ScalarUnsupported (Exception)  a scalar the exporter cannot write in Lean
+
+2.5 Front end: archytaszx.repl and archytaszx.embed
+
+  lang (also raised by archytaszx.embed)
+    LangError (Exception)      a statement that cannot be executed
+      LangSyntaxError          text that does not parse
+      LangTypeError            a value of a kind not allowed where it is used
+  parser
+    ParseError (Exception)
+      ParseGrammarError        the source does not match its form's grammar
+      ParseDomainError         the source parses but names a value or diagram outside the
+                               accepted domain
+  printer
+    PrinterError (Exception)
+      PrinterDomainError       a diagram with no Dirac form
+      PrinterGrammarError      an argument of the wrong type
+  commands
+    CommandError (Exception)
+      CommandGrammarError      a malformed command line: unknown option, bad assignment,
+                               missing argument
+      CommandDomainError       a well-formed command the session or engine cannot carry out
+  zxview
+    ZXViewError (Exception)    a state with no ZX diagram
+  zxsym
+    Unsupported (Exception)    a term the structural translation does not cover
+
+archytaszx.repl.commands.execute raises only CommandError subclasses, the engine error
+chained as __cause__; archytaszx.repl.commands.run never raises for an Exception and returns
+an outcome with ok=False instead.

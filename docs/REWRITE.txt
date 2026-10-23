@@ -1,0 +1,350 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Layer C: Rewriting
+
+Applies to: ArchytasZX 0.19.x
+Package: archytaszx.rewrite (modules rule, match, match_zxw, match_box, rules_library, engine,
+         normal_form, egraph, tactics, sheet, cache)
+
+
+1. PURPOSE
+----------
+
+Layer C transforms diagrams by rewrite rules. Every transformation is an application of one
+rule at one match, produces a new diagram without changing its input, and records full
+provenance. On top of single applications the layer provides a fixpoint strategy, a normal-form
+driver, equality saturation, a tactic language with proof search, operations on scalable
+notation, and caches. The rules themselves are catalogued in RULES.txt.
+
+
+2. THE RULE MODEL: archytaszx.rewrite.rule
+------------------------------------------
+
+2.1 Rule
+
+    Rule(name, pattern, builder, side_conditions, quantifiers, scalar_introduced,
+         scalar_in_dim, dimension_guards, scalar_in_match)
+
+A Rule is a frozen value object performing no graph surgery:
+
+  name               the rule's unique name
+  pattern            a Pattern locating occurrences of the left-hand side
+  builder            the right-hand side: builds the replacement for one match
+  side_conditions    the named conditions every match is checked against
+  quantifiers        the leg-count and dimension variables the rule's equation ranges over
+  scalar_introduced  the exact scalar the rule multiplies in
+  scalar_in_match    for rules whose scalar depends on the match (for example on a leg
+                     count), the function computing it per match
+  dimension_guards   arithmetic restrictions on the matched dimension
+
+2.2 Pattern and Match
+
+    class Pattern (abstract)
+        find_matches(diagram) -> tuple[Match, ...]     in a deterministic order
+        order_key(match)                               the key of that order
+        locality_radius: int
+
+Every concrete pattern returns its own match type, satisfying the Match protocol:
+
+    match.side_condition_outcomes   every condition checked and its outcome
+    match.dimension_constraints     every dimension equality assumed rather than verified
+    match.all_side_conditions_passed
+    match.support_node_ids          every node the match reads or rewrites, ascending
+
+2.3 Side conditions
+
+A SideCondition (name, description) is declared once per pattern; a SideConditionOutcome
+(name, passed, detail, deferred) records its result for one candidate. An outcome is deferred
+when it passed on an assumed rather than verified dimension equality. A rule fires only when
+the outcomes cover exactly its declared conditions and all passed.
+
+2.4 Dimension constraints
+
+A DimensionConstraint records one dimension equality a match accepted without a syntactic
+identity: assumed, equal_to, the source of the check (the connecting pair, a surviving leg or
+a node's phase), and the outcome, DEFERRED (unify could not decide) or BOUND (it holds under a
+binding, listed in bound_here). Deferred constraints travel into every certificate, decision
+and Lean theorem built on the step.
+
+2.5 Dimension guards
+
+    DimensionGuard(kind, value)
+    kind: PRIME | COMPOSITE | AT_LEAST | EQUALS | DIVISIBLE_BY
+
+A guard restricts the dimension a match resolves to. Its evaluation is three-valued: PASSED,
+FAILED, or UNDECIDED for a non-concrete dimension. An undecided guard blocks the match; a guard
+is never assumed to hold.
+
+2.6 BuildResult
+
+The builder returns a BuildResult: the working diagram it was given with the new nodes added,
+the new node ids, the consumed node ids and wires, a port mapping from consumed ports to
+surviving ones, the scalar introduced, new wires, and phase substitutions. The builder never
+removes nodes and never touches wires or boundaries; the engine does.
+
+
+3. MATCHING
+-----------
+
+3.1 Spider fusion: archytaszx.rewrite.match
+
+The fusion pattern finds two spiders of the same colour joined by a wire. A pair joined by k
+wires yields one candidate per wire; the other wires survive as self-loops on the fused spider.
+The side conditions, in the order applied:
+
+   1. distinct_nodes                   the two nodes differ (a recorded fact)
+   2. same_generator_type              both Z or both X
+   3. parallel_wires_become_self_loops the count of other joining wires (a recorded fact)
+   4. consumed_wire_direction_permitted_for_color
+                                       X requires an output-to-input wire; Z allows any
+   5. consumed_ports_singly_claimed    neither consumed port is claimed twice or on a boundary
+   6. bang_box_scope_agreement         both nodes in the same innermost node-scope box, or none
+   7. dimension_agreement              the connected legs unify; FAILURE is no match, DEFERRED
+                                       or a binding is recorded as a constraint; every
+                                       surviving leg is then unified with the shared dimension
+   8. phase_dimension_agreement        every phase vector unifies with the shared dimension;
+                                       here a DEFERRED result is rejected
+   9. dimension_guards_satisfied       every guard of the rule holds
+
+One predicate, resolve_fusion_match, decides all nine conditions. find_matches calls it per
+candidate, and the builder calls it again, fresh, against the diagram it receives, building
+only from its result.
+
+    find_matches(diagram, *, dimension_guards=(), anchors=None) -> tuple[FusionMatch, ...]
+    resolve_fusion_match(diagram, a_id, b_id, wire, *, dimension_guards=()) -> FusionResolution
+    reattach_phase(phase, shared_dim, bindings)
+
+Other patterns in this module: the F^4 chain (find_fourier_matches), the Z/X cap
+(find_cap_matches), identity removal (find_identity_matches), triangle-inverse cancellation
+(find_triangle_matches), state copy (find_state_copy_matches), Hopf (find_hopf_matches),
+bialgebra (find_bialgebra_matches) and Fourier colour change (find_fourier_state_matches).
+
+3.2 W, triangle and connective patterns: archytaszx.rewrite.match_zxw
+
+W fusion, W identity, W zero copy, triangle zero state and effect, connective inverse (both
+orders), connective states, W/Z bialgebra and the W effects. Every pattern requires its legs
+to carry exactly equal dimensions. Only W fusion fires inside a node-scope bang box; every
+other pattern requires its nodes to lie outside every node-scope box.
+
+3.3 Port-box patterns: archytaszx.rewrite.match_box
+
+Port-box unfusion: a spider leg that alone forms the scope of a port-scope box is moved onto a
+new phaseless spider of the same colour, joined to the rest by one wire.
+
+3.4 Determinism
+
+Every matcher returns its matches sorted by a hash-independent key; no result depends on set
+iteration order.
+
+
+4. APPLYING A RULE: archytaszx.rewrite.engine
+---------------------------------------------
+
+    apply(diagram, rule, match) -> RewriteResult
+
+apply is the single entry point for every rule. It proceeds as follows:
+
+  1. Check that the match's side-condition outcomes cover the rule's conditions exactly and
+     all passed.
+  2. Work on a copy; the input diagram is never mutated.
+  3. Call the builder; it must return the working copy itself and leave its wires and
+     boundaries untouched.
+  4. Validate the build result: the scalar agrees with the rule's; every consumed node and
+     wire exists; new node ids are new; the port mapping is injective and maps onto surviving
+     ports.
+  5. Remap every wire and boundary entry through the port mapping, then add the new wires;
+     a wire-count postcondition catches any wire lost.
+  6. Remove the consumed nodes.
+  7. Multiply the scalar.
+  8. Validate the input and the result; a hard error in the result that the input did not
+     have raises RewriteDomainError. Deferred issues never block, and are recorded as removed
+     or introduced.
+  9. Record a RewriteStep.
+
+    RewriteResult(diagram, new_node_ids, step)
+    RewriteStep(rule_name, match, consumed_node_ids, consumed_wires, side_condition_outcomes,
+                dimension_constraints, scalar_introduced, port_mapping, new_node_ids,
+                removed_deferred_issues, introduced_deferred_issues, phase_substitutions, ...)
+
+The step stores the match itself, so that a certificate can re-apply the rule at the same
+match without re-running the matcher.
+
+
+5. STRATEGIES
+-------------
+
+    apply_until_fixpoint(diagram, rules, *, guard=DEFAULT_GUARD, strict=False, cache=None,
+                         on_result=None) -> StrategyOutcome
+    toward_normal_form(diagram, *, guard=DEFAULT_GUARD, strict=False, cache=None)
+
+apply_until_fixpoint applies, at each iteration, the first match of the earliest rule in rules
+that has one, until nothing matches or the guard trips.
+
+    TerminationGuard(max_steps=128, max_nodes=None, detect_loops=True)
+
+Loop detection compares each new diagram's canonical key with the earlier ones and confirms a
+hit by isomorphism. The key includes the scalar, so a cycle that introduces a factor each time
+is not a loop and runs to the step ceiling instead.
+
+    StrategyOutcome(diagram, steps, stop_reason, scalar_accumulated, steps_attempted)
+    StopReason: FIXPOINT | STEP_LIMIT | NODE_LIMIT | LOOP_DETECTED
+
+With strict=True any stop other than FIXPOINT raises TerminationGuardTripped carrying the
+outcome.
+
+
+6. NORMAL FORM: archytaszx.rewrite.normal_form
+----------------------------------------------
+
+    normal_form(diagram, *, rules=None, guard=DEFAULT_GUARD, cache=None) -> NormalForm
+    same_normal_form(a, b) -> bool
+
+normal_form runs apply_until_fixpoint over the normal-form rule set, NORMAL_FORM_RULE_NAMES in
+archytaszx.rewrite.engine, in that order:
+
+    identity_removal, triangle_inverse_cancellation, w_identity, w_fusion,
+    connective_inverse, connective_inverse_bind_first, connective_states,
+    connective_states_swapped, triangle_zero_state, triangle_zero_effect, w_zero_effect,
+    w_z_effect, fourier_cancellation, fourier_state_color_change,
+    fourier_state_color_change_swapped, spider_fusion, hopf, hopf_swapped, state_copy,
+    state_copy_swapped, w_zero_copy, zx_cap, zx_cap_swapped
+
+The library rules outside this set are z_fusion_prime_d (subsumed by spider_fusion), and
+bialgebra, bialgebra_swapped, wz_bialgebra and port_box_unfusion, which grow the diagram.
+
+A NormalForm holds the source, the reduced diagram, the strategy outcome, the results (which
+replay onto the reduced diagram id for id), and a key. Two normal forms are the same when
+their comparison views share a key and are isomorphic. The comparison view of a diagram sorts
+each Z and X spider's legs within a direction, clears the parameter environment and simplifies
+the scalar. NormalForm.assumed_constraints lists every deferred dimension constraint of its
+steps.
+
+The normal form is a reduction, not a canonical form: two equal diagrams can have different
+normal forms. Agreement of normal forms proves equality; disagreement proves nothing.
+
+
+7. EQUALITY SATURATION: archytaszx.rewrite.egraph
+-------------------------------------------------
+
+An EGraph stores diagrams up to isomorphism of their comparison views and partitions them into
+equivalence classes.
+
+    g = EGraph()
+    g.add(diagram) -> ENodeId
+    g.saturate(rules=None, *, limits=DEFAULT_LIMITS, cache=None) -> SaturationReport
+    g.equivalent(a, b) -> bool
+    g.extract(eclass, cost=default_cost) -> Extraction
+    g.explain(a, b) -> tuple[EGraphEdge, ...] | None
+    g.path_from_root(enode)
+    simplify(diagram, rules=None, *, cost=default_cost, limits=DEFAULT_LIMITS)
+        -> (Extraction, SaturationReport)
+
+saturate runs rounds. Each round applies every rule at every passing match of every e-node not
+yet expanded. A result isomorphic to a node of another class merges the two classes; a result
+already in its own class is redundant; a result larger than the node bound is pruned; an
+application that raises is recorded as a FailedApplication. The default rules are every rule
+in the library (saturation_rules()).
+
+    SaturationLimits(max_iterations=6, max_enodes=512, max_applications=20000, node_margin=4)
+    SaturationStop: SATURATED | ITERATION_LIMIT | ENODE_LIMIT | APPLICATION_LIMIT
+
+The node bound is the largest root's node count plus node_margin. Every edge stored is one
+apply call, so every equivalence the e-graph reports can be explained by a path of
+replayable steps (explain). extract returns the class member of least cost, ties going to the
+lowest id; default_cost is (node count, wire count, number of phased nodes).
+
+
+8. TACTICS AND PROOF SEARCH: archytaszx.rewrite.tactics
+-------------------------------------------------------
+
+8.1 Tactics
+
+A Tactic maps a diagram to a lazy, ordered stream of TacticOutcomes. An outcome holds the
+reached diagram and the chain of RewriteResults leading to it, so that every outcome replays
+from the input.
+
+  Primitive / combinator     Outcomes
+  -------------------------  ------------------------------------------------------------
+  rule(r, focus=None)        one per passing match of r (whose support meets focus)
+  identity()                 one, with no results
+  fail()                     none
+  fixpoint(rules)            one: apply_until_fixpoint over rules
+  normalize()                fixpoint(normal_form_rules())
+  seq(a, b, ...), a >> b     every outcome of the last over every outcome of the earlier
+  first(a, b, ...), a | b    the outcomes of the first tactic that has any
+  choice(a, b, ...)          every outcome of each tactic, in order
+  attempt(t)                 first(t, identity())
+  once(t)                    the first outcome of t only
+  repeat(t, max_times=...)   t's first outcome repeatedly, until none, no progress or a
+                             revisited diagram
+
+A TacticContext carries a shared cache, an application budget (BudgetExhausted when spent) and
+the list of applications that raised.
+
+    tactic.outcomes(diagram, context=None), tactic.run(diagram), tactic.all(diagram, limit=None)
+    default_moves() -> (normalize(), one rule tactic per library rule)
+
+8.2 Search
+
+    search(start, goal, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, bidirectional=True,
+           cache=None) -> SearchResult
+    search_for(start, accept, *, moves=None, limits=..., cache=None)
+
+search is a layered breadth-first search from start and, when bidirectional, from goal. States
+are diagrams up to isomorphism of their comparison views. Each layer expands the start side's
+states at the current depth, then the goal side's, applying every move. An outcome meeting a
+state of the other side ends the search with a ProofPath, whose forward results replay from
+start and backward results from goal, their final diagrams having isomorphic views.
+
+    SearchLimits(max_depth=4, max_states=2048, max_applications=20000, node_margin=4)
+    SearchStatus: FOUND | EXHAUSTED | DEPTH_LIMIT | STATE_LIMIT | APPLICATION_LIMIT
+
+Not finding a path is a status, never an exception. search_for returns the first reachable
+diagram on which a predicate accepts.
+
+
+9. SHEET OPERATIONS: archytaszx.rewrite.sheet
+---------------------------------------------
+
+Six operations act directly on a ScalableDiagram (DIAGRAM.txt, section 6). Each returns a
+SheetStep (operation, arguments, before, after) whose result passes validation; an invalid
+input is refused.
+
+  Operation                      Effect
+  -----------------------------  ---------------------------------------------------------
+  split_scale(s, scale, first)   a COPIES scale of m becomes sibling scales of first and
+                                 m - first copies; a part of multiplicity 1 is dissolved
+  join_scales(s, a, b)           two corresponding sibling scales become one of the summed
+                                 multiplicity
+  enclose(s, nodes, *, multiplicity=1)
+                                 wraps nodes in a new COPIES scale
+  dissolve(s, scale)             removes a scale of multiplicity 1, keeping its contents
+  kill_scale(s, scale)           removes a scale of multiplicity 0 and all it scales
+  fuse_sheet(s, wire)            spider fusion across a wire of any size, once per copy
+
+    SHEET_OPERATIONS: name -> function
+    replay_sheet_step(step) -> SheetStep       re-runs and confirms a step
+
+Errors: SheetGrammarError, SheetDomainError (subclasses of the rewrite errors).
+
+
+10. CACHING: archytaszx.rewrite.cache
+-------------------------------------
+
+    RewriteCache(match_cache=MatchCache(), incremental=None)
+
+the one cache object the strategy, saturation and search functions accept.
+
+  - fingerprint(diagram) -> DiagramFingerprint: per-node digests and global keys, sha256
+    over repr, identical across processes.
+  - MatchCache: memoises pattern matches by a diagram's match key and canonical keys by its
+    global key, in bounded least-recently-used stores (LruMemo).
+  - IncrementalMatcher(patterns): after a local edit, keeps every match outside the changed
+    region and re-matches only inside it.
+  - ValueMemo(compute, key): a generic content-keyed memo; numpy results are stored as
+    private copies and returned read-only.
+  - CacheStats: hits, misses, evictions, invalidations, hit rate.
+
+Caching never changes a result: a cache is keyed on exact content, and a pattern whose
+identity cannot be keyed is matched without the cache.

@@ -1,0 +1,146 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Glossary
+
+Applies to: ArchytasZX 0.19.x
+
+
+abstraction
+    Replacing a concrete number typed by the user with a fresh symbol, recording the number in
+    the parameter environment. Dim.abstract, Mult.abstract.
+
+assumption
+    A dimension equality a derivation relied on without verifying it (a deferred dimension
+    constraint). Reported with every verdict and certificate that depends on it, and stated as
+    a hypothesis of an exported Lean theorem.
+
+bang box
+    A scope in a diagram standing for a symbolic number of repetitions. A node-scope box
+    repeats whole nodes; a port-scope box repeats legs of one node. DIAGRAM.txt, section 4.
+
+boundary
+    The ordered lists of a diagram's open ports: boundary inputs and boundary outputs.
+
+Born distribution
+    The probabilities of the outcomes of measuring a state in the computational basis,
+    |<z|psi>|^2 / <psi|psi>.
+
+certificate
+    A replayable record of a derivation, with the method by which its claimed equality is
+    checked. PROOFS.txt, section 5.
+
+character sum
+    The identity sum_{k=0}^{d-1} omega_d^{j k} = d [j == 0 mod d], central to symbolic
+    contraction and to the Lean normaliser.
+
+comparison view
+    A copy of a diagram with spider legs in canonical order, an empty parameter environment
+    and a simplified scalar; two diagrams are identified when their views are isomorphic.
+
+copy-major
+    The layout of an instantiated family: copy 0 of every slot, then copy 1, and so on.
+
+deferred
+    Said of a dimension equation the unifier could not decide, and of a validation issue or
+    match condition resting on one. Deferred items never fail validation; they become
+    assumptions.
+
+density matrix
+    A mixed state, sum_k p_k |k><k| after a measurement; held as its vectorisation (Mixed).
+
+derivation
+    A sequence of rewrite steps from an initial to a final diagram.
+
+dimension
+    The number of levels of a qudit; a Dim: a positive integer, a symbol, or a product or power
+    of these. Stored on every port.
+
+e-graph
+    A data structure holding many equivalent diagrams at once, partitioned into equivalence
+    classes; used for equality saturation. REWRITE.txt, section 7.
+
+effect
+    A spider with one input and no output.
+
+family
+    A diagram containing bang boxes, standing for one diagram per value of its multiplicities.
+
+generator
+    A node type: Z and X spiders, the Fourier box F, the triangle T and its inverse Ti, the W
+    node, the binder B and the splitter S.
+
+induction
+    Proof of an equality between families for every value of a multiplicity, from a base case
+    and a step case. PROOFS.txt, section 4.
+
+kernel
+    The small set of inference rules from which theorems about diagrams are built.
+    PROOFS.txt, section 6.
+
+match
+    One occurrence of a rule's left-hand side in a diagram, with the outcome of each side
+    condition.
+
+multiplicity
+    The number of repetitions a bang box stands for; a Mult: a non-negative integer, a symbol,
+    or sums and products of these.
+
+normal form
+    The fixpoint of the normal-form rule set; agreement of normal forms proves equality.
+
+oracle
+    Numeric contraction of small concrete instances, used to find counterexamples and to
+    cross-check derivations. Evidence, never proof.
+
+parameter environment
+    The map from a diagram's symbols to the concrete values the user supplied for them.
+
+path sum
+    The representation of language values: a sum of terms, each an amplitude times a sum over
+    bound indices of register values.
+
+phase
+    An angle in turns; a phase vector gives one phase per level of a spider, index 0 fixed to
+    zero.
+
+qufinite ZX(W)-calculus
+    The graphical calculus of qudits of arbitrary and mixed finite dimensions, with Z and X
+    spiders, the Fourier box, the triangle, the W node and the dimension connectives.
+
+register
+    A group of qudits of one dimension whose joint value is one integer, read big-endian.
+
+rule
+    A rewrite: a pattern, a builder, side conditions and the exact scalar introduced.
+    RULES.txt.
+
+scalable notation
+    The sheet-wire reading of bang-boxed diagrams, in which a scale stands for k copies or a
+    sheet of k wires. DIAGRAM.txt, section 6.
+
+side condition
+    A named condition a match must satisfy for a rule to fire.
+
+soundness
+    The property that every rewrite preserves the denoted linear map, scalar included, and
+    every EQUAL or UNEQUAL verdict is correct.
+
+spider
+    A Z or X generator; any number of legs, a phase vector.
+
+state
+    A spider or diagram with no input; in the language, a ket.
+
+symbolic contraction
+    Contraction of a diagram with every dimension, phase and multiplicity kept as a symbol.
+    SEMANTICS.txt, section 5.
+
+tactic
+    A program that maps a diagram to a stream of derivations. REWRITE.txt, section 8.
+
+turn
+    The unit of phase: t turns is the angle 2*pi*t.
+
+UNKNOWN
+    The verdict of a decision procedure that could neither prove nor refute an equality.

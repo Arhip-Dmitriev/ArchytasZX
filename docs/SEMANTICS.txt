@@ -1,0 +1,276 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Layer D (part 1): Meaning, Contraction and the Oracle
+
+Applies to: ArchytasZX 0.19.x
+Package: archytaszx.semantics (modules denote, contract_numeric, contract_symbolic, check,
+         pathsum, interop)
+
+The second part of Layer D, deciding and proving equality, is documented in PROOFS.txt.
+
+
+1. PURPOSE
+----------
+
+This layer fixes what a diagram means, a linear map between tensor products of qudit spaces,
+and computes it in two ways: numerically at a concrete assignment of every symbol, and
+symbolically with dimensions and multiplicities kept formal. It also defines the path-sum
+values of the .azx language and their measurement.
+
+
+2. DENOTATION: archytaszx.semantics.denote
+------------------------------------------
+
+2.1 Axis convention
+
+A node with m inputs and n outputs denotes a tensor of rank m + n whose axes are its outputs
+in order, then its inputs in order; each axis has the length of its port's dimension. A
+diagram's boundary follows the same rule: boundary outputs, then boundary inputs. Every
+consumer in the engine uses this convention.
+
+2.2 The generators
+
+With omega_d = e^{2 pi i/d}, and F the unitary discrete Fourier transform
+F[j][k] = omega_d^{j k} / sqrt(d):
+
+  Z spider, phase vector (alpha_1, ..., alpha_{d-1}), alpha_0 = 0:
+      Z_{m->n} = sum_{k=0}^{d-1} e^{i alpha_k} |k>^(x n) <k|^(x m)
+      A node without a phase is the all-ones diagonal. With no legs it is the scalar
+      sum_k e^{i alpha_k}.
+
+  X spider, the Fourier conjugate of Z:
+      X_{m->n} = F^(x n) . Z_{m->n} . (F^dagger)^(x m)
+
+  F (Fourier box):        F[j][k] = omega_d^{j k} / sqrt(d)
+  T (triangle):           T[out][in] = 1 if out == 0 or out == in, else 0
+  Ti (inverse triangle):  1 if out == in; -1 if out == 0 and in >= 1; else 0
+  W node:                 W[0; 0, ..., 0] = 1, and for i in 1..d-1 the entry with input i
+                          and exactly one output equal to i (the others 0) is 1; every other
+                          entry is 0
+  B (binder), S (splitter):
+                          the pair (a, b), a < s, b < t, corresponds to k = a*t + b < s*t;
+                          B . S = id and S . B = id exactly
+
+The sign of the Fourier exponent and the normalisation 1/sqrt(d) are fixed here and nowhere
+else.
+
+2.3 Functions
+
+    denote(node) -> numpy.ndarray          the complex tensor of one concrete node
+    resolve_dimension(node) -> int         the node's single concrete leg dimension
+    resolve_dim(node) -> Dim               the same, possibly symbolic
+    leg_dims(node), leg_dimensions(node)   every leg dimension, outputs then inputs
+
+denote refuses, before allocating anything, a node whose dimensions or phase are not concrete,
+whose legs disagree, or whose shape is illegal.
+
+
+3. NUMERIC CONTRACTION: archytaszx.semantics.contract_numeric
+-------------------------------------------------------------
+
+    contract(diagram, *, max_elements=10_000_000) -> ContractionResult
+
+contracts a fully concrete diagram without bang boxes into one tensor. The diagram is first
+validated; a hard error or a deferred dimension issue is refused with ContractValidationError.
+A non-concrete dimension, phase or scalar is refused with ContractDomainError. Each node is
+denoted, each wire identifies two tensor axes, and the network is contracted pairwise,
+smallest result first. The exact scalar is multiplied in last.
+
+ContractionResult holds the tensor, the PortRef of each axis (boundary outputs, then inputs)
+and the number of output axes. A tensor larger than max_elements entries, whether a node's,
+an intermediate or the result, raises ContractSizeError.
+
+Numeric contraction is the oracle of the engine (section 4): it is used to search for
+counterexamples and to cross-check derivations at small concrete sizes, never to produce a
+result reported as symbolic.
+
+
+4. THE ORACLE: archytaszx.semantics.check
+-----------------------------------------
+
+    instantiate(diagram, assignment) -> Diagram
+    score(diagram, assignment, *, max_elements=...) -> ContractionResult
+    compare(a, b, assignment, *, mode=EqualityMode.EXACT, tolerance=1e-9, ...)
+        -> ComparisonResult
+    compare_tensors(a, b, *, mode=EqualityMode.EXACT, tolerance=1e-9) -> ComparisonResult
+
+instantiate substitutes every dimension, phase, scalar and multiplicity symbol: a symbol the
+assignment names takes that value; any other symbol takes its value from the diagram's
+parameter environment; a symbol neither supplies raises CheckGrammarError. Bang boxes are
+expanded at their instantiated multiplicities.
+
+compare instantiates both diagrams at one shared assignment, first checks that their
+interfaces correspond (the same numbers of outputs and inputs, the same dimension per axis),
+then contracts and compares.
+
+4.1 Equality modes
+
+  EXACT               (the default) equal shapes and entrywise agreement within tolerance,
+                      overall scalar included.
+  UP_TO_GLOBAL_PHASE  b == lambda * a for some lambda with |lambda| = 1. lambda is recovered
+                      from a's largest entry and verified on the whole tensor. A rescaling by a
+                      factor of modulus other than 1 is not a match.
+
+UP_TO_GLOBAL_PHASE is used only when requested. The tolerance is an absolute entrywise bound,
+1e-9 by default, and is never loosened implicitly.
+
+ComparisonResult holds the mode, matched, a reason, the largest deviation and the recovered
+lambda.
+
+4.2 Limits of the oracle
+
+The oracle compares tensors axis by axis. It cannot establish that axis i of one diagram is
+the same leg as axis i of the other; two diagrams whose boundaries are permuted are
+indistinguishable to it whenever the tensors happen to agree. It is evidence at the points it
+evaluates, not a proof for other values.
+
+
+5. SYMBOLIC CONTRACTION: archytaszx.semantics.contract_symbolic
+---------------------------------------------------------------
+
+    contract_symbolic(diagram, *, max_steps=1024) -> SymbolicTensor
+
+contracts a diagram with every dimension, phase and multiplicity kept formal. A tensor is an
+ordered list of axes (SymbolicAxis: port, dimension, index name) and one exact Scalar entry
+over the axis indices. Wires become summed indices; every Kronecker delta is a ModDelta; the
+scalar simplifier of Layer A (character sums, delta elimination) closes the contraction.
+
+Bang boxes:
+
+  - A node-scope box closed off from the rest contributes its scope's scalar raised to its
+    multiplicity.
+  - A node-scope box meeting only the boundary, and a port-scope box on Z and X spiders, make
+    the rank depend on the multiplicity: the tensor becomes variable-rank, with
+    ReplicatedFactor groups (a factor taken once per copy), ReplicatedBlock runs of boundary
+    slots laid out copy-major, and SharedIndex sums.
+  - A box wired to a node outside it, a port box over two W nodes, and other shapes not
+    listed raise SymbolicContractionUnsupportedError.
+
+    tensor.substitute(mapping) -> SymbolicTensor       values pushed into every dimension,
+                                                       multiplicity, entry and factor
+    tensor.flatten()                                   the fixed-rank tensor once every
+                                                       multiplicity is concrete
+    tensor.value_at(index) -> Scalar                   one entry, simplified
+    tensor.simplify(), tensor.ranges(), tensor.signature(), tensor.rank
+    tensor.to_dense(*, max_elements=...)               enumerate every entry (concrete only)
+
+substitute followed by value_at answers a question about a concrete size without expanding the
+diagram: the cost does not depend on the size of the value substituted.
+
+The cost of symbolic contraction grows quickly with the number of phased spiders (in a chain
+of spiders with symbolic phases, roughly fourfold per spider).
+
+5.1 Symbolic comparison
+
+    compare_symbolic(left, right, *, mode=EXACT, max_steps=1024, dimension_floors=None)
+        -> ComparisonResult
+    find_entry_witness(left, right, assignments, *, tolerance=1e-9, ...) -> EntryWitness | None
+
+compare_symbolic simplifies the difference of two symbolic tensors. It has three outcomes:
+equal ("entries are exactly equal with d formal"), unequal, and indeterminate, when the
+difference still carries an index sum the simplifier could not decide. An indeterminate result
+has matched=False and a reason beginning "indeterminate"; it does not mean unequal. Variable-
+rank tensors are compared only when their layouts, shared indices and replicated factors agree.
+dimension_floors supplies least values of dimension symbols (for example d >= 3).
+
+find_entry_witness looks for one assignment and one index tuple at which the two entries
+differ, trying the given assignments and then the points the difference's deltas pin.
+
+
+6. PATH SUMS: archytaszx.semantics.pathsum
+------------------------------------------
+
+The values of the .azx language are path sums.
+
+6.1 States
+
+A State has registers, each with a width and a dimension (2 when omitted), possibly symbolic,
+and a sum of Terms. A term is an amplitude times a sum over bound indices (Bound: name and
+range) of a tuple of register values. Register r holds a value in 0 .. d_r^(w_r) - 1, read
+big-endian in base d_r. A state with bra=True is a bra.
+
+    basis(value, width, dim), basis_kets(values, widths, dims)
+    tensor(a, b), scale(c, s), add(a, b), dagger(s)
+    power_state(s, n)                       tensor power, one register of width n
+    inner(a, b) -> Expr                     bra-ket contraction
+    simplify(s)                             merge terms, close sums, pin digits
+    norm2(s)                                squared norm
+    substitute(s, mapping), free_symbols(s)
+
+6.2 Operators
+
+Gate (a map from register values, widths and dimensions to a state), Identity, Power, Tensor,
+Compose, Outer, Scaled and OpSum.
+
+    apply(op, s) -> State
+
+Applying a gate is substitution of its pattern variables. The tensor power of a one-qudit gate
+or state factors its amplitude digit by digit: exponents linear in an input digit a, an output
+digit y and a*y become digit sums dsum and digit dot products ddot (pop and bitdot for qubits).
+While apply runs, a free symbol of an operator that meets a register of another width or
+dimension is bound to that register's value for this application only.
+
+6.3 Integer functions
+
+The symbolic integer functions of the language, kept unevaluated on symbolic arguments:
+
+  xor(a, b)        bitwise exclusive or
+  bit(x, j)        bit j of x, least significant first
+  pop(x)           population count of x
+  bitdot(a, b)     population count of the bitwise and of a and b
+  dsum(v, d), ddot(a, b, d)       base-d digit sum and digit dot product
+  powmod(b, e, m)  b^e mod m
+  igcd(a, b)       greatest common divisor
+  denom(x, N)      denominator of the best approximation of x with denominator at most N
+  bits(z, lo, hi, w), digits(z, lo, hi, w, d)
+                   bits (digits) lo..hi-1 of the width-w big-endian string z
+  part(z, k, below, levels)       register k of a mixed-radix outcome z
+  shr(v, k, d)     v with its k lowest base-d digits dropped
+  dshift(v, k, d, w)              every base-d digit of the w-digit v increased by k mod d
+
+6.4 Measurement and mixed states
+
+    distribution(s) -> Distribution
+    amplitude(s, values) -> Expr
+    density(s) -> Mixed
+    apply_mixed(op, m) -> Mixed             rho -> U rho U^dagger
+    collapse(d, layout) -> Mixed            the mixture a measurement leaves
+    density_of(op) -> Mixed | None          a sum of outer products read as a density matrix
+    trace(m)
+    map_outcomes(d, fn), certain(d)
+
+distribution derives the Born distribution of measuring every register: the probability of
+an outcome z is |<z|s>|^2 / <s|s>, with <z|s> obtained by substituting z into the path sum
+and closing the remaining sums. No path is enumerated and no outcome sampled. A Distribution
+is a tuple of Branches, each a value, a probability and the free indices it ranges over, so
+that one branch stands for a whole family of outcomes.
+
+A Mixed state is a density matrix held as its vectorisation: the ket registers followed by as
+many bra registers, with factors recorded when it is a product of a ket part and a bra part.
+
+6.5 Enumeration helpers
+
+enumerate_state, concrete_levels, decode and paths exist for exporting a concrete state, for
+example as an amplitude vector (Value.vector in the Python embedding). They are not used to
+compute language results.
+
+
+7. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop
+---------------------------------------------------------
+
+    default_samples(*diagrams, limit=12)
+    check_round_trip(diagram, samples=None) -> RoundTripReport
+    check_sheet_step(step, samples=None) -> SheetCheck
+    via_scalable(diagram, operations, samples=None) -> InteropOutcome
+
+check_round_trip translates a diagram to scalable notation and back and checks, at each sample,
+that both instantiate to isomorphic diagrams, that strip agrees with bang-box instantiation,
+and that the oracle finds both exactly equal. check_sheet_step replays a sheet operation,
+validates its result and oracle-compares its two sides. via_scalable runs a list of sheet
+operations and checks every step and the round trip.
+
+default_samples gives each multiplicity the values 0, 1, 2, each dimension 2 and 3, and each
+phase or scalar symbol two pool values, diagonals first, at most limit assignments. A sample
+outside one side's domain is skipped and counted; a report is ok only when at least one sample
+was evaluated.
