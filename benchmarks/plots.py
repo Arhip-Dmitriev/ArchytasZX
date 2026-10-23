@@ -53,7 +53,12 @@ BLUE_RAMP = [
     "#104281",
     "#0d366b",
 ]
-TITLES = {"ghz": "GHZ", "dj": "Deutsch-Jozsa", "grover": "Grover, one iteration"}
+TITLES = {
+    "ghz": "GHZ",
+    "dj": "Deutsch-Jozsa",
+    "grover": "Grover, one iteration",
+    "shor": "Shor order finding, N = 15, a = 7",
+}
 
 plt.rcParams.update(
     {
@@ -88,9 +93,11 @@ def plot_algorithms() -> list[Path]:
     cap = zmax + 0.5
     ns = sorted({r["n"] for r in rows})
     ds = sorted({r["d"] for r in rows})
-    fig = plt.figure(figsize=(6.2 * len(algs), 6.4))
+    cols = 2 if len(algs) > 3 else len(algs)
+    nrows = -(-len(algs) // cols)
+    fig = plt.figure(figsize=(6.2 * cols, 6.0 * nrows))
     for k, alg in enumerate(algs):
-        ax = fig.add_subplot(1, len(algs), k + 1, projection="3d")
+        ax = fig.add_subplot(nrows, cols, k + 1, projection="3d")
         ax.set_facecolor(SURFACE)
         lines: dict[tuple[str, int], list[dict]] = defaultdict(list)
         for r in rows:
