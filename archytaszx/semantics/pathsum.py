@@ -41,6 +41,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -497,6 +498,28 @@ class Params:
 
 
 _SCOPE: ContextVar[Params | None] = ContextVar("pathsum_params", default=None)
+_RANGES: ContextVar[dict[sympy.Symbol, tuple[Expr, Expr]] | None] = ContextVar(
+    "pathsum_ranges", default=None
+)
+
+
+@contextmanager
+def ranged(ranges: dict[sympy.Symbol, tuple[Expr, Expr]]) -> Iterator[None]:
+    """A scope in which each symbol of ``ranges`` lies in its inclusive ``(lo, hi)``."""
+    token = _RANGES.set({**(_RANGES.get() or {}), **ranges})
+    try:
+        yield
+    finally:
+        _RANGES.reset(token)
+
+
+def _in_known_range(val: Expr, b: Bound) -> bool:
+    """Whether ``val`` is a symbol of the running :func:`ranged` scope within ``b``'s range."""
+    span = (_RANGES.get() or {}).get(val)
+    if span is None:
+        return False
+    low, high = sympy.simplify(span[0] - b.lo), sympy.simplify(b.hi - span[1])
+    return bool(low.is_nonnegative) and bool(high.is_nonnegative)
 
 
 def bind(want: Expr | None, have: Expr | None) -> bool:
@@ -960,7 +983,7 @@ SliceFn: TypeAlias = Callable[[tuple[Expr, ...], tuple[Expr, ...], tuple[Expr, .
 def _apply_map(s: State, i: int, j: int, fn: SliceFn) -> State:
     out: State | None = None
     terms: list[Term] = []
-    for t in s.terms:
+    for t in map(fresh, s.terms):
         res = fn(t.kets[i:j], s.widths[i:j], s.dims[i:j])
         if out is None:
             out = res
@@ -1338,6 +1361,7 @@ def _eliminate_deltas(t: Term) -> Term:
                 other = next((x for x in t.bound if x.symbol == val), None)
                 inside = (
                     _inside(val, b, t.bound)
+                    or _in_known_range(val, b)
                     or (
                         val.is_Integer
                         and b.lo.is_Integer

@@ -1158,8 +1158,14 @@ class Interpreter:
             saved = self.values.get(var)
             self.values[var] = j
             self.states[name] = P.basis_kets(probes, cur.widths, cur.dims)
+            ranges = {
+                u: (sympy.S.Zero, d**w - 1)
+                for u, w, d in zip(probes, cur.widths, cur.dims, strict=True)
+                if w is not None and d is not None
+            }
             try:
-                step = self._eval(self._parser(toks[2:]).expr(), Ctx())
+                with P.ranged(ranges):
+                    step = self._eval(self._parser(toks[2:]).expr(), Ctx())
             finally:
                 self.states[name] = cur
                 if saved is None:

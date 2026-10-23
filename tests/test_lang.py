@@ -525,6 +525,22 @@ class TestControlFlow:
         )
         assert run(source)[1] == "|s> = 2^(-n/2) sum(x in 0..2^n){ |x> @ |a^x % N> }"
 
+    def test_teleport_loop_folds(self) -> None:
+        source = (
+            "var n, d, x\n|B>_d = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }\n"
+            "gate HOP = |a>_d -> d sum(c in 0..d){ ((<B| @ <c|_d)(|a>_d @ |B>)) |c>_d }\n"
+            "|l> = |x>_d\nfor j in 0..n { |l> = HOP |l> }\nshow(|l>)"
+        )
+        assert run(source)[1] == "|l>_d = |x>_d"
+
+    def test_gate_body_bound_index_not_captured(self) -> None:
+        source = (
+            "var d\n|B>_d = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }\n"
+            "gate HOP = |a>_d -> d sum(c in 0..d){ ((<B| @ <c|_d)(|a>_d @ |B>)) |c>_d }\n"
+            "show((I @ HOP)|B>)"
+        )
+        assert run(source)[1] == "(I @ HOP)|B> = 1/sqrt(d) sum(k in 0..d){ |k>_d @ |k>_d }"
+
     def test_assume_and_assert(self) -> None:
         interp, _ = run("var r\nassume r > 2\nshow(r > 2, r > 3)")
         assert interp.execute("show(r > 2, r > 3)") == "r > 2: assumed\nr > 3: open"
