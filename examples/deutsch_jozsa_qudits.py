@@ -14,8 +14,8 @@ azx("gate U_const = |x>|y>_d -> |x>|(y + c) % d>_d")  # f(x) = c
 azx("gate U_bal = |x>|y>_d -> |x>|(y + x) % d>_d")  # f(x) = x mod d, balanced
 
 start = azx.ket(0, "d") ** n @ azx.ket(1, "d")
-first = azx.F ** n @ azx.Fd
-last = azx.Fd ** n @ azx.I
+first = azx.F**n @ azx.Fd
+last = azx.Fd**n @ azx.I
 target = (azx.ket(0, "d") ** n @ (azx.Fd | azx.ket(1, "d"))).dag()
 
 azx.out_const = last | (azx.U_const | (first | start))

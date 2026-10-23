@@ -444,9 +444,7 @@ class PhaseVector:
     def is_concrete(self) -> bool:
         """True iff the dimension, every stored phase and the rule are concrete."""
         rule = self._rule is None or not (self._rule.to_sympy_turns().free_symbols - {INDEX})
-        return (
-            self._dim.is_concrete and rule and all(p.is_concrete for p in self._entries.values())
-        )
+        return self._dim.is_concrete and rule and all(p.is_concrete for p in self._entries.values())
 
     @property
     def free_symbols(self) -> frozenset[str]:

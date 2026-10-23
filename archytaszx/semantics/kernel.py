@@ -307,8 +307,9 @@ class Symbolic:
     source: str
 
 
-def symbolic(left: Diagram, right: Diagram,
-             describe: Callable[[Diagram], str] | None = None) -> Symbolic:
+def symbolic(
+    left: Diagram, right: Diagram, describe: Callable[[Diagram], str] | None = None
+) -> Symbolic:
     """The normaliser's proof of ``left = right``."""
     try:
         return Symbolic(left, right, lean_sym.export_symbolic(left, right, describe=describe))
@@ -528,8 +529,9 @@ def lean(
         if theorem.source and name == "main":
             return theorem.source
         try:
-            return lean_refute.export_refutation(theorem.lhs, theorem.rhs, theorem.point, name,
-                                                 describe)
+            return lean_refute.export_refutation(
+                theorem.lhs, theorem.rhs, theorem.point, name, describe
+            )
         except lean_net.NetUnsupported as exc:
             raise KernelError(f"no Lean refutation: {exc}") from exc
     if not isinstance(theorem, Theorem):

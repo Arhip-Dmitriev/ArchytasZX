@@ -39,8 +39,10 @@ CASES: dict[str, tuple[str, str]] = {
         "count n; a = Z(0 -> 2, d); b = Z(1 -> 1, d); wire a.out0 -- b.in0; box p x n ports a.out1",
         "count n; a = X(0 -> 2, d); b = Z(1 -> 1, d); wire a.out0 -- b.in0; box p x n ports a.out1",
     ),
-    "nodes": ("count n; a = Z(0 -> 1, d); box p x n nodes a",
-              "count n; a = X(0 -> 1, d); box p x n nodes a"),
+    "nodes": (
+        "count n; a = Z(0 -> 1, d); box p x n nodes a",
+        "count n; a = X(0 -> 1, d); box p x n nodes a",
+    ),
     "arity": ("a = Z(0 -> 1, d)", "a = Z(0 -> 2, d)"),
 }
 
@@ -123,8 +125,10 @@ REFUTATIONS: dict[str, tuple[str, str]] = {
     "contracted": (_chain(9, 3, "1/3"), "a = X(1 -> 1, literal 3) phase {2: 1/3}"),
     "dimensions": ("a = Z(0 -> 1, d)", "a = Z(0 -> 1, e)"),
     "sqrt_five": ("a = Z(1 -> 1, literal 5); scalar sqrt(5)", "a = Z(1 -> 1, literal 5)"),
-    "boxed_ports": ("count n; a = Z(0 -> 2, d); box p x n ports a.out0",
-                    "count n; a = X(0 -> 2, d); box p x n ports a.out1"),
+    "boxed_ports": (
+        "count n; a = Z(0 -> 2, d); box p x n ports a.out0",
+        "count n; a = X(0 -> 2, d); box p x n ports a.out1",
+    ),
 }
 
 

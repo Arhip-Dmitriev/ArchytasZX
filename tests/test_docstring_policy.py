@@ -62,7 +62,9 @@ detector: see the module docstring."""
 
 
 def _python_files() -> list[Path]:
-    return sorted(p for p in _PACKAGE.rglob("*.py") if "__pycache__" not in p.parts and ".lake" not in p.parts)
+    return sorted(
+        p for p in _PACKAGE.rglob("*.py") if "__pycache__" not in p.parts and ".lake" not in p.parts
+    )
 
 
 def _prose_line_numbers(source: str) -> set[int]:

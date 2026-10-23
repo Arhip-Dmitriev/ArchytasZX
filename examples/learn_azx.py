@@ -20,8 +20,8 @@ azx.show(n, t)
 azx("assume n > 0")
 
 # Attribute assignment names a value in the program; Python numbers become exact numbers.
-azx.b = azx.a ** 2 + 1          # ** on scalars is power
-azx.show(azx.b)                  # show prints; render returns the text
+azx.b = azx.a**2 + 1  # ** on scalars is power
+azx.show(azx.b)  # show prints; render returns the text
 
 # A Value has no ==; .sympy() gives the sympy expression, int()/float() a number.
 assert azx.b.sympy() == 10
@@ -44,11 +44,11 @@ azx.show(azx.c0, azx.c1, azx.c2)
 #   **  tensor power of states and operators
 #   .dag()  conjugate transpose
 azx.p = azx.ket(0) + azx.ket(1)  # |0> + |1>
-azx.v = azx.ket(2, 3)            # |2>_3
+azx.v = azx.ket(2, 3)  # |2>_3
 azx.show(azx.p, azx.v)
-print(azx.bra(0) | azx.ket("+"))   # <0|+>
+print(azx.bra(0) | azx.ket("+"))  # <0|+>
 print(azx.ket("+").dag() | azx.ket("-"))  # <+|->
-azx.zeros = azx.ket(0) ** n      # |0>^@n, n symbolic
+azx.zeros = azx.ket(0) ** n  # |0>^@n, n symbolic
 azx.show(azx.zeros)
 
 # ---- 5. Gates -----------------------------------------------------------------------------
@@ -69,11 +69,11 @@ azx.var("d")
 azx.show(azx.QFT | azx.ket(0, "d"))
 
 # ---- 6. Output ----------------------------------------------------------------------------
-print(azx.c)                     # unicode
+print(azx.c)  # unicode
 print(azx.c.ascii())
-print(azx.c.latex())             # also rendered by Jupyter
-print(azx.c.vector())            # numpy amplitudes of a concrete state
-print(sorted(azx.names()))       # every user-defined name
+print(azx.c.latex())  # also rendered by Jupyter
+print(azx.c.vector())  # numpy amplitudes of a concrete state
+print(sorted(azx.names()))  # every user-defined name
 
 # ---- 7. Measurement -----------------------------------------------------------------------
 # azx.measure | state (or azx.measure(state)) returns the Born distribution and leaves the
@@ -94,8 +94,8 @@ oracles = {"zero": "0", "one": "1", "bal": "bit(x, 0)"}
 
 start = azx.ket(0) ** n @ azx.ket(1)
 target = azx.bra(0) ** n @ azx.bra("-")
-first = azx.H ** n @ azx.H
-last = azx.H ** n @ azx.I
+first = azx.H**n @ azx.H
+last = azx.H**n @ azx.I
 amps = {}
 
 for name, body in oracles.items():

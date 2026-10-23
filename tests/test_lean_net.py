@@ -249,9 +249,15 @@ def _boxed_rule(name: str) -> K.Theorem:
 
 
 BOXED = [
-    "fourier_cancellation", "fourier_state_color_change", "fourier_state_color_change/effect",
-    "identity_removal", "identity_removal/X", "triangle_inverse_cancellation",
-    "triangle_inverse_cancellation/Ti", "w_fusion", "w_identity",
+    "fourier_cancellation",
+    "fourier_state_color_change",
+    "fourier_state_color_change/effect",
+    "identity_removal",
+    "identity_removal/X",
+    "triangle_inverse_cancellation",
+    "triangle_inverse_cancellation/Ti",
+    "w_fusion",
+    "w_identity",
 ]
 
 
@@ -370,8 +376,15 @@ def _nested_rule(name: str) -> K.Theorem:
     return K.rule(diagram, apply(diagram, rule, match).step)
 
 
-NESTED = ["fusion", "fusion_three_level", "fusion_port_scope", "identity", "triangle", "fourier",
-          "fourier_state"]
+NESTED = [
+    "fusion",
+    "fusion_three_level",
+    "fusion_port_scope",
+    "identity",
+    "triangle",
+    "fourier",
+    "fourier_state",
+]
 
 
 @pytest.mark.parametrize("name", NESTED)

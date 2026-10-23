@@ -576,7 +576,8 @@ class TestControlFlow:
 
     def test_qudit_phase_kickback(self) -> None:
         source = (
-            "var n, d, c\n" + FOURIER
+            "var n, d, c\n"
+            + FOURIER
             + "gate Fd = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(-2*pi*i*x*y/d) |y>_d }\n"
             "gate U_c = |x>|y>_d -> |x>|(y + c) % d>_d\n"
             "gate U_b = |x>|y>_d -> |x>|(y + x) % d>_d\n|p>_d = |0>_d^@n @ |1>_d\n"
@@ -770,8 +771,10 @@ class TestShowModes:
         for head, box in (("var n\n", "n - 1"), ("var n = 6\n", "5"), ("var n = 50\n", "49")):
             out = Interpreter(style="ascii", mode=NotationMode.ZX).execute(head + source)
             drawings.append(out.split("\n", 2)[2].replace(f"- {box} -", "- B -"))
-        assert drawings[0].replace("-", "") == drawings[1].replace("-", "") == (
-            drawings[2].replace("-", "")
+        assert (
+            drawings[0].replace("-", "")
+            == drawings[1].replace("-", "")
+            == (drawings[2].replace("-", ""))
         )
 
     def test_zx_drawing_styles(self) -> None:

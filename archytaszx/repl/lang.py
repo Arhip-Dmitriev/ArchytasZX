@@ -958,10 +958,9 @@ class Interpreter:
     def _parser(self, toks: list[Tok]) -> Parser:
         return Parser(
             toks,
-            lambda name: name in _FUNCS
-            or name in _SPECIAL
-            or name in _STATE_FUNCS
-            or name in self.funcs,
+            lambda name: (
+                name in _FUNCS or name in _SPECIAL or name in _STATE_FUNCS or name in self.funcs
+            ),
         )
 
     def _statement(self, text: str, builtin: bool = False) -> str:
@@ -1604,9 +1603,7 @@ class Interpreter:
         )
         taken = frozenset(self.values) | frozenset(self.states) | frozenset(self.funcs)
         order = {sympy.Symbol(n): k for k, (n, _) in enumerate(self.sugar)}
-        return D.Context(
-            sugar, taken | frozenset(self.ops), tuple(self.assumptions), order
-        )
+        return D.Context(sugar, taken | frozenset(self.ops), tuple(self.assumptions), order)
 
     def _dim(self, text: str | None, ctx: Ctx) -> sympy.Expr | None:
         """The dimension named by a ``_dim`` suffix, or None without one."""

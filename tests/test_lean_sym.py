@@ -44,18 +44,32 @@ from .test_phase15_oracle import PROVED
 PAIRS: dict[str, tuple[str, str]] = {
     "phase_fusion": (
         "a = Z(1 -> 1, d) phase {1: t}; b = Z(1 -> 1, d) phase {1: s}; wire a.out0 -- b.in0",
-        "a = Z(1 -> 1, d) phase {1: t + s}"),
+        "a = Z(1 -> 1, d) phase {1: t + s}",
+    ),
     "x_fusion": (
         "a = X(1 -> 1, d) phase {1: t}; b = X(1 -> 1, d) phase {2: 1/3}; wire a.out0 -- b.in0",
-        "a = X(1 -> 1, d) phase {1: t, 2: 1/3}"),
-    "fourier": (("a = F(d); b = F(d); c = F(d); e = F(d); wire a.out0 -- b.in0; "
-                 "wire b.out0 -- c.in0; wire c.out0 -- e.in0"), "a = Z(1 -> 1, d)"),
+        "a = X(1 -> 1, d) phase {1: t, 2: 1/3}",
+    ),
+    "fourier": (
+        (
+            "a = F(d); b = F(d); c = F(d); e = F(d); wire a.out0 -- b.in0; "
+            "wire b.out0 -- c.in0; wire c.out0 -- e.in0"
+        ),
+        "a = Z(1 -> 1, d)",
+    ),
     "triangle": ("a = T(d); b = Ti(d); wire a.out0 -- b.in0", "a = Z(1 -> 1, d)"),
     "two_dims": ("a = Z(1 -> 1, d); b = X(1 -> 1, e)", "a = Z(1 -> 1, d); b = Z(1 -> 1, e)"),
-    "literal": ("a = X(1 -> 1, literal 3); b = X(1 -> 1, literal 3); wire a.out0 -- b.in0",
-                "a = X(1 -> 1, literal 3)"),
-    "phase_rule": (("a = Z(1 -> 1, d) phase {k: k/d}; b = Z(1 -> 1, d) phase {k: k^2/d}; "
-                    "wire a.out0 -- b.in0"), "a = Z(1 -> 1, d) phase {k: (k + k^2)/d}"),
+    "literal": (
+        "a = X(1 -> 1, literal 3); b = X(1 -> 1, literal 3); wire a.out0 -- b.in0",
+        "a = X(1 -> 1, literal 3)",
+    ),
+    "phase_rule": (
+        (
+            "a = Z(1 -> 1, d) phase {k: k/d}; b = Z(1 -> 1, d) phase {k: k^2/d}; "
+            "wire a.out0 -- b.in0"
+        ),
+        "a = Z(1 -> 1, d) phase {k: (k + k^2)/d}",
+    ),
 }
 
 CATALOGUE = ("bialgebra_4", "bialgebra_5", "bialgebra_6", "boxed_fusion", "two_index_fusion")
@@ -85,8 +99,9 @@ def _boxed(fused: bool, shape: str) -> Diagram:
         g.add_bang_box(Mult.symbol("m") + 1, node_scope=frozenset(q))
     else:
         outer = g.add_bang_box(Mult("n"), node_scope=frozenset(p + q))
-        g.add_bang_box(Mult("m" if shape == "nested" else "n"), node_scope=frozenset(q),
-                       parent=outer)
+        g.add_bang_box(
+            Mult("m" if shape == "nested" else "n"), node_scope=frozenset(q), parent=outer
+        )
     return g
 
 
@@ -160,8 +175,12 @@ def _integer_phase(phased: bool) -> Diagram:
     """A qutrit state with an integer-symbol phase, or without it."""
     g = Diagram()
     j = Phase(sp.Symbol("j", integer=True))
-    n = g.add_node(Z_SPIDER, [], [Dim.concrete(3)],
-                   phase=PhaseVector(Dim.concrete(3), {1: j}) if phased else None)
+    n = g.add_node(
+        Z_SPIDER,
+        [],
+        [Dim.concrete(3)],
+        phase=PhaseVector(Dim.concrete(3), {1: j}) if phased else None,
+    )
     g.set_boundary_outputs([PortRef(n, Direction.OUTPUT, 0)])
     return g
 
@@ -175,8 +194,10 @@ BUILT = {
     "w_port_box": lambda: (_w_port(True), _w_port(False)),
     "scalar_power": lambda: (_scaled_family(True), _scaled_family(False)),
     "shared_opaque": lambda: tuple(_with_pi(parse_diagram(t)) for t in PAIRS["phase_fusion"]),
-    "opaque_ratio": lambda: (_with_pi(_with_two(parse_diagram(PAIRS["phase_fusion"][0]))),
-                             _with_two(_with_pi(parse_diagram(PAIRS["phase_fusion"][1])))),
+    "opaque_ratio": lambda: (
+        _with_pi(_with_two(parse_diagram(PAIRS["phase_fusion"][0]))),
+        _with_two(_with_pi(parse_diagram(PAIRS["phase_fusion"][1]))),
+    ),
     "mixed_legs": lambda: (_mixed_legs(), _mixed_legs()),
 }
 
@@ -291,8 +312,10 @@ def test_kernel_artefact_carries_the_source() -> None:
 
 # the mirror against numeric contraction
 
+
 def _value(t: S.STm, dims: list[int], nu: dict[int, int]) -> complex:
     """A term's value by enumeration."""
+
     def dm(m: S.DMon) -> int:
         return S.dm_den(m, lambda i: dims[i] if i < len(dims) else 1)
 
@@ -310,7 +333,7 @@ def _value(t: S.STm, dims: list[int], nu: dict[int, int]) -> complex:
     for i, k in enumerate(c[2]):
         coef *= (dims[i] ** 0.5) ** k
     for x in c[3]:
-        coef *= x ** 0.5
+        coef *= x**0.5
     for a, m in c[5]:
         coef *= math.gcd(abs(a), dm(m))
     assert not c[4]
@@ -365,6 +388,7 @@ def test_the_translation_is_the_tensor() -> None:
 
 
 # Lean
+
 
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))

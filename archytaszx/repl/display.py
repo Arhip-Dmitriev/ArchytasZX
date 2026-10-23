@@ -543,9 +543,9 @@ class Renderer:
             text += f" - {p[1:]}" if p.startswith("-") else f" + {p}"
         return text
 
-    def _names(self, bound: Sequence[P.Bound], taken: set[str]) -> tuple[
-        dict[sympy.Basic, sympy.Expr], list[tuple[str, str, str]]
-    ]:
+    def _names(
+        self, bound: Sequence[P.Bound], taken: set[str]
+    ) -> tuple[dict[sympy.Basic, sympy.Expr], list[tuple[str, str, str]]]:
         """Display symbols for summation indices and their ``(name, lo, hi)`` texts."""
         taken |= {sym.name for _, sym in self.ctx.sugar} | set(self.ctx.taken)
         mapping: dict[sympy.Basic, sympy.Expr] = {}
@@ -842,6 +842,7 @@ def keep(png: bytes, kind: str) -> str | None:
     with open(path, "wb") as handle:
         handle.write(png)
     return path
+
 
 _DPI = 100
 _DENSITY = 2
@@ -1141,8 +1142,10 @@ def terminal_image(lines: list[str]) -> str | None:
     density = _DENSITY if proto == "none" or scalable(proto) else 1
     try:
         if SAVE_WHITE:
-            keep(render_png(lines, dark_theme=False, opaque=True, density=_DENSITY,
-                            palette=WHITE), "dirac")
+            keep(
+                render_png(lines, dark_theme=False, opaque=True, density=_DENSITY, palette=WHITE),
+                "dirac",
+            )
             if proto == "none":
                 return None
             png = render_png(lines, dark_theme=dark(), opaque=proto == "sixel", density=density)

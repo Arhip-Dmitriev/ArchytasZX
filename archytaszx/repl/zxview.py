@@ -147,9 +147,7 @@ def _turns(z: sympy.Expr) -> sympy.Expr:
 
 def _effects(u: Sequence[sympy.Expr]) -> list[dict[int, sympy.Expr]]:
     """Phase maps (index -> turns) of the Z effects whose W^T sum is ``u``; ``u[0] == 1``."""
-    return _effects_polar(
-        [(sympy.S.Zero, sympy.S.Zero) if z == 0 else _polar(z) for z in u[1:]]
-    )
+    return _effects_polar([(sympy.S.Zero, sympy.S.Zero) if z == 0 else _polar(z) for z in u[1:]])
 
 
 def _effects_polar(rest: Sequence[tuple[sympy.Expr, sympy.Expr]]) -> list[dict[int, sympy.Expr]]:
@@ -474,8 +472,6 @@ def _split(g: Diagram, out: PortRef, radices: Sequence[int]) -> list[PortRef]:
     return [*outputs, out]
 
 
-
-
 @dataclass
 class _Block:
     """A built term: its per-qudit output legs, the scalar of its gadgets and the factor its
@@ -521,10 +517,13 @@ def _block(
             else:
                 weights[i] = ratio
         active *= u0
-    sources = {i: [j for (a, j), m in plan.couplings.items() if a == i for _ in range(m)]
-               for i in range(len(plan.digits))}
-    targets = {j: sum(m for (_, b), m in plan.couplings.items() if b == j)
-               for j in range(len(plan.digits))}
+    sources = {
+        i: [j for (a, j), m in plan.couplings.items() if a == i for _ in range(m)]
+        for i in range(len(plan.digits))
+    }
+    targets = {
+        j: sum(m for (_, b), m in plan.couplings.items() if b == j) for j in range(len(plan.digits))
+    }
     spiders: list[NodeId] = []
     free: dict[int, int] = {}
     for i, digit in enumerate(plan.digits):
@@ -647,7 +646,9 @@ def _sum(s: P.State, plans: list[_Plan], view: View) -> Diagram:
         weight = plan.scalar
         for r, part in zip(bits, parts[: len(bits)], strict=True):
             dim = Dim.concrete(r)
-            n = sum(1 for q, (k, v) in enumerate(plan.outputs) if k == "c" and v and radices[q] == r)
+            n = sum(
+                1 for q, (k, v) in enumerate(plan.outputs) if k == "c" and v and radices[q] == r
+            )
             carries = r == bits[0]
             node = g.add_node(Z_SPIDER, [dim], [dim] * (n + carries))
             g.add_wire(part, _in(node, 0))

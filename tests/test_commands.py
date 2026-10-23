@@ -878,8 +878,9 @@ class TestDecisionProofs:
     @staticmethod
     def _boxed_symbolic(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
         """The Lean file of a boxed family decided by symbolic contraction."""
-        monkeypatch.setattr(C, "decide_equal",
-                            functools.partial(decide_equal, rules=(), use_saturation=False))
+        monkeypatch.setattr(
+            C, "decide_equal", functools.partial(decide_equal, rules=(), use_saturation=False)
+        )
         left, right = BUILT[name]()
         s = Session()
         s.names.update(l=left, r=right)
@@ -893,8 +894,9 @@ class TestDecisionProofs:
         return target.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("name", ["nested_boxes", "x_port_box"])
-    def test_boxed_symbolic_verdict_is_an_induction(self, name: str, tmp_path: Path,
-                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_boxed_symbolic_verdict_is_an_induction(
+        self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         source = self._boxed_symbolic(name, tmp_path, monkeypatch)
         assert "induction " in source and "symCheck" in source
 
@@ -904,8 +906,9 @@ class TestDecisionProofs:
         reason="the ArchytasZX Lean project has no Mathlib",
     )
     @pytest.mark.parametrize("name", ["nested_boxes", "x_port_box"])
-    def test_boxed_symbolic_verdict_lean_checks(self, name: str, tmp_path: Path,
-                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_boxed_symbolic_verdict_lean_checks(
+        self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         source = self._boxed_symbolic(name, tmp_path, monkeypatch)
         passed, message = check(source, str(tmp_path / "check.lean"))
         assert passed, message
@@ -951,8 +954,9 @@ class TestDecisionProofs:
         reason="the ArchytasZX Lean project has no Mathlib",
     )
     def test_unequal_verdict_lean_checks(self, tmp_path: Path) -> None:
-        s = session("a = Z(0 -> 1, d) phase {1: theta}", "name l", "a = Z(0 -> 1, d)",
-                    "name r", "load @l")
+        s = session(
+            "a = Z(0 -> 1, d) phase {1: theta}", "name l", "a = Z(0 -> 1, d)", "name r", "load @l"
+        )
         failed(s, "decide against @r")
         target = tmp_path / "refute.lean"
         ok(s, f"certificate lean {target}")
