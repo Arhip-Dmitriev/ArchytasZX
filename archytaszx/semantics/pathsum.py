@@ -1366,9 +1366,7 @@ def _split_characters(amp: Expr, sym: sympy.Symbol) -> Expr:
         if hit == 0 or hit == f.args[0]:
             out *= f
             continue
-        out *= sympy.Mul(
-            sympy.exp(hit, evaluate=False), sympy.exp(f.args[0] - hit), evaluate=False
-        )
+        out *= sympy.Mul(sympy.exp(hit, evaluate=False), sympy.exp(f.args[0] - hit), evaluate=False)
     return out
 
 
@@ -2127,7 +2125,9 @@ def _digit_character(amp: Expr, b: Bound) -> Expr | None:
         if not m.is_Integer:
             return None
         parts.append((m, sympy.S.One))
-    if base is None or not (base.is_Integer and size.is_Integer):
+    if base is None:
+        return None
+    if not (base.is_Integer and size.is_Integer):
         if len(parts) == 1 and parts[0][0] % base in (1, base - 1):
             return (
                 rest
@@ -2795,7 +2795,9 @@ def fold(
         raise PathSumError("the loop phase depends on a register the loop changes")
     terms = []
     for term in cur.terms:
-        fixed = {probes[k]: v for k, v in enumerate(term.kets) if k not in updates and k not in masks}
+        fixed = {
+            probes[k]: v for k, v in enumerate(term.kets) if k not in updates and k not in masks
+        }
         kets = list(term.kets)
         for k, h in masks.items():
             kets[k] = xor(term.kets[k], h.xreplace(fixed) * (2 ** expand(hi + 1) - 2**lo))

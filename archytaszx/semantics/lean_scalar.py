@@ -100,7 +100,7 @@ class Scalars:
                 return inner ** int(exp) if int(exp) >= 0 else Inv(inner) ** (-int(exp))
             if exp.is_Rational and exp.q == 2 and self._natural(base):
                 root = Rt(base)
-                return root ** exp.p if exp.p > 0 else Inv(root) ** (-exp.p)
+                return root**exp.p if exp.p > 0 else Inv(root) ** (-exp.p)
             raise ScalarUnsupported(f"the power {expr}")
         if isinstance(expr, sp.exp):
             arg = sp.expand(expr.args[0] / (2 * sp.pi * sp.I))
@@ -113,8 +113,10 @@ class Scalars:
     def _natural(self, base: sp.Expr) -> bool:
         if base.is_Integer:
             return int(base) > 0
-        return bool(base.free_symbols) and all(str(s) in self.nats for s in base.free_symbols) and (
-            base.is_Mul or base.is_Pow or base.is_Symbol or base.is_Add
+        return (
+            bool(base.free_symbols)
+            and all(str(s) in self.nats for s in base.free_symbols)
+            and (base.is_Mul or base.is_Pow or base.is_Symbol or base.is_Add)
         )
 
     # rendering
@@ -206,10 +208,15 @@ class Scalars:
             return "(Complex.exp_ne_zero _)"
         if isinstance(atom, NC):
             x = self.nat_text(atom.args[0])
-            return f"(Nat.cast_ne_zero.2 (Nat.pos_iff_ne_zero.1 {self.positive(x)}) : (({x} : ℕ) : ℂ) ≠ 0)"
+            return (
+                f"(Nat.cast_ne_zero.2 (Nat.pos_iff_ne_zero.1 {self.positive(x)}) "
+                f": (({x} : ℕ) : ℂ) ≠ 0)"
+            )
         if atom.is_Symbol and str(atom) in self.nats:
             x = self.nat(atom)
-            return f"(Nat.cast_ne_zero.2 (Nat.pos_iff_ne_zero.1 {self.positive(x)}) : ({x} : ℂ) ≠ 0)"
+            return (
+                f"(Nat.cast_ne_zero.2 (Nat.pos_iff_ne_zero.1 {self.positive(x)}) : ({x} : ℂ) ≠ 0)"
+            )
         if atom.is_Integer:
             return f"(by norm_num : ({int(atom)} : ℂ) ≠ 0)"
         return f"(by norm_num [Complex.ext_iff] : {self.text(atom)} ≠ 0)"
@@ -318,8 +325,10 @@ class Scalars:
                 if partner in atoms:
                     e = self.nat_text(atom.args[1])
                     stmt = f"{self.text(inner)} ^ {e} * ({self.text(inner)})⁻¹ ^ {e} = 1"
-                    proof = (f"({stmt} := (by rw [← mul_pow, mul_inv_cancel₀ "
-                             f"{self.nonzero(inner)}, one_pow]))")
+                    proof = (
+                        f"({stmt} := (by rw [← mul_pow, mul_inv_cancel₀ "
+                        f"{self.nonzero(inner)}, one_pow]))"
+                    )
                     relations.append((atoms[partner] * atoms[atom] - 1, proof))
         gens = list(atoms.values())
         if not gens or not relations:

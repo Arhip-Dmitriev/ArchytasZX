@@ -316,8 +316,13 @@ class Session:
     certificate: ProofArtefact | None = None
     certificate_witness: dict[str, CheckAssignmentValue] | None = None
     last_proof: (
-        ProofOutcome | InductionResult | ProofCertificate | kernel.Theorem | kernel.Refutation
-        | kernel.Symbolic | None
+        ProofOutcome
+        | InductionResult
+        | ProofCertificate
+        | kernel.Theorem
+        | kernel.Refutation
+        | kernel.Symbolic
+        | None
     ) = None
     induct_pair: tuple[Diagram, Diagram] | None = None
     last_detail: object | None = None
@@ -786,9 +791,14 @@ def _decision_proof(
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         forward, backward = decision.certificates
         if forward.initial is left and backward.initial is right:
-            return ProofCertificate(left, right, forward, backward,
-                                    tuple(s.rule_name for s in forward.steps),
-                                    tuple(s.rule_name for s in backward.steps))
+            return ProofCertificate(
+                left,
+                right,
+                forward,
+                backward,
+                tuple(s.rule_name for s in forward.steps),
+                tuple(s.rule_name for s in backward.steps),
+            )
     try:
         return kernel.from_decision(decision, left, right)
     except kernel.KernelError:
@@ -812,8 +822,12 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
         evidence = _decision_proof(decision, left, right)
         session.last_proof = evidence
         if evidence is None:
-            blocks.append(Text(
-                f"proof: none the kernel re-checks; the verdict rests on {decision.method.value}"))
+            blocks.append(
+                Text(
+                    "proof: none the kernel re-checks; the verdict rests on "
+                    f"{decision.method.value}"
+                )
+            )
         else:
             blocks.append(Text("proof: re-checkable; certificate kernel / certificate lean"))
             condition = _symbolic_condition(evidence)
@@ -1037,7 +1051,8 @@ def _emit(
     for the latest proof artefact falling back to the session derivation."""
     proof = session.last_proof
     if which in ("", "proof") and isinstance(
-            proof, (ProofCertificate, kernel.Theorem, kernel.Refutation, kernel.Symbolic)):
+        proof, (ProofCertificate, kernel.Theorem, kernel.Refutation, kernel.Symbolic)
+    ):
         return proof, None
     if which in ("", "proof") and isinstance(proof, ProofOutcome) and proof.proved:
         artefact = proof.certificate if proof.certificate is not None else proof.induction
@@ -1144,8 +1159,10 @@ def proof_text(proof: ProofArtefact, *, unicode: bool = False) -> str:
     end = "∎" if u else "QED"
     if isinstance(proof, Certificate):
         left, right = proof.initial, proof.final
-    else:
+    elif isinstance(proof, (ProofCertificate, InductionProof)):
         left, right = proof.start, proof.goal
+    else:
+        left, right = proof.lhs, proof.rhs
     lines = [
         "Theorem.",
         f"  {_math(left, u)}",
@@ -1240,7 +1257,8 @@ def _symbolic_condition(evidence: object) -> str:
         line = line.strip()
         if line.startswith("assumes the dimension constraints "):
             return line.removeprefix("assumes the dimension constraints ").removesuffix(
-                " (hypotheses of the theorem)")
+                " (hypotheses of the theorem)"
+            )
     return ""
 
 
@@ -1296,8 +1314,12 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
         if rederived is None:
             sym = _symbolic_of(session.certificate)
             if sym is not None:
-                blocks.append(Text(f"kernel: {_one_line(exc)}; proved by the normal form of "
-                                   "symbolic sums instead"))
+                blocks.append(
+                    Text(
+                        f"kernel: {_one_line(exc)}; proved by the normal form of "
+                        "symbolic sums instead"
+                    )
+                )
                 session.certificate = sym
                 return _kernel_symbolic(sym, action, path, blocks)
             text = f"kernel: rejected: {_one_line(exc)}"
@@ -1313,8 +1335,9 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
     if action == "lean":
         source = kernel.lean(theorem, describe=lambda d: _math(d, True))
         if "verified normaliser" in source.split("-/")[0]:
-            blocks.append(Text("lean: tensor-network semantics, the normal form computed by the "
-                               "Lean kernel"))
+            blocks.append(
+                Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
+            )
         elif "import ArchytasZX" in source:
             unproved = source.count("\naxiom unproved_")
             note = f"{unproved} unproved step(s)" if unproved else "every step proved"
@@ -1338,19 +1361,22 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
     return _ok("certificate", blocks, theorem)
 
 
-def _kernel_symbolic(
-    sym: kernel.Symbolic, action: str, path: str, blocks: list[Block]
-) -> Outcome:
+def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[Block]) -> Outcome:
     """``certificate kernel`` states the equality; ``certificate lean`` exports its proof."""
     left, right = _math(sym.lhs, False), _math(sym.rhs, False)
-    blocks.append(Text(f"kernel: {left} = {right} for every dimension and phase, by the normal "
-                       "form of symbolic sums"))
+    blocks.append(
+        Text(
+            f"kernel: {left} = {right} for every dimension and phase, by the normal "
+            "form of symbolic sums"
+        )
+    )
     condition = _symbolic_condition(sym)
     if condition:
         blocks.append(Text(f"  assumes {condition}"))
     if action == "lean":
-        blocks.append(Text("lean: tensor-network semantics, the normal form computed by the "
-                           "Lean kernel"))
+        blocks.append(
+            Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
+        )
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as handle:
@@ -1377,10 +1403,15 @@ def _kernel_refutation(
             text = f"lean: {_one_line(exc)}"
             return _fail("certificate", [*blocks, Text(text)], Text(text))
         head = source.split("-/")[0]
-        how = ("the boundaries differ in size" if "differ in size" in head
-               else "the leg dimensions differ" if "interface refutation" in head
-               else f"refuted by ball arithmetic at {point}" if "ball arithmetic" in head
-               else f"refuted exactly at {point}")
+        how = (
+            "the boundaries differ in size"
+            if "differ in size" in head
+            else "the leg dimensions differ"
+            if "interface refutation" in head
+            else f"refuted by ball arithmetic at {point}"
+            if "ball arithmetic" in head
+            else f"refuted exactly at {point}"
+        )
         blocks.append(Text(f"lean: tensor-network semantics, {how}"))
         if path:
             try:
@@ -1404,7 +1435,7 @@ def _verify_refutation(artefact: kernel.Refutation, blocks: list[Block]) -> Outc
     point = _assignment_text(artefact.point) if artefact.point else "no parameters"
     try:
         comparison = compare(artefact.lhs, artefact.rhs, dict(artefact.point))
-    except _ORACLE_ERRORS as exc:  # type: ignore[misc]
+    except _ORACLE_ERRORS as exc:
         text = f"verify: no evaluation at {point}: {_one_line(exc)}"
         return _fail("certificate", [*blocks, Text(text)], Text(text))
     if comparison.matched:

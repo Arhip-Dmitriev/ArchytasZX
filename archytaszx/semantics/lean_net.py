@@ -40,7 +40,8 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from typing import Any, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -50,7 +51,7 @@ from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import _mult_symbol
 from archytaszx.diagram.compare import isomorphism
-from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.semantics.denote import DenoteDomainError, resolve_dim
 from archytaszx.semantics.lean_scalar import NC, Inv, Rt, Scalars, ScalarUnsupported
@@ -91,7 +92,9 @@ class LNode:
 
     def lean(self) -> str:
         """The Lean ``Node`` literal."""
-        return f"⟨{_klean(self.kind)}, {_list(self.outs)}, {_list(self.ins)}, {self.dim}, {self.ph}⟩"
+        return (
+            f"⟨{_klean(self.kind)}, {_list(self.outs)}, {_list(self.ins)}, {self.dim}, {self.ph}⟩"
+        )
 
     def labels(self) -> tuple[int, ...]:
         """Outputs then inputs."""
@@ -259,12 +262,12 @@ class _Sym:
                 root = f"(Real.sqrt {self.render(base, 'ℝ', sym_kind)} : {ty})"
                 if ty == "ℝ":
                     root = f"Real.sqrt {self.render(base, 'ℝ', sym_kind)}"
-                power = int(exp.p)
-                if power == 1:
+                pw = int(exp.p)
+                if pw == 1:
                     return f"({root})"
-                if power > 0:
-                    return f"(({root}) ^ {power})"
-                return f"(({root}) ^ {-power})⁻¹"
+                if pw > 0:
+                    return f"(({root}) ^ {pw})"
+                return f"(({root}) ^ {-pw})⁻¹"
             raise NetUnsupported(f"the power {expr}")
         if isinstance(expr, sp.exp):
             if ty != "ℂ":
@@ -275,6 +278,14 @@ class _Sym:
 
 class _Export:
     """Accumulates the tables, networks and proofs of one export."""
+
+    mixed_ok: bool
+    mixed: set[tuple[int, int]]
+    env: str
+    binders: str
+    args: str
+    hyps: str
+    hyp_args: str
 
     def __init__(self, describe: Callable[[Diagram], str]) -> None:
         self.describe = describe
@@ -356,11 +367,13 @@ class _Export:
             node = d.nodes[nid]
             legs = (*node.inputs, *node.outputs)
             if node.generator_type.name == "B":
-                n = replace(n, dim=self.raw_dim(node.inputs[0].dim),
-                            ph=self.raw_dim(node.inputs[1].dim))
+                n = replace(
+                    n, dim=self.raw_dim(node.inputs[0].dim), ph=self.raw_dim(node.inputs[1].dim)
+                )
             elif node.generator_type.name == "S":
-                n = replace(n, dim=self.raw_dim(node.outputs[0].dim),
-                            ph=self.raw_dim(node.outputs[1].dim))
+                n = replace(
+                    n, dim=self.raw_dim(node.outputs[0].dim), ph=self.raw_dim(node.outputs[1].dim)
+                )
             elif legs:
                 n = replace(n, dim=self.raw_dim(legs[0].dim))
             nodes.append(n)
@@ -402,10 +415,12 @@ class _Export:
         if key not in self.phase_key:
             self.phase_key[key] = len(self.phases)
             self.phases.append(f"fun k => {body}")
-            self.phase_specs.append((
-                {i: ph.to_sympy_turns() for i, ph in pv.entries().items()},
-                None if pv.rule is None else pv.rule.to_sympy_turns(),
-            ))
+            self.phase_specs.append(
+                (
+                    {i: ph.to_sympy_turns() for i, ph in pv.entries().items()},
+                    None if pv.rule is None else pv.rule.to_sympy_turns(),
+                )
+            )
         return self.phase_key[key]
 
     def label(self, dim: int) -> int:
@@ -433,7 +448,7 @@ class _Export:
             return k.text
         if isinstance(k, tuple):
             return f"({self.text(k[1])} * {self.text(k[2])})"
-        return self.sc.text(k)  # type: ignore[arg-type]
+        return self.sc.text(k)
 
     def drop_ones(self, k: object) -> str:
         """A product tree as Lean without the factors ``simp only [one_mul, mul_one]`` removes."""
@@ -444,13 +459,13 @@ class _Export:
             if right == "1":
                 return left
             return f"({left} * {right})"
-        return self.sc.text(k)  # type: ignore[arg-type]
+        return self.sc.text(k)
 
     def nonzero(self, k: object) -> str:
         """A Lean proof that a product tree is nonzero."""
         if isinstance(k, tuple):
             return f"(mul_ne_zero {self.nonzero(k[1])} {self.nonzero(k[2])})"
-        return self.sc.nonzero_expr(k)  # type: ignore[arg-type]
+        return self.sc.nonzero_expr(k)
 
     def flat(self, k: object) -> sp.Expr:
         """A product tree as one model."""
@@ -458,7 +473,7 @@ class _Export:
             return k.model
         if isinstance(k, tuple):
             return self.flat(k[1]) * self.flat(k[2])
-        return k  # type: ignore[return-value]
+        return k
 
     # networks
 
@@ -511,7 +526,7 @@ class _Export:
         """Each boxed node's node boxes outermost first, with their multiplicity indices."""
         boxes = {bid: box for bid, box in d.bang_boxes.items() if box.node_scope}
 
-        def depth(bid: int) -> int:
+        def depth(bid: BangBoxId) -> int:
             n, b = 0, boxes[bid].parent
             while b is not None:
                 n += 1
@@ -524,10 +539,13 @@ class _Export:
             if not mine:
                 continue
             if boxes[mine[0]].parent is not None or any(
-                    boxes[b].parent != a for a, b in zip(mine, mine[1:], strict=False)):
+                boxes[b].parent != a for a, b in pairwise(mine)
+            ):
                 raise NetUnsupported("node boxes that do not nest")
-            out[nid] = (tuple(mine),
-                        tuple(self.mult_of(boxes[b].multiplicity.to_sympy()) for b in mine))
+            out[nid] = (
+                tuple(mine),
+                tuple(self.mult_of(boxes[b].multiplicity.to_sympy()) for b in mine),
+            )
         return out
 
     def bundle_dim(self, base: int, m: int) -> int:
@@ -597,15 +615,19 @@ class _Export:
         """A proof that every bundle base is positive."""
         return f"(fun _ _ _ => Fam.dimv_pos _ _ _ (Fpos {_join(self.sp_args, self.sp_hyp_args)} _))"
 
-    def translate(self, d: Diagram, slots: Sequence[int] | None,
-                  alloc: Callable[[int, Chain], int], register: bool = True,
-                  dims_out: dict[int, int] | None = None) -> tuple[LNet, tuple[NodeId, ...],
-                                                                     dict[PortRef, int]]:
+    def translate(
+        self,
+        d: Diagram,
+        slots: Sequence[int] | None,
+        alloc: Callable[[int, Chain], int],
+        register: bool = True,
+        dims_out: dict[int, int] | None = None,
+    ) -> tuple[LNet, tuple[NodeId, ...], dict[PortRef, int]]:
         """``d`` as a network with boundary slot ``i`` labelled ``slots[i]``, internal labels
         from ``alloc(dim, chain)``."""
         nodes_of = self.node_chain(d)
         port_box: dict[PortRef, Chain] = {}
-        holders: dict[PortRef, list[int]] = {}
+        holders: dict[PortRef, list[BangBoxId]] = {}
         for bid, box in sorted(d.bang_boxes.items()):
             for ref in box.port_scope:
                 holders.setdefault(ref, []).append(bid)
@@ -652,9 +674,9 @@ class _Export:
                 raise NetUnsupported("a port box on a wire")
             ba = nodes_of.get(wire.a.node_id, ((), ()))
             bb = nodes_of.get(wire.b.node_id, ((), ()))
-            if ba[0][:len(bb[0])] == bb[0]:
+            if ba[0][: len(bb[0])] == bb[0]:
                 chain, short, n_short = ba[1], wire.b, len(bb[1])
-            elif bb[0][:len(ba[0])] == ba[0]:
+            elif bb[0][: len(ba[0])] == ba[0]:
                 chain, short, n_short = bb[1], wire.a, len(ba[1])
             else:
                 raise NetUnsupported("a wire between two node boxes")
@@ -665,9 +687,9 @@ class _Export:
                 dims_out[lab] = self.dim_for(self.dim(da), chain)
             port[wire.a] = port[wire.b] = lab
             internal.append(lab)
-        order = tuple(sorted(d.nodes))
+        node_order = tuple(sorted(d.nodes))
         nodes = []
-        for nid in order:
+        for nid in node_order:
             node = d.nodes[nid]
             kind = _KINDS.get(node.generator_type.name)
             if kind is None:
@@ -687,16 +709,16 @@ class _Export:
             dim, aux = self.node_dims(d, nid)
             ph = self.phase(node.phase) if kind in ("Z", "X") else aux
             o, i_ = legs
-            base = _bundle_node(LNode(kind, o, i_, dim, ph), pos)
-            k = base.kind
+            bnode = _bundle_node(LNode(kind, o, i_, dim, ph), pos)
+            k = bnode.kind
             if nid in nodes_of:
                 if not _copyable(k):
                     raise NetUnsupported(f"a boxed {kind} node")
                 for m in reversed(nodes_of[nid][1]):
                     k = ("Bun", m, k)
-            nodes.append(LNode(k, base.outs, base.ins, dim, ph))
+            nodes.append(LNode(k, bnode.outs, bnode.ins, dim, ph))
         bnd = tuple(slots) if slots is not None else tuple(range(len(refs)))
-        return LNet(tuple(nodes), tuple(internal), bnd), order, port
+        return LNet(tuple(nodes), tuple(internal), bnd), node_order, port
 
     def labelled(self, d: Diagram, slots: Sequence[int] | None = None) -> Labelled:
         key = (self.structure_key(d), tuple(slots) if slots is not None else None)
@@ -710,8 +732,7 @@ class _Export:
             elif self.nb != nb:
                 raise NetUnsupported("the diagrams have different boundaries")
         if slots is None:
-            self.next_label = max(self.next_label,
-                                  len(d.boundary_outputs) + len(d.boundary_inputs))
+            self.next_label = max(self.next_label, len(d.boundary_outputs) + len(d.boundary_inputs))
 
         def alloc(dim: int, chain: Chain) -> int:
             return self.label(self.dim_for(dim, chain))
@@ -726,7 +747,10 @@ class _Export:
     @staticmethod
     def structure_key(d: Diagram) -> object:
         boxes = tuple(
-            (tuple(sorted(map(int, b.node_scope))), tuple(sorted(r.sort_key() for r in b.port_scope)))
+            (
+                tuple(sorted(map(int, b.node_scope))),
+                tuple(sorted(r.sort_key() for r in b.port_scope)),
+            )
             for _, b in sorted(d.bang_boxes.items())
         )
         nodes = tuple(
@@ -815,8 +839,16 @@ class _Export:
         from archytaszx.semantics.kernel import Theorem
 
         assert isinstance(t, Theorem)
-        saved = (self.env, list(self.ks_vals), list(self.ks_syms), self.slots, self.binders,
-                 self.args, self.hyps, self.hyp_args)
+        saved = (
+            self.env,
+            list(self.ks_vals),
+            list(self.ks_syms),
+            self.slots,
+            self.binders,
+            self.args,
+            self.hyps,
+            self.hyp_args,
+        )
         idx = str(t.inference.data["index"])
         ks = str(t.inference.data["step"])
         alias = self.mult_ix.get(ks)
@@ -826,8 +858,16 @@ class _Export:
         try:
             self.induction_lemma(t, name, f"{name}_")
         finally:
-            (self.env, self.ks_vals, self.ks_syms, self.slots, self.binders, self.args,
-             self.hyps, self.hyp_args) = saved
+            (
+                self.env,
+                self.ks_vals,
+                self.ks_syms,
+                self.slots,
+                self.binders,
+                self.args,
+                self.hyps,
+                self.hyp_args,
+            ) = saved
             if alias is None:
                 self.mult_ix.pop(ks, None)
             else:
@@ -836,8 +876,12 @@ class _Export:
         oth = [j for j in range(len(self.mult_names)) if j != mi and self.mult_bare[j]]
         lead = _join(self.sp_args, *(_paren(self.ks_vals[j]) for j in oth))
         cur = _paren(self.ks_vals[mi])
-        sub = {sym: self.ks_syms[j] for j in range(len(self.mult_names))
-               for sym in [self.mult_exprs[j]] if self.mult_bare[j]}
+        sub = {
+            sym: self.ks_syms[j]
+            for j in range(len(self.mult_names))
+            for sym in [self.mult_exprs[j]]
+            if self.mult_bare[j]
+        }
 
         def leaf(stem: str, model: sp.Expr) -> _Named:
             return _Named(f"({_join(f'{name}_{stem}', lead, cur)})", model.xreplace(sub))
@@ -882,7 +926,7 @@ class _Export:
         a: Labelled,
         b: Labelled,
         builder: _RuleBuilder,
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[object, list[str]]:
         new_ids = tuple(step.new_node_ids)
         removed = [nid for nid in before.nodes if nid not in after.nodes]
         nb_after, nb_before = self.node_chain(after), self.node_chain(before)
@@ -933,18 +977,30 @@ class _Export:
                 a.port[w.a] for w in consumed_wires if w.a.node_id in inner and w.b.node_id in inner
             )
         i_r = tuple(spec.i_r) if spec.i_r is not None else tuple(sorted(set(fresh.values())))
-        l_nodes = spec.l if spec.l is not None else tuple(net.nodes[index[nid]] for nid in spec.l_ids)
+        l_nodes = (
+            spec.l if spec.l is not None else tuple(net.nodes[index[nid]] for nid in spec.l_ids)
+        )
         r_nodes = tuple(n for _, n in spec.r)
         lemma = spec.lemma
         if "IFACE" in lemma:
             lemma = lemma.replace("IFACE", _list(_iface(l_nodes, i_l)))
-        return spec.k, self.region_lines(a, b, spec.l_ids, l_nodes, r_nodes,
-                                         [nid for nid, _ in spec.r], i_l, i_r, spec.k, lemma)
+        return spec.k, self.region_lines(
+            a, b, spec.l_ids, l_nodes, r_nodes, [nid for nid, _ in spec.r], i_l, i_r, spec.k, lemma
+        )
 
-    def region_lines(self, a: Labelled, b: Labelled, l_ids: Sequence[NodeId],
-                     l_nodes: tuple[LNode, ...], r_nodes: tuple[LNode, ...],
-                     r_ids: Sequence[NodeId | None], i_l: tuple[int, ...], i_r: tuple[int, ...],
-                     k_model: sp.Expr, lemma: str) -> list[str]:
+    def region_lines(
+        self,
+        a: Labelled,
+        b: Labelled,
+        l_ids: Sequence[NodeId],
+        l_nodes: tuple[LNode, ...],
+        r_nodes: tuple[LNode, ...],
+        r_ids: Sequence[NodeId | None],
+        i_l: tuple[int, ...],
+        i_r: tuple[int, ...],
+        k_model: sp.Expr,
+        lemma: str,
+    ) -> list[str]:
         """The step's tactic: reorder, rewrite the region with ``lemma``, drop bare wires,
         reorder onto ``b``."""
         net = a.net
@@ -974,20 +1030,22 @@ class _Export:
             ms = _tower_ms(n.kind)
             assert ms is not None
             x, w = n.outs[0], n.ins[0]
-            rest = current.nodes[:pos] + current.nodes[pos + 1:]
+            rest = current.nodes[:pos] + current.nodes[pos + 1 :]
             bz = self.labs[x]
             plain = LNode("I", (x,), (w,), bz, 0)
             target = LNet(rest + (n,), current.summed, bnd)
             lines.append(f"refine Equal.trans ({self.iso_term(k, current, target, [])}) ?_")
-            lemma = (f"bunI {self.env} {_list(ms)} {n.dim} {bz} {x} {w} {_list([x, w])} "
-                     f"(Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) (by pos) {_chks(4)}")
+            lemma = (
+                f"bunI {self.env} {_list(ms)} {n.dim} {bz} {x} {w} {_list([x, w])} "
+                f"(Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) (by pos) {_chks(4)}"
+            )
             lines.append(
                 f"refine Equal.trans (rewrite {self.env} {_nodes(rest)} {_nodes((n,))} "
                 f"{_nodes((plain,))} {_list(current.summed)} [] [] {_list(bnd)} {_list([x, w])} "
                 f"{_paren(k)} 1 {_paren(k)} ({lemma}) {_chks(3)} (mul_one _).symm) ?_"
             )
             current = LNet(rest + (plain,), current.summed, bnd)
-            ids = ids[:pos] + ids[pos + 1:] + [ids[pos]]
+            ids = ids[:pos] + ids[pos + 1 :] + [ids[pos]]
         while any(n.kind == "I" for n in current.nodes):
             pos = next(i for i, n in enumerate(current.nodes) if n.kind == "I")
             bare = current.nodes[pos]
@@ -1063,16 +1121,17 @@ class _Export:
             if self.engine_scalars is None:
                 raise NetUnsupported("a diagram scalar has no Lean form")
             s_start, s_goal = self.engine_scalars
-            hst = self.sc.prove(
-                s_start * self.flat(proof.right), s_goal * self.flat(proof.left)
-            )
+            hst = self.sc.prove(s_start * self.flat(proof.right), s_goal * self.flat(proof.left))
             self.decls.append(
                 f"/-- The start and goal diagrams with their own scalars. -/\n{head}"
                 f"{self.statement(self.text(s_start), start, self.text(s_goal), goal)} :=\n"
                 f"  Equal.rescale {proof.term}\n    "
-                + (f"(by (try simp only [{self.sdefs()}]); nzt)\n    "
-                   f"(by simp only [{self.sdefs()}]; {hst[3:]})" if self.scalar_defs else
-                   f"{self.nonzero(proof.left)}\n    ({hst})")
+                + (
+                    f"(by (try simp only [{self.sdefs()}]); nzt)\n    "
+                    f"(by simp only [{self.sdefs()}]; {hst[3:]})"
+                    if self.scalar_defs
+                    else f"{self.nonzero(proof.left)}\n    ({hst})"
+                )
             )
         except (ScalarUnsupported, NetUnsupported) as exc:
             self.scalar_gap = str(exc)
@@ -1086,8 +1145,9 @@ class _Export:
             self.unmerge(theorem, outer, name, start, goal)
         return self.render(theorem)
 
-    def unmerge(self, theorem: object, outer: str, inner: str, start: Labelled,
-                goal: Labelled) -> None:
+    def unmerge(
+        self, theorem: object, outer: str, inner: str, start: Labelled, goal: Labelled
+    ) -> None:
         """The theorem ``outer`` over the networks at their own dimensions, the assumed
         equalities as hypotheses, from ``inner`` over the merged networks."""
         from archytaszx.semantics.kernel import Theorem
@@ -1114,23 +1174,32 @@ class _Export:
         if self.scalar_gap:
             raise NetUnsupported("the diagrams' scalars are not compared")
         self.decls += [
-            (f"/-- Each label's own dimension index. -/\ndef labsF : List (ℕ × ℕ) := "
-             f"{_pairs(sorted(labs_f.items()))}"),
-            (f"/-- The environment at the diagrams' own dimensions. -/\nnoncomputable def EF "
-             f"{self.binders} : Env := {{ dimv := Δ {self.args}, phase := Φ {self.args}, "
-             f"labs := labsF }}").replace("  ", " "),
+            (
+                f"/-- Each label's own dimension index. -/\ndef labsF : List (ℕ × ℕ) := "
+                f"{_pairs(sorted(labs_f.items()))}"
+            ),
+            (
+                f"/-- The environment at the diagrams' own dimensions. -/\nnoncomputable def EF "
+                f"{self.binders} : Env := {{ dimv := Δ {self.args}, phase := Φ {self.args}, "
+                f"labs := labsF }}"
+            ).replace("  ", " "),
             *([f"/-- The start at its own dimensions. -/\ndef {start.name}F : Net := {fa.lean()}"]),
-            *([f"/-- The goal at its own dimensions. -/\ndef {goal.name}F : Net := {fb.lean()}"]
-              if goal.name != start.name else []),
-            (f"/-- The diagrams are equal wherever the assumed dimension equalities hold. -/\n"
-             f"theorem {_join(outer, self.binders, self.hyps, hyps)} :\n"
-             f"    Equal {envf} {_paren(sl)} {start.name}F {_paren(sr)} {goal.name}F :=\n"
-             f"  Equal.of_mapDim' {envf} {envm} {ps} (by\n"
-             f"    intro p hp\n    simp only [List.mem_cons, List.not_mem_nil, or_false] at hp\n"
-             f"    rcases hp with {alts} <;> simp [EF, Δ, {hcs}])\n"
-             f"    {start.name}F {goal.name}F {start.name} {goal.name} (by decide) (by decide)\n"
-             f"    (by simp only [EF, E]; congr 1)\n"
-             f"    {_paren(_join(inner, self.args, self.hyp_args))}"),
+            *(
+                [f"/-- The goal at its own dimensions. -/\ndef {goal.name}F : Net := {fb.lean()}"]
+                if goal.name != start.name
+                else []
+            ),
+            (
+                f"/-- The diagrams are equal wherever the assumed dimension equalities hold. -/\n"
+                f"theorem {_join(outer, self.binders, self.hyps, hyps)} :\n"
+                f"    Equal {envf} {_paren(sl)} {start.name}F {_paren(sr)} {goal.name}F :=\n"
+                f"  Equal.of_mapDim' {envf} {envm} {ps} (by\n"
+                f"    intro p hp\n    simp only [List.mem_cons, List.not_mem_nil, or_false] at hp\n"
+                f"    rcases hp with {alts} <;> simp [EF, Δ, {hcs}])\n"
+                f"    {start.name}F {goal.name}F {start.name} {goal.name} (by decide) (by decide)\n"
+                f"    (by simp only [EF, E]; congr 1)\n"
+                f"    {_paren(_join(inner, self.args, self.hyp_args))}"
+            ),
         ]
 
     # families
@@ -1232,8 +1301,10 @@ class _Export:
         start, goal = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
         names = list(self.mult_names)
         syms = list(self.mult_exprs)
-        if any(not self.mult_bare[j] and idx in map(str, syms[j].free_symbols)
-               for j in range(len(names))):
+        if any(
+            not self.mult_bare[j] and idx in map(str, syms[j].free_symbols)
+            for j in range(len(names))
+        ):
             raise NetUnsupported("a box whose multiplicity depends on the induction index")
         oth = [j for j in range(len(names)) if j != mi and self.mult_bare[j]]
         binders = _join(self.sp_binders, *(f"({names[j]} : ℕ)" for j in oth))
@@ -1266,10 +1337,12 @@ class _Export:
 
         bind = _join(binders, f"({nn} : ℕ)")
         self.scalar_defs += [sS, sG]
-        self.decls.append(f"/-- The start's scalar. -/\nnoncomputable def {sS} {bind} : ℂ := "
-                          f"{self.sc.text(s_s)}")
-        self.decls.append(f"/-- The goal's scalar. -/\nnoncomputable def {sG} {bind} : ℂ := "
-                          f"{self.sc.text(s_g)}")
+        self.decls.append(
+            f"/-- The start's scalar. -/\nnoncomputable def {sS} {bind} : ℂ := {self.sc.text(s_s)}"
+        )
+        self.decls.append(
+            f"/-- The goal's scalar. -/\nnoncomputable def {sG} {bind} : ℂ := {self.sc.text(s_g)}"
+        )
         isb = self.isb(mi)
         ns, ng = start.name, goal.name
         H = H_OFFSET
@@ -1300,7 +1373,7 @@ class _Export:
         s_own, s_oth = (sS, sG) if start_side else (sG, sS)
         split_own = _split_net(own.net, mi, isb)
         split_oth = _split_net(other.net, mi, isb)
-        peeled = data["peeled"]
+        peeled = cast(Diagram, data["peeled"])
         self.slots = self.slots_for(peeled, split_own)
         enter(kk, k_sym)
         self.binders = _join(binders, f"({kk} : ℕ)")
@@ -1308,8 +1381,8 @@ class _Export:
         lp = self.labelled(peeled, self.slots)
         ia = self.iso_b(self.env, f"(Net.split {spc} {H} {own.name})", split_own, lp.name, lp.net)
         pe = self.term(expose_t)
-        lx = self.labelled(data["exposed"], self.slots)
-        region = set(data["region"])
+        lx = self.labelled(cast(Diagram, data["exposed"]), self.slots)
+        region = set(cast("frozenset[NodeId]", data["region"]))
         ctx = tuple(n for nid, n in zip(lx.order, lx.net.nodes, strict=True) if nid not in region)
         reg = tuple(n for nid, n in zip(lx.order, lx.net.nodes, strict=True) if nid in region)
         ctx_labels = {x for n in ctx for x in n.labels()}
@@ -1331,12 +1404,14 @@ class _Export:
         plug_b = LNet(ctx + rx.nodes, i_c + rx.summed, bnd)
 
         def plug_text(o: str) -> str:
-            return (f"⟨{_nodes(ctx)} ++ (Net.rename {pt} {o}).nodes, "
-                    f"{_list(i_c)} ++ (Net.rename {pt} {o}).int, {_list(bnd)}⟩")
+            return (
+                f"⟨{_nodes(ctx)} ++ (Net.rename {pt} {o}).nodes, "
+                f"{_list(i_c)} ++ (Net.rename {pt} {o}).int, {_list(bnd)}⟩"
+            )
 
         ib = self.iso_b(self.env, lx.name, lx.net, plug_text(own.name), plug_a)
         ih = "ih" if start_side else "ih.symm"
-        hr = (f"(Equal.rename {self.env} {pt} {own.name} {other.name} (by chk) (by chk) {ih})")
+        hr = f"(Equal.rename {self.env} {pt} {own.name} {other.name} (by chk) (by chk) {ih})"
         plug = (
             f"(plug {self.env} {_nodes(ctx)} (Net.rename {pt} {own.name}).nodes "
             f"(Net.rename {pt} {other.name}).nodes {_list(i_c)} "
@@ -1344,23 +1419,32 @@ class _Export:
             f"(Net.rename {pt} {own.name}).bnd {ret(s_own, kk)} {ret(s_oth, kk)} "
             f"(Equal.toLocal _ _ _ {hr}) (by chk) (by chk) (by chk))"
         )
-        lr = self.labelled(data["replaced"], self.slots)
+        lr = self.labelled(cast(Diagram, data["replaced"]), self.slots)
         ic = self.iso_b(self.env, plug_text(other.name), plug_b, lr.name, lr.net)
         ps = self.term(step_t)
-        lo = self.labelled(data["other_peeled"], self.slots)
-        idd = self.iso_b(self.env, lo.name, lo.net, f"(Net.split {spc} {H} {other.name})",
-                         split_oth)
+        lo = self.labelled(cast(Diagram, data["other_peeled"]), self.slots)
+        idd = self.iso_b(
+            self.env, lo.name, lo.net, f"(Net.split {spc} {H} {other.name})", split_oth
+        )
         own_k = at(s_s if start_side else s_g, k_sym)
         oth_k = at(s_g if start_side else s_s, k_sym)
         own_leaf = _Named(ret(s_own, kk), own_k)
         oth_leaf = _Named(ret(s_oth, kk), oth_k)
-        chain = (f"(Equal.mul_trans {ia} (Equal.mul_trans {pe.term} (Equal.mul_trans {ib} "
-                 f"(Equal.mul_trans {plug} (Equal.mul_trans {ic} (Equal.mul_trans {ps.term} "
-                 f"{idd}))))))")
-        left = ("*", ONE, ("*", pe.left, ("*", ONE, ("*", own_leaf, ("*", ONE,
-                ("*", ps.left, ONE))))))
-        right = ("*", ONE, ("*", pe.right, ("*", ONE, ("*", oth_leaf, ("*", ONE,
-                 ("*", ps.right, ONE))))))
+        chain = (
+            f"(Equal.mul_trans {ia} (Equal.mul_trans {pe.term} (Equal.mul_trans {ib} "
+            f"(Equal.mul_trans {plug} (Equal.mul_trans {ic} (Equal.mul_trans {ps.term} "
+            f"{idd}))))))"
+        )
+        left = (
+            "*",
+            ONE,
+            ("*", pe.left, ("*", ONE, ("*", own_leaf, ("*", ONE, ("*", ps.left, ONE))))),
+        )
+        right = (
+            "*",
+            ONE,
+            ("*", pe.right, ("*", ONE, ("*", oth_leaf, ("*", ONE, ("*", ps.right, ONE))))),
+        )
         if not start_side:
             chain = f"({chain}).symm"
             left, right = right, left
@@ -1431,7 +1515,9 @@ class _Export:
                     if wire is None:
                         raise NetUnsupported(f"new port {ref} has no wire")
                     if wire not in fresh:
-                        fresh[wire] = self.label(self.dim_for(self.dim(_port_dim(after, ref)), chain))
+                        fresh[wire] = self.label(
+                            self.dim_for(self.dim(_port_dim(after, ref)), chain)
+                        )
                     row.append(fresh[wire])
                 legs.append(tuple(row))
             dim, aux = self.node_dims(after, nid)
@@ -1451,33 +1537,79 @@ class _Export:
                 raise NetUnsupported("a boxed rewrite rewiring a bundled leg")
             deltas.append(LNode(_tower(chain), (x,), (w,), self.root(self.labs[w]), 0))
         removed = [nid for nid in before.nodes if nid not in after.nodes]
-        spec = self.lift(chain, 0, a, new_top, deltas, sorted(fresh.values()), removed,
-                         before, after, step, builder, list(self.ks_vals), list(self.ks_syms))
-        l_nodes = spec.l if spec.l is not None else tuple(
-            a.net.nodes[a.order.index(nid)] for nid in spec.l_ids)
+        spec = self.lift(
+            chain,
+            0,
+            a,
+            new_top,
+            deltas,
+            sorted(fresh.values()),
+            removed,
+            before,
+            after,
+            step,
+            builder,
+            list(self.ks_vals),
+            list(self.ks_syms),
+        )
+        l_nodes = (
+            spec.l
+            if spec.l is not None
+            else tuple(a.net.nodes[a.order.index(nid)] for nid in spec.l_ids)
+        )
         r_nodes = tuple(n for _, n in spec.r)
         assert spec.i_l is not None and spec.i_r is not None
-        return spec.k, self.region_lines(a, b, spec.l_ids, l_nodes, r_nodes,
-                                         [nid for nid, _ in spec.r], spec.i_l, spec.i_r, spec.k,
-                                         spec.lemma)
+        return spec.k, self.region_lines(
+            a,
+            b,
+            spec.l_ids,
+            l_nodes,
+            r_nodes,
+            [nid for nid, _ in spec.r],
+            spec.i_l,
+            spec.i_r,
+            spec.k,
+            spec.lemma,
+        )
 
-    def lift(self, chain: Chain, depth: int, view: Labelled, new_view: dict[NodeId, LNode],
-             deltas: list[LNode], fresh: list[int], removed: list[NodeId], before: Diagram,
-             after: Diagram, step: RewriteStep, builder: _RuleBuilder, vals: list[str],
-             syms: list[Any]) -> _Spec:
+    def lift(
+        self,
+        chain: Chain,
+        depth: int,
+        view: Labelled,
+        new_view: dict[NodeId, LNode],
+        deltas: list[LNode],
+        fresh: list[int],
+        removed: list[NodeId],
+        before: Diagram,
+        after: Diagram,
+        step: RewriteStep,
+        builder: _RuleBuilder,
+        vals: list[str],
+        syms: list[Any],
+    ) -> _Spec:
         """The rule's local equation in ``view``, whose region copies along ``chain``."""
         if not chain:
             spec = builder(_Ctx(self, before, after, step, view, new_view, deltas))
-            inner = set(spec.l_ids)
-            i_l = tuple(spec.i_l) if spec.i_l is not None else tuple(
-                view.port[w.a] for w in step.consumed_wires
-                if w.a.node_id in inner and w.b.node_id in inner)
+            inner_ids = set(spec.l_ids)
+            i_l = (
+                tuple(spec.i_l)
+                if spec.i_l is not None
+                else tuple(
+                    view.port[w.a]
+                    for w in step.consumed_wires
+                    if w.a.node_id in inner_ids and w.b.node_id in inner_ids
+                )
+            )
             i_r = tuple(spec.i_r) if spec.i_r is not None else tuple(sorted(set(fresh)))
             lemma = spec.lemma
             if "IFACE" in lemma:
                 index = {nid: i for i, nid in enumerate(view.order)}
-                l_nodes = spec.l if spec.l is not None else tuple(
-                    view.net.nodes[index[nid]] for nid in spec.l_ids)
+                l_nodes = (
+                    spec.l
+                    if spec.l is not None
+                    else tuple(view.net.nodes[index[nid]] for nid in spec.l_ids)
+                )
                 lemma = lemma.replace("IFACE", _list(_iface(l_nodes, i_l)))
             return replace(spec, i_l=i_l, i_r=i_r, lemma=lemma)
         mb = chain[0]
@@ -1495,9 +1627,13 @@ class _Export:
                 return n
             return LNode(n.kind[2], tuple(map(up, n.outs)), tuple(map(up, n.ins)), n.dim, n.ph)
 
-        vb = Labelled(LNet(tuple(map(base_of, view.net.nodes)), view.net.summed, view.net.bnd),
-                      view.order, {r: up(x) for r, x in view.port.items()}, view.name,
-                      view.scalar_note)
+        vb = Labelled(
+            LNet(tuple(map(base_of, view.net.nodes)), view.net.summed, view.net.bnd),
+            view.order,
+            {r: up(x) for r, x in view.port.items()},
+            view.name,
+            view.scalar_note,
+        )
         taken = set(self.mult_names) | {n for n, _ in self.sym.params.values()}
         names = list(self.mult_names)
         for k in range(len(names)):
@@ -1518,13 +1654,29 @@ class _Export:
         saved_env = self.env
         self.env = env_j
         try:
-            inner = self.lift(chain[1:], depth + 1, vb, {n: base_of(x) for n, x in new_view.items()},
-                              [base_of(x) for x in deltas], [up(x) for x in fresh], removed,
-                              before, after, step, builder, vals_j, syms_j)
+            inner = self.lift(
+                chain[1:],
+                depth + 1,
+                vb,
+                {n: base_of(x) for n, x in new_view.items()},
+                [base_of(x) for x in deltas],
+                [up(x) for x in fresh],
+                removed,
+                before,
+                after,
+                step,
+                builder,
+                vals_j,
+                syms_j,
+            )
         finally:
             self.env = saved_env
         index = {nid: i for i, nid in enumerate(view.order)}
-        lb = inner.l if inner.l is not None else tuple(vb.net.nodes[index[nid]] for nid in inner.l_ids)
+        lb = (
+            inner.l
+            if inner.l is not None
+            else tuple(vb.net.nodes[index[nid]] for nid in inner.l_ids)
+        )
         rb = tuple(n for _, n in inner.r)
         assert inner.i_l is not None and inner.i_r is not None
         i_lb, i_rb = inner.i_l, inner.i_r
@@ -1536,8 +1688,13 @@ class _Export:
             raise NetUnsupported("a boxed rule producing an uncopyable node")
 
         def down_l(n: LNode) -> LNode:
-            return LNode(("Bun", mb, n.kind), tuple(x - off for x in n.outs),
-                         tuple(x - off for x in n.ins), n.dim, n.ph)
+            return LNode(
+                ("Bun", mb, n.kind),
+                tuple(x - off for x in n.outs),
+                tuple(x - off for x in n.ins),
+                n.dim,
+                n.ph,
+            )
 
         l_nodes = tuple(down_l(n) for n in lb)
         r_nodes = tuple(map(down_l, rb))
@@ -1547,10 +1704,12 @@ class _Export:
         ln, rn = LNet(l_nodes, i_l, iface), LNet(r_nodes, i_r, iface)
         name = self.fresh("bun")
         lname, rname = f"{name}L", f"{name}R"
-        self.decls.append(f"/-- The boxed region before `{name}`. -/\ndef {lname} : Net := "
-                          f"{ln.lean()}")
-        self.decls.append(f"/-- The boxed region after `{name}`. -/\ndef {rname} : Net := "
-                          f"{rn.lean()}")
+        self.decls.append(
+            f"/-- The boxed region before `{name}`. -/\ndef {lname} : Net := {ln.lean()}"
+        )
+        self.decls.append(
+            f"/-- The boxed region after `{name}`. -/\ndef {rname} : Net := {rn.lean()}"
+        )
         k1 = self.text(inner.k)
         kj = f"({k1}) ^ {jv}"
         lemma = inner.lemma
@@ -1572,14 +1731,20 @@ class _Export:
             i3 = self.iso_b(env_j, t4, p4, f"(Net.split {spc} {off} {rname})", sr)
         finally:
             self.env = saved_env
-        plug1 = (f"(plug {env_j} {_nodes(lb)} {lname}.nodes {rname}.nodes {_list(i_lb)} "
-                 f"{lname}.int {rname}.int {_list(both)} {lname}.bnd 1 ({kj}) "
-                 f"(Equal.toLocal _ _ _ ih) {_chks(3)})")
-        plug2 = (f"(plug {env_j} {rname}.nodes {_nodes(lb)} {_nodes(rb)} {rname}.int "
-                 f"{_list(i_lb)} {_list(i_rb)} {_list(both)} {_list(if_b)} 1 ({k1}) "
-                 f"({lemma}) {_chks(3)})")
-        chain_t = (f"(Equal.mul_trans {i1} (Equal.mul_trans {plug1} (Equal.mul_trans {i2} "
-                   f"(Equal.mul_trans {plug2} {i3}))))")
+        plug1 = (
+            f"(plug {env_j} {_nodes(lb)} {lname}.nodes {rname}.nodes {_list(i_lb)} "
+            f"{lname}.int {rname}.int {_list(both)} {lname}.bnd 1 ({kj}) "
+            f"(Equal.toLocal _ _ _ ih) {_chks(3)})"
+        )
+        plug2 = (
+            f"(plug {env_j} {rname}.nodes {_nodes(lb)} {_nodes(rb)} {rname}.int "
+            f"{_list(i_lb)} {_list(i_rb)} {_list(both)} {_list(if_b)} 1 ({k1}) "
+            f"({lemma}) {_chks(3)})"
+        )
+        chain_t = (
+            f"(Equal.mul_trans {i1} (Equal.mul_trans {plug1} (Equal.mul_trans {i2} "
+            f"(Equal.mul_trans {plug2} {i3}))))"
+        )
         ok_l = f"(by decide : Spec.splitOK {spc} {off} {lname} = true)"
         ok_r = f"(by decide : Spec.splitOK {spc} {off} {rname} = true)"
         fam = self.fam_text()
@@ -1588,10 +1753,13 @@ class _Export:
             return "[" + ", ".join(v if k == mb else names[k] for k in range(len(names))) + "]"
 
         env_0 = self.env_text([("0" if k == mb else names[k]) for k in range(len(names))])
-        z = (f"(Equal.rescale (isoB {env_0} 1 (Net.zero {spc} {lname}) "
-             f"(Net.zero {spc} {rname}) [] [] (by chk)) one_ne_zero (by simp))")
-        binders = _join(self.sp_binders, *(f"({names[k]} : ℕ)" for k in oth), f"({jv} : ℕ)",
-                        self.sp_hyps)
+        z = (
+            f"(Equal.rescale (isoB {env_0} 1 (Net.zero {spc} {lname}) "
+            f"(Net.zero {spc} {rname}) [] [] (by chk)) one_ne_zero (by simp))"
+        )
+        binders = _join(
+            self.sp_binders, *(f"({names[k]} : ℕ)" for k in oth), f"({jv} : ℕ)", self.sp_hyps
+        )
         self.decls.append(
             f"/-- The boxed rewrite at every multiplicity. -/\n"
             f"theorem {_join(name, binders)} :\n"
@@ -1599,16 +1767,25 @@ class _Export:
             f"  induction {jv} with\n"
             f"  | zero => exact Equal.of_zero_at {fam} {mb} {off} {lst('0')} (by simp) {lname} "
             f"{rname} {ok_l} {ok_r} (by decide) {z}\n"
-            f"  | succ {jv} ih => exact Equal.of_split_at {fam} {mb} {off} {jv} {lst(jv)} (by simp) "
+            f"  | succ {jv} ih => exact Equal.of_split_at {fam} {mb} {off} {jv} {lst(jv)} "
+            f"(by simp) "
             f"{lname} {rname} {ok_l} {ok_r} {self.bund_pos(vals_j)} "
             f"(Equal.rescale {chain_t} (by norm_num) (by ring))"
         )
         cur = vals[mb]
         k_model = _Named(f"({k1}) ^ {_paren(cur)}", self.flat(inner.k) ** syms[mb])
-        applied = _join(name, self.sp_args, *(_paren(vals[k]) for k in oth), _paren(cur),
-                        self.sp_hyp_args)
-        return _Spec(tuple(inner.l_ids), [(nid, down_l(n)) for nid, n in inner.r],
-                     f"Equal.toLocal _ _ _ ({applied})", k_model, i_l, i_r, l_nodes)
+        applied = _join(
+            name, self.sp_args, *(_paren(vals[k]) for k in oth), _paren(cur), self.sp_hyp_args
+        )
+        return _Spec(
+            tuple(inner.l_ids),
+            [(nid, down_l(n)) for nid, n in inner.r],
+            f"Equal.toLocal _ _ _ ({applied})",
+            k_model,
+            i_l,
+            i_r,
+            l_nodes,
+        )
 
     def register(self, d: Diagram) -> None:
         """Every dimension, phase and scalar symbol of ``d``."""
@@ -1636,8 +1813,11 @@ class _Export:
             self.scalar(step.scalar_introduced)
 
     def set_params(self) -> None:
-        params = [(n, ty) for raw, (n, ty) in self.sym.params.items()
-                  if raw != "k_lean_index" and raw not in self.mults]
+        params = [
+            (n, ty)
+            for raw, (n, ty) in self.sym.params.items()
+            if raw != "k_lean_index" and raw not in self.mults
+        ]
         nats = [n for n, ty in params if ty == "ℕ"]
         self.binders = " ".join(f"({n} : {ty})" for n, ty in params)
         self.args = " ".join(n for n, _ in params)
@@ -1653,8 +1833,11 @@ class _Export:
 
     def source(self, assumptions: Sequence[object] = (), lead: str = "") -> str:
         """The file: header with ``lead`` and notes, tables and declarations."""
-        params = [(n, ty) for raw, (n, ty) in self.sym.params.items()
-                  if raw != "k_lean_index" and raw not in self.mults]
+        params = [
+            (n, ty)
+            for raw, (n, ty) in self.sym.params.items()
+            if raw != "k_lean_index" and raw not in self.mults
+        ]
         binders = " ".join(f"({n} : {ty})" for n, ty in params)
         args = " ".join(n for n, _ in params)
         dims = "\n".join(f"  | {i} => {text}" for i, text in enumerate(self.dims))
@@ -1673,35 +1856,55 @@ class _Export:
         if self.family:
             nats = [n for n, ty in params if ty == "ℕ"]
             hyps = " ".join(f"(h_{n} : 0 < {n})" for n in nats)
-            tables.insert(1, (
-                f"/-- Every dimension value is positive. -/\ntheorem Δpos {_join(binders, hyps)} :"
-                f" ∀ i, 0 < Δ {args} i := by\n  intro i\n  unfold Δ\n  split <;> first | omega | "
-                "positivity | (apply pow_pos; omega) | norm_num"))
+            tables.insert(
+                1,
+                (
+                    f"/-- Every dimension value is positive. -/\n"
+                    f"theorem Δpos {_join(binders, hyps)} :"
+                    f" ∀ i, 0 < Δ {args} i := by\n  intro i\n  unfold Δ\n  split <;> "
+                    f"first | omega | "
+                    "positivity | (apply pow_pos; omega) | norm_num"
+                ),
+            )
             bund = ", ".join(f"({i}, {b}, {m})" for i, (b, m) in sorted(self.bund_of.items()))
-            names = ", ".join(f"{k} = {self.mult_names[i]}" for k, i in sorted(
-                self.mult_ix.items(), key=lambda kv: kv[1]))
+            names = ", ".join(
+                f"{k} = {self.mult_names[i]}"
+                for k, i in sorted(self.mult_ix.items(), key=lambda kv: kv[1])
+            )
             tables += [
-                f"/-- Each bundle dimension index with its base index and multiplicity. -/\n"
-                f"def bundL : List (ℕ × ℕ × ℕ) := [{bund}]",
+                (
+                    f"/-- Each bundle dimension index with its base index and multiplicity. -/\n"
+                    f"def bundL : List (ℕ × ℕ × ℕ) := [{bund}]"
+                ),
                 f"/-- The family, its multiplicities in order: {names}. -/\n"
                 f"noncomputable def F {binders} : Fam := "
-                f"{{ dims := Δ {args}, bund := bundL, phase := Φ {args}, labs := labs }}"
-                .replace("  ", " "),
+                f"{{ dims := Δ {args}, bund := bundL, phase := Φ {args}, labs := labs }}".replace(
+                    "  ", " "
+                ),
                 f"/-- Every dimension value of the family is positive. -/\ntheorem Fpos "
                 f"{_join(binders, hyps)} : ∀ i, 0 < (F {args}).dims i := fun i => Δpos "
                 f"{_join(args, ' '.join('h_' + n for n in nats))} i".replace("(F )", "F"),
-                "/-- The family's structure alone. -/\nnoncomputable def FC : Fam := "
-                "{ dims := fun _ => 1, bund := bundL, phase := fun _ _ => 0, labs := labs }",
-                "/-- The family's structure along multiplicity `m`. -/\n"
-                "noncomputable def SpC (m : ℕ) : Spec := ⟨FC, m, ksOf []⟩",
+                (
+                    "/-- The family's structure alone. -/\nnoncomputable def FC : Fam := "
+                    "{ dims := fun _ => 1, bund := bundL, phase := fun _ _ => 0, labs := labs }"
+                ),
+                (
+                    "/-- The family's structure along multiplicity `m`. -/\n"
+                    "noncomputable def SpC (m : ℕ) : Spec := ⟨FC, m, ksOf []⟩"
+                ),
             ]
         notes = [f"  assumes {a}" for a in assumptions]
         if self.alias:
-            notes.append("  dimensions assumed equal are one dimension here: " + ", ".join(
-                f"{k} = {self.canon(v)}" for k, v in sorted(self.alias.items())))
+            notes.append(
+                "  dimensions assumed equal are one dimension here: "
+                + ", ".join(f"{k} = {self.canon(v)}" for k, v in sorted(self.alias.items()))
+            )
         if getattr(self, "constraints", None):
-            notes.append("  assumes the dimension constraints " + ", ".join(self.constraints)
-                         + " (hypotheses of the theorem)")
+            notes.append(
+                "  assumes the dimension constraints "
+                + ", ".join(self.constraints)
+                + " (hypotheses of the theorem)"
+            )
         for sym, expr in self.sc.opaques.values():
             notes.append(f"  {self.sym.name(sym, 'ℂ')} stands for the scalar {expr}")
         if self.unproved:
@@ -1727,8 +1930,12 @@ class _Export:
             "set_option linter.unusedTactic false",
             "set_option linter.unreachableTactic false",
             "",
-            *_macros(self.unfold, f"exact Fam.env_dimv_pos _ _ _ (Fpos "
-                     f"{_join(self.sp_args, self.sp_hyp_args)} _)" if self.family else ""),
+            *_macros(
+                self.unfold,
+                f"exact Fam.env_dimv_pos _ _ _ (Fpos {_join(self.sp_args, self.sp_hyp_args)} _)"
+                if self.family
+                else "",
+            ),
         ]
         return "\n".join(
             [*header, "", "\n\n".join([*tables, *self.decls]), "", "end ArchytasZX.Export", ""]
@@ -1738,9 +1945,11 @@ class _Export:
 def _norm_tail(ls: Sequence[int], cs: Sequence[Chain]) -> tuple[tuple[int, ...], list[Chain]]:
     """Python mirror of ``normTail``."""
     ps = list(zip(_tail(ls, cs), cs, strict=False))
-    head = tuple(ls[:len(ls) - len(cs)])
-    return (head + tuple(x for x, c in ps if not c) + tuple(x for x, c in ps if c),
-            [c for _, c in ps if c])
+    head = tuple(ls[: len(ls) - len(cs)])
+    return (
+        head + tuple(x for x, c in ps if not c) + tuple(x for x, c in ps if c),
+        [c for _, c in ps if c],
+    )
 
 
 def _norm(n: LNode) -> LNode:
@@ -1768,8 +1977,10 @@ def _segments(n: LNode) -> list[tuple[tuple[int, ...], bool]]:
 
     def groups(ls: Sequence[int], cs: Sequence[Chain]) -> list[tuple[tuple[int, ...], bool]]:
         tl = _tail(ls, cs)
-        return [(tuple(x for x, c2 in zip(tl, cs, strict=True) if c2 == c), True)
-                for c in sorted(set(cs))]
+        return [
+            (tuple(x for x, c2 in zip(tl, cs, strict=True) if c2 == c), True)
+            for c in sorted(set(cs))
+        ]
 
     if h == "Bun":
         if k[2] == "Z":
@@ -1785,19 +1996,24 @@ def _segments(n: LNode) -> list[tuple[tuple[int, ...], bool]]:
         return [(o, True), (i, False)]
     if h == "ZB":
         cs = k[1]
-        return [(o + i[:len(i) - len(cs)], True), *groups(i, cs)]
+        return [(o + i[: len(i) - len(cs)], True), *groups(i, cs)]
     if h == "XB":
         co, ci = k[1], k[2]
-        return [(o[:len(o) - len(co)], True), *groups(o, co), (i[:len(i) - len(ci)], True),
-                *groups(i, ci)]
+        return [
+            (o[: len(o) - len(co)], True),
+            *groups(o, co),
+            (i[: len(i) - len(ci)], True),
+            *groups(i, ci),
+        ]
     if h == "WB":
         cs = k[1]
-        return [(o[:len(o) - len(cs)], True), *groups(o, cs), (i, False)]
+        return [(o[: len(o) - len(cs)], True), *groups(o, cs), (i, False)]
     return [(o, False), (i, False)]
 
 
-def _match(a: LNet, b: LNet, dims_a: Callable[[int], int], dims_b: Callable[[int], int],
-           fix_bnd: bool) -> dict[int, int] | None:
+def _match(
+    a: LNet, b: LNet, dims_a: Callable[[int], int], dims_b: Callable[[int], int], fix_bnd: bool
+) -> dict[int, int] | None:
     """A label bijection carrying ``a`` onto ``b`` node for node, boundary to boundary (each
     boundary label to itself when ``fix_bnd``), or None."""
     if len(a.nodes) != len(b.nodes) or len(a.bnd) != len(b.bnd) or len(a.summed) != len(b.summed):
@@ -1805,10 +2021,16 @@ def _match(a: LNet, b: LNet, dims_a: Callable[[int], int], dims_b: Callable[[int
     bnd_a, bnd_b = set(a.bnd), set(b.bnd)
 
     def sig(n: LNode) -> tuple[object, ...]:
-        return (_canon(_norm(n).kind), n.dim, n.ph,
-                tuple((len(seg), sym) for seg, sym in _segments(n)))
+        return (
+            _canon(_norm(n).kind),
+            n.dim,
+            n.ph,
+            tuple((len(seg), sym) for seg, sym in _segments(n)),
+        )
 
-    order = sorted(range(len(a.nodes)), key=lambda j: sum(1 for m in b.nodes if sig(m) == sig(a.nodes[j])))
+    order = sorted(
+        range(len(a.nodes)), key=lambda j: sum(1 for m in b.nodes if sig(m) == sig(a.nodes[j]))
+    )
     used: set[int] = set()
     fwd: dict[int, int] = {}
     back: dict[int, int] = {}
@@ -2016,13 +2238,15 @@ def _tower_ms(kind: Any) -> tuple[int, ...] | None:
     return None
 
 
-def _peel(m: int, off: int, tl: Sequence[int], cs: Sequence[Chain]) -> tuple[list[int], list[Chain]]:
+def _peel(
+    m: int, off: int, tl: Sequence[int], cs: Sequence[Chain]
+) -> tuple[list[int], list[Chain]]:
     ps = [(b, c) for b, c in zip(tl, cs, strict=False) if c[:1] == (m,)]
     return [b + off for b, _ in ps], [c[1:] for _, c in ps]
 
 
 def _tail(ls: Sequence[int], cs: Sequence[Chain]) -> tuple[int, ...]:
-    return tuple(ls[len(ls) - len(cs):])
+    return tuple(ls[len(ls) - len(cs) :])
 
 
 def _split_node(n: LNode, m: int, off: int) -> list[LNode]:
@@ -2036,15 +2260,29 @@ def _split_node(n: LNode, m: int, off: int) -> list[LNode]:
         co, ci = n.kind[1], n.kind[2]
         ol, oc = _peel(m, off, _tail(n.outs, co), co)
         il, ic = _peel(m, off, _tail(n.ins, ci), ci)
-        return [replace(n, kind=("XB", tuple(co) + tuple(oc), tuple(ci) + tuple(ic)),
-                        outs=n.outs + tuple(ol), ins=n.ins + tuple(il))]
+        return [
+            replace(
+                n,
+                kind=("XB", tuple(co) + tuple(oc), tuple(ci) + tuple(ic)),
+                outs=n.outs + tuple(ol),
+                ins=n.ins + tuple(il),
+            )
+        ]
     if h == "WB":
         cs = n.kind[1]
         pl, pc = _peel(m, off, _tail(n.outs, cs), cs)
         return [replace(n, kind=("WB", tuple(cs) + tuple(pc)), outs=n.outs + tuple(pl))]
     if h == "Bun" and n.kind[1] == m:
-        return [n, LNode(n.kind[2], tuple(x + off for x in n.outs), tuple(x + off for x in n.ins),
-                         n.dim, n.ph)]
+        return [
+            n,
+            LNode(
+                n.kind[2],
+                tuple(x + off for x in n.outs),
+                tuple(x + off for x in n.ins),
+                n.dim,
+                n.ph,
+            ),
+        ]
     return [n]
 
 
@@ -2060,7 +2298,7 @@ def _split_net(net: LNet, m: int, isb: Callable[[int], bool], off: int = H_OFFSE
 
 def _drop(m: int, ls: Sequence[int], cs: Sequence[Chain]) -> tuple[tuple[int, ...], list[Chain]]:
     ps = [(b, c) for b, c in zip(_tail(ls, cs), cs, strict=False) if c[:1] != (m,)]
-    return tuple(ls[:len(ls) - len(cs)]) + tuple(b for b, _ in ps), [c for _, c in ps]
+    return tuple(ls[: len(ls) - len(cs)]) + tuple(b for b, _ in ps), [c for _, c in ps]
 
 
 def _zero_net(net: LNet, m: int, isb: Callable[[int], bool]) -> LNet:
@@ -2080,15 +2318,19 @@ def _zero_net(net: LNet, m: int, isb: Callable[[int], bool]) -> LNet:
             nodes.append(replace(n, kind=_wk(cs), outs=outs))
         elif not (h == "Bun" and n.kind[1] == m):
             nodes.append(n)
-    return LNet(tuple(nodes), tuple(x for x in net.summed if not isb(x)),
-                tuple(x for x in net.bnd if not isb(x)))
+    return LNet(
+        tuple(nodes),
+        tuple(x for x in net.summed if not isb(x)),
+        tuple(x for x in net.bnd if not isb(x)),
+    )
 
 
 def _rename_net(net: LNet, pairs: Sequence[tuple[int, int]]) -> LNet:
     """Python mirror of ``Net.rename``."""
     f = _ren(pairs)
-    return LNet(tuple(n.rename(f) for n in net.nodes), tuple(map(f, net.summed)),
-                tuple(map(f, net.bnd)))
+    return LNet(
+        tuple(n.rename(f) for n in net.nodes), tuple(map(f, net.summed)), tuple(map(f, net.bnd))
+    )
 
 
 def _bundle_node(n: LNode, tails: dict[tuple[str, int], Chain]) -> LNode:
@@ -2102,15 +2344,25 @@ def _bundle_node(n: LNode, tails: dict[tuple[str, int], Chain]) -> LNode:
     if n.kind == "Z":
         both = sorted([(c, 0, j) for c, j in to] + [(c, 1, j) for c, j in ti])
         tl = [n.outs[j] if s == 0 else n.ins[j] for c, s, j in both]
-        return replace(n, kind=("ZB", tuple(c for c, _, _ in both)), outs=tuple(outs),
-                       ins=tuple(ins) + tuple(tl))
+        return replace(
+            n,
+            kind=("ZB", tuple(c for c, _, _ in both)),
+            outs=tuple(outs),
+            ins=tuple(ins) + tuple(tl),
+        )
     if n.kind == "X":
-        return replace(n, kind=("XB", tuple(c for c, _ in to), tuple(c for c, _ in ti)),
-                       outs=tuple(outs) + tuple(n.outs[j] for _, j in to),
-                       ins=tuple(ins) + tuple(n.ins[j] for _, j in ti))
+        return replace(
+            n,
+            kind=("XB", tuple(c for c, _ in to), tuple(c for c, _ in ti)),
+            outs=tuple(outs) + tuple(n.outs[j] for _, j in to),
+            ins=tuple(ins) + tuple(n.ins[j] for _, j in ti),
+        )
     if n.kind == "W" and not ti:
-        return replace(n, kind=("WB", tuple(c for c, _ in to)),
-                       outs=tuple(outs) + tuple(n.outs[j] for _, j in to))
+        return replace(
+            n,
+            kind=("WB", tuple(c for c, _ in to)),
+            outs=tuple(outs) + tuple(n.outs[j] for _, j in to),
+        )
     raise NetUnsupported(f"a bundled leg on a {n.kind} node")
 
 
@@ -2121,8 +2373,9 @@ def _equiv_b(n: LNode, m: LNode) -> bool:
     sn, sm = _segments(n), _segments(m)
     if [len(x) for x, _ in sn] != [len(x) for x, _ in sm]:
         return False
-    return all(sorted(x) == sorted(y) if sym else x == y
-               for (x, sym), (y, _) in zip(sn, sm, strict=True))
+    return all(
+        sorted(x) == sorted(y) if sym else x == y for (x, sym), (y, _) in zip(sn, sm, strict=True)
+    )
 
 
 _FAMILY_UNFOLD = "F, Fam.env, bundL, List.lookup, ksOf, List.getD"
@@ -2132,28 +2385,48 @@ def _macros(unfold: str, pos_first: str = "") -> list[str]:
     """The export's tactics, unfolding the environment through ``unfold``."""
     pre = f"first | {pos_first} | " if pos_first else ""
     defs = [
-        ("chk", "Decides a structural side condition.",
-         f"first | decide | (simp only [{unfold}]; decide)"),
-        ("pos", "A dimension is positive.",
-         f"{pre}(simp [{unfold}, Δ] <;> first | decide | omega | positivity | "
-         "(apply Nat.mul_pos <;> omega) | (apply pow_pos; omega))"),
+        (
+            "chk",
+            "Decides a structural side condition.",
+            f"first | decide | (simp only [{unfold}]; decide)",
+        ),
+        (
+            "pos",
+            "A dimension is positive.",
+            (
+                f"{pre}(simp [{unfold}, Δ] <;> first | decide | omega | positivity | "
+                "(apply Nat.mul_pos <;> omega) | (apply pow_pos; omega))"
+            ),
+        ),
         ("phz", "A phase vector is zero.", f"(intro k _; simp [{unfold}, Φ, ex_zero])"),
-        ("nzt", "A product of nonzero scalars is nonzero.",
-         "repeat (first | exact one_ne_zero | apply mul_ne_zero | apply pow_ne_zero | "
-         "apply inv_ne_zero | exact Complex.I_ne_zero | exact Complex.exp_ne_zero _ | "
-         "(apply rt_ne; first | omega | norm_num | positivity | (apply pow_pos; omega)) | "
-         "(apply om_ne_zero; first | omega | norm_num) | "
-         "(apply Nat.cast_ne_zero.2; first | omega | positivity | norm_num) | norm_num)"),
-        ("phs", "A phase vector is the sum of two.",
-         f"(intro k _; simp only [{unfold}, Φ]; rw [← ex_add]; apply ex_congr_int; "
-         "(try split_ifs) <;> first " + " ".join(
-             f"| (refine ⟨{z}, ?_⟩; push_cast; linarith)" for z in (0, -1, 1, -2, 2))
-         + ")"),
+        (
+            "nzt",
+            "A product of nonzero scalars is nonzero.",
+            (
+                "repeat (first | exact one_ne_zero | apply mul_ne_zero | apply pow_ne_zero | "
+                "apply inv_ne_zero | exact Complex.I_ne_zero | exact Complex.exp_ne_zero _ | "
+                "(apply rt_ne; first | omega | norm_num | positivity | (apply pow_pos; omega)) | "
+                "(apply om_ne_zero; first | omega | norm_num) | "
+                "(apply Nat.cast_ne_zero.2; first | omega | positivity | norm_num) | norm_num)"
+            ),
+        ),
+        (
+            "phs",
+            "A phase vector is the sum of two.",
+            f"(intro k _; simp only [{unfold}, Φ]; rw [← ex_add]; apply ex_congr_int; "
+            "(try split_ifs) <;> first "
+            + " ".join(f"| (refine ⟨{z}, ?_⟩; push_cast; linarith)" for z in (0, -1, 1, -2, 2))
+            + ")",
+        ),
     ]
     out: list[str] = []
     for name, doc, body in defs:
-        out += ["", "set_option hygiene false in", f"/-- {doc} -/",
-                f"macro \"{name}\" : tactic => `(tactic| {body})"]
+        out += [
+            "",
+            "set_option hygiene false in",
+            f"/-- {doc} -/",
+            f'macro "{name}" : tactic => `(tactic| {body})',
+        ]
     return out
 
 
@@ -2296,7 +2569,7 @@ class _Spec:
     l_ids: tuple[NodeId, ...]
     r: Sequence[tuple[NodeId | None, LNode]]
     lemma: str
-    k: Any = sp.Integer(1)
+    k: Any = field(default_factory=lambda: sp.Integer(1))
     i_l: tuple[int, ...] | None = None
     i_r: tuple[int, ...] | None = None
     l: tuple[LNode, ...] | None = None
@@ -2314,9 +2587,7 @@ def _phaseless(c: _Ctx, n: LNode) -> str:
 
 
 def _phase_sum() -> str:
-    return (
-        "(by phs)"
-    )
+    return "(by phs)"
 
 
 def _positive(c: _Ctx, dz: int) -> str:
@@ -2372,28 +2643,47 @@ def _fusion_bundled(c: _Ctx, na: LNode, nb: LNode, rid: NodeId, r: LNode, w: int
 
     def zparts(n: LNode) -> tuple[Sequence[Chain], tuple[int, ...], tuple[int, ...]]:
         cs = n.kind[1] if _head(n.kind) == "ZB" else ()
-        return cs, n.ins[:len(n.ins) - len(cs)], _tail(n.ins, cs)
+        return cs, n.ins[: len(n.ins) - len(cs)], _tail(n.ins, cs)
 
     if hr in ("Z", "ZB"):
-        _need(_head(na.kind) in ("Z", "ZB") and _head(nb.kind) in ("Z", "ZB"), "fusion across kinds")
+        _need(
+            _head(na.kind) in ("Z", "ZB") and _head(nb.kind) in ("Z", "ZB"), "fusion across kinds"
+        )
         c1, i1, t1 = zparts(na)
         c2, i2, t2 = zparts(nb)
         _, i3, _ = zparts(r)
         rn = LNode(_zk(tuple(c1) + tuple(c2)), r.outs, i3 + t1 + t2, r.dim, r.ph)
-        cs = lambda x: "[" + ", ".join(_list(y) for y in x) + "]"  # noqa: E731
+
+        def fmtz(x: Any) -> str:
+            return "[" + ", ".join(_list(y) for y in x) + "]"
+
         lemma = (
-            f"fusionZG {c.env} {cs(c1)} {cs(c2)} {na.ph} {nb.ph} {r.ph} {r.dim} {w} "
+            f"fusionZG {c.env} {fmtz(c1)} {fmtz(c2)} {na.ph} {nb.ph} {r.ph} {r.dim} {w} "
             f"{_list(na.outs)} {_list(i1)} {_list(t1)} {_list(nb.outs)} {_list(i2)} {_list(t2)} "
             f"{_list(r.outs)} {_list(i3)} IFACE {_chks(9)} {_phase_sum()}"
         )
         return _Spec((m.a_id, m.b_id), [(rid, r)], _as_r(lemma, [rn], [r]))
     _need(_head(na.kind) in ("X", "XB") and _head(nb.kind) in ("X", "XB"), "fusion across kinds")
 
-    def xparts(n: LNode) -> tuple[Sequence[Chain], Sequence[Chain], tuple[int, ...], tuple[int, ...],
-                                 tuple[int, ...], tuple[int, ...]]:
+    def xparts(
+        n: LNode,
+    ) -> tuple[
+        Sequence[Chain],
+        Sequence[Chain],
+        tuple[int, ...],
+        tuple[int, ...],
+        tuple[int, ...],
+        tuple[int, ...],
+    ]:
         co, ci = (n.kind[1], n.kind[2]) if _head(n.kind) == "XB" else ((), ())
-        return (co, ci, n.outs[:len(n.outs) - len(co)], _tail(n.outs, co),
-                n.ins[:len(n.ins) - len(ci)], _tail(n.ins, ci))
+        return (
+            co,
+            ci,
+            n.outs[: len(n.outs) - len(co)],
+            _tail(n.outs, co),
+            n.ins[: len(n.ins) - len(ci)],
+            _tail(n.ins, ci),
+        )
 
     pa, pb = xparts(na), xparts(nb)
     if w in pa[2]:
@@ -2402,11 +2692,20 @@ def _fusion_bundled(c: _Ctx, na: LNode, nb: LNode, rid: NodeId, r: LNode, w: int
         first, second, f, g = nb, na, pb, pa
     _need(w in f[2] and w in g[4], "an X fusion along one output")
     pr = xparts(r)
-    rn = LNode(_xk(tuple(f[0]) + tuple(g[0]), tuple(f[1]) + tuple(g[1])),
-               pr[2] + f[3] + g[3], pr[4] + f[5] + g[5], r.dim, r.ph)
-    cs = lambda x: "[" + ", ".join(_list(y) for y in x) + "]"  # noqa: E731
+    rn = LNode(
+        _xk(tuple(f[0]) + tuple(g[0]), tuple(f[1]) + tuple(g[1])),
+        pr[2] + f[3] + g[3],
+        pr[4] + f[5] + g[5],
+        r.dim,
+        r.ph,
+    )
+
+    def fmtx(x: Any) -> str:
+        return "[" + ", ".join(_list(y) for y in x) + "]"
+
     lemma = (
-        f"fusionXG {c.env} {cs(f[0])} {cs(f[1])} {cs(g[0])} {cs(g[1])} {first.ph} {second.ph} "
+        f"fusionXG {c.env} {fmtx(f[0])} {fmtx(f[1])} {fmtx(g[0])} {fmtx(g[1])} "
+        f"{first.ph} {second.ph} "
         f"{r.ph} {r.dim} {w} {_list(f[2])} {_list(f[3])} {_list(f[4])} {_list(f[5])} "
         f"{_list(g[2])} {_list(g[3])} {_list(g[4])} {_list(g[5])} {_list(pr[2])} {_list(pr[4])} "
         f"IFACE {_chks(4)} {_positive(c, r.dim)} {_chks(10)} {_phase_sum()}"
@@ -2813,26 +3112,30 @@ def _unfuse(c: _Ctx) -> _Spec:
     b = c.a.port[m.boxed]
     dz = n.dim
     h = _head(n.kind)
-    cs = lambda x: "[" + ", ".join(_list(y) for y in x) + "]"  # noqa: E731
 
-    def move_last(ls: tuple[int, ...], chains: Sequence[Chain]) -> tuple[tuple[int, ...],
-                                                                       tuple[int, ...],
-                                                                       list[Chain], Chain]:
-        hd = ls[:len(ls) - len(chains)]
+    def cs(x: Any) -> str:
+        return "[" + ", ".join(_list(y) for y in x) + "]"
+
+    def move_last(
+        ls: tuple[int, ...], chains: Sequence[Chain]
+    ) -> tuple[tuple[int, ...], tuple[int, ...], list[Chain], Chain]:
+        hd = ls[: len(ls) - len(chains)]
         tl = list(zip(_tail(ls, chains), chains, strict=True))
         j = next(j for j, (x, _) in enumerate(tl) if x == b)
-        (bb, cb) = tl.pop(j)
+        (_bb, cb) = tl.pop(j)
         return hd, tuple(x for x, _ in tl), [c2 for _, c2 in tl], cb
 
     if h == "ZB":
         _need(b in _tail(n.ins, n.kind[1]), "unfusion of an unbundled leg")
         hd, tl, rest, cb = move_last(n.ins, n.kind[1])
         legs = side.outs + side.ins
-        _need(_head(side.kind) == "ZB" and len(legs) == 2 and b in _tail(side.ins, side.kind[1]),
-              "unfusion side spider")
+        _need(
+            _head(side.kind) == "ZB" and len(legs) == 2 and b in _tail(side.ins, side.kind[1]),
+            "unfusion side spider",
+        )
         y = next(x for x in legs if x != b)
         lhs = LNode(("ZB", tuple(rest) + (cb,)), n.outs, hd + tl + (b,), dz, n.ph)
-        mh = main.ins[:len(main.ins) - len(rest)] if _head(main.kind) == "ZB" else main.ins
+        mh = main.ins[: len(main.ins) - len(rest)] if _head(main.kind) == "ZB" else main.ins
         rmain = LNode(_zk(rest), main.outs, tuple(mh) + tl, dz, main.ph)
         rside = LNode(("ZB", (cb,)), (), (y, b), dz, side.ph)
         lemma = (
@@ -2846,7 +3149,7 @@ def _unfuse(c: _Ctx) -> _Spec:
         _need(side.outs == (b,) and len(side.ins) == 1, "unfusion side")
         y = side.ins[0]
         lhs = LNode(("XB", tuple(rest) + (cb,), ci), hd + tl + (b,), n.ins, dz, n.ph)
-        mo = main.outs[:len(main.outs) - len(rest)] if _head(main.kind) == "XB" else main.outs
+        mo = main.outs[: len(main.outs) - len(rest)] if _head(main.kind) == "XB" else main.outs
         rmain = LNode(_xk(rest, ci), tuple(mo) + tl, n.ins, dz, main.ph)
         rside = LNode(("XB", (cb,), ()), (b,), (y,), dz, side.ph)
         lemma = (
@@ -2860,7 +3163,7 @@ def _unfuse(c: _Ctx) -> _Spec:
         _need(side.ins == (b,) and len(side.outs) == 1, "unfusion side")
         y = side.outs[0]
         lhs = LNode(("XB", co, tuple(rest) + (cb,)), n.outs, hd + tl + (b,), dz, n.ph)
-        mi = main.ins[:len(main.ins) - len(rest)] if _head(main.kind) == "XB" else main.ins
+        mi = main.ins[: len(main.ins) - len(rest)] if _head(main.kind) == "XB" else main.ins
         rmain = LNode(_xk(co, rest), n.outs, tuple(mi) + tl, dz, main.ph)
         rside = LNode(("XB", (), (cb,)), (y,), (b,), dz, side.ph)
         lemma = (

@@ -70,8 +70,11 @@ def export_refutation(
     their parameters, at ``point`` or else at the first default sample point that works."""
     from archytaszx.semantics.decide import sample_grid
 
-    if _interfaces_differ(left, right) and (left.bang_boxes or right.bang_boxes or any(
-            a != b for (a, _), (b, _) in zip(_legs(left), _legs(right), strict=False))):
+    if _interfaces_differ(left, right) and (
+        left.bang_boxes
+        or right.bang_boxes
+        or any(a != b for (a, _), (b, _) in zip(_legs(left), _legs(right), strict=False))
+    ):
         try:
             return export_interface_refutation(left, right, point, name)
         except NetUnsupported:
@@ -119,7 +122,10 @@ def _legs(d: Diagram) -> list[tuple[sp.Expr, sp.Expr]]:
 
 
 def export_interface_refutation(
-    left: Diagram, right: Diagram, point: Mapping[str, object], name: str = "main",
+    left: Diagram,
+    right: Diagram,
+    point: Mapping[str, object],
+    name: str = "main",
 ) -> str:
     """Lean 4 source proving that the leg dimensions of ``left`` and ``right`` differ for some
     parameter values, at ``point`` or a default sample point."""
@@ -133,8 +139,9 @@ def export_interface_refutation(
         if len(vals) != len(syms):
             continue
 
-        def flat(legs: list[tuple[sp.Expr, sp.Expr]],
-                 vals: dict[sp.Symbol, sp.Expr] = vals) -> list[int] | None:
+        def flat(
+            legs: list[tuple[sp.Expr, sp.Expr]], vals: dict[sp.Symbol, sp.Expr] = vals
+        ) -> list[int] | None:
             out = []
             for dim, n in legs:
                 dv, nv = dim.xreplace(vals), n.xreplace(vals)
@@ -148,8 +155,7 @@ def export_interface_refutation(
             continue
         names = {s: _lean_name(str(s)) for s in syms}
 
-        def text(legs: list[tuple[sp.Expr, sp.Expr]],
-                 names: dict[sp.Symbol, str] = names) -> str:
+        def text(legs: list[tuple[sp.Expr, sp.Expr]], names: dict[sp.Symbol, str] = names) -> str:
             parts = [f"List.replicate {_nat(n, names)} {_nat(dim, names)}" for dim, n in legs]
             return " ++ ".join(parts) if parts else "([] : List ℕ)"
 
@@ -160,27 +166,48 @@ def export_interface_refutation(
         args += " " + " ".join("(by norm_num)" for _ in dims) if dims else ""
         quant = f"∀ {binders} {hyps}, " if syms else ""
         lead = ", ".join(f"{s} = {vals[s]}" for s in syms) or "no parameters"
-        return "\n".join([
-            "/-",
-            "  ArchytasZX interface refutation: the boundary leg dimensions of the two",
-            f"  diagrams, outputs then inputs, differ at {lead}.",
-            "-/", "", "import ArchytasZX", "", "namespace ArchytasZX.Export", "",
-            f"/-- The diagrams' leg dimensions differ at {lead}. -/",
-            f"theorem {name} :",
-            f"    ¬ {quant}({text(ll)}) = ({text(lr)}) := by",
-            f"  intro h; exact absurd (h {args}) (by decide)" if syms else "  decide",
-            "", "end ArchytasZX.Export", ""])
+        return "\n".join(
+            [
+                "/-",
+                "  ArchytasZX interface refutation: the boundary leg dimensions of the two",
+                f"  diagrams, outputs then inputs, differ at {lead}.",
+                "-/",
+                "",
+                "import ArchytasZX",
+                "",
+                "namespace ArchytasZX.Export",
+                "",
+                f"/-- The diagrams' leg dimensions differ at {lead}. -/",
+                f"theorem {name} :",
+                f"    ¬ {quant}({text(ll)}) = ({text(lr)}) := by",
+                f"  intro h; exact absurd (h {args}) (by decide)" if syms else "  decide",
+                "",
+                "end ArchytasZX.Export",
+                "",
+            ]
+        )
     raise NetUnsupported("the leg dimensions agree at every sample point")
 
 
-def _instantiated_refutation(left: Diagram, right: Diagram, point: Mapping[str, object],
-                             name: str, describe: Callable[[Diagram], str] | None) -> str:
+def _instantiated_refutation(
+    left: Diagram,
+    right: Diagram,
+    point: Mapping[str, object],
+    name: str,
+    describe: Callable[[Diagram], str] | None,
+) -> str:
     """The refutation of the two families instantiated at a point's multiplicities."""
     from archytaszx.diagram.bangbox import instantiate_symbol
     from archytaszx.semantics.decide import sample_grid
 
-    mults = sorted({str(s) for d in (left, right) for box in d.bang_boxes.values()
-                    for s in box.multiplicity.free_symbols})
+    mults = sorted(
+        {
+            str(s)
+            for d in (left, right)
+            for box in d.bang_boxes.values()
+            for s in box.multiplicity.free_symbols
+        }
+    )
     first: NetUnsupported | None = None
     for cand in [dict(point)] + [dict(p) for p in sample_grid(left, right)][:MAX_POINTS]:
         if any(m not in cand for m in mults):
@@ -188,8 +215,10 @@ def _instantiated_refutation(left: Diagram, right: Diagram, point: Mapping[str, 
         pair = []
         for d in (left, right):
             for m in mults:
-                if any(m in {str(x) for x in b.multiplicity.free_symbols}
-                       for b in d.bang_boxes.values()):
+                if any(
+                    m in {str(x) for x in b.multiplicity.free_symbols}
+                    for b in d.bang_boxes.values()
+                ):
                     d = instantiate_symbol(d, m, int(cand[m]))
             pair.append(d)
         if pair[0].bang_boxes or pair[1].bang_boxes:
@@ -230,15 +259,22 @@ def _nat(e: sp.Expr, names: Mapping[sp.Symbol, str]) -> str:
 def _interfaces_differ(left: Diagram, right: Diagram) -> bool:
     ll, lr = _legs(left), _legs(right)
     return len(ll) != len(lr) or any(
-        sp.expand(a - b) != 0 or sp.expand(m - n) != 0 for (a, m), (b, n) in zip(ll, lr,
-                                                                              strict=False))
+        sp.expand(a - b) != 0 or sp.expand(m - n) != 0
+        for (a, m), (b, n) in zip(ll, lr, strict=False)
+    )
 
 
 class _Refuter:
     """Evaluates both networks at one point and writes the refutation."""
 
-    def __init__(self, left: Diagram, right: Diagram, point: Mapping[str, object],
-                 describe: Callable[[Diagram], str] | None, opaque: bool = False) -> None:
+    def __init__(
+        self,
+        left: Diagram,
+        right: Diagram,
+        point: Mapping[str, object],
+        describe: Callable[[Diagram], str] | None,
+        opaque: bool = False,
+    ) -> None:
         self.out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
         self.point = {str(k): sp.nsimplify(v) for k, v in point.items()}
         for d in (left, right):
@@ -289,7 +325,8 @@ class _Refuter:
         for i in range(len(out.dims)):
             if out.family and i in out.bund_of:
                 self.dimv_tab[i] = base[out.root(i)] ** math.prod(
-                    self.mult(m) for m in out.chain(i))
+                    self.mult(m) for m in out.chain(i)
+                )
             else:
                 self.dimv_tab[i] = base[i]
 
@@ -318,7 +355,8 @@ class _Refuter:
     def bundled(self, d: int, vs: Sequence[int], cs: Sequence[tuple[int, ...]]) -> list[int]:
         n = max(len(vs) - len(cs), 0)
         return list(vs[:n]) + [
-            y for v, c in zip(vs[n:], cs, strict=False) for y in self.digs_c(d, c, v)]
+            y for v, c in zip(vs[n:], cs, strict=False) for y in self.digs_c(d, c, v)
+        ]
 
     def digs_c(self, d: int, c: tuple[int, ...], v: int) -> list[int]:
         if not c:
@@ -326,8 +364,9 @@ class _Refuter:
         b = d ** math.prod(self.mult(x) for x in c[1:])
         return [y for i in range(self.mult(c[0])) for y in self.digs_c(d, c[1:], v // b**i % b)]
 
-    def copy_legs(self, d: int, i: int, cs: Sequence[tuple[int, ...]],
-                  vs: Sequence[int]) -> list[int]:
+    def copy_legs(
+        self, d: int, i: int, cs: Sequence[tuple[int, ...]], vs: Sequence[int]
+    ) -> list[int]:
         out = []
         for c, v in zip(cs, vs, strict=False):
             b = d ** math.prod(self.mult(x) for x in c)
@@ -388,8 +427,17 @@ class _Refuter:
             b = kind[2]
             acc: Vec = {((), 0): 1}
             for i in range(self.mult(kind[1])):
-                acc = _mul(acc, self.tensor(b, d, ph, self.copy_legs(d, i, _outcs(b, len(os)), os),
-                                            self.copy_legs(d, i, _incs(b, len(is_)), is_)), self.M)
+                acc = _mul(
+                    acc,
+                    self.tensor(
+                        b,
+                        d,
+                        ph,
+                        self.copy_legs(d, i, _outcs(b, len(os)), os),
+                        self.copy_legs(d, i, _incs(b, len(is_)), is_),
+                    ),
+                    self.M,
+                )
                 if not acc:
                     break
             return acc
@@ -423,8 +471,15 @@ class _Refuter:
         return 0
 
     def sq_list(self, net: LNet) -> list[tuple[int, int]]:
-        return [(self.dimv(n.dim), 0 if _head(n.kind) in ("B", "S") else
-                 self.sqc(n.kind, self.dimv(n.dim), len(n.outs), len(n.ins))) for n in net.nodes]
+        return [
+            (
+                self.dimv(n.dim),
+                0
+                if _head(n.kind) in ("B", "S")
+                else self.sqc(n.kind, self.dimv(n.dim), len(n.outs), len(n.ins)),
+            )
+            for n in net.nodes
+        ]
 
     def evaluate(self, net: LNet, sigma: Mapping[int, int]) -> list[int]:
         """The entry without atoms, as `evalG`'s single vector."""
@@ -439,39 +494,55 @@ class _Refuter:
             return self.final_groups(self.plan_of(net)[2], sigma)
         return self.groups_brute(net, sigma)
 
-    def plan_of(self, net: LNet) -> tuple[list[Any], list[Any], list[Any]]:
-        cache = self.__dict__.setdefault("_plans", {})
+    def plan_of(self, net: LNet) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
+        cache: dict[int, tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]] = (
+            self.__dict__.setdefault("_plans", {})
+        )
         if id(net) not in cache:
             cache[id(net)] = self.plan(net)
         return cache[id(net)]
 
-    def eval_rewrites(self, env: str, gs: str, keys: str, nets: Sequence[tuple[str, LNet, Any,
-                      Any]], sigma: str = "σ0") -> tuple[str, str, list[str]]:
+    def eval_rewrites(
+        self,
+        env: str,
+        gs: str,
+        keys: str,
+        nets: Sequence[tuple[str, LNet, Any, Any]],
+        sigma: str = "σ0",
+    ) -> tuple[str, str, list[str]]:
         """The `rw` terms for each network's entry, the `show` terms for its constant and
         groups, and the declarations of its contraction."""
         M = self.M
         evals, shows, decls = [], [], []
         for name, net, sq, g in nets:
-            shows.append(f"show sqL {_paren(env)}.shape {name} = {_list_pairs(sq)} from by "
-                         f"decide +kernel")
+            shows.append(
+                f"show sqL {_paren(env)}.shape {name} = {_list_pairs(sq)} from by decide +kernel"
+            )
             if self.use_plan(net):
                 decls += self.plan_decls(name, self.plan_of(net))
                 evals.append(
                     f"eval_ve {_paren(env)} {M} {gs} Pt {keys} {name} (by norm_num) "
-                    f"{K} hP L{name} {K} {K} ST{name} FN{name} {K} {K} {K} {sigma} {K}")
-                evals.append(f"eval_ve_groups {_paren(env)} {M} {gs} (by norm_num) FN{name} "
-                             f"{sigma}")
-                shows.append(f"show gnorm {M} (ffold {_paren(env)}.shape.dim FN{name} {sigma}) = "
-                             f"{_groups_text(g)} from by decide +kernel")
+                    f"{K} hP L{name} {K} {K} ST{name} FN{name} {K} {K} {K} {sigma} {K}"
+                )
+                evals.append(
+                    f"eval_ve_groups {_paren(env)} {M} {gs} (by norm_num) FN{name} {sigma}"
+                )
+                shows.append(
+                    f"show gnorm {M} (ffold {_paren(env)}.shape.dim FN{name} {sigma}) = "
+                    f"{_groups_text(g)} from by decide +kernel"
+                )
             else:
-                evals.append(f"eval_cyc {_paren(env)} {M} {gs} Pt {keys} {name} {sigma} "
-                             f"(by norm_num) (by decide +kernel) hP")
-                shows.append(f"show evalG {_paren(env)}.shape {M} Pt {name} {sigma} = "
-                             f"{_groups_text(g)} from by decide +kernel")
+                evals.append(
+                    f"eval_cyc {_paren(env)} {M} {gs} Pt {keys} {name} {sigma} "
+                    f"(by norm_num) (by decide +kernel) hP"
+                )
+                shows.append(
+                    f"show evalG {_paren(env)}.shape {M} Pt {name} {sigma} = "
+                    f"{_groups_text(g)} from by decide +kernel"
+                )
         return ", ".join(evals), ", ".join(shows), decls
 
-    def groups_brute(self, net: LNet, sigma: Mapping[int, int]) -> dict[tuple[int, ...],
-                                                                         list[int]]:
+    def groups_brute(self, net: LNet, sigma: Mapping[int, int]) -> dict[tuple[int, ...], list[int]]:
         """Mirror of `evalG`: one vector of length `M` per atom monomial, zero ones dropped."""
         total: Vec = {}
         ranges = [range(self.labdim(x)) for x in net.summed]
@@ -515,14 +586,19 @@ class _Refuter:
 
     def plan(self, net: LNet) -> tuple[list[Any], list[tuple[int, list[Any]]], list[Any]]:
         """Leaves, elimination steps and final factors of ``net``."""
+
+        def leaf_of(n: LNode) -> Callable[[dict[int, int]], Vec]:
+            return lambda tau: self.node(n, tau)
+
         leaves = []
         for n in net.nodes:
             scope = tuple(dict.fromkeys((*n.outs, *n.ins)))
-            leaves.append((scope, self.table(scope, lambda tau, n=n: self.node(n, tau))))
+            leaves.append((scope, self.table(scope, leaf_of(n))))
         facs = list(leaves)
         steps = []
-        left = list(dict.fromkeys(net.summed))
+        left: list[int] = list(dict.fromkeys(net.summed))
         while left:
+
             def cost(l: int, facs: list[Any] = facs) -> int:
                 sc: set[int] = set()
                 for f in facs:
@@ -530,6 +606,7 @@ class _Refuter:
                         sc |= set(f[0])
                 sc.discard(l)
                 return math.prod(self.labdim(x) for x in sc)
+
             l = min(left, key=lambda x: (cost(x), x))
             left.remove(l)
             ins = [f for f in facs if l in f[0]]
@@ -538,7 +615,7 @@ class _Refuter:
             if math.prod(self.labdim(x) for x in scope) * self.labdim(l) > MAX_TERMS:
                 raise NetUnsupported("an intermediate factor is too large")
 
-            def entry(tau: dict[int, int], ins=ins, l=l) -> Vec:
+            def entry(tau: dict[int, int], ins: list[Any] = ins, l: int = l) -> Vec:
                 total: Vec = {}
                 for j in range(self.labdim(l)):
                     t2 = {**tau, l: j}
@@ -550,13 +627,15 @@ class _Refuter:
                     for key, c in acc.items():
                         _add(total, key, c, self.M)
                 return total
+
             new = (scope, self.table(scope, entry))
             facs = outs + [new]
             steps.append((l, list(facs)))
         return leaves, steps, facs
 
-    def final_groups(self, final: list[Any], sigma: Mapping[int, int]) -> dict[tuple[int, ...],
-                                                                                list[int]]:
+    def final_groups(
+        self, final: list[Any], sigma: Mapping[int, int]
+    ) -> dict[tuple[int, ...], list[int]]:
         acc: Vec = {((), 0): 1}
         for f in final:
             acc = _mul(acc, self.at(f, sigma), self.M)
@@ -573,8 +652,10 @@ class _Refuter:
         steps_t = ", ".join(f"({l}, {_facs(fs)})" for l, fs in steps)
         return [
             f"/-- The leaves of {tag}. -/\ndef L{tag} : List Fac := {_facs(leaves)}",
-            (f"/-- The eliminations of {tag}. -/\ndef ST{tag} : List (ℕ × List Fac) := "
-             f"[{steps_t}]"),
+            (
+                f"/-- The eliminations of {tag}. -/\ndef ST{tag} : List (ℕ × List Fac) := "
+                f"[{steps_t}]"
+            ),
             f"/-- The final factors of {tag}. -/\ndef FN{tag} : List Fac := {_facs(final)}",
         ]
 
@@ -606,7 +687,7 @@ class _Refuter:
                 if c:
                     needs |= self.atom_needs(Rt(d))
         self.M = math.lcm(*needs)
-        self.ptab = {}
+        self.ptab: dict[tuple[int, int], tuple[int, tuple[int, ...]]] = {}
         for (ph, j), t in zip(self.keys, dens, strict=True):
             self.ptab[(ph, j)] = (int((t * self.M) % self.M), ())
 
@@ -615,8 +696,7 @@ class _Refuter:
 
     def at_point(self, model: sp.Expr) -> sp.Expr:
         e = sp.sympify(model)
-        subs = {s: self.point[str(s)] for s in e.free_symbols
-                if s != II and str(s) in self.point}
+        subs = {s: self.point[str(s)] for s in e.free_symbols if s != II and str(s) in self.point}
         missing = [s for s in e.free_symbols if s != II and str(s) not in self.point]
         if missing:
             raise NetUnsupported(f"the counterexample gives no value for {missing[0]}")
@@ -668,8 +748,7 @@ class _Refuter:
             n = int(e.args[1])
             base = self.poly_expr(e.args[0])
             if n < 0:
-                base, n = sp.Poly(sp.invert(base.as_expr(), phi.as_expr(), _Z), _Z,
-                                  domain="QQ"), -n
+                base, n = sp.Poly(sp.invert(base.as_expr(), phi.as_expr(), _Z), _Z, domain="QQ"), -n
             return (base**n).rem(phi)
         if isinstance(e, NC):
             return sp.Poly(_int(e.args[0]), _Z, domain="QQ")
@@ -702,11 +781,13 @@ class _Refuter:
             if k != 1:
                 return k * Rt(s), f"rt_split {x} {k} {s} (by norm_num)"
             if s == 2:
-                return _Z ** (M // 8) + _Z ** (7 * (M // 8)), \
-                    f"rt_sub2 {M} {M // 8} (by norm_num) (by norm_num)"
+                return _Z ** (M // 8) + _Z ** (
+                    7 * (M // 8)
+                ), f"rt_sub2 {M} {M // 8} (by norm_num) (by norm_num)"
             if s == 3:
-                return _Z ** (M // 12) + _Z ** (11 * (M // 12)), \
-                    f"rt_sub3 {M} {M // 12} (by norm_num) (by norm_num)"
+                return _Z ** (M // 12) + _Z ** (
+                    11 * (M // 12)
+                ), f"rt_sub3 {M} {M // 12} (by norm_num) (by norm_num)"
             if not sp.isprime(s):
                 q = min(sp.primefactors(s))
                 return Rt(q) * Rt(s // q), f"rt_prod {s} {q} {s // q} (by norm_num)"
@@ -734,8 +815,9 @@ class _Refuter:
             raise NetUnsupported(f"the Gauss sum for √{p} is not separated from zero")
         cert = self.combination(sp.expand(h**2 - p), [])
         self.facts += lines
-        return h, (f"(sqrt_of_sq {text} {p} (by {cert}) (re_pos_of_near {ball} "
-                   f"(by norm_num))).symm")
+        return h, (
+            f"(sqrt_of_sq {text} {p} (by {cert}) (re_pos_of_near {ball} (by norm_num))).symm"
+        )
 
     # the certificate
 
@@ -771,11 +853,12 @@ class _Refuter:
             inner = atom.args[0]
             for x in sp.preorder_traversal(inner):
                 if (x == II or isinstance(x, (Rt, Om, Inv))) and not (
-                        isinstance(x, Om) and _int(x.args[0]) == self.M):
+                    isinstance(x, Om) and _int(x.args[0]) == self.M
+                ):
                     self.fact(x)
             f = self.poly(atom).as_expr()
             goal = self.symbolize(inner) * f - 1
-            proof = (f"inv_eq_of_mul_eq_one_right (by {self.combination(goal, [])})")
+            proof = f"inv_eq_of_mul_eq_one_right (by {self.combination(goal, [])})"
             rhs = f
         else:
             sub = self.substitute(atom)
@@ -835,8 +918,7 @@ class _Refuter:
                 c = sp.expand(quot * coeff.as_expr())
                 if c != 0:
                     terms.append((c, name))
-        parts = [f"({self.text(self.unsym(c))}) * {name}" for c, name in terms
-                 if sp.expand(c) != 0]
+        parts = [f"({self.text(self.unsym(c))}) * {name}" for c, name in terms if sp.expand(c) != 0]
         return "linear_combination " + (" + ".join(parts) if parts else "0")
 
     def reduce_squares(self, rest: sp.Expr, terms: list[tuple[sp.Expr, str]]) -> sp.Expr:
@@ -905,7 +987,8 @@ class _Refuter:
             text = " + ".join("(1 : ℂ)" if j == 0 else f"om {M} ^ {j * step}" for j in range(p))
             self.rel_lines.append(
                 f"have {name} : {text} = 0 := by simpa [Finset.sum_range_succ] using "
-                f"om_geom {M} {p} (by norm_num) (by norm_num) (by norm_num)")
+                f"om_geom {M} {p} (by norm_num) (by norm_num) (by norm_num)"
+            )
             rels.append(sp.Poly(g, _Z, domain="QQ"))
             names.append(name)
             self.hyp_diff[name] = g
@@ -971,8 +1054,10 @@ class _Refuter:
         r = [int(c * scale) for c in coeffs]
         a0 = sum(c * _Z**i for i, c in enumerate(c0))
         a1 = sum(c * _Z**i for i, c in enumerate(c1))
-        d_atoms = sp.expand(self.symbolize(s0) * self.symbolize(k0) * a0
-                            - self.symbolize(s1) * self.symbolize(k1) * a1)
+        d_atoms = sp.expand(
+            self.symbolize(s0) * self.symbolize(k0) * a0
+            - self.symbolize(s1) * self.symbolize(k1) * a1
+        )
         self.hyp_diff["h0"] = d_atoms
         goal = scale * sum(c * _Z**i for i, c in enumerate(coeffs))
         final = self.combination(sp.expand(goal), [(sp.Integer(scale), "h0")])
@@ -1004,15 +1089,29 @@ class _Refuter:
             return f"({int(v.p)} : {ty})"
         return f"(({int(v.p)} : {ty}) / {int(v.q)})"
 
-    def source(self, name: str, sigma: Mapping[int, int], sq0: list[tuple[int, int]],
-               sq1: list[tuple[int, int]], c0: list[int], c1: list[int], r: list[int],
-               final: str) -> str:
+    def source(
+        self,
+        name: str,
+        sigma: Mapping[int, int],
+        sq0: list[tuple[int, int]],
+        sq1: list[tuple[int, int]],
+        c0: list[int],
+        c1: list[int],
+        r: list[int],
+        final: str,
+    ) -> str:
         out = self.out
         head = self.statement()
-        params = [(raw, n, ty) for raw, (n, ty) in out.sym.params.items()
-                  if raw != "k_lean_index" and raw not in out.mults]
-        bare = [(str(e), n) for n, e, b in zip(out.mult_names, out.mult_exprs, out.mult_bare,
-                                               strict=True) if b]
+        params = [
+            (raw, n, ty)
+            for raw, (n, ty) in out.sym.params.items()
+            if raw != "k_lean_index" and raw not in out.mults
+        ]
+        bare = [
+            (str(e), n)
+            for n, e, b in zip(out.mult_names, out.mult_exprs, out.mult_bare, strict=True)
+            if b
+        ]
         args = [self.value_text(raw, ty) for raw, _, ty in params]
         args += [self.value_text(raw, "ℕ") for raw, _ in bare]
         args += ["(by norm_num)" for _, _, ty in params if ty == "ℕ"]
@@ -1026,11 +1125,15 @@ class _Refuter:
         phok = ", ".join(self.phase_proof(ph, j, unfold) for ph, j in self.keys)
         phok_args = phok + ", " if phok else ""
         decls = [
-            (f"/-- Each phase entry's power of `om {M}`. -/\n"
-             f"def Pt (i k : ℕ) : ℕ × List ℤ := ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ)))"
-             f".lookup (i, k)).getD (0, []))"),
-            (f"/-- The boundary assignment where the diagrams differ. -/\n"
-             f"def σ0 (l : ℕ) : ℕ := ((([{sig}] : List (ℕ × ℕ)).lookup l).getD 0)"),
+            (
+                f"/-- Each phase entry's power of `om {M}`. -/\n"
+                f"def Pt (i k : ℕ) : ℕ × List ℤ := ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ)))"
+                f".lookup (i, k)).getD (0, []))"
+            ),
+            (
+                f"/-- The boundary assignment where the diagrams differ. -/\n"
+                f"def σ0 (l : ℕ) : ℕ := ((([{sig}] : List (ℕ × ℕ)).lookup l).getD 0)"
+            ),
         ]
         nets = [(self.a.name, self.a.net, sq0, {(): c0} if any(c0) else {})]
         if self.b.name != self.a.name:
@@ -1046,8 +1149,10 @@ class _Refuter:
             f"  rw [{evals}] at h0",
             "  unfold sqK at h0",
             f"  rw [{shows}] at h0",
-            ("  simp only [sqK, gval, mono_nil, List.map_cons, List.map_nil, List.prod_cons,"
-             " List.prod_nil, List.sum_cons, List.sum_nil, one_mul, cvz] at h0"),
+            (
+                "  simp only [sqK, gval, mono_nil, List.map_cons, List.map_nil, List.prod_cons,"
+                " List.prod_nil, List.sum_cons, List.sum_nil, one_mul, cvz] at h0"
+            ),
             "  try push_cast at h0",
             *(f"  {line}" for line in self.rel_lines),
             *(f"  {line}" for line in self.facts),
@@ -1057,9 +1162,11 @@ class _Refuter:
         if not binders:
             body[1] = "  have he := h"
             body[0] = "  intro h"
-        theorem = ("set_option maxHeartbeats 0 in\n"
-                   f"/-- The diagrams are not equal: they differ at {self.point_note()}. -/\n"
-                   f"theorem {name} :\n    {head} := by\n" + "\n".join(body))
+        theorem = (
+            "set_option maxHeartbeats 0 in\n"
+            f"/-- The diagrams are not equal: they differ at {self.point_note()}. -/\n"
+            f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
+        )
         out.decls += [*decls, theorem]
         return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}")
 
@@ -1075,8 +1182,7 @@ class _Refuter:
             out.binders = _join(out.binders, *(f"({n} : ℕ)" for n in bare))
             out.args = _join(out.args, *bare)
             out.env = out.env_text(out.ks_vals)
-        stmt = out.statement(self.scalar_text(self.s0), self.a, self.scalar_text(self.s1),
-                             self.b)
+        stmt = out.statement(self.scalar_text(self.s0), self.a, self.scalar_text(self.s1), self.b)
         binders = _join(out.binders, out.hyps)
         return f"¬ ∀ {binders}, {stmt}" if binders else f"¬ {stmt}"
 
@@ -1089,17 +1195,22 @@ class _Refuter:
         head = self.statement()
         args = self.zero_args()
         apply = f"(h {args})" if args else "h"
-        theorem = ("set_option maxHeartbeats 0 in\n"
-                   "/-- The diagrams are not equal: their boundaries differ in size. -/\n"
-                   f"theorem {name} :\n    {head} := by\n"
-                   f"  intro h\n  exact refute_bnd (by decide) {apply}")
+        theorem = (
+            "set_option maxHeartbeats 0 in\n"
+            "/-- The diagrams are not equal: their boundaries differ in size. -/\n"
+            f"theorem {name} :\n    {head} := by\n"
+            f"  intro h\n  exact refute_bnd (by decide) {apply}"
+        )
         self.out.decls.append(theorem)
         return self.out.source(lead="  refutation: the boundaries differ in size")
 
     def zero_args(self) -> str:
         """Arguments instantiating every binder at 1."""
-        params = [(n, ty) for raw, (n, ty) in self.out.sym.params.items()
-                  if raw != "k_lean_index" and raw not in self.out.mults]
+        params = [
+            (n, ty)
+            for raw, (n, ty) in self.out.sym.params.items()
+            if raw != "k_lean_index" and raw not in self.out.mults
+        ]
         bare = [n for n, b in zip(self.out.mult_names, self.out.mult_bare, strict=True) if b]
         args = ["1" if ty == "ℕ" else f"(0 : {ty})" for _, ty in params]
         args += ["0"] * len(bare)

@@ -1693,8 +1693,9 @@ def _mode_sheet_step(step: SheetStep, mode: NotationMode, unicode: bool) -> str:
 
 def render(state: object, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False) -> str:
     """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX each diagram's drawing (its graph
-    listing outside :func:`drawing`), BOTH that then the Dirac block, RAW the graph listing. Accepts Diagram, ScalableDiagram, NormalForm,
-    RewriteResult, Derivation, Certificate, ProofCertificate, InductionProof and SheetStep."""
+    listing outside :func:`drawing`), BOTH that then the Dirac block, RAW the graph listing.
+    Accepts Diagram, ScalableDiagram, NormalForm, RewriteResult, Derivation, Certificate,
+    ProofCertificate, InductionProof and SheetStep."""
     mode = _mode_check(mode, unicode)
     if isinstance(state, Diagram):
         return _mode_diagram(state, mode, unicode)

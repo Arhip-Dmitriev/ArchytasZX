@@ -87,8 +87,15 @@ class _NumRefuter(_Refuter):
     """Evaluates both networks at a point, non-rational phase parts as atoms, and writes a
     refutation by balls."""
 
-    def __init__(self, left: Diagram, right: Diagram, point: Mapping[str, object],
-                 describe: Callable[[Diagram], str] | None) -> None:
+    prefix: str
+
+    def __init__(
+        self,
+        left: Diagram,
+        right: Diagram,
+        point: Mapping[str, object],
+        describe: Callable[[Diagram], str] | None,
+    ) -> None:
         super().__init__(left, right, point, describe, opaque=True)
         if self.arity:
             raise NetUnsupported("the boundaries differ in size")
@@ -130,8 +137,9 @@ class _NumRefuter(_Refuter):
         return sp.expand(a.args[0] / (2 * sp.pi * sp.I))
 
     def ks_of(self, parts: dict[sp.Expr, sp.Rational]) -> tuple[int, ...]:
-        return _ktrim([int(parts.get(b, 0) * L) for b, L in zip(self.bases, self.scale,
-                                                               strict=True)])
+        return _ktrim(
+            [int(parts.get(b, 0) * L) for b, L in zip(self.bases, self.scale, strict=True)]
+        )
 
     def mono(self, ks: Sequence[int]) -> sp.Expr:
         out = sp.Integer(1)
@@ -147,8 +155,10 @@ class _NumRefuter(_Refuter):
         p = self.P(ph, j)[0]
         z = int((q * self.M - p) / self.M)
         ks = list(self.ks_of(parts))
-        return (f"ex_atoms {self.M} {p} ({z}) {self.gs_text()} {_ints(ks)} (by norm_num) "
-                f"(by norm_num [{unfold}, List.zipWith] <;> ring)")
+        return (
+            f"ex_atoms {self.M} {p} ({z}) {self.gs_text()} {_ints(ks)} (by norm_num) "
+            f"(by norm_num [{unfold}, List.zipWith] <;> ring)"
+        )
 
     def model_at(self, model: sp.Expr) -> sp.Expr:
         e = sp.sympify(model).xreplace(self.opq)
@@ -162,7 +172,7 @@ class _NumRefuter(_Refuter):
         """The atoms ``g = b / L``, one per non-rational phase term ``b`` at the point."""
         self.s0, self.s1 = self.model_at(self.s0), self.model_at(self.s1)
         self.values: dict[tuple[int, int], tuple[sp.Rational, dict[sp.Expr, sp.Rational]]] = {}
-        self.keys = []
+        self.keys: list[tuple[int, int]] = []
         for net in (self.a.net, self.b.net):
             for n in net.nodes:
                 if _head(n.kind) in ("B", "S"):
@@ -174,8 +184,12 @@ class _NumRefuter(_Refuter):
                     if (n.ph, j) not in self.values:
                         self.keys.append((n.ph, j))
                         self.values[(n.ph, j)] = self.split(self.phase_sym(n.ph, j))
-        exs = [self.split(self.ex_turns(a)) for model in (self.s0, self.s1)
-               for a in sp.preorder_traversal(sp.sympify(model)) if isinstance(a, Ex)]
+        exs = [
+            self.split(self.ex_turns(a))
+            for model in (self.s0, self.s1)
+            for a in sp.preorder_traversal(sp.sympify(model))
+            if isinstance(a, Ex)
+        ]
         dens: dict[sp.Expr, int] = {}
         for _, parts in (*self.values.values(), *exs):
             for b, c in parts.items():
@@ -184,8 +198,10 @@ class _NumRefuter(_Refuter):
         self.scale = [dens[b] for b in self.bases]
         self.xsym = [sp.Symbol(f"x_lean_{i}") for i in range(len(self.bases))]
         self.xinv = [sp.Symbol(f"xi_lean_{i}") for i in range(len(self.bases))]
-        self.gtext = [self.out.sym.render(b / L, "ℝ", "ℝ")
-                      for b, L in zip(self.bases, self.scale, strict=True)]
+        self.gtext = [
+            self.out.sym.render(b / L, "ℝ", "ℝ")
+            for b, L in zip(self.bases, self.scale, strict=True)
+        ]
 
     def atom_needs(self, e: sp.Expr) -> set[int]:
         return set()
@@ -320,13 +336,21 @@ class _NumRefuter(_Refuter):
         if e is sp.pi:
             m = Fraction(314159265358979323846, 10**20)
             d = Fraction(1, 10**20)
-            return self.have(f"NearR {_paren(t)} {_q(m)} {_q(d)}",
-                             f"nearR_round nearR_pi {_q(m)} {_q(d)} (by norm_num)"), m, d
+            return (
+                self.have(
+                    f"NearR {_paren(t)} {_q(m)} {_q(d)}",
+                    f"nearR_round nearR_pi {_q(m)} {_q(d)} (by norm_num)",
+                ),
+                m,
+                d,
+            )
         if e.is_Pow and e.args[1] == sp.Rational(1, 2) and e.args[0].is_Integer:
             p = int(e.args[0])
             m, d = self.sqrt_ball(p)
-            proof = (f"nearR_sqrt {p} {_q(m)} {_q(d)} (by norm_num) (by norm_num) (by norm_num) "
-                     f"(by norm_num)")
+            proof = (
+                f"nearR_sqrt {p} {_q(m)} {_q(d)} (by norm_num) (by norm_num) (by norm_num) "
+                f"(by norm_num)"
+            )
             return self.have(f"NearR {_paren(t)} {_q(m)} {_q(d)}", proof), m, d
         if e.is_Pow and e.args[1] == sp.Rational(-1, 2) and e.args[0].is_Integer:
             p = int(e.args[0])
@@ -353,9 +377,10 @@ class _NumRefuter(_Refuter):
                 else:
                     cm, cd = m * m2, abs(m) * d2 + abs(m2) * d + d * d2
                 rm, rd = _round(cm), _up(abs(cm - _round(cm)) + cd)
-                name = self.have(f"NearR {_paren(text)} {_q(rm)} {_q(rd)}",
-                                 f"nearR_round (nearR_{op} {name} {n2}) {_q(rm)} {_q(rd)} "
-                                 f"(by norm_num)")
+                name = self.have(
+                    f"NearR {_paren(text)} {_q(rm)} {_q(rd)}",
+                    f"nearR_round (nearR_{op} {name} {n2}) {_q(rm)} {_q(rd)} (by norm_num)",
+                )
                 m, d = rm, rd
             return name, m, d
         raise NetUnsupported(f"the real constant {e}")
@@ -367,12 +392,15 @@ class _NumRefuter(_Refuter):
         d = Fraction(2, 10**SQRT_DIGITS)
         return m, d
 
-    def cball(self, text: str, proof: str, x: Fraction, y: Fraction, r: Fraction
-              ) -> tuple[str, Fraction, Fraction, Fraction]:
+    def cball(
+        self, text: str, proof: str, x: Fraction, y: Fraction, r: Fraction
+    ) -> tuple[str, Fraction, Fraction, Fraction]:
         rx, ry = _round(x), _round(y)
         rr = _up(abs(x - rx) + abs(y - ry) + r)
-        name = self.have(f"Near {_paren(text)} {_q(rx)} {_q(ry)} {_q(rr)}",
-                         f"near_round ({proof}) {_q(rx)} {_q(ry)} {_q(rr)} (by norm_num)")
+        name = self.have(
+            f"Near {_paren(text)} {_q(rx)} {_q(ry)} {_q(rr)}",
+            f"near_round ({proof}) {_q(rx)} {_q(ry)} {_q(rr)} (by norm_num)",
+        )
         return name, rx, ry, rr
 
     def ex_ball(self, ctx: str, theta: sp.Expr) -> tuple[str, Fraction, Fraction, Fraction]:
@@ -389,18 +417,29 @@ class _NumRefuter(_Refuter):
         else:
             a_name, A, eps = self.angle_ball(arg, reduced)
         n = TAYLOR
-        cos_c = sum(Fraction((-1) ** k) * A ** (2 * k) / math.factorial(2 * k) for k in range(n))
-        sin_c = sum(Fraction((-1) ** k) * A ** (2 * k + 1) / math.factorial(2 * k + 1)
-                    for k in range(n))
+        cos_c = sum(
+            (Fraction((-1) ** k) * A ** (2 * k) / math.factorial(2 * k) for k in range(n)),
+            Fraction(0),
+        )
+        sin_c = sum(
+            (Fraction((-1) ** k) * A ** (2 * k + 1) / math.factorial(2 * k + 1) for k in range(n)),
+            Fraction(0),
+        )
         tb = abs(A) ** (2 * n) * Fraction(2 * n + 1, math.factorial(2 * n) * 2 * n)
         r0 = 2 * (eps + tb)
         name, x, y, r = self.cball(
-            w, f"near_exp {arg} {_q(A)} {_q(eps)} {n} (by norm_num) {a_name} (by norm_num)",
-            cos_c, sin_c, r0)
+            w,
+            f"near_exp {arg} {_q(A)} {_q(eps)} {n} (by norm_num) {a_name} (by norm_num)",
+            cos_c,
+            sin_c,
+            r0,
+        )
         # the cosT/sinT centers need their sums unfolded
         self.lines[-1] = self.lines[-1].replace("(by norm_num)\n", "")
-        self.lines[-1] = self.lines[-1][: self.lines[-1].rindex("(by norm_num)")] + \
-            "(by norm_num [cosT, sinT, Finset.sum_range_succ, Nat.factorial])"
+        self.lines[-1] = (
+            self.lines[-1][: self.lines[-1].rindex("(by norm_num)")]
+            + "(by norm_num [cosT, sinT, Finset.sum_range_succ, Nat.factorial])"
+        )
         cur = (w, name, x, y, r)
         for _ in range(3):
             t, nm, x, y, r = cur
@@ -411,9 +450,11 @@ class _NumRefuter(_Refuter):
             cur = (prod, nm2, x2, y2, r2)
         t8, nm8, x8, y8, r8 = cur
         stmt_ctx = f"Near (ex {_paren(ctx)}) {_q(x8)} {_q(y8)} {_q(r8)}"
-        proof = (f"by rw [ex_congr_int (⟨{z}, by push_cast; ring⟩ : ∃ k : ℤ, {_paren(ctx)} = "
-                 f"{rt} + k), ex_pow_eight, ex_eq_exp, show {w} ^ 8 = {t8} by ring]; "
-                 f"exact {nm8}")
+        proof = (
+            f"by rw [ex_congr_int (⟨{z}, by push_cast; ring⟩ : ∃ k : ℤ, {_paren(ctx)} = "
+            f"{rt} + k), ex_pow_eight, ex_eq_exp, show {w} ^ 8 = {t8} by ring]; "
+            f"exact {nm8}"
+        )
         name = self.have(stmt_ctx, proof)
         return name, x8, y8, r8
 
@@ -423,65 +464,109 @@ class _NumRefuter(_Refuter):
         pi_name, pm, pd = self.rball(sp.pi)
         two_pi_m = 2 * pm
         two_pi_d = 2 * pd
-        n1 = self.have(f"NearR (2 * Real.pi) {_q(two_pi_m)} {_q(two_pi_d)}",
-                       f"nearR_round (nearR_mul (nearR_const 2) {pi_name}) {_q(two_pi_m)} "
-                       f"{_q(two_pi_d)} (by norm_num)")
+        n1 = self.have(
+            f"NearR (2 * Real.pi) {_q(two_pi_m)} {_q(two_pi_d)}",
+            f"nearR_round (nearR_mul (nearR_const 2) {pi_name}) {_q(two_pi_m)} "
+            f"{_q(two_pi_d)} (by norm_num)",
+        )
         gm8, gd8 = m / 8, d / 8
         rt = self.rtext(reduced)
-        n2 = self.have(f"NearR ({rt} / 8) {_q(gm8)} {_q(gd8)}",
-                       f"by simpa [div_eq_mul_inv] using nearR_round (nearR_mul {g_name} "
-                       f"(nearR_const (1 / 8 : ℝ))) {_q(gm8)} {_q(gd8)} (by norm_num)")
+        n2 = self.have(
+            f"NearR ({rt} / 8) {_q(gm8)} {_q(gd8)}",
+            f"by simpa [div_eq_mul_inv] using nearR_round (nearR_mul {g_name} "
+            f"(nearR_const (1 / 8 : ℝ))) {_q(gm8)} {_q(gd8)} (by norm_num)",
+        )
         cm = two_pi_m * gm8
         cd = abs(two_pi_m) * gd8 + abs(gm8) * two_pi_d + two_pi_d * gd8
         rm, rd = _round(cm), _up(abs(cm - _round(cm)) + cd)
-        n3 = self.have(f"NearR {_paren(arg)} {_q(rm)} {_q(rd)}",
-                       f"nearR_round (nearR_mul {n1} {n2}) {_q(rm)} {_q(rd)} (by norm_num)")
+        n3 = self.have(
+            f"NearR {_paren(arg)} {_q(rm)} {_q(rd)}",
+            f"nearR_round (nearR_mul {n1} {n2}) {_q(rm)} {_q(rd)} (by norm_num)",
+        )
         n4 = self.have(f"|{arg} - {_q(rm)}| ≤ {_q(rd)}", n3)
         return n4, rm, rd
 
     def atom_ball(self, e: sp.Expr) -> tuple[str, str, Fraction, Fraction, Fraction]:
         """A Near fact for an atom of the difference: its text, name and ball."""
         if e == II:
-            return "Complex.I", self.have("Near Complex.I 0 1 0", "near_I"), Fraction(0), \
-                Fraction(1), Fraction(0)
+            return (
+                "Complex.I",
+                self.have("Near Complex.I 0 1 0", "near_I"),
+                Fraction(0),
+                Fraction(1),
+                Fraction(0),
+            )
         if e.is_Rational:
             t = f"(({int(e.p)} : ℂ) / {int(e.q)})"
             m = Fraction(int(e.p), int(e.q))
-            name = self.have(f"Near {_paren(t)} {_q(m)} 0 0",
-                             f"by simpa using near_rat ({int(e.p)}) ({int(e.q)})")
+            name = self.have(
+                f"Near {_paren(t)} {_q(m)} 0 0",
+                f"by simpa using near_rat ({int(e.p)}) ({int(e.q)})",
+            )
             return t, name, m, Fraction(0), Fraction(0)
         if isinstance(e, Rt) or (e.is_Pow and e.args[1] == sp.Rational(1, 2)):
             p = int(e.args[0])
             n, m, d = self.rball(sp.sqrt(p))
             t = f"(rt {p})" if isinstance(e, Rt) else f"((Real.sqrt (({p} : ℕ) : ℝ) : ℝ) : ℂ)"
-            return t, self.have(f"Near {_paren(t)} {_q(m)} 0 {_q(d)}", f"near_ofReal {n}"), m, \
-                Fraction(0), d
+            return (
+                t,
+                self.have(f"Near {_paren(t)} {_q(m)} 0 {_q(d)}", f"near_ofReal {n}"),
+                m,
+                Fraction(0),
+                d,
+            )
         if isinstance(e, Inv) and isinstance(e.args[0], Rt):
             p = int(e.args[0].args[0])
             n, m, d = self.rball(sp.Pow(sp.Integer(p), sp.Rational(-1, 2), evaluate=False))
             t = f"(rt {p})⁻¹"
-            return t, self.have(f"Near {_paren(t)} {_q(m)} 0 {_q(d)}",
-                                f"by rw [rt_inv_ofReal]; exact near_ofReal {n}"), m, \
-                Fraction(0), d
+            return (
+                t,
+                self.have(
+                    f"Near {_paren(t)} {_q(m)} 0 {_q(d)}",
+                    f"by rw [rt_inv_ofReal]; exact near_ofReal {n}",
+                ),
+                m,
+                Fraction(0),
+                d,
+            )
         if e is sp.pi:
             n, m, d = self.rball(sp.pi)
-            return "(Real.pi : ℂ)", self.have(f"Near (Real.pi : ℂ) {_q(m)} 0 {_q(d)}",
-                                              f"near_ofReal {n}"), m, Fraction(0), d
+            return (
+                "(Real.pi : ℂ)",
+                self.have(f"Near (Real.pi : ℂ) {_q(m)} 0 {_q(d)}", f"near_ofReal {n}"),
+                m,
+                Fraction(0),
+                d,
+            )
         if isinstance(e, Om):
             k = int(e.args[0])
             ctx = f"((1 : ℕ) : ℝ) / (({k} : ℕ) : ℝ)"
             n, x, y, r = self.ex_ball(ctx, sp.Rational(1, k))
             t = f"(om {k})"
-            return t, self.have(f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}",
-                                f"by rw [show om {k} = om {k} ^ 1 from (pow_one _).symm, "
-                                f"om_eq_ex]; exact {n}"), x, y, r
+            return (
+                t,
+                self.have(
+                    f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}",
+                    f"by rw [show om {k} = om {k} ^ 1 from (pow_one _).symm, om_eq_ex]; exact {n}",
+                ),
+                x,
+                y,
+                r,
+            )
         if e == _Z or (e.is_Pow and e.args[0] == _Z and e.args[1].is_Integer):
             k = 1 if e == _Z else int(e.args[1])
             ctx = f"(({k} : ℕ) : ℝ) / (({self.M} : ℕ) : ℝ)"
             n, x, y, r = self.ex_ball(ctx, sp.Rational(k, self.M))
             t = f"(om {self.M} ^ {k})"
-            return t, self.have(f"Near {t} {_q(x)} {_q(y)} {_q(r)}",
-                                f"by rw [om_eq_ex {self.M} {k}]; exact {n}"), x, y, r
+            return (
+                t,
+                self.have(
+                    f"Near {t} {_q(x)} {_q(y)} {_q(r)}", f"by rw [om_eq_ex {self.M} {k}]; exact {n}"
+                ),
+                x,
+                y,
+                r,
+            )
         if e in self.xsym or e in self.xinv:
             i = (self.xsym if e in self.xsym else self.xinv).index(e)
             g = self.gval_expr(i)
@@ -490,17 +575,31 @@ class _NumRefuter(_Refuter):
                 return f"(ex {_paren(self.gtext[i])})", n, x, y, r
             n, x, y, r = self.ex_ball(f"-{_paren(self.gtext[i])}", -g)
             t = f"(ex {_paren(self.gtext[i])})⁻¹"
-            return t, self.have(f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}",
-                                f"by rw [ex_inv]; exact {n}"), x, y, r
+            return (
+                t,
+                self.have(
+                    f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}", f"by rw [ex_inv]; exact {n}"
+                ),
+                x,
+                y,
+                r,
+            )
         if isinstance(e, (sp.exp, Ex)):
             turns = sp.nsimplify(sp.expand(e.args[0] / (2 * sp.pi * sp.I)))
             theta = self.rtext(turns)
             arg = self.out.sc.complex_text(e.args[0])
             n, x, y, r = self.ex_ball(theta, turns)
             t = f"(Complex.exp {arg})"
-            return t, self.have(f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}",
-                                f"by rw [exp_eq_ex {arg} {theta} (by push_cast; ring)]; exact {n}"
-                                ), x, y, r
+            return (
+                t,
+                self.have(
+                    f"Near {_paren(t)} {_q(x)} {_q(y)} {_q(r)}",
+                    f"by rw [exp_eq_ex {arg} {theta} (by push_cast; ring)]; exact {n}",
+                ),
+                x,
+                y,
+                r,
+            )
         raise NetUnsupported(f"no ball for {e}")
 
     def tree(self, e: sp.Expr) -> tuple[str, str, Fraction, Fraction, Fraction]:
@@ -568,30 +667,53 @@ class _NumRefuter(_Refuter):
             raise NetUnsupported("the balls are too wide to separate the entry from zero")
         return self.source_num(name, sigma, sq0, sq1, g0, g1, text, n, which)
 
-    def difference(self, k0: sp.Expr, k1: sp.Expr, g0: dict, g1: dict) -> sp.Expr:
-        def gexpr(g: dict) -> sp.Expr:
-            return sp.Add(*(self.mono(key) * sp.Add(*(c * _Z**i for i, c in enumerate(vec)
-                                                       if c))
-                            for key, vec in g.items()))
+    def difference(
+        self, k0: sp.Expr, k1: sp.Expr, g0: dict[Any, Any], g1: dict[Any, Any]
+    ) -> sp.Expr:
+        def gexpr(g: dict[Any, Any]) -> sp.Expr:
+            return sp.Add(
+                *(
+                    self.mono(key) * sp.Add(*(c * _Z**i for i, c in enumerate(vec) if c))
+                    for key, vec in g.items()
+                )
+            )
+
         return sp.Add(self.s0 * k0 * gexpr(g0), -(self.s1 * k1 * gexpr(g1)), evaluate=False)
 
-    def source_num(self, name: str, sigma: Mapping[int, int], sq0: list[tuple[int, int]],
-                   sq1: list[tuple[int, int]], g0: dict, g1: dict, dtext: str, dname: str,
-                   which: str) -> str:
+    def source_num(
+        self,
+        name: str,
+        sigma: Mapping[int, int],
+        sq0: list[tuple[int, int]],
+        sq1: list[tuple[int, int]],
+        g0: dict[Any, Any],
+        g1: dict[Any, Any],
+        dtext: str,
+        dname: str,
+        which: str,
+    ) -> str:
         out = self.out
         head = self.statement()
-        params = [(raw, n, ty) for raw, (n, ty) in out.sym.params.items()
-                  if raw != "k_lean_index" and raw not in out.mults]
-        bare = [(str(e), n) for n, e, b in zip(out.mult_names, out.mult_exprs, out.mult_bare,
-                                               strict=True) if b]
+        params = [
+            (raw, n, ty)
+            for raw, (n, ty) in out.sym.params.items()
+            if raw != "k_lean_index" and raw not in out.mults
+        ]
+        bare = [
+            (str(e), n)
+            for n, e, b in zip(out.mult_names, out.mult_exprs, out.mult_bare, strict=True)
+            if b
+        ]
         args = [self.value_text(raw, ty) for raw, _, ty in params]
         args += [self.value_text(raw, "ℕ") for raw, _ in bare]
         args += ["(by norm_num)" for _, _, ty in params if ty == "ℕ"]
         env = self.instantiate(out.env)
         M = self.M
         gs = self.gs_text()
-        pt = ", ".join(f"(({ph}, {j}), ({self.P(ph, j)[0]}, {_ints(list(self.P(ph, j)[1]))}))"
-                       for ph, j in self.keys)
+        pt = ", ".join(
+            f"(({ph}, {j}), ({self.P(ph, j)[0]}, {_ints(list(self.P(ph, j)[1]))}))"
+            for ph, j in self.keys
+        )
         keys = _list_pairs(self.keys)
         sig = ", ".join(f"({x}, {v})" for x, v in sorted(sigma.items()))
         unfold = "Fam.env, F, Φ" if out.family else "E, Φ"
@@ -601,12 +723,17 @@ class _NumRefuter(_Refuter):
         if self.b.name != self.a.name:
             nets.append((self.b.name, self.b.net, sq1, g1))
         evals, shows, pdecls = self.eval_rewrites(env, gs, keys, nets)
-        decls = [*pdecls,
-            (f"/-- Each phase entry as a power of `om {M}` times atoms. -/\n"
-             f"def Pt (i k : ℕ) : ℕ × List ℤ := ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ)))"
-             f".lookup (i, k)).getD (0, []))"),
-            (f"/-- The boundary assignment where the diagrams differ. -/\n"
-             f"def σ0 (l : ℕ) : ℕ := ((([{sig}] : List (ℕ × ℕ)).lookup l).getD 0)"),
+        decls = [
+            *pdecls,
+            (
+                f"/-- Each phase entry as a power of `om {M}` times atoms. -/\n"
+                f"def Pt (i k : ℕ) : ℕ × List ℤ := ((([{pt}] : List ((ℕ × ℕ) × (ℕ × List ℤ)))"
+                f".lookup (i, k)).getD (0, []))"
+            ),
+            (
+                f"/-- The boundary assignment where the diagrams differ. -/\n"
+                f"def σ0 (l : ℕ) : ℕ := ((([{sig}] : List (ℕ × ℕ)).lookup l).getD 0)"
+            ),
         ]
         body = [
             "  intro h",
@@ -617,24 +744,28 @@ class _NumRefuter(_Refuter):
             f"  rw [{evals}] at h0",
             "  unfold sqK at h0",
             f"  rw [{shows}] at h0",
-            ("  simp only [gval, mono, mono_nil, List.map_cons, List.map_nil, List.prod_cons,"
-             " List.prod_nil, List.sum_cons, List.sum_nil, one_mul, mul_one, cvz, zpow_neg,"
-             " zpow_one, zpow_ofNat, zpow_zero] at h0"),
+            (
+                "  simp only [gval, mono, mono_nil, List.map_cons, List.map_nil, List.prod_cons,"
+                " List.prod_nil, List.sum_cons, List.sum_nil, one_mul, mul_one, cvz, zpow_neg,"
+                " zpow_one, zpow_ofNat, zpow_zero] at h0"
+            ),
             "  try push_cast at h0",
             f"  have hD : {dtext} = 0 := by linear_combination h0",
             *(f"  {line}" for line in self.lines),
             f"  exact ne_zero_of_near {dname} ({which} (by norm_num)) hD",
         ]
-        theorem = ("set_option maxHeartbeats 0 in\n"
-                   f"/-- The diagrams are not equal: they differ at {self.point_note()}. -/\n"
-                   f"theorem {name} :\n    {head} := by\n" + "\n".join(body))
+        theorem = (
+            "set_option maxHeartbeats 0 in\n"
+            f"/-- The diagrams are not equal: they differ at {self.point_note()}. -/\n"
+            f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
+        )
         out.decls += [*decls, theorem]
         return out.source(lead=f"  refutation by ball arithmetic at {self.point_note()}")
 
 
-def ball_tree(M: int, out: Any, expr: sp.Expr, prefix: str) -> tuple[list[str], str, str,
-                                                                       Fraction, Fraction,
-                                                                       Fraction]:
+def ball_tree(
+    M: int, out: Any, expr: sp.Expr, prefix: str
+) -> tuple[list[str], str, str, Fraction, Fraction, Fraction]:
     """Lean facts giving ``expr``, a polynomial in ζ = om M, a ball: the facts, its text,
     the name of its fact and the ball."""
     b = _NumRefuter.__new__(_NumRefuter)

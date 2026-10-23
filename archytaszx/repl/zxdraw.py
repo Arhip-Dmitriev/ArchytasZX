@@ -100,7 +100,7 @@ def _scalar(e: sympy.Expr) -> str:
 
 
 def _plain(e: sympy.Expr) -> str:
-    return sympy.sstr(sympy.nsimplify(e) if e.has(sympy.Float) else e).replace("**", "^")
+    return str(sympy.sstr(sympy.nsimplify(e) if e.has(sympy.Float) else e)).replace("**", "^")
 
 
 class _Labels:
@@ -156,7 +156,9 @@ def _basis_value(node: Node) -> int | None:
         return None
     r = pv.dim.to_int()
     c = -pv.get(1).to_sympy_turns() * r
-    if not (c.is_Integer and all(_mod1(pv.get(k).to_sympy_turns() + k * c / r) for k in range(1, r))):
+    if not (
+        c.is_Integer and all(_mod1(pv.get(k).to_sympy_turns() + k * c / r) for k in range(1, r))
+    ):
         return None
     return int(c) % r
 
@@ -173,7 +175,9 @@ def _dim_text(node: Node, ref: PortRef) -> str:
     return str(port.dim)
 
 
-def _items(view: View, max_nodes: int) -> tuple[dict[str, Item], list[Edge], list[Frame], bool, list[str]]:
+def _items(
+    view: View, max_nodes: int
+) -> tuple[dict[str, Item], list[Edge], list[Frame], bool, list[str]]:
     g = view.diagram
     summary = len(g.nodes) > max_nodes and bool(view.groups)
     labels = _Labels()
@@ -328,9 +332,11 @@ def _order(items: dict[str, Item], edges: Sequence[Edge]) -> None:
         for c in seq:
             nbrs = right if sweep % 2 == 0 else left
             col = cols[c]
-            def bary(k: str) -> tuple[float, int]:
+
+            def bary(k: str, nbrs: dict[str, list[str]] = nbrs) -> tuple[float, int]:
                 ns = nbrs[k]
                 return (sum(pos[m] for m in ns) / len(ns) if ns else pos[k], pos[k])
+
             col.sort(key=bary)
             for i, k in enumerate(col):
                 pos[k] = i
@@ -389,15 +395,43 @@ def _dim_label(text: str) -> str:
 
 _L, _R, _U, _D = 1, 2, 4, 8
 _BOX = {
-    _L | _R: "─", _U | _D: "│", _R | _D: "┌", _L | _D: "┐", _R | _U: "└", _L | _U: "┘",
-    _L | _R | _D: "┬", _L | _R | _U: "┴", _U | _D | _R: "├", _U | _D | _L: "┤",
-    _L | _R | _U | _D: "┼", _L: "─", _R: "─", _U: "│", _D: "│",
+    _L | _R: "─",
+    _U | _D: "│",
+    _R | _D: "┌",
+    _L | _D: "┐",
+    _R | _U: "└",
+    _L | _U: "┘",
+    _L | _R | _D: "┬",
+    _L | _R | _U: "┴",
+    _U | _D | _R: "├",
+    _U | _D | _L: "┤",
+    _L | _R | _U | _D: "┼",
+    _L: "─",
+    _R: "─",
+    _U: "│",
+    _D: "│",
 }
 _GLYPHS = {
-    True: {"Z": "Ⓩ", "X": "Ⓧ", "W": "▷W", "F": "[F]", "T": "[T]", "Ti": "[T⁻¹]", "S": "◁S",
-           "B": "▷B"},
-    False: {"Z": "(", "X": "(", "W": ">W", "F": "[F]", "T": "[T]", "Ti": "[T^-1]", "S": "<S",
-            "B": ">B"},
+    True: {
+        "Z": "Ⓩ",
+        "X": "Ⓧ",
+        "W": "▷W",
+        "F": "[F]",
+        "T": "[T]",
+        "Ti": "[T⁻¹]",
+        "S": "◁S",
+        "B": "▷B",
+    },
+    False: {
+        "Z": "(",
+        "X": "(",
+        "W": ">W",
+        "F": "[F]",
+        "T": "[T]",
+        "Ti": "[T^-1]",
+        "S": "<S",
+        "B": ">B",
+    },
 }
 
 
@@ -440,6 +474,7 @@ def grid(lay: Layout, unicode: bool = True) -> str:
 
     def ypos(it: Item) -> int:
         return y0 + step * it.row
+
     lines: dict[tuple[int, int], int] = {}
 
     def mark(px: int, py: int, bits: int) -> None:
@@ -485,8 +520,11 @@ def grid(lay: Layout, unicode: bool = True) -> str:
             hline(xt, xb, yb)
     canvas: dict[tuple[int, int], str] = {}
     for (px, py), bits in lines.items():
-        canvas[(px, py)] = _BOX[bits] if unicode else ("-" if bits in (_L, _R, _L | _R) else
-                                                       "|" if bits in (_U, _D, _U | _D) else "+")
+        canvas[(px, py)] = (
+            _BOX[bits]
+            if unicode
+            else ("-" if bits in (_L, _R, _L | _R) else "|" if bits in (_U, _D, _U | _D) else "+")
+        )
     for fr in lay.frames:
         its = [lay.items[k] for k in fr.keys]
         xa = min(xs[i.col] for i in its) - 1
@@ -496,7 +534,7 @@ def grid(lay: Layout, unicode: bool = True) -> str:
         last = max(i.col for i in its)
         xb = max(xb, xs[last] + widths[last])
         h, v = ("─", "│") if unicode else ("-", "|")
-        corners = "┌┐└┘" if unicode else "++++"
+        corners = ("┌", "┐", "└", "┘") if unicode else ("+", "+", "+", "+")
         for px in range(xa, xb + 1):
             canvas[(px, ya)] = h
             canvas[(px, yb)] = h
@@ -579,9 +617,11 @@ def figure(
     ax.set_xlim(-1, ncol * dx + 0.5)
     ax.set_ylim(-(nrow * dy) - 0.3, 1.0)
     font = 9 * scale
+
     def at(k: str) -> tuple[float, float]:
         it = lay.items[k]
         return it.col * dx, -it.row * dy
+
     tracks, plan = _routes(lay)
     labelled: set[str] = set()
     for e, hops in plan:
@@ -602,8 +642,16 @@ def figure(
         if first not in labelled and lay.items[first].kind != "dummy":
             labelled.add(first)
             (xa, ya) = at(first)
-            ax.text(xa + 0.3, ya + 0.04, _dim_label(e.dim), color=fg, fontsize=font * 0.55,
-                    ha="left", va="bottom", zorder=4)
+            ax.text(
+                xa + 0.3,
+                ya + 0.04,
+                _dim_label(e.dim),
+                color=fg,
+                fontsize=font * 0.55,
+                ha="left",
+                va="bottom",
+                zorder=4,
+            )
     for fr in lay.frames:
         pts = [at(k) for k in fr.keys]
         xa, xb = min(p[0] for p in pts) - 0.5, max(p[0] for p in pts) + 0.5
@@ -616,39 +664,86 @@ def figure(
             continue
         if it.kind in ("Z", "X"):
             ax.add_patch(Circle((x, y), 0.17, fc=_FILL[it.kind], ec=fg, lw=0.8, zorder=2))
-            ax.text(x, y, it.kind, color="#111111", fontsize=font * 0.75, ha="center",
-                    va="center", zorder=3)
+            ax.text(
+                x,
+                y,
+                it.kind,
+                color="#111111",
+                fontsize=font * 0.75,
+                ha="center",
+                va="center",
+                zorder=3,
+            )
             if it.label:
-                ax.text(x, y + 0.22, it.label, color=fg, fontsize=font * 0.8, ha="center",
-                        va="bottom", zorder=3)
+                ax.text(
+                    x,
+                    y + 0.22,
+                    it.label,
+                    color=fg,
+                    fontsize=font * 0.8,
+                    ha="center",
+                    va="bottom",
+                    zorder=3,
+                )
         elif it.kind == "W":
             tri = [(x - 0.17, y - 0.17), (x - 0.17, y + 0.17), (x + 0.2, y)]
             ax.add_patch(Polygon(tri, closed=True, fc=bg, ec=fg, lw=0.9, zorder=2))
         elif it.kind in ("F", "T", "Ti"):
-            ax.add_patch(Rectangle((x - 0.15, y - 0.15), 0.3, 0.3, fc=_FILL[it.kind], ec=fg,
-                                   lw=0.8, zorder=2))
-            ax.text(x, y, it.kind, color="#111111", fontsize=font * 0.7, ha="center",
-                    va="center", zorder=3)
+            ax.add_patch(
+                Rectangle(
+                    (x - 0.15, y - 0.15), 0.3, 0.3, fc=_FILL[it.kind], ec=fg, lw=0.8, zorder=2
+                )
+            )
+            ax.text(
+                x,
+                y,
+                it.kind,
+                color="#111111",
+                fontsize=font * 0.7,
+                ha="center",
+                va="center",
+                zorder=3,
+            )
         elif it.kind in ("S", "B"):
             dia = [(x, y - 0.14), (x + 0.12, y), (x, y + 0.14), (x - 0.12, y)]
             ax.add_patch(Polygon(dia, closed=True, fc="#bbbbbb", ec=fg, lw=0.8, zorder=2))
         elif it.kind == "group":
             half = min(dx * 0.48, 0.035 * len(it.label) * scale + 0.1)
-            ax.add_patch(FancyBboxPatch((x - half, y - 0.18), 2 * half, 0.36,
-                                        boxstyle="round,pad=0.02", fc=bg, ec=fg, lw=0.8,
-                                        zorder=2))
-            ax.text(x, y, it.label, color=fg, fontsize=font * 0.7, ha="center", va="center",
-                    zorder=3)
+            ax.add_patch(
+                FancyBboxPatch(
+                    (x - half, y - 0.18),
+                    2 * half,
+                    0.36,
+                    boxstyle="round,pad=0.02",
+                    fc=bg,
+                    ec=fg,
+                    lw=0.8,
+                    zorder=2,
+                )
+            )
+            ax.text(
+                x, y, it.label, color=fg, fontsize=font * 0.7, ha="center", va="center", zorder=3
+            )
         else:
-            ax.text(x, y, it.label, color=fg, fontsize=font * 0.8, ha="center", va="center",
-                    zorder=3, bbox={"fc": bg, "ec": "none", "pad": 1})
+            ax.text(
+                x,
+                y,
+                it.label,
+                color=fg,
+                fontsize=font * 0.8,
+                ha="center",
+                va="center",
+                zorder=3,
+                bbox={"fc": bg, "ec": "none", "pad": 1},
+            )
     corner = f"scalar: {lay.scalar}"
     if lay.legend:
         corner += "\n" + "\n".join(lay.legend)
     fig.text(0.01, 0.99, corner, color=fg, fontsize=font * 0.8, ha="left", va="top")
     out = io.BytesIO()
-    fig.savefig(out, format="png", dpi=dpi, transparent=not opaque,
-                facecolor=bg if opaque else "none")
+    fig.savefig(
+        out, format="png", dpi=dpi, transparent=not opaque, facecolor=bg if opaque else "none"
+    )
     return out.getvalue()
 
 
@@ -670,10 +765,16 @@ def draw(view: View, style: str = "matplot") -> str:
         dense = density(lay) if proto == "none" or D.scalable(proto) else 1
         try:
             if D.SAVE_WHITE:
-                D.keep(figure(lay, dark_theme=False, opaque=True, density=density(lay),
-                              palette=D.WHITE), "zx")
-                png = None if proto == "none" else figure(
-                    lay, dark_theme=D.dark(), opaque=proto == "sixel", density=dense
+                D.keep(
+                    figure(
+                        lay, dark_theme=False, opaque=True, density=density(lay), palette=D.WHITE
+                    ),
+                    "zx",
+                )
+                png = (
+                    None
+                    if proto == "none"
+                    else figure(lay, dark_theme=D.dark(), opaque=proto == "sixel", density=dense)
                 )
             else:
                 png = figure(
