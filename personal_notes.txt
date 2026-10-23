@@ -1,9 +1,10 @@
 0.21.? -> 1.1.1
- - run phases 20 & 21
  - benchmarking
- - example set
 
 Right after QuRise:
+- Finish list
+- hardening
+perfomance phase 21
 - Preprint
 
 future only:
