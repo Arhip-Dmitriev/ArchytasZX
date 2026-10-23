@@ -1,7 +1,41 @@
-# Deutsch-Jozsa over Z_d^n, constant oracle: the data register F^@n, F^dag^@n (= F^3) maps |0>^n back to |0>^n, for every n and d.
-:load count n; c = X(0 -> 1, d); box q x n nodes c
-:name zeros
-:load count n; s = X(0 -> 1, d); f1 = F(1 -> 1, d); f2 = F(1 -> 1, d); f3 = F(1 -> 1, d); f4 = F(1 -> 1, d); wire s.out0 -- f1.in0; wire f1.out0 -- f2.in0; wire f2.out0 -- f3.in0; wire f3.out0 -- f4.in0; box p x n nodes s, f1, f2, f3, f4
-:prove against @zeros
-:certificate kernel
+# The circuit of examples/deutsch_jozsa_qudits.azx as ZXW diagrams, proved equal to its output
+# for every d and n and exported to Lean 4.
+# |0>_d = d^(-1/2) X(0 -> 1), |1>_d = d^(-1/2) X(0 -> 1) phase{k: -k/d}, Fd = F^3.
+# U_const: X(2 -> 1) adds its input c, wired to the boundary, to the target (scale sqrt(d)).
+# U_bal: Z(1 -> 2) copies the last data qudit into X(2 -> 1) on the target; n = m + 1.
+
+# Constant: |out_const> = e^(2 pi i c/d) |0>_d^@n @ Fd|1>_d, for every input |c>.
+:load count n; dim d; z = X(0 -> 1, d); box q x n nodes z; \
+  t = Z(0 -> 1, d) phase{k: -k/d}; e = Z(1 -> 0, d) phase{k: k/d}; \
+  scalar d^(-(n+1)/2)
+:name out_const
+:load count n; dim d; \
+  z = X(0 -> 1, d); g1 = F(1 -> 1, d); g2 = F(1 -> 1, d); g3 = F(1 -> 1, d); g4 = F(1 -> 1, d); \
+  wire z.out0 -- g1.in0; wire g1.out0 -- g2.in0; wire g2.out0 -- g3.in0; wire g3.out0 -- g4.in0; \
+  box p x n nodes z, g1, g2, g3, g4; \
+  t = X(0 -> 1, d) phase{k: -k/d}; h1 = F(1 -> 1, d); h2 = F(1 -> 1, d); h3 = F(1 -> 1, d); \
+  u = X(2 -> 1, d); \
+  wire t.out0 -- h1.in0; wire h1.out0 -- h2.in0; wire h2.out0 -- h3.in0; wire h3.out0 -- u.in0; \
+  inputs u.in1; scalar d^(-n/2)
+:decide against @out_const
 :certificate lean deutsch_jozsa_constant.lean
+
+# Balanced: |out_bal> = |0>_d^@(n-1) @ |1>_d @ Fd|1>_d.
+:load count m; dim d; z = X(0 -> 1, d); box q x m nodes z; \
+  o = X(0 -> 1, d) phase{k: -k/d}; t = Z(0 -> 1, d) phase{k: -k/d}; \
+  scalar d^(-(m+2)/2)
+:name out_bal
+:load count m; dim d; \
+  z = X(0 -> 1, d); g1 = F(1 -> 1, d); g2 = F(1 -> 1, d); g3 = F(1 -> 1, d); g4 = F(1 -> 1, d); \
+  wire z.out0 -- g1.in0; wire g1.out0 -- g2.in0; wire g2.out0 -- g3.in0; wire g3.out0 -- g4.in0; \
+  box p x m nodes z, g1, g2, g3, g4; \
+  zl = X(0 -> 1, d); l1 = F(1 -> 1, d); c = Z(1 -> 2, d); l2 = F(1 -> 1, d); \
+  l3 = F(1 -> 1, d); l4 = F(1 -> 1, d); \
+  wire zl.out0 -- l1.in0; wire l1.out0 -- c.in0; wire c.out0 -- l2.in0; wire l2.out0 -- l3.in0; \
+  wire l3.out0 -- l4.in0; \
+  t = X(0 -> 1, d) phase{k: -k/d}; h1 = F(1 -> 1, d); h2 = F(1 -> 1, d); h3 = F(1 -> 1, d); \
+  u = X(2 -> 1, d); \
+  wire t.out0 -- h1.in0; wire h1.out0 -- h2.in0; wire h2.out0 -- h3.in0; wire h3.out0 -- u.in0; \
+  wire c.out1 -- u.in1; scalar d^(-(m+1)/2)
+:decide against @out_bal
+:certificate lean deutsch_jozsa_balanced.lean

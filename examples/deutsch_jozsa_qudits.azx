@@ -10,12 +10,10 @@ gate U_bal = |x>|y>_d -> |x>|(y + x) % d>_d        # f(x) = x mod d, balanced
 |start>_d = |0>_d^@n @ |1>_d
 |out_const> = (Fd^@n @ I) U_const (F^@n @ Fd) |start>
 |out_bal> = (Fd^@n @ I) U_bal (F^@n @ Fd) |start>
-show(|out_const>, |out_bal>)
+show(|start>, |out_const>, |out_bal>)
 
 # Amplitude of the all-zeros outcome with the target left in Fd|1>.
 |target>_d = |0>_d^@n @ Fd |1>_d
 var a_const = <target|out_const>
 var a_bal = <target|out_bal>
-show(a_const, a_bal)
-assert abs(a_const) == 1
-assert a_bal == 0
+show(|target>, a_const, a_bal)

@@ -47,10 +47,11 @@ register is a bang box of multiplicity `n - 1` rather than `n` copies:
   <img src="https://raw.githubusercontent.com/Arhip-Dmitriev/ArchytasZX/main/docs/images/deutsch_jozsa_zx.png" alt="ZX diagram of the Deutsch–Jozsa state before measurement, with the register as a bang box of multiplicity n - 1" width="640">
 </p>
 
-The constant-oracle case over qudits,
+The qudit version,
 [`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx),
-proves that `F†^⊗n F^⊗n |0⟩^⊗n = |0⟩^⊗n` for every `n` and every `d` and writes the proof
-out as a Lean 4 file.
+proves that the whole circuit of `examples/deutsch_jozsa_qudits.azx` returns
+`e^{2πi c/d} |0⟩^⊗n ⊗ F†|1⟩` for the constant oracle and `|0⟩^⊗(n-1) ⊗ |1⟩ ⊗ F†|1⟩` for the
+balanced one, for every `n` and every `d`. Both proofs are written out as Lean 4 files.
 
 ## What it does
 

@@ -182,13 +182,14 @@ commands (lines starting with a colon) as well as statements, so a script can sw
 load diagrams and run proofs. Scripts given together share one session: names defined by an
 earlier script are visible to a later one.
 
-Example, examples/deutsch_jozsa_proof.azx, consists of engine commands only:
+Example, examples/deutsch_jozsa_proof.azx, consists of engine commands only. A line ending in
+a backslash continues on the next line:
 
-    :load count n; c = X(0 -> 1, d); box q x n nodes c
-    :name zeros
-    :load count n; s = X(0 -> 1, d); f1 = F(1 -> 1, d); ... ; box p x n nodes s, f1, ...
-    :prove against @zeros
-    :certificate kernel
+    :load count n; dim d; z = X(0 -> 1, d); box q x n nodes z; \
+      t = Z(0 -> 1, d) phase{k: -k/d}; e = Z(1 -> 0, d) phase{k: k/d}; scalar d^(-(n+1)/2)
+    :name out_const
+    :load count n; dim d; z = X(0 -> 1, d); g1 = F(1 -> 1, d); ... ; inputs u.in1; ...
+    :decide against @out_const
     :certificate lean deutsch_jozsa_constant.lean
 
 
