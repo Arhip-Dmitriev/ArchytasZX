@@ -2624,8 +2624,9 @@ def inline(expr: Expr) -> Expr:
         )
 
 
-def _multiplicative(w: Expr, u: sympy.Symbol) -> tuple[Expr, Expr] | None:
-    """``(G, M)`` when ``w = Mod(u * G, M)`` (a ``u < M`` guard allowed), G free of u."""
+def _multiplicative(w: Expr, u: sympy.Symbol) -> tuple[Expr, Expr, bool] | None:
+    """``(G, M, guarded)`` when ``w = Mod(u * G, M)``, or ``w`` is that below M and u
+    otherwise, G free of u."""
     if isinstance(w, sympy.Piecewise) and len(w.args) == 2:
         (inside, cond), (outside, rest) = w.args
         if not (rest == sympy.true and outside == u and isinstance(cond, sympy.StrictLessThan)):
@@ -2641,16 +2642,50 @@ def _multiplicative(w: Expr, u: sympy.Symbol) -> tuple[Expr, Expr] | None:
     g = sympy.simplify(w.args[0] / u)
     if u in g.free_symbols:
         return None
-    return g, w.args[1]
+    return g, w.args[1], guard is not None
 
 
 def _bit_sum(e: Expr, j: sympy.Symbol, lo: Expr, hi: Expr) -> Expr:
-    """``sum_{j=lo}^{hi} e``, with ``sum_{j=0}^{hi} 2^j bit(x, j) = x mod 2^(hi+1)``."""
-    e = expand(e)
-    for b in e.atoms(bit):
-        if b.args[1] == j and lo == 0 and sympy.simplify(e - 2**j * b) == 0:
-            return sympy.Mod(b.args[0], 2 ** expand(hi + 1))
-    return sympy.Sum(e, (j, lo, hi)).doit()
+    """``sum_{j=lo}^{hi} e``, with ``sum_{j=0}^{hi} 2^j bit(x, j) = x mod 2^(hi+1)`` and
+    ``sum_{j=0}^{hi} d^j (floor(x / d^j) mod d) = x mod d^(hi+1)``, per term."""
+    out: Expr = sympy.S.Zero
+    for term in sympy.Add.make_args(expand(e)):
+        out += _digit_term_sum(term, j, lo, hi)
+    return out
+
+
+def _digit_term_sum(term: Expr, j: sympy.Symbol, lo: Expr, hi: Expr) -> Expr:
+    if j not in term.free_symbols:
+        return term * (hi - lo + 1)
+    if lo == 0:
+        for b in term.atoms(bit):
+            c = sympy.simplify(term / (2**j * b))
+            if b.args[1] == j and j not in c.free_symbols:
+                return c * sympy.Mod(b.args[0], 2 ** expand(hi + 1))
+        for m in term.atoms(sympy.Mod):
+            f, d = m.args
+            if not (isinstance(f, sympy.floor) and j not in d.free_symbols):
+                continue
+            x = sympy.simplify(f.args[0] * d**j)
+            c = sympy.simplify(term / (d**j * m))
+            if j not in x.free_symbols and j not in c.free_symbols:
+                return c * sympy.Mod(x, d ** expand(hi + 1))
+    return sympy.Sum(term, (j, lo, hi)).doit()
+
+
+def _loop_phase(amp: Expr, j: sympy.Symbol, lo: Expr, hi: Expr) -> Expr:
+    """``prod_{j=lo}^{hi} amp``, exponents of j-free bases summed by :func:`_bit_sum`."""
+    out = sympy.S.One
+    for f in sympy.Mul.make_args(sympy.powsimp(amp)):
+        if j not in f.free_symbols:
+            out *= f ** expand(hi - lo + 1)
+        elif isinstance(f, sympy.exp):
+            out *= sympy.exp(_bit_sum(f.args[0], j, lo, hi))
+        elif f.is_Pow and j not in f.base.free_symbols:
+            out *= f.base ** _bit_sum(f.exp, j, lo, hi)
+        else:
+            return sympy.Product(amp, (j, lo, hi)).doit()
+    return out
 
 
 def _product_mod(g: Expr, j: sympy.Symbol, lo: Expr, hi: Expr, modulus: Expr) -> Expr:
@@ -2680,38 +2715,68 @@ def _below(value: Expr, modulus: Expr) -> bool:
     return bool(value.is_Integer and int(value) in (0, 1))
 
 
+def _xor_mask(w: Expr, u: sympy.Symbol, j: sympy.Symbol) -> Expr | None:
+    """h when ``w = xor(u, h 2^j)`` with h free of u and j, else None."""
+    if not isinstance(w, xor) or u not in w.args:
+        return None
+    other = w.args[1] if w.args[0] == u else w.args[0]
+    h = sympy.simplify(other / 2**j)
+    if h.free_symbols & {u, j}:
+        return None
+    return h
+
+
 def fold(
     cur: State, step: State, probes: Sequence[sympy.Symbol], j: sympy.Symbol, lo: Expr, hi: Expr
 ) -> State:
     """``cur`` after ``step`` for ``j = lo..hi``; ``step`` is one iteration on the probe basis
-    state ``|probes>``. Registers must stay fixed or update as ``y -> y G(j) mod M``."""
+    state ``|probes>``. Registers must stay fixed or update as ``y -> y G(j) mod M`` or
+    ``y -> y xor h 2^j`` with h a one-qubit register."""
     if step.bra or len(step.terms) != 1 or step.terms[0].bound or not _same_layout(cur, step):
         raise PathSumError("a symbolic loop step must map basis states to basis states")
     t = step.terms[0]
-    updates: dict[int, tuple[Expr, Expr]] = {}
+    updates: dict[int, tuple[Expr, Expr, bool]] = {}
+    masks: dict[int, Expr] = {}
     for k, (u, w) in enumerate(zip(probes, t.kets, strict=True)):
         w = inline(w)
         if w == u:
             continue
+        h = _xor_mask(w, u, j)
+        if h is not None and h in probes:
+            r = probes.index(h)
+            if same(cur.widths[r], 1) and same(cur.dims[r], TWO):
+                masks[k] = h
+                continue
         found = _multiplicative(w, u)
         if found is None:
-            raise PathSumError(f"register {k} does not update as y -> y*G mod M in the loop")
+            raise PathSumError(
+                f"register {k} does not update as y -> y*G mod M or y -> y xor h*2^j in the loop"
+            )
         updates[k] = found
-    moving = {probes[k] for k in updates}
-    if any(g.free_symbols & moving for g, _ in updates.values()):
+    moving = {probes[k] for k in (*updates, *masks)}
+    if any(g.free_symbols & moving for g, _, _ in updates.values()) or set(masks.values()) & moving:
         raise PathSumError("loop updates of different registers depend on each other")
     amp = inline(t.amp)
     if amp.free_symbols & moving:
         raise PathSumError("the loop phase depends on a register the loop changes")
     terms = []
     for term in cur.terms:
-        fixed = {probes[k]: v for k, v in enumerate(term.kets) if k not in updates}
+        fixed = {probes[k]: v for k, v in enumerate(term.kets) if k not in updates and k not in masks}
         kets = list(term.kets)
-        for k, (g, modulus) in updates.items():
-            if not _below(term.kets[k], modulus):
+        for k, h in masks.items():
+            kets[k] = xor(term.kets[k], h.xreplace(fixed) * (2 ** expand(hi + 1) - 2**lo))
+        for k, (g, modulus, guarded) in updates.items():
+            below = _below(term.kets[k], modulus)
+            if not (below or guarded):
                 raise PathSumError(f"register {k} is not known to start below {modulus}")
             product = _product_mod(g.xreplace(fixed), j, lo, hi, modulus)
+            if same(product, 1) or same(product, modulus + 1):
+                continue
             kets[k] = sympy.Mod(term.kets[k] * product, modulus)
-        total = sympy.Product(amp.xreplace(fixed), (j, lo, hi)).doit() if amp != 1 else 1
+            if not below:
+                kets[k] = sympy.Piecewise(
+                    (kets[k], sympy.StrictLessThan(term.kets[k], modulus)), (term.kets[k], True)
+                )
+        total = _loop_phase(amp.xreplace(fixed), j, lo, hi) if amp != 1 else 1
         terms.append(Term(term.amp * total, term.bound, tuple(kets)))
     return _with(cur, terms=terms)
