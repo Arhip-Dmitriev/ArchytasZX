@@ -142,7 +142,7 @@ def plot_algorithms() -> list[Path]:
         ax.set_zlim(zt[0], cap)
         ax.set_xlabel("qudits n (log)")
         ax.set_ylabel("dimension d")
-        ax.set_zlabel("time (s, log)")
+        ax.set_zlabel("CPU time (s, log)")
         ax.set_title(TITLES[alg])
         ax.view_init(elev=22, azim=-58)
         for axis in (ax.xaxis, ax.yaxis, ax.zaxis):

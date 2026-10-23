@@ -31,7 +31,9 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("suites", nargs="*", default=["all"], choices=[*SUITES, "all"])
     r.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     r.add_argument("--timeout", type=float, default=60.0, help="seconds per case")
-    r.add_argument("--repeat", type=int, default=3, help="timed runs per case (median kept)")
+    r.add_argument(
+        "--repeat", type=int, default=5, help="separate cold runs per case (mean CPU time kept)"
+    )
     r.add_argument("--mem-gb", type=float, default=6.0, help="address-space cap per case, 0 = none")
     r.add_argument("--quick", action="store_true", help="the smaller half of every sweep")
     r.add_argument("--tool", action="append", help="only these tools (repeatable)")

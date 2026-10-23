@@ -11,12 +11,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Case runner: one worker process per case, ``jobs`` at a time, killed at ``timeout``.
+"""Case runner: ``repeat`` fresh worker processes per case (one run each, cold caches), ``jobs``
+processes at a time, each killed at ``timeout`` seconds of wall time.
 
 A suite module exposes ``cases(quick) -> list[dict]``, ``supports(case) -> str | None`` (the
 reason a tool cannot run it) and ``run(case, repeat) -> dict``. A case is a JSON dict with at
-least ``suite``, ``family`` and ``tool``; the row written back adds ``status``, ``time`` (median
-seconds over ``repeat`` runs), ``times`` and ``detail``.
+least ``suite``, ``family`` and ``tool``; the row written back adds ``status``, ``time`` (mean CPU
+seconds of the worker process over the finished runs), ``time_std``, ``times`` (every run's CPU
+seconds), ``wall`` (mean wall seconds), ``runs`` and ``detail``. CPU time is
+``time.process_time``: every thread of the worker, none of the time it waits for a core.
 """
 
 from __future__ import annotations
@@ -50,22 +53,47 @@ class Inconclusive(Exception):
     """A tool finished without settling the question."""
 
 
-def timed(fn: Callable[[], object], repeat: int) -> tuple[object, list[float]]:
-    """``fn`` run ``repeat`` times; its last value and every wall time."""
+def timed(fn: Callable[[], object], repeat: int) -> tuple[object, list[tuple[float, float]]]:
+    """``fn`` run ``repeat`` times; its last value and every (CPU, wall) time in seconds."""
     times = []
     out: object = None
     for _ in range(max(1, repeat)):
-        t = time.perf_counter()
+        c, w = time.process_time(), time.perf_counter()
         out = fn()
-        times.append(time.perf_counter() - t)
+        times.append((time.process_time() - c, time.perf_counter() - w))
     return out, times
 
 
 def row(
-    case: dict, status: str, times: list[float] | None = None, detail: str = "", **extra: object
+    case: dict,
+    status: str,
+    times: list[tuple[float, float]] | None = None,
+    detail: str = "",
+    **extra: object,
 ) -> dict:
-    t = statistics.median(times) if times else None
-    return {**case, **extra, "status": status, "time": t, "times": times or [], "detail": detail}
+    cpu = [c for c, _ in times or []]
+    wall = [w for _, w in times or []]
+    return {
+        **case,
+        **extra,
+        "status": status,
+        "time": statistics.fmean(cpu) if cpu else None,
+        "time_std": statistics.stdev(cpu) if len(cpu) > 1 else 0.0,
+        "times": cpu,
+        "wall": statistics.fmean(wall) if wall else None,
+        "walls": wall,
+        "runs": len(cpu),
+        "detail": detail,
+    }
+
+
+def _combine(case: dict, shots: list[dict]) -> dict:
+    """One row from the rows of a case's separate runs; a failed run sets the status."""
+    bad = next((r for r in shots if r["status"] != "ok"), None)
+    pairs = [(c, w) for r in shots if r["status"] == "ok" for c, w in zip(r["times"], r["walls"])]
+    first = bad or shots[0]
+    extra = {k: v for k, v in first.items() if k not in case and k not in _OUTPUTS}
+    return row(case, first["status"], pairs, first["detail"], **extra)
 
 
 def _worker(case: dict, repeat: int) -> dict:
@@ -102,22 +130,25 @@ def run_cases(
 ) -> list[dict]:
     """Every case's row, in case order; unsupported cases are not spawned."""
     out: list[dict | None] = [None] * len(cases)
+    shots: dict[int, list[dict]] = {}
     pending: list[int] = []
     for i, case in enumerate(cases):
         module = importlib.import_module(f"benchmarks.{case['suite']}")
         reason = module.supports(case)
         if reason is None:
-            pending.append(i)
+            pending += [i] * max(1, repeat)
+            shots[i] = []
         else:
             out[i] = row(case, "unsupported", detail=reason)
     env = {**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "PYTHONHASHSEED": "0"}
-    running: dict[int, tuple[subprocess.Popen[str], float]] = {}
-    done = len(cases) - len(pending)
+    running: dict[int, tuple[int, subprocess.Popen[str], float]] = {}
+    done = len(cases) - len(shots)
     pending.reverse()
+    slot = 0
     while pending or running:
         while pending and len(running) < jobs:
             i = pending.pop()
-            cmd = [sys.executable, "-m", "benchmarks.harness", json.dumps(cases[i]), str(repeat)]
+            cmd = [sys.executable, "-m", "benchmarks.harness", json.dumps(cases[i]), "1"]
             proc = subprocess.Popen(
                 cmd,
                 cwd=ROOT.parent,
@@ -127,40 +158,48 @@ def run_cases(
                 text=True,
                 preexec_fn=_limit(mem_gb),  # noqa: PLW1509
             )
-            running[i] = (proc, time.monotonic())
+            running[slot] = (i, proc, time.monotonic())
+            slot += 1
         time.sleep(0.02)
-        for i, (proc, start) in list(running.items()):
+        for key, (i, proc, start) in list(running.items()):
             if proc.poll() is None:
-                if time.monotonic() - start > timeout:
-                    proc.kill()
-                    proc.communicate()
-                    out[i] = row(cases[i], "timeout", detail=f"> {timeout:g} s")
-                    del running[i]
-                else:
+                if time.monotonic() - start <= timeout:
                     continue
+                proc.kill()
+                proc.communicate()
+                shot = row(cases[i], "timeout", detail=f"> {timeout:g} s")
             else:
                 stdout, stderr = proc.communicate()
                 lines = [ln for ln in stdout.splitlines() if ln.startswith(_MARK)]
                 if lines:
-                    out[i] = json.loads(lines[-1][len(_MARK) :])
+                    shot = json.loads(lines[-1][len(_MARK) :])
                 elif "MemoryError" in stderr or proc.returncode in (-9, 137):
-                    out[i] = row(cases[i], "oom", detail=stderr.strip()[-300:])
+                    shot = row(cases[i], "oom", detail=stderr.strip()[-300:])
                 else:
-                    out[i] = row(cases[i], "error", detail=stderr.strip()[-300:])
-                del running[i]
+                    shot = row(cases[i], "error", detail=stderr.strip()[-300:])
+            del running[key]
+            shots[i].append(shot)
+            if shot["status"] != "ok":
+                pending = [j for j in pending if j != i]
+            if i in pending or any(i == j for j, _, _ in running.values()):
+                continue
+            out[i] = _combine(cases[i], shots[i])
             done += 1
             if log:
                 r = out[i]
                 assert r is not None
-                t = "" if r["time"] is None else f"{r['time']:.3g}s"
+                t = "" if r["time"] is None else f"{r['time']:.3g}s cpu"
                 label = " ".join(f"{k}={v}" for k, v in cases[i].items() if k not in ("suite",))
                 print(f"[{done}/{len(cases)}] {r['status']:<12} {t:>9}  {label}", flush=True)
     return [r for r in out if r is not None]
 
 
 _OUTPUTS = frozenset(
-    {"status", "time", "times", "detail", "verdict", "zx_nodes", "nodes_before", "nodes_after"}
-)
+    {
+        "status", "time", "time_std", "times", "wall", "walls", "runs", "detail",
+        "verdict", "zx_nodes", "nodes_before", "nodes_after",
+    }
+)  # fmt: skip
 
 
 def _key(r: dict) -> str:
