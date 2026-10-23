@@ -771,6 +771,7 @@ def tidy(expr: Expr) -> Expr:
         return sympy.Mul(*(sympy.Integer(q) ** expand(k * p.exp) for q, k in primes.items()))
 
     expr = sympy.powsimp(denest(sympy.sympify(expr)), combine="exp")
+    expr = expr.replace(lambda e: isinstance(e, sympy.exp) and e.has(sympy.Mod), _unmod_phase)
     expr = expr.replace(
         lambda e: e.is_Pow and e.base.is_number and not e.exp.is_number and e.base != -1,
         rewrite,
@@ -781,6 +782,21 @@ def tidy(expr: Expr) -> Expr:
             sympy.Pow(-1, _fraction(e.exp), evaluate=True) * (-1) ** (e.exp - _fraction(e.exp))
         ),
     )
+
+
+def _unmod_phase(f: sympy.exp) -> Expr:
+    """``e^{2 pi i c Mod(a, D)}`` as ``e^{2 pi i c a}`` for integer a and integer c D."""
+    turns = expand(f.args[0] / (2 * sympy.pi * sympy.I))
+    out: Expr = sympy.S.Zero
+    for term in sympy.Add.make_args(turns):
+        mods = [m for m in sympy.Mul.make_args(term) if isinstance(m, sympy.Mod)]
+        if len(mods) == 1:
+            m = mods[0]
+            c = term / m
+            if m.args[0].is_integer and (c * m.args[1]).is_integer:
+                term = expand(c * m.args[0])
+        out += term
+    return sympy.exp(2 * sympy.pi * sympy.I * out)
 
 
 def _fraction(e: Expr) -> Expr:
@@ -1450,11 +1466,36 @@ def _reduce_mods(t: Term) -> Term:
     return Term(rewrite(t.amp), t.bound, tuple(rewrite(k) for k in t.kets))
 
 
+def _reindex_shifts(t: Term) -> Term:
+    """A ket ``Mod(b + s, D)``, b a bound index over ``0..D-1`` in no other ket, re-indexed to
+    b when the amplitude at ``Mod(b - s, D)`` is free of Mod in b."""
+    for r, k in enumerate(t.kets):
+        if not isinstance(k, sympy.Mod):
+            continue
+        top, modulus = k.args
+        for b in t.bound:
+            shift = expand(top - b.symbol)
+            if not (
+                b.lo == 0
+                and same(b.hi + 1, modulus)
+                and b.symbol not in shift.free_symbols
+                and shift.is_integer
+                and not any(b.symbol in x.free_symbols for j, x in enumerate(t.kets) if j != r)
+            ):
+                continue
+            amp = tidy(t.amp.xreplace({b.symbol: sympy.Mod(b.symbol - shift, modulus)}))
+            if any(b.symbol in m.free_symbols for m in amp.atoms(sympy.Mod)):
+                continue
+            kets = t.kets[:r] + (b.symbol,) + t.kets[r + 1 :]
+            return _reindex_shifts(Term(amp, t.bound, kets))
+    return t
+
+
 def simplify(s: State) -> State:
     """Terms tidied, zero terms dropped, and bound indices outside every ket summed out."""
     terms = []
     for t in s.terms:
-        t = _reduce_mods(t)
+        t = _reindex_shifts(_reduce_mods(t))
         amp = tidy(t.amp)
         bound = list(t.bound)
         for b in list(bound):
