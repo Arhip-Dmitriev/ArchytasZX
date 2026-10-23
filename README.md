@@ -8,7 +8,7 @@ identities as closed forms that hold for every `n` and every `d` at once.
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/LICENSE)
 [![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt)
-[![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
 ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with integration into Dirac notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
 simulated: every result comes from exact rewriting and has the same shape for every size.
@@ -255,7 +255,7 @@ not implemented yet.
 
 ## Status
 
-A **research prototype under active development**: the API is unstable and changes between
+In **beta and under active development**: the API is unstable and changes between
 releases. Equality checking is sound but not complete, so `decide` and `prove` can answer
 "unknown". Known limits:
 
