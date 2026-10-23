@@ -29,16 +29,26 @@ def main(argv: list[str] | None = None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="run suites, then plot them")
     r.add_argument("suites", nargs="*", default=["all"], choices=[*SUITES, "all"])
-    r.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
-    r.add_argument("--timeout", type=float, default=60.0, help="seconds per case")
+    r.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1)
     r.add_argument(
-        "--repeat", type=int, default=5, help="separate cold runs per case (mean CPU time kept)"
+        "--timeout",
+        type=float,
+        default=60.0,
+        help="CPU seconds per run (wall-clock safety net: 4x)",
     )
-    r.add_argument("--mem-gb", type=float, default=6.0, help="address-space cap per case, 0 = none")
+    r.add_argument(
+        "--repeat", type=int, default=10, help="separate cold runs per case (median CPU kept)"
+    )
+    r.add_argument(
+        "--mem-gb",
+        default="auto",
+        help="memory cap per run in GB, 0 = none, auto = 85%% of available memory / jobs",
+    )
     r.add_argument("--quick", action="store_true", help="the smaller half of every sweep")
     r.add_argument("--tool", action="append", help="only these tools (repeatable)")
     r.add_argument("--family", action="append", help="only these families (repeatable)")
     r.add_argument("--no-plot", action="store_true")
+    r.add_argument("--resume", action="store_true", help="keep finished rows of an earlier run")
     p = sub.add_parser("plot", help="plot saved results")
     p.add_argument("suites", nargs="*", default=["all"], choices=[*SUITES, "all"])
     args = ap.parse_args(argv)
@@ -53,9 +63,18 @@ def main(argv: list[str] | None = None) -> None:
                 cases = [c for c in cases if c["tool"] in args.tool]
             if args.family:
                 cases = [c for c in cases if c["family"] in args.family]
-            print(f"== {suite}: {len(cases)} cases, {args.jobs} jobs, {args.timeout:g} s cap")
+            mem = harness.safe_memory_gb(args.jobs) if args.mem_gb == "auto" else float(args.mem_gb)
+            print(
+                f"== {suite}: {len(cases)} cases x {args.repeat} runs, {args.jobs} jobs, "
+                f"{args.timeout:g} s cpu cap, {mem:.2f} GB memory cap"
+            )
             rows = harness.run_cases(
-                cases, jobs=args.jobs, timeout=args.timeout, repeat=args.repeat, mem_gb=args.mem_gb
+                cases,
+                jobs=args.jobs,
+                timeout=args.timeout,
+                repeat=args.repeat,
+                mem_gb=mem,
+                resume=args.resume,
             )
             print(f"saved {harness.save(suite, rows)}")
             if args.no_plot:
