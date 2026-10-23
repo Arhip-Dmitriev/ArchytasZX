@@ -577,6 +577,7 @@ _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "min": sympy.Min,
     "max": sympy.Max,
     "bit": P.bit,
+    "dot": lambda a, b, d=2: P.ddot(a, b, d),
     "powmod": P.powmod,
     "bitlen": _bitlen,
     "denom": P.denom,
