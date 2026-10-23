@@ -12,7 +12,7 @@
 # limitations under the License.
 
 cff-version: 1.2.0
-title: "ArchytasZX: size-agnostic quantum algorithm development with the symbolic qufinite ZX-calculus"
+title: "ArchytasZX: Size- and Dimension-Agnostic Engine for Quantum Algorithm Development Based on ZX-Calculus"
 message: "If you use this software, please cite it as below."
 type: software
 authors:

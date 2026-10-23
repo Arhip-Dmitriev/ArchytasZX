@@ -270,7 +270,7 @@ If you use ArchytasZX in academic work, please cite it via
 ```bibtex
 @software{dmitriev_archytaszx,
   author  = {Dmitriev, Arkhip Alekseyevich},
-  title   = {ArchytasZX: size-agnostic quantum algorithm development with the symbolic qufinite ZX-calculus},
+  title   = {ArchytasZX: Size- and Dimension-Agnostic Engine for Quantum Algorithm Development Based on {ZX}-Calculus},
   year    = {2026},
   url     = {https://github.com/Arhip-Dmitriev/ArchytasZX},
   license = {Apache-2.0}
