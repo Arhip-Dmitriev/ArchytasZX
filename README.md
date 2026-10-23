@@ -1,6 +1,6 @@
 # ArchytasZX
 
-**Develop quantum algorithms without fixing the size of the machine.** Write a circuit once,
+**Develop quantum algorithms without fixing the size or dimensionality of the machine.** Write a circuit once,
 for `n` qudits of dimension `d`, and get its states, measurement statistics and proofs of its
 identities as closed forms that hold for every `n` and every `d` at once.
 
