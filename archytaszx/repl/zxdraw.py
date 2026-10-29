@@ -14,7 +14,7 @@
 
 """Drawings of ZX diagrams: one layered layout, rendered with matplotlib, Unicode or ASCII.
 
-:func:`layout` places a :class:`~archytaszx.repl.zxview.View`'s nodes in columns by their
+:func:`layout` places a :class:`View`'s nodes in columns by their
 distance from the outputs (outputs rightmost), splits wires that skip columns with dummy
 points, and orders each column by barycentre sweeps to reduce crossings. A diagram above
 :data:`MAX_NODES` nodes is summarised: each summed term becomes one box and chains of
@@ -36,9 +36,22 @@ from dataclasses import dataclass, field
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.diagram.graph import Diagram, Node, NodeId, PortRef
-from archytaszx.repl import display as D
+from archytaszx.repl import terminal as T
 from archytaszx.repl.printer import rule_turns
-from archytaszx.repl.zxview import View
+
+
+@dataclass
+class View:
+    """A diagram with the nodes of each summed term grouped: ``groups`` maps a node to its
+    term, ``labels`` names each term, ``outputs`` names the outputs (``out k`` when empty) and
+    ``notes`` define dimension names."""
+
+    diagram: Diagram
+    groups: dict[NodeId, int] = field(default_factory=dict)
+    labels: dict[int, str] = field(default_factory=dict)
+    outputs: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
 
 MAX_NODES = 150
 """The most nodes drawn one by one; above it terms and splitter chains are summarised."""
@@ -576,10 +589,10 @@ def density(lay: Layout) -> float:
     items beyond 40 and with the scale-down a figure wider than the terminal needs."""
     items = sum(1 for it in lay.items.values() if it.kind != "dummy")
     value = 2 * max(1.0, math.sqrt(items / 40))
-    cell = D.TERMINAL.cell_width
+    cell = T.TERMINAL.cell_width
     if cell:
         room = max(10, shutil.get_terminal_size().columns - 1) * cell
-        natural = (lay.columns * 1.6 + 2) * 0.9 * D.CONFIG.size * 100
+        natural = (lay.columns * 1.6 + 2) * 0.9 * T.CONFIG.size * 100
         value *= max(1.0, natural / room)
     return min(value, 8.0)
 
@@ -598,18 +611,18 @@ def figure(
     from matplotlib.figure import Figure
     from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
 
-    fg, bg = D.colours(dark_theme)
-    if D.CONFIG.color != "auto":
-        fg = D.CONFIG.color
+    fg, bg = T.colours(dark_theme)
+    if T.CONFIG.color != "auto":
+        fg = T.CONFIG.color
     if palette is not None:
         fg, bg = palette
-    scale = D.CONFIG.size
+    scale = T.CONFIG.size
     ncol = lay.columns
     nrow = 1 + max((i.row for i in lay.items.values()), default=0)
     dx, dy = 1.6, 0.9
     width = (ncol * dx + 2) * 0.9 * scale
     height = (nrow * dy + 1.5) * 0.9 * scale
-    dpi = 100 * min(density, D._MAX_PIXELS / (100 * max(width, height)))
+    dpi = 100 * min(density, T._MAX_PIXELS / (100 * max(width, height)))
     fig = Figure(figsize=(width, height), dpi=dpi)
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
@@ -760,34 +773,34 @@ def draw(view: View, style: str = "matplot") -> str:
     if style not in STYLES:
         raise ValueError(f"unknown drawing style {style!r}")
     lay = layout(view)
-    proto = D.protocol() if style == "matplot" else "none"
-    if proto != "none" or D.SAVE_DIR is not None:
-        dense = density(lay) if proto == "none" or D.scalable(proto) else 1
+    proto = T.protocol() if style == "matplot" else "none"
+    if proto != "none" or T.SAVE_DIR is not None:
+        dense = density(lay) if proto == "none" or T.scalable(proto) else 1
         try:
-            if D.SAVE_WHITE:
-                D.keep(
+            if T.SAVE_WHITE:
+                T.keep(
                     figure(
-                        lay, dark_theme=False, opaque=True, density=density(lay), palette=D.WHITE
+                        lay, dark_theme=False, opaque=True, density=density(lay), palette=T.WHITE
                     ),
                     "zx",
                 )
                 png = (
                     None
                     if proto == "none"
-                    else figure(lay, dark_theme=D.dark(), opaque=proto == "sixel", density=dense)
+                    else figure(lay, dark_theme=T.dark(), opaque=proto == "sixel", density=dense)
                 )
             else:
                 png = figure(
                     lay,
-                    dark_theme=D.dark(),
-                    opaque=proto == "sixel" or D.SAVE_DIR is not None,
+                    dark_theme=T.dark(),
+                    opaque=proto == "sixel" or T.SAVE_DIR is not None,
                     density=dense,
                 )
-                D.keep(png, "zx")
+                T.keep(png, "zx")
         except Exception:  # noqa: BLE001
             png = None
         if png is not None:
-            image = D.encode_image(png, proto, dense) if style == "matplot" else None
+            image = T.encode_image(png, proto, dense) if style == "matplot" else None
             if image is not None:
                 return image
     if style == "matplot":

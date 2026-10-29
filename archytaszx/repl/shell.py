@@ -55,6 +55,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
 
 from archytaszx.repl import display as D
+from archytaszx.repl import terminal as T
 from archytaszx.repl.commands import Outcome, Session, detail_text, format_outcome, run
 from archytaszx.repl.lang import Interpreter, LangError, incomplete, is_else, may_continue
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
@@ -370,7 +371,7 @@ class Shell:
         sink = sys.stdout if stdout is None else stdout
         interactive = _isatty(source)
         if interactive and "plot" in self.interpreter.styles:
-            D.prepare()
+            T.prepare()
         use_input = interactive and source is sys.stdin and sink is sys.stdout
         readline_module = _start_readline() if use_input else None
         try:
@@ -463,17 +464,17 @@ class Shell:
         words = rest.split(maxsplit=1)
         try:
             if words == ["save"]:
-                return f"saved {D.save_config(D.CONFIG)}"
+                return f"saved {T.save_config(T.CONFIG)}"
             if words == ["reset"]:
-                D.CONFIG.size, D.CONFIG.color = D.Config().size, D.Config().color
+                T.CONFIG.size, T.CONFIG.color = T.Config().size, T.Config().color
             elif len(words) == 2:
-                D.set_config(D.CONFIG, words[0].lower(), words[1])
+                T.set_config(T.CONFIG, words[0].lower(), words[1])
             elif words:
                 raise ValueError("usage: config [KEY VALUE | save | reset]")
         except (ValueError, OSError) as exc:
             self.errors += 1
             return f"error: {exc}"
-        return f"size = {D.CONFIG.size:g}\ncolor = {D.CONFIG.color}\nfile: {D.config_path()}"
+        return f"size = {T.CONFIG.size:g}\ncolor = {T.CONFIG.color}\nfile: {T.config_path()}"
 
     def _paint(self, text: str, code: str) -> str:
         return f"\x1b[{code}m{text}\x1b[0m" if self.color else text
@@ -712,11 +713,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     paths = [p for p in args.scripts if args.commands or p.endswith(".azx")]
     script_args = [p for p in args.scripts if not (args.commands or p.endswith(".azx"))]
     try:
-        D.CONFIG = D.load_config()
+        T.CONFIG = T.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
-    D.SAVE_DIR = args.images or args.images_white
-    D.SAVE_WHITE = args.images_white is not None
+    T.SAVE_DIR = args.images or args.images_white
+    T.SAVE_WHITE = args.images_white is not None
     mode, zx_style = VIEWS[args.mode]
     shell = Shell(
         mode=mode,
@@ -732,7 +733,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     drawn = mode is not NotationMode.DIRAC and zx_style == "matplot"
     if ("plot" in shell.interpreter.styles or drawn) and (paths or args.command):
-        D.prepare()
+        T.prepare()
     commands: list[str] = list(args.command)
     scripts: list[list[str]] = []
     for path in paths:

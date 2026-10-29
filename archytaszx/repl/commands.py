@@ -62,7 +62,7 @@ from archytaszx.diagram.scalable import (
     to_scalable,
 )
 from archytaszx.diagram.validate import ValidateError
-from archytaszx.repl import zxdraw, zxview
+from archytaszx.repl import zxdraw
 from archytaszx.repl.parser import (
     ParseError,
     ParseGrammarError,
@@ -1913,7 +1913,7 @@ def format_outcome(
         raise CommandGrammarError(f"unknown ZX drawing style {zx_style!r}")
 
     def draw(diagram: Diagram) -> str:
-        text = zxdraw.draw(zxview.View(diagram), zx_style)
+        text = zxdraw.draw(zxdraw.View(diagram), zx_style)
         return f"{text}\n{render_graph(diagram)}" if listing else text
 
     parts: list[str] = []

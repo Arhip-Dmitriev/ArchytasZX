@@ -55,6 +55,7 @@ from archytaszx.diagram.generators import (
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.repl import zxsym
 from archytaszx.repl.printer import render_graph
+from archytaszx.repl.zxdraw import View
 from archytaszx.semantics import pathsum as P
 
 MAX_TABLE = 256
@@ -67,19 +68,6 @@ class ZXViewError(Exception):
 
 class _NoForm(Exception):
     """A term outside the structural translation."""
-
-
-@dataclass
-class View:
-    """A diagram with the nodes of each summed term grouped: ``groups`` maps a node to its
-    term, ``labels`` names each term, ``outputs`` names the outputs (``out k`` when empty) and
-    ``notes`` define dimension names."""
-
-    diagram: Diagram
-    groups: dict[NodeId, int] = field(default_factory=dict)
-    labels: dict[int, str] = field(default_factory=dict)
-    outputs: list[str] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
 
 
 # -- dense construction ----------------------------------------------------------------------
