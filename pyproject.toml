@@ -17,8 +17,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ArchytasZX"
-version = "1.1.3"
-description = "Size-agnostic quantum algorithm development: symbolic qufinite ZX-calculus for any qudit count and dimension, with proofs checked in Lean"
+version = "2.0.0"
+description = "Size-agnostic proofs of quantum algorithm identities: symbolic qufinite ZX-calculus for any qudit count and dimension, with proofs checked in Lean"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
@@ -76,11 +76,6 @@ dev = [
     "pytest-xdist",
     "ruff",
     "mypy",
-]
-bench = [
-    "matplotlib",
-    "pyzx",
-    "qiskit",
 ]
 
 [tool.setuptools.packages.find]

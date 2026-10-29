@@ -1,8 +1,8 @@
 # ArchytasZX
 
-**Develop quantum algorithms without fixing the size or dimensionality of the machine.** Write a circuit once,
-for `n` qudits of dimension `d`, and get its states, measurement statistics and proofs of its
-identities as closed forms that hold for every `n` and every `d` at once.
+**Prove identities of quantum algorithms without fixing the size or dimensionality of the
+machine.** Write a circuit once as a ZX diagram, for `n` qudits of dimension `d`, and get
+rewrites, decisions of equality and proofs that hold for every `n` and every `d` at once.
 
 [![PyPI](https://img.shields.io/pypi/v/archytaszx.svg)](https://pypi.org/project/archytaszx/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
@@ -10,54 +10,33 @@ identities as closed forms that hold for every `n` and every `d` at once.
 [![Proofs checked in Lean 4](https://img.shields.io/badge/proofs-Lean%204-purple.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/Arhip-Dmitriev/ArchytasZX#status)
 
-ArchytasZX is a symbolic engine built on the qufinite ZX-calculus, with integration into Dirac notation. Qudit count and dimension are symbols, so nothing is ever enumerated, sampled or
-simulated: every result comes from exact rewriting and has the same shape for every size.
+ArchytasZX is a symbolic engine for the qufinite ZX(W)-calculus. Qudit count, dimension and
+multiplicities are symbols, so nothing is ever enumerated, sampled or simulated: every
+rewrite, decision and proof holds for every size at once, and every proof can be re-checked in
+Lean 4. To write algorithms in Dirac notation instead of diagrams, see its sister project
+[DiracULA](https://github.com/Arhip-Dmitriev/DiracULA).
 
-## Example: Deutsch–Jozsa for every `n`
+## Example: Deutsch–Jozsa for every `n` and every `d`
 
-[`examples/deutsch_jozsa.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa.azx), a balanced oracle on an `n`-qubit register,
-with `n` never given a value:
-
-```text
-var n
-gate U_f = |x>|y> -> |x>|y xor bit(x, 0)>
-|psi> = |0>^@n @ |1>
-show(|psi>)
-(H^@n @ H)|psi>
-show(|psi>)
-U_f|psi>
-show(|psi>)
-(H^@n @ I)|psi>
-show(|psi>)
-var z = floor(measure|psi>/2)
-show(z)
-show(|psi>)
-```
+[`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx)
+writes the qudit Deutsch–Jozsa circuit as ZXW diagrams, with the register a bang box of
+symbolic multiplicity, and proves that it returns `e^{2πi c/d} |0⟩^⊗n ⊗ F†|1⟩` for the constant
+oracle and `|0⟩^⊗(n-1) ⊗ |1⟩ ⊗ F†|1⟩` for the balanced one:
 
 ```console
-$ archytaszx --unicode examples/deutsch_jozsa.azx
-|ψ⟩ = |0⟩^⊗n ⊗ |1⟩
-|ψ⟩ = 2^(-n/2 - 1/2) Σ_{y=0}^{1} Σ_{x=0}^{2^n - 1} (-1)^y |x⟩ ⊗ |y⟩
-|ψ⟩ = 2^(-n/2 - 1/2) Σ_{y=0}^{1} Σ_{x=0}^{2^n - 1} (-1)^y |x⟩ ⊗ |(y ⊕ bit(x, 0))⟩
-|ψ⟩ = 2^(-n - 1/2) Σ_{y=0}^{1} Σ_{x=0}^{2^n - 1} Σ_{x'=0}^{2^n - 1} (-1)^(y + x⊙x') |x'⟩ ⊗ |(y ⊕ bit(x, 0))⟩
-z = [(1, 1)]
-|ψ⟩⟨ψ| = 1/2 Σ_{k1=0}^{1} |1⟩⟨1| ⊗ |k1⟩⟨k1|
+$ archytaszx --unicode examples/deutsch_jozsa_proof.azx
+...
+decide: equal by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: re-checkable; certificate kernel / certificate lean
+lean: tensor-network semantics, the normal form computed by the Lean kernel
+lean: wrote deutsch_jozsa_constant.lean
+...
+decide: equal by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+...
+lean: wrote deutsch_jozsa_balanced.lean
 ```
 
-The measurement is a Born distribution derived symbolically: outcome `1` with probability `1`,
-so the oracle is balanced, for every register size. The post-measurement state is the mixed
-state on the last line. The same states can be drawn as ZX diagrams (`--zx`), where the
-register is a bang box of multiplicity `n - 1` rather than `n` copies:
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Arhip-Dmitriev/ArchytasZX/main/docs/images/deutsch_jozsa_zx.png" alt="ZX diagram of the Deutsch–Jozsa state before measurement, with the register as a bang box of multiplicity n - 1" width="640">
-</p>
-
-The qudit version,
-[`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx),
-proves that the whole circuit of `examples/deutsch_jozsa_qudits.azx` returns
-`e^{2πi c/d} |0⟩^⊗n ⊗ F†|1⟩` for the constant oracle and `|0⟩^⊗(n-1) ⊗ |1⟩ ⊗ F†|1⟩` for the
-balanced one, for every `n` and every `d`. Both proofs are written out as Lean 4 files.
+Both equalities hold for every `n` and every `d`, and both are written out as Lean 4 files.
 
 ## What it does
 
@@ -70,63 +49,38 @@ balanced one, for every `n` and every `d`. Both proofs are written out as Lean 4
   proof search decide equalities; induction over bang-box multiplicities proves whole families.
 - **Independent checking.** Every proof emits a replayable certificate, is re-checked by a small
   proof kernel, and can be exported to Lean 4 and Mathlib, where it is checked again from scratch.
-- **A language for algorithms.** Dirac notation with gates, sums, measurement, control flow and
-  f-strings, run as scripts or interactively, and embeddable in Python and Jupyter.
 
 ## Install
 
 Python ≥ 3.12. `numpy` and `sympy` are the only runtime dependencies. With `matplotlib`
-installed, output is typeset and ZX diagrams are drawn as images in terminals that show them;
-without it, both fall back to Unicode text.
+installed, ZX diagrams are drawn as images in terminals that show them; without it, they fall
+back to Unicode text.
 
 ```bash
 pip install archytaszx           # or 'archytaszx[viz]' to add matplotlib
 archytaszx                       # interactive shell
-archytaszx script.azx            # run a script
+archytaszx commands.azx          # run a command file
 ```
 
 ## Quickstart
 
-### The `.azx` language
+### The shell
 
-```text
-var n
-gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
-|psi> = H^@n |0>^@n
-var z = measure|psi>
-show(z, |psi>)
-print(f"z = {z}")
+```console
+$ archytaszx --unicode -c 'load sum_{k=0}^{3-1} |k>^{30}; copy'
+loaded dirac input
+Σ_{k0,k1=0}^{d-1} [k0 = k1] |k0⟩^{n} |k1, k1⟩
+at d = 3, n = 29: Σ_{k0,k1=0}^{3-1} [k0 = k1] |k0⟩^{29} |k1, k1⟩
 ```
 
-Output styles are `--render` (default, typeset images), `--unicode`, `--ascii` and `--latex`;
-several style flags print every output in each style, and `--order` groups the output by style
-at the end. `--zx`, `--both` and `--raw` switch between Dirac notation and ZX diagrams, and
-`--images DIR` saves every rendered image as a PNG. In the shell, commands starting with `:`
-drive the engine directly (`:help` lists them).
-
-[`examples/learn_azx.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/learn_azx.azx)
-is a guided tour of the whole language, ending in Deutsch–Jozsa for every `n`; the complete
-reference is [`docs/LANGUAGE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LANGUAGE.txt).
+Diagrams are loaded in a DSL, in Dirac notation or as a graph listing, then rewritten,
+normalised, decided and proved with commands such as `apply`, `normalize`, `decide`, `prove`
+and `induct`; `help` lists them all. `--zx`, `--both` and `--raw` switch between Dirac notation
+and ZX drawings. The reference is
+[`docs/ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt).
 
 ### From Python
 
-```python
-from archytaszx import azx               # a shared Program; archytaszx.Program() for a fresh one
-
-azx("var n")
-azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n      # |psi> = H^@n |0>^@n
-azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
-azx.phi       # |φ⟩ = 2^(-n/2) Σ_{x=0}^{2^n - 1} |x⟩ - 2^(1 - n/2) |0⟩^⊗n
-azx.phi.latex()                          # also rendered by Jupyter
-
-y = azx.measure | azx.psi
-y             # [(k, 2^(-n)) : k ∈ {0,…,2^n - 1}]
-```
-
-[`examples/learn_azx.py`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/learn_azx.py)
-is the same tour from Python.
-
-### The diagram engine
 
 Build two Z spiders over a symbolic dimension `d`, fuse them, check the rewrite, and prove it for
 every count at once.
@@ -209,18 +163,16 @@ The full reference documentation is in [`docs/`](https://github.com/Arhip-Dmitri
 | [`INDEX.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INDEX.txt) | Index of the documentation, conventions and reading order |
 | [`OVERVIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/OVERVIEW.txt) | What the engine is, its guarantees and its limits |
 | [`INSTALL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INSTALL.txt) | Installation, the Lean library, configuration and environment variables |
-| [`LANGUAGE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LANGUAGE.txt) | The `.azx` language reference |
-| [`SHELL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SHELL.txt) | The `archytaszx` command: flags, views, styles, meta-commands, exit codes |
+| [`SHELL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SHELL.txt) | The `archytaszx` command: flags, views, shell commands, exit codes |
 | [`ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt) | The `:` engine commands and the diagram input forms |
-| [`PYTHON_API.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PYTHON_API.txt) | The Python embedding and the engine import map |
+| [`PYTHON_API.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PYTHON_API.txt) | The engine import map and a worked example |
 | [`ALGEBRA.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ALGEBRA.txt) | Layer A: dimensions, phases, exact scalars |
 | [`DIAGRAM.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/DIAGRAM.txt) | Layer B: generators, diagrams, bang boxes, scalable notation, validation |
 | [`REWRITE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/REWRITE.txt) | Layer C: rules, matching, strategies, normal form, e-graph, tactics |
 | [`RULES.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/RULES.txt) | Every rewrite rule with its scalar and side conditions |
-| [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle, path sums, measurement |
+| [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle |
 | [`PROOFS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PROOFS.txt) | Deciding equality, proof search, induction, certificates, the kernel |
 | [`LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) | The Lean 4 library and the export of proofs and refutations |
-| [`ZX_VIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ZX_VIEW.txt) | How language states become ZX diagrams and how they are drawn |
 | [`ERRORS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ERRORS.txt) | The exception hierarchy of every module |
 | [`GLOSSARY.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/GLOSSARY.txt) | Definitions of the terms used throughout |
 
@@ -244,18 +196,18 @@ semantics, the trust boundary, the normaliser and the refutation method.
 
 ## Architecture
 
-Four engine layers, depending strictly downward, with the language on top:
+Four engine layers, depending strictly downward, with the shell on top:
 
 | Layer | Package | Contents |
 |---|---|---|
 | A | [`algebra`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/algebra) | Dimension expressions with one canonical form and a unifier; phase vectors tied to `d`; exact scalars over roots of unity with a character-sum simplifier |
 | B | [`diagram`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/diagram) | Qufinite ZXW generators (Z, X, Fourier box, triangle, W, dimension binder/splitter) with per-port dimensions; bang boxes and scalable sheet wires; validation |
 | C | [`rewrite`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/rewrite) | Rule library, matcher and engine with provenance; normal form; diagram-level e-graph; tactics and bidirectional proof search |
-| D | [`semantics`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/semantics) | Symbolic and numeric contraction; path sums and Born distributions; the `decide_equal` ladder; induction; certificates, proof kernel and Lean export |
-| — | [`repl`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/repl) | The `.azx` language, parser and printer, ZX view and drawing, shell |
+| D | [`semantics`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/semantics) | Symbolic and numeric contraction; the `decide_equal` ladder; induction; certificates, proof kernel and Lean export |
+| — | [`repl`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/repl) | Diagram parser and printer, ZX drawing, engine commands, shell |
 
-Sub-package `__init__.py` files are empty; `archytaszx` itself exports only `Program`, `Value`
-and `azx`, so engine objects are imported by full module path. Each module raises only its own
+The package and sub-package `__init__.py` files export nothing, so engine objects are imported
+by full module path. Each module raises only its own
 `<Area>Error` hierarchy: `<Area>GrammarError` for a wrong call and `<Area>DomainError` for a case
 not implemented yet.
 
