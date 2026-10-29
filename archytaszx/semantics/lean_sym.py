@@ -1035,6 +1035,8 @@ def sym_check(
 def _dmon(e: sp.Expr, syms: Sequence[sp.Symbol]) -> DMon:
     """A dimension expression as ``c Π d_i^e_i``."""
     e = sp.expand(sp.sympify(e))
+    if e.has(sp.pi):
+        raise NetUnsupported("a phase that is not a rational number of turns (a real angle)")
     c, rest = e.as_coeff_Mul()
     if not c.is_Integer or int(c) <= 0:
         raise NetUnsupported(f"the dimension {e} is not a monomial")

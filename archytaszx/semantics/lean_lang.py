@@ -1229,6 +1229,10 @@ class Certifier:
             return Prog("add", (self.scalar_prog(node.left), q))
         if isinstance(node, L.Neg):
             return Prog("mul", (MINUS, self.scalar_prog(node.arg)))
+        if isinstance(node, L.Name):
+            raise CertifyError(
+                f"{node.id} is not a scalar; only scalar and state equations are certified"
+            )
         raise CertifyError(f"the scalar expression {type(node).__name__}")
 
     def expr(self, node: object, want: Layout | None = None) -> tuple[Prog, Layout]:
@@ -1941,6 +1945,10 @@ class Certifier:
             "import ArchytasZX.Lang",
             "",
             "open ArchytasZX.Sym ArchytasZX.LSym ArchytasZX.Lang",
+            "",
+            "set_option linter.unusedVariables false",
+            "set_option linter.unusedTactic false",
+            "set_option linter.unnecessarySeqFocus false",
             "",
             *(d + "\n" for d in dims),
             *decls,
