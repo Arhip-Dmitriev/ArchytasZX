@@ -677,6 +677,17 @@ def _argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", action="store_true", help="echo each line's value, utop style")
     parser.add_argument(
+        "--certify",
+        metavar="DIR",
+        default=None,
+        help="write a Lean certificate of every shown value and every assert to DIR",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="check every written Lean certificate with lake env lean; a failure exits 1",
+    )
+    parser.add_argument(
         "scripts",
         nargs="*",
         metavar="FILE|ARG",
@@ -736,7 +747,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not commands and not scripts:
             code = shell.loop()
         else:
-            for lines in [commands, *scripts]:
+            interp = shell.interpreter
+            interp.lean_check = args.check
+            interp.certify_all = args.certify is not None
+            for k, lines in enumerate([commands, *scripts]):
+                if k:
+                    path = paths[k - 1]
+                    interp.script = os.path.splitext(os.path.basename(path))[0]
+                    interp.certify_dir = args.certify or os.path.dirname(path) or "."
+                elif args.certify is not None:
+                    interp.certify_dir = args.certify
                 for _, output in shell.iter_script(lines):
                     if output:
                         _write(sys.stdout, output + "\n")

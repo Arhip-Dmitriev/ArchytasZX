@@ -32,7 +32,9 @@ distribution and leaves the named state as the mixture of its outcomes.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
+from pathlib import Path
 
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -310,6 +312,7 @@ class Program:
             raise L.LangTypeError(f"cannot infer every register width of |{name}>")
         state = L._flex(raw, ())
         interp.states[name] = P.simplify(P.dagger(state) if bra else state)
+        interp._record("opaque", name, (), interp.states[name], "a state assigned from Python")
 
     def _raw(self, value: object) -> object:
         """The interpreter value of a Value, a Python number or a sympy expression."""
@@ -374,6 +377,19 @@ class Program:
     def show(self, *values: object, style: str = "unicode") -> None:
         """Prints the values in a display style."""
         print(self.render(*values, style=style))
+
+    def certify(self, name: str, out_dir: str | os.PathLike[str] = ".") -> Path:
+        """Writes the Lean certificate of the state, scalar or distribution ``name`` into
+        ``out_dir``; its path. Raises :class:`~archytaszx.repl.lang.LangError` when the result
+        cannot be certified."""
+        interp = self._interp
+        saved = interp.certify_dir
+        interp.certify_dir = os.fspath(out_dir)
+        try:
+            report = interp.certify(name)
+        finally:
+            interp.certify_dir = saved
+        return Path(report.split("lean: wrote ", 1)[1].split(" (", 1)[0])
 
     def names(self) -> Iterable[str]:
         """Every user-defined name."""

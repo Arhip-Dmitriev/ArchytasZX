@@ -61,6 +61,7 @@ latest statement.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -71,6 +72,7 @@ import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 from archytaszx.repl import display as D
 from archytaszx.repl import zxdraw, zxsym, zxview
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
+from archytaszx.semantics import lean_lang as LL
 from archytaszx.semantics import pathsum as P
 
 
@@ -605,6 +607,7 @@ _STATEMENTS = {
     "if",
     "assert",
     "assume",
+    "certify",
 }
 _RESERVED = (
     _STATEMENTS
@@ -926,6 +929,25 @@ class Interpreter:
         self.slots: dict[str, list[tuple[str, str | None]]] = {}
         self.states: dict[str, P.State | P.Mixed] = {}
         self.lists: dict[str, list[tuple[D.Label | None, object]]] = {}
+        self.trees: dict[str, LL.GateTree] = {}
+        """Each gate's pattern, body syntax tree and source, for certificates."""
+        self.log: list[LL.Event] = []
+        """Every state update, for certificates."""
+        self.script = "session"
+        """The script name certificates are named after."""
+        self.certify_dir: str | None = None
+        """Where certificates are written; next to the script when None."""
+        self.lean_check = False
+        """Whether each written certificate is checked by Lean."""
+        self.certify_all = False
+        """Whether every shown value and every assertion is certified."""
+        self.var_trees: dict[str, tuple[object, int, dict[str, object]]] = {}
+        """Each variable's defining syntax tree, log position and variables, for certificates."""
+        self.asserts = 0
+        self.cert_names: dict[str, int] = {}
+        self.measured: list[tuple[str, P.Distribution, int]] = []
+        """Each measurement: the state, its distribution and the log position before it."""
+        self._text = ""
         for stmt in _split_statements(PRELUDE):
             if stmt.strip():
                 self._statement(stmt.strip(), builtin=True)
@@ -983,6 +1005,7 @@ class Interpreter:
         if _ELSE.match(word):
             raise LangSyntaxError("else without an if before it")
         self.last = None
+        self._text = text
         if word == "oracle":
             raise LangSyntaxError("oracle is gone; write gate (every gate is an oracle)")
         toks = tokenize(text)
@@ -1034,6 +1057,7 @@ class Interpreter:
         if not isinstance(value, P.State) or value.bra:
             return False
         self.states[name] = P.simplify(_flex(value, ()))
+        self._record("apply", name, tuple(lefts), self.states[name])
         self.last = Echo(self._label("ket", name), "ket", self.states[name])
         return True
 
@@ -1187,8 +1211,132 @@ class Interpreter:
                 raise LangTypeError(f"|{name}> must be assigned a state")
             try:
                 self.states[name] = P.simplify(P.fold(cur, step, probes, j, lo, hi))
+                self._record_loop(name, toks, var, j, lo, hi, cur, step, probes)
             except P.PathSumError as exc:
                 raise LangError(f"cannot run the loop symbolically: {exc}") from exc
+
+    def _record_loop(
+        self,
+        name: str,
+        toks: list[Tok],
+        var: str,
+        j: sympy.Symbol,
+        lo: sympy.Expr,
+        hi: sympy.Expr,
+        cur: P.State,
+        step: P.State,
+        probes: list[sympy.Dummy],
+    ) -> None:
+        """A loop over a symbolic range: its body, variable, range and a function giving the
+        closed form after the iterations before ``j``."""
+
+        def invariant() -> P.State:
+            return P.simplify(P.fold(cur, step, probes, j, lo, j - 1))
+
+        body = self._parser(toks[2:]).expr()
+        values = dict(self.values)
+        values[var] = j
+        self.log.append(
+            LL.Event(
+                "loop", name, (body, j, lo, hi, invariant), self._text, self.states[name], values
+            )
+        )
+
+    def _record(
+        self, kind: str, name: str, nodes: tuple[object, ...], value: object, why: str = ""
+    ) -> None:
+        self.log.append(LL.Event(kind, name, nodes, why or self._text, value, dict(self.values)))
+
+    def _stmt_certify(self, toks: list[Tok], text: str, builtin: bool) -> str:
+        names = [t.text for t in toks[1:] if t.text != ","]
+        if not names or any(not _IDENT.fullmatch(n) for n in names):
+            raise LangSyntaxError("usage: certify NAME[, NAME...]")
+        return "\n".join(self.certify(n) for n in names)
+
+    def _certifier(self) -> LL.Certifier:
+        funcs: dict[str, Callable[..., sympy.Expr]] = {**_FUNCS, **self.funcs, "xor": P.xor}
+        cert = LL.Certifier(
+            self.trees, self.log, lambda t: self._parser(tokenize(t)).expr(), self.script, funcs
+        )
+        cert.assumptions = list(self.assumptions)
+        return cert
+
+    def certify(self, name: str) -> str:
+        """Writes the Lean certificate of the state or variable ``name``; the report lines."""
+        cert = self._certifier()
+        try:
+            if name in self.states:
+                value = self.states[name]
+                if isinstance(value, P.Mixed):
+                    found = [m for m in self.measured if m[0] == name]
+                    if (
+                        not found
+                        or self.log[-1].name != name
+                        and any(e.name == name for e in self.log[found[-1][2] + 1 :])
+                    ):
+                        raise LL.CertifyError("a density matrix not left by a measurement")
+                    source = cert.certify_mixed(name, found[-1][2], value)
+                else:
+                    source = cert.certify_state(name, value)
+            elif name in self.var_trees and isinstance(self.values.get(name), P.Distribution):
+                source = self._certify_dist(cert, name)
+            elif name in self.var_trees and isinstance(self.values.get(name), sympy.Basic):
+                node, upto, values = self.var_trees[name]
+                source = cert.certify_scalar(name, node, upto, values, self.values[name])
+            else:
+                raise LL.CertifyError(f"{name} is not a state or a scalar variable")
+        except LL.CertifyError as exc:
+            raise LangError(f"cannot certify {name}: {exc}") from exc
+        return self._write_cert(cert.script, name, source)
+
+    def _certify_dist(self, cert: LL.Certifier, name: str) -> str:
+        node, upto, values = self.var_trees[name]
+        found = [m for m in self.measured if m[2] >= upto]
+        if not found:
+            raise LL.CertifyError(f"{name} reads no measurement")
+        label, raw, at = found[0]
+        value = self.values[name]
+        mapped = None if value == raw else value
+        cert.outcome_fn = lambda v: self._outcome_image(node, v)
+        return cert.certify_dist(name, label, at, values, raw, mapped)
+
+    def _outcome_image(self, node: object, v: sympy.Expr) -> sympy.Expr:
+        """The value ``node`` takes with its measurement replaced by ``v``."""
+        if isinstance(node, MeasureNode):
+            return v
+        if isinstance(node, Call):
+            fn = _FUNCS.get(node.name) or self.funcs.get(node.name)
+            if fn is None:
+                raise LL.CertifyError(f"the function {node.name}")
+            return fn(*(self._outcome_image(a, v) for a in node.args))
+        if isinstance(node, Bin) and node.op in ("+", "-", "*", "/", "%"):
+            a, b = self._outcome_image(node.left, v), self._outcome_image(node.right, v)
+            return {"+": a + b, "-": a - b, "*": a * b, "/": a / b, "%": sympy.Mod(a, b)}[node.op]
+        if isinstance(node, Num):
+            return node.value
+        raise LL.CertifyError("a function of outcomes this exporter does not read")
+
+    def _write_cert(self, script: str, name: str, source: str) -> str:
+        key = f"{script}_{LL._clean(name)}"
+        self.cert_names[key] = self.cert_names.get(key, 0) + 1
+        if self.cert_names[key] > 1:
+            fresh = f"{key}_{self.cert_names[key]}"
+            source = source.replace(f"theorem {key} ", f"theorem {fresh} ").replace(
+                f"#print axioms {key}\n", f"#print axioms {fresh}\n"
+            )
+            name = f"{name}_{self.cert_names[key]}"
+        out_dir = self.certify_dir or "."
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"{script}_{LL._clean(name)}.lean")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(source)
+        lines = [f"lean: wrote {path} (0 axioms: none)"]
+        if self.lean_check:
+            ok, output = LL.check_file(path)
+            if not ok:
+                raise LangError(f"lean: {path} failed:\n{output}")
+            lines.append(f"lean: checked {path}")
+        return "\n".join(lines)
 
     def _stmt_assume(self, toks: list[Tok], text: str, builtin: bool) -> None:
         source = text[len("assume") :].strip()
@@ -1199,10 +1347,27 @@ class Interpreter:
             return
         self.assumptions.append(value)
 
-    def _stmt_assert(self, toks: list[Tok], text: str, builtin: bool) -> None:
+    def _stmt_assert(self, toks: list[Tok], text: str, builtin: bool) -> str | None:
         source = text[len("assert") :].strip()
         if not self._truth(self._condition(source, "assertion"), "assertion"):
             raise LangError(f"assertion failed: {source}")
+        if self.certify_all:
+            node = self._condition(source, "assertion")
+            if not (isinstance(node, Bin) and node.op == "=="):
+                raise LangError(
+                    f"assertion not certified: cannot certify {source}: not an equation"
+                )
+            self.asserts += 1
+            label = f"assert_{self.asserts}"
+            cert = self._certifier()
+            try:
+                lean = cert.certify_assert(
+                    label, node.left, node.right, len(self.log), dict(self.values), source
+                )
+            except LL.CertifyError as exc:
+                raise LangError(f"assertion not certified: cannot certify {source}: {exc}") from exc
+            return self._write_cert(cert.script, label, lean)
+        return None
 
     def _check_name(self, name: str, kind: str) -> None:
         if not _IDENT.fullmatch(name):
@@ -1253,6 +1418,7 @@ class Interpreter:
         self.sugar = [(n, v) for n, v in self.sugar if n != name]
 
     def _define(self, name: str, node: object) -> None:
+        self.var_trees[name] = (node, len(self.log), dict(self.values))
         raw = self._eval(node, Ctx())
         if isinstance(raw, P.Distribution):
             self._forget(name)
@@ -1278,6 +1444,8 @@ class Interpreter:
             dist = P.distribution(state)
             layout = state.layout() if isinstance(state, P.Mixed) else state
             self.states[label] = P.collapse(dist, layout)
+            self.measured.append((label, P.joined(dist, layout), len(self.log)))
+            self._record("opaque", label, (), self.states[label], "a measured state")
         except P.PathSumError as exc:
             raise LangError(str(exc)) from exc
         return P.joined(dist, layout)
@@ -1340,6 +1508,7 @@ class Interpreter:
         if isinstance(body, (MatrixNode, MatrixFor)):
             self.ops[name] = self._matrix_gate(name, body, Ctx(), slots, source)
             self.slots[name] = slots
+            self.trees[name] = LL.GateTree(tuple(slots), body, source)
             self.last = Echo(D.Label("op", name), "gate", self.ops[name])
             return
 
@@ -1364,6 +1533,7 @@ class Interpreter:
             return self._fix_widths(res, widths, dims)
 
         oracle = self.check_oracles and not builtin
+        self.trees[name] = LL.GateTree(tuple(slots), body, source)
         self.ops[name] = P.Gate(name, len(names), fn, qubit=builtin, oracle=oracle, source=source)
         self.slots[name] = slots
         self.last = Echo(D.Label("op", name), "gate", self.ops[name])
@@ -1529,11 +1699,23 @@ class Interpreter:
             if isinstance(node, (Str, Fstr)):
                 raise LangTypeError(f'show takes values; write print("{node.text}")')
             entries.extend(self._entries(node, source))
+        reports = self._certify_shown(nodes) if self.certify_all else ""
         if style is not None:
-            return self.render(entries, style)
+            return "\n".join(x for x in (self.render(entries, style), reports) if x)
         for each in self.styles:
             self._out.append((each, self.render(entries, each)))
-        return ""
+        return reports
+
+    def _certify_shown(self, nodes: list[tuple[object, str]]) -> str:
+        """A certificate per shown named state; a report line each."""
+        lines = []
+        for node, source in nodes:
+            name = node.content.strip() if isinstance(node, Braket) else source
+            try:
+                lines.append(self.certify(name))
+            except LangError as exc:
+                lines.append(f"lean: {exc}")
+        return "\n".join(lines)
 
     def _stmt_print(self, toks: list[Tok], text: str, builtin: bool) -> str:
         parts: list[str] = []
@@ -1790,7 +1972,8 @@ class Interpreter:
         p = self._parser(rest)
         if p.done():
             raise LangSyntaxError("missing the value after =")
-        value = self._eval(p.expr(), Ctx())
+        rest_node = p.expr()
+        value = self._eval(rest_node, Ctx())
         if not p.done():
             raise LangSyntaxError(f"unexpected {p.peek().text!r}")  # type: ignore[union-attr]
         if isinstance(value, P.Operator) and head.kind == "ket":
@@ -1799,6 +1982,7 @@ class Interpreter:
                 value = density
         if isinstance(value, P.Mixed) and head.kind == "ket" and head.dim is None:
             self.states[name] = value
+            self._record("opaque", name, (), value, "a density matrix")
             self.last = Echo(self._label("ket", name), "density", value)
             return
         if not isinstance(value, P.State):
@@ -1828,6 +2012,7 @@ class Interpreter:
         value = _flex(value, ())
         state = P.simplify(P.dagger(value) if want_bra else value)
         self.states[name] = state
+        self._record("assign", name, (rest_node,), state)
         shown = P.dagger(state) if want_bra else state
         self.last = Echo(self._label(head.kind, name), head.kind, shown)
 
