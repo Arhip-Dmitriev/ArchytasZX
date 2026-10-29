@@ -92,7 +92,15 @@ Returns the Born distribution of the state and replaces the named state by the m
 outcomes. state may be a Value or a state name. An unnamed state is first stored under a
 fresh name.
 
-2.6 Output
+2.6 Certificates
+
+    program.certify(name, out_dir=".") -> Path
+
+Writes the Lean certificate of the state, scalar variable or measured distribution name
+(LEAN.txt, section 7) into out_dir and returns its path. Raises LangError when the result
+cannot be certified. A state assigned from Python, not by a statement, cannot be certified.
+
+2.7 Output
 
     program.render(*values, style="unicode") -> str     the values, one line each
     program.show(*values, style="unicode")              prints them

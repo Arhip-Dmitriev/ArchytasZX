@@ -6,7 +6,7 @@ The Lean 4 Library and Proof Export
 Applies to: ArchytasZX 0.19.x
 Lean library: archytaszx/lean (Lean 4.35.0, Mathlib)
 Exporters: archytaszx.semantics.kernel (lean), lean_net, lean_sym, lean_refute, lean_numeric,
-           lean_scalar
+           lean_scalar, lean_lang (with its mirror lean_lsym)
 
 
 1. PURPOSE
@@ -84,6 +84,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
   Cyclo        exact arithmetic in ℚ(ζ), ζ a root of unity; cyc_ne
   Refute       exact evaluation of a network at a point (eval_cyc); refute
   Ball         ball arithmetic in ℂ for refutations involving π and irrational phases
+  LSym         symbolic sums with integer atoms: terms with a table of atoms, eliminations
+               of variables no atom reads and of variables pinned by a delta
+  LDigit       the digit-wise character sum over values below d^n and its elimination
+  LCanon       atom rules, canonical names and the normaliser nfA of sums with atoms
+  Lang         the meaning of .azx programs (Prog.sem), their translation into one sum
+               (Prog.sym, proved equal by Prog.sym_ok) and the certificate theorems
 
 
 4. PROOFS OF EQUALITY
@@ -196,7 +202,106 @@ step(s)"). The constructs that currently have no Lean proof path are listed, wit
 for each, in LEAN_GAPS.txt.
 
 
-7. PYTHON INTERFACE
+7. CERTIFIED LANGUAGE RESULTS
+-----------------------------
+
+7.1 What is proved
+
+The certify statement and the --certify option (LANGUAGE.txt, section 14.3; SHELL.txt,
+section 3.5) write one Lean file per result of a .azx program. Its main theorem has the form
+
+    theorem SCRIPT_NAME (V : LV) (hρ : V.ρ.OK) HYPOTHESES :
+        P.sem V = fun ν => axDen V ν R
+
+P is the program as a Prog, R the printed value as an expression. V gives the values of the
+dimension symbols (V.ρ.dv), the coefficient atoms and the functions a program calls
+(V.fa); ν gives every index variable: output register i is ν i, input register i of a gate
+is ν (IN + i), each parameter of the program (a var symbol) is ν (2000 + k). The theorem
+holds for every V and every ν, so for every value of the symbols. Its hypotheses state the
+range facts used: 2 ≤ d for each dimension, n : ℕ with ρ.dv k = d ^ n for each register of
+d^n levels, 1 ≤ n where the result needs it, and one hypothesis per assume statement.
+
+A result of a program containing a loop over a symbolic range holds at every ν for which
+the loop counts are nonnegative. An assertion A == B is proved as A.sem V = B.sem V. A
+measured distribution is proved as one theorem per branch (the branch's probability is
+|<value|psi>|^2), one that the probabilities sum to 1, one that <psi|psi> = 1 and, for a
+function of the outcomes, one that every outcome maps to the printed value. The density
+matrix a measurement leaves is proved in its vectorised form, [o = o'] psi(o) conj(psi(o')).
+
+7.2 The meaning of a program
+
+The left side is built from the program's syntax trees, never from the engine's results.
+Prog has the constructors
+
+  Constructor          Meaning (Prog.sem)
+  -------------------  ------------------------------------------------------------------
+  leaf e               the value of the expression e: a gate's kernel, a literal state, a
+                       scalar or the identity
+  app L a b            Σ_y a(o, y) b(y, x) over registers of levels L: U|s>, and A B
+  ten k a b            a ⊗ b, a on the first k registers
+  mul a b, add a b     product and sum
+  inn L a b            Σ_y conj(a(y)) b(y): <a|b>
+  cnj a                the complex conjugate
+  loop L J lo cnt s i  s applied cnt times to i, iteration t reading J = lo + t
+
+A gate |x>... -> body becomes the kernel of its body: the output kets as deltas on the output
+registers, the input registers read as the pattern variables. U^@n on a register of n
+qudits, for a one-qudit kernel c ω_d^(α x y), is the digit-wise kernel c^n ω_d^(α ddot(x, y)).
+A ket value reduced modulo its register's levels is read as a delta modulo those levels.
+Each Lean definition carries the .azx line it translates as a comment.
+
+7.3 Integer atoms
+
+Ket values and phases may contain integer functions: digit products ddot and bitdot,
+exclusive or, bits, digit sums, repunits (d^n - 1)/(d - 1), powers of two, the value of a
+dimension, the user's functions and powmod. Each is an atom: a variable whose value is the
+function of its arguments, each argument reduced modulo its register's levels, so that an
+atom is periodic in every variable it reads. User functions and powmod are arbitrary
+functions supplied by the valuation (V.fa); no axiom describes them. Exclusive or and bit 0
+read modulo 2 are read as a sum and as the variable itself.
+
+7.4 The proof
+
+Prog.sym translates the program into one symbolic sum with atoms; Prog.sym_ok proves it
+denotes Prog.sem. The normaliser nfA (LCanon) is proved to keep the value of every term
+(nfA_den); the certificate shows that the normal form of the difference between the program
+and R is empty. The translation and each term's normal form are stated in the file (SYM,
+NF) and checked by the Lean kernel (decide +kernel): the translation against the program,
+the normal forms against the difference, and their merge against the empty list.
+
+Besides the moves of section 4.3, the normaliser
+  - eliminates a variable an atom reads when a delta pins it and every argument reading it
+    is reduced modulo a divisor of the delta's modulus, substituting into the arguments;
+  - sums a variable x below N = d^n read only through digit products ddot(x, A_k) and
+    linearly in roots of unity of order d (the digit-wise character sum
+        Σ_{x<d^n} ω_d^(Σ_i x_i e_i) = Π_{i<n} d [d ∣ e_i]),
+    leaving a digit condition, which it reads as a delta when it compares one value with a
+    constant or two values;
+  - removes digit products and digit conditions with a zero argument, merges atoms that
+    compute the same value, reads a reduced argument mod(q, M) as q under a delta or root of
+    unity whose modulus divides M, and drops unused atoms;
+  - renames bound variables and atoms by first occurrence and sorts the sums.
+A loop is proved by induction on its count: the engine's invariant S(J) is shown to equal
+the initial state at J = lo and to satisfy S(J + 1) = step_J(S(J)), both by the normaliser
+with J free.
+
+7.5 What is trusted
+
+The translation of a program's syntax into Prog (archytaszx.semantics.lean_lang) and of
+the printed value into an expression, both shown in the file. The normaliser and the
+meaning of Prog are proved in Lean. #print axioms of every certificate theorem lists only
+propext, Classical.choice and Quot.sound; no certificate uses an axiom of the form
+unproved_*. A result outside the certified fragment is reported as "cannot certify:
+REASON" and never certified.
+
+7.6 The mirror
+
+archytaszx.semantics.lean_lsym and the mirror functions of lean_lang follow the Lean
+definitions on tuples. A certificate is written only when the mirror predicts that the
+kernel's check succeeds; --check confirms it with Lean.
+
+
+8. PYTHON INTERFACE
 -------------------
 
     archytaszx.semantics.kernel.lean(theorem, name="main", describe=None, *, semantic=True)
@@ -210,3 +315,8 @@ for each, in LEAN_GAPS.txt.
     archytaszx.semantics.lean_sym.export_symbolic, sym_check
     archytaszx.semantics.lean_refute.export_refutation
     archytaszx.semantics.lean_numeric.export_numeric_refutation
+    archytaszx.semantics.lean_lang.Certifier
+            the certificate of a language result from an interpreter's recorded trees.
+    archytaszx.semantics.lean_lang.check_file(path) -> (accepted, output)
+            lake env lean on a certificate.
+    archytaszx.embed.Program.certify(name, out_dir) -> Path

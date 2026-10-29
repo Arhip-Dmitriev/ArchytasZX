@@ -53,7 +53,10 @@ closed form. The same program text therefore yields the same closed form for eve
 its size symbols.
 
 The language is used through the archytaszx command (SHELL.txt) or from Python
-(PYTHON_API.txt). Any state can also be shown as a ZXW diagram (ZX_VIEW.txt).
+(PYTHON_API.txt). Any state can also be shown as a ZXW diagram (ZX_VIEW.txt). A printed result
+can be certified in Lean 4 (LANGUAGE.txt, section 14.3): the program's meaning, built from
+its syntax, is proved equal to the printed closed form by a verified normaliser of symbolic
+sums (LEAN.txt, section 7), without the diagram engine.
 
 3.2 The diagram engine
 

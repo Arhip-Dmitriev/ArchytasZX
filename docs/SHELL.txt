@@ -77,6 +77,22 @@ The two options below are mutually exclusive.
                       in DIR, numbered in order of output (0001-zx.png, 0002-dirac.png, ...).
   --images_white DIR  As --images, with black ink on a white background.
 
+3.5 Certificates
+
+  --certify DIR  Write a Lean certificate (LEAN.txt, section 7) of every value a show
+                 statement prints and of every assert into DIR, one file per result named
+                 <script>_<name>.lean. Each certificate is reported on one line,
+                 "lean: wrote FILE (N axioms: NAMES)"; a result that cannot be certified is
+                 reported as "lean: cannot certify NAME: REASON". Under --certify an assert
+                 passes only when its certificate is written (and checked, with --check).
+  --check        Check every certificate written, by certify or --certify, with
+                 lake env lean in the bundled Lean project, and report
+                 "lean: checked FILE". A certificate Lean rejects is an error, and the
+                 command then exits with status 1.
+
+Without --certify, the certify statement (LANGUAGE.txt, section 14.3) writes next to the
+script file.
+
 
 4. EXIT STATUS
 --------------

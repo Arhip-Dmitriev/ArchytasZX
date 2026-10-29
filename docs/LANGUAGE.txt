@@ -24,7 +24,7 @@ CONTENTS
   11. Measurement and mixed states
   12. Collections and output
   13. Control flow
-  14. Assumptions and assertions
+  14. Assumptions, assertions and certificates
   15. Randomness and script arguments
   16. Built-in names
   17. Size symbols and binding
@@ -74,6 +74,7 @@ A ket or bra, including its suffix, is a single token.
 The following names cannot be used as variable, function, gate or state names:
 
   Statements    var func gate list show print measure seed for while if assert assume
+                certify
   Keywords      xor in and or not else sum matrix
   Functions     sqrt exp abs floor ceil gcd min max bit dot powmod bitlen denom known ifelse
                 cos sin tan log arg rand normalise
@@ -93,7 +94,7 @@ Statements are separated by newlines or by semicolons. A statement is one of:
   - an in-place application: operators applied to a named state, U |name>;
   - an output statement: show, print;
   - a control statement: for, while, if;
-  - assume, assert, seed;
+  - assume, assert, certify, seed;
   - a bare expression.
 
 3.2 Blocks
@@ -496,8 +497,10 @@ The condition of while and if must evaluate to a concrete truth value; a conditi
 remains symbolic is an error. Variables assigned inside a block remain assigned after it.
 
 
-14. ASSUMPTIONS AND ASSERTIONS
-------------------------------
+14. ASSUMPTIONS, ASSERTIONS AND CERTIFICATES
+--------------------------------------------
+
+14.1 Assumptions
 
     assume CONDITION
 
@@ -507,11 +510,36 @@ as an integer when it closes the geometric sums of a state, an inner product or 
 measurement, bounds their indices, and simplifies floor and % of measured outcomes
 (examples/shor.azx).
 
+14.2 Assertions
+
     assert CONDITION
 
 is an error unless the condition holds. A symbolic condition that cannot be decided also
 counts as a failure. In a script, a failed assertion makes the archytaszx command exit with
 status 1.
+
+
+14.3 Certificates
+
+    certify NAME[, NAME...]
+
+writes, for each name, a Lean 4 file stating and proving that the value the program computes
+for NAME equals the closed form the engine prints, for every value of the size symbols,
+parameters and output registers (LEAN.txt, section 7). NAME is a state, a scalar variable or
+a variable holding a measured distribution. The file is <script>_<name>.lean next to the
+script, or in the directory given by --certify (SHELL.txt, section 3.5); a name certified
+again gets a numbered file. One line is printed per name:
+
+    lean: wrote FILE (N axioms: NAMES)
+
+A result outside the certified fragment is an error, "cannot certify NAME: REASON"; it is
+never certified incorrectly. The following cannot be certified: rand, a while or if whose
+condition depends on a value that is not concrete, normalise, floating-point format specs,
+states assigned from Python, and results whose proof needs an identity the normaliser does
+not prove (LEAN_GAPS.txt).
+
+Every assume statement becomes a hypothesis of each certificate written after it. Under
+--certify, an assert passes only when the certificate of its equation is written.
 
 
 15. RANDOMNESS AND SCRIPT ARGUMENTS
