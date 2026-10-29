@@ -18,4 +18,3 @@ import ArchytasZX.Contract
 import ArchytasZX.SymNet
 import ArchytasZX.Port
 import ArchytasZX.Assume
-import ArchytasZX.Lang

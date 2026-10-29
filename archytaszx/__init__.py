@@ -12,18 +12,3 @@
 # limitations under the License.
 
 """ArchytasZX: a qufinite ZX-calculus engine with symbolic qudit count and dimension."""
-
-from typing import Any
-
-
-def __getattr__(name: str) -> Any:
-    """``Program`` and ``azx`` (a shared default Program) from :mod:`archytaszx.embed`."""
-    if name not in ("Program", "Value", "azx"):
-        raise AttributeError(f"module 'archytaszx' has no attribute {name!r}")
-    from archytaszx import embed
-
-    if name == "azx":
-        if "azx" not in globals():
-            globals()["azx"] = embed.Program()
-        return globals()["azx"]
-    return getattr(embed, name)

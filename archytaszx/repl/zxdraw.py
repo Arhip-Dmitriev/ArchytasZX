@@ -768,8 +768,8 @@ def _utf8() -> bool:
 def draw(view: View, style: str = "matplot") -> str:
     """``view`` drawn in ``style``; matplot falls back to Unicode without an image protocol
     or matplotlib, Unicode to ASCII on a terminal that is not UTF-8. With
-    :data:`~archytaszx.repl.display.SAVE_DIR` set the matplotlib drawing is also saved there,
-    black on white with :data:`~archytaszx.repl.display.SAVE_WHITE`."""
+    :data:`~archytaszx.repl.terminal.SAVE_DIR` set the matplotlib drawing is also saved there,
+    black on white with :data:`~archytaszx.repl.terminal.SAVE_WHITE`."""
     if style not in STYLES:
         raise ValueError(f"unknown drawing style {style!r}")
     lay = layout(view)
