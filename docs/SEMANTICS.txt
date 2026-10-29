@@ -3,9 +3,9 @@ ARCHYTASZX DOCUMENTATION
 
 Layer D (part 1): Meaning, Contraction and the Oracle
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Package: archytaszx.semantics (modules denote, contract_numeric, contract_symbolic, check,
-         pathsum, interop)
+         interop)
 
 The second part of Layer D, deciding and proving equality, is documented in PROOFS.txt.
 
@@ -15,8 +15,7 @@ The second part of Layer D, deciding and proving equality, is documented in PROO
 
 This layer fixes what a diagram means, a linear map between tensor products of qudit spaces,
 and computes it in two ways: numerically at a concrete assignment of every symbol, and
-symbolically with dimensions and multiplicities kept formal. It also defines the path-sum
-values of the .azx language and their measurement.
+symbolically with dimensions and multiplicities kept formal.
 
 
 2. DENOTATION: archytaszx.semantics.denote
@@ -178,85 +177,7 @@ find_entry_witness looks for one assignment and one index tuple at which the two
 differ, trying the given assignments and then the points the difference's deltas pin.
 
 
-6. PATH SUMS: archytaszx.semantics.pathsum
-------------------------------------------
-
-The values of the .azx language are path sums.
-
-6.1 States
-
-A State has registers, each with a width and a dimension (2 when omitted), possibly symbolic,
-and a sum of Terms. A term is an amplitude times a sum over bound indices (Bound: name and
-range) of a tuple of register values. Register r holds a value in 0 .. d_r^(w_r) - 1, read
-big-endian in base d_r. A state with bra=True is a bra.
-
-    basis(value, width, dim), basis_kets(values, widths, dims)
-    tensor(a, b), scale(c, s), add(a, b), dagger(s)
-    power_state(s, n)                       tensor power, one register of width n
-    inner(a, b) -> Expr                     bra-ket contraction
-    simplify(s)                             merge terms, close sums, pin digits
-    norm2(s)                                squared norm
-    substitute(s, mapping), free_symbols(s)
-
-6.2 Operators
-
-Gate (a map from register values, widths and dimensions to a state), Identity, Power, Tensor,
-Compose, Outer, Scaled and OpSum.
-
-    apply(op, s) -> State
-
-Applying a gate is substitution of its pattern variables. The tensor power of a one-qudit gate
-or state factors its amplitude digit by digit: exponents linear in an input digit a, an output
-digit y and a*y become digit sums dsum and digit dot products ddot (pop and bitdot for qubits).
-While apply runs, a free symbol of an operator that meets a register of another width or
-dimension is bound to that register's value for this application only.
-
-6.3 Integer functions
-
-The symbolic integer functions of the language, kept unevaluated on symbolic arguments:
-
-  xor(a, b)        bitwise exclusive or
-  bit(x, j)        bit j of x, least significant first
-  pop(x)           population count of x
-  bitdot(a, b)     population count of the bitwise and of a and b
-  dsum(v, d), ddot(a, b, d)       base-d digit sum and digit dot product
-  powmod(b, e, m)  b^e mod m
-  igcd(a, b)       greatest common divisor
-  denom(x, N)      denominator of the best approximation of x with denominator at most N
-  bits(z, lo, hi, w), digits(z, lo, hi, w, d)
-                   bits (digits) lo..hi-1 of the width-w big-endian string z
-  part(z, k, below, levels)       register k of a mixed-radix outcome z
-  shr(v, k, d)     v with its k lowest base-d digits dropped
-  dshift(v, k, d, w)              every base-d digit of the w-digit v increased by k mod d
-
-6.4 Measurement and mixed states
-
-    distribution(s) -> Distribution
-    amplitude(s, values) -> Expr
-    density(s) -> Mixed
-    apply_mixed(op, m) -> Mixed             rho -> U rho U^dagger
-    collapse(d, layout) -> Mixed            the mixture a measurement leaves
-    density_of(op) -> Mixed | None          a sum of outer products read as a density matrix
-    trace(m)
-    map_outcomes(d, fn), certain(d)
-
-distribution derives the Born distribution of measuring every register: the probability of
-an outcome z is |<z|s>|^2 / <s|s>, with <z|s> obtained by substituting z into the path sum
-and closing the remaining sums. No path is enumerated and no outcome sampled. A Distribution
-is a tuple of Branches, each a value, a probability and the free indices it ranges over, so
-that one branch stands for a whole family of outcomes.
-
-A Mixed state is a density matrix held as its vectorisation: the ket registers followed by as
-many bra registers, with factors recorded when it is a product of a ket part and a bra part.
-
-6.5 Enumeration helpers
-
-enumerate_state, concrete_levels, decode and paths exist for exporting a concrete state, for
-example as an amplitude vector (Value.vector in the Python embedding). They are not used to
-compute language results.
-
-
-7. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop
+6. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop
 ---------------------------------------------------------
 
     default_samples(*diagrams, limit=12)

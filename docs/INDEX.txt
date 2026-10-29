@@ -3,17 +3,17 @@ ARCHYTASZX DOCUMENTATION
 
 Index and Conventions
 
-Applies to: ArchytasZX 0.19.x (main branch, October 2026)
+Applies to: ArchytasZX 2.0.x (main branch, October 2026)
 License:    Apache License 2.0
 
 
 1. PURPOSE OF THIS DOCUMENTATION SET
 ------------------------------------
 
-This directory is the reference documentation of ArchytasZX, a symbolic engine for developing
-quantum algorithms without fixing the number of qudits or their dimension. The documents
-specify the behaviour of the software as implemented: the input language, the command-line
-shell, the engine commands, the Python interfaces, the mathematical model, the proof machinery
+This directory is the reference documentation of ArchytasZX, a symbolic qufinite ZXW diagram
+engine for proving identities of quantum algorithms without fixing the number of qudits or
+their dimension. The documents specify the behaviour of the software as implemented: the
+command-line shell, the engine commands, the Python interfaces, the mathematical model, the proof machinery
 and the Lean 4 export.
 
 Where a document states a rule ("must", "never", "always"), that rule is enforced by the code.
@@ -27,25 +27,22 @@ explicitly.
   File                 Contents
   -------------------  ----------------------------------------------------------------------
   INDEX.txt            This file: the list of documents, conventions, reading order.
-  OVERVIEW.txt         What the engine is, its two front ends, its guarantees, its limits.
+  OVERVIEW.txt         What the engine is, its guarantees, its limits.
   INSTALL.txt          Requirements, installation, optional components, configuration file.
-  LANGUAGE.txt         The .azx language: complete reference of statements and expressions.
-  SHELL.txt            The archytaszx command: flags, modes, styles, meta-commands, exit codes.
-  ENGINE_COMMANDS.txt  The engine commands (":load", ":decide", ":prove", ...) and the three
+  SHELL.txt            The archytaszx command: flags, views, shell commands, exit codes.
+  ENGINE_COMMANDS.txt  The engine commands (load, decide, prove, ...) and the three
                        diagram input forms (DSL, Dirac, graph listing).
-  PYTHON_API.txt       Python use: the Program/Value embedding and the engine import map.
+  PYTHON_API.txt       Python use: the engine import map and a worked example.
   ALGEBRA.txt          Layer A: dimensions, phases and exact scalars.
   DIAGRAM.txt          Layer B: generators, diagrams, bang boxes, scalable notation,
                        validation and structural comparison.
   REWRITE.txt          Layer C: rules, matching, the rewrite engine, strategies, normal form,
                        equality saturation, tactics, sheet operations and caching.
   RULES.txt            The rule library: every rule, its meaning, scalar and side conditions.
-  SEMANTICS.txt        Layer D: denotation, numeric and symbolic contraction, the oracle,
-                       path sums and measurement.
+  SEMANTICS.txt        Layer D: denotation, numeric and symbolic contraction, the oracle.
   PROOFS.txt           Deciding equality, proof search, induction, certificates and the
                        proof kernel; the trust model.
   LEAN.txt             The bundled Lean 4 library and the export of proofs and refutations.
-  ZX_VIEW.txt          How language states are translated to ZX diagrams and drawn.
   ERRORS.txt           The exception hierarchy of every module.
   GLOSSARY.txt         Definitions of the terms used throughout.
 
@@ -53,8 +50,8 @@ explicitly.
 3. READING ORDER
 ----------------
 
-  Using the language:      OVERVIEW, INSTALL, LANGUAGE, SHELL, then examples/learn_azx.azx.
-  Using it from Python:    OVERVIEW, INSTALL, PYTHON_API, then examples/learn_azx.py.
+  Using the shell:         OVERVIEW, INSTALL, SHELL, ENGINE_COMMANDS, then examples/.
+  Using it from Python:    OVERVIEW, INSTALL, PYTHON_API.
   Proving identities:      OVERVIEW, ENGINE_COMMANDS, RULES, PROOFS, LEAN.
   Working on the engine:   OVERVIEW, ALGEBRA, DIAGRAM, REWRITE, SEMANTICS, PROOFS, ERRORS.
 
@@ -94,4 +91,4 @@ explicitly.
   FULL_PLAN.txt        The development plan of the project.
   LEAN_GAPS.txt        Rule steps and constructs without a Lean proof path.
   REFERENCES.bib/.txt  Bibliography.
-  examples/            Runnable scripts; learn_azx.azx and learn_azx.py are guided tours.
+  examples/            Runnable command files: copy_induction.azx, deutsch_jozsa_proof.azx.

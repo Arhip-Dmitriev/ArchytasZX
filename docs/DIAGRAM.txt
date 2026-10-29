@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Layer B: The Diagram Data Model
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Package: archytaszx.diagram (modules generators, graph, bangbox, scalable, validate, compare)
 
 

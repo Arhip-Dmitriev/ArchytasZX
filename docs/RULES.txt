@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 The Rule Library
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Implementation: archytaszx.rewrite.rules_library (RULES, lookup_rule), with the patterns of
                 archytaszx.rewrite.match, match_zxw and match_box
 

@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Layer A: Symbolic Algebra
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Package: archytaszx.algebra (modules dimension, phase, scalar)
 
 

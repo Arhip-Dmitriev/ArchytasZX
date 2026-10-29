@@ -3,17 +3,17 @@ ARCHYTASZX DOCUMENTATION
 
 Overview
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 
 
 1. SCOPE
 --------
 
-ArchytasZX is a symbolic engine for developing and verifying quantum algorithms whose size is
-not fixed. The number of qudits, their dimension, and the number of repetitions of a
-sub-circuit may all be symbols. Every result the engine reports, whether a state, a
-measurement distribution or a proof of an identity, is a closed form that holds for every value
-of those symbols.
+ArchytasZX is a symbolic engine for proving identities of quantum algorithms whose size is not
+fixed. It works on qufinite ZXW diagrams in which the number of qudits, their dimension, and
+the number of repetitions of a sub-circuit may all be symbols. Every result the engine reports,
+whether a rewritten diagram, a decision of equality or a proof of an identity, holds for every
+value of those symbols.
 
 The engine is written in Python (numpy and sympy are its only runtime dependencies) and ships
 a Lean 4 library against which its proofs can be re-checked independently.
@@ -32,33 +32,14 @@ depends only on the layers below it.
                                validation, structural comparison.
   C      archytaszx.rewrite    Rules, matching, the rewrite engine, strategies, normal form,
                                equality saturation, tactics, caching.
-  D      archytaszx.semantics  Denotation, contraction, the oracle, path sums, deciding
-                               equality, proof search, induction, certificates, proof kernel,
-                               Lean export.
-  -      archytaszx.repl       The .azx language, the diagram parser and printer, the ZX view
-                               and drawing, the engine commands, the shell.
-  -      archytaszx.embed      The Python embedding of the language.
+  D      archytaszx.semantics  Denotation, contraction, the oracle, deciding equality, proof
+                               search, induction, certificates, proof kernel, Lean export.
+  -      archytaszx.repl       The diagram parser and printer, ZX drawing, the engine
+                               commands, the shell.
 
 
-3. THE TWO FRONT ENDS
----------------------
-
-3.1 The .azx language
-
-The language (LANGUAGE.txt) is Dirac notation with variables, gates, sums, measurement and
-control flow. Its values are symbolic path sums (archytaszx.semantics.pathsum): a state is a sum
-of terms, each an amplitude times a sum over bound indices of a product of kets. Applying a gate
-is substitution into that form, and measurement is the Born distribution derived from it in
-closed form. The same program text therefore yields the same closed form for every value of
-its size symbols.
-
-The language is used through the archytaszx command (SHELL.txt) or from Python
-(PYTHON_API.txt). Any state can also be shown as a ZXW diagram (ZX_VIEW.txt). A printed result
-can be certified in Lean 4 (LANGUAGE.txt, section 14.3): the program's meaning, built from
-its syntax, is proved equal to the printed closed form by a verified normaliser of symbolic
-sums (LEAN.txt, section 7), without the diagram engine.
-
-3.2 The diagram engine
+3. THE ENGINE
+-------------
 
 The engine commands (ENGINE_COMMANDS.txt) operate on qufinite ZXW diagrams: graphs of Z and X
 spiders, Fourier boxes, triangles, W nodes and dimension connectives, in which every port
@@ -66,10 +47,8 @@ carries its own dimension and bang boxes stand for a symbolic number of copies o
 diagrams the engine applies rewrite rules (RULES.txt), reduces to a normal form, saturates an
 e-graph, searches for proofs, proves families by induction over multiplicities, issues
 replayable certificates, re-checks proofs in a small kernel and exports them to Lean 4
-(PROOFS.txt, LEAN.txt).
-
-In the shell, language statements and engine commands can be mixed: a line beginning with ":"
-is an engine command.
+(PROOFS.txt, LEAN.txt). The commands are run from the archytaszx shell (SHELL.txt); every
+layer is also usable from Python (PYTHON_API.txt).
 
 
 4. DESIGN PRINCIPLES
@@ -93,10 +72,8 @@ only as an explicit opt-in mode of the numeric oracle.
 
 4.3 Results are derived, not sampled
 
-Language results are obtained by symbolic rewriting of path sums and closed-form summation.
-No state is expanded into an amplitude vector to produce a result, and measurement
-distributions are derived, not sampled. Numeric evaluation exists in the engine only as an
-oracle: it evaluates small concrete instances to look for counterexamples and to cross-check
+Results are obtained by symbolic rewriting and symbolic contraction. Numeric evaluation exists
+in the engine only as an oracle: it evaluates small concrete instances to look for counterexamples and to cross-check
 derivations, and its findings are reported as such.
 
 4.4 Sound, not complete
@@ -149,5 +126,5 @@ certificate and into the Lean theorem as hypotheses.
 7. WHERE TO GO NEXT
 -------------------
 
-  INSTALL.txt to install; LANGUAGE.txt and examples/learn_azx.azx to write programs;
-  ENGINE_COMMANDS.txt and PROOFS.txt to prove identities.
+  INSTALL.txt to install; SHELL.txt and ENGINE_COMMANDS.txt to run commands; PROOFS.txt and
+  LEAN.txt for proofs.

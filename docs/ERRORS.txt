@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Errors and Exceptions
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 
 
 1. PRINCIPLES
@@ -141,19 +141,13 @@ Each entry: class (base) - when it is raised.
   interop
     InteropError (Exception)
       InteropGrammarError      a wrong argument, a bad limit, an unknown operation
-  pathsum
-    PathSumError (Exception)   a path-sum operation undefined on its inputs
   lean_net
     NetUnsupported (Exception) a theorem outside the network semantics
   lean_scalar
     ScalarUnsupported (Exception)  a scalar the exporter cannot write in Lean
 
-2.5 Front end: archytaszx.repl and archytaszx.embed
+2.5 Front end: archytaszx.repl
 
-  lang (also raised by archytaszx.embed)
-    LangError (Exception)      a statement that cannot be executed
-      LangSyntaxError          text that does not parse
-      LangTypeError            a value of a kind not allowed where it is used
   parser
     ParseError (Exception)
       ParseGrammarError        the source does not match its form's grammar
@@ -168,10 +162,6 @@ Each entry: class (base) - when it is raised.
       CommandGrammarError      a malformed command line: unknown option, bad assignment,
                                missing argument
       CommandDomainError       a well-formed command the session or engine cannot carry out
-  zxview
-    ZXViewError (Exception)    a state with no ZX diagram
-  zxsym
-    Unsupported (Exception)    a term the structural translation does not cover
 
 archytaszx.repl.commands.execute raises only CommandError subclasses, the engine error
 chained as __cause__; archytaszx.repl.commands.run never raises for an Exception and returns

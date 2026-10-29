@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Layer D (part 2): Deciding and Proving Equality
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Modules: archytaszx.semantics.decide, prove, induction, certificate, kernel
 
 

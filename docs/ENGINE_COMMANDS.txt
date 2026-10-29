@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Engine Commands and Diagram Input
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Implementation: archytaszx.repl.commands (commands), archytaszx.repl.parser (input forms),
                 archytaszx.repl.printer (output)
 
@@ -11,10 +11,9 @@ Implementation: archytaszx.repl.commands (commands), archytaszx.repl.parser (inp
 1. INTRODUCTION
 ---------------
 
-The engine commands operate on qufinite ZXW diagrams (DIAGRAM.txt). In the shell they are
-written after a colon (":decide"); with the --commands flag, or in a file run with
---commands, they are written without it. A line whose first word is not a command name is
-read as "load LINE".
+The engine commands operate on qufinite ZXW diagrams (DIAGRAM.txt). In the shell and in
+command files they are written as they are, or after an optional colon (":decide"). A line
+whose first word is not a command name is read as "load LINE".
 
 A session (archytaszx.repl.commands.Session) holds:
 

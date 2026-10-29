@@ -3,186 +3,17 @@ ARCHYTASZX DOCUMENTATION
 
 Python Interfaces
 
-Applies to: ArchytasZX 0.19.x
-Implementation: archytaszx.embed (embedding), every engine module (engine API)
+Applies to: ArchytasZX 2.0.x
+Implementation: every engine module
 
 The Python interfaces are not yet stable between releases.
 
 
-PART I. THE LANGUAGE EMBEDDING
-==============================
-
-1. OVERVIEW
------------
-
-The embedding runs the .azx language (LANGUAGE.txt) from Python. A Program is one
-interpreter; its values are wrapped as Value objects that support Python operators standing
-for the language's operators.
-
-    from archytaszx import azx               # a shared default Program
-    from archytaszx import Program           # or a fresh one: azx = Program()
-
-The package archytaszx exports exactly three names: Program, Value and azx. They are loaded on
-first access. The guided tour examples/learn_azx.py exercises the whole embedding.
-
-
-2. class Program
-----------------
-
-    Program(*, seed: int | None = None, style: str = "unicode")
-
-One interpreter with its own variables, functions, gates and states. seed seeds rand; style
-is the default display style for render and show ("unicode", "ascii" or "latex").
-
-2.1 Running statements
-
-    program(source: str) -> str
-    program.run(source: str) -> str
-
-Runs one or more statements and returns what show and print printed. Errors raise LangError
-or a subclass (ERRORS.txt).
-
-    azx("var n")
-    azx("|psi> = H^@n |0>^@n\nshow(|psi>)")
-
-2.2 Evaluating and assigning in the language syntax
-
-    program[EXPRESSION] -> Value
-    program["|NAME>"] = value
-    program["<NAME|"] = value
-    program["NAME"] = value
-
-Indexing evaluates one expression in the language syntax. Item assignment names a ket, a
-bra (whose ket becomes its conjugate transpose), or a variable.
-
-    azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
-    azx["sum(k in 0..=4){ k }"]               a Value holding 10
-
-2.3 Attributes
-
-    program.NAME -> Value
-    program.NAME = value
-
-Reading an attribute returns the named state, gate, variable, constant (pi, e, i) or function.
-Assigning an attribute names the value by its kind: a state becomes |NAME>, an operator a
-gate, a scalar a variable. Wherever a value is expected, a Python int, complex or sympy
-expression is taken exactly; a Python float is replaced by the simplest rational or radical
-expression sympy's nsimplify finds for it (0.5 becomes 1/2); a bool becomes a truth value; and
-a str is evaluated as an expression in the language syntax.
-
-    azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n      |psi> = H^@n |0>^@n
-
-2.4 Constructors
-
-    program.ket(value, dim=None) -> Value       |value> or |value>_dim
-    program.bra(value, dim=None) -> Value       <value| or <value|_dim
-    program.var(*names, type="nat")             declares symbols; returns a Value, or a tuple
-                                                of Values for several names
-    program.seed(value: int)                    seeds rand
-
-value may be an integer, a symbol name, or the name of a built-in state: "+", "-", "i", "-i".
-type is one of nat, int, real, complex.
-
-2.5 Measurement
-
-    program.measure(state) -> Value
-    program.measure | state -> Value
-
-Returns the Born distribution of the state and replaces the named state by the mixture of its
-outcomes. state may be a Value or a state name. An unnamed state is first stored under a
-fresh name.
-
-2.6 Certificates
-
-    program.certify(name, out_dir=".") -> Path
-
-Writes the Lean certificate of the state, scalar variable or measured distribution name
-(LEAN.txt, section 7) into out_dir and returns its path. Raises LangError when the result
-cannot be certified. A state assigned from Python, not by a statement, cannot be certified.
-
-2.7 Output
-
-    program.render(*values, style="unicode") -> str     the values, one line each
-    program.show(*values, style="unicode")              prints them
-    program.names() -> Iterable[str]                    every user-defined name
-    program.interpreter                                 the underlying Interpreter
-
-
-3. class Value
---------------
-
-A Value wraps one language value: a scalar, ket, bra, operator, density matrix or
-distribution. Value.name is set when the Value is a named state.
-
-3.1 Operators
-
-  Python    Language        Meaning
-  --------  --------------  ---------------------------------------------------------------
-  a | b     a b             juxtaposition: application, inner and outer product, tensor of
-                            kets, multiplication
-  a @ b     a @ b           tensor product
-  a ** n    a^@n or a^n     tensor power of a state or operator; power of a scalar
-  a + b     a + b           sum
-  a - b     a - b           difference
-  a * b     a * b           product, composition
-  a / b     a / b           division
-  -a        -a              negation
-  a.dag()   <a|             conjugate transpose
-
-Python operators group differently from the language. Python's | groups from the left, so
-the language's CNOT (H @ I) |0>|0> is written
-
-    azx.CNOT | (azx.H @ azx.I) | (azx.ket(0) @ azx.ket(0))
-
-and Python's @ binds tighter than |, so (H |0>) @ |1> needs its parentheses:
-
-    (azx.H | azx.ket(0)) @ azx.ket(1)
-
-3.2 Conversion
-
-    value.text(style="unicode") -> str      the value in a display style
-    value.unicode() / value.ascii() / value.latex() -> str
-    value.sympy()                           the sympy expression of a scalar, or of the single
-                                            outcome of a certain distribution
-    int(value), float(value), complex(value)
-    bool(value)
-    value.vector()                          the amplitudes of a concrete state as a complex
-                                            numpy vector
-
-A Value has no ==; compare value.sympy() instead. In Jupyter a Value is rendered from its
-LaTeX form.
-
-vector() is an export of a concrete state for use outside the engine. The engine itself never
-builds amplitude vectors to compute results.
-
-
-4. EXAMPLE
-----------
-
-    from archytaszx import Program
-
-    azx = Program()
-    n = azx.var("n")
-    azx("func f(x) = bit(x, 0)")
-    azx("gate O = |x>|y> -> |x>|y xor f(x)>")
-
-    start  = azx.ket(0) ** n @ azx.ket(1)
-    first  = azx.H ** n @ azx.H
-    last   = azx.H ** n @ azx.I
-    target = azx.bra(0) ** n @ azx.bra("-")
-
-    azx["|out>"] = last | azx.O | first | start
-    amplitude = (target | azx.out).sympy()     0: the oracle is balanced, for every n
-
-
-PART II. THE ENGINE API
-=======================
-
-5. IMPORT CONVENTIONS
+1. IMPORT CONVENTIONS
 ---------------------
 
-Engine objects are imported by full module path. The sub-package __init__ files are empty;
-from archytaszx import Diagram fails.
+Engine objects are imported by full module path. The package and sub-package __init__ files
+export nothing; from archytaszx import Diagram fails.
 
     # Layer A: algebra
     from archytaszx.algebra.dimension import Dim, solve, unify_all
@@ -223,7 +54,7 @@ from archytaszx import Diagram fails.
 Each module raises only exceptions of its own hierarchy (ERRORS.txt).
 
 
-6. WORKED EXAMPLE
+2. WORKED EXAMPLE
 -----------------
 
 Build two Z spiders over a symbolic dimension, fuse them, check, certify, and prove the

@@ -48,17 +48,3 @@ A spider whose legs have dimensions such as d^p and d^q is proved under the hypo
 d^p = d^q, but only outside bang boxes. Inside a family the positivity of every dimension value
 is stated over the family's natural-number parameters, and the exponent symbols carry no
 positivity hypothesis.
-
-9. Exclusive or of symbolic bit patterns, in certified language results.
-A loop such as examples/fanout_sequential.azx applies y xor c*2^j for j below a symbol n. Its
-invariant step needs (a xor y(2^j - 1)) xor y 2^j = a xor y(2^(j+1) - 1), which holds for
-y in {0, 1} but not for every integer y. The certificate states its theorem for every
-valuation, without ranges on the output registers, so the normaliser does not prove the
-step, and the result is reported as "cannot certify".
-
-10. Loop invariants over symbolic digit positions, in certified language results.
-The loops of examples/qft_adder.azx, examples/phase_estimation.azx, examples/cyclic_shift.azx
-and examples/shor.azx act on digit j of a register, through floor(x/d^j) % d, d^j or
-powmod. Their invariants contain d^j and d^(-j) for a loop variable j. Dimension monomials
-have exponents in width symbols only, and the digit-wise character sum ranges over all
-digits, so these results are reported as "cannot certify".

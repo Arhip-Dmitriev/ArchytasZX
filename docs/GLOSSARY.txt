@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Glossary
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 
 
 abstraction
@@ -21,10 +21,6 @@ bang box
 
 boundary
     The ordered lists of a diagram's open ports: boundary inputs and boundary outputs.
-
-Born distribution
-    The probabilities of the outcomes of measuring a state in the computational basis,
-    |<z|psi>|^2 / <psi|psi>.
 
 certificate
     A replayable record of a derivation, with the method by which its claimed equality is
@@ -45,9 +41,6 @@ deferred
     Said of a dimension equation the unifier could not decide, and of a validation issue or
     match condition resting on one. Deferred items never fail validation; they become
     assumptions.
-
-density matrix
-    A mixed state, sum_k p_k |k><k| after a measurement; held as its vectorisation (Mixed).
 
 derivation
     A sequence of rewrite steps from an initial to a final diagram.
@@ -96,10 +89,6 @@ oracle
 parameter environment
     The map from a diagram's symbols to the concrete values the user supplied for them.
 
-path sum
-    The representation of language values: a sum of terms, each an amplitude times a sum over
-    bound indices of register values.
-
 phase
     An angle in turns; a phase vector gives one phase per level of a spider, index 0 fixed to
     zero.
@@ -107,9 +96,6 @@ phase
 qufinite ZX(W)-calculus
     The graphical calculus of qudits of arbitrary and mixed finite dimensions, with Z and X
     spiders, the Fourier box, the triangle, the W node and the dimension connectives.
-
-register
-    A group of qudits of one dimension whose joint value is one integer, read big-endian.
 
 rule
     A rewrite: a pattern, a builder, side conditions and the exact scalar introduced.
@@ -130,7 +116,7 @@ spider
     A Z or X generator; any number of legs, a phase vector.
 
 state
-    A spider or diagram with no input; in the language, a ket.
+    A spider or diagram with no input.
 
 symbolic contraction
     Contraction of a diagram with every dimension, phase and multiplicity kept as a symbol.

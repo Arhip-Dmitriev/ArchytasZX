@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Installation and Configuration
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 
 
 1. REQUIREMENTS
@@ -13,7 +13,7 @@ Applies to: ArchytasZX 0.19.x
   ------------  -------------------------------------------------------------------------
   Python        3.12 or later.
   Required      numpy, sympy (installed automatically).
-  Optional      matplotlib, for typeset output and drawn ZX diagrams.
+  Optional      matplotlib, for ZX diagrams drawn as images.
   Optional      Lean 4 (via elan) and Mathlib, to re-check exported proofs.
   Terminal      Any. Inline images need a terminal with the kitty, iTerm2 or sixel image
                 protocol; other terminals receive Unicode text.
@@ -33,8 +33,8 @@ ArchytasZX refer to the same distribution. The importable package is archytaszx.
 
     pip install 'archytaszx[viz]'
 
-This adds matplotlib. Without it every output style that needs matplotlib (the default
-"render" style and the "zxrender" view) falls back to Unicode text; nothing else changes.
+This adds matplotlib. Without it the "zxrender" view falls back to Unicode text; nothing else
+changes.
 
 2.3 From a source checkout
 
@@ -49,13 +49,13 @@ The dev extra adds pytest, pytest-xdist, ruff and mypy.
 2.4 Verifying the installation
 
     archytaszx --help
-    archytaszx -c 'var n' -c 'show(H^@n |0>^@n)' --unicode
+    archytaszx --unicode -c 'load sum_{k=0}^{3-1} |k>^{30}; copy'
 
 The second command prints
 
-    H^⊗n |0⟩^⊗n = 2^(-n/2) Σ_{x=0}^{2^n - 1} |x⟩
-
-or an equivalent closed form.
+    loaded dirac input
+    Σ_{k0,k1=0}^{d-1} [k0 = k1] |k0⟩^{n} |k1, k1⟩
+    at d = 3, n = 29: Σ_{k0,k1=0}^{3-1} [k0 = k1] |k0⟩^{29} |k1, k1⟩
 
 
 3. INSTALLING THE LEAN LIBRARY

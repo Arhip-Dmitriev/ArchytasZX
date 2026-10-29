@@ -3,7 +3,7 @@ ARCHYTASZX DOCUMENTATION
 
 Layer C: Rewriting
 
-Applies to: ArchytasZX 0.19.x
+Applies to: ArchytasZX 2.0.x
 Package: archytaszx.rewrite (modules rule, match, match_zxw, match_box, rules_library, engine,
          normal_form, egraph, tactics, sheet, cache)
 
