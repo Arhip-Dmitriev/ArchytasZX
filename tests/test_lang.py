@@ -411,7 +411,7 @@ class TestErrors:
             ("|a> = |0>_2 + |0>|0>", LangError, "different widths"),
             ("var n\n|a> = H|0>^@n", LangError, "single qubits"),
             ("|a> = QQ|0>", LangError, "not defined"),
-            ("var H", LangTypeError, "already a op"),
+            ("var H", LangTypeError, "already a gate"),
             ("var pi", LangSyntaxError, "reserved"),
             ("gate H = |x> -> |x>", LangTypeError, "built-in"),
             ("oracle B = |x> -> |0>", LangSyntaxError, "oracle is gone"),

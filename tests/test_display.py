@@ -21,6 +21,7 @@ import pytest
 import sympy
 
 from archytaszx.repl import display as D
+from archytaszx.repl import terminal as T
 from archytaszx.repl.lang import Interpreter
 from tests.test_lang import SHOR
 
@@ -53,12 +54,12 @@ def test_shor_lines_render_in_mathtext() -> None:
     ],
 )
 def test_protocol_detection(env: dict[str, str], tty: bool, expected: str) -> None:
-    assert D.protocol(env, tty) == expected
+    assert T.protocol(env, tty) == expected
 
 
 def test_theme() -> None:
-    assert D.dark({}) and D.dark({"COLORFGBG": "15;0"})
-    assert not D.dark({"COLORFGBG": "0;15"}) and not D.dark({"ARCHYTASZX_IMAGE_THEME": "light"})
+    assert T.dark({}) and T.dark({"COLORFGBG": "15;0"})
+    assert not T.dark({"COLORFGBG": "0;15"}) and not T.dark({"ARCHYTASZX_IMAGE_THEME": "light"})
 
 
 @pytest.mark.parametrize("proto", ["kitty", "iterm", "sixel"])
@@ -69,7 +70,7 @@ def test_image_escapes(proto: str, monkeypatch: pytest.MonkeyPatch) -> None:
     assert out is not None
     prefix = {"kitty": "\x1b_Ga=T,f=100", "iterm": "\x1b]1337;File=inline=1", "sixel": "\x1bPq"}
     assert out.startswith(prefix[proto])
-    png = D.render_png([r"|0\rangle"], dark_theme=False)
+    png = T.render_png([r"|0\rangle"], dark_theme=False)
     assert png.startswith(b"\x89PNG")
 
 

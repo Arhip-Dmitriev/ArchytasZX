@@ -600,7 +600,7 @@ class TestElse:
 
 class TestConfig:
     def test_show_set_and_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(S.D, "CONFIG", S.D.Config())
+        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
         shell = Shell(display="ascii")
         assert shell.run_line(":config").startswith("size = 1\ncolor = auto\nfile: ")
         assert shell.run_line(":config size 1.5").startswith("size = 1.5\n")
@@ -611,20 +611,20 @@ class TestConfig:
         assert shell.errors == 2
 
     def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(S.D, "CONFIG", S.D.Config())
+        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         shell = Shell(display="ascii")
         shell.run_line(":config size 2")
         assert shell.run_line(":config save") == f"saved {tmp_path}/archytaszx/config.toml"
-        loaded = S.D.load_config()
+        loaded = S.T.load_config()
         assert loaded.size == 2.0 and loaded.color == "auto"
 
     def test_bad_file(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"
         path.write_text("size = -1\n", encoding="utf-8")
         with pytest.raises(ValueError):
-            S.D.load_config(str(path))
-        assert S.D.load_config(str(tmp_path / "none.toml")) == S.D.Config()
+            S.T.load_config(str(path))
+        assert S.T.load_config(str(tmp_path / "none.toml")) == S.T.Config()
 
 
 class TestStyles:

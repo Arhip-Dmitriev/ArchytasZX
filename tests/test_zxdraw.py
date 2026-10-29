@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from archytaszx.repl import display as D
+from archytaszx.repl import terminal as T
 from archytaszx.repl import zxdraw, zxview
 from archytaszx.repl.lang import Interpreter
 from archytaszx.repl.shell import VIEWS, _argument_parser, main
@@ -126,6 +126,6 @@ def test_horrible_state_zx_draws(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ARCHYTASZX_IMAGES", "kitty")
-    monkeypatch.setattr(D, "prepare", lambda *a, **k: None)
+    monkeypatch.setattr(T, "prepare", lambda *a, **k: None)
     assert main([HORRIBLE, "--zx"]) == 0
     assert "\x1b_G" in capsys.readouterr().out
