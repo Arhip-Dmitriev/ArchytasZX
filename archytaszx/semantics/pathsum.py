@@ -877,8 +877,9 @@ def _indicator(c: sympy.Basic) -> Expr | None:
         delta = sympy.KroneckerDelta(c.lhs, c.rhs)
         return delta if isinstance(c, sympy.Eq) else 1 - delta
     if isinstance(c, (sympy.And, sympy.Or, sympy.Not)):
-        parts = [_indicator(a) for a in c.args]
-        if any(p is None for p in parts):
+        found = [_indicator(a) for a in c.args]
+        parts = [p for p in found if p is not None]
+        if len(parts) != len(found):
             return None
         if isinstance(c, sympy.Not):
             return 1 - parts[0]
@@ -1821,8 +1822,8 @@ def _reindex_shifts(t: Term) -> Term:
 def simplify(s: State) -> State:
     """Terms tidied, zero terms dropped, and bound indices outside every ket summed out."""
     terms = []
-    for t in (p for t in s.terms for p in _delta_parts(t)):
-        t = _reindex_shifts(_reduce_mods(t))
+    for part in (p for t in s.terms for p in _delta_parts(t)):
+        t = _reindex_shifts(_reduce_mods(part))
         amp = tidy(t.amp)
         bound = list(t.bound)
         for b in list(bound):
@@ -2414,9 +2415,10 @@ def _bit_character(amp: Expr, b: Bound, limits: dict[sympy.Symbol, Expr]) -> Exp
             if same(leaf, size - 1):
                 continue
             top = limits.get(leaf) if isinstance(leaf, sympy.Symbol) else None
-            if top is None or not same(top, size):
-                if not _in_known_range(leaf, Bound(sym, sympy.S.Zero, size - 1)):
-                    return False
+            if (top is None or not same(top, size)) and not _in_known_range(
+                leaf, Bound(sym, sympy.S.Zero, size - 1)
+            ):
+                return False
         return True
 
     terms = sympy.Add.make_args(sign.exp)
@@ -2742,7 +2744,7 @@ def _is_bit(e: Expr, limits: dict[sympy.Symbol, Expr], bound: Sequence[Bound]) -
     if isinstance(e, sympy.Symbol):
         b = next((x for x in bound if x.symbol == e), None)
         if b is not None:
-            return b.lo == 0 and b.hi == 1
+            return bool(b.lo == 0 and b.hi == 1)
         span = (_RANGES.get() or {}).get(e)
         return same(limits.get(e), 2) or (span is not None and span == (0, 1))
     if isinstance(e, bit) or (isinstance(e, sympy.Mod) and e.args[1] == 2):

@@ -1,6 +1,7 @@
-from archytaszx import azx, Program
+from archytaszx import Program, azx
+
 azx("var n")
-azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n
+azx.psi = azx.H**azx.n | azx.ket(0) ** azx.n
 print(azx.psi)
 azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
 print(azx.phi)
@@ -22,5 +23,5 @@ print(q["<s|s>"])
 q("gate CZ = |a>|b> -> (-1)^(a*b) |a>|b>")
 print(q["CZ (|+> @ |+>)"])
 print(q.CZ)
-print(float(q["<s|s>"]) if hasattr(q["<s|s>"], '__float__') else 'no float')
+print(float(q["<s|s>"]) if hasattr(q["<s|s>"], "__float__") else "no float")
 print(repr(q["<s|s>"]))
