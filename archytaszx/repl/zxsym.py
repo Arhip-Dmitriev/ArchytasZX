@@ -41,8 +41,8 @@ from typing import TypeAlias, cast
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionError
-from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
-from archytaszx.algebra.scalar import Scalar
+from archytaszx.algebra.phase import INDEX, Phase, PhaseError, PhaseVector
+from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import Mult, _mult_symbol
 from archytaszx.diagram.generators import (
     DIM_BINDER,
@@ -883,11 +883,32 @@ def _fold(s: P.State) -> P.State:
     return P.State(s.widths, (P.Term(amp, tuple(bound), tuple(kets)),), False, s.dims)
 
 
+def _pair(s: P.State) -> P.State | None:
+    """Two terms without indices whose amplitudes differ by a phase rho as one term
+    ``sum_c a0 rho^c |v0 + c (v1 - v0)>`` over ``c in 0..1``; None otherwise."""
+    if len(s.terms) != 2 or any(t.bound for t in s.terms):
+        return None
+    a, b = s.terms
+    if a.amp == 0:
+        return None
+    rho = P.tidy(sympy.simplify(b.amp / a.amp))
+    if rho != 1 and _turns(rho) is None:
+        return None
+    sel = P.new_bound("c", 0, 1)
+    c = sel.symbol
+    kets = tuple(P.expand(u + c * (v - u)) for u, v in zip(a.kets, b.kets, strict=True))
+    amp = a.amp if rho == 1 else a.amp * rho**c
+    return P.State(s.widths, (P.Term(amp, (sel,), kets),), False, s.dims)
+
+
 def diagram(s: P.State) -> tuple[Diagram, list[str]]:
     """A ZXW diagram of the ket ``s`` and notes naming the dimensions outside the Dim grammar."""
     b = _Builder()
     if len(s.terms) > 1:
-        s = _fold(s)
+        s = _pair(s) or _fold(s)
     term = _Term(s.terms[0], s, b)
-    term.build()
-    return b.build(), b.notes
+    try:
+        term.build()
+        return b.build(), b.notes
+    except (ScalarError, PhaseError) as exc:
+        raise Unsupported(f"an amplitude outside the ZX scalar and phase grammar: {exc}") from exc

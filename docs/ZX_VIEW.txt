@@ -40,8 +40,14 @@ translated as follows.
     [u = v] = (1/L) sum_t omega^{t (u - v)}: a Fourier box between u and t, and a gadget on t
     and the indices of v.
 
-Several terms are folded into one with a selector index s: the factors of term i read s == i,
-and each register's value becomes a function of s and the term indices.
+Two terms without summation indices whose amplitudes differ by a phase rho, a0 |v0> + a0 rho
+|v1>, become one term sum_{c=0}^{1} a0 rho^c |v0 + c (v1 - v0)>. The GHZ state
+(|0>^@n + |1>^@n)/sqrt(2) is then one Z spider copied into the n digits of the register.
+Several other terms are folded into one with a selector index s: the factors of term i read
+s == i, and each register's value becomes a function of s and the term indices.
+
+An amplitude outside the scalar and phase grammar, such as cos(t) of a real symbol t, has no
+ZX form; the view prints "no ZX form (reason)".
 
 
 3. SUMS OF TERMS AND LITERAL VECTORS (archytaszx.repl.zxview)
