@@ -89,6 +89,7 @@ exclude = ["archytaszx.lean*"]
 
 [tool.setuptools.package-data]
 archytaszx = [
+    "py.typed",
     "lean/*.lean",
     "lean/ArchytasZX/*.lean",
     "lean/lakefile.toml",
