@@ -22,10 +22,16 @@ with `n` never given a value:
 var n
 gate U_f = |x>|y> -> |x>|y xor bit(x, 0)>
 |psi> = |0>^@n @ |1>
+show(|psi>)
 (H^@n @ H)|psi>
+show(|psi>)
 U_f|psi>
+show(|psi>)
 (H^@n @ I)|psi>
+show(|psi>)
 var z = floor(measure|psi>/2)
+show(z)
+show(|psi>)
 ```
 
 ```console

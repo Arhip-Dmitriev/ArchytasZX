@@ -510,6 +510,17 @@ as an integer when it closes the geometric sums of a state, an inner product or 
 measurement, bounds their indices, and simplifies floor and % of measured outcomes
 (examples/shor.azx).
 
+A bound x < b, x <= b, x > b or x >= b on a symbol x gives x that range. A value |x> then
+lies inside a sum over 0..b-1 or a character sum over 0..b-1, and two values that differ
+everywhere over the range are never equal:
+
+    var n, w
+    assume w < 2^n         sum(x in 0..2^n){ ifelse(x == w, 1, 0) |x> } is |w>
+    assume n >= 1          <0|^@n |1>^@n is 0
+
+A symbol of concrete range, such as x under assume x < 8, is also read digit by digit where
+floor, % and bit of it meet a sum.
+
 14.2 Assertions
 
     assert CONDITION
@@ -527,8 +538,8 @@ writes, for each name, a Lean 4 file stating and proving that the value the prog
 for NAME equals the closed form the engine prints, for every value of the size symbols,
 parameters and output registers (LEAN.txt, section 7). NAME is a state, a scalar variable or
 a variable holding a measured distribution. The file is <script>_<name>.lean next to the
-script, or in the directory given by --certify (SHELL.txt, section 3.5); a name certified
-again gets a numbered file. One line is printed per name:
+script, or in the directory given by --certify (SHELL.txt, section 3.5), with s_ before a
+script name that does not begin with a letter; a name certified again gets a numbered file. One line is printed per name:
 
     lean: wrote FILE (N axioms: NAMES)
 
