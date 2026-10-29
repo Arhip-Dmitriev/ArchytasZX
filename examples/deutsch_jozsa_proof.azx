@@ -1,4 +1,4 @@
-# The circuit of examples/deutsch_jozsa_qudits.azx as ZXW diagrams, proved equal to its output
+# The qudit Deutsch-Jozsa circuit as ZXW diagrams, proved equal to its output
 # for every d and n and exported to Lean 4.
 # |0>_d = d^(-1/2) X(0 -> 1), |1>_d = d^(-1/2) X(0 -> 1) phase{k: -k/d}, Fd = F^3.
 # U_const: X(2 -> 1) adds its input c, wired to the boundary, to the target (scale sqrt(d)).
