@@ -413,6 +413,39 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   [doi:10.1038/s41586-020-2649-2](https://doi.org/10.1038/s41586-020-2649-2)
 - Meurer et al., *SymPy*, PeerJ Comput. Sci. 3 (2017) — [doi:10.7717/peerj-cs.103](https://doi.org/10.7717/peerj-cs.103)
 
+**Verification of quantum programs and related tools**
+- Chareton, Bardin, Bobot, Perrelle & Valiron, *An automated deductive verification framework for
+  circuit-building quantum programs* (QBricks), ESOP 2021 — [arXiv:2003.05841](https://arxiv.org/abs/2003.05841)
+- Hietala, Rand, Hung, Wu & Hicks, *A verified optimizer for quantum circuits* (VOQC), POPL 2021 —
+  [arXiv:1912.02250](https://arxiv.org/abs/1912.02250)
+- Hietala, Rand, Hung, Li & Hicks, *Proving quantum programs correct* (SQIR), ITP 2021 —
+  [arXiv:2010.01240](https://arxiv.org/abs/2010.01240)
+- Peng et al., *A formally certified end-to-end implementation of Shor's factorization algorithm*,
+  PNAS 120 (2023) — [arXiv:2204.07112](https://arxiv.org/abs/2204.07112)
+- Chen, Chung, Lengál, Lin, Tsai & Yen, *An automata-based framework for verification and bug
+  hunting in quantum circuits* (AutoQ), PLDI 2023 — [arXiv:2301.07747](https://arxiv.org/abs/2301.07747)
+- Abdulla et al., *Parameterized verification of quantum circuits* (2025) —
+  [arXiv:2511.19897](https://arxiv.org/abs/2511.19897)
+- Xu, Barthe & Zhou, *Automating equational proofs in Dirac notation* (DiracDec), POPL 2025 —
+  [arXiv:2411.11617](https://arxiv.org/abs/2411.11617)
+- Xu, Zhou & Barthe, *D-Hammer: efficient equational reasoning for labelled Dirac notation*,
+  CAV 2025 — [arXiv:2505.08633](https://arxiv.org/abs/2505.08633)
+- Lehmann, Caldwell, Shah, Spencer & Rand, *VyZX: formal verification of a graphical quantum
+  language* — [arXiv:2311.11571](https://arxiv.org/abs/2311.11571)
+- Miller-Bakewell, *Finite verification of infinite families of diagram equations*, EPTCS 318
+  (2020) — [arXiv:1904.00706](https://arxiv.org/abs/1904.00706)
+- Kissinger & Zamdzhiev, *Quantomatic: a proof assistant for diagrammatic reasoning*, CADE-25
+  (2015) — [arXiv:1503.01034](https://arxiv.org/abs/1503.01034)
+- Poór, Booth, Carette, van de Wetering & Yeh, *The qupit stabiliser ZX-travaganza*, EPTCS 384
+  (2023), with the DiZX library — [arXiv:2306.05204](https://arxiv.org/abs/2306.05204),
+  [github.com/jvdwetering/dizx](https://github.com/jvdwetering/dizx)
+- Sutcliffe & Kissinger, *Fast classical simulation of quantum circuits via parametric rewriting
+  in the ZX-calculus* (ParamZX), EPTCS 426 (2025) — [arXiv:2403.06777](https://arxiv.org/abs/2403.06777)
+- Chareton, Bardin, Lee, Valiron, Vilmart & Xu, *Formal methods for quantum programs: a survey* —
+  [arXiv:2109.06493](https://arxiv.org/abs/2109.06493)
+- Lewis, Soudjani & Zuliani, *Formal verification of quantum programs: theory, tools, and
+  challenges*, ACM TQC 5 (2023) — [arXiv:2110.01320](https://arxiv.org/abs/2110.01320)
+
 </details>
 
 ## License

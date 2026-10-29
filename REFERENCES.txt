@@ -199,3 +199,74 @@ Software
 [42] A. Meurer et al. SymPy: symbolic computing in Python.
      PeerJ Computer Science 3:e103, 2017.
      doi:10.7717/peerj-cs.103
+
+
+Verification of quantum programs and related tools
+--------------------------------------------------
+
+[43] C. Chareton, S. Bardin, F. Bobot, V. Perrelle, B. Valiron. An automated deductive
+     verification framework for circuit-building quantum programs.
+     ESOP 2021, LNCS 12648, pp. 148-177. Springer, 2021.
+     doi:10.1007/978-3-030-72019-3_6, arXiv:2003.05841
+
+[44] K. Hietala, R. Rand, S.-H. Hung, X. Wu, M. Hicks. A verified optimizer for quantum circuits.
+     Proceedings of the ACM on Programming Languages 5(POPL):1-29, 2021.
+     doi:10.1145/3434318, arXiv:1912.02250
+
+[45] K. Hietala, R. Rand, S.-H. Hung, L. Li, M. Hicks. Proving quantum programs correct.
+     ITP 2021, LIPIcs 193, pp. 21:1-21:19, 2021.
+     doi:10.4230/LIPIcs.ITP.2021.21, arXiv:2010.01240
+
+[46] Y. Peng, K. Hietala, R. Tao, L. Li, R. Rand, M. Hicks, X. Wu. A formally certified
+     end-to-end implementation of Shor's factorization algorithm.
+     Proceedings of the National Academy of Sciences 120(21):e2218775120, 2023.
+     doi:10.1073/pnas.2218775120, arXiv:2204.07112
+
+[47] Y.-F. Chen, K.-M. Chung, O. Lengal, J.-A. Lin, W.-L. Tsai, D.-D. Yen. An automata-based
+     framework for verification and bug hunting in quantum circuits.
+     Proceedings of the ACM on Programming Languages 7(PLDI):1218-1243, 2023.
+     doi:10.1145/3591270, arXiv:2301.07747
+
+[48] P. A. Abdulla, Y.-F. Chen, M. Hecko, L. Holik, O. Lengal, J.-A. Lin, R. S. Thinniyam.
+     Parameterized verification of quantum circuits (technical report), 2025.
+     arXiv:2511.19897
+
+[49] Y. Xu, G. Barthe, L. Zhou. Automating equational proofs in Dirac notation.
+     Proceedings of the ACM on Programming Languages 9(POPL):1227-1259, 2025.
+     doi:10.1145/3704878, arXiv:2411.11617
+
+[50] Y. Xu, L. Zhou, G. Barthe. D-Hammer: efficient equational reasoning for labelled Dirac
+     notation. CAV 2025, LNCS, pp. 53-76. Springer, 2025.
+     doi:10.1007/978-3-031-98685-7_3, arXiv:2505.08633
+
+[51] A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of a
+     graphical quantum language, 2023.
+     arXiv:2311.11571
+
+[52] H. Miller-Bakewell. Finite verification of infinite families of diagram equations.
+     EPTCS 318:27-52, 2020.
+     doi:10.4204/EPTCS.318.3, arXiv:1904.00706
+
+[53] A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic reasoning.
+     CADE-25, LNCS, pp. 326-336. Springer, 2015.
+     doi:10.1007/978-3-319-21401-6_22, arXiv:1503.01034
+
+[54] B. Poor, R. I. Booth, T. Carette, J. van de Wetering, L. Yeh. The qupit stabiliser
+     ZX-travaganza: simplified axioms, normal forms and graph-theoretic simplification.
+     EPTCS 384:220-264, 2023.
+     doi:10.4204/EPTCS.384.13, arXiv:2306.05204
+
+[55] J. van de Wetering et al. DiZX: a qudit version of PyZX.
+     https://github.com/jvdwetering/dizx
+
+[56] M. Sutcliffe, A. Kissinger. Fast classical simulation of quantum circuits via parametric
+     rewriting in the ZX-calculus. EPTCS 426:247-269, 2025.
+     doi:10.4204/EPTCS.426.10, arXiv:2403.06777
+
+[57] C. Chareton, S. Bardin, D. Lee, B. Valiron, R. Vilmart, Z. Xu. Formal methods for quantum
+     programs: a survey, 2021.
+     arXiv:2109.06493
+
+[58] M. Lewis, S. Soudjani, P. Zuliani. Formal verification of quantum programs: theory, tools,
+     and challenges. ACM Transactions on Quantum Computing 5(1):1-35, 2023.
+     doi:10.1145/3624483, arXiv:2110.01320
