@@ -836,6 +836,14 @@ class Reader:
             for p in parts[1:]:
                 out = _tensor(out, p)
             return out
+        if content in _BUILTIN_KETS and dim is None:
+            c = _BUILTIN_KETS[content]
+            half = 1 / sympy.sqrt(2)
+            return Ket(
+                (sympy.Integer(1),),
+                (sympy.Integer(2),),
+                ((half, (), (sympy.Integer(0),)), (c * half, (), (sympy.Integer(1),))),
+            )
         ast = self.parse(content)
         value = self.scalar(ast, loc)
         slot = loc.get(ast.id) if isinstance(ast, L.Name) else None
@@ -1011,6 +1019,9 @@ class GateTree:
     source: str
 
 
+_BUILTIN_KETS = {"+": sympy.Integer(1), "-": sympy.Integer(-1), "i": sympy.I, "-i": -sympy.I}
+
+
 def _clean(name: str) -> str:
     return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
 
@@ -1029,7 +1040,7 @@ class Certifier:
         self.trees = trees
         self.log = list(log)
         self.parse = parse
-        self.script = _clean(script)
+        self.script = _clean(script) if script[:1].isalpha() else f"s_{_clean(script)}"
         self.funcs = funcs or {}
         self.upto = 0
         self.assumptions: list[sympy.Basic] = []
