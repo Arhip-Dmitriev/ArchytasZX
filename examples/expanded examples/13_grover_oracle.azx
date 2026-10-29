@@ -1,0 +1,9 @@
+var n, w
+|s> = H^@n |0>^@n
+gate O = |x> -> (-1)^(ifelse(x == w, 1, 0)) |x>
+|psi> = O |s>
+show(|psi>)
+|psi> = 2 |s><s|psi> - |psi>
+show(|psi>)
+|m> = 0 |0>^@n + |w>
+show(<m|psi>)

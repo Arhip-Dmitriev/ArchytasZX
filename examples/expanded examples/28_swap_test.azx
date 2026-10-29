@@ -1,0 +1,12 @@
+var a: real
+var b: real
+|u> = cos(a)|0> + sin(a)|1>
+|v> = cos(b)|0> + sin(b)|1>
+gate CSWAP = |c>|x>|y> -> ifelse(c == 1, 1, 0) |c>|y>|x> + ifelse(c == 0, 1, 0) |c>|x>|y>
+|psi> = |0> @ |u> @ |v>
+(H @ I) |psi>
+CSWAP |psi>
+(H @ I) |psi>
+var z = floor(measure|psi> / 4)
+show(z)
+show(<u|v>)

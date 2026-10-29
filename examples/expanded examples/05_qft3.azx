@@ -1,0 +1,10 @@
+var n
+var N = 2^n
+gate QFT = |x> -> 1/sqrt(N) sum(k in 0..N){ e^(2*pi*i*x*k/N) |k> }
+|psi> = QFT |0>^@n
+show(|psi>)
+var z = measure|psi>
+show(z)
+|phi> = QFT |1>^@n
+var w = measure|phi>
+show(w)

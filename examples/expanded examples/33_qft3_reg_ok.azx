@@ -1,0 +1,19 @@
+# per-qubit gates written with explicit widths for each register
+var x
+assume x < 8
+gate CP4 = |a>|b>|c> -> e^(i*pi*a*c/4) |a>|b>|c>
+gate CP2B = |a>|b>|c> -> e^(i*pi*a*b/2) |a>|b>|c>
+gate CP2C = |a>|b>|c> -> e^(i*pi*b*c/2) |a>|b>|c>
+gate SW13 = |a>|b>|c> -> |c>|b>|a>
+gate QFT = |x> -> 1/sqrt(8) sum(k in 0..8){ e^(2*pi*i*x*k/8) |k> }
+|c> = 0 |0>^@3 + |x>
+(H @ I) |c>
+CP2B |c>
+CP4 |c>
+(I @ H @ I) |c>
+CP2C |c>
+(I @ I @ H) |c>
+SW13 |c>
+show(|c>)
+|ref> = QFT (0 |0>^@3 + |x>)
+show(<ref|c>)

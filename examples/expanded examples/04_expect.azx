@@ -1,0 +1,7 @@
+var t: real
+gate RY = [[cos(t/2), -sin(t/2)], [sin(t/2), cos(t/2)]]
+|psi> = RY |0>
+show(|psi>)
+show(<psi|Z|psi>)
+var z = measure|psi>
+show(z)

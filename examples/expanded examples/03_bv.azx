@@ -1,0 +1,10 @@
+# Bernstein-Vazirani, symbolic n and secret s
+var n, s
+gate U_f = |x>|y> -> |x>|y xor (dot(x, s) % 2)>
+|psi> = |0>^@n @ |1>
+(H^@n @ H)|psi>
+U_f|psi>
+(H^@n @ I)|psi>
+show(|psi>)
+var z = floor(measure|psi>/2)
+show(z)

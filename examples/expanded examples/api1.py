@@ -1,0 +1,26 @@
+from archytaszx import azx, Program
+azx("var n")
+azx.psi = azx.H ** azx.n | azx.ket(0) ** azx.n
+print(azx.psi)
+azx["|phi>"] = azx["|psi> - 2 |0><0|psi>"]
+print(azx.phi)
+print(azx.phi.latex())
+y = azx.measure | azx.psi
+print(y)
+p = Program()
+p("|b> = CNOT (H @ I) |0>|0>")
+print(p.b)
+print(p.measure | p.b)
+p("var t: real")
+p("gate RY = [[cos(t/2), -sin(t/2)], [sin(t/2), cos(t/2)]]")
+print(p["RY |0>"])
+print(p["<0|RY|0>"])
+q = Program()
+q.s = q.ket(1) + q.ket(0)
+print(q.s)
+print(q["<s|s>"])
+q("gate CZ = |a>|b> -> (-1)^(a*b) |a>|b>")
+print(q["CZ (|+> @ |+>)"])
+print(q.CZ)
+print(float(q["<s|s>"]) if hasattr(q["<s|s>"], '__float__') else 'no float')
+print(repr(q["<s|s>"]))

@@ -1,0 +1,12 @@
+# Phase estimation of U|1> = e^(2 pi i phi)|1>, phi = m/2^t exactly
+var t, m
+var M = 2^t
+assume m < M
+gate IQFT = |x> -> 1/sqrt(M) sum(k in 0..M){ e^(-2*pi*i*x*k/M) |k> }
+gate CU = |c>|u> -> e^(2*pi*i*m*c*u/M) |c>|u>
+|psi> = (H^@t |0>^@t) @ |1>
+CU |psi>
+(IQFT @ I) |psi>
+show(|psi>)
+var z = floor(measure|psi> / 2)
+show(z)

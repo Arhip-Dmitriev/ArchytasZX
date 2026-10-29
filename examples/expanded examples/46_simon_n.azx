@@ -1,0 +1,9 @@
+# Simon for symbolic n with f(x) = x xor (bit-parity(x . s)) style 2-to-1: f(x) = min(x, x xor s)
+var n, s
+assume s < 2^n
+gate U = |x>|y> -> |x>|y xor (dot(x, s) % 2)>
+|psi> = (H^@n @ I) (|0>^@n @ |0>)
+U |psi>
+(H^@n @ I) |psi>
+var z = floor(measure|psi> / 2)
+show(z)

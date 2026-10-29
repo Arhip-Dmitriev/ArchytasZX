@@ -1,0 +1,9 @@
+# Grover on 2 qubits, marked item 3, one iteration -> certain
+|s> = H^@2 |0>^@2
+gate O = |x> -> (-1)^(ifelse(x == 3, 1, 0)) |x>
+|psi> = |s>
+O |psi>
+|psi> = (2 |s><s| - I) |psi>
+show(|psi>)
+var z = measure|psi>
+show(z)

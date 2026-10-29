@@ -1,0 +1,11 @@
+|rho> = 1/2 |0><0| + 1/2 |1><1|
+show(|rho>)
+H |rho>
+show(|rho>)
+|psi> = |+>
+var z = measure|psi>
+show(z, |psi>)
+H |psi>
+show(|psi>)
+var y = measure|psi>
+show(y)

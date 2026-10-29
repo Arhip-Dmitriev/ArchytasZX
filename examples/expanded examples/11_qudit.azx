@@ -1,0 +1,12 @@
+var d
+gate F = |x>_d -> 1/sqrt(d) sum(y in 0..d){ e^(2*pi*i*x*y/d) |y>_d }
+gate Xd = |x>_d -> |(x + 1) % d>_d
+|psi> = F |0>_d
+show(|psi>)
+show(<psi|psi>)
+|phi> = F F |0>_d
+show(|phi>)
+|chi> = F F F F |1>_d
+show(|chi>)
+var z = measure|psi>
+show(z)

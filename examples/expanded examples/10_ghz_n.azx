@@ -1,0 +1,7 @@
+# GHZ for symbolic n via fanout
+var n
+gate FAN = |c>|y> -> |c>|y xor c*(2^n - 1)>
+|psi> = FAN (H|0> @ |0>^@n)
+show(|psi>)
+var z = measure|psi>
+show(z)

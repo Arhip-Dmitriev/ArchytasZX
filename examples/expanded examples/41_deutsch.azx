@@ -1,0 +1,14 @@
+gate F0 = |x>|y> -> |x>|y>
+gate F1 = |x>|y> -> |x>|1 - y>
+gate FI = |x>|y> -> |x>|y xor x>
+gate FN = |x>|y> -> |x>|y xor (1 - x)>
+|a> = (H @ H) |0>|1>
+|b> = (H @ I) F0 |a>
+|c> = (H @ I) F1 |a>
+|d> = (H @ I) FI |a>
+|e> = (H @ I) FN |a>
+var zb = floor(measure|b>/2)
+var zc = floor(measure|c>/2)
+var zd = floor(measure|d>/2)
+var ze = floor(measure|e>/2)
+show(zb, zc, zd, ze)

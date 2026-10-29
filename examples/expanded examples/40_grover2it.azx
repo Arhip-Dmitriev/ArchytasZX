@@ -1,0 +1,12 @@
+var n, w
+assume w < 2^n
+|s> = H^@n |0>^@n
+gate O = |x> -> (-1)^(ifelse(x == w, 1, 0)) |x>
+|psi> = |s>
+for k in 0..2 {
+  O |psi>
+  |psi> = 2 |s><s|psi> - |psi>
+}
+|m> = 0 |0>^@n + |w>
+show(<m|psi>)
+show(<psi|psi>)

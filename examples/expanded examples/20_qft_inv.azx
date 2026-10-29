@@ -1,0 +1,9 @@
+var n, x
+var N = 2^n
+assume x < N
+gate QFT = |x> -> 1/sqrt(N) sum(k in 0..N){ e^(2*pi*i*x*k/N) |k> }
+gate IQFT = |x> -> 1/sqrt(N) sum(k in 0..N){ e^(-2*pi*i*x*k/N) |k> }
+|a> = 0 |0>^@n + |x>
+|b> = IQFT QFT |a>
+show(|b>)
+assert <a|b> == 1

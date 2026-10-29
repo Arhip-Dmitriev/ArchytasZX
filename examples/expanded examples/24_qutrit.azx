@@ -1,0 +1,10 @@
+gate F3 = |x>_3 -> 1/sqrt(3) sum(y in 0..3){ e^(2*pi*i*x*y/3) |y>_3 }
+|psi> = F3 |0>_3
+show(|psi>)
+var z = measure|psi>
+show(z)
+|phi> = F3 F3 |1>_3
+show(|phi>)
+|w> = |0> + |2>
+show(|w>)
+show(normalise(|w>))

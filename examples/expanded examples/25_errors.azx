@@ -1,0 +1,9 @@
+|psi> = H |0
+show(|foo>)
+var x = |0>
+|a> = |0> + 1
+gate G = |x> -> |x
+|b> = CNOT |0>
+show(<0|1>)
+assert 1 == 2
+print("still running")

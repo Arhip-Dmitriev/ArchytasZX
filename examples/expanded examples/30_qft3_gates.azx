@@ -1,0 +1,19 @@
+var x
+assume x < 8
+gate CP2 = |a>|b> -> e^(i*pi*a*b/2) |a>|b>
+gate CP4 = |a>|b>|c> -> e^(i*pi*a*c/4) |a>|b>|c>
+gate SW13 = |a>|b>|c> -> |c>|b>|a>
+gate QFT = |x> -> 1/sqrt(8) sum(k in 0..8){ e^(2*pi*i*x*k/8) |k> }
+|inp> = 0 |0>|0>|0> + |floor(x/4)>|floor(x/2) % 2>|x % 2>
+|c> = |inp>
+(H @ I) |c>
+(CP2 @ I) |c>
+CP4 |c>
+(I @ H @ I) |c>
+(I @ CP2) |c>
+(I @ I @ H) |c>
+SW13 |c>
+show(|c>)
+|ref> = QFT (0 |0>^@3 + |x>)
+show(|ref>)
+show(<ref|c>)

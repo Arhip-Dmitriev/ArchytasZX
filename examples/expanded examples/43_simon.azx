@@ -1,0 +1,7 @@
+# Simon, n = 2, s = 3: f(x) = f(x xor 3)
+gate U = |x>|y> -> |x>|y xor ifelse(x == 0 or x == 3, 0, 1)>
+|psi> = (H^@2 @ I) (|0>^@2 @ |0>^@2)
+U |psi>
+(H^@2 @ I) |psi>
+var z = floor(measure|psi> / 4)
+show(z)

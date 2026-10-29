@@ -1,0 +1,4 @@
+|psi> = CNOT (H @ I) |0>|0>
+show(|psi>)
+var z = measure|psi>
+show(z)

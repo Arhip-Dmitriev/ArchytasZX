@@ -1,0 +1,6 @@
+gate CZ = |a>|b> -> (-1)^(a*b) |a>|b>
+|psi> = CZ (|+> @ |+>)
+show(|psi>)
+show(<psi|psi>)
+|phi> = (H @ I) CZ (H @ I) |1>|0>
+show(|phi>)

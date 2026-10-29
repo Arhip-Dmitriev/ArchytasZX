@@ -1,0 +1,14 @@
+var n
+|psi> = |0>
+for j in 0..4 { |psi> = H |psi> }
+show(|psi>)
+for j in 0..3 { print(f"j = {j}") }
+var c = 0
+while c < 3 { var c = c + 1 }
+print(f"c = {c}")
+if c == 3 { print("three") } else { print("no") }
+func f(x) = x^2 + 1
+show(f(3), f(n))
+show(sum(k in 0..n){ k })
+show(sum(k in 0..n){ 2^k })
+show(sum(k in 0..=10){ k^2 })

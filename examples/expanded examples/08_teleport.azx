@@ -1,0 +1,8 @@
+var a, b
+|q> = a|0> + b|1>
+|psi> = |q> @ (1/sqrt(2) (|0>|0> + |1>|1>))
+(CNOT @ I)|psi>
+(H @ I)|psi>
+show(|psi>)
+var z = measure|psi>
+show(z)

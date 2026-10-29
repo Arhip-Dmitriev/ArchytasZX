@@ -1,0 +1,10 @@
+var t: real
+gate CRZ = |c>|x> -> e^(i*t*c*(2*x-1)/2) |c>|x>
+|psi> = CRZ (|+> @ |+>)
+show(|psi>)
+show(<psi|psi>)
+var z = measure|psi>
+show(z)
+gate RX = [[cos(t/2), -i*sin(t/2)], [-i*sin(t/2), cos(t/2)]]
+|q> = RX RX |0>
+show(|q>)

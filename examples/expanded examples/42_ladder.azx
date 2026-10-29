@@ -1,0 +1,9 @@
+# GHZ by a CNOT ladder on one n-qubit register, bit j+1 ^= bit j, from the top bit down
+var n
+assume n >= 1
+gate L = |x> -> |x xor (bit(x, n - 1 - j) * 2^(n - 2 - j))>
+|psi> = (H @ I) |0>^@n
+for j in 0..n-1 { |psi> = L |psi> }
+show(|psi>)
+|ghz> = 1/sqrt(2) (|0>^@n + |1>^@n)
+show(<ghz|psi>)

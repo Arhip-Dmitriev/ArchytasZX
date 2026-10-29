@@ -1,0 +1,9 @@
+var n, w
+assume w < 2^n
+assume n >= 1
+|a> = sum(x in 0..2^n){ ifelse(x == w, 1, 0) |x> }
+show(|a>)
+show(<0|^@n |1>^@n)
+|z> = |0>^@n
+|o> = |1>^@n
+show(<z|o>)

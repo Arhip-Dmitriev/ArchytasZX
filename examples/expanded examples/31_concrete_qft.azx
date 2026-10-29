@@ -1,0 +1,14 @@
+gate CP2 = |a>|b> -> e^(i*pi*a*b/2) |a>|b>
+gate CP4 = |a>|b>|c> -> e^(i*pi*a*c/4) |a>|b>|c>
+gate SW13 = |a>|b>|c> -> |c>|b>|a>
+|c> = |1>|0>|1>
+(H @ I) |c>
+(CP2 @ I) |c>
+CP4 |c>
+(I @ H @ I) |c>
+(I @ CP2) |c>
+(I @ I @ H) |c>
+SW13 |c>
+show(|c>)
+var z = measure|c>
+show(z)

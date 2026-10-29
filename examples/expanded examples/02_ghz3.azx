@@ -1,0 +1,7 @@
+|psi> = |0>|0>|0>
+(H @ I) |psi>
+(CNOT @ I) |psi>
+(I @ CNOT) |psi>
+show(|psi>)
+var z = measure|psi>
+show(z)

@@ -1,0 +1,9 @@
+# Grover on n qubits, marked item w, one iteration: amplitude on w
+var n, w
+var N = 2^n
+|s> = H^@n |0>^@n
+|m> = 0 |0>^@n + |w>
+|psi> = |s> - 2 |m><m|s>
+|psi> = 2 |s><s|psi> - |psi>
+show(|psi>)
+show(<m|psi>)

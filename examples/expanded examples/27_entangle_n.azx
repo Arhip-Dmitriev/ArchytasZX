@@ -1,0 +1,9 @@
+# W-like and partial things
+var n
+assume n >= 1
+|ghz> = 1/sqrt(2) (|0>^@n + |1>^@n)
+show(<ghz|ghz>)
+var z = measure|ghz>
+show(z)
+|p> = H^@n |ghz>
+show(|p>)

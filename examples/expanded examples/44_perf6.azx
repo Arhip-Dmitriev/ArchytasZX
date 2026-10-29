@@ -1,0 +1,21 @@
+|c> = |0>|0>|0>|0>|0>|0>
+(H @ I) |c>
+(I @ H @ I) |c>
+(I @ I @ H @ I) |c>
+gate CX = |a>|b> -> |a>|b xor a>
+gate CZ = |a>|b> -> (-1)^(a*b) |a>|b>
+(I @ I @ CX @ I) |c>
+(I @ I @ I @ CX @ I) |c>
+(I @ I @ I @ I @ CX) |c>
+(CZ @ I) |c>
+(I @ CZ @ I) |c>
+(T @ I) |c>
+(I @ S @ I) |c>
+(H @ I) |c>
+(I @ H @ I) |c>
+(I @ I @ H @ I) |c>
+(I @ I @ I @ H @ I) |c>
+show(|c>)
+show(<c|c>)
+var z = measure|c>
+show(z)

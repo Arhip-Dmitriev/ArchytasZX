@@ -1,0 +1,7 @@
+|psi> = SWAP |0>|1>
+show(|psi>)
+show(<psi|psi>)
+show((H H)|0>)
+show((X Y Z)|0>)
+show((S S)|1>, (T T T T)|1>)
+show(H^2 |1>)
