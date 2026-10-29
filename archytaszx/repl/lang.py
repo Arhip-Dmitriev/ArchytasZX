@@ -569,6 +569,12 @@ def _known(v: sympy.Expr) -> sympy.Basic:
     return sympy.true if not v.free_symbols else sympy.false
 
 
+def _ifelse(c: object, a: sympy.Expr, b: sympy.Expr) -> sympy.Expr:
+    """``a`` where c holds and ``b`` elsewhere, as delta terms for integer (in)equations."""
+    p = sympy.Piecewise((a, c), (b, True))
+    return P.piecewise_delta(p) if isinstance(p, sympy.Piecewise) else p
+
+
 _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "sqrt": sympy.sqrt,
     "exp": sympy.exp,
@@ -584,7 +590,7 @@ _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "bitlen": _bitlen,
     "denom": P.denom,
     "known": _known,
-    "ifelse": lambda c, a, b: sympy.Piecewise((a, c), (b, True)),
+    "ifelse": _ifelse,
     "cos": sympy.cos,
     "sin": sympy.sin,
     "tan": sympy.tan,
@@ -973,7 +979,7 @@ class Interpreter:
         for stmt in _split_statements(source):
             text = stmt.strip()
             if text:
-                with P.divisible(self._divisibility()):
+                with P.divisible(self._divisibility()), P.ranged(self._ranges()):
                     printed = self._statement(text)
                 if printed:
                     self._out.append((None, printed))
@@ -987,6 +993,36 @@ class Interpreter:
                 if isinstance(m, sympy.Mod):
                     out.append((m.args[0], m.args[1]))
         return out
+
+    def _ranges(self) -> dict[sympy.Symbol, tuple[sympy.Expr, sympy.Expr]]:
+        """``(lo, hi)`` inclusive for each symbol an assumption ``x < b``, ``x <= b``, ``x > b``
+        or ``x >= b`` bounds; an unbounded side is 0 for a natural and infinite otherwise."""
+        lows: dict[sympy.Symbol, sympy.Expr] = {}
+        highs: dict[sympy.Symbol, sympy.Expr] = {}
+        for fact in self.assumptions:
+            if not isinstance(fact, sympy.core.relational.Relational) or isinstance(
+                fact, (sympy.Eq, sympy.Ne)
+            ):
+                continue
+            for rel in (fact, fact.reversed):
+                x, b = rel.lhs, rel.rhs
+                if not (x.is_Symbol and x.is_integer) or x in b.free_symbols:
+                    continue
+                if isinstance(rel, sympy.StrictLessThan):
+                    highs[x] = b - 1
+                elif isinstance(rel, sympy.LessThan):
+                    highs[x] = b
+                elif isinstance(rel, sympy.StrictGreaterThan):
+                    lows[x] = b + 1
+                elif isinstance(rel, sympy.GreaterThan):
+                    lows[x] = b
+        return {
+            x: (
+                lows.get(x, sympy.S.Zero if x.is_nonnegative else -sympy.oo),
+                highs.get(x, sympy.oo),
+            )
+            for x in lows.keys() | highs.keys()
+        }
 
     def _parser(self, toks: list[Tok]) -> Parser:
         return Parser(
@@ -1187,26 +1223,14 @@ class Interpreter:
                     f"a loop over the symbolic range {lo}..={hi} cannot update the density "
                     f"matrix |{name}>"
                 )
-            probes = [
-                sympy.Dummy(f"u{k}", integer=True, nonnegative=True) for k in range(len(cur.widths))
-            ]
-            saved = self.values.get(var)
-            self.values[var] = j
-            self.states[name] = P.basis_kets(probes, cur.widths, cur.dims)
-            ranges = {
-                u: (sympy.S.Zero, d**w - 1)
-                for u, w, d in zip(probes, cur.widths, cur.dims, strict=True)
-                if w is not None and d is not None
-            }
-            try:
-                with P.ranged(ranges):
-                    step = self._eval(self._parser(toks[2:]).expr(), Ctx())
-            finally:
-                self.states[name] = cur
-                if saved is None:
-                    self.values.pop(var, None)
-                else:
-                    self.values[var] = saved
+            step, probes = self._loop_step(name, cur, toks, var, j)
+            if (
+                isinstance(step, P.State)
+                and len(step.widths) == 1 < len(cur.widths)
+                and cur.uniform_dim() is not None
+            ):
+                cur = P.merge(cur, 0, len(cur.widths))
+                step, probes = self._loop_step(name, cur, toks, var, j)
             if not isinstance(step, P.State):
                 raise LangTypeError(f"|{name}> must be assigned a state")
             try:
@@ -1214,6 +1238,34 @@ class Interpreter:
                 self._record_loop(name, toks, var, j, lo, hi, cur, step, probes)
             except P.PathSumError as exc:
                 raise LangError(f"cannot run the loop symbolically: {exc}") from exc
+
+    def _loop_step(
+        self, name: str, cur: P.State, toks: list[Tok], var: str, j: sympy.Symbol
+    ) -> tuple[object, list[sympy.Dummy]]:
+        """The loop body's value with |name> a basis ket of probes in the registers of
+        ``cur`` and the loop variable ``j``, and the probes."""
+        probes = [
+            sympy.Dummy(f"u{k}", integer=True, nonnegative=True) for k in range(len(cur.widths))
+        ]
+        saved = self.values.get(var)
+        self.values[var] = j
+        before = self.states[name]
+        self.states[name] = P.basis_kets(probes, cur.widths, cur.dims)
+        ranges = {
+            u: (sympy.S.Zero, d**w - 1)
+            for u, w, d in zip(probes, cur.widths, cur.dims, strict=True)
+            if w is not None and d is not None
+        }
+        try:
+            with P.ranged(ranges):
+                step = self._eval(self._parser(toks[2:]).expr(), Ctx())
+        finally:
+            self.states[name] = before
+            if saved is None:
+                self.values.pop(var, None)
+            else:
+                self.values[var] = saved
+        return step, probes
 
     def _record_loop(
         self,
@@ -1381,9 +1433,10 @@ class Interpreter:
             "state": self.states,
             "list": self.lists,
         }
+        nouns = {"var": "a variable", "func": "a function", "op": "a gate", "state": "a state"}
         for k, table in tables.items():
             if k != kind and name in table:
-                raise LangTypeError(f"{name!r} is already a {k}")
+                raise LangTypeError(f"{name!r} is already {nouns.get(k, 'a ' + k)}")
         if kind == "op" and name in getattr(self, "builtins", ()):
             raise LangTypeError(f"{name!r} is a built-in operator")
 
@@ -2569,7 +2622,7 @@ def _boolean(v: sympy.Basic) -> sympy.Basic:
 
 
 def _ints(*xs: sympy.Expr) -> bool:
-    return all(x.is_Integer for x in xs)
+    return all(sympy.sympify(x).is_Integer for x in xs)
 
 
 def _split_items(content: str) -> list[str]:

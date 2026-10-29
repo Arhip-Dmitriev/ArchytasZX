@@ -533,6 +533,29 @@ def _in_known_range(val: Expr, b: Bound) -> bool:
     return bool(low.is_nonnegative) and bool(high.is_nonnegative)
 
 
+def _apart(a: Expr, b: Expr) -> bool:
+    """Whether ``a - b`` has a known sign other than 0 over the running :func:`ranged` scope."""
+    shift = {}
+    for x, (lo, _) in (_RANGES.get() or {}).items():
+        if lo.is_finite and x in (a - b).free_symbols:
+            shift[x] = lo + sympy.Dummy(str(x), integer=True, nonnegative=True)
+    if not shift:
+        return False
+    diff = sympy.simplify(sympy.sympify(a - b).xreplace(shift))
+    return bool(diff.is_positive or diff.is_negative)
+
+
+def _nonnegative(e: Expr) -> bool:
+    """Whether ``e`` is known non-negative, its symbols shifted to the lower bounds of the
+    running :func:`ranged` scope."""
+    shift = {
+        x: lo + sympy.Dummy(str(x), integer=True, nonnegative=True)
+        for x, (lo, _) in (_RANGES.get() or {}).items()
+        if lo.is_finite and x in sympy.sympify(e).free_symbols
+    }
+    return bool(sympy.simplify(sympy.sympify(e).xreplace(shift)).is_nonnegative)
+
+
 def bind(want: Expr | None, have: Expr | None) -> bool:
     """``same(want, have)``, binding a free symbol of ``want`` inside a running :func:`apply`."""
     params = _SCOPE.get()
@@ -781,7 +804,12 @@ def tidy(expr: Expr) -> Expr:
             return p
         return sympy.Mul(*(sympy.Integer(q) ** expand(k * p.exp) for q, k in primes.items()))
 
-    expr = sympy.powsimp(denest(sympy.sympify(expr)), combine="exp")
+    expr = sympy.sympify(expr)
+    if expr.has(sympy.Piecewise):
+        expr = expr.replace(lambda e: isinstance(e, sympy.Piecewise), piecewise_delta)
+    expr = sympy.powsimp(denest(expr), combine="exp")
+    if expr.has(sympy.KroneckerDelta):
+        expr = expr.replace(_delta_power, _split_delta_power)
     expr = expr.replace(lambda e: isinstance(e, sympy.exp) and e.has(sympy.Mod), _unmod_phase)
     expr = expr.replace(
         lambda e: e.is_Pow and e.base.is_number and not e.exp.is_number and e.base != -1,
@@ -793,6 +821,60 @@ def tidy(expr: Expr) -> Expr:
             sympy.Pow(-1, _fraction(e.exp), evaluate=True) * (-1) ** (e.exp - _fraction(e.exp))
         ),
     )
+
+
+def _indicator(c: sympy.Basic) -> Expr | None:
+    """``[c]`` as a delta expression for an equation or inequation of integers; else None."""
+    if isinstance(c, (sympy.Eq, sympy.Ne)) and expand(c.lhs - c.rhs).is_integer:
+        delta = sympy.KroneckerDelta(c.lhs, c.rhs)
+        return delta if isinstance(c, sympy.Eq) else 1 - delta
+    if isinstance(c, (sympy.And, sympy.Or, sympy.Not)):
+        parts = [_indicator(a) for a in c.args]
+        if any(p is None for p in parts):
+            return None
+        if isinstance(c, sympy.Not):
+            return 1 - parts[0]
+        if isinstance(c, sympy.And):
+            return sympy.Mul(*parts)
+        return 1 - sympy.Mul(*(1 - p for p in parts))
+    return None
+
+
+def piecewise_delta(p: sympy.Piecewise) -> Expr:
+    """A Piecewise whose conditions are integer (in)equations as a sum of delta terms."""
+    out: Expr = sympy.S.Zero
+    rest: Expr = sympy.S.One
+    for value, cond in p.args:
+        if cond is sympy.true:
+            return expand(out + rest * value)
+        ind = _indicator(cond)
+        if ind is None:
+            return p
+        out += rest * ind * value
+        rest *= 1 - ind
+    return p
+
+
+def _delta_power(e: sympy.Basic) -> bool:
+    ex = e.args[0] if isinstance(e, sympy.exp) else e.exp if e.is_Pow else None
+    return ex is not None and any(
+        isinstance(t.as_independent(sympy.KroneckerDelta, as_Add=False)[1], sympy.KroneckerDelta)
+        for t in sympy.Add.make_args(expand(ex))
+    )
+
+
+def _split_delta_power(e: sympy.Basic) -> Expr:
+    """``b^(c [p] + r)`` as ``b^r (1 + (b^c - 1) [p])``."""
+    base, ex = (sympy.E, e.args[0]) if isinstance(e, sympy.exp) else (e.base, e.exp)
+    rest: Expr = sympy.S.Zero
+    out: Expr = sympy.S.One
+    for t in sympy.Add.make_args(expand(ex)):
+        c, f = t.as_independent(sympy.KroneckerDelta, as_Add=False)
+        if isinstance(f, sympy.KroneckerDelta):
+            out *= 1 + (base**c - 1) * f
+        else:
+            rest += t
+    return base**rest * out
 
 
 def _unmod_phase(f: sympy.exp) -> Expr:
@@ -1066,6 +1148,13 @@ def _apply(op: Operator, s: State, i: int, j: int) -> State:
 def _apply_gate(g: Gate, s: State, i: int, j: int) -> State:
     if g.arity == 1 and j - i > 1:
         s, j = merge(s, i, j), i + 1
+    if j - i < g.arity and same(sympy.Add(*s.widths[i:j]), g.arity):
+        r = i
+        while r < j:
+            if same(s.widths[r], 1):
+                r += 1
+                continue
+            s, j = split(s, r, sympy.S.One), j + 1
     if j - i != g.arity:
         raise PathSumError(f"{g.name} acts on {g.arity} register(s), got {j - i}")
     if g.qubit and not all(
@@ -1214,8 +1303,13 @@ def _align(
 ) -> tuple[State, list[tuple[Operator, int, int]]]:
     """Register segments ``(factor, start, end)`` covering ``i..j``, splitting as needed."""
     flat: list[Operator] = []
-    for f in factors:
-        flat.extend(f.factors if isinstance(f, Tensor) else [f])
+    stack = list(reversed(factors))
+    while stack:
+        f = stack.pop()
+        if isinstance(f, Tensor):
+            stack.extend(reversed(f.factors))
+        else:
+            flat.append(f)
     segments: list[tuple[Operator, int, int]] = []
     k = i
     for idx, f in enumerate(flat):
@@ -1251,10 +1345,15 @@ def _consume(s: State, k: int, j: int, width: Expr) -> tuple[State, int, int]:
         if same(acc, width):
             return s, r, j
         over = expand(acc - width)
-        if over.is_Integer and over > 0:
+        if (over.is_Integer and over > 0) or (not over.is_Integer and _nonnegative(over)):
             s = split(s, r - 1, expand(w - over))
             return s, r, j + 1
-    raise PathSumError(f"no registers of total width {width} to act on")
+    hint = (
+        f"; assume each register width is at least {width}"
+        if any(not sympy.sympify(x).is_Integer for x in s.widths[k:j] if x is not None)
+        else ""
+    )
+    raise PathSumError(f"no registers of total width {width} to act on{hint}")
 
 
 def _bound_ok(sym: Expr, other: Expr, bound: list[Bound], width: Expr, dim: Expr) -> bool:
@@ -1274,7 +1373,7 @@ def inner(a: State, b: State) -> Expr:
     for ta in a.terms:
         for tb in (fresh(t) for t in b.terms):
             total += _contract(ta, tb, a.widths, a.dims)
-    return _simp(total)
+    return _simp(_delta_tidy(total))
 
 
 def _contract(
@@ -1600,7 +1699,7 @@ def _reindex_shifts(t: Term) -> Term:
 def simplify(s: State) -> State:
     """Terms tidied, zero terms dropped, and bound indices outside every ket summed out."""
     terms = []
-    for t in s.terms:
+    for t in (p for t in s.terms for p in _delta_parts(t)):
         t = _reindex_shifts(_reduce_mods(t))
         amp = tidy(t.amp)
         bound = list(t.bound)
@@ -1633,6 +1732,17 @@ def simplify(s: State) -> State:
     if not terms:
         terms = [Term(sympy.S.Zero, (), s.terms[0].kets if s.terms else ())]
     return _with(s, terms=terms)
+
+
+def _delta_parts(t: Term) -> list[Term]:
+    """``t`` split into one term per additive part of its amplitude when a delta on a bound
+    index occurs in it."""
+    syms = {b.symbol for b in t.bound}
+    amp = tidy(t.amp)
+    if not any(syms & d.free_symbols for d in amp.atoms(sympy.KroneckerDelta)):
+        return [t]
+    parts = sympy.Add.make_args(expand(amp))
+    return [Term(p, t.bound, t.kets) for p in parts] if len(parts) > 1 else [t]
 
 
 _CANON = [sympy.Symbol(f"_canon{k}", integer=True) for k in range(64)]
@@ -1959,7 +2069,55 @@ def collapse(d: Distribution, layout: State) -> Mixed:
 def _simp(e: Expr) -> Expr:
     """``sympy.simplify`` of an expression without unevaluated sums; others unchanged, since
     simplify evaluates a sum over a concrete range term by term."""
-    return e if e.has(sympy.Sum) else sympy.simplify(e)
+    if e.has(sympy.Sum):
+        e = e.replace(
+            lambda x: isinstance(x, sympy.Sum),
+            lambda x: _close(x.function, [Bound(v, lo, hi) for v, lo, hi in x.limits], {}),
+        )
+    if e.has(sympy.Sum):
+        return e
+    out = sympy.simplify(e)
+    cancelled = _cancel_powers(out)
+    return cancelled if sympy.count_ops(cancelled) < sympy.count_ops(out) else out
+
+
+def _cancel_powers(e: Expr) -> Expr:
+    """``e`` as a cancelled rational function of ``p^(g n)`` for each prime p and symbol n
+    of its powers ``p^(c n + b)``, g the step of the coefficients c."""
+    e = tidy(e)
+    pows = [
+        x
+        for x in e.atoms(sympy.Pow)
+        if x.base.is_Integer and x.base > 1 and sympy.isprime(int(x.base)) and x.exp.free_symbols
+    ]
+    if not pows:
+        return e
+    steps: dict[tuple[sympy.Integer, sympy.Symbol], list[sympy.Rational]] = {}
+    for x in pows:
+        terms = sympy.Add.make_args(expand(x.exp))
+        syms = x.exp.free_symbols
+        if len(syms) != 1:
+            return e
+        (n,) = syms
+        for t in terms:
+            c = t.coeff(n) if t.has(n) else None
+            if c is not None and not c.is_Rational:
+                return e
+        c = expand(x.exp).coeff(n)
+        if not c.is_Rational or expand(x.exp - c * n).has(n):
+            return e
+        steps.setdefault((x.base, n), []).append(c)
+    mapping: dict[sympy.Basic, Expr] = {}
+    back: dict[sympy.Symbol, Expr] = {}
+    for (q, n), cs in steps.items():
+        g = sympy.Rational(sympy.gcd([c.p for c in cs]), sympy.lcm([c.q for c in cs]))
+        t = sympy.Dummy(f"{q}_{n}", positive=True)
+        back[t] = q ** (g * n)
+        for x in pows:
+            if x.base == q and n in x.exp.free_symbols:
+                c = expand(x.exp).coeff(n)
+                mapping[x] = q ** expand(x.exp - c * n) * t ** (c / g)
+    return tidy(sympy.factor(sympy.cancel(e.xreplace(mapping))).xreplace(back))
 
 
 def _xor_leaves(e: Expr) -> list[Expr]:
@@ -2102,7 +2260,8 @@ def _bit_character(amp: Expr, b: Bound, limits: dict[sympy.Symbol, Expr]) -> Exp
                 continue
             top = limits.get(leaf) if isinstance(leaf, sympy.Symbol) else None
             if top is None or not same(top, size):
-                return False
+                if not _in_known_range(leaf, Bound(sym, sympy.S.Zero, size - 1)):
+                    return False
         return True
 
     terms = sympy.Add.make_args(sign.exp)
@@ -2260,7 +2419,13 @@ def _repeated_partners(
 
 
 def _delta_tidy(e: Expr) -> Expr:
-    """``[xor(a, c) = 0]`` as ``[a = c]`` and squared deltas as deltas."""
+    """``[xor(a, c) = 0]`` as ``[a = c]``, squared deltas as deltas, and deltas whose sides
+    differ over the running :func:`ranged` scope as 0."""
+    if _RANGES.get():
+        e = e.replace(
+            lambda x: isinstance(x, sympy.KroneckerDelta) and _apart(x.args[0], x.args[1]),
+            lambda x: sympy.S.Zero,
+        )
     e = e.replace(
         lambda x: isinstance(x, sympy.KroneckerDelta) and 0 in x.args,
         lambda x: _delta_zero(next(a for a in x.args if a != 0) if x.args[0] != x.args[1] else 0),
@@ -2277,12 +2442,22 @@ def _delta_zero(v: Expr) -> Expr:
         return sympy.KroneckerDelta(*leaves)
     if len(leaves) > 2:
         return sympy.KroneckerDelta(leaves[0], _xor_of(leaves[1:]))
+    if isinstance(v, sympy.Mul):
+        c, rest = v.as_independent(*(x for x in v.free_symbols if x.is_Dummy), as_Add=False)
+        if c != 1 and rest != 1 and c.is_nonzero:
+            return sympy.KroneckerDelta(rest, 0)
     return sympy.KroneckerDelta(v, 0)
 
 
-def _close(amp: Expr, bound: list[Bound], limits: dict[sympy.Symbol, Expr]) -> Expr:
+def _close(
+    amp: Expr, bound: list[Bound], limits: dict[sympy.Symbol, Expr], digits_ok: bool = True
+) -> Expr:
     """``sum_bound amp`` by closed forms: deltas substituted, geometric sums, sign characters
     and constants, until none applies; an unevaluated Sum for the rest."""
+    syms = {b.symbol for b in bound}
+    if syms & sympy.sympify(amp).free_symbols and isinstance(expand(amp), sympy.Add):
+        parts = sympy.Add.make_args(expand(amp))
+        return sympy.Add(*(_close(p, bound, limits, digits_ok) for p in parts))
     bound = list(bound)
     limits = {**limits, **{b.symbol: b.hi + 1 for b in bound if b.lo == 0}}
     progress = True
@@ -2306,9 +2481,165 @@ def _close(amp: Expr, bound: list[Bound], limits: dict[sympy.Symbol, Expr]) -> E
                 bound.remove(b)
                 progress = True
                 break
+    if bound and digits_ok:
+        done = _close_by_digits(amp, bound, limits)
+        if done is not None:
+            return done
+        done = _close_by_parity(amp, bound, limits)
+        if done is not None:
+            return done
     for b in bound:
         amp = sympy.Sum(amp, (b.symbol, b.lo, b.hi))
     return amp
+
+
+def _is_bit(e: Expr, limits: dict[sympy.Symbol, Expr], bound: Sequence[Bound]) -> bool:
+    """Whether ``e`` takes only the values 0 and 1."""
+    if e.is_Integer:
+        return e in (0, 1)
+    if isinstance(e, sympy.Symbol):
+        b = next((x for x in bound if x.symbol == e), None)
+        if b is not None:
+            return b.lo == 0 and b.hi == 1
+        span = (_RANGES.get() or {}).get(e)
+        return same(limits.get(e), 2) or (span is not None and span == (0, 1))
+    if isinstance(e, bit) or (isinstance(e, sympy.Mod) and e.args[1] == 2):
+        return True
+    if isinstance(e, xor):
+        return all(_is_bit(a, limits, bound) for a in e.args)
+    return False
+
+
+def _close_by_parity(
+    amp: Expr, bound: list[Bound], limits: dict[sympy.Symbol, Expr]
+) -> Expr | None:
+    """``sum_bound amp`` closed with each delta of two bits on a summed index written as the
+    character sum ``(1 + (-1)^(a + b)) / 2``."""
+    syms = {b.symbol for b in bound}
+    hits = [
+        f
+        for f in sympy.sympify(amp).atoms(sympy.KroneckerDelta)
+        if f.free_symbols & syms and all(_is_bit(a, limits, bound) for a in f.args)
+    ]
+    if not hits:
+        return None
+    amp = amp.xreplace(
+        {f: (1 + (-1) ** (_parity_sum(f.args[0]) + _parity_sum(f.args[1]))) / 2 for f in hits}
+    )
+    parts = sympy.Add.make_args(expand(amp))
+    done = sympy.Add(*(_close(_signs(p, list(syms)), bound, limits, digits_ok=False) for p in parts))
+    return None if done.has(sympy.Sum) else _delta_tidy(tidy(done))
+
+
+def _parity_sum(e: Expr) -> Expr:
+    """A bit expression with the same parity as ``e``: xor as a sum, ``Mod(v, 2)`` as v."""
+    if isinstance(e, xor):
+        return sympy.Add(*(_parity_sum(a) for a in e.args))
+    if isinstance(e, sympy.Mod) and e.args[1] == 2:
+        return e.args[0]
+    return e
+
+
+_DIGIT_FUNCS = (shr, sympy.Mod, bit, sympy.floor)
+
+
+def _digit_base(amp: Expr) -> tuple[sympy.Symbol, int, int] | None:
+    """``(x, d, w)`` for a symbol x of the running :func:`ranged` scope with a concrete range
+    ``0 .. d^w - 1`` or below, met by a digit function of base d in ``amp``."""
+    ranges = _RANGES.get() or {}
+    for f in amp.atoms(*_DIGIT_FUNCS):
+        if isinstance(f, shr):
+            d = f.args[2]
+        elif isinstance(f, bit):
+            d = TWO
+        else:
+            m = f.args[1] if isinstance(f, sympy.Mod) else 1 / f.args[0].as_coeff_Mul()[0]
+            primes = sympy.factorint(m) if m.is_Integer and m > 1 else {}
+            if len(primes) != 1:
+                continue
+            d = sympy.Integer(next(iter(primes)))
+        for x in f.free_symbols:
+            lo, hi = ranges.get(x, (None, None))
+            if lo == 0 and hi is not None and hi.is_Integer and d.is_Integer and d > 1:
+                w = 1
+                while int(d) ** w <= int(hi):
+                    w += 1
+                return x, int(d), w
+    return None
+
+
+def _digit_vector(v: Expr, digits: Sequence[sympy.Symbol], d: int) -> dict[int, sympy.Symbol] | None:
+    """``{j: digit}`` when ``v`` is ``sum_j d^j digit_j`` over some of ``digits``."""
+    out: dict[int, sympy.Symbol] = {}
+    for t in sympy.Add.make_args(expand(v)):
+        if t == 0:
+            continue
+        c, sym = t.as_coeff_Mul()
+        if sym not in digits or not c.is_Integer or c <= 0:
+            return None
+        j = sympy.multiplicity(d, int(c)) if int(c) > 1 else 0
+        if d**j != int(c) or j in out:
+            return None
+        out[j] = sym
+    return out
+
+
+def _eval_digits(e: Expr, digits: Sequence[sympy.Symbol], d: int) -> Expr:
+    """``e`` with digit functions of digit sums evaluated to digit sums."""
+    if not e.args:
+        return e
+    e = e.func(*(_eval_digits(a, digits, d) for a in e.args))
+
+    def keep(vec: dict[int, sympy.Symbol], lo: int, hi: int | None) -> Expr:
+        return sympy.Add(*(d ** (j - lo) * b for j, b in vec.items() if j >= lo and (hi is None or j < hi)))
+
+    if isinstance(e, shr) and e.args[1].is_Integer and e.args[2] == d:
+        vec = _digit_vector(e.args[0], digits, d)
+        if vec is not None:
+            return keep(vec, int(e.args[1]), None)
+    if isinstance(e, sympy.Mod) and e.args[1].is_Integer:
+        m = int(e.args[1])
+        k = sympy.multiplicity(d, m) if m > 1 else 0
+        vec = _digit_vector(e.args[0], digits, d)
+        if vec is not None and d**k == m:
+            return keep(vec, 0, k)
+    if isinstance(e, bit) and d == 2 and e.args[1].is_Integer:
+        vec = _digit_vector(e.args[0], digits, d)
+        if vec is not None:
+            return vec.get(int(e.args[1]), sympy.S.Zero)
+    if isinstance(e, sympy.floor):
+        q = sympy.denom(sympy.together(e.args[0]))
+        if q.is_Integer and q > 1:
+            k = sympy.multiplicity(d, int(q))
+            vec = _digit_vector(expand(e.args[0] * q), digits, d)
+            if vec is not None and d**k == q:
+                return keep(vec, k, None)
+    return e
+
+
+def _close_by_digits(
+    amp: Expr, bound: list[Bound], limits: dict[sympy.Symbol, Expr]
+) -> Expr | None:
+    """``sum_bound amp`` closed with a symbol of concrete range written in its digits, when
+    the digit functions of it then evaluate; the digits read back as digit functions."""
+    found = _digit_base(amp)
+    if found is None:
+        return None
+    x, d, w = found
+    digits = [sympy.Dummy(f"{x}{j}", integer=True, nonnegative=True) for j in range(w)]
+    whole = sympy.Add(*(d**j * b for j, b in enumerate(digits)))
+    amp = _eval_digits(amp.xreplace({x: whole}), digits, d)
+    if any(x in f.free_symbols or set(digits) & f.free_symbols for f in amp.atoms(*_DIGIT_FUNCS)):
+        return None
+    amp = amp.replace(
+        lambda e: e.is_Pow and e.base == -1, lambda e: sympy.exp(sympy.pi * sympy.I * e.exp)
+    )
+    amp = tidy(sympy.powsimp(expand(amp), combine="exp"))
+    done = _close(amp, bound, {**limits, **{b: d for b in digits}}, digits_ok=False)
+    if done.has(sympy.Sum):
+        return None
+    back = {b: shr(sympy.Mod(x, d ** (j + 1)), j, d) for j, b in enumerate(digits)}
+    return tidy(_delta_tidy(done.xreplace(back)))
 
 
 def amplitude(
@@ -2519,7 +2850,11 @@ def joined(d: Distribution, layout: State) -> Distribution:
     out = []
     for br in d.branches:
         regs = list(br.registers)
-        free = {b.symbol: b for b in br.free}
+        free = {
+            b.symbol: b
+            for b in br.free
+            if sum(1 for r in regs if b.symbol in sympy.sympify(r).free_symbols) == 1
+        }
         runs: list[list[int]] = []
         for k, v in enumerate(regs):
             prev = regs[k - 1] if k else None
@@ -2543,8 +2878,11 @@ def joined(d: Distribution, layout: State) -> Distribution:
             size = sympy.Mul(*[layout.levels(k) for k in run])
             if len(run) == 1:
                 value = value * size + regs[run[0]]
-                if regs[run[0]] in free:
-                    bounds.append(free[regs[run[0]]])
+                bounds.extend(
+                    b
+                    for b in br.free
+                    if b.symbol in sympy.sympify(regs[run[0]]).free_symbols and b not in bounds
+                )
                 continue
             b = new_bound("k", 0, size - 1)
             value = value * size + b.symbol
@@ -2688,7 +3026,47 @@ def map_outcomes(d: Distribution, fn: Callable[[Expr], Expr]) -> Distribution:
             out[same_branch] = Branch(o.value, tidy(o.prob + prob))
             continue
         out.append(Branch(value, prob, tuple(free)))
-    return Distribution(tuple(out))
+    return Distribution(tuple(_merge_overlaps(out)))
+
+
+def _outcomes(br: Branch, cap: int = 64) -> list[dict[sympy.Symbol, Expr]] | None:
+    """Every valuation of the free indices of ``br`` over their concrete ranges, or None when
+    a range is symbolic or there are more than ``cap``."""
+    vals: list[dict[sympy.Symbol, Expr]] = [{}]
+    for b in br.free:
+        if not (b.lo.is_Integer and b.hi.is_Integer):
+            return None
+        vals = [{**v, b.symbol: sympy.Integer(k)} for v in vals for k in range(b.lo, b.hi + 1)]
+        if len(vals) > cap:
+            return None
+    return vals
+
+
+def _merge_overlaps(branches: list[Branch]) -> list[Branch]:
+    """Branches over concrete ranges whose outcomes meet another branch's split into single
+    outcomes, and equal outcomes merged."""
+    sets: list[set[Expr] | None] = []
+    for br in branches:
+        vals = _outcomes(br)
+        sets.append(None if vals is None else {br.value.xreplace(v) for v in vals})
+    hit = [
+        a is not None and any(b is not None and k != j and a & b for j, b in enumerate(sets))
+        for k, a in enumerate(sets)
+    ]
+    if not any(hit):
+        return branches
+    out: list[Branch] = [br for br, h in zip(branches, hit, strict=True) if not h]
+    merged: dict[Expr, Expr] = {}
+    for br, h in zip(branches, hit, strict=True):
+        if h:
+            for v in _outcomes(br) or []:
+                value = br.value.xreplace(v)
+                merged[value] = merged.get(value, sympy.S.Zero) + br.prob.xreplace(v)
+    for value, prob in merged.items():
+        prob = _simp(_delta_tidy(tidy(prob)))
+        if prob != 0:
+            out.append(Branch(value, prob))
+    return out
 
 
 def certain(d: Distribution) -> Expr | None:
