@@ -53,7 +53,7 @@ BV = 10000
 
 
 class CertifyError(Exception):
-    """A result that cannot be certified; the message is the reason."""
+    """A result that cannot be certified; the message names what lies outside the fragment."""
 
 
 # the mirror
@@ -1000,7 +1000,8 @@ Layout = tuple[tuple[sympy.Expr, ...], tuple[sympy.Expr, ...]]
 class Event:
     """A recorded state update: ``assign`` (``nodes`` is the right side), ``apply``
     (``nodes`` are the operators applied in place, outermost first) or ``opaque`` (``source``
-    is the reason); ``value`` is the state after it and ``values`` the variables then."""
+    says what was not recorded); ``value`` is the state after it and ``values`` the variables
+    then."""
 
     kind: str
     name: str
