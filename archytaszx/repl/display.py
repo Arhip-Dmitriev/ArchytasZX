@@ -296,6 +296,49 @@ class _Text(StrPrinter):  # type: ignore[misc]
     def _print_KroneckerDelta(self, e: sympy.KroneckerDelta) -> str:
         return f"[{self._print(e.args[0])} = {self._print(e.args[1])}]"
 
+    def _print_conjugate(self, e: sympy.conjugate) -> str:
+        return f"conj({self._print(e.args[0])})"
+
+    def _print_Sum(self, e: sympy.Sum) -> str:
+        used = {self._print(x) for x in e.free_symbols}
+        body = e.function
+        heads = []
+        for v, lo, hi in e.limits:
+            name = self._print(v)
+            while name in used:
+                name += "'"
+            used.add(name)
+            if name != self._print(v):
+                new = sympy.Symbol(name, integer=True)
+                body = body.xreplace({v: new})
+                v = new
+            heads.append((name, lo, hi))
+        text = self._print(body)
+        for name, lo, hi in heads:
+            if self.uni:
+                atomic = body.is_Atom or isinstance(body, (sympy.Function, sympy.Pow))
+                inner = text if atomic and len(heads) == 1 else f"({text})"
+                text = f"Σ_{{{name}={self._print(lo)}}}^{{{self._print(hi)}}} {inner}"
+            else:
+                text = f"sum({name} in {self._print(lo)}..={self._print(hi)}){{ {text} }}"
+            body = sympy.Symbol("_")
+        return str(text)
+
+    def _print_Equality(self, e: sympy.Eq) -> str:
+        return f"{self._print(e.lhs)} = {self._print(e.rhs)}"
+
+    def _print_Unequality(self, e: sympy.Ne) -> str:
+        return f"{self._print(e.lhs)} {'≠' if self.uni else '!='} {self._print(e.rhs)}"
+
+    def _print_Piecewise(self, e: sympy.Piecewise) -> str:
+        parts = [
+            f"{self._print(v)} otherwise"
+            if c is sympy.true
+            else f"{self._print(v)} if {self._print(c)}"
+            for v, c in e.args
+        ]
+        return "{" + "; ".join(parts) + "}"
+
     def _print_Function(self, e: sympy.Function) -> str:
         name = type(e).__name__
         args = e.args
@@ -314,7 +357,7 @@ class _Text(StrPrinter):  # type: ignore[misc]
         if name == "dsum":
             return f"dsum({self._print(args[0])})"
         if name in ("bitdot", "ddot"):
-            return f"{self._paren(args[0])}{'·' if self.uni else '.'}{self._paren(args[1])}"
+            return f"{self._paren(args[0])}{'⊙' if self.uni else '.'}{self._paren(args[1])}"
         if name == "dshift":
             op = "⊞" if self.uni else "++"
             return f"({self._print(args[0])} {op} {self._print(args[1])})"
@@ -367,7 +410,7 @@ class _Latex(LatexPrinter):  # type: ignore[misc]
         if name in ("pop", "dsum"):
             return rf"\mathrm{{{name}}}({self._print(args[0])})"
         if name in ("bitdot", "ddot"):
-            return rf"{self._print(args[0])} \cdot {self._print(args[1])}"
+            return rf"{self._print(args[0])} \odot {self._print(args[1])}"
         if name == "dshift":
             return rf"({self._print(args[0])} \boxplus {self._print(args[1])})"
         if name == "powmod":
@@ -396,6 +439,14 @@ class Text:
     """A literal line of text."""
 
     text: str
+
+
+@dataclass(frozen=True)
+class Action:
+    """An operator shown as the image of a basis ket of symbolic value."""
+
+    probe: P.State
+    image: P.State
 
 
 @dataclass
@@ -675,6 +726,9 @@ class Renderer:
             return "true" if v else "false"
         if isinstance(v, P.Operator):
             return self.operator(v)
+        if isinstance(v, Action):
+            arrow = {"plot": r"\mapsto", "latex": r"\mapsto", "unicode": "↦"}.get(self.style, "->")
+            return f"{self.state(v.probe)} {arrow} {self.state(v.image)}"
         if isinstance(v, type) and _user(v):
             return self.function(v)
         if isinstance(v, sympy.Basic):

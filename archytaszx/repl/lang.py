@@ -117,6 +117,13 @@ _DIGIT_STRING = re.compile(r"\d*`")
 
 
 def _with_dim(src: str, i: int, kind: str, text: str, pos: int) -> tuple[Tok, int]:
+    if src.startswith("_(", i):
+        depth = 0
+        for j in range(i + 1, len(src)):
+            depth += {"(": 1, ")": -1}.get(src[j], 0)
+            if depth == 0:
+                return Tok(kind, text, pos, src[i + 1 : j + 1]), j + 1
+        raise LangSyntaxError(f"unclosed dimension at column {i + 1}")
     m = _DIM.match(src, i)
     if m:
         return Tok(kind, text, pos, m.group(1)), m.end()
@@ -575,10 +582,40 @@ def _ifelse(c: object, a: sympy.Expr, b: sympy.Expr) -> sympy.Expr:
     return P.piecewise_delta(p) if isinstance(p, sympy.Piecewise) else p
 
 
+def _has_gate(op: P.Operator) -> bool:
+    """Whether a gate occurs in ``op``."""
+    if isinstance(op, P.Gate):
+        return True
+    if isinstance(op, (P.Power, P.Scaled)):
+        return _has_gate(op.op)
+    if isinstance(op, P.Tensor):
+        return any(_has_gate(f) for f in op.factors)
+    if isinstance(op, (P.Compose, P.OpSum)):
+        return any(_has_gate(o) for o in op.ops)
+    return False
+
+
+def _zero_form(e: sympy.Expr) -> sympy.Expr:
+    """``e`` tidied, or 0 when its powers of i and -1 written as exponentials cancel."""
+    e = P.tidy(e)
+    if e == 0 or e.has(sympy.Sum):
+        return e
+    phased = sympy.powsimp(P.expand(e.rewrite(sympy.exp)), force=True)
+    return sympy.S.Zero if sympy.simplify(phased) == 0 else e
+
+
+def _abs(v: sympy.Expr) -> sympy.Expr:
+    """``|v|``, as the root of ``v conj(v)`` in real form for a sum with exponentials."""
+    if isinstance(v, sympy.Add) and v.has(sympy.exp) and not v.has(sympy.Sum):
+        return sympy.sqrt(P.real_form(P.expand(v * P.conjugate(v))))
+    return sympy.Abs(v)
+
+
 _FUNCS: dict[str, Callable[..., sympy.Expr]] = {
     "sqrt": sympy.sqrt,
     "exp": sympy.exp,
-    "abs": sympy.Abs,
+    "abs": _abs,
+    "conj": lambda v: P.conjugate(v),
     "floor": sympy.floor,
     "ceil": sympy.ceiling,
     "gcd": P.igcd,
@@ -840,6 +877,13 @@ def _unify(a: P.State, b: P.State) -> tuple[P.State, P.State, list[bool]]:
         da, db = a.dims[k], b.dims[k]
         wa, wb = a.widths[k], b.widths[k]
         if P.same(da, db) and P.same(wa, wb):
+            flags.append(fa and fb)
+            continue
+        if (da is None) != (db is None) and wa is not None and P.same(wa, wb):
+            if da is None:
+                a = _relayout(a, k, wb, db)
+            else:
+                b = _relayout(b, k, wa, da)
             flags.append(fa and fb)
             continue
         if fa and fb and wa is not None and wb is not None and P.same(wa, wb):
@@ -1668,7 +1712,11 @@ class Interpreter:
     def _pattern(self, node: object) -> list[tuple[str, str | None]]:
         if isinstance(node, Braket) and not node.bra:
             content = node.content.strip()
-            if not _IDENT.fullmatch(content) or content in _RESERVED:
+            if content in _RESERVED:
+                raise LangSyntaxError(
+                    f"'{content}' is reserved; name the pattern variable otherwise"
+                )
+            if not _IDENT.fullmatch(content):
                 raise LangSyntaxError(f"a pattern ket holds one variable name, got |{content}>")
             return [(content, node.dim)]
         if isinstance(node, Juxt) or (isinstance(node, Bin) and node.op == "@"):
@@ -1855,7 +1903,12 @@ class Interpreter:
         """The dimension named by a ``_dim`` suffix, or None without one."""
         if text is None:
             return None
-        d = sympy.Integer(text) if text.isdigit() else self._name(text, ctx)
+        if text.startswith("("):
+            d = self._scalar(
+                self._eval_node(self._parser(tokenize(text)).expr(), ctx), "a dimension"
+            )
+        else:
+            d = sympy.Integer(text) if text.isdigit() else self._name(text, ctx)
         if not isinstance(d, sympy.Basic) or d.is_integer is False or (d.is_Integer and d < 2):
             raise LangTypeError(f"_{text} must name an integer dimension of at least 2")
         return d
@@ -1912,6 +1965,8 @@ class Interpreter:
             return True
 
         for lab, v in entries:
+            if isinstance(v, P.Operator):
+                v = self._action(v) or v
             state = isinstance(v, (P.State, P.Mixed))
             if not state or mode in (NotationMode.DIRAC, NotationMode.BOTH):
                 math.append(r.entry(lab, v, record=not state))
@@ -2269,7 +2324,7 @@ class Interpreter:
         body = self._eval_node(node.body, ctx.child(node.var, Local(b.symbol, bound=b)))
         if isinstance(body, P.State):
             terms = tuple(P.Term(t.amp, (b,) + t.bound, t.kets) for t in body.terms)
-            return P.simplify(P.State(body.widths, terms, body.bra, body.dims))
+            return _flex(P.simplify(P.State(body.widths, terms, body.bra, body.dims)), _flags(body))
         if isinstance(body, sympy.Basic):
             return sympy.Sum(body, (b.symbol, lo, hi)).doit()
         raise LangTypeError("a sum body must be a state or a scalar")
@@ -2325,6 +2380,8 @@ class Interpreter:
                 return power
         if isinstance(a, P.Operator) and isinstance(b, P.Operator):
             return P.Compose((a, b))
+        if isinstance(a, P.State) and a.bra and isinstance(b, P.Operator):
+            return self._bra_times(a, b)
         if isinstance(a, P.State) and isinstance(b, P.State):
             if a.bra and not b.bra:
                 a, b, _ = _unify(a, b)
@@ -2333,6 +2390,99 @@ class Interpreter:
                 return P.Outer(a, b)
             return _flex(P.tensor(a, b), _flags(a) + _flags(b))
         raise LangTypeError(f"cannot apply {self._kind(a)} to {self._kind(b)}")
+
+    def _bra_times(self, a: P.State, op: P.Operator) -> P.State:
+        """``<a| U`` as ``sum_x <a|U|x> <x|`` over the registers of ``a``."""
+        if any(w is None for w in a.widths) or any(d is None for d in a.dims):
+            raise LangTypeError("cannot infer a register width; give the bra a dimension <v|_d")
+        bounds = [P.new_bound("x", 0, a.levels(k) - 1) for k in range(len(a.widths))]
+        xs = [b.symbol for b in bounds]
+        with P.ranged({x: (sympy.S.Zero, b.hi) for x, b in zip(xs, bounds, strict=True)}):
+            image = self._juxt(op, _flex(P.basis_kets(xs, a.widths, a.dims), _flags(a)))
+            if not isinstance(image, P.State) or image.bra:
+                raise LangTypeError("<a| U needs U to map kets to kets")
+            amp = P.conjugate(P.inner(*_unify(a, image)[:2]))
+        ket = P.simplify(P.State(a.widths, (P.Term(amp, tuple(bounds), tuple(xs)),), False, a.dims))
+        return P.dagger(ket)
+
+    def _equal_linear(self, op: str, a: object, b: object) -> sympy.Basic:
+        """``a == b`` for two kets, two bras or two operators, as ``||a - b||^2 = 0``;
+        operators are compared on a basis ket of symbolic value."""
+        rel = sympy.Eq if op == "==" else sympy.Ne
+        if isinstance(a, P.State) and isinstance(b, P.State):
+            if a.bra != b.bra:
+                raise LangTypeError(f"{op} compares two kets or two bras")
+            diff = self._binary("-", a, b)
+            if not isinstance(diff, P.State):
+                raise LangTypeError(f"{op} compares two kets or two bras")
+            ket = P.dagger(diff) if diff.bra else diff
+            return rel(_zero_form(P.norm2(ket)), 0)
+        if not (isinstance(a, P.Operator) and isinstance(b, P.Operator)):
+            raise LangTypeError(f"{op} compares scalars, got {self._kind(a)} and {self._kind(b)}")
+        layout = self._layout(a) or self._layout(b)
+        if layout is None:
+            raise LangTypeError(f"{op}: cannot tell which registers the operators act on")
+        xs = [sympy.Dummy("x", integer=True, nonnegative=True) for _ in layout]
+        bounds = [P.Bound(x, sympy.S.Zero, d**w - 1) for x, (w, d) in zip(xs, layout, strict=True)]
+        with P.ranged({x: (sympy.S.Zero, x_.hi) for x, x_ in zip(xs, bounds, strict=True)}):
+            probe = P.basis_kets(xs, [w for w, _ in layout], [d for _, d in layout])
+            diff = self._binary("-", self._juxt(a, probe), self._juxt(b, probe))
+            if not isinstance(diff, P.State):
+                raise LangTypeError(f"{op}: the operators do not map kets to kets")
+            return rel(_zero_form(P.norm2(diff)), 0)
+
+    def _action(self, op: P.Operator) -> D.Action | None:
+        """``op`` as the image of a basis ket of symbolic value, or None when its registers
+        are unknown or the image is not a ket."""
+        if not _has_gate(op):
+            return None
+        layout = self._layout(op)
+        if layout is None:
+            return None
+        names = "xyzuvw"
+        xs = [
+            sympy.Dummy(names[k] if k < len(names) else f"x{k}", integer=True, nonnegative=True)
+            for k in range(len(layout))
+        ]
+        ranges = {x: (sympy.S.Zero, d**w - 1) for x, (w, d) in zip(xs, layout, strict=True)}
+        with P.ranged(ranges):
+            probe = P.basis_kets(xs, [w for w, _ in layout], [d for _, d in layout])
+            try:
+                image = self._juxt(op, probe)
+            except (LangError, P.PathSumError):
+                return None
+        if not isinstance(image, P.State) or image.bra:
+            return None
+        return D.Action(probe, image)
+
+    def _layout(self, op: P.Operator) -> list[tuple[sympy.Expr, sympy.Expr]] | None:
+        """``(width, dimension)`` of each register ``op`` acts on, or None when unknown."""
+        if isinstance(op, _MatrixGate) and op.slots is None:
+            return None if op.size is None else [(sympy.S.One, op.size)]
+        if isinstance(op, P.Gate):
+            slots = self.slots.get(op.name, [("", None)] * op.arity)
+            try:
+                dims = [self._dim(want, Ctx()) for _, want in slots]
+            except LangError:
+                return None
+            return [(sympy.S.One, d if d is not None else P.TWO) for d in dims]
+        if isinstance(op, P.Power):
+            inner = self._layout(op.op)
+            if inner is None or len(inner) != 1:
+                return None
+            return [(inner[0][0] * op.count, inner[0][1])]
+        if isinstance(op, P.Tensor):
+            parts = [self._layout(f) for f in op.factors]
+            if any(p is None for p in parts):
+                return None
+            return [r for p in parts for r in p]  # type: ignore[union-attr]
+        if isinstance(op, (P.Compose, P.OpSum)):
+            return next((lay for o in op.ops if (lay := self._layout(o)) is not None), None)
+        if isinstance(op, P.Scaled):
+            return self._layout(op.op)
+        if isinstance(op, P.Outer) and all(w is not None for w in op.ket.widths):
+            return [(w, d) for w, d in zip(op.ket.widths, op.ket.dims, strict=True) if w and d]
+        return None
 
     def _fit_gate(self, op: P.Operator, s: P.State) -> P.State:
         """``s`` with flexible registers raised to the layout a gate's pattern or matrix
@@ -2409,6 +2559,8 @@ class Interpreter:
         if isinstance(a, P.Mixed) or isinstance(b, P.Mixed):
             return self._mixed_binary(op, a, b)
         scalars = isinstance(a, sympy.Basic) and isinstance(b, sympy.Basic)
+        if op in ("==", "!=") and not scalars:
+            return self._equal_linear(op, a, b)
         if op in _COMPARE or op in ("and", "or"):
             if not scalars:
                 raise LangTypeError(
@@ -2434,7 +2586,11 @@ class Interpreter:
         if op == "/":
             if not isinstance(b, sympy.Basic):
                 raise LangTypeError(f"cannot divide by {self._kind(b)}")
+            if b == 0:
+                raise LangTypeError("division by zero")
             return self._mul(a, 1 / b)
+        if op == "%" and scalars and b == 0:
+            raise LangTypeError("modulo by zero")
         if op in ("+", "-"):
             if scalars:
                 return a + b if op == "+" else a - b  # type: ignore[operator]

@@ -63,7 +63,8 @@ single space.
                 denotes the exact rational it spells: 2.5 is 5/2.
   Strings       Text between double quotes: "text". A string prefixed with f is a formatted
                 string (section 12.3).
-  Kets          | content > with an optional dimension suffix _d: |0>, |x>, |psi>_d, |2>_3.
+  Kets          | content > with an optional dimension suffix _d or _(EXPRESSION): |0>, |x>,
+                |psi>_d, |2>_3, |3>_(2^n).
   Bras          < content | with an optional suffix: <0|, <phi|, <x|_d.
   Operators     + - * / % ^ @ ^@ == != < <= > >= -> .. ..= ( ) [ ] { } , : ;
 
@@ -215,7 +216,8 @@ names.
 
     |v>        one register holding the value v, of the lowest dimension that holds v
                (2 for v = 0 or 1, otherwise v + 1)
-    |v>_D      one qudit of dimension D holding v (an error if v >= D)
+    |v>_D      one qudit of dimension D holding v (an error if v >= D); D is a numeral, a
+               name or a parenthesised expression, |3>_(2^n)
     |b1b2...`> a digit string: one register per digit, |010`> is |0>|1>|0>
     |000>      a numeral is one value: |000> is |0>
 
@@ -361,6 +363,7 @@ kinds:
     |x>|y>           tensor product of kets
     <a|b>            inner product
     |a><b|           outer product
+    <a| U            bra times operator: the bra sum_x <a|U|x> <x|
     2 |s><s|psi>     scaled projector applied to a ket
 
 Juxtaposition groups from the right: U |x>|y> is U applied to |x>|y>, both registers. Because
@@ -371,7 +374,13 @@ to both.
 
 + - * / % ^ act on scalars with their usual meaning; / is exact division and % the remainder.
 ^ is power and associates to the right: 2^3^2 is 2^9. xor is the bitwise exclusive or of
-integers. Comparisons yield truth values, combined with and, or and not.
+integers. Comparisons yield truth values, combined with and, or and not. Division or remainder
+by zero is an error.
+
+== and != also compare two kets, two bras or two operators, as ||a - b||^2 = 0. Two operators
+are compared on a basis ket |x> whose value x is a symbol over the whole register, so the
+answer holds for every basis state; assert H X H == Z passes and assert H X H == X fails. A
+comparison that does not reduce to a truth value counts as undecided (section 14.2).
 
 9.4 Constants
 
@@ -427,6 +436,11 @@ ranges of those indices:
 
     var m = measure|coin>          m = [(k, 0.5) : k ∈ {0,1}]
 
+An outcome singled out inside such a range is folded into the branch as a delta term, so each
+probability is read off directly:
+
+    m = [(k, 2^(3 - 2n) (2^n - 2) [k = w] + (2^n - 4)^2/2^(3n)) : k ∈ {0,…,2^n - 1}]
+
 Probabilities are printed as exact fractions of 1, as terminating decimals where possible.
 
 11.2 The post-measurement state
@@ -464,7 +478,9 @@ prints each value as a labelled mathematical expression, "label = value". The la
 source text of the argument. A STYLE word (render, unicode, ascii, latex) as the last argument
 forces that style for this statement; otherwise every style selected for the session is
 printed (SHELL.txt, section 3.3). Values are shown in closed form with defined variables folded
-back in: under var q = 2^n, a factor 2^(-n/2) is shown as 1/sqrt(q).
+back in: under var q = 2^n, a factor 2^(-n/2) is shown as 1/sqrt(q). An operator built from
+gates is shown as the image of a basis ket of symbolic value: show(H X H) prints
+H X H = |x> -> (-1)^x |x>.
 
 12.3 print
 
@@ -579,6 +595,7 @@ which is never sampled.
   sqrt(x)           square root
   exp(x)            exponential
   abs(x)            absolute value
+  conj(x)           complex conjugate
   floor(x)          greatest integer not above x
   ceil(x)           least integer not below x
   cos(x) sin(x)
