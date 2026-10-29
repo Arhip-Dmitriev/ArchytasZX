@@ -1,14 +1,32 @@
-0.21.? -> 1.1.1
- - benchmarking
+Now:
+- FInish abstract
+- Review abstract
+- review Problems
+- polish up code
+- write paper
 
-Right after QuRise:
+
+Next:
 - Finish list
 - hardening
 - perfomance phase 21
-- Preprint
+- PyZX integration
 
 future only:
  - make it so .azx is known extension, maybe vs picture and recog, etc.
  - add compatibility for python 3.8 up 
  - port to rust or c if it gives benefits
  - make available without python as a binary like ocaml is
+
+so we have some notable issues
+ - it turns out we dont use ZX at all, we use path sums
+- we basically need to rebrand everthing except the name around path sums
+- if we have no diagram, where is tractability, still algorithmic-inelegance
+
+Problems caused by new path sums revalation:
+- name of program
+- both APS abstracts are BS and sent
+- falsley advertised at QuRise
+- whole github/PyPI branding is off
+- we might have an entire unused engine of code
+- we have to describre ZX as another interaction face the
