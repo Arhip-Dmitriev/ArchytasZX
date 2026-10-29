@@ -344,8 +344,6 @@ class TestRegistry:
             "both",
             "listing",
             "raw",
-            "verbose_on",
-            "verbose_off",
             "config",
             "history",
             "quit",
