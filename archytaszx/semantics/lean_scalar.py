@@ -93,6 +93,9 @@ class Scalars:
                     raise ScalarUnsupported(f"the exponent {exp}")
                 out = out * sp.Pow(self.model(base**coeff), sym)
             return out
+        if expr.is_Pow and expr.args[0] == -1 and expr.args[1].is_Rational:
+            q = sp.Rational(expr.args[1]) / 2 % 1
+            return Om(q.q) ** q.p if q != 0 else sp.Integer(1)
         if expr.is_Pow:
             base, exp = expr.args
             if exp.is_Integer:
