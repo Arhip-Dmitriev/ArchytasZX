@@ -418,24 +418,8 @@ def test_rewrite_pairs_are_plentiful() -> None:
     assert len({base for base, _ in REWRITE_PAIRS}) > 10
 
 
-WEIGHT_SYMBOL_PAIRS = frozenset({("unicode_names", "phase_to_weight")})
-"""Pairs whose rewrite puts a real phase symbol into a weight, which the listing reads back as
-a complex symbol."""
-
-
 @pytest.mark.parametrize(
-    ("base", "rule"),
-    [
-        pytest.param(
-            b,
-            r,
-            marks=pytest.mark.xfail(strict=True, reason="weight symbol assumptions"),
-        )
-        if (b, r) in WEIGHT_SYMBOL_PAIRS
-        else (b, r)
-        for b, r in REWRITE_PAIRS
-    ],
-    ids=[f"{b}-{r}" for b, r in REWRITE_PAIRS],
+    ("base", "rule"), REWRITE_PAIRS, ids=[f"{b}-{r}" for b, r in REWRITE_PAIRS]
 )
 def test_listing_round_trip_after_rewrites(base: str, rule: str) -> None:
     diagram = HAND[base]()

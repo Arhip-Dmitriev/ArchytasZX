@@ -1212,10 +1212,11 @@ def _inferred_roles(
 
 
 def _listing_roles(diagram: Diagram) -> str | None:
-    """``roles: NAME = ROLE, ...`` for each scalar or phase symbol a listing reader would
+    """``roles: NAME = ROLE, ...`` for each scalar, phase or weight symbol a listing reader would
     infer differently, or None when there is none."""
     dims: list[Dim] = []
     phases: list[Phase] = []
+    weights: list[Scalar] = []
     for node in diagram.nodes.values():
         dims.extend(port.dim for port in (*node.inputs, *node.outputs))
         if node.phase is not None:
@@ -1223,6 +1224,9 @@ def _listing_roles(diagram: Diagram) -> str | None:
             phases.extend(node.phase.entries().values())
             if node.phase.rule is not None:
                 phases.append(node.phase.rule.at(1))
+            weights.extend(node.phase.weights().values())
+            if node.phase.weight_rule is not None:
+                weights.append(node.phase.weight_rule)
     mults = [box.multiplicity for box in diagram.bang_boxes.values()]
     wrong: dict[str, sp.Symbol] = {}
     for table, symbols, default in (
@@ -1230,6 +1234,11 @@ def _listing_roles(diagram: Diagram) -> str | None:
             _inferred_roles(dims, mults, []),
             {s for p in phases for s in p.to_sympy_turns().free_symbols},
             "phase",
+        ),
+        (
+            _inferred_roles(dims, mults, []),
+            {s for w in weights for s in w.to_sympy().free_symbols} - {INDEX},
+            "scalar",
         ),
         (
             _inferred_roles(dims, mults, phases),
