@@ -282,8 +282,14 @@ def sqc (E : Shape) : Kind → ℕ → ℕ → ℕ → ℕ
   | .Bun m b, d, no, ni => E.mult m * sqc E b d no ni
   | _, _, _, _ => 0
 
+/-- A kind with no coefficient spider. -/
+def Kind.noZW : Kind → Bool
+  | .ZW => false
+  | .Bun _ b => b.noZW
+  | _ => true
+
 theorem tensor_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x ≠ 0)
-    (P : ℕ → ℕ → ℕ × List ℤ) (hM : 0 < M) (k : Kind) (d ph : ℕ) (hdM : d ∣ M)
+    (P : ℕ → ℕ → ℕ × List ℤ) (hM : 0 < M) (k : Kind) (hk : k.noZW = true) (d ph : ℕ) (hdM : d ∣ M)
     (hφ : ∀ j < d, ex (E.phase ph j) = om M ^ (P ph j).1 * mono xs (P ph j).2)
     (os is : List ℕ) :
     tensor E k d ph os is = (rt d)⁻¹ ^ sqc E.shape k d os.length is.length *
@@ -326,6 +332,7 @@ theorem tensor_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x ≠
     simp [tc, tWZ_eq, mono_nil, Env.shape]
   | B => simp [tensor, tensorT, tv]
   | S => simp [tensor, tensorT, tv]
+  | ZW => simp [Kind.noZW] at hk
   | Bun m b ih =>
     simp only [tensor, tensorT, sqc, tv_foldr_tmul _ _ hx, List.map_map, copyOuts, copyIns,
       Env.shape]
@@ -335,7 +342,7 @@ theorem tensor_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x ≠
           tv (om M) xs (tensorT E.shape M P b d ph (copyLegs E.mult d i (b.outCs os.length) os)
             (copyLegs E.mult d i (b.inCs is.length) is)) := by
       intro i
-      rw [ih, show (copyLegs E.mult d i (b.outCs os.length) os).length = os.length from
+      rw [ih (by simpa [Kind.noZW] using hk), show (copyLegs E.mult d i (b.outCs os.length) os).length = os.length from
         copyOuts_length E b d i os, show (copyLegs E.mult d i (b.inCs is.length) is).length =
         is.length from copyIns_length E b d i is]
     simp only [this, prod_pow_mul, List.length_range]
@@ -364,7 +371,7 @@ def sqN (E : Shape) (n : Node) : ℕ :=
 
 /-- `M` is a multiple of the node's dimension and `keys` lists its phase entries. -/
 def nodeOK (E : Shape) (M : ℕ) (keys : List (ℕ × ℕ)) (n : Node) : Bool :=
-  isBS n || (M % E.dimv n.dim == 0 &&
+  isBS n || (n.kind.noZW && M % E.dimv n.dim == 0 &&
     (List.range (E.dimv n.dim)).all fun j => keys.contains (n.ph, j))
 
 /-- Each listed phase entry is `om M ^ e` times a monomial in the atoms `ex g`. -/
@@ -404,8 +411,8 @@ theorem val_cyc (E : Env) (M : ℕ) (gs : List ℝ) (P : ℕ → ℕ → ℕ × 
       simp [isBS, hb'.1, hb'.2]
     simp only [nodeOK, hn, Bool.false_or, Bool.and_eq_true, beq_iff_eq, List.all_eq_true,
       List.mem_range, List.contains_iff_mem, Env.shape] at hok
-    rw [val_tensor E σ kind hb', tensor_cyc E M (gs.map ex) (ex_atoms_ne gs) P hM kind _ ph
-      (Nat.dvd_of_mod_eq_zero hok.1) (fun j hj => hph.get (hok.2 j hj))]
+    rw [val_tensor E σ kind hb', tensor_cyc E M (gs.map ex) (ex_atoms_ne gs) P hM kind hok.1.1 _ ph
+      (Nat.dvd_of_mod_eq_zero hok.1.2) (fun j hj => hph.get (hok.2 j hj))]
     simp [valT, sqN, hn, Env.shape]
 
 /-- The product of the node entries without their `(√d)⁻¹` factors. -/

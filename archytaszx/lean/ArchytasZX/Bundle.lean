@@ -556,7 +556,7 @@ theorem Kind.inCs_ms (b : Kind) (n : ℕ) : ∀ c ∈ b.inCs n, ∀ x ∈ c, x �
     obtain ⟨-, rfl⟩ := hc
     simp at hx
 
-theorem tensor_env (E E' : Env) (hp : E.phase = E'.phase) (b : Kind)
+theorem tensor_env (E E' : Env) (hp : E.phase = E'.phase) (hc : E.coef = E'.coef) (b : Kind)
     (hm : ∀ j ∈ b.ms, E.mult j = E'.mult j) (d ph : ℕ) (os is : List ℕ) :
     tensor E b d ph os is = tensor E' b d ph os is := by
   induction b generalizing os is with
@@ -586,6 +586,7 @@ theorem tensor_env (E E' : Env) (hp : E.phase = E'.phase) (b : Kind)
     exact ih hb _ _
   | Z => simp only [tensor, hp]
   | X => simp only [tensor, hp]
+  | ZW => simp only [tensor, hc]
   | _ => rcases os with _ | ⟨_, _ | ⟨_, _⟩⟩ <;> rcases is with _ | ⟨_, _ | ⟨_, _⟩⟩ <;> rfl
 
 theorem val_tensor (E : Env) (σ : ℕ → ℕ) (b : Kind) (hb : b ≠ .B ∧ b ≠ .S)
@@ -602,11 +603,12 @@ theorem copyKind_ne (b : Kind) (h : copyKind b = true) : b ≠ .B ∧ b ≠ .S :
 /-- A node whose value ignores `m`. -/
 theorem val_env (E E' : Env) (σ : ℕ → ℕ) (n : Node) (hd : E.dimv n.dim = E'.dimv n.dim)
     (hph : n.kind = .B ∨ n.kind = .S → E.dimv n.ph = E'.dimv n.ph) (hp : E.phase = E'.phase)
-    (hm : ∀ j ∈ n.kind.ms, E.mult j = E'.mult j) : val E σ n = val E' σ n := by
+    (hc : E.coef = E'.coef) (hm : ∀ j ∈ n.kind.ms, E.mult j = E'.mult j) :
+    val E σ n = val E' σ n := by
   obtain ⟨kind, os, is, dim, ph⟩ := n
   by_cases hk : kind ≠ .B ∧ kind ≠ .S
   · rw [val_tensor E σ kind hk, val_tensor E' σ kind hk, hd]
-    exact tensor_env E E' hp kind hm _ _ _ _
+    exact tensor_env E E' hp hc kind hm _ _ _ _
   · simp only [not_and_or, not_not] at hk
     simp only at hd hph
     rcases hk with rfl | rfl <;> simp only [val, hd, hph (by simp)] <;>
@@ -872,7 +874,7 @@ theorem Spec.val_still (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (τ
   simp only at h
   rw [h]
   refine val_env _ _ τ n (by rw [S.dimv_plain _ _ hd, S.dimv_plain _ _ hd])
-    (fun h => by rw [S.dimv_plain _ _ (hph h), S.dimv_plain _ _ (hph h)]) rfl
+    (fun h => by rw [S.dimv_plain _ _ (hph h), S.dimv_plain _ _ (hph h)]) rfl rfl
     fun j hj => S.mult_ne _ _ _ (by rintro rfl; exact hm hj)
 
 theorem Spec.legs_plain (S : Spec) (hwf : S.F.wf = true) (dim : ℕ) (ls : List ℕ) (n : ℕ)
@@ -949,7 +951,7 @@ theorem val_split (S : Spec) (H k : ℕ) (D : SplitData S H) (n : Node) (hn : S.
       have he : tensor (S.at (k + 1)) b (S.F.dims dim) ph =
           tensor (S.at k) b (S.F.dims dim) ph := by
         funext x y
-        exact tensor_env (S.at (k + 1)) (S.at k) rfl b
+        exact tensor_env (S.at (k + 1)) (S.at k) rfl rfl b
           (fun j hj => S.mult_ne _ _ _ (by rintro rfl; exact hmb hj)) _ _ _ _
       simp only [Node.split, ite_true, List.map_cons, List.map_nil, List.prod_cons,
         List.prod_nil, mul_one]

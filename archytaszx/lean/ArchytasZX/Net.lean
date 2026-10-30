@@ -17,10 +17,10 @@ namespace ArchytasZX
 open Complex Finset
 
 /-- Generator kinds: spiders, Fourier box, triangle and inverse, W node, dimension binder
-and splitter, the bare wire, a Z, X or W whose last legs bundle along the chains of
-multiplicities `cs` (outermost first), and copies of a generator along multiplicity `m`. -/
+and splitter, the bare wire, a weighted Z spider, a Z, X or W whose last legs bundle along the
+chains of multiplicities `cs` (outermost first), and copies of a generator along multiplicity `m`. -/
 inductive Kind
-  | Z | X | F | T | Ti | W | B | S | I
+  | Z | X | F | T | Ti | W | B | S | I | ZW
   | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
   | Bun (m : ℕ) (base : Kind)
   deriving DecidableEq, Repr
@@ -41,13 +41,14 @@ structure Net where
   bnd : List ℕ
   deriving DecidableEq, Repr
 
-/-- Dimension values, phase vectors in turns, each label's dimension index, and each
-multiplicity symbol's value. -/
+/-- Dimension values, phase vectors in turns, each label's dimension index, each
+multiplicity symbol's value, and coefficient vectors. -/
 structure Env where
   dimv : ℕ → ℕ
   phase : ℕ → ℕ → ℝ
   labs : List (ℕ × ℕ)
   mult : ℕ → ℕ := fun _ => 0
+  coef : ℕ → ℕ → ℂ := fun _ _ => 1
 
 /-- `e^{2πiθ}`. -/
 noncomputable def ex (θ : ℝ) : ℂ := Complex.exp (2 * Real.pi * Complex.I * θ)
@@ -61,6 +62,10 @@ noncomputable def fou (d j k : ℕ) : ℂ := om d ^ (j * k) / (Real.sqrt d : ℂ
 /-- The Z spider on leg values `vs`. -/
 noncomputable def tZ (d : ℕ) (φ : ℕ → ℝ) (vs : List ℕ) : ℂ :=
   ∑ k ∈ range d, if ∀ v ∈ vs, v = k then ex (φ k) else 0
+
+/-- The Z spider with coefficient `c k` on `|k…k⟩⟨k…k|`. -/
+noncomputable def tZw (d : ℕ) (c : ℕ → ℂ) (vs : List ℕ) : ℂ :=
+  ∑ k ∈ range d, if ∀ v ∈ vs, v = k then c k else 0
 
 /-- The X spider: the Z spider with `F` on every output and `conj F` on every input. -/
 noncomputable def tX (d : ℕ) (φ : ℕ → ℝ) (os is : List ℕ) : ℂ :=
@@ -138,6 +143,7 @@ noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List 
   | .Ti, _, _, [o], [i] => tTi o i
   | .W, d, _, os, [i] => tW d os i
   | .I, d, _, [a], [b] => tI d a b
+  | .ZW, d, ph, os, is => tZw d (E.coef ph) (os ++ is)
   | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
@@ -160,6 +166,7 @@ noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   | .B, [k], [a, b] => tB d (E.dimv n.ph) k a b
   | .S, [a, b], [k] => tB d (E.dimv n.ph) k a b
   | .I, [a], [b] => tI d a b
+  | .ZW, os, is => tZw d (E.coef n.ph) (os ++ is)
   | .ZB cs, os, is => tZ d (E.phase n.ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w

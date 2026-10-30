@@ -49,7 +49,7 @@ theorem val_mapDim (E : Env) (f : ℕ → ℕ) (hf : ∀ x, E.dimv (f x) = E.dim
       cases kind <;> simp_all [Node.mapDim]
     rw [e, val_tensor _ σ kind hk, val_tensor E σ kind hk]
     exact (congrArg (fun d => tensor _ kind d ph _ _) (hf dim)).trans
-      (tensor_env { E with labs := labs } E rfl kind (fun _ _ => rfl) _ _ _ _)
+      (tensor_env { E with labs := labs } E rfl rfl kind (fun _ _ => rfl) _ _ _ _)
   · have hbs : kind = .B ∨ kind = .S := by
       by_contra h'; exact hk ⟨fun e => h' (Or.inl e), fun e => h' (Or.inr e)⟩
     rcases hbs with rfl | rfl <;>

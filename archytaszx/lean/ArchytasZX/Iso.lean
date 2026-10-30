@@ -47,7 +47,7 @@ theorem ren_injective (π : List (ℕ × ℕ)) (hk : (π.map Prod.fst).Nodup)
 def nodeEquiv (n m : Node) : Bool :=
   n.kind == m.kind && n.dim == m.dim && n.ph == m.ph &&
     match n.kind with
-    | .Z => (n.outs ++ n.ins).isPerm (m.outs ++ m.ins)
+    | .Z | .ZW => (n.outs ++ n.ins).isPerm (m.outs ++ m.ins)
     | .X => n.outs.isPerm m.outs && n.ins.isPerm m.ins
     | _ => n.outs == m.outs && n.ins == m.ins
 
@@ -61,6 +61,14 @@ theorem val_nodeEquiv (E : Env) (σ : ℕ → ℕ) (n m : Node) (h : nodeEquiv n
   | Z =>
     simp only [List.isPerm_iff] at h
     simp only [val, tZ, ← List.map_append]
+    refine Finset.sum_congr rfl fun k _ => ?_
+    have : (∀ v ∈ (on ++ inn).map σ, v = k) ↔ (∀ v ∈ (om ++ im).map σ, v = k) :=
+      ⟨fun h' v hv => h' v ((h.map σ).mem_iff.2 hv),
+        fun h' v hv => h' v ((h.map σ).mem_iff.1 hv)⟩
+    simp only [this]
+  | ZW =>
+    simp only [List.isPerm_iff] at h
+    simp only [val, tZw, ← List.map_append]
     refine Finset.sum_congr rfl fun k _ => ?_
     have : (∀ v ∈ (on ++ inn).map σ, v = k) ↔ (∀ v ∈ (om ++ im).map σ, v = k) :=
       ⟨fun h' v hv => h' v ((h.map σ).mem_iff.2 hv),
