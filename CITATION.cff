@@ -12,7 +12,7 @@
 # limitations under the License.
 
 cff-version: 1.2.0
-title: "ArchytasZX: Size- and Dimension-Agnostic Engine for Quantum Algorithm Development Based on ZX-Calculus"
+title: "ArchytasZX: Certified, Size- and Dimension-Agnostic ZXW Rewriting"
 message: "If you use this software, please cite it as below."
 type: software
 authors:
@@ -24,7 +24,8 @@ abstract: >-
   A symbolic engine for proving identities of quantum algorithms without fixing
   the qudit count or dimension, built on the qufinite ZX(W)-calculus. Rewrites,
   decisions of equality and proofs hold for every size, by exact rewriting,
-  never by simulation. Includes bang boxes and scalable
+  never by simulation. Its rules contain the complete qudit and qufinite ZXW
+  axiomatisations. Includes bang boxes and scalable
   notation, a normal-form procedure, equality saturation, proof search,
   induction over symbolic multiplicities, replayable certificates, a proof
   kernel, and export of proofs and refutations to Lean 4 and Mathlib.
