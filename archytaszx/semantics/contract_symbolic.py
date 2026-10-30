@@ -42,6 +42,7 @@ from typing import TypeAlias, cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.phase import INDEX
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
@@ -600,7 +601,7 @@ def _node_entry(
             entry = entry + _delta(dim, leg, inputs[0]) * sp.Mul(*rest)
         return entry
 
-    if node.phase is not None and node.phase.rule is not None:
+    if node.phase is not None and (node.phase.rule is not None or node.phase.is_weighted):
         return _ruled_entry(node, node_id, dim, outputs, inputs)
 
     corrections = _phase_corrections(node)
@@ -619,9 +620,33 @@ def _node_entry(
 
 
 def _rule_weight(node: Node, value: sp.Expr) -> sp.Expr:
-    """``e^{i*alpha}`` of ``node``'s phase vector at a possibly symbolic ``value``."""
-    assert node.phase is not None
-    return cast(sp.Expr, sp.exp(2 * sp.pi * sp.I * node.phase.at(value)))
+    """The coefficient ``w * e^{i*alpha}`` of ``node``'s phase vector at a possibly symbolic
+    ``value``."""
+    phase = node.phase
+    assert phase is not None
+    if not phase.is_weighted:
+        return cast(sp.Expr, sp.exp(2 * sp.pi * sp.I * phase.at(value)))
+    dim = phase.dim
+    rule = phase.weight_rule
+
+    def base(index: sp.Expr) -> sp.Expr:
+        return sp.Integer(1) if rule is None else rule.to_sympy().xreplace({INDEX: index})
+
+    weight = base(value) + _delta(dim, value, sp.Integer(0)) * (1 - base(sp.Integer(0)))
+    for index, entry in sorted(phase.weights().items()):
+        weight = weight + _delta(dim, value, sp.Integer(index)) * (
+            entry.to_sympy() - base(sp.Integer(index))
+        )
+    factor: sp.Expr = sp.Integer(1)
+    if phase.rule is not None:
+        factor = sp.exp(2 * sp.pi * sp.I * phase.rule.to_sympy_turns().xreplace({INDEX: value}))
+    for index, turns in sorted(phase.entries().items()):
+        factor = factor * (
+            1
+            + _delta(dim, value, sp.Integer(index))
+            * (Scalar.from_phase(turns).to_sympy() - sp.Integer(1))
+        )
+    return cast(sp.Expr, weight * factor)
 
 
 def _ruled_entry(
@@ -672,9 +697,10 @@ def _shared_spider_entry(
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     weight: sp.Expr = sp.Integer(1)
-    if node.phase is not None and node.phase.rule is not None:
+    ruled = node.phase is not None and (node.phase.rule is not None or node.phase.is_weighted)
+    if ruled:
         weight = _rule_weight(node, shared)
-    for index, factor in _phase_corrections(node) if weight == 1 else ():
+    for index, factor in _phase_corrections(node) if not ruled else ():
         weight = weight + factor * _delta(dim, shared, sp.Integer(index))
     legs = [
         (PortRef(node_id, direction, position), sign)

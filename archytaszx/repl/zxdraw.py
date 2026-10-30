@@ -37,7 +37,7 @@ import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.diagram.graph import Diagram, Node, NodeId, PortRef
 from archytaszx.repl import terminal as T
-from archytaszx.repl.printer import rule_turns
+from archytaszx.repl.printer import _phase_label, _weight_label, rule_turns
 
 
 @dataclass
@@ -127,6 +127,17 @@ class _Labels:
         pv = node.phase
         if pv is None or pv.is_zero:
             return ""
+        if pv.is_weighted:
+            text = "w{" + _weight_label(pv) + "}"
+            if pv.entries() or pv.rule is not None:
+                text = _phase_label(pv)
+            if len(text) <= 14:
+                return text
+            if text not in self._seen:
+                name = f"a{len(self._seen) + 1}"
+                self._seen[text] = name
+                self.legend.append(f"{name} = {text}")
+            return self._seen[text]
         if pv.rule is not None and not pv.entries():
             text = _plain(rule_turns(pv))
             if len(text) <= 14:

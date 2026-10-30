@@ -34,7 +34,8 @@ the validator (section 5).
   S     DIM_SPLITTER      1       2        none         product of inputs = product of outputs
 
 "Tied to leg" means a phase vector, when present, is built over the same dimension as the
-node's legs. The binder takes legs of dimensions s and t to one leg of dimension s*t, the
+node's legs. A phase vector may carry complex weights (ALGEBRA.txt, section 3.4), which makes
+a Z spider the Z box of [P1]; an X spider with weights is the Fourier conjugate of that Z box. The binder takes legs of dimensions s and t to one leg of dimension s*t, the
 splitter the reverse.
 
 2.2 Types

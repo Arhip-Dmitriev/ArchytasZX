@@ -660,10 +660,16 @@ def reattach_phase(
     for entry in phase.entries().values():
         entry_symbols |= entry.free_symbols
     applied = {name: bindings[name] for name in concrete_bindings if name in entry_symbols}
-    if phase.rule is not None:
+    if phase.rule is not None or phase.is_weighted:
         entry_symbols |= phase.free_symbols
         applied = {name: bindings[name] for name in concrete_bindings if name in entry_symbols}
-    reattached = PhaseVector(shared_dim, substituted.entries(), substituted.rule)
+    reattached = PhaseVector(
+        shared_dim,
+        substituted.entries(),
+        substituted.rule,
+        weights=substituted.weights(),
+        weight_rule=substituted.weight_rule,
+    )
     return reattached, MappingProxyType(applied)
 
 

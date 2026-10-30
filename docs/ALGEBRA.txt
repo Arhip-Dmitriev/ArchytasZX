@@ -160,6 +160,30 @@ storage is what allows a phase vector at a symbolic dimension to exist.
 Errors: PhaseDomainError for an index out of range, a gauge violation, mismatched dimensions or
 numeric evaluation of a symbolic phase; PhaseGrammarError for inexact input such as a float.
 
+3.4 Complex weights
+
+A PhaseVector may also carry exact complex weights, making it the parameter of a [P1] Z box:
+the spider's coefficient at index k is
+
+    a_k = w_k e^{2 pi i alpha_k},     a_0 = 1.
+
+    PhaseVector(dim, entries, rule, expand, weights=None, weight_rule=None)
+    PhaseVector.from_weights(dim, weights=None, rule=None)   weights only, no phase
+
+    v.weights() -> Mapping[int, Scalar]         the stored weight entries
+    v.weight_rule -> Scalar | None              a Scalar in INDEX
+    v.weight(index) -> Scalar                   1 at index 0, else the entry, else the rule,
+                                                else 1
+    v.coefficient(index) -> Scalar              weight(index) * e^{2 pi i get(index)}
+    v.weight_at(index) -> sympy.Expr            the weight at a possibly symbolic index
+    v.is_weighted                               some weight differs from 1
+
+An entry overrides the weight rule at its index; an entry equal to the value it would
+otherwise take is dropped. At a concrete dimension a weight rule is expanded into entries
+unless expand=False. is_zero is False for a weighted vector, so every rule requiring a
+phaseless spider refuses it. v + w multiplies weights and adds phases (the fusion of Z boxes).
+A vector without weights is stored, compared, hashed and printed exactly as before.
+
 
 4. SCALARS: archytaszx.algebra.scalar
 -------------------------------------

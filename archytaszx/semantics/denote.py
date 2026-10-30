@@ -26,9 +26,10 @@ Pairing convention (stated once here, used by ``"B"`` and ``"S"`` alike). A pair
 with ``a`` in ``[0, s)`` and ``b`` in ``[0, t)`` corresponds to the single index
 ``k = a * t + b`` in ``[0, s*t)``. ``B . S = id`` and ``S . B = id`` hold exactly.
 
-Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})`` and ``alpha_0 == 0`` as gauge::
+Z spider. With phase vector ``(alpha_1, ..., alpha_{d-1})``, weights ``(w_1, ..., w_{d-1})``
+and ``alpha_0 == 0``, ``w_0 == 1`` as gauge::
 
-    Z_{m -> n} = sum_{k=0}^{d-1} e^{i * angle(alpha_k)} |k>^{ox n} <k|^{ox m}
+    Z_{m -> n} = sum_{k=0}^{d-1} w_k e^{i * angle(alpha_k)} |k>^{ox n} <k|^{ox m}
 
 The tensor is zero off the "all axes equal k" diagonal and holds ``Phase.to_complex()`` of
 ``phase.get(k)`` on it; a missing entry is ``Phase.zero()``, so a ``phase=None`` node is
@@ -60,7 +61,6 @@ from __future__ import annotations
 import numpy as np
 
 from archytaszx.algebra.dimension import Dim
-from archytaszx.algebra.phase import Phase
 from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
@@ -204,9 +204,14 @@ def _z_tensor(node: Node, d: int) -> np.ndarray:
     """The Z spider tensor at concrete dimension ``d``. See the module docstring."""
     rank = node.num_outputs + node.num_inputs
     tensor = np.zeros((d,) * rank, dtype=np.complex128)
-    get_phase = node.phase.get if node.phase is not None else (lambda _k: Phase.zero())
+    phase = node.phase
     for k in range(d):
-        tensor[(k,) * rank] += get_phase(k).to_complex()
+        if phase is None:
+            tensor[(k,) * rank] += 1
+        elif phase.is_weighted:
+            tensor[(k,) * rank] += phase.coefficient(k).to_complex()
+        else:
+            tensor[(k,) * rank] += phase.get(k).to_complex()
     return tensor
 
 

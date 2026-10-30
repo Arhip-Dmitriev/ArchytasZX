@@ -730,7 +730,10 @@ class _Renderer:
         if phase.rule is not None:
             at = sp.Symbol(self.index(index))
             terms.append(self.atom(phase.rule.to_sympy_turns().xreplace({INDEX: at})))
-        return f"e^{{2 {self.g.pi} i ({' + '.join(terms)})}}"
+        if not phase.is_weighted:
+            return f"e^{{2 {self.g.pi} i ({' + '.join(terms)})}}"
+        weight = f"w{{{_weight_label(phase)}}}({self.index(index)})"
+        return f"{weight} e^{{2 {self.g.pi} i ({' + '.join(terms)})}}" if terms else weight
 
     def x_factor(self, f: XFactor) -> str:
         parts: list[str] = []
@@ -879,7 +882,23 @@ def _phase_label(phase: PhaseVector) -> str:
     parts = [f"{k}: {_plain(p.to_sympy_turns())}" for k, p in sorted(phase.entries().items())]
     if phase.rule is not None:
         parts.append(f"k: {_plain(rule_turns(phase))}")
+    if phase.is_weighted:
+        parts.append(f"weight{{{_weight_label(phase)}}}")
     return ", ".join(parts)
+
+
+def _weight_label(phase: PhaseVector) -> str:
+    """``1: x, k: rule`` for the weights of ``phase``."""
+    parts = [f"{k}: {_plain(w.to_sympy())}" for k, w in sorted(phase.weights().items())]
+    if phase.weight_rule is not None:
+        parts.append(f"k: {_plain(rule_weight(phase))}")
+    return ", ".join(parts)
+
+
+def rule_weight(phase: PhaseVector) -> sp.Expr:
+    """The weight rule of ``phase`` written in the index symbol ``k``."""
+    assert phase.weight_rule is not None
+    return phase.weight_rule.to_sympy().xreplace({INDEX: sp.Symbol("k", integer=True)})
 
 
 def rule_turns(phase: PhaseVector) -> sp.Expr:
@@ -891,7 +910,9 @@ def rule_turns(phase: PhaseVector) -> sp.Expr:
 def _z_name(m: sp.Expr, n: sp.Expr, phase: PhaseVector | None) -> str:
     generic = f"Z_{{{_plain(m)}->{_plain(n)}}}"
     if phase is not None:
-        return "Z_phase" if m == 1 and n == 1 else f"{generic}({_phase_label(phase)})"
+        if m == 1 and n == 1 and not phase.is_weighted:
+            return "Z_phase"
+        return f"{generic}({_phase_label(phase)})"
     for count, other, tail in ((n, m, ""), (m, n, "^dagger")):
         if other == 0 and count == 1:
             return f"plus{tail}"
@@ -1127,7 +1148,16 @@ def _listing_phase(phase: PhaseVector | None) -> str:
     if phase.rule is not None:
         parts.append(f"k: {_listing_expr(sp.sstr(rule_turns(phase)))}")
     entries = ", ".join(parts)
-    return f"  phase[{_listing_expr(phase.dim)}]: {{{entries}}} turns"
+    text = f"  phase[{_listing_expr(phase.dim)}]: {{{entries}}} turns"
+    if not phase.is_weighted:
+        return text
+    weights = [
+        f"{index}: {_listing_expr(sp.sstr(w.to_sympy()))}"
+        for index, w in sorted(phase.weights().items())
+    ]
+    if phase.weight_rule is not None:
+        weights.append(f"k: {_listing_expr(sp.sstr(rule_weight(phase)))}")
+    return f"{text} weight: {{{', '.join(weights)}}}"
 
 
 def _listing_header(kind: str, nodes: int, wires: int, inputs: int, outputs: int) -> str:

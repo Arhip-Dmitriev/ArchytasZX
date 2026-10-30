@@ -653,12 +653,15 @@ def dimension_floors(*diagrams: Diagram) -> dict[str, int]:
     floors: dict[str, int] = {}
     for diagram in diagrams:
         for node in diagram.nodes.values():
-            if node.phase is None or not node.phase.entries():
+            if node.phase is None:
+                continue
+            indices = [*node.phase.entries(), *node.phase.weights()]
+            if not indices:
                 continue
             dim = node.phase.dim.to_sympy()
             if dim.is_Symbol:
                 name = str(dim.name)
-                floors[name] = max(floors.get(name, 1), max(node.phase.entries()) + 1)
+                floors[name] = max(floors.get(name, 1), max(indices) + 1)
     return floors
 
 
