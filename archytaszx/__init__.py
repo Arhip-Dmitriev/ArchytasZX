@@ -12,3 +12,12 @@
 # limitations under the License.
 
 """ArchytasZX: a qufinite ZX-calculus engine with symbolic qudit count and dimension."""
+
+
+def __getattr__(name: str) -> object:
+    """``azx``, ``Program``, ``Piece`` and ``Sym`` from :mod:`archytaszx.repl.embed`."""
+    if name in ("azx", "Program", "Piece", "Sym"):
+        from archytaszx.repl import embed
+
+        return getattr(embed, name)
+    raise AttributeError(f"module 'archytaszx' has no attribute {name!r}")
