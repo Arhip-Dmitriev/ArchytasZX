@@ -165,7 +165,7 @@ class TestRunLine:
             "induct",
         ):
             assert usage in out
-        assert "aliases: list-rules = rules" in out
+        assert "aliases: cert = certificate, list-rules = rules" in out
 
     def test_help_for_one_command(self) -> None:
         assert Shell().run_line("help zx").startswith("zx -- ")
@@ -540,3 +540,22 @@ class TestConfig:
         with pytest.raises(ValueError):
             S.T.load_config(str(path))
         assert S.T.load_config(str(tmp_path / "none.toml")) == S.T.Config()
+
+
+def test_indented_lines_continue_the_command_above() -> None:
+    shell = Shell()
+    outs = shell.run_script(
+        [
+            "@ghz =",
+            "    g = Z(0 -> 3)",
+            "",
+            "load",
+            "    a = Z(0 -> 2)  # first",
+            "    b = Z(1 -> 2)",
+            "    a -> b",
+            "apply spider_fusion",
+            "decide against @ghz",
+        ]
+    )
+    assert shell.errors == 0 and len(outs) == 4
+    assert "decide: equal" in outs[-1]

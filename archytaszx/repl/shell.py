@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
@@ -250,7 +251,21 @@ class Shell:
                 prompt = self.prompt(True)
                 continue
             parts.append(stripped.strip())
-            return " ".join(part for part in parts if part)
+            line = " ".join(part for part in parts if part)
+            if interactive and _BLOCK_HEAD_RE.fullmatch(line):
+                return self._read_block(line, source, sink, use_input)
+            return line
+
+    def _read_block(self, head: str, source: TextIO, sink: TextIO, use_input: bool) -> str:
+        """``head`` and the lines after it up to a blank line or EOF, joined by newlines."""
+        lines = [head]
+        while True:
+            raw = _read_physical(source, sink, self.prompt(True), use_input)
+            code = "" if raw is None else raw.split("#", 1)[0].strip()
+            if raw is None or not raw.strip():
+                return "\n".join(lines)
+            if code:
+                lines.append(code)
 
     def _mode(self, word: str) -> str:
         """Sets the notation mode and the ZX drawing style of a view word."""
@@ -309,20 +324,37 @@ def _place() -> str:
     return os.path.basename(cwd) or cwd
 
 
+_BLOCK_HEAD_RE = re.compile(r":?load|@[A-Za-z_]\w*\s*=")
+
+
 def _logical_lines(lines: Iterable[str]) -> Iterator[str]:
-    """Joins each line ending in ``\\`` to the next with a single space; a comment line never
-    continues."""
+    """Joins each line ending in ``\\`` to the next with a single space, and each indented
+    line to the command above it with a newline; comments are cut from joined lines, and blank
+    or comment lines never continue."""
+    pending: str | None = None
     parts: list[str] = []
     for raw in lines:
         stripped = raw.rstrip("\r\n").rstrip()
+        code = stripped.split("#", 1)[0].strip()
+        if not parts and not code:
+            yield stripped.strip()
+            continue
+        if not parts and pending is not None and stripped[:1] in (" ", "\t"):
+            pending = pending.split("#", 1)[0].rstrip() + "\n" + code
+            continue
         if stripped.endswith("\\") and (parts or not stripped.lstrip().startswith("#")):
             parts.append(stripped[:-1].strip())
             continue
         parts.append(stripped.strip())
-        yield " ".join(part for part in parts if part)
+        if pending is not None:
+            yield pending
+        pending = " ".join(part for part in parts if part)
         parts = []
     if parts:
-        yield " ".join(part for part in parts if part)
+        tail = " ".join(part for part in parts if part)
+        pending = tail if pending is None else f"{pending}\n{tail}"
+    if pending is not None:
+        yield pending
 
 
 def _read_physical(source: TextIO, sink: TextIO, prompt: str, use_input: bool) -> str | None:
