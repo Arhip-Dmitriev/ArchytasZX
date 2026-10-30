@@ -46,10 +46,14 @@ Gate = tuple
 
 def cases(quick: bool) -> list[dict]:
     """Every tool at every (w, seed, s); ``quick`` keeps a few."""
-    sizes, widths, seeds = (QUICK_SIZES, QUICK_WIDTHS, QUICK_SEEDS) if quick else (
-        SIZES,
-        WIDTHS,
-        SEEDS,
+    sizes, widths, seeds = (
+        (QUICK_SIZES, QUICK_WIDTHS, QUICK_SEEDS)
+        if quick
+        else (
+            SIZES,
+            WIDTHS,
+            SEEDS,
+        )
     )
     return [
         {"suite": "size", "tool": tool, "w": w, "seed": seed, "s": s}
@@ -137,10 +141,8 @@ def azx_script(gates: list[Gate], w: int, family: bool) -> str:
     ids = [f"e{k} = Z(1 -> 1)" for k in range(w)]
     if family:
         ids.append("repeat n: " + ", ".join(f"e{k}" for k in range(w)))
-    indent = lambda lines: "\n".join("    " + ln for ln in lines)  # noqa: E731
-    return (
-        f"@rhs =\n{indent(head + ids)}\n\nload\n{indent(head + body)}\n\ndecide against @rhs\n"
-    )
+    indent = lambda lines: "\n".join("    " + ln for ln in lines)
+    return f"@rhs =\n{indent(head + ids)}\n\nload\n{indent(head + body)}\n\ndecide against @rhs\n"
 
 
 def pyzx_check(gates: list[Gate], w: int) -> dict:

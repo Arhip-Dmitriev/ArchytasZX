@@ -23,10 +23,10 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib import colormaps  # noqa: E402
+import matplotlib.pyplot as plt
+from matplotlib import colormaps
 
-from benchmarks import harness, scaling, size  # noqa: E402
+from benchmarks import harness, scaling, size
 
 PLOTS_DIR = Path(__file__).resolve().parent / "plots"
 TOOL_COLOURS = {"azx-family": "#0072b2", "azx-qubit": "#009e73", "pyzx": "#d55e00"}
@@ -100,8 +100,13 @@ def plot_scaling() -> None:
         for d in ds:
             line = sorted((r for r in mine if r["d"] == d), key=lambda r: r["n"])
             ok = [r for r in line if r["status"] == "ok"]
-            ax.plot([r["n"] for r in ok], [r["time"] for r in ok], "-o", color=colour[d],
-                    label=f"d = {d}" if d < 2**16 else f"d = 2^{int(math.log2(d))}")
+            ax.plot(
+                [r["n"] for r in ok],
+                [r["time"] for r in ok],
+                "-o",
+                color=colour[d],
+                label=f"d = {d}" if d < 2**16 else f"d = 2^{int(math.log2(d))}",
+            )
             bad = [r for r in line if r["status"] in FAILED]
             ax.plot([r["n"] for r in bad], [top * 1.5] * len(bad), "x", color=colour[d])
         free = [r for r in mine if r["d"] == "free" and r["status"] == "ok"]
@@ -227,8 +232,15 @@ def plot_size_nodes() -> None:
     fig, ax = plt.subplots(figsize=(3.6, 2.6))
     for tool in size.TOOLS:
         mine = [r for r in rows if r["tool"] == tool]
-        ax.plot([r["nodes"] for r in mine], [r["time"] for r in mine], "o",
-                color=TOOL_COLOURS[tool], alpha=0.6, mec="none", label=TOOL_LABELS[tool])
+        ax.plot(
+            [r["nodes"] for r in mine],
+            [r["time"] for r in mine],
+            "o",
+            color=TOOL_COLOURS[tool],
+            alpha=0.6,
+            mec="none",
+            label=TOOL_LABELS[tool],
+        )
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("nodes in the checked diagram(s)")

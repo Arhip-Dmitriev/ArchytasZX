@@ -262,6 +262,6 @@ def load(suite: str) -> list[dict]:
 
 
 if __name__ == "__main__":
-    from benchmarks import harness as _self
+    from benchmarks import harness as _self  # noqa: PLW0406
 
     print(_MARK + json.dumps(_self._worker(json.loads(sys.argv[1])), default=str), flush=True)

@@ -41,9 +41,9 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
 
 from archytaszx.repl import terminal as T
-from archytaszx.rewrite import match_template
 from archytaszx.repl.commands import Outcome, Session, detail_text, format_outcome, run
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
+from archytaszx.rewrite import match_template
 
 HISTORY_FILE = "~/.archytaszx_history"
 """The readline history file, user-expanded."""

@@ -235,7 +235,7 @@ class Piece:
                         o_node
                     ].text.startswith(("Z(", "X(")):
                         break
-                diff =[(x, y) for x, y in zip(left[::-1], right[::-1]) if x != y]
+                diff = [(x, y) for x, y in zip(left[::-1], right[::-1]) if x != y]
                 if (
                     len(left) != len(right)
                     or joined.boxes[diff[0][0]][0] != joined.boxes[diff[0][1]][0]

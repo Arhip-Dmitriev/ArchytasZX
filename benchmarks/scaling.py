@@ -174,7 +174,7 @@ def cases(quick: bool) -> list[dict]:
 def script(case: dict) -> str:
     """The family's script with ``n`` and ``d`` bound, or free when ``"free"``."""
     _, text = FAMILIES[case["family"]]
-    bind = lambda v: "" if v == "free" else f" = {v}"  # noqa: E731
+    bind = lambda v: "" if v == "free" else f" = {v}"
     return text.format(N=bind(case["n"]), D=bind(case["d"]))
 
 
