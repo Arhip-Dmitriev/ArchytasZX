@@ -568,7 +568,7 @@ class TestSimplify:
         assert extraction.cost == manual.cost
 
     def test_saturation_rules_are_the_registry(self) -> None:
-        assert saturation_rules() == tuple(RULES.values())
+        assert saturation_rules() == tuple(rule for rule in RULES.values() if rule.automatic)
 
 
 class TestClassMembersAreOracleEqual:

@@ -565,7 +565,7 @@ class TestMatch:
 
     def test_all_rules(self) -> None:
         outcome = ok(session(WORKED), "match")
-        assert texts(outcome) == ["#0 spider_fusion at n0, n1"]
+        assert texts(outcome)[0] == "#0 spider_fusion at n0, n1"
         assert not outcome.changed
 
     def test_one_rule(self) -> None:

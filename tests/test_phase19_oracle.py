@@ -642,6 +642,7 @@ COMMAND_LINES = {
     "certificate": "certificate",
     "translate": "translate",
     "name": "name g",
+    "define": f"define g2 = {EXAMPLE}",
     "names": "names",
     "undo": "undo",
     "reset": "reset",

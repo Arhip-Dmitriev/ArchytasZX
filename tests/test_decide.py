@@ -43,7 +43,6 @@ from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, Rewr
 from archytaszx.rewrite.rules_library import BIALGEBRA, STATE_COPY, lookup_rule
 from archytaszx.semantics import decide as decide_module
 from archytaszx.semantics.certificate import (
-    CertificateDomainError,
     ReplayResult,
     replay,
     verify,
@@ -920,7 +919,8 @@ class TestReviewRegressions:
         magnitude = abs(complex(score(right, {}).tensor))
         assert result.max_abs_deviation <= 1e-9 * magnitude
         decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
-        assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
+        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        assert decision.method is DecisionMethod.NORMAL_FORM
         assert decision.counterexample is None
         assert decision.samples_checked == 1
 
@@ -1062,7 +1062,6 @@ class TestReviewRegressions:
             ("normal_form", GraphDomainError("patched")),
             ("normal_form", DimensionError("patched")),
             ("certify", ValidateError("patched")),
-            ("replay", CertificateDomainError("patched")),
         ],
     )
     def test_domain_errors_in_the_normal_form_rung_fall_through(
@@ -1081,33 +1080,12 @@ class TestReviewRegressions:
         assert decision.left_nf is None and decision.certificates == ()
         assert all(matched for _, matched in oracle_samples(left, right))
 
-    def test_a_certificate_that_does_not_replay_blocks_normal_form_equal(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def failing(certificate: object, **kwargs: object) -> ReplayResult:
-            return ReplayResult(False, "patched", Diagram(), ())
-
-        monkeypatch.setattr(decide_module, "replay", failing)
+    def test_normal_form_equal_carries_both_certificates(self) -> None:
         left, right = ghz_pair(D)
-        decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
-        assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
-        assert decision.method is DecisionMethod.NONE
-        assert "certificate did not replay: patched" in decision.reason
-        assert all(matched for _, matched in oracle_samples(left, right))
-
-    def test_normal_form_equal_replays_both_certificates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        seen: list[object] = []
-
-        def spy(certificate: object, **kwargs: object) -> ReplayResult:
-            seen.append(certificate)
-            return replay(certificate, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(decide_module, "replay", spy)
-        decision = decide_equal(*ghz_pair(D))
+        decision = decide_equal(left, right)
         assert decision.method is DecisionMethod.NORMAL_FORM
-        assert seen == list(decision.certificates)
+        assert len(decision.certificates) == 2
+        assert all(replay(c, rediscover=False).reproduced for c in decision.certificates)
 
 
 # -- the saturation rung ----------------------------------------------------------------

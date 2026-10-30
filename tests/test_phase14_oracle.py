@@ -265,7 +265,9 @@ class TestDoneWhen:
             assert_oracle_equal(diagram, member, DIMENSIONS)
 
     def test_saturation_beats_greedy_over_every_rule_but_bialgebra(self) -> None:
-        without_bialgebra = tuple(rule for rule in RULES.values() if rule.name != "bialgebra")
+        without_bialgebra = tuple(
+            rule for rule in RULES.values() if rule.automatic and rule.name != "bialgebra"
+        )
         assert {rule.name for rule in normal_form_rules()} <= {r.name for r in without_bialgebra}
         for name, (builder, _, _) in sorted(REACHED.items()):
             diagram = builder()

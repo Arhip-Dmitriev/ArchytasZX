@@ -332,6 +332,8 @@ class TestNormalFormRuleResolution:
             "w_zero_copy",
             "zx_cap",
             "zx_cap_swapped",
+            "zxw_ept",
+            "scalar_box",
         )
 
     def test_resolved_and_skipped_names_partition_the_declared_tuple(self) -> None:
