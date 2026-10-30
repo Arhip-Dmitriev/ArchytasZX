@@ -159,16 +159,20 @@ bang-box diagram, which becomes current.
 
 2.14 Session commands
 
-  Command      Effect
-  -----------  ---------------------------------------------------------------------------
-  name NAME    Store the current diagram as @NAME.
-  names        List the named diagrams.
-  undo         Revert the last state-changing command (load, apply, normalize, saturate,
-               translate, reset).
-  reset        Start a new derivation at the current diagram.
-  detail       Show the last command's full payload: every diagram as its graph listing and
-               Dirac form side by side; after an error, the exception chain and messages.
-  help [CMD]   List every command, or show one command's usage.
+  Command          Effect
+  ---------------  -----------------------------------------------------------------------
+  @NAME = SOURCE   Store a diagram as @NAME without loading it (also define NAME = SOURCE).
+  name NAME        Store the current diagram as @NAME (alias save).
+  names            List the named diagrams.
+  undo             Revert the last state-changing command (load, apply, normalize, saturate,
+                   translate, reset).
+  reset            Start a new derivation at the current diagram.
+  detail           Show the last command's full payload: every diagram as its graph listing
+                   and Dirac form side by side; after an error, the exception chain and
+                   messages.
+  help [CMD]       List every command, or show one command's usage.
+
+Aliases: save = name, cert = certificate, normalise = normalize, list-rules = rules.
 
 2.15 Failure
 
@@ -190,35 +194,73 @@ word literal. Every diagram read passes validation without a hard error.
 
 3.1 The DSL form
 
-A DSL program is a sequence of statements separated by newlines or semicolons.
+A DSL program is a sequence of statements separated by newlines or semicolons. It reads as a
+circuit: nodes are declared, then connected with arrows.
+
+    count n
+    repeat n: X(0 -> 1) -> F^4
+    X(0 -> 1) phase{k: -k/d} -> F^3 -> u = X(2 -> 1)
+    inputs u.in1
+
+declares n chains of an X state through four F gates, and one phased X state through three F
+gates into the X spider u, whose second input is the diagram's input.
 
 Node declarations:
 
+    NAME = GEN(M -> N) [PHASE]             M inputs and N outputs of the default dimension
     NAME = GEN(M -> N, D) [PHASE]          M inputs and N outputs, all of dimension D
+    NAME = GEN [PHASE]                     F, T and Ti: one input and one output
+    NAME = GEN(D) [PHASE]                  the same, of dimension D
     NAME = GEN(in: [D, ...], out: [D, ...]) [PHASE]
                                            explicit leg dimensions
-    NAME = GEN(D)                          F, T and Ti: one input and one output of D
     NAME = B(S, T)                         binder: inputs S and T, output S*T
     NAME = S(S, T)                         splitter: input S*T, outputs S and T
+    NAME[A..B] = ...                       one node per name NAMEA, ..., NAMEB
 
-GEN is a generator name: Z, X, F, T, Ti, W, B or S (DIAGRAM.txt, section 2). PHASE is
+GEN is a generator name: Z, X, F, T, Ti, W, B or S (DIAGRAM.txt, section 2). The default
+dimension is the first symbol declared by dim, or d when there is none. PHASE is
 
     phase{I: EXPR, ...}                    phase entries in turns at indices I >= 1
+    phase{k: EXPR}                         the phase EXPR at every index k
     phase[D]{I: EXPR, ...}                 the same, with an explicit phase dimension
     phase 0                                the zero phase vector
 
+Chains:
+
+    A -> B -> C ...                        wires each step's next free output to the next
+                                           step's next free input
+
+A step is one of:
+
+    NAME                                   a declared node
+    NAME[A..B]                             the nodes NAMEA, ..., NAMEB, in series
+    NAME = GEN...                          a node declared in place
+    GEN... [^K]                            an unnamed node, or K of them in series
+    NAME.outI, NAME.inJ                    an explicit port, at either end of the chain only
+
+A free port is one not named explicitly by any wire or boundary statement and not yet taken
+by an earlier chain; the lowest-numbered free port is used. Node ids follow the order in which
+nodes are written.
+
+Bang boxes:
+
+    repeat MULT: STEP, ...                 a node-scope box over the nodes the steps name;
+                                           a step may be a whole chain
+    repeat MULT: A.outI, ...               a port-scope box
+    repeat MULT as NAME [in P]: ...        a named box, optionally nested in box P
+
 Other statements:
 
-    wire A.outI -- B.inJ [, ...]           wires, ports numbered from 0
+    wire A.outI -- B.inJ [, ...]           explicit wires, ports numbered from 0
     inputs A.inI, ...                      the ordered boundary inputs
     outputs A.outI, ...                    the ordered boundary outputs
     scalar EXPR                            the scalar factor
-    box NAME x MULT nodes A, B, ... [in P] a node-scope bang box, optionally nested in box P
-    box NAME x MULT ports A.outI, ... [in P]
-                                           a port-scope bang box
     dim NAME [= INT], ...                  declares dimension symbols, optionally bound
     count NAME [= INT], ...                declares multiplicity symbols, optionally bound
     let NAME = INT, ...                    binds a symbol to a value
+    box NAME x MULT nodes A, ... [in P]    a node-scope bang box (the long form of repeat)
+    box NAME x MULT ports A.outI, ... [in P]
+                                           a port-scope bang box (the long form of repeat)
 
 When inputs or outputs is omitted, every port not otherwise wired becomes a boundary port, in
 order of node declaration and port index.
@@ -227,14 +269,15 @@ Expressions (dimensions, multiplicities, phases, scalars) are built from integer
 + - * / ^ ** and parentheses, the constants I, pi (or π) and E, and the functions exp and
 sqrt.
 
-Example: two Z spiders over a symbolic dimension, the first with phase alpha at index 1:
+An unknown node, generator, statement or rule is reported with the closest known name.
 
-    dim d; a = Z(0 -> 2, d) phase{1: alpha}; b = Z(1 -> 2, d); wire a.out0 -- b.in0
+Example: two Z spiders, the first with phase alpha at index 1, joined by one wire:
+
+    a = Z(0 -> 2) phase{1: alpha}; b = Z(1 -> 2); a -> b
 
 Example: the same pair repeated n times:
 
-    count n; dim d; a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0
-    box m x n nodes a, b
+    count n; repeat n: Z(0 -> 2) -> Z(1 -> 2)
 
 3.2 The Dirac form
 
@@ -315,12 +358,12 @@ A family under a bang box is printed with copy indices:
 5. WORKED SESSION
 -----------------
 
-    :load dim d; a = Z(0 -> 2, d) phase{1: alpha}; b = Z(1 -> 2, d); wire a.out0 -- b.in0
-    :apply spider_fusion
-    :decide
-    :certificate emit
-    :certificate verify d=3
-    :certificate kernel
+    a = Z(0 -> 2) phase{1: alpha}; b = Z(1 -> 2); a -> b
+    apply spider_fusion
+    decide
+    certificate emit
+    certificate verify d=3
+    certificate kernel
 
 loads two spiders, fuses them, decides that the result equals the start for every d and
 alpha, stores the derivation as a certificate, replays and oracle-checks it at d = 3, and

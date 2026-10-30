@@ -73,6 +73,22 @@ loaded dirac input
 at d = 3, n = 29: Σ_{k0,k1=0}^{3-1} [k0 = k1] |k0⟩^{29} |k1, k1⟩
 ```
 
+The DSL reads as a circuit: declare nodes, then connect them with arrows.
+
+```console
+$ archytaszx --unicode -c 'a = Z(0 -> 2) phase{1: alpha}; b = Z(1 -> 2); a -> b' \
+                       -c 'apply spider_fusion'
+loaded dsl input
+Σ_{k0,k1=0}^{d-1} e^{2 π i (alpha [k0=1])} [k0 = k1] |k0, k1, k1⟩
+step: spider_fusion (consumed n0, n1, new n2, scalar 1)
+result:
+  Z_{0->3}(1: alpha) = Σ_{k=0}^{d-1} e^{2 π i (alpha [k=1])} |k, k, k⟩
+```
+
+A command file spans a diagram over indented lines;
+[`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx)
+writes n data qudits as `repeat n: X(0 -> 1) -> F^4`.
+
 Diagrams are loaded in a DSL, in Dirac notation or as a graph listing, then rewritten,
 normalised, decided and proved with commands such as `apply`, `normalize`, `decide`, `prove`
 and `induct`; `help` lists them all. `--zx`, `--both` and `--raw` switch between Dirac notation

@@ -1,41 +1,49 @@
-# The qudit Deutsch-Jozsa circuit as ZXW diagrams, proved equal to its output
-# for every d and n and exported to Lean 4.
-# |0>_d = d^(-1/2) X(0 -> 1), |1>_d = d^(-1/2) X(0 -> 1) phase{k: -k/d}, Fd = F^3.
-# U_const: X(2 -> 1) adds its input c, wired to the boundary, to the target (scale sqrt(d)).
-# U_bal: Z(1 -> 2) copies the last data qudit into X(2 -> 1) on the target; n = m + 1.
+# The qudit Deutsch-Jozsa circuit, proved equal to its output for every d and n,
+# and exported to Lean 4.
+#
+#   |0>  = d^(-1/2) X(0 -> 1)
+#   |1>  = d^(-1/2) X(0 -> 1) phase{k: -k/d}
+#   F_d  = F^3
+#   U_const: X(2 -> 1) adds its input c, wired to the boundary, to the target (scale sqrt(d)).
+#   U_bal:   Z(1 -> 2) copies the last data qudit into X(2 -> 1) on the target; n = m + 1.
 
-# Constant: |out_const> = e^(2 pi i c/d) |0>_d^@n @ Fd|1>_d, for every input |c>.
-:load count n; dim d; z = X(0 -> 1, d); box q x n nodes z; \
-  t = Z(0 -> 1, d) phase{k: -k/d}; e = Z(1 -> 0, d) phase{k: k/d}; \
-  scalar d^(-(n+1)/2)
-:name out_const
-:load count n; dim d; \
-  z = X(0 -> 1, d); g1 = F(1 -> 1, d); g2 = F(1 -> 1, d); g3 = F(1 -> 1, d); g4 = F(1 -> 1, d); \
-  wire z.out0 -- g1.in0; wire g1.out0 -- g2.in0; wire g2.out0 -- g3.in0; wire g3.out0 -- g4.in0; \
-  box p x n nodes z, g1, g2, g3, g4; \
-  t = X(0 -> 1, d) phase{k: -k/d}; h1 = F(1 -> 1, d); h2 = F(1 -> 1, d); h3 = F(1 -> 1, d); \
-  u = X(2 -> 1, d); \
-  wire t.out0 -- h1.in0; wire h1.out0 -- h2.in0; wire h2.out0 -- h3.in0; wire h3.out0 -- u.in0; \
-  inputs u.in1; scalar d^(-n/2)
-:decide against @out_const
-:certificate lean deutsch_jozsa_constant.lean
 
-# Balanced: |out_bal> = |0>_d^@(n-1) @ |1>_d @ Fd|1>_d.
-:load count m; dim d; z = X(0 -> 1, d); box q x m nodes z; \
-  o = X(0 -> 1, d) phase{k: -k/d}; t = Z(0 -> 1, d) phase{k: -k/d}; \
-  scalar d^(-(m+2)/2)
-:name out_bal
-:load count m; dim d; \
-  z = X(0 -> 1, d); g1 = F(1 -> 1, d); g2 = F(1 -> 1, d); g3 = F(1 -> 1, d); g4 = F(1 -> 1, d); \
-  wire z.out0 -- g1.in0; wire g1.out0 -- g2.in0; wire g2.out0 -- g3.in0; wire g3.out0 -- g4.in0; \
-  box p x m nodes z, g1, g2, g3, g4; \
-  zl = X(0 -> 1, d); l1 = F(1 -> 1, d); c = Z(1 -> 2, d); l2 = F(1 -> 1, d); \
-  l3 = F(1 -> 1, d); l4 = F(1 -> 1, d); \
-  wire zl.out0 -- l1.in0; wire l1.out0 -- c.in0; wire c.out0 -- l2.in0; wire l2.out0 -- l3.in0; \
-  wire l3.out0 -- l4.in0; \
-  t = X(0 -> 1, d) phase{k: -k/d}; h1 = F(1 -> 1, d); h2 = F(1 -> 1, d); h3 = F(1 -> 1, d); \
-  u = X(2 -> 1, d); \
-  wire t.out0 -- h1.in0; wire h1.out0 -- h2.in0; wire h2.out0 -- h3.in0; wire h3.out0 -- u.in0; \
-  wire c.out1 -- u.in1; scalar d^(-(m+1)/2)
-:decide against @out_bal
-:certificate lean deutsch_jozsa_balanced.lean
+# Constant oracle: the output is e^(2 pi i c/d) |0>^n (x) F_d|1>, for every input |c>.
+
+@out_const =
+    count n
+    repeat n: X(0 -> 1)
+    t = Z(0 -> 1) phase{k: -k/d}
+    e = Z(1 -> 0) phase{k: k/d}
+    scalar d^(-(n+1)/2)
+
+load
+    count n
+    repeat n: X(0 -> 1) -> F^4                          # data qudits
+    X(0 -> 1) phase{k: -k/d} -> F^3 -> u = X(2 -> 1)    # target, through U_const
+    inputs u.in1
+    scalar d^(-n/2)
+
+decide against @out_const
+certificate lean deutsch_jozsa_constant.lean
+
+
+# Balanced oracle: the output is |0>^(n-1) (x) |1> (x) F_d|1>.
+
+@out_bal =
+    count m
+    repeat m: X(0 -> 1)
+    o = X(0 -> 1) phase{k: -k/d}
+    t = Z(0 -> 1) phase{k: -k/d}
+    scalar d^(-(m+2)/2)
+
+load
+    count m
+    repeat m: X(0 -> 1) -> F^4                          # first m data qudits
+    X(0 -> 1) -> F -> c = Z(1 -> 2) -> F^3              # last data qudit, copied by U_bal
+    X(0 -> 1) phase{k: -k/d} -> F^3 -> u = X(2 -> 1)    # target
+    c -> u
+    scalar d^(-(m+1)/2)
+
+decide against @out_bal
+certificate lean deutsch_jozsa_balanced.lean

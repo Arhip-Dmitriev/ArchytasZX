@@ -86,7 +86,8 @@ Each input line is handled as follows, a leading colon being optional:
   - A shell command (section 6) changes the shell's settings.
   - Any other line is an engine command (ENGINE_COMMANDS.txt).
 
-A line ending in a backslash is joined to the next.
+A line ending in a backslash is joined to the next. A line that is only load, or @NAME =,
+opens a block: the lines after it, up to a blank line, are the diagram source.
 
 5.3 History
 
@@ -125,15 +126,29 @@ shows the engine's full error record.
 
 A command file is UTF-8 text with one engine or shell command per line, a leading colon
 optional. Files given together share one session: diagrams named by an earlier file are
-visible to a later one. A line ending in a backslash continues on the next line, as in
+visible to a later one.
+
+An indented line continues the command above it on a new line, so a diagram spans several
+lines under load or @NAME =. Blank and comment lines inside such a block are skipped. A line
+ending in a backslash is joined to the next with a space. From
 examples/deutsch_jozsa_proof.azx:
 
-    :load count n; dim d; z = X(0 -> 1, d); box q x n nodes z; \
-      t = Z(0 -> 1, d) phase{k: -k/d}; e = Z(1 -> 0, d) phase{k: k/d}; scalar d^(-(n+1)/2)
-    :name out_const
-    :load count n; dim d; z = X(0 -> 1, d); g1 = F(1 -> 1, d); ... ; inputs u.in1; ...
-    :decide against @out_const
-    :certificate lean deutsch_jozsa_constant.lean
+    @out_const =
+        count n
+        repeat n: X(0 -> 1)
+        t = Z(0 -> 1) phase{k: -k/d}
+        e = Z(1 -> 0) phase{k: k/d}
+        scalar d^(-(n+1)/2)
+
+    load
+        count n
+        repeat n: X(0 -> 1) -> F^4                          # data qudits
+        X(0 -> 1) phase{k: -k/d} -> F^3 -> u = X(2 -> 1)    # target, through U_const
+        inputs u.in1
+        scalar d^(-n/2)
+
+    decide against @out_const
+    certificate lean deutsch_jozsa_constant.lean
 
 
 8. TERMINAL IMAGES
