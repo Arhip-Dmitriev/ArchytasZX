@@ -1,0 +1,17 @@
+# GHZ-state preparation, for every n and every qudit dimension d: a Fourier transform on the
+# control qudit, then n CNOTs from it, equals (1/sqrt(d)) sum_k |k>|k>^n.
+
+@ghz =
+  count n
+  g = Z(0 -> 2)
+  repeat n: g.out1
+  scalar d^(-1/2)
+
+load
+  count n
+  X(0 -> 1) -> F -> z = Z(1 -> 2)
+  repeat n: z.out1 -> t = X(2 -> 1), X(0 -> 1) -> t
+  scalar d^(-1/2)
+
+decide @ghz
+certificate lean ghz.lean
