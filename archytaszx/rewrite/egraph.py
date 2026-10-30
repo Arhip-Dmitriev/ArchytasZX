@@ -121,14 +121,57 @@ def _detached(result: RewriteResult) -> RewriteResult:
     return replace(result, diagram=result.diagram.copy())
 
 
+class _Backoff:
+    """The backoff rule scheduler of one saturation (as in egg): a rule applied more often than
+    its threshold in one iteration is cut for the rest of it and banned for a while."""
+
+    def __init__(self, limits: SaturationLimits) -> None:
+        self.limits = limits
+        self.bans: dict[int, int] = {}
+        self.until: dict[int, int] = {}
+        self.fired: dict[int, int] = {}
+        self.cuts: set[int] = set()
+        self.iteration = 0
+
+    def start(self, iteration: int) -> None:
+        self.iteration = iteration
+        self.fired = {}
+        self.cuts = set()
+
+    def allows(self, rule: Rule) -> bool:
+        return self.until.get(id(rule), 0) < self.iteration
+
+    def fire(self, rule: Rule) -> bool:
+        """Count one application; False once the rule passes its threshold."""
+        key = id(rule)
+        if key in self.cuts:
+            return False
+        count = self.fired.get(key, 0) + 1
+        self.fired[key] = count
+        if count > self.limits.match_limit << self.bans.get(key, 0):
+            self.cuts.add(key)
+            return False
+        return True
+
+    def cut(self, rule: Rule) -> bool:
+        return id(rule) in self.cuts
+
+    def finish(self, iteration: int) -> None:
+        for key in self.cuts:
+            times = self.bans.get(key, 0)
+            self.until[key] = iteration + (self.limits.ban_length << times)
+            self.bans[key] = times + 1
+
+
 def _same_rules(first: tuple[Rule, ...], second: tuple[Rule, ...]) -> bool:
     """Whether the two tuples hold the same rule objects in the same order."""
     return len(first) == len(second) and all(a is b for a, b in zip(first, second, strict=True))
 
 
 def saturation_rules() -> tuple[Rule, ...]:
-    """Every rule in :data:`~archytaszx.rewrite.rules_library.RULES`, in registry order."""
-    return tuple(RULES.values())
+    """Every automatic rule in :data:`~archytaszx.rewrite.rules_library.RULES`, in registry
+    order."""
+    return tuple(rule for rule in RULES.values() if rule.automatic)
 
 
 class EdgeKind(enum.Enum):
@@ -158,10 +201,22 @@ class SaturationLimits:
     max_enodes: int = 512
     max_applications: int = 20_000
     node_margin: int = 4
+    match_limit: int = 1_000
+    """Backoff: a rule applied more often than ``match_limit << b`` in one iteration, b its
+    bans so far, is banned."""
+    ban_length: int = 5
+    """Backoff: a ban lasts ``ban_length << b`` iterations."""
 
     def __post_init__(self) -> None:
         """Reject a field that is not a non-negative int."""
-        for name in ("max_iterations", "max_enodes", "max_applications", "node_margin"):
+        for name in (
+            "max_iterations",
+            "max_enodes",
+            "max_applications",
+            "node_margin",
+            "match_limit",
+            "ban_length",
+        ):
             value = getattr(self, name)
             if not _is_int(value):
                 raise RewriteGrammarError(
@@ -521,6 +576,8 @@ class EGraph:
         failed: list[FailedApplication] = []
         iterations = 0
         stop = SaturationStop.SATURATED
+        backoff = _Backoff(limits)
+        applied: dict[int, set[int]] = {}
         try:
             while True:
                 pending = [i for i in range(len(self._reps)) if self._pending(i, rule_set, bound)]
@@ -529,9 +586,15 @@ class EGraph:
                 if iterations >= limits.max_iterations:
                     raise _Stop(SaturationStop.ITERATION_LIMIT)
                 iterations += 1
+                backoff.start(iterations)
                 for index in pending:
-                    self._expand(index, rule_set, limits, bound, cache, counts, failed)
-                    self._expanded[index] = (rule_set, bound)
+                    done = applied.setdefault(index, set())
+                    due = tuple(r for r in rule_set if id(r) not in done and backoff.allows(r))
+                    self._expand(index, due, limits, bound, cache, counts, failed, backoff)
+                    done.update(id(r) for r in due if not backoff.cut(r))
+                    if all(id(r) in done for r in rule_set):
+                        self._expanded[index] = (rule_set, bound)
+                backoff.finish(iterations)
         except _Stop as signal:
             stop = signal.reason
         return SaturationReport(
@@ -554,6 +617,7 @@ class EGraph:
         cache: RewriteCache | None,
         counts: dict[str, int],
         failed: list[FailedApplication],
+        backoff: _Backoff | None = None,
     ) -> None:
         """Apply every rule at every passing match of e-node ``index`` and insert the results."""
         rep = self._reps[index]
@@ -561,6 +625,8 @@ class EGraph:
             for match in self._matches(rule, rep, cache):
                 if not match.all_side_conditions_passed:
                     continue
+                if backoff is not None and not backoff.fire(rule):
+                    break
                 if counts["applications"] >= limits.max_applications:
                     raise _Stop(SaturationStop.APPLICATION_LIMIT)
                 counts["applications"] += 1

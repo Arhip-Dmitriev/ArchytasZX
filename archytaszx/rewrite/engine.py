@@ -1007,11 +1007,15 @@ NORMAL_FORM_RULE_NAMES: tuple[str, ...] = (
     "w_zero_copy",
     "zx_cap",
     "zx_cap_swapped",
+    "zxw_ept",
+    "scalar_box",
 )
 """:func:`toward_normal_form`'s rule set, in application order.
 
-Every entry removes at least one wire; ``state_copy``, its swapped twin and ``w_zero_copy``
-on a node with n >= 3 legs add nodes. ``bialgebra`` and its twin turn two nodes into four and
+Every entry but ``scalar_box`` removes at least one wire; ``scalar_box`` removes a node and no
+wire; ``state_copy``, its swapped twin and ``w_zero_copy`` on a node with n >= 3 legs add
+nodes. The pair (wire count, node count) decreases lexicographically at every step.
+``bialgebra`` and its twin turn two nodes into four and
 are absent. A name not yet registered in :data:`~archytaszx.rewrite.rules_library.RULES` is
 skipped, so the ordering here is the target set and :func:`missing_normal_form_rule_names`
 reports what of it is not yet live.

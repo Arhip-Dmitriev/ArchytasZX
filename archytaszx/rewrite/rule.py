@@ -439,6 +439,11 @@ class Pattern(abc.ABC):
         tuple(sorted(find_matches(D), key=self.order_key))``."""
         return tuple(int(node_id) for node_id in match.support_node_ids)
 
+    def verify(self, diagram: Diagram, match: Match) -> bool:
+        """Whether ``match`` is a match of this pattern in ``diagram``: by default, whether
+        :meth:`find_matches` rediscovers it."""
+        return match in self.find_matches(diagram)
+
     def find_matches_anchored(
         self, diagram: Diagram, anchors: frozenset[NodeId]
     ) -> tuple[Match, ...]:
@@ -483,6 +488,8 @@ class Rule:
     scalar_in_dim: Callable[[Dim], Scalar] | None = None
     dimension_guards: tuple[DimensionGuard, ...] = ()
     scalar_in_match: Callable[[Match], Scalar] | None = None
+    automatic: bool = True
+    """Whether the automatic layers (normal form, saturation, tactics) may use this rule."""
 
     def scalar_for(self, dim: Dim | None) -> Scalar:
         """The exact scalar this rule introduces at ``dim``.
@@ -562,6 +569,10 @@ class Rule:
             raise RewriteGrammarError(
                 f"rule {self.name!r}: scalar_in_dim must be callable or None, "
                 f"got {type(self.scalar_in_dim).__name__}"
+            )
+        if not isinstance(self.automatic, bool):
+            raise RewriteGrammarError(
+                f"rule {self.name!r}: automatic must be a bool, got {self.automatic!r}"
             )
         if self.scalar_in_match is not None and not callable(self.scalar_in_match):
             raise RewriteGrammarError(

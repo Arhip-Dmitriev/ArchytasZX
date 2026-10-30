@@ -69,6 +69,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseDomainError, PhaseVector
 from archytaszx.algebra.scalar import Scalar
@@ -125,6 +127,12 @@ from archytaszx.rewrite.match_box import (
     PortBoxUnfusionPattern,
     find_port_box_unfusion_matches,
 )
+from archytaszx.rewrite.match_template import (
+    TemplateAxiom,
+    TemplatePattern,
+    template_builder,
+    template_scalar,
+)
 from archytaszx.rewrite.match_zxw import (
     CONNECTIVE_INVERSE_SIDE_CONDITIONS,
     CONNECTIVE_STATES_SIDE_CONDITIONS,
@@ -168,10 +176,12 @@ from archytaszx.rewrite.rule import (
     Match,
     Quantifiers,
     RewriteDomainError,
+    RewriteError,
     RewriteGrammarError,
     Rule,
     check_side_condition_coverage,
 )
+from archytaszx.rewrite.rules_axioms import AXIOMS, CONVERSES
 
 
 def _surviving_legs(
@@ -1736,6 +1746,76 @@ PORT_BOX_UNFUSION = Rule(
 one wire, the boxed leg on a new phaseless one, scalar 1."""
 
 
+PROMOTED_RULE_NAMES: frozenset[str] = frozenset(
+    {
+        "zxw_ept",
+        "scalar_box",
+        "zxw_k0",
+        "zxw_k2",
+        "zxw_zer",
+        "zxw_ad",
+        "zxw_bs0",
+        "zxw_bsj",
+        "zxw_ta",
+        "zxw_bzw",
+        "zxw_aso",
+        "zxw_hd",
+        "zxw_va",
+        "zxw_zv",
+        "zxw_kz",
+        "qf_dzx",
+        "qf_e",
+        "qf_k0",
+        "qf_bzw",
+        "qf_s1",
+    }
+)
+"""The template rules the automatic layers use (docs/COMPLETENESS.txt, section 8)."""
+
+
+def fixed_template_scalar(axiom: TemplateAxiom) -> Scalar | None:
+    """The scalar ``axiom`` introduces at every match, when its sides have one shape at every
+    dimension and carry no scalar diagram; None otherwise."""
+    dim = Dim.symbol("d")
+    try:
+        left, right = axiom.left.template(dim, {}), axiom.right.template(dim, {})
+    except (KeyError, IndexError, ValueError, RewriteError):
+        return None
+    if left is None or right is None or left.scalar is not None or right.scalar is not None:
+        return None
+    if any(node.open for node in (*left.nodes, *right.nodes)):
+        return None
+    try:
+        own = axiom.scalar(dim, {})
+    except (KeyError, ValueError, RewriteError):
+        return None
+    exponent = sum(
+        (sp.Rational(n.ins + n.outs, 2) - 1 for n in right.nodes if n.pink), sp.Integer(0)
+    ) - sum((sp.Rational(n.ins + n.outs, 2) - 1 for n in left.nodes if n.pink), sp.Integer(0))
+    return own * Scalar(sp.Pow(dim.to_sympy(), exponent))
+
+
+def template_rule(axiom: TemplateAxiom) -> Rule:
+    """The :class:`Rule` applying ``axiom`` left to right; automatic only when promoted."""
+    return Rule(
+        name=axiom.name,
+        pattern=TemplatePattern(axiom),
+        builder=template_builder(axiom),
+        side_conditions=axiom.side_conditions,
+        quantifiers=Quantifiers(
+            leg_counts=tuple(q for q in axiom.quantifiers if q != "d"), dimensions=("d",)
+        ),
+        scalar_introduced=fixed_template_scalar(axiom) or Scalar.one(),
+        scalar_in_match=lambda match: template_scalar(axiom, match),
+        automatic=axiom.name in PROMOTED_RULE_NAMES,
+    )
+
+
+TEMPLATE_RULES: tuple[Rule, ...] = tuple(template_rule(axiom) for axiom in (*AXIOMS, *CONVERSES))
+"""The axioms of [P1] and [P2], their definitional rules and the converses
+(:mod:`archytaszx.rewrite.rules_axioms`)."""
+
+
 RULES: Mapping[str, Rule] = MappingProxyType(
     {
         SPIDER_FUSION.name: SPIDER_FUSION,
@@ -1766,6 +1846,7 @@ RULES: Mapping[str, Rule] = MappingProxyType(
         W_Z_EFFECT.name: W_Z_EFFECT,
         W_ZERO_EFFECT.name: W_ZERO_EFFECT,
         PORT_BOX_UNFUSION.name: PORT_BOX_UNFUSION,
+        **{rule.name: rule for rule in TEMPLATE_RULES},
     }
 )
 """Every rule this module registers, keyed by :attr:`~archytaszx.rewrite.rule.Rule.name`.

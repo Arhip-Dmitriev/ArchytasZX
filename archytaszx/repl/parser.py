@@ -59,6 +59,8 @@ from archytaszx.diagram.generators import REGISTRY, X_SPIDER, Z_SPIDER, Generato
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, Node, NodeId, PortRef
 from archytaszx.diagram.validate import IssueKind, validate
 from archytaszx.rewrite.engine import RewriteResult, apply
+from archytaszx.rewrite.match_template import TemplateMatch, TemplatePattern
+from archytaszx.rewrite.rule import Match, Rule
 from archytaszx.rewrite.rules_library import RULES
 
 
@@ -918,6 +920,40 @@ def _phase_vector_parts(
     return entries, rule
 
 
+def _weight_vector_parts(
+    text: str, table: Mapping[str, sp.Symbol]
+) -> tuple[dict[int, Scalar], Scalar | None]:
+    """``i: expr, ..., k: rule`` as index -> Scalar weight and the weight rule in
+    :data:`INDEX`."""
+    entries: dict[int, Scalar] = {}
+    rule: Scalar | None = None
+    for item in _split_top(text):
+        index, colon, expr = item.partition(":")
+        if not colon:
+            raise ParseGrammarError(f"weight entry {item!r} is not 'INDEX: EXPR'")
+        if index.strip() == "k":
+            if rule is not None:
+                raise ParseGrammarError("the weight rule k appears twice")
+            rule = _scalar_of(_parse_expr(expr, "weight"), {**table, "k": INDEX})
+            continue
+        i = _int_token(index, "weight index")
+        if i in entries:
+            raise ParseGrammarError(f"weight index {i} appears twice")
+        entries[i] = _scalar_of(_parse_expr(expr, "weight"), table)
+    return entries, rule
+
+
+def _phase_vector_of(
+    dim: Dim, phase_text: str, weight_text: str | None, table: Mapping[str, sp.Symbol]
+) -> PhaseVector:
+    """The phase vector a phase text and an optional weight text declare over ``dim``."""
+    entries, rule = _phase_vector_parts(phase_text, table)
+    if weight_text is None:
+        return PhaseVector(dim, entries, rule)
+    weights, weight_rule = _weight_vector_parts(weight_text, table)
+    return PhaseVector(dim, entries, rule, weights=weights, weight_rule=weight_rule)
+
+
 def _carried(diagram: Diagram) -> frozenset[str]:
     """Every symbol name ``diagram`` carries."""
     names: set[str] = set(diagram.scalar.free_symbols)
@@ -956,6 +992,7 @@ class _NodeDraft:
     outputs: tuple[Dim, ...]
     phase_dim: Dim | None = None
     phase_entries: str | None = None
+    weight_entries: str | None = None
 
 
 def _place_nodes(diagram: Diagram, drafts: Mapping[int, _NodeDraft]) -> None:
@@ -990,8 +1027,12 @@ def _set_phases(
 ) -> None:
     for i, draft in sorted(drafts.items()):
         if draft.phase_dim is not None:
-            entries, rule = _phase_vector_parts(draft.phase_entries or "", table)
-            diagram.set_phase(NodeId(i), PhaseVector(draft.phase_dim, entries, rule))
+            diagram.set_phase(
+                NodeId(i),
+                _phase_vector_of(
+                    draft.phase_dim, draft.phase_entries or "", draft.weight_entries, table
+                ),
+            )
 
 
 # -- form 1: graph listing -----------------------------------------------------------------
@@ -1003,7 +1044,8 @@ _LISTING_HEADER_RE = re.compile(
 _LISTING_REF_RE = re.compile(r"n(?P<node>[0-9]+)\.(?P<side>out|in)(?P<index>[0-9]+)")
 _LISTING_NODE_RE = re.compile(
     r"n(?P<id>[0-9]+)\s+(?P<gen>\S+)\s+in:\s*\[(?P<ins>[^\]]*)\]\s+out:\s*\[(?P<outs>[^\]]*)\]"
-    r"(?:\s+phase\[(?P<pdim>[^\]]*)\]:\s*(?:(?P<pzero>0)|\{(?P<pentries>[^{}]*)\}\s*turns))?"
+    r"(?:\s+phase\[(?P<pdim>[^\]]*)\]:\s*(?:(?P<pzero>0)|\{(?P<pentries>[^{}]*)\}\s*turns)"
+    r"(?:\s+weight:\s*\{(?P<wentries>[^{}]*)\})?)?"
     r"(?:\s+boxes:\s*(?P<boxes>!.*))?"
 )
 _LISTING_BOX_RE = re.compile(
@@ -1107,7 +1149,12 @@ def _listing_node(
     if match["pdim"] is not None:
         phase_dim = _dim_of(_parse_expr(match["pdim"], "dimension"), _concrete_dim, mults)
     draft = _NodeDraft(
-        _generator(match["gen"]), sides[0], sides[1], phase_dim, match["pentries"] or ""
+        _generator(match["gen"]),
+        sides[0],
+        sides[1],
+        phase_dim,
+        match["pentries"] or "",
+        match["wentries"],
     )
     return node_id, draft
 
@@ -1282,7 +1329,8 @@ _DSL_NODE_RE = re.compile(
 _DSL_RANGE_RE = re.compile(rf"(?P<stem>{_IDENTIFIER})\[(?P<lo>[0-9]+)\s*\.\.\s*(?P<hi>[0-9]+)\]")
 _DSL_ANON_RE = re.compile(
     rf"(?P<gen>{_IDENTIFIER})\s*(?P<args>\(.*\))?\s*"
-    r"(?P<phase>phase\s*(?:\[[^\]]*\])?\s*(?:0|\{[^{}]*\}))?\s*(?:\^\s*(?P<times>[0-9]+))?"
+    r"(?P<phase>(?:phase\s*(?:\[[^\]]*\])?\s*(?:0|\{[^{}]*\}))?\s*"
+    r"(?:weight\s*(?:\[[^\]]*\])?\s*\{[^{}]*\})?)?\s*(?:\^\s*(?P<times>[0-9]+))?"
 )
 _DSL_REPEAT_RE = re.compile(
     rf"repeat\s+(?P<mult>.+?)(?:\s+as\s+(?P<name>{_IDENTIFIER}))?"
@@ -1292,7 +1340,8 @@ _DEFAULT_DIM = "d"
 _WORD_THEN_WORD_RE = re.compile(rf"{_IDENTIFIER}\s+[A-Za-z_]")
 _DSL_REF_RE = re.compile(rf"(?P<node>{_IDENTIFIER})\.(?P<side>out|in)(?P<index>[0-9]+)")
 _DSL_PHASE_RE = re.compile(
-    r"phase\s*(?:\[(?P<dim>[^\]]*)\])?\s*(?:(?P<zero>0)|\{(?P<entries>[^{}]*)\})"
+    r"(?:phase\s*(?:\[(?P<dim>[^\]]*)\])?\s*(?:(?P<zero>0)|\{(?P<entries>[^{}]*)\}))?\s*"
+    r"(?:weight\s*(?:\[(?P<wdim>[^\]]*)\])?\s*\{(?P<wentries>[^{}]*)\})?"
 )
 _DSL_EXPLICIT_RE = re.compile(r"in:\s*\[(?P<ins>[^\]]*)\]\s*,\s*out:\s*\[(?P<outs>[^\]]*)\]")
 _DSL_BOX_RE = re.compile(
@@ -1467,18 +1516,21 @@ class _Dsl:
         inputs, outputs, default = self.legs(generator, args or "")
         phase_dim = None
         entries = None
+        weights = None
         if rest:
             phase = _DSL_PHASE_RE.fullmatch(rest)
             if phase is None:
                 raise ParseGrammarError(f"node {name!r}: {rest!r} is not a phase suffix")
-            if phase["dim"] is not None:
-                phase_dim = self.dim(phase["dim"])
+            given = phase["dim"] if phase["dim"] is not None else phase["wdim"]
+            if given is not None:
+                phase_dim = self.dim(given)
             elif default is not None or inputs or outputs:
                 phase_dim = default if default is not None else (*inputs, *outputs)[0]
             else:
                 raise ParseDomainError(f"node {name!r} has no legs; its phase needs 'phase[D]'")
             entries = phase["entries"] or ""
-        return _NodeDraft(generator, inputs, outputs, phase_dim, entries)
+            weights = phase["wentries"]
+        return _NodeDraft(generator, inputs, outputs, phase_dim, entries, weights)
 
     def legs(
         self, generator: GeneratorType, args: str
@@ -2740,6 +2792,7 @@ def parse_dirac(source: str) -> Diagram:
 _STEP_RE = re.compile(
     rf"apply\s+(?P<rule>{_IDENTIFIER})"
     r"(?:\s+at\s+(?:(?P<index>[0-9]+)|(?P<nodes>n[0-9]+(?:\s*,\s*n[0-9]+)*)))?"
+    r"(?:\s+with\s+(?P<values>.+))?"
 )
 
 
@@ -2751,6 +2804,7 @@ class RuleStep:
     index: int | None
     nodes: tuple[int, ...] | None
     source: str
+    values: str | None = None
 
     def __post_init__(self) -> None:
         """Type and range checks: ParseGrammarError on a bad field."""
@@ -2791,7 +2845,7 @@ def parse_step(source: str) -> RuleStep:
         nodes = tuple(_numeral(t.strip()[1:], "node id") for t in match["nodes"].split(","))
         if len(set(nodes)) != len(nodes):
             raise ParseGrammarError(f"{text!r} names a node twice")
-    return RuleStep(match["rule"], index, nodes, text)
+    return RuleStep(match["rule"], index, nodes, text, match["values"])
 
 
 @_guarded
@@ -2810,11 +2864,35 @@ def apply_step(diagram: Diagram, step: RuleStep) -> RewriteResult:
         if len(found) != 1:
             what = "no" if not found else f"{len(found)}"
             raise ParseDomainError(f"{what} {step.rule} matches on nodes {sorted(wanted)}")
-        return apply(diagram, rule, found[0])
+        return apply(diagram, rule, _with_values(diagram, rule, found[0], step.values))
     index = 0 if step.index is None else step.index
     if index >= len(matches):
         raise ParseDomainError(f"{step.rule} has {len(matches)} match(es); no match {index}")
-    return apply(diagram, rule, matches[index])
+    return apply(diagram, rule, _with_values(diagram, rule, matches[index], step.values))
+
+
+def _with_values(diagram: Diagram, rule: Rule, match: Match, text: str | None) -> Match:
+    """``match`` with the free values ``NAME = VALUE, ...`` of ``text`` set."""
+    if text is None:
+        return match
+    pattern = rule.pattern
+    if not isinstance(pattern, TemplatePattern) or not isinstance(match, TemplateMatch):
+        raise ParseDomainError(f"{rule.name} takes no 'with' values")
+    dim = match.template_dim
+    values: dict[str, object] = {}
+    for item in _split_top(text):
+        name, eq, value = item.partition("=")
+        name, value = name.strip(), value.strip()
+        if not eq or not name.isidentifier():
+            raise ParseGrammarError(f"{item!r} is not 'NAME = VALUE'")
+        suffix = _DSL_PHASE_RE.fullmatch(value) if value else None
+        if suffix is not None and (suffix["entries"] is not None or suffix["wentries"] is not None):
+            values[name] = _phase_vector_of(dim, suffix["entries"] or "", suffix["wentries"], {})
+        elif re.fullmatch(r"-?[0-9]+", value):
+            values[name] = sp.Integer(int(value))
+        else:
+            values[name] = _scalar_of(_parse_expr(value, "value"), {})
+    return pattern.with_values(diagram, match, values)
 
 
 # -- dispatch ------------------------------------------------------------------------------

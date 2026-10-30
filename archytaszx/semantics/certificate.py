@@ -416,7 +416,7 @@ def _replay_one(
                 working,
             )
 
-    if rediscover and step.match not in rule.pattern.find_matches(working):
+    if rediscover and not rule.pattern.verify(working, step.match):
         reason = (
             f"{prefix}the recorded match is not among the matches rediscovered in the "
             "diagram being replayed"

@@ -30,8 +30,23 @@ Each entry gives:
   Scalar           the factor the rule introduces (per match: computed from the match)
   Quantifiers      the leg-count and dimension variables the equation ranges over
   Guards           arithmetic restrictions on the matched dimension
-  Normal-form set  whether the rule belongs to the normal-form set (REWRITE.txt, section 6)
+  Normal-form set  whether the rule belongs to the normal-form set (REWRITE.txt, section 6),
+                   and whether the automatic layers (normal form, saturation, tactics) use it
+  Free values      variables of the built side the matched side does not bind (2.29 onwards)
   Side conditions  the conditions every match is checked against, in order
+
+Template rules. Rules 2.29 onwards state the axioms of [P1] and [P2], the definitional rules
+translating the engine's generators into theirs, and the converse of each, read right to left
+(COMPLETENESS.txt). Each is an equation between two small diagrams matched up to the symmetry
+of each generator's legs: every leg of a Z spider, an X spider's inputs among themselves and
+its outputs among themselves, a W node's outputs. A pink spider of the papers is the X spider
+with the phase vector K_j = (j k/d turns)_k, scaled by d^((m + n)/2 - 1) for m outputs and n
+inputs; H is F, H^dagger is F^3, D is F^2. A rule's scalar is the ratio of the pink
+normalisations of its two sides, times the value of each side's scalar diagram (a closed
+diagram of the paper) and any factor the equation states. A free value is set to its default
+in every listed match; "apply RULE ... with NAME = VALUE" sets another, which the rule's side
+conditions then check. The rules whose entry says "automatic: yes" are used by saturation and
+tactics; zxw_ept and scalar_box also belong to the normal-form set (COMPLETENESS.txt, section 8).
 
 
 2. RULES
@@ -433,11 +448,1376 @@ wire, the boxed leg moved onto the new, phaseless one. This rule grows the diagr
                     outside_every_bang_box
 
 
+
+2.29 zxw_s1
+~~~~~~~~~~~
+
+[P1] S1: Z boxes a and b joined by k >= 1 wires fuse into the Z box ab.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts k, legs; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.30 zxw_s2
+~~~~~~~~~~~
+
+[P1] S2: the plain green dot with two legs is the identity.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.31 zxw_s2_pink
+~~~~~~~~~~~~~~~~
+
+[P1] S2 (second part), [P2] S2: the pink dot (1 -> 1) is the identity.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.32 zxw_d1
+~~~~~~~~~~~
+
+[P1] D1: Z box a followed by D is D followed by Z box <-a.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.33 zxw_ept
+~~~~~~~~~~~~
+
+[P1] Ept: the pink dot state into a Z box effect is the empty diagram.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.34 zxw_b2
+~~~~~~~~~~~
+
+[P1] B2, [P2] B2: the bialgebra of the plain green and pink dots.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.35 zxw_k0
+~~~~~~~~~~~
+
+[P1] K0: a pink K_j state copied by a plain green dot (1 -> 2).
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.36 zxw_k1
+~~~~~~~~~~~
+
+[P1] K1: pink K_j (1 -> 1) commutes through a plain green dot (1 -> n).
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.37 zxw_k2
+~~~~~~~~~~~
+
+[P1] K2, [P2] K2: pink K_j through a Z box a, times the scalar a_{-j}.
+
+  Scalar:           a_{-j} (the scalar diagram of the right side)
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, a_minus_j_nonzero
+
+
+2.38 zxw_zer
+~~~~~~~~~~~~
+
+[P1] Zer: the Z box 0 state is the pink dot state.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.39 zxw_p1
+~~~~~~~~~~~
+
+[P1] P1 with (Du): H ; H is D, the pink dot (0 -> 2) with one leg bent.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.40 zxw_p1_multiplier
+~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] P1, [P2] P1: H ; H = D is the multiplier -1.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.41 zxw_h1
+~~~~~~~~~~~
+
+[P1] H1: the green circle spider K_j with H^dagger on its inputs and H on its outputs is the
+green circle spider K_{-j} with H on its inputs and H^dagger on its outputs.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m, j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.42 zxw_pcy
+~~~~~~~~~~~~
+
+[P1] Pcy: a Z box a on the input of a W node is copied onto both outputs.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.43 zxw_ad
+~~~~~~~~~~~
+
+[P1] AD, [P2] AD: Z box effects a and b on a W node add.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.44 zxw_sym
+~~~~~~~~~~~~
+
+[P1] Sym: the two outputs of a W node may be swapped.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.45 zxw_aso
+~~~~~~~~~~~~
+
+[P1] Aso: the W node is associative.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.46 zxw_bzw
+~~~~~~~~~~~~
+
+[P1] BZW: the bialgebra of the W node and the plain green dot.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.47 zxw_ww
+~~~~~~~~~~~
+
+[P1] WW: a W transpose (n inputs) into a W node (1 -> m), projected by a W node on plain green
+dots, is the crossed bialgebra of W nodes and W transposes.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.48 zxw_bs0
+~~~~~~~~~~~~
+
+[P1] Bs0: the pink dot state into a W node is two pink dot states.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.49 zxw_bsj
+~~~~~~~~~~~~
+
+[P1] Bsj, [P2] Bsj: the pink K_j state into a W node with one output on a plain green effect is
+the Z box T_j state.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.50 zxw_ta
+~~~~~~~~~~~
+
+[P1] TA: the trialgebra rule, the pink dot (1 -> 2) becomes a W node.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.51 zxw_hd
+~~~~~~~~~~~
+
+[P1] HD: the decomposition of the Hadamard box.
+
+  Scalar:           per match: pink normalisations, over the left side's scalar diagram d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.52 zxw_zv
+~~~~~~~~~~~
+
+[P1] ZV: a Z box a state into V is the Z box state (a_{d-1}, ..., a_{d-1}).
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.53 zxw_va
+~~~~~~~~~~~
+
+[P1] VA: d-1 boxes a_i on a W node through multipliers -i into a pink dot are V followed by the
+Z box a.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.54 zxw_vw
+~~~~~~~~~~~
+
+[P1] VW: V into a W node is the W node with V on both outputs.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.55 zxw_kz
+~~~~~~~~~~~
+
+[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through multipliers
+e_1..e_n is a pink K_1 state and n pink dot states.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, e_1..e_n; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.56 qf_wf
+~~~~~~~~~~
+
+[P2] WF: a W node fed by an output of another is one W node.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts p, q, r; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.57 qf_w_sym
+~~~~~~~~~~~~~
+
+[P2] (2.10): outputs k and k+1 of a W node with n outputs may be swapped.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, k; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.58 qf_z_flex
+~~~~~~~~~~~~~~
+
+[P2] (2.9): a Z box's input leg bends to an output leg.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.59 qf_mw
+~~~~~~~~~~
+
+[P2] MW: a multiplier e (e != 0 mod d) through the box 1 and a W node.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts e; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.60 qf_d1
+~~~~~~~~~~
+
+[P2] D1: D on every input of a Z box a is H ; H on every output of <-a.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.61 qf_ww
+~~~~~~~~~~
+
+[P2] WW: a W transpose (m inputs) into a W node (1 -> n) is m W nodes crossed into n W
+transposes, projected through plain green dots and a W transpose on a green effect.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.62 qf_va
+~~~~~~~~~~
+
+[P2] VA: boxes 1, a_1..a_{d-1} on a W node through multipliers 0, -1..-(d-1) into a pink dot are
+the box 1, pink K_{-1}, a W transpose with a plain green state, pink K_1 and the Z box a in
+series.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.63 qf_hd
+~~~~~~~~~~
+
+[P2] HD: the decomposition of the Hadamard box.
+
+  Scalar:           per match: pink normalisations, over the left side's (-1)^(d+1)/sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.64 binder_definition
+~~~~~~~~~~~~~~~~~~~~~~
+
+[P2] (2.8): the dimension merger B is the splitter S with its legs bent.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.65 qf_dd
+~~~~~~~~~~
+
+[P2] DD: the splitter mn -> (m, n) is the pink dot of dimension mn whose outputs reach two-
+legged plain green dots, the first through the multiplier n.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.66 qf_e
+~~~~~~~~~
+
+[P2] E: the pink dot state of dimension n through a multiplier e != 0 mod n and a two-legged
+plain green dot (n -> 2) is the pink dot state of dimension 2.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, e; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.67 qf_dzx
+~~~~~~~~~~~
+
+[P2] DZX: a pink dot of dimension mn whose legs pass through multipliers n and two-legged plain
+green dots to dimension m is the pink dot of dimension m.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, p, q; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.68 qf_k0
+~~~~~~~~~~
+
+[P2] K0: the pink K_{-j} state of dimension m into a plain green dot with legs m, n1, n2 is pink
+K_{-j} states of dimensions n1 and n2 times [j < min(m, n1, n2)].
+
+  Scalar:           per match: pink normalisations, times [j < min(m, n1, n2)]
+  Quantifiers:      leg counts m, n1, n2, j; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.69 qf_bzw
+~~~~~~~~~~~
+
+[P2] BZW: W nodes of dimensions m and n crossed into mixed-dimensional Z boxes a (legs m, n, k)
+are the Z box a into a W node of dimension k.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, k; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.70 qf_ta
+~~~~~~~~~~
+
+[P2] TA: a W node of dimension m and a pink dot of dimension n whose outputs pass through
+multipliers e_t != 0 mod n meet in mixed plain green dots with outputs of dimension k; the pink
+dot may be replaced by a W node of dimension n.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, k, i, e_1..e_i; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.71 qf_s1
+~~~~~~~~~~
+
+[P2] S1: mixed-dimensional Z boxes a and b joined by wires of any dimensions fuse into the Z box
+ab' = (a_1 b_1, ..., a_{M-1} b_{M-1}, 0, ...), M the least leg dimension.
+
+  Scalar:           per match: pink normalisations of the mixed-box definitions
+  Quantifiers:      leg counts legs, dimensions; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.72 x_spider_definition
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The X spider is the Z spider with F on each output and F^3 on each input.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.73 triangle_definition
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] (YT): the triangle is a W node with one output on a plain green effect.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.74 triangle_inverse_definition
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] (YT): the inverse triangle is a W node with one output on the box -1.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.75 phase_to_weight
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] green circle spider: the phase alpha is the weight e^{i alpha}.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, carries_a_phase
+
+
+2.76 scalar_box
+~~~~~~~~~~~~~~~
+
+A Z box with no legs is the scalar 1 + a_1 + ... + a_{d-1}.
+
+  Scalar:           1 + a_1 + ... + a_{d-1}, per match
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  yes; automatic: yes
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.77 zxw_s2_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] S2: the plain green dot with two legs is the identity. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.78 zxw_s2_pink_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] S2 (second part), [P2] S2: the pink dot (1 -> 1) is the identity. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.79 zxw_ept_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Ept: the pink dot state into a Z box effect is the empty diagram. Read right to left.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      a (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.80 zxw_b2_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] B2, [P2] B2: the bialgebra of the plain green and pink dots. Read right to left.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.81 zxw_k0_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] K0: a pink K_j state copied by a plain green dot (1 -> 2). Read right to left.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.82 zxw_k1_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] K1: pink K_j (1 -> 1) commutes through a plain green dot (1 -> n). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.83 zxw_zer_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Zer: the Z box 0 state is the pink dot state. Read right to left.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.84 zxw_p1_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] P1 with (Du): H ; H is D, the pink dot (0 -> 2) with one leg bent. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.85 zxw_p1_multiplier_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] P1, [P2] P1: H ; H = D is the multiplier -1. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.86 zxw_h1_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] H1: the green circle spider K_j with H^dagger on its inputs and H on its outputs is the
+green circle spider K_{-j} with H on its inputs and H^dagger on its outputs. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m, j; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.87 zxw_pcy_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Pcy: a Z box a on the input of a W node is copied onto both outputs. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.88 zxw_sym_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Sym: the two outputs of a W node may be swapped. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.89 zxw_aso_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Aso: the W node is associative. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.90 zxw_bzw_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] BZW: the bialgebra of the W node and the plain green dot. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.91 zxw_ww_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] WW: a W transpose (n inputs) into a W node (1 -> m), projected by a W node on plain green
+dots, is the crossed bialgebra of W nodes and W transposes. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.92 zxw_bs0_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Bs0: the pink dot state into a W node is two pink dot states. Read right to left.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.93 zxw_ta_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] TA: the trialgebra rule, the pink dot (1 -> 2) becomes a W node. Read right to left.
+
+  Scalar:           d^(1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.94 zxw_hd_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] HD: the decomposition of the Hadamard box. Read right to left.
+
+  Scalar:           per match: pink normalisations, times d^(-1/2)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.95 zxw_vw_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] VW: V into a W node is the W node with V on both outputs. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.96 zxw_kz_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through multipliers
+e_1..e_n is a pink K_1 state and n pink dot states. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, e_1..e_n; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.97 qf_wf_converse
+~~~~~~~~~~~~~~~~~~~
+
+[P2] WF: a W node fed by an output of another is one W node. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts p, q, r; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.98 qf_w_sym_converse
+~~~~~~~~~~~~~~~~~~~~~~
+
+[P2] (2.10): outputs k and k+1 of a W node with n outputs may be swapped. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, k; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.99 qf_z_flex_converse
+~~~~~~~~~~~~~~~~~~~~~~~
+
+[P2] (2.9): a Z box's input leg bends to an output leg. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.100 qf_mw_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] MW: a multiplier e (e != 0 mod d) through the box 1 and a W node. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts e; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.101 qf_ww_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] WW: a W transpose (m inputs) into a W node (1 -> n) is m W nodes crossed into n W
+transposes, projected through plain green dots and a W transpose on a green effect. Read right
+to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.102 qf_hd_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] HD: the decomposition of the Hadamard box. Read right to left.
+
+  Scalar:           per match: pink normalisations, times (-1)^(d+1)/sqrt(d)
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.103 binder_definition_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P2] (2.8): the dimension merger B is the splitter S with its legs bent. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.104 qf_dd_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] DD: the splitter mn -> (m, n) is the pink dot of dimension mn whose outputs reach two-
+legged plain green dots, the first through the multiplier n. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.105 qf_e_converse
+~~~~~~~~~~~~~~~~~~~
+
+[P2] E: the pink dot state of dimension n through a multiplier e != 0 mod n and a two-legged
+plain green dot (n -> 2) is the pink dot state of dimension 2. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, e; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.106 qf_dzx_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P2] DZX: a pink dot of dimension mn whose legs pass through multipliers n and two-legged plain
+green dots to dimension m is the pink dot of dimension m. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, p, q; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.107 qf_k0_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] K0: the pink K_{-j} state of dimension m into a plain green dot with legs m, n1, n2 is pink
+K_{-j} states of dimensions n1 and n2 times [j < min(m, n1, n2)]. Read right to left.
+
+  Scalar:           per match: pink normalisations, over [j < min(m, n1, n2)] (which is 1)
+  Quantifiers:      leg counts m, n1, n2, j; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.108 qf_bzw_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P2] BZW: W nodes of dimensions m and n crossed into mixed-dimensional Z boxes a (legs m, n, k)
+are the Z box a into a W node of dimension k. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, k; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.109 qf_ta_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] TA: a W node of dimension m and a pink dot of dimension n whose outputs pass through
+multipliers e_t != 0 mod n meet in mixed plain green dots with outputs of dimension k; the pink
+dot may be replaced by a W node of dimension n. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m, n, k, i, e_1..e_i; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.110 x_spider_definition_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The X spider is the Z spider with F on each output and F^3 on each input. Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.111 triangle_definition_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] (YT): the triangle is a W node with one output on a plain green effect. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.112 triangle_inverse_definition_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] (YT): the inverse triangle is a W node with one output on the box -1. Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.113 scalar_box_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A Z box with no legs is the scalar 1 + a_1 + ... + a_{d-1}. Read right to left.
+
+  Scalar:           1/(1 + a_1 + ... + a_{d-1}), per match
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      a (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, box_value_nonzero
+
+
+2.114 zxw_d1_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] D1 read right to left: D followed by Z box b is Z box <-b followed by D.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.115 zxw_k2_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] K2 read right to left.
+
+  Scalar:           c_j
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, c_j_nonzero
+
+
+2.116 zxw_s1_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] S1 read right to left: the Z box c is Z boxes a and b (ab = c) joined by k wires, the legs
+split by a mask; by default a = c and b is the plain green dot.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, mask, k; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      a (default), b (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, fuses_back
+
+
+2.117 zxw_ad_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] AD read right to left: the Z box effect c is a W node with effects a and b, a + b = c; by
+default a = c and b = 0.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      a (default), b (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, adds_back
+
+
+2.118 zxw_bsj_converse
+~~~~~~~~~~~~~~~~~~~~~~
+
+[P1] Bsj read right to left.
+
+  Scalar:           d^(-1/2)
+  Quantifiers:      leg counts j; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.119 zxw_zv_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] ZV read right to left: by default a = (0, ..., 0, x).
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      a (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, constant_vector
+
+
+2.120 zxw_va_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+[P1] VA read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.121 qf_va_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] VA read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.122 qf_d1_converse
+~~~~~~~~~~~~~~~~~~~~
+
+[P2] D1 read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.123 weight_to_phase
+~~~~~~~~~~~~~~~~~~~~~
+
+phase_to_weight read right to left: weights that are roots of unity.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
 3. SOUNDNESS
 ------------
 
-Each rule's equation, scalar included, is checked against the numeric oracle by the test
-suite over sweeps of dimensions and leg counts, and most rules are lemmas of the bundled Lean
-library (LEAN.txt); the rules and constructs without a Lean lemma are listed in LEAN_GAPS.txt.
+Each rule's equation, scalar included, is checked against the numeric oracle: rules 2.1 to
+2.28 by the test suite over sweeps of dimensions and leg counts, rules 2.29 onwards on random
+instances of their matched side, alone and inside random weighted contexts, at d = 2..6
+(concrete-dimension rules at the dimensions their size allows). Most rules 2.1 to 2.28 are
+lemmas of the bundled Lean library (LEAN.txt); the rules and constructs without a Lean lemma
+are listed in LEAN_GAPS.txt.
+
 A rewrite that changes the denoted linear map, scalar included, is a soundness bug; see
 CONTRIBUTING.md for how to report one.
