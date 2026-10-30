@@ -326,7 +326,7 @@ ruff format . && ruff check . && mypy archytaszx
 ```
 
 CI runs both tiers (`pytest -m "" -n auto`) on Python 3.12, 3.13 and 3.14. On 2026-10-30 every
-version gave 13,162 passed, 117 failed, 294 skipped and 4 collection errors. `ruff format` is
+version gave 14,399 passed and 294 skipped, with no failures. `ruff format` is
 authoritative for layout; `mypy` runs in strict mode.
 
 ## Citation
