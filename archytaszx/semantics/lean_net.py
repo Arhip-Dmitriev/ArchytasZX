@@ -399,6 +399,8 @@ class _Export:
     def phase(self, pv: PhaseVector | None) -> int:
         if pv is None or pv.is_zero:
             return 0
+        if pv.is_weighted:
+            raise NetUnsupported("a spider with complex weights")
         parts = []
         for index, ph in sorted(pv.entries().items()):
             parts.append((index, self.sym.render(ph.to_sympy_turns(), "ℝ", "ℝ")))
@@ -3178,6 +3180,92 @@ def _unfuse(c: _Ctx) -> _Spec:
     return _Spec((m.node_id,), [(main_id, main), (side_id, side)], lemma, ONE, (), (y,))
 
 
+def _w_perm(c: _Ctx) -> _Spec:
+    m = c.match
+    nodes = dict(m.nodes)
+    n = c.node(nodes["w"])
+    ((rid, r),) = c.new_nodes.items()
+    _need(n.kind == "W" and r.kind == "W" and r.ins == n.ins and len(n.ins) == 1, "W shape")
+    _need(sorted(n.outs) == sorted(r.outs), "W outputs permuted")
+    lemma = (
+        f"wPerm {c.env} {n.ph} {r.ph} {n.dim} {n.ins[0]} {_list(n.outs)} {_list(r.outs)} IFACE "
+        "(by decide)"
+    )
+    return _Spec((nodes["w"],), [(rid, r)], lemma)
+
+
+def _z_perm(c: _Ctx) -> _Spec:
+    m = c.match
+    nodes = dict(m.nodes)
+    n = c.node(nodes["z"])
+    ((rid, r),) = c.new_nodes.items()
+    _need(n.kind == "Z" and r.kind == "Z" and n.ph == r.ph, "Z shape")
+    _need(sorted(n.outs + n.ins) == sorted(r.outs + r.ins), "Z legs permuted")
+    lemma = (
+        f"zPerm {c.env} {n.ph} {n.dim} {_list(n.outs)} {_list(n.ins)} {_list(r.outs)} "
+        f"{_list(r.ins)} IFACE (by decide)"
+    )
+    return _Spec((nodes["z"],), [(rid, r)], lemma)
+
+
+def _template_fusion(c: _Ctx) -> _Spec:
+    _need(len(c.match.wires) == 1, "fusion along one wire")
+    return _template(_fusion, a_id="a", b_id="b")(c)
+
+
+def _w_aso(c: _Ctx) -> _Spec:
+    m = c.match
+    nodes = dict(m.nodes)
+    first, second = c.node(nodes["w1"]), c.node(nodes["w2"])
+    w = c.wire(m.wires[0])
+    rs = [(nid, c.new_nodes[nid]) for nid in c.step.new_node_ids]
+    _need(len(rs) == 2 and len(first.ins) == 1 and second.ins == (w,), "Aso shape")
+    i = first.ins[0]
+    outer = [x for x in rs if x[1].ins == (i,)]
+    inner = [x for x in rs if x[1].ins != (i,)]
+    _need(len(outer) == 1 and len(inner) == 1, "Aso right side")
+    p1, p2 = outer[0][1], inner[0][1]
+    w2 = p2.ins[0]
+    o3 = [x for x in first.outs if x != w] + list(second.outs)
+    dz = first.dim
+    lemma = (
+        f"wAso {c.env} {dz} {w} {w2} {i} {_list(first.outs)} {_list(second.outs)} "
+        f"{_list(p1.outs)} {_list(p2.outs)} {_list(o3)} IFACE {_chks(6)} {_positive(c, dz)} "
+        f"{_chks(7)}"
+    )
+    return _Spec((nodes["w1"], nodes["w2"]), [outer[0], inner[0]], lemma)
+
+
+@dataclass(frozen=True)
+class _Shim:
+    """A template match read through the fields an existing rule's hook expects."""
+
+    fields: dict[str, Any]
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self.fields[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def _template(builder: _RuleBuilder, **keys: str | bool) -> _RuleBuilder:
+    """``builder`` applied to a template match: each field a template node key, ``wire`` the
+    match's internal wire, a bool field given as is."""
+
+    def hook(c: _Ctx) -> _Spec:
+        m = c.match
+        nodes = dict(m.nodes)
+        fields: dict[str, Any] = {}
+        for field_name, key in keys.items():
+            fields[field_name] = key if isinstance(key, bool) else nodes[key]
+        if m.wires:
+            fields["wire"] = m.wires[0]
+        return builder(replace(c, step=replace(c.step, match=_Shim(fields))))
+
+    return hook
+
+
 _RULES: dict[str, _RuleBuilder] = {
     "spider_fusion": _fusion,
     "z_fusion_prime_d": _fusion,
@@ -3207,6 +3295,23 @@ _RULES: dict[str, _RuleBuilder] = {
     "connective_inverse_bind_first": _conn_inverse,
     "wz_bialgebra": _wz,
     "port_box_unfusion": _unfuse,
+    "zxw_s2": _template(_identity, node_id="z"),
+    "zxw_s2_pink": _template(_identity, node_id="p"),
+    "zxw_ept": _template(_cap, state_id="p", effect_id="z", swapped=True),
+    "zxw_k0": _template(_state_copy, state_id="p", spider_id="g", swapped=False),
+    "zxw_bs0": _template(_fed_state, state_id="p", target_id="w"),
+    "zxw_b2_converse": _template(_bialgebra, x_id="p", z_id="g", swapped=False),
+    "zxw_bzw_converse": _template(_wz, z_id="g", w_id="w"),
+    "qf_wf": _template(_w_fusion, first_id="w1", second_id="w2"),
+    "zxw_sym": _w_perm,
+    "zxw_sym_converse": _w_perm,
+    "qf_w_sym": _w_perm,
+    "qf_w_sym_converse": _w_perm,
+    "zxw_s1": _template_fusion,
+    "zxw_aso": _w_aso,
+    "zxw_aso_converse": _w_aso,
+    "qf_z_flex": _z_perm,
+    "qf_z_flex_converse": _z_perm,
 }
 
 

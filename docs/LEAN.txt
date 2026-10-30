@@ -84,6 +84,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
   Cyclo        exact arithmetic in ℚ(ζ), ζ a root of unity; cyc_ne
   Refute       exact evaluation of a network at a point (eval_cyc); refute
   Ball         ball arithmetic in ℂ for refutations involving π and irrational phases
+  Completeness rule lemmas of the complete axiomatisation no earlier module states: wPerm,
+               the outputs of a W node permuted; zPerm, the legs of a Z spider
+               permuted and bent; wAso, W associativity from wFusion
+  Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
+               paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
+               the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
 
 
 4. PROOFS OF EQUALITY
@@ -99,6 +105,15 @@ networks with the diagrams' own scalars. Its proof composes, by Equal.trans and 
   - for a rule step: an isomorphism into a context C ++ L, the rule's lemma applied to L,
     wire_elim for every bare wire the rule leaves, and an isomorphism onto the next network;
   - for an isomorphism step: iso, decided by isoOK.
+
+A step of a rule of the complete axiomatisation (COMPLETENESS.txt) is proved by an existing
+rule lemma where the rule's equation is an instance of it: zxw_s1 (phases, one wire) by
+fusionZ, zxw_s2 and zxw_s2_pink by
+identityZ and identityX, zxw_ept (plain effect) by capSwapped, zxw_k0 (j = 0) by stateCopy,
+zxw_bs0 by wZeroCopy, zxw_b2_converse by bialgebra, zxw_bzw_converse by wzBialgebra, qf_wf
+by wFusion; zxw_sym, qf_w_sym and their converses by wPerm, qf_z_flex and its converse by zPerm,
+zxw_aso and its converse by wAso (Completeness). Every other such step, and these outside those instances, is an unproved axiom
+(LEAN_GAPS.txt, item 9).
 
 The scalar identity between the two sides is a linear_combination whose coefficients the
 engine computes and Lean's ring checks (archytaszx.semantics.lean_scalar). Scalars outside the

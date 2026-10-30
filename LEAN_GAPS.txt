@@ -48,3 +48,23 @@ A spider whose legs have dimensions such as d^p and d^q is proved under the hypo
 d^p = d^q, but only outside bang boxes. Inside a family the positivity of every dimension value
 is stated over the family's natural-number parameters, and the exponent symbols carry no
 positivity hypothesis.
+
+9. The rules of the complete axiomatisation, and spiders with complex weights.
+Every rule named zxw_*, qf_*, the definitional rules (x_spider_definition, triangle_definition,
+triangle_inverse_definition, phase_to_weight, weight_to_phase, scalar_box, binder_definition) and
+their converses export each step as the axiom unproved_RULE_N: no rule lemma of the bundled
+library states them yet (COMPLETENESS.txt, section 3). The exceptions are the steps that are
+instances of existing lemmas: zxw_s1 with phases along one wire (fusionZ), zxw_s2, zxw_s2_pink, zxw_ept with a plain effect, zxw_k0 at j = 0,
+zxw_bs0, zxw_b2_converse, zxw_bzw_converse, qf_wf, and zxw_sym, qf_w_sym and their converses
+(wPerm), qf_z_flex and its converse (zPerm), zxw_aso and its converse (wAso, Completeness.lean). The remaining lemmas need, per rule, a new
+LocalEq proof over symbolic d of the kind in Bialgebra.lean; rules defined only at a concrete
+dimension (the V, M, HD, VA families, every mixed-dimensional rule) need one per dimension. A spider whose phase vector carries
+complex weights is outside the tensor-network semantics, whose spiders carry a real phase
+function only; any export reaching one falls back to the opaque-diagram axioms.
+
+10. Normaliser exports of steps on phased diagrams.
+When a theorem is exported through the verified normaliser of symbolic sums rather than step by
+step, two shapes still fail in Lean: a closing scalar identity between roots of unity written in
+different forms (for example 1 - I + om 6 against 1 - ex(1/4) + ex(1/6)), which the final ring
+tactic does not identify, and a symCheck whose evaluation by decide does not reduce in the kernel
+for a network of eight nodes. Lean rejects these files; nothing unsound is accepted.
