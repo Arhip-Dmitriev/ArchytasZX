@@ -2661,6 +2661,534 @@ QF_S1 = TemplateAxiom(
 )
 
 
+# -- the older rules (RULES.txt 2.1-2.28) as templates, for their converses -------------------
+
+
+def _x(t: TB, ins: int, outs: int, param: Param = PHASELESS, key: str | None = None) -> str:
+    return t.node(X_SPIDER, ins, outs, param, key)
+
+
+def _chain_side(gens: Sequence[GeneratorType]) -> Callable[[], Template]:
+    def build() -> Template:
+        t = TB()
+        keys = [t.node(gen, 1, 1) for gen in gens]
+        t.chain(keys)
+        t.term("in", i(keys[0]))
+        t.term("out", o(keys[-1]))
+        return t.done()
+
+    return build
+
+
+FOURIER_ORDER = TemplateAxiom(
+    "fourier_cancellation",
+    fixed_side(_chain_side([FOURIER_BOX] * 4)),
+    fixed_side(_bare),
+    description="F^4 is the identity (RULES.txt 2.3).",
+)
+
+TRIANGLE_CANCEL = TemplateAxiom(
+    "triangle_inverse_cancellation",
+    fixed_side(_chain_side([TRIANGLE, TRIANGLE_INVERSE])),
+    fixed_side(_bare),
+    description="T followed by Ti is the identity (RULES.txt 2.6).",
+)
+
+TRIANGLE_CANCEL_SWAPPED = TemplateAxiom(
+    "triangle_inverse_cancellation_ti_t",
+    fixed_side(_chain_side([TRIANGLE_INVERSE, TRIANGLE])),
+    fixed_side(_bare),
+    description="Ti followed by T is the identity (RULES.txt 2.6).",
+)
+
+W_IDENTITY_T = TemplateAxiom(
+    "w_identity",
+    fixed_side(_chain_side([W_NODE])),
+    fixed_side(_bare),
+    description="A W node with one output is the identity (RULES.txt 2.17).",
+)
+
+
+def _cap_left(state: GeneratorType, effect: GeneratorType) -> Callable[[], Template]:
+    def build() -> Template:
+        t = TB()
+        a = t.node(state, 0, 1)
+        b = t.node(effect, 1, 0)
+        t.wire(o(a), i(b))
+        return t.done()
+
+    return build
+
+
+ZX_CAP_T = TemplateAxiom(
+    "zx_cap",
+    fixed_side(_cap_left(Z_SPIDER, X_SPIDER)),
+    fixed_side(_empty),
+    scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
+    description="A plain Z state into a plain X effect is sqrt(d) (RULES.txt 2.4).",
+)
+
+ZX_CAP_SWAPPED_T = TemplateAxiom(
+    "zx_cap_swapped",
+    fixed_side(_cap_left(X_SPIDER, Z_SPIDER)),
+    fixed_side(_empty),
+    scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
+    description="A plain X state into a plain Z effect is sqrt(d) (RULES.txt 2.11).",
+)
+
+
+def _copy_sides(
+    state: GeneratorType, spider: GeneratorType
+) -> tuple[Callable[[Dim, Arities], Template], Callable[[Dim, Arities], Template]]:
+    def left(_dim: Dim, a: Arities) -> Template:
+        t = TB()
+        s0 = t.node(state, 0, 1, key="s")
+        sp_ = t.node(spider, 1, a["n"], key="g")
+        t.wire(o(s0), i(sp_))
+        for k in range(a["n"]):
+            t.term(f"o{k}", o(sp_, k))
+        return t.done()
+
+    def right(_dim: Dim, a: Arities) -> Template:
+        n = a["n"]
+        t = TB()
+        for k in range(n):
+            t.term(f"o{k}", o(t.node(state, 0, 1, key=f"s{k}")))
+        return t.done(lambda dim, _b: Scalar(sp.Pow(dim.to_sympy(), sp.Rational(1 - n, 2))))
+
+    return left, right
+
+
+def _copy_right_arities(
+    state: GeneratorType,
+) -> Callable[[Diagram, NodeId, Dim], Iterator[Arities]]:
+    def enumerate_(diagram: Diagram, anchor: NodeId, _dim: Dim) -> Iterator[Arities]:
+        node = diagram.nodes[anchor]
+        if node.generator_type.name != state.name or node.num_inputs or node.num_outputs != 1:
+            return
+        if node.phase is not None and not node.phase.is_zero:
+            return
+        count = sum(
+            1
+            for other in diagram.nodes.values()
+            if other.generator_type.name == state.name
+            and not other.num_inputs
+            and other.num_outputs == 1
+            and (other.phase is None or other.phase.is_zero)
+        )
+        for n in range(2, count + 1):
+            yield {"n": n}
+
+    return enumerate_
+
+
+def _copy_axiom(name: str, state: GeneratorType, spider: GeneratorType, text: str) -> TemplateAxiom:
+    left, right = _copy_sides(state, spider)
+    return TemplateAxiom(
+        name,
+        Side(left, lambda _d, _n, _dim: ()),
+        Side(right, _copy_right_arities(state)),
+        description=text,
+        quantifiers=("n",),
+    )
+
+
+STATE_COPY_T = _copy_axiom(
+    "state_copy",
+    X_SPIDER,
+    Z_SPIDER,
+    "A plain X state into a plain Z spider (1 -> n) is n plain X states, times d^((1-n)/2) "
+    "(RULES.txt 2.7).",
+)
+STATE_COPY_SWAPPED_T = _copy_axiom(
+    "state_copy_swapped",
+    Z_SPIDER,
+    X_SPIDER,
+    "A plain Z state into a plain X spider (1 -> n) is n plain Z states, times d^((1-n)/2) "
+    "(RULES.txt 2.12).",
+)
+W_ZERO_COPY_T = _copy_axiom(
+    "w_zero_copy",
+    X_SPIDER,
+    W_NODE,
+    "A plain X state into a W node (1 -> n) is n plain X states, times d^((1-n)/2) "
+    "(RULES.txt 2.18).",
+)
+
+
+def _color_sides(
+    first: GeneratorType, second: GeneratorType, state: bool
+) -> tuple[Callable[[], Template], Callable[[], Template]]:
+    def left() -> Template:
+        t = TB()
+        f = t.f()
+        if state:
+            s0 = t.node(first, 0, 1)
+            t.wire(o(s0), i(f))
+            t.term("out", o(f))
+        else:
+            e = t.node(first, 1, 0)
+            t.wire(o(f), i(e))
+            t.term("in", i(f))
+        return t.done()
+
+    def right() -> Template:
+        t = TB()
+        if state:
+            t.term("out", o(t.node(second, 0, 1)))
+        else:
+            t.term("in", i(t.node(second, 1, 0)))
+        return t.done()
+
+    return left, right
+
+
+def _color_axiom(
+    name: str, first: GeneratorType, second: GeneratorType, state: bool
+) -> TemplateAxiom:
+    left, right = _color_sides(first, second, state)
+    what = "state" if state else "effect"
+    return TemplateAxiom(
+        name,
+        fixed_side(left),
+        fixed_side(right),
+        description=(
+            f"F on a plain {first.name} {what} is the plain {second.name} {what} "
+            "(RULES.txt 2.10, 2.15)."
+        ),
+    )
+
+
+COLOR_STATE = _color_axiom("fourier_state_color_change", Z_SPIDER, X_SPIDER, True)
+COLOR_EFFECT = _color_axiom("fourier_effect_color_change", X_SPIDER, Z_SPIDER, False)
+COLOR_STATE_SWAPPED = _color_axiom("fourier_state_color_change_swapped", X_SPIDER, Z_SPIDER, True)
+COLOR_EFFECT_SWAPPED = _color_axiom(
+    "fourier_effect_color_change_swapped", Z_SPIDER, X_SPIDER, False
+)
+
+
+def _tri_state(gen: GeneratorType) -> TemplateAxiom:
+    def left() -> Template:
+        t = TB()
+        s0 = _x(t, 0, 1)
+        tri = t.node(gen, 1, 1)
+        t.wire(o(s0), i(tri))
+        t.term("out", o(tri))
+        return t.done()
+
+    def right() -> Template:
+        t = TB()
+        t.term("out", o(_x(t, 0, 1)))
+        return t.done()
+
+    return TemplateAxiom(
+        f"triangle_zero_state_{gen.name.lower()}",
+        fixed_side(left),
+        fixed_side(right),
+        description=f"{gen.name} fixes the plain X state (RULES.txt 2.19).",
+    )
+
+
+def _tri_effect_left() -> Template:
+    t = TB()
+    tri = t.node(TRIANGLE, 1, 1)
+    e = _x(t, 1, 0)
+    t.wire(o(tri), i(e))
+    t.term("in", i(tri))
+    return t.done()
+
+
+def _tri_effect_right() -> Template:
+    t = TB()
+    t.term("in", i(t.z(1, 0)))
+    return t.done()
+
+
+TRIANGLE_ZERO_EFFECT_T = TemplateAxiom(
+    "triangle_zero_effect",
+    fixed_side(_tri_effect_left),
+    fixed_side(_tri_effect_right),
+    scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
+    description="T into a plain X effect is a plain Z effect times sqrt(d) (RULES.txt 2.20).",
+)
+
+
+def _w_effect_sides(
+    effect: GeneratorType,
+) -> tuple[Callable[[Dim, Arities], Template], Callable[[Dim, Arities], Template]]:
+    def left(_dim: Dim, a: Arities) -> Template:
+        t = TB()
+        w = t.w(a["m"], "w")
+        e = t.node(effect, 1, 0)
+        t.wire(o(w, 0), i(e))
+        t.term("in", i(w))
+        for k in range(1, a["m"]):
+            t.term(f"o{k}", o(w, k))
+        return t.done()
+
+    def right(_dim: Dim, a: Arities) -> Template:
+        t = TB()
+        w = t.w(a["m"] - 1, "w")
+        if effect.name == Z_SPIDER.name:
+            tri = t.node(TRIANGLE, 1, 1, key="t")
+            t.wire(o(tri), i(w))
+            t.term("in", i(tri))
+        else:
+            t.term("in", i(w))
+        for k in range(1, a["m"]):
+            t.term(f"o{k}", o(w, k - 1))
+        return t.done()
+
+    return left, right
+
+
+def _w_effect_right_arities(diagram: Diagram, anchor: NodeId, _dim: Dim) -> Iterator[Arities]:
+    node = diagram.nodes[anchor]
+    if node.generator_type.name in (W_NODE.name, TRIANGLE.name):
+        outs = node.num_outputs
+        if node.generator_type.name == TRIANGLE.name:
+            for other in _neighbour_ids(diagram, anchor):
+                if diagram.nodes[other].generator_type.name == W_NODE.name:
+                    yield {"m": diagram.nodes[other].num_outputs + 1}
+        else:
+            yield {"m": outs + 1}
+
+
+W_Z_EFFECT_T = TemplateAxiom(
+    "w_z_effect",
+    Side(_w_effect_sides(Z_SPIDER)[0], lambda _d, _n, _dim: ()),
+    Side(_w_effect_sides(Z_SPIDER)[1], _w_effect_right_arities),
+    description="A W output on a plain Z effect is T followed by the smaller W (RULES.txt 2.26).",
+    quantifiers=("m",),
+)
+
+W_ZERO_EFFECT_T = TemplateAxiom(
+    "w_zero_effect",
+    Side(_w_effect_sides(X_SPIDER)[0], lambda _d, _n, _dim: ()),
+    Side(_w_effect_sides(X_SPIDER)[1], _w_effect_right_arities),
+    scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
+    description="A W output on a plain X effect is the smaller W times sqrt(d) (RULES.txt 2.27).",
+    quantifiers=("m",),
+)
+
+
+def _hopf_left(swapped: bool) -> Callable[[Dim, Arities], Template]:
+    def build(_dim: Dim, _a: Arities) -> Template:
+        t = TB()
+        if not swapped:
+            t.z(0, 2, Var("a"), "z", open=True)
+            t.node(X_SPIDER, 2, 0, Var("b"), "x", open=True)
+            src, dst = "z", "x"
+        else:
+            t.node(X_SPIDER, 0, 2, Var("b"), "x", open=True)
+            t.z(2, 0, Var("a"), "z", open=True)
+            src, dst = "x", "z"
+        f = t.fs(2)
+        t.wire(o(src, 0), i(dst, 0))
+        t.wire(o(src, 1), i(f[0]))
+        t.wire(o(f[1]), i(dst, 1))
+        t.rest = {"z2": "z", "x2": "x"}
+        return t.done()
+
+    return build
+
+
+def _hopf_right(_dim: Dim, _a: Arities) -> Template:
+    t = TB()
+    t.z(0, 0, Var("a"), "z2", open=True)
+    t.node(X_SPIDER, 0, 0, Var("b"), "x2", open=True)
+    t.rest = {"z": "z2", "x": "x2"}
+    return t.done()
+
+
+def _hopf_axiom(name: str, swapped: bool) -> TemplateAxiom:
+    return TemplateAxiom(
+        name,
+        Side(_hopf_left(swapped), lambda _d, _n, _dim: ()),
+        Side(_hopf_right, arity_from_anchor(_first_kind(Z_SPIDER))),
+        scalar=lambda dim, _b: Scalar.dim_power(dim, -1, 1),
+        description=(
+            "A Z and an X spider joined by a plain wire and a wire through F^2 fall apart, "
+            "times 1/d (RULES.txt 2.8, 2.13)."
+        ),
+    )
+
+
+HOPF_T = _hopf_axiom("hopf", False)
+HOPF_SWAPPED_T = _hopf_axiom("hopf_swapped", True)
+
+
+def _bialg_swapped_left() -> Template:
+    t = TB()
+    z = t.z(2, 1, key="z")
+    x = _x(t, 1, 2, key="x")
+    t.wire(o(z), i(x))
+    for name, port in (("a", i(z, 0)), ("b", i(z, 1)), ("c", o(x, 0)), ("e", o(x, 1))):
+        t.term(name, port)
+    return t.done()
+
+
+def _bialg_swapped_right() -> Template:
+    t = TB()
+    x1, x2 = _x(t, 1, 2, key="x1"), _x(t, 1, 2, key="x2")
+    z1, z2 = t.z(2, 1, key="z1"), t.z(2, 1, key="z2")
+    t.wire(o(x1, 0), i(z1, 0))
+    t.wire(o(x1, 1), i(z2, 0))
+    t.wire(o(x2, 0), i(z1, 1))
+    t.wire(o(x2, 1), i(z2, 1))
+    for name, port in (("a", i(x1)), ("b", i(x2)), ("c", o(z1)), ("e", o(z2))):
+        t.term(name, port)
+    return t.done()
+
+
+BIALGEBRA_SWAPPED_T = TemplateAxiom(
+    "bialgebra_swapped",
+    fixed_side(_bialg_swapped_left),
+    fixed_side(_bialg_swapped_right),
+    scalar=lambda dim, _b: Scalar.dim_power(dim, 1, 2),
+    description=(
+        "Z (2 -> 1) into X (1 -> 2) is the crossed bialgebra, times sqrt(d) (RULES.txt 2.14)."
+    ),
+)
+
+
+def _wz_sides() -> tuple[Callable[[Dim, Arities], Template], Callable[[Dim, Arities], Template]]:
+    def left(_dim: Dim, a: Arities) -> Template:
+        n, m = a["n"], a["m"]
+        t = TB()
+        z = t.z(n, 1, key="z")
+        w = t.w(m, "w")
+        t.wire(o(z), i(w))
+        for k in range(n):
+            t.term(f"i{k}", i(z, k))
+        for k in range(m):
+            t.term(f"o{k}", o(w, k))
+        return t.done()
+
+    def right(_dim: Dim, a: Arities) -> Template:
+        n, m = a["n"], a["m"]
+        t = TB()
+        for r in range(n):
+            t.w(m, f"w{r}")
+            t.term(f"i{r}", i(f"w{r}"))
+        for c in range(m):
+            t.z(n, 1, key=f"z{c}")
+            for r in range(n):
+                t.wire(o(f"w{r}", c), i(f"z{c}", r))
+            t.term(f"o{c}", o(f"z{c}"))
+        return t.done()
+
+    return left, right
+
+
+def _wz_right_arities(diagram: Diagram, anchor: NodeId, _dim: Dim) -> Iterator[Arities]:
+    node = diagram.nodes[anchor]
+    if node.generator_type.name == W_NODE.name:
+        zs = {
+            diagram.nodes[x].num_inputs
+            for x in _neighbour_ids(diagram, anchor)
+            if diagram.nodes[x].generator_type.name == Z_SPIDER.name
+        }
+        for n in sorted(zs):
+            yield {"n": n, "m": node.num_outputs}
+
+
+WZ_BIALGEBRA_T = TemplateAxiom(
+    "wz_bialgebra",
+    Side(_wz_sides()[0], lambda _d, _n, _dim: ()),
+    Side(_wz_sides()[1], _wz_right_arities),
+    description=(
+        "A plain Z (n -> 1) into a W node (1 -> m) is n W nodes crossed into m plain Z spiders "
+        "(RULES.txt 2.25)."
+    ),
+    quantifiers=("n", "m"),
+)
+
+
+def _x_unfuse_left(_dim: Dim, a: Arities) -> Template:
+    t = TB()
+    t.node(X_SPIDER, a["ni"], a["no"], Var("c"), "x")
+    for k in range(a["ni"]):
+        t.term(f"i{k}", i("x", k))
+    for k in range(a["no"]):
+        t.term(f"o{k}", o("x", k))
+    return t.done()
+
+
+def _x_unfuse_right(_dim: Dim, a: Arities) -> Template:
+    ni, no, mi, mo = a["ni"], a["no"], a["mi"], a["mo"]
+    ins_a = [k for k in range(ni) if mi >> k & 1]
+    ins_b = [k for k in range(ni) if not mi >> k & 1]
+    outs_a = [k for k in range(no) if mo >> k & 1]
+    outs_b = [k for k in range(no) if not mo >> k & 1]
+    t = TB()
+    t.node(X_SPIDER, len(ins_a), len(outs_a) + 1, Var("a"), "xa")
+    t.node(X_SPIDER, len(ins_b) + 1, len(outs_b), Var("b"), "xb")
+    t.wire(o("xa", len(outs_a)), i("xb", len(ins_b)))
+    for position, k in enumerate(ins_a):
+        t.term(f"i{k}", i("xa", position))
+    for position, k in enumerate(ins_b):
+        t.term(f"i{k}", i("xb", position))
+    for position, k in enumerate(outs_a):
+        t.term(f"o{k}", o("xa", position))
+    for position, k in enumerate(outs_b):
+        t.term(f"o{k}", o("xb", position))
+    return t.done()
+
+
+def _x_unfuse_arities(diagram: Diagram, anchor: NodeId) -> Iterator[Arities]:
+    node = diagram.nodes[anchor]
+    if node.generator_type.name != X_SPIDER.name:
+        return
+    ni, no = node.num_inputs, node.num_outputs
+    for mi in range(2**ni):
+        for mo in range(2**no):
+            yield {"ni": ni, "no": no, "mi": mi, "mo": mo}
+
+
+X_FUSION_CONVERSE = TemplateAxiom(
+    "x_fusion_converse",
+    Side(_x_unfuse_left, arity_from_anchor(_x_unfuse_arities)),
+    Side(_x_unfuse_right),
+    conditions=(Condition("fuses_back", "ab = c", lambda dim, b: _fuses_to(dim, b)),),
+    free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: PhaseVector(dim)},
+    description=(
+        "spider_fusion for X spiders read right to left: the X spider c is X spiders a and b "
+        "(ab = c) joined by an output of a into an input of b, the legs split by masks; by "
+        "default a = c and b is the plain X spider (RULES.txt 2.1)."
+    ),
+    quantifiers=("ni", "no", "mi", "mo"),
+)
+
+
+LEGACY: tuple[TemplateAxiom, ...] = (
+    FOURIER_ORDER,
+    TRIANGLE_CANCEL,
+    TRIANGLE_CANCEL_SWAPPED,
+    W_IDENTITY_T,
+    ZX_CAP_T,
+    ZX_CAP_SWAPPED_T,
+    COLOR_STATE,
+    COLOR_EFFECT,
+    COLOR_STATE_SWAPPED,
+    COLOR_EFFECT_SWAPPED,
+    _tri_state(TRIANGLE),
+    _tri_state(TRIANGLE_INVERSE),
+    TRIANGLE_ZERO_EFFECT_T,
+    W_Z_EFFECT_T,
+    W_ZERO_EFFECT_T,
+    HOPF_T,
+    HOPF_SWAPPED_T,
+    BIALGEBRA_SWAPPED_T,
+    WZ_BIALGEBRA_T,
+    STATE_COPY_T,
+    STATE_COPY_SWAPPED_T,
+    W_ZERO_COPY_T,
+)
+"""Equations of rules 2.1 to 2.28 that no rule of AXIOMS states, read left to right; only their
+converses are registered (LEGACY_CONVERSES)."""
+
+
 # -- explicit converses ---------------------------------------------------------------------
 
 
@@ -3227,6 +3755,12 @@ EXPLICIT_CONVERSES: tuple[TemplateAxiom, ...] = (
 )
 """Converses written out: their matched side carries a derived parameter."""
 
+LEGACY_CONVERSES: tuple[TemplateAxiom, ...] = (
+    *(axiom.converse(f"{axiom.name}_converse") for axiom in LEGACY),
+    X_FUSION_CONVERSE,
+)
+"""Rules 2.1 to 2.28 read right to left."""
+
 CONVERSES: tuple[TemplateAxiom, ...] = (
     *(
         axiom.converse(f"{axiom.name}_converse")
@@ -3236,6 +3770,7 @@ CONVERSES: tuple[TemplateAxiom, ...] = (
         and axiom is not PHASE_TO_WEIGHT
     ),
     *EXPLICIT_CONVERSES,
+    *LEGACY_CONVERSES,
 )
 """The converse of every axiom: generated where the right side determines the left side's
 parameters, written out otherwise. ``weight_to_phase`` is the converse of

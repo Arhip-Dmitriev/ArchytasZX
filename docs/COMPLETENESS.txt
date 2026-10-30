@@ -179,6 +179,16 @@ converse.
   green circle spider       phase_to_weight (weight_to_phase)                    y  y  U
   scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  U
 
+3.4 Converses of the rules 2.1 to 2.28
+
+The equations of the older rules are also template rules, registered read right to left only:
+fourier_cancellation, triangle_inverse_cancellation (both orders), w_identity, zx_cap and its
+twin, the four Fourier colour changes, triangle_zero_state (T and Ti), triangle_zero_effect,
+w_z_effect, w_zero_effect, hopf and its twin, bialgebra_swapped, wz_bialgebra, state_copy and
+its twin, w_zero_copy (each NAME_converse), and x_fusion_converse (X spider unfusion, free
+values as zxw_s1_converse). Each passed the oracle check and replays in the kernel. The
+connective rules 2.21 to 2.24 and port_box_unfusion have none.
+
 Lean export of one proof per rule (lake env lean on the exported file, one instance per rule
 at d = 3, mixed rules at the dimensions of section 3.2): 43 rules' instances are proved over
 the tensor-network semantics with no unproved axiom (by a rule lemma or by the verified
@@ -275,9 +285,10 @@ proof certificate, checked as prove's are. There is no depth cap and no time lim
 Fairness. A derivation of length n each of whose steps is the application of a rule at a
 match its pattern enumerates (free values at their defaults) is found by the time the start
 side has expanded layer n. When every step of its last floor(n/2) steps uses a rule with a
-converse (every rule 2.29 onwards has one; the rules 2.1 to 2.28 do not), it is found by the
-time the start side has expanded layer ceil(n/2) and the goal side layer floor(n/2): that
-half, read from the goal, is a sequence of converse applications.
+converse, it is found by the time the start side has expanded layer ceil(n/2) and the goal
+side layer floor(n/2): that half, read from the goal, is a sequence of converse applications.
+Every rule has a converse except the connective rules (2.21 to 2.24) and port_box_unfusion
+(2.28, bang boxes only).
 
 Termination.
   - Unequal diagrams at concrete dimensions: the oracle rung contracts both and reports
@@ -304,8 +315,8 @@ is NOT_FOUND.
   - No bang boxes: template rules never match a node or leg inside a bang box.
   - Derivability, not decision; the automatic layers use only the rules section 8 lists.
   - The mixed-dimensional S1 of [P2] has no converse rule; its unfusion is not enumerated.
-  - The rules 2.1 to 2.28 (RULES.txt) have no converse rules; exhaustive mode reads them only
-    forwards from either side (section 6).
+  - The connective rules 2.21 to 2.24 and port_box_unfusion have no converse rules; exhaustive
+    mode reads them only forwards from either side (section 6).
   - A paper diagram that is a bare wire is represented by a phaseless Z spider with two
     legs; a non-Z port facing a boundary entry of the other direction carries such a spider
     as an adapter. Equalities hold modulo these representatives.
@@ -374,9 +385,9 @@ output). Lean: the exported proofs of these lemmas use unproved rule axioms (sec
   [P1] 43       not found (exhaustive, 3600 s)    -         -      -
 
 Lemma 38 has a derivation of three steps from the start side
-(examples/completeness/derivations/p1_lemma38_derivation.azx). Its last step, w_identity, is
-one of the rules 2.1 to 2.28, which have no converse, so the search must expand layer 3 of the
-start side; the insertion converses make that layer larger than an hour of search covers.
+(examples/completeness/derivations/p1_lemma38_derivation.azx). Its last step, w_identity, had
+no converse rule at the time of this run, so the search had to expand layer 3 of the start
+side; the insertion converses make that layer larger than an hour of search covers.
 
 Before promotion (section 8), lemmas 8, 9, 10 and 39 were found by exhaustive mode only, in
 2.6 to 4.6 s. "Not found" means the search was stopped by the runner, not that the lemma is

@@ -37,7 +37,8 @@ Each entry gives:
 
 Template rules. Rules 2.29 onwards state the axioms of [P1] and [P2], the definitional rules
 translating the engine's generators into theirs, and the converse of each, read right to left
-(COMPLETENESS.txt). Each is an equation between two small diagrams matched up to the symmetry
+(COMPLETENESS.txt); the rules named after one of 2.1 to 2.28 with the suffix _converse read
+that rule right to left. Each is an equation between two small diagrams matched up to the symmetry
 of each generator's legs: every leg of a Z spider, an X spider's inputs among themselves and
 its outputs among themselves, a W node's outputs. A pink spider of the papers is the X spider
 with the phase vector K_j = (j k/d turns)_k, scaled by d^((m + n)/2 - 1) for m outputs and n
@@ -1807,6 +1808,339 @@ phase_to_weight read right to left: weights that are roots of unity.
   Free values:      none
   Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
                     right_side_defined
+
+
+2.124 fourier_cancellation_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+F^4 is the identity (RULES.txt 2.3). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.125 triangle_inverse_cancellation_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+T followed by Ti is the identity (RULES.txt 2.6). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.126 triangle_inverse_cancellation_ti_t_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Ti followed by T is the identity (RULES.txt 2.6). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.127 w_identity_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A W node with one output is the identity (RULES.txt 2.17). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.128 zx_cap_converse
+~~~~~~~~~~~~~~~~~~~~~
+
+A plain Z state into a plain X effect is sqrt(d) (RULES.txt 2.4). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.129 zx_cap_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plain X state into a plain Z effect is sqrt(d) (RULES.txt 2.11). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.130 fourier_state_color_change_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+F on a plain Z state is the plain X state (RULES.txt 2.10, 2.15). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.131 fourier_effect_color_change_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+F on a plain X effect is the plain Z effect (RULES.txt 2.10, 2.15). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.132 fourier_state_color_change_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+F on a plain X state is the plain Z state (RULES.txt 2.10, 2.15). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.133 fourier_effect_color_change_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+F on a plain Z effect is the plain X effect (RULES.txt 2.10, 2.15). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.134 triangle_zero_state_t_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+T fixes the plain X state (RULES.txt 2.19). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.135 triangle_zero_state_ti_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Ti fixes the plain X state (RULES.txt 2.19). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.136 triangle_zero_effect_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+T into a plain X effect is a plain Z effect times sqrt(d) (RULES.txt 2.20). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.137 w_z_effect_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A W output on a plain Z effect is T followed by the smaller W (RULES.txt 2.26). Read right to
+left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.138 w_zero_effect_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A W output on a plain X effect is the smaller W times sqrt(d) (RULES.txt 2.27). Read right to
+left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.139 hopf_converse
+~~~~~~~~~~~~~~~~~~~
+
+A Z and an X spider joined by a plain wire and a wire through F^2 fall apart, times 1/d
+(RULES.txt 2.8, 2.13). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.140 hopf_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A Z and an X spider joined by a plain wire and a wire through F^2 fall apart, times 1/d
+(RULES.txt 2.8, 2.13). Read right to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.141 bialgebra_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Z (2 -> 1) into X (1 -> 2) is the crossed bialgebra, times sqrt(d) (RULES.txt 2.14). Read right
+to left.
+
+  Scalar:           1
+  Quantifiers:      leg counts none; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.142 wz_bialgebra_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plain Z (n -> 1) into a W node (1 -> m) is n W nodes crossed into m plain Z spiders (RULES.txt
+2.25). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n, m; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.143 state_copy_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plain X state into a plain Z spider (1 -> n) is n plain X states, times d^((1-n)/2) (RULES.txt
+2.7). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.144 state_copy_swapped_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plain Z state into a plain X spider (1 -> n) is n plain Z states, times d^((1-n)/2) (RULES.txt
+2.12). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.145 w_zero_copy_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plain X state into a W node (1 -> n) is n plain X states, times d^((1-n)/2) (RULES.txt 2.18).
+Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts n; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.146 x_fusion_converse
+~~~~~~~~~~~~~~~~~~~~~~~
+
+spider_fusion for X spiders read right to left: the X spider c is X spiders a and b (ab = c)
+joined by an output of a into an input of b, the legs split by masks; by default a = c and b is
+the plain X spider (RULES.txt 2.1).
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts ni, no, mi, mo; dimensions d
+  Guards:           none
+  Normal-form set:  no; automatic: no
+  Free values:      a (default), b (default)
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined, fuses_back
 
 
 3. SOUNDNESS

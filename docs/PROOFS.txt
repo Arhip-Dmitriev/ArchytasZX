@@ -152,7 +152,7 @@ to every diagram of the previous layer; a diagram whose comparison view is isomo
 already reached on its side is pruned. Layer k of the start side is expanded before layer k of
 the goal side, and both before layer k + 1, so a derivation of n enumerated steps is found by
 layer n of the start side, and by layer ceil(n/2) when its second half uses rules with
-converses. A meeting gives an ordinary ProofCertificate, checked as
+converses (every rule but 2.21 to 2.24 and 2.28 has one). A meeting gives an ordinary ProofCertificate, checked as
 prove's are. There is no depth cap and no time limit; when both sides close without meeting
 the outcome is NOT_FOUND. COMPLETENESS.txt, section 6, states for which inputs it terminates.
 In the shell: prove exhaustive [against] [TARGET].

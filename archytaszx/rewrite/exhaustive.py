@@ -23,7 +23,8 @@ Layer ``k`` of the start side is expanded before layer ``k`` of the goal side, a
 layer ``k + 1`` of either. A derivation of length ``n`` whose steps are rule applications at
 matches the patterns enumerate (a free variable at its default value) is therefore found
 once the start side reaches layer ``n``, and once it reaches layer ``ceil(n/2)`` and the goal
-side layer ``floor(n/2)`` when the last ``floor(n/2)`` steps use rules that have converses.
+side layer ``floor(n/2)`` when the last ``floor(n/2)`` steps use rules that have converses
+(every rule but the connective ones and port-box unfusion).
 There is no depth cap and no time limit: on two diagrams no enumerated derivation joins, the
 search does not terminate. A diagram whose construction or canonical key raises (for example a
 scalar beyond Python's integer conversion limit) is skipped.
