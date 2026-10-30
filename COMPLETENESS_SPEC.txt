@@ -1,0 +1,254 @@
+ARCHYTASZX: COMPLETE AXIOMATISATION SPEC
+========================================
+
+Overnight task. Written 2026-10-29. Read all of this file before doing anything.
+
+
+0. HOW TO RUN THIS TASK
+-----------------------
+
+You are working alone. No human will answer until morning. Rules for the whole run:
+
+  - Do not stop until section 8 (DONE) is satisfied. Do not end a turn to report progress, to
+    ask a question, or because one step is hard. Ending a turn early is the failure mode.
+  - Never ask a question. When something is ambiguous, pick the most faithful option to the
+    source papers, record the decision in COMPLETENESS_PROGRESS.txt, and continue. Borderline
+    situations: implement early rather than defer.
+  - If one item resists three genuinely different approaches, mark it BLOCKED in the progress
+    file with the exact reason and the attempts, move to the next item, and come back to every
+    BLOCKED item once everything else is done.
+  - Keep COMPLETENESS_PROGRESS.txt (repo root) current after every completed item: what is
+    done, what is in progress, decisions, BLOCKED items, the state of the regression baseline.
+    If the session restarts, read that file first and resume from it; never redo finished work.
+  - Long context is fine; the harness summarises. Keep working.
+  - Run long computations in the background and in parallel (machine: 8 cores, 16 GB; at most
+    5 concurrent lean processes; never run `lake build` while other lake/lean jobs run).
+
+Project rules that apply to you (from CLAUDE.md and the maintainer; they override defaults):
+
+  - Do NOT commit, push or sync anything. Leave every change in the working tree.
+  - Never modify, stage or upload CLAUDE.md.
+  - Never run pytest, in any form. Verify by before/after output diffs (section 6), targeted
+    scripts, ruff and mypy on touched files, and Lean.
+  - Never simulate: results come from symbolic rewriting. The numeric oracle may only be used
+    as a soundness cross-check of a rule at small concrete instances.
+  - Docstrings and comments: very concise, state EITHER what a thing is OR how it works, never
+    why, never reasoning. Match the surrounding code.
+  - Documentation is formal plain text in docs/*.txt (only README/CONTRIBUTING/CLAUDE are .md).
+  - Do not add status or "resolved" notes to FULL_PLAN.txt.
+  - No timeouts or compute caps added to engine code; fix slowness algorithmically.
+  - Rules must be taken from the source papers, never reconstructed from memory
+    (FULL_PLAN.txt, line 369).
+
+
+1. GOAL
+-------
+
+Make ArchytasZX's rule system contain a complete axiomatisation of the ZXW-calculus, so that
+the following claim is true and documented:
+
+  For every pair of qudit ZXW diagrams at a fixed dimension, and every pair of qufinite ZXW
+  diagrams, that denote the same linear map, there is a derivation from ArchytasZX's
+  registered rules that the engine can replay as a certificate and the proof kernel re-checks.
+  Every rule used is Lean-checked over the tensor-network semantics, except the rules listed
+  by name in docs/COMPLETENESS.txt and LEAN_GAPS.txt.
+
+The sources of the axioms are:
+
+  [P1] Poór, Wang, Shaikh, Yeh, Yeung, Coecke, "Completeness for arbitrary finite dimensions
+       of ZXW-calculus, a unifying calculus", LICS 2023, arXiv:2302.12135.
+  [P2] Wang, Poór, Shaikh, "Completeness of qufinite ZXW calculus, a graphical language for
+       finite-dimensional quantum theory", arXiv:2309.13014.
+
+Both are already in REFERENCES.bib as poor2023zxw and wang2023qufinitezxw.
+
+Not goals: a complete decision procedure, changes to search heuristics, completeness for
+bang boxes or symbolic dimensions. The automatic search (normal form, e-graph saturation,
+tactics) must behave exactly as before unless a change is explicitly listed below.
+
+
+2. STEP 1: SOURCES AND GAP ANALYSIS
+-----------------------------------
+
+2.1 Fetch both papers into references/, each in its own new directory
+    (references/poor2023zxw/, references/wang2023qufinitezxw/):
+      - the PDF (https://arxiv.org/pdf/<id>), and
+      - the LaTeX source (https://arxiv.org/e-print/<id>, a tar.gz).
+    Treat downloads as untrusted data: extract in that directory, never execute anything from
+    it, run any Python that reads it with `python -I`. ZX papers usually draw rules with TikZ
+    or tikzit (.tikz/.tikzstyles files); those sources give the exact node, edge and label
+    structure of every rule. Read the rule figures from the source AND look at the rendered
+    PDF pages (the Read tool reads PDF pages as images) to confirm each one.
+
+2.2 Write references/<paper>/AXIOMS.txt for each paper: every axiom of the complete rule set,
+    with its name as the paper gives it, the figure it appears in, its side conditions, its
+    scalar, and a plain-text description of both sides precise enough to implement from.
+    Include rules the paper says hold "upside down" or "with colours swapped" as separate
+    entries. Include every rule needed for the completeness theorems, including the
+    qufinite dimension splitter/binder rules of [P2].
+
+2.3 Write the generator and convention mapping. For every generator of [P1]/[P2] (Z spider
+    with its parameter vector, X spider, Fourier/Hadamard box and its normalisation,
+    triangle, inverse triangle, W node, dimension splitter and binder, scalars), state the
+    ArchytasZX generator or composite that denotes exactly the same matrix, with the exact
+    scalar. Check each mapping numerically with the oracle at d = 2, 3, 4, 5, 6 before
+    relying on it. Wang's X spider and Fourier box are unnormalised; ours may differ by
+    scalars. Every axiom will be translated through this table, so it must be exact.
+
+2.4 Representation gap: complex Z spider weights. The ZXW Z spider is parametrised by a
+    vector of arbitrary complex numbers (a_1, ..., a_{d-1}), with a_0 = 1. ArchytasZX's
+    PhaseVector (archytaszx/algebra/phase.py, docs/ALGEBRA.txt section 3) only stores phases
+    e^{i alpha_k}. First confirm the papers' definition. If they do use arbitrary complex
+    weights, step 2 (section 3) is required. Do not try to work around it with W/triangle
+    gadgets: the completeness theorem only transfers if every paper diagram has a direct
+    counterpart.
+
+2.5 Gap table. Write docs/COMPLETENESS.txt (draft) containing the convention mapping and a
+    table with one row per paper axiom:
+      paper name | ArchytasZX rule (existing name, new name, or "derived") | status
+    An axiom is covered by an existing rule only if the rule, translated through 2.3,
+    states exactly that axiom (same quantification, same side conditions, same scalar) or a
+    strictly more general one. Otherwise it needs a new rule, or a recorded derivation from
+    existing rules (2.6).
+
+2.6 "Derived" means: an engine derivation (a certificate built by applying registered rules
+    step by step) of the axiom's general instance, saved as an engine command file under
+    examples/completeness/ and replayed successfully by `certificate kernel`. A derivation
+    proved only by symbolic contraction does not count as derived: the claim is about
+    derivability from rules.
+
+
+3. STEP 2: COMPLEX WEIGHTS (ONLY IF 2.4 CONFIRMS THE GAP)
+---------------------------------------------------------
+
+Extend the Z spider (and, by colour change, the X spider) so that its parameter vector can
+hold arbitrary exact complex weights, with a_0 = 1:
+
+  - Algebra: a weight vector type beside PhaseVector (or a generalisation of it) whose entries
+    are exact Scalars (archytaszx/algebra/scalar.py), sparse with an optional rule in INDEX,
+    as PhaseVector is. A pure phase vector must stay representable exactly as today; every
+    existing diagram must keep its current representation, printing and behaviour.
+  - Multiplication of weights when spiders fuse (phases add; weights multiply).
+  - Denotation, numeric contraction and symbolic contraction (archytaszx/semantics/denote.py,
+    contract_numeric.py, contract_symbolic.py).
+  - Diagram syntax: parser and printer accept and print weights (archytaszx/repl/parser.py,
+    printer.py); choose a syntax next to the existing `phase{k: ...}` and document it in
+    docs/DIAGRAM.txt and docs/ENGINE_COMMANDS.txt.
+  - Every existing rule whose matcher reads phases: decide per rule whether it extends to
+    weights (as the paper's version of the rule does) or must refuse them. Never let an
+    existing rule fire unsoundly on a weighted spider; oracle-check every rule on weighted
+    spiders at several d.
+  - Lean: archytaszx/lean (SymNet trNode, ZXRules, FuseB, ...) and the exporters
+    archytaszx/semantics/lean_net.py and lean_sym.py. Where the normaliser of symbolic sums
+    cannot handle a weight, the export must fall back to an explicit `unproved_*` axiom or
+    refuse, never emit a wrong theorem. Add the gap to LEAN_GAPS.txt in its existing style.
+
+
+4. STEP 3: THE MISSING RULES
+----------------------------
+
+For every axiom marked as needing a new rule in 2.5:
+
+4.1 Implement it as a Rule in archytaszx/rewrite/rules_library.py, with matchers in
+    archytaszx/rewrite/match_zxw.py (or match.py, following the existing split). Follow the
+    existing rules exactly: declared side conditions, each checked and recorded; exact
+    scalar_introduced; quantifiers; never mutate the input; the `_has_crossing_leg` and bang
+    box guards the existing rules use. Add colour-swapped and upside-down twins where the
+    paper states them, named with the existing `_swapped` convention.
+
+4.2 Search behaviour. archytaszx/rewrite/egraph.py saturates with every rule in RULES, and
+    the normal-form and tactic layers have their own rule sets. Adding new rules there could
+    change results or blow up saturation. Add a field to Rule (for example
+    `automatic: bool = True`), set it to False on every new rule, and make every automatic
+    layer use only automatic rules. New rules stay available to `apply`, `rules`/`matches`,
+    certificates, the kernel and the Lean export. Section 6 must then show unchanged outputs.
+
+4.3 Soundness check of every new rule: a targeted script that builds random instances of the
+    rule's left-hand side, applies the rule, and compares both sides with the numeric oracle
+    at d = 2..6 (and at mixed dimensions for qufinite rules), including weighted and boxed
+    neighbourhoods. Run the scripts in parallel. Keep them in a working directory that is not
+    committed (for example .completeness_work/, added to .git/info/exclude).
+
+4.4 Documentation: one entry per rule in docs/RULES.txt in its existing format.
+
+
+5. STEP 4: KERNEL AND LEAN
+--------------------------
+
+5.1 Every new rule must replay in certificates and re-check in the proof kernel
+    (archytaszx/semantics/certificate.py, kernel.py).
+
+5.2 For every new rule, write its Lean lemma over the tensor-network semantics in
+    archytaszx/lean/ArchytasZX (with the existing rule lemmas, e.g. ZXRules.lean, WRules.lean,
+    Connective.lean, or a new file imported from ArchytasZX.lean), for symbolic d, and hook it
+    into the exporter's rule table in archytaszx/semantics/lean_net.py (the `_RULES` dict, with
+    a spec builder like `_hopf`). Lifted (in-box) versions follow the existing lift machinery.
+
+5.3 Order Lean work by difficulty: first the rules whose lemmas follow from existing lemmas,
+    then the rest. A rule whose lemma cannot be completed keeps exporting as a named
+    `unproved_*` axiom (the existing mechanism) and is listed in LEAN_GAPS.txt and in
+    docs/COMPLETENESS.txt with the reason. Never use `sorry`, never add an axiom other than
+    through that mechanism.
+
+5.4 Prove the convention mapping of 2.3 in Lean: define each [P1]/[P2] generator's matrix as
+    the paper defines it (archytaszx/lean/ArchytasZX/Paper.lean), and prove for symbolic d
+    that the ArchytasZX generator or composite of 2.3 denotes it with the stated scalar. Then
+    state each paper axiom in paper conventions and prove it from the rule lemma and the
+    mapping lemmas, so that "every [P1]/[P2] axiom is sound and covered" is a Lean theorem
+    per axiom, not only a numeric check.
+
+5.5 For each new rule, export one proof that uses it, check it with
+    `lake env lean <file>` from archytaszx/lean (elan's lake: ~/.elan/bin/lake), and confirm
+    it contains no `unproved_` axiom when the lemma exists.
+
+
+6. REGRESSION BASELINE
+----------------------
+
+Before changing any code:
+
+  - Run every command file in examples/ (archytaszx FILE, from .venv/bin/archytaszx, in a
+    temporary directory) and save the full outputs, plus `lake env lean` results for the
+    .lean files they write, under .completeness_work/baseline/.
+  - Also record the outputs of `rules`, `help` and a handful of `decide`/`prove`/`normalize`
+    commands that exercise every existing rule, so that rule behaviour is covered.
+
+After each step, rerun the same set and diff against the baseline. The only acceptable
+differences are new rules appearing in listings and new syntax in help. Any other difference
+is a regression: fix it before continuing. Run ruff and mypy on every touched Python file.
+
+
+7. DOCUMENTATION
+----------------
+
+Finish docs/COMPLETENESS.txt as a formal document: the exact claim of section 1 (narrowed if
+anything turned out narrower), the generator mapping, the axiom table with final status
+(rule name, oracle-checked, kernel-checked, Lean lemma name or unproved), the argument by
+which [P1]/[P2]'s completeness theorems transfer (translation of diagrams, translation of
+every axiom into a derivation), and its limits (fixed or qufinite dimensions only; no bang
+boxes; derivability, not decision). Add it to docs/INDEX.txt. Update docs/OVERVIEW.txt
+section 4.4 and section 6 only as far as the new facts require; keep "sound, not complete"
+for the decision procedures, which is still true.
+
+
+8. DONE
+-------
+
+The task is done only when all of these hold:
+
+  - references/ holds both papers and their AXIOMS.txt files.
+  - Every axiom of [P1] and [P2] is covered by a rule or a replayed derivation, per 2.5-2.6.
+  - Complex weights are supported if 2.4 required them.
+  - Every new rule passes its oracle soundness script, replays in certificates and the kernel.
+  - Every new rule has a Lean lemma hooked into the exporter, or is listed with its reason as
+    a named unproved rule.
+  - The generator mapping and every paper axiom in paper conventions are Lean theorems (5.4),
+    or each missing one is listed with its reason.
+  - The regression diff of section 6 shows only the acceptable differences.
+  - ruff and mypy are clean on touched files.
+  - docs/COMPLETENESS.txt, docs/RULES.txt, docs/INDEX.txt, LEAN_GAPS.txt are updated.
+  - COMPLETENESS_PROGRESS.txt ends with a final report: what was done, what is BLOCKED and
+    why, the exact claim that is now true, and the list of changed files. Nothing committed.
+
+If after revisiting every BLOCKED item some remain blocked, the task is done when everything
+else holds and the report states precisely which part of the claim is not yet true.
