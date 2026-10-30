@@ -44,6 +44,7 @@ playground.py
 
 # lean
 .lake/
+LEAN_GAPS.txt
 
 
 # personal
