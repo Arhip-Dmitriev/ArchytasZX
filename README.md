@@ -12,9 +12,42 @@ rewrites, decisions of equality and proofs that hold for every `n` and every `d`
 
 ArchytasZX is a symbolic engine for the qufinite ZX(W)-calculus. Qudit count, dimension and
 multiplicities are symbols, so nothing is ever enumerated, sampled or simulated: every
-rewrite, decision and proof holds for every size at once, and every proof can be re-checked in
-Lean 4. To write algorithms in Dirac notation instead of diagrams, see its sister project
+rewrite, decision and proof holds for every size at once. Its rules contain the complete ZXW
+axiomatisations of Poór et al. and Wang et al., and its proofs are exported to Lean 4 as
+theorems about the diagrams themselves, so the engine is untrusted: Lean re-checks every
+proof it exports. To write algorithms in Dirac notation instead of diagrams, see its sister project
 [DiracULA](https://github.com/Arhip-Dmitriev/DiracULA).
+
+## Reproducing the paper
+
+*ArchytasZX: Certified, Size- and Dimension-Agnostic ZXW Rewriting* uses GHZ-state preparation
+as its running example. Both forms of Figure 1 are in `examples/`:
+
+```console
+$ pip install 'archytaszx>=2.0'
+$ git clone https://github.com/Arhip-Dmitriev/ArchytasZX.git && cd ArchytasZX
+$ archytaszx --unicode examples/ghz_proof.azx      # native script, about 2 s
+...
+decide: equal by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
+proof: re-checkable; certificate kernel / certificate lean
+emitted certificate: kernel theorem, 16 inferences
+...
+lean: tensor-network semantics, every step proved
+lean: wrote ghz.lean
+$ python examples/ghz_proof.py                     # Python library, same verdict and proof
+```
+
+To re-check `ghz.lean` in Lean, install [elan](https://github.com/leanprover/elan), then build
+the bundled library once (prebuilt Mathlib is downloaded) and check the file:
+
+```console
+$ cd archytaszx/lean && lake exe cache get && lake build
+$ lake env lean ../../ghz.lean      # no output and exit code 0 mean the proof checks
+```
+
+The other examples prove the qudit Deutsch–Jozsa and Bernstein–Vazirani circuits
+(`deutsch_jozsa_proof.azx`, `bernstein_vazirani_proof.azx`), prove a family by induction
+(`copy_induction.azx`) and refute false claims with Lean counterexamples (`refutations.azx`).
 
 ## Example: Deutsch–Jozsa for every `n` and every `d`
 
@@ -47,8 +80,13 @@ Both equalities hold for every `n` and every `d`, and both are written out as Le
   no global factor is ever dropped, so results are equalities, not proportionalities.
 - **Proofs for all `n`.** Diagram rewriting, a normal-form procedure, equality saturation and
   proof search decide equalities; induction over bang-box multiplicities proves whole families.
+- **A complete rule set.** Every axiom of qudit ZXW (Poór et al., LICS 2023) and qufinite ZXW
+  (Wang, Poór & Shaikh, 2023) is a rule, with Z spiders carrying phases or arbitrary complex
+  weights. Any two bang-box-free diagrams at concrete dimensions that denote the same map are
+  joined by a derivation, and `prove exhaustive` finds it, given enough time
+  ([`docs/COMPLETENESS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/COMPLETENESS.txt)).
 - **Independent checking.** Every proof emits a replayable certificate, is re-checked by a small
-  proof kernel, and can be exported to Lean 4 and Mathlib, where it is checked again from scratch.
+  proof kernel, and is exported to Lean 4 and Mathlib, where it is checked again from scratch.
 
 ## Install
 
@@ -90,8 +128,8 @@ A command file spans a diagram over indented lines;
 writes n data qudits as `repeat n: X(0 -> 1) -> F^4`.
 
 Diagrams are loaded in a DSL, in Dirac notation or as a graph listing, then rewritten,
-normalised, decided and proved with commands such as `apply`, `normalize`, `decide`, `prove`
-and `induct`; `help` lists them all. `--zx`, `--both` and `--raw` switch between Dirac notation
+normalised, decided and proved with commands such as `apply`, `normalize`, `decide`, `prove`,
+`prove exhaustive` and `induct`; `help` lists them all. `--zx`, `--both` and `--raw` switch between Dirac notation
 and ZX drawings. The reference is
 [`docs/ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt).
 
@@ -207,6 +245,7 @@ The full reference documentation is in [`docs/`](https://github.com/Arhip-Dmitri
 | [`RULES.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/RULES.txt) | Every rewrite rule with its scalar and side conditions |
 | [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle |
 | [`PROOFS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PROOFS.txt) | Deciding equality, proof search, induction, certificates, the kernel |
+| [`COMPLETENESS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/COMPLETENESS.txt) | The ZXW axioms as rules, the completeness argument, exhaustive search |
 | [`LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) | The Lean 4 library and the export of proofs and refutations |
 | [`ERRORS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ERRORS.txt) | The exception hierarchy of every module |
 | [`GLOSSARY.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/GLOSSARY.txt) | Definitions of the terms used throughout |
@@ -217,9 +256,15 @@ Proofs found by the engine are exported to Lean 4 (`:certificate lean proof.lean
 Mathlib library bundled in `archytaszx/lean`, in which a diagram is a tensor network over ℂ and
 every rewrite rule is a lemma proved once. Families over multiplicities become Lean
 `induction`s, equalities the rewriter cannot reach are closed by a verified normaliser of
-symbolic sums, and verdicts that two diagrams differ export a Lean refutation. `#print axioms`
-lists only Lean's standard axioms; any step without a lemma is a named `unproved_*` axiom, and
-the REPL reports how many there are.
+symbolic sums, and verdicts that two diagrams differ export a Lean refutation.
+
+The final theorem of every export is stated over the engine's diagrams as data, with their
+meaning defined directly in Lean, and, for diagrams written in a command file, over the text of
+that file, parsed and elaborated inside Lean. Python only proposes: if it builds a wrong network
+or a wrong diagram, Lean rejects the file. `#print axioms` lists only `propext`,
+`Classical.choice` and `Quot.sound`. The trusted base is the Lean kernel, Mathlib, and the Lean
+definitions of the generators, of diagram evaluation and bang-box expansion, and of the
+command-file parser.
 
 ```sh
 cd archytaszx/lean && lake exe cache get && lake build      # once
@@ -235,9 +280,9 @@ Four engine layers, depending strictly downward, with the shell on top:
 
 | Layer | Package | Contents |
 |---|---|---|
-| A | [`algebra`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/algebra) | Dimension expressions with one canonical form and a unifier; phase vectors tied to `d`; exact scalars over roots of unity with a character-sum simplifier |
+| A | [`algebra`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/algebra) | Dimension expressions with one canonical form and a unifier; phase and complex-weight vectors tied to `d`; exact scalars over roots of unity with a character-sum simplifier |
 | B | [`diagram`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/diagram) | Qufinite ZXW generators (Z, X, Fourier box, triangle, W, dimension binder/splitter) with per-port dimensions; bang boxes and scalable sheet wires; validation |
-| C | [`rewrite`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/rewrite) | Rule library, matcher and engine with provenance; normal form; diagram-level e-graph; tactics and bidirectional proof search |
+| C | [`rewrite`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/rewrite) | Rule library with the qudit and qufinite ZXW axioms as rules, matcher and engine with provenance; normal form; diagram-level e-graph; tactics, bidirectional and exhaustive proof search |
 | D | [`semantics`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/semantics) | Symbolic and numeric contraction; the `decide_equal` ladder; induction; certificates, proof kernel and Lean export |
 | — | [`repl`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/repl) | Diagram parser and printer, ZX drawing, engine commands, shell |
 
@@ -249,8 +294,10 @@ not implemented yet.
 ## Status
 
 In **beta and under active development**: the API is unstable and changes between
-releases. Equality checking is sound but not complete, so `decide` and `prove` can answer
-"unknown". Known limits:
+releases. The automatic decision procedure is sound but not complete, so `decide` and `prove`
+can answer "unknown"; `prove exhaustive` is guaranteed to terminate only on equal inputs in the
+complete fragment (no bang boxes, concrete dimensions), and has no depth or time cap. Known
+limits:
 
 - Symbolic contraction slows sharply as the number of phased spiders grows.
 - Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two
@@ -261,8 +308,9 @@ releases. Equality checking is sound but not complete, so `decide` and `prove` c
 - A rule restricted to prime `d` refuses to fire at a symbolic `d`.
 - `compare_symbolic` has three outcomes (equal, unequal, indeterminate); read `.reason` when it
   does not match.
-- Steps the Lean export cannot prove yet are listed in
-  [`LEAN_GAPS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/LEAN_GAPS.txt).
+- Every rule is a proved Lean lemma. A few verdicts reached only by symbolic contraction
+  (evaluated quadratic Gauss sums, phases with a symbolic coefficient, scalars outside the exact
+  model) have no Lean proof path.
 
 ## Development
 
@@ -277,7 +325,8 @@ python -m pytest -m slow  # fuzz sweeps and oracle differentials
 ruff format . && ruff check . && mypy archytaszx
 ```
 
-The default tier is 10,072 tests and the slow tier 3,898 (counted 2026-10-22). `ruff format` is
+CI runs both tiers (`pytest -m "" -n auto`) on Python 3.12, 3.13 and 3.14. On 2026-10-30 every
+version gave 13,162 passed, 117 failed, 294 skipped and 4 collection errors. `ruff format` is
 authoritative for layout; `mypy` runs in strict mode.
 
 ## Citation
@@ -288,7 +337,7 @@ If you use ArchytasZX in academic work, please cite it via
 ```bibtex
 @software{dmitriev_archytaszx,
   author  = {Dmitriev, Arkhip Alekseyevich},
-  title   = {ArchytasZX: Size- and Dimension-Agnostic Engine for Quantum Algorithm Development Based on {ZX}-Calculus},
+  title   = {{ArchytasZX}: Certified, Size- and Dimension-Agnostic {ZXW} Rewriting},
   year    = {2026},
   url     = {https://github.com/Arhip-Dmitriev/ArchytasZX},
   license = {Apache-2.0}
