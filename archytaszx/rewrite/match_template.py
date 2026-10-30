@@ -629,6 +629,15 @@ def match_template(
     yield from extend(placed, pending)
 
 
+def _has_arities(axiom: TemplateAxiom) -> bool:
+    """Whether the built side of an insertion depends on arity parameters."""
+    try:
+        axiom.right.template(Dim.symbol("d"), {})
+    except (KeyError, IndexError, ValueError, RewriteDomainError):
+        return True
+    return False
+
+
 def _ref_key(ref: PortRef) -> tuple[int, str, int]:
     return (int(ref.node_id), ref.direction.value, ref.index)
 
@@ -750,13 +759,14 @@ class TemplatePattern(Pattern):
                 host_dim = host_node.legs(wire.a.direction)[wire.a.index].dim
                 if self.axiom.concrete_only and not dim.is_concrete:
                     continue
-                state = _State({}, set(), {}, {wire.a, wire.b}, [wire], {})
-                match = self._to_match(diagram, template, state, dim, {}, host_dim)
-                if match is not None:
-                    out.append(replace(match, terminals=((first, wire.a), (second, wire.b))))
+                for arities in self.axiom.left.arities(diagram, wire.a.node_id, dim):
+                    state = _State({}, set(), {}, {wire.a, wire.b}, [wire], {})
+                    match = self._to_match(diagram, template, state, dim, arities, host_dim)
+                    if match is not None:
+                        out.append(replace(match, terminals=((first, wire.a), (second, wire.b))))
             boundary = [*diagram.boundary_inputs, *diagram.boundary_outputs]
             for ref in sorted(boundary, key=_ref_key):
-                if ref.node_id in boxed:
+                if ref.node_id in boxed or any(template.nodes) or _has_arities(self.axiom):
                     continue
                 node = diagram.nodes[ref.node_id]
                 dim = node.legs(ref.direction)[ref.index].dim

@@ -2127,7 +2127,77 @@ Read right to left.
                     right_side_defined
 
 
-2.146 x_fusion_converse
+2.146 connective_inverse_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+S taking s t to s and t, both into B, is the identity (RULES.txt 2.21). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.147 connective_states_states_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Plain Z states on a binder are one plain Z state (RULES.txt 2.23, 2.24). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.148 connective_states_effects_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Plain Z effects on a splitter are one plain Z effect (RULES.txt 2.23, 2.24). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.149 connective_states_swapped_states_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Plain X states on a binder are one plain X state (RULES.txt 2.23, 2.24). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.150 connective_states_swapped_effects_converse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Plain X effects on a splitter are one plain X effect (RULES.txt 2.23, 2.24). Read right to left.
+
+  Scalar:           per match: the ratio of the pink normalisations of the two sides
+  Quantifiers:      leg counts s, t; dimensions d
+  Guards:           concrete dimension
+  Normal-form set:  no; automatic: no
+  Free values:      none
+  Side conditions:  template_matches, parameters_match, same_dimension, outside_every_bang_box,
+                    right_side_defined
+
+
+2.151 x_fusion_converse
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 spider_fusion for X spiders read right to left: the X spider c is X spiders a and b (ab = c)

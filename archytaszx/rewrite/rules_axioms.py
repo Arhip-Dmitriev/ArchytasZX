@@ -3161,6 +3161,88 @@ X_FUSION_CONVERSE = TemplateAxiom(
 )
 
 
+def _factor_pairs(total: int) -> Iterator[tuple[int, int]]:
+    for s_ in range(2, total):
+        if total % s_ == 0 and total // s_ >= 2:
+            yield s_, total // s_
+
+
+def _factor_arities(diagram: Diagram, anchor: NodeId, dim: Dim) -> Iterator[Arities]:
+    if dim.is_concrete:
+        for s_, t_ in _factor_pairs(dim.to_int()):
+            yield {"s": s_, "t": t_}
+
+
+def _conn_inverse_left(_dim: Dim, a: Arities) -> Template:
+    s_, t_ = a["s"], a["t"]
+    t = TB()
+    sp_ = t.conn(DIM_SPLITTER, ((s_ * t_,), (s_, t_)), key="s")
+    b = t.conn(DIM_BINDER, ((s_, t_), (s_ * t_,)), key="b")
+    t.wire(o(sp_, 0), i(b, 0))
+    t.wire(o(sp_, 1), i(b, 1))
+    t.term("in", i(sp_))
+    t.term("out", o(b))
+    return t.done()
+
+
+CONNECTIVE_INVERSE_T = TemplateAxiom(
+    "connective_inverse",
+    Side(_conn_inverse_left, lambda _d, _n, _dim: ()),
+    Side(lambda _dim, _a: _bare(), _factor_arities),
+    concrete_only=True,
+    description="S taking s t to s and t, both into B, is the identity (RULES.txt 2.21).",
+    quantifiers=("s", "t"),
+)
+
+
+def _conn_states(gen: GeneratorType, effect: bool) -> TemplateAxiom:
+    def left(_dim: Dim, a: Arities) -> Template:
+        s_, t_ = a["s"], a["t"]
+        t = TB()
+        if not effect:
+            c = t.conn(DIM_BINDER, ((s_, t_), (s_ * t_,)), key="c")
+            x = t.node(gen, 0, 1, dim=_d(s_))
+            y = t.node(gen, 0, 1, dim=_d(t_))
+            t.wire(o(x), i(c, 0))
+            t.wire(o(y), i(c, 1))
+            t.term("p", o(c))
+        else:
+            c = t.conn(DIM_SPLITTER, ((s_ * t_,), (s_, t_)), key="c")
+            x = t.node(gen, 1, 0, dim=_d(s_))
+            y = t.node(gen, 1, 0, dim=_d(t_))
+            t.wire(o(c, 0), i(x))
+            t.wire(o(c, 1), i(y))
+            t.term("p", i(c))
+        return t.done()
+
+    def right(_dim: Dim, a: Arities) -> Template:
+        total = a["s"] * a["t"]
+        t = TB()
+        if not effect:
+            t.term("p", o(t.node(gen, 0, 1, dim=_d(total))))
+        else:
+            t.term("p", i(t.node(gen, 1, 0, dim=_d(total))))
+        return t.done()
+
+    def arities(diagram: Diagram, anchor: NodeId, dim: Dim) -> Iterator[Arities]:
+        node = diagram.nodes[anchor]
+        if node.generator_type.name == gen.name and node.num_inputs + node.num_outputs == 1:
+            yield from _factor_arities(diagram, anchor, dim)
+
+    name = "connective_states" if gen.name == Z_SPIDER.name else "connective_states_swapped"
+    return TemplateAxiom(
+        f"{name}_{'effects' if effect else 'states'}",
+        Side(left, lambda _d, _n, _dim: ()),
+        Side(right, arities),
+        concrete_only=True,
+        description=(
+            f"Plain {gen.name} {'effects on a splitter' if effect else 'states on a binder'} "
+            f"are one plain {gen.name} {'effect' if effect else 'state'} (RULES.txt 2.23, 2.24)."
+        ),
+        quantifiers=("s", "t"),
+    )
+
+
 LEGACY: tuple[TemplateAxiom, ...] = (
     FOURIER_ORDER,
     TRIANGLE_CANCEL,
@@ -3184,6 +3266,11 @@ LEGACY: tuple[TemplateAxiom, ...] = (
     STATE_COPY_T,
     STATE_COPY_SWAPPED_T,
     W_ZERO_COPY_T,
+    CONNECTIVE_INVERSE_T,
+    _conn_states(Z_SPIDER, False),
+    _conn_states(Z_SPIDER, True),
+    _conn_states(X_SPIDER, False),
+    _conn_states(X_SPIDER, True),
 )
 """Equations of rules 2.1 to 2.28 that no rule of AXIOMS states, read left to right; only their
 converses are registered (LEGACY_CONVERSES)."""
