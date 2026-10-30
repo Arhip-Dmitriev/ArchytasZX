@@ -1,0 +1,15 @@
+# [P1] Lemma 42 (s = 2, d = 3): a W node whose outputs pass through Z boxes a and b into a pink
+# dot (2 -> 1) is the Z box a + b.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    w = W(1 -> 2, literal 3); a = Z(1 -> 1, literal 3) weight{1: a1, 2: a2}; b = Z(1 -> 1, literal 3) weight{1: b1, 2: b2}; p = X(2 -> 1, literal 3)
+    wire w.out0 -- a.in0, w.out1 -- b.in0, a.out0 -- p.in0, b.out0 -- p.in1
+    scalar 3^(1/2)
+
+@rhs =
+    z = Z(1 -> 1, literal 3) weight{1: a1 + b1, 2: a2 + b2}
+
+load @lhs
+prove against @rhs
+certificate kernel

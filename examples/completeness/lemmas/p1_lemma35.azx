@@ -1,0 +1,12 @@
+# [P1] Lemma 35 (d = 3): D on the input of a plain green dot (1 -> 2) is D on both outputs.
+# Dimensions are literal.
+
+@lhs =
+    a = F(literal 3); b = F(literal 3); g = Z(1 -> 2, literal 3); a -> b -> g
+
+@rhs =
+    g = Z(1 -> 2, literal 3); g -> F(literal 3) -> F(literal 3); g -> F(literal 3) -> F(literal 3)
+
+load @lhs
+prove against @rhs
+certificate kernel

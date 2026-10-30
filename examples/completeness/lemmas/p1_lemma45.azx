@@ -1,0 +1,19 @@
+# [P1] Lemma 45 (d = 3, a = (x, y)): the box 1 state into a W node (1 -> 2) whose outputs pass
+# through the boxes x and y and the multipliers -1 and -2 into a pink dot (2 -> 1) is the Z box
+# (x, y) state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    o = Z(0 -> 1, literal 3) weight{1: 0, 2: 1}; w = W(1 -> 2, literal 3)
+    b1 = Z(1 -> 1, literal 3) weight{1: 0, 2: x}; b2 = Z(1 -> 1, literal 3) weight{1: 0, 2: y}
+    m1 = Z(1 -> 2, literal 3); q1 = X(2 -> 1, literal 3); m2 = Z(1 -> 1, literal 3); q2 = X(1 -> 1, literal 3)
+    p = X(2 -> 1, literal 3)
+    wire o.out0 -- w.in0, w.out0 -- b1.in0, w.out1 -- b2.in0, b1.out0 -- m1.in0, m1.out0 -- q1.in0, m1.out1 -- q1.in1, b2.out0 -- m2.in0, m2.out0 -- q2.in0, q1.out0 -- p.in0, q2.out0 -- p.in1
+    scalar 3^(1/2) * 3^(1/2)
+
+@rhs =
+    z = Z(0 -> 1, literal 3) weight{1: x, 2: y}
+
+load @lhs
+prove against @rhs
+certificate kernel
