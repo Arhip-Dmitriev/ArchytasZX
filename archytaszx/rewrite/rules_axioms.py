@@ -101,8 +101,7 @@ def last_vector(x: Scalar, dim: Dim) -> PhaseVector:
         weights = {k: Scalar.zero() for k in range(1, r - 1)}
         weights[r - 1] = x
         return PhaseVector.from_weights(dim, weights)
-    rule = x.to_sympy() * sp.KroneckerDelta(INDEX, dim.to_sympy() - 1)
-    return PhaseVector.from_weights(dim, rule=Scalar(rule))
+    raise RewriteDomainError(f"the box (0, ..., 0, x) needs a concrete dimension, got {dim}")
 
 
 def unit_vector(index: sp.Expr | int, dim: Dim) -> PhaseVector:

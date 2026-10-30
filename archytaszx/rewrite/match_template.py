@@ -502,7 +502,10 @@ def match_template(
         elif not _legs_have_dim(diagram, node_id, tnode.dim if tnode.dim is not None else dim):
             return None
         own = tnode.dim if tnode.dim is not None else dim
-        bound = tnode.param.match(diagram.nodes[node_id].phase, own, state.bindings)
+        try:
+            bound = tnode.param.match(diagram.nodes[node_id].phase, own, state.bindings)
+        except RewriteDomainError:
+            return None
         if bound is None:
             return None
         return _State(
@@ -711,6 +714,9 @@ class TemplatePattern(Pattern):
 
     def __init__(self, axiom: TemplateAxiom) -> None:
         self.axiom = axiom
+
+    def __repr__(self) -> str:
+        return f"TemplatePattern({self.axiom.name!r}, concrete_axioms={CONCRETE_AXIOMS})"
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
         if self.axiom.concrete_only and not CONCRETE_AXIOMS:
@@ -1168,16 +1174,31 @@ def _build(diagram: Diagram, axiom: TemplateAxiom, match: TemplateMatch) -> Buil
         else:
             port_mapping[host] = target
 
+    def splice(host: PortRef, far: PortRef) -> None:
+        """Maps ``host`` onto ``far``, through an identity Z spider where a boundary
+        direction would flip."""
+        if host in boundary_dir and boundary_dir[host] is not far.direction:
+            own = _port_dim(diagram, host)
+            adapter = diagram.add_node(Z_SPIDER, [own], [own])
+            new_ids.append(adapter)
+            inner_direction = (
+                Direction.OUTPUT if boundary_dir[host] is Direction.INPUT else Direction.INPUT
+            )
+            port_mapping[host] = PortRef(adapter, boundary_dir[host], 0)
+            adapters.append((PortRef(adapter, inner_direction, 0), far))
+        else:
+            port_mapping[host] = far
+
     consumed_wires = list(match.wires)
     for first, second in right.bare:
         h1, h2 = terminals[first], terminals[second]
         far1, far2 = partner.get(h1), partner.get(h2)
         if far1 is not None and far1.node_id not in consumed and far1 != h2:
             consumed_wires.append(Wire(h1, far1))
-            port_mapping[h2] = far1
+            splice(h2, far1)
         elif far2 is not None and far2.node_id not in consumed and far2 != h1:
             consumed_wires.append(Wire(h2, far2))
-            port_mapping[h1] = far2
+            splice(h1, far2)
         elif h1 in boundary_dir and h2 in boundary_dir:
             dirs = [boundary_dir[h1], boundary_dir[h2]]
             ins_n = sum(1 for d in dirs if d is Direction.INPUT)
