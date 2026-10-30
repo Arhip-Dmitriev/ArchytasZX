@@ -67,11 +67,17 @@ the nodes each one involves:
 
 2.5 apply
 
-    apply RULE [at INDEX | at nI, nJ, ...]
+    apply RULE [at INDEX | at nI, nJ, ...] [with NAME = VALUE, ...]
 
 Rewrites the current diagram at a match of RULE: the match numbered INDEX (default 0), or the
 match whose node set is exactly nI, nJ, .... The result becomes the current diagram and the
-step is appended to the derivation. Output:
+step is appended to the derivation. "with" sets the free values of a template rule
+(RULES.txt, section 1), for instance the split of zxw_s1_converse:
+
+    apply zxw_s1_converse at 0 with a = weight{1: 2}, b = weight{1: 1/2}
+
+A VALUE is an integer, a scalar expression, or a vector written as a phase and weight suffix;
+the rule's side conditions check the values (here ab = c). Output:
 
     step: spider_fusion (consumed n0, n1, new n2, scalar 1)
 
@@ -110,11 +116,13 @@ equal, unequal or unknown, with the method that settled it and the oracle summar
 
 2.10 prove
 
-    prove [against] [TARGET]
+    prove [exhaustive] [against] [TARGET]
 
 Searches for a derivation between the two diagrams by bidirectional tactic search, certifies
 and checks it; when no path is found and a multiplicity is free, tries induction (PROOFS.txt,
-section 3). The proof is stored and can be shown, kernel-checked and exported.
+section 3). The proof is stored and can be shown, kernel-checked and exported. With
+exhaustive, the search is the fair breadth-first search over every registered rule of
+PROOFS.txt, section 3.2, with no bound: it may not return (COMPLETENESS.txt, section 6).
 
 2.11 induct
 
@@ -224,6 +232,15 @@ dimension is the first symbol declared by dim, or d when there is none. PHASE is
     phase{k: EXPR}                         the phase EXPR at every index k
     phase[D]{I: EXPR, ...}                 the same, with an explicit phase dimension
     phase 0                                the zero phase vector
+    weight{I: EXPR, ...}                   complex weights at indices I >= 1; absent is 1
+    weight{k: EXPR}                        the weight EXPR at every index k >= 1
+    weight[D]{...}                         the same, with an explicit dimension
+    phase{...} weight{...}                 both: the coefficient at index k is
+                                           weight_k * e^(2 pi i phase_k)
+
+A spider with weights is the Z box of [P1] (COMPLETENESS.txt, section 2): weight{1: 0, 2: 0}
+at d = 3 is the Z box (0, 0), the projector onto |0>. In the graph listing a weighted node
+reads "phase[D]: {I: EXPR} turns weight: {I: EXPR}".
 
 Chains:
 

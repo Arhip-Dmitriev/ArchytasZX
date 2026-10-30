@@ -140,6 +140,23 @@ diagrams have isomorphic comparison views; (d) the oracle finds no counterexampl
 start and goal. An InductionProof is checked piece by piece, then the oracle is run on its two
 sides.
 
+3.2 Exhaustive search
+
+    prove_exhaustive(start, goal, *, refute=True, samples=None, max_samples=24,
+                     tolerance=1e-9, max_elements=10_000_000, on_layer=None) -> ProofOutcome
+
+prove_exhaustive runs steps 1 and 2 of prove, then archytaszx.rewrite.exhaustive
+.exhaustive_search: a breadth-first search from start and from goal at once over every rule
+of RULES, automatic or not, converses included. Each layer applies every match of every rule
+to every diagram of the previous layer; a diagram whose comparison view is isomorphic to one
+already reached on its side is pruned. Layer k of the start side is expanded before layer k of
+the goal side, and both before layer k + 1, so a derivation of n enumerated steps is found by
+layer n of the start side, and by layer ceil(n/2) when its second half uses rules with
+converses. A meeting gives an ordinary ProofCertificate, checked as
+prove's are. There is no depth cap and no time limit; when both sides close without meeting
+the outcome is NOT_FOUND. COMPLETENESS.txt, section 6, states for which inputs it terminates.
+In the shell: prove exhaustive [against] [TARGET].
+
 
 4. INDUCTION OVER MULTIPLICITIES: archytaszx.semantics.induction
 ----------------------------------------------------------------
@@ -221,7 +238,9 @@ pairs a derivation with its CheckMethod: NUMERIC_ORACLE or INDUCTION.
 
 replay re-applies every recorded step to a fresh copy of the initial diagram and checks, per
 step, that the rule still exists by name, that the consumed nodes and wires are present, that
-the matcher rediscovers the recorded match, and that the step apply produces equals the
+the rule's pattern verifies the recorded match (Pattern.verify: by default the matcher
+rediscovers it; a template rule re-checks it with its own free values), and that the step
+apply produces equals the
 recorded step; finally that the diagram reached is identical, id for id, to the recorded final
 diagram. verify runs replay and then compares the two ends with the oracle at the assignment.
 

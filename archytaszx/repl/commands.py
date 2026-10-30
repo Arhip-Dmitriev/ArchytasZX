@@ -90,9 +90,10 @@ from archytaszx.rewrite.egraph import (
     SaturationReport,
 )
 from archytaszx.rewrite.engine import DEFAULT_GUARD, RewriteResult, RewriteStep, apply
+from archytaszx.rewrite.match_template import TemplatePattern
 from archytaszx.rewrite.normal_form import NormalForm, normal_form
-from archytaszx.rewrite.rule import RewriteError
-from archytaszx.rewrite.rules_library import RULES, lookup_rule
+from archytaszx.rewrite.rule import RewriteError, Rule
+from archytaszx.rewrite.rules_library import RULES, fixed_template_scalar, lookup_rule
 from archytaszx.rewrite.sheet import (
     SheetStep,
     dissolve,
@@ -150,6 +151,7 @@ from archytaszx.semantics.prove import (
     ProveError,
     check_proof,
     prove,
+    prove_exhaustive,
 )
 
 
@@ -660,8 +662,18 @@ def _rule_lines(name: str) -> list[str]:
         ),
         f"{_INDENT}side conditions: {', '.join(c.name for c in rule.side_conditions) or 'none'}",
         f"{_INDENT}dimension guards: {guards or 'none'}",
-        f"{_INDENT}scalar: {_expr(rule.scalar_introduced)}",
+        f"{_INDENT}scalar: {_rule_scalar(rule)}",
     ]
+
+
+def _rule_scalar(rule: Rule) -> str:
+    """The scalar a rule introduces, or "per match" for a template rule whose scalar varies."""
+    if (
+        isinstance(rule.pattern, TemplatePattern)
+        and fixed_template_scalar(rule.pattern.axiom) is None
+    ):
+        return "per match (RULES.txt)"
+    return _expr(rule.scalar_introduced)
 
 
 def _rule_name(text: str) -> str:
@@ -940,8 +952,12 @@ def _saturation_line(report: SaturationReport, extraction: Extraction) -> str:
 
 
 def _cmd_prove(session: Session, args: str) -> Outcome:
+    words = args.split(maxsplit=1)
+    exhaustive = bool(words) and words[0] == "exhaustive"
+    if exhaustive:
+        args = words[1] if len(words) > 1 else ""
     left, right = _pair_args(session, args)
-    outcome = prove(left, right)
+    outcome = prove_exhaustive(left, right) if exhaustive else prove(left, right)
     session.last_proof = outcome
     payload = _Pair("prove", left, right, outcome)
     head = f"prove: {outcome.status.value}: {outcome.reason}"
@@ -1791,14 +1807,20 @@ HELP: Mapping[str, str] = MappingProxyType(
         "rules": "rules [RULE] -- rule names, or one rule's quantifiers, side conditions, "
         "dimension guards and scalar (alias list-rules)",
         "match": "match [RULE] -- matches in the current diagram, all rules when none",
-        "apply": "apply RULE [at INT | at nI, nJ] -- rewrite the current diagram at a match",
+        "apply": (
+            "apply RULE [at INT | at nI, nJ] [with NAME = VALUE, ...] -- rewrite the current "
+            "diagram at a match, a template rule's free values set"
+        ),
         "check": "check [NAME=VALUE ...] [against TARGET] -- oracle check of start vs current "
         "(or current vs TARGET) at the sample grid, supplied values overriding",
         "normalize": "normalize -- reduce the current diagram to normal form",
         "decide": "decide [against] [TARGET] -- decide equality of start vs current (or "
         "current vs TARGET)",
         "saturate": "saturate -- equality saturation, then extract the cheapest diagram",
-        "prove": "prove [against] [TARGET] -- tactic search for a proof",
+        "prove": (
+            "prove [exhaustive] [against] [TARGET] -- tactic search for a proof; exhaustive: "
+            "fair search over every rule, unbounded"
+        ),
         "induct": "induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by "
         "induction",
         "certificate": "certificate [emit [derivation|induction|proof] | verify [NAME=VALUE "

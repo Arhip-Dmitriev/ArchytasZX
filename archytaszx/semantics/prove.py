@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import enum
 import functools
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -62,6 +62,7 @@ from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, NodeId
 from archytaszx.diagram.validate import ValidateError, validate
 from archytaszx.rewrite.cache import RewriteCache
+from archytaszx.rewrite.exhaustive import ExhaustedError, LayerReport, exhaustive_search
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError
 from archytaszx.rewrite.tactics import (
@@ -815,4 +816,70 @@ def prove(
         check=check,
         search=found,
         assumptions=assumptions,
+    )
+
+
+def prove_exhaustive(
+    start: Diagram,
+    goal: Diagram,
+    *,
+    refute: bool = True,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    max_samples: int = 24,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+    on_layer: Callable[[LayerReport], None] | None = None,
+) -> ProofOutcome:
+    """Prove ``start`` equal to ``goal`` by :func:`~archytaszx.rewrite.exhaustive.exhaustive_search`
+    over every registered rule, after the interface and oracle refutation rungs of
+    :func:`prove`; no limit bounds the search."""
+    for name, value in (("start", start), ("goal", goal)):
+        if not isinstance(value, Diagram):
+            raise ProveGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")
+        invalid = _invalid_reason(value)
+        if invalid is not None:
+            raise ProveGrammarError(f"{name} {invalid}")
+    _check_oracle_args(samples, max_samples, tolerance, max_elements)
+    interface = interface_reason(start, goal)
+    if interface is not None:
+        return ProofOutcome(ProofStatus.REFUTED, f"interfaces never agree: {interface}")
+    oracle: OracleRefutation | None = None
+    if refute:
+        oracle = refute_by_oracle(
+            start,
+            goal,
+            samples=samples,
+            max_samples=max_samples,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
+        if oracle.counterexample is not None:
+            detail = oracle.comparison.reason if oracle.comparison is not None else ""
+            return ProofOutcome(
+                ProofStatus.REFUTED,
+                f"oracle mismatch at {dict(oracle.counterexample)!r}: {detail}",
+                counterexample=oracle.counterexample,
+            )
+    try:
+        path = exhaustive_search(start, goal, on_layer=on_layer)
+    except ExhaustedError as exc:
+        return ProofOutcome(ProofStatus.NOT_FOUND, f"exhaustive search: {exc}")
+    certificate = certify_proof(path)
+    check = _check(certificate, True, oracle, samples, max_samples, tolerance, max_elements)
+    if not check.verified:
+        return ProofOutcome(
+            ProofStatus.CHECK_FAILED,
+            f"proof check failed: {check.reason}",
+            certificate=certificate,
+            check=check,
+            counterexample=check.counterexample,
+        )
+    return ProofOutcome(
+        ProofStatus.PROVED,
+        f"proved exhaustively in {certificate.length} step(s), "
+        f"{len(certificate.forward.steps)} forward and {len(certificate.backward.steps)} "
+        f"backward; {check.reason}",
+        certificate=certificate,
+        check=check,
+        assumptions=certificate.assumptions,
     )
