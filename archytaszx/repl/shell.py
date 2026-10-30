@@ -41,6 +41,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TextIO
 
 from archytaszx.repl import terminal as T
+from archytaszx.rewrite import match_template
 from archytaszx.repl.commands import Outcome, Session, detail_text, format_outcome, run
 from archytaszx.repl.printer import DEFAULT_MODE, NotationMode
 
@@ -448,6 +449,12 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="as --images, with black drawings on a white background",
     )
     parser.add_argument(
+        "--no-concrete-axioms",
+        dest="concrete_axioms",
+        action="store_false",
+        help="never substitute bound dimensions while rewriting; no concrete-only axioms",
+    )
+    parser.add_argument(
         "-c",
         "--command",
         action="append",
@@ -475,6 +482,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         T.CONFIG = T.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
+    match_template.CONCRETE_AXIOMS = args.concrete_axioms
     T.SAVE_DIR = args.images or args.images_white
     T.SAVE_WHITE = args.images_white is not None
     mode, zx_style = VIEWS[args.mode]

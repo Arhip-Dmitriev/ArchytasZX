@@ -127,6 +127,7 @@ class Labelled:
     port: dict[PortRef, int]
     name: str
     scalar_note: str
+    source: Diagram | None = None
 
 
 @dataclass(frozen=True)
@@ -766,10 +767,85 @@ class _Export:
 
         net, order, port = self.translate(d, slots, alloc)
         name = f"N{len(self.nets)}"
-        labelled = Labelled(net, order, port, name, str(d.scalar.to_sympy()))
+        source = d if slots is None and not d.bang_boxes else None
+        labelled = Labelled(net, order, port, name, str(d.scalar.to_sympy()), source)
         self.nets[key] = labelled
         self.decls.append(f"/-- {_comment(self.describe(d))} -/\ndef {name} : Net := {net.lean()}")
         return labelled
+
+    def diagram_literal(self, d: Diagram, net: LNet, name: str) -> tuple[str, int] | None:
+        """``d`` as a Lean ``Diagram`` named after ``name``, with the offset of ``net``'s wire
+        labels; ``None`` when they are not consecutive."""
+        nb = len(d.boundary_outputs) + len(d.boundary_inputs)
+        off = net.summed[0] if net.summed else nb
+        if net.summed != tuple(range(off, off + len(net.summed))):
+            return None
+
+        def port(ref: PortRef) -> str:
+            out = "true" if ref.direction is Direction.OUTPUT else "false"
+            return f"⟨{int(ref.node_id)}, {out}, {ref.index}⟩"
+
+        nodes = []
+        for nid, n in zip(sorted(d.nodes), net.nodes, strict=True):
+            node = d.nodes[nid]
+            outs = _list([self.dim(p.dim) for p in node.outputs])
+            ins = _list([self.dim(p.dim) for p in node.inputs])
+            nodes.append(f"⟨{int(nid)}, {_klean(n.kind)}, {n.dim}, {n.ph}, {outs}, {ins}⟩")
+        wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
+        dname = f"D{name[1:]}"
+        self.decls.append(
+            f"/-- {_comment(self.describe(d))}, as the engine's diagram. -/\n"
+            f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
+            f"    wires := [{', '.join(wires)}],\n"
+            f"    outs := [{', '.join(map(port, d.boundary_outputs))}],\n"
+            f"    ins := [{', '.join(map(port, d.boundary_inputs))}] }}"
+        )
+        self.decls.append(
+            f"theorem {dname}_net : {dname}.toNet {off} = {name} := by decide +kernel"
+        )
+        return dname, off
+
+    def diagram_theorem(
+        self,
+        name: str,
+        binders: str,
+        args: str,
+        sl: str,
+        a: Labelled,
+        sr: str,
+        b: Labelled,
+        negated: bool = False,
+        env: str = "",
+    ) -> None:
+        """The theorem ``name`` restated on the diagrams ``a`` and ``b`` themselves, at the
+        environment ``env`` or the export's own."""
+        if a.source is None or b.source is None or self.alias:
+            return
+        la = self.diagram_literal(a.source, a.net, a.name)
+        lb = la if b.name == a.name else self.diagram_literal(b.source, b.net, b.name)
+        if la is None or lb is None:
+            return
+        (da, oa), (db, ob) = la, lb
+        stmt = f"DEqual {env or self.env} {_paren(sl)} {da} {_paren(sr)} {db}"
+        rw = (
+            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labs) rfl (by decide +kernel) "
+            "(by decide +kernel), "
+            f"{da}_net, {db}_net]"
+        )
+        intro = [f"  intro {args}"] if args else []
+        if negated:
+            head = f"¬ ∀ {binders}, {stmt}" if binders else f"¬ {stmt}"
+            have = f"have h := h {args}" if args else ""
+            lines = ["  intro h", f"  apply {name}", *intro, *([f"  {have}"] if have else [])]
+            lines += [f"  {rw} at h", "  exact h"]
+        else:
+            head = f"∀ {binders}, {stmt}" if binders else stmt
+            lines = [*intro, f"  {rw}", f"  exact {_join(name, args)}"]
+        body = "by\n" + "\n".join(lines)
+        self.decls.append(
+            "/-- The theorem on the engine's diagrams, through the proved translation "
+            f"`DEqual_iff`. -/\ntheorem {name}_diagrams :\n    {head} := {body}"
+        )
 
     @staticmethod
     def structure_key(d: Diagram) -> object:
@@ -1152,6 +1228,7 @@ class _Export:
                 raise NetUnsupported("a diagram scalar has no Lean form")
             s_start, s_goal = self.engine_scalars
             hst = self.sc.prove(s_start * self.flat(proof.right), s_goal * self.flat(proof.left))
+            stated = (self.text(s_start), self.text(s_goal))
             self.decls.append(
                 f"/-- The start and goal diagrams with their own scalars. -/\n{head}"
                 f"{self.statement(self.text(s_start), start, self.text(s_goal), goal)} :=\n"
@@ -1166,6 +1243,7 @@ class _Export:
         except (ScalarUnsupported, NetUnsupported) as exc:
             self.scalar_gap = str(exc)
             left, right = self.drop_ones(proof.left), self.drop_ones(proof.right)
+            stated = (left, right)
             self.decls.append(
                 f"/-- {_comment(f'start = {start.scalar_note}, goal = {goal.scalar_note}')} -/\n"
                 f"{head}{self.statement(left, start, right, goal)} := by\n"
@@ -1173,6 +1251,16 @@ class _Export:
             )
         if self.alias:
             self.unmerge(theorem, outer, name, start, goal)
+        elif not self.family:
+            self.diagram_theorem(
+                name,
+                _join(self.binders, self.hyps),
+                _join(self.args, self.hyp_args),
+                stated[0],
+                start,
+                stated[1],
+                goal,
+            )
         return self.render(theorem)
 
     def unmerge(

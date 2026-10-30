@@ -32,6 +32,9 @@ interactive shell starts.
   -c CMD, --command CMD  Run CMD as one line. Repeatable; the lines run in order, before any
                          file.
   --unicode              Print Unicode text instead of ASCII.
+  --no-concrete-axioms   Rewrite with bound dimensions kept symbolic: the axioms defined only
+                         at a concrete dimension never match, and the other axioms match
+                         without substituting bound values.
 
 3.2 Views
 

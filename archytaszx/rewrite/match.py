@@ -1830,6 +1830,31 @@ def _splice_keeps_copies(
     return not mine or any(s == mine for s in sides)
 
 
+def _liftable_box(
+    diagram: Diagram, node_id: NodeId, surviving_ref: PortRef, far_ref: PortRef
+) -> BangBoxId | None:
+    """The node-scope box holding only ``node_id`` when the node's surviving leg is a boundary
+    slot and its spliced wire reaches a spider leg one box out; otherwise None."""
+    box_id = innermost_node_scope_box(diagram, node_id)
+    if box_id is None:
+        return None
+    box = diagram.bang_boxes[box_id]
+    if box.node_scope != frozenset((node_id,)):
+        return None
+    if any(other.parent == box_id for other in diagram.bang_boxes.values()):
+        return None
+    if surviving_ref not in (*diagram.boundary_inputs, *diagram.boundary_outputs):
+        return None
+    far = diagram.nodes[far_ref.node_id]
+    if not _is_spider(far) or _has_port_boxed_leg(diagram, (far_ref.node_id,)):
+        return None
+    if _node_boxes(diagram, far_ref.node_id) != _node_boxes(diagram, node_id) - {box_id}:
+        return None
+    if box.parent != innermost_node_scope_box(diagram, far_ref.node_id):
+        return None
+    return box_id
+
+
 def _has_crossing_leg(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
     """True iff a wire joins one of ``node_ids`` to a node in other node-scope bang boxes."""
     for wire in diagram.wires:
@@ -1880,20 +1905,24 @@ IDENTITY_SIDE_CONDITIONS: tuple[SideCondition, ...] = (
     SideCondition("same_dimension", "both legs carry one dimension"),
     SideCondition(
         "leaves_every_bang_box_populated",
-        "no node-scope bang box holds the node and nothing else",
+        "no node-scope bang box holds the node and nothing else, unless that box lifts to a "
+        "port-scope box",
     ),
     SideCondition("no_port_boxed_leg", "neither leg lies in a port-scope bang box"),
     SideCondition(
         "splice_keeps_copies",
         "no neighbour lies in a node-scope bang box nested inside the node's, and some wired "
-        "neighbour shares the node's boxes",
+        "neighbour shares the node's boxes, unless the node's box lifts to a port-scope box: "
+        "it holds only the node, has no child box, the surviving leg is a boundary slot, and "
+        "the far port is a spider leg one box out with no port-boxed leg",
     ),
 )
 
 
 @dataclass(frozen=True, slots=True)
 class IdentityMatch:
-    """One located identity spider: the node, the wire spliced out, and the surviving leg."""
+    """One located identity spider: the node, the wire spliced out, the surviving leg, and the
+    node-scope box that becomes a port-scope box on the far port, if any."""
 
     node_id: NodeId
     wire: Wire
@@ -1902,6 +1931,7 @@ class IdentityMatch:
     shared_dim: Dim
     side_condition_outcomes: tuple[SideConditionOutcome, ...]
     dimension_constraints: tuple[DimensionConstraint, ...] = ()
+    lifted_box: BangBoxId | None = None
 
     @property
     def all_side_conditions_passed(self) -> bool:
@@ -1963,11 +1993,16 @@ def find_identity_matches(
         neighbour = by_port.get(surviving_ref)
         if neighbour is not None and _far_end(neighbour, surviving_ref) == far_ref:
             continue
-        if _exhausts_a_node_scope_box(diagram, (node_id,)):
-            continue
         if _has_port_boxed_leg(diagram, (node_id,)):
             continue
-        if not _splice_keeps_copies(
+        lifted = (
+            _liftable_box(diagram, node_id, surviving_ref, far_ref)
+            if neighbour is None
+            else None
+        )
+        if lifted is None and _exhausts_a_node_scope_box(diagram, (node_id,)):
+            continue
+        if lifted is None and not _splice_keeps_copies(
             diagram,
             node_id,
             tuple(  # type: ignore[arg-type]
@@ -1984,6 +2019,7 @@ def find_identity_matches(
                 far_ref=far_ref,
                 shared_dim=shared_dim,
                 side_condition_outcomes=_all_passed(IDENTITY_SIDE_CONDITIONS),
+                lifted_box=lifted,
             )
         )
     return tuple(matches)

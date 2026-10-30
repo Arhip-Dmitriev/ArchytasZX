@@ -1689,6 +1689,9 @@ class _SymExport:
                 f"  {proof}"
             )
             out.decls += [*decls, theorem]
+            out.diagram_theorem(
+                name, bh, self.ah, self.stated_s(0), self.a, self.stated_s(1), self.b, env=env
+            )
         else:
             if not self.check():
                 raise NetUnsupported(self.why)

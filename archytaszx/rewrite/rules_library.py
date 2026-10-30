@@ -667,7 +667,7 @@ def identity_removal_builder(diagram: Diagram, match: Match) -> BuildResult:
     """The right-hand side of :data:`IDENTITY_REMOVAL`: nothing, the wire spliced through.
 
     Consumes the spider and the wire on one of its legs, mapping the other leg onto that
-    wire's far port.
+    wire's far port; a lifted node-scope box becomes a port-scope box on that far port.
     """
     if not isinstance(match, IdentityMatch):
         raise RewriteGrammarError(
@@ -676,7 +676,14 @@ def identity_removal_builder(diagram: Diagram, match: Match) -> BuildResult:
     check_side_condition_coverage(match, IDENTITY_SIDE_CONDITIONS, "identity_removal_builder")
     _require_rediscovered(match, find_identity_matches(diagram), "identity_removal_builder")
     port_mapping = {match.surviving_ref: match.far_ref}
-    _rescope_boxes(diagram, (match.node_id,), (), "identity_removal_builder")
+    if match.lifted_box is None:
+        _rescope_boxes(diagram, (match.node_id,), (), "identity_removal_builder")
+    else:
+        box = diagram.bang_boxes[match.lifted_box]
+        diagram.remove_bang_box(match.lifted_box)
+        diagram.add_bang_box(
+            box.multiplicity, port_scope=frozenset((match.far_ref,)), parent=box.parent
+        )
     _follow_port_scopes(diagram, port_mapping)
     return BuildResult(
         diagram=diagram,

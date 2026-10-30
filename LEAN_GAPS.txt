@@ -68,3 +68,9 @@ step, two shapes still fail in Lean: a closing scalar identity between roots of 
 different forms (for example 1 - I + om 6 against 1 - ex(1/4) + ex(1/6)), which the final ring
 tactic does not identify, and a symCheck whose evaluation by decide does not reduce in the kernel
 for a network of eight nodes. Lean rejects these files; nothing unsound is accepted.
+
+11. Families stated over networks.
+A theorem on diagrams without bang boxes is restated on the engine's diagrams (DEqual, Diagram.lean),
+through the proved equivalence DEqual_iff with their networks. A family's statement is still over
+the networks of its bundled encoding: no Lean semantics of a diagram with bang boxes (the diagram
+with each box copied) is proved equal to the bundled network yet.

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 import sympy  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.diagram.graph import Diagram, Node, NodeId, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, Node, NodeId, PortRef
 from archytaszx.repl import terminal as T
 from archytaszx.repl.printer import _phase_label, _weight_label, rule_turns
 
@@ -305,6 +305,15 @@ def layout(view: View, max_nodes: int = MAX_NODES) -> Layout:
             break
         dist[rest[0]] = 1
         frontier = [rest[0]]
+    flow = _flow(view.diagram, items)
+    for _ in range(len(items)):
+        moved = False
+        for a, b in flow:
+            if dist[a] <= dist[b]:
+                dist[a] = dist[b] + 1
+                moved = True
+        if not moved:
+            break
     top = max(dist.values(), default=0)
     for k, it in items.items():
         it.col = top - dist[k]
@@ -327,6 +336,20 @@ def layout(view: View, max_nodes: int = MAX_NODES) -> Layout:
         routed.append(Edge(path, e.dim))
     _order(items, routed)
     return Layout(items, routed, frames, _scalar(view.diagram.scalar.to_sympy()), legend, summary)
+
+
+def _flow(g: Diagram, items: dict[str, Item]) -> list[tuple[str, str]]:
+    """The (source, target) item keys of each wire from an output port to an input port."""
+    pairs: list[tuple[str, str]] = []
+    for wire in sorted(g.wires, key=lambda w: w.sort_key()):
+        ends = {wire.a.direction: wire.a, wire.b.direction: wire.b}
+        out, inp = ends.get(Direction.OUTPUT), ends.get(Direction.INPUT)
+        if out is None or inp is None:
+            continue
+        a, b = f"n{int(out.node_id)}", f"n{int(inp.node_id)}"
+        if a != b and a in items and b in items:
+            pairs.append((a, b))
+    return pairs
 
 
 def _key_order(k: str) -> tuple[int, int]:

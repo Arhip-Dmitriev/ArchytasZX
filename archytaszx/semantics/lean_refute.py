@@ -1168,6 +1168,17 @@ class _Refuter:
             f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
         )
         out.decls += [*decls, theorem]
+        if not out.family:
+            out.diagram_theorem(
+                name,
+                binders,
+                _join(out.args, out.hyp_args),
+                self.scalar_text(self.s0),
+                self.a,
+                self.scalar_text(self.s1),
+                self.b,
+                negated=True,
+            )
         return out.source(lead=f"  refutation at {self.point_note()}, ζ = om {M}")
 
     def statement(self) -> str:

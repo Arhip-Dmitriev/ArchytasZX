@@ -4,36 +4,28 @@ ArchytasZX references
 BibTeX for every entry is in REFERENCES.bib.
 
 
-Quantum computation
--------------------
-
-[1]   M. A. Nielsen, I. L. Chuang. Quantum Computation and Quantum Information,
-     10th anniversary edition. Cambridge University Press, 2010.
-     doi:10.1017/CBO9780511976667
-
-
 ZX-calculus, W node, qufinite ZX/ZXW
 ------------------------------------
 
-[2]   B. Coecke, R. Duncan. Interacting quantum observables: categorical algebra and
+[1]   B. Coecke, R. Duncan. Interacting quantum observables: categorical algebra and
      diagrammatics. New Journal of Physics 13:043016, 2011.
      doi:10.1088/1367-2630/13/4/043016, arXiv:0906.4725
 
-[3]   J. van de Wetering. ZX-calculus for the working quantum computer scientist, 2020.
+[2]   J. van de Wetering. ZX-calculus for the working quantum computer scientist, 2020.
      arXiv:2012.13966
 
-[4]   A. Hadzihasanovic. A diagrammatic axiomatisation for qubit entanglement.
+[3]   A. Hadzihasanovic. A diagrammatic axiomatisation for qubit entanglement.
      LICS 2015.
      arXiv:1501.07082
 
-[5]   Q. Wang. Qufinite ZX-calculus: a unified framework of qudit ZX-calculi, 2021.
+[4]   Q. Wang. Qufinite ZX-calculus: a unified framework of qudit ZX-calculi, 2021.
      arXiv:2104.06429
 
-[6]   B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke. Completeness for
+[5]   B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke. Completeness for
      arbitrary finite dimensions of ZXW-calculus, a unifying calculus. LICS 2023.
      doi:10.1109/LICS56636.2023.10175672, arXiv:2302.12135
 
-[7]   Q. Wang, B. Poor, R. A. Shaikh. Completeness of qufinite ZXW calculus, a graphical
+[6]   Q. Wang, B. Poor, R. A. Shaikh. Completeness of qufinite ZXW calculus, a graphical
      language for finite-dimensional quantum theory, 2023.
      arXiv:2309.13014
 
@@ -41,23 +33,23 @@ ZX-calculus, W node, qufinite ZX/ZXW
 Bang boxes and scalable notation
 --------------------------------
 
-[8]   L. Dixon, R. Duncan. Graphical reasoning in compact closed categories for quantum
+[7]   L. Dixon, R. Duncan. Graphical reasoning in compact closed categories for quantum
      computation. Annals of Mathematics and Artificial Intelligence 56(1):23-42, 2009.
      doi:10.1007/s10472-009-9141-x
 
-[9]   A. Kissinger, A. Merry, M. Soloviev. Pattern graph rewrite systems.
+[8]   A. Kissinger, A. Merry, M. Soloviev. Pattern graph rewrite systems.
      EPTCS 143:54-66, 2014.
      doi:10.4204/EPTCS.143.5, arXiv:1204.6695
 
-[10]  A. Kissinger, D. Quick. A first-order logic for string diagrams.
+[9]   A. Kissinger, D. Quick. A first-order logic for string diagrams.
      CALCO 2015, LIPIcs 35, pp. 171-189, 2015.
      doi:10.4230/LIPIcs.CALCO.2015.171, arXiv:1505.00343
 
-[11]  T. Carette, D. Horsman, S. Perdrix. SZX-calculus: scalable graphical quantum
+[10]  T. Carette, D. Horsman, S. Perdrix. SZX-calculus: scalable graphical quantum
      reasoning. MFCS 2019, LIPIcs.
      doi:10.4230/LIPIcs.MFCS.2019.55, arXiv:1905.00041
 
-[12]  T. Carette, L. Lemonnier. Large-scale quantum diagrammatic reasoning tools,
+[11]  T. Carette, L. Lemonnier. Large-scale quantum diagrammatic reasoning tools,
      !-boxes vs. scalable notations, 2022.
      arXiv:2204.11702
 
@@ -65,14 +57,14 @@ Bang boxes and scalable notation
 Exact symbolic sums and contraction
 -----------------------------------
 
-[13]  B. C. Berndt, R. J. Evans, K. S. Williams. Gauss and Jacobi Sums. Wiley, 1998.
+[12]  B. C. Berndt, R. J. Evans, K. S. Williams. Gauss and Jacobi Sums. Wiley, 1998.
      ISBN 978-0-471-12807-6
 
-[14]  G. Landsberg. Zur Theorie der Gaussschen Summen und der linearen Transformation der
+[13]  G. Landsberg. Zur Theorie der Gaussschen Summen und der linearen Transformation der
      Thetafunctionen. Journal fuer die reine und angewandte Mathematik 111:234-253, 1893.
      doi:10.1515/crll.1893.111.234
 
-[15]  R. Dechter. Bucket elimination: a unifying framework for reasoning.
+[14]  R. Dechter. Bucket elimination: a unifying framework for reasoning.
      Artificial Intelligence 113(1-2):41-85, 1999.
      doi:10.1016/S0004-3702(99)00059-4
 
@@ -80,20 +72,20 @@ Exact symbolic sums and contraction
 Rewriting, e-graphs and equality saturation
 -------------------------------------------
 
-[16]  R. Tate, M. Stepp, Z. Tatlock, S. Lerner. Equality saturation: a new approach to
+[15]  R. Tate, M. Stepp, Z. Tatlock, S. Lerner. Equality saturation: a new approach to
      optimization. Logical Methods in Computer Science 7(1), 2011.
      doi:10.2168/LMCS-7(1:10)2011, arXiv:1012.1802
 
-[17]  M. Willsey, C. Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, P. Panchekha. egg: fast and
+[16]  M. Willsey, C. Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, P. Panchekha. egg: fast and
      extensible equality saturation. Proceedings of the ACM on Programming Languages
      5(POPL), 2021.
      doi:10.1145/3434304, arXiv:2004.03082
 
-[18]  G. Nelson, D. C. Oppen. Fast decision procedures based on congruence closure.
+[17]  G. Nelson, D. C. Oppen. Fast decision procedures based on congruence closure.
      Journal of the ACM 27(2):356-364, 1980.
      doi:10.1145/322186.322198
 
-[19]  R. E. Tarjan. Efficiency of a good but not linear set union algorithm.
+[18]  R. E. Tarjan. Efficiency of a good but not linear set union algorithm.
      Journal of the ACM 22(2):215-225, 1975.
      doi:10.1145/321879.321884
 
@@ -101,28 +93,32 @@ Rewriting, e-graphs and equality saturation
 Lean formalisation
 ------------------
 
-[20]  L. de Moura, S. Ullrich. The Lean 4 theorem prover and programming language.
+[19]  L. de Moura, S. Ullrich. The Lean 4 theorem prover and programming language.
      CADE-28, LNCS 12699, pp. 625-635. Springer, 2021.
      doi:10.1007/978-3-030-79876-5_37
 
-[21]  The mathlib Community. The Lean mathematical library. CPP 2020, pp. 367-381.
+[20]  The mathlib Community. The Lean mathematical library. CPP 2020, pp. 367-381.
      doi:10.1145/3372885.3373824, arXiv:1910.09336
 
 
 Algorithms in the examples
 --------------------------
 
-[22]  D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
+[21]  D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
      Proceedings of the Royal Society of London A 439(1907):553-558, 1992.
      doi:10.1098/rspa.1992.0167
 
-[23]  Y. Fan. A generalization of the Deutsch-Jozsa algorithm to multi-valued quantum logic.
+[22]  Y. Fan. A generalization of the Deutsch-Jozsa algorithm to multi-valued quantum logic.
      ISMVL 2007, pp. 12-16. IEEE, 2007.
      doi:10.1109/ISMVL.2007.3
 
-[24]  E. Bernstein, U. Vazirani. Quantum complexity theory.
+[23]  E. Bernstein, U. Vazirani. Quantum complexity theory.
      SIAM Journal on Computing 26(5):1411-1473, 1997.
      doi:10.1137/S0097539796300921
+
+[24]  R. Krishna, V. Makwana, A. P. Suresh. A generalization of Bernstein-Vazirani algorithm
+     to qudit systems, 2016.
+     arXiv:1609.03185
 
 
 Software

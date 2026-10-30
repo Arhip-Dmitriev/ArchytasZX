@@ -713,6 +713,8 @@ class TemplatePattern(Pattern):
         self.axiom = axiom
 
     def find_matches(self, diagram: Diagram) -> tuple[Match, ...]:
+        if self.axiom.concrete_only and not CONCRETE_AXIOMS:
+            return ()
         found: dict[tuple[object, ...], TemplateMatch] = {}
         host = diagram
         diagram = resolved_view(host)
@@ -1223,9 +1225,16 @@ def _redim(phase: PhaseVector | None, dim: Dim) -> PhaseVector | None:
     )
 
 
+CONCRETE_AXIOMS = True
+"""Whether template matching substitutes bound dimensions and matches the concrete-only
+axioms; when False, neither."""
+
+
 def resolved_view(diagram: Diagram) -> Diagram:
-    """``diagram`` with every dimension symbol its parameter environment binds substituted;
-    node ids preserved."""
+    """``diagram`` with every dimension symbol its parameter environment binds substituted,
+    or ``diagram`` itself when :data:`CONCRETE_AXIOMS` is False; node ids preserved."""
+    if not CONCRETE_AXIOMS:
+        return diagram
     names: set[str] = set()
     for node in diagram.nodes.values():
         for port in (*node.inputs, *node.outputs):

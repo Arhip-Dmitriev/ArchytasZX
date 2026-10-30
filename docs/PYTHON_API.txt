@@ -153,7 +153,8 @@ Python binds ^ looser than @ and *, so a series power inside a product needs par
 (azx.F ^ 3) @ azx.id.
 
 A wire between two !-boxes of equal multiplicity merges them, so azx.F ** n | azx.X(0, 1) ** n
-is (azx.F | azx.X(0, 1)) ** n. Any other wire across a !-box boundary raises AzxError.
+is (azx.F | azx.X(0, 1)) ** n. A Z or X spider leg may be wired into a node !-box nested
+inside the spider's own boxes. Any other wire across a !-box boundary raises AzxError.
 
 Each Piece compiles to the DSL of ENGINE_COMMANDS.txt, section 3.1. Node ids follow the order
 in which nodes act, so a piece and the same circuit written as a DSL chain read back

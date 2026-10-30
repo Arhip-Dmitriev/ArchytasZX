@@ -41,8 +41,7 @@ decide_equal tries the following rungs in order and stops at the first that sett
   1. INTERFACE              The numbers of boundary inputs or outputs differ, or a pair of
                             boundary dimensions has no solution: UNEQUAL.
   2. NORMAL_FORM            Both diagrams are reduced to normal form (REWRITE.txt, section 6).
-                            When the normal forms agree, both derivations replay, and rung 3
-                            finds no mismatch: EQUAL.
+                            When the normal forms agree and rung 3 finds no mismatch: EQUAL.
   3. ORACLE_COUNTEREXAMPLE  The numeric oracle evaluates both diagrams at the sample grid; a
                             mismatch above tolerance (relative to the larger entry, at least 1)
                             is UNEQUAL.

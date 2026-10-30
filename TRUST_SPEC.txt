@@ -1,0 +1,260 @@
+ARCHYTASZX: TRUSTED-TRANSLATION REMOVAL SPEC
+============================================
+
+Overnight task. Written 2026-10-30. Read all of this file before doing anything.
+
+
+0. HOW TO RUN THIS TASK
+-----------------------
+
+You are working alone. No human will answer until morning. Rules for the whole run:
+
+  - Do not stop until section 8 (DONE) is satisfied. Do not end a turn to report progress, to
+    ask a question, or because one step is hard. Ending a turn early is the failure mode.
+  - Never ask a question. When something is ambiguous, pick the option that keeps Lean the
+    sole authority over what a theorem means (section 1.3), record the decision in
+    TRUST_PROGRESS.txt, and continue. Borderline situations: implement early rather than defer.
+  - If one item resists three genuinely different approaches, mark it BLOCKED in the progress
+    file with the exact reason and the attempts, move to the next item, and come back to every
+    BLOCKED item once everything else is done.
+  - Keep TRUST_PROGRESS.txt (repo root, already in .gitignore) current after every completed
+    item: what is done, what is in progress, decisions, BLOCKED items, the state of the
+    regression baseline. If the session restarts, read that file first and resume from it;
+    never redo finished work.
+  - Long context is fine; the harness summarises. Keep working.
+  - Run long computations in the background and in parallel (machine: 8 cores, 16 GB; at most
+    5 concurrent lean processes; never run `lake build` while other lake/lean jobs run).
+  - You may be interrupted by 5-hour usage windows, which begin at 9PM. Pre-emptively schedule
+    wake-up calls so the run resumes if it is killed by one.
+
+Project rules that apply to you (from CLAUDE.md and the maintainer; they override defaults):
+
+  - Do NOT commit, push or sync anything. Leave every change in the working tree. Other
+    uncommitted changes in the tree (for example from the completeness run) are not yours:
+    never revert them.
+  - Never modify, stage or upload CLAUDE.md.
+  - Never run pytest, in any form. Verify by before/after output diffs (section 6), targeted
+    scripts, ruff and mypy on touched files, and Lean.
+  - Never simulate: results come from symbolic rewriting. The numeric oracle may only be used
+    as a cross-check at small concrete instances.
+  - Docstrings and comments: very concise, state EITHER what a thing is OR how it works, never
+    why, never reasoning. Match the surrounding code (Lean files included).
+  - Documentation is formal plain text in docs/*.txt (only README/CONTRIBUTING/CLAUDE are .md).
+  - Do not add status or "resolved" notes to FULL_PLAN.txt.
+  - No timeouts or compute caps added to engine code; fix slowness algorithmically.
+  - Lean: never `sorry`, never `native_decide` (it adds the axiom Lean.ofReduceBool), never a
+    new `axiom` declaration. `decide +kernel` is allowed. Every final theorem's
+    `#print axioms` must list only propext, Classical.choice, Quot.sound (plus any named
+    `unproved_*` rule axioms the export already carried before your change).
+
+
+1. GOAL
+-------
+
+1.1 Today. Every exported Lean theorem is proved over the Net semantics
+(archytaszx/lean/ArchytasZX/Net.lean). The networks are built by Python
+(archytaszx/semantics/lean_net.py, `_Export.translate`): label allocation, bundled labels for
+bang boxes (Kind.Bun towers, ZB/XB/WB tails, chains of multiplicities, Fam/bundL tables). A
+bug there would make Lean prove a true statement about the wrong diagram. That translation is
+the remaining trusted component.
+
+1.2 Already done (2026-10-30), the model to follow. archytaszx/lean/ArchytasZX/Diagram.lean:
+  - `Diagram` (nodes `DNode`, wires `Port × Port`, boundary `outs`/`ins`) is the engine's
+    diagram as data; `Diagram.eval` is its meaning, defined directly (sum over a value on each
+    wire of the product of the node tensors at the values on their legs), with no labels.
+  - `Diagram.toNet off` builds the network; `Diagram.check` is a Bool well-formedness check;
+    `DEqual_iff` proves `DEqual E s₁ D₁ s₂ D₂ ↔ Equal E s₁ (D₁.toNet o₁) s₂ (D₂.toNet o₂)`.
+  - Python: `_Export.diagram_literal` and `_Export.diagram_theorem` in lean_net.py emit
+    `D{i}`, `D{i}_net : D{i}.toNet off = N{i} := by decide +kernel`, and a final theorem
+    `{name}_diagrams` stated with DEqual. Hooked into lean_net.finish, lean_sym (non-family)
+    and lean_refute (non-family, negated). Only bang-box-free diagrams are covered.
+  Read Diagram.lean and those Python functions first.
+
+1.3 Target claim, to be made true and documented:
+
+  Every theorem and refutation the engine exports to Lean, families included, has a final
+  Lean statement over (A) the engine's diagrams as data, with a meaning defined directly in
+  Lean, and (B) in a second stage, the text of the engine command file itself, parsed and
+  given meaning inside Lean. No Python-computed object enters a final statement except
+  literals that are checked against a Lean computation from (B)'s source text.
+
+  The trust argument that must hold: Python may compute anything, but if it computes it
+  wrongly, Lean rejects the file; it can never make Lean accept a statement whose meaning
+  differs from the Lean definitions applied to the user's diagram.
+
+Not goals: changing what the engine proves, changing search, the completeness rules, gaps
+2-10 of LEAN_GAPS.txt.
+
+
+2. STEP 1: SEMANTICS OF DIAGRAMS WITH BANG BOXES
+------------------------------------------------
+
+2.1 Read: archytaszx/diagram/bangbox.py (BangBox, node_scope, port_scope, parent, Mult,
+    instantiate_symbol and what it does to boundary order and to wires leaving a node box),
+    archytaszx/diagram/graph.py, lean_net.py `translate`, `node_chain`, `labelled`,
+    `induction_lemma`, and the Lean files Bundle.lean (Fam, Fam.env, digsC, bundled, Bun),
+    Port.lean (port boxes), FuseB.lean, Unfuse.lean. Write down in the progress file, with
+    examples, exactly which box configurations `translate` accepts (everything else raises
+    NetUnsupported and needs no coverage).
+
+2.2 Extend `Diagram` in Diagram.lean with boxes: a box has a multiplicity (an index into the
+    multiplicity values `ks`, as in Fam), an optional parent box, a node scope and a port scope,
+    mirroring BangBox one to one. Box-free literals must stay valid (default the new field to
+    []), so the existing bridge keeps working unchanged.
+
+2.3 Define the meaning by expansion, in Lean: `Diagram.expand (ks : ℕ → ℕ) : Diagram` returns
+    the box-free diagram with every box instantiated, and a family's meaning at `ks` is
+    `(D.expand ks).eval`. This definition is the specification, so it must be short and
+    readable, and it must agree with the engine's `instantiate_symbol`: same nodes, wires and
+    boundary order, up to the renaming of node ids. Check that agreement by a script that, for
+    every boxed diagram in examples/ and section 6's battery, at small multiplicities
+    (0, 1, 2, 3 per symbol), compares the Lean `#eval` of `expand` against the Python
+    instantiation; any mismatch is fixed on the Lean side (the engine's instantiation is the
+    user-facing meaning) or recorded and decided in the progress file.
+
+2.4 Family equality: `DEqualF` (name free) stating, for all multiplicity values, `DEqual` of
+    the expansions at the base environment, where the dimension table holds only plain
+    dimensions (no bundle indices). Expansion changes the boundary size with ks; DEqual
+    already compares boundary dimension lists, so no extra arity condition is needed.
+
+
+3. STEP 2: THE BRIDGE FOR FAMILIES
+----------------------------------
+
+3.1 Generalise `toNet` to boxed diagrams: produce exactly the bundled networks Python emits
+    today (Bun towers, ZB/XB/WB tails, chains outermost first, Fam bundL table), so that
+    `D.toNet … = N := by decide +kernel` closes against the existing exporter's nets. Where
+    Python's output is not a function of the diagram alone (label offsets, H_OFFSET peel
+    labels, bundle index allocation), give toNet the needed parameters, all checked by a Bool
+    `check` as in Diagram.lean.
+
+3.2 Prove, for every `ks`, under `check`:
+      eval (F.env ks) (D.toNet …) σ = (D.expand ks).eval E₀ (unbundle σ)
+    where `unbundle` splits each bundled boundary value into its digits in the engine's
+    boundary order, and the corresponding InRange statements. Then prove the family version of
+    DEqual_iff. Useful Mathlib facts: `finFunctionFinEquiv : (Fin n → Fin m) ≃ Fin (m ^ n)`
+    with `finFunctionFinEquiv_symm_apply_val` (digit i of v is v / m ^ i % m, matching
+    `digit`), `Finset.prod_univ_sum` / `Fintype.piFinset` (a product of sums is a sum over
+    functions), `Finset.sum_bij`/`Equiv.sum_comp` for reindexing. Structure the proof by
+    induction on the box nesting, one box at a time, reusing Bundle.lean's existing lemmas
+    about Bun, copyOuts/copyIns and bundled wherever they apply.
+
+3.3 Order: node boxes without crossing wires; node boxes with wires to outside nodes (fan-out);
+    nested node boxes; port boxes; nested port boxes; boxes whose multiplicity is a compound
+    expression. Each configuration that `translate` accepts must be covered or BLOCKED with
+    its reason.
+
+3.4 Exporters: extend `diagram_literal`/`diagram_theorem` to boxed diagrams and hook the family
+    branches: lean_net (families and nested inductions), lean_sym (the `∀ … : ℕ, Equal
+    (F.env …)` branch), lean_refute (the `¬ ∀` family statement). The final theorem of every
+    export is the DEqual/DEqualF one; keep the Net theorems as intermediate lemmas.
+
+3.5 Deferred dimension constraints and mixed dimensions (LEAN_GAPS items 7, 8; the `mainM` /
+    `Equal.of_mapDim'` path, `self.alias`): the diagram statement must use the diagram's own
+    dimensions, with the constraints as hypotheses. Cover it or BLOCK it with the reason.
+
+
+4. STEP 3: STATEMENTS OVER THE SOURCE TEXT
+------------------------------------------
+
+4.1 After step 2, the remaining Python-produced parts of a final statement are the `D`
+    literals, the dimension table Δ, the phase table Φ (and Ψ), and the scalars. Remove them
+    by parsing the engine command file in Lean.
+
+4.2 Read archytaszx/repl/parser.py and docs/DIAGRAM.txt / docs/ENGINE_COMMANDS.txt for the
+    engine diagram syntax (named blocks `@name =`, `load` blocks, chains `a -> b`, `F^4`,
+    ranges, `count n`, `repeat n:`, `inputs`, `scalar`, `phase{k: …}`, `weight{…}`, port
+    references like `u.in1`, indented blocks, old DSL forms still accepted). Write in the
+    progress file the exact subset the examples and the battery use; cover at least that
+    subset, then extend toward the full syntax.
+
+4.3 In a new Lean file (imported from ArchytasZX.lean):
+  - Expression syntax for dimensions, multiplicities, phases and scalars (natural, real and
+    complex), with a denotation function each, evaluated at the symbols' values.
+  - A parser `String → Option (…)` (or over List Char) that is structurally recursive, so the
+    kernel can evaluate it with `decide +kernel`. Measure its kernel cost on the largest
+    example early; if too slow, change representation (List Char, a small tokenizer, fuel),
+    never use native_decide.
+  - An elaborator from the parsed block to a boxed `Diagram` plus its tables.
+  - The final statement of an export: the source text as a string literal (the diagram blocks
+    used, verbatim from the user's file), its parse, and DEqual/DEqualF of the elaborated
+    diagrams, with Δ, Φ, Ψ and scalars taken from the parsed expressions' denotations.
+    The proof connects to step 2 by `elaborate src = some D := by decide +kernel` and, for
+    the tables, equalities proved in Lean (funext + simp/norm_num), not assumed.
+
+4.4 Conformance: a script that, for every example and battery file, compares the Lean
+    elaboration (#eval) with the Python diagram literal. A disagreement is a bug in one of the
+    two parsers: fix it so both agree with docs/DIAGRAM.txt; record each one.
+
+4.5 The engine and exporters must pass the source text through: the REPL knows which file
+    lines defined each diagram; carry them to `certificate lean` (archytaszx/repl/commands.py,
+    kernel.lean). Diagrams with no source text (built in Python via the embedding API, or
+    produced by commands like normalize) keep the step-1/step-2 statement over `D` literals,
+    and the file header says so.
+
+
+5. STEP 4: DOCUMENTATION AND GAPS
+---------------------------------
+
+5.1 docs/LEAN.txt: new sections on Diagram semantics, expansion, the family bridge, source
+    statements, and the exact trusted base that remains (Lean kernel, standard axioms, Mathlib
+    definitions, the Lean definitions of generator tensors, Diagram.eval, Diagram.expand and
+    the parser/elaborator as the specification of the language).
+5.2 LEAN_GAPS.txt: remove or narrow item 11 to what is still not covered; add any new gap in
+    the existing style.
+5.3 docs/OVERVIEW.txt and docs/PROOFS.txt only as far as the new facts require.
+
+
+6. REGRESSION BASELINE
+----------------------
+
+Before changing any code:
+
+  - Run every command file in examples/ (and examples/completeness/ if present) with
+    .venv/bin/archytaszx in a temporary directory; save full outputs and `lake env lean`
+    results for every .lean file written, under .trust_work/baseline/ (add .trust_work/ to
+    .git/info/exclude). Add a battery file of your own exercising: box-free proofs and
+    refutations, every family shape of 3.3, normaliser proofs (lean_sym) with and without
+    families, deferred constraints, mixed dimensions, weighted spiders, nested inductions.
+  - Record which exports are accepted by Lean today. The set accepted must not shrink.
+
+After each step, rerun and diff. The only acceptable differences are the added Lean
+declarations, the new final theorems, and header notes about what a statement is over. Every
+REPL verdict and every printed certificate must be identical. Any other difference is a
+regression: fix it before continuing. Run ruff and mypy on every touched Python file.
+
+
+7. VERIFICATION OF THE CLAIM
+----------------------------
+
+  - For every exported file in the baseline, `#print axioms` on the final theorem (append it
+    to a copy) lists only the allowed axioms.
+  - Mutation test: in a copy of lean_net.py, introduce deliberate translation bugs (swap two
+    legs, drop a wire, swap boundary order, off-by-one in a chain, wrong bundle multiplicity);
+    every mutated export must be rejected by Lean. Record the table. A mutation Lean accepts
+    is a hole in the claim and must be closed.
+  - Same mutation test for step 3 against the Python parser's literal output (once source
+    statements exist, a wrong literal must be rejected).
+
+
+8. DONE
+-------
+
+The task is done only when all of these hold:
+
+  - Diagram.lean (or new files) define boxed diagrams, expansion, DEqualF, and the family
+    bridge, proved, with no sorry, native_decide or new axiom.
+  - Every export the baseline accepts ends in a DEqual/DEqualF theorem over diagrams, and,
+    where the diagrams came from a command file, over its source text.
+  - The expansion agrees with instantiate_symbol, and the Lean elaborator with the Python
+    parser, on every example and battery file (scripts and results recorded).
+  - The mutation tables of section 7 show every mutation rejected.
+  - The regression diff of section 6 shows only the acceptable differences.
+  - ruff and mypy are clean on touched files.
+  - docs/LEAN.txt, LEAN_GAPS.txt (and OVERVIEW/PROOFS as needed) are updated.
+  - TRUST_PROGRESS.txt ends with a final report: what was done, what is BLOCKED and why, the
+    exact claim now true and the exact trusted base that remains, and the list of changed
+    files. Nothing committed.
+
+If after revisiting every BLOCKED item some remain blocked, the task is done when everything
+else holds and the report states precisely which part of the claim is not yet true.

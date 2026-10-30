@@ -118,6 +118,9 @@ state's all-ones vector leaves sqrt(d).
 ~~~~~~~~~~~~~~~~~~~~
 
 A phaseless spider with one input and one output is the identity on its wire, and is removed.
+When it is the only node of a node-scope bang box with no child box, its other leg is a
+boundary slot, and its wire reaches a Z or X spider leg one box out, the box becomes a
+port-scope box of the same multiplicity on that spider leg.
 
   Scalar:           1
   Quantifiers:      leg counts none; dimensions d

@@ -227,7 +227,15 @@ class Piece:
                 left, right = joined._chain(src[0]), joined._chain(dst[0])
                 if left == right:
                     break
-                diff = [(x, y) for x, y in zip(left[::-1], right[::-1]) if x != y]
+                if len(left) != len(right):
+                    (outer, o_node), (inner, _) = sorted(
+                        ((left, src[0]), (right, dst[0])), key=lambda c: len(c[0])
+                    )
+                    if inner[len(inner) - len(outer) :] == outer and joined.nodes[
+                        o_node
+                    ].text.startswith(("Z(", "X(")):
+                        break
+                diff =[(x, y) for x, y in zip(left[::-1], right[::-1]) if x != y]
                 if (
                     len(left) != len(right)
                     or joined.boxes[diff[0][0]][0] != joined.boxes[diff[0][1]][0]

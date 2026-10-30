@@ -314,10 +314,6 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
 <details>
 <summary>Full reference list</summary>
 
-**Quantum computation**
-- Nielsen & Chuang, *Quantum Computation and Quantum Information* (2010) —
-  [doi:10.1017/CBO9780511976667](https://doi.org/10.1017/CBO9780511976667)
-
 **ZX-calculus, W node, qufinite ZX/ZXW**
 - Coecke & Duncan, *Interacting quantum observables: categorical algebra and diagrammatics*, NJP 13 (2011) —
   [arXiv:0906.4725](https://arxiv.org/abs/0906.4725)
@@ -374,6 +370,8 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   [doi:10.1109/ISMVL.2007.3](https://doi.org/10.1109/ISMVL.2007.3)
 - Bernstein & Vazirani, *Quantum complexity theory*, SIAM J. Comput. 26 (1997) —
   [doi:10.1137/S0097539796300921](https://doi.org/10.1137/S0097539796300921)
+- Krishna, Makwana & Suresh, *A generalization of Bernstein–Vazirani algorithm to qudit systems* (2016) —
+  [arXiv:1609.03185](https://arxiv.org/abs/1609.03185)
 
 **Software**
 - Kissinger & van de Wetering, *PyZX*, EPTCS 318 (2020) — [arXiv:1904.04735](https://arxiv.org/abs/1904.04735)

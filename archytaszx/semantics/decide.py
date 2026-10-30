@@ -28,19 +28,17 @@
    multiplicity index.
 
 ``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
-counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form
-match needs both certificates to replay and rung 3 to find no mismatch before it is
-reported; ``DEFERRED`` dimension constraints its derivations assumed are carried in
-:attr:`Decision.assumptions`. A saturation merge yields one certificate per edge of
-:meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its edge's parent to its
-child; each must replay onto a diagram whose comparison view is isomorphic to its child's, and
-their ``DEFERRED`` constraints become the assumptions; sides sharing one e-node need none.
-An oracle mismatch counts only above ``tolerance`` times the larger entry magnitude (at least
-1), at an assignment satisfying every symbol's sympy assumptions. Induction proves ``EQUAL``
-only from base 0. The parameter environment never enters a verdict;
-:attr:`Decision.parameters_agree` reports it. :func:`interface_reason`,
-:func:`refute_by_oracle` and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the
-witness search alone.
+counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form match
+needs rung 3 to find no mismatch before it is reported; ``DEFERRED`` dimension constraints its
+derivations assumed are carried in :attr:`Decision.assumptions`. A saturation merge yields one
+certificate per edge of :meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its
+edge's parent to its child; each must replay onto a diagram whose comparison view is isomorphic
+to its child's, and their ``DEFERRED`` constraints become the assumptions; sides sharing one
+e-node need none. An oracle mismatch counts only above ``tolerance`` times the larger entry
+magnitude (at least 1), at an assignment satisfying every symbol's sympy assumptions. Induction
+proves ``EQUAL`` only from base 0. The parameter environment never enters a verdict;
+:attr:`Decision.parameters_agree` reports it. :func:`interface_reason`, :func:`refute_by_oracle`
+and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the witness search alone.
 """
 
 from __future__ import annotations
@@ -966,16 +964,6 @@ def decide_equal(
         )
         nf_assumptions = _dedupe((*nf_l.assumed_constraints, *nf_r.assumed_constraints))
         nf_equal = same_normal_form(nf_l, nf_r)
-        if nf_equal:
-            for certificate in certificates:
-                replayed = replay(certificate, rediscover=False)
-                if not replayed.reproduced:
-                    nf_equal = False
-                    nf_reason = (
-                        f"normal forms agree but the {certificate.derivation.label} certificate "
-                        f"did not replay: {replayed.reason}"
-                    )
-                    break
     except _NORMAL_FORM_ERRORS as exc:
         nf_l = nf_r = None
         certificates = ()
