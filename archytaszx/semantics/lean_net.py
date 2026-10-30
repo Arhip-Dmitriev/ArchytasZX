@@ -3240,6 +3240,47 @@ def _w_aso(c: _Ctx) -> _Spec:
     return _Spec((nodes["w1"], nodes["w2"]), [outer[0], inner[0]], lemma)
 
 
+def _kj_proof(c: _Ctx, ph: int, dz: int, j: int) -> str:
+    """A proof of ``∀ q < E.dimv dz, ex (E.phase ph q) = om (E.dimv dz) ^ (q * j)`` at a
+    concrete dimension: one ``ex_of`` per index."""
+    d_expr = c.ex.dim_exprs[dz]
+    _need(d_expr.is_Integer, "K_j phases at a concrete dimension")
+    d = int(d_expr)
+    entries, rule = c.ex.phase_specs[ph]
+    _need(rule is None, "K_j phases written entry by entry")
+    cases = ["· simp [E, Φ, ex_zero]"]
+    for q in range(1, d):
+        turns = sp.nsimplify(entries.get(q, sp.Integer(0)))
+        z = turns - sp.Rational(q * j, d)
+        _need(bool(z.is_Integer), f"phase at {q} is not {q * j}/{d} turns")
+        cases.append(
+            f"· exact ex_of {d} {q * j} ({int(z)}) (by norm_num) (by norm_num [E, Φ])"
+        )
+    body = "\n    ".join(cases)
+    return f"(by\n    intro q hq\n    simp only [E, Δ] at hq\n    interval_cases q\n    {body})"
+
+
+def _k_copy(c: _Ctx) -> _Spec:
+    m = c.match
+    nodes = dict(m.nodes)
+    st, sp_ = c.node(nodes["p"]), c.node(nodes["g"])
+    w = c.wire(m.wires[0])
+    _need(st.kind == "X" and st.outs == (w,) and not st.ins and sp_.ins == (w,), "K0 shape")
+    rs = [(nid, c.new_nodes[nid]) for nid in c.step.new_node_ids]
+    phs = {n.ph for _, n in rs}
+    _need(len(phs) == 1, "new states differ")
+    cph = phs.pop()
+    j = int(sp.Integer(dict(m.bindings)["j"]))
+    dz, n = st.dim, len(sp_.outs)
+    k, kt, hk = c.copy_scalar(dz, n)
+    lemma = (
+        f"kCopy {c.env} {st.ph} {sp_.ph} {cph} {dz} {w} {j} {_list(sp_.outs)} IFACE {kt} "
+        f"{_positive(c, dz)} {_chks(3)} {_kj_proof(c, st.ph, dz, j)} {_phaseless(c, sp_)} "
+        f"{_kj_proof(c, cph, dz, j)} {hk}"
+    )
+    return _Spec((nodes["p"], nodes["g"]), rs, lemma, k)
+
+
 _FORWARD: dict[str, str] = {
     "x_fusion_converse": "spider_fusion",
     "triangle_inverse_cancellation_ti_t_converse": "triangle_inverse_cancellation",
@@ -3359,7 +3400,7 @@ _RULES: dict[str, _RuleBuilder] = {
     "zxw_s2": _template(_identity, node_id="z"),
     "zxw_s2_pink": _template(_identity, node_id="p"),
     "zxw_ept": _template(_cap, state_id="p", effect_id="z", swapped=True),
-    "zxw_k0": _template(_state_copy, state_id="p", spider_id="g", swapped=False),
+    "zxw_k0": _k_copy,
     "zxw_bs0": _template(_fed_state, state_id="p", target_id="w"),
     "zxw_b2_converse": _template(_bialgebra, x_id="p", z_id="g", swapped=False),
     "zxw_bzw_converse": _template(_wz, z_id="g", w_id="w"),
