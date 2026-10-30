@@ -1,0 +1,14 @@
+# [P1] Lemma 43 (d = 3): the pink K_1 state into a W node with one output on the box 1 is the
+# box 1 state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}; w = W(1 -> 2, literal 3); b = Z(1 -> 0, literal 3) weight{1: 0, 2: 1}; p -> w; wire w.out0 -- b.in0
+    scalar 3^(-1/2)
+
+@rhs =
+    z = Z(0 -> 1, literal 3) weight{1: 0, 2: 1}
+
+load @lhs
+prove against @rhs
+certificate kernel

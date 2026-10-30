@@ -1,0 +1,12 @@
+# [P1] Lemma 16 (d = 3): D D is the identity.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = F(literal 3); a -> F(literal 3)^3
+
+@rhs =
+    z = Z(1 -> 1, literal 3)
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,295 @@
+LEMMAS OF [P1]
+==============
+
+paper.pdf and src/ below are in references/poor2023zxw/ (downloaded, not tracked).
+
+Source: [P1], Appendix A.1 "Lemmas and Proofs" (PDF pages 23-35), src/lemmas.tex. Lemmas 1-6
+and 48 belong to the completeness proof (normal forms, PDF pages 35-44); they state rewriting
+procedures, not single diagram equations, and are listed at the end.
+
+Each entry: number (as printed), LaTeX label, statement figure (src/figures/), side
+conditions as stated, proof figure, and the step labels of the proof as the PDF prints them
+above its equality signs: an axiom name, a notation's definition (HZ, Du, Mu, WN, YT, S3, S4,
+H dagger), or the number of an earlier lemma. "encoded" names the engine command file holding
+the lemma at a fixed dimension, run by the corpus run (docs/COMPLETENESS.txt, section 9).
+
+Lemma 7  label kjgalm
+    statement figure(s): lemmas/kjga
+    text: [figure] where $\overrightarrow{a}=(a_1,\cdots, a_{d-1})$, $j \in \{ 1,\cdots,
+      d-1\}.$
+    proof figure(s): lemmas/kjgaprf
+    steps of the proof (labels as printed): AD, Bsj, S1, 7, K0
+    encoded: examples/completeness/lemmas/p1_lemma07.azx (d = 3)
+
+Lemma 8  label scalargeneralmultlm
+    statement figure(s): lemmas/scalargeneralmult
+    proof figure(s): lemmas/scalargeneralmultprf
+    steps of the proof (labels as printed): none printed
+    encoded: examples/completeness/lemmas/p1_lemma08.azx (d = 3)
+
+Lemma 9  label zeroemptyditlm
+    statement figure(s): lemmas/zeroemptydit
+    proof figure(s): lemmas/zeroemptyditprf
+    steps of the proof (labels as printed): S1, Zer, Ept
+    encoded: examples/completeness/lemmas/p1_lemma09.azx (d = 3)
+
+Lemma 10  label scalarinverseditlm
+    statement figure(s): lemmas/scalarinversedit
+    text: Suppose $a \neq 0$. Then [figure]
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): none printed; cites Lemmas 8 and 9.
+    encoded: examples/completeness/lemmas/p1_lemma10.azx (d = 3)
+
+Lemma 11  label hilm
+    statement figure(s): lemmas/h1scalar
+    proof figure(s): lemmas/h1scalarprf
+    steps of the proof (labels as printed): S2, HZ, 9
+    encoded: examples/completeness/lemmas/p1_lemma11.azx (d = 3)
+
+Lemma 12  label hheqhdhd
+    statement figure(s): lemmas/hheqhdhd
+    proof figure(s): lemmas/hheqhdhdpf
+    steps of the proof (labels as printed): 11
+    encoded: examples/completeness/lemmas/p1_lemma12.azx (d = 3)
+
+Lemma 13  label s4lm
+    statement figure(s): lemmas/redspider0pfusedit2
+    text: \begin{gather} [figure] \tag{S4} \end{gather}
+    proof figure(s): lemmas/redspider0pfusedit2prf
+    steps of the proof (labels as printed): HZ, S1, 8, 11
+    encoded: examples/completeness/lemmas/p1_lemma13.azx (d = 3)
+
+Lemma 14  label redspiderforgrlm
+    statement figure(s): lemmas/redspiderforgr
+    text: \begin{gather} [figure] \tag{HX} \end{gather} where $v_{m,n}=
+      d^{\frac{-m-n+2}{2}}-1$, $j \in \{ 0,1,\cdots, d-1\}$. We also call this
+      equality~\eqref{rule:HX}.
+    proof figure(s): lemmas/redspiderforgrprf-1, lemmas/redspiderforgrprf-2
+    steps of the proof (labels as printed): HZ, H1, 10, 11
+    encoded: no
+
+Lemma 15  label b3quditlm
+    statement figure(s): lemmas/b3qudit
+    text: \begin{gather} [figure] \tag{B3} \end{gather}
+    proof figure(s): lemmas/b3quditprf
+    steps of the proof (labels as printed): HZ, 11, K0, HX
+    encoded: examples/completeness/lemmas/p1_lemma15.azx (d = 3)
+
+Lemma 16  label hcubiclm
+    statement figure(s): lemmas/hcubic
+    text: % % [figure] %
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): P1, 12, 11
+    encoded: examples/completeness/lemmas/p1_lemma16.azx (d = 3)
+
+Lemma 17  label dboxsquarelm
+    statement figure(s): lemmas/dboxsquare
+    proof figure(s): lemmas/dboxsquareprf
+    steps of the proof (labels as printed): P1, H1, 11
+    encoded: examples/completeness/lemmas/p1_lemma17.azx (d = 3)
+
+Lemma 18  label dboxgdotlm
+    statement figure(s): lemmas/dboxgdot
+    proof figure(s): lemmas/dboxgdotprf
+    steps of the proof (labels as printed): Du, 16, S1, S4, 18a, S2
+    encoded: no
+
+Lemma 19  label dualiserslm
+    statement figure(s): lemmas/dualisers
+    proof figure(s): lemmas/dualisersprf-1, lemmas/dualisersprf-2, lemmas/dualisersprf-3
+    steps of the proof (labels as printed): 11, HZ, S2, 9, 18, S1, P1
+    encoded: no
+
+Lemma 20  label hadslidegnlm
+    statement figure(s): lemmas/hadslidegn-1, lemmas/hadslidegn-2
+    text: \begin{align*} &\scalebox{.9}{ [figure] } \\ &\scalebox{.9}{ [figure] }
+      \end{align*}
+    proof figure(s): lemmas/hadslidegnprf
+    steps of the proof (labels as printed): P1, 19
+    encoded: no
+
+Lemma 21  label dboxslidegrnlm
+    statement figure(s): lemmas/dboxslidegrn-1, lemmas/dboxslidegrn-2
+    text: \begin{align*} &[figure]\\ &[figure] \end{align*}
+    proof figure(s): lemmas/dboxslidegrnprf
+    steps of the proof (labels as printed): none printed; cites Lemmas 16 and 20.
+    encoded: no
+
+Lemma 22  label dboxbell
+    statement figure(s): lemmas/dboxbell-1, lemmas/dboxbell-2
+    text: \begin{align*} &[figure] \\ &[figure] \end{align*}
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): S1, 18, 19
+    encoded: no
+
+Lemma 23  label swaprgcapcupditlm
+    statement figure(s): lemmas/swaprgcapcupdit
+    proof figure(s): lemmas/swaprgcapcupditprf
+    steps of the proof (labels as printed): none printed
+    encoded: examples/completeness/lemmas/p1_lemma23.azx (d = 3)
+
+Lemma 24  label grconnectkslm
+    statement figure(s): lemmas/grconnectks
+    proof figure(s): lemmas/grconnectksprf
+    steps of the proof (labels as printed): 18, S1, S4
+    encoded: no
+
+Lemma 25  label controlnotslideditlm
+    statement figure(s): lemmas/controlnotslidedit-1, lemmas/controlnotslidedit-2
+    text: \begin{align*} &[figure] \\ &[figure] \end{align*}
+    proof figure(s): lemmas/controlnotslideditprf
+    steps of the proof (labels as printed): S4, S3, S1, 18, 20
+    encoded: no
+
+Lemma 26  label xdualiserlm
+    statement figure(s): lemmas/xdualiser-1, lemmas/xdualiser-2
+    text: \begin{align*} &[figure]\\ &[figure] \end{align*}
+    proof figure(s): lemmas/xdualiserpf-1, lemmas/xdualiserpf-2
+    steps of the proof (labels as printed): S1, 18, 25, 17, D1, S2
+    encoded: no
+
+Lemma 27  label slidecupditlm
+    statement figure(s): lemmas/slidecupdit-1, lemmas/slidecupdit-2
+    text: \begin{align*} &[figure]\\ &[figure] \end{align*} where
+      $\overleftarrow{a}=(a_{d-1}, \cdots, a_1)$.
+    proof figure(s): lemmas/slidecupditprf-1, lemmas/slidecupditprf-2
+    steps of the proof (labels as printed): S4, B3, 26, S1, K0
+    encoded: no
+
+Lemma 28  label copyvarsditlm
+    statement figure(s): lemmas/copyvarsdit
+    proof figure(s): lemmas/copyvarsditprf-1, lemmas/copyvarsditprf-2
+    steps of the proof (labels as printed): S1, Zer, 27, K0
+    encoded: examples/completeness/lemmas/p1_lemma28.azx (d = 3)
+
+Lemma 29  label spider0tordotslm
+    statement figure(s): lemmas/spider0tordots
+    proof figure(s): lemmas/spider0tordotsprf
+    steps of the proof (labels as printed): S1, S4, P1, 22, B2, 27, Ept, 23
+    encoded: examples/completeness/lemmas/p1_lemma29.azx (d = 3)
+
+Lemma 30  label hopfditlm
+    statement figure(s): lemmas/hopfdit
+    text: \begin{gather} [figure] \tag{Hopf} \end{gather}
+    proof figure(s): lemmas/hopfditprf-1, lemmas/hopfditprf-2
+    steps of the proof (labels as printed): S1, P1, Du, S4, Hopf, 24
+    encoded: no
+
+Lemma 31  label redgreenmchangelm
+    statement figure(s): lemmas/redgreenmchange
+    text: [figure] where $1 \leq k \leq d-1$.
+    proof figure(s): lemmas/redgreenmchangeprf
+    steps of the proof (labels as printed): B2, S1, Mu
+    encoded: examples/completeness/lemmas/p1_lemma31.azx (d = 3)
+
+Lemma 32  label multiplierpushlm
+    statement figure(s): lemmas/multipliers/multiplier-push, lemmas/multipliers/multiplier-push-dual
+    text: Suppose $x \in \{0, \dotsc, d - 1 \}$. Then [figure] \qquad \qquad [figure]
+    proof figure(s): lemmas/multipliers/multiplier-push-proof
+    steps of the proof (labels as printed): Mu, B2, S1
+    encoded: examples/completeness/lemmas/p1_lemma32.azx (d = 3)
+
+Lemma 33  label multipliermultlm
+    statement figure(s): lemmas/multipliers/multiplier-mult
+    text: Suppose $x, y \in \{0, \dotsc, d - 1 \}$. Then [figure]
+    proof figure(s): lemmas/multipliers/multipliermultprf
+    steps of the proof (labels as printed): P1; cites Lemmas 32.
+    encoded: examples/completeness/lemmas/p1_lemma33.azx (d = 3)
+
+Lemma 34  label multiplieraddlm
+    statement figure(s): lemmas/multipliers/multiplier-add
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): S4, Mu
+    encoded: no
+
+Lemma 35  label dualisermultipliermultlm
+    statement figure(s): lemmas/multipliers/dualiser-multiplier-mult
+    text: Suppose $x \in \{0, \dotsc, d - 1 \}$. Then [figure]
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): P1; cites Lemmas 23 and 31.
+    encoded: no
+
+Lemma 36  label dboxgcopylm
+    statement figure(s): lemmas/dboxgcopy
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): S4, 25, 24, 35, 16
+    encoded: no
+
+Lemma 37  label xtransposelm
+    statement figure(s): lemmas/xtranspose
+    proof figure(s): lemmas/xtransposepf
+    steps of the proof (labels as printed): Sym, 18, Hopf, 16, S2, S4, P1, 35, 25, TA, BZW,
+      S3, S1, YT
+    encoded: no
+
+Lemma 38  label wdecomplm
+    statement figure(s): lemmas/wdecomp
+    proof figure(s): lemmas/wdecompprf-0, lemmas/wdecompprf-1, lemmas/wdecompprf-2
+    steps of the proof (labels as printed): 37, K0, Zer, AD, S4, YT, S1, S2
+    encoded: examples/completeness/lemmas/p1_lemma38.azx (d = 3)
+
+Lemma 39  label wunitlm
+    statement figure(s): lemmas/wunit
+    proof figure(s): lemmas/wunitprf
+    steps of the proof (labels as printed): TA, BZW, WN, S4
+    encoded: examples/completeness/lemmas/p1_lemma39.azx (d = 3)
+
+Lemma 40  label trialgbzwlm
+    statement figure(s): lemmas/trialgbzw
+    text: Suppose $m\geq 2$. Then [figure]
+    proof figure(s): lemmas/trialgbzwprf
+    steps of the proof (labels as printed): BZW; cites Lemmas 39.
+    encoded: no
+
+Lemma 41  label trialgebraallconnectionlm
+    statement figure(s): lemmas/trialgebraallconnection
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): WN; cites Lemmas 40
+    encoded: no
+
+Lemma 42  label gerneraltrialgebralm
+    statement figure(s): lemmas/gerneraltrialgebra
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): S1, 40, AD, 36, S3, BZW
+    encoded: no
+
+Lemma 43  label 2wadditionlm
+    statement figure(s): lemmas/2waddition
+    proof figure(s): lemmas/2wadditionprf-0, lemmas/2wadditionprf-1, lemmas/2wadditionprf-2
+    steps of the proof (labels as printed): 7, K0, S1, Pcy
+    encoded: examples/completeness/lemmas/p1_lemma43.azx (d = 3)
+
+Lemma 44  label K1Wgbox1lm
+    statement figure(s): lemmas/K1Wgbox1
+    proof figure(s): lemmas/K1Wgbox1prf
+    steps of the proof (labels as printed): WN, S3, S1
+    encoded: no
+
+Lemma 45  label wtransposelm
+    statement figure(s): lemmas/wtranspose
+    proof figure(s): (text only)
+    steps of the proof (labels as printed): VA, ZV, S1
+    encoded: no
+
+Lemma 46  label zbox-single-decompositionlm
+    statement figure(s): lemmas/zbox-single-decomposition
+    text: For $\overrightarrow{a} = (a_1, a_2, \, \ldots \, , a_{d - 1})$, we have [figure]
+    proof figure(s): lemmas/zbox-single-decompositionprf
+    steps of the proof (labels as printed): VA, VW, ZV
+    encoded: no
+
+Lemma 47  label zbox-double-decompositionlm
+    statement figure(s): lemmas/zbox-double-decomposition
+    text: For $\overrightarrow{a} = (a_1, a_2, \, \ldots \, , a_{d - 1})$ and
+      $\overrightarrow{b} = (b_1, b_2, \, \ldots \, , b_{d - 1})$, we have [figure]
+    proof figure(s): lemmas/zbox-double-decompositionprf
+    steps of the proof (labels as printed): Sym, VB, WN, VA, Pcy, S1, S4, Mu, MB, 36, 41,
+      BZW, d-1, HD, 47, 31; cites Lemmas 4
+    encoded: no
+
+Lemma 1, 2, 3, 4, 5, 6, 48 (completeness proof)
+    Lemma 1: any normal form can be rewritten into its unique form. Lemmas 2-6: the Z box,
+    the W node, the Hadamard box, the partial trace and the tensor product of normal forms
+    rewrite into normal form. Lemma 48: used in the proof of Lemma 4. Their proofs are
+    rewriting procedures over arbitrary diagrams; they are the argument of the completeness
+    theorem itself, and are not encoded as single equations.

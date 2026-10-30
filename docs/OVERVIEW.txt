@@ -84,6 +84,12 @@ incomplete: "equal" is reported only with a proof, "unequal" only with a counter
 everything else is "unknown". The same holds for scalars and phases, whose equality tests
 report "not equal" whenever equality cannot be verified.
 
+The rule system itself is complete where [P1] and [P2] are: for diagrams without bang boxes at
+concrete dimensions, any two that denote the same map are joined by a derivation from the
+registered rules (COMPLETENESS.txt). That is derivability, not decision: the decision
+procedures above stay sound and incomplete, and the exhaustive mode of prove searches for
+such derivations without bound.
+
 4.5 Every proof can be re-checked
 
 A derivation is recorded step by step with full provenance. A certificate replays it from the
@@ -119,7 +125,11 @@ certificate and into the Lean theorem as hypotheses.
   - The dimension unifier defers equations with several solution branches, such as
     d1*d2 == 6 or d^n == d^m; such equalities become recorded assumptions.
   - A rule restricted to prime dimensions does not fire at a symbolic dimension.
-  - Some proof steps have no Lean lemma yet; they are listed in LEAN_GAPS.txt.
+  - Some proof steps have no Lean lemma yet; they are listed in LEAN_GAPS.txt. This includes
+    every rule of the complete axiomatisation (COMPLETENESS.txt) and every spider with
+    complex weights.
+  - The completeness of the rule system holds at concrete dimensions without bang boxes; the
+    exhaustive search may not return on inputs it cannot join.
   - The Python API is not yet stable between releases.
 
 

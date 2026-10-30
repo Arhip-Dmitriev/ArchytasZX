@@ -1,0 +1,440 @@
+LEMMAS OF [P2]
+==============
+
+paper.pdf and src/ below are in references/wang2023qufinitezxw/ (downloaded, not tracked).
+
+Source: [P2], Appendix A (PDF pages 26-55), src/lemmas.tex. Numbering as printed (A.1-A.80);
+the source holds further lemma environments that the printed paper does not number.
+
+Each entry: number, the printed statement text with its diagrams omitted (the diagrams are in
+the PDF and in src/), and the step labels of its proof as the PDF prints them. Lemmas A.3 and A.5
+are encoded; lemmas whose proof is a [P1] lemma's say so.
+
+Lemma A.1
+    statement text (figures omitted): [Wan22] Kj = − → a (0, · · · , ad-j -1, · · · , 0) 1
+      d-j d-1 → where − a = (a1 , · · · , ad−1 ), j ∈ {1, · · · , d − 1}.
+    steps of the proof (labels as printed): none printed; cites Lemmas 7
+    encoded: no; the proof is [P1] Lemma 7's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.2
+    statement text (figures omitted): [Wan22] ····· +
+    steps of the proof (labels as printed): none printed; cites Lemmas 9
+    encoded: no
+
+Lemma A.3
+    statement text (figures omitted): K1 K1 = 1
+    steps of the proof (labels as printed): S1, K0
+    encoded: examples/completeness/lemmas/p2_lemmaA03.azx (d = 3)
+
+Lemma A.4
+    statement text (figures omitted): [Wan22] n s n s ··· ··· ··· ··· Kj Ki = m ··· = n+s
+      ··· ··· ··· ··· = Ki+j Ki+j Kj Ki ··· n+s ··· t ··· m ··· t
+    steps of the proof (labels as printed): S4; cites Lemmas 13
+    encoded: no; the proof is [P1] Lemma 13's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.5
+    steps of the proof (labels as printed): none printed; cites Lemmas 22
+    encoded: examples/completeness/lemmas/p2_lemmaA05.azx (d = 3)
+
+Lemma A.6
+    statement text (figures omitted): ··· ···
+    steps of the proof (labels as printed): none printed; cites Lemmas 23
+    encoded: no
+
+Lemma A.7
+    statement text (figures omitted): D D =
+    steps of the proof (labels as printed): none printed; cites Lemmas 16
+    encoded: no; the proof is [P1] Lemma 16's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.8
+    statement text (figures omitted): D D = =
+    steps of the proof (labels as printed): none printed; cites Lemmas 17
+    encoded: no; the proof is [P1] Lemma 17's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.9
+    statement text (figures omitted): = D D = D D
+    steps of the proof (labels as printed): none printed; cites Lemmas 20; 31
+    encoded: no; the proof is [P1] Lemma 20's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.10
+    statement text (figures omitted): Suppose x ∈ {0, . . . , d − 1}. Then 27 28 Q. WANG, B.
+      POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.11
+    statement text (figures omitted): Suppose x, y ∈ {0, . . . , d − 1}. Then
+    steps of the proof (labels as printed): none printed; cites Lemmas 32; 33
+    encoded: no; the proof is [P1] Lemma 32's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.12
+    statement text (figures omitted): x x x = x = x x
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.13
+    statement text (figures omitted): Suppose x ∈ {0, . . . , d − 1}. Then -x = x x D = D
+    steps of the proof (labels as printed): none printed; cites Lemmas 34
+    encoded: no; the proof is [P1] Lemma 34's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.14
+    statement text (figures omitted): D = = D D D D D = D = D D D D D
+    steps of the proof (labels as printed): none printed; cites Lemmas 35
+    encoded: no; the proof is [P1] Lemma 35's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.15
+    statement text (figures omitted): Kj n Kn·j =
+    steps of the proof (labels as printed): Mu, 6, S4
+    encoded: no
+
+Lemma A.16
+    statement text (figures omitted): ··· = ··· = ···
+    steps of the proof (labels as printed): none printed; cites Lemmas 36
+    encoded: no; the proof is [P1] Lemma 36's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.17
+    statement text (figures omitted): ··· ··· = ··· ··· ··· D D
+    steps of the proof (labels as printed): none printed; cites Lemmas 48
+    encoded: no; the proof is [P1] Lemma 48's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.18
+    statement text (figures omitted): =
+    steps of the proof (labels as printed): none printed; cites Lemmas 37
+    encoded: no; the proof is [P1] Lemma 37's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.19
+    statement text (figures omitted): =
+    steps of the proof (labels as printed): none printed; cites Lemmas 38
+    encoded: no; the proof is [P1] Lemma 38's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.20
+    statement text (figures omitted): K1 K1 = 1 COMPLETENESS OF QUFINITE ZXW CALCULUS 29
+    steps of the proof (labels as printed): K0, Bsj, S4, S1
+    encoded: no
+
+Lemma A.21
+    statement text (figures omitted): Kj ··· = ··· Kj
+    steps of the proof (labels as printed): none printed; cites Lemmas 44
+    encoded: no; the proof is [P1] Lemma 44's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.22
+    statement text (figures omitted): K1 -2 -2 -2 ad-1 1 1 1 a2 -1 -1 -1 = ··· ··· a1 1 − →
+      a ···
+    steps of the proof (labels as printed): none printed; cites Lemmas 1
+    encoded: no; the proof is [P1] Lemma 1's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.23
+    statement text (figures omitted): 1 1 1 ··· -1 -1 -1 -1 -2 -2 -2 -2 = 1 1 1 -(d-1)
+      -(d-1) 1 -(d-1) -(d-1) K1
+    steps of the proof (labels as printed): none printed; cites Lemmas 2
+    encoded: no; the proof is [P1] Lemma 2's (see poor2023zxw/LEMMAS.txt)
+
+Lemma A.24
+    statement text (figures omitted): n x·Tk x·Tn·k =
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.25
+    statement text (figures omitted): D D = D
+    steps of the proof (labels as printed): d-1; cites Lemmas 1
+    encoded: no
+
+Lemma A.26
+    statement text (figures omitted): 1 ··· ··· = ··· ⇐⇒ ··· ek K1 e1 ··· ek e1 D = K1 ···
+      COMPLETENESS OF QUFINITE ZXW CALCULUS 31
+    steps of the proof (labels as printed): LHS, Pcy, WN, RHS, S4, S2
+    encoded: no
+
+Lemma A.27
+    statement text (figures omitted): = (Bs0)
+    steps of the proof (labels as printed): WN, WW, K0, WF, Ept
+    encoded: no
+
+Lemma A.28
+    statement text (figures omitted): 0 = (Zer) -ek K1 ek K1 K1 1 32 Q. WANG, B. POÓR, AND
+      R. A. SHAIKH
+    steps of the proof (labels as printed): Bsj, Bs0, Ept
+    encoded: no
+
+Lemma A.29
+    statement text (figures omitted): . n. . . n. . = 0 .m. . .m. .
+    steps of the proof (labels as printed): S1, K0
+    encoded: no
+
+Lemma A.30
+    statement text (figures omitted): Kj = (K1) Kj ··· Kj ···
+    steps of the proof (labels as printed): S4, B2, K0
+    encoded: no
+
+Lemma A.31
+    statement text (figures omitted): − → a → where − a− d−1 = (ad−1 , ad−1 , . . . , ad−1
+      ). ··· −−→ a d-1 1 -1 1 = (ZV) COMPLETENESS OF QUFINITE ZXW CALCULUS 33
+    steps of the proof (labels as printed): Mu, K2, Pcy, S1, Bsj, WF, VA, S4, HZ, K0, Ept
+    encoded: no
+
+Lemma A.32
+    statement text (figures omitted): 1 ... ad-1 (VA) 1 -1 1 -1 ... = -0 a1 -0 1 − → a
+    steps of the proof (labels as printed): Pcy, ZV
+    encoded: no
+
+Lemma A.33
+    statement text (figures omitted): ... d-1 1 ... d-1 = 1 ... 1 d-1 1 1 (VW) 34 Q. WANG,
+      B. POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): BZW, MW, Pcy, WW, TA, WF, K0, HZ
+    encoded: no
+
+Lemma A.34
+    statement text (figures omitted): K1 1 d ... K1 K0 1 ... ... ... d 1 √ d 1 = d H Kd-1
+      (A.1) COMPLETENESS OF QUFINITE ZXW CALCULUS 35
+    steps of the proof (labels as printed): K2, VA, Pcy, -1, S4, HD, S1, S2, D1, Ept, B2,
+      K0, K1, Zer, P1, H1, Sym, BZW, Ad, AD, Aso, WF, WW, Bs0, Bsj, TA, ZV, VW, KZ; cites
+      Lemmas A.5; A.1 and L; A.5; A.39 and L
+    encoded: no
+
+Lemma A.35
+    statement text (figures omitted): m − → a n n m = m − → a n n (Pcy) m − → a n
+    steps of the proof (labels as printed): S1, BZW
+    encoded: no
+
+Lemma A.36
+    statement text (figures omitted): Suppose m ≥ 2. Then m l m l = n ··· n n ··· n − → a n
+      − → a n m − → a n COMPLETENESS OF QUFINITE ZXW CALCULUS 37
+    steps of the proof (labels as printed): 3, 2, WN, TA, S4, BZW
+    encoded: no
+
+Lemma A.37
+    statement text (figures omitted): m l m l = n · · ·n · · ·n n · · ·n · · ·n
+    steps of the proof (labels as printed): 2; cites Lemmas A.36.
+    encoded: no
+
+Lemma A.38
+    statement text (figures omitted): m1 · · · mk · · · mj m1 · · · mk · · · mj = n · · ·n ·
+      · ·n · · ·n · · ·n n · · ·n · · ·n · · ·n · · ·n
+    steps of the proof (labels as printed): WN; cites Lemmas A.37
+    encoded: no
+
+Lemma A.39
+    statement text (figures omitted): 1 D d ... e1 n m1 d n ... ... ek d d mk = (KZ) m1 ...
+      mk 38 Q. WANG, B. POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): K0, TA, Bs0, S1, S4, Pcy, Mu, D1
+    encoded: no
+
+Lemma A.40
+    statement text (figures omitted): m m m − → a 1 ··· = − → a s ··· − → a 1 = − → a s s P
+      − → a i i=1 n n n
+    steps of the proof (labels as printed): 1; cites Lemmas A.38. T; 42
+    encoded: no
+
+Lemma A.41
+    statement text (figures omitted): mn −→ 1m mn mn k = m kn n m mn −→ 1m mn mn
+    steps of the proof (labels as printed): S1, DZX, Mu
+    encoded: no
+
+Lemma A.42
+    statement text (figures omitted): klm klm lm k m l kl = k m l
+    steps of the proof (labels as printed): S1, DZX, DD
+    encoded: no
+
+Lemma A.43
+    statement text (figures omitted): mn mn m = n m
+    steps of the proof (labels as printed): S2, S4, K0, DD
+    encoded: no
+
+Lemma A.44
+    statement text (figures omitted): klm lm l m klm = klm klm l m m
+    steps of the proof (labels as printed): 5, DAS, S1, DD
+    encoded: no
+
+Lemma A.45
+    statement text (figures omitted): = m1 · · · mk where Πj = k Y mi i=j+1 Π1 m for 1 ≤ j ≤
+      k − 1, ··· ℓm ··· m1 Πk := 1, Πk ℓm ℓm ℓm mk and m= k Y mi . i=1
+    steps of the proof (labels as printed): S4; cites Lemmas A.44. T
+    encoded: no
+
+Lemma A.46
+    statement text (figures omitted): m1 · · · mk = m m1 ··· ··· Πk m Π1 m m mk
+    steps of the proof (labels as printed): 3, SD; cites Lemmas A.45
+    encoded: no
+
+Lemma A.47
+    statement text (figures omitted): mn −→ 1m mn mn − → 1n mn n mn −→ 1m = n mn mn − → 1n
+      mn mn −→ 1m mn mn mn − → 1n mn
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.48
+    statement text (figures omitted): m n m n = mn m n
+    steps of the proof (labels as printed): DD, S1
+    encoded: no
+
+Lemma A.49
+    statement text (figures omitted): K-j K-i m K-(ni+j) n = mn where 0 ≤ i ≤ m − 1, mn 0 ≤
+      j ≤ n − 1.
+    steps of the proof (labels as printed): DD, K0, S4
+    encoded: no
+
+Lemma A.50
+    statement text (figures omitted): mn m = n m n
+    steps of the proof (labels as printed): UT1
+    encoded: no
+
+Lemma A.51
+    statement text (figures omitted): K1 mn m = n K1 K1 n m
+    steps of the proof (labels as printed): m-1, n-1, UT1
+    encoded: no
+
+Lemma A.52
+    statement text (figures omitted): mn n m mn =
+    steps of the proof (labels as printed): S1, DD
+    encoded: no
+
+Lemma A.53
+    statement text (figures omitted): K1 K1 mn m = n m
+    steps of the proof (labels as printed): DC1
+    encoded: no
+
+Lemma A.54
+    statement text (figures omitted): 1 mn m K1 n = n K-1
+    steps of the proof (labels as printed): K0, DD, m-1, S4, S1
+    encoded: no
+
+Lemma A.55
+    statement text (figures omitted): m m = mn n m
+    steps of the proof (labels as printed): UT1, DD, K0, S4, S2
+    encoded: no
+
+Lemma A.56
+    statement text (figures omitted): n n mn −→ 1m mn mn − → 1n mn mn 1 = -k -mtk -nsk mn −→
+      1m mn m n 1 mn mn − → 1n mn mn mn
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.57
+    statement text (figures omitted): mn mn 1 m -k = -tk -sk 1 n mn mn
+    steps of the proof (labels as printed): DD
+    encoded: no
+
+Lemma A.58
+    statement text (figures omitted): mn mn 1 1 = n -tk -sk -k m m n
+    steps of the proof (labels as printed): UT1
+    encoded: no
+
+Lemma A.59
+    statement text (figures omitted): mn 1 1 D mn = D m D n m n -tk -tk -k = -sk 1 (A.57) 1
+      -k m -mtk mn -nsk mn -tk 1 mn − → 1n mn mn −→ 1m mn n mn m n 1 mn n COMPLETENESS OF
+      QUFINITE ZXW CALCULUS 45
+    steps of the proof (labels as printed): S1, DD, MS
+    encoded: no
+
+Lemma A.60
+    statement text (figures omitted): mn 1 1 D mn = m m D n n D
+    steps of the proof (labels as printed): none printed; cites Lemmas A.7 and L
+    encoded: no
+
+Lemma A.61
+    statement text (figures omitted): mn 1 mn a 1 = n a m mn = n m n m a
+    steps of the proof (labels as printed): D1, S1
+    encoded: no
+
+Lemma A.62
+    statement text (figures omitted): 1 m 1 = m1 · · · mk mn a D D m D D m1 · · · mk n D D
+      mn = a (A.60) = m n n mn 46 Q. WANG, B. POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): SD, D1, S1; cites Lemmas A.60. T
+    encoded: no
+
+Lemma A.63
+    statement text (figures omitted): mn m mn mn m n = n
+    steps of the proof (labels as printed): S1, B2, DD
+    encoded: no
+
+Lemma A.64
+    statement text (figures omitted): mn n m = mn mn
+    steps of the proof (labels as printed): SD, S2, BZD, S1
+    encoded: no
+
+Lemma A.65
+    statement text (figures omitted): dm d n mn COMPLETENESS OF QUFINITE ZXW CALCULUS 47
+    steps of the proof (labels as printed): S1
+    encoded: no
+
+Lemma A.66
+    statement text (figures omitted): dm d ··· d dm = a a d ··· d dm dm dm a (S1) d ··· d d
+      a d = d ··· d dm dm (A.65) (S1) d a d = = a·Td-1 dm dm d ··· d dm dm (A.10) dm dm -1
+      d-1 d ··· d = a·Td-1 dm -1 d-1 dm dm -1 d-1 dm -1 d-1
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.67
+    statement text (figures omitted): dm dm a ··· = ··· d d a ··· d d
+    steps of the proof (labels as printed): UT1
+    encoded: no
+
+Lemma A.68
+    statement text (figures omitted): m n mn m n = mn m n m n
+    steps of the proof (labels as printed): BZD, S1, UT1, S3, SD
+    encoded: no
+
+Lemma A.69
+    statement text (figures omitted): mn mn = m n m m n n
+    steps of the proof (labels as printed): SD, S3, S1
+    encoded: no
+
+Lemma A.70
+    statement text (figures omitted): d2 d2 1 d 1 d = d d
+    steps of the proof (labels as printed): DZS, S1
+    encoded: no
+
+Lemma A.71
+    statement text (figures omitted): 1 mn m n = n 1 mn m
+    steps of the proof (labels as printed): 1, S2; cites Lemmas A.60 and R
+    encoded: no
+
+Lemma A.72
+    statement text (figures omitted): mn mn 1 1 m n m n 1 mn = m m n
+    steps of the proof (labels as printed): S1
+    encoded: no
+
+Lemma A.73
+    statement text (figures omitted): 1 1 1 1 mn mn = mn m n m n
+    steps of the proof (labels as printed): Pcy, BZW
+    encoded: no
+
+Lemma A.74
+    statement text (figures omitted): mn mn = m n (A.25) mn 1 = mn m D mn m n m n m n n 50
+      Q. WANG, B. POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): Pcy, S1
+    encoded: no
+
+Lemma A.75
+    statement text (figures omitted): d d = d a+b d b d2 1 a d2 1
+    steps of the proof (labels as printed): none printed
+    encoded: no
+
+Lemma A.76
+    statement text (figures omitted): m m m a1 ··· ··· m1 ··· ak ··· a1 = mj ··· ··· m1 ak =
+      ··· ··· k P ai i=0 m1 mj mj
+    steps of the proof (labels as printed): S1, D1
+    encoded: no
+
+Lemma A.77
+    statement text (figures omitted): K1 ··· ··· ek e1 mn n K1 = mn n mn ··· m
+    steps of the proof (labels as printed): Pcy, WN, KZ, d-1
+    encoded: no
+
+Lemma A.78
+    statement text (figures omitted): ··· m n where d = mn.
+    steps of the proof (labels as printed): d-1, S1, DD, DZX
+    encoded: no
+
+Lemma A.79
+    statement text (figures omitted): K1 K1 d dm = ··· ··· ··· dm ··· dm dm dm
+    steps of the proof (labels as printed): Pcy, BWD, S1, DZS, BZW, K0
+    encoded: no
+
+Lemma A.80
+    statement text (figures omitted): K1 K1 d2 d d d ··· d d ··· = d d d d ··· d d ··· d d
+      which is equivalent to K1 K1 d d2 ··· d where d = mn. m n = ··· d m n d m n ··· d m n
+      ··· d m n d m n d 1 ··· dm 54 Q. WANG, B. POÓR, AND R. A. SHAIKH
+    steps of the proof (labels as printed): UT1, DZS, S1, d-1, Pcy, S3; cites Lemmas 3.9. I;
+      3.17
+    encoded: no

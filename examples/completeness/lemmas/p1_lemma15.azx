@@ -1,0 +1,14 @@
+# [P1] Lemma 15, (B3) (d = 3): the plain green state into the pink dot (1 -> 2) is two plain
+# green states.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(0 -> 1, literal 3); p = X(1 -> 2, literal 3); g -> p
+    scalar 3^(1/2)
+
+@rhs =
+    a = Z(0 -> 1, literal 3); b = Z(0 -> 1, literal 3)
+
+load @lhs
+prove against @rhs
+certificate kernel

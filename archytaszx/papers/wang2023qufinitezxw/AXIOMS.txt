@@ -1,0 +1,149 @@
+AXIOMS OF THE QUFINITE ZXW-CALCULUS
+===================================
+
+paper.pdf and src/ below are in references/wang2023qufinitezxw/ (downloaded, not tracked).
+
+Source: [P2] Q. Wang, B. Poor, R. A. Shaikh, "Completeness of qufinite ZXW calculus, a
+graphical language for finite-dimensional quantum theory", arXiv:2309.13014 (paper.pdf,
+67 pages; LaTeX source in src/). Section 2.4 "Complete set of rules": equations (2.9),
+(2.10), Figure 1 (qudit part) and Figure 2 (mixed-dimensional part), PDF pages 8-10.
+
+Read from: the rendered PDF pages 4-10 at 220 and 400 dpi; src/axioms-table.tex.
+
+
+1. CONVENTIONS OF THE PAPER
+---------------------------
+
+As in [P1] (../poor2023zxw/AXIOMS.txt, section 1): read top to bottom, Z box with arbitrary
+complex parameter a, a_0 := 1; H; W node (1 -> 2); swap; identity. Additional generator:
+
+  dimension splitter, input of dimension de, outputs d and e:
+      sum_{i<d} sum_{j<e} |i, j><i e + j|
+  dimension merger: its transpose (2.8).
+
+Notations that differ from or extend [P1]:
+
+  K_j                 here the parameter vector (e^{ij 2pi/d}, ..., e^{i(d-1)j 2pi/d}); the
+                      pink K_j spider is as in [P1] (HZ). Pink K_j effect = <j|, pink K_j
+                      state = |d - j>.
+  T_j (0 <= j < d)    the vector with a single 1 at index j (T_0 = 0 vector).
+  1_k                 (1, ..., 1, 0, ..., 0) with k-1 ones.
+  W node, 0 outputs   pink dot effect <0|.  W node, 1 output: identity.
+  dimension splitter with 0 legs (SD): the pink dot of dimension 1; with 1 leg: identity.
+  mixed-dimensional Z box (2.3.3), legs d_1..d_k, parameter a in C^{min d_i - 1}:
+      sum_{j < min d_i} a_j |j...j><j...j|
+      defined as a Z box over d = prod d_i with parameter (a_1, ..., a_{min-1}, 0, ..., 0),
+      each leg d_i attached through a dimension merger/splitter (d/d_i, d_i) whose d/d_i leg
+      carries a pink dot state of dimension d/d_i.
+  e != 0 mod n        multiplier labels in E and TA.
+
+
+2. SYMMETRIES (unnamed)
+-----------------------
+
+(2.9)  Z box flexsymmetry: any permutation of the legs of a (mixed-dimensional) Z box,
+       inputs and outputs alike, and bending a leg between input and output, leaves it equal.
+(2.10) Sym: W node outputs may be permuted.   Scalar 1.
+
+
+3. FIGURE 1: QUDIT RULES (every wire of dimension d)
+----------------------------------------------------
+
+B2    LHS: two plain green dots (1 -> 2), outputs crossed into two pink dots (2 -> 1).
+      RHS: pink dot (2 -> 1) into plain green dot (1 -> 2).   Scalar 1.   Same as [P1] B2.
+
+AD    LHS: W node (1 -> 2), outputs into Z box effects a and b.
+      RHS: Z box effect a + b.   Scalar 1.   Same as [P1] AD.
+
+S2    LHS: pink dot (1 -> 1).   RHS: identity.   Scalar 1.   [P1] S2, second part.
+
+K2    Same as [P1] K2 (condition a_{d-j} != 0).
+
+Ept   Same as [P1] Ept.
+
+Bsj   LHS: pink K_{-j} state (0 -> 1) into a W node (1 -> 2) whose output 0 goes into a
+      plain green effect.   RHS: Z box T_j state.   0 <= j < d.   Scalar 1.
+      ([P1] Bsj with j -> -j; [P1] Bs0 is the case j = 0 after the green effect is
+      contracted.)
+
+P1    LHS: D.   RHS: multiplier -1 (green dot 1 -> d-1, all into pink dot d-1 -> 1).
+      Scalar 1.
+
+WW    Variables m >= 1, n >= 1.
+      LHS: W transpose t (m inputs, 1 output) into W node w (1 -> n).
+      RHS: W nodes u_1..u_m (1 -> n), u_k on input k; W transposes v_1..v_n (m -> 1),
+           v_i.in(k) = u_k.out(i); plain green dots g_1..g_n (1 -> 2), g_i.in = v_i.out,
+           g_i.out0 = output i, g_i.out1 into a W transpose s (n -> 1) whose output goes
+           into a plain green effect.
+      Scalar 1.
+
+WF    LHS: W node (1 -> p + 1 + q) whose output p feeds a W node (1 -> r).
+      RHS: W node (1 -> p + r + q), outputs in order.   Scalar 1.
+
+HD    LHS: H.  RHS: the scalar diagram pink K_1 state into Z box effect (-1)^{d+1}/sqrt d
+      (the box x = (0, ..., 0, x)), beside: a pink dot (1 -> d) under the input whose
+      outputs pass through multipliers d (= 0), ..., 1 (output r through multiplier d - r
+      for r = 0..d-1, upward), into plain green dots c_0..c_{d-1} (2 -> 2); a pink K_1 state
+      into a W node (1 -> d) whose outputs go into c_0..c_{d-1}; c_r's outputs: one through a
+      pink K_{-1} (1 -> 1) into a W transpose together with a plain green state, the W
+      transpose's output into Z box K_r (1 -> 1); all K_r into a pink dot (d -> 1).
+      Scalar 1.   Concrete d only.
+
+MW    LHS: Z box 1 (1 -> 1), then multiplier e, then W node (1 -> 2).
+      RHS: Z box 1 (1 -> 1), then W node (1 -> 2), each output through multiplier e.
+      e != 0 mod d (Figure 1 caption).   Scalar 1.
+
+VA    LHS: W node (1 -> d); output 0 through Z box 1 (1 -> 1) and multiplier 0; output i
+      (1 <= i <= d-1) through Z box a_i (1 -> 1) and multiplier -i; all into a pink dot
+      (d -> 1).
+      RHS: Z box 1 (1 -> 1), pink K_{-1} (1 -> 1), W transpose (2 -> 1) whose other input is
+      a plain green state, pink K_1 (1 -> 1), Z box a (1 -> 1), in series.
+      Scalar 1.   Concrete d only.
+
+D1    LHS: Z box a with n inputs and m outputs, each input preceded by D.
+      RHS: Z box <-a with n inputs and m outputs, each output followed by H ; H.
+      Scalar 1.
+
+
+4. FIGURE 2: MIXED-DIMENSIONAL RULES
+------------------------------------
+
+S1    Mixed-dimensional Z boxes a and b joined by wires of dimensions r_1..r_s (s >= 1),
+      free legs of any dimensions: one mixed-dimensional Z box ab' carrying all free legs,
+      ab' = (a_1 b_1, ..., a_{M-1} b_{M-1}, 0, ..., 0), M the least dimension among all legs
+      of both boxes and the joining wires.   Scalar 1.
+
+DZX   Inputs of dimension m (any number), each through a two-legged plain green dot (m ->
+      mn) and an upward multiplier n, into a pink dot of dimension mn; each output of that
+      pink dot through a multiplier n and a two-legged plain green dot (mn -> m).
+      RHS: pink dot of dimension m with the same legs.   Scalar 1.
+
+TA    W node of dimension m (1 -> k... ) and pink dot of dimension n with multipliers
+      e_1..e_i on its outputs, crossed into plain green dots with outputs of dimension k
+      (mixed-dimensional trialgebra); RHS: the pink dot replaced by a W node of dimension n.
+      e_t != 0 mod n.   Scalar 1.
+
+DD    LHS: dimension splitter mn -> (m, n).
+      RHS: pink dot of dimension mn (1 -> 2); output 0 through multiplier n and a two-legged
+      plain green dot (mn -> m); output 1 through a two-legged plain green dot (mn -> n).
+      Scalar 1.
+
+E     LHS: pink dot state of dimension n, multiplier e, two-legged plain green dot (n -> 2).
+      RHS: pink dot state of dimension 2.   e != 0 mod n.   Scalar 1.
+
+BZW   W nodes of dimensions m and n (each 1 -> 2), outputs crossed into Z boxes a
+      (mixed-dimensional, legs m, n, k) ... RHS: Z box a (inputs m, n) into a W node of
+      dimension k (1 -> 2).   Scalar 1.
+
+K0    LHS: pink K_{-j} state of dimension m into a plain green dot with legs m, n_1, n_2.
+      RHS: pink K_{-j} state of dimension n_1, pink K_{-j} state of dimension n_2, and the
+      scalar diagram pink K_{-j} state (dimension m) into Z box 1_N, N = min{m, n_1, n_2}.
+      Scalar 1.
+
+
+5. RELATION TO [P1]
+-------------------
+
+Proposition 3.1 of [P2]: the rules above derive every rule of [P1]. Its Figure 1 replaces
+[P1]'s S1, D1, K0, K1, Zer, H1, Pcy, Aso, BZW, Bs0, TA, ZV, VW, KZ by the general forms
+in Figures 1 and 2 and by WF and MW.

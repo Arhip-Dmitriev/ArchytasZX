@@ -1,0 +1,13 @@
+# [P1] Lemma 32 (x = y = 2, d = 3): multipliers x and y compose to the multiplier xy = 1.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g1 = Z(1 -> 2, literal 3); p1 = X(2 -> 1, literal 3); g1 -> p1; g1 -> p1; g2 = Z(1 -> 2, literal 3); p2 = X(2 -> 1, literal 3); p1 -> g2; g2 -> p2; g2 -> p2
+    scalar 3
+
+@rhs =
+    g = Z(1 -> 1, literal 3); p = X(1 -> 1, literal 3); g -> p
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,12 @@
+# [P1] Lemma 10 (a = 2, d = 3): the boxes a - 1 and 1/a - 1 cancel.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: 1}; q = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: -1/2}
+
+@rhs =
+    scalar 1
+
+load @lhs
+prove against @rhs
+certificate kernel

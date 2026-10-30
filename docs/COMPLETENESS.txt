@@ -1,0 +1,397 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Completeness of the Rule System
+
+Applies to: ArchytasZX 2.0.x
+Implementation: archytaszx.rewrite.rules_axioms (the axioms as rules), archytaszx.rewrite
+                match_template (template matching), archytaszx.rewrite.exhaustive and
+                archytaszx.semantics.prove.prove_exhaustive (exhaustive mode)
+Sources:        [P1] B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke,
+                "Completeness for arbitrary finite dimensions of ZXW-calculus, a unifying
+                calculus", LICS 2023, arXiv:2302.12135 (REFERENCES.bib: poor2023zxw).
+                [P2] Q. Wang, B. Poor, R. A. Shaikh, "Completeness of qufinite ZXW calculus,
+                a graphical language for finite-dimensional quantum theory", arXiv:2309.13014
+                (REFERENCES.bib: wang2023qufinitezxw).
+                Both papers, their sources and the axiom lists read from them are in
+                archytaszx/papers/poor2023zxw/ and archytaszx/papers/wang2023qufinitezxw/ (AXIOMS.txt).
+
+
+1. THE CLAIM
+------------
+
+Let D1 and D2 be two diagrams with the same boundary, without bang boxes, all of whose
+dimensions are concrete (literal, or symbols bound in the parameter environment), built from
+the generators Z, X (with phases and complex weights), F, T, Ti, W, B and S. If D1 and D2
+denote the same linear map, scalar included, then there is a derivation from D1 to D2 by
+applications of the rules registered in archytaszx.rewrite.rules_library.RULES. Each step is
+an application of a rule at a match its pattern verifies, with the rule's free values set
+where it has any (RULES.txt, section 1), so the engine replays the derivation as a
+certificate and the proof kernel re-checks it.
+
+In particular this holds for every pair of [P1] qudit ZXW diagrams at a fixed dimension d and
+every pair of [P2] qufinite ZXW diagrams, through the translation of section 2.
+
+The claim is an existence statement proved in section 4 from the completeness theorems of
+[P1] (Theorem: every qudit ZXW diagram rewrites to a unique normal form) and [P2] (the same
+for qufinite diagrams). It is not a decision procedure. The automatic search (normal form,
+saturation, tactics) remains sound and incomplete (PROOFS.txt); the exhaustive mode of
+section 6 searches for such derivations without bound.
+
+Lean. Seventeen rules added for this claim are proved in Lean by existing rule lemmas in the
+instances listed in section 3 (LEAN.txt, section 4.1); every other step of them exports as a
+named axiom unproved_RULE_N (LEAN_GAPS.txt, item 9). The generator mapping of section 2 is
+proved in Lean for every dimension (ArchytasZX.Paper) except for the Z box with complex
+weights, which the Lean semantics does not have. The derivations of section 4 are therefore
+kernel-checked and, except for those steps, Lean-checked.
+
+
+2. THE GENERATOR MAPPING
+------------------------
+
+Conventions of both papers: diagrams are read top to bottom; omega = e^(2 pi i/d); indices
+are taken mod d. The engine's conventions are in SEMANTICS.txt, section 2: F[j][k] =
+omega^(jk)/sqrt(d), the X spider is F^(x)m . Z . (F^dagger)^(x)n, wires are direction-free
+contractions (a cap or cup is a wire, the swap is wiring).
+
+Every entry was checked numerically at d = 2, 3, 4, 5, 6 (splitter and merger at (s, t) =
+(2, 3), (3, 2), (2, 2), (3, 4)) against the matrix the paper gives, by contracting the
+engine's diagram.
+
+  Paper generator or notation                  ArchytasZX diagram                 Scalar
+  -------------------------------------------  ---------------------------------  ---------
+  Z box a, n inputs, m outputs                 Z spider (n -> m), weights a        1
+                                               (weight{1: a_1, ..., d-1: a_{d-1}})
+  green circle spider alpha                    Z spider, phase vector alpha        1
+  plain green dot                              phaseless Z spider                  1
+  box labelled x                               Z spider, weights (0, ..., 0, x)    1
+  Hadamard box H                               F                                   1
+  H^dagger (:= H H H)                          F^3                                 1
+  W node (1 -> 2), W node (1 -> n) (WN)        W node                              1
+  W node with no output ([P2] WN)              W node (1 -> 0) = <0|               1
+  W transpose (WN)                             W node, legs bent                   1
+  swap, identity, cap, cup (S3)                wiring                              1
+  pink K_j spider, n inputs, m outputs (HZ)    X spider (n -> m), phase vector     d^((m+n)/2 - 1)
+                                               K_j = (j k/d turns)_k
+  pink dot                                     phaseless X spider                  d^((m+n)/2 - 1)
+  D (Du), sum_i |i><-i|                        F^2, or the pink dot (0 -> 2) with  1
+                                               one leg bent (rule zxw_p1)
+  multiplier m (Mu)                            Z (1 -> m), m wires, pink (m -> 1)  as pink
+  yellow triangle (YT)                         T                                   1
+  inverse triangle (YT)                        Ti                                  1
+  V box, M box (VB, MB)                        their definitions, concrete d       as pink
+  dimension splitter de -> (d, e)              S (d, e)                            1
+  dimension merger (2.8)                       B (d, e)                            1
+  mixed-dimensional Z box (2.3.3)              its definition: Z over prod d_i,    1
+                                               legs through B and S with pink dots
+
+The scalar column is the factor by which the paper's generator exceeds the engine diagram.
+The weighted Z spider is the [P1] Z box exactly: its coefficient at index k is
+w_k e^(2 pi i alpha_k) (ALGEBRA.txt, section 3), so a weight vector alone is the Z box and a
+phase vector alone is the green circle spider.
+
+
+3. THE AXIOMS
+-------------
+
+Every axiom of both papers is a rule of its own (names zxw_* for [P1], qf_* for the [P2]
+rules that differ from [P1]'s), together with a converse rule reading it right to left.
+Every rule was checked against the numeric oracle on random instances of its matched side,
+alone and inside random weighted contexts, at d = 2..6 (rules defined at a concrete dimension
+at d = 2..4, mixed-dimensional rules at the listed dimension tuples); every rule's step was
+replayed as a certificate and re-checked by the proof kernel. No mismatch was found.
+
+Status columns: O = oracle-checked, K = replayed and kernel-checked, Lean: L = proved by the
+named lemma, U = exported as the unproved axiom unproved_RULE_N; "L/U" gives the rule then its
+converse.
+
+3.1 [P1] (section 2.2.2)
+
+  Paper  Rule (converse)                                   O  K  Lean  Notes
+  -----  ------------------------------------------------  -  -  ----  ---------------------
+  S1     zxw_s1 (zxw_s1_converse)                          y  y  L/U   fusionZ: phases, one
+                                                                       wire; converse: free a, b
+  S2     zxw_s2, zxw_s2_pink (both _converse)              y  y  L     identityZ/identityX;
+                                                                       converse U
+  D1     zxw_d1 (zxw_d1_converse)                          y  y  U     concrete d
+  Ept    zxw_ept (zxw_ept_converse)                        y  y  L/U   capSwapped at a = 1;
+                                                                       converse: free a
+  B2     zxw_b2 (zxw_b2_converse)                          y  y  U/L   converse: bialgebra
+  K0     zxw_k0 (zxw_k0_converse)                          y  y  L/U   stateCopy at j = 0
+  K1     zxw_k1 (zxw_k1_converse)                          y  y  U
+  K2     zxw_k2 (zxw_k2_converse)                          y  y  U     a_{d-j} != 0
+  Zer    zxw_zer (zxw_zer_converse)                        y  y  U
+  P1     zxw_p1, zxw_p1_multiplier (both _converse)        y  y  U
+  H1     zxw_h1 (zxw_h1_converse)                          y  y  U
+  Pcy    zxw_pcy (zxw_pcy_converse)                        y  y  U
+  AD     zxw_ad (zxw_ad_converse)                          y  y  U     converse: free a, b
+  Sym    zxw_sym (zxw_sym_converse)                        y  y  L/L   wPerm
+  Aso    zxw_aso (zxw_aso_converse)                        y  y  L/L   wAso
+  BZW    zxw_bzw (zxw_bzw_converse)                        y  y  U/L   converse: wzBialgebra
+  WW     zxw_ww (zxw_ww_converse)                          y  y  U
+  Bs0    zxw_bs0 (zxw_bs0_converse)                        y  y  L/U   wZeroCopy
+  Bsj    zxw_bsj (zxw_bsj_converse)                        y  y  U
+  TA     zxw_ta (zxw_ta_converse)                          y  y  U
+  HD     zxw_hd (zxw_hd_converse)                          y  y  U     concrete d
+  ZV     zxw_zv (zxw_zv_converse)                          y  y  U     concrete d; converse:
+                                                                       free a
+  VA     zxw_va (zxw_va_converse)                          y  y  U     concrete d
+  VW     zxw_vw (zxw_vw_converse)                          y  y  U     concrete d
+  KZ     zxw_kz (zxw_kz_converse)                          y  y  U     concrete d
+
+3.2 [P2] (section 2.4, Figures 1 and 2, (2.9), (2.10))
+
+  Paper  Rule (converse)                                   O  K  Lean  Notes
+  -----  ------------------------------------------------  -  -  ----  ---------------------
+  (2.9)  qf_z_flex (qf_z_flex_converse)                    y  y  L/L     with the kernel's
+                                                                       leg-order isomorphism
+  (2.10) qf_w_sym (qf_w_sym_converse)                      y  y  L/L   wPerm
+  B2     zxw_b2                                            y  y  U     same as [P1]
+  AD     zxw_ad                                            y  y  U     same as [P1]
+  S2     zxw_s2_pink                                       y  y  U     same as [P1]
+  K2     zxw_k2                                            y  y  U     same as [P1]
+  Ept    zxw_ept                                           y  y  U     same as [P1]
+  Bsj    zxw_bsj                                           y  y  U     j -> -j of [P1]'s
+  P1     zxw_p1_multiplier                                 y  y  U
+  WW     qf_ww (qf_ww_converse)                            y  y  U
+  WF     qf_wf (qf_wf_converse)                            y  y  L/U   wFusion
+  HD     qf_hd (qf_hd_converse)                            y  y  U     concrete d
+  MW     qf_mw (qf_mw_converse)                            y  y  U     e != 0 mod d
+  VA     qf_va (qf_va_converse)                            y  y  U     concrete d
+  D1     qf_d1 (qf_d1_converse)                            y  y  U     concrete d
+  S1     qf_s1                                             y  y  U     concrete dims; no
+                                                                       converse (section 7)
+  DZX    qf_dzx (qf_dzx_converse)                          y  y  U     concrete dims
+  TA     qf_ta (qf_ta_converse)                            y  y  U     concrete dims
+  DD     qf_dd (qf_dd_converse)                            y  y  U     concrete dims
+  E      qf_e (qf_e_converse)                              y  y  U     concrete dims
+  BZW    qf_bzw (qf_bzw_converse)                          y  y  U     concrete dims
+  K0     qf_k0 (qf_k0_converse)                            y  y  U     concrete dims
+  (2.8)  binder_definition (binder_definition_converse)    y  y  U     merger = bent splitter
+
+3.3 Definitional rules (the generator mapping as rules)
+
+  Mapping entry             Rule (converse)                                      O  K  Lean
+  ------------------------  ---------------------------------------------------  -  -  ----
+  X spider = F . Z . F^3    x_spider_definition (x_spider_definition_converse)   y  y  U
+  triangle (YT)             triangle_definition (triangle_definition_converse)   y  y  U
+  inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  U
+  green circle spider       phase_to_weight (weight_to_phase)                    y  y  U
+  scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  U
+
+Lean export of one proof per rule (lake env lean on the exported file, one instance per rule
+at d = 3, mixed rules at the dimensions of section 3.2): 43 rules' instances are proved over
+the tensor-network semantics with no unproved axiom (by a rule lemma or by the verified
+normaliser of symbolic sums); 41 instances carry complex weights and export as opaque
+diagrams with every step an axiom; 2 export with a named unproved_ axiom; 6 exports are
+rejected by Lean (LEAN_GAPS.txt, item 10); the two HD rules of [P2] exceeded 300 s; one
+converse (zxw_zv_converse) had no random instance its condition accepts. The "L" entries
+above are the rules proved by their lemma for every instance of the stated form.
+
+An axiom is never "derived": each is a rule of its own, stating exactly the paper's equation
+(same quantification, same side conditions, same scalar through section 2).
+
+
+4. TRANSFER OF THE COMPLETENESS THEOREMS
+----------------------------------------
+
+4.1 Translation. Let tau map a paper diagram to an engine diagram by section 2: each
+generator to its engine counterpart, wiring to wiring, a bare boundary-to-boundary wire to a
+phaseless Z spider with one input and one output, and a closed scalar diagram to the scalar
+it denotes. tau preserves the denoted map exactly (section 2). Conversely every engine
+diagram D in the scope of section 1 is reached from the paper diagram pi(D) obtained by
+replacing each X spider, T, Ti, phase vector, B and scalar factor by its definition: the
+definitional rules of section 3.3 and binder_definition rewrite D to tau(pi(D)).
+
+4.2 Axioms. For every axiom L = R of [P1] or [P2] and every context C, the engine derives
+tau(C[R]) from tau(C[L]) and tau(C[L]) from tau(C[R]):
+
+  - the rule of the axiom, or its converse, applies at the image of the axiom's instance:
+    template matching is up to the leg symmetry the papers assume (Z boxes flexsymmetric,
+    (2.9); W outputs symmetric, (2.10); X spiders symmetric within inputs and within outputs);
+  - a notation the axiom uses in a form the template does not (H^dagger, D, pink spiders,
+    scalar diagrams) is first brought into the template's form by the definitional rules and
+    zxw_p1, both of which have converses;
+  - a converse with free values (S1, AD, Ept, ZV, scalar_box) is applied with the values the
+    paper's instance has ("apply ... with NAME = VALUE"); the pattern verifies the match with
+    those values, so the step replays;
+  - an identity inserted by a paper step on any wire, internal or at the boundary, is
+    zxw_s2_converse or zxw_s2_pink_converse;
+  - leg order within a direction is identified by the kernel's iso inference; bending a Z leg
+    between directions is qf_z_flex; permuting W outputs is qf_w_sym and zxw_sym.
+
+4.3 Theorem. If D1 and D2 (section 1) denote the same map, then pi(D1) and pi(D2) denote the
+same map, so by [P1] (one dimension) or [P2] (several) there is a paper derivation
+pi(D1) = E_0 = E_1 = ... = E_k = pi(D2), each step one axiom instance in a context, read in
+either direction. By 4.2 each step lifts to an engine derivation tau(E_i) ->* tau(E_{i+1});
+by 4.1, D1 ->* tau(pi(D1)) and tau(pi(D2)) <-* D2, the latter read backwards through the
+converses of the definitional rules. Concatenating gives a derivation D1 ->* D2 by
+registered rules, every step replayable.
+
+4.4 Lean. ArchytasZX.Paper proves the mapping of section 2 for every d: paperH_eq (H = F),
+paperZ_eq (green circle spider), paperW_eq (W node), paperT_eq and paperTi_eq (triangles),
+paperSplit_eq (splitter), paperD_eq (D = F F), and pink_eq (the pink K_j spider is
+d^((m+n)/2 - 1) times the X spider with phases j k/d). Not proved: the Z box with complex
+weights (outside the Lean semantics), and the statement of each axiom in paper conventions:
+the rule lemmas are local equations between labelled networks (LocalEq), and restating them
+over the paper* tensors needs an evaluation of each axiom's network, which is not written.
+
+4.5 What is proved and what is checked. The transfer is the argument above; it relies on
+the completeness theorems of [P1] and [P2] as published. What the engine checks is each rule
+(oracle, d = 2..6) and each step (replay and kernel). No complete derivation between two
+arbitrary diagrams is constructed by this argument; finding one is the job of section 6.
+
+
+5. CLAIM (A): THE PAPERS' LEMMAS
+--------------------------------
+
+Target: the automatic search (decide and prove, naming no rule) finds a derivation of every
+lemma [P1] and [P2] derive from their axioms.
+
+The lemmas are listed in archytaszx/papers/poor2023zxw/LEMMAS.txt ([P1] Lemmas 7 to 47) and
+archytaszx/papers/wang2023qufinitezxw/LEMMAS.txt ([P2] Lemmas A.1 to A.80), each with the steps its
+proof prints. Twenty [P1] lemmas are encoded at the literal dimension d = 3 under
+examples/completeness/lemmas/ (one file each: the two sides as @lhs and @rhs, prove, then
+certificate kernel); section 9 gives the corpus run.
+
+Status: claim (A) is not established. The automatic search proves 13 of the 20 encoded
+lemmas; the remaining 7 and the lemmas not encoded are open (section 9).
+
+
+6. CLAIM (B): EXHAUSTIVE MODE
+-----------------------------
+
+    prove exhaustive [against] [TARGET]
+
+runs the interface check and the oracle refutation rung of prove (PROOFS.txt), then a
+breadth-first search from both diagrams at once over every registered rule, automatic or
+not, converses included (archytaszx.rewrite.exhaustive). Every match each pattern enumerates
+is applied to every diagram of the current layer; a diagram whose comparison view is
+isomorphic to one already reached on its side is pruned. The start side's layer k is expanded
+before the goal side's layer k, and both before layer k + 1 of either. When a diagram reached
+from one side is isomorphic to one reached from the other, the two paths form an ordinary
+proof certificate, checked as prove's are. There is no depth cap and no time limit.
+
+Fairness. A derivation of length n each of whose steps is the application of a rule at a
+match its pattern enumerates (free values at their defaults) is found by the time the start
+side has expanded layer n. When every step of its last floor(n/2) steps uses a rule with a
+converse (every rule 2.29 onwards has one; the rules 2.1 to 2.28 do not), it is found by the
+time the start side has expanded layer ceil(n/2) and the goal side layer floor(n/2): that
+half, read from the goal, is a sequence of converse applications.
+
+Termination.
+  - Unequal diagrams at concrete dimensions: the oracle rung contracts both and reports
+    UNEQUAL before the search starts.
+  - Equal diagrams joined by a derivation of enumerated steps: the search terminates with a
+    proof.
+  - Equal diagrams every derivation of which needs a free value away from its default (a
+    nontrivial split in S1 or AD read right to left, an inserted Ept or scalar box of chosen
+    parameter): the search does not terminate. Section 4 guarantees a derivation exists, not
+    that one exists with default free values; such derivations are applied by hand with
+    "apply ... with".
+  - Diagrams with bang boxes or symbolic dimensions: outside the claim; the search may not
+    terminate.
+If both sides close (every diagram reachable already reached) without meeting, the result
+is NOT_FOUND.
+
+
+7. LIMITS
+---------
+
+  - Concrete dimensions only. Rules stated at symbolic d where the paper's shape does not
+    depend on d; the V, M, HD, VA, ZV, VW, KZ, D1 and K2 families and every mixed-dimensional
+    rule need a concrete dimension (literal, or bound in the parameter environment).
+  - No bang boxes: template rules never match a node or leg inside a bang box.
+  - Derivability, not decision; the automatic layers use only the rules section 8 lists.
+  - The mixed-dimensional S1 of [P2] has no converse rule; its unfusion is not enumerated.
+  - The rules 2.1 to 2.28 (RULES.txt) have no converse rules; exhaustive mode reads them only
+    forwards from either side (section 6).
+  - A paper diagram that is a bare wire is represented by a phaseless Z spider with two
+    legs; a non-Z port facing a boundary entry of the other direction carries such a spider
+    as an adapter. Equalities hold modulo these representatives.
+  - Lean: section 1.
+
+
+8. AUTOMATION
+-------------
+
+Normal form. zxw_ept and scalar_box joined the normal-form set, after every other rule. Each
+removes a node and never adds one, and zxw_ept removes a wire: with them every rule of the set
+decreases the pair (wire count, node count) lexicographically, so normal forms still
+terminate (archytaszx.rewrite.engine.NORMAL_FORM_RULE_NAMES).
+
+Saturation. The e-graph has a backoff rule scheduler (as in egg): a rule applied more than
+match_limit << b times in one iteration, b its bans so far, is cut for the rest of the
+iteration and banned for ban_length << b iterations (SaturationLimits.match_limit = 1000,
+ban_length = 5); an e-node expanded while a rule is banned is expanded under it once the ban
+ends. With no ban, the order of applications is as before.
+
+Promotion into saturation and tactics (automatic = True): zxw_ept, scalar_box, zxw_k0,
+zxw_k2, zxw_zer, zxw_ad, zxw_bs0, zxw_bsj, zxw_ta, zxw_bzw, zxw_aso, zxw_hd, zxw_va,
+zxw_zv, zxw_kz, qf_dzx, qf_e, qf_k0, qf_bzw, qf_s1: the axioms read in the direction that
+does not grow a diagram. Acceptance: the regression set of the section-6 baseline (the example
+command files, a command battery exercising every older rule, and the Lean checks of the
+files they write) gives output identical to the run before promotion, and the automatic
+corpus result went from 9 to 13 of 20.
+
+Kept out of automation: every converse and every rule that grows a diagram or permutes legs
+(zxw_s1 and its converse, zxw_s2 family converses, zxw_k1, zxw_pcy, zxw_sym, zxw_ww, zxw_vw,
+zxw_d1, zxw_h1, zxw_p1, the qf_ rules not listed above, the definitional rules): an insertion
+or unfusion applies at every wire or leg mask and would exhaust the saturation budget on
+every input; a permutation or colour change undoes another at the next step. They stay
+available to apply, matches, certificates, the kernel, the Lean export and exhaustive mode.
+
+
+9. CORPUS RUN
+-------------
+
+.completeness_work/corpus_run.py (not committed) runs each lemma file: automatic prove, then,
+if not proved, prove exhaustive under a wall-clock limit the script sets (the engine sets
+none). Every proof found was replayed and re-checked by the kernel ("kernel: theorem" in the
+output). Lean: the exported proofs of these lemmas use unproved rule axioms (section 1).
+
+  Lemma         Found by                          Time      Steps  Kernel
+  ------------  --------------------------------  --------  -----  ------
+  [P1] 7        not found (exhaustive, 3600 s)    -         -      -
+  [P1] 8        automatic (tactics)               < 2 s     3      yes
+  [P1] 9        automatic (tactics)               < 2 s     1      yes
+  [P1] 10       automatic (tactics)               < 2 s     2      yes
+  [P1] 11       automatic (tactics)               1.1 s     1      yes
+  [P1] 12       automatic (tactics)               1.4 s     2      yes
+  [P1] 13       automatic (tactics)               1.1 s     1      yes
+  [P1] 15       automatic (tactics)               1.3 s     1      yes
+  [P1] 16       automatic (tactics)               1.1 s     1      yes
+  [P1] 17       automatic (tactics)               1.2 s     2      yes
+  [P1] 17b      automatic (tactics)               1.4 s     2      yes
+  [P1] 23       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 28       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 29       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 31       automatic (tactics)               1.4 s     5      yes
+  [P1] 32       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 33       automatic (tactics)               1.5 s     4      yes
+  [P1] 38       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 39       automatic (tactics)               < 2 s     2      yes
+  [P1] 43       not found (exhaustive, 3600 s)    -         -      -
+
+Lemma 38 has a derivation of three steps from the start side
+(examples/completeness/derivations/p1_lemma38_derivation.azx). Its last step, w_identity, is
+one of the rules 2.1 to 2.28, which have no converse, so the search must expand layer 3 of the
+start side; the insertion converses make that layer larger than an hour of search covers.
+
+Before promotion (section 8), lemmas 8, 9, 10 and 39 were found by exhaustive mode only, in
+2.6 to 4.6 s. "Not found" means the search was stopped by the runner, not that the lemma is
+false: each was checked equal by the oracle at d = 3 and is a lemma of [P1]. Their paper
+proofs pass through lemmas the engine states only as derivations of several steps (S4, the
+pink spider fusion, has no unfusion rule; S3 and the bending lemmas need definitional rules),
+so the shortest derivations are deeper than exhaustive mode reached.
+
+Each lemma proved above has a replayed derivation: the certificate of its proof, re-checked by
+the kernel. Lemma 38 also has one written as apply steps following the rules
+(examples/completeness/derivations/p1_lemma38_derivation.azx: w_zero_effect, an identity
+inserted at the boundary, w_identity). For lemmas 7, 23, 28, 29, 32 and 43 no derivation by
+apply steps was written: the paper's proofs use converse steps with chosen free values (the
+splits of AD and S1 read right to left) and the lemmas S3, S4 and 22, each several engine steps
+long; their truth at d = 3 was checked by the oracle only. [P2] Lemma A.5 is proved by the
+automatic search in 1 step; Lemma A.3 was not found by automatic search nor by exhaustive
+mode within 1800 s.
+

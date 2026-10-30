@@ -1,0 +1,15 @@
+# [P1] Lemma 13, (S4) (i = j = 1, d = 3): pink K_i and K_j spiders joined by a wire fuse into
+# K_{i+j}.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = X(1 -> 2, literal 3) phase{k: k/3}; b = X(2 -> 1, literal 3) phase{k: k/3}; a -> b
+    scalar 3
+
+@rhs =
+    c = X(2 -> 2, literal 3) phase{k: 2*k/3}
+    scalar 3
+
+load @lhs
+prove against @rhs
+certificate kernel

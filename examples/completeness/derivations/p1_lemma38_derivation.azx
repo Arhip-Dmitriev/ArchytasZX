@@ -1,0 +1,13 @@
+# [P1] Lemma 38 (d = 3), derived by rule applications: a W node with one output on the pink
+# dot effect is the identity, here the phaseless Z spider with two legs (COMPLETENESS.txt, 7).
+
+@rhs =
+    z = Z(1 -> 1, literal 3)
+
+w = W(1 -> 2, literal 3); e = X(1 -> 0, literal 3); wire w.out1 -- e.in0; scalar 3^(-1/2)
+apply w_zero_effect
+apply zxw_s2_converse at 0
+apply w_identity
+prove against @rhs
+certificate emit derivation
+certificate kernel

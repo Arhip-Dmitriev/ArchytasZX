@@ -39,6 +39,8 @@ explicitly.
   REWRITE.txt          Layer C: rules, matching, the rewrite engine, strategies, normal form,
                        equality saturation, tactics, sheet operations and caching.
   RULES.txt            The rule library: every rule, its meaning, scalar and side conditions.
+  COMPLETENESS.txt     The complete axiomatisation: the axioms of [P1] and [P2] as rules, the
+                       generator mapping, the transfer argument, exhaustive mode, limits.
   SEMANTICS.txt        Layer D: denotation, numeric and symbolic contraction, the oracle.
   PROOFS.txt           Deciding equality, proof search, induction, certificates and the
                        proof kernel; the trust model.
@@ -53,6 +55,7 @@ explicitly.
   Using the shell:         OVERVIEW, INSTALL, SHELL, ENGINE_COMMANDS, then examples/.
   Using it from Python:    OVERVIEW, INSTALL, PYTHON_API.
   Proving identities:      OVERVIEW, ENGINE_COMMANDS, RULES, PROOFS, LEAN.
+  Completeness:            COMPLETENESS, RULES (2.29 onwards), PROOFS (3.2).
   Working on the engine:   OVERVIEW, ALGEBRA, DIAGRAM, REWRITE, SEMANTICS, PROOFS, ERRORS.
 
 

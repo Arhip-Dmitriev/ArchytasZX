@@ -1,0 +1,13 @@
+# [P1] Lemma 38 (d = 3): a W node with one output on the pink dot effect is the identity.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    w = W(1 -> 2, literal 3); e = X(1 -> 0, literal 3); wire w.out1 -- e.in0
+    scalar 3^(-1/2)
+
+@rhs =
+    z = Z(1 -> 1, literal 3)
+
+load @lhs
+prove against @rhs
+certificate kernel

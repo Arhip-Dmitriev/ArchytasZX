@@ -1,0 +1,13 @@
+# [P1] Lemma 28 (one input, two outputs, d = 3): the Z box 0 is pink dot effects and states.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    z = Z(1 -> 2, literal 3) weight{1: 0, 2: 0}
+
+@rhs =
+    e = X(1 -> 0, literal 3); s = X(0 -> 1, literal 3); t = X(0 -> 1, literal 3)
+    scalar 3^(-3/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

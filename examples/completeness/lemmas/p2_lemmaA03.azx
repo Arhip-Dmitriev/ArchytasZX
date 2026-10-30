@@ -1,0 +1,14 @@
+# [P2] Lemma A.3 (d = 3): the pink K_1 state through the box 1 is the pink K_1 state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}; b = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; p -> b
+    scalar 3^(-1/2)
+
+@rhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}
+    scalar 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

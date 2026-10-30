@@ -1,0 +1,216 @@
+AXIOMS OF THE QUDIT ZXW-CALCULUS
+================================
+
+paper.pdf and src/ below are in references/poor2023zxw/ (downloaded, not tracked).
+
+Source: [P1] B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke, "Completeness for
+arbitrary finite dimensions of ZXW-calculus, a unifying calculus", LICS 2023,
+arXiv:2302.12135 (paper.pdf, 47 pages; LaTeX source in src/). Section 2.2.2 "Complete rule
+set", PDF pages 10-12; TikZ sources src/figures/axioms/*.tikz.
+
+Read from: the rendered PDF pages 6-12 and the TikZ files named per rule below.
+
+
+1. CONVENTIONS OF THE PAPER
+---------------------------
+
+Diagrams are read top to bottom: a node's legs above it are its inputs, legs below it its
+outputs. d >= 2 is the dimension of every wire. omega = e^{2 pi i/d}. Indices are taken
+modulo d.
+
+Generators (section 2.2.1):
+
+  Z box, parameter a = (a_1, ..., a_{d-1}) in C^{d-1}, a_0 := 1, n inputs, m outputs:
+      sum_{j=0}^{d-1} a_j |j>^{(x) m} <j|^{(x) n}
+  Hadamard box H:  (1/sqrt d) sum_{j,k} omega^{jk} |j><k|
+  W node, one input, two outputs:  |00><0| + sum_{i=1}^{d-1} (|0i> + |i0>) <i|
+  swap, identity: the usual ones.
+
+Notations (pages 7-10), each a diagram of generators:
+
+  green circle spider alpha     Z box with parameter e^{i alpha} = (e^{i alpha_1}, ...)
+  plain green dot               Z box with parameter 1 = (1, ..., 1)
+  box labelled x (x in C)       Z box with parameter (0, ..., 0, x)
+  cap, cup (S3)                 plain green dot with two outputs, with two inputs
+  H^dagger (H dagger)           H ; H ; H
+  pink spider K_j, n inputs, m outputs (HZ), j in Z_d:
+      sum over i_1..i_m, j_1..j_n with i_1 + ... + i_m + j == j_1 + ... + j_n (mod d) of
+      |i_1 ... i_m><j_1 ... j_n|
+      (the pink dot is K_0; the pink spider is defined only at the phases K_j)
+  K_j                           the phase vector (j 2pi/d, 2j 2pi/d, ..., (d-1)j 2pi/d)
+  D (Du)                        sum_i |i><-i|, drawn as a green cup into a pink 0->2 state
+  W node with n outputs (WN)    iterated W node; one output: identity
+  W transpose (WN)              the W node bent by caps and cups: n inputs, one output
+  yellow triangle (YT)          W node with its left output on a plain green effect:
+                                I + sum_{i>=1} |0><i|
+  inverse triangle (YT)         W node with its left output on a Z box effect of parameter
+                                -1 = (-1, ..., -1): I - sum_{i>=1} |0><i|
+  multiplier m (Mu)             plain green dot with one input and m outputs, all m outputs
+                                into a pink dot with m inputs and one output: |m i><i|.
+                                Labels are taken mod d; -m := d - m. The upward multiplier
+                                is its transpose: pink dot (1 input, m outputs) into a green
+                                dot (m inputs, 1 output).
+  V box (VB)                    Z box (0,...,0,1) (1 input, 1 output) into a W node with d-1
+                                outputs, output k (k = 1..d-1) through multiplier -k, all into
+                                a pink dot (d-1 inputs, 1 output):  |0><0| + sum_{i>=1} |i><-1|
+  M box (MB)                    as V but the W node has d outputs, the last through multiplier
+                                0 (the two-node multiplier with no wire between its nodes);
+                                equals the W node with one output into V and one into a box 1.
+  T_j (j = 0..d-1)              parameter vector with a single 1 at index d-j, 0 elsewhere
+  a_{d-1}-vector                (a_{d-1}, ..., a_{d-1})
+  <-a                           (a_{d-1}, ..., a_1)
+  ab                            (a_1 b_1, ..., a_{d-1} b_{d-1})
+  k_j(a)                        (a_{1-j}/a_{d-j}, ..., a_{d-1-j}/a_{d-j}); requires a_{d-j} != 0
+                                (a_{-j} with a_0 = 1; at j = 0 it is a)
+
+
+2. THE AXIOMS
+-------------
+
+Each entry: name (as the paper gives it) | TikZ file | side conditions | scalar | LHS, RHS.
+"Pink K_j (n -> m)" is the pink spider of section 1 with n inputs and m outputs. A
+"scalar diagram" is a closed diagram, equal to the complex number it denotes.
+
+Qudit ZX part (page 10-11)
+
+S1   gengspiderfusedit.tikz
+     Conditions: none; any numbers of legs; k >= 1 wires join the two boxes.
+     LHS: Z box a and Z box b joined by k >= 1 wires, every other leg free.
+     RHS: one Z box ab carrying all free legs of both. The second equality of the figure
+          states the RHS with its legs permuted (Z boxes are symmetric).
+     Scalar: 1.
+
+S2   s2qudit.tikz
+     LHS: plain green dot, 1 input, 1 output.   RHS: identity wire.
+     LHS': pink dot (K_0), 1 input, 1 output.   RHS': identity wire.   Scalar: 1.
+
+D1   dcomwtha0.tikz
+     LHS: Z box a (1 -> 1) followed by D.   RHS: D followed by Z box <-a (1 -> 1).
+     Scalar: 1.
+
+Ept  rdotaemptydit0.tikz
+     LHS: pink dot state (0 -> 1) into a Z box a effect (1 -> 0).   RHS: empty diagram.
+     Scalar: 1.
+
+B2   b2qudit.tikz
+     LHS: two plain green dots (1 -> 2), outputs crossed into two pink dots (2 -> 1):
+          green_1.out0 -> pink_1.in0, green_1.out1 -> pink_2.in0,
+          green_2.out0 -> pink_1.in1, green_2.out1 -> pink_2.in1.
+     RHS: pink dot (2 -> 1) into plain green dot (1 -> 2).   Scalar: 1.
+
+K0   k1copy.tikz
+     LHS: pink K_j state (0 -> 1) into a plain green dot (1 -> 2).
+     RHS: two pink K_j states (0 -> 1).   Scalar: 1.   j in Z_d.
+
+K1   pimultiplecpdit.tikz
+     LHS: pink K_j (1 -> 1) into a plain green dot (1 -> n), n >= 0.
+     RHS: plain green dot (1 -> n), each output through pink K_j (1 -> 1).   Scalar: 1.
+
+K2   k2adit.tikz
+     LHS: pink K_j (1 -> 1) followed by Z box a (1 -> 1).
+     RHS: Z box k_j(a) (1 -> 1) followed by pink K_j (1 -> 1), beside the scalar diagram
+          pink K_j state (0 -> 1) into Z box a effect (1 -> 0), whose value is a_{-j}.
+     Condition: a_{d-j} != 0.   Scalar: 1 (the scalar diagram is part of the RHS).
+
+Zer  zerotoreddit0.tikz
+     LHS: box 0 = Z box (0, ..., 0) state (0 -> 1).   RHS: pink dot state (0 -> 1).
+     Scalar: 1.
+
+P1   p1sdit2.tikz
+     LHS: H followed by H.   RHS: D.   RHS': upward multiplier labelled -1 drawn as the
+     transposed multiplier -1 (equivalently D, by (Du) and (Mu)).   Scalar: 1.
+
+H1   hhdaggerchangedit.tikz (node style gn_phase on both sides)
+     LHS: green circle spider K_j with n inputs, m outputs, each input preceded by H^dagger
+          and each output followed by H.
+     RHS: green circle spider K_{d-j} with the same legs, each input preceded by H and each
+          output followed by H^dagger.   Scalar: 1.
+
+Qudit ZW part (page 11)
+
+Pcy  phasecopydit.tikz
+     LHS: Z box a (1 -> 1) whose output feeds the input of a W node (1 -> 2).
+     RHS: W node (1 -> 2) whose two outputs each go through Z box a (1 -> 1).
+     Scalar: 1.
+
+AD   additiondit.tikz
+     LHS: W node (1 -> 2), output 0 into Z box a effect, output 1 into Z box b effect.
+     RHS: Z box effect a + b = (a_1 + b_1, ..., a_{d-1} + b_{d-1}).   Scalar: 1.
+
+Sym  wsymetrydit.tikz
+     LHS: W node (1 -> 2).   RHS: W node (1 -> 2) with its outputs swapped.   Scalar: 1.
+
+Aso  associatedit.tikz
+     LHS: W node (1 -> 2) whose output 0 feeds a W node (1 -> 2).
+     RHS: W node (1 -> 2) whose output 1 feeds a W node (1 -> 2). Outputs in order.
+     Scalar: 1.
+
+BZW  w-bialgebra.tikz
+     LHS: two W nodes (1 -> 2), outputs crossed into two plain green dots (2 -> 1):
+          W_1.out0 -> g_1.in0, W_1.out1 -> g_2.in0, W_2.out0 -> g_1.in1, W_2.out1 -> g_2.in1.
+     RHS: plain green dot (2 -> 1) into W node (1 -> 2).   Scalar: 1.
+
+WW   w-w-algebra.tikz
+     Variables: n >= 1 (inputs of the W transpose), m >= 1 (plain green dots).
+     LHS: inputs u, x_1..x_n. W transpose t (n inputs x_1..x_n, 1 output) feeding a W node
+          w (1 -> m); a W node p (1 -> m) on input u; plain green dots g_1..g_m (2 -> 1),
+          g_i.in0 = p.out(i), g_i.in1 = w.out(i); outputs g_1..g_m.
+     RHS: inputs u, x_1..x_n. W node p' (1 -> m) on u; W nodes w_1..w_n (1 -> m), w_k on
+          x_k; W transposes t_1..t_m (n inputs, 1 output), t_i.in(k) = w_k.out(i); plain
+          green dots g'_1..g'_m (2 -> 1), g'_i.in0 = p'.out(i), g'_i.in1 = t_i.out;
+          outputs g'_1..g'_m.
+     A W transpose is a W node whose legs are bent: its input is its single lower leg.
+     Scalar: 1.
+
+Qudit ZXW part (page 12)
+
+Bs0  triangleocopydit.tikz
+     LHS: pink dot state (0 -> 1) into a W node (1 -> 2).
+     RHS: two pink dot states.   Scalar: 1.
+
+Bsj  trianglepicopydit2.tikz
+     LHS: pink K_j state (0 -> 1) into a W node (1 -> 2) whose output 0 goes into a plain
+          green effect (1 -> 0).
+     RHS: Z box T_j state (0 -> 1).   j in Z_d.   Scalar: 1.
+
+TA   trialgebra.tikz
+     LHS: W node w (1 -> 2) and pink dot p (1 -> 2) on top, plain green dots g_1, g_2
+          (2 -> 1) below: w.out0 -> g_1, w.out1 -> g_2, p.out0 -> g_1, p.out1 -> g_2,
+          each g with one output.
+     RHS: the same with p replaced by a second W node (1 -> 2).   Scalar: 1.
+
+HD   hadamard-decomposition2.tikz
+     LHS: a pink dot (1 -> 3 legs: the boundary input above and d legs below) feeding,
+          through upward multipliers 0, -1, ..., -(d-1) (leg r through multiplier -r),
+          d plain green dots c_0..c_{d-1}; a pink K_1 state into a W node with d outputs
+          wired to c_0..c_{d-1}; each c_r through an M box into a green circle spider K_r
+          (1 -> 1); all d into a pink dot (d -> 1) giving the output. Beside it the scalar
+          diagram pink K_1 state into Z box effect 1/sqrt d.
+     RHS: H.   Scalar: 1.   Concrete d only (d nodes).
+
+ZV   z-push-v.tikz
+     LHS: Z box a state (0 -> 1) into a V box.   RHS: Z box a_{d-1}-vector state.
+     Scalar: 1.   Concrete d only.
+
+VA   zbox-v-decomposition-2.tikz
+     LHS: W node (1 -> d-1), output i (i = 1..d-1) through box a_i (1 -> 1) and a
+          multiplier -i, all into a pink dot (d-1 -> 1).
+     RHS: V box followed by Z box a (1 -> 1).   Scalar: 1.   Concrete d only.
+
+VW   v-push-w.tikz
+     LHS: V box into a W node (1 -> 2).   RHS: W node (1 -> 2), each output through V.
+     Scalar: 1.   Concrete d only.
+
+KZ   k1zstate.tikz
+     LHS: pink K_1 state into a W node (1 -> n+1); W output 0 is a free output; W output i
+          (i = 1..n) into plain green dot g_i (2 -> 1 ... with one free output); a pink dot
+          state (0 -> n) whose leg i passes through multiplier e_i into g_i.
+     RHS: pink K_1 state and n pink dot states, on the n+1 outputs in order.
+     Conditions: n >= 1, e_1, ..., e_n in {1, ..., d-1}.   Scalar: 1.
+
+
+3. NOTES
+--------
+
+The structural rules (naturality of the swap, yanking of caps and cups, symmetry of the Z box
+under any permutation and bending of legs) are part of the calculus without a name.

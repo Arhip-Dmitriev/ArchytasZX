@@ -1,0 +1,12 @@
+# [P1] Lemma 17, second equality (d = 3): D on a pink dot state is the pink dot state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    x = X(0 -> 1, literal 3); x -> F(literal 3) -> F(literal 3)
+
+@rhs =
+    x = X(0 -> 1, literal 3)
+
+load @lhs
+prove against @rhs
+certificate kernel

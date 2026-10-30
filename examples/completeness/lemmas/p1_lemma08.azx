@@ -1,0 +1,12 @@
+# [P1] Lemma 8 (d = 3): the boxes a - 1 and b - 1 multiply to the box ab - 1.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: a - 1}; q = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: b - 1}
+
+@rhs =
+    r = Z(0 -> 0, literal 3) weight[literal 3]{1: 0, 2: a*b - 1}
+
+load @lhs
+prove against @rhs
+certificate kernel

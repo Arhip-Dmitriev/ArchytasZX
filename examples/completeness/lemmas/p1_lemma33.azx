@@ -1,0 +1,15 @@
+# [P1] Lemma 33 (x = y = 1, d = 3): multipliers x and y side by side are the multiplier x + y.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(1 -> 2, literal 3); a1 = Z(1 -> 1, literal 3); p1 = X(1 -> 1, literal 3); a2 = Z(1 -> 1, literal 3); p2 = X(1 -> 1, literal 3); q = X(2 -> 1, literal 3)
+    g -> a1; a1 -> p1; p1 -> q; g -> a2; a2 -> p2; p2 -> q
+    scalar 3^(1/2)
+
+@rhs =
+    g = Z(1 -> 2, literal 3); p = X(2 -> 1, literal 3); g -> p; g -> p
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,12 @@
+# [P1] Lemma 12 (d = 3): H H = H^dagger H^dagger.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = F(literal 3); a -> F(literal 3)
+
+@rhs =
+    a = F(literal 3); a -> F(literal 3)^5
+
+load @lhs
+prove against @rhs
+certificate kernel

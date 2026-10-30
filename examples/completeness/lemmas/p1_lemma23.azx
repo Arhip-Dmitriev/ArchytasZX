@@ -1,0 +1,14 @@
+# [P1] Lemma 23 (d = 3): the multiplier -1 is its transpose.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(1 -> 2, literal 3); p = X(2 -> 1, literal 3); g -> p; g -> p
+    scalar 3^(1/2)
+
+@rhs =
+    p = X(1 -> 2, literal 3); g = Z(2 -> 1, literal 3); p -> g; p -> g
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

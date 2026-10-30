@@ -1,0 +1,15 @@
+# [P1] Lemma 31 (x = 2, d = 3): a multiplier x copies through a plain green dot.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(1 -> 2, literal 3); p = X(2 -> 1, literal 3); g -> p; g -> p; c = Z(1 -> 2, literal 3); p -> c
+    scalar 3^(1/2)
+
+@rhs =
+    c = Z(1 -> 2, literal 3); g1 = Z(1 -> 2, literal 3); p1 = X(2 -> 1, literal 3); g2 = Z(1 -> 2, literal 3); p2 = X(2 -> 1, literal 3)
+    c -> g1; c -> g2; g1 -> p1; g1 -> p1; g2 -> p2; g2 -> p2
+    scalar 3
+
+load @lhs
+prove against @rhs
+certificate kernel
