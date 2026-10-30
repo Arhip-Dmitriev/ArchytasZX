@@ -1,0 +1,44 @@
+# False claims about algorithm families, refuted at a concrete point and exported to Lean 4
+# as negations.
+#
+#   |0>  = d^(-1/2) X(0 -> 1)
+#   |1>  = d^(-1/2) X(0 -> 1) phase{k: -k/d}
+#   |-1> = d^(-1/2) X(0 -> 1) phase{k: k/d}
+
+
+# Deutsch-Jozsa with the balanced oracle U_bal claimed to give the constant output
+# |0>^(m+1) (x) F_d|1>; refuted at d = 2, m = 0.
+
+@out_const =
+    count m
+    repeat m: X(0 -> 1)
+    o = X(0 -> 1)
+    t = Z(0 -> 1) phase{k: -k/d}
+    scalar d^(-(m+2)/2)
+
+load
+    count m
+    repeat m: X(0 -> 1) -> F^4                          # first m data qudits
+    X(0 -> 1) -> F -> c = Z(1 -> 2) -> F^3              # last data qudit, copied by U_bal
+    X(0 -> 1) phase{k: -k/d} -> F^3 -> u = X(2 -> 1)    # target
+    c -> u
+    scalar d^(-(m+1)/2)
+
+decide against @out_const
+certificate lean deutsch_jozsa_refuted.lean
+
+
+# Bernstein-Vazirani with s = 1...1 claimed to give |-1>^n; true at d = 2, refuted at d = 3.
+
+@out_minus_ones =
+    count n
+    repeat n: X(0 -> 1) phase{k: k/d}
+    scalar d^(-n/2)
+
+load
+    count n
+    repeat n: X(0 -> 1) -> F -> Z(1 -> 1) phase{k: k/d} -> F^3
+    scalar d^(-n/2)
+
+decide against @out_minus_ones
+certificate lean bernstein_vazirani_refuted.lean
