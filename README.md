@@ -97,8 +97,27 @@ and ZX drawings. The reference is
 
 ### From Python
 
+`azx` builds diagrams with Python operators and runs the engine on them. The qudit
+Deutsch–Jozsa circuit with a constant oracle, proved for every `n` and `d`:
 
-Build two Z spiders over a symbolic dimension `d`, fuse them, check the rewrite, and prove it for
+```python
+from archytaszx import azx
+
+n, d = azx.count("n"), azx.d
+data = (azx.F ^ 4 | azx.X(0, 1)) ** n                          # a !-box of n data qudits
+target = azx.X(2, 1) | azx.F ^ 3 | azx.X(0, 1, phase="-k/d")   # the target through U_f
+circuit = data @ target * d ** (-n / 2)
+goal = (azx.X(0, 1) ** n @ azx.Z(0, 1, phase="-k/d") @ azx.Z(1, 0, phase="k/d")) \
+    * d ** (-(n + 1) / 2)
+
+azx.decide(circuit, goal).verdict      # 'equal'
+azx.lean("deutsch_jozsa.lean")         # the Lean 4 theorem
+```
+
+`a | b` feeds `b` into `a`, `@` is the tensor product, `** n` repeats a piece in a !-box, `^ k`
+puts `k` copies in series and `*` scales. `azx("...")` runs any engine command.
+
+The engine objects can also be used directly. Build two Z spiders over a symbolic dimension `d`, fuse them, check the rewrite, and prove it for
 every count at once.
 
 ```python

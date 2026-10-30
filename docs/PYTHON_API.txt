@@ -13,7 +13,7 @@ The Python interfaces are not yet stable between releases.
 ---------------------
 
 Engine objects are imported by full module path. The package and sub-package __init__ files
-export nothing; from archytaszx import Diagram fails.
+export nothing; from archytaszx import Diagram fails. Section 3 lists the one exception.
 
     # Layer A: algebra
     from archytaszx.algebra.dimension import Dim, solve, unify_all
@@ -96,3 +96,110 @@ fusion for every number of copies.
 
 The layer documents (ALGEBRA.txt, DIAGRAM.txt, REWRITE.txt, SEMANTICS.txt, PROOFS.txt) specify
 every public class and function used here.
+
+
+3. THE EMBEDDING
+----------------
+
+Implementation: archytaszx.repl.embed
+
+The package exports four names, the only exception to section 1:
+
+    from archytaszx import azx                 # the default Program
+    from archytaszx import Program, Piece, Sym
+
+A Program is one engine session (ENGINE_COMMANDS.txt). Each Program() is a fresh session.
+
+3.1 Symbols
+
+    azx.count(NAME [, VALUE])    a multiplicity symbol
+    azx.dim(NAME [, VALUE])      a dimension symbol
+    azx.d                        the default dimension
+
+A Sym combines with + - * / ** and with Python ints and Fractions. A string is read as an
+expression. A bound VALUE is written as "count NAME = VALUE" or "let NAME = VALUE"; the
+symbol stays symbolic in every proof.
+
+3.2 Pieces
+
+A Piece is a diagram fragment with ordered free inputs and outputs.
+
+  Expression                         Piece
+  ---------------------------------  ------------------------------------------------------
+  azx.Z(M, N, phase=, weight=, dim=)  Z spider with M inputs and N outputs
+  azx.X(M, N, phase=, dim=)          X spider
+  azx.W(M, N, dim=)                  W node
+  azx.F, azx.T, azx.Ti               Fourier box, triangle, inverse triangle
+  azx.fourier(D), azx.triangle(D)    the same, of dimension D
+  azx.B(S, T), azx.S(S, T)           binder and splitter
+  azx.node(GEN, INS, OUTS, ...)      any generator, with explicit leg dimensions
+  azx.id, azx.swap                   one bare wire, two crossing wires
+  azx.scalar(EXPR)                   the empty diagram times EXPR
+
+A symbolic M or N is one leg in a port-scope !-box of that multiplicity. phase and weight
+take 0, one expression at every index k ("-k/d"), or a dict {INDEX: EXPR}.
+
+  Operator    Meaning
+  ----------  ---------------------------------------------------------------------------
+  A | B       B's leading outputs wired to A's leading inputs (B first); unwired ports
+              stay free, B's inputs before A's, A's outputs before B's
+  A @ B       tensor product, A above B
+  A ** K      K copies side by side; a node-scope !-box of multiplicity K when K is symbolic
+  A ^ K       K copies in series (int K >= 1)
+  A * S, S * A, A / S
+              scalar factor
+
+Python binds ^ looser than @ and *, so a series power inside a product needs parentheses:
+(azx.F ^ 3) @ azx.id.
+
+A wire between two !-boxes of equal multiplicity merges them, so azx.F ** n | azx.X(0, 1) ** n
+is (azx.F | azx.X(0, 1)) ** n. Any other wire across a !-box boundary raises AzxError.
+
+Each Piece compiles to the DSL of ENGINE_COMMANDS.txt, section 3.1. Node ids follow the order
+in which nodes act, so a piece and the same circuit written as a DSL chain read back
+identically. Bare wires are spliced out; one that joins an input straight to an output is
+written Z(1 -> 1).
+
+  Method         Result
+  -------------  --------------------------------------------------------------------------
+  p.dsl()        the DSL text
+  p.diagram()    the Diagram
+  p.draw(STYLE)  the ZX drawing: unicode (default), ascii or matplot
+  str(p)         the Dirac form
+  p._repr_png_   the drawing in Jupyter
+
+3.3 Commands
+
+  Call                                Effect
+  ----------------------------------  ---------------------------------------------------
+  azx(TEXT)                           runs engine commands, returns their printed output
+  azx.NAME = P                        stores P as @NAME
+  azx.load(P)                         makes P the current diagram
+  azx.decide(A, B)                    decide A against B
+  azx.prove(A, B, exhaustive=False)   prove A against B
+  azx.check(A, B, NAME=VALUE, ...)    numeric check of A against B
+  azx.lean([FILE])                    certificate lean [FILE]
+  azx.kernel()                        certificate kernel
+
+A and B are Pieces, DSL text or "@NAME". Each call returns a Result: its printed text, ok,
+and, after decide, verdict and method.
+
+3.4 Example
+
+The qudit Deutsch-Jozsa circuit with the balanced oracle f(x) = x_n, n = m + 1:
+
+    from archytaszx import azx
+
+    m, d = azx.count("m"), azx.d
+    data = (azx.F ^ 4 | azx.X(0, 1)) ** m
+    last = ((azx.F ^ 3) @ azx.id) | azx.Z(1, 2) | azx.F | azx.X(0, 1)
+    target = azx.F ^ 3 | azx.X(0, 1, phase="-k/d")
+    oracle = (azx.id @ azx.X(2, 1)) | (azx.id @ azx.swap)
+    circuit = data @ (oracle | (last @ target)) * d ** (-(m + 1) / 2)
+    goal = (azx.X(0, 1) ** m @ azx.X(0, 1, phase="-k/d") @ azx.Z(0, 1, phase="-k/d")) \
+        * d ** (-(m + 2) / 2)
+
+    azx.decide(circuit, goal).verdict           'equal'
+    azx.lean("deutsch_jozsa_balanced.lean")
+
+circuit.dsl() reads back to the diagram of examples/deutsch_jozsa_proof.azx node for node.
