@@ -911,6 +911,10 @@ class _Export:
         a, b = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
         builder = _RULES.get(t.inference.rule)
         engine_k = self.scalar(step.scalar_introduced) if step is not None else ONE
+        if step is not None and builder is None:
+            reverse = _through_forward(t)
+            if reverse is not None:
+                return self.term(reverse)
         if step is None or builder is None:
             return self.axiom(t.inference.rule, f"rule {t.inference.rule}", a, b, engine_k)
         try:
@@ -3234,6 +3238,63 @@ def _w_aso(c: _Ctx) -> _Spec:
         f"{_chks(7)}"
     )
     return _Spec((nodes["w1"], nodes["w2"]), [outer[0], inner[0]], lemma)
+
+
+_FORWARD: dict[str, str] = {
+    "x_fusion_converse": "spider_fusion",
+    "triangle_inverse_cancellation_ti_t_converse": "triangle_inverse_cancellation",
+    "fourier_effect_color_change_converse": "fourier_state_color_change",
+    "fourier_effect_color_change_swapped_converse": "fourier_state_color_change_swapped",
+    "triangle_zero_state_t_converse": "triangle_zero_state",
+    "triangle_zero_state_ti_converse": "triangle_zero_state",
+    "connective_states_states_converse": "connective_states",
+    "connective_states_effects_converse": "connective_states",
+    "connective_states_swapped_states_converse": "connective_states_swapped",
+    "connective_states_swapped_effects_converse": "connective_states_swapped",
+}
+"""Converse rules whose forward rule has another name."""
+
+
+def _through_forward(t: object) -> object | None:
+    """A step's theorem rebuilt as the symmetric of a step of its reverse rule (the forward
+    rule of a converse, the converse of a rule) applied to the step's result and closed by an
+    isomorphism; None when no such step exists."""
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.rewrite.engine import apply as apply_rule
+    from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
+    from archytaszx.rewrite.rule import RewriteError
+    from archytaszx.rewrite.rules_library import RULES
+    from archytaszx.semantics import kernel
+
+    assert isinstance(t, kernel.Theorem)
+    name = t.inference.rule
+    if name.endswith("_converse"):
+        forward = _FORWARD.get(name, name.removesuffix("_converse"))
+    else:
+        forward = f"{name}_converse"
+    if forward == name or forward not in RULES or forward not in _RULES:
+        return None
+    rule = RULES[forward]
+    target = comparison_view(t.lhs)
+    try:
+        matches = rule.pattern.find_matches(t.rhs)
+    except RewriteError:
+        return None
+    for match in matches:
+        try:
+            result = apply_rule(t.rhs, rule, match)
+        except RewriteError:
+            continue
+        view = comparison_view(result.diagram)
+        if not (isomorphic(result.diagram, t.lhs) or views_isomorphic(view, target)):
+            continue
+        try:
+            step = kernel.rule(t.rhs, result.step)
+            closed = kernel.trans(step, kernel.iso(result.diagram, t.lhs))
+        except kernel.KernelError:
+            continue
+        return kernel.symm(closed)
+    return None
 
 
 @dataclass(frozen=True)
