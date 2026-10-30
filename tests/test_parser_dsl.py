@@ -728,7 +728,12 @@ BAD = [
     ("a = ", GRAMMAR),
     ("a = Z(", GRAMMAR),
     ("a = Z()", GRAMMAR),
-    ("a = Z(0 -> 1)", GRAMMAR),
+    ("a = Z(0)", GRAMMAR),
+    ("a = Z(0 -> 1); b = Z(1 -> 0); a -> bb", GRAMMAR),
+    ("a = Z(0 -> 1); b = Z(1 -> 0); a -> b -> b", DOMAIN),
+    ("a = Z(0 -> 1); b = Z(2 -> 0); a -> b.in1 -> b", GRAMMAR),
+    ("a = Z(0 -> 1); repeat 2: a, a.out0", GRAMMAR),
+    ("a[3..1] = F", GRAMMAR),
     ("a = Z(0 -> 1, d", GRAMMAR),
     ("a = Z(0 -> 1, d))", GRAMMAR),
     ("a = Q(0 -> 1, d)", GRAMMAR),
@@ -1249,3 +1254,60 @@ def test_parser_never_contracts(monkeypatch: pytest.MonkeyPatch) -> None:
         parsed = PR.parse(source)
         assert isinstance(parsed, PR.ParsedDiagram)
     PR.apply_step(PR.parse_diagram(GHZ_DSL), PR.parse_step("apply spider_fusion"))
+
+
+# -- chains, ranges, repeat, default dimension ------------------------------------------------
+
+FRIENDLY = [
+    (
+        "dim d; a = Z(0 -> 2, d) phase{1: alpha}; b = Z(1 -> 2, d); wire a.out0 -- b.in0",
+        "a = Z(0 -> 2) phase{1: alpha}; b = Z(1 -> 2); a -> b",
+    ),
+    (
+        (
+            "count n; dim d; a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0; "
+            "box m x n nodes a, b"
+        ),
+        "count n; repeat n: Z(0 -> 2) -> Z(1 -> 2)",
+    ),
+    (
+        (
+            "count n; s = X(0 -> 1, d); z = Z(1 -> 1, d); wire s.out0 -- z.in0; "
+            "box p x n ports z.out0"
+        ),
+        "count n; X(0 -> 1) -> z = Z(1 -> 1); repeat n: z.out0",
+    ),
+    (
+        (
+            "dim e; s = X(0 -> 1, e); g1 = F(e); g2 = F(e); g3 = F(e); u = X(2 -> 1, e); "
+            "wire s.out0 -- g1.in0, g1.out0 -- g2.in0, g2.out0 -- g3.in0, g3.out0 -- u.in0; "
+            "inputs u.in1"
+        ),
+        "dim e; s = X(0 -> 1); g[1..3] = F; u = X(2 -> 1); s -> g[1..3] -> u; inputs u.in1",
+    ),
+    (
+        (
+            "dim d; s = X(0 -> 1, d) phase{k: -k/d}; g1 = F(d); g2 = F(d); c = Z(1 -> 2, d); "
+            "u = X(2 -> 1, d); wire s.out0 -- g1.in0, g1.out0 -- g2.in0, g2.out0 -- c.in0, "
+            "c.out0 -- u.in0, c.out1 -- u.in1"
+        ),
+        "X(0 -> 1) phase{k: -k/d} -> F^2 -> c = Z(1 -> 2) -> u = X(2 -> 1); c -> u",
+    ),
+]
+
+
+@pytest.mark.parametrize(("long", "short"), FRIENDLY)
+def test_friendly_forms_match_the_long_forms(long: str, short: str) -> None:
+    assert PR.parse(short).form is PR.InputForm.DSL
+    assert compare_structure(PR.parse_dsl(long), PR.parse_dsl(short)).identical
+
+
+def test_default_dimension_does_not_rename_minted_symbols() -> None:
+    assert PR.parse_dsl("a = X(0 -> 1, 3)").parameters == {"d": 3}
+
+
+def test_unknown_names_suggest_the_closest() -> None:
+    with pytest.raises(PR.ParseGrammarError, match="did you mean 'b'"):
+        PR.parse_dsl("a = Z(0 -> 1); b = Z(1 -> 0); a -> bb")
+    with pytest.raises(PR.ParseDomainError, match="did you mean 'spider_fusion'"):
+        PR.parse_step("apply spidr_fusion")

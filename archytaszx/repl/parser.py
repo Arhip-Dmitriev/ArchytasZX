@@ -39,8 +39,10 @@ no unknown-parameter issue. Every failure is a :class:`ParseError`.
 
 from __future__ import annotations
 
+import difflib
 import enum
 import functools
+import itertools
 import math
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -929,9 +931,19 @@ def _carried(diagram: Diagram) -> frozenset[str]:
     return frozenset(names)
 
 
+def _did_you_mean(word: str, known: Iterable[str]) -> str:
+    """``; did you mean 'X'?`` for the closest user-visible name in ``known``, else ``""``."""
+    names = [name for name in known if "~" not in name]
+    close = difflib.get_close_matches(word, names, n=1, cutoff=0.6)
+    return f"; did you mean {close[0]!r}?" if close else ""
+
+
 def _generator(name: str) -> GeneratorType:
     if name not in REGISTRY.names():
-        raise ParseGrammarError(f"unknown generator {name!r}; known: {sorted(REGISTRY.names())}")
+        raise ParseGrammarError(
+            f"unknown generator {name!r}{_did_you_mean(name, REGISTRY.names())} "
+            f"(known: {', '.join(sorted(REGISTRY.names()))})"
+        )
     return REGISTRY.get(name)
 
 
@@ -1257,11 +1269,27 @@ def _phases(diagram: Diagram) -> list[Phase]:
 
 # -- form 2: DSL ---------------------------------------------------------------------------
 
-_DSL_KEYWORDS = frozenset({"dim", "count", "let", "wire", "inputs", "outputs", "scalar", "box"})
+_DSL_KEYWORDS = frozenset(
+    {"dim", "count", "let", "wire", "inputs", "outputs", "scalar", "box", "repeat"}
+)
 _RESERVED_SYMBOLS = _DSL_KEYWORDS | {_LITERAL_MARKER, "apply"}
 _RESERVED_NAMES = _RESERVED_SYMBOLS | set(_CONSTANTS) | _FUNCTIONS
 _DSL_START_RE = re.compile(rf"(?:{'|'.join(sorted(_DSL_KEYWORDS))})\b")
-_DSL_NODE_RE = re.compile(rf"(?P<name>{_IDENTIFIER})\s*=\s*(?P<gen>{_IDENTIFIER})\s*\(")
+_DSL_NODE_RE = re.compile(
+    rf"(?P<name>{_IDENTIFIER})(?:\[(?P<lo>[0-9]+)\s*\.\.\s*(?P<hi>[0-9]+)\])?\s*=\s*"
+    rf"(?P<gen>{_IDENTIFIER})\s*(?:\(|(?=\s|$))"
+)
+_DSL_RANGE_RE = re.compile(rf"(?P<stem>{_IDENTIFIER})\[(?P<lo>[0-9]+)\s*\.\.\s*(?P<hi>[0-9]+)\]")
+_DSL_ANON_RE = re.compile(
+    rf"(?P<gen>{_IDENTIFIER})\s*(?P<args>\(.*\))?\s*"
+    r"(?P<phase>phase\s*(?:\[[^\]]*\])?\s*(?:0|\{[^{}]*\}))?\s*(?:\^\s*(?P<times>[0-9]+))?"
+)
+_DSL_REPEAT_RE = re.compile(
+    rf"repeat\s+(?P<mult>.+?)(?:\s+as\s+(?P<name>{_IDENTIFIER}))?"
+    rf"(?:\s+in\s+(?P<parent>{_IDENTIFIER}))?\s*:\s*(?P<scope>.+)"
+)
+_DEFAULT_DIM = "d"
+_WORD_THEN_WORD_RE = re.compile(rf"{_IDENTIFIER}\s+[A-Za-z_]")
 _DSL_REF_RE = re.compile(rf"(?P<node>{_IDENTIFIER})\.(?P<side>out|in)(?P<index>[0-9]+)")
 _DSL_PHASE_RE = re.compile(
     r"phase\s*(?:\[(?P<dim>[^\]]*)\])?\s*(?:(?P<zero>0)|\{(?P<entries>[^{}]*)\})"
@@ -1302,11 +1330,60 @@ def _closing_paren(text: str, open_at: int) -> int:
     raise ParseGrammarError(f"unbalanced '(' in {text!r}")
 
 
+def _split_token(text: str, token: str) -> list[str]:
+    """``text`` split at ``token`` outside brackets, parts stripped."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and text.startswith(token, i):
+            parts.append(text[start:i].strip())
+            i += len(token)
+            start = i
+            continue
+        i += 1
+    parts.append(text[start:].strip())
+    return parts
+
+
 def _name(name: str, what: str) -> str:
     reserved = _RESERVED_SYMBOLS if what == "symbol" else _RESERVED_NAMES
     if name in reserved or not name.isidentifier():
         raise ParseGrammarError(f"{what} name {name!r} is a keyword or not an identifier")
     return name
+
+
+def _name_range(lo: str, hi: str) -> range:
+    """The integers ``lo..hi``, both ends included."""
+    a, b = _numeral(lo, "range start"), _numeral(hi, "range end")
+    if b < a or b - a >= _MAX_KET_LEG_COUNT:
+        raise ParseGrammarError(f"range {a}..{b} is empty or longer than {_MAX_KET_LEG_COUNT}")
+    return range(a, b + 1)
+
+
+def _expand(items: Iterable[str]) -> list[str]:
+    """``items`` with every ``stem[a..b]`` spelled out as ``stema, ..., stemb``."""
+    out: list[str] = []
+    for item in items:
+        match = _DSL_RANGE_RE.fullmatch(item.strip())
+        if match is None:
+            out.append(item.strip())
+        else:
+            out.extend(f"{match['stem']}{i}" for i in _name_range(match["lo"], match["hi"]))
+    return out
+
+
+def _node_names(match: re.Match[str]) -> list[str]:
+    """The names a node declaration introduces: one, or one per index of its range."""
+    if match["lo"] is None:
+        return [match["name"]]
+    return [f"{match['name']}{i}" for i in _name_range(match["lo"], match["hi"])]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1323,6 +1400,8 @@ class _Dsl:
 
     abstraction: _Abstraction
     mults: frozenset[str] = frozenset()
+    default_dim: str = _DEFAULT_DIM
+    names: frozenset[str] = frozenset()
     nodes: dict[str, _NodeDraft] = field(default_factory=dict)
     wires: list[tuple[str, str]] = field(default_factory=list)
     boundary: dict[str, list[str]] = field(default_factory=dict)
@@ -1331,13 +1410,14 @@ class _Dsl:
     declared_dims: set[str] = field(default_factory=set)
     declared_counts: set[str] = field(default_factory=set)
     bindings: dict[str, int] = field(default_factory=dict)
+    used_default: bool = False
 
     def dim(self, text: str) -> Dim:
         return _slot_dim(_parse_expr(text, "dimension"), self.abstraction.dim, self.mults)
 
     def statement(self, text: str) -> None:
         node = _DSL_NODE_RE.match(text)
-        if node is not None:
+        if node is not None and len(_split_token(text, "->")) == 1:
             self.node(text, node)
             return
         keyword, rest = _keyword(text)
@@ -1345,31 +1425,46 @@ class _Dsl:
             self.binding(keyword, rest)
         elif keyword == "wire":
             for item in _split_top(rest):
-                left, sep, right = item.partition("--")
-                if not sep:
-                    raise ParseGrammarError(f"wire {item!r} is not 'a.outI -- b.inJ'")
-                self.wires.append((left.strip(), right.strip()))
+                self.link(item)
         elif keyword in ("inputs", "outputs"):
             if keyword in self.boundary:
                 raise ParseGrammarError(f"'{keyword}' appears twice")
-            self.boundary[keyword] = _split_top(rest)
+            self.boundary[keyword] = _expand(_split_top(rest))
         elif keyword == "scalar":
             if self.scalar is not None:
                 raise ParseGrammarError("'scalar' appears twice")
             self.scalar = rest
         elif keyword == "box":
             self.box(text)
+        elif keyword == "repeat":
+            self.repeat(text)
+        elif (
+            len(_split_token(text, "->")) > 1 or len(_split_token(text, "--")) > 1
+        ) and not _WORD_THEN_WORD_RE.match(text):
+            self.link(text)
         else:
-            raise ParseGrammarError(f"unknown DSL statement {text!r}")
+            raise ParseGrammarError(
+                f"unknown DSL statement {text!r}"
+                + _did_you_mean(keyword, (*_DSL_KEYWORDS, *self.names))
+            )
 
     def node(self, text: str, match: re.Match[str]) -> None:
-        name = _name(match["name"], "node")
-        if name in self.nodes:
-            raise ParseGrammarError(f"node {name!r} is declared twice")
         generator = _generator(match["gen"])
-        close = _closing_paren(text, match.end() - 1)
-        inputs, outputs, default = self.legs(generator, text[match.end() : close])
-        rest = text[close + 1 :].strip()
+        if text[match.end() - 1] == "(":
+            close = _closing_paren(text, match.end() - 1)
+            args, rest = text[match.end() : close], text[close + 1 :]
+        else:
+            args, rest = None, text[match.end() :]
+        draft = self.draft(generator, args, rest.strip(), match["name"])
+        for name in _node_names(match):
+            name = _name(name, "node")
+            if name in self.nodes:
+                raise ParseGrammarError(f"node {name!r} is declared twice")
+            self.nodes[name] = draft
+
+    def draft(self, generator: GeneratorType, args: str | None, rest: str, name: str) -> _NodeDraft:
+        """The node ``GEN(args) rest`` declares; ``args`` is ``None`` without parentheses."""
+        inputs, outputs, default = self.legs(generator, args or "")
         phase_dim = None
         entries = None
         if rest:
@@ -1383,36 +1478,99 @@ class _Dsl:
             else:
                 raise ParseDomainError(f"node {name!r} has no legs; its phase needs 'phase[D]'")
             entries = phase["entries"] or ""
-        self.nodes[name] = _NodeDraft(generator, inputs, outputs, phase_dim, entries)
+        return _NodeDraft(generator, inputs, outputs, phase_dim, entries)
 
     def legs(
         self, generator: GeneratorType, args: str
     ) -> tuple[tuple[Dim, ...], tuple[Dim, ...], Dim | None]:
-        """Input dims, output dims, and the shorthand dim if one was given."""
+        """Input dims, output dims, and the shorthand dim if one was given; an omitted dim is
+        :attr:`default_dim`."""
         parts = _split_top(args)
         if parts and "->" in parts[0]:
-            if len(parts) != 2:
-                raise ParseGrammarError(f"{args!r} is not 'm -> n, D'")
+            if len(parts) > 2:
+                raise ParseGrammarError(f"{args!r} is not 'm -> n[, D]'")
             ins_text, _, outs_text = parts[0].partition("->")
             counts = (_int_token(ins_text, "input count"), _int_token(outs_text, "output count"))
             if max(counts) > _MAX_KET_LEG_COUNT:
                 raise ParseDomainError(f"leg count above the bound of {_MAX_KET_LEG_COUNT}")
-            dim = self.dim(parts[1])
+            dim = self.dim(parts[1]) if len(parts) == 2 else self.fallback_dim()
             return (dim,) * counts[0], (dim,) * counts[1], dim
         explicit = _DSL_EXPLICIT_RE.fullmatch(args.strip())
         if explicit is not None:
             inputs = tuple(self.dim(t) for t in _split_top(explicit["ins"]))
             outputs = tuple(self.dim(t) for t in _split_top(explicit["outs"]))
             return inputs, outputs, None
-        if generator.name in _ONE_TO_ONE and len(parts) == 1:
-            dim = self.dim(parts[0])
+        if generator.name in _ONE_TO_ONE and len(parts) <= 1:
+            dim = self.dim(parts[0]) if parts else self.fallback_dim()
             return (dim,), (dim,), dim
         if generator.name in ("B", "S") and len(parts) == 2:
             s, t = self.dim(parts[0]), self.dim(parts[1])
             if generator.name == "B":
                 return (s, t), (s * t,), None
             return (s * t,), (s, t), None
-        raise ParseGrammarError(f"{generator.name}({args}) matches no node form")
+        raise ParseGrammarError(
+            f"{generator.name}({args}) matches no node form; write {generator.name}(m -> n) "
+            f"or {generator.name}(m -> n, D)"
+        )
+
+    def fallback_dim(self) -> Dim:
+        """The default dimension, for a node that gives none."""
+        self.used_default = True
+        return self.dim(self.default_dim)
+
+    def link(self, text: str) -> list[str]:
+        """Wires of ``a.outI -- b.inJ`` or of a chain ``a -> b -> c``; the chain's nodes."""
+        if len(_split_token(text, "->")) == 1:
+            parts = _split_token(text, "--")
+            if len(parts) != 2 or not all(parts):
+                raise ParseGrammarError(f"wire {text!r} is not 'a.outI -- b.inJ' or 'a -> b'")
+            self.wires.append((parts[0], parts[1]))
+            return []
+        ends: list[tuple[str, str]] = []
+        for item in _split_token(text, "->"):
+            if not item:
+                raise ParseGrammarError(f"chain {text!r} has an empty step")
+            ends.extend(self.chain_item(item))
+        for k, (left, right) in enumerate(itertools.pairwise(ends)):
+            if (k > 0 and "." in left[1]) or (k < len(ends) - 2 and "." in right[0]):
+                raise ParseGrammarError(f"chain {text!r}: only its ends may name a port")
+            self.wires.append((left[1], right[0]))
+        return [end[0] for end in ends if "." not in end[0]]
+
+    def chain_item(self, item: str) -> list[tuple[str, str]]:
+        """(input end, output end) per node one chain step stands for, in order."""
+        if _DSL_REF_RE.fullmatch(item):
+            return [(item, item)]
+        declared = _DSL_NODE_RE.match(item)
+        if declared is not None:
+            self.node(item, declared)
+            return [(name, name) for name in _node_names(declared)]
+        expanded = _expand([item])
+        if len(expanded) > 1 or item in self.names:
+            for name in expanded:
+                if name not in self.names:
+                    raise ParseGrammarError(
+                        f"unknown node {name!r}" + _did_you_mean(name, self.names)
+                    )
+            return [(name, name) for name in expanded]
+        anon = _DSL_ANON_RE.fullmatch(item)
+        if anon is None or anon["gen"] not in REGISTRY.names():
+            word = anon["gen"] if anon is not None else item
+            raise ParseGrammarError(
+                f"unknown node or generator {word!r}"
+                + _did_you_mean(word, (*self.names, *REGISTRY.names()))
+            )
+        args = anon["args"][1:-1] if anon["args"] else None
+        times = 1 if anon["times"] is None else _numeral(anon["times"], "repeat count")
+        if not 1 <= times <= _MAX_KET_LEG_COUNT:
+            raise ParseDomainError(f"{item!r}: repeat count outside 1..{_MAX_KET_LEG_COUNT}")
+        draft = self.draft(_generator(anon["gen"]), args, anon["phase"] or "", anon["gen"])
+        out: list[tuple[str, str]] = []
+        for _ in range(times):
+            name = f"{anon['gen']}~{len(self.nodes)}"
+            self.nodes[name] = draft
+            out.append((name, name))
+        return out
 
     def binding(self, keyword: str, rest: str) -> None:
         items = _split_top(rest)
@@ -1435,45 +1593,113 @@ class _Dsl:
                 raise ParseGrammarError(f"{name!r} is bound twice")
             self.bindings[name] = _signed(match["value"])
 
+    def multiplicity(self, text: str) -> Mult:
+        """A box multiplicity: a bare int is abstracted, ``literal INT`` kept concrete."""
+        node = _parse_expr(text, "multiplicity")
+        if isinstance(node, _Num):
+            return self.abstraction.count(node.value)
+        if isinstance(node, _Lit):
+            return Mult(node.value)
+        return _mult_of(node)
+
+    def add_box(self, name: str, box: _DslBox) -> None:
+        if name in self.boxes:
+            raise ParseGrammarError(f"box {name!r} is declared twice")
+        self.boxes[name] = box
+
     def box(self, text: str) -> None:
         match = _DSL_BOX_RE.fullmatch(text)
         if match is None:
             raise ParseGrammarError(f"{text!r} is not 'box NAME x MULT nodes|ports ... [in P]'")
-        name = _name(match["name"], "box")
-        if name in self.boxes:
-            raise ParseGrammarError(f"box {name!r} is declared twice")
-        node = _parse_expr(match["mult"], "multiplicity")
-        if isinstance(node, _Num):
-            mult = self.abstraction.count(node.value)
-        elif isinstance(node, _Lit):
-            mult = Mult(node.value)
-        else:
-            mult = _mult_of(node)
-        self.boxes[name] = _DslBox(mult, match["kind"], match["scope"], match["parent"])
+        box = _DslBox(
+            self.multiplicity(match["mult"]), match["kind"], match["scope"], match["parent"]
+        )
+        self.add_box(_name(match["name"], "box"), box)
+
+    def repeat(self, text: str) -> None:
+        match = _DSL_REPEAT_RE.fullmatch(text)
+        if match is None:
+            raise ParseGrammarError(
+                f"{text!r} is not 'repeat MULT [as NAME] [in P]: nodes or ports'"
+            )
+        items: list[str] = []
+        ports: list[bool] = []
+        for item in _split_top(match["scope"]):
+            if len(_split_token(item, "->")) > 1:
+                found = self.link(item)
+            elif _DSL_REF_RE.fullmatch(item):
+                found = [item]
+            else:
+                found = [end for end, _ in self.chain_item(item)]
+            items.extend(found)
+            ports.extend("." in name for name in found)
+        if any(ports) and not all(ports):
+            raise ParseGrammarError(f"{text!r} mixes nodes and ports")
+        kind = "ports" if all(ports) else "nodes"
+        name = _name(match["name"], "box") if match["name"] else f"~{len(self.boxes)}"
+        box = _DslBox(self.multiplicity(match["mult"]), kind, ", ".join(items), match["parent"])
+        self.add_box(name, box)
 
     def ref(self, text: str, ids: Mapping[str, NodeId]) -> PortRef:
         match = _DSL_REF_RE.fullmatch(text.strip())
         if match is None:
             raise ParseGrammarError(f"{text!r} is not a port 'NAME.outI' or 'NAME.inJ'")
         if match["node"] not in ids:
-            raise ParseGrammarError(f"unknown node {match['node']!r}")
+            raise ParseGrammarError(
+                f"unknown node {match['node']!r}" + _did_you_mean(match["node"], ids)
+            )
         direction = Direction.OUTPUT if match["side"] == "out" else Direction.INPUT
         return PortRef(ids[match["node"]], direction, _numeral(match["index"], "port index"))
+
+    def wire_ports(
+        self, drafts: Mapping[int, _NodeDraft], ids: Mapping[str, NodeId], fixed: set[PortRef]
+    ) -> list[tuple[PortRef, PortRef]]:
+        """Both ports of every wire; a bare node end takes its lowest port not otherwise
+        used, an output on the left and an input on the right."""
+        taken = set(fixed)
+        for left, right in self.wires:
+            for end in (left, right):
+                if "." in end:
+                    taken.add(self.ref(end, ids))
+        pairs: list[tuple[PortRef, PortRef]] = []
+        for left, right in self.wires:
+            ends = []
+            for end, direction in ((left, Direction.OUTPUT), (right, Direction.INPUT)):
+                if "." in end:
+                    ends.append(self.ref(end, ids))
+                    continue
+                if end not in ids:
+                    raise ParseGrammarError(f"unknown node {end!r}" + _did_you_mean(end, ids))
+                node = ids[end]
+                draft = drafts[int(node)]
+                count = len(draft.outputs if direction is Direction.OUTPUT else draft.inputs)
+                free = [
+                    ref
+                    for ref in (PortRef(node, direction, j) for j in range(count))
+                    if ref not in taken
+                ]
+                if not free:
+                    side = "output" if direction is Direction.OUTPUT else "input"
+                    shown = end.split("~", 1)[0]
+                    raise ParseDomainError(f"node {shown!r} has no free {side} for a wire")
+                taken.add(free[0])
+                ends.append(free[0])
+            pairs.append((ends[0], ends[1]))
+        return pairs
 
     def build(self) -> Diagram:
         diagram = Diagram()
         drafts = dict(enumerate(self.nodes.values()))
         _place_nodes(diagram, drafts)
         ids = {name: NodeId(i) for i, name in enumerate(self.nodes)}
-        used: set[PortRef] = set()
-        for left, right in self.wires:
-            a, b = self.ref(left, ids), self.ref(right, ids)
-            diagram.add_wire(a, b)
-            used |= {a, b}
+        named = {name: ids[name] for name in self.nodes if "~" not in name}
         sides = {}
         for keyword in ("inputs", "outputs"):
-            sides[keyword] = [self.ref(text, ids) for text in self.boundary.get(keyword, [])]
-            used.update(sides[keyword])
+            sides[keyword] = [self.ref(text, named) for text in self.boundary.get(keyword, [])]
+        used: set[PortRef] = {*sides["inputs"], *sides["outputs"]}
+        for a, b in self.wire_ports(drafts, ids, used):
+            diagram.add_wire(a, b)
+            used |= {a, b}
         for keyword, direction in (("inputs", Direction.INPUT), ("outputs", Direction.OUTPUT)):
             if keyword not in self.boundary:
                 sides[keyword] = [
@@ -1492,17 +1718,22 @@ class _Dsl:
         box_ids = {name: BangBoxId(i) for i, name in enumerate(self.boxes)}
         for box in self.boxes.values():
             if box.parent is not None and box.parent not in box_ids:
-                raise ParseGrammarError(f"unknown parent box {box.parent!r}")
+                raise ParseGrammarError(
+                    f"unknown parent box {box.parent!r}" + _did_you_mean(box.parent, box_ids)
+                )
             parent = None if box.parent is None else box_ids[box.parent]
-            items = _split_top(box.scope)
+            items = _expand(_split_top(box.scope))
             if box.kind == "nodes":
                 unknown = [item for item in items if item not in ids]
                 if unknown:
-                    raise ParseGrammarError(f"unknown node(s) {unknown} in a box scope")
+                    raise ParseGrammarError(
+                        f"unknown node(s) {unknown} in a box scope"
+                        + _did_you_mean(unknown[0], named)
+                    )
                 scope = frozenset(ids[item] for item in items)
                 diagram.add_bang_box(box.multiplicity, node_scope=scope, parent=parent)
             else:
-                ports = frozenset(self.ref(item, ids) for item in items)
+                ports = frozenset(self.ref(item, named) for item in items)
                 diagram.add_bang_box(box.multiplicity, port_scope=ports, parent=parent)
         dims = [*_draft_dims(drafts), *(Dim.symbol(n) for n in sorted(self.declared_dims))]
         mults = [
@@ -1520,14 +1751,28 @@ class _Dsl:
         return diagram
 
 
-def _dsl_prepass(statements: Sequence[str]) -> tuple[dict[int, str], frozenset[str]]:
-    """Values bound by ``dim``/``let`` (value -> first name), and every count or box
-    multiplicity name."""
+@dataclass(frozen=True, slots=True)
+class _Prepass:
+    """What a DSL program declares before any statement is read."""
+
+    reuse: dict[int, str]
+    mults: frozenset[str]
+    default_dim: str
+    names: frozenset[str]
+
+
+def _dsl_prepass(statements: Sequence[str]) -> _Prepass:
+    """Values bound by ``dim``/``let`` (value -> first name), every count or box multiplicity
+    name, the first declared dimension, and every node name."""
     reuse: dict[int, str] = {}
     mults: set[str] = set()
+    dims: list[str] = []
+    names: set[str] = set()
     for text in statements:
-        if _DSL_NODE_RE.match(text):
-            continue
+        body = text.split(":", 1)[-1] if text.startswith("repeat") else text
+        for part in _split_token(body, "->"):
+            if (node := _DSL_NODE_RE.match(part)) is not None:
+                names.update(_node_names(node))
         keyword, rest = _keyword(text)
         if keyword in ("dim", "let", "count"):
             for item in _split_top(rest):
@@ -1536,11 +1781,16 @@ def _dsl_prepass(statements: Sequence[str]) -> tuple[dict[int, str], frozenset[s
                     continue
                 if keyword == "count":
                     mults.add(match["name"])
-                elif match["value"] is not None:
+                    continue
+                if keyword == "dim":
+                    dims.append(match["name"])
+                if match["value"] is not None:
                     reuse.setdefault(_signed(match["value"]), match["name"])
         elif keyword == "box" and (box := _DSL_BOX_RE.fullmatch(text)) is not None:
             mults |= _mult_names(_parse_expr(box["mult"], "multiplicity"))
-    return reuse, frozenset(mults)
+        elif keyword == "repeat" and (rep := _DSL_REPEAT_RE.fullmatch(text)) is not None:
+            mults |= _mult_names(_parse_expr(rep["mult"], "multiplicity"))
+    return _Prepass(reuse, frozenset(mults), dims[0] if dims else _DEFAULT_DIM, frozenset(names))
 
 
 def _check_phase_range(diagram: Diagram) -> Diagram:
@@ -1564,10 +1814,18 @@ def parse_dsl(source: str) -> Diagram:
     statements = _statements(_require_text(source))
     if not statements:
         raise ParseGrammarError("empty DSL program")
-    reuse, mults = _dsl_prepass(statements)
-    dsl = _Dsl(_Abstraction(source, reuse), mults)
-    for text in statements:
-        dsl.statement(text)
+    pre = _dsl_prepass(statements)
+
+    def read(reserved: str) -> _Dsl:
+        dsl = _Dsl(_Abstraction(f"{source} {reserved}", pre.reuse), pre.mults, pre.default_dim)
+        dsl.names = pre.names
+        for text in statements:
+            dsl.statement(text)
+        return dsl
+
+    dsl = read("")
+    if dsl.used_default:
+        dsl = read(pre.default_dim)
     return _finish(_check_phase_range(dsl.build()))
 
 
@@ -2524,7 +2782,9 @@ def parse_step(source: str) -> RuleStep:
     if match is None:
         raise ParseGrammarError(f"{text!r} is not 'apply RULE [at INT | at nI, nJ, ...]'")
     if match["rule"] not in RULES:
-        raise ParseDomainError(f"no rule {match['rule']!r}; known: {sorted(RULES)}")
+        raise ParseDomainError(
+            f"no rule {match['rule']!r}{_did_you_mean(match['rule'], RULES)} (rules lists them)"
+        )
     index = None if match["index"] is None else _numeral(match["index"], "match index")
     nodes = None
     if match["nodes"] is not None:
@@ -2579,8 +2839,8 @@ class ParsedDiagram:
 
 def _form(source: str) -> InputForm:
     """``graph:`` prefix: LISTING; first word ``apply``: STEP; a first statement opening
-    with a DSL keyword or ``NAME = GEN(`` (GEN a generator, ``(`` not ``(x)``): DSL; else
-    DIRAC."""
+    with a DSL keyword, a chain ``a -> b``, or ``NAME = GEN`` (GEN a generator, not followed
+    by ``(x)``): DSL; else DIRAC."""
     text = source.strip()
     if text.startswith("graph:"):
         return InputForm.LISTING
@@ -2590,7 +2850,7 @@ def _form(source: str) -> InputForm:
     if not statements:
         return InputForm.DIRAC
     first = statements[0]
-    if _DSL_START_RE.match(first):
+    if _DSL_START_RE.match(first) or len(_split_token(first, "->")) > 1:
         return InputForm.DSL
     node = _DSL_NODE_RE.match(first)
     if (
