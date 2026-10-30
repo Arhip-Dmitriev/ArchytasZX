@@ -49,6 +49,7 @@ ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
 WALL_FACTOR = 4
 SAFE_FRACTION = 0.85
+MIN_MEMORY_GB = 0.75
 _MARK = "@@RESULT "
 _FAILED = ("timeout", "oom")
 _OUTPUTS = ("status", "cpu", "wall", "detail", "run")
@@ -197,6 +198,11 @@ def run_suite(
     elif runs_path.exists():
         runs_path.unlink()
     mem_gb = safe_memory_gb(jobs)
+    if mem_gb < MIN_MEMORY_GB:
+        raise SystemExit(
+            f"{suite}: {mem_gb:.2f} GB per run with {jobs} jobs is under {MIN_MEMORY_GB} GB; "
+            "free memory or lower --jobs"
+        )
     cgroup = _cgroups()
     lock = threading.Lock()
     sweeps = _sweeps(cases, module.SIZE)
