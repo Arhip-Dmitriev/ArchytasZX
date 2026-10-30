@@ -681,6 +681,7 @@ def identity_removal_builder(diagram: Diagram, match: Match) -> BuildResult:
     else:
         box = diagram.bang_boxes[match.lifted_box]
         diagram.remove_bang_box(match.lifted_box)
+        _rescope_boxes(diagram, (match.node_id,), (), "identity_removal_builder")
         diagram.add_bang_box(
             box.multiplicity, port_scope=frozenset((match.far_ref,)), parent=box.parent
         )

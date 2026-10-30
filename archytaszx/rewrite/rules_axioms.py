@@ -378,9 +378,13 @@ def fixed_side(build: Callable[[], Template]) -> Side:
     return Side(lambda _dim, _a: build())
 
 
-def concrete_side(build: Callable[[int], Template]) -> Side:
-    """A side defined only at a concrete dimension."""
-    return Side(lambda dim, _a: build(dim.to_int()) if dim.is_concrete else None)
+def concrete_side(build: Callable[[int], Template], grows: bool = False) -> Side:
+    """A side defined only at a concrete dimension; ``grows`` marks a template with at least
+    r nodes at dimension r."""
+    return Side(
+        lambda dim, _a: build(dim.to_int()) if dim.is_concrete else None,
+        min_size=lambda dim: dim.to_int() if grows and dim.is_concrete else 0,
+    )
 
 
 # -- arity enumerators ---------------------------------------------------------------------
@@ -774,7 +778,7 @@ def _multiplier_side(dim: Dim, _a: Arities) -> Template | None:
 ZXW_P1_MULTIPLIER = TemplateAxiom(
     "zxw_p1_multiplier",
     Side(lambda _dim, _a: _hh_left()),
-    Side(_multiplier_side),
+    Side(_multiplier_side, min_size=lambda dim: dim.to_int() - 1 if dim.is_concrete else 0),
     concrete_only=True,
     description="[P1] P1, [P2] P1: H ; H = D is the multiplier -1.",
 )
@@ -1196,7 +1200,7 @@ def _zv_right(r: int) -> Template:
 
 ZXW_ZV = TemplateAxiom(
     "zxw_zv",
-    concrete_side(_zv_left),
+    concrete_side(_zv_left, grows=True),
     concrete_side(_zv_right),
     concrete_only=True,
     description="[P1] ZV: a Z box a state into V is the Z box state (a_{d-1}, ..., a_{d-1}).",
@@ -1241,8 +1245,8 @@ def _scalar(value: object) -> Scalar:
 
 ZXW_VA = TemplateAxiom(
     "zxw_va",
-    concrete_side(_va_left),
-    concrete_side(_va_right),
+    concrete_side(_va_left, grows=True),
+    concrete_side(_va_right, grows=True),
     concrete_only=True,
     description=(
         "[P1] VA: d-1 boxes a_i on a W node through multipliers -i into a pink dot are V "
@@ -1283,8 +1287,8 @@ def _first_kind(gen: GeneratorType) -> Callable[[Diagram, NodeId], Iterator[Arit
 
 ZXW_VW = TemplateAxiom(
     "zxw_vw",
-    concrete_side(_vw_left),
-    concrete_side(_vw_right),
+    concrete_side(_vw_left, grows=True),
+    concrete_side(_vw_right, grows=True),
     concrete_only=True,
     description="[P1] VW: V into a W node is the W node with V on both outputs.",
 )
@@ -1400,7 +1404,7 @@ def _hd_right(_r: int) -> Template:
 
 ZXW_HD = TemplateAxiom(
     "zxw_hd",
-    concrete_side(_hd_left),
+    concrete_side(_hd_left, grows=True),
     concrete_side(_hd_right),
     concrete_only=True,
     description="[P1] HD: the decomposition of the Hadamard box.",
@@ -1766,7 +1770,7 @@ def _va2_right(r: int) -> Template:
 
 QF_VA = TemplateAxiom(
     "qf_va",
-    concrete_side(_va2_left),
+    concrete_side(_va2_left, grows=True),
     concrete_side(_va2_right),
     concrete_only=True,
     description=(
@@ -1808,7 +1812,7 @@ def _hd2_left(r: int) -> Template:
 
 QF_HD = TemplateAxiom(
     "qf_hd",
-    concrete_side(_hd2_left),
+    concrete_side(_hd2_left, grows=True),
     concrete_side(_hd_right),
     concrete_only=True,
     description="[P2] HD: the decomposition of the Hadamard box.",
@@ -1948,6 +1952,8 @@ def _box_value(dim: Dim, b: Bindings) -> Scalar:
     if pv.entries() or pv.weights():
         raise RewriteDomainError("a symbolic sum over explicit entries")
     expr = _rule_coefficient(pv)
+    if INDEX not in expr.free_symbols:
+        return Scalar.one() + (Scalar.from_dim(dim) - Scalar.one()) * Scalar(expr)
     return (
         Scalar.one()
         + Scalar.index_sum(dim, lambda k: Scalar(expr.xreplace({INDEX: k.to_sympy()})))
@@ -3538,7 +3544,7 @@ def _zv_matches(dim: Dim, b: Bindings) -> bool:
 ZXW_ZV_CONVERSE = TemplateAxiom(
     "zxw_zv_converse",
     concrete_side(_zv_converse_left),
-    concrete_side(_zv_converse_right),
+    concrete_side(_zv_converse_right, grows=True),
     conditions=(Condition("constant_vector", "c = (x, ..., x) with x = a_{d-1}", _zv_matches),),
     free={"a": lambda dim, b: last_vector(_coefficient(b["c"], 1, dim), dim)},
     concrete_only=True,
@@ -3587,8 +3593,8 @@ def _va_converse_right(r: int) -> Template:
 
 ZXW_VA_CONVERSE = TemplateAxiom(
     "zxw_va_converse",
-    concrete_side(_va_converse_left),
-    concrete_side(_va_converse_right),
+    concrete_side(_va_converse_left, grows=True),
+    concrete_side(_va_converse_right, grows=True),
     concrete_only=True,
     description="[P1] VA read right to left.",
 )
@@ -3640,7 +3646,7 @@ def _va2_converse_right(r: int) -> Template:
 QF_VA_CONVERSE = TemplateAxiom(
     "qf_va_converse",
     concrete_side(_va2_converse_left),
-    concrete_side(_va2_converse_right),
+    concrete_side(_va2_converse_right, grows=True),
     concrete_only=True,
     description="[P2] VA read right to left.",
 )

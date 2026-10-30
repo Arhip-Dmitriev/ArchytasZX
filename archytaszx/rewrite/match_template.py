@@ -326,6 +326,8 @@ class Side:
 
     template: Callable[[Dim, Arities], Template | None]
     arities: Callable[[Diagram, NodeId, Dim], Iterable[Arities]] = lambda _d, _n, _dim: ({},)
+    min_size: Callable[[Dim], int] = lambda _dim: 0
+    """A lower bound on the template's node count plus internal wire count at a dimension."""
 
 
 @dataclass(frozen=True)
@@ -737,6 +739,8 @@ class TemplatePattern(Pattern):
                 continue
             if self.axiom.concrete_only and not dim.is_concrete:
                 continue
+            if self.axiom.left.min_size(dim) > len(diagram.nodes) + len(diagram.wires):
+                continue
             for arities in self.axiom.left.arities(diagram, anchor, dim):
                 template = self.axiom.left.template(dim, arities)
                 if template is None or not template.nodes:
@@ -885,6 +889,16 @@ class TemplatePattern(Pattern):
         arities: Arities,
         host_dim: Dim,
     ) -> TemplateMatch | None:
+        boxed = _boxed_nodes(diagram)
+        if boxed:
+            partner = _partner_map(diagram)
+            for node_id in state.nodes.values():
+                node = diagram.nodes[node_id]
+                for direction in (Direction.INPUT, Direction.OUTPUT):
+                    for k in range(len(node.legs(direction))):
+                        far = partner.get(PortRef(node_id, direction, k))
+                        if far is not None and far.node_id in boxed:
+                            return None
         bindings = dict(state.bindings)
         outcomes = [
             SideConditionOutcome("template_matches", True, "every template wire is a host wire"),
