@@ -1,0 +1,39 @@
+# The qudit Bernstein-Vazirani circuit with secret s = 1...1, proved equal to its output for
+# every d and n, and exported to Lean 4.
+#
+#   |0>  = d^(-1/2) X(0 -> 1)
+#   |1>  = d^(-1/2) X(0 -> 1) phase{k: -k/d}
+#   F_d  = F,  F_d^dagger = F^3
+#   U_f: f(x) = x_1 + ... + x_n, the phase w^(x_i) on each data qudit.
+
+
+# Fourier superposition: F^n |0>^n is the uniform superposition.
+
+@uniform =
+    count n
+    repeat n: Z(0 -> 1)
+    scalar d^(-n/2)
+
+load
+    count n
+    repeat n: X(0 -> 1) -> F
+    scalar d^(-n/2)
+
+decide against @uniform
+certificate lean fourier_superposition.lean
+
+
+# Bernstein-Vazirani: the output is |1>^n.
+
+@out_ones =
+    count n
+    repeat n: X(0 -> 1) phase{k: -k/d}
+    scalar d^(-n/2)
+
+load
+    count n
+    repeat n: X(0 -> 1) -> F -> Z(1 -> 1) phase{k: k/d} -> F^3
+    scalar d^(-n/2)
+
+decide against @out_ones
+certificate lean bernstein_vazirani.lean
