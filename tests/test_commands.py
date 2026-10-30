@@ -100,6 +100,7 @@ EXPECTED_COMMANDS = {
     "certificate",
     "translate",
     "name",
+    "define",
     "names",
     "undo",
     "reset",
@@ -332,7 +333,12 @@ class TestRegistry:
             ALIASES["x"] = "load"  # type: ignore[index]
 
     def test_aliases(self) -> None:
-        assert dict(ALIASES) == {"list-rules": "rules"}
+        assert dict(ALIASES) == {
+            "list-rules": "rules",
+            "save": "name",
+            "cert": "certificate",
+            "normalise": "normalize",
+        }
 
     def test_help_covers_commands_and_shell_commands(self) -> None:
         assert EXPECTED_COMMANDS | {
@@ -355,19 +361,34 @@ class TestRegistry:
     def test_command_names(self) -> None:
         names = command_names()
         assert names == tuple(sorted(names))
-        assert set(names) == EXPECTED_COMMANDS | {"list-rules"}
+        assert set(names) == EXPECTED_COMMANDS | set(ALIASES)
 
     def test_help_lists_every_usage(self) -> None:
         outcome = ok(Session(), "help")
         lines = texts(outcome)
         assert lines[: len(HELP)] == [HELP[n] for n in sorted(HELP)]
-        assert lines[-2] == "aliases: list-rules = rules"
+        assert lines[-2] == (
+            "aliases: cert = certificate, list-rules = rules, normalise = normalize, save = name"
+        )
         assert lines[-1] == "any other line is load <line>"
         assert not outcome.changed
 
     @pytest.mark.parametrize("word", ["apply", "zx", "config", "quit"])
     def test_help_command(self, word: str) -> None:
         assert texts(ok(Session(), f"help {word}")) == [HELP[word]]
+
+    def test_define_stores_without_loading(self) -> None:
+        session = Session()
+        ok(session, "a = Z(0 -> 2); b = Z(1 -> 2); a -> b")
+        before = session.current
+        assert texts(ok(session, "@ghz = GHZ_{3}[d]"))[0] == "named @ghz"
+        assert session.current is before and "ghz" in session.names
+        ok(session, "define two = @ghz")
+        assert "two" in session.names
+
+    def test_mistyped_command_suggests_the_command(self) -> None:
+        outcome = run(Session(), "decid against @x")
+        assert not outcome.ok and "did you mean 'decide'" in texts(outcome)[0]
 
     def test_help_alias(self) -> None:
         assert texts(ok(Session(), "help list-rules")) == [HELP["rules"]]

@@ -40,6 +40,7 @@ one exists, otherwise the furthest-simplified states and the bound that was hit.
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -666,8 +667,14 @@ def _rule_lines(name: str) -> list[str]:
 def _rule_name(text: str) -> str:
     name = text.strip()
     if name not in RULES:
-        raise CommandDomainError(f"no rule {name!r}; rules lists them")
+        raise CommandDomainError(f"no rule {name!r}{_did_you_mean(name, RULES)} (rules lists them)")
     return name
+
+
+def _did_you_mean(word: str, known: Iterable[str], cutoff: float = 0.6) -> str:
+    """``; did you mean 'X'?`` for the closest name in ``known``, else ``""``."""
+    close = difflib.get_close_matches(word, list(known), n=1, cutoff=cutoff)
+    return f"; did you mean {close[0]!r}?" if close else ""
 
 
 def _cmd_rules(session: Session, args: str) -> Outcome:
@@ -1674,6 +1681,21 @@ def _cmd_name(session: Session, args: str) -> Outcome:
     return _ok("name", [Text(f"named @{name}")], current)
 
 
+_DEFINE_RE = re.compile(r"@?([A-Za-z_]\w*)\s*=\s*(.+)", re.DOTALL)
+
+
+def _cmd_define(session: Session, args: str) -> Outcome:
+    match = _DEFINE_RE.fullmatch(args.strip())
+    if match is None:
+        raise CommandGrammarError("expected @NAME = SOURCE")
+    name, source = match[1], match[2]
+    if name in ("start", "current"):
+        raise CommandDomainError(f"{name} is built in")
+    diagram, _ = _resolve(session, source)
+    session.names[name] = diagram.copy()
+    return _ok("define", [Text(f"named @{name}"), State(diagram)], diagram)
+
+
 def _cmd_names(session: Session, args: str) -> Outcome:
     if args.strip():
         raise CommandGrammarError("names takes no arguments")
@@ -1741,6 +1763,7 @@ COMMANDS: Mapping[str, Handler] = MappingProxyType(
         "certificate": _cmd_certificate,
         "translate": _cmd_translate,
         "name": _cmd_name,
+        "define": _cmd_define,
         "names": _cmd_names,
         "undo": _cmd_undo,
         "reset": _cmd_reset,
@@ -1750,7 +1773,14 @@ COMMANDS: Mapping[str, Handler] = MappingProxyType(
 )
 """Every command by canonical name."""
 
-ALIASES: Mapping[str, str] = MappingProxyType({"list-rules": "rules"})
+ALIASES: Mapping[str, str] = MappingProxyType(
+    {
+        "list-rules": "rules",
+        "save": "name",
+        "cert": "certificate",
+        "normalise": "normalize",
+    }
+)
 """Alternative command names."""
 
 HELP: Mapping[str, str] = MappingProxyType(
@@ -1776,7 +1806,9 @@ HELP: Mapping[str, str] = MappingProxyType(
         "certificate to Lean 4",
         "translate": "translate [back | dissolve S | split S FIRST | join S S | enclose nA, nB "
         "[x MULT] | kill S | fuse nA.outI -- nB.inJ] -- scalable notation and sheet steps",
-        "name": "name NAME -- store the current diagram as @NAME",
+        "name": "name NAME -- store the current diagram as @NAME (alias save)",
+        "define": "define NAME = SOURCE -- store a diagram as @NAME without loading it; "
+        "also written @NAME = SOURCE",
         "names": "names -- list named diagrams",
         "undo": "undo -- revert the last state-changing command",
         "reset": "reset -- restart the derivation at the current diagram",
@@ -1810,6 +1842,8 @@ def command_names() -> tuple[str, ...]:
 def _split(line: str) -> tuple[str, str]:
     """(canonical command, arguments); a non-command line is ``load`` of the whole line."""
     text = line.strip()
+    if _DEFINE_RE.fullmatch(text) and text.startswith("@"):
+        return "define", text.split("#", 1)[0].strip()
     parts = text.split(None, 1)
     word, rest = parts[0], (parts[1] if len(parts) > 1 else "")
     name = ALIASES.get(word, word)
@@ -1888,6 +1922,11 @@ def run(session: Session, line: str) -> Outcome:
         if isinstance(session, Session):
             session.last_detail = detail
         message = _one_line(exc) or type(exc).__name__
+        if name == "load" and isinstance(line, str):
+            word = text.split(None, 1)[0]
+            hint = _did_you_mean(word, command_names(), cutoff=0.75)
+            if hint and word not in COMMANDS:
+                message += hint
         blocks = (Text(f"error: {message}"), Text("(detail shows the engine detail)"))
         return Outcome(name, False, blocks, detail, False)
 
