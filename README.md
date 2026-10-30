@@ -314,27 +314,15 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
 <details>
 <summary>Full reference list</summary>
 
-**Dirac notation and quantum foundations**
-- Dirac, *A new notation for quantum mechanics*, Math. Proc. Camb. Phil. Soc. 35 (1939) —
-  [doi:10.1017/S0305004100021162](https://doi.org/10.1017/S0305004100021162)
-- Born, *Zur Quantenmechanik der Stoßvorgänge*, Z. Phys. 37 (1926), the Born rule —
-  [doi:10.1007/BF01397477](https://doi.org/10.1007/BF01397477)
-- Nielsen & Chuang, *Quantum Computation and Quantum Information* (2010), density matrices,
-  measurement, the quantum Fourier transform —
+**Quantum computation**
+- Nielsen & Chuang, *Quantum Computation and Quantum Information* (2010) —
   [doi:10.1017/CBO9780511976667](https://doi.org/10.1017/CBO9780511976667)
-- Gottesman, *Fault-tolerant quantum computation with higher-dimensional systems* (1999), qudits —
-  [arXiv:quant-ph/9802007](https://arxiv.org/abs/quant-ph/9802007)
 
-**ZX-calculus, qudit and qufinite ZX/ZXW**
-- Penrose, *Applications of negative dimensional tensors* (1971), tensor-network diagrams
-- Coecke & Duncan, *Interacting quantum observables*, ICALP 2008 / NJP 13 (2011) —
+**ZX-calculus, W node, qufinite ZX/ZXW**
+- Coecke & Duncan, *Interacting quantum observables: categorical algebra and diagrammatics*, NJP 13 (2011) —
   [arXiv:0906.4725](https://arxiv.org/abs/0906.4725)
-- Coecke & Kissinger, *Picturing Quantum Processes* (2017) —
-  [doi:10.1017/9781316219317](https://doi.org/10.1017/9781316219317)
 - van de Wetering, *ZX-calculus for the working quantum computer scientist* —
   [arXiv:2012.13966](https://arxiv.org/abs/2012.13966)
-- Ranchin, *Depicting qudit quantum mechanics and mutually unbiased qudit theories*, EPTCS 172 (2014) —
-  [arXiv:1404.1288](https://arxiv.org/abs/1404.1288)
 - Hadzihasanovic, *A diagrammatic axiomatisation for qubit entanglement*, LICS 2015, the W node —
   [arXiv:1501.07082](https://arxiv.org/abs/1501.07082)
 - Wang, *Qufinite ZX-calculus: a unified framework of qudit ZX-calculi*, the generator set,
@@ -343,35 +331,25 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   ZXW-calculus*, LICS 2023 — [arXiv:2302.12135](https://arxiv.org/abs/2302.12135)
 - Wang, Poór & Shaikh, *Completeness of qufinite ZXW calculus* —
   [arXiv:2309.13014](https://arxiv.org/abs/2309.13014)
-- Shaikh, Wang & Yeung, *How to sum and exponentiate Hamiltonians in ZXW calculus*, EPTCS 394 (2023) —
-  [arXiv:2212.04462](https://arxiv.org/abs/2212.04462)
 
 **Bang boxes and scalable notation**
 - Dixon & Duncan, *Graphical reasoning in compact closed categories for quantum computation*,
   AMAI 56 (2009) — [doi:10.1007/s10472-009-9141-x](https://doi.org/10.1007/s10472-009-9141-x)
-- Dixon, Duncan & Kissinger, *Open graphs and computational reasoning*, EPTCS 26 (2010) —
-  [arXiv:1007.3794](https://arxiv.org/abs/1007.3794)
 - Kissinger, Merry & Soloviev, *Pattern graph rewrite systems*, EPTCS 143 (2014) —
   [arXiv:1204.6695](https://arxiv.org/abs/1204.6695)
-- Kissinger & Zamdzhiev, *Equational reasoning with context-free families of string diagrams*,
-  ICGT 2015 — [arXiv:1504.02716](https://arxiv.org/abs/1504.02716)
+- Kissinger & Quick, *A first-order logic for string diagrams*, CALCO 2015, !-box induction —
+  [arXiv:1505.00343](https://arxiv.org/abs/1505.00343)
 - Carette, Horsman & Perdrix, *SZX-calculus: scalable graphical quantum reasoning*, MFCS 2019 —
   [arXiv:1905.00041](https://arxiv.org/abs/1905.00041)
 - Carette & Lemonnier, *Large-scale quantum diagrammatic reasoning tools, !-boxes vs. scalable
   notations* — [arXiv:2204.11702](https://arxiv.org/abs/2204.11702)
 
-**Path sums and exact symbolic sums**
-- Amy, *Towards large-scale functional verification of universal quantum circuits*, EPTCS 287
-  (2019) — [arXiv:1805.06908](https://arxiv.org/abs/1805.06908)
-- Vilmart, *The structure of sum-over-paths, its consequences, and completeness for Clifford*,
-  FoSSaCS 2021 — [arXiv:2003.05678](https://arxiv.org/abs/2003.05678)
+**Exact symbolic sums and contraction**
 - Berndt, Evans & Williams, *Gauss and Jacobi Sums* (1998), quadratic Gauss sums and their sign
 - Landsberg, *Zur Theorie der Gaussschen Summen…*, J. reine angew. Math. 111 (1893),
   Landsberg–Schaar reciprocity — [doi:10.1515/crll.1893.111.234](https://doi.org/10.1515/crll.1893.111.234)
 - Dechter, *Bucket elimination*, Artif. Intell. 113 (1999), contraction by variable elimination —
   [doi:10.1016/S0004-3702(99)00059-4](https://doi.org/10.1016/S0004-3702(99)00059-4)
-- Richardson, *Some undecidable problems involving elementary functions of a real variable*,
-  J. Symb. Logic 33 (1968) — [doi:10.2307/2271358](https://doi.org/10.2307/2271358)
 
 **Rewriting and equality saturation**
 - Tate, Stepp, Tatlock & Lerner, *Equality saturation*, LMCS 7 (2011) —
@@ -392,52 +370,48 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
 **Algorithms in the examples**
 - Deutsch & Jozsa, *Rapid solution of problems by quantum computation*, Proc. R. Soc. A 439 (1992) —
   [doi:10.1098/rspa.1992.0167](https://doi.org/10.1098/rspa.1992.0167)
-- Grover, *A fast quantum mechanical algorithm for database search*, STOC 1996 —
-  [arXiv:quant-ph/9605043](https://arxiv.org/abs/quant-ph/9605043)
-- Shor, *Polynomial-time algorithms for prime factorization and discrete logarithms on a quantum
-  computer*, SIAM J. Comput. 26 (1997) — [arXiv:quant-ph/9508027](https://arxiv.org/abs/quant-ph/9508027)
-- Coppersmith, *An approximate Fourier transform useful in quantum factoring* (1994) —
-  [arXiv:quant-ph/0201067](https://arxiv.org/abs/quant-ph/0201067)
+- Fan, *A generalization of the Deutsch–Jozsa algorithm to multi-valued quantum logic*, ISMVL 2007 —
+  [doi:10.1109/ISMVL.2007.3](https://doi.org/10.1109/ISMVL.2007.3)
+- Bernstein & Vazirani, *Quantum complexity theory*, SIAM J. Comput. 26 (1997) —
+  [doi:10.1137/S0097539796300921](https://doi.org/10.1137/S0097539796300921)
 
 **Software**
 - Kissinger & van de Wetering, *PyZX*, EPTCS 318 (2020) — [arXiv:1904.04735](https://arxiv.org/abs/1904.04735)
-- Javadi-Abhari et al., *Quantum computing with Qiskit* (2024) — [arXiv:2405.08810](https://arxiv.org/abs/2405.08810)
+- *ZXLive* — [github.com/zxcalc/zxlive](https://github.com/zxcalc/zxlive)
 - Harris et al., *Array programming with NumPy*, Nature 585 (2020) —
   [doi:10.1038/s41586-020-2649-2](https://doi.org/10.1038/s41586-020-2649-2)
 - Meurer et al., *SymPy*, PeerJ Comput. Sci. 3 (2017) — [doi:10.7717/peerj-cs.103](https://doi.org/10.7717/peerj-cs.103)
 
-**Verification of quantum programs and related tools**
-- Chareton, Bardin, Bobot, Perrelle & Valiron, *An automated deductive verification framework for
-  circuit-building quantum programs* (QBricks), ESOP 2021 — [arXiv:2003.05841](https://arxiv.org/abs/2003.05841)
-- Hietala, Rand, Hung, Wu & Hicks, *A verified optimizer for quantum circuits* (VOQC), POPL 2021 —
-  [arXiv:1912.02250](https://arxiv.org/abs/1912.02250)
-- Hietala, Rand, Hung, Li & Hicks, *Proving quantum programs correct* (SQIR), ITP 2021 —
-  [arXiv:2010.01240](https://arxiv.org/abs/2010.01240)
-- Peng et al., *A formally certified end-to-end implementation of Shor's factorization algorithm*,
-  PNAS 120 (2023) — [arXiv:2204.07112](https://arxiv.org/abs/2204.07112)
-- Chen, Chung, Lengál, Lin, Tsai & Yen, *An automata-based framework for verification and bug
-  hunting in quantum circuits* (AutoQ), PLDI 2023 — [arXiv:2301.07747](https://arxiv.org/abs/2301.07747)
-- Abdulla et al., *Parameterized verification of quantum circuits* (2025) —
-  [arXiv:2511.19897](https://arxiv.org/abs/2511.19897)
-- Xu, Barthe & Zhou, *Automating equational proofs in Dirac notation* (DiracDec), POPL 2025 —
-  [arXiv:2411.11617](https://arxiv.org/abs/2411.11617)
-- Xu, Zhou & Barthe, *D-Hammer: efficient equational reasoning for labelled Dirac notation*,
-  CAV 2025 — [arXiv:2505.08633](https://arxiv.org/abs/2505.08633)
-- Lehmann, Caldwell, Shah, Spencer & Rand, *VyZX: formal verification of a graphical quantum
-  language* — [arXiv:2311.11571](https://arxiv.org/abs/2311.11571)
-- Miller-Bakewell, *Finite verification of infinite families of diagram equations*, EPTCS 318
-  (2020) — [arXiv:1904.00706](https://arxiv.org/abs/1904.00706)
+**Diagrammatic proof assistants and their formalisation**
 - Kissinger & Zamdzhiev, *Quantomatic: a proof assistant for diagrammatic reasoning*, CADE-25
   (2015) — [arXiv:1503.01034](https://arxiv.org/abs/1503.01034)
+- Kissinger, *Chyp: composing hypergraphs, proving theorems*, ACT 2023 —
+  [github.com/akissinger/chyp](https://github.com/akissinger/chyp)
+- Lehmann, Caldwell, Shah, Spencer & Rand, *VyZX: formal verification of a graphical quantum
+  language* — [arXiv:2311.11571](https://arxiv.org/abs/2311.11571)
+- Shah, Spencer, Zielinski, Caldwell, Lehmann & Rand, *ViCAR: visualizing categories with
+  automated rewriting in Coq*, EPTCS 429 (2025) — [arXiv:2404.08163](https://arxiv.org/abs/2404.08163)
+- Caldwell, Spencer, Kissinger & Rand, *TensorRocq: enabling diagrammatic reasoning in Rocq* (2026) —
+  [arXiv:2604.17592](https://arxiv.org/abs/2604.17592)
 - Poór, Booth, Carette, van de Wetering & Yeh, *The qupit stabiliser ZX-travaganza*, EPTCS 384
   (2023), with the DiZX library — [arXiv:2306.05204](https://arxiv.org/abs/2306.05204),
   [github.com/jvdwetering/dizx](https://github.com/jvdwetering/dizx)
 - Sutcliffe & Kissinger, *Fast classical simulation of quantum circuits via parametric rewriting
   in the ZX-calculus* (ParamZX), EPTCS 426 (2025) — [arXiv:2403.06777](https://arxiv.org/abs/2403.06777)
-- Chareton, Bardin, Lee, Valiron, Vilmart & Xu, *Formal methods for quantum programs: a survey* —
-  [arXiv:2109.06493](https://arxiv.org/abs/2109.06493)
-- Lewis, Soudjani & Zuliani, *Formal verification of quantum programs: theory, tools, and
-  challenges*, ACM TQC 5 (2023) — [arXiv:2110.01320](https://arxiv.org/abs/2110.01320)
+
+**Verification of quantum programs and parameterized families**
+- Hietala, Rand, Hung, Li & Hicks, *Proving quantum programs correct* (SQIR), ITP 2021 —
+  [arXiv:2010.01240](https://arxiv.org/abs/2010.01240)
+- Zhou, Barthe, Strub, Liu & Ying, *CoqQ: foundational verification of quantum programs*, POPL 2023 —
+  [arXiv:2207.11350](https://arxiv.org/abs/2207.11350)
+- Chareton, Bardin, Bobot, Perrelle & Valiron, *An automated deductive verification framework for
+  circuit-building quantum programs* (QBricks), ESOP 2021 — [arXiv:2003.05841](https://arxiv.org/abs/2003.05841)
+- Abdulla et al., *Parameterized verification of quantum circuits*, POPL 2026 —
+  [arXiv:2511.19897](https://arxiv.org/abs/2511.19897)
+- Ross & Wesley, *Cutoff theorems for the equivalence of parameterized quantum circuits*, MFCS 2025 —
+  [arXiv:2506.20985](https://arxiv.org/abs/2506.20985)
+- Miller-Bakewell, *Finite verification of infinite families of diagram equations*, EPTCS 318
+  (2020) — [arXiv:1904.00706](https://arxiv.org/abs/1904.00706)
 
 </details>
 

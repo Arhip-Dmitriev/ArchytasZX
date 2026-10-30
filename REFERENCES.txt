@@ -4,148 +4,96 @@ ArchytasZX references
 BibTeX for every entry is in REFERENCES.bib.
 
 
-Dirac notation and quantum foundations
---------------------------------------
+Quantum computation
+-------------------
 
-[1]   P. A. M. Dirac. A new notation for quantum mechanics.
-     Mathematical Proceedings of the Cambridge Philosophical Society 35(3):416-418, 1939.
-     doi:10.1017/S0305004100021162
-
-[2]   M. Born. Zur Quantenmechanik der Stossvorgaenge.
-     Zeitschrift fuer Physik 37(12):863-867, 1926.
-     doi:10.1007/BF01397477
-
-[3]   M. A. Nielsen, I. L. Chuang. Quantum Computation and Quantum Information,
+[1]   M. A. Nielsen, I. L. Chuang. Quantum Computation and Quantum Information,
      10th anniversary edition. Cambridge University Press, 2010.
      doi:10.1017/CBO9780511976667
 
-[4]   D. Gottesman. Fault-tolerant quantum computation with higher-dimensional systems.
-     Chaos, Solitons & Fractals 10(10):1749-1758, 1999.
-     doi:10.1016/S0960-0779(98)00218-5, arXiv:quant-ph/9802007
 
+ZX-calculus, W node, qufinite ZX/ZXW
+------------------------------------
 
-Diagrams, ZX-calculus, qudit and qufinite ZX/ZXW
-------------------------------------------------
-
-[5]   R. Penrose. Applications of negative dimensional tensors.
-     In D. J. A. Welsh (ed.), Combinatorial Mathematics and its Applications,
-     pp. 221-244. Academic Press, 1971.
-
-[6]   B. Coecke, R. Duncan. Interacting quantum observables.
-     ICALP 2008, LNCS 5126, pp. 298-310. Springer, 2008.
-     doi:10.1007/978-3-540-70583-3_25
-
-[7]   B. Coecke, R. Duncan. Interacting quantum observables: categorical algebra and
+[2]   B. Coecke, R. Duncan. Interacting quantum observables: categorical algebra and
      diagrammatics. New Journal of Physics 13:043016, 2011.
      doi:10.1088/1367-2630/13/4/043016, arXiv:0906.4725
 
-[8]   B. Coecke, A. Kissinger. Picturing Quantum Processes: A First Course in Quantum
-     Theory and Diagrammatic Reasoning. Cambridge University Press, 2017.
-     doi:10.1017/9781316219317
-
-[9]   J. van de Wetering. ZX-calculus for the working quantum computer scientist, 2020.
+[3]   J. van de Wetering. ZX-calculus for the working quantum computer scientist, 2020.
      arXiv:2012.13966
 
-[10] A. Ranchin. Depicting qudit quantum mechanics and mutually unbiased qudit theories.
-     EPTCS 172:68-91, 2014.
-     doi:10.4204/EPTCS.172.6, arXiv:1404.1288
-
-[11] A. Hadzihasanovic. A diagrammatic axiomatisation for qubit entanglement.
+[4]   A. Hadzihasanovic. A diagrammatic axiomatisation for qubit entanglement.
      LICS 2015.
      arXiv:1501.07082
 
-[12] Q. Wang. Qufinite ZX-calculus: a unified framework of qudit ZX-calculi, 2021.
+[5]   Q. Wang. Qufinite ZX-calculus: a unified framework of qudit ZX-calculi, 2021.
      arXiv:2104.06429
 
-[13] B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke. Completeness for
+[6]   B. Poor, Q. Wang, R. A. Shaikh, L. Yeh, R. Yeung, B. Coecke. Completeness for
      arbitrary finite dimensions of ZXW-calculus, a unifying calculus. LICS 2023.
      doi:10.1109/LICS56636.2023.10175672, arXiv:2302.12135
 
-[14] Q. Wang, B. Poor, R. A. Shaikh. Completeness of qufinite ZXW calculus, a graphical
+[7]   Q. Wang, B. Poor, R. A. Shaikh. Completeness of qufinite ZXW calculus, a graphical
      language for finite-dimensional quantum theory, 2023.
      arXiv:2309.13014
-
-[15] R. A. Shaikh, Q. Wang, R. Yeung. How to sum and exponentiate Hamiltonians in ZXW
-     calculus. EPTCS 394:236-261, 2023.
-     doi:10.4204/EPTCS.394.14, arXiv:2212.04462
-
-[16] Q. Wang, R. Yeung, M. Koch. Differentiating and integrating ZX diagrams with
-     applications to quantum machine learning. Quantum 8:1491, 2024.
-     doi:10.22331/q-2024-10-04-1491, arXiv:2201.13250
 
 
 Bang boxes and scalable notation
 --------------------------------
 
-[17] L. Dixon, R. Duncan. Graphical reasoning in compact closed categories for quantum
+[8]   L. Dixon, R. Duncan. Graphical reasoning in compact closed categories for quantum
      computation. Annals of Mathematics and Artificial Intelligence 56(1):23-42, 2009.
      doi:10.1007/s10472-009-9141-x
 
-[18] L. Dixon, R. Duncan, A. Kissinger. Open graphs and computational reasoning.
-     EPTCS 26:169-180, 2010.
-     doi:10.4204/EPTCS.26.16, arXiv:1007.3794
-
-[19] A. Kissinger, A. Merry, M. Soloviev. Pattern graph rewrite systems.
+[9]   A. Kissinger, A. Merry, M. Soloviev. Pattern graph rewrite systems.
      EPTCS 143:54-66, 2014.
      doi:10.4204/EPTCS.143.5, arXiv:1204.6695
 
-[20] A. Kissinger, V. Zamdzhiev. Equational reasoning with context-free families of
-     string diagrams. ICGT 2015, LNCS. Springer, 2015.
-     doi:10.1007/978-3-319-21145-9_9, arXiv:1504.02716
+[10]  A. Kissinger, D. Quick. A first-order logic for string diagrams.
+     CALCO 2015, LIPIcs 35, pp. 171-189, 2015.
+     doi:10.4230/LIPIcs.CALCO.2015.171, arXiv:1505.00343
 
-[21] T. Carette, D. Horsman, S. Perdrix. SZX-calculus: scalable graphical quantum
+[11]  T. Carette, D. Horsman, S. Perdrix. SZX-calculus: scalable graphical quantum
      reasoning. MFCS 2019, LIPIcs.
      doi:10.4230/LIPIcs.MFCS.2019.55, arXiv:1905.00041
 
-[22] T. Carette, L. Lemonnier. Large-scale quantum diagrammatic reasoning tools,
+[12]  T. Carette, L. Lemonnier. Large-scale quantum diagrammatic reasoning tools,
      !-boxes vs. scalable notations, 2022.
      arXiv:2204.11702
 
 
-Path sums and exact symbolic sums
----------------------------------
+Exact symbolic sums and contraction
+-----------------------------------
 
-[23] M. Amy. Towards large-scale functional verification of universal quantum circuits.
-     EPTCS 287:1-21, 2019.
-     doi:10.4204/EPTCS.287.1, arXiv:1805.06908
-
-[24] R. Vilmart. The structure of sum-over-paths, its consequences, and completeness for
-     Clifford. FoSSaCS 2021, LNCS 12650, pp. 531-550. Springer, 2021.
-     doi:10.1007/978-3-030-71995-1_27, arXiv:2003.05678
-
-[25] B. C. Berndt, R. J. Evans, K. S. Williams. Gauss and Jacobi Sums. Wiley, 1998.
+[13]  B. C. Berndt, R. J. Evans, K. S. Williams. Gauss and Jacobi Sums. Wiley, 1998.
      ISBN 978-0-471-12807-6
 
-[26] G. Landsberg. Zur Theorie der Gaussschen Summen und der linearen Transformation der
+[14]  G. Landsberg. Zur Theorie der Gaussschen Summen und der linearen Transformation der
      Thetafunctionen. Journal fuer die reine und angewandte Mathematik 111:234-253, 1893.
      doi:10.1515/crll.1893.111.234
 
-[27] D. Richardson. Some undecidable problems involving elementary functions of a real
-     variable. Journal of Symbolic Logic 33(4):514-520, 1968.
-     doi:10.2307/2271358
-
-[28] R. Dechter. Bucket elimination: a unifying framework for reasoning.
+[15]  R. Dechter. Bucket elimination: a unifying framework for reasoning.
      Artificial Intelligence 113(1-2):41-85, 1999.
      doi:10.1016/S0004-3702(99)00059-4
 
 
-Rewriting and equality saturation
----------------------------------
+Rewriting, e-graphs and equality saturation
+-------------------------------------------
 
-[29] R. Tate, M. Stepp, Z. Tatlock, S. Lerner. Equality saturation: a new approach to
+[16]  R. Tate, M. Stepp, Z. Tatlock, S. Lerner. Equality saturation: a new approach to
      optimization. Logical Methods in Computer Science 7(1), 2011.
      doi:10.2168/LMCS-7(1:10)2011, arXiv:1012.1802
 
-[30] M. Willsey, C. Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, P. Panchekha. egg: fast and
+[17]  M. Willsey, C. Nandi, Y. R. Wang, O. Flatt, Z. Tatlock, P. Panchekha. egg: fast and
      extensible equality saturation. Proceedings of the ACM on Programming Languages
      5(POPL), 2021.
      doi:10.1145/3434304, arXiv:2004.03082
 
-[31] G. Nelson, D. C. Oppen. Fast decision procedures based on congruence closure.
+[18]  G. Nelson, D. C. Oppen. Fast decision procedures based on congruence closure.
      Journal of the ACM 27(2):356-364, 1980.
      doi:10.1145/322186.322198
 
-[32] R. E. Tarjan. Efficiency of a good but not linear set union algorithm.
+[19]  R. E. Tarjan. Efficiency of a good but not linear set union algorithm.
      Journal of the ACM 22(2):215-225, 1975.
      doi:10.1145/321879.321884
 
@@ -153,120 +101,108 @@ Rewriting and equality saturation
 Lean formalisation
 ------------------
 
-[33] L. de Moura, S. Ullrich. The Lean 4 theorem prover and programming language.
+[20]  L. de Moura, S. Ullrich. The Lean 4 theorem prover and programming language.
      CADE-28, LNCS 12699, pp. 625-635. Springer, 2021.
      doi:10.1007/978-3-030-79876-5_37
 
-[34] The mathlib Community. The Lean mathematical library. CPP 2020, pp. 367-381.
+[21]  The mathlib Community. The Lean mathematical library. CPP 2020, pp. 367-381.
      doi:10.1145/3372885.3373824, arXiv:1910.09336
 
 
 Algorithms in the examples
 --------------------------
 
-[35] D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
+[22]  D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
      Proceedings of the Royal Society of London A 439(1907):553-558, 1992.
      doi:10.1098/rspa.1992.0167
 
-[36] L. K. Grover. A fast quantum mechanical algorithm for database search.
-     STOC 1996, pp. 212-219.
-     doi:10.1145/237814.237866, arXiv:quant-ph/9605043
+[23]  Y. Fan. A generalization of the Deutsch-Jozsa algorithm to multi-valued quantum logic.
+     ISMVL 2007, pp. 12-16. IEEE, 2007.
+     doi:10.1109/ISMVL.2007.3
 
-[37] P. W. Shor. Polynomial-time algorithms for prime factorization and discrete
-     logarithms on a quantum computer. SIAM Journal on Computing 26(5):1484-1509, 1997.
-     doi:10.1137/S0097539795293172, arXiv:quant-ph/9508027
-
-[38] D. Coppersmith. An approximate Fourier transform useful in quantum factoring.
-     IBM Research Report RC19642, 1994.
-     arXiv:quant-ph/0201067
+[24]  E. Bernstein, U. Vazirani. Quantum complexity theory.
+     SIAM Journal on Computing 26(5):1411-1473, 1997.
+     doi:10.1137/S0097539796300921
 
 
 Software
 --------
 
-[39] A. Kissinger, J. van de Wetering. PyZX: large scale automated diagrammatic
+[25]  A. Kissinger, J. van de Wetering. PyZX: large scale automated diagrammatic
      reasoning. EPTCS 318:229-241, 2020.
      doi:10.4204/EPTCS.318.14, arXiv:1904.04735
 
-[40] A. Javadi-Abhari, M. Treinish, K. Krsulich, C. J. Wood, J. Lishman, J. Gacon,
-     S. Martiel, P. D. Nation, L. S. Bishop, A. W. Cross, B. R. Johnson, J. M. Gambetta.
-     Quantum computing with Qiskit, 2024.
-     arXiv:2405.08810
+[26]  R. A. Shaikh, J. van de Wetering et al. ZXLive: an interactive tool for the ZX-calculus.
+     https://github.com/zxcalc/zxlive
 
-[41] C. R. Harris et al. Array programming with NumPy. Nature 585(7825):357-362, 2020.
+[27]  C. R. Harris et al. Array programming with NumPy. Nature 585(7825):357-362, 2020.
      doi:10.1038/s41586-020-2649-2
 
-[42] A. Meurer et al. SymPy: symbolic computing in Python.
+[28]  A. Meurer et al. SymPy: symbolic computing in Python.
      PeerJ Computer Science 3:e103, 2017.
      doi:10.7717/peerj-cs.103
 
 
-Verification of quantum programs and related tools
---------------------------------------------------
+Diagrammatic proof assistants and their formalisation
+-----------------------------------------------------
 
-[43] C. Chareton, S. Bardin, F. Bobot, V. Perrelle, B. Valiron. An automated deductive
-     verification framework for circuit-building quantum programs.
-     ESOP 2021, LNCS 12648, pp. 148-177. Springer, 2021.
-     doi:10.1007/978-3-030-72019-3_6, arXiv:2003.05841
-
-[44] K. Hietala, R. Rand, S.-H. Hung, X. Wu, M. Hicks. A verified optimizer for quantum circuits.
-     Proceedings of the ACM on Programming Languages 5(POPL):1-29, 2021.
-     doi:10.1145/3434318, arXiv:1912.02250
-
-[45] K. Hietala, R. Rand, S.-H. Hung, L. Li, M. Hicks. Proving quantum programs correct.
-     ITP 2021, LIPIcs 193, pp. 21:1-21:19, 2021.
-     doi:10.4230/LIPIcs.ITP.2021.21, arXiv:2010.01240
-
-[46] Y. Peng, K. Hietala, R. Tao, L. Li, R. Rand, M. Hicks, X. Wu. A formally certified
-     end-to-end implementation of Shor's factorization algorithm.
-     Proceedings of the National Academy of Sciences 120(21):e2218775120, 2023.
-     doi:10.1073/pnas.2218775120, arXiv:2204.07112
-
-[47] Y.-F. Chen, K.-M. Chung, O. Lengal, J.-A. Lin, W.-L. Tsai, D.-D. Yen. An automata-based
-     framework for verification and bug hunting in quantum circuits.
-     Proceedings of the ACM on Programming Languages 7(PLDI):1218-1243, 2023.
-     doi:10.1145/3591270, arXiv:2301.07747
-
-[48] P. A. Abdulla, Y.-F. Chen, M. Hecko, L. Holik, O. Lengal, J.-A. Lin, R. S. Thinniyam.
-     Parameterized verification of quantum circuits (technical report), 2025.
-     arXiv:2511.19897
-
-[49] Y. Xu, G. Barthe, L. Zhou. Automating equational proofs in Dirac notation.
-     Proceedings of the ACM on Programming Languages 9(POPL):1227-1259, 2025.
-     doi:10.1145/3704878, arXiv:2411.11617
-
-[50] Y. Xu, L. Zhou, G. Barthe. D-Hammer: efficient equational reasoning for labelled Dirac
-     notation. CAV 2025, LNCS, pp. 53-76. Springer, 2025.
-     doi:10.1007/978-3-031-98685-7_3, arXiv:2505.08633
-
-[51] A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of a
-     graphical quantum language, 2023.
-     arXiv:2311.11571
-
-[52] H. Miller-Bakewell. Finite verification of infinite families of diagram equations.
-     EPTCS 318:27-52, 2020.
-     doi:10.4204/EPTCS.318.3, arXiv:1904.00706
-
-[53] A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic reasoning.
+[29]  A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic reasoning.
      CADE-25, LNCS, pp. 326-336. Springer, 2015.
      doi:10.1007/978-3-319-21401-6_22, arXiv:1503.01034
 
-[54] B. Poor, R. I. Booth, T. Carette, J. van de Wetering, L. Yeh. The qupit stabiliser
+[30]  A. Kissinger. Chyp: composing hypergraphs, proving theorems. ACT 2023.
+     https://act2023.github.io/papers/paper25.pdf, https://github.com/akissinger/chyp
+
+[31]  A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of a
+     graphical quantum language, 2023.
+     arXiv:2311.11571
+
+[32]  B. Shah, W. Spencer, L. Zielinski, B. Caldwell, A. Lehmann, R. Rand. ViCAR: visualizing
+     categories with automated rewriting in Coq. EPTCS 429:234-248, 2025.
+     doi:10.4204/EPTCS.429.13, arXiv:2404.08163
+
+[33]  B. Caldwell, W. Spencer, A. Kissinger, R. Rand. TensorRocq: enabling diagrammatic
+     reasoning in Rocq, 2026.
+     arXiv:2604.17592
+
+[34]  B. Poor, R. I. Booth, T. Carette, J. van de Wetering, L. Yeh. The qupit stabiliser
      ZX-travaganza: simplified axioms, normal forms and graph-theoretic simplification.
      EPTCS 384:220-264, 2023.
      doi:10.4204/EPTCS.384.13, arXiv:2306.05204
 
-[55] J. van de Wetering et al. DiZX: a qudit version of PyZX.
+[35]  J. van de Wetering et al. DiZX: a qudit version of PyZX.
      https://github.com/jvdwetering/dizx
 
-[56] M. Sutcliffe, A. Kissinger. Fast classical simulation of quantum circuits via parametric
+[36]  M. Sutcliffe, A. Kissinger. Fast classical simulation of quantum circuits via parametric
      rewriting in the ZX-calculus. EPTCS 426:247-269, 2025.
      doi:10.4204/EPTCS.426.10, arXiv:2403.06777
 
-[57] C. Chareton, S. Bardin, D. Lee, B. Valiron, R. Vilmart, Z. Xu. Formal methods for quantum
-     programs: a survey, 2021.
-     arXiv:2109.06493
 
-[58] M. Lewis, S. Soudjani, P. Zuliani. Formal verification of quantum programs: theory, tools,
-     and challenges. ACM Transactions on Quantum Computing 5(1):1-35, 2023.
-     doi:10.1145/3624483, arXiv:2110.01320
+Verification of quantum programs and parameterized families
+-----------------------------------------------------------
+
+[37]  K. Hietala, R. Rand, S.-H. Hung, L. Li, M. Hicks. Proving quantum programs correct.
+     ITP 2021, LIPIcs 193, pp. 21:1-21:19, 2021.
+     doi:10.4230/LIPIcs.ITP.2021.21, arXiv:2010.01240
+
+[38]  L. Zhou, G. Barthe, P.-Y. Strub, J. Liu, M. Ying. CoqQ: foundational verification of
+     quantum programs. Proceedings of the ACM on Programming Languages 7(POPL):833-865, 2023.
+     doi:10.1145/3571222, arXiv:2207.11350
+
+[39]  C. Chareton, S. Bardin, F. Bobot, V. Perrelle, B. Valiron. An automated deductive
+     verification framework for circuit-building quantum programs.
+     ESOP 2021, LNCS 12648, pp. 148-177. Springer, 2021.
+     doi:10.1007/978-3-030-72019-3_6, arXiv:2003.05841
+
+[40]  P. A. Abdulla, Y.-F. Chen, M. Hecko, L. Holik, O. Lengal, J.-A. Lin, R. S. Thinniyam.
+     Parameterized verification of quantum circuits.
+     Proceedings of the ACM on Programming Languages 10(POPL), 2026.
+     doi:10.1145/3776712, arXiv:2511.19897
+
+[41]  N. J. Ross, S. Wesley. Cutoff theorems for the equivalence of parameterized quantum
+     circuits. MFCS 2025, LIPIcs 345, pp. 85:1-85:19, 2025.
+     doi:10.4230/LIPIcs.MFCS.2025.85, arXiv:2506.20985
+
+[42]  H. Miller-Bakewell. Finite verification of infinite families of diagram equations.
+     EPTCS 318:27-52, 2020.
+     doi:10.4204/EPTCS.318.3, arXiv:1904.00706
