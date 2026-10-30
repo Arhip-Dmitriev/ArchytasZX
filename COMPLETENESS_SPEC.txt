@@ -23,6 +23,8 @@ You are working alone. No human will answer until morning. Rules for the whole r
   - Long context is fine; the harness summarises. Keep working.
   - Run long computations in the background and in parallel (machine: 8 cores, 16 GB; at most
     5 concurrent lean processes; never run `lake build` while other lake/lean jobs run).
+  - note that you may be interrupted by 5-hour long window limits. they are on intervals beginning from 9PM so
+    premptiviley make some wake up calls in case you get killed by one
 
 Project rules that apply to you (from CLAUDE.md and the maintainer; they override defaults):
 
@@ -162,6 +164,7 @@ For every axiom marked as needing a new rule in 2.5:
     `automatic: bool = True`), set it to False on every new rule, and make every automatic
     layer use only automatic rules. New rules stay available to `apply`, `rules`/`matches`,
     certificates, the kernel and the Lean export. Section 6 must then show unchanged outputs.
+    This is the starting state; section 5B promotes rules into automation afterwards.
 
 4.3 Soundness check of every new rule: a targeted script that builds random instances of the
     rule's left-hand side, applies the rule, and compares both sides with the numeric oracle
@@ -202,6 +205,63 @@ For every axiom marked as needing a new rule in 2.5:
     it contains no `unproved_` axiom when the lemma exists.
 
 
+5B. STEP 5: AUTOMATION
+----------------------
+
+Target claims, both to be made true and documented:
+
+  (A) The automatic search (decide/prove, without naming rules) finds a derivation of every
+      lemma that [P1] and [P2] derive from their axioms.
+  (B) An exhaustive mode finds a derivation of every true equation between bang-box-free
+      diagrams at concrete dimensions, given enough time.
+
+5B.1 Lemma corpus. Write references/<paper>/LEMMAS.txt: every lemma, proposition and corollary
+     of [P1]/[P2] stated as a diagram equation and proved diagrammatically (from axioms or
+     earlier lemmas), with its number and the axioms its proof uses. Encode each as an engine
+     command file under examples/completeness/lemmas/, in its general form (symbolic d, phase
+     or weight symbols) where the paper states it generally, otherwise at the paper's fixed
+     dimension. Before running search on it, confirm each lemma is true with one replayed
+     derivation by `apply` steps following the paper's proof, or record why that is not
+     possible.
+
+5B.2 Corpus run. Run automatic decide/prove on every corpus file (in parallel) and record a
+     table: lemma | found by (rung) | time | proof re-checked by kernel | Lean-checked. Keep
+     this run reproducible as one script in .completeness_work/ and re-run it after every
+     change in 5B.3-5B.5.
+
+5B.3 Normal-form promotion. For each new rule, decide whether a well-founded measure
+     (for example node count, then wire count, then a fixed order on generators) strictly
+     decreases on every application. Only such rules may join the normal-form rule set, and
+     the measure argument goes into docs/COMPLETENESS.txt. Promote a rule only if, on the
+     section 6 baseline, no verdict changes except UNKNOWN to EQUAL or UNEQUAL, and the
+     corpus result does not get worse. Normal-form termination must hold for every rule set
+     you ship.
+
+5B.4 Saturation and tactics promotion. Expanding rules compete for the e-graph's fixed
+     budget (archytaszx/rewrite/egraph.py, SaturationLimits). Improve this algorithmically,
+     not by raising limits: for example a backoff rule scheduler (as in egg) that throttles
+     rules that keep firing without merging classes, and direction-aware use of rules that
+     grow diagrams. Then promote rules into saturation and tactics one at a time under the
+     same acceptance test as 5B.3. Keep a rule out of automation when it fails the test,
+     and record why.
+
+5B.5 Exhaustive mode. Add a search mode (a `prove ... exhaustive` form or an option of the
+     existing prove command; document it in docs/ENGINE_COMMANDS.txt and docs/PROOFS.txt)
+     that enumerates derivations fairly over every registered rule, automatic or not:
+     iterative deepening or breadth-first over rule applications in both directions, with
+     duplicate diagrams pruned by canonical key, no depth cap and no timeout. Fairness must be
+     exact: every derivation of length k is reached before depth k+1 finishes. Its result is
+     an ordinary certificate. On bang-box-free diagrams at concrete dimensions, run the
+     engine's existing refutation rungs alongside it, so that an unequal pair is reported
+     UNEQUAL as soon as a refutation is found. State precisely in docs/COMPLETENESS.txt for
+     which inputs the mode is guaranteed to terminate (equal inputs in the complete fragment,
+     by [P1]/[P2]) and for which it is not.
+
+5B.6 Every lemma that ordinary automatic search does not find must be found by exhaustive
+     mode; run those in the background in parallel and record times. If one is not found
+     overnight, record it as running or BLOCKED, never as false.
+
+
 6. REGRESSION BASELINE
 ----------------------
 
@@ -214,8 +274,11 @@ Before changing any code:
     commands that exercise every existing rule, so that rule behaviour is covered.
 
 After each step, rerun the same set and diff against the baseline. The only acceptable
-differences are new rules appearing in listings and new syntax in help. Any other difference
-is a regression: fix it before continuing. Run ruff and mypy on every touched Python file.
+differences are new rules appearing in listings, new syntax in help, and (after 5B
+promotions) verdicts going from UNKNOWN to EQUAL or UNEQUAL, or the same verdict reached by a
+different derivation. Every such difference is listed in the progress file. Any other
+difference, in particular a verdict lost or a normal form that no longer terminates, is a
+regression: fix it before continuing. Run ruff and mypy on every touched Python file.
 
 
 7. DOCUMENTATION
@@ -225,7 +288,8 @@ Finish docs/COMPLETENESS.txt as a formal document: the exact claim of section 1 
 anything turned out narrower), the generator mapping, the axiom table with final status
 (rule name, oracle-checked, kernel-checked, Lean lemma name or unproved), the argument by
 which [P1]/[P2]'s completeness theorems transfer (translation of diagrams, translation of
-every axiom into a derivation), and its limits (fixed or qufinite dimensions only; no bang
+every axiom into a derivation), claims (A) and (B) of section 5B with the corpus table and
+the normal-form termination argument, and its limits (fixed or qufinite dimensions only; no bang
 boxes; derivability, not decision). Add it to docs/INDEX.txt. Update docs/OVERVIEW.txt
 section 4.4 and section 6 only as far as the new facts require; keep "sound, not complete"
 for the decision procedures, which is still true.
@@ -244,6 +308,9 @@ The task is done only when all of these hold:
     a named unproved rule.
   - The generator mapping and every paper axiom in paper conventions are Lean theorems (5.4),
     or each missing one is listed with its reason.
+  - The lemma corpus exists, the corpus table is recorded, every rule is promoted into
+    automation or recorded with its reason for staying out, and exhaustive mode exists with
+    its termination statement (5B).
   - The regression diff of section 6 shows only the acceptable differences.
   - ruff and mypy are clean on touched files.
   - docs/COMPLETENESS.txt, docs/RULES.txt, docs/INDEX.txt, LEAN_GAPS.txt are updated.
