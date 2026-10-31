@@ -413,6 +413,8 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   [arXiv:1910.09336](https://arxiv.org/abs/1910.09336)
 
 **Algorithms in the examples**
+- Greenberger, Horne & Zeilinger, *Going beyond Bell's theorem* (1989), the GHZ state —
+  [arXiv:0712.0921](https://arxiv.org/abs/0712.0921)
 - Deutsch & Jozsa, *Rapid solution of problems by quantum computation*, Proc. R. Soc. A 439 (1992) —
   [doi:10.1098/rspa.1992.0167](https://doi.org/10.1098/rspa.1992.0167)
 - Fan, *A generalization of the Deutsch–Jozsa algorithm to multi-valued quantum logic*, ISMVL 2007 —
@@ -440,11 +442,10 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   automated rewriting in Coq*, EPTCS 429 (2025) — [arXiv:2404.08163](https://arxiv.org/abs/2404.08163)
 - Caldwell, Spencer, Kissinger & Rand, *TensorRocq: enabling diagrammatic reasoning in Rocq* (2026) —
   [arXiv:2604.17592](https://arxiv.org/abs/2604.17592)
+- Duve, *zxLean* — [github.com/tannerduve/zxLean](https://github.com/tannerduve/zxLean)
 - Poór, Booth, Carette, van de Wetering & Yeh, *The qupit stabiliser ZX-travaganza*, EPTCS 384
   (2023), with the DiZX library — [arXiv:2306.05204](https://arxiv.org/abs/2306.05204),
   [github.com/jvdwetering/dizx](https://github.com/jvdwetering/dizx)
-- Sutcliffe & Kissinger, *Fast classical simulation of quantum circuits via parametric rewriting
-  in the ZX-calculus* (ParamZX), EPTCS 426 (2025) — [arXiv:2403.06777](https://arxiv.org/abs/2403.06777)
 
 **Verification of quantum programs and parameterized families**
 - Hietala, Rand, Hung, Li & Hicks, *Proving quantum programs correct* (SQIR), ITP 2021 —
@@ -455,10 +456,6 @@ Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
   circuit-building quantum programs* (QBricks), ESOP 2021 — [arXiv:2003.05841](https://arxiv.org/abs/2003.05841)
 - Abdulla et al., *Parameterized verification of quantum circuits*, POPL 2026 —
   [arXiv:2511.19897](https://arxiv.org/abs/2511.19897)
-- Ross & Wesley, *Cutoff theorems for the equivalence of parameterized quantum circuits*, MFCS 2025 —
-  [arXiv:2506.20985](https://arxiv.org/abs/2506.20985)
-- Miller-Bakewell, *Finite verification of infinite families of diagram equations*, EPTCS 318
-  (2020) — [arXiv:1904.00706](https://arxiv.org/abs/1904.00706)
 
 </details>
 

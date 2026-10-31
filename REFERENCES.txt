@@ -104,19 +104,24 @@ Lean formalisation
 Algorithms in the examples
 --------------------------
 
-[21]  D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
+[21]  D. M. Greenberger, M. A. Horne, A. Zeilinger. Going beyond Bell's theorem.
+     In M. Kafatos (ed.), Bell's Theorem, Quantum Theory and Conceptions of the Universe,
+     Fundamental Theories of Physics 37, pp. 69-72. Springer, 1989.
+     doi:10.1007/978-94-017-0849-4_10, arXiv:0712.0921
+
+[22]  D. Deutsch, R. Jozsa. Rapid solution of problems by quantum computation.
      Proceedings of the Royal Society of London A 439(1907):553-558, 1992.
      doi:10.1098/rspa.1992.0167
 
-[22]  Y. Fan. A generalization of the Deutsch-Jozsa algorithm to multi-valued quantum logic.
+[23]  Y. Fan. A generalization of the Deutsch-Jozsa algorithm to multi-valued quantum logic.
      ISMVL 2007, pp. 12-16. IEEE, 2007.
      doi:10.1109/ISMVL.2007.3
 
-[23]  E. Bernstein, U. Vazirani. Quantum complexity theory.
+[24]  E. Bernstein, U. Vazirani. Quantum complexity theory.
      SIAM Journal on Computing 26(5):1411-1473, 1997.
      doi:10.1137/S0097539796300921
 
-[24]  R. Krishna, V. Makwana, A. P. Suresh. A generalization of Bernstein-Vazirani algorithm
+[25]  R. Krishna, V. Makwana, A. P. Suresh. A generalization of Bernstein-Vazirani algorithm
      to qudit systems, 2016.
      arXiv:1609.03185
 
@@ -124,17 +129,17 @@ Algorithms in the examples
 Software
 --------
 
-[25]  A. Kissinger, J. van de Wetering. PyZX: large scale automated diagrammatic
+[26]  A. Kissinger, J. van de Wetering. PyZX: large scale automated diagrammatic
      reasoning. EPTCS 318:229-241, 2020.
      doi:10.4204/EPTCS.318.14, arXiv:1904.04735
 
-[26]  R. A. Shaikh, J. van de Wetering et al. ZXLive: an interactive tool for the ZX-calculus.
+[27]  R. A. Shaikh, J. van de Wetering et al. ZXLive: an interactive tool for the ZX-calculus.
      https://github.com/zxcalc/zxlive
 
-[27]  C. R. Harris et al. Array programming with NumPy. Nature 585(7825):357-362, 2020.
+[28]  C. R. Harris et al. Array programming with NumPy. Nature 585(7825):357-362, 2020.
      doi:10.1038/s41586-020-2649-2
 
-[28]  A. Meurer et al. SymPy: symbolic computing in Python.
+[29]  A. Meurer et al. SymPy: symbolic computing in Python.
      PeerJ Computer Science 3:e103, 2017.
      doi:10.7717/peerj-cs.103
 
@@ -142,63 +147,54 @@ Software
 Diagrammatic proof assistants and their formalisation
 -----------------------------------------------------
 
-[29]  A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic reasoning.
+[30]  A. Kissinger, V. Zamdzhiev. Quantomatic: a proof assistant for diagrammatic reasoning.
      CADE-25, LNCS, pp. 326-336. Springer, 2015.
      doi:10.1007/978-3-319-21401-6_22, arXiv:1503.01034
 
-[30]  A. Kissinger. Chyp: composing hypergraphs, proving theorems. ACT 2023.
+[31]  A. Kissinger. Chyp: composing hypergraphs, proving theorems. ACT 2023.
      https://act2023.github.io/papers/paper25.pdf, https://github.com/akissinger/chyp
 
-[31]  A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of a
+[32]  A. Lehmann, B. Caldwell, B. Shah, W. Spencer, R. Rand. VyZX: formal verification of a
      graphical quantum language, 2023.
      arXiv:2311.11571
 
-[32]  B. Shah, W. Spencer, L. Zielinski, B. Caldwell, A. Lehmann, R. Rand. ViCAR: visualizing
+[33]  B. Shah, W. Spencer, L. Zielinski, B. Caldwell, A. Lehmann, R. Rand. ViCAR: visualizing
      categories with automated rewriting in Coq. EPTCS 429:234-248, 2025.
      doi:10.4204/EPTCS.429.13, arXiv:2404.08163
 
-[33]  B. Caldwell, W. Spencer, A. Kissinger, R. Rand. TensorRocq: enabling diagrammatic
+[34]  B. Caldwell, W. Spencer, A. Kissinger, R. Rand. TensorRocq: enabling diagrammatic
      reasoning in Rocq, 2026.
      arXiv:2604.17592
 
-[34]  B. Poor, R. I. Booth, T. Carette, J. van de Wetering, L. Yeh. The qupit stabiliser
+[35]  T. Duve. zxLean: the ZX-calculus in Lean 4.
+     https://github.com/tannerduve/zxLean
+
+[36]  B. Poor, R. I. Booth, T. Carette, J. van de Wetering, L. Yeh. The qupit stabiliser
      ZX-travaganza: simplified axioms, normal forms and graph-theoretic simplification.
      EPTCS 384:220-264, 2023.
      doi:10.4204/EPTCS.384.13, arXiv:2306.05204
 
-[35]  J. van de Wetering et al. DiZX: a qudit version of PyZX.
+[37]  J. van de Wetering et al. DiZX: a qudit version of PyZX.
      https://github.com/jvdwetering/dizx
-
-[36]  M. Sutcliffe, A. Kissinger. Fast classical simulation of quantum circuits via parametric
-     rewriting in the ZX-calculus. EPTCS 426:247-269, 2025.
-     doi:10.4204/EPTCS.426.10, arXiv:2403.06777
 
 
 Verification of quantum programs and parameterized families
 -----------------------------------------------------------
 
-[37]  K. Hietala, R. Rand, S.-H. Hung, L. Li, M. Hicks. Proving quantum programs correct.
+[38]  K. Hietala, R. Rand, S.-H. Hung, L. Li, M. Hicks. Proving quantum programs correct.
      ITP 2021, LIPIcs 193, pp. 21:1-21:19, 2021.
      doi:10.4230/LIPIcs.ITP.2021.21, arXiv:2010.01240
 
-[38]  L. Zhou, G. Barthe, P.-Y. Strub, J. Liu, M. Ying. CoqQ: foundational verification of
+[39]  L. Zhou, G. Barthe, P.-Y. Strub, J. Liu, M. Ying. CoqQ: foundational verification of
      quantum programs. Proceedings of the ACM on Programming Languages 7(POPL):833-865, 2023.
      doi:10.1145/3571222, arXiv:2207.11350
 
-[39]  C. Chareton, S. Bardin, F. Bobot, V. Perrelle, B. Valiron. An automated deductive
+[40]  C. Chareton, S. Bardin, F. Bobot, V. Perrelle, B. Valiron. An automated deductive
      verification framework for circuit-building quantum programs.
      ESOP 2021, LNCS 12648, pp. 148-177. Springer, 2021.
      doi:10.1007/978-3-030-72019-3_6, arXiv:2003.05841
 
-[40]  P. A. Abdulla, Y.-F. Chen, M. Hecko, L. Holik, O. Lengal, J.-A. Lin, R. S. Thinniyam.
+[41]  P. A. Abdulla, Y.-F. Chen, M. Hecko, L. Holik, O. Lengal, J.-A. Lin, R. S. Thinniyam.
      Parameterized verification of quantum circuits.
      Proceedings of the ACM on Programming Languages 10(POPL), 2026.
      doi:10.1145/3776712, arXiv:2511.19897
-
-[41]  N. J. Ross, S. Wesley. Cutoff theorems for the equivalence of parameterized quantum
-     circuits. MFCS 2025, LIPIcs 345, pp. 85:1-85:19, 2025.
-     doi:10.4230/LIPIcs.MFCS.2025.85, arXiv:2506.20985
-
-[42]  H. Miller-Bakewell. Finite verification of infinite families of diagram equations.
-     EPTCS 318:27-52, 2020.
-     doi:10.4204/EPTCS.318.3, arXiv:1904.00706
