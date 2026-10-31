@@ -20,7 +20,7 @@ proof it exports. To write algorithms in Dirac notation instead of diagrams, see
 
 ## Reproducing the paper
 
-*ArchytasZX: Certified, Size- and Dimension-Agnostic ZXW Rewriting* uses GHZ-state preparation
+*ArchytasZX: Certified ZXW Rewriting with Symbolic Size and Dimension* uses GHZ-state preparation
 as its running example. Both forms of Figure 1 are in `examples/`:
 
 ```console
@@ -337,7 +337,7 @@ If you use ArchytasZX in academic work, please cite it via
 ```bibtex
 @software{dmitriev_archytaszx,
   author  = {Dmitriev, Arkhip Alekseyevich},
-  title   = {{ArchytasZX}: Certified, Size- and Dimension-Agnostic {ZXW} Rewriting},
+  title   = {{ArchytasZX}: Certified {ZXW} Rewriting with Symbolic Size and Dimension},
   year    = {2026},
   url     = {https://github.com/Arhip-Dmitriev/ArchytasZX},
   license = {Apache-2.0}

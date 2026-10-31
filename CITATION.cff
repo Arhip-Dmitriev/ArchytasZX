@@ -12,7 +12,7 @@
 # limitations under the License.
 
 cff-version: 1.2.0
-title: "ArchytasZX: Certified, Size- and Dimension-Agnostic ZXW Rewriting"
+title: "ArchytasZX: Certified ZXW Rewriting with Symbolic Size and Dimension"
 message: "If you use this software, please cite it as below."
 type: software
 authors:
