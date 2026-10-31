@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ArchytasZX"
-version = "2.0.1"
+version = "2.0.2"
 description = "ArchytasZX: Certified ZXW Rewriting with Symbolic Size and Dimension"
 readme = "README.md"
 requires-python = ">=3.12"
