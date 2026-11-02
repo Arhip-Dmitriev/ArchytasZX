@@ -59,3 +59,11 @@ TRUST_PROGRESS.txt
 
 # publications (drafts)
 publications/
+
+# specs and plan
+*SPEC.*
+FULL_PLAN.txt
+
+# lean (library sources excepted)
+*.lean
+!archytaszx/lean/**/*.lean
