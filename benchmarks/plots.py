@@ -248,14 +248,14 @@ def plot_scaling_times() -> None:
 
 
 def _size_line(rows: list[dict]) -> tuple[list[int], list[float], list[int]]:
-    """Gate counts and the median over seeds where most seeds settled; the rest's counts."""
+    """Gate counts and the median over the seeds that settled; the counts no seed settled."""
     xs: list[int] = []
     ys: list[float] = []
     bad: list[int] = []
     for s in sorted({r["s"] for r in rows}):
         at = [r for r in rows if r["s"] == s]
         ok = [r["time"] for r in at if r["status"] == "ok"]
-        if len(ok) * 2 > len(at):
+        if ok:
             xs.append(2 * s)
             ys.append(statistics.median(ok))
         else:
@@ -265,8 +265,8 @@ def _size_line(rows: list[dict]) -> tuple[list[int], list[float], list[int]]:
 
 def plot_size() -> None:
     """One panel per width: the median over seeds of each case's median CPU seconds against
-    the gate count of C C^-1, one line per tool; crosses on the top edge where most seeds did
-    not settle."""
+    the gate count of C C^-1, one line per tool; crosses on the top edge where no seed
+    settled."""
     rows = harness.load("size")
     if not rows:
         return
@@ -364,7 +364,7 @@ def plot_paper_scaling() -> None:
     fig, ax = plt.subplots(figsize=(PAPER_WIDTH, PAPER_HEIGHT))
     _strip(ax, rows, SHORT, 2.2)
     fig.tight_layout(pad=0.2)
-    _save(fig, "paper_scaling")
+    _save(fig, "paper_scaling", tight=False)
 
 
 def plot_paper_size() -> None:
@@ -383,15 +383,16 @@ def plot_paper_size() -> None:
         xs, ys, bad = _size_line([r for r in rows if r["tool"] == tool])
         colour = TOOL_COLOURS[tool]
         ax.plot(xs, ys, "-", marker=TOOL_MARKERS[tool], ms=3, color=colour, label=TOOL_LABELS[tool])
-        ax.plot(bad, [top] * len(bad), "x", color=colour, ms=4, mew=1.1, clip_on=False)
+        row = top / 2.2 ** size.TOOLS.index(tool)
+        ax.plot(bad, [row] * len(bad), "x", color=colour, ms=4, mew=1.1, clip_on=False)
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
     ax.set_ylim(lo, top)
     ax.set_xlabel("gates in $C\\,C^{-1}$")
     ax.set_ylabel("CPU s (median)")
-    ax.legend(fontsize=5.5, loc="lower right")
+    ax.legend(fontsize=5.5, loc="center right", bbox_to_anchor=(1.0, 0.62))
     fig.tight_layout(pad=0.2)
-    _save(fig, "paper_size")
+    _save(fig, "paper_size", tight=False)
 
 
 def _all(*plots: Callable[[], None]) -> Callable[[], None]:
