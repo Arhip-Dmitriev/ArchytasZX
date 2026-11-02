@@ -15,18 +15,16 @@ multiplicities are symbols, so nothing is ever enumerated, sampled or simulated:
 rewrite, decision and proof holds for every size at once. Its rules contain the complete ZXW
 axiomatisations of Poór et al. and Wang et al., and its proofs are exported to Lean 4 as
 theorems about the diagrams themselves, so the engine is untrusted: Lean re-checks every
-proof it exports. To write algorithms in Dirac notation instead of diagrams, see its sister project
-[DiracULA](https://github.com/Arhip-Dmitriev/DiracULA).
+proof it exports.
 
-## Reproducing the paper
+## Reproducing Demonstrations
 
-*ArchytasZX: Certified ZXW Rewriting with Symbolic Size and Dimension* uses GHZ-state preparation
-as its running example. Both forms of Figure 1 are in `examples/`:
+GHZ-state preparation is the running example. Figures are in `examples/`:
 
 ```console
 $ pip install 'archytaszx>=2.0'
 $ git clone https://github.com/Arhip-Dmitriev/ArchytasZX.git && cd ArchytasZX
-$ archytaszx --unicode examples/ghz_proof.azx      # native script, about 2 s
+$ archytaszx --unicode examples/ghz_proof.azx
 ...
 decide: equal by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
 proof: re-checkable; certificate kernel / certificate lean
@@ -42,7 +40,7 @@ the bundled library once (prebuilt Mathlib is downloaded) and check the file:
 
 ```console
 $ cd archytaszx/lean && lake exe cache get && lake build
-$ lake env lean ../../ghz.lean      # no output and exit code 0 mean the proof checks
+$ lake env lean ../../ghz.lean
 ```
 
 The other examples prove the qudit Deutsch–Jozsa and Bernstein–Vazirani circuits
@@ -71,7 +69,7 @@ lean: wrote deutsch_jozsa_balanced.lean
 
 Both equalities hold for every `n` and every `d`, and both are written out as Lean 4 files.
 
-## What it does
+## What ArchytasZX does
 
 - **Symbolic size.** Qudit count, dimension and multiplicities stay symbols. `|0>^@30` is one
   leg under a bang box, not thirty, and a concrete value is substituted into the closed form at
@@ -83,8 +81,7 @@ Both equalities hold for every `n` and every `d`, and both are written out as Le
 - **A complete rule set.** Every axiom of qudit ZXW (Poór et al., LICS 2023) and qufinite ZXW
   (Wang, Poór & Shaikh, 2023) is a rule, with Z spiders carrying phases or arbitrary complex
   weights. Any two bang-box-free diagrams at concrete dimensions that denote the same map are
-  joined by a derivation, and `prove exhaustive` finds it, given enough time
-  ([`docs/COMPLETENESS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/COMPLETENESS.txt)).
+  joined by a derivation, and `prove exhaustive` finds it, given enough time.
 - **Independent checking.** Every proof emits a replayable certificate, is re-checked by a small
   proof kernel, and is exported to Lean 4 and Mathlib, where it is checked again from scratch.
 
@@ -96,8 +93,8 @@ back to Unicode text.
 
 ```bash
 pip install archytaszx           # or 'archytaszx[viz]' to add matplotlib
-archytaszx                       # interactive shell
-archytaszx commands.azx          # run a command file
+archytaszx                       # interactive shell/REPL
+archytaszx commands.azx          # run a script
 ```
 
 ## Quickstart
@@ -123,7 +120,7 @@ result:
   Z_{0->3}(1: alpha) = Σ_{k=0}^{d-1} e^{2 π i (alpha [k=1])} |k, k, k⟩
 ```
 
-A command file spans a diagram over indented lines;
+A script spans a diagram over indented lines;
 [`examples/deutsch_jozsa_proof.azx`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/examples/deutsch_jozsa_proof.azx)
 writes n data qudits as `repeat n: X(0 -> 1) -> F^4`.
 
@@ -148,8 +145,8 @@ circuit = data @ target * d ** (-n / 2)
 goal = (azx.X(0, 1) ** n @ azx.Z(0, 1, phase="-k/d") @ azx.Z(1, 0, phase="k/d")) \
     * d ** (-(n + 1) / 2)
 
-azx.decide(circuit, goal).verdict      # 'equal'
-azx.lean("deutsch_jozsa.lean")         # the Lean 4 theorem
+azx.decide(circuit, goal).verdict      
+azx.lean("deutsch_jozsa.lean")         
 ```
 
 `a | b` feeds `b` into `a`, `@` is the tensor product, `** n` repeats a piece in a !-box, `^ k`
@@ -192,10 +189,10 @@ recorded field (scalar, rule, consumed wire, side condition, multiplicity) fails
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.certificate import certify, verify
 
-compare(g, result.diagram, {"d": 5}).matched   # True -- numeric oracle at d = 5
+compare(g, result.diagram, {"d": 5}).matched   
 
 certificate = certify(g, [result], label="fuse A into B")
-verify(certificate, {"d": 3}).verified         # True
+verify(certificate, {"d": 3}).verified        
 ```
 
 Wrap the graph in a bang box of multiplicity `m` and prove the fusion for every `m`, with `d`
@@ -210,11 +207,11 @@ fused = apply(boxed, SPIDER_FUSION, find_matches(boxed)[0]).diagram
 
 proof = prove_by_induction(boxed, fused, witness={"d": 2})
 
-proof.proved          # True
-proof.verdict         # Verdict.PROVED_UNIFORM -- for all m, not a finite schema check
-proof.index           # 'm'
-proof.discharge       # StepDischarge.UNIFORM_REWRITE -- the tier that settled the step
-proof.held_symbolic   # frozenset({'d'}) -- what stayed universally quantified
+proof.proved          
+proof.verdict         
+proof.index           
+proof.discharge       
+proof.held_symbolic   
 ```
 
 Concrete numbers typed by the user are abstracted back into symbols, with the values kept for
@@ -267,7 +264,7 @@ definitions of the generators, of diagram evaluation and bang-box expansion, and
 command-file parser.
 
 ```sh
-cd archytaszx/lean && lake exe cache get && lake build      # once
+cd archytaszx/lean && lake exe cache get && lake build      # once only
 lake env lean /path/to/proof.lean
 ```
 
@@ -325,8 +322,7 @@ python -m pytest -m slow  # fuzz sweeps and oracle differentials
 ruff format . && ruff check . && mypy archytaszx
 ```
 
-CI runs both tiers (`pytest -m "" -n auto`) on Python 3.12, 3.13 and 3.14. On 2026-10-30 every
-version gave 14,399 passed and 294 skipped, with no failures. `ruff format` is
+CI runs both tiers (`pytest -m "" -n auto`) on Python 3.12, 3.13 and 3.14. `ruff format` is
 authoritative for layout; `mypy` runs in strict mode.
 
 ## Citation
@@ -348,7 +344,7 @@ If you use ArchytasZX in academic work, please cite it via
 
 Bug reports, counterexamples and questions about the mathematics are the most useful
 contributions; a soundness bug (a rewrite that changes the denoted map, scalar included) is the
-most valuable report of all. See
+most valuable. See
 [`CONTRIBUTING.md`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/CONTRIBUTING.md).
 
 ## References
