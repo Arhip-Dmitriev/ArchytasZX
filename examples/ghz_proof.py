@@ -1,5 +1,7 @@
 """GHZ-state preparation for every n and every qudit dimension d, through the Python library."""
 
+from pathlib import Path
+
 from archytaszx import azx
 
 n, d = azx.count("n"), azx.d
@@ -12,4 +14,4 @@ diagram = (azx.id @ t**n) | azx.Z(1, 2) | azx.F | azx.X(0, 1)
 diagram *= d ** "-1/2"
 
 print(azx.decide(diagram, ghz).verdict)
-print(azx.lean("ghz.lean"))
+print(azx.lean(str(Path(__file__).with_name("ghz.lean"))))

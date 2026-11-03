@@ -469,9 +469,9 @@ def _argument_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Console entry point.
 
-    With ``-c`` or script files: runs the ``-c`` commands, then each file, in one session, and
-    returns 1 when any line had ``ok=False``, else 0; an unreadable file returns 2 before
-    anything runs. With neither: the interactive :meth:`Shell.loop`. A usage error returns 2,
+    With ``-c`` or script files: runs the ``-c`` commands, then each file, in one session (a
+    file's relative FILE paths resolve against its directory), and returns 1 when any line had
+    ``ok=False``, else 0; an unreadable file returns 2 before anything runs. With neither: the interactive :meth:`Shell.loop`. A usage error returns 2,
     a closed standard output 1, and Ctrl-C outside a command 130.
     """
     try:
@@ -495,20 +495,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if mode is not NotationMode.DIRAC and zx_style == "matplot" and (args.scripts or args.command):
         T.prepare()
     commands: list[str] = list(args.command)
-    scripts: list[list[str]] = []
+    scripts: list[tuple[str, list[str]]] = [("", commands)]
     for path in args.scripts:
         try:
             with open(path, encoding="utf-8") as handle:
-                scripts.append(handle.read().splitlines())
+                scripts.append((os.path.dirname(path), handle.read().splitlines()))
         except (OSError, UnicodeDecodeError) as exc:
             sys.stderr.write(f"archytaszx: cannot read {path}: {exc}\n")
             return 2
     _tolerant_streams()
     try:
-        if not commands and not scripts:
+        if len(scripts) == 1 and not commands:
             code = shell.loop()
         else:
-            for lines in [commands, *scripts]:
+            for base, lines in scripts:
+                shell.session.base = base
                 for _, output in shell.iter_script(lines):
                     if output:
                         _write(sys.stdout, output + "\n")

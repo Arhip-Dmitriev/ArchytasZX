@@ -34,6 +34,8 @@ runs Lean on it. In the shell:
     :certificate lean proof.lean        write the stored proof to proof.lean
     :certificate lean                   print it instead
 
+In a script file, a relative path resolves against the script's directory.
+
 
 3. THE SEMANTICS IN LEAN
 ------------------------

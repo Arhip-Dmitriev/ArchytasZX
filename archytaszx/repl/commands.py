@@ -41,6 +41,7 @@ one exists, otherwise the furthest-simplified states and the bound that was hit.
 from __future__ import annotations
 
 import difflib
+import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -307,8 +308,8 @@ class _Snapshot:
 class Session:
     """REPL state: the current diagram, the derivation start and its replayable results, named
     diagrams, the scalable form and its sheet steps, the stored certificate (and the witness an
-    induction certificate verifies at), the latest proof, the latest detail payload, and the
-    undo stack."""
+    induction certificate verifies at), the latest proof, the latest detail payload, the
+    undo stack, and the directory relative FILE paths resolve against."""
 
     current: Diagram | None = None
     start: Diagram | None = None
@@ -330,6 +331,7 @@ class Session:
     induct_pair: tuple[Diagram, Diagram] | None = None
     last_detail: object | None = None
     undo_stack: list[_Snapshot] = field(default_factory=list)
+    base: str = ""
 
     def _snapshot(self, command: str) -> _Snapshot:
         return _Snapshot(
@@ -1321,6 +1323,8 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
     [FILE]`` also prints its Lean 4 export, or writes it to FILE."""
     if action == "kernel" and path:
         raise CommandGrammarError("certificate kernel takes no arguments")
+    if path and session.base and not os.path.isabs(path):
+        path = os.path.join(session.base, path)
     blocks: list[Block] = []
     if session.certificate is None:
         artefact, witness = _emit(session, "")
