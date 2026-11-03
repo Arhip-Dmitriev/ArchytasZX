@@ -485,8 +485,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     With ``-c`` or script files: runs the ``-c`` commands, then each file, in one session (a
     file's relative FILE paths resolve against its directory), and returns 1 when any line had
-    ``ok=False``, else 0; an unreadable file returns 2 before anything runs. With neither: the interactive :meth:`Shell.loop`. A usage error returns 2,
-    a closed standard output 1, and Ctrl-C outside a command 130.
+    ``ok=False``, else 0; an unreadable file returns 2 before anything runs. With neither: the
+    interactive :meth:`Shell.loop`. A usage error returns 2, a closed standard output 1, and Ctrl-C
+    outside a command 130.
     """
     try:
         args = _argument_parser().parse_args(argv)
