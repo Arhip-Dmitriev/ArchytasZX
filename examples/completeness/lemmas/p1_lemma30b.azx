@@ -1,0 +1,19 @@
+# [P1] Lemma 30, second equality (k = 1, d = 3): a pink dot joined upwards by k wires to a plain
+# green dot is the pink dot joined downwards by d - k wires to the green dot.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(2 -> 1, literal 3); g = Z(1 -> 2, literal 3); wire g.out1 -- p.in1
+    inputs p.in0, g.in0
+    outputs p.out0, g.out0
+    scalar 3^(1/2)
+
+@rhs =
+    p = X(1 -> 3, literal 3); g = Z(3 -> 1, literal 3); wire p.out1 -- g.in1, p.out2 -- g.in2
+    inputs p.in0, g.in0
+    outputs p.out0, g.out0
+    scalar 3
+
+load @lhs
+prove against @rhs
+certificate kernel

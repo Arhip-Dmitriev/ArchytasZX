@@ -261,14 +261,28 @@ arbitrary diagrams is constructed by this argument; finding one is the job of se
 Target: the automatic search (decide and prove, naming no rule) finds a derivation of every
 lemma [P1] and [P2] derive from their axioms.
 
-The lemmas are listed in archytaszx/papers/poor2023zxw/LEMMAS.txt ([P1] Lemmas 7 to 47) and
-archytaszx/papers/wang2023qufinitezxw/LEMMAS.txt ([P2] Lemmas A.1 to A.80), each with the steps its
-proof prints. Twenty [P1] lemmas are encoded at the literal dimension d = 3 under
-examples/completeness/lemmas/ (one file each: the two sides as @lhs and @rhs, prove, then
-certificate kernel); section 9 gives the corpus run.
+The lemmas are listed in archytaszx/papers/poor2023zxw/LEMMAS.txt ([P1] Lemmas 7 to 48) and
+archytaszx/papers/wang2023qufinitezxw/LEMMAS.txt ([P2] Lemmas A.1 to A.80), each with the
+steps its proof prints and the command file that encodes it. Every lemma that is one diagram
+equation is encoded under examples/completeness/lemmas/, one file per equality (the two sides
+as @lhs and @rhs, prove, then certificate kernel; a lemma with several equalities has the
+suffixes b, c, ...), at fixed small dimensions: d = 3 for [P1], the dimensions the file names
+for [P2]. A [P2] lemma whose statement is a [P1] lemma's names that lemma's file. Not encoded:
+[P1] Lemmas 1 to 6 (rewriting procedures of the completeness proof, not equations) and [P2]
+Lemma A.26 (an equivalence between two equations). In all 126 files: 60 for [P1], 66 for [P2].
 
-Status: claim (A) is not established. The automatic search proves 13 of the 20 encoded
-lemmas; the remaining 7 and the lemmas not encoded are open (section 9).
+A mixed-dimensional Z box is written as its definition ([P2] (2.3.3)), as the rules of
+section 3.2 read it: a Z box over the product of its leg dimensions, each leg through a binder
+or splitter whose other leg carries a pink dot.
+
+Every file was checked equal by the oracle before any search (check against @rhs: exact at
+the files' concrete dimensions, sampled over weight symbols). [P2] Lemma A.74 is false as
+printed: at m = 2, n = 3 and the input |1> its left side is twice its right side. Its proof
+starts from the box 1 on the input, and the file encodes that statement.
+
+Status: claim (A) is not established. The automatic search proves 20 of the 126 files and
+exhaustive mode 11 more within 600 s each; the other 95 were not found within 600 s
+(section 9).
 
 
 6. CLAIM (B): EXHAUSTIVE MODE
@@ -360,52 +374,150 @@ available to apply, matches, certificates, the kernel, the Lean export and exhau
 -------------
 
 .completeness_work/corpus_run.py (not committed) runs each lemma file: automatic prove, then,
-if not proved, prove exhaustive under a wall-clock limit the script sets (the engine sets
-none). Every proof found was replayed and re-checked by the kernel ("kernel: theorem" in the
-output). Lean: the exported proofs of these lemmas use unproved rule axioms (section 1).
+for the files it does not prove, prove exhaustive, each under a wall-clock limit of 600 s and
+a memory limit of 2 GB that the script sets (the engine sets none). Every proof found was
+replayed and re-checked by the kernel ("kernel: theorem" in the output). Lean: the exported
+proofs of these lemmas use unproved rule axioms (section 1).
 
   Lemma         Found by                          Time      Steps  Kernel
   ------------  --------------------------------  --------  -----  ------
-  [P1] 7        not found (exhaustive, 3600 s)    -         -      -
-  [P1] 8        automatic (tactics)               < 2 s     3      yes
-  [P1] 9        automatic (tactics)               < 2 s     1      yes
-  [P1] 10       automatic (tactics)               < 2 s     2      yes
-  [P1] 11       automatic (tactics)               1.1 s     1      yes
-  [P1] 12       automatic (tactics)               1.4 s     2      yes
-  [P1] 13       automatic (tactics)               1.1 s     1      yes
-  [P1] 15       automatic (tactics)               1.3 s     1      yes
-  [P1] 16       automatic (tactics)               1.1 s     1      yes
-  [P1] 17       automatic (tactics)               1.2 s     2      yes
-  [P1] 17b      automatic (tactics)               1.4 s     2      yes
-  [P1] 23       not found (exhaustive, 3600 s)    -         -      -
-  [P1] 28       not found (exhaustive, 3600 s)    -         -      -
-  [P1] 29       not found (exhaustive, 3600 s)    -         -      -
-  [P1] 31       automatic (tactics)               1.4 s     5      yes
-  [P1] 32       not found (exhaustive, 3600 s)    -         -      -
-  [P1] 33       automatic (tactics)               1.5 s     4      yes
-  [P1] 38       not found (exhaustive, 3600 s)    -         -      -
-  [P1] 39       automatic (tactics)               < 2 s     2      yes
-  [P1] 43       not found (exhaustive, 3600 s)    -         -      -
+  [P1] 7        not found (exhaustive, 600 s)     -         -      -
+  [P1] 8        automatic                         < 2 s     3      yes
+  [P1] 9        automatic                         < 2 s     1      yes
+  [P1] 10       automatic                         < 2 s     2      yes
+  [P1] 11       automatic                         < 2 s     1      yes
+  [P1] 12       automatic                         < 2 s     2      yes
+  [P1] 13       automatic                         < 2 s     1      yes
+  [P1] 14       not found (exhaustive, 600 s)     -         -      -
+  [P1] 14b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 15       automatic                         < 2 s     1      yes
+  [P1] 16       automatic                         < 2 s     1      yes
+  [P1] 17       automatic                         < 2 s     2      yes
+  [P1] 17b      automatic                         < 2 s     2      yes
+  [P1] 18       exhaustive                        < 2 s     2      yes
+  [P1] 18b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 19       not found (exhaustive, 600 s)     -         -      -
+  [P1] 19b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 20       not found (exhaustive, 600 s)     -         -      -
+  [P1] 20b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 21       not found (exhaustive, 600 s)     -         -      -
+  [P1] 21b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 22       exhaustive                        2.5 s     2      yes
+  [P1] 23       not found (exhaustive, 600 s)     -         -      -
+  [P1] 24       not found (exhaustive, 600 s)     -         -      -
+  [P1] 25       not found (exhaustive, 600 s)     -         -      -
+  [P1] 25b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 26       not found (exhaustive, 600 s)     -         -      -
+  [P1] 26b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 26c      not found (exhaustive, 600 s)     -         -      -
+  [P1] 26d      exhaustive                        45.5 s    3      yes
+  [P1] 26e      exhaustive                        46.1 s    3      yes
+  [P1] 27       not found (exhaustive, 600 s)     -         -      -
+  [P1] 27b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 27c      not found (exhaustive, 600 s)     -         -      -
+  [P1] 27d      not found (exhaustive, 600 s)     -         -      -
+  [P1] 28       not found (exhaustive, 600 s)     -         -      -
+  [P1] 29       not found (exhaustive, 600 s)     -         -      -
+  [P1] 30       not found (exhaustive, 600 s)     -         -      -
+  [P1] 30b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 31       automatic                         < 2 s     5      yes
+  [P1] 32       not found (exhaustive, 600 s)     -         -      -
+  [P1] 33       automatic                         < 2 s     4      yes
+  [P1] 34       not found (exhaustive, 600 s)     -         -      -
+  [P1] 34b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 35       exhaustive                        3.2 s     2      yes
+  [P1] 36       not found (exhaustive, 600 s)     -         -      -
+  [P1] 36b      not found (exhaustive, 600 s)     -         -      -
+  [P1] 37       not found (exhaustive, 600 s)     -         -      -
+  [P1] 38       exhaustive                        26.9 s    3      yes
+  [P1] 39       automatic                         < 2 s     2      yes
+  [P1] 39m3     not found (exhaustive, 600 s)     -         -      -
+  [P1] 40       not found (exhaustive, 600 s)     -         -      -
+  [P1] 41       not found (exhaustive, 600 s)     -         -      -
+  [P1] 42       not found (exhaustive, 600 s)     -         -      -
+  [P1] 43       not found (exhaustive, 600 s)     -         -      -
+  [P1] 44       not found (exhaustive, 600 s)     -         -      -
+  [P1] 45       automatic                         3.1 s     3      yes
+  [P1] 46       not found (exhaustive, 600 s)     -         -      -
+  [P1] 47       not found (exhaustive, 600 s)     -         -      -
+  [P1] 48       not found (exhaustive, 600 s)     -         -      -
+  [P2] A.3      not found (exhaustive, 600 s)     -         -      -
+  [P2] A.5      automatic                         < 2 s     1      yes
+  [P2] A.6      exhaustive                        8.0 s     1      yes
+  [P2] A.15     automatic                         < 2 s     3      yes
+  [P2] A.18     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.20     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.22     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.23     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.24     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.25     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.27     automatic                         < 2 s     1      yes
+  [P2] A.28     automatic                         < 2 s     1      yes
+  [P2] A.30     exhaustive                        2.6 s     1      yes
+  [P2] A.31     automatic                         < 2 s     1      yes
+  [P2] A.32     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.33     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.34     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.35     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.36     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.37     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.38     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.39     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.40     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.40b    not found (exhaustive, 600 s)     -         -      -
+  [P2] A.41     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.42     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.43     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.44     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.45     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.46     exhaustive                        2.0 s     1      yes
+  [P2] A.47     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.48     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.49     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.50     exhaustive                        403.9 s   2      yes
+  [P2] A.51     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.52     automatic                         < 2 s     1      yes
+  [P2] A.53     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.54     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.55     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.56     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.57     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.58     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.59     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.60     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.61     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.61b    not found (exhaustive, 600 s)     -         -      -
+  [P2] A.62     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.63     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.64     exhaustive                        39.6 s    2      yes
+  [P2] A.65     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.66     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.67     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.68     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.69     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.70     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.71     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.72     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.73     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.74     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.75     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.76     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.76b    not found (exhaustive, 600 s)     -         -      -
+  [P2] A.77     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.78     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.79     not found (exhaustive, 600 s)     -         -      -
+  [P2] A.80     not found (exhaustive, 600 s)     -         -      -
 
-Lemma 38 has a derivation of three steps from the start side
-(examples/completeness/derivations/p1_lemma38_derivation.azx). Its last step, w_identity, had
-no converse rule at the time of this run, so the search had to expand layer 3 of the start
-side; the insertion converses make that layer larger than an hour of search covers.
+"Not found" means the runner stopped the search at 600 s, not that the lemma is false: each
+is a lemma of [P1] or [P2] and was checked equal by the oracle. Most of these have no
+automatic rule that applies to either side (the search ends after one layer), and their paper
+proofs pass through steps the engine states only as several rule applications (S3 and the
+bending of legs, S4 as pink spider fusion with no unfusion rule, the splits of AD and S1 read
+right to left with chosen free values), so the shortest derivations lie deeper than exhaustive
+mode reaches in 600 s. Earlier runs gave [P1] Lemmas 7, 23, 28, 29, 32 and 43 3600 s each and
+[P2] A.3 1800 s, with the same result.
 
-Before promotion (section 8), lemmas 8, 9, 10 and 39 were found by exhaustive mode only, in
-2.6 to 4.6 s. "Not found" means the search was stopped by the runner, not that the lemma is
-false: each was checked equal by the oracle at d = 3 and is a lemma of [P1]. Their paper
-proofs pass through lemmas the engine states only as derivations of several steps (S4, the
-pink spider fusion, has no unfusion rule; S3 and the bending lemmas need definitional rules),
-so the shortest derivations are deeper than exhaustive mode reached.
-
-Each lemma proved above has a replayed derivation: the certificate of its proof, re-checked by
-the kernel. Lemma 38 also has one written as apply steps following the rules
+[P1] Lemma 38 has a derivation of three steps written as apply steps
 (examples/completeness/derivations/p1_lemma38_derivation.azx: w_zero_effect, an identity
-inserted at the boundary, w_identity). For lemmas 7, 23, 28, 29, 32 and 43 no derivation by
-apply steps was written: the paper's proofs use converse steps with chosen free values (the
-splits of AD and S1 read right to left) and the lemmas S3, S4 and 22, each several engine steps
-long; their truth at d = 3 was checked by the oracle only. [P2] Lemma A.5 is proved by the
-automatic search in 1 step; Lemma A.3 was not found by automatic search nor by exhaustive
-mode within 1800 s.
-
+inserted at the boundary, w_identity); exhaustive mode now finds a three-step derivation in
+27 s, through the converse rules added since.

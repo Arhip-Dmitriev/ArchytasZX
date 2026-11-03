@@ -1,0 +1,22 @@
+# [P2] Lemma A.54 (m = 2, n = 3): the box 1 state of dimension mn into the splitter, its m output on
+# the pink K_{-1} effect, is the pink K_1 state of dimension n.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 2, literal 3)
+    x3 = X(1 -> 0, literal 2) phase{k: -1*k/2}
+    wire z1.out0 -- s2.in0, s2.out0 -- x3.in0
+    outputs s2.out1
+    scalar 2^(-1/2)
+
+@rhs =
+    x1 = X(0 -> 1, literal 3) phase{k: 1*k/3}
+    outputs x1.out0
+    scalar 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

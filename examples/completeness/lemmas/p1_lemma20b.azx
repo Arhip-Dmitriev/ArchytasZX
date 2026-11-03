@@ -1,0 +1,14 @@
+# [P1] Lemma 20 (d = 3): D slides along a pink cup (an effect) from its left leg to its right leg.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = X(2 -> 0, literal 3); h = F(literal 3); h2 = F(literal 3); h -> h2; wire h2.out0 -- g.in0
+    inputs h.in0, g.in1
+
+@rhs =
+    g = X(2 -> 0, literal 3); h = F(literal 3); h2 = F(literal 3); h -> h2; wire h2.out0 -- g.in1
+    inputs g.in0, h.in0
+
+load @lhs
+prove against @rhs
+certificate kernel

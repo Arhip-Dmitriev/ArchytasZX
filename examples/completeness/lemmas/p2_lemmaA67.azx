@@ -1,0 +1,23 @@
+# [P2] Lemma A.67 (d = 2, m = 2): the box a of dimension d^m into the splitter is the splitter into
+# the Z box a (2 -> 2) of dimension d.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(1 -> 1, literal 4) weight{1: 0, 2: 0, 3: a}
+    s2 = S(literal 2, literal 2)
+    wire z1.out0 -- s2.in0
+    inputs z1.in0
+    outputs s2.out0, s2.out1
+
+@rhs =
+    s1 = S(literal 2, literal 2)
+    z2 = Z(2 -> 2, literal 2) weight{1: a}
+    wire s1.out0 -- z2.in0, s1.out1 -- z2.in1
+    inputs s1.in0
+    outputs z2.out0, z2.out1
+
+load @lhs
+prove against @rhs
+certificate kernel

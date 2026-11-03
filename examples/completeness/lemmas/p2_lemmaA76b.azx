@@ -1,0 +1,29 @@
+# [P2] Lemma A.76, second equality (k = 2, j = 2, m = 4, m_1 = m_2 = 2): as A.76 with pink dots in
+# place of the W transposes.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    w1 = W(1 -> 2, literal 4)
+    z2 = Z(1 -> 1, literal 4) weight{1: 0, 2: 0, 3: x}
+    s3 = S(literal 2, literal 2)
+    z4 = Z(1 -> 1, literal 4) weight{1: 0, 2: 0, 3: y}
+    s5 = S(literal 2, literal 2)
+    x6 = X(2 -> 1, literal 2)
+    x7 = X(2 -> 1, literal 2)
+    wire w1.out0 -- z2.in0, z2.out0 -- s3.in0, w1.out1 -- z4.in0, z4.out0 -- s5.in0, s3.out0 -- x6.in0, s5.out0 -- x6.in1, s3.out1 -- x7.in0, s5.out1 -- x7.in1
+    inputs w1.in0
+    outputs x6.out0, x7.out0
+    scalar 2^(1/2) * 2^(1/2)
+
+@rhs =
+    z1 = Z(1 -> 1, literal 4) weight{1: 0, 2: 0, 3: x + y}
+    s2 = S(literal 2, literal 2)
+    wire z1.out0 -- s2.in0
+    inputs z1.in0
+    outputs s2.out0, s2.out1
+
+load @lhs
+prove against @rhs
+certificate kernel

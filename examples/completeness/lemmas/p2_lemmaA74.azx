@@ -1,0 +1,31 @@
+# [P2] Lemma A.74 (m = 2, n = 3), as its proof states it, with the box 1 on the input (the printed
+# statement omits it and is false without it, at the input |1>): the box 1 into a W node of
+# dimension mn, each output into a splitter with a plain green effect on its n output, is the box 1
+# into the splitter with a green effect on n into a W node of dimension m.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(1 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    w2 = W(1 -> 2, literal 6)
+    s3 = S(literal 2, literal 3)
+    z4 = Z(1 -> 0, literal 3)
+    s5 = S(literal 2, literal 3)
+    z6 = Z(1 -> 0, literal 3)
+    wire z1.out0 -- w2.in0, w2.out0 -- s3.in0, s3.out1 -- z4.in0, w2.out1 -- s5.in0, s5.out1 -- z6.in0
+    inputs z1.in0
+    outputs s3.out0, s5.out0
+
+@rhs =
+    z1 = Z(1 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 2, literal 3)
+    z3 = Z(1 -> 0, literal 3)
+    w4 = W(1 -> 2, literal 2)
+    wire z1.out0 -- s2.in0, s2.out1 -- z3.in0, s2.out0 -- w4.in0
+    inputs z1.in0
+    outputs w4.out0, w4.out1
+
+load @lhs
+prove against @rhs
+certificate kernel

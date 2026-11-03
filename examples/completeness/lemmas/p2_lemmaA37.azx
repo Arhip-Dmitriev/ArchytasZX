@@ -1,0 +1,53 @@
+# [P2] Lemma A.37 (l = 2, m = 2, n = 3, two green dots): a W node of dimension l and a pink dot of
+# dimension m crossed into plain green dots (l, m -> n) are two W nodes crossed into them.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    w1 = W(1 -> 2, literal 2)
+    x2 = X(1 -> 2, literal 2)
+    z3 = Z(2 -> 1, literal 12) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0}
+    b4 = B(literal 6, literal 2)
+    x5 = X(0 -> 1, literal 6)
+    b6 = B(literal 6, literal 2)
+    x7 = X(0 -> 1, literal 6)
+    s8 = S(literal 4, literal 3)
+    x9 = X(1 -> 0, literal 4)
+    z10 = Z(2 -> 1, literal 12) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0}
+    b11 = B(literal 6, literal 2)
+    x12 = X(0 -> 1, literal 6)
+    b13 = B(literal 6, literal 2)
+    x14 = X(0 -> 1, literal 6)
+    s15 = S(literal 4, literal 3)
+    x16 = X(1 -> 0, literal 4)
+    wire x5.out0 -- b4.in0, b4.out0 -- z3.in0, x7.out0 -- b6.in0, b6.out0 -- z3.in1, z3.out0 -- s8.in0, s8.out0 -- x9.in0, w1.out0 -- b4.in1, x2.out0 -- b6.in1, x12.out0 -- b11.in0, b11.out0 -- z10.in0, x14.out0 -- b13.in0, b13.out0 -- z10.in1, z10.out0 -- s15.in0, s15.out0 -- x16.in0, w1.out1 -- b11.in1, x2.out1 -- b13.in1
+    inputs w1.in0, x2.in0
+    outputs s8.out1, s15.out1
+    scalar 2^(1/2) * 6^(-1/2) * 6^(-1/2) * 4^(-1/2) * 6^(-1/2) * 6^(-1/2) * 4^(-1/2)
+
+@rhs =
+    w1 = W(1 -> 2, literal 2)
+    w2 = W(1 -> 2, literal 2)
+    z3 = Z(2 -> 1, literal 12) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0}
+    b4 = B(literal 6, literal 2)
+    x5 = X(0 -> 1, literal 6)
+    b6 = B(literal 6, literal 2)
+    x7 = X(0 -> 1, literal 6)
+    s8 = S(literal 4, literal 3)
+    x9 = X(1 -> 0, literal 4)
+    z10 = Z(2 -> 1, literal 12) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0}
+    b11 = B(literal 6, literal 2)
+    x12 = X(0 -> 1, literal 6)
+    b13 = B(literal 6, literal 2)
+    x14 = X(0 -> 1, literal 6)
+    s15 = S(literal 4, literal 3)
+    x16 = X(1 -> 0, literal 4)
+    wire x5.out0 -- b4.in0, b4.out0 -- z3.in0, x7.out0 -- b6.in0, b6.out0 -- z3.in1, z3.out0 -- s8.in0, s8.out0 -- x9.in0, w1.out0 -- b4.in1, w2.out0 -- b6.in1, x12.out0 -- b11.in0, b11.out0 -- z10.in0, x14.out0 -- b13.in0, b13.out0 -- z10.in1, z10.out0 -- s15.in0, s15.out0 -- x16.in0, w1.out1 -- b11.in1, w2.out1 -- b13.in1
+    inputs w1.in0, w2.in0
+    outputs s8.out1, s15.out1
+    scalar 6^(-1/2) * 6^(-1/2) * 4^(-1/2) * 6^(-1/2) * 6^(-1/2) * 4^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

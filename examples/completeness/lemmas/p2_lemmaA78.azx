@@ -1,0 +1,56 @@
+# [P2] Lemma A.78 (m = n = 2, d = mn): the box 1 into a W node (1 -> d), outputs through the
+# multipliers -0, ..., -(d-1) into a pink dot, then a plain green dot (1 -> 2) whose second output
+# goes into the splitter, is the same W node and multipliers, each into a plain green dot (1 -> 2)
+# whose outputs feed a pink dot of dimension mn and, through a splitter, pink dots of dimensions m
+# and n.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 4) weight{1: 0, 2: 0, 3: 1}
+    w2 = W(1 -> 4, literal 4)
+    x3 = X(4 -> 1, literal 4)
+    z4 = Z(1 -> 0, literal 4)
+    x5 = X(0 -> 1, literal 4)
+    z6 = Z(1 -> 3, literal 4)
+    x7 = X(3 -> 1, literal 4)
+    z8 = Z(1 -> 2, literal 4)
+    x9 = X(2 -> 1, literal 4)
+    z10 = Z(1 -> 1, literal 4)
+    x11 = X(1 -> 1, literal 4)
+    z12 = Z(1 -> 2, literal 4)
+    s13 = S(literal 2, literal 2)
+    wire z1.out0 -- w2.in0, w2.out0 -- z4.in0, x5.out0 -- x3.in0, z6.out0 -- x7.in0, z6.out1 -- x7.in1, z6.out2 -- x7.in2, w2.out1 -- z6.in0, x7.out0 -- x3.in1, z8.out0 -- x9.in0, z8.out1 -- x9.in1, w2.out2 -- z8.in0, x9.out0 -- x3.in2, z10.out0 -- x11.in0, w2.out3 -- z10.in0, x11.out0 -- x3.in3, x3.out0 -- z12.in0, z12.out1 -- s13.in0
+    outputs z12.out0, s13.out0, s13.out1
+    scalar 4^(3/2) * 4^(-1/2) * 4^(2/2) * 4^(1/2)
+
+@rhs =
+    z1 = Z(0 -> 1, literal 4) weight{1: 0, 2: 0, 3: 1}
+    w2 = W(1 -> 4, literal 4)
+    x3 = X(4 -> 1, literal 4)
+    x4 = X(4 -> 1, literal 2)
+    x5 = X(4 -> 1, literal 2)
+    z6 = Z(1 -> 0, literal 4)
+    x7 = X(0 -> 1, literal 4)
+    z8 = Z(1 -> 2, literal 4)
+    s9 = S(literal 2, literal 2)
+    z10 = Z(1 -> 3, literal 4)
+    x11 = X(3 -> 1, literal 4)
+    z12 = Z(1 -> 2, literal 4)
+    s13 = S(literal 2, literal 2)
+    z14 = Z(1 -> 2, literal 4)
+    x15 = X(2 -> 1, literal 4)
+    z16 = Z(1 -> 2, literal 4)
+    s17 = S(literal 2, literal 2)
+    z18 = Z(1 -> 1, literal 4)
+    x19 = X(1 -> 1, literal 4)
+    z20 = Z(1 -> 2, literal 4)
+    s21 = S(literal 2, literal 2)
+    wire z1.out0 -- w2.in0, w2.out0 -- z6.in0, x7.out0 -- z8.in0, z8.out0 -- x3.in0, z8.out1 -- s9.in0, s9.out0 -- x4.in0, s9.out1 -- x5.in0, z10.out0 -- x11.in0, z10.out1 -- x11.in1, z10.out2 -- x11.in2, w2.out1 -- z10.in0, x11.out0 -- z12.in0, z12.out0 -- x3.in1, z12.out1 -- s13.in0, s13.out0 -- x4.in1, s13.out1 -- x5.in1, z14.out0 -- x15.in0, z14.out1 -- x15.in1, w2.out2 -- z14.in0, x15.out0 -- z16.in0, z16.out0 -- x3.in2, z16.out1 -- s17.in0, s17.out0 -- x4.in2, s17.out1 -- x5.in2, z18.out0 -- x19.in0, w2.out3 -- z18.in0, x19.out0 -- z20.in0, z20.out0 -- x3.in3, z20.out1 -- s21.in0, s21.out0 -- x4.in3, s21.out1 -- x5.in3
+    outputs x3.out0, x4.out0, x5.out0
+    scalar 4^(3/2) * 2^(3/2) * 2^(3/2) * 4^(-1/2) * 4^(2/2) * 4^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

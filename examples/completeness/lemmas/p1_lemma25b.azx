@@ -1,0 +1,20 @@
+# [P1] Lemma 25, second row (d = 3): an input leg of a pink dot (2 -> 1) is an output leg through
+# D bent up to the input.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(2 -> 1, literal 3)
+    inputs p.in0, p.in1
+    outputs p.out0
+    scalar 3^(1/2)
+
+@rhs =
+    p = X(1 -> 2, literal 3); h = F(literal 3); h2 = F(literal 3); c = Z(2 -> 0, literal 3)
+    wire p.out1 -- h.in0, h.out0 -- h2.in0, h2.out0 -- c.in0
+    inputs c.in1, p.in0
+    outputs p.out0
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

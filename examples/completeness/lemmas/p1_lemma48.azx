@@ -1,0 +1,17 @@
+# [P1] Lemma 48 (two legs each, d = 3): two pink dots (2 -> 1) whose outputs are joined are one
+# pink dot (4 -> 0) with D on its last two legs.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(2 -> 1, literal 3); q = X(2 -> 1, literal 3); wire p.out0 -- q.out0
+    inputs p.in0, p.in1, q.in0, q.in1
+    scalar 3^(1/2) * 3^(1/2)
+
+@rhs =
+    r = X(4 -> 0, literal 3); h = F(literal 3); k = F(literal 3); h -> F(literal 3) -> r; k -> F(literal 3) -> r
+    inputs r.in0, r.in1, h.in0, k.in0
+    scalar 3
+
+load @lhs
+prove against @rhs
+certificate kernel

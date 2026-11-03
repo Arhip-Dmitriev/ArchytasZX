@@ -1,0 +1,28 @@
+# [P2] Lemma A.32, (VA) (d = 3, a = (a1, a2)): a W node (1 -> 3) whose outputs pass through the
+# boxes 1, a1, a2 and the multipliers -0, -1, -2 into a pink dot is the box 1 into a W node (1 -> 3)
+# whose outputs pass through the multipliers -0, -1, -2 into a pink dot, followed by the Z box a.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    w = W(1 -> 3, literal 3)
+    o = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; c1 = Z(1 -> 1, literal 3) weight{1: 0, 2: a1}; c2 = Z(1 -> 1, literal 3) weight{1: 0, 2: a2}
+    u0 = Z(1 -> 0, literal 3); v0 = X(0 -> 1, literal 3)
+    u1 = Z(1 -> 2, literal 3); v1 = X(2 -> 1, literal 3); u2 = Z(1 -> 1, literal 3); v2 = X(1 -> 1, literal 3)
+    p = X(3 -> 1, literal 3)
+    wire w.out0 -- o.in0, w.out1 -- c1.in0, w.out2 -- c2.in0, o.out0 -- u0.in0
+    wire c1.out0 -- u1.in0, u1.out0 -- v1.in0, u1.out1 -- v1.in1, c2.out0 -- u2.in0, u2.out0 -- v2.in0
+    wire v0.out0 -- p.in0, v1.out0 -- p.in1, v2.out0 -- p.in2
+    scalar 3^(-1/2) * 3^(1/2) * 3
+
+@rhs =
+    b = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; w = W(1 -> 3, literal 3)
+    u0 = Z(1 -> 0, literal 3); v0 = X(0 -> 1, literal 3)
+    u1 = Z(1 -> 2, literal 3); v1 = X(2 -> 1, literal 3); u2 = Z(1 -> 1, literal 3); v2 = X(1 -> 1, literal 3)
+    p = X(3 -> 1, literal 3); z = Z(1 -> 1, literal 3) weight{1: a1, 2: a2}
+    wire b.out0 -- w.in0, w.out0 -- u0.in0, w.out1 -- u1.in0, u1.out0 -- v1.in0, u1.out1 -- v1.in1, w.out2 -- u2.in0, u2.out0 -- v2.in0
+    wire v0.out0 -- p.in0, v1.out0 -- p.in1, v2.out0 -- p.in2, p.out0 -- z.in0
+    scalar 3^(-1/2) * 3^(1/2) * 3
+
+load @lhs
+prove against @rhs
+certificate kernel

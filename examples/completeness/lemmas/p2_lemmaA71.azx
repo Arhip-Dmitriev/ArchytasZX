@@ -1,0 +1,21 @@
+# [P2] Lemma A.71 (m = 2, n = 3): the box 1 state of dimension mn into the splitter (m, n) is the box
+# 1 state into the splitter (n, m) followed by the swap.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 2, literal 3)
+    wire z1.out0 -- s2.in0
+    outputs s2.out0, s2.out1
+
+@rhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 3, literal 2)
+    wire z1.out0 -- s2.in0
+    outputs s2.out1, s2.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

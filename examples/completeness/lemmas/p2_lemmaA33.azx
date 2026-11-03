@@ -1,0 +1,24 @@
+# [P2] Lemma A.33, (VW) (d = 3): the V box into a W node (1 -> 2) is the box 1 into a W node
+# (1 -> 4) whose outputs pass through the multipliers -1, -2, -1, -2 into two pink dots.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    vb = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; vw = W(1 -> 2, literal 3)
+    vu1 = Z(1 -> 2, literal 3); vq1 = X(2 -> 1, literal 3); vu2 = Z(1 -> 1, literal 3); vq2 = X(1 -> 1, literal 3); vp = X(2 -> 1, literal 3)
+    wire vb.out0 -- vw.in0, vw.out0 -- vu1.in0, vu1.out0 -- vq1.in0, vu1.out1 -- vq1.in1, vw.out1 -- vu2.in0, vu2.out0 -- vq2.in0, vq1.out0 -- vp.in0, vq2.out0 -- vp.in1
+    w = W(1 -> 2, literal 3); wire vp.out0 -- w.in0
+    scalar 3^(1/2) * 3^(1/2)
+
+@rhs =
+    b = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; w = W(1 -> 4, literal 3)
+    u1 = Z(1 -> 2, literal 3); q1 = X(2 -> 1, literal 3); u2 = Z(1 -> 1, literal 3); q2 = X(1 -> 1, literal 3)
+    u3 = Z(1 -> 2, literal 3); q3 = X(2 -> 1, literal 3); u4 = Z(1 -> 1, literal 3); q4 = X(1 -> 1, literal 3)
+    p = X(2 -> 1, literal 3); r = X(2 -> 1, literal 3)
+    wire b.out0 -- w.in0, w.out0 -- u1.in0, u1.out0 -- q1.in0, u1.out1 -- q1.in1, w.out1 -- u2.in0, u2.out0 -- q2.in0
+    wire w.out2 -- u3.in0, u3.out0 -- q3.in0, u3.out1 -- q3.in1, w.out3 -- u4.in0, u4.out0 -- q4.in0
+    wire q1.out0 -- p.in0, q2.out0 -- p.in1, q3.out0 -- r.in0, q4.out0 -- r.in1
+    scalar 3^(1/2) * 3^(1/2) * 3^(1/2) * 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

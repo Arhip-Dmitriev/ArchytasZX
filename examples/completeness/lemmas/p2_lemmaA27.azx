@@ -1,0 +1,14 @@
+# [P2] Lemma A.27, (Bs0) (d = 3): the pink state into a W node (1 -> 2) is two pink states.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 1, literal 3); w = W(1 -> 2, literal 3); p -> w
+    scalar 3^(-1/2)
+
+@rhs =
+    a = X(0 -> 1, literal 3); b = X(0 -> 1, literal 3)
+    scalar 3^(-1/2) * 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

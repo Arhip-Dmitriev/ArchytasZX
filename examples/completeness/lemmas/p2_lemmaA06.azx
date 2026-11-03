@@ -1,0 +1,22 @@
+# [P2] Lemma A.6 (two inputs, two green dots, d = 3): a W node and a W transpose into a W node, all
+# meeting two plain green dots, are W nodes on every input into W transposes meeting the dots.
+# A W transpose is a W node with its legs bent (the identity adapters i1, i2 carry its inputs).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    t = W(1 -> 2, literal 3); u = W(1 -> 2, literal 3); p = W(1 -> 2, literal 3); g1 = Z(2 -> 1, literal 3); g2 = Z(2 -> 1, literal 3)
+    i1 = Z(1 -> 1, literal 3); i2 = Z(1 -> 1, literal 3)
+    wire i1.out0 -- t.out0, i2.out0 -- t.out1, t.in0 -- u.in0, p.out0 -- g1.in0, p.out1 -- g2.in0, u.out0 -- g1.in1, u.out1 -- g2.in1
+    inputs p.in0, i1.in0, i2.in0
+    outputs g1.out0, g2.out0
+
+@rhs =
+    p = W(1 -> 2, literal 3); a = W(1 -> 2, literal 3); b = W(1 -> 2, literal 3); s = W(1 -> 2, literal 3); r = W(1 -> 2, literal 3)
+    g1 = Z(2 -> 1, literal 3); g2 = Z(2 -> 1, literal 3)
+    wire p.out0 -- g1.in0, p.out1 -- g2.in0, a.out0 -- s.out0, a.out1 -- r.out0, b.out0 -- s.out1, b.out1 -- r.out1, s.in0 -- g1.in1, r.in0 -- g2.in1
+    inputs p.in0, a.in0, b.in0
+    outputs g1.out0, g2.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

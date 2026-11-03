@@ -1,0 +1,15 @@
+# [P2] Lemma A.20 (d = 3): the pink K_1 state into a W node (1 -> 2) is the pink K_1 cap with the
+# box 1 on its right leg.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}; w = W(1 -> 2, literal 3); p -> w
+    scalar 3^(-1/2)
+
+@rhs =
+    p = X(0 -> 2, literal 3) phase{k: k/3}; b = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; wire p.out1 -- b.in0
+    outputs p.out0, b.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

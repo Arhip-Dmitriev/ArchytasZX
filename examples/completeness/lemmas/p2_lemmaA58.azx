@@ -1,0 +1,29 @@
+# [P2] Lemma A.58 (m = 2, n = 3, k = 4 = s_k n + t_k): the box 1 state through the multiplier -k
+# into the splitter is the box 1 state into the splitter, then the multipliers -s_k and -t_k.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    z2 = Z(1 -> 2, literal 6)
+    x3 = X(2 -> 1, literal 6)
+    s4 = S(literal 2, literal 3)
+    wire z2.out0 -- x3.in0, z2.out1 -- x3.in1, z1.out0 -- z2.in0, x3.out0 -- s4.in0
+    outputs s4.out0, s4.out1
+    scalar 6^(1/2)
+
+@rhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 2, literal 3)
+    z3 = Z(1 -> 1, literal 2)
+    x4 = X(1 -> 1, literal 2)
+    z5 = Z(1 -> 2, literal 3)
+    x6 = X(2 -> 1, literal 3)
+    wire z1.out0 -- s2.in0, z3.out0 -- x4.in0, z5.out0 -- x6.in0, z5.out1 -- x6.in1, s2.out0 -- z3.in0, s2.out1 -- z5.in0
+    outputs x4.out0, x6.out0
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,21 @@
+# [P2] Lemma A.64 (m = 2, n = 3): the splitter followed by the binder is the identity of dimension
+# mn.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    s1 = S(literal 2, literal 3)
+    b2 = B(literal 2, literal 3)
+    wire s1.out0 -- b2.in0, s1.out1 -- b2.in1
+    inputs s1.in0
+    outputs b2.out0
+
+@rhs =
+    z1 = Z(1 -> 1, literal 6)
+    inputs z1.in0
+    outputs z1.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

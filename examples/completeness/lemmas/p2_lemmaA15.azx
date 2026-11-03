@@ -1,0 +1,15 @@
+# [P2] Lemma A.15 (j = 1, n = 2, d = 3): the pink K_j state through the multiplier n is the pink
+# K_{nj} state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 1, literal 3) phase{k: k/3}; g = Z(1 -> 2, literal 3); q = X(2 -> 1, literal 3); p -> g; g -> q; g -> q
+    scalar 3^(-1/2) * 3^(1/2)
+
+@rhs =
+    p = X(0 -> 1, literal 3) phase{k: 2*k/3}
+    scalar 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

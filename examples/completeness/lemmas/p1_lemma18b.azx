@@ -1,0 +1,15 @@
+# [P1] Lemma 18 (b) (d = 3): D is a pink dot (on the input) joined to a plain green dot (on the
+# output).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = F(literal 3); a -> F(literal 3)
+
+@rhs =
+    p = X(2 -> 0, literal 3); g = Z(0 -> 2, literal 3); wire g.out0 -- p.in1
+    inputs p.in0
+    outputs g.out1
+
+load @lhs
+prove against @rhs
+certificate kernel

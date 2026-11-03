@@ -1,0 +1,15 @@
+# [P1] Lemma 14, (HX) (j = 1, n = 1 input, m = 2 outputs, d = 3): the green K_j spider is v_{m,n}
+# times the pink K_j spider with H on its input and H^dagger on its outputs.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    z = Z(1 -> 2, literal 3) phase{k: k/3}
+
+@rhs =
+    a = F(literal 3); x = X(1 -> 2, literal 3) phase{k: k/3}; a -> x
+    x -> F(literal 3)^3; x -> F(literal 3)^3
+    scalar 3^(1/2) * 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

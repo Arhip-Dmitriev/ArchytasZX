@@ -1,0 +1,17 @@
+# [P1] Lemma 37 (d = 3): the W node (1 -> 2) is a plain green dot (1 -> 2) whose outputs feed a
+# pink dot (1 -> 2) and, through a triangle, a plain green dot (2 -> 1) that the pink dot also feeds.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    w = W(1 -> 2, literal 3)
+
+@rhs =
+    a = Z(1 -> 2, literal 3); p = X(1 -> 2, literal 3); t = T(literal 3); b = Z(2 -> 1, literal 3)
+    wire a.out0 -- p.in0, a.out1 -- t.in0, t.out0 -- b.in0, p.out1 -- b.in1
+    inputs a.in0
+    outputs p.out0, b.out0
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

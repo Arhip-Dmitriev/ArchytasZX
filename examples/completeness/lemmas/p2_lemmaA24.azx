@@ -1,0 +1,14 @@
+# [P2] Lemma A.24 (k = 1, n = 2, d = 3): the box x T_k state through the multiplier n is the box
+# x T_{nk} state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    b = Z(0 -> 1, literal 3) weight{1: 0, 2: x}; g = Z(1 -> 2, literal 3); q = X(2 -> 1, literal 3); b -> g; g -> q; g -> q
+    scalar 3^(1/2)
+
+@rhs =
+    b = Z(0 -> 1, literal 3) weight{1: x, 2: 0}
+
+load @lhs
+prove against @rhs
+certificate kernel

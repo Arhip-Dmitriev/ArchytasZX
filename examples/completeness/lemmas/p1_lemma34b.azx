@@ -1,0 +1,13 @@
+# [P1] Lemma 34 (x = 2, d = 3): D followed by the multiplier x is the multiplier -x.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    h = F(literal 3); g = Z(1 -> 2, literal 3); p = X(2 -> 1, literal 3); h -> F(literal 3) -> g; g -> p; g -> p
+    scalar 3^(1/2)
+
+@rhs =
+    g = Z(1 -> 1, literal 3); p = X(1 -> 1, literal 3); g -> p
+
+load @lhs
+prove against @rhs
+certificate kernel

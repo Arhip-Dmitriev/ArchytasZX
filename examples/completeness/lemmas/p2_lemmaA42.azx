@@ -1,0 +1,23 @@
+# [P2] Lemma A.42 (k = 2, l = 3, m = 2): the splitter klm -> (k, lm) followed by lm -> (l, m) is
+# klm -> (kl, m) followed by kl -> (k, l).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    s1 = S(literal 2, literal 6)
+    s2 = S(literal 3, literal 2)
+    wire s1.out1 -- s2.in0
+    inputs s1.in0
+    outputs s1.out0, s2.out0, s2.out1
+
+@rhs =
+    s1 = S(literal 6, literal 2)
+    s2 = S(literal 2, literal 3)
+    wire s1.out0 -- s2.in0
+    inputs s1.in0
+    outputs s2.out0, s2.out1, s1.out1
+
+load @lhs
+prove against @rhs
+certificate kernel

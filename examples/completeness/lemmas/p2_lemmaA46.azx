@@ -1,0 +1,34 @@
+# [P2] Lemma A.46 (k = 2, m_1 = 2, m_2 = 3): the splitter m -> (m_1, m_2) is the pink dot of
+# dimension m, outputs through the multipliers Pi_1 = m_2 and Pi_2 = 1 into plain green dots
+# (m -> m_i).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    s1 = S(literal 2, literal 3)
+    inputs s1.in0
+    outputs s1.out0, s1.out1
+
+@rhs =
+    x1 = X(1 -> 2, literal 6)
+    x2 = X(1 -> 3, literal 6)
+    z3 = Z(3 -> 1, literal 6)
+    z4 = Z(1 -> 1, literal 12) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0}
+    b5 = B(literal 2, literal 6)
+    x6 = X(0 -> 1, literal 2)
+    s7 = S(literal 6, literal 2)
+    x8 = X(1 -> 0, literal 6)
+    z9 = Z(1 -> 1, literal 18) weight{3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0}
+    b10 = B(literal 3, literal 6)
+    x11 = X(0 -> 1, literal 3)
+    s12 = S(literal 6, literal 3)
+    x13 = X(1 -> 0, literal 6)
+    wire x2.out0 -- z3.in0, x2.out1 -- z3.in1, x2.out2 -- z3.in2, x1.out0 -- x2.in0, x6.out0 -- b5.in0, b5.out0 -- z4.in0, z4.out0 -- s7.in0, s7.out0 -- x8.in0, z3.out0 -- b5.in1, x11.out0 -- b10.in0, b10.out0 -- z9.in0, z9.out0 -- s12.in0, s12.out0 -- x13.in0, x1.out1 -- b10.in1
+    inputs x1.in0
+    outputs s7.out1, s12.out1
+    scalar 6^(1/2) * 6^(2/2) * 2^(-1/2) * 6^(-1/2) * 3^(-1/2) * 6^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

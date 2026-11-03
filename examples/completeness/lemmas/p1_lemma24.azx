@@ -1,0 +1,20 @@
+# [P1] Lemma 24 (d = 3): a plain green dot on one wire joined upwards to a pink dot on another is
+# the green dot joined downwards, through D, to the pink dot.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(2 -> 1, literal 3); p = X(1 -> 2, literal 3); wire p.out1 -- g.in1
+    inputs g.in0, p.in0
+    outputs g.out0, p.out0
+    scalar 3^(1/2)
+
+@rhs =
+    g = Z(1 -> 2, literal 3); p = X(2 -> 1, literal 3); h = F(literal 3); h2 = F(literal 3)
+    wire g.out1 -- h.in0, h2.out0 -- p.in1; h -> h2
+    inputs g.in0, p.in0
+    outputs g.out0, p.out0
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

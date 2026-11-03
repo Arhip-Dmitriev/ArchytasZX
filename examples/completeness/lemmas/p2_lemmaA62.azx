@@ -1,0 +1,34 @@
+# [P2] Lemma A.62 (k = 2, m_1 = 3, m_2 = 2): the box 1 state of dimension m into the splitter is the
+# box 1 state through D into the plain green dot (m -> m_1, m_2) with D on both outputs.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    s2 = S(literal 3, literal 2)
+    wire z1.out0 -- s2.in0
+    outputs s2.out0, s2.out1
+
+@rhs =
+    z1 = Z(0 -> 1, literal 6) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 1}
+    f2 = F(1 -> 1, literal 6)
+    f3 = F(1 -> 1, literal 6)
+    z4 = Z(1 -> 2, literal 36) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 0, 22: 0, 23: 0, 24: 0, 25: 0, 26: 0, 27: 0, 28: 0, 29: 0, 30: 0, 31: 0, 32: 0, 33: 0, 34: 0, 35: 0}
+    b5 = B(literal 6, literal 6)
+    x6 = X(0 -> 1, literal 6)
+    s7 = S(literal 12, literal 3)
+    x8 = X(1 -> 0, literal 12)
+    s9 = S(literal 18, literal 2)
+    x10 = X(1 -> 0, literal 18)
+    f11 = F(1 -> 1, literal 3)
+    f12 = F(1 -> 1, literal 3)
+    f13 = F(1 -> 1, literal 2)
+    f14 = F(1 -> 1, literal 2)
+    wire f2.out0 -- f3.in0, z1.out0 -- f2.in0, x6.out0 -- b5.in0, b5.out0 -- z4.in0, z4.out0 -- s7.in0, s7.out0 -- x8.in0, z4.out1 -- s9.in0, s9.out0 -- x10.in0, f3.out0 -- b5.in1, f11.out0 -- f12.in0, f13.out0 -- f14.in0, s7.out1 -- f11.in0, s9.out1 -- f13.in0
+    outputs f12.out0, f14.out0
+    scalar 6^(-1/2) * 12^(-1/2) * 18^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

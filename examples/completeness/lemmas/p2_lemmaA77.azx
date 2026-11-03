@@ -1,0 +1,27 @@
+# [P2] Lemma A.77 (k = 1, m = 2, n = 3, e_1 = 1): the pink K_1 state of dimension mn into a W node
+# (1 -> 2), the second output into a splitter whose n output meets a pink state through the
+# multiplier e_1, is the pink K_1 state of dimension mn beside the pink state of dimension m.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    x1 = X(0 -> 1, literal 6) phase{k: 1*k/6}
+    w2 = W(1 -> 2, literal 6)
+    s3 = S(literal 2, literal 3)
+    x4 = X(0 -> 1, literal 3)
+    x5 = X(1 -> 1, literal 3)
+    z6 = Z(1 -> 1, literal 3)
+    wire x1.out0 -- w2.in0, w2.out1 -- s3.in0, x5.out0 -- z6.in0, x4.out0 -- x5.in0, z6.out0 -- s3.out1
+    outputs w2.out0, s3.out0
+    scalar 6^(-1/2) * 3^(-1/2)
+
+@rhs =
+    x1 = X(0 -> 1, literal 6) phase{k: 1*k/6}
+    x2 = X(0 -> 1, literal 2)
+    outputs x1.out0, x2.out0
+    scalar 6^(-1/2) * 2^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

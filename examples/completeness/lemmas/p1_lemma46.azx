@@ -1,0 +1,27 @@
+# [P1] Lemma 46 (d = 3, a = (a1, a2), b = (b1, b2)): the box 1 state into a W node (1 -> 2), each
+# output into the decomposition of Lemma 45, is the plain green state into a W node (1 -> 2)
+# whose outputs pass through the Z boxes a and b.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    o = Z(0 -> 1, literal 3) weight{1: 0, 2: 1}; t = W(1 -> 2, literal 3); w = W(1 -> 2, literal 3); v = W(1 -> 2, literal 3)
+    a1 = Z(1 -> 1, literal 3) weight{1: 0, 2: x1}; a2 = Z(1 -> 1, literal 3) weight{1: 0, 2: x2}
+    b1 = Z(1 -> 1, literal 3) weight{1: 0, 2: y1}; b2 = Z(1 -> 1, literal 3) weight{1: 0, 2: y2}
+    m1 = Z(1 -> 2, literal 3); q1 = X(2 -> 1, literal 3); m2 = Z(1 -> 1, literal 3); q2 = X(1 -> 1, literal 3)
+    n1 = Z(1 -> 2, literal 3); r1 = X(2 -> 1, literal 3); n2 = Z(1 -> 1, literal 3); r2 = X(1 -> 1, literal 3)
+    p = X(2 -> 1, literal 3); s = X(2 -> 1, literal 3)
+    wire o.out0 -- t.in0, t.out0 -- w.in0, t.out1 -- v.in0
+    wire w.out0 -- a1.in0, w.out1 -- a2.in0, a1.out0 -- m1.in0, m1.out0 -- q1.in0, m1.out1 -- q1.in1, a2.out0 -- m2.in0, m2.out0 -- q2.in0, q1.out0 -- p.in0, q2.out0 -- p.in1
+    wire v.out0 -- b1.in0, v.out1 -- b2.in0, b1.out0 -- n1.in0, n1.out0 -- r1.in0, n1.out1 -- r1.in1, b2.out0 -- n2.in0, n2.out0 -- r2.in0, r1.out0 -- s.in0, r2.out0 -- s.in1
+    outputs p.out0, s.out0
+    scalar 3^(1/2) * 3^(1/2) * 3^(1/2) * 3^(1/2)
+
+@rhs =
+    g = Z(0 -> 1, literal 3); w = W(1 -> 2, literal 3)
+    a = Z(1 -> 1, literal 3) weight{1: x1, 2: x2}; b = Z(1 -> 1, literal 3) weight{1: y1, 2: y2}
+    wire g.out0 -- w.in0, w.out0 -- a.in0, w.out1 -- b.in0
+    outputs a.out0, b.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

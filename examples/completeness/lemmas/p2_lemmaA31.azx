@@ -1,0 +1,18 @@
+# [P2] Lemma A.31, (ZV) (d = 3, a = (a1, a2)): the Z box a state into the V box is the Z box
+# (a2, a2) state. V is its definition: box 1, W node (1 -> 2), multipliers -1 and -2, pink dot.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    z = Z(0 -> 1, literal 3) weight{1: a1, 2: a2}
+    vb = Z(1 -> 1, literal 3) weight{1: 0, 2: 1}; vw = W(1 -> 2, literal 3)
+    vu1 = Z(1 -> 2, literal 3); vq1 = X(2 -> 1, literal 3); vu2 = Z(1 -> 1, literal 3); vq2 = X(1 -> 1, literal 3); vp = X(2 -> 1, literal 3)
+    wire vb.out0 -- vw.in0, vw.out0 -- vu1.in0, vu1.out0 -- vq1.in0, vu1.out1 -- vq1.in1, vw.out1 -- vu2.in0, vu2.out0 -- vq2.in0, vq1.out0 -- vp.in0, vq2.out0 -- vp.in1
+    wire z.out0 -- vb.in0
+    scalar 3^(1/2) * 3^(1/2)
+
+@rhs =
+    z = Z(0 -> 1, literal 3) weight{1: a2, 2: a2}
+
+load @lhs
+prove against @rhs
+certificate kernel

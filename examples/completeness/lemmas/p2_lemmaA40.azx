@@ -1,0 +1,39 @@
+# [P2] Lemma A.40 (s = 2, m = 2, n = 3): a W node of dimension m, outputs through the Z boxes x and y
+# (m -> n) into a W transpose of dimension n, is the Z box x + y (m -> n).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    w1 = W(1 -> 2, literal 2)
+    w2 = W(1 -> 2, literal 3)
+    z3 = Z(1 -> 1, literal 6) weight{1: x, 2: 0, 3: 0, 4: 0, 5: 0}
+    b4 = B(literal 3, literal 2)
+    x5 = X(0 -> 1, literal 3)
+    s6 = S(literal 2, literal 3)
+    x7 = X(1 -> 0, literal 2)
+    z8 = Z(1 -> 1, literal 6) weight{1: y, 2: 0, 3: 0, 4: 0, 5: 0}
+    b9 = B(literal 3, literal 2)
+    x10 = X(0 -> 1, literal 3)
+    s11 = S(literal 2, literal 3)
+    x12 = X(1 -> 0, literal 2)
+    z13 = Z(1 -> 1, literal 3)
+    wire x5.out0 -- b4.in0, b4.out0 -- z3.in0, z3.out0 -- s6.in0, s6.out0 -- x7.in0, w1.out0 -- b4.in1, s6.out1 -- w2.out0, x10.out0 -- b9.in0, b9.out0 -- z8.in0, z8.out0 -- s11.in0, s11.out0 -- x12.in0, w1.out1 -- b9.in1, s11.out1 -- w2.out1, w2.in0 -- z13.in0
+    inputs w1.in0
+    outputs z13.out0
+    scalar 3^(-1/2) * 2^(-1/2) * 3^(-1/2) * 2^(-1/2)
+
+@rhs =
+    z1 = Z(1 -> 1, literal 6) weight{1: x + y, 2: 0, 3: 0, 4: 0, 5: 0}
+    b2 = B(literal 3, literal 2)
+    x3 = X(0 -> 1, literal 3)
+    s4 = S(literal 2, literal 3)
+    x5 = X(1 -> 0, literal 2)
+    wire x3.out0 -- b2.in0, b2.out0 -- z1.in0, z1.out0 -- s4.in0, s4.out0 -- x5.in0
+    inputs b2.in1
+    outputs s4.out1
+    scalar 3^(-1/2) * 2^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,41 @@
+# [P2] Lemma A.45 (k = 2, l = 3, m_1 = m_2 = 2): the plain green dot (lm -> m) into the splitter
+# m -> (m_1, m_2) is the pink dot of dimension lm, outputs through the multipliers Pi_1 = m_2 and
+# Pi_2 = 1 into plain green dots (lm -> m_i).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(1 -> 1, literal 48) weight{4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 0, 22: 0, 23: 0, 24: 0, 25: 0, 26: 0, 27: 0, 28: 0, 29: 0, 30: 0, 31: 0, 32: 0, 33: 0, 34: 0, 35: 0, 36: 0, 37: 0, 38: 0, 39: 0, 40: 0, 41: 0, 42: 0, 43: 0, 44: 0, 45: 0, 46: 0, 47: 0}
+    b2 = B(literal 4, literal 12)
+    x3 = X(0 -> 1, literal 4)
+    s4 = S(literal 12, literal 4)
+    x5 = X(1 -> 0, literal 12)
+    s6 = S(literal 2, literal 2)
+    wire x3.out0 -- b2.in0, b2.out0 -- z1.in0, z1.out0 -- s4.in0, s4.out0 -- x5.in0, s4.out1 -- s6.in0
+    inputs b2.in1
+    outputs s6.out0, s6.out1
+    scalar 4^(-1/2) * 12^(-1/2)
+
+@rhs =
+    x1 = X(1 -> 2, literal 12)
+    x2 = X(1 -> 2, literal 12)
+    z3 = Z(2 -> 1, literal 12)
+    z4 = Z(1 -> 1, literal 24) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 0, 22: 0, 23: 0}
+    b5 = B(literal 2, literal 12)
+    x6 = X(0 -> 1, literal 2)
+    s7 = S(literal 12, literal 2)
+    x8 = X(1 -> 0, literal 12)
+    z9 = Z(1 -> 1, literal 24) weight{2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0, 21: 0, 22: 0, 23: 0}
+    b10 = B(literal 2, literal 12)
+    x11 = X(0 -> 1, literal 2)
+    s12 = S(literal 12, literal 2)
+    x13 = X(1 -> 0, literal 12)
+    wire x2.out0 -- z3.in0, x2.out1 -- z3.in1, x1.out0 -- x2.in0, x6.out0 -- b5.in0, b5.out0 -- z4.in0, z4.out0 -- s7.in0, s7.out0 -- x8.in0, z3.out0 -- b5.in1, x11.out0 -- b10.in0, b10.out0 -- z9.in0, z9.out0 -- s12.in0, s12.out0 -- x13.in0, x1.out1 -- b10.in1
+    inputs x1.in0
+    outputs s7.out1, s12.out1
+    scalar 12^(1/2) * 12^(1/2) * 2^(-1/2) * 12^(-1/2) * 2^(-1/2) * 12^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

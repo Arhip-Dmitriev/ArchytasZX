@@ -1,0 +1,32 @@
+# [P2] Lemma A.75 (d = 3, a = b = 1): the box 1 state of dimension d^2 into the splitter, the
+# multipliers a and b into a pink dot (2 -> 1), is the box 1 state into the splitter, the first
+# output through the multiplier a + b and the second on a plain green effect.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 1, literal 9) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 1}
+    s2 = S(literal 3, literal 3)
+    z3 = Z(1 -> 1, literal 3)
+    x4 = X(1 -> 1, literal 3)
+    z5 = Z(1 -> 1, literal 3)
+    x6 = X(1 -> 1, literal 3)
+    x7 = X(2 -> 1, literal 3)
+    wire z1.out0 -- s2.in0, z3.out0 -- x4.in0, z5.out0 -- x6.in0, s2.out0 -- z3.in0, s2.out1 -- z5.in0, x4.out0 -- x7.in0, x6.out0 -- x7.in1
+    outputs x7.out0
+    scalar 3^(1/2)
+
+@rhs =
+    z1 = Z(0 -> 1, literal 9) weight{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 1}
+    s2 = S(literal 3, literal 3)
+    z3 = Z(1 -> 2, literal 3)
+    x4 = X(2 -> 1, literal 3)
+    z5 = Z(1 -> 0, literal 3)
+    wire z1.out0 -- s2.in0, z3.out0 -- x4.in0, z3.out1 -- x4.in1, s2.out0 -- z3.in0, s2.out1 -- z5.in0
+    outputs x4.out0
+    scalar 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

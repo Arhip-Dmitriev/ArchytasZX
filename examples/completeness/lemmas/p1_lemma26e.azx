@@ -1,0 +1,15 @@
+# [P1] Lemma 26, second row (d = 3, a = (a1, a2)): the Z box a on the left leg of a pink cap
+# (0 -> 2) is the Z box <-a = (a2, a1) on its right leg.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(0 -> 2, literal 3); b = Z(1 -> 1, literal 3) weight{1: a1, 2: a2}; wire p.out0 -- b.in0
+    outputs b.out0, p.out1
+
+@rhs =
+    p = X(0 -> 2, literal 3); b = Z(1 -> 1, literal 3) weight{1: a2, 2: a1}; wire p.out1 -- b.in0
+    outputs p.out0, b.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

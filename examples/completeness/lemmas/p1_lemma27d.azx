@@ -1,0 +1,15 @@
+# [P1] Lemma 27 (d = 3): a plain green dot (1 -> 2) with one output on a pink effect is a pink
+# effect beside a pink state.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(1 -> 2, literal 3); p = X(1 -> 0, literal 3); wire g.out0 -- p.in0
+    scalar 3^(-1/2)
+
+@rhs =
+    e = X(1 -> 0, literal 3); s = X(0 -> 1, literal 3)
+    scalar 3^(-1/2) * 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

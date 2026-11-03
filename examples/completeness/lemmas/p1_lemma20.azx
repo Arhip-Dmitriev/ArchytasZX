@@ -1,0 +1,15 @@
+# [P1] Lemma 20 (d = 3): D slides along a plain green cap (a state) from its left leg to its right
+# leg.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    g = Z(0 -> 2, literal 3); h = F(literal 3); h2 = F(literal 3); wire g.out0 -- h.in0; h -> h2
+    outputs h2.out0, g.out1
+
+@rhs =
+    g = Z(0 -> 2, literal 3); h = F(literal 3); h2 = F(literal 3); wire g.out1 -- h.in0; h -> h2
+    outputs g.out0, h2.out0
+
+load @lhs
+prove against @rhs
+certificate kernel

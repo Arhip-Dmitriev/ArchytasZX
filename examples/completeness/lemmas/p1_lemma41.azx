@@ -1,0 +1,22 @@
+# [P1] Lemma 41 (three nodes, two green dots, d = 3): three W nodes each joined to the same two plain
+# green dots are one W node and two pink dots joined to them.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = W(1 -> 2, literal 3); b = W(1 -> 2, literal 3); c = W(1 -> 2, literal 3)
+    g1 = Z(3 -> 1, literal 3); g2 = Z(3 -> 1, literal 3)
+    wire a.out0 -- g1.in0, a.out1 -- g2.in0, b.out0 -- g1.in1, b.out1 -- g2.in1, c.out0 -- g1.in2, c.out1 -- g2.in2
+    inputs a.in0, b.in0, c.in0
+    outputs g1.out0, g2.out0
+
+@rhs =
+    a = W(1 -> 2, literal 3); b = X(1 -> 2, literal 3); c = X(1 -> 2, literal 3)
+    g1 = Z(3 -> 1, literal 3); g2 = Z(3 -> 1, literal 3)
+    wire a.out0 -- g1.in0, a.out1 -- g2.in0, b.out0 -- g1.in1, b.out1 -- g2.in1, c.out0 -- g1.in2, c.out1 -- g2.in2
+    inputs a.in0, b.in0, c.in0
+    outputs g1.out0, g2.out0
+    scalar 3^(1/2) * 3^(1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

@@ -1,0 +1,61 @@
+# [P2] Lemma A.23 (d = 3): the W node (1 -> 2) with its input bent to an output is its normal form:
+# the pink K_1 state into a W node, one output per nonzero entry v of the state (000, i0i, ii0), each
+# through the box 1 (1 -> 3) and the multipliers -v_1, -v_2, -v_3 into three pink dots.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    z1 = Z(0 -> 2, literal 3)
+    w2 = W(1 -> 2, literal 3)
+    wire z1.out1 -- w2.in0
+    outputs z1.out0, w2.out0, w2.out1
+
+@rhs =
+    x1 = X(0 -> 1, literal 3) phase{k: 1*k/3}
+    w2 = W(1 -> 5, literal 3)
+    x3 = X(5 -> 1, literal 3)
+    x4 = X(5 -> 1, literal 3)
+    x5 = X(5 -> 1, literal 3)
+    z6 = Z(1 -> 3, literal 3) weight{1: 0, 2: 1}
+    z7 = Z(1 -> 0, literal 3)
+    x8 = X(0 -> 1, literal 3)
+    z9 = Z(1 -> 0, literal 3)
+    x10 = X(0 -> 1, literal 3)
+    z11 = Z(1 -> 0, literal 3)
+    x12 = X(0 -> 1, literal 3)
+    z13 = Z(1 -> 3, literal 3) weight{1: 0, 2: 1}
+    z14 = Z(1 -> 2, literal 3)
+    x15 = X(2 -> 1, literal 3)
+    z16 = Z(1 -> 0, literal 3)
+    x17 = X(0 -> 1, literal 3)
+    z18 = Z(1 -> 2, literal 3)
+    x19 = X(2 -> 1, literal 3)
+    z20 = Z(1 -> 3, literal 3) weight{1: 0, 2: 1}
+    z21 = Z(1 -> 1, literal 3)
+    x22 = X(1 -> 1, literal 3)
+    z23 = Z(1 -> 0, literal 3)
+    x24 = X(0 -> 1, literal 3)
+    z25 = Z(1 -> 1, literal 3)
+    x26 = X(1 -> 1, literal 3)
+    z27 = Z(1 -> 3, literal 3) weight{1: 0, 2: 1}
+    z28 = Z(1 -> 2, literal 3)
+    x29 = X(2 -> 1, literal 3)
+    z30 = Z(1 -> 2, literal 3)
+    x31 = X(2 -> 1, literal 3)
+    z32 = Z(1 -> 0, literal 3)
+    x33 = X(0 -> 1, literal 3)
+    z34 = Z(1 -> 3, literal 3) weight{1: 0, 2: 1}
+    z35 = Z(1 -> 1, literal 3)
+    x36 = X(1 -> 1, literal 3)
+    z37 = Z(1 -> 1, literal 3)
+    x38 = X(1 -> 1, literal 3)
+    z39 = Z(1 -> 0, literal 3)
+    x40 = X(0 -> 1, literal 3)
+    wire x1.out0 -- w2.in0, w2.out0 -- z6.in0, z6.out0 -- z7.in0, x8.out0 -- x3.in0, z6.out1 -- z9.in0, x10.out0 -- x4.in0, z6.out2 -- z11.in0, x12.out0 -- x5.in0, w2.out1 -- z13.in0, z14.out0 -- x15.in0, z14.out1 -- x15.in1, z13.out0 -- z14.in0, x15.out0 -- x3.in1, z13.out1 -- z16.in0, x17.out0 -- x4.in1, z18.out0 -- x19.in0, z18.out1 -- x19.in1, z13.out2 -- z18.in0, x19.out0 -- x5.in1, w2.out2 -- z20.in0, z21.out0 -- x22.in0, z20.out0 -- z21.in0, x22.out0 -- x3.in2, z20.out1 -- z23.in0, x24.out0 -- x4.in2, z25.out0 -- x26.in0, z20.out2 -- z25.in0, x26.out0 -- x5.in2, w2.out3 -- z27.in0, z28.out0 -- x29.in0, z28.out1 -- x29.in1, z27.out0 -- z28.in0, x29.out0 -- x3.in3, z30.out0 -- x31.in0, z30.out1 -- x31.in1, z27.out1 -- z30.in0, x31.out0 -- x4.in3, z27.out2 -- z32.in0, x33.out0 -- x5.in3, w2.out4 -- z34.in0, z35.out0 -- x36.in0, z34.out0 -- z35.in0, x36.out0 -- x3.in4, z37.out0 -- x38.in0, z34.out1 -- z37.in0, x38.out0 -- x4.in4, z34.out2 -- z39.in0, x40.out0 -- x5.in4
+    outputs x3.out0, x4.out0, x5.out0
+    scalar 3^(-1/2) * 3^(4/2) * 3^(4/2) * 3^(4/2) * 3^(-1/2) * 3^(-1/2) * 3^(-1/2) * 3^(1/2) * 3^(-1/2) * 3^(1/2) * 3^(-1/2) * 3^(1/2) * 3^(1/2) * 3^(-1/2) * 3^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

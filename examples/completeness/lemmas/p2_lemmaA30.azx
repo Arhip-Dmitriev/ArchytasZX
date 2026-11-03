@@ -1,0 +1,13 @@
+# [P2] Lemma A.30, (K1) (j = 1, two outputs, d = 3): pink K_j (1 -> 1) into a plain green dot
+# (1 -> 2) is the green dot with pink K_j on each output.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    p = X(1 -> 1, literal 3) phase{k: k/3}; g = Z(1 -> 2, literal 3); p -> g
+
+@rhs =
+    g = Z(1 -> 2, literal 3); g -> X(1 -> 1, literal 3) phase{k: k/3}; g -> X(1 -> 1, literal 3) phase{k: k/3}
+
+load @lhs
+prove against @rhs
+certificate kernel

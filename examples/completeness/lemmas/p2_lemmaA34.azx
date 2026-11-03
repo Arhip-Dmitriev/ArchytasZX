@@ -1,0 +1,49 @@
+# [P2] Lemma A.34 (d = 2): H is the scalar pink K_1 state into the box 1/sqrt d beside: a pink dot
+# (1 -> d), output r through the upward multiplier d - r into a plain green dot that also takes
+# output r of a W node fed by the pink K_1 state; each green dot into a W node (1 -> d) whose
+# outputs pass through the multipliers d, ..., 1 into a pink dot, then the green box K_r; all into a
+# pink dot (d -> 1).
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    f1 = F(1 -> 1, literal 2)
+    inputs f1.in0
+    outputs f1.out0
+
+@rhs =
+    x1 = X(0 -> 1, literal 2) phase{k: 1*k/2}
+    z2 = Z(1 -> 0, literal 2) weight{1: 2^(-1/2)}
+    x3 = X(1 -> 2, literal 2)
+    x4 = X(0 -> 1, literal 2) phase{k: 1*k/2}
+    w5 = W(1 -> 2, literal 2)
+    x6 = X(2 -> 1, literal 2)
+    x7 = X(1 -> 0, literal 2)
+    z8 = Z(0 -> 1, literal 2)
+    z9 = Z(2 -> 1, literal 2)
+    w10 = W(1 -> 2, literal 2)
+    x11 = X(2 -> 1, literal 2)
+    z12 = Z(1 -> 0, literal 2)
+    x13 = X(0 -> 1, literal 2)
+    z14 = Z(1 -> 1, literal 2)
+    x15 = X(1 -> 1, literal 2)
+    z16 = Z(1 -> 1, literal 2)
+    x17 = X(1 -> 1, literal 2)
+    z18 = Z(1 -> 1, literal 2)
+    z19 = Z(2 -> 1, literal 2)
+    w20 = W(1 -> 2, literal 2)
+    x21 = X(2 -> 1, literal 2)
+    z22 = Z(1 -> 0, literal 2)
+    x23 = X(0 -> 1, literal 2)
+    z24 = Z(1 -> 1, literal 2)
+    x25 = X(1 -> 1, literal 2)
+    z26 = Z(1 -> 1, literal 2) phase{k: 1*k/2}
+    wire x1.out0 -- z2.in0, x4.out0 -- w5.in0, x3.out0 -- x7.in0, z8.out0 -- z9.in0, w5.out0 -- z9.in1, z9.out0 -- w10.in0, w10.out0 -- z12.in0, x13.out0 -- x11.in0, z14.out0 -- x15.in0, w10.out1 -- z14.in0, x15.out0 -- x11.in1, x11.out0 -- z16.in0, z16.out0 -- x6.in0, x17.out0 -- z18.in0, x3.out1 -- x17.in0, z18.out0 -- z19.in0, w5.out1 -- z19.in1, z19.out0 -- w20.in0, w20.out0 -- z22.in0, x23.out0 -- x21.in0, z24.out0 -- x25.in0, w20.out1 -- z24.in0, x25.out0 -- x21.in1, x21.out0 -- z26.in0, z26.out0 -- x6.in1
+    inputs x3.in0
+    outputs x6.out0
+    scalar 2^(-1/2) * 2^(1/2) * 2^(-1/2) * 2^(1/2) * 2^(-1/2) * 2^(1/2) * 2^(-1/2) * 2^(1/2) * 2^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

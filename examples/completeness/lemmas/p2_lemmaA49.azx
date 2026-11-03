@@ -1,0 +1,22 @@
+# [P2] Lemma A.49 (m = 2, n = 3, i = j = 1): the pink K_{-i} state of dimension m and the pink
+# K_{-j} state of dimension n into the binder are the pink K_{-(ni+j)} state of dimension mn.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+# A mixed-dimensional Z box is its definition ([P2] (2.3.3)): a Z box over the product of its leg
+# dimensions, each leg through a binder or splitter whose other leg carries a pink dot.
+
+@lhs =
+    x1 = X(0 -> 1, literal 2) phase{k: -1*k/2}
+    x2 = X(0 -> 1, literal 3) phase{k: -1*k/3}
+    b3 = B(literal 2, literal 3)
+    wire x1.out0 -- b3.in0, x2.out0 -- b3.in1
+    outputs b3.out0
+    scalar 2^(-1/2) * 3^(-1/2)
+
+@rhs =
+    x1 = X(0 -> 1, literal 6) phase{k: -4*k/6}
+    outputs x1.out0
+    scalar 6^(-1/2)
+
+load @lhs
+prove against @rhs
+certificate kernel

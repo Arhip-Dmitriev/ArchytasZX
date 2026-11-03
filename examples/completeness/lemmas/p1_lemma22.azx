@@ -1,0 +1,15 @@
+# [P1] Lemma 22 (d = 3): D is a pink dot (two outputs) and a plain green dot (two inputs) joined by
+# a loop, their free legs crossing.
+# Dimensions are literal. Paper pink spiders are X spiders with their normalisation d^((m+n)/2 - 1) as scalar.
+
+@lhs =
+    a = F(literal 3); a -> F(literal 3)
+
+@rhs =
+    p = X(0 -> 2, literal 3); g = Z(2 -> 0, literal 3); wire p.out1 -- g.in0
+    inputs g.in1
+    outputs p.out0
+
+load @lhs
+prove against @rhs
+certificate kernel
