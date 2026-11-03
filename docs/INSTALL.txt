@@ -93,13 +93,20 @@ Image settings are read at start-up from
 
     $XDG_CONFIG_HOME/archytaszx/config.toml
 
-or ~/.config/archytaszx/config.toml when XDG_CONFIG_HOME is unset. The file is TOML with two
+or ~/.config/archytaszx/config.toml when XDG_CONFIG_HOME is unset. The file is TOML with four
 keys:
 
-  Key    Type     Default  Meaning
-  -----  -------  -------  ----------------------------------------------------------------
-  size   number   1        Scale of rendered images; 1 is one terminal cell of text height.
-  color  string   "auto"   "auto" follows the terminal; otherwise any matplotlib colour name.
+  Key          Type     Default  Meaning
+  -----------  -------  -------  ----------------------------------------------------------
+  size         number   1        Scale of rendered images; 1 is one terminal cell of text
+                                 height.
+  color        string   "auto"   "auto" follows the terminal; otherwise any matplotlib
+                                 colour name.
+  format       string   "auto"   Format of drawings saved by --images and --images_white:
+                                 "png", "pdf" or "svg"; "auto" is PDF in publication mode
+                                 and PNG otherwise.
+  publication  boolean  false    Label ZX drawings in the paper's notation (SHELL.txt,
+                                 section 9.3).
 
 The file is created and changed from the shell with the :config meta-command (SHELL.txt):
 ":config size 1.5", ":config save", ":config reset". A missing file means the defaults.

@@ -1848,7 +1848,9 @@ HELP: Mapping[str, str] = MappingProxyType(
         "both": "both -- Dirac notation and ZX drawings",
         "raw": "raw -- full ZX graph listings, nothing summarised or capped",
         "listing": "listing -- toggle the ZX graph listing under each drawing",
-        "config": "config [KEY VALUE | save | reset] -- image settings: size, color",
+        "publication": "publication -- toggle the paper's notation in ZX drawings",
+        "config": "config [KEY VALUE | save | reset] -- image settings: size, color, format, "
+        "publication",
         "history": "history -- list the lines entered this session",
         "quit": "quit -- leave the shell",
         "exit": "exit -- leave the shell",

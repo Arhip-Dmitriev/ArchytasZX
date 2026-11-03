@@ -20,8 +20,9 @@ input line goes through :meth:`Shell.run_line`, a leading ``:`` optional:
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
 * ``history`` and ``quit``/``exit`` are handled here;
 * ``dirac``, ``zx`` (``zxrender``), ``zxunicode``, ``zxascii``, ``both`` and ``raw`` pick how
-  diagrams are printed, ``listing`` toggles the graph listing under each drawing and
-  ``config`` shows or sets the image size and colour;
+  diagrams are printed, ``listing`` toggles the graph listing under each drawing,
+  ``publication`` toggles the paper's notation in ZX drawings and ``config`` shows or sets the
+  image settings;
 * every other line is an engine command, run by :func:`~archytaszx.repl.commands.run` and
   printed by :func:`~archytaszx.repl.commands.format_outcome` in the current mode.
 
@@ -133,6 +134,9 @@ class Shell:
         if word == "listing" and not rest:
             self.listing = not self.listing
             return f"listing: {'on' if self.listing else 'off'}"
+        if word == "publication" and not rest:
+            T.CONFIG.publication = not T.CONFIG.publication
+            return f"publication: {'on' if T.CONFIG.publication else 'off'}"
         if word == "config":
             return self._red(self._config(rest))
         try:
@@ -284,7 +288,7 @@ class Shell:
             if words == ["save"]:
                 return f"saved {T.save_config(T.CONFIG)}"
             if words == ["reset"]:
-                T.CONFIG.size, T.CONFIG.color = T.Config().size, T.Config().color
+                T.CONFIG = T.Config()
             elif len(words) == 2:
                 T.set_config(T.CONFIG, words[0].lower(), words[1])
             elif words:
@@ -292,7 +296,11 @@ class Shell:
         except (ValueError, OSError) as exc:
             self.errors += 1
             return f"error: {exc}"
-        return f"size = {T.CONFIG.size:g}\ncolor = {T.CONFIG.color}\nfile: {T.config_path()}"
+        return (
+            f"size = {T.CONFIG.size:g}\ncolor = {T.CONFIG.color}\nformat = {T.CONFIG.format}\n"
+            f"publication = {'true' if T.CONFIG.publication else 'false'}\n"
+            f"file: {T.config_path()}"
+        )
 
     def prompt(self, continuation: bool = False) -> str:
         """``dir(n): ``, the working directory's name and the next line number; dots replace
@@ -440,13 +448,19 @@ def _argument_parser() -> argparse.ArgumentParser:
         "--images",
         metavar="DIR",
         default=None,
-        help="also save every matplotlib ZX drawing as a PNG in DIR",
+        help="also save every matplotlib ZX drawing in DIR (PNG, PDF or SVG; config format)",
     )
     saving.add_argument(
         "--images_white",
         metavar="DIR",
         default=None,
         help="as --images, with black drawings on a white background",
+    )
+    parser.add_argument(
+        "--publication",
+        action="store_true",
+        help="label ZX drawings in the paper's notation (radians, vectors, Z boxes) with LaTeX "
+        "fonts; saved drawings default to PDF",
     )
     parser.add_argument(
         "--no-concrete-axioms",
@@ -482,6 +496,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         T.CONFIG = T.load_config()
     except ValueError as exc:
         sys.stderr.write(f"archytaszx: {exc}; using the default display settings\n")
+    if args.publication:
+        T.CONFIG.publication = True
     match_template.CONCRETE_AXIOMS = args.concrete_axioms
     T.SAVE_DIR = args.images or args.images_white
     T.SAVE_WHITE = args.images_white is not None

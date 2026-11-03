@@ -386,7 +386,7 @@ class TestMain:
     def test_mode_zx(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--zx", "-c", EXAMPLE]) == 0
         drawn = capsys.readouterr().out
-        assert "scalar:" in drawn and not listing(drawn)
+        assert "out 0" in drawn and not listing(drawn)
         assert main(["-zxrender", "-c", EXAMPLE]) == 0
         assert capsys.readouterr().out == drawn
         assert main(["--raw", "-c", EXAMPLE]) == 0
@@ -517,13 +517,25 @@ class TestConfig:
     def test_show_set_and_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
         shell = Shell()
-        assert shell.run_line(":config").startswith("size = 1\ncolor = auto\nfile: ")
+        assert shell.run_line(":config").startswith(
+            "size = 1\ncolor = auto\nformat = auto\npublication = false\nfile: "
+        )
         assert shell.run_line(":config size 1.5").startswith("size = 1.5\n")
         assert shell.run_line(":config color #ff8800").splitlines()[1] == "color = #ff8800"
         assert shell.run_line(":config size huge").startswith("error: size must be a number")
         assert shell.run_line(":config shade red").startswith("error: unknown setting")
-        assert shell.run_line(":config reset").startswith("size = 1\ncolor = auto")
-        assert shell.errors == 2
+        assert shell.run_line(":config format svg").splitlines()[2] == "format = svg"
+        assert shell.run_line(":config format gif").startswith("error: format must be one of")
+        assert shell.run_line(":config publication on").splitlines()[3] == "publication = true"
+        assert shell.run_line(":config reset").startswith("size = 1\ncolor = auto\nformat = auto")
+        assert shell.errors == 3
+
+    def test_publication_toggle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
+        shell = Shell()
+        assert shell.run_line("publication") == "publication: on"
+        assert S.T.CONFIG.publication
+        assert shell.run_line(":publication") == "publication: off"
 
     def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
@@ -531,8 +543,11 @@ class TestConfig:
         shell = Shell()
         shell.run_line(":config size 2")
         assert shell.run_line(":config save") == f"saved {tmp_path}/archytaszx/config.toml"
+        shell.run_line(":config format pdf")
+        shell.run_line(":config save")
         loaded = S.T.load_config()
         assert loaded.size == 2.0 and loaded.color == "auto"
+        assert loaded.format == "pdf" and not loaded.publication
 
     def test_bad_file(self, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"

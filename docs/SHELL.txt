@@ -52,8 +52,17 @@ the default is --dirac.
 
 3.3 Saving images
 
-  --images DIR        Also save every matplotlib ZX drawing as a PNG in DIR.
+  --images DIR        Also save every matplotlib ZX drawing in DIR, as NNNN-zx.EXT with
+                      NNNN counting from 0001. EXT is set by the format setting (section 6):
+                      png by default, pdf in publication mode.
   --images_white DIR  As --images, with black drawings on a white background.
+
+PDF drawings embed their fonts; SVG drawings carry their text converted to paths.
+
+3.4 Notation
+
+  --publication       Label ZX drawings in the paper's notation with LaTeX fonts
+                      (section 9.3). Sets the publication setting for this run.
 
 
 4. EXIT STATUS
@@ -116,9 +125,11 @@ shows the engine's full error record.
   both                   View Dirac notation and the matplotlib ZX drawing.
   raw                    View full ZX graph listings.
   listing                Toggle the graph listing printed under each ZX drawing.
+  publication            Toggle the paper's notation in ZX drawings (section 9.3).
   config                 Show the image settings and the configuration file path.
-  config KEY VALUE       Set an image setting: size (a positive number) or color ("auto" or
-                         a matplotlib colour).
+  config KEY VALUE       Set an image setting: size (a positive number), color ("auto" or
+                         a matplotlib colour), format ("auto", "png", "pdf" or "svg") or
+                         publication ("true" or "false").
   config save            Write the settings to the configuration file.
   config reset           Restore the default settings.
   help [CMD]             List every command, or show one command's usage.
@@ -162,3 +173,97 @@ iTerm2 inline image protocol, or sixel; the protocol is detected from the enviro
 forced with ARCHYTASZX_IMAGES (INSTALL.txt, section 4.3). Where no protocol is available, or
 standard output is not a terminal, drawings are replaced by Unicode text. Image size and
 colour are set by the configuration file (INSTALL.txt, section 4.1).
+
+
+9. ZX DRAWINGS
+--------------
+
+9.1 Layout
+
+A drawing reads left to right: the inputs (in 0, in 1, ...) form the first column and the
+outputs the last. A wire from an output port to an input port runs rightwards; a node fed from
+an input sits as far left as its wires allow, any other node as far right. Each connected
+component keeps its own shape and is placed, in order (those holding inputs first), just below
+the components already placed in the columns it occupies; a component without inputs or
+outputs takes the first free space that fits it. Columns and rows that would be empty are
+removed.
+
+Every port leaves its node at its own point: a node with several legs on one side spreads them
+over that side, one row per leg. In the grid views a node with more than one leg on a side
+carries a heavy bracket, each leg leaving it on its own row.
+
+Wires never share a segment, never pass behind a node and never end at a node they are not
+attached to. Two wires that cross do so at right angles: the grid views draw the crossing as
+┼ (+ in ASCII, where corners are . and '), the matplotlib view leaves a gap in the lower wire.
+Two wires that would exchange the same two rows across a channel are moved a row apart, so they
+cross once. Junctions occur only inside
+nodes. A wire from a node to itself is drawn as a loop beside the node.
+
+9.2 Nodes and labels
+
+  Glyph (matplotlib)                        Grid     Node
+  ----------------------------------------  -------  -----------------------------------
+  light circle labelled Z                   Ⓩ        Z spider
+  dark circle labelled X                    Ⓧ        X spider
+  black triangle, input at the tip          ◀W       W node
+  white triangle, input on the flat side    ▷T       triangle T
+  grey triangle, labelled T^-1              ▶T⁻¹     inverse triangle
+  yellow square labelled F                  [F]      Fourier box
+  wedge labelled S, product leg left        ⊳S       splitter
+  wedge labelled B, product leg right       ⊲B       binder
+
+The ASCII view writes (Z ...), (X ...), <W, |>T, |>T^-1, [F], >S and <B. A spider's label stands
+next to it; a long label is wrapped, or set smaller, beside its node.
+
+The scalar is written to the left of the drawing, level with the middle of the first
+component; a scalar of 1 is not written. Each wire is labelled with its dimension, at 85 % of
+the label size, at the point where it leaves its first end.
+When every wire has the same dimension the labels are omitted and the drawing states the
+dimension once beneath it.
+
+9.3 Phase notation
+
+By default a spider's label repeats the diagram source, with phases in turns:
+
+  Source                          Label
+  ------------------------------  -----------------
+  phase{1: alpha}                 α@1
+  phase{1: theta, 2: phi}         θ@1, φ@2
+  phase{k: k/d}                   k/d @k
+  weight{1: lambda}               w: λ@1
+  phase{1: p} weight{1: r}        p@1 · w: r@1
+
+and the drawing states "phases in turns" beneath it. At a concrete dimension, phases that are
+a fixed multiple of the index are written as one family, such as k/3 @k.
+
+In publication mode (--publication, the publication command or the publication setting) the
+labels follow the paper's definitions: the phase vector (α_1, ..., α_{d-1}) in radians, with
+α_0 = 0. A turn value v is written 2πv and simplified, each phase symbol in it standing for an
+angle in radians: phase{1: alpha} is labelled α, phase{1: alpha + 1/3} α + 2π/3 and
+phase{k: k/d} (2πk/d)_k. A vector at a symbolic dimension whose only entry is at index 1 is
+written as that entry alone; otherwise its entries are listed up to the last one set and the
+unset remainder is written 0, ..., 0, as in (θ, φ, 0, ..., 0). A weighted spider is drawn as a
+Z box (an X box for an X spider) labelled with its coefficient vector of entries w_k e^{iα_k},
+for example (λ), (1, λ, 1, ..., 1) or (r e^{ip}), a multiple of π in an exponent written first,
+as in e^{2πi/3}. Matplotlib text is set in Computer Modern with serif text. No phase unit is
+stated.
+
+9.4 Bang boxes
+
+A bang box is drawn as a dashed rectangle (double lines in the grid views) with a ! tag in its
+top-left corner and its multiplicity in its top-right corner, both inside the box. A leg in a
+port box is kept one row clear of its node's other legs in the matplotlib view. A nested box
+lies strictly inside its parent with space on every side. A box over ports wraps each leg where
+it leaves its node. Where a wire crosses a box border the border is marked: a dot in the
+matplotlib view, ╫ or ╪ in the Unicode view, * in the ASCII view.
+
+9.5 Summaries
+
+A diagram of more than 150 nodes that comes from a summed state is summarised: each summed term
+is drawn as one box and each chain of splitters or binders as one node. The drawing then
+states "summarised: one box per term".
+
+9.6 Line weight
+
+Matplotlib drawings place every line on whole points and draw it 1 pt wide, so wires and
+outlines have one weight in PDF and SVG output at any zoom that is a multiple of 72 dpi.

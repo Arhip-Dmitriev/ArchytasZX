@@ -35,8 +35,8 @@ def test_layout_is_deterministic() -> None:
 def test_text_renderers_draw_the_bang_box() -> None:
     unicode = zxdraw.draw(view(), "unicode")
     ascii_ = zxdraw.draw(view(), "ascii")
-    assert "Ⓩ" in unicode and "── n ──" in unicode
-    assert "(Z)" in ascii_ and "-- n --" in ascii_
+    assert "Ⓩ" in unicode and "╔!═" in unicode and "n║" in unicode
+    assert "(Z)" in ascii_ and "#!=" in ascii_ and "n:" in ascii_
     assert unicode.count("\n") == ascii_.count("\n")
 
 

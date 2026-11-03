@@ -88,16 +88,16 @@ WHITE = ("#000000", "#ffffff")
 _SAVED: list[int] = [0]
 
 
-def keep(png: bytes, kind: str) -> str | None:
-    """Writes ``png`` to :data:`SAVE_DIR` as ``NNNN-kind.png``; returns the path, None without
+def keep(data: bytes, kind: str, ext: str = "png") -> str | None:
+    """Writes ``data`` to :data:`SAVE_DIR` as ``NNNN-kind.ext``; returns the path, None without
     a folder."""
     if SAVE_DIR is None:
         return None
     os.makedirs(SAVE_DIR, exist_ok=True)
     _SAVED[0] += 1
-    path = os.path.join(SAVE_DIR, f"{_SAVED[0]:04d}-{kind}.png")
+    path = os.path.join(SAVE_DIR, f"{_SAVED[0]:04d}-{kind}.{ext}")
     with open(path, "wb") as handle:
-        handle.write(png)
+        handle.write(data)
     return path
 
 
@@ -111,12 +111,19 @@ _WARM: list[threading.Thread] = []
 
 @dataclass
 class Config:
-    """Image settings: ``size`` scales the text (1 = the terminal's cell height) and ``color``
-    is ``auto`` (the terminal's text colour) or a colour such as ``#ff8800``."""
+    """Image settings: ``size`` scales the text (1 = the terminal's cell height), ``color``
+    is ``auto`` (the terminal's text colour) or a colour such as ``#ff8800``, ``format`` is the
+    saved drawing format (``auto``, ``png``, ``pdf`` or ``svg``) and ``publication`` selects
+    the paper's notation and fonts in ZX drawings."""
 
     size: float = 1.0
     color: str = "auto"
+    format: str = "auto"
+    publication: bool = False
 
+
+FORMATS = ("auto", "png", "pdf", "svg")
+"""Saved drawing formats; ``auto`` is PDF in publication mode and PNG otherwise."""
 
 CONFIG = Config()
 """The settings :func:`render_png` uses."""
@@ -146,8 +153,22 @@ def set_config(config: Config, key: str, value: object) -> None:
         if text != "auto" and not _HEX.fullmatch(text) and not _named_colour(text):
             raise ValueError(f"color must be auto, #rgb, #rrggbb or a colour name, got {text!r}")
         config.color = text
+    elif key == "format":
+        text = str(value).strip().lower()
+        if text not in FORMATS:
+            raise ValueError(f"format must be one of {', '.join(FORMATS)}, got {text!r}")
+        config.format = text
+    elif key == "publication":
+        if isinstance(value, bool):
+            config.publication = value
+        elif str(value).strip().lower() in ("true", "on", "yes", "1"):
+            config.publication = True
+        elif str(value).strip().lower() in ("false", "off", "no", "0"):
+            config.publication = False
+        else:
+            raise ValueError(f"publication must be true or false, got {value!r}")
     else:
-        raise ValueError(f"unknown setting {key!r}; settings: size, color")
+        raise ValueError(f"unknown setting {key!r}; settings: size, color, format, publication")
 
 
 def _named_colour(text: str) -> bool:
@@ -180,7 +201,10 @@ def save_config(config: Config, path: str | None = None) -> str:
     path = config_path() if path is None else path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(f'size = {config.size!r}\ncolor = "{config.color}"\n')
+        handle.write(
+            f'size = {config.size!r}\ncolor = "{config.color}"\nformat = "{config.format}"\n'
+            f"publication = {'true' if config.publication else 'false'}\n"
+        )
     return path
 
 
