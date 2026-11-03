@@ -67,3 +67,4 @@ FULL_PLAN.txt
 # lean (library sources excepted)
 *.lean
 !archytaszx/lean/**/*.lean
+Random_crap/
