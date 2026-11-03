@@ -1,0 +1,24 @@
+# One Grover iteration on two qubits with the marked item |11> [grover1996fast;
+# nielsen2010quantum, section 6.1]: H on |00>, the oracle CZ, the diffusion
+# H (2|00><00| - I) H = -(H X) CZ (X H) on both qubits. Target (from the algorithm: one
+# iteration finds the item with certainty at N = 4): |11>.
+#   d = 2 literal; H = F, X = X(1 -> 1) phase{1: 1/2}, CZ = Z(1 -> 2) -F- Z(2 -> 1), scale
+#   sqrt(2); |1> = 2^(-1/2) X(0 -> 1) phase{1: 1/2}
+
+@rhs =
+    a = X(0 -> 1, literal 2) phase{1: 1/2}
+    b = X(0 -> 1, literal 2) phase{1: 1/2}
+    scalar 1/2
+
+load
+    X(0 -> 1, literal 2) -> F(literal 2) -> c1 = Z(1 -> 2, literal 2)
+    X(0 -> 1, literal 2) -> F(literal 2) -> c2 = Z(2 -> 1, literal 2)
+    c1.out1 -> F(literal 2) -> c2
+    c1.out0 -> F(literal 2) -> X(1 -> 1, literal 2) phase{1: 1/2} -> c3 = Z(1 -> 2, literal 2)
+    c2.out0 -> F(literal 2) -> X(1 -> 1, literal 2) phase{1: 1/2} -> c4 = Z(2 -> 1, literal 2)
+    c3.out1 -> F(literal 2) -> c4
+    c3.out0 -> X(1 -> 1, literal 2) phase{1: 1/2} -> F(literal 2)
+    c4.out0 -> X(1 -> 1, literal 2) phase{1: 1/2} -> F(literal 2)
+    scalar -1
+
+decide against @rhs

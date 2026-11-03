@@ -1,0 +1,17 @@
+# Two independent counts n, m and two dimensions d, e in one diagram: the Fourier
+# superposition on n registers of dimension d and m of dimension e [nielsen2010quantum,
+# section 5.1]. Target: the uniform state on every register, scaled d^(-n/2) e^(-m/2).
+
+@rhs =
+    count n, m
+    repeat n: Z(0 -> 1, d)
+    repeat m: Z(0 -> 1, e)
+    scalar d^(-n/2) * e^(-m/2)
+
+load
+    count n, m
+    repeat n: X(0 -> 1, d) -> F(d)
+    repeat m: X(0 -> 1, e) -> F(e)
+    scalar d^(-n/2) * e^(-m/2)
+
+decide against @rhs

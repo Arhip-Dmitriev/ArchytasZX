@@ -24,6 +24,13 @@ A case's row holds ``status`` (``ok`` when every run finished ``ok``, else the c
 status), ``time`` (median CPU seconds), ``time_q1``/``time_q3``, ``times``, ``wall``, ``walls``,
 ``runs`` and the extra fields of its first run. Every run is appended to
 ``results/<suite>.runs.jsonl``; finished cases are saved to ``results/<suite>.json``.
+
+Optional suite attributes: ``REPEAT`` and ``TIMEOUT`` (defaults when the command line gives
+none), ``case_limits(case, timeout, repeat) -> (timeout, repeat)`` (per-case defaults),
+``TIMED`` (statuses besides ``ok`` whose runs are timed) and ``RECORD_ENV`` (write
+``results/<suite>.env.json``). The results directory is ``$BENCH_RESULTS`` when set. A run may
+call :func:`progress`; a run that times out or runs out of memory keeps its last progress
+record.
 """
 
 from __future__ import annotations
@@ -44,13 +51,16 @@ import time
 import traceback
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
+RESULTS_ENV = "BENCH_RESULTS"
 WALL_FACTOR = 4
 SAFE_FRACTION = 0.85
 MIN_MEMORY_GB = 0.75
 _MARK = "@@RESULT "
+_PROGRESS = "@@PROGRESS "
 _FAILED = ("timeout", "oom")
 _OUTPUTS = ("status", "cpu", "wall", "detail", "run")
 
@@ -63,6 +73,22 @@ class Inconclusive(Exception):
     """A tool finished without settling the question."""
 
 
+def results_dir() -> Path:
+    """``$BENCH_RESULTS`` when set, else :data:`RESULTS`."""
+    override = os.environ.get(RESULTS_ENV)
+    return Path(override).resolve() if override else RESULTS
+
+
+def progress(record: dict[str, Any]) -> None:
+    """Prints ``record`` as the run's latest progress."""
+    print(_PROGRESS + json.dumps(record, default=str), flush=True)
+
+
+def _last_progress(stdout: str) -> dict[str, Any]:
+    lines = [ln for ln in stdout.splitlines() if ln.startswith(_PROGRESS)]
+    return json.loads(lines[-1][len(_PROGRESS) :]) if lines else {}
+
+
 def measure(fn: Callable[[], object]) -> tuple[object, float, float]:
     """``fn()``, its CPU seconds and its wall seconds."""
     c, w = time.process_time(), time.perf_counter()
@@ -70,10 +96,10 @@ def measure(fn: Callable[[], object]) -> tuple[object, float, float]:
     return out, time.process_time() - c, time.perf_counter() - w
 
 
-def _worker(case: dict) -> dict:
+def _worker(case: dict[str, Any]) -> dict[str, Any]:
     module = importlib.import_module(f"benchmarks.{case['suite']}")
     try:
-        return {"status": "ok", **module.run(case)}  # type: ignore[no-any-return]
+        return {"status": "ok", **module.run(case)}
     except Wrong as exc:
         return {"status": "wrong", "detail": str(exc)[:500]}
     except Inconclusive as exc:
@@ -110,7 +136,7 @@ def _limit(mem_gb: float, cpu_s: float, cgroup: bool) -> Callable[[], None]:
     return apply
 
 
-def _one_run(case: dict, timeout: float, mem_gb: float, cgroup: bool) -> dict:
+def _one_run(case: dict[str, Any], timeout: float, mem_gb: float, cgroup: bool) -> dict[str, Any]:
     """One fresh worker process on ``case``."""
     cmd = [sys.executable, "-m", "benchmarks.harness", json.dumps(case)]
     if cgroup:
@@ -130,24 +156,28 @@ def _one_run(case: dict, timeout: float, mem_gb: float, cgroup: bool) -> dict:
         stdout, stderr = proc.communicate(timeout=WALL_FACTOR * timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.communicate()
-        return {"status": "timeout", "detail": f"> {WALL_FACTOR * timeout:g} s wall"}
+        stdout, _ = proc.communicate()
+        wall = {"status": "timeout", "detail": f"> {WALL_FACTOR * timeout:g} s wall"}
+        return _last_progress(stdout or "") | wall
     lines = [ln for ln in stdout.splitlines() if ln.startswith(_MARK)]
     if lines:
         return json.loads(lines[-1][len(_MARK) :])  # type: ignore[no-any-return]
+    seen = _last_progress(stdout)
     if proc.returncode in (-signal.SIGXCPU, 128 + signal.SIGXCPU):
-        return {"status": "timeout", "detail": f"> {timeout:g} s cpu"}
+        return seen | {"status": "timeout", "detail": f"> {timeout:g} s cpu"}
     if "MemoryError" in stderr or proc.returncode in (-signal.SIGKILL, 128 + signal.SIGKILL):
-        return {"status": "oom", "detail": f"> {mem_gb:.2f} GB"}
+        return seen | {"status": "oom", "detail": f"> {mem_gb:.2f} GB"}
     return {"status": "error", "detail": stderr.strip()[-300:]}
 
 
-def _combine(case: dict, runs: list[dict], repeat: int) -> dict:
-    """One row from a case's runs."""
+def _combine(
+    case: dict[str, Any], runs: list[dict[str, Any]], repeat: int, timed: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """One row from a case's runs; runs whose status is ``ok`` or in ``timed`` are timed."""
     statuses = [r["status"] for r in runs]
     bad = [s for s in statuses if s != "ok"]
     status = collections.Counter(bad).most_common(1)[0][0] if bad else "ok"
-    ok = [r for r in runs if r["status"] == "ok"]
+    ok = [r for r in runs if r["status"] == "ok" or r["status"] in timed]
     cpu = [r["cpu"] for r in ok]
     wall = [r["wall"] for r in ok]
     q1, q3 = statistics.quantiles(cpu, n=4)[::2] if len(cpu) > 1 else (cpu or [None]) * 2
@@ -170,28 +200,44 @@ def _combine(case: dict, runs: list[dict], repeat: int) -> dict:
     }
 
 
-def _key(case: dict) -> str:
+def _key(case: dict[str, Any]) -> str:
     return json.dumps(case, sort_keys=True)
 
 
-def _sweeps(cases: list[dict], size: str) -> list[list[dict]]:
+def _sweeps(cases: list[dict[str, Any]], size: str) -> list[list[dict[str, Any]]]:
     """The cases grouped by every field but ``size``, each group in ascending ``size``."""
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for case in cases:
         groups.setdefault(_key({k: v for k, v in case.items() if k != size}), []).append(case)
     return [sorted(g, key=lambda c: c[size]) for g in groups.values()]
 
 
 def run_suite(
-    suite: str, *, quick: bool, jobs: int, timeout: float, repeat: int, resume: bool
-) -> list[dict]:
-    """Every case's row of ``suite`` (see the module docstring)."""
+    suite: str,
+    *,
+    quick: bool,
+    jobs: int,
+    timeout: float,
+    repeat: int,
+    resume: bool,
+    case_defaults: bool = False,
+) -> list[dict[str, Any]]:
+    """Every case's row of ``suite`` (see the module docstring); ``case_defaults`` lets the
+    suite's ``case_limits`` set each case's timeout and repeat."""
     module = importlib.import_module(f"benchmarks.{suite}")
     cases = module.cases(quick)
-    RESULTS.mkdir(exist_ok=True)
-    rows_path = RESULTS / f"{suite}.json"
-    runs_path = RESULTS / f"{suite}.runs.jsonl"
-    done: dict[str, dict] = {}
+    results = results_dir()
+    results.mkdir(parents=True, exist_ok=True)
+    rows_path = results / f"{suite}.json"
+    runs_path = results / f"{suite}.runs.jsonl"
+    timed: tuple[str, ...] = tuple(getattr(module, "TIMED", ()))
+    keep: Callable[[dict[str, Any], float, int], tuple[float, int]] = lambda case, t, r: (t, r)
+    limits = getattr(module, "case_limits", keep) if case_defaults else keep
+    if getattr(module, "RECORD_ENV", False):
+        from benchmarks import env
+
+        env.write(results / f"{suite}.env.json", quick=quick, jobs=jobs)
+    done: dict[str, dict[str, Any]] = {}
     if resume and rows_path.exists():
         for r in json.loads(rows_path.read_text(encoding="utf-8")):
             done[_key({k: r[k] for k in cases[0] if k in r})] = r
@@ -213,7 +259,7 @@ def run_suite(
         rows = sorted(done.values(), key=lambda r: [str(r.get(k)) for k in cases[0]])
         rows_path.write_text(json.dumps(rows, indent=1, default=str), encoding="utf-8")
 
-    def sweep_worker(queue: list[list[dict]]) -> None:
+    def sweep_worker(queue: list[list[dict[str, Any]]]) -> None:
         while True:
             with lock:
                 if not queue:
@@ -228,15 +274,16 @@ def run_suite(
                 if stopped is not None:
                     row = {**case, "status": "skipped", "detail": stopped, "time": None}
                 else:
-                    runs: list[dict] = []
-                    for k in range(repeat):
-                        r = _one_run(case, timeout, mem_gb, cgroup) | {"run": k}
+                    runs: list[dict[str, Any]] = []
+                    case_timeout, case_repeat = limits(case, timeout, repeat)
+                    for k in range(case_repeat):
+                        r = _one_run(case, case_timeout, mem_gb, cgroup) | {"run": k}
                         runs.append(r)
                         with lock, runs_path.open("a", encoding="utf-8") as fh:
                             fh.write(json.dumps({**case, **r}, default=str) + "\n")
                         if r["status"] in _FAILED:
                             break
-                    row = _combine(case, runs, repeat)
+                    row = _combine(case, runs, case_repeat, timed)
                     if row["status"] in _FAILED:
                         stopped = f"not run: {module.SIZE} = {case[module.SIZE]} {row['status']}"
                 with lock:
@@ -255,15 +302,15 @@ def run_suite(
     return list(done.values())
 
 
-def _log(where: str, r: dict, case: dict) -> None:
+def _log(where: str, r: dict[str, Any], case: dict[str, Any]) -> None:
     t = "" if r.get("time") is None else f"{r['time']:.3g}s cpu"
     label = " ".join(f"{k}={v}" for k, v in case.items() if k != "suite")
     print(f"[{case['suite']} {where}] {r['status']:<12} {t:>13}  {label}", flush=True)
 
 
-def load(suite: str) -> list[dict]:
+def load(suite: str) -> list[dict[str, Any]]:
     """The saved rows of ``suite``."""
-    path = RESULTS / f"{suite}.json"
+    path = results_dir() / f"{suite}.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 

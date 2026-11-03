@@ -45,6 +45,8 @@ explicitly.
   PROOFS.txt           Deciding equality, proof search, induction, certificates and the
                        proof kernel; the trust model.
   LEAN.txt             The bundled Lean 4 library and the export of proofs and refutations.
+  BENCHMARKS.txt       The benchmark suites: the harness, every suite, the commands, the
+                       estimated run times and the ancillary-file export.
   ERRORS.txt           The exception hierarchy of every module.
   GLOSSARY.txt         Definitions of the terms used throughout.
 
@@ -57,6 +59,7 @@ explicitly.
   Proving identities:      OVERVIEW, ENGINE_COMMANDS, RULES, PROOFS, LEAN.
   Completeness:            COMPLETENESS, RULES (2.29 onwards), PROOFS (3.2).
   Working on the engine:   OVERVIEW, ALGEBRA, DIAGRAM, REWRITE, SEMANTICS, PROOFS, ERRORS.
+  Evaluating the engine:   OVERVIEW, BENCHMARKS.
 
 
 4. TYPOGRAPHICAL CONVENTIONS

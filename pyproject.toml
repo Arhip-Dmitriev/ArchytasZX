@@ -123,3 +123,12 @@ extend-ignore = ["UP040", "UP046", "UP047"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[[tool.mypy.overrides]]
+# The frozen benchmark suites (docs/BENCHMARKS.txt, section 2).
+module = ["benchmarks.scaling", "benchmarks.size"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["qiskit", "qiskit.*", "dizx", "dizx.*"]
+ignore_missing_imports = true

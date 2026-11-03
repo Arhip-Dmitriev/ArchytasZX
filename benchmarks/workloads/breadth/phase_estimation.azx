@@ -1,0 +1,21 @@
+# Phase estimation of one eigenphase with one control qudit [kitaev1995quantum]: U = Z
+# (U|m> = w^m |m>) on its eigenstate |t>, controlled-U^c by the qudit CZ gadget (copy, F, copy,
+# scale sqrt(d)), F before and F^-1 after on the control. Target (from the algorithm): |t> on
+# the control, the eigenstate unchanged.
+#   |m> = d^(-1/2) X(0 -> 1) phase{k: -m k/d}
+
+@rhs =
+    count t
+    u = X(0 -> 1) phase{k: -t*k/d}
+    v = X(0 -> 1) phase{k: -t*k/d}
+    scalar d^(-1)
+
+load
+    count t
+    X(0 -> 1) -> F -> c = Z(1 -> 2)
+    X(0 -> 1) phase{k: -t*k/d} -> g = Z(2 -> 1)
+    c.out1 -> F -> g
+    c.out0 -> F^3
+    scalar d^(-1) * d^(1/2)
+
+decide against @rhs

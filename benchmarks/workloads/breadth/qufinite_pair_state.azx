@@ -1,0 +1,15 @@
+# A register of dimension d e treated as a pair [wang2023qufinitezxw]: the uniform state
+# sum_{k < d e} |k> is the binder of the uniform states of dimensions d and e (k = a e + b
+# ranges over every value below d e once).
+
+@rhs =
+    z = Z(0 -> 1, d*e)
+
+load
+    a = Z(0 -> 1, d)
+    b = Z(0 -> 1, e)
+    q = B(d, e)
+    wire a.out0 -- q.in0
+    wire b.out0 -- q.in1
+
+decide against @rhs

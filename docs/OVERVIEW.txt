@@ -137,4 +137,4 @@ certificate and into the Lean theorem as hypotheses.
 -------------------
 
   INSTALL.txt to install; SHELL.txt and ENGINE_COMMANDS.txt to run commands; PROOFS.txt and
-  LEAN.txt for proofs.
+  LEAN.txt for proofs; BENCHMARKS.txt for the benchmark suites.

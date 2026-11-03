@@ -1,0 +1,383 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+The Benchmark Suites
+
+Applies to: ArchytasZX 2.0.x
+Implementation: benchmarks/ (python -m benchmarks), benchmarks/workloads/ (command files)
+
+
+1. PURPOSE
+----------
+
+The benchmark suites measure the engine as a user runs it: scaling in the number of qudits n
+and the dimension d, cost against concrete tools, refutation of wrong algorithms, the breadth
+of algorithms the language states, the completeness of the rule set, the cost and coverage of
+the Lean export, the trust argument of the export, and the engine's documented limits. Every
+ArchytasZX result comes from symbolic rewriting; the numeric oracle enters only where the
+engine itself uses it. Competitor tools run as they normally run.
+
+Every suite runs as
+
+    python -m benchmarks run SUITE [--quick] [--jobs J] [--timeout T] [--repeat R] [--resume]
+                                   [--results DIR] [--plots DIR]
+    python -m benchmarks plot SUITE [--results DIR] [--plots DIR]
+
+and the ancillary files are written by
+
+    python -m benchmarks anc OUT_DIR
+
+
+2. THE HARNESS
+--------------
+
+Implementation: benchmarks/harness.py, benchmarks/__main__.py
+
+2.1 Runs and sweeps
+
+Every run is a fresh worker process. A case's runs go back to back; the cases of a sweep (equal
+on every field but the suite's swept field) run in ascending size; --jobs sweeps run at a time
+(default: half the cores). A row holds the status, the median CPU seconds (time), the quartiles,
+every run's CPU and wall seconds, and the fields of the first run.
+
+2.2 Caps
+
+Each run is stopped by the kernel after the timeout in CPU seconds (RLIMIT_CPU), killed after
+four times that in wall time, and held to a memory cap of 85 % of the available memory divided
+by --jobs (a systemd scope without swap where available, otherwise RLIMIT_AS). A run that times
+out or runs out of memory ends its case and every larger case of its sweep (status skipped).
+A run may report progress; a run that times out or runs out of memory keeps its last progress
+record (layers reached, diagrams visited).
+
+2.3 Defaults
+
+--repeat and --timeout default to the suite's own defaults (section 4), else 10 runs and 600
+CPU seconds. Given neither flag, a suite may set per-case defaults (the exhaustive mode of the
+completeness suite). The suites scaling and size keep their defaults and are frozen: their
+scripts, results and plots are not changed by the other suites.
+
+2.4 Statuses
+
+  Status        Meaning
+  ------------  -------------------------------------------------------------------------
+  ok            every run finished with the expected outcome
+  refuted       (refutations) the wrong claim was refuted: the expected outcome
+  wrong         a tool returned an incorrect answer (an EQUAL verdict on a wrong claim, a
+                refutation of a true one, a Lean-accepted mutation)
+  inconclusive  the tool finished without settling the question (UNKNOWN)
+  unsupported   a construct the engine or a tool cannot express, with the reason
+  timeout, oom  the run exceeded a cap
+  skipped       not run: a smaller case of its sweep exceeded a cap
+  error         a bug in the benchmark
+
+2.5 Results and the environment record
+
+Rows are written to RESULTS/SUITE.json and every run to RESULTS/SUITE.runs.jsonl, RESULTS being
+benchmarks/results/, or the directory of --results or of the environment variable
+BENCH_RESULTS. Plots go to benchmarks/plots/, or to --plots or BENCH_PLOTS. Every new suite
+also writes RESULTS/SUITE.env.json (benchmarks/env.py): CPU model, cores, memory, OS, Python,
+numpy, sympy, pyzx, qiskit and matplotlib versions, the Lean toolchain and version, the Mathlib
+revision, the git commit and whether the tree is dirty, and the run's options.
+
+2.6 How the engine is run
+
+Every suite except ablation runs the engine through engine command files (benchmarks.engine
+.run_script, one fresh session, concrete axioms on as the archytaszx command runs by default)
+or through the documented Python API. The frozen suites keep benchmarks.engine.decide_script
+(concrete axioms off).
+
+
+3. COMMON INFRASTRUCTURE
+------------------------
+
+3.1 The Lean runner (benchmarks/lean.py)
+
+A file is checked by `lake env lean FILE` in archytaszx/lean, with `#print axioms` of its final
+theorem appended, under the harness caps; at most five Lean processes run at a time across
+every worker (lock files in the temporary directory). Fields:
+
+  lean_status      accepted, rejected, timeout, oom (no export: no file was written)
+  lean_cpu         CPU seconds of lake and Lean; lean_wall: wall seconds
+  lean_peak_mb     peak resident memory (mapped Mathlib files included)
+  file_bytes, file_lines
+  axioms           the axioms the final theorem depends on
+  axiom_class      clean (only propext, Classical.choice, Quot.sound), unproved (some
+                   unproved_* rule axiom), opaque (the fallback export of LEAN.txt, 4.5),
+                   other; for a file Lean does not accept, its lean_status
+  unproved         the number of unproved_* axioms
+  statement_level  source (the final statement over the command file's text), diagram (over
+                   Diagram literals, DEqual), network (over networks only), opaque
+
+3.2 Workloads (benchmarks/workloads.py)
+
+The families: the seven of scaling.py and GHZ (examples/ghz_proof.azx), each a command file
+with n and d free or bound. A command file with several verdicts is split into units, one per
+decide or prove line, each with the lines before it (earlier verdicts and certificate lines
+removed) and its own certificate emit and kernel lines. The lemma corpus is read from
+archytaszx/papers/*/LEMMAS.txt; a lemma's command file is the one its entry names, or
+examples/completeness/lemmas/ or benchmarks/workloads/completeness/ by file name
+(p1_lemma07.azx is [P1] Lemma 7, p2_lemmaA03.azx is [P2] Lemma A.3).
+
+3.3 Correctness checks (benchmarks/checks.py)
+
+    python -m benchmarks.checks
+
+checks the benchmarks themselves: every family and breadth target against the target written
+from the algorithm's definition (numpy), evaluated by the engine's oracle at one small
+instance, and the claim's left side against the same target; every buggy variant false at one
+small instance; every PyZX translation equal to the oracle's evaluation of the ArchytasZX
+workload at d = 2 and n = 1, 2 (exactly), every Qiskit translation proportional to it, and the
+DiZX gate lists' matrices (under DiZX's gate definitions) equal to the ArchytasZX circuits at
+d = 3. One line per check, PASS or FAIL.
+
+
+4. THE SUITES
+-------------
+
+Defaults are 10 runs and 600 CPU seconds unless stated.
+
+4.1 families
+
+Question: how does one symbolic proof compare with instance-by-instance checking?
+Workloads: the families of 3.2.
+Tools:
+  azx-free   ArchytasZX, n and d free, one case per family (n = "free").
+  azx-bound  ArchytasZX at dim d = 2, count n bound to each size.
+  pyzx       PyZX at d = 2 on the same diagram built at each n (Z and X spiders, F as a
+             Hadamard edge into an identity spider, exact scalars as powers of sqrt 2); both
+             sides as states (inputs bent to outputs); full_reduce of the inner products
+             <L|L>, <R|R>, <R|L>; equal when ||L - R||^2 = 0, otherwise wrong.
+  qiskit     (optional arm) the left side as a circuit, its Statevector (Operator for F^4)
+             compared with the target written from the algorithm's definition. Spider fusion
+             (no circuit distinguishes the two spider presentations) and Deutsch-Jozsa
+             constant (a map with a free input) are unsupported.
+Sizes: n = 1, 2, 4, ..., 2^20; each sweep ends at its first timeout.
+Fields: tool, family, n, time, nodes, wires, method.
+Plots: families_crossover (time against n, log-log, one panel per family, azx-free as a
+horizontal line), families_paper (every family in one panel), and families_crossover.txt (per
+family and concrete tool, the smallest n at which azx-free is faster).
+
+4.2 refutations
+
+Question: how fast and by which rung are wrong algorithms refuted, and what does the Lean
+refutation cost?
+Workloads: for every family three to five wrong variants (a wrong phase, a dropped or wrong
+scalar, a missing gate inside the bang box, a gate outside the box, an off-by-one
+multiplicity, a wrong dimension), and both claims of examples/refutations.azx.
+Runs: n and d free, and bound to (d, n) = (2, 1) and (3, 4): decide, certificate lean, the
+Lean runner.
+Fields: variant, kind, method (interface, oracle_counterexample, symbolic_witness), time (the
+verdict's CPU seconds), export_cpu, lean_status, lean_cpu, refutation_kind (interface,
+cyclotomic, ball arithmetic), axiom_class, statement_level.
+Statuses: refuted expected; an EQUAL verdict is wrong; UNKNOWN is inconclusive.
+Plot: refutations_methods (time per variant, coloured by method).
+
+4.3 breadth
+
+Question: which textbook algorithms and protocols can the engine state and prove for every n
+and d?
+Workloads: benchmarks/workloads/breadth/*.azx, each with its target from the algorithm's
+definition and its source by reference key in a header comment: qudit teleportation (symbolic
+d, Bell outcome a, b as counts), entanglement swapping, superdense coding, the W node on |0>
+and the W state's overlap for every n, generalised Bernstein-Vazirani with the secret (s, ...,
+s), Fourier sampling over Z_d^n with a phase oracle, phase estimation of one eigenphase with
+one control qudit, the repetition-code encoder and decoder for every n, one Grover iteration on
+two qubits, the splitter-binder round trip, a register of dimension d e as a pair, states over
+two symbolic dimensions, two counts and two dimensions in one diagram, nested bang boxes of
+depth 1, 2 and 3. Unsupported, with the missing construct: one Grover iteration for every n (no
+bang box states the n-register reflection), a secret vector varying per copy (a bang box
+repeats one subdiagram), phase estimation with n control qudits (an exponent indexed by the
+copy).
+Tools: azx-free (the file as written, then certificate kernel, certificate lean and the Lean
+runner) and azx-bound (dim d = 2 where the file uses the default dimension, the count n bound
+to 1, 2, 4, ..., 2^20; files without n have no bound rows).
+Fields: workload, expressible, verdict, method, time, inferences, lean_status, axiom_class.
+Plot: breadth_methods (one row per workload: the rung that settled it and its time).
+
+4.4 completeness
+
+Question: how much of [P1] and [P2] does the engine reproduce, automatically and exhaustively,
+and at what cost?
+Workloads: every lemma of archytaszx/papers/*/LEMMAS.txt; a lemma without a command file is one
+row, unsupported, "not encoded".
+Modes (separate tools): auto (prove naming no rule), exhaustive (prove_exhaustive; default
+3600 CPU seconds and one run), kernel (certificate kernel on the automatic proof), lean
+(certificate lean and the Lean runner on the automatic proof).
+Rule rows (paper "rules", mode "rule"): every rule of rules_axioms.by_name applied once to a
+seeded random instance of its matched side, certified, replayed, kernel-checked, exported and
+checked by Lean.
+Fields: paper, lemma, mode, status, time, derivation_length, layers_start, layers_goal and
+visited (exhaustive, also on timeout), inferences, lean_status, unproved_axioms; for rules
+apply_cpu, replay_cpu, replayed, kernel_cpu, export_cpu.
+Plots: completeness_coverage (stacked bars per paper: auto, exhaustive only, not found, not
+encoded), completeness_cost (time against derivation length, auto and exhaustive).
+
+4.5 lean
+
+Question: what does a Lean certificate cost and what does it prove?
+Workloads: every verdict of every example (examples/*.azx, examples/completeness/), every
+family free, every breadth workload and every encoded lemma.
+Runs: certificate kernel, certificate lean, the Lean runner; default 3 runs. The row's time is
+Lean's CPU seconds; an UNKNOWN verdict is inconclusive and not exported.
+Fields: workload, script_cpu, export_cpu, file_bytes, file_lines, lean_cpu, lean_wall,
+lean_peak_mb, axiom_class, statement_level, unproved.
+Plots: lean_cost (Lean time against file lines), lean_coverage (share of exports per axiom
+class and per statement level).
+
+4.6 trust
+
+Question: does Lean reject every wrong translation?
+Mutations, applied in the worker's memory to the exporter (lean_net._Export) or to the
+diagrams the parser returns to the session, never to the installed files; each consistent
+(every network of the export carries it): swap legs (two wires crossed), drop wire, swap
+boundary, chain off by one (one Bun layer removed), bundle multiplicity (m replaced by m + 1),
+phase entry, scalar (the first one doubled), dimension (the first one increased), source
+literal (the first parsed diagram's scalar doubled).
+Workloads: every verdict of every example and of every battery file present
+(benchmarks/workloads/trust/*.azx, .trust_work/battery*.azx).
+Statuses: rejected is ok; accepted is wrong, unless the theorem depends on more unproved_*
+axioms than the unmutated export (ok: the mutation surfaced as an unproved step); a mutation
+with nothing to act on, an unchanged export, and an export that falls back to the opaque form
+or fails are unsupported. Default 1 run.
+Output: plots/trust_mutations.txt and trust_mutations.csv (no plot).
+
+4.7 ablation
+
+The only suite that runs the engine differently from a user; every row is labelled
+"ablation". The pair each workload's verdict line names is decided by decide_equal under:
+full; no saturation (use_saturation=False); no symbolic (use_symbolic=False); no induction
+(use_induction=False); no concrete axioms (match_template.CONCRETE_AXIOMS = False); no normal
+form (decide_equal has no switch: unsupported). Workloads: every family free, every breadth
+workload, [P1] Lemmas 8, 11, 12, 16, 38 and 42.
+Fields: configuration, workload, verdict, method, settled, time.
+Plot: ablation_matrix (workloads by configuration; a filled cell is settled, its shade the log
+time; a cross is not settled).
+
+4.8 qudits
+
+Question: at odd prime d, how does ArchytasZX compare with DiZX, the qudit ZX tool?
+Workloads: C C^-1 (size.py's generator on n qudits, 2 n gates each way, phases restricted to
+Paulis: Clifford), F^4 = 1, and the families GHZ and Fourier superposition; d = 3, 5, 7, 11;
+n = 1, 2, 4, ..., 1024.
+Tools: dizx (clifford_simp to the identity: every input joined to its output by a plain edge,
+directly or through one phase-free Z spider; state equations unsupported: DiZX has no tensor or
+scalar comparison), azx-bound (dim d = D, n bound; C C^-1 with n explicit wires), azx-free (n
+and d free; C C^-1 as two wires repeated n times).
+DiZX runs in its own environment, benchmarks/.venvs/dizx, by benchmarks/dizx_driver.py with
+python -I. Without that environment every dizx row is unsupported with the reason. To install
+it (DiZX has no packaging; the package directory is copied into the environment):
+
+    git clone https://github.com/jvdwetering/dizx benchmarks/.venvs/src/dizx
+    python -m venv benchmarks/.venvs/dizx
+    benchmarks/.venvs/dizx/bin/pip install numpy sympy matplotlib
+    cp -r benchmarks/.venvs/src/dizx/dizx benchmarks/.venvs/dizx/lib/python3.*/site-packages/
+
+Fields and plot as 4.1: qudits_crossover.
+
+4.9 exhaustive
+
+Question: how far can exhaustive mode reach in practice?
+Workloads: seed diagrams ([P1] Lemmas 7, 8, 11, 12, 15, 16, 17, 38, 39, 42 at their literal
+dimension; the families spider fusion, Fourier order 4, Fourier superposition and GHZ at n = 1,
+d = 2); for k = 1 .. 12 a target made by k rule steps chosen by a generator seeded with the seed
+name and k, every match of every rule of RULES in name order being a candidate; then
+prove_exhaustive from the seed to the target. Targets are made by rule steps only.
+Fields: seed, k, found, layers_start, layers_goal, visited, time, peak_mb, derivation_length
+(at most k), path (the generating rules).
+Defaults: 3600 CPU seconds, 3 runs.
+Plot: exhaustive_reach (time and diagrams visited against k, log scale).
+
+4.10 certificates
+
+Question: how large are certificates and kernel proofs?
+Workloads: every family free, every breadth workload, every encoded lemma, and the ArchytasZX
+cases of size.py rebuilt at their sizes (size.json is neither read nor written).
+Fields: nodes, wires, derivation_length, inferences, certificate_bytes (the output of
+certificate show), certificate_kind, lean_lines, lean_bytes (the export is written, not
+checked).
+Plot: certificates_size (inferences and Lean lines against node count).
+
+4.11 limits
+
+Question: where do the limits of OVERVIEW.txt, section 6, begin?
+Kinds (param is the swept parameter):
+  contraction  contract_symbolic on a chain of param Z spiders with symbolic phases joined
+               by F boxes, 1 .. 12
+  nesting      nested bang boxes of depth 1 .. 5, by decide and by prove
+  symbols      param independent (count, dimension) pairs, 1 .. 6
+  deferred     matches needing d1 d2 = 6 or d^p = d^q; assumptions counts the conditions a
+               verdict rests on
+  prime        every family and breadth workload with d free, bound to 3 and bound to 4
+Fields: kind, workload, param, verdict, method, time, peak_mb, assumptions.
+Plot: limits (one panel per kind).
+
+
+5. COMMANDS
+-----------
+
+5.1 Full runs, in the recommended order
+
+    python -m benchmarks run families
+    python -m benchmarks run refutations
+    python -m benchmarks run lean
+    python -m benchmarks run completeness
+    python -m benchmarks run trust
+    python -m benchmarks run breadth
+    python -m benchmarks run certificates
+    python -m benchmarks run limits
+    python -m benchmarks run ablation
+    python -m benchmarks run qudits
+    python -m benchmarks run exhaustive
+
+Each command also writes its plots; `python -m benchmarks plot SUITE` redraws them from the
+results. --resume keeps the finished cases of an interrupted run.
+
+5.2 Quick runs
+
+    python -m benchmarks run SUITE --quick --repeat 1 --results .bench_smoke/results \
+        --plots .bench_smoke/plots
+
+runs a few cases of each suite in minutes, without touching benchmarks/results/ or
+benchmarks/plots/.
+
+
+6. ESTIMATED FULL-RUN TIMES
+---------------------------
+
+Estimated from the quick runs at the default --jobs (4 on the reference machine, an 8-thread
+Intel i7-8650U with 16 GB), the suites' default repeat and timeout; a sweep's cost is bounded
+by its first timeout.
+
+  Suite         Cases  Repeat  Estimate  With one timeout per sweep
+  ------------  -----  ------  --------  --------------------------
+  families        512      10     0.6 h    1.6 h
+  refutations      98      10     1.0 h    1.0 h
+  lean             61       3     0.2 h    0.2 h
+  completeness    328      10     4.3 h    4.3 h  (exhaustive rows of lemmas the automatic
+                                                   search does not prove run to 3600 s)
+  trust            72       1     0.1 h    0.1 h
+  breadth         209      10     0.8 h    1.2 h
+  certificates    352      10     0.4 h    1.7 h
+  limits          107      10     0.2 h    1.4 h
+  ablation        186      10     0.2 h    0.2 h
+  qudits          356      10     0.4 h    1.8 h
+  exhaustive      168       3     0.4 h    3.9 h
+
+The estimate takes every case at the cost of its kind in the quick run, plus 1.5 s of process
+start per run, divided by the jobs; the second column adds one timed-out run per sweep. Cases
+whose cost grows with n (families, breadth, qudits, certificates at large n; limits beyond five
+symbolic phases, about 4.5 times slower per phase) can exceed both; the caps bound every run by
+the timeout and every sweep by its first timeout. Total, in the order of 5.1: about 9 h, at most
+about 17 h.
+
+
+7. THE ANCILLARY FILES
+----------------------
+
+    python -m benchmarks anc OUT_DIR
+
+copies into OUT_DIR the benchmark scripts (scripts/), the command files they run (workloads/:
+benchmarks/workloads/, examples/ and the lemma lists), every file of the results directory
+(results/, environment records included), every file of the plots directory (plots/) and this
+document, with a plain-text README. It refuses an OUT_DIR under publications/ or
+public_publications/.

@@ -1,0 +1,16 @@
+# Fourier sampling over Z_d^n with a phase oracle (the hidden-subgroup circuit)
+# [kitaev1995quantum; jozsa2001quantum]: F^-1 on |0>^n, the character w^(-t . x) with
+# t = (t, ..., t), then F. Target (from the character orthogonality): |t>^n,
+# |m> = d^(-1/2) X(0 -> 1) phase{k: -m k/d}.
+
+@rhs =
+    count n, t
+    repeat n: X(0 -> 1) phase{k: -t*k/d}
+    scalar d^(-n/2)
+
+load
+    count n, t
+    repeat n: X(0 -> 1) -> F^3 -> Z(1 -> 1) phase{k: -t*k/d} -> F
+    scalar d^(-n/2)
+
+decide against @rhs

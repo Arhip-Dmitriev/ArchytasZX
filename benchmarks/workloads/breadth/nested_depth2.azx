@@ -1,0 +1,21 @@
+# Nested bang boxes, depth 2: the Fourier superposition on registers at every level, box
+# k holding one register and box k + 1 (n, n m registers) [nielsen2010quantum, section 5.1].
+# Target: the uniform state on every register.
+
+@rhs =
+    count n, m
+    z0 = Z(0 -> 1)
+    z1 = Z(0 -> 1)
+    repeat n as A: z0, z1
+    repeat m as B in A: z1
+    scalar d^(-(n + n*m)/2)
+
+load
+    count n, m
+    x0 = X(0 -> 1) -> f0 = F
+    x1 = X(0 -> 1) -> f1 = F
+    repeat n as A: x0, f0, x1, f1
+    repeat m as B in A: x1, f1
+    scalar d^(-(n + n*m)/2)
+
+decide against @rhs

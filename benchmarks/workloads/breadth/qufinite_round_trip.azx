@@ -1,0 +1,13 @@
+# Splitter then binder on a register of dimension s t, symbolic s and t [wang2023qufinitezxw]:
+# by the definition of B and S (k = a t + b), B . S is the identity on the s t register.
+
+@rhs =
+    z = Z(1 -> 1, s*t)
+
+load
+    p = S(s, t)
+    q = B(s, t)
+    wire p.out0 -- q.in0
+    wire p.out1 -- q.in1
+
+decide against @rhs
