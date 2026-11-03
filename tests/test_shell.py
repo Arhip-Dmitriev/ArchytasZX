@@ -134,13 +134,13 @@ class TestRunLine:
         dirac = shell.run_line(EXAMPLE)
         shell.run_line("zx")
         zx = shell.run_line("show")
-        assert not listing(dirac) and not listing(zx) and zx.startswith("scalar:")
+        assert not listing(dirac) and not listing(zx) and "out 0" in zx
         shell.run_line("raw")
         assert listing(shell.run_line("show"))
         shell.run_line("listing")
         shell.run_line("zx")
         both = shell.run_line("show")
-        assert both.startswith("scalar:") and listing(both)
+        assert "out 0" in both and listing(both)
 
     @pytest.mark.parametrize("word", ["quit", "exit", "QUIT", "  exit  "])
     def test_quit_and_exit(self, word: str) -> None:

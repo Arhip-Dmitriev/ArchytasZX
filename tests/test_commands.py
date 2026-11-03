@@ -351,6 +351,7 @@ class TestRegistry:
             "listing",
             "raw",
             "config",
+            "publication",
             "history",
             "quit",
             "exit",

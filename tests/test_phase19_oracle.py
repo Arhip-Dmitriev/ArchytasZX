@@ -407,14 +407,14 @@ class TestModeIndependence:
         dirac = shell.run_line("show")
         assert shell.run_line("zx") == "mode: zx"
         zx = shell.run_line("show")
-        assert zx.startswith("scalar:") and not listing_lines(zx)
+        assert "out 0" in zx and not listing_lines(zx)
         assert not is_subsequence(lines_of(dirac), lines_of(zx))
         assert shell.run_line("raw") == "mode: raw"
         raw = shell.run_line("show")
         assert listing_lines(raw) and not is_subsequence(lines_of(dirac), lines_of(raw))
         assert shell.run_line("both") == "mode: both"
         both = shell.run_line("show")
-        assert not listing_lines(dirac) and both.startswith("scalar:")
+        assert not listing_lines(dirac) and "out 0" in both
         assert is_subsequence(lines_of(dirac), lines_of(both))
         assert shell.run_line("dirac") == "mode: dirac"
         assert shell.run_line("show") == dirac
