@@ -6218,4 +6218,124 @@ theorem xcFusion (E : Env) (na nb m : Node) (dz w : ℕ) (iface : List ℕ) (ha 
 
 
 
+/-- The phaseless pink effect at `j`: `√d` if `j = 0`. -/
+theorem tX_zero_effect (d j : ℕ) (hd : 0 < d) (hj : j < d) (φ : ℕ → ℝ)
+    (hφ : ∀ k < d, ex (φ k) = 1) :
+    tX d φ [] [j] = if j = 0 then rt d else 0 := by
+  rw [tX_flat d hd φ hφ]
+  simp only [List.length_nil, List.length_cons, List.sum_nil, List.sum_cons, add_zero,
+    zero_add, pow_one, Nat.zero_mod, Nat.mod_eq_of_lt hj]
+  by_cases h : j = 0
+  · simp [h, rt_inv_mul d hd]
+  · simp [h, Ne.symm h]
+
+/-- [P2] (E): the pink state of dimension `n` through the multiplier `e` and the plain green dot
+`n -> t` (binder, weighted Z box, splitter) is `s` times the pink state of dimension `t`, where
+`s √n^e = √n^3`. -/
+theorem qfE (E : Env) (dn d2 dk a b g k l h o p0 z0 x0 p1 p2 p3 : ℕ) (m : Node)
+    (ws iface : List ℕ) (hn : 0 < E.dimv dn) (ht : 0 < E.dimv d2)
+    (hdk : E.dimv dk = E.dimv d2 * E.dimv dn) (hm : isZc m = true) (hdm : m.dim = dk)
+    (hlm : m.outs ++ m.ins = [l, k]) (hnd : (a :: b :: g :: k :: l :: h :: o :: ws).Nodup)
+    (hla : ∀ x ∈ a :: b :: h :: ws, labIdx E.labs x = dn) (hg : labIdx E.labs g = d2)
+    (hk : labIdx E.labs k = dk) (hl : labIdx E.labs l = dk)
+    (ho : o ∈ iface ∧ labIdx E.labs o = d2)
+    (hph : ∀ ph ∈ [p0, z0, x0, p2], ∀ q < E.dimv dn, ex (E.phase ph q) = 1)
+    (hph2 : ∀ ph ∈ [p1, p3], ∀ q < E.dimv d2, ex (E.phase ph q) = 1)
+    (h0 : zc E m 0 = 1) (s : ℂ) (hs : s * rt (E.dimv dn) ^ ws.length = rt (E.dimv dn) ^ 3) :
+    LocalEq E [⟨.X, [a], [], dn, p0⟩, ⟨.Z, ws, [a], dn, z0⟩, ⟨.X, [b], ws, dn, x0⟩,
+        ⟨.B, [k], [g, b], d2, dn⟩, ⟨.X, [g], [], d2, p1⟩, m, ⟨.S, [h, o], [l], dn, d2⟩,
+        ⟨.X, [], [h], dn, p2⟩] (a :: b :: g :: k :: l :: h :: ws)
+      [⟨.X, [o], [], d2, p3⟩] [] iface 1 s := by
+  intro τ hτ
+  have ro := hτ o ho.1
+  rw [labDim_of E o d2 ho.2] at ro
+  simp only [List.mem_cons, List.not_mem_nil, or_false, forall_eq_or_imp, forall_eq] at hph hph2
+  obtain ⟨hp0, hz0, hx0, hp2⟩ := hph
+  obtain ⟨hp1, hp3⟩ := hph2
+  set n := E.dimv dn
+  set t := E.dimv d2
+  simp only [List.nodup_cons, List.mem_cons, not_or] at hnd
+  obtain ⟨⟨hab, hag, hak, hal, hah, hao, haw⟩, ⟨hbg, hbk, hbl, hbh, hbo, hbw⟩,
+    ⟨hgk, hgl, hgh, hgo, hgw⟩, ⟨hkl, hkh, hko, hkw⟩, ⟨hlh, hlo, hlw⟩, ⟨hho, hhw⟩,
+    how, hws⟩ := hnd
+  have hwl : ∀ w ∈ ws, labIdx E.labs w = dn := fun w hw => hla w (by simp [hw])
+  set G : (ℕ → ℕ) → ℂ := fun ρ => val E ρ ⟨.X, [a], [], dn, p0⟩ *
+    val E ρ ⟨.B, [k], [g, b], d2, dn⟩ * val E ρ ⟨.X, [g], [], d2, p1⟩ * val E ρ m *
+    val E ρ ⟨.S, [h, o], [l], dn, d2⟩ * val E ρ ⟨.X, [], [h], dn, p2⟩ with hGdef
+  have split : prodVal E [⟨.X, [a], [], dn, p0⟩, ⟨.Z, ws, [a], dn, z0⟩, ⟨.X, [b], ws, dn, x0⟩,
+      ⟨.B, [k], [g, b], d2, dn⟩, ⟨.X, [g], [], d2, p1⟩, m, ⟨.S, [h, o], [l], dn, d2⟩,
+      ⟨.X, [], [h], dn, p2⟩] = fun ρ => G ρ *
+        prodVal E [⟨.Z, ws, [a], dn, z0⟩, ⟨.X, [b], ws, dn, x0⟩] ρ := by
+    funext ρ; simp only [hGdef, prodVal, List.map_cons, List.map_nil, List.prod_cons,
+      List.prod_nil]; ring
+  have hG : Reads [a, b, g, k, l, h, o] G := by
+    intro ρ ρ' hr
+    simp only [hGdef]
+    rw [val_zc _ _ m hm, val_zc _ _ m hm, hlm]
+    simp only [val, List.map_cons, List.map_nil]
+    rw [hr a (by simp), hr b (by simp), hr g (by simp), hr k (by simp), hr l (by simp),
+      hr h (by simp), hr o (by simp)]
+  rw [split, show a :: b :: g :: k :: l :: h :: ws = [a, b, g, k, l, h] ++ ws from rfl,
+    sumOver_append]
+  rw [sumOver_congr _ _ _ (fun ρ => G ρ * ((rt n)⁻¹ ^ (1 + ws.length) *
+      (if ρ b % n = (ws.length * ρ a) % n then (n : ℂ) else 0))) τ (fun ρ _ hr => by
+    rw [sumOver_const_mul _ ws [a, b, g, k, l, h, o] _ _ hG (by
+      intro x hx hxw
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+      rcases hx with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      exacts [haw hxw, hbw hxw, hgw hxw, hkw hxw, hlw hxw, hhw hxw, how hxw]),
+      multiplier_val E z0 x0 dn a b ws ρ hn hws haw hbw hwl
+        (by have := hr a (by simp); rwa [labDim_of E a dn (hla a (by simp))] at this) hz0 hx0])]
+  have hlab : ∀ x, labIdx E.labs x = dn → labDim E x = n := fun x hx => labDim_of E x dn hx
+  have hGv : ∀ ρ : ℕ → ℕ, ρ a < n → ρ g < t → ρ k < E.dimv dk → ρ h < n → G ρ =
+      (if ρ a = 0 then rt n else 0) * tB t n (ρ k) (ρ g) (ρ b) * (if ρ g = 0 then rt t else 0) *
+        (if ρ l = ρ k then zc E m (ρ k) else 0) * tB n t (ρ l) (ρ h) (ρ o) *
+        (if ρ h = 0 then rt n else 0) := by
+    intro ρ ra rg rk' rh
+    simp only [hGdef]
+    rw [val_zc_two E ρ m hm l k hlm (hdm ▸ rk')]
+    simp only [val, List.map_cons, List.map_nil]
+    rw [tX_zero_state n _ hn ra _ hp0, tX_zero_state t _ ht rg _ hp1,
+      tX_zero_effect n _ hn rh _ hp2]
+  rw [sumOver_congr _ _ _ (fun ρ => ((if ρ a = 0 then rt n else 0) * tB t n (ρ k) (ρ g) (ρ b) *
+      (if ρ g = 0 then rt t else 0) * (if ρ l = ρ k then zc E m (ρ k) else 0) *
+      tB n t (ρ l) (ρ h) (ρ o) * (if ρ h = 0 then rt n else 0)) * ((rt n)⁻¹ ^ (1 + ws.length) *
+      (if ρ b % n = (ws.length * ρ a) % n then (n : ℂ) else 0))) τ (fun ρ _ hr => by
+    rw [hGv ρ (by simpa [hlab a (hla a (by simp))] using hr a (by simp))
+      (by simpa [labDim_of E g d2 hg] using hr g (by simp))
+      (by simpa [labDim_of E k dk hk] using hr k (by simp))
+      (by simpa [hlab h (hla h (by simp))] using hr h (by simp))])]
+  simp only [sumOver, hlab a (hla a (by simp)), hlab b (hla b (by simp)),
+    hlab h (hla h (by simp)), labDim_of E g d2 hg, labDim_of E k dk hk, labDim_of E l dk hl,
+    Function.update_apply, hab, hag, hak, hal, hah, hbg, hbk, hbl, hbh, hgk, hgl, hgh, hkl, hkh,
+    hlh, Ne.symm hab, Ne.symm hag, Ne.symm hak, Ne.symm hal, Ne.symm hah, Ne.symm hao,
+    Ne.symm hbg, Ne.symm hbk, Ne.symm hbl, Ne.symm hbh, Ne.symm hbo, Ne.symm hgk, Ne.symm hgl,
+    Ne.symm hgh, Ne.symm hgo, Ne.symm hkl, Ne.symm hkh, Ne.symm hko, Ne.symm hlh, Ne.symm hlo,
+    Ne.symm hho, ite_true, ite_false, one_mul, mul_one, prodVal, List.map_cons, List.map_nil,
+    List.prod_cons, List.prod_nil, val]
+  simp only [ite_mul, mul_ite, zero_mul, mul_zero, Finset.sum_ite_irrel, Finset.sum_const_zero,
+    Finset.sum_ite_eq', Finset.mem_range, hn, ite_true]
+  rw [Finset.sum_eq_single 0 (fun x _ hx => by simp [hx])
+    (fun h => absurd (Finset.mem_range.2 hn) h)]
+  rw [Finset.sum_eq_single 0 (fun x hx hx0 => by
+    simp [Nat.mod_eq_of_lt (Finset.mem_range.1 hx), hx0])
+    (fun h => absurd (Finset.mem_range.2 hn) h)]
+  simp only [mul_zero, Nat.zero_mod, ite_true]
+  rw [Finset.sum_eq_single 0 (fun x _ hx => by simp [hx])
+    (fun h => absurd (Finset.mem_range.2 ht) h)]
+  simp only [ite_true, tB_zero t n _ ht hn, mul_ite, ite_mul, zero_mul, mul_zero]
+  rw [tX_zero_state t _ ht ro _ hp3, hdk, Finset.sum_eq_single 0 (fun x _ hx => by simp [hx])
+    (fun h => absurd (Finset.mem_range.2 (Nat.mul_pos ht hn)) h), if_pos (Nat.mul_pos ht hn),
+    if_pos rfl]
+  have key : rt n * rt t * zc E m 0 * rt n * ((rt n ^ (1 + ws.length))⁻¹ * n) = s * rt t := by
+    have hr := rt_ne n hn
+    rw [h0, ← mul_left_inj' (pow_ne_zero ws.length hr), mul_right_comm s, hs, ← rt_sq n]
+    field_simp
+    ring
+  unfold tB
+  by_cases h' : τ o = 0
+  · simp [h', hn, ht]
+    linear_combination key
+  · simp [h', Ne.symm h']
+
 end ArchytasZX
