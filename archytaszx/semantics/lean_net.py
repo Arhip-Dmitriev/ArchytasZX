@@ -432,13 +432,28 @@ class _Export:
     def weights(self, pv: PhaseVector) -> str:
         """The coefficient vector of ``pv`` as the body of a Lean ``fun k``; its models kept in
         ``coef_models`` under the body."""
-        _need(pv.dim.is_concrete, "complex weights at a symbolic dimension")
+        if not pv.dim.is_concrete:
+            return self.weights_rule(pv)
         models = {k: self.scalar(pv.coefficient(k)) for k in range(1, pv.dim.to_int())}
         body = "1"
         for index, model in sorted(models.items(), reverse=True):
             body = f"if k = {index} then {self.sc.text(model)} else {body}"
         self.coef_models[body] = models
         return body
+
+    def weights_rule(self, pv: PhaseVector) -> str:
+        """The coefficient vector of ``pv`` at a symbolic dimension: its entries, then its weight
+        rule, as the body of a Lean ``fun k``."""
+        _need(not pv.entries() and pv.rule is None, "phased weights at a symbolic dimension")
+        rule = pv.weight_rule
+        _need(
+            rule is None or INDEX not in rule.to_sympy().free_symbols,
+            "an index-dependent weight rule at a symbolic dimension",
+        )
+        body = "1" if rule is None else self.sc.text(self.scalar(rule))
+        for index, weight in sorted(pv.weights().items(), reverse=True):
+            body = f"if k = {index} then {self.sc.text(self.scalar(weight))} else {body}"
+        return f"if k = 0 then 1 else {body}"
 
     def kind_ph(self, kind: str, pv: PhaseVector | None, aux: int) -> tuple[str, int]:
         """A node's Lean kind and phase index: a weighted Z or X spider is ``ZW`` or ``XW``."""
@@ -2557,8 +2572,8 @@ def _macros(unfold: str, pos_first: str = "") -> list[str]:
             "A coefficient vector is `[k = 0]`.",
             (
                 f"(intro k hk; simp only [{unfold}, Δ] at hk; simp only [zc, {unfold}, Φ]; "
-                "(try simp only [Ψ]); (try split_ifs) <;> first | (exfalso; omega) | "
-                "simp [ex_zero])"
+                "all_goals (try simp only [Ψ]); all_goals ((try split_ifs) <;> first | "
+                "(exfalso; omega) | simp [ex_zero]))"
             ),
         ),
     ]
@@ -3524,9 +3539,10 @@ def _coef_case(c: _Ctx, lhs: sp.Expr, rhs: sp.Expr, rewrites: Sequence[str]) -> 
 
 
 def _coef_hyp(c: _Ctx, left: LNode, right: Sequence[LNode], fn: str = "zc") -> str:
-    """A proof of ``∀ k < E.dimv dz, fn E left k = ∏ fn E right k`` at a concrete dimension."""
+    """A proof of ``∀ k < E.dimv dz, fn E left k = ∏ fn E right k``."""
     d_expr = c.ex.dim_exprs[left.dim]
-    _need(d_expr.is_Integer, "coefficients at a concrete dimension")
+    if not d_expr.is_Integer:
+        return f"(by intro k hk; simp only [{fn}, {c.ex.unfold}, Φ]; {_coef_sym(c)})"
     cases = []
     for k in range(int(d_expr)):
         lhs = _zc_terms(c, left, k)[0]
@@ -3547,6 +3563,15 @@ def _coef_at(c: _Ctx, k: int, lhs: sp.Expr, rhs: sp.Expr, nodes: Sequence[LNode]
     return f"simp only [zc]; {body}"
 
 
+def _coef_sym(c: _Ctx) -> str:
+    """Tactics closing a coefficient identity at a symbolic index once ``zc`` is unfolded."""
+    psi = "(try simp only [Ψ]); " if c.ex.weight_tab else ""
+    return (
+        f"{psi}(try split_ifs) <;> first | (exfalso; omega) | (simp [ex_zero]; done) | "
+        "(norm_num [ex_zero]; done) | ring"
+    )
+
+
 def _zc_ad(c: _Ctx) -> _Spec:
     nodes = dict(c.match.nodes)
     w, na, nb = c.node(nodes["w"]), c.node(nodes["za"]), c.node(nodes["zb"])
@@ -3557,7 +3582,15 @@ def _zc_ad(c: _Ctx) -> _Spec:
     _need(na.labels() == (x,) and nb.labels() == (y,) and r.labels() == (i,), "effect shape")
     _need(all(n.kind in _ZC for n in (na, nb, r)), "spider effects")
     d_expr = c.ex.dim_exprs[w.dim]
-    _need(d_expr.is_Integer, "coefficients at a concrete dimension")
+    if not d_expr.is_Integer:
+        sym = _coef_sym(c)
+        lemma = (
+            f"zcAd {c.env} {w.dim} {x} {y} {i} {_zc(na)} {_zc(nb)} {_zc(r)} IFACE (by decide) "
+            f"(by decide) (by decide) rfl rfl rfl rfl rfl rfl (by decide) (by decide) (by decide) "
+            f"{_CHK} {_CHK} {_CHK} (by simp only [zc, {c.ex.unfold}, Φ]; {sym}) "
+            f"(by intro k hk hk0; simp only [zc, {c.ex.unfold}, Φ]; {sym})"
+        )
+        return _Spec((nodes["w"], nodes["za"], nodes["zb"]), [(rid, r)], lemma)
     nodes3 = [r, na, nb]
 
     def model(n: LNode, k: int) -> sp.Expr:
@@ -3636,19 +3669,22 @@ def _zc_ti(c: _Ctx) -> _Spec:
     _need(ef.kind in _ZC and ef.labels() == (e,), "effect shape")
     _need(r.kind == "Ti" and r.outs == (o,) and r.ins == (i,), "inverse triangle shape")
     d_expr = c.ex.dim_exprs[w.dim]
-    _need(d_expr.is_Integer, "coefficients at a concrete dimension")
-    h0 = _coef_at(c, 0, _zc_terms(c, ef, 0)[0], ONE, [ef])
-    cases = ["· exact absurd rfl hk0"]
-    for k in range(1, int(d_expr)):
-        cases.append(f"· {_coef_at(c, k, _zc_terms(c, ef, k)[0], -ONE, [ef])}")
-    body = "\n    ".join(cases)
-    hc = (
-        f"(by\n    intro k hk hk0\n    simp only [{c.ex.unfold}, Δ] at hk\n    interval_cases k\n"
-        f"    {body})"
-    )
+    if d_expr.is_Integer:
+        h0 = _coef_at(c, 0, _zc_terms(c, ef, 0)[0], ONE, [ef])
+        cases = ["· exact absurd rfl hk0"]
+        for k in range(1, int(d_expr)):
+            cases.append(f"· {_coef_at(c, k, _zc_terms(c, ef, k)[0], -ONE, [ef])}")
+        body = "\n    ".join(cases)
+        hc = (
+            f"(by\n    intro k hk hk0\n    simp only [{c.ex.unfold}, Δ] at hk\n"
+            f"    interval_cases k\n    {body})"
+        )
+    else:
+        unf = f"simp only [zc, {c.ex.unfold}, Φ]; {_coef_sym(c)}"
+        h0, hc = unf, f"(by intro k hk hk0; {unf})"
     lemma = (
         f"zcTi {c.env} {w.dim} {e} {o} {i} {_zc(ef)} IFACE (by decide) rfl rfl {_CHK} "
-        f"(by decide) (by decide) (by decide) (by decide) (by {h0}) {hc}"
+        f"{_chks(2)} (by decide) (by decide) (by {h0}) {hc}"
     )
     return _Spec((nodes["w"], nodes["e"]), [(rid, r)], lemma)
 
@@ -3666,16 +3702,19 @@ def _zc_t(c: _Ctx) -> _Spec:
         h0, hc = plain, f"(by intro k _ _; {plain})"
     else:
         d_expr = c.ex.dim_exprs[w.dim]
-        _need(d_expr.is_Integer, "coefficients at a concrete dimension")
-        h0 = _coef_at(c, 0, _zc_terms(c, ef, 0)[0], ONE, [ef])
-        cases = ["· exact absurd rfl hk0"]
-        for k in range(1, int(d_expr)):
-            cases.append(f"· {_coef_at(c, k, _zc_terms(c, ef, k)[0], ONE, [ef])}")
-        body = "\n    ".join(cases)
-        hc = (
-            f"(by\n    intro k hk hk0\n    simp only [{c.ex.unfold}, Δ] at hk\n"
-            f"    interval_cases k\n    {body})"
-        )
+        if d_expr.is_Integer:
+            h0 = _coef_at(c, 0, _zc_terms(c, ef, 0)[0], ONE, [ef])
+            cases = ["· exact absurd rfl hk0"]
+            for k in range(1, int(d_expr)):
+                cases.append(f"· {_coef_at(c, k, _zc_terms(c, ef, k)[0], ONE, [ef])}")
+            body = "\n    ".join(cases)
+            hc = (
+                f"(by\n    intro k hk hk0\n    simp only [{c.ex.unfold}, Δ] at hk\n"
+                f"    interval_cases k\n    {body})"
+            )
+        else:
+            unf = f"simp only [zc, {c.ex.unfold}, Φ]; {_coef_sym(c)}"
+            h0, hc = unf, f"(by intro k hk hk0; {unf})"
     lemma = (
         f"zcT {c.env} {w.dim} {e} {o} {i} {_zc(ef)} IFACE (by decide) rfl rfl {_chks(3)} "
         f"(by decide) (by decide) (by {h0}) {hc}"
@@ -4745,6 +4784,266 @@ def _kz(c: _Ctx) -> _Spec:
     )
 
 
+def _ww_core(
+    nodes: Mapping[NodeId, LNode],
+) -> tuple[dict[NodeId, LNode], list[tuple[NodeId, LNode]]]:
+    """The nodes of one WW side without its identity Z spiders, and those spiders."""
+    ids = [(nid, n) for nid, n in nodes.items() if n.kind == "Z" and len(n.ins) == len(n.outs) == 1]
+    return {nid: n for nid, n in nodes.items() if (nid, n) not in ids}, ids
+
+
+def _ww_idents(
+    ids: list[tuple[NodeId, LNode]], core: Mapping[NodeId, LNode]
+) -> dict[int, tuple[int, NodeId, LNode]]:
+    """Each identity Z spider of a WW side by its core label: the boundary label, id, node."""
+    used = {lab for m in core.values() for lab in m.labels()}
+    ident: dict[int, tuple[int, NodeId, LNode]] = {}
+    for nid, n in ids:
+        if n.ins[0] in used and n.outs[0] not in used:
+            ident[n.ins[0]] = (n.outs[0], nid, n)
+        elif n.outs[0] in used and n.ins[0] not in used:
+            ident[n.outs[0]] = (n.ins[0], nid, n)
+        else:
+            raise NetUnsupported("WW identity")
+    return ident
+
+
+def _ww_wrap(
+    lemma: str, ident: Mapping[int, tuple[int, NodeId, LNode]], side: list[LNode], how: str, dz: int
+) -> tuple[str, list[LNode], list[int]]:
+    """``lemma`` with every identity of ``ident`` inserted on one side by ``LocalEq.{how}``."""
+    added = []
+    for a, (x, _nid, n) in ident.items():
+        f = _ren([(x, a)])
+        side = [m.rename(f) for m in side]
+        hpq = "(Or.inl ⟨rfl, rfl⟩)" if n.outs[0] == x else "(Or.inr ⟨rfl, rfl⟩)"
+        lemma = (
+            f"LocalEq.{how} ({lemma}) {dz} {n.outs[0]} {n.ins[0]} {x} {a} {n.ph} {hpq} "
+            f"{_chks(7)} (by phz) {_nodes(side)} rfl"
+        )
+        side = [*side, n]
+        added.append(a)
+    return lemma, side, added
+
+
+def _ww(c: _Ctx) -> _Spec:
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    new = dict(c.new_nodes)
+    conv = c.step.rule_name.endswith("_converse")
+    lraw, rraw = (new, left) if conv else (left, new)
+    lside, l_ids_ = _ww_core(lraw)
+    rside, r_ids_ = _ww_core(rraw)
+    _need(not (l_ids_ if not conv else r_ids_), "WW identity on the matched side")
+    for n in (*lraw.values(), *rraw.values()):
+        _need(n.kind in ("W", "Z"), "WW node kinds")
+        if n.kind == "W":
+            _need(n.ph == 0 and len(n.ins) == 1, "WW W node")
+        else:
+            _phaseless(c, n)
+    dims = {n.dim for n in (*lraw.values(), *rraw.values())}
+    _need(len(dims) == 1, "WW dimensions")
+    (dz,) = dims
+    lw = {nid: n for nid, n in lside.items() if n.kind == "W"}
+    lg = {nid: n for nid, n in lside.items() if n.kind == "Z"}
+    _need(
+        len(lw) == 3 and all(len(g.ins) == 2 and len(g.outs) == 1 for g in lg.values()), "WW left"
+    )
+    ins = [n.ins[0] for n in lw.values()]
+    pid = next((nid for nid, n in lw.items() if ins.count(n.ins[0]) == 1), None)
+    _need(pid is not None, "WW pair")
+    assert pid is not None
+    p = lw[pid]
+    (u,) = p.ins
+    pair = [nid for nid in lw if nid != pid]
+    _need(lw[pair[0]].ins == lw[pair[1]].ins, "WW pair")
+    g_by1 = {g.ins[1]: gid for gid, g in lg.items()}
+    ws = [nid for nid in pair if all(o in g_by1 for o in lw[nid].outs)]
+    ws = [nid for nid in ws if len(lw[nid].outs) == len(lg)]
+    _need(bool(ws), "WW W node into the green dots")
+    wid = ws[-1]
+    tid = next(nid for nid in pair if nid != wid)
+    w, t = lw[wid], lw[tid]
+    (z,) = w.ins
+    gids = [g_by1[o] for o in w.outs]
+    _need(len(set(gids)) == len(gids) == len(lg), "WW green dots")
+    gs = [lg[g] for g in gids]
+    _need(p.outs == tuple(g.ins[0] for g in gs), "WW projecting W node")
+    ident = _ww_idents(l_ids_ or r_ids_, lside if conv else rside)
+    xs = [ident[a][0] if conv and a in ident else a for a in t.outs]
+    rw_ = {nid: n for nid, n in rside.items() if n.kind == "W"}
+    rg = {nid: n for nid, n in rside.items() if n.kind == "Z"}
+    by_y = {g.outs[0]: gid for gid, g in rg.items() if len(g.ins) == 2 and len(g.outs) == 1}
+    _need(len(by_y) == len(rg) == len(gs) and all(g.outs[0] in by_y for g in gs), "WW right greens")
+    hids = [by_y[g.outs[0]] for g in gs]
+    hs = [rg[h] for h in hids]
+    pps = [nid for nid, n in rw_.items() if n.ins == (u,)]
+    _need(len(pps) == 1, "WW right projecting W node")
+    ppid = pps[0]
+    _need(rw_[ppid].outs == tuple(h.ins[0] for h in hs), "WW right projecting W node outputs")
+    colids = []
+    for h in hs:
+        found = [nid for nid, n in rw_.items() if nid != ppid and n.ins == (h.ins[1],)]
+        _need(len(found) == 1, "WW column")
+        colids.append(found[0])
+    rest = [nid for nid in rw_ if nid != ppid and nid not in colids]
+    row_in = {}
+    for nid in rest:
+        (lab,) = rw_[nid].ins
+        x = ident[lab][0] if not conv and lab in ident else lab
+        _need(x not in row_in, "WW rows")
+        row_in[x] = nid
+    _need(sorted(row_in) == sorted(xs) and len(rest) == len(xs), "WW rows")
+    rowids = [row_in[x] for x in xs]
+    cols = [rw_[nid].outs for nid in colids]
+    for k, rid in enumerate(rowids):
+        _need(all(len(col) == len(xs) for col in cols), "WW column lengths")
+        _need(rw_[rid].outs == tuple(col[k] for col in cols), "WW crossing")
+    gs_text = "[" + ", ".join(f"⟨{g.ins[0]}, {g.ins[1]}, {g.outs[0]}, {g.ph}⟩" for g in gs) + "]"
+    cs_text = (
+        "["
+        + ", ".join(
+            f"⟨{h.ins[0]}, {h.ins[1]}, {h.outs[0]}, {h.ph}, {_list(col)}⟩"
+            for h, col in zip(hs, cols)
+        )
+        + "]"
+    )
+    env = c.env
+    lemma = (
+        f"zxwWW {env} {dz} {z} {u} {_list(xs)} {gs_text} {cs_text} IFACE {_positive(c, dz)} "
+        f"{_chks(8)} (by intro g hg; fin_cases hg <;> phz) (by intro g hg; fin_cases hg <;> phz) "
+        f"{_chks(1)}"
+    )
+    core_l = [t.rename(_ren([(a, ident[a][0]) for a in ident])) if conv else t, w, p, *gs]
+    core_r_rows = [
+        rw_[rid].rename(_ren([(lab, ident[lab][0]) for lab in ident])) if not conv else rw_[rid]
+        for rid in rowids
+    ]
+    core_r = [rw_[ppid], *core_r_rows, *(rw_[nid] for nid in colids), *hs]
+    i_l = [z, *(v for g in gs for v in g.ins)]
+    i_r = [*(v for col in cols for v in col), *(v for h in hs for v in h.ins)]
+    lemma, _side, added = _ww_wrap(
+        lemma, ident, list(core_l if conv else core_r), "idL" if conv else "idR", dz
+    )
+    i_side = [*(i_l if conv else i_r), *added]
+    if conv:
+        order = [tid, wid, pid, *gids, *(nid for _, (_, nid, _) in ident.items())]
+        return _Spec(
+            (ppid, *rowids, *colids, *hids),
+            [(nid, new[nid]) for nid in order],
+            f"LocalEq.symm' ({lemma})",
+            i_l=tuple(i_r),
+            i_r=tuple(i_side),
+        )
+    order = [ppid, *rowids, *colids, *hids, *(nid for _, (_, nid, _) in ident.items())]
+    return _Spec(
+        (tid, wid, pid, *gids),
+        [(nid, new[nid]) for nid in order],
+        lemma,
+        i_l=tuple(i_l),
+        i_r=tuple(i_side),
+    )
+
+
+def _qf_ww(c: _Ctx) -> _Spec:
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    new = dict(c.new_nodes)
+    conv = c.step.rule_name.endswith("_converse")
+    lraw, rraw = (new, left) if conv else (left, new)
+    lside, l_ids_ = _ww_core(lraw)
+    rside, r_ids_ = _ww_core(rraw)
+    _need(not (l_ids_ if not conv else r_ids_), "qf_ww identity on the matched side")
+    for n in (*lraw.values(), *rraw.values()):
+        _need(n.kind in ("W", "Z"), "qf_ww node kinds")
+        if n.kind == "W":
+            _need(n.ph == 0 and len(n.ins) == 1, "qf_ww W node")
+        else:
+            _phaseless(c, n)
+    dims = {n.dim for n in (*lraw.values(), *rraw.values())}
+    _need(len(dims) == 1, "qf_ww dimensions")
+    (dz,) = dims
+    _need(len(lside) == 2 and all(n.kind == "W" for n in lside.values()), "qf_ww left")
+    rg = {nid: n for nid, n in rside.items() if n.kind == "Z" and len(n.outs) == 2}
+    effs = [nid for nid, n in rside.items() if n.kind == "Z" and not n.outs and len(n.ins) == 1]
+    _need(len(effs) == 1, "qf_ww green effect")
+    eid = effs[0]
+    eff = rside[eid]
+    by_y = {g.outs[0]: gid for gid, g in rg.items() if len(g.ins) == 1}
+    _need(len(by_y) == len(rg), "qf_ww green dots")
+    pair = list(lside)
+    _need(lside[pair[0]].ins == lside[pair[1]].ins, "qf_ww pair")
+    ws = [nid for nid in pair if sorted(lside[nid].outs) == sorted(by_y)]
+    _need(bool(ws), "qf_ww W node")
+    wid = ws[-1]
+    tid = next(nid for nid in pair if nid != wid)
+    w, t = lside[wid], lside[tid]
+    (z,) = w.ins
+    hids = [by_y[y] for y in w.outs]
+    hs = [rg[h] for h in hids]
+    rw_ = {nid: n for nid, n in rside.items() if n.kind == "W"}
+    sids = [nid for nid, n in rw_.items() if n.ins == eff.ins]
+    _need(len(sids) == 1, "qf_ww W node on the effect")
+    sid = sids[0]
+    _need(rw_[sid].outs == tuple(h.outs[1] for h in hs), "qf_ww W node outputs")
+    colids = []
+    for h in hs:
+        found = [nid for nid, n in rw_.items() if nid != sid and n.ins == (h.ins[0],)]
+        _need(len(found) == 1, "qf_ww column")
+        colids.append(found[0])
+    ident = _ww_idents(l_ids_ or r_ids_, lside if conv else rside)
+    xs = [ident[a][0] if conv and a in ident else a for a in t.outs]
+    rest = [nid for nid in rw_ if nid != sid and nid not in colids]
+    row_in = {}
+    for nid in rest:
+        (lab,) = rw_[nid].ins
+        x = ident[lab][0] if not conv and lab in ident else lab
+        _need(x not in row_in, "qf_ww rows")
+        row_in[x] = nid
+    _need(sorted(row_in) == sorted(xs) and len(rest) == len(xs), "qf_ww rows")
+    rowids = [row_in[x] for x in xs]
+    cols = [rw_[nid].outs for nid in colids]
+    _need(all(len(col) == len(xs) for col in cols), "qf_ww column lengths")
+    for k, rid in enumerate(rowids):
+        _need(rw_[rid].outs == tuple(col[k] for col in cols), "qf_ww crossing")
+    cs_text = (
+        "["
+        + ", ".join(
+            f"⟨{h.outs[0]}, {h.outs[1]}, {h.ins[0]}, {h.ph}, {_list(col)}⟩"
+            for h, col in zip(hs, cols)
+        )
+        + "]"
+    )
+    (e,) = eff.ins
+    lemma = (
+        f"qfWW {c.env} {dz} {z} {e} {eff.ph} {_list(xs)} {cs_text} IFACE {_positive(c, dz)} "
+        f"{_chks(6)} (by intro g hg; fin_cases hg <;> phz) (by phz) {_chks(1)}"
+    )
+    back = _ren([(a, x) for a, (x, _, _) in ident.items()])
+    core_l = [t.rename(back) if conv else t, w]
+    rows = [rw_[rid] if conv else rw_[rid].rename(back) for rid in rowids]
+    core_r = [*rows, rw_[sid], eff, *(rw_[nid] for nid in colids), *hs]
+    i_l = [z]
+    i_r = [*(v for col in cols for v in col), e, *(v for h in hs for v in (h.outs[1], h.ins[0]))]
+    lemma, _side, added = _ww_wrap(
+        lemma, ident, list(core_l if conv else core_r), "idL" if conv else "idR", dz
+    )
+    extra = [nid for _, (_, nid, _) in ident.items()]
+    if conv:
+        return _Spec(
+            (*rowids, sid, eid, *colids, *hids),
+            [(nid, new[nid]) for nid in (tid, wid, *extra)],
+            f"LocalEq.symm' ({lemma})",
+            i_l=tuple(i_r),
+            i_r=(*i_l, *added),
+        )
+    return _Spec(
+        (tid, wid),
+        [(nid, new[nid]) for nid in (*rowids, sid, eid, *colids, *hids, *extra)],
+        lemma,
+        i_l=tuple(i_l),
+        i_r=(*i_r, *added),
+    )
+
+
 def _qf_hd(c: _Ctx) -> _Spec:
     left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
     new = dict(c.new_nodes)
@@ -5470,6 +5769,10 @@ _RULES: dict[str, _RuleBuilder] = {
     "qf_va": _qf_va,
     "qf_va_converse": _qf_va,
     "zxw_kz": _kz,
+    "zxw_ww": _ww,
+    "zxw_ww_converse": _ww,
+    "qf_ww": _qf_ww,
+    "qf_ww_converse": _qf_ww,
     "zxw_kz_converse": _kz,
     "qf_hd": _qf_hd,
     "qf_hd_converse": _qf_hd,
