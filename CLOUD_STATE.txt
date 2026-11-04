@@ -23,3 +23,15 @@ Models to copy: zxwKZ / kzVal (pin2 + groups), zxwVW (sumOver_W), builders _kz, 
   archytaszx/semantics/lean_net.py; registration in the _RULES dict there.
 
 NOTES (append one dated entry per run: what was done, what failed, the next step)
+
+2026-11-04 (run 1): SETUP FAILED, no Lean work done. The environment's network policy answers 403 to
+  CONNECT for release.lean-lang.org (elan toolchain download) and cache.mathlib.org (`lake exe cache
+  get`). Toolchain workaround that works: download
+  https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst, extract
+  with python zstandard (no unzstd binary), `elan toolchain link leanprover/lean4:v4.35.0 <dir>`.
+  The Mathlib cache has no workaround; building Mathlib from source on 4 cores does not fit a run.
+  Fix needed: allow cache.mathlib.org (and release.lean-lang.org) in the environment network policy.
+  Next step unchanged: the WW rule lemma. Plan sketch for it: left nodes t=W(xs;z), w=W(ws;z),
+  p=W(ps;u), g_k=Z([y_k];[p_k,w_k]); right nodes p=W(ps;u), w_k=W(row_k;x_k), t_c=W(col_c;s_c),
+  g_c=Z([y_c];[p_c,s_c]); take rows and cols as separate arguments with a decidable hypothesis
+  tying cols to rows (cols = rows.transpose) so the node lists stay plain flatMaps/maps.
