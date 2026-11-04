@@ -6420,5 +6420,75 @@ theorem wwLeftVal (E : Env) (dz z u pg : ℕ) (xs : List ℕ) (cs : List (ℕ ×
   simp only [List.map_const', List.prod_replicate, one_pow, one_mul]
   ring
 
+/-- The nodes of the WW right side: W `ps ← u`, the row W nodes `row_k ← a_k` of
+`rows = (a_k, row_k)`, the column W nodes `col_c ← s_c` and green dots `y_c ← p_c, s_c` of
+`cols = (p_c, s_c, y_c, col_c)`. -/
+def wwRight (dz u pg : ℕ) (rows : List (ℕ × List ℕ)) (cols : List (ℕ × ℕ × ℕ × List ℕ)) :
+    List Node :=
+  ⟨.W, cols.map Prod.fst, [u], dz, 0⟩ :: ((rows.map fun r => ⟨.W, r.2, [r.1], dz, 0⟩) ++
+    (cols.map fun c => ⟨.W, c.2.2.2, [c.2.1], dz, 0⟩) ++
+    cols.map fun c => ⟨.Z, [c.2.2.1], [c.1, c.2.1], dz, pg⟩)
+
+/-- The WW right side with `p_c, s_c` summed: both pinned to `y_c`. -/
+theorem wwRightPin (E : Env) (dz u pg : ℕ) (rows : List (ℕ × List ℕ))
+    (cols : List (ℕ × ℕ × ℕ × List ℕ)) (τ : ℕ → ℕ)
+    (hnd : (cols.flatMap fun c => [c.1, c.2.1]).Nodup)
+    (hout : ∀ x ∈ u :: (rows.flatMap fun r => r.1 :: r.2) ++
+      cols.flatMap (fun c => c.2.2.1 :: c.2.2.2), x ∉ cols.flatMap fun c => [c.1, c.2.1])
+    (hlab : ∀ x ∈ cols.flatMap fun c => [c.1, c.2.1], labIdx E.labs x = dz)
+    (ry : ∀ c ∈ cols, τ c.2.2.1 < E.dimv dz) (hg : ∀ k < E.dimv dz, ex (E.phase pg k) = 1) :
+    sumOver (labDim E) (cols.flatMap fun c => [c.1, c.2.1]) (prodVal E (wwRight dz u pg rows cols))
+        τ =
+      tW (E.dimv dz) (cols.map fun c => τ c.2.2.1) (τ u) *
+        ((rows.map fun r => tW (E.dimv dz) (r.2.map τ) (τ r.1)).prod *
+          (cols.map fun c => tW (E.dimv dz) (c.2.2.2.map τ) (τ c.2.2.1)).prod) := by
+  set d := E.dimv dz with hdd
+  set P := cols.flatMap fun c => [c.1, c.2.1]
+  have hD : ∀ x ∈ P, labDim E x = d := fun x hx => labDim_of E x dz (hlab x hx)
+  have hu : u ∉ P := hout u (by simp)
+  have hr : ∀ r ∈ rows, ∀ x ∈ r.1 :: r.2, x ∉ P := fun r h x hx => hout x
+    (List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_flatMap.2 ⟨r, h, hx⟩)))
+  have hc : ∀ c ∈ cols, ∀ x ∈ c.2.2.1 :: c.2.2.2, x ∉ P := fun c h x hx => hout x
+    (List.mem_cons_of_mem _ (List.mem_append_right _ (List.mem_flatMap.2 ⟨c, h, hx⟩)))
+  set R : ℂ := (rows.map fun r => tW d (r.2.map τ) (τ r.1)).prod
+  rw [sumOver_congr _ P _ (fun ρ => (cols.map fun c => if ρ c.1 = τ c.2.2.1 ∧
+      ρ c.2.1 = τ c.2.2.1 then (1 : ℂ) else 0).prod * (fun ps ss => tW d ps (τ u) * (R *
+        (List.zipWith (fun c s => tW d (c.2.2.2.map τ) s) cols ss).prod))
+        (cols.map fun c => ρ c.1) (cols.map fun c => ρ c.2.1)) _ fun ρ hρ _ => by
+    have e : ∀ x, x ∉ P → ρ x = τ x := hρ
+    have hz : ((cols.map fun c => (⟨.Z, [c.2.2.1], [c.1, c.2.1], dz, pg⟩ : Node)).map (val E ρ)) =
+        cols.map fun c => if ρ c.1 = τ c.2.2.1 ∧ ρ c.2.1 = τ c.2.2.1 then (1 : ℂ) else 0 := by
+      rw [List.map_map]
+      refine List.map_congr_left fun c h => ?_
+      simp only [Function.comp_apply, val, List.map_cons, List.map_nil, List.cons_append,
+        List.nil_append]
+      rw [e _ (hc c h _ List.mem_cons_self), tZ_pin3 d _ _ _ _ (ry c h) (hg _ (ry c h))]
+    have hR : ((rows.map fun r => (⟨.W, r.2, [r.1], dz, 0⟩ : Node)).map (val E ρ)).prod = R := by
+      rw [List.map_map]
+      refine congrArg List.prod (List.map_congr_left fun r h => ?_)
+      simp only [Function.comp_apply, val, List.map_cons, List.map_nil]
+      rw [e _ (hr r h _ List.mem_cons_self),
+        List.map_congr_left fun x hx => e x (hr r h x (List.mem_cons_of_mem _ hx))]
+    have hC : ((cols.map fun c => (⟨.W, c.2.2.2, [c.2.1], dz, 0⟩ : Node)).map (val E ρ)).prod =
+        (List.zipWith (fun c s => tW d (c.2.2.2.map τ) s) cols (cols.map fun c => ρ c.2.1)).prod := by
+      rw [List.map_map, List.zipWith_map_right, List.zipWith_self]
+      refine congrArg List.prod (List.map_congr_left fun c h => ?_)
+      simp only [Function.comp_apply, val, List.map_cons, List.map_nil]
+      rw [List.map_congr_left fun x hx => e x (hc c h x (List.mem_cons_of_mem _ hx))]
+    simp only [wwRight, prodVal, List.map_cons, List.map_append, List.prod_cons, List.prod_append,
+      hz, hR, hC]
+    simp only [val, List.map_cons, List.map_nil, List.map_map, Function.comp_def]
+    rw [e u hu]
+    ring]
+  have hv : ∀ c ∈ cols, τ c.2.2.1 < labDim E c.1 := fun c h => by
+    rw [hD _ (List.mem_flatMap.2 ⟨c, h, by simp⟩)]; exact ry c h
+  have hv' : ∀ c ∈ cols, τ c.2.2.1 < labDim E c.2.1 := fun c h => by
+    rw [hD _ (List.mem_flatMap.2 ⟨c, h, by simp⟩)]; exact ry c h
+  refine (sumOver_pin2 (D := labDim E) cols Prod.fst (fun c => c.2.1) (fun c => τ c.2.2.1)
+    (fun c => τ c.2.2.1) (fun _ => 1) (fun ps ss => tW d ps (τ u) * (R *
+      (List.zipWith (fun c s => tW d (c.2.2.2.map τ) s) cols ss).prod)) hnd hv hv' _).trans ?_
+  simp only [List.map_const', List.prod_replicate, one_pow, one_mul, List.zipWith_map_right,
+    List.zipWith_self]
+
 
 end ArchytasZX
