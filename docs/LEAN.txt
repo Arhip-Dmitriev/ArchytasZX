@@ -111,6 +111,9 @@ between two scaled networks under one environment: the same tensor, scalars incl
                taLegVal, taPins, taK, taNet, ta_id, qfTA, MixOK, mix_ok, sumOver_finsum,
                zz_join, qfS1, qfS1c
                (section 8)
+  Expand       bang boxes on diagrams: Diagram.expand instantiates every box (port boxes grow a
+               boundary leg, node boxes copy their nodes and fan out crossing wires), one leaf
+               box at a time; DEqualF, equality of two families at every assignment
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
@@ -145,6 +148,20 @@ multiplicities. A rule applied inside node boxes is lifted to every multiplicity
 induction, one box at a time, peeling one copy per step; an induction proof of the engine,
 nested ones included, becomes a Lean induction over the same peeling. A port box on Z and X
 spiders or on a W node's outputs steps by Equal.of_port.
+
+A diagram of the engine with bang boxes is, in Lean, a Diagram with boxes (Diagram.lean, DBox:
+id, multiplicity index, parent box, node scope, port scope; box-free diagrams have none).
+Diagram.expand ks (Expand.lean) is the box-free diagram with every box b instantiated at ks b.mult,
+the least-id leaf box first: a port box grows each of its boundary legs into k consecutive legs;
+a node box makes k copies of its nodes and internal wires, a wire crossing into it becomes k legs
+of the outside node, copy j on the j-th, and its boundary ports become one block, copy by copy,
+at the place of the first of them; at k = 0 the boundary ports of its enclosing node boxes are
+first gathered into one block each. On every boxed diagram of examples/ and the battery, at every
+assignment of 0..3, the expansion was checked equal to the engine's instantiate_symbol up to
+renaming of nodes, boundary slots and leg positions fixed. DEqualF E M s₁ D₁ s₂ D₂
+states DEqual at every assignment σ of the multiplicity symbols, the boxes of index i at M σ i.
+Family exports still end in a statement over bundled networks (section 9, G11): the bridge from
+those networks to DEqualF is not proved yet.
 
 4.3 Proofs by the normaliser (archytaszx.semantics.lean_sym)
 
@@ -362,7 +379,9 @@ unproved axiom. binder_definition has one (section 8) except when only some of i
 
 G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
 by the classical evaluation with Gauss's sign and by Landsberg-Schaar reciprocity; neither is in
-Mathlib. A proof needing one is accepted only when the sums cancel between the sides.
+Mathlib. A proof needing one is accepted only when the sums cancel between the sides. No rule
+lemma needs an evaluated Gauss sum: zxw_h1, zxw_pcy, zxw_hd and qf_hd are proved by rewriting
+(xDef, zcPcy, zxwHD, qfHD), so the gap concerns only whole-proof normaliser exports.
 
 G3 Phase rules with a symbolic coefficient (theta k). At a bound index s the rule contributes
 ex(theta)^s; summing gives a geometric series, outside the normaliser's monomials.
