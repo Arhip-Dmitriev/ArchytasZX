@@ -103,7 +103,7 @@ between two scaled networks under one environment: the same tensor, scalars incl
                wPairSum_zero, wPairSum_hot, sum_hot_rows, LocalEq.idR, LocalEq.idL, WwG,
                wwLeft, wwLeftVal, WwC, wwRight, wwRows, wwRightVal, wwB_zero, wwB_hot, zxwWW,
                QwC, qwRight, qwRightVal, qfWW, mixLegIn, mixLegOut, MixL, mixSum, mixZ,
-               multiplierUp_val
+               multiplierUp_val, tX_zero_effect, qfE, tX_kj_state, tB_zero_left, qfK0
                (section 8)
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
@@ -303,6 +303,9 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
                                  wwRightVal            on moved terms by LocalEq.idR/idL)
   qf_ww                          qfWW, qwRightVal,     _qf_ww (as _ww)
                                  wwB_zero, wwB_hot
+  qf_e                           qfE, tX_zero_effect   _qf_e
+  qf_k0                          qfK0, tX_kj_state,    _qf_k0
+                                 tB_zero_left
   spider_fusion (weighted X)     xcFusion              _fusion
   zxw_hd                         zxwHD, chainsVal,     _zxw_hd (both directions; the converse
                                  chainsClosed,         by LocalEq.flip')
@@ -327,8 +330,8 @@ there, over the rule's arity classes, and checks every file with lake env lean.
 
 G1 Binder and splitter under the normaliser. The binder entry [k = a t + b] needs t as a
 coefficient and div/mod to eliminate; an X spider or F on an s t wire gives characters
-omega_s^(t k l) whose sums depend on gcd(t, s). The rules qf_dd, qf_e, qf_dzx, qf_k0, qf_bzw,
-qf_ta, qf_s1 and connective_inverse_converse have no rule lemma; their steps are unproved
+omega_s^(t k l) whose sums depend on gcd(t, s). The rules qf_dd, qf_dzx, qf_bzw, qf_ta, qf_s1
+and connective_inverse_converse have no rule lemma; their steps are unproved
 axioms. binder_definition has one (section 8) except when only some of its legs are bent. The
 mixed-dimensional Z box of [P2] (2.3.3), which these rules contain, has its value lemma mixZ
 (Weights.lean: every leg's pink dot and binder or splitter pin its product label to the leg's

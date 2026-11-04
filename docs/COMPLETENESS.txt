@@ -184,9 +184,9 @@ converse.
   DZX    qf_dzx (qf_dzx_converse)                          y  y  U     concrete dims
   TA     qf_ta (qf_ta_converse)                            y  y  U     concrete dims
   DD     qf_dd (qf_dd_converse)                            y  y  U     concrete dims
-  E      qf_e (qf_e_converse)                              y  y  U     concrete dims
+  E      qf_e (qf_e_converse)                              y  y  L/L   qfE
   BZW    qf_bzw (qf_bzw_converse)                          y  y  U     concrete dims
-  K0     qf_k0 (qf_k0_converse)                            y  y  U     concrete dims
+  K0     qf_k0 (qf_k0_converse)                            y  y  L/L   qfK0
   (2.8)  binder_definition (binder_definition_converse)    y  y  L/L   merger = bent splitter;
                                                                        bindDef, bindDef0
 
