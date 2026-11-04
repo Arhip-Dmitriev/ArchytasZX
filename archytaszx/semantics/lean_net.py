@@ -4102,6 +4102,65 @@ def _bind_def(c: _Ctx) -> _Spec:
     return _Spec((nodes["b"],), [(sid, sn), z1, z2, z3], lemma, i_r=(x, y, z))
 
 
+def _qf_e(c: _Ctx) -> _Spec:
+    ids = list(dict(c.match.nodes).values())
+    ns = {nid: c.node(nid) for nid in ids}
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in ns.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    bid, bn = one(lambda n: n.kind == "B", "E binder")
+    sid, sn = one(lambda n: n.kind == "S", "E splitter")
+    _need(len(bn.outs) == 1 and len(bn.ins) == 2 and len(sn.outs) == 2, "E connective legs")
+    (k,), (g, b), (h, o), (l,) = bn.outs, bn.ins, sn.outs, sn.ins
+    gid, gn = one(lambda n: n.kind == "X" and n.outs == (g,) and not n.ins, "E pink state")
+    hid, hn = one(lambda n: n.kind == "X" and n.ins == (h,) and not n.outs, "E pink effect")
+    mid, mn = one(lambda n: n.kind in _ZC and n.outs == (l,) and n.ins == (k,), "E Z box")
+    xid, xn = one(lambda n: n.kind == "X" and n.outs == (b,), "E multiplier")
+    ws = xn.ins
+    zid, zn = one(lambda n: n.kind == "Z" and n.outs == ws and len(n.ins) == 1, "E multiplier")
+    (a,) = zn.ins
+    pid, pn = one(lambda n: n.kind == "X" and n.outs == (a,) and not n.ins, "E input state")
+    _need(len(ns) == 8, "E left side")
+    ((rid, rn),) = c.new_nodes.items()
+    _need(rn.kind == "X" and rn.outs == (o,) and not rn.ins, "E right state")
+    dn, d2 = pn.dim, gn.dim
+    _need(all(n.dim == dn for n in (zn, xn, hn)) and rn.dim == d2, "E dimensions")
+    _need((bn.dim, bn.ph, sn.dim, sn.ph) == (d2, dn, dn, d2), "E connective dimensions")
+    for n in (pn, zn, xn, gn, hn, rn):
+        _phaseless(c, n)
+    if mn.kind == "Z":
+        h0 = f"(by simp [zc, {c.ex.unfold}, Φ, ex_zero])"
+    else:
+        h0 = f"(by {_coef_at(c, 0, _zc_terms(c, mn, 0)[0], ONE, [mn])})"
+    e = len(ws)
+    r = c.rt(dn)
+    k_model = r ** (3 - e)
+    sc = c.ex.sc
+    try:
+        body = sc.prove(k_model * r**e, r**3)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
+    hs = f"(show {sc.text(k_model)} * {sc.text(r)} ^ {e} = {sc.text(r)} ^ 3 from ({body}))"
+    hla = "(by intro x hx; fin_cases hx <;> chk)"
+    lemma = (
+        f"qfE {c.env} {dn} {d2} {mn.dim} {a} {b} {g} {k} {l} {h} {o} {pn.ph} {zn.ph} {xn.ph} "
+        f"{gn.ph} {hn.ph} {rn.ph} {_zc(mn)} {_list(ws)} IFACE (by pos) (by pos) {_CHK} rfl rfl rfl "
+        f"(by decide) {hla} {_chks(4)} (by intro ph hph; fin_cases hph <;> phz) "
+        f"(by intro ph hph; fin_cases hph <;> phz) {h0} _ {hs}"
+    )
+    return _Spec(
+        (pid, zid, xid, bid, gid, mid, sid, hid),
+        [(rid, rn)],
+        lemma,
+        k_model,
+        i_l=(a, b, g, k, l, h, *ws),
+        i_r=(),
+    )
+
+
 def _d1(c: _Ctx) -> _Spec:
     nodes = dict(c.match.nodes)
     zid = nodes["z"]
@@ -5460,6 +5519,7 @@ _RULES: dict[str, _RuleBuilder] = {
     "zxw_p1_multiplier": _hh_mult,
     "qf_mw": _qf_mw,
     "binder_definition": _bind_def,
+    "qf_e": _qf_e,
     "zxw_d1": _d1,
     "qf_d1": _qf_d1,
     "qf_d1_converse": _qf_d1,

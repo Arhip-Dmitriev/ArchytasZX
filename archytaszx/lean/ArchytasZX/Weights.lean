@@ -6216,8 +6216,6 @@ theorem xcFusion (E : Env) (na nb m : Node) (dz w : ℕ) (iface : List ℕ) (ha 
   simp only [A, B, List.map_append, List.prod_append, F, G]
   ring
 
-
-
 /-- The phaseless pink effect at `j`: `√d` if `j = 0`. -/
 theorem tX_zero_effect (d j : ℕ) (hd : 0 < d) (hj : j < d) (φ : ℕ → ℝ)
     (hφ : ∀ k < d, ex (φ k) = 1) :
