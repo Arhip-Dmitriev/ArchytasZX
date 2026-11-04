@@ -824,8 +824,8 @@ Z box a.
 2.55 zxw_kz
 ~~~~~~~~~~~
 
-[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through multipliers
-e_1..e_n is a pink K_1 state and n pink dot states.
+[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through transposed
+multipliers e_1..e_n is a pink K_1 state and n pink dot states.
 
   Scalar:           per match: the ratio of the pink normalisations of the two sides
   Quantifiers:      leg counts n, e_1..e_n; dimensions d
@@ -1412,8 +1412,8 @@ dots, is the crossed bialgebra of W nodes and W transposes. Read right to left.
 2.96 zxw_kz_converse
 ~~~~~~~~~~~~~~~~~~~~
 
-[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through multipliers
-e_1..e_n is a pink K_1 state and n pink dot states. Read right to left.
+[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through transposed
+multipliers e_1..e_n is a pink K_1 state and n pink dot states. Read right to left.
 
   Scalar:           per match: the ratio of the pink normalisations of the two sides
   Quantifiers:      leg counts n, e_1..e_n; dimensions d

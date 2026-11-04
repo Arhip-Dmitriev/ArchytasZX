@@ -1306,7 +1306,7 @@ def _kz_left(dim: Dim, a: Arities) -> Template:
     for k, e in enumerate(es):
         g = t.z(2, 1, key=f"g{k}")
         t.wire(o("w", k + 1), i(g, 0))
-        top, bottom = t.multiplier(e)
+        top, bottom = t.multiplier(e, up=True)
         t.wire(o("q", k), top)
         t.wire(bottom, i(g, 1))
         t.term(f"o{k + 1}", o(g))
@@ -1332,9 +1332,9 @@ def _kz_arities(diagram: Diagram, anchor: NodeId, dim: Dim) -> Iterator[Arities]
     for green in _neighbour_ids(diagram, anchor):
         if diagram.nodes[green].generator_type.name != Z_SPIDER.name:
             continue
-        for pink in _neighbour_ids(diagram, green):
-            if diagram.nodes[pink].generator_type.name == X_SPIDER.name:
-                labels.add(diagram.nodes[pink].num_inputs)
+        for lower in _neighbour_ids(diagram, green):
+            if lower != green and diagram.nodes[lower].generator_type.name == Z_SPIDER.name:
+                labels.add(diagram.nodes[lower].num_inputs)
     bound = dim.to_int() - 1 if dim.is_concrete else None
     usable = sorted(e for e in labels if e >= 1 and (bound is None or e <= bound))
     for es in itertools.combinations_with_replacement(usable, n):
@@ -1365,7 +1365,7 @@ ZXW_KZ = TemplateAxiom(
     concrete_only=True,
     description=(
         "[P1] KZ: a pink K_1 state on a W node whose other outputs meet a pink dot through "
-        "multipliers e_1..e_n is a pink K_1 state and n pink dot states."
+        "transposed multipliers e_1..e_n is a pink K_1 state and n pink dot states."
     ),
     quantifiers=("n", "e_1..e_n", "d"),
 )
