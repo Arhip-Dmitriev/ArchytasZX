@@ -22,3 +22,4 @@ import ArchytasZX.Paper
 import ArchytasZX.Completeness
 import ArchytasZX.Weights
 import ArchytasZX.Diagram
+import ArchytasZX.Expand

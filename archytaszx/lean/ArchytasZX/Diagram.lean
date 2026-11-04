@@ -34,12 +34,22 @@ structure DNode where
   ins : List ℕ
   deriving DecidableEq, Repr
 
-/-- Nodes, wires between two ports, boundary outputs and boundary inputs. -/
+/-- A bang box: id, multiplicity index, parent box, node scope and port scope. -/
+structure DBox where
+  id : ℕ
+  mult : ℕ
+  parent : Option ℕ
+  nodes : List ℕ
+  ports : List Port
+  deriving DecidableEq, Repr
+
+/-- Nodes, wires between two ports, boundary outputs and boundary inputs, and bang boxes. -/
 structure Diagram where
   nodes : List DNode
   wires : List (Port × Port)
   outs : List Port
   ins : List Port
+  boxes : List DBox := []
   deriving DecidableEq, Repr
 
 namespace Diagram
