@@ -6336,4 +6336,143 @@ theorem qfE (E : Env) (dn d2 dk a b g k l h o p0 z0 x0 p1 p2 p3 : ℕ) (m : Node
     linear_combination key
   · simp [h', Ne.symm h']
 
+/-- The pink `K_j` state at `x`: `√d` if `x = J`, where `J + j ≡ 0`. -/
+theorem tX_kj_state (d j J x : ℕ) (hd : 0 < d) (hJ : J < d) (hx : x < d) (hjJ : (J + j) % d = 0)
+    (φ : ℕ → ℝ) (hφ : ∀ k < d, ex (φ k) = om d ^ (k * j)) :
+    tX d φ [x] [] = if x = J then rt d else 0 := by
+  rw [tX_kj d j hd φ hφ]
+  simp only [List.length_cons, List.length_nil, List.sum_cons, List.sum_nil, add_zero,
+    zero_add, pow_one, Nat.zero_mod]
+  have : (x + j) % d = 0 ↔ x = J := by
+    constructor
+    · intro h
+      have h1 : (x + j) % d = (J + j) % d := by rw [h, hjJ]
+      have := Nat.ModEq.add_right_cancel' j h1
+      rwa [Nat.ModEq, Nat.mod_eq_of_lt hx, Nat.mod_eq_of_lt hJ] at this
+    · rintro rfl; exact hjJ
+  by_cases h : x = J
+  · rw [if_pos (this.2 h), if_pos h, rt_inv_mul d hd]
+  · rw [if_neg (fun h' => h (this.1 h')), if_neg h, mul_zero]
+
+/-- The binder entry with first leg `0`. -/
+theorem tB_zero_left (s t K b : ℕ) (hs : 0 < s) :
+    tB s t K 0 b = if b < t ∧ K = b then 1 else 0 := by
+  unfold tB; simp [hs]
+
+/-- [P2] (K0): the pink state `K_j` of dimension `m` into the plain green dot with legs `m`,
+`n1`, `n2` (binder, weighted Z box, two splitters) is `s` times pink `K` states of dimensions
+`n1` and `n2`. -/
+theorem qfK0 (E : Env) (dm dg dk dh1 dh2 dn1 dn2 x g k l1 l2 h1 h2 a b px pg q1 q2 r1 r2 j j1 j2
+    J : ℕ) (m : Node) (iface : List ℕ) (hm0 : 0 < E.dimv dm) (hg0 : 0 < E.dimv dg)
+    (hh1 : 0 < E.dimv dh1) (hh2 : 0 < E.dimv dh2) (hn1 : 0 < E.dimv dn1) (hn2 : 0 < E.dimv dn2)
+    (hdk : E.dimv dk = E.dimv dg * E.dimv dm) (hm : isZc m = true) (hdm : m.dim = dk)
+    (hlm : m.outs ++ m.ins = [l1, l2, k]) (hnd : [x, g, k, l1, l2, h1, h2, a, b].Nodup)
+    (hx : labIdx E.labs x = dm) (hg : labIdx E.labs g = dg) (hk : labIdx E.labs k = dk)
+    (hl1 : labIdx E.labs l1 = dk) (hl2 : labIdx E.labs l2 = dk) (hh1l : labIdx E.labs h1 = dh1)
+    (hh2l : labIdx E.labs h2 = dh2) (ha : a ∈ iface ∧ labIdx E.labs a = dn1)
+    (hb : b ∈ iface ∧ labIdx E.labs b = dn2)
+    (hpx : ∀ q < E.dimv dm, ex (E.phase px q) = om (E.dimv dm) ^ (q * j))
+    (hr1 : ∀ q < E.dimv dn1, ex (E.phase r1 q) = om (E.dimv dn1) ^ (q * j1))
+    (hr2 : ∀ q < E.dimv dn2, ex (E.phase r2 q) = om (E.dimv dn2) ^ (q * j2))
+    (hpg : ∀ q < E.dimv dg, ex (E.phase pg q) = 1) (hq1 : ∀ q < E.dimv dh1, ex (E.phase q1 q) = 1)
+    (hq2 : ∀ q < E.dimv dh2, ex (E.phase q2 q) = 1)
+    (hJ : J < E.dimv dm) (hjJ : (J + j) % E.dimv dm = 0)
+    (hj1 : J < E.dimv dn1 → (J + j1) % E.dimv dn1 = 0)
+    (hj2 : J < E.dimv dn2 → (J + j2) % E.dimv dn2 = 0)
+    (hlow : (J < E.dimv dn1 ∧ J < E.dimv dn2) ∨ zc E m J = 0) (s : ℂ)
+    (hs : s * (rt (E.dimv dn1) * rt (E.dimv dn2)) = rt (E.dimv dm) * rt (E.dimv dg) *
+      rt (E.dimv dh1) * rt (E.dimv dh2) * zc E m J) :
+    LocalEq E [⟨.X, [x], [], dm, px⟩, ⟨.B, [k], [g, x], dg, dm⟩, ⟨.X, [g], [], dg, pg⟩, m,
+        ⟨.S, [h1, a], [l1], dh1, dn1⟩, ⟨.X, [], [h1], dh1, q1⟩, ⟨.S, [h2, b], [l2], dh2, dn2⟩,
+        ⟨.X, [], [h2], dh2, q2⟩] [x, g, k, l1, l2, h1, h2]
+      [⟨.X, [a], [], dn1, r1⟩, ⟨.X, [b], [], dn2, r2⟩] [] iface 1 s := by
+  intro τ hτ
+  have ra := hτ a ha.1
+  have rb := hτ b hb.1
+  rw [labDim_of E a dn1 ha.2] at ra
+  rw [labDim_of E b dn2 hb.2] at rb
+  simp only [List.nodup_cons, List.mem_cons, List.not_mem_nil, or_false, not_or,
+    List.nodup_nil, and_true] at hnd
+  obtain ⟨⟨hxg, hxk, hxl1, hxl2, hxh1, hxh2, hxa, hxb⟩, ⟨hgk, hgl1, hgl2, hgh1, hgh2, hga, hgb⟩,
+    ⟨hkl1, hkl2, hkh1, hkh2, hka, hkb⟩, ⟨hl12, hl1h1, hl1h2, hl1a, hl1b⟩,
+    ⟨hl2h1, hl2h2, hl2a, hl2b⟩, ⟨hh12, hh1a, hh1b⟩, ⟨hh2a, hh2b⟩, hab⟩ := hnd
+  set M := E.dimv dm
+  set G := E.dimv dg
+  set D := E.dimv dk
+  set H1 := E.dimv dh1
+  set H2 := E.dimv dh2
+  set N1 := E.dimv dn1
+  set N2 := E.dimv dn2
+  have hval : ∀ ρ : ℕ → ℕ, ρ x < M → ρ g < G → ρ k < D → ρ h1 < H1 → ρ h2 < H2 →
+      prodVal E [⟨.X, [x], [], dm, px⟩, ⟨.B, [k], [g, x], dg, dm⟩, ⟨.X, [g], [], dg, pg⟩, m,
+        ⟨.S, [h1, a], [l1], dh1, dn1⟩, ⟨.X, [], [h1], dh1, q1⟩, ⟨.S, [h2, b], [l2], dh2, dn2⟩,
+        ⟨.X, [], [h2], dh2, q2⟩] ρ =
+      (if ρ x = J then rt M else 0) * tB G M (ρ k) (ρ g) (ρ x) * (if ρ g = 0 then rt G else 0) *
+        (if ρ l1 = ρ k ∧ ρ l2 = ρ k then zc E m (ρ k) else 0) * tB H1 N1 (ρ l1) (ρ h1) (ρ a) *
+        (if ρ h1 = 0 then rt H1 else 0) * tB H2 N2 (ρ l2) (ρ h2) (ρ b) *
+        (if ρ h2 = 0 then rt H2 else 0) := by
+    intro ρ rx rg rk rh1 rh2
+    have hz : val E ρ m = if ρ l1 = ρ k ∧ ρ l2 = ρ k then zc E m (ρ k) else 0 := by
+      rw [val_zc _ _ m hm, hlm, hdm]
+      simp only [List.map_cons, List.map_nil]
+      rw [tZw_at _ _ _ (ρ k) (by simp)]
+      have rk' : ρ k < E.dimv dk := rk
+      simp [rk']
+    simp only [prodVal, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one]
+    rw [hz]
+    simp only [val, List.map_cons, List.map_nil]
+    rw [tX_kj_state M j J _ hm0 hJ rx hjJ _ hpx, tX_zero_state G _ hg0 rg _ hpg,
+      tX_zero_effect H1 _ hh1 rh1 _ hq1, tX_zero_effect H2 _ hh2 rh2 _ hq2]
+    ring
+  rw [sumOver_congr _ _ _ _ τ (fun ρ _ hr => hval ρ
+      (by simpa [labDim_of E x dm hx] using hr x (by simp))
+      (by simpa [labDim_of E g dg hg] using hr g (by simp))
+      (by simpa [labDim_of E k dk hk] using hr k (by simp))
+      (by simpa [labDim_of E h1 dh1 hh1l] using hr h1 (by simp))
+      (by simpa [labDim_of E h2 dh2 hh2l] using hr h2 (by simp)))]
+  simp only [sumOver, labDim_of E x dm hx, labDim_of E g dg hg, labDim_of E k dk hk,
+    labDim_of E l1 dk hl1, labDim_of E l2 dk hl2, labDim_of E h1 dh1 hh1l, labDim_of E h2 dh2 hh2l,
+    Function.update_apply, hxg, hxk, hxl1, hxl2, hxh1, hxh2, hgk, hgl1, hgl2, hgh1, hgh2, hkl1,
+    hkl2, hkh1, hkh2, hl12, hl1h1, hl1h2, hl2h1, hl2h2, hh12, Ne.symm hxg, Ne.symm hxk,
+    Ne.symm hxl1, Ne.symm hxl2, Ne.symm hxh1, Ne.symm hxh2, Ne.symm hgk, Ne.symm hgl1,
+    Ne.symm hgl2, Ne.symm hgh1, Ne.symm hgh2, Ne.symm hkl1, Ne.symm hkl2, Ne.symm hkh1,
+    Ne.symm hkh2, Ne.symm hl12, Ne.symm hl1h1, Ne.symm hl1h2, Ne.symm hl2h1, Ne.symm hl2h2,
+    Ne.symm hh12, Ne.symm hxa, Ne.symm hxb, Ne.symm hga, Ne.symm hgb, Ne.symm hka, Ne.symm hkb,
+    Ne.symm hl1a, Ne.symm hl1b, Ne.symm hl2a, Ne.symm hl2b, Ne.symm hh1a, Ne.symm hh1b,
+    Ne.symm hh2a, Ne.symm hh2b, ite_true, ite_false, one_mul, prodVal, List.map_cons, List.map_nil,
+    List.prod_cons, List.prod_nil, mul_one, val]
+  have hJD : J < D := by
+    rw [hdk]; exact lt_of_lt_of_le hJ (Nat.le_mul_of_pos_left _ hg0)
+  rw [Finset.sum_eq_single J (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hJ) h)]
+  rw [Finset.sum_eq_single 0 (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hg0) h)]
+  rw [Finset.sum_eq_single J (fun y _ hy => by simp [hy, tB_zero_left _ _ _ _ hg0])
+    (fun h => absurd (Finset.mem_range.2 hJD) h)]
+  rw [Finset.sum_eq_single J (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hJD) h)]
+  rw [Finset.sum_eq_single J (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hJD) h)]
+  rw [Finset.sum_eq_single 0 (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hh1) h)]
+  rw [Finset.sum_eq_single 0 (fun y _ hy => by simp [hy])
+    (fun h => absurd (Finset.mem_range.2 hh2) h)]
+  simp only [ite_true, and_self, tB_zero_left _ _ _ _ hg0, tB_zero_left _ _ _ _ hh1,
+    tB_zero_left _ _ _ _ hh2, hJ, ra, rb, true_and, mul_one]
+  rcases hlow with ⟨l1', l2'⟩ | hz
+  · rw [tX_kj_state N1 j1 J _ hn1 l1' ra (hj1 l1') _ hr1,
+      tX_kj_state N2 j2 J _ hn2 l2' rb (hj2 l2') _ hr2]
+    have key : rt M * rt G * zc E m J * rt H1 * rt H2 = s * (rt N1 * rt N2) := by
+      rw [hs]; ring
+    by_cases ea : τ a = J
+    · by_cases eb : τ b = J
+      · rw [if_pos ea.symm, if_pos eb.symm, if_pos ea, if_pos eb]; linear_combination key
+      · rw [if_neg (Ne.symm eb), if_neg eb]; ring
+    · rw [if_neg (Ne.symm ea), if_neg ea]; ring
+  · have hs0 : s = 0 := by
+      have h' := hs
+      rw [hz, mul_zero] at h'
+      exact (mul_eq_zero.1 h').resolve_right (mul_ne_zero (rt_ne _ hn1) (rt_ne _ hn2))
+    simp [hz, hs0]
+
 end ArchytasZX
