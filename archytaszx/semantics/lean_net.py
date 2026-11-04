@@ -4161,6 +4161,86 @@ def _qf_e(c: _Ctx) -> _Spec:
     )
 
 
+def _qf_k0(c: _Ctx) -> _Spec:
+    ns = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    _need(len(ns) == 8 and len(c.new_nodes) == 2, "K0 sides")
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in ns.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    bid, bn = one(lambda n: n.kind == "B", "K0 binder")
+    _need(len(bn.outs) == 1 and len(bn.ins) == 2, "K0 binder legs")
+    (k,), (g, x) = bn.outs, bn.ins
+    mid, mn = one(lambda n: n.kind in _ZC and n.ins == (k,) and len(n.outs) == 2, "K0 Z box")
+    l1, l2 = mn.outs
+    s1id, s1 = one(lambda n: n.kind == "S" and n.ins == (l1,) and len(n.outs) == 2, "K0 split")
+    s2id, s2 = one(lambda n: n.kind == "S" and n.ins == (l2,) and len(n.outs) == 2, "K0 split")
+    (h1, a), (h2, b) = s1.outs, s2.outs
+    pid, pn = one(lambda n: n.kind == "X" and n.outs == (x,) and not n.ins, "K0 state")
+    gid, gn = one(lambda n: n.kind == "X" and n.outs == (g,) and not n.ins, "K0 pink state")
+    e1id, e1 = one(lambda n: n.kind == "X" and n.ins == (h1,) and not n.outs, "K0 effect")
+    e2id, e2 = one(lambda n: n.kind == "X" and n.ins == (h2,) and not n.outs, "K0 effect")
+    by_out = {n.outs: (nid, n) for nid, n in c.new_nodes.items() if n.kind == "X" and not n.ins}
+    _need((a,) in by_out and (b,) in by_out, "K0 right states")
+    r1, r2 = by_out[(a,)], by_out[(b,)]
+    dm, dg, dk, dh1, dh2 = pn.dim, gn.dim, mn.dim, e1.dim, e2.dim
+    dn1, dn2 = r1[1].dim, r2[1].dim
+    _need(
+        (bn.dim, bn.ph, s1.dim, s1.ph, s2.dim, s2.ph) == (dg, dm, dh1, dn1, dh2, dn2),
+        "K0 connective dimensions",
+    )
+    for n in (gn, e1, e2):
+        _phaseless(c, n)
+    dims = {}
+    for dz in (dm, dn1, dn2):
+        d_expr = c.ex.dim_exprs[dz]
+        _need(d_expr.is_Integer, "K0 at concrete dimensions")
+        dims[dz] = int(d_expr)
+    j = int(sp.Integer(dict(c.match.bindings)["j"]))
+    big = dims[dm]
+    jj = j % big
+    cval = _zc_terms(c, mn, jj)[0]
+    _need(cval in (sp.Integer(0), sp.Integer(1)), "K0 coefficient 0 or 1")
+    unfold = c.ex.unfold
+    hc = f"(by {_coef_at(c, jj, cval, cval, [mn])})"
+    low = jj < min(dims[dn1], dims[dn2])
+    _need(low or cval == 0, "K0 coefficient below the smallest dimension")
+    hlow = f"(Or.inl (by norm_num [{unfold}, Δ]))" if low else "(Or.inr rfl)"
+    rts = c.rt(dm) * c.rt(dg) * c.rt(dh1) * c.rt(dh2)
+    k_model = sp.Integer(0) if cval == 0 else rts * Inv(c.rt(dn1)) * Inv(c.rt(dn2))
+    sc = c.ex.sc
+    left, right = k_model * (c.rt(dn1) * c.rt(dn2)), rts * cval
+    try:
+        body = sc.prove(left, right)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
+    hs = (
+        f"(show {sc.text(k_model)} * ({sc.text(c.rt(dn1))} * {sc.text(c.rt(dn2))}) = "
+        f"{sc.text(c.rt(dm))} * {sc.text(c.rt(dg))} * {sc.text(c.rt(dh1))} * "
+        f"{sc.text(c.rt(dh2))} * {sc.text(cval)} from ({body}))"
+    )
+    js = [(-j) % dims[dz] for dz in (dm, dn1, dn2)]
+    lemma = (
+        f"qfK0 {c.env} {dm} {dg} {dk} {dh1} {dh2} {dn1} {dn2} {x} {g} {k} {l1} {l2} {h1} {h2} "
+        f"{a} {b} {pn.ph} {gn.ph} {e1.ph} {e2.ph} {r1[1].ph} {r2[1].ph} {js[0]} {js[1]} {js[2]} "
+        f"{jj} {_zc(mn)} IFACE {' '.join(['(by pos)'] * 6)} {_CHK} rfl rfl rfl (by decide) "
+        f"{_chks(9)} {_kj_proof(c, pn.ph, dm, js[0])} {_kj_proof(c, r1[1].ph, dn1, js[1])} "
+        f"{_kj_proof(c, r2[1].ph, dn2, js[2])} (by phz) (by phz) (by phz) "
+        f"(by norm_num [{unfold}, Δ]) (by norm_num [{unfold}, Δ]) (by norm_num [{unfold}, Δ]) "
+        f"(by norm_num [{unfold}, Δ]) {sc.text(cval)} {hc} {hlow} _ {hs}"
+    )
+    return _Spec(
+        (pid, bid, gid, mid, s1id, e1id, s2id, e2id),
+        [r1, r2],
+        lemma,
+        k_model,
+        i_l=(x, g, k, l1, l2, h1, h2),
+        i_r=(),
+    )
+
+
 def _d1(c: _Ctx) -> _Spec:
     nodes = dict(c.match.nodes)
     zid = nodes["z"]
@@ -5520,6 +5600,7 @@ _RULES: dict[str, _RuleBuilder] = {
     "qf_mw": _qf_mw,
     "binder_definition": _bind_def,
     "qf_e": _qf_e,
+    "qf_k0": _qf_k0,
     "zxw_d1": _d1,
     "qf_d1": _qf_d1,
     "qf_d1_converse": _qf_d1,
