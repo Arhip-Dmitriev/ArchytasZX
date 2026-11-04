@@ -41,3 +41,12 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   connects). Toolchain workaround from run 1 worked again (GitHub release tarball + python
   zstandard + `elan toolchain link`). `lake exe cache get` cannot work until cache.mathlib.org is
   allowed in the environment network policy. Next step unchanged: the WW rule lemma (plan in run 1).
+
+2026-11-04 (run 3): SETUP WORKED (release.lean-lang.org and cache.mathlib.org now reachable; elan
+  installer + `lake exe cache get` + `lake build ArchytasZX` in ~5 min). Note: `python` is 3.11 and
+  lacks the deps; use `python3.13 -I cloudtools/rule_check.py ...` (pip installs into 3.13).
+  Exported shapes (zxw_ww forward, d=2 n=m=2): left = W(xs;z), W(ws;z), W(ps;u), Z([y_k];[p_k,w_k]);
+  right = W(ps';u), W(row_k;a_k), W(col_c;s_c), Z([y_c];[p_c,s_c]) AND a bridge Z([x_k];[a_k])
+  per row (x_k boundary, a_k internal). Converse: bridges Z([t_out_k];[x_k]) on t's outputs.
+  Proved (Weights.lean): tZ_pin3, wwLeft, wwLeftVal (left = tW(y;u) * Σ_j tW(x;j) tW(y;j)),
+  wwRight, wwRightPin (right with p,s summed = tW(y;u) * Π_rows tW(row;a) * Π_cols tW(col;y)).
