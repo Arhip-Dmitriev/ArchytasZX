@@ -6433,4 +6433,863 @@ theorem sum_hot_rows (v : ℕ) (hv : v ≠ 0) (xs : List ℕ) :
     rw [← prod_isZero]; congr 2
     exact List.ext_getElem (by simp) (by simp)
 
+/-- A local equation with a boundary label `x` of its right side moved onto a fresh label `a`
+through an identity Z spider. -/
+theorem LocalEq.idR {E : Env} {L R : List Node} {iL iR iface : List ℕ}
+    (h : LocalEq E L iL R iR iface 1 1) (dz p q x a ph : ℕ)
+    (hpq : (p = x ∧ q = a) ∨ (p = a ∧ q = x)) (hx : x ∈ iface) (hxi : x ∉ iR) (hai : a ∉ iR)
+    (hax : a ≠ x) (haR : a ∉ labelsOf R) (hlx : labIdx E.labs x = dz) (hla : labIdx E.labs a = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase ph k) = 1) (R' : List Node)
+    (hR' : R.map (Node.rename fun l => if l = x then a else l) = R') :
+    LocalEq E L iL (R' ++ [⟨.Z, [p], [q], dz, ph⟩]) (iR ++ [a]) iface 1 1 := by
+  intro τ hτ
+  rw [h τ hτ, sumOver_append]
+  congr 1
+  refine sumOver_congr _ _ _ _ _ fun ρ hρ _ => ?_
+  have hρx : ρ x < E.dimv dz := by
+    rw [hρ x hxi]; have := hτ x hx; rwa [labDim_of E x dz hlx] at this
+  subst hR'
+  simp only [sumOver, prodVal_append, prodVal_rename, labDim_of E a dz hla]
+  rw [Finset.sum_eq_single (ρ x)]
+  · have hz : prodVal E [⟨.Z, [p], [q], dz, ph⟩] (Function.update ρ a (ρ x)) = 1 := by
+      simp only [prodVal, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one, val,
+        List.cons_append, List.nil_append]
+      rcases hpq with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+      · rw [Function.update_of_ne (Ne.symm hax), Function.update_self,
+          tZ_pair _ _ hph _ _ hρx, if_pos rfl]
+      · rw [Function.update_of_ne (Ne.symm hax), Function.update_self,
+          tZ_pair _ _ hph _ _ hρx, if_pos rfl]
+    rw [hz, mul_one]
+    refine prodVal_reads E R _ _ fun l hl => ?_
+    have hla' : l ≠ a := fun e => haR (e ▸ hl)
+    by_cases hlx' : l = x
+    · subst hlx'; simp [Function.update_self]
+    · simp [hlx', Function.update_of_ne hla']
+  · intro j _ hj
+    have hz : prodVal E [⟨.Z, [p], [q], dz, ph⟩] (Function.update ρ a j) = 0 := by
+      simp only [prodVal, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one, val,
+        List.cons_append, List.nil_append]
+      rcases hpq with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+      · rw [Function.update_of_ne (Ne.symm hax), Function.update_self]
+        unfold tZ
+        refine Finset.sum_eq_zero fun k _ => if_neg fun hk => hj ?_
+        have h1 := hk _ List.mem_cons_self
+        have h2 := hk _ (List.mem_cons_of_mem _ List.mem_cons_self)
+        omega
+      · rw [Function.update_of_ne (Ne.symm hax), Function.update_self]
+        unfold tZ
+        refine Finset.sum_eq_zero fun k _ => if_neg fun hk => hj ?_
+        have h1 := hk _ List.mem_cons_self
+        have h2 := hk _ (List.mem_cons_of_mem _ List.mem_cons_self)
+        omega
+    rw [hz, mul_zero]
+  · intro hn; exact absurd (Finset.mem_range.2 hρx) hn
+
+/-- `LocalEq.idR` on the left side. -/
+theorem LocalEq.idL {E : Env} {L R : List Node} {iL iR iface : List ℕ}
+    (h : LocalEq E L iL R iR iface 1 1) (dz p q x a ph : ℕ)
+    (hpq : (p = x ∧ q = a) ∨ (p = a ∧ q = x)) (hx : x ∈ iface) (hxi : x ∉ iL) (hai : a ∉ iL)
+    (hax : a ≠ x) (haL : a ∉ labelsOf L) (hlx : labIdx E.labs x = dz) (hla : labIdx E.labs a = dz)
+    (hph : ∀ k < E.dimv dz, ex (E.phase ph k) = 1) (L' : List Node)
+    (hL' : L.map (Node.rename fun l => if l = x then a else l) = L') :
+    LocalEq E (L' ++ [⟨.Z, [p], [q], dz, ph⟩]) (iL ++ [a]) R iR iface 1 1 :=
+  (LocalEq.idR h.symm' dz p q x a ph hpq hx hxi hai hax haL hlx hla hph L' hL').symm'
+
+/-- A green dot `p, w -> y` of a WW match, with its phase index. -/
+structure WwG where
+  p : ℕ
+  w : ℕ
+  y : ℕ
+  ph : ℕ
+  deriving DecidableEq
+
+/-- The green dot node. -/
+def WwG.node (dz : ℕ) (g : WwG) : Node := ⟨.Z, [g.y], [g.p, g.w], dz, g.ph⟩
+
+theorem tZ_three (d : ℕ) (φ : ℕ → ℝ) (hφ : ∀ k < d, ex (φ k) = 1) (a b c : ℕ) (ha : a < d) :
+    tZ d φ [a, b, c] = if b = a ∧ c = a then 1 else 0 := by
+  rw [tZ_at d φ _ a (by simp)]
+  simp only [List.mem_cons, List.not_mem_nil, or_false, forall_eq_or_imp, forall_eq, true_and]
+  by_cases h : b = a ∧ c = a
+  · rw [if_pos ⟨ha, h⟩, if_pos h, hφ a ha]
+  · rw [if_neg (fun h' => h h'.2), if_neg h]
+
+/-- The left side of zxw_ww: W transpose `xs <- z`, W node `z -> ws`, W node `u -> ps`, green
+dots. -/
+def wwLeft (dz z u : ℕ) (xs : List ℕ) (gs : List WwG) : List Node :=
+  ⟨.W, xs, [z], dz, 0⟩ :: ⟨.W, gs.map WwG.w, [z], dz, 0⟩ :: ⟨.W, gs.map WwG.p, [u], dz, 0⟩ ::
+    gs.map (WwG.node dz)
+
+theorem wwLeftVal (E : Env) (dz z u : ℕ) (xs : List ℕ) (gs : List WwG) (τ : ℕ → ℕ)
+    (hd : 0 < E.dimv dz) (hnd : (z :: gs.flatMap fun g => [g.p, g.w]).Nodup)
+    (hout : ∀ l ∈ u :: xs ++ gs.map WwG.y, l ∉ z :: gs.flatMap fun g => [g.p, g.w])
+    (hlab : ∀ l ∈ z :: gs.flatMap fun g => [g.p, g.w], labIdx E.labs l = dz)
+    (hy : ∀ g ∈ gs, τ g.y < E.dimv dz) (hph : ∀ g ∈ gs, ∀ k < E.dimv dz, ex (E.phase g.ph k) = 1) :
+    sumOver (labDim E) (z :: gs.flatMap fun g => [g.p, g.w]) (prodVal E (wwLeft dz z u xs gs)) τ =
+      tW (E.dimv dz) (gs.map fun g => τ g.y) (τ u) *
+        ∑ j ∈ Finset.range (E.dimv dz), tW (E.dimv dz) (xs.map τ) j *
+          tW (E.dimv dz) (gs.map fun g => τ g.y) j := by
+  set d := E.dimv dz with hdd
+  set F := gs.flatMap fun g => [g.p, g.w] with hF
+  obtain ⟨hzF, hFnd⟩ := List.nodup_cons.1 hnd
+  have hD : ∀ l ∈ F, labDim E l = d := fun l hl =>
+    labDim_of E l dz (hlab l (List.mem_cons_of_mem _ hl))
+  have hpF : ∀ g ∈ gs, g.p ∈ F := fun g hg => List.mem_flatMap.2 ⟨g, hg, by simp⟩
+  have hwF : ∀ g ∈ gs, g.w ∈ F := fun g hg => List.mem_flatMap.2 ⟨g, hg, by simp⟩
+  simp only [sumOver, labDim_of E z dz (hlab z List.mem_cons_self), Finset.mul_sum]
+  refine Finset.sum_congr rfl fun j hj => ?_
+  have hz' : ∀ l ∈ u :: xs ++ gs.map WwG.y, l ∉ F := fun l hl h' =>
+    hout l hl (List.mem_cons_of_mem _ h')
+  have hzl : ∀ l ∈ u :: xs ++ gs.map WwG.y, l ≠ z := fun l hl e => hout l hl (e ▸ List.mem_cons_self)
+  rw [sumOver_congr _ _ _ (fun ρ => (gs.map fun g => if ρ g.p = (fun g => τ g.y) g ∧
+      ρ g.w = (fun g => τ g.y) g then (fun _ => (1 : ℂ)) g else 0).prod *
+      (fun ps ws => tW d (xs.map τ) j * tW d ws j * tW d ps (τ u))
+        (gs.map fun g => ρ g.p) (gs.map fun g => ρ g.w)) _ (fun ρ hρ _ => ?_)]
+  · refine (sumOver_pin2 (D := labDim E) gs WwG.p WwG.w (fun g => τ g.y) (fun g => τ g.y)
+      (fun _ => 1) (fun ps ws => tW d (xs.map τ) j * tW d ws j * tW d ps (τ u)) hFnd
+      (fun g hg => by rw [hD _ (hpF g hg)]; exact hy g hg)
+      (fun g hg => by rw [hD _ (hwF g hg)]; exact hy g hg) _).trans ?_
+    simp only [List.map_const', List.prod_replicate, one_pow, one_mul]
+    ring
+  · have eo : ∀ l ∈ u :: xs ++ gs.map WwG.y, ρ l = τ l := fun l hl => by
+      rw [hρ l (hz' l hl), Function.update_of_ne (hzl l hl)]
+    have ez : ρ z = j := by rw [hρ z hzF, Function.update_self]
+    have exs : xs.map ρ = xs.map τ := List.map_congr_left fun l hl => eo l (by simp [hl])
+    have eu : ρ u = τ u := eo u (by simp)
+    simp only [prodVal, wwLeft, List.map_cons, List.prod_cons, List.map_map, Function.comp_def, val,
+      WwG.node, List.cons_append, List.nil_append, List.map_nil, ez, exs, eu]
+    have eg : ∀ g ∈ gs, tZ d (E.phase g.ph) [ρ g.y, ρ g.p, ρ g.w] =
+        if ρ g.p = τ g.y ∧ ρ g.w = τ g.y then 1 else 0 := fun g hg => by
+      rw [eo g.y (by simp only [List.cons_append, List.mem_cons, List.mem_append, List.mem_map]; exact Or.inr (Or.inr ⟨g, hg, rfl⟩)), tZ_three d _ (hph g hg) _ _ _ (hy g hg)]
+    rw [List.map_congr_left eg]
+    ring
+
+/-- A column of the right side of zxw_ww: the green dot `p, q -> y` and the W transpose
+`col <- q`. -/
+structure WwC where
+  p : ℕ
+  q : ℕ
+  y : ℕ
+  ph : ℕ
+  col : List ℕ
+  deriving DecidableEq
+
+/-- The right side of zxw_ww: W node `u -> ps`, row W nodes `x_k -> row k`, column W transposes,
+green dots. -/
+def wwRight (dz u : ℕ) (xs : List ℕ) (cs : List WwC) : List Node :=
+  ⟨.W, cs.map WwC.p, [u], dz, 0⟩ ::
+    ((xs.mapIdx fun k x => (⟨.W, cs.map (fun c => c.col.getD k 0), [x], dz, 0⟩ : Node)) ++
+      cs.map (fun c => (⟨.W, c.col, [c.q], dz, 0⟩ : Node)) ++
+      cs.map (fun c => (⟨.Z, [c.y], [c.p, c.q], dz, c.ph⟩ : Node)))
+
+/-- The rows of the right side at `ρ`. -/
+noncomputable def wwRows (d : ℕ) (xs : List ℕ) (cs : List WwC) (ρ : ℕ → ℕ) : ℂ :=
+  (xs.mapIdx fun k x => tW d ((cs.map fun c => c.col.getD k 0).map ρ) (ρ x)).prod
+
+theorem zip_map_self {α β γ : Type*} (cs : List α) (f : α → β) (g : α × β → γ) :
+    (cs.zip (cs.map f)).map g = cs.map fun c => g (c, f c) := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih => simp [ih]
+
+theorem wwRows_val (E : Env) (dz : ℕ) (xs : List ℕ) (cs : List WwC) (ρ : ℕ → ℕ) :
+    ((xs.mapIdx fun k x => (⟨.W, cs.map (fun c => c.col.getD k 0), [x], dz, 0⟩ : Node)).map
+      (val E ρ)).prod = wwRows (E.dimv dz) xs cs ρ := by
+  unfold wwRows
+  congr 1
+  refine List.ext_getElem (by simp) fun i h₁ h₂ => ?_
+  simp [val]
+
+theorem wwRows_reads (d : ℕ) (xs : List ℕ) (cs : List WwC) (ρ ρ' : ℕ → ℕ)
+    (hlen : ∀ c ∈ cs, c.col.length = xs.length)
+    (hQ : ∀ l ∈ (cs.map WwC.col).flatten, ρ l = ρ' l) (hx : ∀ x ∈ xs, ρ x = ρ' x) :
+    wwRows d xs cs ρ = wwRows d xs cs ρ' := by
+  unfold wwRows
+  congr 1
+  refine List.ext_getElem (by simp) fun i h₁ h₂ => ?_
+  simp only [List.getElem_mapIdx, List.map_map, Function.comp_def]
+  have hi : i < xs.length := by simpa using h₁
+  rw [hx _ (List.getElem_mem _)]
+  congr 1
+  refine List.map_congr_left fun c hc => hQ _ ?_
+  rw [List.getD_eq_getElem _ _ (by rw [hlen c hc]; exact hi)]
+  exact List.mem_flatten.2 ⟨c.col, List.mem_map_of_mem hc, List.getElem_mem _⟩
+
+theorem wwRightVal (E : Env) (dz u : ℕ) (xs : List ℕ) (cs : List WwC) (τ : ℕ → ℕ)
+    (hnd : ((cs.map WwC.col).flatten ++ cs.flatMap fun c => [c.p, c.q]).Nodup)
+    (hout : ∀ l ∈ u :: xs ++ cs.map WwC.y, l ∉ (cs.map WwC.col).flatten ++
+      cs.flatMap fun c => [c.p, c.q])
+    (hlab : ∀ l ∈ cs.flatMap fun c => [c.p, c.q], labIdx E.labs l = dz)
+    (hy : ∀ c ∈ cs, τ c.y < E.dimv dz) (hph : ∀ c ∈ cs, ∀ k < E.dimv dz, ex (E.phase c.ph k) = 1)
+    (hlen : ∀ c ∈ cs, c.col.length = xs.length) :
+    sumOver (labDim E) ((cs.map WwC.col).flatten ++ cs.flatMap fun c => [c.p, c.q])
+      (prodVal E (wwRight dz u xs cs)) τ =
+      tW (E.dimv dz) (cs.map fun c => τ c.y) (τ u) *
+        sumOver (labDim E) (cs.map WwC.col).flatten (fun ρ =>
+          (cs.map fun c => tW (E.dimv dz) (c.col.map ρ) (τ c.y)).prod *
+            wwRows (E.dimv dz) xs cs ρ) τ := by
+  set d := E.dimv dz with hdd
+  set P := cs.flatMap fun c => [c.p, c.q] with hP
+  set Q := (cs.map WwC.col).flatten with hQ
+  obtain ⟨hQnd, hPnd, hQP⟩ := List.nodup_append.1 hnd
+  have hD : ∀ l ∈ P, labDim E l = d := fun l hl => labDim_of E l dz (hlab l hl)
+  have hpP : ∀ c ∈ cs, c.p ∈ P := fun c hc => List.mem_flatMap.2 ⟨c, hc, by simp⟩
+  have hqP : ∀ c ∈ cs, c.q ∈ P := fun c hc => List.mem_flatMap.2 ⟨c, hc, by simp⟩
+  have hoP : ∀ l ∈ u :: xs ++ cs.map WwC.y, l ∉ P := fun l hl h' =>
+    hout l hl (List.mem_append_right _ h')
+  have hoQ : ∀ l ∈ u :: xs ++ cs.map WwC.y, l ∉ Q := fun l hl h' =>
+    hout l hl (List.mem_append_left _ h')
+  rw [sumOver_append, mul_sumOver]
+  refine sumOver_congr _ _ _ _ _ (fun ρ hρ _ => ?_)
+  have eρ : ∀ l ∈ u :: xs ++ cs.map WwC.y, ρ l = τ l := fun l hl => hρ l (hoQ l hl)
+  rw [sumOver_congr _ _ _ (fun ρ' => (cs.map fun c => if ρ' c.p = (fun c => τ c.y) c ∧
+      ρ' c.q = (fun c => τ c.y) c then (fun _ => (1 : ℂ)) c else 0).prod *
+      (fun ps qs => tW d ps (τ u) * (wwRows d xs cs ρ *
+        ((cs.zip qs).map fun cq => tW d (cq.1.col.map ρ) cq.2).prod))
+        (cs.map fun c => ρ' c.p) (cs.map fun c => ρ' c.q)) _ (fun ρ' hρ' _ => ?_)]
+  · refine (sumOver_pin2 (D := labDim E) cs WwC.p WwC.q (fun c => τ c.y) (fun c => τ c.y)
+      (fun _ => 1) (fun ps qs => tW d ps (τ u) * (wwRows d xs cs ρ *
+        ((cs.zip qs).map fun cq => tW d (cq.1.col.map ρ) cq.2).prod)) hPnd
+      (fun c hc => by rw [hD _ (hpP c hc)]; exact hy c hc)
+      (fun c hc => by rw [hD _ (hqP c hc)]; exact hy c hc) _).trans ?_
+    simp only [List.map_const', List.prod_replicate, one_pow, one_mul, zip_map_self]
+    ring
+  · have e1 : ∀ l ∈ u :: xs ++ cs.map WwC.y, ρ' l = τ l := fun l hl => by
+      rw [hρ' l (hoP l hl), eρ l hl]
+    have eQ : ∀ l ∈ Q, ρ' l = ρ l := fun l hl => hρ' l (fun h => hQP l hl l h rfl)
+    simp only [prodVal, wwRight, List.map_cons, List.map_append, List.prod_cons, List.prod_append,
+      List.map_map, Function.comp_def, val, List.map_nil, List.cons_append, List.nil_append]
+    rw [wwRows_val, wwRows_reads d xs cs ρ' ρ hlen eQ
+      (fun x hx => by rw [e1 x (by simp [hx]), eρ x (by simp [hx])]), e1 u (by simp),
+      zip_map_self]
+    have eg : ∀ c ∈ cs, tZ d (E.phase c.ph) [ρ' c.y, ρ' c.p, ρ' c.q] =
+        if ρ' c.p = τ c.y ∧ ρ' c.q = τ c.y then 1 else 0 := fun c hc => by
+      have hcy : c.y ∈ u :: xs ++ cs.map WwC.y := by
+        simp only [List.cons_append, List.mem_cons, List.mem_append, List.mem_map]
+        exact Or.inr (Or.inr ⟨c, hc, rfl⟩)
+      rw [e1 c.y hcy, tZ_three d _ (hph c hc) _ _ _ (hy c hc)]
+    have ec : ∀ c ∈ cs, tW d (c.col.map ρ') (ρ' c.q) = tW d (c.col.map ρ) (ρ' c.q) :=
+      fun c hc => by
+        congr 1
+        exact List.map_congr_left fun l hl =>
+          eQ l (List.mem_flatten.2 ⟨c.col, List.mem_map_of_mem hc, hl⟩)
+    rw [List.map_congr_left eg, List.map_congr_left ec]
+    ring
+
+theorem tW_allZero (d : ℕ) (os : List ℕ) (x : ℕ) (h : ∀ o ∈ os, o = 0) :
+    tW d os x = if x = 0 then 1 else 0 := by
+  unfold tW
+  have : os.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y hy => by simp [h y hy]
+  by_cases hx : x = 0
+  · rw [if_pos hx, if_pos h, if_pos hx]
+  · rw [if_neg hx, this, if_neg hx]; simp
+
+theorem prod_mapIdx_const {α : Type*} (xs : List α) (f : α → ℂ) :
+    (xs.mapIdx fun _ x => f x).prod = (xs.map f).prod := by
+  congr 1
+  exact List.ext_getElem (by simp) (by simp)
+
+/-- The crossing sum of zxw_ww with every column W at `0`. -/
+theorem wwB_zero (E : Env) (dz : ℕ) (xs : List ℕ) (cs : List WwC) (τ : ℕ → ℕ)
+    (hd : 0 < E.dimv dz) (hnd : (cs.map WwC.col).flatten.Nodup)
+    (hlab : ∀ l ∈ (cs.map WwC.col).flatten, labIdx E.labs l = dz)
+    (hx : ∀ x ∈ xs, x ∉ (cs.map WwC.col).flatten) (hlen : ∀ c ∈ cs, c.col.length = xs.length)
+    (hy : ∀ c ∈ cs, τ c.y = 0) :
+    sumOver (labDim E) (cs.map WwC.col).flatten (fun ρ =>
+      (cs.map fun c => tW (E.dimv dz) (c.col.map ρ) (τ c.y)).prod *
+        wwRows (E.dimv dz) xs cs ρ) τ = if ∀ x ∈ xs, τ x = 0 then 1 else 0 := by
+  set d := E.dimv dz with hdd
+  have e : ∀ ρ : ℕ → ℕ, (cs.map fun c => tW d (c.col.map ρ) (τ c.y)).prod =
+      ((cs.map WwC.col).map fun c => tW d (c.map ρ) 0).prod := fun ρ => by
+    rw [List.map_map]; congr 1
+    exact List.map_congr_left fun c hc => by simp [hy c hc]
+  simp only [e]
+  rw [sumOver_cols_zero d _ hnd (fun l hl => by rw [labDim_of E l dz (hlab l hl)]; exact hd)]
+  unfold wwRows
+  have hp := prod_isZero (xs.map τ)
+  simp only [List.map_map, List.forall_mem_map, Function.comp_def] at hp
+  rw [← hp, ← prod_mapIdx_const]
+  congr 1
+  refine List.ext_getElem (by simp) fun i h₁ h₂ => ?_
+  simp only [List.getElem_mapIdx, List.getElem_map]
+  have hi : i < xs.length := by simpa using h₁
+  rw [if_neg (hx _ (List.getElem_mem hi))]
+  refine tW_allZero d _ _ fun o ho => ?_
+  obtain ⟨l, hl, rfl⟩ := List.mem_map.1 ho
+  obtain ⟨c, hc, rfl⟩ := List.mem_map.1 hl
+  rw [if_pos]
+  rw [List.getD_eq_getElem _ _ (by rw [hlen c hc]; exact hi)]
+  exact List.mem_flatten.2 ⟨c.col, List.mem_map_of_mem hc, List.getElem_mem _⟩
+
+theorem hot_split {α : Type*} (cs : List α) (f : α → ℕ) (v : ℕ)
+    (h : (cs.map f).filter (· ≠ 0) = [v]) :
+    ∃ A c B, cs = A ++ c :: B ∧ f c = v ∧ (∀ a ∈ A, f a = 0) ∧ ∀ b ∈ B, f b = 0 := by
+  induction cs with
+  | nil => simp at h
+  | cons c cs ih =>
+    by_cases h0 : f c = 0
+    · simp only [List.map_cons, List.filter_cons, h0, ne_eq, not_true_eq_false, decide_false,
+        Bool.false_eq_true, if_false] at h
+      obtain ⟨A, c', B, rfl, h1, h2, h3⟩ := ih h
+      refine ⟨c :: A, c', B, rfl, h1, ?_, h3⟩
+      simp only [List.mem_cons, forall_eq_or_imp]
+      exact ⟨h0, h2⟩
+    · simp only [List.map_cons, List.filter_cons, ne_eq, h0, not_false_eq_true, decide_true,
+        if_true, List.cons.injEq] at h
+      refine ⟨[], c, cs, rfl, h.1, by simp, fun b hb => ?_⟩
+      have : f b ∉ (cs.map f).filter (· ≠ 0) := by rw [h.2]; simp
+      by_contra hb0
+      exact this (List.mem_filter.2 ⟨List.mem_map_of_mem hb, by simp [hb0]⟩)
+
+theorem sum_map_range {α : Type*} (l : List α) (F : α → ℂ) (a : α) :
+    (l.map F).sum = ∑ k ∈ Finset.range l.length, F (l.getD k a) := by
+  induction l with
+  | nil => simp
+  | cons x l ih =>
+    rw [List.map_cons, List.sum_cons, ih, List.length_cons, Finset.sum_range_succ']
+    simp [add_comm]
+
+/-- The crossing sum of zxw_ww with one column W at `v` and the others at `0`. -/
+theorem wwB_hot (E : Env) (dz : ℕ) (xs : List ℕ) (cs : List WwC) (τ : ℕ → ℕ) (v : ℕ)
+    (hv : v ≠ 0) (hvd : v < E.dimv dz) (hnd : (cs.map WwC.col).flatten.Nodup)
+    (hlab : ∀ l ∈ (cs.map WwC.col).flatten, labIdx E.labs l = dz)
+    (hx : ∀ x ∈ xs, x ∉ (cs.map WwC.col).flatten) (hlen : ∀ c ∈ cs, c.col.length = xs.length)
+    (hy : (cs.map fun c => τ c.y).filter (· ≠ 0) = [v]) :
+    sumOver (labDim E) (cs.map WwC.col).flatten (fun ρ =>
+      (cs.map fun c => tW (E.dimv dz) (c.col.map ρ) (τ c.y)).prod *
+        wwRows (E.dimv dz) xs cs ρ) τ = if (xs.map τ).filter (· ≠ 0) = [v] then 1 else 0 := by
+  set d := E.dimv dz with hdd
+  have hd : 0 < d := by omega
+  obtain ⟨A, c, B, rfl, hc, hA, hB⟩ := hot_split cs (fun c => τ c.y) v hy
+  set A' := (A ++ B).map WwC.col with hA'
+  have hperm : (((A ++ c :: B).map WwC.col).flatten).Perm (A'.flatten ++ c.col) := by
+    simp only [hA', List.map_append, List.map_cons, List.flatten_append, List.flatten_cons,
+      List.append_assoc]
+    exact List.Perm.append_left _ List.perm_append_comm
+  have hnd' := hperm.nodup_iff.1 hnd
+  rw [sumOver_perm (labDim E) hperm]
+  have e : ∀ ρ : ℕ → ℕ, ((A ++ c :: B).map fun c => tW d (c.col.map ρ) (τ c.y)).prod *
+      wwRows d xs (A ++ c :: B) ρ = (A'.map fun c => tW d (c.map ρ) 0).prod *
+        (tW d (c.col.map ρ) v * wwRows d xs (A ++ c :: B) ρ) := fun ρ => by
+    have eA : (A.map fun c => tW d (c.col.map ρ) (τ c.y)) = A.map fun c => tW d (c.col.map ρ) 0 :=
+      List.map_congr_left fun a ha => by rw [hA a ha]
+    have eB : (B.map fun c => tW d (c.col.map ρ) (τ c.y)) = B.map fun c => tW d (c.col.map ρ) 0 :=
+      List.map_congr_left fun b hb => by rw [hB b hb]
+    simp only [hA', List.map_append, List.map_cons, List.prod_append, List.prod_cons, List.map_map,
+      Function.comp_def, eA, eB, hc]
+    ring
+  simp only [e]
+  rw [sumOver_cols_hot d hd A' c.col v hvd hnd'
+    (fun l hl => labDim_of E l dz (hlab l (hperm.mem_iff.2 hl))), if_neg hv]
+  obtain ⟨hAn, hcn, hAc⟩ := List.nodup_append.1 hnd'
+  have hlc : c.col.length = xs.length := hlen c (by simp)
+  have hQ : ∀ x, x ∈ ((A ++ c :: B).map WwC.col).flatten ↔ x ∈ A'.flatten ++ c.col :=
+    fun x => hperm.mem_iff
+  rw [sum_map_range c.col _ 0, hlc, ← sum_hot_rows v hv (xs.map τ), List.length_map]
+  refine Finset.sum_congr rfl fun k hk => ?_
+  have hk' : k < c.col.length := by rw [hlc]; exact Finset.mem_range.1 hk
+  set l := c.col.getD k 0 with hl
+  have hlm : l ∈ c.col := by rw [hl, List.getD_eq_getElem _ _ hk']; exact List.getElem_mem _
+  unfold wwRows
+  congr 1
+  refine List.ext_getElem (by simp) fun j h₁ h₂ => ?_
+  have hj : j < xs.length := by simpa using h₁
+  simp only [List.getElem_mapIdx, List.getElem_map]
+  have hxQ : xs[j] ∉ A'.flatten ++ c.col := fun h => hx _ (List.getElem_mem hj) ((hQ _).2 h)
+  have hxl : xs[j] ≠ l := fun h => hxQ (List.mem_append_right _ (h ▸ hlm))
+  have ex : Function.update (fun x => if x ∈ c.col then 0 else
+      (fun x => if x ∈ A'.flatten then 0 else τ x) x) l v xs[j] = τ xs[j] := by
+    rw [Function.update_of_ne hxl, if_neg (fun h => hxQ (List.mem_append_right _ h))]
+    simp only
+    rw [if_neg (fun h => hxQ (List.mem_append_left _ h))]
+  rw [ex]
+  have zA : ∀ a ∈ A ++ B, Function.update (fun x => if x ∈ c.col then 0 else
+      (fun x => if x ∈ A'.flatten then 0 else τ x) x) l v (a.col.getD j 0) = 0 := by
+    intro a ha
+    have hm : a.col.getD j 0 ∈ A'.flatten := by
+      have hla : a.col.length = xs.length := by
+        rcases List.mem_append.1 ha with h | h
+        · exact hlen a (by simp [h])
+        · exact hlen a (by simp [h])
+      rw [List.getD_eq_getElem _ _ (by rw [hla]; exact hj)]
+      exact List.mem_flatten.2 ⟨a.col, List.mem_map_of_mem ha, List.getElem_mem _⟩
+    have hne : a.col.getD j 0 ≠ l := fun h => hAc _ hm _ hlm h
+    rw [Function.update_of_ne hne, if_neg (fun h => hAc _ hm _ h rfl)]
+    simp only
+    rw [if_pos hm]
+  simp only [List.map_append, List.map_cons, List.map_map, Function.comp_def]
+  have eA := List.map_congr_left fun a (ha : a ∈ A) => zA a (List.mem_append_left _ ha)
+  have eB := List.map_congr_left fun b (hb : b ∈ B) => zA b (List.mem_append_right _ hb)
+  rw [eA, eB]
+  by_cases hjk : j = k
+  · subst hjk
+    rw [if_pos rfl, ← hl, Function.update_self, tW_single d _ v _ _ (by simp) (by simp) hv]
+    simp [hvd]
+  · have hne : c.col.getD j 0 ≠ l := by
+      rw [hl, List.getD_eq_getElem _ _ (by rw [hlc]; exact hj),
+        List.getD_eq_getElem _ _ hk']
+      exact fun h => hjk ((List.Nodup.getElem_inj_iff hcn).1 h)
+    have hcm : c.col.getD j 0 ∈ c.col := by
+      rw [List.getD_eq_getElem _ _ (by rw [hlc]; exact hj)]; exact List.getElem_mem _
+    rw [if_neg hjk, Function.update_of_ne hne, if_pos hcm]
+    exact tW_allZero d _ _ (by simp; tauto)
+
+/-- [P1] (WW): a W transpose `xs <- z` into a W node `z -> ws`, projected by a W node `u -> ps`
+on plain green dots, is the crossed W nodes `x_k -> row k` and W transposes `col_c <- q_c`. -/
+theorem zxwWW (E : Env) (dz z u : ℕ) (xs : List ℕ) (gs : List WwG) (cs : List WwC)
+    (iface : List ℕ) (hd : 0 < E.dimv dz)
+    (hnL : (z :: gs.flatMap fun g => [g.p, g.w]).Nodup)
+    (hnR : ((cs.map WwC.col).flatten ++ cs.flatMap fun c => [c.p, c.q]).Nodup)
+    (hoL : ∀ l ∈ u :: xs ++ gs.map WwG.y, l ∉ z :: gs.flatMap fun g => [g.p, g.w])
+    (hoR : ∀ l ∈ u :: xs ++ cs.map WwC.y, l ∉ (cs.map WwC.col).flatten ++
+      cs.flatMap fun c => [c.p, c.q])
+    (hlL : ∀ l ∈ z :: gs.flatMap fun g => [g.p, g.w], labIdx E.labs l = dz)
+    (hlR : ∀ l ∈ (cs.map WwC.col).flatten ++ cs.flatMap fun c => [c.p, c.q],
+      labIdx E.labs l = dz)
+    (hY : cs.map WwC.y = gs.map WwG.y)
+    (hio : ∀ l ∈ gs.map WwG.y, l ∈ iface ∧ labIdx E.labs l = dz)
+    (hphL : ∀ g ∈ gs, ∀ k < E.dimv dz, ex (E.phase g.ph k) = 1)
+    (hphR : ∀ c ∈ cs, ∀ k < E.dimv dz, ex (E.phase c.ph k) = 1)
+    (hlen : ∀ c ∈ cs, c.col.length = xs.length) :
+    LocalEq E (wwLeft dz z u xs gs) (z :: gs.flatMap fun g => [g.p, g.w]) (wwRight dz u xs cs)
+      ((cs.map WwC.col).flatten ++ cs.flatMap fun c => [c.p, c.q]) iface 1 1 := by
+  intro τ hτ
+  set d := E.dimv dz with hdd
+  have hyr : ∀ l ∈ gs.map WwG.y, τ l < d := fun l hl => by
+    have := hτ l (hio l hl).1; rwa [labDim_of E l dz (hio l hl).2] at this
+  have hyg : ∀ g ∈ gs, τ g.y < d := fun g hg => hyr _ (List.mem_map_of_mem hg)
+  have hyc : ∀ c ∈ cs, τ c.y < d := fun c hc => hyr _ (hY ▸ List.mem_map_of_mem hc)
+  have eY : (cs.map fun c => τ c.y) = gs.map fun g => τ g.y := by
+    have := congrArg (List.map τ) hY
+    simpa [List.map_map, Function.comp_def] using this
+  obtain ⟨hQn, _, _⟩ := List.nodup_append.1 hnR
+  have hlQ : ∀ l ∈ (cs.map WwC.col).flatten, labIdx E.labs l = dz := fun l hl =>
+    hlR l (List.mem_append_left _ hl)
+  have hxQ : ∀ x ∈ xs, x ∉ (cs.map WwC.col).flatten := fun x hx h =>
+    hoR x (by simp [hx]) (List.mem_append_left _ h)
+  rw [one_mul, one_mul, wwLeftVal E dz z u xs gs τ hd hnL hoL hlL hyg hphL,
+    wwRightVal E dz u xs cs τ hnR hoR (fun l hl => hlR l (List.mem_append_right _ hl)) hyc hphR
+      hlen, eY]
+  by_cases hW : tW d (gs.map fun g => τ g.y) (τ u) = 0
+  · rw [hW, zero_mul, zero_mul]
+  congr 1
+  rcases tW_support d (τ u) _ hW with ⟨_, hz⟩ | ⟨hu0, hud, hhot⟩
+  · have hzc : ∀ c ∈ cs, τ c.y = 0 := fun c hc => hz _ (eY ▸ List.mem_map_of_mem hc)
+    rw [wPairSum_zero d hd _ _ hz, wwB_zero E dz xs cs τ hd hQn hlQ hxQ hlen hzc]
+    simp
+  · rw [wPairSum_hot d (τ u) hu0 hud _ _ hhot,
+      wwB_hot E dz xs cs τ (τ u) hu0 hud hQn hlQ hxQ hlen (eY ▸ hhot)]
+
+/-- A column of the right side of qf_ww: the W transpose `col <- q` and the green dot
+`q -> y, s`. -/
+structure QwC where
+  y : ℕ
+  s : ℕ
+  q : ℕ
+  ph : ℕ
+  col : List ℕ
+  deriving DecidableEq
+
+/-- The `WwC` of a qf_ww column. -/
+def QwC.toWw (c : QwC) : WwC := ⟨c.s, c.q, c.y, c.ph, c.col⟩
+
+/-- The right side of qf_ww: row W nodes `x_k -> row k`, the W node `e -> ss` on the green effect,
+column W transposes, green dots. -/
+def qwRight (dz e pe : ℕ) (xs : List ℕ) (cs : List QwC) : List Node :=
+  (xs.mapIdx fun k x => (⟨.W, cs.map (fun c => c.col.getD k 0), [x], dz, 0⟩ : Node)) ++
+    (⟨.W, cs.map QwC.s, [e], dz, 0⟩ :: ⟨.Z, [], [e], dz, pe⟩ ::
+      (cs.map (fun c => (⟨.W, c.col, [c.q], dz, 0⟩ : Node)) ++
+        cs.map (fun c => (⟨.Z, [c.y, c.s], [c.q], dz, c.ph⟩ : Node))))
+
+theorem sum_tW_zero (d : ℕ) (hd : 0 < d) (ys : List ℕ) (h : ∀ y ∈ ys, y = 0) :
+    ∑ j ∈ Finset.range d, tW d ys j = 1 := by
+  rw [Finset.sum_eq_single 0]
+  · rw [tW_allZero d ys 0 h, if_pos rfl]
+  · intro j _ hj
+    rw [tW_allZero d ys j h, if_neg hj]
+  · intro hn; exact absurd (Finset.mem_range.2 hd) hn
+
+theorem sum_tW_hot (d v : ℕ) (hv : v ≠ 0) (hvd : v < d) (ys : List ℕ)
+    (h : ys.filter (· ≠ 0) = [v]) : ∑ j ∈ Finset.range d, tW d ys j = 1 := by
+  rw [Finset.sum_eq_single v]
+  · unfold tW; rw [if_neg hv, if_pos ⟨hvd, h⟩]
+  · intro j _ hj
+    unfold tW
+    by_cases j0 : j = 0
+    · have : ¬ ∀ y ∈ ys, y = 0 := fun h' => by
+        have hm : v ∈ ys.filter (· ≠ 0) := by rw [h]; exact List.mem_singleton_self v
+        exact hv (h' v (List.mem_filter.1 hm).1)
+      rw [if_pos j0, if_neg this]
+    · rw [if_neg j0, if_neg]
+      rintro ⟨_, h'⟩
+      rw [h] at h'
+      exact hj (List.singleton_inj.1 h').symm
+  · intro hn; exact absurd (Finset.mem_range.2 hvd) hn
+
+theorem qwRightVal (E : Env) (dz e pe : ℕ) (xs : List ℕ) (cs : List QwC) (τ : ℕ → ℕ)
+    (hd : 0 < E.dimv dz)
+    (hnd : ((cs.map QwC.col).flatten ++ e :: cs.flatMap fun c => [c.s, c.q]).Nodup)
+    (hout : ∀ l ∈ xs ++ cs.map QwC.y, l ∉ (cs.map QwC.col).flatten ++
+      e :: cs.flatMap fun c => [c.s, c.q])
+    (hlab : ∀ l ∈ e :: cs.flatMap fun c => [c.s, c.q], labIdx E.labs l = dz)
+    (hy : ∀ c ∈ cs, τ c.y < E.dimv dz) (hph : ∀ c ∈ cs, ∀ k < E.dimv dz, ex (E.phase c.ph k) = 1)
+    (hpe : ∀ k < E.dimv dz, ex (E.phase pe k) = 1)
+    (hlen : ∀ c ∈ cs, c.col.length = xs.length) :
+    sumOver (labDim E) ((cs.map QwC.col).flatten ++ e :: cs.flatMap fun c => [c.s, c.q])
+      (prodVal E (qwRight dz e pe xs cs)) τ =
+      (∑ j ∈ Finset.range (E.dimv dz), tW (E.dimv dz) (cs.map fun c => τ c.y) j) *
+        sumOver (labDim E) ((cs.map QwC.toWw).map WwC.col).flatten (fun ρ =>
+          ((cs.map QwC.toWw).map fun c => tW (E.dimv dz) (c.col.map ρ) (τ c.y)).prod *
+            wwRows (E.dimv dz) xs (cs.map QwC.toWw) ρ) τ := by
+  set d := E.dimv dz with hdd
+  set P := cs.flatMap fun c => [c.s, c.q] with hP
+  set Q := (cs.map QwC.col).flatten with hQ
+  have hQ' : ((cs.map QwC.toWw).map WwC.col).flatten = Q := by
+    rw [List.map_map]; rfl
+  rw [hQ']
+  obtain ⟨hQnd, hePnd, hQP⟩ := List.nodup_append.1 hnd
+  obtain ⟨heP, hPnd⟩ := List.nodup_cons.1 hePnd
+  have hD : ∀ l ∈ P, labDim E l = d := fun l hl =>
+    labDim_of E l dz (hlab l (List.mem_cons_of_mem _ hl))
+  have hsP : ∀ c ∈ cs, c.s ∈ P := fun c hc => List.mem_flatMap.2 ⟨c, hc, by simp⟩
+  have hqP : ∀ c ∈ cs, c.q ∈ P := fun c hc => List.mem_flatMap.2 ⟨c, hc, by simp⟩
+  have hoQ : ∀ l ∈ xs ++ cs.map QwC.y, l ∉ Q := fun l hl h' =>
+    hout l hl (List.mem_append_left _ h')
+  have hoP : ∀ l ∈ xs ++ cs.map QwC.y, l ∉ P := fun l hl h' =>
+    hout l hl (List.mem_append_right _ (List.mem_cons_of_mem _ h'))
+  have hoe : ∀ l ∈ xs ++ cs.map QwC.y, l ≠ e := fun l hl h' =>
+    hout l hl (List.mem_append_right _ (h' ▸ List.mem_cons_self))
+  have hlen' : ∀ c ∈ cs.map QwC.toWw, c.col.length = xs.length := fun c hc => by
+    obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hc; exact hlen c' hc'
+  rw [sumOver_append, mul_sumOver]
+  refine sumOver_congr _ _ _ _ _ (fun ρ hρ _ => ?_)
+  have eρ : ∀ l ∈ xs ++ cs.map QwC.y, ρ l = τ l := fun l hl => hρ l (hoQ l hl)
+  simp only [sumOver, labDim_of E e dz (hlab e List.mem_cons_self), Finset.sum_mul]
+  refine Finset.sum_congr rfl fun j hj => ?_
+  have hjd : j < d := Finset.mem_range.1 hj
+  rw [sumOver_congr _ _ _ (fun ρ' => (cs.map fun c => if ρ' c.s = (fun c => τ c.y) c ∧
+      ρ' c.q = (fun c => τ c.y) c then (fun _ => (1 : ℂ)) c else 0).prod *
+      (fun ss qs => wwRows d xs (cs.map QwC.toWw) ρ * (tW d ss j *
+        ((cs.zip qs).map fun cq => tW d (cq.1.col.map ρ) cq.2).prod))
+        (cs.map fun c => ρ' c.s) (cs.map fun c => ρ' c.q)) _ (fun ρ' hρ' _ => ?_)]
+  · refine (sumOver_pin2 (D := labDim E) cs QwC.s QwC.q (fun c => τ c.y) (fun c => τ c.y)
+      (fun _ => 1) (fun ss qs => wwRows d xs (cs.map QwC.toWw) ρ * (tW d ss j *
+        ((cs.zip qs).map fun cq => tW d (cq.1.col.map ρ) cq.2).prod)) hPnd
+      (fun c hc => by rw [hD _ (hsP c hc)]; exact hy c hc)
+      (fun c hc => by rw [hD _ (hqP c hc)]; exact hy c hc) _).trans ?_
+    simp only [List.map_const', List.prod_replicate, one_pow, one_mul, zip_map_self,
+      List.map_map, Function.comp_def, QwC.toWw]
+    ring
+  · have e1 : ∀ l ∈ xs ++ cs.map QwC.y, ρ' l = τ l := fun l hl => by
+      rw [hρ' l (hoP l hl), Function.update_of_ne (hoe l hl), eρ l hl]
+    have ee : ρ' e = j := by rw [hρ' e heP, Function.update_self]
+    have eQ : ∀ l ∈ Q, ρ' l = ρ l := fun l hl => by
+      rw [hρ' l (fun h => hQP l hl l (List.mem_cons_of_mem _ h) rfl),
+        Function.update_of_ne (fun h => hQP l hl e List.mem_cons_self h)]
+    simp only [prodVal, qwRight, List.map_cons, List.map_append, List.prod_cons, List.prod_append,
+      List.map_map, Function.comp_def, val, List.map_nil, List.cons_append, List.nil_append]
+    have hrows := wwRows_val E dz xs (cs.map QwC.toWw) ρ'
+    simp only [List.map_map, Function.comp_def, QwC.toWw] at hrows
+    rw [hrows]
+    have hQ'' : ∀ l ∈ ((cs.map QwC.toWw).map WwC.col).flatten, ρ' l = ρ l := by
+      rw [hQ']; exact eQ
+    rw [wwRows_reads d xs _ ρ' ρ hlen' hQ''
+      (fun x hx => by rw [e1 x (by simp [hx]), eρ x (by simp [hx])]), ee, zip_map_self]
+    have eg : ∀ c ∈ cs, tZ d (E.phase c.ph) [ρ' c.y, ρ' c.s, ρ' c.q] =
+        if ρ' c.s = τ c.y ∧ ρ' c.q = τ c.y then 1 else 0 := fun c hc => by
+      have hcy : c.y ∈ xs ++ cs.map QwC.y := List.mem_append_right _ (List.mem_map_of_mem hc)
+      rw [e1 c.y hcy, tZ_three d _ (hph c hc) _ _ _ (hy c hc)]
+    have ec : ∀ c ∈ cs, tW d (c.col.map ρ') (ρ' c.q) = tW d (c.col.map ρ) (ρ' c.q) :=
+      fun c hc => by
+        congr 1
+        exact List.map_congr_left fun l hl =>
+          eQ l (List.mem_flatten.2 ⟨c.col, List.mem_map_of_mem hc, hl⟩)
+    have he : tZ d (E.phase pe) [j] = 1 := by
+      rw [tZ_at d _ _ j (by simp)]; simp [hjd, hpe j hjd]
+    rw [List.map_congr_left eg, List.map_congr_left ec, he]
+    ring
+
+/-- [P2] (WW): a W transpose `xs <- z` into a W node `z -> ys` is the crossed W nodes
+`x_k -> row k` and W transposes `col_c <- q_c`, projected through green dots `q_c -> y_c, s_c`
+and a W node `e -> ss` on a green effect. -/
+theorem qfWW (E : Env) (dz z e pe : ℕ) (xs : List ℕ) (cs : List QwC) (iface : List ℕ)
+    (hd : 0 < E.dimv dz)
+    (hnR : ((cs.map QwC.col).flatten ++ e :: cs.flatMap fun c => [c.s, c.q]).Nodup)
+    (hoR : ∀ l ∈ xs ++ cs.map QwC.y, l ∉ (cs.map QwC.col).flatten ++
+      e :: cs.flatMap fun c => [c.s, c.q])
+    (hz : z ∉ xs ++ cs.map QwC.y) (hlz : labIdx E.labs z = dz)
+    (hlR : ∀ l ∈ (cs.map QwC.col).flatten ++ e :: cs.flatMap fun c => [c.s, c.q],
+      labIdx E.labs l = dz)
+    (hio : ∀ l ∈ cs.map QwC.y, l ∈ iface ∧ labIdx E.labs l = dz)
+    (hph : ∀ c ∈ cs, ∀ k < E.dimv dz, ex (E.phase c.ph k) = 1)
+    (hpe : ∀ k < E.dimv dz, ex (E.phase pe k) = 1)
+    (hlen : ∀ c ∈ cs, c.col.length = xs.length) :
+    LocalEq E [⟨.W, xs, [z], dz, 0⟩, ⟨.W, cs.map QwC.y, [z], dz, 0⟩] [z]
+      (qwRight dz e pe xs cs) ((cs.map QwC.col).flatten ++ e :: cs.flatMap fun c => [c.s, c.q])
+      iface 1 1 := by
+  intro τ hτ
+  set d := E.dimv dz with hdd
+  have hyc : ∀ c ∈ cs, τ c.y < d := fun c hc => by
+    have hm := hio _ (List.mem_map_of_mem hc)
+    have := hτ _ hm.1; rwa [labDim_of E _ dz hm.2] at this
+  have hQ' : ((cs.map QwC.toWw).map WwC.col).flatten = (cs.map QwC.col).flatten := by
+    rw [List.map_map]; rfl
+  obtain ⟨hQn, _, _⟩ := List.nodup_append.1 hnR
+  have hQn' : ((cs.map QwC.toWw).map WwC.col).flatten.Nodup := by rw [hQ']; exact hQn
+  have hlQ : ∀ l ∈ ((cs.map QwC.toWw).map WwC.col).flatten, labIdx E.labs l = dz := by
+    rw [hQ']; exact fun l hl => hlR l (List.mem_append_left _ hl)
+  have hxQ : ∀ x ∈ xs, x ∉ ((cs.map QwC.toWw).map WwC.col).flatten := by
+    rw [hQ']; exact fun x hx h => hoR x (List.mem_append_left _ hx) (List.mem_append_left _ h)
+  have hlen' : ∀ c ∈ cs.map QwC.toWw, c.col.length = xs.length := fun c hc => by
+    obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hc; exact hlen c' hc'
+  have eY : ((cs.map QwC.toWw).map fun c => τ c.y) = cs.map fun c => τ c.y := by
+    rw [List.map_map]; rfl
+  rw [one_mul, one_mul, qwRightVal E dz e pe xs cs τ hd hnR hoR
+    (fun l hl => hlR l (List.mem_append_right _ hl)) hyc hph hpe hlen]
+  have hL : sumOver (labDim E) [z] (prodVal E [⟨.W, xs, [z], dz, 0⟩, ⟨.W, cs.map QwC.y, [z], dz, 0⟩])
+      τ = ∑ j ∈ Finset.range d, tW d (xs.map τ) j * tW d (cs.map fun c => τ c.y) j := by
+    simp only [sumOver, labDim_of E z dz hlz, prodVal, List.map_cons, List.map_nil,
+      List.prod_cons, List.prod_nil, mul_one, val, List.map_map, Function.comp_def]
+    refine Finset.sum_congr rfl fun j _ => ?_
+    rw [Function.update_self]
+    congr 2
+    · exact List.map_congr_left fun x hx =>
+        Function.update_of_ne (fun (h : x = z) => hz (h ▸ List.mem_append_left _ hx)) _ _
+    · exact List.map_congr_left fun c hc =>
+        Function.update_of_ne
+          (fun (h : c.y = z) => hz (h ▸ List.mem_append_right _ (List.mem_map_of_mem hc))) _ _
+  rw [hL]
+  by_cases hex : ∃ j ∈ Finset.range d, tW d (cs.map fun c => τ c.y) j ≠ 0
+  · obtain ⟨j, _, hj⟩ := hex
+    rcases tW_support d j _ hj with ⟨_, hz0⟩ | ⟨hj0, hjd, hhot⟩
+    · have hzc : ∀ c ∈ cs.map QwC.toWw, τ c.y = 0 := fun c hc => by
+        obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hc; exact hz0 _ (List.mem_map_of_mem hc')
+      rw [sum_tW_zero d hd _ hz0, wPairSum_zero d hd _ _ hz0,
+        wwB_zero E dz xs _ τ hd hQn' hlQ hxQ hlen' hzc, one_mul]
+      simp
+    · rw [sum_tW_hot d j hj0 hjd _ hhot, wPairSum_hot d j hj0 hjd _ _ hhot,
+        wwB_hot E dz xs _ τ j hj0 hjd hQn' hlQ hxQ hlen' (eY ▸ hhot), one_mul]
+  · simp only [not_exists, not_and, not_not] at hex
+    rw [Finset.sum_eq_zero hex, Finset.sum_eq_zero fun j hj => by rw [hex j hj, mul_zero], zero_mul]
+
+/-- A binder `(a, v) -> K` with a plain pink state on `a`, summed over `a`. -/
+theorem mixLegIn (r t K V : ℕ) (hr : 0 < r) (φ : ℕ → ℝ) (hφ : ∀ k < r, ex (φ k) = 1)
+    (hV : V < t) :
+    ∑ a ∈ Finset.range r, tX r φ [a] [] * tB r t K a V = rt r * (if K = V then 1 else 0) := by
+  have e : ∀ a ∈ Finset.range r, tX r φ [a] [] * tB r t K a V =
+      if a % r = 0 then rt r * tB r t K a V else 0 := by
+    intro a _
+    rw [tX_flat r hr φ hφ]
+    simp only [List.sum_cons, List.sum_nil, add_zero, List.length_cons, List.length_nil,
+      zero_add, pow_one, Nat.zero_mod]
+    split_ifs with h
+    · rw [rt_inv_mul _ hr]
+    · simp
+  rw [Finset.sum_congr rfl e, sum_mod0 _ hr]
+  unfold tB
+  by_cases h : K = V
+  · simp [h, hr, hV]
+  · simp [h, hr, Ne.symm h]
+
+/-- A splitter `K -> (a, v)` with a plain pink effect on `a`, summed over `a`. -/
+theorem mixLegOut (r t K V : ℕ) (hr : 0 < r) (φ : ℕ → ℝ) (hφ : ∀ k < r, ex (φ k) = 1)
+    (hV : V < t) :
+    ∑ a ∈ Finset.range r, tX r φ [] [a] * tB r t K a V = rt r * (if K = V then 1 else 0) := by
+  have e : ∀ a ∈ Finset.range r, tX r φ [] [a] * tB r t K a V =
+      if a % r = 0 then rt r * tB r t K a V else 0 := by
+    intro a _
+    rw [tX_flat r hr φ hφ]
+    simp only [List.sum_cons, List.sum_nil, add_zero, List.length_cons, List.length_nil,
+      zero_add, pow_one, Nat.zero_mod]
+    split_ifs with h h'
+    · rw [rt_inv_mul _ hr]
+    · exact absurd h.symm h'
+    · rename_i h''; exact absurd h''.symm h
+    · simp
+  rw [Finset.sum_congr rfl e, sum_mod0 _ hr]
+  unfold tB
+  by_cases h : K = V
+  · simp [h, hr, hV]
+  · simp [h, hr, Ne.symm h]
+
+/-- A leg of a mixed-dimensional Z box: pink label `a`, product label `K`, leg label `v`, the
+pink dot's dimension and phase indices `dr`, `p`, the leg's dimension index `dt`, and whether
+the leg is an output (splitter) or an input (binder). -/
+structure MixL where
+  a : ℕ
+  K : ℕ
+  v : ℕ
+  dr : ℕ
+  p : ℕ
+  dt : ℕ
+  out : Bool
+  deriving DecidableEq
+
+/-- The pink dot and the connector of a leg. -/
+def MixL.nodes (l : MixL) : List Node :=
+  if l.out then [⟨.X, [], [l.a], l.dr, l.p⟩, ⟨.S, [l.a, l.v], [l.K], l.dr, l.dt⟩]
+  else [⟨.X, [l.a], [], l.dr, l.p⟩, ⟨.B, [l.K], [l.a, l.v], l.dr, l.dt⟩]
+
+theorem MixL.val_nodes (E : Env) (ρ : ℕ → ℕ) (l : MixL) :
+    prodVal E l.nodes ρ = (if l.out then tX (E.dimv l.dr) (E.phase l.p) [] [ρ l.a]
+      else tX (E.dimv l.dr) (E.phase l.p) [ρ l.a] []) *
+        tB (E.dimv l.dr) (E.dimv l.dt) (ρ l.K) (ρ l.a) (ρ l.v) := by
+  unfold MixL.nodes prodVal
+  cases l.out <;> simp [val]
+
+/-- The legs of a mixed Z box summed over their pink and product labels: each product label
+pinned to its leg's value, times `√r` per leg. -/
+theorem mixSum {E : Env} (legs : List MixL) (H : List ℕ → ℂ) (σ : ℕ → ℕ)
+    (hnd : (legs.flatMap fun l => [l.a, l.K]).Nodup)
+    (hv : ∀ l ∈ legs, l.v ∉ legs.flatMap fun l => [l.a, l.K])
+    (hr : ∀ l ∈ legs, 0 < E.dimv l.dr)
+    (hφ : ∀ l ∈ legs, ∀ k < E.dimv l.dr, ex (E.phase l.p k) = 1)
+    (ha : ∀ l ∈ legs, labDim E l.a = E.dimv l.dr)
+    (hK : ∀ l ∈ legs, σ l.v < labDim E l.K) (hV : ∀ l ∈ legs, σ l.v < E.dimv l.dt) :
+    sumOver (labDim E) (legs.flatMap fun l => [l.a, l.K]) (fun ρ =>
+      (legs.map fun l => prodVal E l.nodes ρ).prod * H (legs.map fun l => ρ l.K)) σ =
+      (legs.map fun l => rt (E.dimv l.dr)).prod * H (legs.map fun l => σ l.v) := by
+  induction legs generalizing H σ with
+  | nil => simp [sumOver]
+  | cons l ls ih =>
+    simp only [List.flatMap_cons, List.cons_append, List.nil_append] at hnd hv ⊢
+    obtain ⟨hna, hnK⟩ := List.nodup_cons.1 hnd
+    obtain ⟨hnK', hnr⟩ := List.nodup_cons.1 hnK
+    have haK : l.a ≠ l.K := fun h => hna (h ▸ List.mem_cons_self)
+    have har : l.a ∉ ls.flatMap fun l => [l.a, l.K] := fun h => hna (List.mem_cons_of_mem _ h)
+    have hvl := hv l List.mem_cons_self
+    simp only [List.mem_cons, not_or] at hvl
+    obtain ⟨hva, hvK, hvr⟩ := hvl
+    have hv' : ∀ m ∈ ls, m.v ∉ ls.flatMap fun l => [l.a, l.K] := fun m hm h =>
+      hv m (List.mem_cons_of_mem _ hm) (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ h))
+    have hφl := hφ l List.mem_cons_self
+    have hrl := hr l List.mem_cons_self
+    have hVl := hV l List.mem_cons_self
+    set V := σ l.v with hVdef
+    set C : ℕ → ℂ := fun jK => (ls.map fun l => rt (E.dimv l.dr)).prod *
+      H (jK :: ls.map fun l => σ l.v) with hC
+    set lv : ℕ → ℕ → ℂ := fun ja jK => (if l.out then tX (E.dimv l.dr) (E.phase l.p) [] [ja]
+      else tX (E.dimv l.dr) (E.phase l.p) [ja] []) * tB (E.dimv l.dr) (E.dimv l.dt) jK ja V
+      with hlv
+    have step : ∀ ja jK, sumOver (labDim E) (ls.flatMap fun l => [l.a, l.K]) (fun ρ =>
+        (List.map (fun l => prodVal E l.nodes ρ) (l :: ls)).prod *
+          H (List.map (fun l => ρ l.K) (l :: ls)))
+        (Function.update (Function.update σ l.a ja) l.K jK) = lv ja jK * C jK := by
+      intro ja jK
+      set σ' := Function.update (Function.update σ l.a ja) l.K jK with hσ'
+      have e : ∀ x, x ≠ l.a → x ≠ l.K → σ' x = σ x := fun x h1 h2 => by
+        rw [hσ', Function.update_of_ne h2, Function.update_of_ne h1]
+      rw [sumOver_congr _ _ _ (fun ρ => lv ja jK * ((ls.map fun l => prodVal E l.nodes ρ).prod *
+          (fun xs => H (jK :: xs)) (ls.map fun l => ρ l.K))) _ (fun ρ hρ _ => ?_)]
+      · rw [← mul_sumOver, ih (fun xs => H (jK :: xs)) σ' hnr hv'
+          (fun m hm => hr m (List.mem_cons_of_mem _ hm))
+          (fun m hm => hφ m (List.mem_cons_of_mem _ hm))
+          (fun m hm => ha m (List.mem_cons_of_mem _ hm))
+          (fun m hm => by
+            have hm' := hv m (List.mem_cons_of_mem _ hm)
+            simp only [List.mem_cons, not_or] at hm'
+            rw [e _ hm'.1 hm'.2.1]; exact hK m (List.mem_cons_of_mem _ hm))
+          (fun m hm => by
+            have hm' := hv m (List.mem_cons_of_mem _ hm)
+            simp only [List.mem_cons, not_or] at hm'
+            rw [e _ hm'.1 hm'.2.1]; exact hV m (List.mem_cons_of_mem _ hm))]
+        have ev : (ls.map fun l => σ' l.v) = ls.map fun l => σ l.v :=
+          List.map_congr_left fun m hm => by
+            have hm' := hv m (List.mem_cons_of_mem _ hm)
+            simp only [List.mem_cons, not_or] at hm'
+            exact e _ hm'.1 hm'.2.1
+        rw [ev]
+      · have ra : ρ l.a = ja := by rw [hρ _ har, hσ', Function.update_of_ne haK, Function.update_self]
+        have rK : ρ l.K = jK := by rw [hρ _ hnK', hσ', Function.update_self]
+        have rv : ρ l.v = V := by
+          rw [hρ _ hvr, hσ', Function.update_of_ne hvK, Function.update_of_ne hva]
+        simp only [List.map_cons, List.prod_cons, MixL.val_nodes, ra, rK, rv, hlv]
+        ring
+    simp only [sumOver, step, ha l List.mem_cons_self]
+    rw [Finset.sum_comm]
+    simp only [← Finset.sum_mul]
+    have hleg : ∀ jK, ∑ ja ∈ Finset.range (E.dimv l.dr), lv ja jK =
+        rt (E.dimv l.dr) * (if jK = V then 1 else 0) := fun jK => by
+      simp only [hlv]
+      cases l.out
+      · exact mixLegIn _ _ _ _ hrl _ hφl hVl
+      · exact mixLegOut _ _ _ _ hrl _ hφl hVl
+    simp only [hleg]
+    rw [Finset.sum_eq_single V]
+    · simp only [if_true, mul_one, hC, List.map_cons, List.prod_cons]; ring
+    · intro j _ hj; simp [hj]
+    · intro h; exact absurd (Finset.mem_range.2 (hK l List.mem_cons_self)) h
+
+theorem prodVal_mixL (E : Env) (legs : List MixL) (ρ : ℕ → ℕ) :
+    prodVal E (legs.flatMap MixL.nodes) ρ = (legs.map fun l => prodVal E l.nodes ρ).prod := by
+  induction legs with
+  | nil => simp [prodVal]
+  | cons l ls ih => rw [List.flatMap_cons, prodVal_append, ih, List.map_cons, List.prod_cons]
+
+/-- [P2]'s mixed-dimensional Z box (2.3.3): legs through binders and splitters with pink dots
+into a weighted Z box on the product dimension, summed over the internal labels. -/
+theorem mixZ (E : Env) (dD c : ℕ) (legs : List MixL) (ko ki : List ℕ) (σ : ℕ → ℕ)
+    (hperm : (ko ++ ki).Perm (legs.map MixL.K))
+    (hnd : (legs.flatMap fun l => [l.a, l.K]).Nodup)
+    (hv : ∀ l ∈ legs, l.v ∉ legs.flatMap fun l => [l.a, l.K])
+    (hr : ∀ l ∈ legs, 0 < E.dimv l.dr)
+    (hφ : ∀ l ∈ legs, ∀ k < E.dimv l.dr, ex (E.phase l.p k) = 1)
+    (ha : ∀ l ∈ legs, labDim E l.a = E.dimv l.dr)
+    (hK : ∀ l ∈ legs, σ l.v < labDim E l.K) (hV : ∀ l ∈ legs, σ l.v < E.dimv l.dt) :
+    sumOver (labDim E) (legs.flatMap fun l => [l.a, l.K])
+      (prodVal E (legs.flatMap MixL.nodes ++ [⟨.ZW, ko, ki, dD, c⟩])) σ =
+      (legs.map fun l => rt (E.dimv l.dr)).prod *
+        tZw (E.dimv dD) (E.coef c) (legs.map fun l => σ l.v) := by
+  rw [← mixSum legs (tZw (E.dimv dD) (E.coef c)) σ hnd hv hr hφ ha hK hV]
+  refine sumOver_congr _ _ _ _ _ (fun ρ _ _ => ?_)
+  rw [prodVal_append, prodVal_mixL]
+  congr 1
+  simp only [prodVal, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one, val]
+  rw [← List.map_append]
+  exact tZw_perm _ _ _ _ ((hperm.map ρ).trans (by rw [List.map_map]; rfl))
+
+/-- The transposed multiplier `X x -> ws`, `Z ws -> z`, summed over `ws`. -/
+theorem multiplierUp_val (E : Env) (pz px dz x z : ℕ) (ws : List ℕ) (τ : ℕ → ℕ)
+    (hd : 0 < E.dimv dz) (hnd : ws.Nodup) (hx' : x ∉ ws) (hz' : z ∉ ws)
+    (hws : ∀ w ∈ ws, labIdx E.labs w = dz) (rz : τ z < E.dimv dz)
+    (hz : ∀ k < E.dimv dz, ex (E.phase pz k) = 1) (hx : ∀ k < E.dimv dz, ex (E.phase px k) = 1) :
+    sumOver (labDim E) ws (prodVal E [⟨.X, ws, [x], dz, px⟩, ⟨.Z, [z], ws, dz, pz⟩]) τ =
+      (rt (E.dimv dz))⁻¹ ^ (ws.length + 1) *
+        (if (ws.length * τ z) % E.dimv dz = τ x % E.dimv dz then (E.dimv dz : ℂ) else 0) := by
+  have hD : ∀ w ∈ ws, labDim E w = E.dimv dz := fun w hw => labDim_of E w dz (hws w hw)
+  have key : sumOver (labDim E) ws (prodVal E [⟨.X, ws, [x], dz, px⟩, ⟨.Z, [z], ws, dz, pz⟩]) τ =
+      sumOver (labDim E) ws (fun ρ => if ∀ l ∈ ws, ρ l = ρ ((fun _ => z) l) then
+        tX (E.dimv dz) (E.phase px) (ws.map ρ) [ρ x] else 0) τ := by
+    refine sumOver_congr _ _ _ _ _ fun ρ hρ _ => ?_
+    have ez : ρ z = τ z := hρ z hz'
+    have rz' : ρ z < E.dimv dz := ez ▸ rz
+    simp only [prodVal, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, mul_one,
+      val, List.cons_append, List.nil_append]
+    rw [tZ_at _ _ _ (ρ z) (by simp), hz _ rz']
+    have hz'' : (ρ z < E.dimv dz ∧ ∀ y ∈ ρ z :: ws.map ρ, y = ρ z) ↔ ∀ w ∈ ws, ρ w = ρ z := by
+      constructor
+      · rintro ⟨-, h⟩ w hw
+        exact h _ (List.mem_cons_of_mem _ (List.mem_map_of_mem hw))
+      · intro h
+        refine ⟨rz', fun y hy => ?_⟩
+        rcases List.mem_cons.1 hy with hy | hy
+        · exact hy
+        · obtain ⟨w, hw, rfl⟩ := List.mem_map.1 hy
+          exact h w hw
+    by_cases hc : ∀ w ∈ ws, ρ w = ρ z
+    · rw [if_pos (hz''.2 hc), if_pos hc, mul_one]
+    · rw [if_neg (fun h => hc (hz''.1 h)), if_neg hc, mul_zero]
+  rw [key, sumOver_pin (labDim E) ws hnd (fun _ => z) (fun _ _ => hz') _ τ
+    (fun w hw => by rw [hD w hw]; exact rz)]
+  simp only
+  have ex' : (if x ∈ ws then τ z else τ x) = τ x := by rw [if_neg hx']
+  rw [ex', tX_flat _ hd _ hx]
+  have hm : ws.map (fun y => if y ∈ ws then τ z else τ y) = List.replicate ws.length (τ z) := by
+    rw [List.eq_replicate_iff]
+    refine ⟨by simp, fun y hy => ?_⟩
+    obtain ⟨w, hw, rfl⟩ := List.mem_map.1 hy
+    simp [hw]
+  rw [hm]
+  simp [List.sum_replicate]
+
 end ArchytasZX
