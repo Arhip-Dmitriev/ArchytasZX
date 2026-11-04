@@ -35,3 +35,17 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   sumOver_const_mul + multiplier_val for the multiplier, sumOver_congr to rewrite the rest
   pointwise into if-forms (tX_zero_state / tX_zero_effect / val_zc_two), simp only [sumOver,
   Function.update_apply, distinctness], then Finset.sum_eq_single 0 per summed label.
+2026-11-04 (run 2, end): DONE qf_k0: Weights.lean `tX_kj_state` (pink K state with phases
+  om d^(q j) is [x = J] √d when J + j ≡ 0), `tB_zero_left`, `qfK0` (symbolic dims; Z box
+  coefficient passed as value `c` with `hc : zc E m J = c`; `hlow : J < n1 ∧ J < n2 ∨ c = 0`).
+  Builder `_qf_k0` (needs the coefficient model 0 or 1; scalar written with Inv, sympy `/`
+  gives 1/Rt(2) which sc.text rejects). rule_check --lean dims 2,3,4,6 and dims 3,4,6
+  --arities 6: qf_k0 and qf_k0_converse PROVED in every class.
+  Status: qf_e, qf_e_converse, qf_k0, qf_k0_converse PROVED. Remaining: qf_dd, qf_dzx, qf_bzw,
+  qf_ta (+ converses), all UNPROVED (no builder). Next step: qf_dd. Its left side is one
+  splitter S(mn -> m, n); the right side (13 nodes for m=n=1, see /root/scratch/dump.py idea:
+  register a debug builder that prints c.node / c.new_nodes and raises NetUnsupported) is a pink
+  X (1 -> 2, dim mn), an `up` multiplier n (pink X 1 -> n then Z n -> 1) on output 0, and mixed
+  Z boxes mn -> m and mn -> n (binder with pink state, weighted Z, splitter with pink effect).
+  Since the rewrite runs left -> right with the big side on the right, state the lemma with the
+  splitter on the left and evaluate the right side as in qfE/qfK0.
