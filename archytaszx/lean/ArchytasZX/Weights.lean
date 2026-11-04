@@ -6594,5 +6594,28 @@ theorem wwRowsHot (d c v : ℕ) (hv : v ≠ 0) (hvd : v < d) (rows : List (ℕ �
             (List.mem_map_of_mem (f := fun r => σ r.1) hr)]
       · rw [if_neg (fun h => hav h.1), zero_mul, if_neg (fun h => hav (List.cons.inj h).1)]
 
+/-- A list whose values have one nonzero entry `v`: zeros, the entry, zeros. -/
+theorem split_hot {β : Type*} (l : List β) (f : β → ℕ) (v : ℕ)
+    (h : (l.map f).filter (· ≠ 0) = [v]) :
+    ∃ A c B, l = A ++ c :: B ∧ (∀ x ∈ A, f x = 0) ∧ f c = v ∧ ∀ x ∈ B, f x = 0 := by
+  induction l with
+  | nil => simp at h
+  | cons a l ih =>
+    rw [List.map_cons] at h
+    by_cases ha : f a = 0
+    · rw [List.filter_cons_of_neg (by simp [ha])] at h
+      obtain ⟨A, c, B, rfl, hA, hc, hB⟩ := ih h
+      exact ⟨a :: A, c, B, rfl, fun x hx => by
+        rcases List.mem_cons.1 hx with rfl | hx
+        · exact ha
+        · exact hA x hx, hc, hB⟩
+    · rw [List.filter_cons_of_pos (by simpa using ha), List.cons.injEq] at h
+      refine ⟨[], a, l, rfl, by simp, h.1, fun x hx => ?_⟩
+      by_contra hx0
+      have : f x ∈ (l.map f).filter (· ≠ 0) :=
+        List.mem_filter.2 ⟨List.mem_map_of_mem hx, by simpa using hx0⟩
+      rw [h.2] at this
+      simp at this
+
 
 end ArchytasZX
