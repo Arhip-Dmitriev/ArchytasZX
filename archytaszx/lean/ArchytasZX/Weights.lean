@@ -6490,5 +6490,109 @@ theorem wwRightPin (E : Env) (dz u pg : ℕ) (rows : List (ℕ × List ℕ))
   simp only [List.map_const', List.prod_replicate, one_pow, one_mul, List.zipWith_map_right,
     List.zipWith_self]
 
+/-- A W node on all-zero outputs. -/
+theorem tW_zeros (d a : ℕ) (ys : List ℕ) (h : ∀ y ∈ ys, y = 0) :
+    tW d ys a = if a = 0 then 1 else 0 := by
+  have : ys.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y hy => by simp [h y hy]
+  unfold tW
+  by_cases ha : a = 0
+  · simp only [ha, if_true, if_pos h]
+  · simp only [ha, if_false, this]
+    rw [if_neg]
+    rintro ⟨-, h'⟩
+    exact List.cons_ne_nil a [] h'.symm
+
+theorem prod_ite_zero' {β : Type*} (rs : List β) (f : β → ℕ) :
+    (rs.map fun r => if f r = 0 then (1 : ℂ) else 0).prod = if ∀ r ∈ rs, f r = 0 then 1 else 0 := by
+  induction rs with
+  | nil => simp
+  | cons r rs ih =>
+    simp only [List.map_cons, List.prod_cons, ih, List.forall_mem_cons]
+    by_cases h : f r = 0 <;> simp [h]
+
+/-- A W node on the outputs `xs` under `Z` updated at `xs[c]` to `v`, `Z` zero on `xs`. -/
+theorem tW_hotAt (d c v a : ℕ) (xs : List ℕ) (hnd : xs.Nodup) (hc : c < xs.length) (hv : v ≠ 0)
+    (Z : ℕ → ℕ) (hZ : ∀ x ∈ xs, Z x = 0) :
+    tW d (xs.map (Function.update Z (xs.getD c 0) v)) a = if a = v ∧ v < d then 1 else 0 := by
+  have hl : xs.getD c 0 = xs[c] := by simp [List.getD_eq_getElem?_getD, hc]
+  have hs : xs = xs.take c ++ xs[c] :: xs.drop (c + 1) := by
+    rw [← List.drop_eq_getElem_cons hc, List.take_append_drop]
+  rw [hl]
+  generalize xs.take c = A at hs
+  generalize xs.drop (c + 1) = B at hs
+  generalize xs[c] = l at hs
+  subst hs
+  obtain ⟨-, hB, hdis⟩ := List.nodup_append.1 hnd
+  obtain ⟨hnot, -⟩ := List.nodup_cons.1 hB
+  rw [List.map_append, List.map_cons, Function.update_self]
+  refine tW_single d a v _ _ (fun y hy => ?_) (fun y hy => ?_) hv
+  · obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hy
+    rw [Function.update_of_ne (fun h => hdis x hx _ List.mem_cons_self h)]
+    exact hZ x (List.mem_append_left _ hx)
+  · obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hy
+    rw [Function.update_of_ne (fun h => hnot (by rw [← h]; exact hx))]
+    exact hZ x (List.mem_append_right _ (List.mem_cons_of_mem _ hx))
+
+/-- Rows of W nodes at `σ a_r`, one label `r[c]` of one row at `v ≠ 0` and the rest at `0`,
+summed over the row: the inputs are one-hot at `v`. -/
+theorem wwRowsHot (d c v : ℕ) (hv : v ≠ 0) (hvd : v < d) (rows : List (ℕ × List ℕ))
+    (σ Z : ℕ → ℕ) (hnd : (rows.flatMap Prod.snd).Nodup) (hc : ∀ r ∈ rows, c < r.2.length)
+    (hZ : ∀ x ∈ rows.flatMap Prod.snd, Z x = 0) :
+    (rows.map fun r => (rows.map fun r' =>
+        tW d (r'.2.map (Function.update Z (r.2.getD c 0) v)) (σ r'.1)).prod).sum =
+      if (rows.map fun r => σ r.1).filter (· ≠ 0) = [v] then 1 else 0 := by
+  induction rows with
+  | nil => simp
+  | cons r₀ rs ih =>
+    simp only [List.flatMap_cons] at hnd hZ
+    obtain ⟨h0, hrs, hdis⟩ := List.nodup_append.1 hnd
+    have hZ0 : ∀ x ∈ r₀.2, Z x = 0 := fun x hx => hZ x (List.mem_append_left _ hx)
+    have hZr : ∀ x ∈ rs.flatMap Prod.snd, Z x = 0 := fun x hx => hZ x (List.mem_append_right _ hx)
+    have hc0 := hc r₀ List.mem_cons_self
+    have hcr : ∀ r ∈ rs, c < r.2.length := fun r h => hc r (List.mem_cons_of_mem _ h)
+    -- a label outside the row leaves it at zero
+    have zero_of : ∀ (l : ℕ) (xs : List ℕ), (∀ x ∈ xs, Z x = 0) → l ∉ xs → ∀ a,
+        tW d (xs.map (Function.update Z l v)) a = if a = 0 then 1 else 0 := by
+      intro l xs hz hl a
+      refine tW_zeros d a _ fun y hy => ?_
+      obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hy
+      rw [Function.update_of_ne (fun h => hl (by rw [← h]; exact hx))]
+      exact hz x hx
+    have hl0 : r₀.2.getD c 0 ∈ r₀.2 := by
+      simp [List.getD_eq_getElem?_getD, hc0]
+    have hlr : ∀ r ∈ rs, r.2.getD c 0 ∈ rs.flatMap Prod.snd := fun r h =>
+      List.mem_flatMap.2 ⟨r, h, by simp [List.getD_eq_getElem?_getD, hcr r h]⟩
+    simp only [List.map_cons, List.prod_cons, List.sum_cons]
+    rw [tW_hotAt d c v _ r₀.2 h0 hc0 hv Z hZ0]
+    have e1 : (rs.map fun r' => tW d (r'.2.map (Function.update Z (r₀.2.getD c 0) v)) (σ r'.1)) =
+        rs.map fun r' => if σ r'.1 = 0 then (1 : ℂ) else 0 :=
+      List.map_congr_left fun r' h' => zero_of _ r'.2
+        (fun x hx => hZr x (List.mem_flatMap.2 ⟨r', h', hx⟩))
+        (fun h => hdis _ hl0 _ (List.mem_flatMap.2 ⟨r', h', h⟩) rfl) (σ r'.1)
+    have e2 : (rs.map fun r => tW d (r₀.2.map (Function.update Z (r.2.getD c 0) v)) (σ r₀.1) *
+        (rs.map fun r' => tW d (r'.2.map (Function.update Z (r.2.getD c 0) v)) (σ r'.1)).prod) =
+        rs.map fun r => (if σ r₀.1 = 0 then (1 : ℂ) else 0) *
+          (rs.map fun r' => tW d (r'.2.map (Function.update Z (r.2.getD c 0) v)) (σ r'.1)).prod :=
+      List.map_congr_left fun r h => by
+        rw [zero_of _ r₀.2 hZ0 (fun h' => hdis _ h' _ (hlr r h) rfl) (σ r₀.1)]
+    rw [e1, e2, List.sum_map_mul_left, ih hrs hcr hZr, prod_ite_zero']
+    have hf : ∀ l : List ℕ, (∀ x ∈ l, x = 0) → l.filter (· ≠ 0) = [] := fun l h =>
+      List.filter_eq_nil_iff.2 fun y hy => by simp [h y hy]
+    have hfe : ∀ l : List ℕ, l.filter (· ≠ 0) = [] ↔ ∀ x ∈ l, x = 0 := fun l => by
+      rw [List.filter_eq_nil_iff]; simp
+    by_cases ha : σ r₀.1 = 0
+    · rw [if_pos ha, if_neg (fun h => hv (ha ▸ h.1).symm), zero_mul, zero_add, one_mul,
+        List.filter_cons_of_neg (by simp [ha])]
+    · rw [if_neg ha, zero_mul, add_zero, List.filter_cons_of_pos (by simpa using ha)]
+      by_cases hav : σ r₀.1 = v
+      · rw [if_pos ⟨hav, hvd⟩, one_mul]
+        simp only [List.cons.injEq, hav, true_and]
+        by_cases hall : ∀ r ∈ rs, σ r.1 = 0
+        · rw [if_pos hall, if_pos ((hfe _).2 fun x hx => by
+            obtain ⟨r, hr, rfl⟩ := List.mem_map.1 hx; exact hall r hr)]
+        · rw [if_neg hall, if_neg fun h => hall fun r hr => (hfe (rs.map fun r => σ r.1)).1 h _
+            (List.mem_map_of_mem (f := fun r => σ r.1) hr)]
+      · rw [if_neg (fun h => hav h.1), zero_mul, if_neg (fun h => hav (List.cons.inj h).1)]
+
 
 end ArchytasZX
