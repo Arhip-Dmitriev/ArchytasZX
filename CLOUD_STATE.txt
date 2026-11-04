@@ -23,3 +23,15 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   leanprover/lean4:v4.35.0 DIR`. No workaround for the Mathlib cache: building Mathlib from
   source on 4 cores does not fit a run. Next step: allow cache.mathlib.org (and
   release.lean-lang.org) in the environment network policy, then start on qf_e.
+2026-11-04 (run 2): Setup works now (cache.mathlib.org reachable; elan installer fine; full
+  `lake build ArchytasZX` ~3 min from cache). Python: /usr/local/bin/python is 3.11 but the
+  package needs >=3.12, so `uv venv -p 3.12 /root/venv && . /root/venv/bin/activate &&
+  uv pip install -e '.[dev]'` and run rule_check from that venv.
+  DONE qf_e: Weights.lean `tX_zero_effect` (phaseless pink effect = [j=0] √d) and `qfE`
+  (symbolic in n, t, e via the multiplier list ws; scalar hyp `s * √n^e = √n^3`; Z box only
+  needs zc 0 = 1). Builder `_qf_e` in lean_net.py, registered "qf_e". rule_check --lean
+  dims 2,3,4,6: PROVED all classes (also n=3,e=2); qf_e_converse PROVED via through_forward.
+  Proof pattern that worked (reuse for the next rules): sumOver_append to split off ws,
+  sumOver_const_mul + multiplier_val for the multiplier, sumOver_congr to rewrite the rest
+  pointwise into if-forms (tX_zero_state / tX_zero_effect / val_zc_two), simp only [sumOver,
+  Function.update_apply, distinctness], then Finset.sum_eq_single 0 per summed label.
