@@ -35,3 +35,9 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   p=W(ps;u), g_k=Z([y_k];[p_k,w_k]); right nodes p=W(ps;u), w_k=W(row_k;x_k), t_c=W(col_c;s_c),
   g_c=Z([y_c];[p_c,s_c]); take rows and cols as separate arguments with a decidable hypothesis
   tying cols to rows (cols = rows.transpose) so the node lists stay plain flatMaps/maps.
+
+2026-11-04 (run 2): SETUP FAILED again, no Lean work done. Same cause: release.lean-lang.org and
+  cache.mathlib.org answer 403 to CONNECT (proxy status shows 20 rejected cache.mathlib.org
+  connects). Toolchain workaround from run 1 worked again (GitHub release tarball + python
+  zstandard + `elan toolchain link`). `lake exe cache get` cannot work until cache.mathlib.org is
+  allowed in the environment network policy. Next step unchanged: the WW rule lemma (plan in run 1).
