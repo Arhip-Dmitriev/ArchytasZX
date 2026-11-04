@@ -99,7 +99,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
                LocalEq.flip', sumOver_pin2, wKz, multT_val, kzChainVal, kzVal, zxwKZ, HdC,
                hdChainVal, hdGroup, hdVal, hdClosed, om_tri, qfHD, chainsVal, chainsClosed,
                ZhdC, zhdChainVal, zhdGroup, zxwHD, hopfW, hopfSwappedW, hopfXW,
-               hopfSwappedXW, hopfWXW, hopfSwappedWXW, xDefW, xc, xcFusion (section 8)
+               hopfSwappedXW, hopfWXW, hopfSwappedWXW, xDefW, xc, xcFusion, tW_support, wPairSum,
+               wPairSum_zero, wPairSum_hot, sum_hot_rows, LocalEq.idR, LocalEq.idL, WwG,
+               wwLeft, wwLeftVal, WwC, wwRight, wwRows, wwRightVal, wwB_zero, wwB_hot, zxwWW,
+               QwC, qwRight, qwRightVal, qfWW, mixLegIn, mixLegOut, MixL, mixSum, mixZ,
+               multiplierUp_val
+               (section 8)
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
@@ -293,6 +298,11 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
   hopf, hopf_swapped (weighted   hopfW, hopfXW,        _hopf
   spiders)                       hopfWXW, Swapped forms
   x_spider_definition (weighted) xDefW                 _x_def
+  zxw_ww                         zxwWW, wwB_zero,      _ww (both directions; the converse
+                                 wwB_hot, wwLeftVal,   by LocalEq.symm'; identity spiders
+                                 wwRightVal            on moved terms by LocalEq.idR/idL)
+  qf_ww                          qfWW, qwRightVal,     _qf_ww (as _ww)
+                                 wwB_zero, wwB_hot
   spider_fusion (weighted X)     xcFusion              _fusion
   zxw_hd                         zxwHD, chainsVal,     _zxw_hd (both directions; the converse
                                  chainsClosed,         by LocalEq.flip')
@@ -319,7 +329,11 @@ G1 Binder and splitter under the normaliser. The binder entry [k = a t + b] need
 coefficient and div/mod to eliminate; an X spider or F on an s t wire gives characters
 omega_s^(t k l) whose sums depend on gcd(t, s). The rules qf_dd, qf_e, qf_dzx, qf_k0, qf_bzw,
 qf_ta, qf_s1 and connective_inverse_converse have no rule lemma; their steps are unproved
-axioms. binder_definition has one (section 8) except when only some of its legs are bent.
+axioms. binder_definition has one (section 8) except when only some of its legs are bent. The
+mixed-dimensional Z box of [P2] (2.3.3), which these rules contain, has its value lemma mixZ
+(Weights.lean: every leg's pink dot and binder or splitter pin its product label to the leg's
+value, times the square root of the pink dot's dimension); the rule lemmas built on it are not
+written yet.
 
 G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
 by the classical evaluation with Gauss's sign and by Landsberg-Schaar reciprocity; neither is in
@@ -341,9 +355,9 @@ only, not the bundle indices derived from them.
 G8 Nodes whose legs differ in dimension (d^p against d^q), in families: exponent symbols carry
 no positivity hypothesis.
 
-G9 Rules of the complete axiomatisation without a rule lemma: zxw_ww and qf_ww, with their
-converses. Steps of proved rules outside their lemma's form: binder_definition with only some
-legs bent.
+G9 Steps of proved rules outside their lemma's form: binder_definition with only some legs
+bent. Every rule of the complete axiomatisation outside the connective rules (G1) has a rule
+lemma.
 
 G10 Normaliser exports on phased diagrams: a closing identity between roots of unity written in
 different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does
@@ -354,9 +368,10 @@ unproved axioms.
 
 G11 Families are stated over bundled networks, not over the engine's diagrams.
 
-G12 Weighted spiders at a symbolic dimension: a coefficient table is exported only at a concrete
-dimension ("complex weights at a symbolic dimension"); steps on such nodes are unproved axioms.
-Weighted X spiders are exported as Kind.XW at a concrete dimension.
+G12 Weighted spiders at a symbolic dimension: the coefficient table Ψ is the weight entries
+over an index-free weight rule; a weight vector that also carries phases, or a weight rule
+depending on the index, raises NetUnsupported, and steps on such nodes are unproved axioms.
+Weighted X spiders are exported as Kind.XW.
 
 G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
 of isoB) are decided in the kernel first (decide +kernel), and a step's closing isoB names its

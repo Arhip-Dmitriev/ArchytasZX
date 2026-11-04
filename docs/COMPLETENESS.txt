@@ -135,12 +135,12 @@ converse.
                                                                        fourierSq'; fourierMult
   H1     zxw_h1 (zxw_h1_converse)                          y  y  L/L   xDef, xDefT; concrete d
   Pcy    zxw_pcy (zxw_pcy_converse)                        y  y  L/L   zcPcy
-  AD     zxw_ad (zxw_ad_converse)                          y  y  L/L   zcAd; concrete d;
-                                                                       converse: any a, b
+  AD     zxw_ad (zxw_ad_converse)                          y  y  L/L   zcAd; converse: any
+                                                                       a, b
   Sym    zxw_sym (zxw_sym_converse)                        y  y  L/L   wPerm
   Aso    zxw_aso (zxw_aso_converse)                        y  y  L/L   wAso
   BZW    zxw_bzw (zxw_bzw_converse)                        y  y  L/L   wzBialgebra
-  WW     zxw_ww (zxw_ww_converse)                          y  y  U
+  WW     zxw_ww (zxw_ww_converse)                          y  y  L/L   zxwWW, LocalEq.idR/idL
   Bs0    zxw_bs0 (zxw_bs0_converse)                        y  y  L/L   wZeroCopy
   Bsj    zxw_bsj (zxw_bsj_converse)                        y  y  L/L   zxwBsj; concrete d
   TA     zxw_ta (zxw_ta_converse)                          y  y  L/L   zxwTA
@@ -171,7 +171,7 @@ converse.
   Ept    zxw_ept                                           y  y  L     same as [P1]
   Bsj    zxw_bsj                                           y  y  L     j -> -j of [P1]'s
   P1     zxw_p1_multiplier                                 y  y  L     same as [P1]
-  WW     qf_ww (qf_ww_converse)                            y  y  U
+  WW     qf_ww (qf_ww_converse)                            y  y  L/L   qfWW, LocalEq.idR/idL
   WF     qf_wf (qf_wf_converse)                            y  y  L/L   wFusion
   HD     qf_hd (qf_hd_converse)                            y  y  L/L   qfHD, hdClosed; concrete
                                                                        d; Lean checked at d <= 5
@@ -196,8 +196,7 @@ converse.
   ------------------------  ---------------------------------------------------  -  -  ----
   X spider = F . Z . F^3    x_spider_definition (x_spider_definition_converse)   y  y  L (xDef)
   triangle (YT)             triangle_definition (triangle_definition_converse)   y  y  L (zcT)
-  inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  L (zcTi,
-                                                                                         concrete d)
+  inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  L (zcTi)
   green circle spider       phase_to_weight (weight_to_phase)                    y  y  L (zcCongr)
   scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  L (zcScalar,
                                                                                          concrete d)
@@ -222,7 +221,10 @@ quantified over every dimension, arity, phase and weight the lemma states, with 
 side checks per step; a converse is proved as the symmetric of a step of its forward rule
 (followed by identity removals). "concrete d" marks a rule whose builder proves the coefficient
 hypotheses by cases over the indices and so needs a concrete dimension; at a symbolic dimension
-such a step is the axiom unproved_RULE_N. Each "L" entry was checked by exporting single steps
+such a step is the axiom unproved_RULE_N. At a symbolic dimension a weight vector is exported
+from its entries and an index-free weight rule, and the coefficient hypotheses of zcAd, zcTi,
+zcT and zcZer are closed by cases on the index (zxw_ad, zxw_zer, triangle_definition,
+triangle_inverse_definition and their converses). Each "L" entry was checked by exporting single steps
 (step route only, never the normaliser of symbolic sums) at d = 2, 3, 5 and, where the
 template builds there, at symbolic d, over the rule's arity classes, with lake env lean
 accepting every file (and, for the rules proved on 2026-11-03/04, six random instances at each
