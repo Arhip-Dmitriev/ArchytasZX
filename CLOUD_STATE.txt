@@ -56,7 +56,7 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   Port.tW_zeros; force push was denied); fixed by the next commit e237c85. Lesson: gate commits on
   `grep -q "Build completed successfully"` of the build log, not on grep's exit status.
   NEXT (rule lemma zxwWW, plan):
-   1. split lemma: (l.map f).filter (≠0) = [v] → ∃ A c B, l = A ++ c :: B, f = 0 on A and B, f c = v.
+   1. DONE (c390f31): split_hot (l.map f).filter (≠0) = [v] → ∃ A c B, l = A ++ c :: B, zeros, f c = v.
    2. wwRightSum: tW(y;u) * sumOver (cols.flatMap col) (Π_rows tW(row.map ρ; ρ a) * Π_cols
       tW(col.map ρ; τ y_c)) τ = tW(y;u) * Σ_j tW(as;j) tW(y;j), as = rows.map (τ ∘ fst). Hyps:
       hlen ∀ r, r.2.length = cols.length; hC cols.map col = (range cols.length).map fun c =>
