@@ -129,8 +129,6 @@ UNPROVED: set[str] = {
     "qf_ta",
     "qf_ta_converse",
     "qf_wf_converse",
-    "qf_ww",
-    "qf_ww_converse",
     "scalar_box_converse",
     "state_copy_converse",
     "state_copy_swapped_converse",
@@ -167,8 +165,6 @@ UNPROVED: set[str] = {
     "zxw_s2_pink_converse",
     "zxw_ta_converse",
     "zxw_vw_converse",
-    "zxw_ww",
-    "zxw_ww_converse",
     "zxw_zer_converse",
     "zxw_zv_converse",
 }
