@@ -4200,6 +4200,660 @@ def _qf_e(c: _Ctx) -> _Spec:
     )
 
 
+def _qf_dd(c: _Ctx) -> _Spec:
+    ((sid, sn),) = ((nid, c.node(nid)) for nid in dict(c.match.nodes).values())
+    _need(sn.kind == "S" and len(sn.outs) == 2 and len(sn.ins) == 1, "DD splitter")
+    (a, b), (k,) = sn.outs, sn.ins
+    new = dict(c.new_nodes)
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in new.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    pid, pn = one(lambda n: n.kind == "X" and n.ins == (k,) and len(n.outs) == 2, "DD pink dot")
+    x, y = pn.outs
+    xid, xn = one(lambda n: n.kind == "X" and n.ins == (x,), "DD multiplier")
+    ws = xn.outs
+    zid, zn = one(lambda n: n.kind == "Z" and n.ins == ws and len(n.outs) == 1, "DD multiplier")
+    (z,) = zn.outs
+
+    def gadget(vin: int, vout: int) -> tuple[list[NodeId], str, str, LNode]:
+        bid, bn = one(lambda n: n.kind == "B" and len(n.ins) == 2 and n.ins[1] == vin, "DD binder")
+        (kin,), (ain, _) = bn.outs, bn.ins
+        gid, gn = one(lambda n: n.kind == "X" and n.outs == (ain,) and not n.ins, "DD pink state")
+        wid, wn = one(lambda n: n.kind in _ZC and n.ins == (kin,) and len(n.outs) == 1, "DD Z box")
+        (kout,) = wn.outs
+        tid, tn = one(lambda n: n.kind == "S" and n.ins == (kout,), "DD splitter")
+        _need(len(tn.outs) == 2 and tn.outs[1] == vout, "DD splitter legs")
+        aout = tn.outs[0]
+        eid, en = one(lambda n: n.kind == "X" and n.ins == (aout,) and not n.outs, "DD pink effect")
+        _need(gn.dim == bn.dim and en.dim == tn.dim, "DD pink dimensions")
+        li = f"⟨{ain}, {kin}, {vin}, {bn.dim}, {gn.ph}, {bn.ph}, false⟩"
+        lo = f"⟨{aout}, {kout}, {vout}, {tn.dim}, {en.ph}, {tn.ph}, true⟩"
+        for n in (gn, en):
+            _phaseless(c, n)
+        return [gid, bid, eid, tid, wid], li, lo, wn
+
+    ids_a, ai, ao, wa = gadget(z, a)
+    ids_b, bi, bo, wb = gadget(y, b)
+    _need(len(new) == 13, "DD right side")
+    dd = pn.dim
+    _need(all(n.dim == dd for n in (xn, zn)), "DD dimensions")
+    for n in (pn, xn, zn):
+        _phaseless(c, n)
+    d_expr = c.ex.dim_exprs[dd]
+    _need(d_expr.is_Integer, "DD at a concrete dimension")
+    r = c.rt(dd)
+    n_ws = len(ws)
+    k_model = r ** (n_ws - 3) if n_ws >= 3 else Inv(r) ** (3 - n_ws)
+    sc = c.ex.sc
+    try:
+        body = sc.prove(k_model * r**3, r**n_ws)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
+    hs = f"(show {sc.text(k_model)} * {sc.text(r)} ^ 3 = {sc.text(r)} ^ {n_ws} from ({body}))"
+    psi = " <;> (try simp only [Ψ])" if c.ex.weight_tab else ""
+    coef = (
+        f"(by intro j hj; simp only [{c.ex.unfold}, Δ] at hj ⊢; interval_cases j <;> "
+        f"simp only [zc]{psi} <;> simp [Φ, ex_zero])"
+    )
+    lemma = (
+        f"qfDD {c.env} {dd} {sn.dim} {sn.ph} {pn.ph} {xn.ph} {zn.ph} {k} {x} {_list(ws)} "
+        f"{_zc(wa)} {_zc(wb)} {ai} {ao} {bi} {bo} IFACE _ {_positive(c, sn.dim)} "
+        f"{_positive(c, sn.ph)} {_chks(15)} ⟨rfl, rfl, rfl, rfl⟩ {_CHK} ⟨rfl, rfl, rfl⟩ "
+        f"⟨rfl, rfl, rfl⟩ {_chks(4)} {coef} {coef} "
+        "(by intro ph hph; fin_cases hph <;> phz) (by intro l hl; fin_cases hl <;> phz) "
+        f"{_CHK} {hs}"
+    )
+
+    def mlabs(li: str, lo: str) -> list[int]:
+        out = []
+        for t in (li, lo):
+            parts = [p.strip("⟨⟩ ") for p in t.split(",")]
+            out += [int(parts[0]), int(parts[1])]
+        return out
+
+    r_ids = [pid, xid, zid, *ids_a, *ids_b]
+    i_r = (x, y, z, *ws, *mlabs(ai, ao), *mlabs(bi, bo))
+    return _Spec((sid,), [(nid, new[nid]) for nid in r_ids], lemma, k_model, i_l=(), i_r=i_r)
+
+
+@dataclass(frozen=True)
+class _MixLeg:
+    """A leg of a mixed Z box: its pink dot and connector ids, MixL literal, summed labels and
+    leg label."""
+
+    ids: tuple[NodeId, NodeId]
+    lit: str
+    labs: tuple[int, int]
+    v: int
+
+
+def _mix_legs(nodes: Mapping[NodeId, LNode], box: LNode) -> tuple[list[_MixLeg], list[_MixLeg]]:
+    """The input and output legs of a mixed Z box ``box`` among ``nodes``, in the box's order."""
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in nodes.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    def binder(k: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "B" and n.outs == (k,) and len(n.ins) == 2
+
+    def splitter(k: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "S" and n.ins == (k,) and len(n.outs) == 2
+
+    def state(a: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "X" and n.outs == (a,) and not n.ins
+
+    def effect(a: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "X" and n.ins == (a,) and not n.outs
+
+    ins: list[_MixLeg] = []
+    outs: list[_MixLeg] = []
+    for kin in box.ins:
+        bid, bn = one(binder(kin), "binder")
+        ain, vin = bn.ins
+        gid, gn = one(state(ain), "pink state")
+        _need(gn.dim == bn.dim, "pink dimension")
+        lit = f"⟨{ain}, {kin}, {vin}, {bn.dim}, {gn.ph}, {bn.ph}, false⟩"
+        ins.append(_MixLeg((gid, bid), lit, (ain, kin), vin))
+    for kout in box.outs:
+        tid, tn = one(splitter(kout), "splitter")
+        aout, vout = tn.outs
+        eid, en = one(effect(aout), "pink effect")
+        _need(en.dim == tn.dim, "pink dimension")
+        lit = f"⟨{aout}, {kout}, {vout}, {tn.dim}, {en.ph}, {tn.ph}, true⟩"
+        outs.append(_MixLeg((eid, tid), lit, (aout, kout), vout))
+    return ins, outs
+
+
+def _qf_bzw(c: _Ctx) -> _Spec:
+    _need(not c.step.rule_name.endswith("_converse"), "BZW forward")
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    new = dict(c.new_nodes)
+    for n in (*left.values(), *new.values()):
+        if n.kind == "X":
+            _phaseless(c, n)
+
+    def boxes_of(nodes: Mapping[NodeId, LNode]) -> list[tuple[NodeId, LNode]]:
+        return [
+            (nid, n)
+            for nid, n in nodes.items()
+            if n.kind in _ZC and len(n.ins) == 2 and len(n.outs) == 1
+        ]
+
+    ws = {nid: n for nid, n in left.items() if n.kind == "W"}
+    _need(len(ws) == 2 and all(len(n.outs) == 2 and len(n.ins) == 1 for n in ws.values()), "BZW W")
+    lboxes = boxes_of(left)
+    _need(len(lboxes) == 2 and len(left) == 16, "BZW left side")
+    gads = []
+    for bid, bx in lboxes:
+        ins, outs = _mix_legs(left, bx)
+        _need(len(ins) == 2 and len(outs) == 1, "BZW box legs")
+        gads.append((bid, bx, ins, outs[0]))
+    wm_id = next(nid for nid, n in ws.items() if gads[0][2][0].v in n.outs)
+    wn_id = next(nid for nid in ws if nid != wm_id)
+    wm, wn = ws[wm_id], ws[wn_id]
+    ordered = []
+    for bid, bx, ins, out in gads:
+        if ins[0].v not in wm.outs:
+            ins = [ins[1], ins[0]]
+        _need(ins[0].v in wm.outs and ins[1].v in wn.outs, "BZW crossing")
+        ordered.append((bid, bx, ins, out))
+    ordered.sort(key=lambda g: wm.outs.index(g[2][0].v))
+    for i, (_bid, _bx, ins, _out) in enumerate(ordered):
+        _need(ins[0].v == wm.outs[i] and ins[1].v == wn.outs[i], "BZW crossing")
+    rboxes = boxes_of(new)
+    _need(len(rboxes) == 1 and len(new) == 8, "BZW right side")
+    ((hid, hb),) = rboxes
+    hins, houts = _mix_legs(new, hb)
+    _need(len(hins) == 2 and len(houts) == 1, "BZW right legs")
+    if hins[0].v != wm.ins[0]:
+        hins = [hins[1], hins[0]]
+    _need(hins[0].v == wm.ins[0] and hins[1].v == wn.ins[0], "BZW right inputs")
+    hout = houts[0]
+    wks = [(nid, n) for nid, n in new.items() if n.kind == "W" and n.ins == (hout.v,)]
+    _need(len(wks) == 1, "BZW right W")
+    ((wkid, wk),) = wks
+    _need(wk.outs == (ordered[0][3].v, ordered[1][3].v), "BZW right outputs")
+    _need(all((g[1].kind, g[1].ph) == (hb.kind, hb.ph) for g in ordered), "BZW coefficients")
+    hlegs = [*hins, hout]
+    drs = [int(leg.lit.split(",")[3]) for leg in hlegs]
+    k_model = c.rt(drs[0]) * c.rt(drs[1]) * c.rt(drs[2])
+    unfold = c.ex.unfold
+    ok = (
+        f"⟨rfl, {_CHK}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
+        f"exact ⟨by pos, by phz, by chk, by chk⟩), rfl, rfl, rfl, {_CHK}⟩"
+    )
+    psi = "; (try simp [Ψ])" if c.ex.weight_tab else ""
+    g0, g1 = ordered
+    lits = [leg.lit for g in ordered for leg in (*g[2], g[3])]
+    lemma = (
+        f"qfBZW {c.env} {wm.dim} {wn.dim} {wk.dim} {' '.join(lits)} "
+        f"{' '.join(leg.lit for leg in hlegs)} {_zc(g0[1])} {_zc(g1[1])} {_zc(hb)} IFACE _ "
+        f"{_positive(c, wm.dim)} {_positive(c, wn.dim)} {_positive(c, wk.dim)} "
+        f"{_chks(11)} {ok} {ok} {ok} (fun _ _ => ⟨rfl, rfl⟩) "
+        f"(by simp [zc, {unfold}, Φ, ex_zero]{psi}) "
+        f"(by simp only [{unfold}, Δ]; ring)"
+    )
+
+    def gad_ids(bid: NodeId, legs: list[_MixLeg]) -> list[NodeId]:
+        return [*(i for leg in legs for i in leg.ids), bid]
+
+    def gad_labs(legs: list[_MixLeg]) -> list[int]:
+        return [lab for leg in legs for lab in leg.labs]
+
+    l_ids = (
+        wm_id,
+        wn_id,
+        *gad_ids(g0[0], [*g0[2], g0[3]]),
+        *gad_ids(g1[0], [*g1[2], g1[3]]),
+    )
+    i_l = (
+        wm.outs[0],
+        wm.outs[1],
+        wn.outs[0],
+        wn.outs[1],
+        *gad_labs([*g0[2], g0[3]]),
+        *gad_labs([*g1[2], g1[3]]),
+    )
+    r_ids = (*gad_ids(hid, hlegs), wkid)
+    i_r = (hout.v, *gad_labs(hlegs))
+    return _Spec(l_ids, [(nid, new[nid]) for nid in r_ids], lemma, k_model, i_l=i_l, i_r=i_r)
+
+
+def _qf_dzx(c: _Ctx) -> _Spec:
+    _need(not c.step.rule_name.endswith("_converse"), "DZX forward")
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    ((rid, rn),) = c.new_nodes.items()
+    _need(rn.kind == "X", "DZX right pink dot")
+    _phaseless(c, rn)
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in left.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    def z_from(w: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "Z" and n.ins == (w,)
+
+    def z_to(w: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "Z" and n.outs == (w,)
+
+    def x_in(ws: tuple[int, ...]) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "X" and n.ins == ws and len(n.outs) == 1
+
+    def x_out(ws: tuple[int, ...]) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "X" and n.outs == ws and len(n.ins) == 1
+
+    chains: dict[int, tuple[bool, str, list[NodeId], list[int], int, int]] = {}
+    for bid, bx in left.items():
+        if not (bx.kind in _ZC and len(bx.ins) == 1 and len(bx.outs) == 1):
+            continue
+        (li,), (lo,) = _mix_legs(left, bx)
+        if li.v in rn.ins:
+            zid, zn = one(z_from(lo.v), "DZX multiplier")
+            ws = zn.outs
+            xid, xn = one(x_in(ws), "DZX multiplier")
+            (u,) = xn.outs
+            ids = [*li.ids, *lo.ids, bid, zid, xid]
+            labs = [lo.v, *ws, *li.labs, *lo.labs]
+            out, key = False, li.v
+        elif lo.v in rn.outs:
+            zid, zn = one(z_to(li.v), "DZX multiplier")
+            ws = zn.ins
+            xid, xn = one(x_out(ws), "DZX multiplier")
+            (u,) = xn.ins
+            ids = [xid, zid, *li.ids, *lo.ids, bid]
+            labs = [li.v, *ws, *li.labs, *lo.labs]
+            out, key = True, lo.v
+        else:
+            raise NetUnsupported("DZX chain")
+        _phaseless(c, zn)
+        _phaseless(c, xn)
+        lit = f"⟨{li.lit}, {lo.lit}, {_zc(bx)}, {_list(ws)}, {u}, {zn.ph}, {xn.ph}⟩"
+        chains[key] = (out, lit, ids, labs, u, len(ws))
+    _need(set(chains) == set(rn.ins) | set(rn.outs), "DZX chains")
+    order = [*rn.ins, *rn.outs]
+    cs = [chains[key] for key in order]
+    us_out = tuple(chains[key][4] for key in rn.outs)
+    us_in = tuple(chains[key][4] for key in rn.ins)
+    cid, cn = one(lambda n: n.kind == "X" and n.outs == us_out and n.ins == us_in, "DZX pink dot")
+    _phaseless(c, cn)
+    _need(len(left) == 1 + 7 * len(cs), "DZX left side")
+    ns = {ch[5] for ch in cs}
+    _need(len(ns) == 1, "DZX multipliers")
+    n_val = ns.pop()
+    d_expr, m_expr = c.ex.dim_exprs[cn.dim], c.ex.dim_exprs[rn.dim]
+    _need(d_expr.is_Integer and m_expr.is_Integer, "DZX at concrete dimensions")
+    big, small, count = int(d_expr), int(m_expr), len(cs)
+    r_d, r_m = c.rt(cn.dim), c.rt(rn.dim)
+    k_l = (r_d * r_m * (Inv(r_d) ** (n_val + 1) * big)) ** count * (Inv(r_d) ** count * big)
+    k_r = Inv(r_m) ** count * small
+    e = count * (1 - n_val) + 2
+    k_model = (r_d**e if e >= 0 else Inv(r_d) ** (-e)) * sp.Integer(small) ** (count - 1)
+    sc = c.ex.sc
+    try:
+        body = sc.prove(k_model * k_r, k_l)
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
+    hs = (
+        f"(by have h := (show {sc.text(k_model)} * {sc.text(k_r)} = {sc.text(k_l)} from ({body})); "
+        f"simp only [{c.ex.unfold}, Δ, List.length_cons, List.length_nil]; push_cast; "
+        "linear_combination h)"
+    )
+    psi = " <;> (try simp only [Ψ])" if c.ex.weight_tab else ""
+    unfold = c.ex.unfold
+    coef = (
+        f"(by intro j hj; simp only [{unfold}, Δ] at hj ⊢; interval_cases j <;> "
+        f"simp only [zc]{psi} <;> simp [Φ, ex_zero])"
+    )
+    ok = (
+        "(by intro b hb; fin_cases hb <;> simp only [Bool.false_eq_true, ↓reduceIte] <;> "
+        f"exact ⟨rfl, rfl, rfl, {coef}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
+        f"exact ⟨by pos, by phz, by chk, by chk⟩), ⟨rfl, rfl⟩, {_CHK}, {_CHK}, {_CHK}, {_CHK}, "
+        f"{_CHK}, {_CHK}, {_CHK}, by phz, by phz⟩)"
+    )
+    cs_text = "[" + ", ".join(f"({'true' if ch[0] else 'false'}, {ch[1]})" for ch in cs) + "]"
+    lemma = (
+        f"qfDZX {c.env} {cn.dim} {rn.dim} {n_val} {cn.ph} {rn.ph} {cs_text} IFACE _ "
+        f"{_positive(c, rn.dim)} (by norm_num) {_CHK} {ok} "
+        f"(by intro b hb; fin_cases hb <;> rfl) {_chks(8)} (by phz) (by phz) {hs}"
+    )
+    l_ids = (cid, *(i for ch in cs for i in ch[2]))
+    i_l = (*(ch[4] for ch in cs), *(lab for ch in cs for lab in ch[3]))
+    return _Spec(l_ids, [(rid, rn)], lemma, k_model, i_l=i_l, i_r=())
+
+
+def _ta_side(
+    nodes: Mapping[NodeId, LNode], pink: bool, u: int | None = None
+) -> tuple[NodeId, LNode, NodeId, LNode, list[tuple[str, list[NodeId], list[int], LNode]]]:
+    """A side of qf_ta: its W node on the outputs' first legs, its pink dot (``pink``) or W node
+    on the multipliers, and per leg the TaC literal, node ids, summed labels and box."""
+
+    def one(pred: Callable[[LNode], bool], what: str) -> tuple[NodeId, LNode]:
+        found = [(nid, n) for nid, n in nodes.items() if pred(n)]
+        _need(len(found) == 1, what)
+        return found[0]
+
+    def mult_x(p: int) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "X" and n.ins == (p,) and len(n.outs) >= 1
+
+    def mult_z(ws: tuple[int, ...]) -> Callable[[LNode], bool]:
+        return lambda n: n.kind == "Z" and n.ins == ws and len(n.outs) == 1
+
+    bound = {n.outs[0] for n in nodes.values() if n.kind == "B" and len(n.outs) == 1}
+    boxes = {
+        nid: n
+        for nid, n in nodes.items()
+        if n.kind in _ZC and len(n.ins) == 2 and len(n.outs) == 1 and set(n.ins) <= bound
+    }
+    legs_of = {bid: _mix_legs(nodes, bx) for bid, bx in boxes.items()}
+    ws_nodes = [(nid, n) for nid, n in nodes.items() if n.kind == "W" and len(n.ins) == 1]
+    if pink:
+        _need(len(ws_nodes) == 1, "TA W node")
+        (wid, wn) = ws_nodes[0]
+        multiplier_ins = {
+            n.ins[0] for n in nodes.values() if n.kind == "X" and len(n.ins) == 1 and n.outs
+        }
+        pid, pn = one(
+            lambda n: (
+                n.kind == "X"
+                and len(n.ins) == 1
+                and set(n.outs) <= multiplier_ins
+                and len(n.outs) == len(boxes)
+            ),
+            "TA pink dot",
+        )
+    else:
+        _need(len(ws_nodes) == 2, "TA W nodes")
+        _need(u is not None, "TA W node input")
+        found_w = [(nid, n) for nid, n in ws_nodes if n.ins == (u,)]
+        _need(len(found_w) == 1, "TA W node")
+        (wid, wn) = found_w[0]
+        (pid, pn) = next((nid, n) for nid, n in ws_nodes if nid != wid)
+    legs = []
+    for i, p in enumerate(pn.outs):
+        xid, xn = one(mult_x(p), "TA multiplier")
+        ws = xn.outs
+        zid, zn = one(mult_z(ws), "TA multiplier")
+        (z,) = zn.outs
+        found = [bid for bid, (ins, _) in legs_of.items() if any(leg.v == z for leg in ins)]
+        _need(len(found) == 1, "TA box")
+        bid = found[0]
+        ins, outs = legs_of[bid]
+        _need(len(ins) == 2 and len(outs) == 1, "TA box legs")
+        lb = next(leg for leg in ins if leg.v == z)
+        la = next(leg for leg in ins if leg.v != z)
+        _need(la.v == wn.outs[i], "TA W crossing")
+        lo = outs[0]
+        lit = (
+            f"⟨{p}, {_list(ws)}, {xn.ph}, {zn.ph}, {la.lit}, {lb.lit}, {lo.lit}, {_zc(boxes[bid])}⟩"
+        )
+        ids = [xid, zid, *la.ids, *lb.ids, *lo.ids, bid]
+        labs = [z, *ws, *la.labs, *lb.labs, *lo.labs]
+        legs.append((lit, ids, labs, boxes[bid]))
+    return wid, wn, pid, pn, legs
+
+
+def _qf_ta(c: _Ctx) -> _Spec:
+    _need(not c.step.rule_name.endswith("_converse"), "TA forward")
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    new = dict(c.new_nodes)
+    for n in (*left.values(), *new.values()):
+        if n.kind in ("X", "Z"):
+            _phaseless(c, n)
+    lw, lwn, lp, lpn, lleg = _ta_side(left, True)
+    rw_, rwn, rp, rpn, rleg = _ta_side(new, False, lwn.ins[0])
+    _need(lwn.ins == rwn.ins and lpn.ins == rpn.ins and len(lleg) == len(rleg), "TA sides")
+    _need(len(left) == 2 + 9 * len(lleg) and len(new) == 2 + 9 * len(rleg), "TA side sizes")
+    mb0 = lleg[0][3] if lleg else LNode("Z", (), (), lwn.dim, 0)
+    _need(
+        all((leg[3].kind, leg[3].ph) == (mb0.kind, mb0.ph) for leg in (*lleg, *rleg)),
+        "TA box coefficients",
+    )
+    drs = {tuple(int(x.split(",")[3]) for x in _ta_mixlits(leg[0])) for leg in (*lleg, *rleg)}
+    _need(len(drs) <= 1, "TA pink dimensions")
+    vals = [1, 1, 1]
+    if drs:
+        vals = []
+        for idx in drs.pop():
+            e = c.ex.dim_exprs[idx]
+            _need(e.is_Integer, "TA at concrete dimensions")
+            vals.append(int(e))
+    count = len(lleg)
+    r_n = c.rt(lpn.dim)
+    n_expr = c.ex.dim_exprs[lpn.dim]
+    _need(n_expr.is_Integer, "TA at concrete dimensions")
+    k_model = Inv(r_n) ** (count + 1) * int(n_expr)
+    dk = int(_ta_mixlits(lleg[0][0])[2].split(",")[5]) if lleg else lwn.dim
+    unfold = c.ex.unfold
+    mix_ok = (
+        f"⟨rfl, {_CHK}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
+        f"exact ⟨by pos, by phz, by chk, by chk⟩), rfl, rfl, rfl, {_CHK}⟩"
+    )
+    ta_ok = (
+        f"(by intro c hc; fin_cases hc <;> exact ⟨{mix_ok}, {_CHK}, {_CHK}, {_CHK}, {_CHK}, "
+        f"{_CHK}, by phz, by phz⟩)"
+    )
+    cl = "[" + ", ".join(leg[0] for leg in lleg) + "]"
+    cr = "[" + ", ".join(leg[0] for leg in rleg) + "]"
+    lemma = (
+        f"qfTA {c.env} {lwn.dim} {lpn.dim} {dk} {lwn.ins[0]} {lpn.ins[0]} {lpn.ph} "
+        f"{vals[0]} {vals[1]} {vals[2]} {_zc(mb0)} {cl} {cr} IFACE _ {_positive(c, lpn.dim)} "
+        f"{_CHK} {ta_ok} {ta_ok} {_chks(10)} {_CHK} {_CHK} "
+        "(by intro c hc; simp only [List.cons_append, List.nil_append] at hc; "
+        "fin_cases hc <;> rfl) (by phz) "
+        f"(by simp only [{unfold}, Δ, List.length_cons, List.length_nil]; push_cast; ring)"
+    )
+    l_ids = (lw, lp, *(i for leg in lleg for i in leg[1]))
+    i_l = (*lwn.outs, *lpn.outs, *(lab for leg in lleg for lab in leg[2]))
+    r_ids = (rw_, rp, *(i for leg in rleg for i in leg[1]))
+    i_r = (*rwn.outs, *rpn.outs, *(lab for leg in rleg for lab in leg[2]))
+    return _Spec(l_ids, [(nid, new[nid]) for nid in r_ids], lemma, k_model, i_l=i_l, i_r=i_r)
+
+
+def _ta_mixlits(lit: str) -> list[str]:
+    """The three MixL literals inside a TaC literal."""
+    return re.findall(r"⟨[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+, (?:true|false)⟩", lit)
+
+
+def _qf_s1(c: _Ctx) -> _Spec:
+    left = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
+    new = dict(c.new_nodes)
+    for n in (*left.values(), *new.values()):
+        if n.kind == "X":
+            _phaseless(c, n)
+
+    def boxes_of(nodes: Mapping[NodeId, LNode]) -> list[tuple[NodeId, LNode]]:
+        bound = {n.outs[0] for n in nodes.values() if n.kind == "B" and len(n.outs) == 1}
+        split = {n.ins[0] for n in nodes.values() if n.kind == "S" and len(n.ins) == 1}
+        return [
+            (nid, n)
+            for nid, n in nodes.items()
+            if n.kind in _ZC and set(n.ins) <= bound and set(n.outs) <= split
+        ]
+
+    lboxes = boxes_of(left)
+    _need(len(lboxes) == 2, "S1 boxes")
+    (aid, ma), (bid, mb) = lboxes
+    a_in, a_out = _mix_legs(left, ma)
+    b_in, b_out = _mix_legs(left, mb)
+    la, lb = [*a_in, *a_out], [*b_in, *b_out]
+    _need(len(left) == 2 + 2 * (len(la) + len(lb)), "S1 left side")
+    joined = [leg.v for leg in la if leg.v in {x.v for x in lb}]
+    _need(bool(joined), "S1 joined legs")
+    if not new:
+        return _qf_s1_closed(c, aid, ma, la, bid, mb, lb, joined)
+    rboxes = boxes_of(new)
+    _need(len(rboxes) == 1, "S1 fused box")
+    ((fid, mf),) = rboxes
+    f_in, f_out = _mix_legs(new, mf)
+    lf = [*f_in, *f_out]
+    _need(bool(lf) and len(new) == 1 + 2 * len(lf), "S1 right side")
+
+    def lits(legs: list[_MixLeg]) -> str:
+        return "[" + ", ".join(leg.lit for leg in legs) + "]"
+
+    def rts(legs: list[_MixLeg]) -> sp.Expr:
+        out = sp.Integer(1)
+        for leg in legs:
+            out = out * c.rt(int(leg.lit.split(",")[3]))
+        return out
+
+    def inv_rts(legs: list[_MixLeg]) -> sp.Expr:
+        out = sp.Integer(1)
+        for leg in legs:
+            out = out * Inv(c.rt(int(leg.lit.split(",")[3])))
+        return out
+
+    for idx in {int(leg.lit.split(",")[3]) for leg in (*la, *lb, *lf)}:
+        _need(c.ex.dim_exprs[idx].is_Integer, "S1 at concrete dimensions")
+    k_model = rts(la) * rts(lb) * inv_rts(lf)
+    sc = c.ex.sc
+    try:
+        body = sc.prove(k_model * rts(lf), rts(la) * rts(lb))
+    except ScalarUnsupported as exc:
+        raise NetUnsupported(str(exc)) from exc
+    unfold = c.ex.unfold
+    prods = "List.map_cons, List.map_nil, List.prod_cons, List.prod_nil"
+    hs = (
+        f"(by have h := (show {sc.text(k_model)} * {sc.text(rts(lf))} = "
+        f"{sc.text(rts(la) * rts(lb))} from ({body})); simp only [{unfold}, Δ, {prods}]; "
+        "push_cast; linear_combination h)"
+    )
+
+    def dts(legs: list[_MixLeg]) -> list[int]:
+        out = []
+        for leg in legs:
+            e = c.ex.dim_exprs[int(leg.lit.split(",")[5])]
+            _need(e.is_Integer, "S1 at concrete dimensions")
+            out.append(int(e))
+        return out
+
+    def size(n: LNode) -> int:
+        e = c.ex.dim_exprs[n.dim]
+        _need(e.is_Integer, "S1 at concrete dimensions")
+        return int(e)
+
+    def model(n: LNode, k: int) -> sp.Expr:
+        return _zc_terms(c, n, k)[0]
+
+    def cases(n: LNode, body: Callable[[int], str | None]) -> str:
+        lines = []
+        for k in range(size(n)):
+            tac = body(k)
+            lines.append(f"· simp [{unfold}, Δ] at hpre" if tac is None else f"· {tac}")
+        text = "\n    ".join(lines)
+        return (
+            f"(by\n    intro j hj hpre\n    simp only [{unfold}, Δ] at hj\n    interval_cases j\n"
+            f"    {text})"
+        )
+
+    def zero_case(n: LNode, legs: list[_MixLeg]) -> Callable[[int], str | None]:
+        def body(k: int) -> str | None:
+            if all(k < d for d in dts(legs)):
+                return None
+            rws = _coef_rewrites(c, [n], [k])
+            return f"simp only [zc]; {_coef_case(c, model(n, k), sp.Integer(0), rws)}"
+
+        return body
+
+    def fused_case(k: int) -> str | None:
+        if not all(k < d for d in dts(lf)):
+            return None
+        both = all(k < d for d in dts([*la, *lb]))
+        rhs = model(ma, k) * model(mb, k) if both else sp.Integer(0)
+        rws = _coef_rewrites(c, [mf, ma, mb], [k])
+        pick = "if_pos" if both else "if_neg"
+        return f"rw [{pick} (by chk)]; simp only [zc]; {_coef_case(c, model(mf, k), rhs, rws)}"
+
+    hca = cases(ma, zero_case(ma, la))
+    hcb = cases(mb, zero_case(mb, lb))
+    hcf = cases(mf, fused_case)
+    ok = (
+        f"⟨rfl, {_CHK}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
+        f"exact ⟨by pos, by phz, by chk, by chk, by chk⟩)⟩"
+    )
+    lemma = (
+        f"qfS1 {c.env} {lits(la)} {lits(lb)} {lits(lf)} {_zc(ma)} {_zc(mb)} {_zc(mf)} "
+        f"{_list(joined)} IFACE _ {ok} {ok} {ok} (by simp) {_chks(7)} (by simp) {_chks(2)} "
+        f"{hca} {hcb} {hcf} {hs}"
+    )
+
+    def ids(bx: NodeId, legs: list[_MixLeg]) -> list[NodeId]:
+        return [*(i for leg in legs for i in leg.ids), bx]
+
+    def labs(legs: list[_MixLeg]) -> list[int]:
+        return [x for leg in legs for x in leg.labs]
+
+    return _Spec(
+        (*ids(aid, la), *ids(bid, lb)),
+        [(nid, new[nid]) for nid in ids(fid, lf)],
+        lemma,
+        k_model,
+        i_l=(*joined, *labs(la), *labs(lb)),
+        i_r=tuple(labs(lf)),
+    )
+
+
+def _qf_s1_closed(
+    c: _Ctx,
+    aid: NodeId,
+    ma: LNode,
+    la: list[_MixLeg],
+    bid: NodeId,
+    mb: LNode,
+    lb: list[_MixLeg],
+    joined: list[int],
+) -> _Spec:
+    """qf_s1 with every leg joined: the boxes as the scalar of their entries' products."""
+    _need(all(leg.v in joined for leg in (*la, *lb)), "S1 closed legs")
+    _need(ma.kind == mb.kind == "ZW", "S1 closed weighted boxes")
+
+    def num(idx: int) -> int:
+        e = c.ex.dim_exprs[idx]
+        _need(e.is_Integer, "S1 at concrete dimensions")
+        return int(e)
+
+    rt_a = sp.Mul(*(c.rt(int(leg.lit.split(",")[3])) for leg in la))
+    rt_b = sp.Mul(*(c.rt(int(leg.lit.split(",")[3])) for leg in lb))
+    low = min(num(int(leg.lit.split(",")[5])) for leg in (*la, *lb))
+    total = sp.Add(
+        *(
+            _zc_terms(c, ma, j)[0] * _zc_terms(c, mb, j)[0]
+            for j in range(min(low, num(ma.dim), num(mb.dim)))
+        )
+    )
+    k_model = rt_a * rt_b * total
+    unfold = c.ex.unfold
+    lits_a = "[" + ", ".join(leg.lit for leg in la) + "]"
+    lits_b = "[" + ", ".join(leg.lit for leg in lb) + "]"
+    ok = (
+        f"⟨rfl, {_CHK}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
+        f"exact ⟨by pos, by phz, by chk, by chk, by chk⟩)⟩"
+    )
+    hs = (
+        f"(by simp only [{unfold}, Δ, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, "
+        "mul_one, Finset.sum_range_succ, Finset.sum_range_zero, zero_add]; "
+        "(conv_rhs => simp [labDim, labs, List.lookup, Δ, zc, Ψ, ex_zero]); ring)"
+    )
+    lemma = (
+        f"qfS1c {c.env} {lits_a} {lits_b} {_zc(ma)} {_zc(mb)} {_list(joined)} IFACE _ {ok} {ok} "
+        f"(by simp) {_chks(5)} {_chks(2)} {hs}"
+    )
+    l_ids = (
+        *(i for leg in la for i in leg.ids),
+        aid,
+        *(i for leg in lb for i in leg.ids),
+        bid,
+    )
+    i_l = (*joined, *(x for leg in la for x in leg.labs), *(x for leg in lb for x in leg.labs))
+    return _Spec(l_ids, [], lemma, k_model, i_l=i_l, i_r=())
+
+
 def _qf_k0(c: _Ctx) -> _Spec:
     ns = {nid: c.node(nid) for nid in dict(c.match.nodes).values()}
     _need(len(ns) == 8 and len(c.new_nodes) == 2, "K0 sides")
@@ -5852,6 +6506,18 @@ def _template(builder: _RuleBuilder, **keys: str | bool) -> _RuleBuilder:
     return hook
 
 
+def _shape(builder: _RuleBuilder) -> _RuleBuilder:
+    """``builder`` with a step of another shape reported as NetUnsupported."""
+
+    def hook(c: _Ctx) -> _Spec:
+        try:
+            return builder(c)
+        except (ValueError, StopIteration, IndexError, KeyError) as exc:
+            raise NetUnsupported(f"{c.step.rule_name} step shape") from exc
+
+    return hook
+
+
 _RULES: dict[str, _RuleBuilder] = {
     "spider_fusion": _fusion,
     "z_fusion_prime_d": _fusion,
@@ -5898,8 +6564,13 @@ _RULES: dict[str, _RuleBuilder] = {
     "zxw_p1_multiplier": _hh_mult,
     "qf_mw": _qf_mw,
     "binder_definition": _bind_def,
-    "qf_e": _qf_e,
-    "qf_k0": _qf_k0,
+    "qf_e": _shape(_qf_e),
+    "qf_k0": _shape(_qf_k0),
+    "qf_dd": _shape(_qf_dd),
+    "qf_bzw": _shape(_qf_bzw),
+    "qf_dzx": _shape(_qf_dzx),
+    "qf_ta": _shape(_qf_ta),
+    "qf_s1": _shape(_qf_s1),
     "zxw_d1": _d1,
     "qf_d1": _qf_d1,
     "qf_d1_converse": _qf_d1,
@@ -5910,10 +6581,10 @@ _RULES: dict[str, _RuleBuilder] = {
     "qf_va": _qf_va,
     "qf_va_converse": _qf_va,
     "zxw_kz": _kz,
-    "zxw_ww": _ww,
-    "zxw_ww_converse": _ww,
-    "qf_ww": _qf_ww,
-    "qf_ww_converse": _qf_ww,
+    "zxw_ww": _shape(_ww),
+    "zxw_ww_converse": _shape(_ww),
+    "qf_ww": _shape(_qf_ww),
+    "qf_ww_converse": _shape(_qf_ww),
     "zxw_kz_converse": _kz,
     "qf_hd": _qf_hd,
     "qf_hd_converse": _qf_hd,
