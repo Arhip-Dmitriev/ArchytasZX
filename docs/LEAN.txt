@@ -103,7 +103,13 @@ between two scaled networks under one environment: the same tensor, scalars incl
                wPairSum_zero, wPairSum_hot, sum_hot_rows, LocalEq.idR, LocalEq.idL, WwG,
                wwLeft, wwLeftVal, WwC, wwRight, wwRows, wwRightVal, wwB_zero, wwB_hot, zxwWW,
                QwC, qwRight, qwRightVal, qfWW, mixLegIn, mixLegOut, MixL, mixSum, mixZ,
-               multiplierUp_val, tX_zero_effect, qfE, tX_kj_state, tB_zero_left, qfK0
+               multiplierUp_val, tX_zero_effect, qfE, tX_kj_state, tB_zero_left, qfK0,
+               sumOver_split_mul, mixZc, mix2, qddP, mixNodes, mixLabs, qfDD, mix3,
+               tW_two_nz, bzwVal, mix3Nodes, mix3Labs, sum4_pin, Mix3OK, mix3_ok, qfBZW,
+               dzInVal, dzOutVal, DzC, DzInOK, DzOutOK, dzVal, dz_chain, sumOver_prodList,
+               pinAll, sumOver_pinAll, dz_mod, qfDZX, TaC, taNodes, taLabs, TaOK, taVal,
+               taLegVal, taPins, taK, taNet, ta_id, qfTA, MixOK, mix_ok, sumOver_finsum,
+               zz_join, qfS1, qfS1c
                (section 8)
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
@@ -306,6 +312,19 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
   qf_e                           qfE, tX_zero_effect   _qf_e
   qf_k0                          qfK0, tX_kj_state,    _qf_k0
                                  tB_zero_left
+  qf_dd                          qfDD, mix2, mixZc,    _qf_dd (concrete dimensions)
+                                 multiplierUp_val
+  qf_bzw                         qfBZW, mix3_ok,       _qf_bzw (concrete dimensions; the
+                                 bzwVal, sum4_pin      converse through the forward rule)
+  qf_dzx                         qfDZX, dzInVal,       _qf_dzx (concrete dimensions, every
+                                 dzOutVal,             number of legs; the converse through
+                                 sumOver_pinAll        the forward rule)
+  qf_ta                          qfTA, taNet,          _qf_ta (concrete dimensions, every
+                                 taLegVal, ta_id       number of legs; the converse through
+                                                       the forward rule)
+  qf_s1                          qfS1, qfS1c, zz_join, _qf_s1 (concrete dimensions, any legs
+                                 mix_ok, MixOK         and joins; closed steps of weighted
+                                                       boxes by qfS1c)
   spider_fusion (weighted X)     xcFusion              _fusion
   zxw_hd                         zxwHD, chainsVal,     _zxw_hd (both directions; the converse
                                  chainsClosed,         by LocalEq.flip')
@@ -330,13 +349,16 @@ there, over the rule's arity classes, and checks every file with lake env lean.
 
 G1 Binder and splitter under the normaliser. The binder entry [k = a t + b] needs t as a
 coefficient and div/mod to eliminate; an X spider or F on an s t wire gives characters
-omega_s^(t k l) whose sums depend on gcd(t, s). The rules qf_dd, qf_dzx, qf_bzw, qf_ta, qf_s1
-and connective_inverse_converse have no rule lemma; their steps are unproved
-axioms. binder_definition has one (section 8) except when only some of its legs are bent. The
-mixed-dimensional Z box of [P2] (2.3.3), which these rules contain, has its value lemma mixZ
-(Weights.lean: every leg's pink dot and binder or splitter pin its product label to the leg's
-value, times the square root of the pink dot's dimension); the rule lemmas built on it are not
-written yet.
+omega_s^(t k l) whose sums depend on gcd(t, s). Normaliser proofs over such networks are not
+attempted. By rewriting, every connective rule with an instance has a rule lemma: the
+mixed-dimensional Z box of [P2] (2.3.3) has its value lemma mixZ (Weights.lean: every leg's pink
+dot and binder or splitter pin its product label to the leg's value, times the square root of
+the pink dot's dimension), with mixZc for a Z or weighted Z box and mix2, mix3 for two and three
+legs; qfDD, qfBZW, qfDZX, qfTA and qfS1 are built on it, qfE and qfK0 directly.
+connective_inverse_converse is proved through its forward rule at composite dimensions (a prime
+wire has no factorisation, so no instance). A qf_s1 step that joins every leg (its right side a
+scalar) is proved by qfS1c when both boxes are weighted Z boxes; with a plain Z box it is an
+unproved axiom. binder_definition has one (section 8) except when only some of its legs are bent.
 
 G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
 by the classical evaluation with Gauss's sign and by Landsberg-Schaar reciprocity; neither is in
@@ -359,8 +381,8 @@ G8 Nodes whose legs differ in dimension (d^p against d^q), in families: exponent
 no positivity hypothesis.
 
 G9 Steps of proved rules outside their lemma's form: binder_definition with only some legs
-bent. Every rule of the complete axiomatisation outside the connective rules (G1) has a rule
-lemma.
+bent. Every rule of the complete axiomatisation has a rule lemma; a qf_s1 step joining every leg
+of a plain Z box (a closed scalar) is outside qfS1c's builder.
 
 G10 Normaliser exports on phased diagrams: a closing identity between roots of unity written in
 different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does

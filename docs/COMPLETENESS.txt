@@ -179,13 +179,16 @@ converse.
   VA     qf_va (qf_va_converse)                            y  y  L/L   qfVA, qfVaR; concrete d
   D1     qf_d1 (qf_d1_converse)                            y  y  L/L   qfD1, spiderF2; concrete d
                                                                        for weighted boxes
-  S1     qf_s1                                             y  y  U     concrete dims; no
-                                                                       converse (section 7)
-  DZX    qf_dzx (qf_dzx_converse)                          y  y  U     concrete dims
-  TA     qf_ta (qf_ta_converse)                            y  y  U     concrete dims
-  DD     qf_dd (qf_dd_converse)                            y  y  U     concrete dims
+  S1     qf_s1                                             y  y  L     qfS1, qfS1c, zz_join;
+                                                                       concrete dims; every leg
+                                                                       joined: weighted boxes
+                                                                       only; no converse
+                                                                       (section 7)
+  DZX    qf_dzx (qf_dzx_converse)                          y  y  L/L   qfDZX, dzInVal, dzOutVal
+  TA     qf_ta (qf_ta_converse)                            y  y  L/L   qfTA, taNet, ta_id
+  DD     qf_dd (qf_dd_converse)                            y  y  L/L   qfDD, mixZc
   E      qf_e (qf_e_converse)                              y  y  L/L   qfE
-  BZW    qf_bzw (qf_bzw_converse)                          y  y  U     concrete dims
+  BZW    qf_bzw (qf_bzw_converse)                          y  y  L/L   qfBZW, mix3
   K0     qf_k0 (qf_k0_converse)                            y  y  L/L   qfK0
   (2.8)  binder_definition (binder_definition_converse)    y  y  L/L   merger = bent splitter;
                                                                        bindDef, bindDef0
@@ -224,8 +227,8 @@ hypotheses by cases over the indices and so needs a concrete dimension; at a sym
 such a step is the axiom unproved_RULE_N. At a symbolic dimension a weight vector is exported
 from its entries and an index-free weight rule, and the coefficient hypotheses of zcAd, zcTi,
 zcT and zcZer are closed by cases on the index (zxw_ad, zxw_zer, triangle_definition,
-triangle_inverse_definition and their converses). Each "L" entry was checked by exporting single steps
-(step route only, never the normaliser of symbolic sums) at d = 2, 3, 5 and, where the
+triangle_inverse_definition and their converses). Each "L" entry was checked by exporting
+single steps (step route only, never the normaliser of symbolic sums) at d = 2, 3, 5 and, where the
 template builds there, at symbolic d, over the rule's arity classes, with lake env lean
 accepting every file (and, for the rules proved on 2026-11-03/04, six random instances at each
 d = 2..6). "U" means the step is exported as the axiom unproved_RULE_N.
