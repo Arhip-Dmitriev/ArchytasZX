@@ -6491,7 +6491,7 @@ theorem wwRightPin (E : Env) (dz u pg : ℕ) (rows : List (ℕ × List ℕ))
     List.zipWith_self]
 
 /-- A W node on all-zero outputs. -/
-theorem tW_zeros (d a : ℕ) (ys : List ℕ) (h : ∀ y ∈ ys, y = 0) :
+theorem tW_allZero (d a : ℕ) (ys : List ℕ) (h : ∀ y ∈ ys, y = 0) :
     tW d ys a = if a = 0 then 1 else 0 := by
   have : ys.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y hy => by simp [h y hy]
   unfold tW
@@ -6554,7 +6554,7 @@ theorem wwRowsHot (d c v : ℕ) (hv : v ≠ 0) (hvd : v < d) (rows : List (ℕ �
     have zero_of : ∀ (l : ℕ) (xs : List ℕ), (∀ x ∈ xs, Z x = 0) → l ∉ xs → ∀ a,
         tW d (xs.map (Function.update Z l v)) a = if a = 0 then 1 else 0 := by
       intro l xs hz hl a
-      refine tW_zeros d a _ fun y hy => ?_
+      refine tW_allZero d a _ fun y hy => ?_
       obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hy
       rw [Function.update_of_ne (fun h => hl (by rw [← h]; exact hx))]
       exact hz x hx
