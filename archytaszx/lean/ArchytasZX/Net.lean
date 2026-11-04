@@ -18,11 +18,13 @@ open Complex Finset
 
 /-- Generator kinds: spiders, Fourier box, triangle and inverse, W node, dimension binder
 and splitter, the bare wire, a weighted Z spider, a Z, X or W whose last legs bundle along the
-chains of multiplicities `cs` (outermost first), and copies of a generator along multiplicity `m`. -/
+chains of multiplicities `cs` (outermost first), copies of a generator along multiplicity `m`,
+and a weighted X spider. -/
 inductive Kind
   | Z | X | F | T | Ti | W | B | S | I | ZW
   | ZB (cs : List (List ℕ)) | XB (co ci : List (List ℕ)) | WB (cs : List (List ℕ))
   | Bun (m : ℕ) (base : Kind)
+  | XW
   deriving DecidableEq, Repr
 
 /-- One generator instance: output and input leg labels, dimension index, phase index. -/
@@ -70,6 +72,12 @@ noncomputable def tZw (d : ℕ) (c : ℕ → ℂ) (vs : List ℕ) : ℂ :=
 /-- The X spider: the Z spider with `F` on every output and `conj F` on every input. -/
 noncomputable def tX (d : ℕ) (φ : ℕ → ℝ) (os is : List ℕ) : ℂ :=
   ∑ k ∈ range d, ex (φ k) * (os.map fun o => fou d o k).prod *
+    (is.map fun i => (starRingEnd ℂ) (fou d i k)).prod
+
+/-- The weighted X spider: the weighted Z spider with `F` on every output and `conj F` on every
+input. -/
+noncomputable def tXw (d : ℕ) (c : ℕ → ℂ) (os is : List ℕ) : ℂ :=
+  ∑ k ∈ range d, c k * (os.map fun o => fou d o k).prod *
     (is.map fun i => (starRingEnd ℂ) (fou d i k)).prod
 
 /-- The triangle: `1` iff `o = 0` or `o = i`. -/
@@ -144,6 +152,7 @@ noncomputable def tensor (E : Env) : Kind → ℕ → ℕ → List ℕ → List 
   | .W, d, _, os, [i] => tW d os i
   | .I, d, _, [a], [b] => tI d a b
   | .ZW, d, ph, os, is => tZw d (E.coef ph) (os ++ is)
+  | .XW, d, ph, os, is => tXw d (E.coef ph) os is
   | .ZB cs, d, ph, os, is => tZ d (E.phase ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, d, ph, os, is => tX d (E.phase ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, d, _, os, [w] => tW d (bundled E.mult d os cs) w
@@ -167,6 +176,7 @@ noncomputable def val (E : Env) (σ : ℕ → ℕ) (n : Node) : ℂ :=
   | .S, [a, b], [k] => tB d (E.dimv n.ph) k a b
   | .I, [a], [b] => tI d a b
   | .ZW, os, is => tZw d (E.coef n.ph) (os ++ is)
+  | .XW, os, is => tXw d (E.coef n.ph) os is
   | .ZB cs, os, is => tZ d (E.phase n.ph) (os ++ bundled E.mult d is cs)
   | .XB co ci, os, is => tX d (E.phase n.ph) (bundled E.mult d os co) (bundled E.mult d is ci)
   | .WB cs, os, [w] => tW d (bundled E.mult d os cs) w

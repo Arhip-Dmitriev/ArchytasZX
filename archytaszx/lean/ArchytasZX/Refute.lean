@@ -285,6 +285,7 @@ def sqc (E : Shape) : Kind → ℕ → ℕ → ℕ → ℕ
 /-- A kind with no coefficient spider. -/
 def Kind.noZW : Kind → Bool
   | .ZW => false
+  | .XW => false
   | .Bun _ b => b.noZW
   | _ => true
 
@@ -333,6 +334,7 @@ theorem tensor_cyc (E : Env) (M : ℕ) (xs : List ℂ) (hx : ∀ x ∈ xs, x ≠
   | B => simp [tensor, tensorT, tv]
   | S => simp [tensor, tensorT, tv]
   | ZW => simp [Kind.noZW] at hk
+  | XW => simp [Kind.noZW] at hk
   | Bun m b ih =>
     simp only [tensor, tensorT, sqc, tv_foldr_tmul _ _ hx, List.map_map, copyOuts, copyIns,
       Env.shape]

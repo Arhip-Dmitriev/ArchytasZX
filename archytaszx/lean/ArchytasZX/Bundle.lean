@@ -587,6 +587,7 @@ theorem tensor_env (E E' : Env) (hp : E.phase = E'.phase) (hc : E.coef = E'.coef
   | Z => simp only [tensor, hp]
   | X => simp only [tensor, hp]
   | ZW => simp only [tensor, hc]
+  | XW => simp only [tensor, hc]
   | _ => rcases os with _ | ⟨_, _ | ⟨_, _⟩⟩ <;> rcases is with _ | ⟨_, _ | ⟨_, _⟩⟩ <;> rfl
 
 theorem val_tensor (E : Env) (σ : ℕ → ℕ) (b : Kind) (hb : b ≠ .B ∧ b ≠ .S)

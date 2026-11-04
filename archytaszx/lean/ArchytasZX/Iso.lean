@@ -48,7 +48,7 @@ def nodeEquiv (n m : Node) : Bool :=
   n.kind == m.kind && n.dim == m.dim && n.ph == m.ph &&
     match n.kind with
     | .Z | .ZW => (n.outs ++ n.ins).isPerm (m.outs ++ m.ins)
-    | .X => n.outs.isPerm m.outs && n.ins.isPerm m.ins
+    | .X | .XW => n.outs.isPerm m.outs && n.ins.isPerm m.ins
     | _ => n.outs == m.outs && n.ins == m.ins
 
 theorem val_nodeEquiv (E : Env) (σ : ℕ → ℕ) (n m : Node) (h : nodeEquiv n m = true) :
@@ -77,6 +77,11 @@ theorem val_nodeEquiv (E : Env) (σ : ℕ → ℕ) (n m : Node) (h : nodeEquiv n
   | X =>
     simp only [Bool.and_eq_true, List.isPerm_iff] at h
     simp only [val, tX]
+    refine Finset.sum_congr rfl fun k _ => ?_
+    rw [((h.1.map σ).map _).prod_eq, ((h.2.map σ).map _).prod_eq]
+  | XW =>
+    simp only [Bool.and_eq_true, List.isPerm_iff] at h
+    simp only [val, tXw]
     refine Finset.sum_congr rfl fun k _ => ?_
     rw [((h.1.map σ).map _).prod_eq, ((h.2.map σ).map _).prod_eq]
   | _ =>
