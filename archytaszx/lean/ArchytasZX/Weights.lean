@@ -6359,5 +6359,66 @@ theorem sumOver_cols_hot {D : ℕ → ℕ} (d : ℕ) (hd : 0 < d) (A : List (Lis
   exact sumOver_cols_zero d A hA (fun l hl => by rw [hD l (List.mem_append_left _ hl)]; exact hd)
     _ σ
 
+/-- A plain Z spider `y, p, w` at `y < d`: `p` and `w` pinned to `y`. -/
+theorem tZ_pin3 (d : ℕ) (φ : ℕ → ℝ) (y p w : ℕ) (hy : y < d) (hφ : ex (φ y) = 1) :
+    tZ d φ [y, p, w] = if p = y ∧ w = y then 1 else 0 := by
+  rw [tZ_at d φ _ y (by simp)]
+  by_cases h1 : p = y <;> by_cases h2 : w = y <;> simp [h1, h2, hy, hφ]
+
+/-- The nodes of the WW left side: W transpose `xs ← z`, W `ws ← z`, W `ps ← u` and the green
+dots `y_k ← p_k, w_k` of `cs = (p_k, w_k, y_k)`. -/
+def wwLeft (dz z u pg : ℕ) (xs : List ℕ) (cs : List (ℕ × ℕ × ℕ)) : List Node :=
+  ⟨.W, xs, [z], dz, 0⟩ :: ⟨.W, cs.map (·.2.1), [z], dz, 0⟩ :: ⟨.W, cs.map Prod.fst, [u], dz, 0⟩ ::
+    cs.map fun c => ⟨.Z, [c.2.2], [c.1, c.2.1], dz, pg⟩
+
+/-- The WW left side: a W node at `u` on `ys` times the shared-input W pair. -/
+theorem wwLeftVal (E : Env) (dz z u pg : ℕ) (xs : List ℕ) (cs : List (ℕ × ℕ × ℕ)) (τ : ℕ → ℕ)
+    (hnd : (z :: cs.flatMap fun c => [c.1, c.2.1]).Nodup)
+    (hout : ∀ x ∈ u :: xs ++ cs.map (·.2.2), x ∉ z :: cs.flatMap fun c => [c.1, c.2.1])
+    (hlab : ∀ x ∈ z :: cs.flatMap fun c => [c.1, c.2.1], labIdx E.labs x = dz)
+    (ry : ∀ c ∈ cs, τ c.2.2 < E.dimv dz) (hg : ∀ k < E.dimv dz, ex (E.phase pg k) = 1) :
+    sumOver (labDim E) (z :: cs.flatMap fun c => [c.1, c.2.1]) (prodVal E (wwLeft dz z u pg xs cs))
+        τ =
+      tW (E.dimv dz) (cs.map fun c => τ c.2.2) (τ u) *
+        ∑ j ∈ range (E.dimv dz), tW (E.dimv dz) (xs.map τ) j *
+          tW (E.dimv dz) (cs.map fun c => τ c.2.2) j := by
+  set d := E.dimv dz with hdd
+  set P := cs.flatMap fun c => [c.1, c.2.1]
+  obtain ⟨hzP, hP⟩ := List.nodup_cons.1 hnd
+  have hD : ∀ x ∈ z :: P, labDim E x = d := fun x hx => labDim_of E x dz (hlab x hx)
+  have hu : u ∉ z :: P := hout u (by simp)
+  have hx : ∀ x ∈ xs, x ∉ z :: P := fun x h => hout x (by simp [h])
+  have hy : ∀ c ∈ cs, c.2.2 ∉ z :: P := fun c h => hout _
+    (List.mem_cons_of_mem _ (List.mem_append_right _ (List.mem_map_of_mem (f := (·.2.2)) h)))
+  simp only [sumOver, hD z List.mem_cons_self, Finset.mul_sum]
+  refine Finset.sum_congr rfl fun j _ => ?_
+  rw [sumOver_congr _ P _ (fun ρ => (cs.map fun c => if ρ c.1 = τ c.2.2 ∧ ρ c.2.1 = τ c.2.2
+      then (1 : ℂ) else 0).prod * (fun ps ws => tW d (xs.map τ) j * tW d ws j * tW d ps (τ u))
+        (cs.map fun c => ρ c.1) (cs.map fun c => ρ c.2.1)) _ fun ρ hρ _ => by
+    have e : ∀ x, x ∉ z :: P → ρ x = τ x := fun x h => by
+      rw [hρ x (fun h' => h (List.mem_cons_of_mem _ h')),
+        Function.update_of_ne (fun h' => h (by rw [h']; exact List.mem_cons_self))]
+    have ez : ρ z = j := by rw [hρ z hzP, Function.update_self]
+    have hz : ((cs.map fun c => (⟨.Z, [c.2.2], [c.1, c.2.1], dz, pg⟩ : Node)).map (val E ρ)) =
+        cs.map fun c => if ρ c.1 = τ c.2.2 ∧ ρ c.2.1 = τ c.2.2 then (1 : ℂ) else 0 := by
+      rw [List.map_map]
+      refine List.map_congr_left fun c hc => ?_
+      simp only [Function.comp_apply, val, List.map_cons, List.map_nil, List.cons_append,
+        List.nil_append]
+      rw [e _ (hy c hc), tZ_pin3 d _ _ _ _ (ry c hc) (hg _ (ry c hc))]
+    simp only [wwLeft, prodVal, List.map_cons, List.prod_cons, hz]
+    simp only [val, List.map_cons, List.map_nil, List.map_map, Function.comp_def]
+    rw [List.map_congr_left (l := xs) fun x h => e x (hx x h), ez, e u hu]
+    ring]
+  have hv : ∀ c ∈ cs, τ c.2.2 < labDim E c.1 := fun c hc => by
+    rw [hD _ (List.mem_cons_of_mem _ (List.mem_flatMap.2 ⟨c, hc, by simp⟩))]; exact ry c hc
+  have hv' : ∀ c ∈ cs, τ c.2.2 < labDim E c.2.1 := fun c hc => by
+    rw [hD _ (List.mem_cons_of_mem _ (List.mem_flatMap.2 ⟨c, hc, by simp⟩))]; exact ry c hc
+  refine (sumOver_pin2 (D := labDim E) cs Prod.fst (fun c => c.2.1) (fun c => τ c.2.2)
+    (fun c => τ c.2.2) (fun _ => 1) (fun ps ws => tW d (xs.map τ) j * tW d ws j * tW d ps (τ u))
+    hP hv hv' _).trans ?_
+  simp only [List.map_const', List.prod_replicate, one_pow, one_mul]
+  ring
+
 
 end ArchytasZX
