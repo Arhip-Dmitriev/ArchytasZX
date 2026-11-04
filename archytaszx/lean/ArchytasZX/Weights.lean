@@ -6379,13 +6379,14 @@ theorem qfK0 (E : Env) (dm dg dk dh1 dh2 dn1 dn2 x g k l1 l2 h1 h2 a b px pg q1 
     (hJ : J < E.dimv dm) (hjJ : (J + j) % E.dimv dm = 0)
     (hj1 : J < E.dimv dn1 → (J + j1) % E.dimv dn1 = 0)
     (hj2 : J < E.dimv dn2 → (J + j2) % E.dimv dn2 = 0)
-    (hlow : (J < E.dimv dn1 ∧ J < E.dimv dn2) ∨ zc E m J = 0) (s : ℂ)
+    (c : ℂ) (hc : zc E m J = c) (hlow : (J < E.dimv dn1 ∧ J < E.dimv dn2) ∨ c = 0) (s : ℂ)
     (hs : s * (rt (E.dimv dn1) * rt (E.dimv dn2)) = rt (E.dimv dm) * rt (E.dimv dg) *
-      rt (E.dimv dh1) * rt (E.dimv dh2) * zc E m J) :
+      rt (E.dimv dh1) * rt (E.dimv dh2) * c) :
     LocalEq E [⟨.X, [x], [], dm, px⟩, ⟨.B, [k], [g, x], dg, dm⟩, ⟨.X, [g], [], dg, pg⟩, m,
         ⟨.S, [h1, a], [l1], dh1, dn1⟩, ⟨.X, [], [h1], dh1, q1⟩, ⟨.S, [h2, b], [l2], dh2, dn2⟩,
         ⟨.X, [], [h2], dh2, q2⟩] [x, g, k, l1, l2, h1, h2]
       [⟨.X, [a], [], dn1, r1⟩, ⟨.X, [b], [], dn2, r2⟩] [] iface 1 s := by
+  subst hc
   intro τ hτ
   have ra := hτ a ha.1
   have rb := hτ b hb.1
