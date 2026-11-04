@@ -1736,8 +1736,8 @@ def grid(lay: Layout, unicode: bool = True) -> str:
 # -- matplotlib ------------------------------------------------------------------------------
 
 _FILL = {
-    "Z": "#d6f0d0",
-    "X": "#b23a3a",
+    "Z": "#009e73",
+    "X": "#cc3311",
     "F": "#f2e07a",
     "S": "#c8c8c8",
     "B": "#c8c8c8",
@@ -1970,6 +1970,11 @@ def _figure(
     for k, it in items.items():
         cx[k] = xcol[it.col] + widths[it.col] / 2
     nlanes = max((pl.top[k] + pl.height[k] for k in items), default=1)
+    nlanes = max(
+        [nlanes]
+        + [pl.lanes[f.key][1] + 1 for f in lay.frames if f.items and f.key in pl.lanes]
+        + [box.lanes[1] + 1 for p in ports for box in _port_boxes(lay, pl, p)]
+    )
     notes = _notes(lay, "tex")
     notes_h = (len(notes) * fs_dim * 1.5 / 72 + 0.1 * s) if notes else 0.0
     ytop = Y(-1.5)
