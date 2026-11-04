@@ -50,3 +50,22 @@ NOTES (append one dated entry per run: what was done, what failed, the next step
   per row (x_k boundary, a_k internal). Converse: bridges Z([t_out_k];[x_k]) on t's outputs.
   Proved (Weights.lean): tZ_pin3, wwLeft, wwLeftVal (left = tW(y;u) * Σ_j tW(x;j) tW(y;j)),
   wwRight, wwRightPin (right with p,s summed = tW(y;u) * Π_rows tW(row;a) * Π_cols tW(col;y)).
+  Also proved: tW_allZero (W on all-zero outputs), prod_ite_zero', tW_hotAt (W on xs under Z
+  updated at xs[c] to v), wwRowsHot (Σ_rows Π_rows' tW(r'.2 under update Z r[c] v; σ a_r') =
+  [(rows.map σ∘fst).filter (≠0) = [v]]). Commit 8e3d9f7 does NOT build (name clash tW_zeros with
+  Port.tW_zeros; force push was denied); fixed by the next commit e237c85. Lesson: gate commits on
+  `grep -q "Build completed successfully"` of the build log, not on grep's exit status.
+  NEXT (rule lemma zxwWW, plan):
+   1. split lemma: (l.map f).filter (≠0) = [v] → ∃ A c B, l = A ++ c :: B, f = 0 on A and B, f c = v.
+   2. wwRightSum: tW(y;u) * sumOver (cols.flatMap col) (Π_rows tW(row.map ρ; ρ a) * Π_cols
+      tW(col.map ρ; τ y_c)) τ = tW(y;u) * Σ_j tW(as;j) tW(y;j), as = rows.map (τ ∘ fst). Hyps:
+      hlen ∀ r, r.2.length = cols.length; hC cols.map col = (range cols.length).map fun c =>
+      rows.map (·.2.getD c 0); nodup of cols.flatMap col and rows.flatMap snd; a, y labels outside.
+      Case tW_support: u=0 → sumOver_cols_zero + tW_allZero/prod_ite_zero' vs tW(as;0) (d>0);
+      u≠0 → split cols = A ++ c0 :: B, sumOver_perm to ((A++B).map col).flatten ++ col c0,
+      List.Perm.prod_eq for the column product, sumOver_cols_hot, col c0 = rows.map (getD A.length),
+      wwRowsHot; left via wPairSum.
+   3. bridges: sumOver over bridge labels a_k of Π Z([x_k];[a_k]) * F = F at a_k := τ x_k
+      (tZ on [o,i] = [o=i], sumOver_pinV). Converse bridges are Z([t_out];[x_k]) (other orientation).
+   4. zxwWW (forward, bridges on the right; iL = z :: P, iR = Elabs ++ P ++ as) and the converse
+      via LocalEq.flip' on a variant with bridges on the t side; then builder _ww in lean_net.py.
