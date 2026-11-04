@@ -2224,7 +2224,7 @@ Each rule's equation, scalar included, is checked against the numeric oracle: ru
 instances of their matched side, alone and inside random weighted contexts, at d = 2..6
 (concrete-dimension rules at the dimensions their size allows). Most rules 2.1 to 2.28 are
 lemmas of the bundled Lean library (LEAN.txt); the rules and constructs without a Lean lemma
-are listed in LEAN_GAPS.txt.
+are listed in LEAN.txt, section 9.
 
 A rewrite that changes the denoted linear map, scalar included, is a soundness bug; see
 CONTRIBUTING.md for how to report one.

@@ -38,11 +38,12 @@ for qufinite diagrams). It is not a decision procedure. The automatic search (no
 saturation, tactics) remains sound and incomplete (PROOFS.txt); the exhaustive mode of
 section 6 searches for such derivations without bound.
 
-Lean. Seventeen rules added for this claim are proved in Lean by existing rule lemmas in the
-instances listed in section 3 (LEAN.txt, section 4.1); every other step of them exports as a
-named axiom unproved_RULE_N (LEAN_GAPS.txt, item 9). The generator mapping of section 2 is
+Lean. The rules marked L in section 3 are proved in Lean step by step by rule lemmas
+(LEAN.txt, section 8); every other step of them exports as a named axiom unproved_RULE_N
+(LEAN.txt, section 9, G9). The generator mapping of section 2 is
 proved in Lean for every dimension (ArchytasZX.Paper) except for the Z box with complex
-weights, which the Lean semantics does not have. The derivations of section 4 are therefore
+weights, for which Paper.lean states no paper tensor (the engine's weighted spider is Kind.ZW
+of the Lean semantics). The derivations of section 4 are therefore
 kernel-checked and, except for those steps, Lean-checked.
 
 
@@ -100,7 +101,11 @@ rules that differ from [P1]'s), together with a converse rule reading it right t
 Every rule was checked against the numeric oracle on random instances of its matched side,
 alone and inside random weighted contexts, at d = 2..6 (rules defined at a concrete dimension
 at d = 2..4, mixed-dimensional rules at the listed dimension tuples); every rule's step was
-replayed as a certificate and re-checked by the proof kernel. No mismatch was found.
+replayed as a certificate and re-checked by the proof kernel. No mismatch was found. Every
+template rule except qf_s1 was further checked at d = 2..12 with 0 to 2 extra legs and
+random weighted contexts, 220 instances per rule (25,339 compared, none differing; instances
+over the contraction limit, the HD, VA, WF, WW, ZV, VW, KZ and P1-multiplier rules from d = 7
+to 10, are not compared).
 
 Status columns: O = oracle-checked, K = replayed and kernel-checked, Lean: L = proved by the
 named lemma, U = exported as the unproved axiom unproved_RULE_N; "L/U" gives the rule then its
@@ -110,35 +115,47 @@ converse.
 
   Paper  Rule (converse)                                   O  K  Lean  Notes
   -----  ------------------------------------------------  -  -  ----  ---------------------
-  S1     zxw_s1 (zxw_s1_converse)                          y  y  L/U   fusionZ: phases, one
-                                                                       wire; converse: free a, b
-  S2     zxw_s2, zxw_s2_pink (both _converse)              y  y  L     identityZ/identityX;
-                                                                       converse U
-  D1     zxw_d1 (zxw_d1_converse)                          y  y  U     concrete d
-  Ept    zxw_ept (zxw_ept_converse)                        y  y  L/U   capSwapped at a = 1;
-                                                                       converse: free a
-  B2     zxw_b2 (zxw_b2_converse)                          y  y  U/L   converse: bialgebra
-  K0     zxw_k0 (zxw_k0_converse)                          y  y  L/U   stateCopy at j = 0
-  K1     zxw_k1 (zxw_k1_converse)                          y  y  U
-  K2     zxw_k2 (zxw_k2_converse)                          y  y  U     a_{d-j} != 0
-  Zer    zxw_zer (zxw_zer_converse)                        y  y  U
-  P1     zxw_p1, zxw_p1_multiplier (both _converse)        y  y  U
-  H1     zxw_h1 (zxw_h1_converse)                          y  y  U
-  Pcy    zxw_pcy (zxw_pcy_converse)                        y  y  U
-  AD     zxw_ad (zxw_ad_converse)                          y  y  U     converse: free a, b
+  S1     zxw_s1 (zxw_s1_converse)                          y  y  L/L   fusionZ, zcFusion (one
+                                                                       wire), zcFusionN (k
+                                                                       wires); converse: any a, b
+  S2     zxw_s2, zxw_s2_pink (both _converse)              y  y  L/L   identityZ/identityX;
+                                                                       bare wire: zPerm,
+                                                                       identityXZ
+  D1     zxw_d1 (zxw_d1_converse)                          y  y  L/L   zxwD1; concrete d for
+                                                                       weighted boxes
+  Ept    zxw_ept (zxw_ept_converse)                        y  y  L/L   zcEpt; converse: any a
+  B2     zxw_b2 (zxw_b2_converse)                          y  y  L/L   bialgebra
+  K0     zxw_k0 (zxw_k0_converse)                          y  y  L/L   kCopy
+  K1     zxw_k1 (zxw_k1_converse)                          y  y  L/L   kOne; concrete d
+  K2     zxw_k2 (zxw_k2_converse)                          y  y  L/L   zcK2; concrete d;
+                                                                       a_{d-j} != 0; some
+                                                                       scalars U (LEAN.txt G10)
+  Zer    zxw_zer (zxw_zer_converse)                        y  y  L/L   zcZer
+  P1     zxw_p1, zxw_p1_multiplier (both _converse)        y  y  L/L   fourierSq,
+                                                                       fourierSq'; fourierMult
+  H1     zxw_h1 (zxw_h1_converse)                          y  y  L/L   xDef, xDefT; concrete d
+  Pcy    zxw_pcy (zxw_pcy_converse)                        y  y  L/L   zcPcy
+  AD     zxw_ad (zxw_ad_converse)                          y  y  L/L   zcAd; concrete d;
+                                                                       converse: any a, b
   Sym    zxw_sym (zxw_sym_converse)                        y  y  L/L   wPerm
   Aso    zxw_aso (zxw_aso_converse)                        y  y  L/L   wAso
-  BZW    zxw_bzw (zxw_bzw_converse)                        y  y  U/L   converse: wzBialgebra
+  BZW    zxw_bzw (zxw_bzw_converse)                        y  y  L/L   wzBialgebra
   WW     zxw_ww (zxw_ww_converse)                          y  y  U
-  Bs0    zxw_bs0 (zxw_bs0_converse)                        y  y  L/U   wZeroCopy
-  Bsj    zxw_bsj (zxw_bsj_converse)                        y  y  U
-  TA     zxw_ta (zxw_ta_converse)                          y  y  U
-  HD     zxw_hd (zxw_hd_converse)                          y  y  U     concrete d
-  ZV     zxw_zv (zxw_zv_converse)                          y  y  U     concrete d; converse:
-                                                                       free a
-  VA     zxw_va (zxw_va_converse)                          y  y  U     concrete d
-  VW     zxw_vw (zxw_vw_converse)                          y  y  U     concrete d
-  KZ     zxw_kz (zxw_kz_converse)                          y  y  U     concrete d
+  Bs0    zxw_bs0 (zxw_bs0_converse)                        y  y  L/L   wZeroCopy
+  Bsj    zxw_bsj (zxw_bsj_converse)                        y  y  L/L   zxwBsj; concrete d
+  TA     zxw_ta (zxw_ta_converse)                          y  y  L/L   zxwTA
+  HD     zxw_hd (zxw_hd_converse)                          y  y  L/L   zxwHD, chainsVal,
+                                                                       chainsClosed; concrete d;
+                                                                       Lean checked at d <= 6,
+                                                                       converse at d <= 5
+  ZV     zxw_zv (zxw_zv_converse)                          y  y  L/L   zxwZV, vBoxVal; concrete
+                                                                       d; converse: any a;
+                                                                       Lean checked at d <= 5
+  VA     zxw_va (zxw_va_converse)                          y  y  L/L   zxwVA, vBoxVal; concrete
+                                                                       d
+  VW     zxw_vw (zxw_vw_converse)                          y  y  L/L   zxwVW, vBoxVal; concrete
+                                                                       d; Lean checked at d <= 6
+  KZ     zxw_kz (zxw_kz_converse)                          y  y  L/L   zxwKZ, kzVal; concrete d
 
 3.2 [P2] (section 2.4, Figures 1 and 2, (2.9), (2.10))
 
@@ -147,19 +164,21 @@ converse.
   (2.9)  qf_z_flex (qf_z_flex_converse)                    y  y  L/L     with the kernel's
                                                                        leg-order isomorphism
   (2.10) qf_w_sym (qf_w_sym_converse)                      y  y  L/L   wPerm
-  B2     zxw_b2                                            y  y  U     same as [P1]
-  AD     zxw_ad                                            y  y  U     same as [P1]
-  S2     zxw_s2_pink                                       y  y  U     same as [P1]
-  K2     zxw_k2                                            y  y  U     same as [P1]
-  Ept    zxw_ept                                           y  y  U     same as [P1]
-  Bsj    zxw_bsj                                           y  y  U     j -> -j of [P1]'s
-  P1     zxw_p1_multiplier                                 y  y  U
+  B2     zxw_b2                                            y  y  L     same as [P1]
+  AD     zxw_ad                                            y  y  L     same as [P1]
+  S2     zxw_s2_pink                                       y  y  L     same as [P1]
+  K2     zxw_k2                                            y  y  L     same as [P1]
+  Ept    zxw_ept                                           y  y  L     same as [P1]
+  Bsj    zxw_bsj                                           y  y  L     j -> -j of [P1]'s
+  P1     zxw_p1_multiplier                                 y  y  L     same as [P1]
   WW     qf_ww (qf_ww_converse)                            y  y  U
-  WF     qf_wf (qf_wf_converse)                            y  y  L/U   wFusion
-  HD     qf_hd (qf_hd_converse)                            y  y  U     concrete d
-  MW     qf_mw (qf_mw_converse)                            y  y  U     e != 0 mod d
-  VA     qf_va (qf_va_converse)                            y  y  U     concrete d
-  D1     qf_d1 (qf_d1_converse)                            y  y  U     concrete d
+  WF     qf_wf (qf_wf_converse)                            y  y  L/L   wFusion
+  HD     qf_hd (qf_hd_converse)                            y  y  L/L   qfHD, hdClosed; concrete
+                                                                       d; Lean checked at d <= 5
+  MW     qf_mw (qf_mw_converse)                            y  y  L/L   qfMW; e != 0 mod d
+  VA     qf_va (qf_va_converse)                            y  y  L/L   qfVA, qfVaR; concrete d
+  D1     qf_d1 (qf_d1_converse)                            y  y  L/L   qfD1, spiderF2; concrete d
+                                                                       for weighted boxes
   S1     qf_s1                                             y  y  U     concrete dims; no
                                                                        converse (section 7)
   DZX    qf_dzx (qf_dzx_converse)                          y  y  U     concrete dims
@@ -168,17 +187,20 @@ converse.
   E      qf_e (qf_e_converse)                              y  y  U     concrete dims
   BZW    qf_bzw (qf_bzw_converse)                          y  y  U     concrete dims
   K0     qf_k0 (qf_k0_converse)                            y  y  U     concrete dims
-  (2.8)  binder_definition (binder_definition_converse)    y  y  U     merger = bent splitter
+  (2.8)  binder_definition (binder_definition_converse)    y  y  L/L   merger = bent splitter;
+                                                                       bindDef, bindDef0
 
 3.3 Definitional rules (the generator mapping as rules)
 
   Mapping entry             Rule (converse)                                      O  K  Lean
   ------------------------  ---------------------------------------------------  -  -  ----
-  X spider = F . Z . F^3    x_spider_definition (x_spider_definition_converse)   y  y  U
-  triangle (YT)             triangle_definition (triangle_definition_converse)   y  y  U
-  inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  U
-  green circle spider       phase_to_weight (weight_to_phase)                    y  y  U
-  scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  U
+  X spider = F . Z . F^3    x_spider_definition (x_spider_definition_converse)   y  y  L (xDef)
+  triangle (YT)             triangle_definition (triangle_definition_converse)   y  y  L (zcT)
+  inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  L (zcTi,
+                                                                                         concrete d)
+  green circle spider       phase_to_weight (weight_to_phase)                    y  y  L (zcCongr)
+  scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  L (zcScalar,
+                                                                                         concrete d)
 
 3.4 Converses of the rules 2.1 to 2.28
 
@@ -193,14 +215,18 @@ both colours (concrete dimensions). Each passed the oracle check and replays in 
 connective_inverse_bind_first (its matched side would be two separate wires) and
 port_box_unfusion have none.
 
-Lean export of one proof per rule (lake env lean on the exported file, one instance per rule
-at d = 3, mixed rules at the dimensions of section 3.2): 43 rules' instances are proved over
-the tensor-network semantics with no unproved axiom (by a rule lemma or by the verified
-normaliser of symbolic sums); 41 instances carry complex weights and export as opaque
-diagrams with every step an axiom; 2 export with a named unproved_ axiom; 6 exports are
-rejected by Lean (LEAN_GAPS.txt, item 10); the two HD rules of [P2] exceeded 300 s; one
-converse (zxw_zv_converse) had no random instance its condition accepts. The "L" entries
-above are the rules proved by their lemma for every instance of the stated form.
+Lean column. "L" means every step of the rule is exported over the tensor-network semantics
+as an instance of the named rule lemma of archytaszx/lean/ArchytasZX (Weights.lean,
+Completeness.lean, ZXRules.lean, Rules.lean, WRules.lean, WZ.lean, Bialgebra.lean, Hopf.lean),
+quantified over every dimension, arity, phase and weight the lemma states, with only decidable
+side checks per step; a converse is proved as the symmetric of a step of its forward rule
+(followed by identity removals). "concrete d" marks a rule whose builder proves the coefficient
+hypotheses by cases over the indices and so needs a concrete dimension; at a symbolic dimension
+such a step is the axiom unproved_RULE_N. Each "L" entry was checked by exporting single steps
+(step route only, never the normaliser of symbolic sums) at d = 2, 3, 5 and, where the
+template builds there, at symbolic d, over the rule's arity classes, with lake env lean
+accepting every file (and, for the rules proved on 2026-11-03/04, six random instances at each
+d = 2..6). "U" means the step is exported as the axiom unproved_RULE_N.
 
 An axiom is never "derived": each is a rule of its own, stating exactly the paper's equation
 (same quantification, same side conditions, same scalar through section 2).

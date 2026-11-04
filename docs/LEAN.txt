@@ -57,7 +57,8 @@ between two scaled networks under one environment: the same tensor, scalars incl
 
   Module       Content
   -----------  ----------------------------------------------------------------------------
-  Net          networks over ℂ and their evaluation
+  Net          networks over ℂ and their evaluation; node kinds include the weighted Z and X
+               spiders Kind.ZW and Kind.XW (tZw, tXw, coefficient table Env.coef)
   Iso          isoOK, a decidable check that two networks agree up to renaming of summed
                labels, node order and spider leg order; iso proves it sound
   Rules        every rule of the engine as a local equation (LocalEq) between its two sides,
@@ -89,6 +90,16 @@ between two scaled networks under one environment: the same tensor, scalars incl
   Completeness rule lemmas of the complete axiomatisation no earlier module states: wPerm,
                the outputs of a W node permuted; zPerm, the legs of a Z spider
                permuted and bent; wAso, W associativity from wFusion
+  Weights      weighted Z and X spiders (zc, xc) and the rule
+               lemmas stated through coefficient vectors zc: zcCongr, zcFusion, zcFusionN,
+               zcScalar, zcEpt, zcZer, zcAd, zcK2, zcTi, zcT, zcPcy; and fourierSq,
+               fourierSq', identityXZ, zxwTA, zxwBsj, kOne, xDef, xDefT, multiplier_val,
+               fourierMult, qfMW, bindDef, bindDef0, zxwD1, spiderF2, qfD1, wMultPinkVal,
+               vBoxVal, zxwVW, zxwZV, vaVal, vaClosed, zxwVA, wGreen, qfVaR, qfVA,
+               LocalEq.flip', sumOver_pin2, wKz, multT_val, kzChainVal, kzVal, zxwKZ, HdC,
+               hdChainVal, hdGroup, hdVal, hdClosed, om_tri, qfHD, chainsVal, chainsClosed,
+               ZhdC, zhdChainVal, zhdGroup, zxwHD, hopfW, hopfSwappedW, hopfXW,
+               hopfSwappedXW, hopfWXW, hopfSwappedWXW, xDefW, xc, xcFusion (section 8)
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
@@ -108,14 +119,8 @@ networks with the diagrams' own scalars. Its proof composes, by Equal.trans and 
     wire_elim for every bare wire the rule leaves, and an isomorphism onto the next network;
   - for an isomorphism step: iso, decided by isoOK.
 
-A step of a rule of the complete axiomatisation (COMPLETENESS.txt) is proved by an existing
-rule lemma where the rule's equation is an instance of it: zxw_s1 (phases, one wire) by
-fusionZ, zxw_s2 and zxw_s2_pink by
-identityZ and identityX, zxw_ept (plain effect) by capSwapped, zxw_k0 (j = 0) by stateCopy,
-zxw_bs0 by wZeroCopy, zxw_b2_converse by bialgebra, zxw_bzw_converse by wzBialgebra, qf_wf
-by wFusion; zxw_sym, qf_w_sym and their converses by wPerm, qf_z_flex and its converse by zPerm,
-zxw_aso and its converse by wAso (Completeness). Every other such step, and these outside those instances, is an unproved axiom
-(LEAN_GAPS.txt, item 9).
+A step of a rule of the complete axiomatisation (COMPLETENESS.txt) is proved by its rule
+lemma (section 8); a step of a rule without one is an unproved axiom (section 9, G9).
 
 The scalar identity between the two sides is a linear_combination whose coefficients the
 engine computes and Lean's ring checks (archytaszx.semantics.lean_scalar). Scalars outside the
@@ -210,7 +215,7 @@ A rule step for which no lemma exists, or an isomorphism the exporter cannot mat
 axiom named unproved_* stating that one step over the same semantics. Such axioms are listed in
 the file header and counted by the shell ("lean: tensor-network semantics, N unproved
 step(s)"). The constructs that currently have no Lean proof path are listed, with the reason
-for each, in LEAN_GAPS.txt.
+for each, in section 9.
 
 
 7. PYTHON INTERFACE
@@ -227,3 +232,135 @@ for each, in LEAN_GAPS.txt.
     archytaszx.semantics.lean_sym.export_symbolic, sym_check
     archytaszx.semantics.lean_refute.export_refutation
     archytaszx.semantics.lean_numeric.export_numeric_refutation
+
+
+8. RULE LEMMAS OF THE COMPLETE AXIOMATISATION
+---------------------------------------------
+
+Each rule of COMPLETENESS.txt, section 3, marked L there is proved step by step by one lemma,
+stated as LocalEq between the rule's two sides for every leg labelling, dimension, phase and
+coefficient vector the lemma quantifies, with side conditions as hypotheses that the exporter
+discharges per step by decide, rfl, or a case split over the indices at a concrete dimension.
+
+  Rule (and converse)            Lemma (module)        Builder in lean_net
+  -----------------------------  --------------------  -----------------------------------
+  zxw_s1                         fusionZ (Rules),      _template_fusion
+                                 zcFusion, zcFusionN
+  zxw_s2, zxw_s2_pink            identityZ, identityX  _s2, _identity
+                                 (Rules); zPerm,
+                                 identityXZ when the
+                                 result is a bare wire
+  zxw_ept, zxw_zer               zcEpt, zcZer          _zc_ept, _zc_zer
+  zxw_ad                         zcAd                  _zc_ad
+  zxw_k0                         kCopy (Completeness)  _k_copy
+  zxw_k1                         kOne                  _k1
+  zxw_k2                         zcK2                  _zc_k2
+  zxw_b2                         bialgebra             _bialgebra (converse direction)
+  zxw_bzw                        wzBialgebra (WZ)      _wz (converse direction)
+  zxw_bs0                        wZeroCopy (WRules)    _fed_state
+  zxw_bsj                        zxwBsj                _bsj
+  zxw_p1                         fourierSq, fourierSq' _hh
+  zxw_pcy                        zcPcy                 _zc_pcy
+  zxw_ta                         zxwTA                 _ta
+  zxw_sym, qf_w_sym              wPerm (Completeness)  _w_perm
+  zxw_aso                        wAso (Completeness)   _w_aso
+  qf_z_flex                      zPerm (Completeness)  _z_perm
+  qf_wf                          wFusion (WRules)      _w_fusion
+  triangle_definition            zcT                   _zc_t (converse direction)
+  triangle_inverse_definition    zcTi                  _zc_ti (converse direction)
+  phase_to_weight, weight_to_    zcCongr               _zc_congr
+  phase
+  scalar_box                     zcScalar              _zc_scalar
+  x_spider_definition            xDef                  _x_def
+  zxw_h1                         xDef, xDefT, kjNeg    _h1 (composed by LocalEq.trans')
+  zxw_p1_multiplier              fourierMult,          _hh_mult
+                                 multiplier_val
+  qf_mw                          qfMW, multiplier_val  _qf_mw
+  binder_definition              bindDef, bindDef0     _bind_def
+  zxw_d1                         zxwD1                 _d1
+  qf_d1                          qfD1, spiderF2        _qf_d1 (both directions)
+  zxw_vw                         zxwVW, vBoxVal,       _vw
+                                 wMultPinkVal
+  zxw_zv                         zxwZV, vBoxVal        _zv
+  zxw_va                         zxwVA, vaClosed,      _va (both directions)
+                                 vaVal, vBoxVal
+  qf_va                          qfVA, qfVaR,          _qf_va (both directions; the
+                                 vaClosed              converse by LocalEq.flip')
+  zxw_kz                         zxwKZ, kzVal,         _kz (both directions; the converse
+                                 kzChainVal, wKz       by LocalEq.flip')
+  qf_hd                          qfHD, hdVal,          _qf_hd (both directions; the converse
+                                 hdClosed, hdChainVal  by LocalEq.flip')
+  hopf, hopf_swapped (weighted   hopfW, hopfXW,        _hopf
+  spiders)                       hopfWXW, Swapped forms
+  x_spider_definition (weighted) xDefW                 _x_def
+  spider_fusion (weighted X)     xcFusion              _fusion
+  zxw_hd                         zxwHD, chainsVal,     _zxw_hd (both directions; the converse
+                                 chainsClosed,         by LocalEq.flip')
+                                 zhdChainVal, vBoxVal
+
+A converse is proved through its forward rule (lean_net._through_forward): the forward rule is
+applied to the step's result, the identity spiders that application leaves are removed by
+identity_removal steps, the outcome is matched to the step's start by an isomorphism, and the
+composite is reversed by Equal.symm; identity removals alone are tried first. qf_d1_converse,
+zxw_va_converse, qf_va_converse, zxw_kz_converse, qf_hd_converse, zxw_hd_converse,
+w_z_effect_converse and wz_bialgebra_converse have builders of their own (LocalEq.symm' or
+LocalEq.flip' of the forward lemma). Converses with free values (zxw_s1, zxw_ad, zxw_ept,
+scalar_box, x_fusion) are proved for the values the step records.
+
+The acceptance check exports single steps of every rule on the step route (never the
+normaliser of section 4.3) at d = 2, 3, 5, at symbolic d where the rule's template builds
+there, over the rule's arity classes, and checks every file with lake env lean.
+
+
+9. GAPS
+-------
+
+G1 Binder and splitter under the normaliser. The binder entry [k = a t + b] needs t as a
+coefficient and div/mod to eliminate; an X spider or F on an s t wire gives characters
+omega_s^(t k l) whose sums depend on gcd(t, s). The rules qf_dd, qf_e, qf_dzx, qf_k0, qf_bzw,
+qf_ta, qf_s1 and connective_inverse_converse have no rule lemma; their steps are unproved
+axioms. binder_definition has one (section 8) except when only some of its legs are bent.
+
+G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
+by the classical evaluation with Gauss's sign and by Landsberg-Schaar reciprocity; neither is in
+Mathlib. A proof needing one is accepted only when the sums cancel between the sides.
+
+G3 Phase rules with a symbolic coefficient (theta k). At a bound index s the rule contributes
+ex(theta)^s; summing gives a geometric series, outside the normaliser's monomials.
+
+G4 Multiplicity-dependent scalars that are not geometric, with port boxes.
+
+G5 Opaque scalars (pi, roots of non-monomials) whose ratio is not exact.
+
+G6 Node boxes meeting the rest at a wire, and port boxes inside port boxes, under the
+normaliser.
+
+G7 Deferred dimension constraints in families: Equal.of_mapDim' maps plain dimension indices
+only, not the bundle indices derived from them.
+
+G8 Nodes whose legs differ in dimension (d^p against d^q), in families: exponent symbols carry
+no positivity hypothesis.
+
+G9 Rules of the complete axiomatisation without a rule lemma: zxw_ww and qf_ww, with their
+converses. Steps of proved rules outside their lemma's form: binder_definition with only some
+legs bent.
+
+G10 Normaliser exports on phased diagrams: a closing identity between roots of unity written in
+different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does
+not identify; a symCheck whose decide does not reduce in the kernel for 8 nodes. The scalar
+prover of rule builders likewise leaves some identities between square roots and roots of unity
+unproved (sqrt 3 against om 12, sqrt 2 against om 8), which turns those zxw_k2 steps into
+unproved axioms.
+
+G11 Families are stated over bundled networks, not over the engine's diagrams.
+
+G12 Weighted spiders at a symbolic dimension: a coefficient table is exported only at a concrete
+dimension ("complex weights at a symbolic dimension"); steps on such nodes are unproved axioms.
+Weighted X spiders are exported as Kind.XW at a concrete dimension.
+
+G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
+of isoB) are decided in the kernel first (decide +kernel), and a step's closing isoB names its
+target network instead of writing it out, so the elaborator does not unfold and compare it. With
+both, zxw_vw and zxw_hd steps up to d = 6 and qf_hd_converse and zxw_hd_converse steps up to d =
+5 check. Larger dimensions were not measured.
+

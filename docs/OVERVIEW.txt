@@ -125,9 +125,9 @@ certificate and into the Lean theorem as hypotheses.
   - The dimension unifier defers equations with several solution branches, such as
     d1*d2 == 6 or d^n == d^m; such equalities become recorded assumptions.
   - A rule restricted to prime dimensions does not fire at a symbolic dimension.
-  - Some proof steps have no Lean lemma yet; they are listed in LEAN_GAPS.txt. This includes
-    every rule of the complete axiomatisation (COMPLETENESS.txt) and every spider with
-    complex weights.
+  - Some proof steps have no Lean lemma yet; they are listed in LEAN.txt, section 9. This
+    includes the rules of the complete axiomatisation marked U in COMPLETENESS.txt, section 3,
+    and weighted spiders at a symbolic dimension.
   - The completeness of the rule system holds at concrete dimensions without bang boxes; the
     exhaustive search may not return on inputs it cannot join.
   - The Python API is not yet stable between releases.

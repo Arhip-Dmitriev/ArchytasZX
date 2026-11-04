@@ -95,6 +95,5 @@ explicitly.
   README.md            Project summary and quick start.
   CONTRIBUTING.md      How to report bugs, in particular soundness bugs.
   FULL_PLAN.txt        The development plan of the project.
-  LEAN_GAPS.txt        Rule steps and constructs without a Lean proof path.
   REFERENCES.bib/.txt  Bibliography.
   examples/            Runnable command files: copy_induction.azx, deutsch_jozsa_proof.azx.
