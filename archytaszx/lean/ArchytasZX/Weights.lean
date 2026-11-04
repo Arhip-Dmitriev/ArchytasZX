@@ -6218,4 +6218,195 @@ theorem xcFusion (E : Env) (na nb m : Node) (dz w : ℕ) (iface : List ℕ) (ha 
 
 
 
+/-- A W node at `u` is nonzero only on all-zero outputs (`u = 0`) or on one output `u`. -/
+theorem tW_support (d u : ℕ) (ys : List ℕ) (h : tW d ys u ≠ 0) :
+    (u = 0 ∧ ∀ y ∈ ys, y = 0) ∨ (u ≠ 0 ∧ u < d ∧ ys.filter (· ≠ 0) = [u]) := by
+  unfold tW at h
+  by_cases hu : u = 0
+  · subst hu
+    simp only [if_true] at h
+    split_ifs at h with hy
+    · exact Or.inl ⟨rfl, hy⟩
+    · exact absurd rfl h
+  · simp only [hu, if_false] at h
+    split_ifs at h with hy
+    · exact Or.inr ⟨hu, hy.1, hy.2⟩
+    · exact absurd rfl h
+
+/-- A W node at `j` summed against a W node at `j` over a shared input: the zero term plus the
+one-hot terms. -/
+theorem wPairSum (d : ℕ) (xs ys : List ℕ) :
+    ∑ z ∈ range d, tW d xs z * tW d ys z =
+      (if (∀ x ∈ xs, x = 0) ∧ ∀ y ∈ ys, y = 0 then (if 0 < d then 1 else 0) else 0) +
+        ∑ z ∈ (range d).erase 0, (if xs.filter (· ≠ 0) = [z] ∧ ys.filter (· ≠ 0) = [z] then 1
+          else 0) := by
+  by_cases hd : 0 < d
+  · rw [← Finset.add_sum_erase _ _ (Finset.mem_range.2 hd), if_pos hd]
+    congr 1
+    · simp only [tW, if_true]
+      split_ifs <;> first | rfl | (exfalso; tauto) | simp
+    · refine Finset.sum_congr rfl fun z hz => ?_
+      have hz0 := Finset.ne_of_mem_erase hz
+      have hzd := Finset.mem_range.1 (Finset.mem_of_mem_erase hz)
+      simp only [tW, hz0, if_false, hzd, true_and]
+      split_ifs <;> first | rfl | (exfalso; tauto) | simp
+  · have : d = 0 := by omega
+    subst this; simp
+
+/-- A W node whose outputs are all zero. -/
+theorem tW_replicateZero (d m x : ℕ) : tW d (List.replicate m 0) x = if x = 0 then 1 else 0 := by
+  unfold tW
+  by_cases hx : x = 0
+  · simp [hx]
+  · have : (List.replicate m 0).filter (· ≠ 0) = [] := by
+      simp [List.filter_eq_nil_iff]
+    simp [hx, this]
+
+/-- A W node whose outputs are zero except one entry `v ≠ 0`. -/
+theorem tW_single (d x v : ℕ) (a b : List ℕ) (ha : ∀ y ∈ a, y = 0) (hb : ∀ y ∈ b, y = 0)
+    (hv : v ≠ 0) : tW d (a ++ v :: b) x = if x = v ∧ v < d then 1 else 0 := by
+  have hfa : a.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y hy => by simp [ha y hy]
+  have hfb : b.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y hy => by simp [hb y hy]
+  have hf : (a ++ v :: b).filter (· ≠ 0) = [v] := by
+    rw [List.filter_append, List.filter_cons, hfa, hfb]
+    simp [hv]
+  unfold tW
+  by_cases hx : x = 0
+  · subst hx
+    have : ¬ ∀ y ∈ a ++ v :: b, y = 0 := fun h => hv (h v (by simp))
+    simp only [if_true, this, if_false]
+    split_ifs with h
+    · exact absurd h.1 (Ne.symm hv)
+    · rfl
+  · simp only [hx, if_false, hf, List.cons.injEq, and_true]
+    by_cases h : x = v
+    · subst h; simp
+    · simp [h, Ne.symm h]
+
+/-- W nodes at the values `xs`, each with all-zero outputs. -/
+theorem prod_tW_zeros (d m : ℕ) (xs : List ℕ) :
+    (xs.map fun x => tW d (List.replicate m 0) x).prod = if ∀ x ∈ xs, x = 0 then 1 else 0 := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.map_cons, List.prod_cons]
+    rw [ih, tW_replicateZero]
+    simp only [List.forall_mem_cons]
+    split_ifs <;> first | rfl | (exfalso; tauto) | simp
+
+theorem prod_tW_zero_in {α : Type*} (d : ℕ) (cols : List α) (f : α → List ℕ) :
+    (cols.map fun c => tW d (f c) 0).prod =
+      if ∀ c ∈ cols, ∀ y ∈ f c, y = 0 then 1 else 0 := by
+  induction cols with
+  | nil => simp
+  | cons c cs ih =>
+    simp only [List.map_cons, List.prod_cons]
+    rw [ih]
+    simp only [tW, if_true, List.forall_mem_cons]
+    split_ifs <;> first | rfl | (exfalso; tauto) | simp
+
+/-- Columns of W outputs, each W at `0`, summed: every column label is pinned to `0`. -/
+theorem sumOver_cols_zero {D : ℕ → ℕ} (d : ℕ) (cols : List (List ℕ)) (hnd : cols.flatten.Nodup)
+    (hD : ∀ l ∈ cols.flatten, 0 < D l) (G : (ℕ → ℕ) → ℂ) (σ : ℕ → ℕ) :
+    sumOver D cols.flatten (fun τ => (cols.map fun c => tW d (c.map τ) 0).prod * G τ) σ =
+      G (fun x => if x ∈ cols.flatten then 0 else σ x) := by
+  have e : ∀ τ : ℕ → ℕ, (cols.map fun c => tW d (c.map τ) 0).prod * G τ =
+      if ∀ l ∈ cols.flatten, τ l = (fun _ => 0) l then G τ else 0 := by
+    intro τ
+    rw [prod_tW_zero_in d cols (fun c => c.map τ)]
+    have hiff : (∀ c ∈ cols, ∀ y ∈ c.map τ, y = 0) ↔ ∀ l ∈ cols.flatten, τ l = 0 := by
+      constructor
+      · intro h l hl
+        obtain ⟨c, hc, hlc⟩ := List.mem_flatten.1 hl
+        exact h c hc _ (List.mem_map_of_mem hlc)
+      · intro h c hc y hy
+        obtain ⟨l, hl, rfl⟩ := List.mem_map.1 hy
+        exact h l (List.mem_flatten.2 ⟨c, hc, hl⟩)
+    by_cases h : ∀ l ∈ cols.flatten, τ l = 0
+    · rw [if_pos (hiff.2 h), if_pos h, one_mul]
+    · rw [if_neg (fun h' => h (hiff.1 h')), if_neg h, zero_mul]
+  simp only [e]
+  exact sumOver_pinV cols.flatten hnd (fun _ => 0) hD G σ
+
+/-- Columns of W outputs at `0` and one column at `v`, summed. -/
+theorem sumOver_cols_hot {D : ℕ → ℕ} (d : ℕ) (hd : 0 < d) (A : List (List ℕ)) (col : List ℕ)
+    (v : ℕ) (hv : v < d) (hnd : (A.flatten ++ col).Nodup)
+    (hD : ∀ l ∈ A.flatten ++ col, D l = d) (G : (ℕ → ℕ) → ℂ) (σ : ℕ → ℕ) :
+    sumOver D (A.flatten ++ col) (fun τ => (A.map fun c => tW d (c.map τ) 0).prod *
+        (tW d (col.map τ) v * G τ)) σ =
+      if v = 0 then G (fun x => if x ∈ col then 0 else
+          (fun x => if x ∈ A.flatten then 0 else σ x) x)
+      else (col.map fun l => G (Function.update (fun x => if x ∈ col then 0 else
+          (fun x => if x ∈ A.flatten then 0 else σ x) x) l v)).sum := by
+  obtain ⟨hA, hc, hAc⟩ := List.nodup_append.1 hnd
+  rw [sumOver_append]
+  have inner : ∀ τ : ℕ → ℕ, sumOver D col (fun τ => (A.map fun c => tW d (c.map τ) 0).prod *
+      (tW d (col.map τ) v * G τ)) τ = (A.map fun c => tW d (c.map τ) 0).prod *
+      (if v = 0 then G (fun x => if x ∈ col then 0 else τ x)
+        else (col.map fun l => G (Function.update (fun x => if x ∈ col then 0 else τ x) l v)).sum) := by
+    intro τ
+    rw [sumOver_const_mul D col A.flatten (fun τ => (A.map fun c => tW d (c.map τ) 0).prod) _
+      (fun τ τ' h => by
+        simp only
+        congr 1
+        refine List.map_congr_left fun c hc => ?_
+        congr 1
+        exact List.map_congr_left fun l hl => h l (List.mem_flatten.2 ⟨c, hc, hl⟩))
+      (fun x hx hx' => hAc x hx x hx' rfl),
+      sumOver_W d col hc (fun l hl => hD l (List.mem_append_right _ hl)) v hv hd G τ]
+  rw [show sumOver D col (fun τ => (A.map fun c => tW d (c.map τ) 0).prod *
+      (tW d (col.map τ) v * G τ)) = _ from funext inner]
+  exact sumOver_cols_zero d A hA (fun l hl => by rw [hD l (List.mem_append_left _ hl)]; exact hd)
+    _ σ
+
+/-- `wPairSum` with all-zero `ys`. -/
+theorem wPairSum_zero (d : ℕ) (hd : 0 < d) (xs ys : List ℕ) (hy : ∀ y ∈ ys, y = 0) :
+    ∑ z ∈ range d, tW d xs z * tW d ys z = if ∀ x ∈ xs, x = 0 then 1 else 0 := by
+  rw [wPairSum, if_pos hd]
+  have hf : ys.filter (· ≠ 0) = [] := List.filter_eq_nil_iff.2 fun y h => by simp [hy y h]
+  have : ∑ z ∈ (range d).erase 0, (if xs.filter (· ≠ 0) = [z] ∧ ys.filter (· ≠ 0) = [z] then
+      (1 : ℂ) else 0) = 0 := Finset.sum_eq_zero fun z _ => by rw [hf]; simp
+  rw [this, add_zero]
+  simp only [and_iff_left hy]
+
+/-- `wPairSum` with `ys` one-hot at `v`. -/
+theorem wPairSum_hot (d v : ℕ) (hv : v ≠ 0) (hvd : v < d) (xs ys : List ℕ)
+    (hy : ys.filter (· ≠ 0) = [v]) :
+    ∑ z ∈ range d, tW d xs z * tW d ys z = if xs.filter (· ≠ 0) = [v] then 1 else 0 := by
+  have hd : 0 < d := by omega
+  rw [wPairSum, if_pos hd]
+  have hny : ¬ ∀ y ∈ ys, y = 0 := fun h => by
+    have : v ∈ ys.filter (· ≠ 0) := by rw [hy]; exact List.mem_singleton_self v
+    have := List.mem_filter.1 this
+    exact hv (h v this.1)
+  simp only [hny, and_false, if_false, zero_add, hy, List.cons.injEq, and_true]
+  rw [Finset.sum_eq_single v]
+  · simp
+  · intro z _ hz
+    simp [Ne.symm hz]
+  · intro h
+    exact absurd (Finset.mem_erase.2 ⟨hv, Finset.mem_range.2 hvd⟩) h
+
+/-- One-hot at `v` of a cons: the head at `v` and the rest zero, or the head zero and the rest
+one-hot at `v`. -/
+theorem hot_cons (v : ℕ) (hv : v ≠ 0) (x : ℕ) (xs : List ℕ) :
+    (if (x :: xs).filter (· ≠ 0) = [v] then (1 : ℂ) else 0) =
+      (if x = v then 1 else 0) * (if ∀ y ∈ xs, y = 0 then 1 else 0) +
+        (if x = 0 then 1 else 0) * (if xs.filter (· ≠ 0) = [v] then 1 else 0) := by
+  have hz : (∀ y ∈ xs, y = 0) ↔ xs.filter (· ≠ 0) = [] := by
+    rw [List.filter_eq_nil_iff]; simp
+  by_cases h0 : x = 0
+  · subst h0
+    simp [Ne.symm hv]
+  · have hf : (x :: xs).filter (· ≠ 0) = x :: xs.filter (· ≠ 0) := by
+      simp [h0]
+    rw [hf]
+    by_cases hxv : x = v
+    · subst hxv
+      simp only [List.cons.injEq, true_and, if_true, h0, if_false, one_mul, mul_zero, add_zero]
+      by_cases h : ∀ y ∈ xs, y = 0
+      · rw [if_pos (hz.1 h), if_pos h]; simp
+      · rw [if_neg (fun h' => h (hz.2 h')), if_neg h]; simp
+    · simp [hxv, h0]
+
 end ArchytasZX
