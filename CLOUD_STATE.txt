@@ -1,0 +1,17 @@
+CLOUD WORKSTREAM cloud/connective
+=================================
+
+Goal: Lean rule lemmas and lean_net builders for the mixed-dimension [P2] rules qf_e, qf_k0,
+qf_ta, qf_dd, qf_dzx, qf_bzw and their converses (work them one at a time, easiest first), so
+that `python -I cloudtools/rule_check.py --lean --dims 2,3,4,6 RULE RULE_converse` reports PROVED
+for every instance class. qf_s1 has no harness instance; skip it.
+
+Read each rule's template in archytaszx/rewrite/rules_axioms.py and its entry in docs/RULES.txt.
+Binder B / splitter S (archytaszx/lean/ArchytasZX/Connective.lean): tB s t k a b is
+[a < s, b < t, k = a*t + b]; reindex sums over k < s*t as pairs (a, b) with Nat.div_add_mod or
+finProdFinEquiv, as Connective.lean does; prove once that characters on an s*t wire factor as
+omega_(s t)^(k l) with k = a t + b. Prove for symbolic s, t where the statement allows, else per
+dimension tuple. Models: bindDef / bindDef0 and builder _bind_def (binder_definition), zcFusion,
+zxwTA (the [P1] TA rule) in Weights.lean and lean_net.py.
+
+NOTES (append one dated entry per run: what was done, what failed, the next step)
