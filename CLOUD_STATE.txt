@@ -1,0 +1,25 @@
+CLOUD WORKSTREAM cloud/ww
+=========================
+
+Goal: Lean rule lemmas and lean_net builders for zxw_ww, zxw_ww_converse, qf_ww, qf_ww_converse,
+so that `python -I cloudtools/rule_check.py --lean --dims 2,3,5 zxw_ww zxw_ww_converse qf_ww
+qf_ww_converse` reports PROVED for every instance class.
+
+Rules (templates): archytaszx/rewrite/rules_axioms.py, _ww_left/_ww_right (zxw_ww) and
+_ww2_left/_ww2_right (qf_ww). zxw_ww: a W transpose t (n outputs, input shared with W node w of m
+outputs) and W node p (input u) meet in Z(2 -> 1) spiders g_k (ins [p_k, w_k], out y_k); the right
+side has p, one W node w_k (input x_k, m outputs) per k < n, and per c < m a W node t_c (n outputs,
+wired output-to-output to w_k[c]) whose input meets p_c in g_c.
+
+Planned route:
+  left  = tW(y; u) * Σ_z tW(x; z) tW(y; z)            (pin p, w to y with sumOver_pin2)
+  right = tW(y; u) * Σ_E Π_k tW(row_k; x_k) Π_c tW(col_c; y_c)   (pin p', s to y the same way)
+  tW(y; u) ≠ 0 forces y all zero or one-hot (tW_support). Evaluate the right column by column:
+  sumOver_cols_zero (every column at 0) and sumOver_cols_hot (one column at v ≠ 0, via
+  sumOver_W); rows then by tW_replicateZero / tW_single / prod_tW_zeros; the left by wPairSum.
+Already proved (end of archytaszx/lean/ArchytasZX/Weights.lean): tW_support, wPairSum,
+  tW_replicateZero, tW_single, prod_tW_zeros, prod_tW_zero_in, sumOver_cols_zero, sumOver_cols_hot.
+Models to copy: zxwKZ / kzVal (pin2 + groups), zxwVW (sumOver_W), builders _kz, _va in
+  archytaszx/semantics/lean_net.py; registration in the _RULES dict there.
+
+NOTES (append one dated entry per run: what was done, what failed, the next step)
