@@ -15,3 +15,11 @@ dimension tuple. Models: bindDef / bindDef0 and builder _bind_def (binder_defini
 zxwTA (the [P1] TA rule) in Weights.lean and lean_net.py.
 
 NOTES (append one dated entry per run: what was done, what failed, the next step)
+2026-11-04 (run 1): SETUP FAILED, no work done. Proxy answers 403 to CONNECT for
+  release.lean-lang.org (elan toolchain download) and cache.mathlib.org (lake exe cache get);
+  lakecache.blob.core.windows.net is also 403. Workaround that worked for the toolchain: download
+  https://github.com/leanprover/lean4/releases/download/v4.35.0/lean-4.35.0-linux.tar.zst
+  (github.com is reachable), unpack with python zstandard, `elan toolchain link
+  leanprover/lean4:v4.35.0 DIR`. No workaround for the Mathlib cache: building Mathlib from
+  source on 4 cores does not fit a run. Next step: allow cache.mathlib.org (and
+  release.lean-lang.org) in the environment network policy, then start on qf_e.
