@@ -6409,4 +6409,28 @@ theorem hot_cons (v : ℕ) (hv : v ≠ 0) (x : ℕ) (xs : List ℕ) :
       · rw [if_neg (fun h' => h (hz.2 h')), if_neg h]; simp
     · simp [hxv, h0]
 
+theorem prod_isZero (xs : List ℕ) :
+    (xs.map fun x => if x = 0 then (1 : ℂ) else 0).prod = if ∀ y ∈ xs, y = 0 then 1 else 0 := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.map_cons, List.prod_cons, ih, List.forall_mem_cons]
+    by_cases hx : x = 0 <;> simp [hx]
+
+/-- Rows of which exactly row `k` is at `v` and every other row at `0`, summed over `k`. -/
+theorem sum_hot_rows (v : ℕ) (hv : v ≠ 0) (xs : List ℕ) :
+    ∑ k ∈ Finset.range xs.length, (xs.mapIdx fun j x =>
+        if j = k then (if x = v then (1 : ℂ) else 0) else (if x = 0 then 1 else 0)).prod =
+      if xs.filter (· ≠ 0) = [v] then 1 else 0 := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    rw [hot_cons v hv, ← ih, List.length_cons, Finset.sum_range_succ', Finset.mul_sum]
+    simp only [List.mapIdx_cons, List.prod_cons, Nat.succ_ne_zero, if_false, add_left_inj,
+      if_true]
+    rw [add_comm]
+    congr 1
+    rw [← prod_isZero]; congr 2
+    exact List.ext_getElem (by simp) (by simp)
+
 end ArchytasZX
