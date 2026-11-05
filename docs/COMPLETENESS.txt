@@ -413,7 +413,9 @@ exists; by the transfer above one exists of the same rules and matches whose fre
 algebraic, say of length n with every free value's entries of level at most m; every step is
 then a match the round K = max(n, m) enumerates, so the start side of that round reaches a
 diagram with the same values as D2, which the canonical comparison identifies with D2. Each
-round is finite (finitely many matches, finitely many vectors per free variable). Pruning
+round is finite (finitely many matches, finitely many vectors per free variable). Computing a
+variable the conditions determine (PROOFS.txt, section 3.3) only adds candidates beyond the
+enumerated ones, so the argument is unchanged. Pruning
 within a side uses the comparison view, so a diagram is dropped only for an isomorphic one with
 the same parameter representation. Premises used about the rules: the patterns enumerate every
 match of every rule, and a free value enters as a vector of coefficients (weights), which the

@@ -167,7 +167,9 @@ of the kind of 3.2 from both sides to depth K, in which every free weight-vector
 rule (the splits and insertions of the converses) also takes every vector whose entries are
 algebraic numbers of level at most K (archytaszx.algebra.algebraic: rationals by height, roots
 of unity by order, Gaussian rationals, then roots of irreducible integer polynomials by degree
-plus largest coefficient). Diagrams are compared by algebraic_view (normal_form): every spider
+plus largest coefficient). Where a rule's conditions determine the other free variables from the
+first (zxw_s1_converse and x_fusion_converse: b = c / a coefficientwise when no coefficient of a
+is 0; zxw_ad_converse: b = c - a), they are computed instead of enumerated. Diagrams are compared by algebraic_view (normal_form): every spider
 parameter as weights and the scalar, each value in canonical form (a rational or CRootOf of its
 minimal polynomial), so equal values compare equal. Both diagrams need concrete dimensions and
 algebraic parameters (ProveGrammarError otherwise). Each round is finite; the rounds are not
