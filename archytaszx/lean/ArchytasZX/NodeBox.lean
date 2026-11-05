@@ -1321,7 +1321,7 @@ theorem cn_WF {D : Diagram} {b : DBox} (k : ℕ) (hW : WF D) (hb : b ∈ D.boxes
     (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) (hbp : b.ports = []) :
     WF (D.copyNodes b k) := by
   have hmem := cn_mem_boxes D b k
-  refine ⟨cn_ids k hW hb, ?_, cn_perm k hW hb, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨cn_ids k hW hb, ?_, cn_perm k hW hb, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [cn_boxes]
     refine (List.Sublist.map _ List.filter_sublist).nodup ?_
     rw [List.map_map]
@@ -1424,6 +1424,16 @@ theorem cn_WF {D : Diagram} {b : DBox} (k : ℕ) (hW : WF D) (hb : b ∈ D.boxes
       rw [hA, List.dropLast_concat]; exact Or.inr this
     · rw [nodeBoxes_same hW hb hleaf ((inS_iff b _).1 h1) ((inS_iff b _).1 h2)]
       exact Or.inl (List.prefix_refl _)
+  · intro y' hy'
+    obtain ⟨y, -, -, rfl, h⟩ := (hmem y').1 hy'
+    exact h
+  · intro w' hw'
+    rw [cn_wires, List.mem_flatMap] at hw'
+    obtain ⟨w, hw, hz⟩ := hw'
+    obtain ⟨j, j1, j2, rfl⟩ := mem_zip_idx hz
+    obtain ⟨-, -, l1, l2⟩ := wire_not_bnd hW hw
+    rw [cn_portDim k hW hb l1 (List.getElem_mem j1), cn_portDim k hW hb l2 (List.getElem_mem j2)]
+    exact hW.wdim w hw
 
 end Diagram
 

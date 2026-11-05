@@ -32,3 +32,7 @@ import ArchytasZX.PortBox
 import ArchytasZX.Gather
 import ArchytasZX.Split
 import ArchytasZX.NodeBox
+import ArchytasZX.Induct
+import ArchytasZX.BoxFree
+import ArchytasZX.Positional
+import ArchytasZX.Tower

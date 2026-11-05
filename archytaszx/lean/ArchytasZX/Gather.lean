@@ -164,13 +164,15 @@ theorem WF_perm_bnd (D : Diagram) (o i : List Port) (ho : o.Perm D.outs) (hi : i
   have hw : D'.wires = D.wires := rfl
   have hn : D'.nodes = D.nodes := rfl
   refine ⟨hW.ids, hW.bids, ?_, hW.kinds, hW.nsub, fun x hx => ?_, fun x y hy hx => ?_,
-    fun p h => ?_, fun p h y hy hpy => ?_, fun y hy p h => hp.mem_iff.2 (hW.pbnd y hy p h), ?_⟩
+    fun p h => ?_, fun p h y hy hpy => ?_, fun y hy p h => hp.mem_iff.2 (hW.pbnd y hy p h), ?_, ?_, ?_⟩
   · rw [legs_congr hn]; exact ((hp.append_left _).append_left _).trans hW.perm
   · rw [ChainOK_congr hb, nodeBoxes_congr hb]; exact hW.nchain x hx
   · rw [nodeBoxes_congr hb]; exact hW.nall x y hy hx
   · rw [ChainOK_congr hb, nodeBoxes_congr hb, portBoxes_congr hb]; exact hW.pchain p (hp.mem_iff.1 h)
   · rw [portBoxes_congr hb]; exact hW.pall p (hp.mem_iff.1 h) y hy hpy
   · intro w hw'; rw [nodeBoxes_congr hb, nodeBoxes_congr hb]; exact hW.wpre w hw'
+  · exact hW.ne
+  · intro w hw'; rw [portDim_congr hn, portDim_congr hn]; exact hW.wdim w hw'
 
 /-- Reordering the boundary reads the slots through the reordering. -/
 theorem evalD_perm_bnd (D : Diagram) (o i : List Port) (ho : o.Perm D.outs) (hi : i.Perm D.ins)

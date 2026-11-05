@@ -106,6 +106,8 @@ structure WF (D : Diagram) : Prop where
   pbnd : ∀ y ∈ D.boxes, ∀ p ∈ y.ports, p ∈ D.bnd
   wpre : ∀ w ∈ D.wires, D.nodeBoxes w.1.node <+: D.nodeBoxes w.2.node ∨
     D.nodeBoxes w.2.node <+: D.nodeBoxes w.1.node
+  ne : ∀ y ∈ D.boxes, y.nodes ≠ [] ∨ y.ports ≠ []
+  wdim : ∀ w ∈ D.wires, D.portDim w.1 = D.portDim w.2
 
 end ArchytasZX
 
@@ -860,7 +862,7 @@ theorem ep_wire_ends (hW : WF D) (hb : b ∈ D.boxes) :
 theorem ep_WF (hW : WF D) (hb : b ∈ D.boxes) (hbn : b.nodes = [])
     (hleaf : ∀ y ∈ D.boxes, y.parent ≠ some b.id) : WF (D.growPorts b k) := by
   have hmem := ep_mem_boxes D b k
-  refine ⟨by rw [ep_ids D b k]; exact hW.ids, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨by rw [ep_ids D b k]; exact hW.ids, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [ep_boxes D b k]
     refine (List.Sublist.map _ List.filter_sublist).nodup ?_
     rw [List.map_map]
@@ -916,6 +918,16 @@ theorem ep_WF (hW : WF D) (hb : b ∈ D.boxes) (hbn : b.nodes = [])
     rcases hW.wpre w hw with h | h
     · exact Or.inl (h.map _)
     · exact Or.inr (h.map _)
+  · intro y' hy'
+    obtain ⟨y, -, -, rfl, h⟩ := (hmem y').1 hy'
+    exact h
+  · intro w' hw'
+    rw [ep_wires_map D b k hW hb] at hw'
+    obtain ⟨w, hw, rfl⟩ := List.mem_map.1 hw'
+    obtain ⟨n1, n2⟩ := not_pg_of_wire b hW hb hw
+    obtain ⟨-, -, l1, l2⟩ := wire_not_bnd hW hw
+    rw [ep_portDim D b k hW _ l1 _ (pshift_mem b k _ n1), ep_portDim D b k hW _ l2 _ (pshift_mem b k _ n2)]
+    exact hW.wdim w hw
 
 end Diagram
 
