@@ -33,13 +33,21 @@ scalar beyond Python's integer conversion limit) is skipped.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from archytaszx.algebra.algebraic import up_to_level
+from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.graph import Diagram
 from archytaszx.rewrite.egraph import APPLICATION_ERRORS
 from archytaszx.rewrite.engine import RewriteResult, apply
-from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
+from archytaszx.rewrite.normal_form import (
+    algebraic_view,
+    comparison_view,
+    view_key,
+    views_isomorphic,
+)
 from archytaszx.rewrite.rule import Rule
 from archytaszx.rewrite.rules_library import RULES
 from archytaszx.rewrite.tactics import ProofPath, ProofStep
@@ -50,10 +58,12 @@ _SKIPPED: tuple[type[Exception], ...] = (*APPLICATION_ERRORS, ValueError, Arithm
 
 @dataclass(frozen=True, slots=True)
 class _Reached:
-    """A diagram one side reached, its comparison view, and the results leading to it."""
+    """A diagram one side reached, its comparison view, the view the two sides meet on, and
+    the results leading to it."""
 
     diagram: Diagram
     view: Diagram
+    meet: Diagram
     results: tuple[RewriteResult, ...]
 
 
@@ -70,17 +80,28 @@ class LayerReport:
 class _Side:
     """One side of the search: every diagram reached, keyed by view key."""
 
-    def __init__(self, name: str, root: Diagram) -> None:
+    def __init__(
+        self,
+        name: str,
+        root: Diagram,
+        values: Sequence[Scalar] | None = None,
+    ) -> None:
         self.name = name
+        self.values = values
         view = comparison_view(root)
-        first = _Reached(root, view, ())
+        meet = view if values is None else algebraic_view(root)
+        first = _Reached(root, view, meet, ())
         self.seen: dict[str, list[_Reached]] = {view_key(view): [first]}
+        self.met: dict[str, list[_Reached]] = {view_key(meet): [first]}
         self.frontier: list[_Reached] = [first]
         self.depth = 0
 
-    def lookup(self, key: str, view: Diagram) -> _Reached | None:
-        for reached in self.seen.get(key, ()):
-            if views_isomorphic(reached.view, view):
+    def known(self, key: str, view: Diagram) -> bool:
+        return any(views_isomorphic(r.view, view) for r in self.seen.get(key, ()))
+
+    def lookup(self, key: str, meet: Diagram) -> _Reached | None:
+        for reached in self.met.get(key, ()):
+            if views_isomorphic(reached.meet, meet):
                 return reached
         return None
 
@@ -98,6 +119,17 @@ class _Side:
                             *matches,
                             *(c for m in matches for c in extra(reached.diagram, m)),
                         )
+                    valued = getattr(rule.pattern, "algebraic_matches", None)
+                    if self.values is not None and valued is not None:
+                        matches = (
+                            *matches,
+                            *(
+                                c
+                                for m in matches
+                                for c in valued(reached.diagram, m, self.values)
+                                if c not in matches
+                            ),
+                        )
                 except _SKIPPED:
                     continue
                 for match in matches:
@@ -105,14 +137,17 @@ class _Side:
                         result = apply(reached.diagram, rule, match)
                         view = comparison_view(result.diagram)
                         key = view_key(view)
+                        if self.known(key, view):
+                            continue
+                        meet = view if self.values is None else algebraic_view(result.diagram)
+                        meet_key = key if self.values is None else view_key(meet)
                     except _SKIPPED:
                         continue
-                    if self.lookup(key, view) is not None:
-                        continue
-                    item = _Reached(result.diagram, view, (*reached.results, result))
+                    item = _Reached(result.diagram, view, meet, (*reached.results, result))
                     self.seen.setdefault(key, []).append(item)
+                    self.met.setdefault(meet_key, []).append(item)
                     nxt.append(item)
-                    added.append((key, item))
+                    added.append((meet_key, item))
         self.frontier = nxt
         self.depth += 1
         return added
@@ -135,15 +170,15 @@ def exhaustive_search(
     over ``rules`` (default: every rule in :data:`RULES`). Returns only on success."""
     rule_set = tuple(RULES.values()) if rules is None else tuple(rules)
     left, right = _Side("start", start), _Side("goal", goal)
-    for key, items in left.seen.items():
+    for key, items in left.met.items():
         for item in items:
-            hit = right.lookup(key, item.view)
+            hit = right.lookup(key, item.meet)
             if hit is not None:
                 return _path(start, goal, item, hit)
     while True:
         for side, other in ((left, right), (right, left)):
             for key, item in side.expand(rule_set):
-                hit = other.lookup(key, item.view)
+                hit = other.lookup(key, item.meet)
                 if hit is not None:
                     found = (item, hit) if side is left else (hit, item)
                     return _path(start, goal, *found)
@@ -160,6 +195,48 @@ def exhaustive_search(
                 return _exhausted()
 
 
+def algebraic_search(
+    start: Diagram,
+    goal: Diagram,
+    *,
+    rules: Sequence[Rule] | None = None,
+    on_layer: Callable[[LayerReport], None] | None = None,
+) -> ProofPath:
+    """A derivation between ``start`` and ``goal`` by iterative deepening: round ``K = 1, 2,
+    ...`` searches both sides to depth ``K``, every free weight-vector value drawn from the
+    algebraic numbers of level at most ``K``
+    (:func:`~archytaszx.algebra.algebraic.up_to_level`), diagrams
+    compared by :func:`~archytaszx.rewrite.normal_form.algebraic_view`. Returns only on
+    success."""
+    rule_set = tuple(RULES.values()) if rules is None else tuple(rules)
+    for bound in itertools.count(1):
+        values = up_to_level(bound)
+        left = _Side("start", start, values)
+        right = _Side("goal", goal, values)
+        for key, items in left.met.items():
+            for item in items:
+                hit = right.lookup(key, item.meet)
+                if hit is not None:
+                    return _path(start, goal, item, hit)
+        while left.depth < bound and (left.frontier or right.frontier):
+            for side, other in ((left, right), (right, left)):
+                for key, item in side.expand(rule_set):
+                    hit = other.lookup(key, item.meet)
+                    if hit is not None:
+                        found = (item, hit) if side is left else (hit, item)
+                        return _path(start, goal, *found)
+                if on_layer is not None:
+                    on_layer(
+                        LayerReport(
+                            f"{side.name} (bound {bound})",
+                            side.depth,
+                            sum(len(v) for v in side.seen.values()),
+                            len(side.frontier),
+                        )
+                    )
+    raise AssertionError("unreachable")
+
+
 class ExhaustedError(Exception):
     """Both sides reached every diagram they can without meeting."""
 
@@ -168,4 +245,4 @@ def _exhausted() -> ProofPath:
     raise ExhaustedError("both sides are closed under every rule and never meet")
 
 
-__all__ = ["ExhaustedError", "LayerReport", "exhaustive_search"]
+__all__ = ["ExhaustedError", "LayerReport", "algebraic_search", "exhaustive_search"]

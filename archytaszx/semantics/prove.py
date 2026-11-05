@@ -62,8 +62,13 @@ from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, NodeId
 from archytaszx.diagram.validate import ValidateError, validate
 from archytaszx.rewrite.cache import RewriteCache
-from archytaszx.rewrite.exhaustive import ExhaustedError, LayerReport, exhaustive_search
-from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
+from archytaszx.rewrite.exhaustive import (
+    ExhaustedError,
+    LayerReport,
+    algebraic_search,
+    exhaustive_search,
+)
+from archytaszx.rewrite.normal_form import algebraic_view, comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError
 from archytaszx.rewrite.tactics import (
     DEFAULT_SEARCH_LIMITS,
@@ -367,6 +372,13 @@ def _check(
         )
     except _CHECK_ERRORS as exc:
         return failed(f"comparing the meet raised {type(exc).__name__}: {exc}")
+    if not meet:
+        try:
+            meet = views_isomorphic(
+                algebraic_view(replays[0].diagram), algebraic_view(replays[1].diagram)
+            )
+        except (*_CHECK_ERRORS, ValueError, ArithmeticError):  # type: ignore[misc]
+            meet = False
     if not meet:
         return failed("the two halves end on diagrams with different comparison views")
     if oracle is None:
@@ -829,10 +841,12 @@ def prove_exhaustive(
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     on_layer: Callable[[LayerReport], None] | None = None,
+    algebraic: bool = False,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by :func:`~archytaszx.rewrite.exhaustive.exhaustive_search`
-    over every registered rule, after the interface and oracle refutation rungs of
-    :func:`prove`; no limit bounds the search."""
+    (or, with ``algebraic``, :func:`~archytaszx.rewrite.exhaustive.algebraic_search`) over every
+    registered rule, after the interface and oracle refutation rungs of :func:`prove`; no limit
+    bounds the search."""
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
             raise ProveGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")
@@ -860,8 +874,18 @@ def prove_exhaustive(
                 f"oracle mismatch at {dict(oracle.counterexample)!r}: {detail}",
                 counterexample=oracle.counterexample,
             )
+    if algebraic:
+        for name, value in (("start", start), ("goal", goal)):
+            try:
+                algebraic_view(value)
+            except (ValueError, ArithmeticError) as exc:
+                raise ProveGrammarError(
+                    f"{name}: algebraic search needs concrete dimensions and algebraic "
+                    f"parameters: {exc}"
+                ) from exc
     try:
-        path = exhaustive_search(start, goal, on_layer=on_layer)
+        search = algebraic_search if algebraic else exhaustive_search
+        path = search(start, goal, on_layer=on_layer)
     except ExhaustedError as exc:
         return ProofOutcome(ProofStatus.NOT_FOUND, f"exhaustive search: {exc}")
     certificate = certify_proof(path)

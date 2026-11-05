@@ -876,6 +876,41 @@ class TemplatePattern(Pattern):
                 out.append(changed)
         return tuple(out)
 
+    def algebraic_matches(
+        self, diagram: Diagram, match: Match, values: Sequence[Scalar]
+    ) -> tuple[TemplateMatch, ...]:
+        """``match`` with its free weight-vector variables set to every vector whose entries are
+        among ``values`` (concrete dimension), each assignment that verifies."""
+        if not self.axiom.free or not isinstance(match, TemplateMatch):
+            return ()
+        dim = match.template_dim
+        if not dim.is_concrete:
+            return ()
+        bindings = match.binding_map()
+        names = []
+        for name, default in self.axiom.free.items():
+            try:
+                value = default(dim, bindings)
+            except (RewriteDomainError, ArithmeticError, ValueError, KeyError):
+                continue
+            if isinstance(value, PhaseVector):
+                names.append(name)
+        if not names:
+            return ()
+        vectors = [
+            PhaseVector.from_weights(dim, dict(zip(range(1, dim.to_int()), combo, strict=True)))
+            for combo in itertools.product(values, repeat=dim.to_int() - 1)
+        ]
+        out: list[TemplateMatch] = []
+        for chosen in itertools.product(vectors, repeat=len(names)):
+            try:
+                changed = self.with_values(diagram, match, dict(zip(names, chosen, strict=True)))
+            except (RewriteDomainError, RewriteGrammarError, ArithmeticError, ValueError):
+                continue
+            if changed != match and changed not in out:
+                out.append(changed)
+        return tuple(out)
+
     def with_values(self, diagram: Diagram, match: Match, values: Bindings) -> TemplateMatch:
         """``match`` with its free variables set to ``values``; raises unless it verifies."""
         if not isinstance(match, TemplateMatch):

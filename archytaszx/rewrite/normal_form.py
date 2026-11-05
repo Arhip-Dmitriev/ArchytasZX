@@ -196,6 +196,19 @@ def comparison_view(diagram: Diagram) -> Diagram:
     return view
 
 
+def algebraic_view(diagram: Diagram) -> Diagram:
+    """:func:`comparison_view` with every spider parameter a weight vector and the scalar, each
+    value in the canonical form of :mod:`archytaszx.algebra.algebraic`."""
+    from archytaszx.algebra.algebraic import canonical_scalar, canonical_vector
+
+    view = comparison_view(diagram)
+    for nid, node in view.nodes.items():
+        if node.phase is not None:
+            view.set_phase(nid, canonical_vector(node.phase, node.phase.dim))
+    view.set_scalar(canonical_scalar(view.scalar))
+    return view
+
+
 def view_key(view: Diagram) -> str:
     """The :func:`~archytaszx.diagram.compare.canonical_key` of a comparison view, up to spider
     leg order."""

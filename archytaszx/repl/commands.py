@@ -956,10 +956,17 @@ def _saturation_line(report: SaturationReport, extraction: Extraction) -> str:
 def _cmd_prove(session: Session, args: str) -> Outcome:
     words = args.split(maxsplit=1)
     exhaustive = bool(words) and words[0] == "exhaustive"
+    algebraic = False
     if exhaustive:
         args = words[1] if len(words) > 1 else ""
+        more = args.split(maxsplit=1)
+        algebraic = bool(more) and more[0] == "algebraic"
+        if algebraic:
+            args = more[1] if len(more) > 1 else ""
     left, right = _pair_args(session, args)
-    outcome = prove_exhaustive(left, right) if exhaustive else prove(left, right)
+    outcome = (
+        prove_exhaustive(left, right, algebraic=algebraic) if exhaustive else prove(left, right)
+    )
     session.last_proof = outcome
     payload = _Pair("prove", left, right, outcome)
     head = f"prove: {outcome.status.value}: {outcome.reason}"
@@ -1822,8 +1829,9 @@ HELP: Mapping[str, str] = MappingProxyType(
         "current vs TARGET)",
         "saturate": "saturate -- equality saturation, then extract the cheapest diagram",
         "prove": (
-            "prove [exhaustive] [against] [TARGET] -- tactic search for a proof; exhaustive: "
-            "fair search over every rule, unbounded"
+            "prove [exhaustive [algebraic]] [against] [TARGET] -- tactic search for a proof; "
+            "exhaustive: fair search over every rule, unbounded; algebraic: free values over "
+            "the algebraic numbers, by iterative deepening"
         ),
         "induct": "induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] -- symbolic-n proof by "
         "induction",

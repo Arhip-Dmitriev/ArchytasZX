@@ -511,10 +511,23 @@ class Program:
         return self._pair("decide", left, right)
 
     def prove(
-        self, left: Piece | str, right: Piece | str | None = None, *, exhaustive: bool = False
+        self,
+        left: Piece | str,
+        right: Piece | str | None = None,
+        *,
+        exhaustive: bool = False,
+        algebraic: bool = False,
     ) -> Result:
-        """Searches for a certified derivation of ``left == right``."""
-        return self._pair("prove exhaustive" if exhaustive else "prove", left, right)
+        """Searches for a certified derivation of ``left == right``; ``algebraic`` implies
+        ``exhaustive``."""
+        command = (
+            "prove exhaustive algebraic"
+            if algebraic
+            else "prove exhaustive"
+            if exhaustive
+            else "prove"
+        )
+        return self._pair(command, left, right)
 
     def check(self, left: Piece | str, right: Piece | str, **values: object) -> Result:
         """Compares ``left`` and ``right`` with the numeric oracle, at ``values`` when given."""
