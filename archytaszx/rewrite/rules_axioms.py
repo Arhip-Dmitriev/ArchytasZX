@@ -3151,12 +3151,18 @@ def _x_unfuse_arities(diagram: Diagram, anchor: NodeId) -> Iterator[Arities]:
             yield {"ni": ni, "no": no, "mi": mi, "mo": mo}
 
 
+def _swapped_default(dim: Dim, b: Bindings) -> list[Bindings]:
+    """The default split read the other way: a the plain spider, b the matched c."""
+    return [{"a": PhaseVector(dim), "b": b["c"]}]
+
+
 X_FUSION_CONVERSE = TemplateAxiom(
     "x_fusion_converse",
     Side(_x_unfuse_left, arity_from_anchor(_x_unfuse_arities)),
     Side(_x_unfuse_right),
     conditions=(Condition("fuses_back", "ab = c", lambda dim, b: _fuses_to(dim, b)),),
     free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: PhaseVector(dim)},
+    candidates=_swapped_default,
     description=(
         "spider_fusion for X spiders read right to left: the X spider c is X spiders a and b "
         "(ab = c) joined by an output of a into an input of b, the legs split by masks; by "
@@ -3415,12 +3421,34 @@ def _same_coefficients(x: PhaseVector | None, y: PhaseVector | None, dim: Dim) -
     )
 
 
+def _single_entry_splits(dim: Dim, b: Bindings) -> list[Bindings]:
+    """The swapped default, and each split of the Z box c into the box carrying c's entry k
+    alone and the box carrying the others, both orders, for every k with a coefficient other
+    than 1 (concrete d)."""
+    c = _vec(b["c"]) or PhaseVector(dim)
+    if not dim.is_concrete:
+        return _swapped_default(dim, b)
+    d = dim.to_int()
+    coef = {k: c.coefficient(k) for k in range(1, d)}
+    ks = [k for k in range(1, d) if sp.simplify(coef[k].to_sympy() - 1) != 0]
+    out: list[Bindings] = _swapped_default(dim, b)
+    if len(ks) < 2:
+        return out
+    for k in ks:
+        one = PhaseVector.from_weights(dim, {k: coef[k]})
+        rest = PhaseVector.from_weights(dim, {j: coef[j] for j in ks if j != k})
+        out.append({"a": one, "b": rest})
+        out.append({"a": rest, "b": one})
+    return out
+
+
 ZXW_S1_CONVERSE = TemplateAxiom(
     "zxw_s1_converse",
     Side(_unfuse_left, arity_from_anchor(_unfuse_arities)),
     Side(_unfuse_right),
     conditions=(Condition("fuses_back", "ab = c", _fuses_to),),
     free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: PhaseVector(dim)},
+    candidates=_single_entry_splits,
     description=(
         "[P1] S1 read right to left: the Z box c is Z boxes a and b (ab = c) joined by k "
         "wires, the legs split by a mask; by default a = c and b is the plain green dot."

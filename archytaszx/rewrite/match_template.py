@@ -670,6 +670,9 @@ class TemplateAxiom:
     which the conditions then check."""
     converse_free: Mapping[str, Callable[[Dim, Bindings], object]] = field(default_factory=dict)
     """The :attr:`free` variables of :meth:`converse`."""
+    candidates: Callable[[Dim, Bindings], Sequence[Bindings]] | None = None
+    """Values of the :attr:`free` variables beyond the defaults, computed from the matched side;
+    exhaustive search enumerates a match with each of them."""
 
     def converse(self, name: str) -> TemplateAxiom:
         """The same equation read right to left."""
@@ -853,6 +856,25 @@ class TemplatePattern(Pattern):
         except (ArithmeticError, ValueError, KeyError, RewriteDomainError):
             return False
         return True
+
+    def candidate_matches(self, diagram: Diagram, match: Match) -> tuple[TemplateMatch, ...]:
+        """``match`` with every value assignment of :attr:`TemplateAxiom.candidates` that
+        verifies."""
+        if self.axiom.candidates is None or not isinstance(match, TemplateMatch):
+            return ()
+        try:
+            options = self.axiom.candidates(match.template_dim, match.binding_map())
+        except (ArithmeticError, ValueError, KeyError, RewriteDomainError):
+            return ()
+        out: list[TemplateMatch] = []
+        for values in options:
+            try:
+                changed = self.with_values(diagram, match, values)
+            except (RewriteDomainError, RewriteGrammarError, ArithmeticError, ValueError):
+                continue
+            if changed != match and changed not in out:
+                out.append(changed)
+        return tuple(out)
 
     def with_values(self, diagram: Diagram, match: Match, values: Bindings) -> TemplateMatch:
         """``match`` with its free variables set to ``values``; raises unless it verifies."""

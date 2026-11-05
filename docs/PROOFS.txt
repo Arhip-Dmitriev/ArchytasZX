@@ -147,7 +147,8 @@ sides.
 prove_exhaustive runs steps 1 and 2 of prove, then archytaszx.rewrite.exhaustive
 .exhaustive_search: a breadth-first search from start and from goal at once over every rule
 of RULES, automatic or not, converses included. Each layer applies every match of every rule
-to every diagram of the previous layer; a diagram whose comparison view is isomorphic to one
+to every diagram of the previous layer, a rule with candidate values for its free variables also
+at each candidate (COMPLETENESS.txt, section 6); a diagram whose comparison view is isomorphic to one
 already reached on its side is pruned. Layer k of the start side is expanded before layer k of
 the goal side, and both before layer k + 1, so a derivation of n enumerated steps is found by
 layer n of the start side, and by layer ceil(n/2) when its second half uses rules with

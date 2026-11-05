@@ -21,7 +21,8 @@ comparison views; the first found gives a :class:`~archytaszx.rewrite.tactics.Pr
 
 Layer ``k`` of the start side is expanded before layer ``k`` of the goal side, and both before
 layer ``k + 1`` of either. A derivation of length ``n`` whose steps are rule applications at
-matches the patterns enumerate (a free variable at its default value) is therefore found
+matches the patterns enumerate (a free variable at its default value, or at a value its rule's
+candidate generator lists from the matched side) is therefore found
 once the start side reaches layer ``n``, and once it reaches layer ``ceil(n/2)`` and the goal
 side layer ``floor(n/2)`` when the last ``floor(n/2)`` steps use rules that have converses
 (every rule but connective_inverse_bind_first and port-box unfusion).
@@ -91,6 +92,12 @@ class _Side:
             for rule in rules:
                 try:
                     matches = rule.pattern.find_matches(reached.diagram)
+                    extra = getattr(rule.pattern, "candidate_matches", None)
+                    if extra is not None:
+                        matches = (
+                            *matches,
+                            *(c for m in matches for c in extra(reached.diagram, m)),
+                        )
                 except _SKIPPED:
                     continue
                 for match in matches:
