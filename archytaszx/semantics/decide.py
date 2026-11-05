@@ -956,8 +956,8 @@ def decide_equal(
     nf_reason = "normal forms differ"
     nf_equal = False
     try:
-        nf_l = normal_form(left, rules=rules, guard=guard)
-        nf_r = normal_form(right, rules=rules, guard=guard)
+        nf_l = normal_form(family_l, rules=rules, guard=guard)
+        nf_r = normal_form(family_r, rules=rules, guard=guard)
         certificates = (
             certify(nf_l.source, nf_l.results, label="left normal form"),
             certify(nf_r.source, nf_r.results, label="right normal form"),
@@ -1026,7 +1026,7 @@ def decide_equal(
 
     notes = [nf_reason, sampled]
     if use_saturation:
-        run = _run_saturation(left, right, rules, saturation_limits)
+        run = _run_saturation(family_l, family_r, rules, saturation_limits)
         saturation = run.report
         if run.certificates is not None:
             conditional = (
