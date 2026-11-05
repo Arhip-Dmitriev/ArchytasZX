@@ -24,3 +24,11 @@ import ArchytasZX.Weights
 import ArchytasZX.Diagram
 import ArchytasZX.Expand
 import ArchytasZX.Bridge
+import ArchytasZX.Elim
+import ArchytasZX.Digits
+import ArchytasZX.ExpandFacts
+import ArchytasZX.Relabel
+import ArchytasZX.PortBox
+import ArchytasZX.Gather
+import ArchytasZX.Split
+import ArchytasZX.NodeBox
