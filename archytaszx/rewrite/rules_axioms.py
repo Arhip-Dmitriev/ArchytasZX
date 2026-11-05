@@ -3413,9 +3413,21 @@ def _same_coefficients(x: PhaseVector | None, y: PhaseVector | None, dim: Dim) -
     if not dim.is_concrete:
         return False
     return all(
-        sp.simplify(left.coefficient(k).to_sympy() - right.coefficient(k).to_sympy()) == 0
+        _zero(left.coefficient(k).to_sympy() - right.coefficient(k).to_sympy())
         for k in range(1, dim.to_int())
     )
+
+
+def _zero(expr: sp.Expr) -> bool:
+    """Whether ``expr`` simplifies to 0; a symbol-free value at least 1e-8 from 0 in a
+    30-digit evaluation is not."""
+    if not expr.free_symbols:
+        try:
+            if abs(complex(sp.N(expr, 30))) > 1e-8:
+                return False
+        except (TypeError, ValueError, ArithmeticError):
+            pass
+    return bool(sp.simplify(expr) == 0)
 
 
 def _single_entry_splits(dim: Dim, b: Bindings) -> list[Bindings]:
