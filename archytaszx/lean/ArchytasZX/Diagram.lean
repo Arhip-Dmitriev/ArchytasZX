@@ -129,6 +129,16 @@ def check (L : List (ℕ × ℕ)) (off : ℕ) : Bool :=
 
 end Diagram
 
+/-- A node's dimension indices through `f`: its own, each leg's, and a binder's or splitter's
+second dimension. -/
+def DNode.mapDim (f : ℕ → ℕ) (n : DNode) : DNode :=
+  { n with dim := f n.dim, outs := n.outs.map f, ins := n.ins.map f,
+           ph := if n.kind = .B ∨ n.kind = .S then f n.ph else n.ph }
+
+/-- The diagram with every dimension index read through `f`. -/
+def Diagram.mapDim (f : ℕ → ℕ) (D : Diagram) : Diagram :=
+  { D with nodes := D.nodes.map (DNode.mapDim f) }
+
 /-- `s₁ • D₁` and `s₂ • D₂` are the same tensor. -/
 def DEqual (E : Env) (s₁ : ℂ) (D₁ : Diagram) (s₂ : ℂ) (D₂ : Diagram) : Prop :=
   D₁.bdims = D₂.bdims ∧ ∀ σ, D₁.InRange E σ → s₁ * D₁.eval E σ = s₂ * D₂.eval E σ

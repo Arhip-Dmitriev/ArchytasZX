@@ -156,10 +156,4 @@ def expand (ks : ℕ → ℕ) (D : Diagram) : Diagram := expandFuel ks (D.boxes.
 
 end Diagram
 
-/-- The families `s₁ • D₁` and `s₂ • D₂` agree at every assignment `σ` of their multiplicity
-symbols: the boxes of index `i` instantiated at `M σ i`, at the environment `E σ`. -/
-def DEqualF (E : (ℕ → ℕ) → Env) (M : (ℕ → ℕ) → ℕ → ℕ) (s₁ : (ℕ → ℕ) → ℂ) (D₁ : Diagram)
-    (s₂ : (ℕ → ℕ) → ℂ) (D₂ : Diagram) : Prop :=
-  ∀ σ, DEqual (E σ) (s₁ σ) (D₁.expand (M σ)) (s₂ σ) (D₂.expand (M σ))
-
 end ArchytasZX

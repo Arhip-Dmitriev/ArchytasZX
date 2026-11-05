@@ -1721,6 +1721,20 @@ class _SymExport:
                 *reversed(self.fam_decls),
                 theorem,
             ]
+            fargs = " ".join(n for _, n, _ in self.params)
+            out.family_diagrams(
+                name,
+                _join(bh, *(f"({n} : ℕ)" for n in names)),
+                _join(self.ah, *names),
+                f"(ksOf [{', '.join(vals)}])",
+                self.env_at(vals),
+                f"(F {fargs})" if fargs else "F",
+                _join("Fpos", self.ah),
+                self.stated_s(0),
+                self.a,
+                self.stated_s(1),
+                self.b,
+            )
             mm = ", ".join(names)
             lead += (
                 f"\n  by induction on the multiplicit{'ies' if len(names) > 1 else 'y'} {mm}, "

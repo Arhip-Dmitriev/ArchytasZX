@@ -94,9 +94,11 @@ such derivations without bound.
 
 A derivation is recorded step by step with full provenance. A certificate replays it from the
 recorded steps; the proof kernel rebuilds it from a small set of inference rules; the Lean
-export restates it over a tensor-network semantics proved in Lean and Mathlib. Assumptions a
-derivation relied on (dimension equalities it could not decide) are carried into the
-certificate and into the Lean theorem as hypotheses.
+export restates it over a tensor-network semantics proved in Lean and Mathlib, and ends in a
+theorem over the engine's diagrams themselves (for families, their expansions at every
+multiplicity, LEAN.txt section 4.2). Assumptions a derivation relied on (dimension equalities
+it could not decide) are carried into the certificate and into the Lean theorem as
+hypotheses.
 
 
 5. WHAT THE ENGINE GUARANTEES

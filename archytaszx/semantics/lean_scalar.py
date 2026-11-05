@@ -36,6 +36,8 @@ Rt = sp.Function("Rt")
 Om = sp.Function("Om")
 Inv = sp.Function("Inv")
 Ex = sp.Function("Ex")
+GS = sp.Function("GS")
+"""The sum over k < D of e^{2πi θ k}: arguments D (natural) and θ (real)."""
 NC = sp.Function("NC")
 II = sp.Symbol("ii")
 
@@ -105,6 +107,17 @@ class Scalars:
                 root = Rt(base)
                 return root**exp.p if exp.p > 0 else Inv(root) ** (-exp.p)
             raise ScalarUnsupported(f"the power {expr}")
+        if isinstance(expr, sp.Sum) and len(expr.limits) == 1:
+            k, lo, hi = expr.limits[0]
+            f = expr.function
+            if lo == 0 and isinstance(f, sp.exp):
+                arg = sp.expand(f.args[0] / (2 * sp.pi * sp.I))
+                theta = sp.simplify(arg / k)
+                if theta.free_symbols.isdisjoint({k}) and sp.expand(theta * k - arg) == 0:
+                    out = GS(sp.expand(hi + 1), theta)
+                    self.text(out)
+                    return out
+            raise ScalarUnsupported(f"the sum {expr}")
         if isinstance(expr, sp.exp):
             arg = sp.expand(expr.args[0] / (2 * sp.pi * sp.I))
             if arg.is_Rational:
@@ -176,7 +189,30 @@ class Scalars:
             return f"({self.text(expr.args[0])})⁻¹"
         if isinstance(expr, Ex):
             return f"(Complex.exp {self.complex_text(expr.args[0])})"
+        if isinstance(expr, GS):
+            return (
+                f"(∑ k ∈ Finset.range {self.nat_text(expr.args[0])}, "
+                f"ex ({self.real_text(expr.args[1])} * (k : ℝ)))"
+            )
         raise ScalarUnsupported(f"cannot write {expr} in Lean")
+
+    def real_text(self, expr: sp.Expr) -> str:
+        """A real expression (rationals, real symbols, sums and products) as a Lean ℝ term."""
+        expr = sp.sympify(expr)
+        if expr.is_Integer:
+            return f"({int(expr)} : ℝ)"
+        if expr.is_Rational:
+            return f"(({expr.p} : ℝ) / {expr.q})"
+        if expr.is_Symbol:
+            name, ty = self.other(expr)
+            if ty != "ℝ":
+                raise ScalarUnsupported(f"the symbol {expr} is not real")
+            return name
+        if expr.is_Add:
+            return "(" + " + ".join(self.real_text(a) for a in expr.args) + ")"
+        if expr.is_Mul:
+            return "(" + " * ".join(self.real_text(a) for a in expr.args) + ")"
+        raise ScalarUnsupported(f"cannot write {expr} as a real number")
 
     def complex_text(self, expr: sp.Expr) -> str:
         """A plain sympy expression (π, I, rationals, symbols) as a Lean ℂ term."""
@@ -277,7 +313,7 @@ class Scalars:
                 return sym(sp.Pow(base, rest, evaluate=False)) * poly(base) ** int(const)
             if isinstance(expr, NC):
                 return poly(expr.args[0])
-            if isinstance(expr, (Rt, Om, Ex, Inv)):
+            if isinstance(expr, (Rt, Om, Ex, Inv, GS)):
                 return sym(expr)
             raise ScalarUnsupported(f"no polynomial model for {expr}")
 

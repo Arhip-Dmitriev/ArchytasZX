@@ -1168,6 +1168,15 @@ class _Refuter:
             f"theorem {name} :\n    {head} := by\n" + "\n".join(body)
         )
         out.decls += [*decls, theorem]
+        if out.family:
+            out.family_diagram_theorem(
+                name,
+                self.scalar_text(self.s0),
+                self.a,
+                self.scalar_text(self.s1),
+                self.b,
+                negated=True,
+            )
         if not out.family:
             out.diagram_theorem(
                 name,

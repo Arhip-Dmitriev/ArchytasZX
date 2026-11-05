@@ -2009,6 +2009,58 @@ theorem bindDef0 (E : Env) (ds dt a b c : ℕ) (iface : List ℕ) :
   intro τ _
   simp [sumOver, prodVal, val]
 
+theorem tZ_pair' (d : ℕ) (φ : ℕ → ℝ) (hφ : ∀ k < d, ex (φ k) = 1) (a v : ℕ) (ha : a < d) :
+    tZ d φ [a, v] = if v = a then 1 else 0 := by
+  rw [tZ_perm _ _ [a, v] [v, a] (List.Perm.swap v a []), tZ_pair _ _ hφ _ _ ha]
+
+/-- A leg `l`, bent by a phaseless Z spider onto `x` when `f`. -/
+def bendLeg (f : Bool) (l x : ℕ) : ℕ := if f then x else l
+
+/-- [P2] (2.8) with only some legs bent: the binder is the splitter with each leg whose flag is set
+bent by a phaseless Z spider. -/
+theorem bindDefP (E : Env) (ds dt dk a b c x y z p₁ p₂ p₃ : ℕ) (fa fb fc : Bool) (iface : List ℕ)
+    (hdk : E.dimv dk = E.dimv ds * E.dimv dt)
+    (hnd : [x, y, z, a, b, c].Nodup) (hx : fa = true → labIdx E.labs x = ds)
+    (hy : fb = true → labIdx E.labs y = dt) (hz : fc = true → labIdx E.labs z = dk) (ha : a ∈ iface ∧ labIdx E.labs a = ds)
+    (hb : b ∈ iface ∧ labIdx E.labs b = dt) (hc : c ∈ iface ∧ labIdx E.labs c = dk)
+    (h₁ : fa = true → ∀ k < E.dimv ds, ex (E.phase p₁ k) = 1)
+    (h₂ : fb = true → ∀ k < E.dimv dt, ex (E.phase p₂ k) = 1)
+    (h₃ : fc = true → ∀ k < E.dimv dk, ex (E.phase p₃ k) = 1) :
+    LocalEq E [⟨.B, [c], [a, b], ds, dt⟩] []
+      (⟨.S, [bendLeg fa a x, bendLeg fb b y], [bendLeg fc c z], ds, dt⟩ ::
+        ((if fa then [⟨.Z, [x], [a], ds, p₁⟩] else []) ++ (if fb then [⟨.Z, [y], [b], dt, p₂⟩] else []) ++
+          (if fc then [⟨.Z, [c], [z], dk, p₃⟩] else [])))
+      ((if fa then [x] else []) ++ (if fb then [y] else []) ++ (if fc then [z] else [])) iface 1 1 := by
+  intro τ hτ
+  have hx' : fa = true → labDim E x = E.dimv ds := fun h => labDim_of E x ds (hx h)
+  have hy' : fb = true → labDim E y = E.dimv dt := fun h => labDim_of E y dt (hy h)
+  have hz' : fc = true → labDim E z = E.dimv dk := fun h => labDim_of E z dk (hz h)
+  have ra := hτ a ha.1
+  have rb := hτ b hb.1
+  have rc := hτ c hc.1
+  rw [labDim_of E a ds ha.2] at ra
+  rw [labDim_of E b dt hb.2] at rb
+  rw [labDim_of E c dk hc.2] at rc
+  have t₁ : fa = true → ∀ v, tZ (E.dimv ds) (E.phase p₁) [v, τ a] = if v = τ a then 1 else 0 :=
+    fun h v => tZ_pair _ _ (h₁ h) _ _ ra
+  have t₂ : fb = true → ∀ v, tZ (E.dimv dt) (E.phase p₂) [v, τ b] = if v = τ b then 1 else 0 :=
+    fun h v => tZ_pair _ _ (h₂ h) _ _ rb
+  have t₃ : fc = true → ∀ v, tZ (E.dimv dk) (E.phase p₃) [τ c, v] = if v = τ c then 1 else 0 :=
+    fun h v => tZ_pair' _ _ (h₃ h) _ _ rc
+  simp only [List.nodup_cons, List.mem_cons, List.not_mem_nil, or_false, not_or] at hnd
+  obtain ⟨⟨hxy, hxz, hxa, hxb, hxc⟩, ⟨hyz, hya, hyb, hyc⟩, ⟨hza, hzb, hzc⟩, -, -, -⟩ := hnd
+  cases fa <;> cases fb <;> cases fc <;>
+  simp only [bendLeg, Bool.false_eq_true, ↓reduceIte, List.nil_append, List.append_nil,
+    List.cons_append, one_mul, sumOver, prodVal, List.map_cons, List.map_nil, List.prod_cons,
+    List.prod_nil, mul_one, val, hx', hy', hz',
+    Function.update_apply, hxy, hxz, hyz, Ne.symm hxy, Ne.symm hxz, Ne.symm hyz, hxa, hxb, hxc,
+    hya, hyb, hyc, hza, hzb, hzc, Ne.symm hxa, Ne.symm hxb, Ne.symm hxc, Ne.symm hya,
+    Ne.symm hyb, Ne.symm hyc, Ne.symm hza, Ne.symm hzb, Ne.symm hzc, if_true, if_false]
+  all_goals (simp only [t₁, t₂, t₃,
+    mul_ite, ite_mul, mul_one, one_mul, mul_zero, zero_mul, Finset.sum_ite_irrel,
+    Finset.sum_const_zero, Finset.sum_ite_eq', Finset.sum_ite_eq, Finset.mem_range, ra, rb, rc,
+    if_true])
+
 /-- A two-leg spider at a value of its second leg. -/
 theorem val_zc_two (E : Env) (σ : ℕ → ℕ) (n : Node) (hn : isZc n = true) (p q : ℕ)
     (hl : n.outs ++ n.ins = [p, q]) (hq : σ q < E.dimv n.dim) :

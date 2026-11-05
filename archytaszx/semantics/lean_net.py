@@ -302,6 +302,10 @@ class _Export:
         self.nb: int | None = None
         self.next_label = 0
         self.nets: dict[object, Labelled] = {}
+        self.boxed: dict[str, tuple[Diagram, tuple[NodeId, ...]]] = {}
+        self.wire_alias = False
+        self.raw_ix: dict[str, int] = {}
+        self.raw_pairs: dict[int, int] = {}
         self.decls: list[str] = []
         self.count = 0
         self.unproved: list[str] = []
@@ -399,9 +403,8 @@ class _Export:
             self.sc.nats |= {str(x) for x in e.free_symbols}
         return self.dim_key[key]
 
-    def phase(self, pv: PhaseVector | None) -> int:
-        if pv is None or pv.is_zero:
-            return 0
+    def phase_body(self, pv: PhaseVector) -> str:
+        """The phases of ``pv`` in turns, as the body of a Lean ``fun k``."""
         parts = []
         for index, ph in sorted(pv.entries().items()):
             parts.append((index, self.sym.render(ph.to_sympy_turns(), "ℝ", "ℝ")))
@@ -414,6 +417,12 @@ class _Export:
             self.sym.params.setdefault(str(k.name), ("(k : ℝ)", "ℝ"))
             rule = self.sym.render(turns, "ℝ", "ℝ")
             body = f"({body}) + (if k = 0 then 0 else {rule})"
+        return body
+
+    def phase(self, pv: PhaseVector | None) -> int:
+        if pv is None or pv.is_zero:
+            return 0
+        body = self.phase_body(pv)
         weights = self.weights(pv) if pv.is_weighted else None
         key = body if weights is None else f"{body}|{weights}"
         if key not in self.phase_key:
@@ -442,17 +451,22 @@ class _Export:
         return body
 
     def weights_rule(self, pv: PhaseVector) -> str:
-        """The coefficient vector of ``pv`` at a symbolic dimension: its entries, then its weight
-        rule, as the body of a Lean ``fun k``."""
-        _need(not pv.entries() and pv.rule is None, "phased weights at a symbolic dimension")
+        """The coefficient vector of ``pv`` at a symbolic dimension: its weight entries, then its
+        weight rule, times e^{2πi} of its phases, as the body of a Lean ``fun k``."""
         rule = pv.weight_rule
-        _need(
-            rule is None or INDEX not in rule.to_sympy().free_symbols,
-            "an index-dependent weight rule at a symbolic dimension",
-        )
-        body = "1" if rule is None else self.sc.text(self.scalar(rule))
+        if rule is not None and INDEX in rule.to_sympy().free_symbols:
+            k = sp.Symbol("k_lean_index", integer=True, nonnegative=True)
+            self.sym.params.setdefault(str(k.name), ("(k : ℝ)", "ℝ"))
+            try:
+                body = self.sc.text(self.sc._model(rule.to_sympy().xreplace({INDEX: k})))
+            except ScalarUnsupported as exc:
+                raise NetUnsupported(str(exc)) from exc
+        else:
+            body = "1" if rule is None else self.sc.text(self.scalar(rule))
         for index, weight in sorted(pv.weights().items(), reverse=True):
             body = f"if k = {index} then {self.sc.text(self.scalar(weight))} else {body}"
+        if pv.entries() or pv.rule is not None:
+            return f"(if k = 0 then 1 else {body}) * ex ({self.phase_body(pv)})"
         return f"if k = 0 then 1 else {body}"
 
     def kind_ph(self, kind: str, pv: PhaseVector | None, aux: int) -> tuple[str, int]:
@@ -783,10 +797,14 @@ class _Export:
         source = d if slots is None and not d.bang_boxes else None
         labelled = Labelled(net, order, port, name, str(d.scalar.to_sympy()), source)
         self.nets[key] = labelled
+        if slots is None and d.bang_boxes:
+            self.boxed[name] = (d, order)
         self.decls.append(f"/-- {_comment(self.describe(d))} -/\ndef {name} : Net := {net.lean()}")
         return labelled
 
-    def diagram_literal(self, d: Diagram, net: LNet, name: str) -> tuple[str, int] | None:
+    def diagram_literal(
+        self, d: Diagram, net: LNet, name: str, own: bool = False
+    ) -> tuple[str, int] | None:
         """``d`` as a Lean ``Diagram`` named after ``name``, with the offset of ``net``'s wire
         labels; ``None`` when they are not consecutive."""
         nb = len(d.boundary_outputs) + len(d.boundary_inputs)
@@ -801,9 +819,14 @@ class _Export:
         nodes = []
         for nid, n in zip(sorted(d.nodes), net.nodes, strict=True):
             node = d.nodes[nid]
-            outs = _list([self.dim(p.dim) for p in node.outputs])
-            ins = _list([self.dim(p.dim) for p in node.inputs])
-            nodes.append(f"⟨{int(nid)}, {_klean(n.kind)}, {n.dim}, {n.ph}, {outs}, {ins}⟩")
+            dimfn = self.raw_dim if own else self.raw_index
+            outs = _list([dimfn(p.dim) for p in node.outputs])
+            ins = _list([dimfn(p.dim) for p in node.inputs])
+            legs = [*node.outputs, *node.inputs]
+            ndim = n.dim
+            if not own and legs and n.dim == self.dim(legs[0].dim) and n.kind not in ("B", "S"):
+                ndim = self.raw_index(legs[0].dim)
+            nodes.append(f"⟨{int(nid)}, {_klean(n.kind)}, {ndim}, {n.ph}, {outs}, {ins}⟩")
         wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
         dname = f"D{name[1:]}"
         self.decls.append(
@@ -813,10 +836,194 @@ class _Export:
             f"    outs := [{', '.join(map(port, d.boundary_outputs))}],\n"
             f"    ins := [{', '.join(map(port, d.boundary_inputs))}] }}"
         )
+        dexpr = self.dim_ids(dname)
         self.decls.append(
-            f"theorem {dname}_net : {dname}.toNet {off} = {name} := by decide +kernel"
+            f"theorem {dname}_net : {dexpr}.toNet {off} = {name} := by decide +kernel"
         )
-        return dname, off
+        return dexpr, off
+
+    def dim_ids(self, dname: str) -> str:
+        """``dname``, read through the dimensions its wires identify (``dimIds``, emitted once)
+        when there are any."""
+        if not self.raw_ix:
+            return dname
+        pairs = ", ".join(f"({r}, {c})" for r, c in sorted(self.raw_pairs.items()))
+        if not any("\ndef dimIds " in x for x in self.decls):
+            names = {r: k for k, r in self.raw_ix.items()}
+            note = "; ".join(
+                f"{r} is {names[r]}, read as index {c} ({self.dims[c]})"
+                for r, c in sorted(self.raw_pairs.items())
+            )
+            self.decls.append(
+                "/-- Dimensions identified with another (by a wire of the diagrams or by an "
+                f"equality the proof assumes), each with the index it is read as: "
+                f"{_comment(note)}. -/\n"
+                f"def dimIds : List (ℕ × ℕ) := [{pairs}]"
+            )
+        return f"({dname}.mapDim (dimMap dimIds))"
+
+    def own_check(self, d: Diagram, labs: dict[int, int], net: LNet) -> bool:
+        """Whether ``d`` at its own dimension indices passes ``Diagram.check`` against ``labs``:
+        each boundary slot's dimension and each wire's two ends and label agree."""
+        bnd = [*d.boundary_outputs, *d.boundary_inputs]
+        if any(labs.get(i) != self.raw_dim(_port_dim(d, ref)) for i, ref in enumerate(bnd)):
+            return False
+        off = net.summed[0] if net.summed else len(bnd)
+        for j, w in enumerate(sorted(d.wires, key=lambda w: w.sort_key())):
+            da, db = self.raw_dim(_port_dim(d, w.a)), self.raw_dim(_port_dim(d, w.b))
+            if da != db or labs.get(off + j, da) != da:
+                return False
+        return True
+
+    def raw_index(self, dim: Dim) -> int:
+        """The diagram's own dimension index of ``dim``: the network's index unless a wire
+        identifies ``dim`` with another dimension, then an index of its own."""
+        e0 = dim.to_sympy()
+        if not self.wire_alias or self.canon(e0) == e0:
+            return self.dim(dim)
+        key = str(e0)
+        if key not in self.raw_ix:
+            self.raw_ix[key] = RAW_OFFSET + len(self.raw_ix)
+            self.raw_pairs[self.raw_ix[key]] = self.dim(dim)
+        return self.raw_ix[key]
+
+    def boxed_literal(self, a: Labelled) -> tuple[str, int] | None:
+        """The boxed diagram of ``a`` as a Lean ``Diagram`` with its bundled-network and check
+        theorems, and the offset of ``a``'s wire labels; ``None`` when ``a`` is not a whole
+        boxed diagram or its wire labels are not consecutive."""
+        if a.name not in self.boxed:
+            return None
+        d, order = self.boxed[a.name]
+        net = a.net
+        nb = len(d.boundary_outputs) + len(d.boundary_inputs)
+        off = net.summed[0] if net.summed else nb
+        if net.summed != tuple(range(off, off + len(net.summed))):
+            return None
+
+        def port(ref: PortRef) -> str:
+            out = "true" if ref.direction is Direction.OUTPUT else "false"
+            return f"⟨{int(ref.node_id)}, {out}, {ref.index}⟩"
+
+        def base(kind: object) -> object:
+            while _head(kind) == "Bun":
+                kind = kind[2]  # type: ignore[index]
+            return {"ZB": "Z", "XB": "X", "WB": "W"}.get(_head(kind), kind)
+
+        nodes = []
+        for nid, n in zip(order, net.nodes, strict=True):
+            node = d.nodes[nid]
+            outs = _list([self.raw_index(p.dim) for p in node.outputs])
+            ins = _list([self.raw_index(p.dim) for p in node.inputs])
+            legs = [*node.outputs, *node.inputs]
+            ndim = n.dim
+            if legs and n.dim == self.dim(legs[0].dim) and base(n.kind) not in ("B", "S"):
+                ndim = self.raw_index(legs[0].dim)
+            nodes.append(f"⟨{int(nid)}, {_klean(base(n.kind))}, {ndim}, {n.ph}, {outs}, {ins}⟩")
+        wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
+        boxes = []
+        for bid, b in sorted(d.bang_boxes.items()):
+            par = "none" if b.parent is None else f"some {int(b.parent)}"
+            ns = ", ".join(str(int(x)) for x in sorted(b.node_scope))
+            ps = ", ".join(port(r) for r in sorted(b.port_scope, key=lambda r: r.sort_key()))
+            m = self.mult_of(b.multiplicity.to_sympy())
+            boxes.append(f"⟨{int(bid)}, {m}, {par}, [{ns}], [{ps}]⟩")
+        dname = f"D{a.name[1:]}"
+        self.decls.append(
+            f"/-- {_comment(self.describe(d))}, as the engine's boxed diagram. -/\n"
+            f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
+            f"    wires := [{', '.join(wires)}],\n"
+            f"    outs := [{', '.join(map(port, d.boundary_outputs))}],\n"
+            f"    ins := [{', '.join(map(port, d.boundary_inputs))}],\n"
+            f"    boxes := [{', '.join(boxes)}] }}"
+        )
+        dexpr = self.dim_ids(dname)
+        self.decls.append(
+            f"theorem {dname}_net : {dexpr}.toNetB {off} = {a.name} := by decide +kernel"
+        )
+        self.decls.append(f"theorem {dname}_ok : {dexpr}.FamOK FC {off} := by decide +kernel")
+        return dexpr, off
+
+    def family_diagram_theorem(
+        self,
+        name: str,
+        sl: str,
+        a: Labelled,
+        sr: str,
+        b: Labelled,
+        extra: tuple[str, str] = ("", ""),
+        negated: bool = False,
+    ) -> None:
+        """The family theorem ``name`` restated on the expansions of the boxed diagrams ``a``
+        and ``b``, their boundaries in key order, at every multiplicity; ``extra`` is a last
+        binder of ``name`` and its argument."""
+        self.family_diagrams(
+            name,
+            _join(self.binders, self.hyps, extra[0]),
+            _join(self.args, self.hyp_args, extra[1]),
+            f"(ksOf [{', '.join(self.ks_vals)}])",
+            self.env,
+            self.fam_text(),
+            _join("Fpos", self.sp_args, self.sp_hyp_args),
+            sl,
+            a,
+            sr,
+            b,
+            negated,
+        )
+
+    def family_diagrams(
+        self,
+        name: str,
+        binders: str,
+        args: str,
+        ks: str,
+        env: str,
+        fam: str,
+        fpos: str,
+        sl: str,
+        a: Labelled,
+        sr: str,
+        b: Labelled,
+        negated: bool = False,
+    ) -> None:
+        """The family theorem ``name``, applied to ``args`` at the multiplicities ``ks``, restated
+        on the expansions of the boxed diagrams ``a`` and ``b``, boundaries in key order; for a
+        refutation, its negation."""
+        la = self.boxed_literal(a)
+        lb = self.boxed_literal(b) if b.name != a.name else la
+        if la is None or lb is None:
+            return
+        (da, _), (db, _) = la, lb
+        na, nbt = _dname(da), _dname(db)
+        head = f"∀ {binders},\n      " if binders else ""
+        stmt = (
+            f"{head}DEqual {env} {_paren(sl)} ({da}.expandK {ks}) {_paren(sr)} ({db}.expandK {ks})"
+        )
+        intro = f"  intro {args}\n" if args else ""
+        checks = (
+            f"    (Diagram.FamOK_congr (F := FC) (F' := {fam}) rfl rfl {na}_ok)\n"
+            f"    (Diagram.FamOK_congr (F := FC) (F' := {fam}) rfl rfl {nbt}_ok)\n"
+            f"    (by decide +kernel) (by decide +kernel) ({fpos})\n"
+        )
+        if negated:
+            stmt = f"¬ {stmt}"
+            body = (
+                f"by\n  intro h\n  apply {name}\n{intro}"
+                f"  rw [← {na}_net, ← {nbt}_net]\n"
+                f"  exact Diagram.Equal_of_DEqual_expandK {ks} _ _\n{checks}"
+                f"    {'(h ' + args + ')' if args else 'h'}"
+            )
+        else:
+            body = (
+                f"by\n{intro}"
+                f"  exact Diagram.DEqual_expandK_of_checks {ks} _ _\n{checks}"
+                f"    ({na}_net ▸ {nbt}_net ▸ {_join(name, args)})"
+            )
+        self.decls.append(
+            "/-- The family theorem on the expansions of the engine's boxed diagrams, boundaries "
+            f"in key order, through `DEqual_expandK_of_checks`. -/\ntheorem {name}_diagrams :\n"
+            f"    {stmt} := {body}"
+        )
 
     def diagram_theorem(
         self,
@@ -832,18 +1039,19 @@ class _Export:
     ) -> None:
         """The theorem ``name`` restated on the diagrams ``a`` and ``b`` themselves, at the
         environment ``env`` or the export's own."""
-        if a.source is None or b.source is None or self.alias:
+        if a.source is None or b.source is None or (self.alias and not self.wire_alias):
             return
         la = self.diagram_literal(a.source, a.net, a.name)
         lb = la if b.name == a.name else self.diagram_literal(b.source, b.net, b.name)
         if la is None or lb is None:
             return
         (da, oa), (db, ob) = la, lb
+        na, nbt = _dname(da), _dname(db)
         stmt = f"DEqual {env or self.env} {_paren(sl)} {da} {_paren(sr)} {db}"
         rw = (
             f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labs) rfl (by decide +kernel) "
             "(by decide +kernel), "
-            f"{da}_net, {db}_net]"
+            f"{na}_net, {nbt}_net]"
         )
         intro = [f"  intro {args}"] if args else []
         if negated:
@@ -1211,7 +1419,8 @@ class _Export:
         for v in theorem.variables:
             self.mult_index(str(v))
         start, goal = self.labelled(theorem.lhs), self.labelled(theorem.rhs)
-        if self.alias:
+        merged = bool(self.alias) and not self.wire_alias and not theorem.variables
+        if merged:
             self.faithful(theorem.lhs, start)
             self.faithful(theorem.rhs, goal)
         self.collect(theorem)
@@ -1232,10 +1441,11 @@ class _Export:
             self.binders = _join(self.binders, *(f"({n} : ℕ)" for n in bare))
             self.args = _join(self.args, *bare)
             self.env = self.env_text(self.ks_vals)
-        if self.alias and self.family:
-            raise NetUnsupported("a family whose proof assumes dimensions equal")
+        if self.alias and self.family and not self.wire_alias:
+            self.wire_alias = True
+            merged = False
         outer = name
-        if self.alias:
+        if merged:
             name = f"{name}M"
         proof = self.term(theorem)
         head = f"theorem {_join(name, self.binders, self.hyps)} :\n    "
@@ -1265,8 +1475,10 @@ class _Export:
                 f"{head}{self.statement(left, start, right, goal)} := by\n"
                 f"  simpa only [one_mul, mul_one] using {proof.term}"
             )
-        if self.alias:
+        if merged:
             self.unmerge(theorem, outer, name, start, goal)
+        elif self.family:
+            self.family_diagram_theorem(name, stated[0], start, stated[1], goal)
         elif not self.family:
             self.diagram_theorem(
                 name,
@@ -1336,6 +1548,32 @@ class _Export:
                 f"    {_paren(_join(inner, self.args, self.hyp_args))}"
             ),
         ]
+        pairs_ab = ((theorem.lhs, fa), (theorem.rhs, fb))
+        if self.family or not all(self.own_check(dg, labs_f, net) for dg, net in pairs_ab):
+            return
+        lit_a = self.diagram_literal(theorem.lhs, fa, f"{start.name}F", own=True)
+        lit_b = (
+            lit_a
+            if goal.name == start.name
+            else self.diagram_literal(theorem.rhs, fb, f"{goal.name}F", own=True)
+        )
+        if lit_a is None or lit_b is None:
+            return
+        (da, oa), (db, ob) = lit_a, lit_b
+        binders = _join(self.binders, self.hyps, hyps)
+        args = _join(self.args, self.hyp_args, " ".join(f"hc{k}" for k in range(len(pairs))))
+        head = f"∀ {binders}, " if binders else ""
+        rw = (
+            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labsF) rfl (by decide +kernel) "
+            f"(by decide +kernel), {_dname(da)}_net, {_dname(db)}_net]"
+        )
+        intro = f"  intro {args}\n" if args else ""
+        self.decls.append(
+            "/-- The theorem on the engine's diagrams at their own dimensions, through the proved "
+            f"translation `DEqual_iff`. -/\ntheorem {outer}_diagrams :\n    {head}DEqual {envf} "
+            f"{_paren(sl)} {da} {_paren(sr)} {db} := by\n{intro}  {rw}\n"
+            f"  exact {_join(outer, args)}"
+        )
 
     # families
 
@@ -1384,6 +1622,8 @@ class _Export:
         return self.label(self.labs[x])
 
     def finish_induction(self, t: object, name: str) -> str:
+        if self.alias:
+            self.wire_alias = True
         self.prepare_induction(t, top=True)
         self.collect(t)
         self.set_params()
@@ -1612,6 +1852,10 @@ class _Export:
             f"{ns} {ng} {ok_s} {ok_g} {self.bund_pos(vals(kk))} "
             f"({sc_} {_join(hyps_args, kk, 'ih')})"
         )
+        if not pre:
+            self.family_diagram_theorem(
+                name, ret(sS, nn), start, ret(sG, nn), goal, (f"({nn} : ℕ)", nn)
+            )
 
     def bundled_tactic(
         self,
@@ -3568,7 +3812,8 @@ def _coef_sym(c: _Ctx) -> str:
     psi = "(try simp only [Ψ]); " if c.ex.weight_tab else ""
     return (
         f"{psi}(try split_ifs) <;> first | (exfalso; omega) | (simp [ex_zero]; done) | "
-        "(norm_num [ex_zero]; done) | ring"
+        "(norm_num [ex_zero]; done) | ring1 | (subst_vars; norm_num [ex_zero]; done) | "
+        "(subst_vars; push_cast; ring)"
     )
 
 
@@ -4126,19 +4371,56 @@ def _bind_def(c: _Ctx) -> _Spec:
         _need(sn.outs == (a, b) and sn.ins == (cc,), "splitter legs")
         lemma = f"bindDef0 {c.env} {bn.dim} {bn.ph} {a} {b} {cc} IFACE"
         return _Spec((nodes["b"],), [(sid, sn)], lemma)
-    _need(len(ss) == 1 and len(zs) == 3 and len(c.new_nodes) == 4, "bent splitter nodes")
+    _need(len(ss) == 1 and len(zs) + 1 == len(c.new_nodes), "bent splitter nodes")
     ((sid, sn),) = ss
     (x, y), (z,) = sn.outs, sn.ins
     by = {(n.outs, n.ins): (nid, n) for nid, n in zs}
     keys = [((x,), (a,)), ((y,), (b,)), ((cc,), (z,))]
-    _need(all(k in by for k in keys), "bent splitter wiring")
-    z1, z2, z3 = (by[k] for k in keys)
-    lemma = (
-        f"bindDef {c.env} {bn.dim} {bn.ph} {z3[1].dim} {a} {b} {cc} {x} {y} {z} {z1[1].ph} "
-        f"{z2[1].ph} {z3[1].ph} IFACE {_CHK} (by decide) {_chks(6)} "
-        f"{_phaseless(c, z1[1])} {_phaseless(c, z2[1])} {_phaseless(c, z3[1])}"
+    bent = [k in by for k in keys]
+    _need(
+        [x, y, z]
+        == [
+            lab if not f else lab2 for f, lab, lab2 in zip(bent, (a, b, cc), (x, y, z), strict=True)
+        ],
+        "bent splitter wiring",
     )
-    return _Spec((nodes["b"],), [(sid, sn), z1, z2, z3], lemma, i_r=(x, y, z))
+    _need(len(by) == sum(bent), "bent splitter adapters")
+    if all(bent):
+        z1, z2, z3 = (by[k] for k in keys)
+        lemma = (
+            f"bindDef {c.env} {bn.dim} {bn.ph} {z3[1].dim} {a} {b} {cc} {x} {y} {z} {z1[1].ph} "
+            f"{z2[1].ph} {z3[1].ph} IFACE {_CHK} (by decide) {_chks(6)} "
+            f"{_phaseless(c, z1[1])} {_phaseless(c, z2[1])} {_phaseless(c, z3[1])}"
+        )
+        return _Spec((nodes["b"],), [(sid, sn), z1, z2, z3], lemma, i_r=(x, y, z))
+    top = (
+        max(
+            [
+                *(x for n in c.a.net.nodes for x in n.labels()),
+                *(x for n in c.new_nodes.values() for x in n.labels()),
+            ],
+            default=0,
+        )
+        + 1
+    )
+    lx, ly, lz = (
+        lab if f else top + k for k, (f, lab) in enumerate(zip(bent, (x, y, z), strict=True))
+    )
+    adapters = [by[k] for k, f in zip(keys, bent, strict=True) if f]
+    phs = [by[k][1].ph if f else 0 for k, f in zip(keys, bent, strict=True)]
+    dk = by[keys[2]][1].dim if bent[2] else c.ex.labs[cc]
+    flags = " ".join("true" if f else "false" for f in bent)
+    hyps = " ".join(f"(fun _ => {_CHK})" if f else "(by intro h; cases h)" for f in bent)
+    phless = " ".join(
+        f"(fun _ => {_phaseless(c, by[k][1])})" if f else "(by intro h; cases h)"
+        for k, f in zip(keys, bent, strict=True)
+    )
+    lemma = (
+        f"bindDefP {c.env} {bn.dim} {bn.ph} {dk} {a} {b} {cc} {lx} {ly} {lz} {phs[0]} {phs[1]} "
+        f"{phs[2]} {flags} IFACE {_CHK} (by decide) {hyps} {_chks(3)} {phless}"
+    )
+    i_r = tuple(lab for f, lab in zip(bent, (x, y, z), strict=True) if f)
+    return _Spec((nodes["b"],), [(sid, sn), *adapters], lemma, i_r=i_r)
 
 
 def _qf_e(c: _Ctx) -> _Spec:
@@ -6202,6 +6484,14 @@ def _zc_scalar(c: _Ctx) -> _Spec:
     if not d_expr.is_Integer:
         _need(n.kind == "Z", "a weighted scalar box at a symbolic dimension")
         env = c.env
+        if n.ph != 0:
+            hs = (
+                f"(by simp only [zc, one_mul, {c.ex.unfold}, Δ, Φ]; "
+                "refine Finset.sum_congr rfl fun k _ => ?_; "
+                "by_cases hk : k = 0 <;> simp [hk] <;> ring_nf)"
+            )
+            lemma = f"zcScalar {env} {_zc(n)} IFACE _ (by decide) rfl rfl {hs}"
+            return _Spec((nodes["z"],), [], lemma, k)
         hs = (
             f"(by have hz : ∀ k < {env}.dimv {n.dim}, ex ({env}.phase {n.ph} k) = 1 := "
             f"{_phaseless(c, n)}; rw [Finset.sum_congr rfl fun k hk => (show zc {env} {_zc(n)} k "
@@ -6644,12 +6934,37 @@ def export(
     if not isinstance(theorem, Theorem):
         raise NetUnsupported(f"export takes a Theorem, got {type(theorem).__name__}")
     out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
-    for a, b in _deferred(theorem):
+    deferred = _deferred(theorem)
+    for a, b in deferred:
         out.assume(a, b)
+    if not deferred:
+        for a, b in _wire_constraints(theorem):
+            out.assume(a, b)
+            out.wire_alias = True
     try:
         return out.finish(theorem, name)
     except ScalarUnsupported as exc:
         raise NetUnsupported(str(exc)) from exc
+
+
+RAW_OFFSET = 1000000
+"""The first dimension index of a dimension a wire identifies with another."""
+
+
+def _dname(expr: str) -> str:
+    """The diagram name in a diagram literal expression."""
+    return expr.lstrip("(").split(".")[0].split(" ")[0]
+
+
+def _wire_constraints(t: object) -> list[tuple[sp.Expr, sp.Expr]]:
+    """Every dimension equality a wire of the start or goal asserts between its two ends."""
+    found: list[tuple[sp.Expr, sp.Expr]] = []
+    for d in (t.lhs, t.rhs):  # type: ignore[attr-defined]
+        for w in d.wires:
+            da, db = _port_dim(d, w.a), _port_dim(d, w.b)
+            if da != db:
+                found.append((da.to_sympy(), db.to_sympy()))
+    return found
 
 
 def _deferred(t: object) -> list[tuple[sp.Expr, sp.Expr]]:

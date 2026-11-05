@@ -191,7 +191,7 @@ converse.
   BZW    qf_bzw (qf_bzw_converse)                          y  y  L/L   qfBZW, mix3
   K0     qf_k0 (qf_k0_converse)                            y  y  L/L   qfK0
   (2.8)  binder_definition (binder_definition_converse)    y  y  L/L   merger = bent splitter;
-                                                                       bindDef, bindDef0
+                                                                       bindDef, bindDef0, bindDefP
 
 3.3 Definitional rules (the generator mapping as rules)
 
@@ -201,8 +201,10 @@ converse.
   triangle (YT)             triangle_definition (triangle_definition_converse)   y  y  L (zcT)
   inverse triangle (YT)     triangle_inverse_definition (..._converse)           y  y  L (zcTi)
   green circle spider       phase_to_weight (weight_to_phase)                    y  y  L (zcCongr)
-  scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  L (zcScalar,
-                                                                                         concrete d)
+  scalar = Z box, no legs   scalar_box (scalar_box_converse)                     y  y  L (zcScalar;
+                                                                                         symbolic d:
+                                                                                         plain or
+                                                                                         phase rule)
 
 3.4 Converses of the rules 2.1 to 2.28
 

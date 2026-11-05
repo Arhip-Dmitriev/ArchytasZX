@@ -94,7 +94,7 @@ between two scaled networks under one environment: the same tensor, scalars incl
                lemmas stated through coefficient vectors zc: zcCongr, zcFusion, zcFusionN,
                zcScalar, zcEpt, zcZer, zcAd, zcK2, zcTi, zcT, zcPcy; and fourierSq,
                fourierSq', identityXZ, zxwTA, zxwBsj, kOne, xDef, xDefT, multiplier_val,
-               fourierMult, qfMW, bindDef, bindDef0, zxwD1, spiderF2, qfD1, wMultPinkVal,
+               fourierMult, qfMW, bindDef, bindDef0, bindDefP, zxwD1, spiderF2, qfD1, wMultPinkVal,
                vBoxVal, zxwVW, zxwZV, vaVal, vaClosed, zxwVA, wGreen, qfVaR, qfVA,
                LocalEq.flip', sumOver_pin2, wKz, multT_val, kzChainVal, kzVal, zxwKZ, HdC,
                hdChainVal, hdGroup, hdVal, hdClosed, om_tri, qfHD, chainsVal, chainsClosed,
@@ -113,7 +113,29 @@ between two scaled networks under one environment: the same tensor, scalars incl
                (section 8)
   Expand       bang boxes on diagrams: Diagram.expand instantiates every box (port boxes grow a
                boundary leg, node boxes copy their nodes and fan out crossing wires), one leaf
-               box at a time; DEqualF, equality of two families at every assignment
+               box at a time
+  Bridge       Diagram.toNetB, the family network of a boxed diagram (Bun towers along node
+               boxes, ZB/XB/WB tails, bundle dimension indices dimFor), and its labels labsB
+  Elim, Digits evalG and evalD: a diagram as a sum over leg values with every wire and boundary
+               pin; for a boxed diagram one base value per leg and copy index (cidx)
+  Relabel, PortBox, Gather, Split, NodeBox, ExpandFacts, Induct, BoxFree
+               instantiating a leaf port box or node box keeps the digit sum, the slots read
+               through bndMap (evalD_expandPort, evalD_expandNode); evalD_expand for the whole
+               expansion; evalD_boxfree: without boxes the digit sum is Diagram.eval
+  Positional, Tower, NodeVal, NodeBridge, Pin, NetDigits
+               the family network as the digit sum: a Bun tower is the product over its copies
+               (tensor_towerC), a bundled node the product of its copies (val_bnode), the pins of
+               the digit sum (evalD_pin), eval_toNetB_evalD
+  FamBridge, FamCheck
+               slot digits packed into bundled values (packC), evalD_slots, evalD_out; the
+               decidable checks WFb, NodeSb, DimOK, FamOK
+  Order, OrderK
+               bidx: the slot copies of a boxed diagram onto the slots of its expansion, one to
+               one, dimensions kept, with bmap reading through it (bmap_read, bidx_bij); the key
+               order of slot copies (slotSig, keyOf, SL) and expandK, the expansion with its
+               boundary in key order (eval_expandK_evalD, bdims_expandK)
+  FamK         DEqual_expandK_of_checks, Equal_of_DEqual_expandK; DEqualF, equality of two
+               families at every assignment of their multiplicity symbols
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
@@ -137,8 +159,10 @@ A step of a rule of the complete axiomatisation (COMPLETENESS.txt) is proved by 
 lemma (section 8); a step of a rule without one is an unproved axiom (section 9, G9).
 
 The scalar identity between the two sides is a linear_combination whose coefficients the
-engine computes and Lean's ring checks (archytaszx.semantics.lean_scalar). Scalars outside the
-exact model (π, irrational powers, conjugates, sums) become opaque complex variables named in
+engine computes and Lean's ring checks (archytaszx.semantics.lean_scalar). A sum
+Σ_{k<D} e^{2πiθk} (a closed spider whose phase rule is θk) is written as it is,
+∑ k ∈ Finset.range D, ex (θ * k), and is an atom of that check. Other scalars outside the exact
+model (π, irrational powers, conjugates, other sums) become opaque complex variables named in
 the theorem's header.
 
 4.2 Families
@@ -158,10 +182,33 @@ of the outside node, copy j on the j-th, and its boundary ports become one block
 at the place of the first of them; at k = 0 the boundary ports of its enclosing node boxes are
 first gathered into one block each. On every boxed diagram of examples/ and the battery, at every
 assignment of 0..3, the expansion was checked equal to the engine's instantiate_symbol up to
-renaming of nodes, boundary slots and leg positions fixed. DEqualF E M s₁ D₁ s₂ D₂
-states DEqual at every assignment σ of the multiplicity symbols, the boxes of index i at M σ i.
-Family exports still end in a statement over bundled networks (section 9, G11): the bridge from
-those networks to DEqualF is not proved yet.
+renaming of nodes, boundary slots and leg positions fixed.
+
+The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
+(its copy index along its node boxes, outermost first, then its port boxes) is placed by the
+key made of, for each node box of i up to the first whose least slot on i's side is i itself,
+that least slot and the copy coordinate in that box, then i, then the remaining node-box
+coordinates outermost first, then the port-box coordinates innermost first. Diagram.expandK ks
+(OrderK.lean) is the expansion with its boundary listed in key order; it is the meaning a family
+statement has. On every boxed diagram of examples/ and the battery, at every assignment of 0..3,
+expandK agrees with instantiate_symbol, boundary order included. The key of each slot depends
+only on keySig (its least slots and its order of copy coordinates), a list the kernel compares.
+
+The bridge (Bridge, NetDigits, FamBridge, Order, OrderK, FamK) proves, for every multiplicity
+assignment, that the family network D.toNetB off at a bundled boundary value equals the expansion
+in key order at that value's digits, read in key order. DEqual_expandK_of_checks turns Equal of
+the family networks of two boxed diagrams into DEqual of their expansions in key order, given
+FamOK of both (the box invariant, node shapes, the family's label dimensions; decided by the
+kernel), equal boundary data (bndData: each slot's dimension and chain) and equal keySig;
+Equal_of_DEqual_expandK is its converse. Every family export, except those of section 9 (G11),
+ends in
+
+    theorem main_diagrams : ∀ params mults, DEqual env s₀ (D0.expandK ks) s₁ (D1.expandK ks)
+
+(¬ ∀ ... for a refutation), D0 and D1 the engine's boxed diagrams as data, with D_net
+(toNetB = the exported network) and D_ok (FamOK) proved by decide +kernel. DEqualF E M s₁ D₁ s₂
+D₂ states the same at every assignment σ of the multiplicity symbols, the boxes of index i at
+M σ i.
 
 4.3 Proofs by the normaliser (archytaszx.semantics.lean_sym)
 
@@ -186,13 +233,23 @@ hypothesis. sym_check in the exporter mirrors the Lean computation to decide whe
 
 Dimension equalities a rewrite assumed (deferred constraints) become hypotheses of the
 theorem; the proof is carried out over the merged network and transported to the diagrams' own
-dimensions (Equal.of_mapDim'). A node whose legs differ in dimension, such as d^p and d^q, is
+dimensions (Equal.of_mapDim'). main_diagrams then states DEqual over the diagrams at their own
+dimensions, with the same hypotheses, when their boundary dimension indices agree; DEqual
+compares indices, so a goal whose boundary carries the other of two dimensions assumed equal
+keeps the statement over networks. A node whose legs differ in dimension, such as d^p and d^q, is
 proved under the hypothesis d^p = d^q. The shell reports every such condition.
+
+A wire of the start or goal that joins two dimensions (a diagram that is well formed only when
+they are equal) identifies them: the networks are the merged ones, and main_diagrams states
+DEqual over the engine's diagrams read through that identification, D.mapDim (dimMap dimIds)
+(Diagram.mapDim renames dimension indices); each identified dimension keeps an index of its own
+in the literal (from 1000000), and dimIds, commented with the dimensions' names, sends it to
+the index it is read as. Families are stated the same way, over (D.mapDim (dimMap dimIds)).expandK.
 
 4.5 Fallback export
 
 A theorem the network export does not cover (free multiplicities outside the cases above,
-pending parameters, dangling ports, disagreeing wire dimensions, or a scalar the exporter cannot
+pending parameters, dangling ports, or a scalar the exporter cannot
 write) is exported without imports: an opaque Diagram type, one constant per diagram, one axiom
 per rule instance, isomorphism, instantiation, peeling and context the kernel checked, and the
 theorem as their composition. This export records the structure of the proof but does not
@@ -231,13 +288,20 @@ are written differently are refuted after instantiating their multiplicities.
 6. WHAT IS TRUSTED
 ------------------
 
-    #print axioms main
+    #print axioms main_diagrams
 
-should list only propext, Classical.choice and Quot.sound. What remains trusted is:
+(main where an export has no diagram statement) should list only propext, Classical.choice and
+Quot.sound. What remains trusted is:
 
   - Lean and Mathlib;
   - the definitions of the bundled library (the tensors of the generators);
-  - the translation of each diagram into a network, which the exported file shows explicitly.
+  - the definitions Diagram.eval, Diagram.expand and Diagram.expandK, and the diagram literals
+    (D0, D1: nodes, wires, boundary and boxes, as data) that the final theorem main_diagrams
+    is stated over; the translation of a diagram into a network is checked by the kernel
+    (D_net), so a wrong translation is rejected, not trusted.
+
+Agreement of Diagram.expandK with the engine's instantiate_symbol is checked on examples/ and the
+battery, not proved.
 
 A rule step for which no lemma exists, or an isomorphism the exporter cannot match, becomes an
 axiom named unproved_* stating that one step over the same semantics. Such axioms are listed in
@@ -304,7 +368,8 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
   zxw_p1_multiplier              fourierMult,          _hh_mult
                                  multiplier_val
   qf_mw                          qfMW, multiplier_val  _qf_mw
-  binder_definition              bindDef, bindDef0     _bind_def
+  binder_definition              bindDef, bindDef0,    _bind_def
+                                 bindDefP
   zxw_d1                         zxwD1                 _d1
   qf_d1                          qfD1, spiderF2        _qf_d1 (both directions)
   zxw_vw                         zxwVW, vBoxVal,       _vw
@@ -375,7 +440,8 @@ legs; qfDD, qfBZW, qfDZX, qfTA and qfS1 are built on it, qfE and qfK0 directly.
 connective_inverse_converse is proved through its forward rule at composite dimensions (a prime
 wire has no factorisation, so no instance). A qf_s1 step that joins every leg (its right side a
 scalar) is proved by qfS1c when both boxes are weighted Z boxes; with a plain Z box it is an
-unproved axiom. binder_definition has one (section 8) except when only some of its legs are bent.
+unproved axiom. binder_definition with only some of its legs bent (an adapter absorbed into a
+neighbouring spider) is proved by bindDefP.
 
 G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
 by the classical evaluation with Gauss's sign and by Landsberg-Schaar reciprocity; neither is in
@@ -383,8 +449,10 @@ Mathlib. A proof needing one is accepted only when the sums cancel between the s
 lemma needs an evaluated Gauss sum: zxw_h1, zxw_pcy, zxw_hd and qf_hd are proved by rewriting
 (xDef, zcPcy, zxwHD, qfHD), so the gap concerns only whole-proof normaliser exports.
 
-G3 Phase rules with a symbolic coefficient (theta k). At a bound index s the rule contributes
-ex(theta)^s; summing gives a geometric series, outside the normaliser's monomials.
+G3 Phase rules with a symbolic coefficient (theta k) under the normaliser. At a bound index s
+the rule contributes ex(theta)^s; summing gives a geometric series, outside the normaliser's
+monomials. Rule steps are not affected: rule lemmas read phase rules pointwise, and a closed
+spider's sum is written explicitly (section 4.1).
 
 G4 Multiplicity-dependent scalars that are not geometric, with port boxes.
 
@@ -393,15 +461,20 @@ G5 Opaque scalars (pi, roots of non-monomials) whose ratio is not exact.
 G6 Node boxes meeting the rest at a wire, and port boxes inside port boxes, under the
 normaliser.
 
-G7 Deferred dimension constraints in families: Equal.of_mapDim' maps plain dimension indices
-only, not the bundle indices derived from them.
+G7 Deferred dimension constraints in families: a family whose rewrite steps assume dimensions
+equal (d^p = d^q, for example) is proved over the merged bundled networks, and main_diagrams is
+stated over the diagrams read through the identification ((D.mapDim (dimMap dimIds)).expandK,
+as for a wire that joins two dimensions, 4.4), not at the diagrams' own dimensions with the
+equality as a hypothesis: that would need Equal.of_mapDim' on bundle indices, which it maps only
+for plain ones.
 
-G8 Nodes whose legs differ in dimension (d^p against d^q), in families: exponent symbols carry
-no positivity hypothesis.
+G8 Nodes whose legs differ in dimension (d^p against d^q), in families: covered by the
+identification of G7 (the exponent symbols are binders with positivity hypotheses); the
+statement is over the diagrams with d^q read as d^p, not at their own dimensions.
 
-G9 Steps of proved rules outside their lemma's form: binder_definition with only some legs
-bent. Every rule of the complete axiomatisation has a rule lemma; a qf_s1 step joining every leg
-of a plain Z box (a closed scalar) is outside qfS1c's builder.
+G9 Steps of proved rules outside their lemma's form: a qf_s1 step joining every leg of a Z box
+of kind Z (a closed scalar) is outside qfS1c's builder, which takes weighted boxes. Every rule of
+the complete axiomatisation has a rule lemma.
 
 G10 Normaliser exports on phased diagrams: a closing identity between roots of unity written in
 different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does
@@ -410,12 +483,14 @@ prover of rule builders likewise leaves some identities between square roots and
 unproved (sqrt 3 against om 12, sqrt 2 against om 8), which turns those zxw_k2 steps into
 unproved axioms.
 
-G11 Families are stated over bundled networks, not over the engine's diagrams.
+G11 Exports without a diagram statement: a box-free derivation whose assumed equality changes a
+boundary dimension's index (4.4), and a network whose wire labels are not consecutive, keep
+their statement over networks only.
 
 G12 Weighted spiders at a symbolic dimension: the coefficient table Ψ is the weight entries
-over an index-free weight rule; a weight vector that also carries phases, or a weight rule
-depending on the index, raises NetUnsupported, and steps on such nodes are unproved axioms.
-Weighted X spiders are exported as Kind.XW.
+over the weight rule (a function of the index k), times e^{2πi} of the spider's phases (entries
+and phase rule); a weight rule the scalar model cannot write raises NetUnsupported, and steps on
+such nodes are unproved axioms. Weighted X spiders are exported as Kind.XW.
 
 G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
 of isoB) are decided in the kernel first (decide +kernel), and a step's closing isoB names its

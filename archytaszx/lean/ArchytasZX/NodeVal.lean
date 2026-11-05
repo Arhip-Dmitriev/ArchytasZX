@@ -7,7 +7,7 @@ import ArchytasZX.Tower
 /-!
 # Leg values of a copy
 
-`fv C t d β P`: for legs given as (label, tail chain) pairs, every leg's digits over its tail
+`ldg C t d β P`: for legs given as (label, tail chain) pairs, every leg's digits over its tail
 at copy `t` of the node chain `C`. The bundled generators at block values and the copies of the
 digit sum both read permutations of these lists.
 -/
@@ -15,22 +15,22 @@ digit sum both read permutations of these lists.
 namespace ArchytasZX
 
 /-- Each leg's digits at copy `t`: digit `pos (C ++ c) (t ++ s)` of its value, `s` over its tail. -/
-def fv (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) : List ℕ :=
+def ldg (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) : List ℕ :=
   P.flatMap fun q => (cidx mult q.2).map fun s => digit d (pos mult (C ++ q.2) (t ++ s)) (β q.1)
 
-theorem fv_append (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P Q : List (ℕ × List ℕ)) :
-    fv mult C t d β (P ++ Q) = fv mult C t d β P ++ fv mult C t d β Q := by
-  simp [fv, List.flatMap_append]
+theorem ldg_append (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P Q : List (ℕ × List ℕ)) :
+    ldg mult C t d β (P ++ Q) = ldg mult C t d β P ++ ldg mult C t d β Q := by
+  simp [ldg, List.flatMap_append]
 
-theorem fv_perm (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) {P Q : List (ℕ × List ℕ)}
-    (h : P.Perm Q) : (fv mult C t d β P).Perm (fv mult C t d β Q) := h.flatMap_right _
+theorem ldg_perm (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) {P Q : List (ℕ × List ℕ)}
+    (h : P.Perm Q) : (ldg mult C t d β P).Perm (ldg mult C t d β Q) := h.flatMap_right _
 
-theorem fv_plain (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (ls : List ℕ) :
-    fv mult C t d β (ls.map (·, [])) = ls.map fun l => digit d (pos mult C t) (β l) := by
+theorem ldg_plain (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (ls : List ℕ) :
+    ldg mult C t d β (ls.map (·, [])) = ls.map fun l => digit d (pos mult C t) (β l) := by
   induction ls with
   | nil => rfl
   | cons l ls ih =>
-    simp only [fv, List.map_cons, List.flatMap_cons, cidx, List.map_cons, List.map_nil,
+    simp only [ldg, List.map_cons, List.flatMap_cons, cidx, List.map_cons, List.map_nil,
       List.append_nil, List.cons_append, List.nil_append] at ih ⊢
     rw [ih]
 
@@ -48,13 +48,13 @@ theorem blk_append (mult : ℕ → ℕ) (d p : ℕ) (a b : List (List ℕ)) (u v
 theorem tailVals_blk (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (hd : 0 < d) (ht : t ∈ cidx mult C)
     (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) :
     tailVals mult d (blkC mult d (pos mult C t) (P.map (·.2)) (P.map (β ·.1))) (P.map (·.2)) =
-      fv mult C t d β P := by
+      ldg mult C t d β P := by
   induction P with
-  | nil => simp [tailVals, blkC, fv]
+  | nil => simp [tailVals, blkC, ldg]
   | cons q P ih =>
     simp only [tailVals, blkC, List.map_cons, List.zipWith_cons_cons, List.flatten_cons] at ih ⊢
     rw [ih]
-    simp only [fv, List.flatMap_cons]
+    simp only [ldg, List.flatMap_cons]
     congr 1
     rw [digsC_pos mult d hd]
     split_ifs with hc
@@ -149,7 +149,7 @@ include hd ht hp in
 theorem side_vals (n : ℕ) (l : ℕ → ℕ) (c : ℕ → List ℕ) (s0 : ℕ) :
     (bundled mult d (blkC mult d p (List.replicate (keepL n l c).length [] ++ (sortT n c s0).map (·.1))
       ((keepL n l c ++ (sortT n c s0).map fun t => ((List.range n).map l).getD t.2.2 0).map β))
-      ((sortT n c s0).map (·.1))).Perm (fv mult C t d β (pairs n l c)) := by
+      ((sortT n c s0).map (·.1))).Perm (ldg mult C t d β (pairs n l c)) := by
   subst hp
   set K := keepL n l c
   set S := sortT n c s0
@@ -159,8 +159,8 @@ theorem side_vals (n : ℕ) (l : ℕ → ℕ) (c : ℕ → List ℕ) (s0 : ℕ) 
     simp [Pb, List.map_map, Function.comp_def]
   rw [List.map_append, blk_append _ _ _ _ _ _ _ (by simp), blk_plain, hS1, hS2,
     bundled_splitC _ _ _ _ _ (by simp [blkC, List.length_zipWith]), tailVals_blk mult C t d hd ht,
-    ← fv_plain, ← fv_append]
-  exact fv_perm _ _ _ _ _ (side_perm n l c s0).symm
+    ← ldg_plain, ← ldg_append]
+  exact ldg_perm _ _ _ _ _ (side_perm n l c s0).symm
 
 theorem sortT_tag (n : ℕ) (c : ℕ → List ℕ) (s0 : ℕ) : ∀ x ∈ sortT n c s0, x.2.1 = s0 := by
   intro x hx
@@ -177,7 +177,7 @@ theorem z_vals (nO : ℕ) (lO : ℕ → ℕ) (cO : ℕ → List ℕ) (nI : ℕ) 
     (blkC mult d p (List.replicate (keepL nO lO cO).length []) ((keepL nO lO cO).map β) ++
       bundled mult d (blkC mult d p (List.replicate (keepL nI lI cI).length [] ++ both.map (·.1))
         ((keepL nI lI cI ++ both.map lab).map β)) (both.map (·.1))).Perm
-      (fv mult C t d β (pairs nO lO cO) ++ fv mult C t d β (pairs nI lI cI)) := by
+      (ldg mult C t d β (pairs nO lO cO) ++ ldg mult C t d β (pairs nI lI cI)) := by
   intro both lab
   subst hp
   set KO := keepL nO lO cO
@@ -187,7 +187,7 @@ theorem z_vals (nO : ℕ) (lO : ℕ → ℕ) (cO : ℕ → List ℕ) (nI : ℕ) 
   have hS2 : (both.map lab).map β = Pb.map (β ·.1) := by simp [Pb, List.map_map, Function.comp_def]
   rw [blk_plain, List.map_append, blk_append _ _ _ _ _ _ _ (by simp), blk_plain, hS1, hS2,
     bundled_splitC _ _ _ _ _ (by simp [blkC, List.length_zipWith]), tailVals_blk mult C t d hd ht,
-    ← fv_plain, ← fv_plain]
+    ← ldg_plain, ← ldg_plain]
   set SO := (sortT nO cO 0).map fun x => (((List.range nO).map lO).getD x.2.2 0, x.1)
   set SI := (sortT nI cI 1).map fun x => (((List.range nI).map lI).getD x.2.2 0, x.1)
   have hPb : Pb.Perm (SO ++ SI) := by
@@ -197,12 +197,12 @@ theorem z_vals (nO : ℕ) (lO : ℕ → ℕ) (cO : ℕ → List ℕ) (nI : ℕ) 
       (List.Perm.of_eq (List.map_congr_left fun x hx => ?_))
     · simp [lab, sortT_tag nO cO 0 x hx]
     · simp [lab, sortT_tag nI cI 1 x hx]
-  have h1 := fv_perm mult C t d β (side_perm nO lO cO 0)
-  have h2 := fv_perm mult C t d β (side_perm nI lI cI 1)
-  rw [fv_append] at h1 h2
+  have h1 := ldg_perm mult C t d β (side_perm nO lO cO 0)
+  have h2 := ldg_perm mult C t d β (side_perm nI lI cI 1)
+  rw [ldg_append] at h1 h2
   refine List.Perm.trans ?_ (h1.symm.append h2.symm)
-  refine (List.Perm.append_left _ (List.Perm.append_left _ (fv_perm mult C t d β hPb))).trans ?_
-  rw [fv_append]
+  refine (List.Perm.append_left _ (List.Perm.append_left _ (ldg_perm mult C t d β hPb))).trans ?_
+  rw [ldg_append]
   simp only [List.append_assoc]
   refine List.Perm.append_left _ ?_
   rw [← List.append_assoc, ← List.append_assoc]
@@ -210,8 +210,8 @@ theorem z_vals (nO : ℕ) (lO : ℕ → ℕ) (cO : ℕ → List ℕ) (nI : ℕ) 
 
 end bnd
 
-/-- `fv` with each tail in `rcidx` order. -/
-def fvR (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) : List ℕ :=
+/-- `ldg` with each tail in `rcidx` order. -/
+def ldgR (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) : List ℕ :=
   P.flatMap fun q => (rcidx mult q.2).map fun s => digit d (pos mult (C ++ q.2) (t ++ s)) (β q.1)
 
 theorem rcidx_perm (mult : ℕ → ℕ) (c : List ℕ) : (rcidx mult c).Perm (cidx mult c) := by
@@ -220,8 +220,8 @@ theorem rcidx_perm (mult : ℕ → ℕ) (c : List ℕ) : (rcidx mult c).Perm (ci
     exact (cidx_nodup mult _).map fun a b h => List.reverse_injective h
   exact (List.perm_ext_iff_of_nodup hnd (cidx_nodup mult c)).2 fun x => mem_rcidx mult c x
 
-theorem fvR_perm (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) :
-    (fvR mult C t d β P).Perm (fv mult C t d β P) :=
+theorem ldgR_perm (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (P : List (ℕ × List ℕ)) :
+    (ldgR mult C t d β P).Perm (ldg mult C t d β P) :=
   List.Perm.flatMap_left _ fun q _ => (rcidx_perm mult q.2).map _
 
 /-- A copy's leg labels on one side through `ν`, when `ν` reads each digit label's digit. -/
@@ -231,8 +231,8 @@ theorem dnode_side (D : Diagram) (ks : ℕ → ℕ) (n : DNode) (t : List ℕ) (
       digit d (pos ks (D.nodeChain n.id ++ D.tail ⟨n.id, o, i⟩) (t ++ s)) (β (lab ⟨n.id, o, i⟩))) :
     ((List.range len).flatMap fun i => (rcidx ks (D.tail ⟨n.id, o, i⟩)).map fun s =>
       dlab ⟨n.id, o, i⟩ (t ++ s)).map ν =
-      fvR ks (D.nodeChain n.id) t d β (pairs len (fun j => lab ⟨n.id, o, j⟩) (fun j => D.tail ⟨n.id, o, j⟩)) := by
-  simp only [fvR, pairs, List.flatMap_map, List.map_flatMap, List.map_map]
+      ldgR ks (D.nodeChain n.id) t d β (pairs len (fun j => lab ⟨n.id, o, j⟩) (fun j => D.tail ⟨n.id, o, j⟩)) := by
+  simp only [ldgR, pairs, List.flatMap_map, List.map_flatMap, List.map_map]
   refine List.flatMap_congr fun i hi => List.map_congr_left fun s hs => ?_
   exact hν i (List.mem_range.1 hi) s hs
 
@@ -377,11 +377,11 @@ theorem bnode_eq (D : Diagram) (off : ℕ) (n : DNode) : D.bnode off n =
 
 end Diagram
 
-theorem fvR_plain (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (n : ℕ) (l : ℕ → ℕ)
+theorem ldgR_plain (mult : ℕ → ℕ) (C t : List ℕ) (d : ℕ) (β : ℕ → ℕ) (n : ℕ) (l : ℕ → ℕ)
     (c : ℕ → List ℕ) (h : tls n c = []) :
-    fvR mult C t d β (pairs n l c) = (List.range n).map fun j => digit d (pos mult C t) (β (l j)) := by
+    ldgR mult C t d β (pairs n l c) = (List.range n).map fun j => digit d (pos mult C t) (β (l j)) := by
   rw [tls_nil] at h
-  simp only [fvR, pairs, List.flatMap_map]
+  simp only [ldgR, pairs, List.flatMap_map]
   rw [List.map_eq_flatMap]
   refine List.flatMap_congr fun j hj => ?_
   simp [h j (List.mem_range.1 hj), Diagram.rcidx_nil]
