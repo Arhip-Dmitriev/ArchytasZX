@@ -203,8 +203,8 @@ def algebraic_search(
     on_layer: Callable[[LayerReport], None] | None = None,
 ) -> ProofPath:
     """A derivation between ``start`` and ``goal`` by iterative deepening: round ``K = 1, 2,
-    ...`` searches both sides to depth ``K``, every free weight-vector value drawn from the
-    algebraic numbers of level at most ``K``
+    ...`` searches both sides to depth ``ceil(K / 2)``, every free weight-vector value drawn
+    from the algebraic numbers of level at most ``K``
     (:func:`~archytaszx.algebra.algebraic.up_to_level`), diagrams
     compared by :func:`~archytaszx.rewrite.normal_form.algebraic_view`. Returns only on
     success."""
@@ -218,7 +218,8 @@ def algebraic_search(
                 hit = right.lookup(key, item.meet)
                 if hit is not None:
                     return _path(start, goal, item, hit)
-        while left.depth < bound and (left.frontier or right.frontier):
+        depth = (bound + 1) // 2
+        while left.depth < depth and (left.frontier or right.frontier):
             for side, other in ((left, right), (right, left)):
                 for key, item in side.expand(rule_set):
                     hit = other.lookup(key, item.meet)

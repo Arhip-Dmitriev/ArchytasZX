@@ -163,7 +163,7 @@ In the shell: prove exhaustive [against] [TARGET].
     prove_exhaustive(start, goal, ..., algebraic=True) -> ProofOutcome
 
 runs archytaszx.rewrite.exhaustive.algebraic_search instead: rounds K = 1, 2, ..., each a search
-of the kind of 3.2 from both sides to depth K, in which every free weight-vector variable of a
+of the kind of 3.2 from both sides to depth ceil(K/2), in which every free weight-vector variable of a
 rule (the splits and insertions of the converses) also takes every vector whose entries are
 algebraic numbers of level at most K (archytaszx.algebra.algebraic: rationals by height, roots
 of unity by order, Gaussian rationals, then roots of irreducible integer polynomials by degree

@@ -403,7 +403,7 @@ proof on every such pair.
 
     prove exhaustive algebraic [against] [TARGET]
 
-is that search (PROOFS.txt, section 3.3): round K searches both sides to depth K with every
+is that search (PROOFS.txt, section 3.3): round K searches both sides to depth ceil(K/2) with every
 free weight-vector variable also at every vector of algebraic numbers of level at most K, and
 compares diagrams by their values in canonical form (rational or CRootOf of the minimal
 polynomial), which decides equality of algebraic numbers. Termination theorem: for bang-box-free
@@ -411,7 +411,7 @@ diagrams D1 and D2 at concrete dimensions with algebraic parameters and equal
 interpretations, prove exhaustive algebraic returns a proof. Proof: by section 4 a derivation
 exists; by the transfer above one exists of the same rules and matches whose free values are
 algebraic, say of length n with every free value's entries of level at most m; every step is
-then a match the round K = max(n, m) enumerates, so the start side of that round reaches a
+then a match the round K = max(2n, m) enumerates, so the start side of that round reaches a
 diagram with the same values as D2, which the canonical comparison identifies with D2. Each
 round is finite (finitely many matches, finitely many vectors per free variable). Computing a
 variable the conditions determine (PROOFS.txt, section 3.3) only adds candidates beyond the
