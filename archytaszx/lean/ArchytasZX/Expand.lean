@@ -9,9 +9,10 @@ import ArchytasZX.Diagram
 
 `Diagram.expand ks` instantiates every bang box of a diagram, the box `b` at multiplicity
 `ks b.mult`, one leaf box at a time (least id first). A port box grows its boundary legs to `k`
-legs each; a node box copies its nodes and internal wires `k` times, a wire crossing into it fans
-out into `k` legs of the outside node, and its boundary ports become one block, copy by copy, at
-the position of the first of them.
+legs each, in place; a node box copies its nodes and internal wires `k` times, a wire crossing
+into it fans out into `k` legs of the outside node, and its boundary ports become one block, copy
+by copy, at the position of the first of them. Every port maps to the list of ports it becomes,
+and every wire to the zip of its two ends' lists.
 -/
 
 namespace ArchytasZX
@@ -27,35 +28,8 @@ def keyLe (p q : Port) : Bool :=
   let b := portKey q
   a.1 < b.1 || (a.1 = b.1 && (a.2.1 < b.2.1 || (a.2.1 = b.2.1 && a.2.2 ≤ b.2.2)))
 
-/-- Where the port `old` lands once the leg `(out, idx)` of `node` has grown to `k` legs on the
-node `new`. -/
-def remapGrown (old : Port) (node new : ℕ) (out : Bool) (idx k : ℕ) : List Port :=
-  if old.node ≠ node then [old]
-  else if old.out ≠ out ∨ old.pos < idx then [⟨new, old.out, old.pos⟩]
-  else if old.pos = idx then (List.range k).map fun i => ⟨new, out, idx + i⟩
-  else [⟨new, old.out, old.pos + k - 1⟩]
-
 /-- A node id above every node of the diagram. -/
 def fresh (D : Diagram) : ℕ := (D.nodes.map (·.id)).foldr max 0 + 1
-
-/-- The node of `ref` replaced by a fresh node whose leg at `ref` is `k` legs, and its id. -/
-def regrow (D : Diagram) (ref : Port) (k : ℕ) : Diagram × ℕ :=
-  match D.nodes.find? (·.id = ref.node) with
-  | none => (D, ref.node)
-  | some n =>
-    let side := if ref.out then n.outs else n.ins
-    let grown := side.take ref.pos ++ List.replicate k (side.getD ref.pos 0) ++ side.drop (ref.pos + 1)
-    let new := D.fresh
-    let n' : DNode := if ref.out then { n with id := new, outs := grown }
-      else { n with id := new, ins := grown }
-    let rm := fun p => remapGrown p ref.node new ref.out ref.pos k
-    let first := fun p => (rm p).headD p
-    ({ nodes := D.nodes.filter (·.id ≠ ref.node) ++ [n'],
-       wires := D.wires.map fun w => (first w.1, first w.2),
-       outs := D.outs.flatMap rm, ins := D.ins.flatMap rm,
-       boxes := D.boxes.map fun b =>
-         { b with nodes := b.nodes.map (fun x => if x = ref.node then new else x),
-                  ports := b.ports.flatMap rm } }, new)
 
 /-- `refs` with its ports in `old` replaced by one block at the first of them: every copy's image
 of those ports, copy by copy. -/
@@ -88,72 +62,80 @@ where
         go { D with ins := splice D.ins cr [ident], outs := splice D.outs cr [ident] }
           outer.parent fuel
 
-/-- The ports `pending` grown to `k` legs each, in order, with `fuel` steps. -/
-def growAll (k : ℕ) : ℕ → Diagram → List Port → Diagram
-  | 0, D, _ => D
-  | _, D, [] => D
-  | fuel + 1, D, ref :: rest =>
-    let (D', new) := D.regrow ref k
-    growAll k fuel D' (rest.flatMap fun p => remapGrown p ref.node new ref.out ref.pos k)
+/-- Where the leg at `p` lands once every leg `g` holds grows to `k` legs, in place: the legs
+before it on its side that grow count `k` each. -/
+def shiftPos (g : Port → Bool) (k : ℕ) (p : Port) : ℕ :=
+  let c := ((List.range p.pos).filter fun i => g ⟨p.node, p.out, i⟩).length
+  p.pos - c + k * c
 
-/-- Each crossing `(inside, outside)` rewired as one outside leg per copy in `maps`, with `fuel`
-steps. -/
-def fanOut (maps : List (List (ℕ × ℕ))) : ℕ → Diagram → List (Port × Port) → Diagram
-  | 0, D, _ => D
-  | _, D, [] => D
-  | fuel + 1, D, (inside, outside) :: rest =>
-    let D₁ := { D with wires := D.wires.filter fun w => !((w.1 = inside ∧ w.2 = outside) ∨
-      (w.1 = outside ∧ w.2 = inside)) }
-    let k := maps.length
-    let (D₂, new) := D₁.regrow outside k
-    let D₃ := { D₂ with wires := D₂.wires ++ (maps.zipIdx.map fun (mp, j) =>
-      (⟨(mp.lookup inside.node).getD inside.node, inside.out, inside.pos⟩,
-        ⟨new, outside.out, outside.pos + j⟩)) }
-    fanOut maps fuel D₃ (rest.flatMap fun (i, o) =>
-      (remapGrown o outside.node new outside.out outside.pos k).map fun o' => (i, o'))
+/-- The side `ds` of the node `x` with every leg `g` holds grown to `k` legs. -/
+def growSide (g : Port → Bool) (k x : ℕ) (out : Bool) (ds : List ℕ) : List ℕ :=
+  ds.zipIdx.flatMap fun (d, i) => if g ⟨x, out, i⟩ then List.replicate k d else [d]
 
-/-- The copies `maps` of the nodes `scope` and of the wires inside it. -/
-def addCopies (D : Diagram) (scope : List ℕ) (maps : List (List (ℕ × ℕ))) : Diagram :=
-  let look := fun (mp : List (ℕ × ℕ)) (x : ℕ) => (mp.lookup x).getD x
-  let internal := D.wires.filter fun w => w.1.node ∈ scope ∧ w.2.node ∈ scope
-  { D with
-    nodes := D.nodes ++ maps.flatMap fun mp => (D.nodes.filter (·.id ∈ scope)).map fun n =>
-      { n with id := look mp n.id },
-    wires := D.wires ++ maps.flatMap fun mp => internal.map fun w =>
-      (⟨look mp w.1.node, w.1.out, w.1.pos⟩, ⟨look mp w.2.node, w.2.out, w.2.pos⟩) }
+/-- The legs the leg at `p` becomes once every leg `g` holds grows to `k` legs, in place. -/
+def growImg (g : Port → Bool) (k : ℕ) (p : Port) : List Port :=
+  if g p then (List.range k).map fun j => ⟨p.node, p.out, shiftPos g k p + j⟩
+  else [⟨p.node, p.out, shiftPos g k p⟩]
+
+/-- Copy `j` of the node `x` of the node box `b`: fresh ids, copy by copy, scope in id order. -/
+def cpId (D : Diagram) (b : DBox) (j x : ℕ) : ℕ :=
+  D.fresh + j * b.nodes.length + (b.nodes.mergeSort (· ≤ ·)).idxOf x
+
+/-- A port on a node of the node box `b`. -/
+def inS (b : DBox) (p : Port) : Bool := decide (p.node ∈ b.nodes)
+
+/-- A port outside the node box `b` wired to a port inside it. -/
+def crossP (D : Diagram) (b : DBox) (p : Port) : Bool :=
+  !inS b p && D.wires.any fun w => (w.1 = p && inS b w.2) || (w.2 = p && inS b w.1)
+
+/-- The ports `p` becomes once the node box `b` is copied `k` times. -/
+def nimg (D : Diagram) (b : DBox) (k : ℕ) (p : Port) : List Port :=
+  if inS b p then (List.range k).map fun j => ⟨D.cpId b j p.node, p.out, p.pos⟩
+  else growImg (D.crossP b) k p
+
+/-- The boundary `refs` with its ports in `b` one block at the first of them, copy by copy. -/
+def spliceN (D : Diagram) (b : DBox) (k : ℕ) (refs : List Port) : List Port :=
+  let here := refs.filter (inS b)
+  if here = [] then refs.flatMap (D.nimg b k)
+  else
+    let at_ := refs.findIdx (inS b)
+    (refs.take at_).flatMap (D.nimg b k) ++
+      (List.range k).flatMap (fun j => here.map fun p => (⟨D.cpId b j p.node, p.out, p.pos⟩ : Port)) ++
+      ((refs.drop at_).filter (!inS b ·)).flatMap (D.nimg b k)
+
+/-- The nodes of the node box `b` and the wires inside it copied `k` times, a wire crossing in
+fanned out over the outside leg grown to `k` legs. -/
+def copyNodes (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
+  let copies := (List.range k).flatMap fun j => (b.nodes.mergeSort (· ≤ ·)).map (D.cpId b j)
+  { nodes := D.nodes.flatMap fun n =>
+      if n.id ∈ b.nodes then (List.range k).map fun j => { n with id := D.cpId b j n.id }
+      else [{ n with outs := growSide (D.crossP b) k n.id true n.outs,
+                     ins := growSide (D.crossP b) k n.id false n.ins }],
+    wires := D.wires.flatMap fun w => (D.nimg b k w.1).zip (D.nimg b k w.2),
+    outs := D.spliceN b k D.outs, ins := D.spliceN b k D.ins,
+    boxes := ((D.boxes.filter (·.id ≠ b.id)).map fun x =>
+      { x with nodes := x.nodes.filter (· ∉ b.nodes) ++
+                 (if x.nodes.any (· ∈ b.nodes) then copies else []),
+               ports := x.ports.flatMap (D.nimg b k) }).filter fun x => x.nodes ≠ [] ∨ x.ports ≠ [] }
 
 /-- The node box `b` instantiated at `k`. -/
 def expandNode (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
-  let D := if k = 0 then D.gather b else D
-  let D := { D with boxes := D.boxes.filter (·.id ≠ b.id) }
-  let scope := b.nodes
-  let sorted := scope.mergeSort (· ≤ ·)
-  let base := D.fresh
-  let maps : List (List (ℕ × ℕ)) :=
-    if k = 1 then [scope.map fun x => (x, x)]
-    else (List.range k).map fun j => sorted.zipIdx.map fun (x, i) => (x, base + j * sorted.length + i)
-  let crossings := ((D.wires.filter fun w => (w.1.node ∈ scope) ≠ (w.2.node ∈ scope)).map fun w =>
-    if w.1.node ∈ scope then w else (w.2, w.1)).mergeSort fun p q => keyLe p.2 q.2
-  let D := if k = 1 then D else D.addCopies scope maps
-  let D := if k = 1 then D else fanOut maps (crossings.length + 1) D crossings
-  let cr := D.scopeBnd scope
-  let D := { D with ins := splice D.ins cr maps, outs := splice D.outs cr maps }
-  let copies := maps.flatMap fun mp => mp.map (·.2)
-  let D := { D with boxes := (D.boxes.map fun x =>
-      if x.nodes.any (· ∈ scope) then
-        let rest := x.nodes.filter (· ∉ scope)
-        { x with nodes := rest ++ copies.filter (· ∉ rest) }
-      else x).filter fun x => x.nodes ≠ [] ∨ x.ports ≠ [] }
-  if k = 1 then D
-  else { D with nodes := D.nodes.filter (·.id ∉ scope),
-                wires := D.wires.filter fun w => w.1.node ∉ scope ∧ w.2.node ∉ scope }
+  (if k = 0 then D.gather b else D).copyNodes b k
 
-/-- The port box `b` instantiated at `k`. -/
+/-- Each port of the port box `b` grown to `k` legs in place. -/
+def growPorts (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
+  let g := fun (p : Port) => decide (p ∈ b.ports)
+  let img := growImg g k
+  { nodes := D.nodes.map fun n =>
+      { n with outs := growSide g k n.id true n.outs, ins := growSide g k n.id false n.ins },
+    wires := D.wires.flatMap fun w => (img w.1).zip (img w.2),
+    outs := D.outs.flatMap img, ins := D.ins.flatMap img,
+    boxes := ((D.boxes.filter (·.id ≠ b.id)).map fun x => { x with ports := x.ports.flatMap img }).filter
+      fun x => x.nodes ≠ [] ∨ x.ports ≠ [] }
+
+/-- The port box `b` instantiated at `k`: each of its ports grown to `k` legs in place. -/
 def expandPort (D : Diagram) (b : DBox) (k : ℕ) : Diagram :=
-  let D := if k = 0 then D.gather b else D
-  let D := { D with boxes := D.boxes.filter (·.id ≠ b.id) }
-  let pending := b.ports.mergeSort keyLe
-  growAll k (pending.length + 1) D pending
+  (if k = 0 then D.gather b else D).growPorts b k
 
 /-- Every box instantiated, the box `b` at `ks b.mult`, the least-id leaf box first, with `fuel`
 steps. -/
