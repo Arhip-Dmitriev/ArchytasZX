@@ -3153,12 +3153,34 @@ def _swapped_default(dim: Dim, b: Bindings) -> list[Bindings]:
     return [{"a": PhaseVector(dim), "b": b["c"]}]
 
 
+def _solve_product(dim: Dim, b: Bindings) -> Bindings | None:
+    """``b`` with ``ab = c`` from ``a`` and ``c``: each coefficient of ``c`` over ``a``'s;
+    ``None`` when some coefficient of ``a`` is 0 (concrete d)."""
+    a, c = _vec(b["a"]) or PhaseVector(dim), _vec(b["c"]) or PhaseVector(dim)
+    out = {}
+    for k in range(1, dim.to_int()):
+        ak = a.coefficient(k)
+        if _zero(ak.to_sympy()):
+            return None
+        out[k] = c.coefficient(k) * ak**-1
+    return {"b": PhaseVector.from_weights(dim, out)}
+
+
+def _solve_sum(dim: Dim, b: Bindings) -> Bindings | None:
+    """``b`` with ``a + b = c`` from ``a`` and ``c`` (concrete d)."""
+    a, c = _vec(b["a"]) or PhaseVector(dim), _vec(b["c"]) or PhaseVector(dim)
+    minus = Scalar(sp.Integer(-1))
+    weights = {k: c.coefficient(k) + minus * a.coefficient(k) for k in range(1, dim.to_int())}
+    return {"b": PhaseVector.from_weights(dim, weights)}
+
+
 X_FUSION_CONVERSE = TemplateAxiom(
     "x_fusion_converse",
     Side(_x_unfuse_left, arity_from_anchor(_x_unfuse_arities)),
     Side(_x_unfuse_right),
     conditions=(Condition("fuses_back", "ab = c", lambda dim, b: _fuses_to(dim, b)),),
     free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: PhaseVector(dim)},
+    solve=_solve_product,
     candidates=_swapped_default,
     description=(
         "spider_fusion for X spiders read right to left: the X spider c is X spiders a and b "
@@ -3457,6 +3479,7 @@ ZXW_S1_CONVERSE = TemplateAxiom(
     Side(_unfuse_right),
     conditions=(Condition("fuses_back", "ab = c", _fuses_to),),
     free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: PhaseVector(dim)},
+    solve=_solve_product,
     candidates=_single_entry_splits,
     description=(
         "[P1] S1 read right to left: the Z box c is Z boxes a and b (ab = c) joined by k "
@@ -3494,6 +3517,7 @@ ZXW_AD_CONVERSE = TemplateAxiom(
     fixed_side(_ad_converse_right),
     conditions=(Condition("adds_back", "a + b = c", _adds_to),),
     free={"a": lambda dim, b: b["c"], "b": lambda dim, _b: zero_vector(dim)},
+    solve=_solve_sum,
     concrete_only=True,
     description=(
         "[P1] AD read right to left: the Z box effect c is a W node with effects a and b, "

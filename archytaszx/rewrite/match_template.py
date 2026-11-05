@@ -670,6 +670,9 @@ class TemplateAxiom:
     which the conditions then check."""
     converse_free: Mapping[str, Callable[[Dim, Bindings], object]] = field(default_factory=dict)
     """The :attr:`free` variables of :meth:`converse`."""
+    solve: Callable[[Dim, Bindings], Bindings | None] | None = None
+    """Free variables the conditions determine from the others: given the bindings with the
+    other free variables set, their values, or ``None`` when they are not determined."""
     candidates: Callable[[Dim, Bindings], Sequence[Bindings]] | None = None
     """Values of the :attr:`free` variables beyond the defaults, computed from the matched side;
     exhaustive search enumerates a match with each of them."""
@@ -901,15 +904,44 @@ class TemplatePattern(Pattern):
             PhaseVector.from_weights(dim, dict(zip(range(1, dim.to_int()), combo, strict=True)))
             for combo in itertools.product(values, repeat=dim.to_int() - 1)
         ]
+        assignments: Iterable[dict[str, object]] = (
+            dict(zip(names, chosen, strict=True))
+            for chosen in itertools.product(vectors, repeat=len(names))
+        )
+        solve = self.axiom.solve
+        if solve is not None and len(names) > 1:
+            assignments = self._solved(dim, bindings, names, vectors, solve)
         out: list[TemplateMatch] = []
-        for chosen in itertools.product(vectors, repeat=len(names)):
+        for assignment in assignments:
             try:
-                changed = self.with_values(diagram, match, dict(zip(names, chosen, strict=True)))
+                changed = self.with_values(diagram, match, assignment)
             except (RewriteDomainError, RewriteGrammarError, ArithmeticError, ValueError):
                 continue
             if changed != match and changed not in out:
                 out.append(changed)
         return tuple(out)
+
+    @staticmethod
+    def _solved(
+        dim: Dim,
+        bindings: Mapping[str, object],
+        names: Sequence[str],
+        vectors: Sequence[PhaseVector],
+        solve: Callable[[Dim, Bindings], Bindings | None],
+    ) -> Iterator[dict[str, object]]:
+        """Assignments with the first free variable over ``vectors`` and the rest solved,
+        enumerated over ``vectors`` where :attr:`TemplateAxiom.solve` leaves them open."""
+        first, rest = names[0], names[1:]
+        for vector in vectors:
+            try:
+                solved = solve(dim, {**bindings, first: vector})
+            except (RewriteDomainError, ArithmeticError, ValueError, ZeroDivisionError):
+                solved = None
+            if solved is not None:
+                yield {first: vector, **solved}
+                continue
+            for chosen in itertools.product(vectors, repeat=len(rest)):
+                yield {first: vector, **dict(zip(rest, chosen, strict=True))}
 
     def with_values(self, diagram: Diagram, match: Match, values: Bindings) -> TemplateMatch:
         """``match`` with its free variables set to ``values``; raises unless it verifies."""
