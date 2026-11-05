@@ -399,9 +399,25 @@ algebraic numbers. So D1 and D2 are joined by a derivation of the same rules at 
 matches whose free values are all algebraic numbers, and a search that enumerates every
 match with free values drawn, by iterative deepening on a bound K, from the first K elements
 of an enumeration of the algebraic numbers (depth at most K, K = 1, 2, ...) terminates with a
-proof on every such pair. The engine does not implement that search: its scalars (exact
-Gaussian rationals, roots of unity, radicals, symbols) do not represent every algebraic
-number, and its equality of scalars is sound but not complete.
+proof on every such pair.
+
+    prove exhaustive algebraic [against] [TARGET]
+
+is that search (PROOFS.txt, section 3.3): round K searches both sides to depth K with every
+free weight-vector variable also at every vector of algebraic numbers of level at most K, and
+compares diagrams by their values in canonical form (rational or CRootOf of the minimal
+polynomial), which decides equality of algebraic numbers. Termination theorem: for bang-box-free
+diagrams D1 and D2 at concrete dimensions with algebraic parameters and equal
+interpretations, prove exhaustive algebraic returns a proof. Proof: by section 4 a derivation
+exists; by the transfer above one exists of the same rules and matches whose free values are
+algebraic, say of length n with every free value's entries of level at most m; every step is
+then a match the round K = max(n, m) enumerates, so the start side of that round reaches a
+diagram with the same values as D2, which the canonical comparison identifies with D2. Each
+round is finite (finitely many matches, finitely many vectors per free variable). Pruning
+within a side uses the comparison view, so a diagram is dropped only for an isomorphic one with
+the same parameter representation. Premises used about the rules: the patterns enumerate every
+match of every rule, and a free value enters as a vector of coefficients (weights), which the
+built side and the later rules read through its coefficients.
 
 
 7. LIMITS

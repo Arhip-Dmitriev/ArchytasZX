@@ -88,7 +88,9 @@ The rule system itself is complete where [P1] and [P2] are: for diagrams without
 concrete dimensions, any two that denote the same map are joined by a derivation from the
 registered rules (COMPLETENESS.txt). That is derivability, not decision: the decision
 procedures above stay sound and incomplete, and the exhaustive mode of prove searches for
-such derivations without bound.
+such derivations without bound; its algebraic variant, which also draws free values from the
+algebraic numbers, returns a proof on every equal pair with algebraic parameters, given time
+(COMPLETENESS.txt, section 6).
 
 4.5 Every proof can be re-checked
 
@@ -127,11 +129,12 @@ hypotheses.
   - The dimension unifier defers equations with several solution branches, such as
     d1*d2 == 6 or d^n == d^m; such equalities become recorded assumptions.
   - A rule restricted to prime dimensions does not fire at a symbolic dimension.
-  - Some proof steps have no Lean lemma yet; they are listed in LEAN.txt, section 9. This
-    includes the rules of the complete axiomatisation marked U in COMPLETENESS.txt, section 3,
-    and weighted spiders at a symbolic dimension.
+  - Every rule of the complete axiomatisation has a Lean lemma; the remaining Lean limits are
+    listed in LEAN.txt, section 9.
   - The completeness of the rule system holds at concrete dimensions without bang boxes; the
-    exhaustive search may not return on inputs it cannot join.
+    exhaustive search may not return on inputs it cannot join by enumerated steps, and its
+    algebraic variant is guaranteed to return only for algebraic parameters, at a cost that
+    grows quickly with the level of the values it needs.
   - The Python API is not yet stable between releases.
 
 

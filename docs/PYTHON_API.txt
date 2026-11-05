@@ -177,7 +177,8 @@ written Z(1 -> 1).
   azx.NAME = P                        stores P as @NAME
   azx.load(P)                         makes P the current diagram
   azx.decide(A, B)                    decide A against B
-  azx.prove(A, B, exhaustive=False)   prove A against B
+  azx.prove(A, B, exhaustive=False,   prove A against B (algebraic: prove exhaustive algebraic)
+            algebraic=False)
   azx.check(A, B, NAME=VALUE, ...)    numeric check of A against B
   azx.lean([FILE])                    certificate lean [FILE]
   azx.kernel()                        certificate kernel

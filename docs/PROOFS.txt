@@ -142,7 +142,8 @@ sides.
 3.2 Exhaustive search
 
     prove_exhaustive(start, goal, *, refute=True, samples=None, max_samples=24,
-                     tolerance=1e-9, max_elements=10_000_000, on_layer=None) -> ProofOutcome
+                     tolerance=1e-9, max_elements=10_000_000, on_layer=None,
+                     algebraic=False) -> ProofOutcome
 
 prove_exhaustive runs steps 1 and 2 of prove, then archytaszx.rewrite.exhaustive
 .exhaustive_search: a breadth-first search from start and from goal at once over every rule
@@ -156,6 +157,22 @@ converses (every rule but 2.22 and 2.28 has one). A meeting gives an ordinary Pr
 prove's are. There is no depth cap and no time limit; when both sides close without meeting
 the outcome is NOT_FOUND. COMPLETENESS.txt, section 6, states for which inputs it terminates.
 In the shell: prove exhaustive [against] [TARGET].
+
+3.3 Search over algebraic values
+
+    prove_exhaustive(start, goal, ..., algebraic=True) -> ProofOutcome
+
+runs archytaszx.rewrite.exhaustive.algebraic_search instead: rounds K = 1, 2, ..., each a search
+of the kind of 3.2 from both sides to depth K, in which every free weight-vector variable of a
+rule (the splits and insertions of the converses) also takes every vector whose entries are
+algebraic numbers of level at most K (archytaszx.algebra.algebraic: rationals by height, roots
+of unity by order, Gaussian rationals, then roots of irreducible integer polynomials by degree
+plus largest coefficient). Diagrams are compared by algebraic_view (normal_form): every spider
+parameter as weights and the scalar, each value in canonical form (a rational or CRootOf of its
+minimal polynomial), so equal values compare equal. Both diagrams need concrete dimensions and
+algebraic parameters (ProveGrammarError otherwise). Each round is finite; the rounds are not
+bounded. COMPLETENESS.txt, section 6, states the termination theorem. In the shell: prove
+exhaustive algebraic [against] [TARGET].
 
 
 4. INDUCTION OVER MULTIPLICITIES: archytaszx.semantics.induction

@@ -4,7 +4,7 @@ ARCHYTASZX DOCUMENTATION
 Layer A: Symbolic Algebra
 
 Applies to: ArchytasZX 2.0.x
-Package: archytaszx.algebra (modules dimension, phase, scalar)
+Package: archytaszx.algebra (modules dimension, phase, scalar, algebraic)
 
 
 1. PURPOSE
@@ -191,8 +191,8 @@ A vector without weights is stored, compared, hashed and printed exactly as befo
 4.1 The model
 
 A Scalar is an exact complex number built from Gaussian rationals, roots of unity
-omega_d^j = e^{2*pi*i*j/d} (d and j possibly symbolic), powers of dimensions and free symbols.
-Scalars are closed under sum, product, integer power and complex conjugation.
+omega_d^j = e^{2*pi*i*j/d} (d and j possibly symbolic), powers of dimensions, algebraic numbers
+written CRootOf(p, i) (section 5) and free symbols. Scalars are closed under sum, product, integer power and complex conjugation.
 
 The standing rule of this module is that nothing quotients a global factor: s and 2*s are
 unequal, s and omega_d*s are unequal, and there is no method, public or private, that makes
@@ -248,3 +248,24 @@ floors, a least value above |c|; it is how facts such as "d >= 3" enter a compar
 Errors: ScalarDomainError (numeric evaluation of a symbolic scalar, zero denominator, zero to a
 negative power), ScalarGrammarError (inexact input), ScalarSumError (a malformed index sum),
 ScalarBudgetError (simplification budget exceeded).
+
+
+5. ALGEBRAIC NUMBERS: archytaszx.algebra.algebraic
+--------------------------------------------------
+
+canonical(expr) is the canonical form of an algebraic number without free symbols: a rational;
+a Gaussian rational a + b i as CRootOf of its primitive minimal polynomial, index 0 when b < 0
+and 1 otherwise; any other number as CRootOf(p, i), p its primitive minimal polynomial with
+positive leading coefficient and i the root's index in sympy's root order, found as the unique
+root within a third of the least root separation at rising precision. Two algebraic numbers are
+equal exactly when their canonical forms are identical. canonical_scalar and canonical_vector
+apply it to a Scalar and to every coefficient of a phase vector (giving a weight vector, at a
+concrete dimension). NotAlgebraicError (a ValueError) marks free symbols or a value without a
+minimal polynomial.
+
+level(n) lists the numbers of level n: rationals of height n (max(|p|, q)), primitive roots of
+unity of order n, a + b i with b != 0 and n - 1 the larger height of a and b, and the roots of
+irreducible integer polynomials of degree D >= 2 and largest coefficient H with D + H = n. Every
+algebraic number has a level; algebraic_numbers() lists each once, by level; up_to_level(K) is
+every number of level at most K, as scalars. The exhaustive search over algebraic values
+(PROOFS.txt, section 3.3) draws its free values from up_to_level.

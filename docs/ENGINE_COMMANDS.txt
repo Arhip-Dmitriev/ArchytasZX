@@ -116,13 +116,16 @@ equal, unequal or unknown, with the method that settled it and the oracle summar
 
 2.10 prove
 
-    prove [exhaustive] [against] [TARGET]
+    prove [exhaustive [algebraic]] [against] [TARGET]
 
 Searches for a derivation between the two diagrams by bidirectional tactic search, certifies
 and checks it; when no path is found and a multiplicity is free, tries induction (PROOFS.txt,
 section 3). The proof is stored and can be shown, kernel-checked and exported. With
 exhaustive, the search is the fair breadth-first search over every registered rule of
-PROOFS.txt, section 3.2, with no bound: it may not return (COMPLETENESS.txt, section 6).
+PROOFS.txt, section 3.2, with no bound: it may not return (COMPLETENESS.txt, section 6). With
+exhaustive algebraic, the search is the iterative deepening over algebraic values of PROOFS.txt,
+section 3.3, for diagrams at concrete dimensions with algebraic parameters: it returns on every
+equal pair, given time.
 
 2.11 induct
 
