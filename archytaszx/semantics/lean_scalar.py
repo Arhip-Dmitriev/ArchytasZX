@@ -357,6 +357,20 @@ class Scalars:
                 proof = self.nonzero(inner_atom)
                 relations.append((inner * s - 1, f"(mul_inv_cancel₀ {proof})"))
                 queue += [a for a in atoms if a not in before]
+        for root, base, other in ((2, 8, 7), (3, 12, 11)):
+            if Rt(sp.Integer(root)) not in atoms:
+                continue
+            for atom in list(atoms):
+                if isinstance(atom, Om) and atom.args[0].is_Integer and atom.args[0] % base == 0:
+                    m = int(atom.args[0])
+                    q = m // base
+                    s = atoms[atom]
+                    relations.append(
+                        (
+                            atoms[Rt(sp.Integer(root))] - s**q - s ** (other * q),
+                            f"(rt_sub{root} {m} {q} (by norm_num) (by norm_num))",
+                        )
+                    )
         for atom in list(atoms):
             if atom.is_Pow and atom.args[1].free_symbols and isinstance(atom.args[0], Inv):
                 inner = atom.args[0].args[0]
