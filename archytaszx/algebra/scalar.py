@@ -144,11 +144,12 @@ def _check_sum_structure(expr: sp.Sum) -> None:
 def _check_scalar_domain(expr: sp.Expr) -> None:
     """Reject an expression outside the scalar grammar.
 
-    The grammar is: exact numbers, ``I``, sympy's named constants, symbols, and sums,
+    The grammar is: exact numbers, ``I``, sympy's named constants, algebraic numbers as
+    ``CRootOf``, symbols, and sums,
     products, powers and ``exp``/``conjugate`` applications of these. A transcendental
     function (``log``, ``sin``) or any other head is rejected.
     """
-    if expr.is_Number or expr is sp.I or expr.is_NumberSymbol:
+    if expr.is_Number or expr is sp.I or expr.is_NumberSymbol or isinstance(expr, sp.CRootOf):
         return
     if expr.is_Symbol:
         _check_symbol_name(str(expr.name), allow_reserved=True)
