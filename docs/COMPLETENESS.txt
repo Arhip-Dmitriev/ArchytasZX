@@ -128,8 +128,7 @@ converse.
   K0     zxw_k0 (zxw_k0_converse)                          y  y  L/L   kCopy
   K1     zxw_k1 (zxw_k1_converse)                          y  y  L/L   kOne; concrete d
   K2     zxw_k2 (zxw_k2_converse)                          y  y  L/L   zcK2; concrete d;
-                                                                       a_{d-j} != 0; some
-                                                                       scalars U (LEAN.txt G10)
+                                                                       a_{d-j} != 0
   Zer    zxw_zer (zxw_zer_converse)                        y  y  L/L   zcZer
   P1     zxw_p1, zxw_p1_multiplier (both _converse)        y  y  L/L   fourierSq,
                                                                        fourierSq'; fourierMult
@@ -180,9 +179,8 @@ converse.
   D1     qf_d1 (qf_d1_converse)                            y  y  L/L   qfD1, spiderF2; concrete d
                                                                        for weighted boxes
   S1     qf_s1                                             y  y  L     qfS1, qfS1c, zz_join;
-                                                                       concrete dims; every leg
-                                                                       joined: weighted boxes
-                                                                       only; no converse
+                                                                       concrete dims; no
+                                                                       converse
                                                                        (section 7)
   DZX    qf_dzx (qf_dzx_converse)                          y  y  L/L   qfDZX, dzInVal, dzOutVal
   TA     qf_ta (qf_ta_converse)                            y  y  L/L   qfTA, taNet, ta_id
@@ -379,6 +377,31 @@ exhaustive mode finds a proof of every equality of bang-box-free diagrams at con
 established: it holds for the inputs above, and would hold for all equal inputs if every lemma
 the normal-form procedures apply right to left had a derivation of enumerated steps at every
 d. That is open.
+
+Orientation. Free values occur only in converses (splits and insertions); every forward rule
+takes its values from the match, and the reverse of a converse step is an enumerated step of
+the forward rule. So every step of a derivation has an enumerated direction, and the search
+finds exactly the derivations of shape D1 ->* N <-* D2 with every arrow enumerated. Both
+[P1] and [P2] prove completeness by rewriting each side into the unique normal form of its
+interpretation, so the open part is whether every diagram reaches its normal form by
+enumerated steps.
+
+Algebraic values. Let D1 and D2 be equal bang-box-free diagrams at concrete dimensions whose
+parameters are algebraic numbers. Fix any derivation D1 = D2 (section 4) and read its free
+values as unknowns x. Every diagram of the derivation has values that are rational
+functions of x over the field of the inputs, and the derivation is valid exactly when a finite
+system holds: each step's side conditions (products and sums of entries equal, entries zero or
+not, a root of unity of a fixed order), the equality of the last diagram's values with
+those of D2, and the product of the step scalars being 1, all polynomial equations and inequations in the real and imaginary parts of x.
+The system has a complex solution, the given derivation. By Tarski's transfer principle (the
+real algebraic numbers are an elementary substructure of the reals) it has a solution in
+algebraic numbers. So D1 and D2 are joined by a derivation of the same rules at the same
+matches whose free values are all algebraic numbers, and a search that enumerates every
+match with free values drawn, by iterative deepening on a bound K, from the first K elements
+of an enumeration of the algebraic numbers (depth at most K, K = 1, 2, ...) terminates with a
+proof on every such pair. The engine does not implement that search: its scalars (exact
+Gaussian rationals, roots of unity, radicals, symbols) do not represent every algebraic
+number, and its equality of scalars is sound but not complete.
 
 
 7. LIMITS

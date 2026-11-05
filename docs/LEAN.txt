@@ -405,8 +405,7 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
                                  taLegVal, ta_id       number of legs; the converse through
                                                        the forward rule)
   qf_s1                          qfS1, qfS1c, zz_join, _qf_s1 (concrete dimensions, any legs
-                                 mix_ok, MixOK         and joins; closed steps of weighted
-                                                       boxes by qfS1c)
+                                 mix_ok, MixOK         and joins; closed steps by qfS1c)
   spider_fusion (weighted X)     xcFusion              _fusion
   zxw_hd                         zxwHD, chainsVal,     _zxw_hd (both directions; the converse
                                  chainsClosed,         by LocalEq.flip')
@@ -439,8 +438,7 @@ the pink dot's dimension), with mixZc for a Z or weighted Z box and mix2, mix3 f
 legs; qfDD, qfBZW, qfDZX, qfTA and qfS1 are built on it, qfE and qfK0 directly.
 connective_inverse_converse is proved through its forward rule at composite dimensions (a prime
 wire has no factorisation, so no instance). A qf_s1 step that joins every leg (its right side a
-scalar) is proved by qfS1c when both boxes are weighted Z boxes; with a plain Z box it is an
-unproved axiom. binder_definition with only some of its legs bent (an adapter absorbed into a
+scalar) is proved by qfS1c, for weighted and plain (phased) Z boxes. binder_definition with only some of its legs bent (an adapter absorbed into a
 neighbouring spider) is proved by bindDefP.
 
 G2 Evaluated quadratic Gauss sums. The simplifier closes sum_{k<d} omega_d^(a k^2 + b k + c)
@@ -472,16 +470,14 @@ G8 Nodes whose legs differ in dimension (d^p against d^q), in families: covered 
 identification of G7 (the exponent symbols are binders with positivity hypotheses); the
 statement is over the diagrams with d^q read as d^p, not at their own dimensions.
 
-G9 Steps of proved rules outside their lemma's form: a qf_s1 step joining every leg of a Z box
-of kind Z (a closed scalar) is outside qfS1c's builder, which takes weighted boxes. Every rule of
-the complete axiomatisation has a rule lemma.
+G9 Steps outside a rule lemma's form: none known. Every rule of the complete axiomatisation has
+a rule lemma; a step its builder does not cover would fall back to an unproved axiom.
 
 G10 Normaliser exports on phased diagrams: a closing identity between roots of unity written in
 different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does
 not identify; a symCheck whose decide does not reduce in the kernel for 8 nodes. The scalar
-prover of rule builders likewise leaves some identities between square roots and roots of unity
-unproved (sqrt 3 against om 12, sqrt 2 against om 8), which turns those zxw_k2 steps into
-unproved axioms.
+prover of rule builders relates sqrt 2 and sqrt 3 to roots of unity of order divisible by 8 and
+12 (rt_sub2, rt_sub3); other square roots of naturals stay independent of the roots of unity.
 
 G11 Exports without a diagram statement: a box-free derivation whose assumed equality changes a
 boundary dimension's index (4.4), and a network whose wire labels are not consecutive, keep
@@ -493,8 +489,9 @@ and phase rule); a weight rule the scalar model cannot write raises NetUnsupport
 such nodes are unproved axioms. Weighted X spiders are exported as Kind.XW.
 
 G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
-of isoB) are decided in the kernel first (decide +kernel), and a step's closing isoB names its
-target network instead of writing it out, so the elaborator does not unfold and compare it. With
-both, zxw_vw and zxw_hd steps up to d = 6 and qf_hd_converse and zxw_hd_converse steps up to d =
-5 check. Larger dimensions were not measured.
+of isoB) are decided in the kernel first (decide +kernel); a step's closing isoB names its target
+network and is applied by refine before its condition is decided; exports set maxRecDepth to
+100000. zxw_hd, zxw_hd_converse, qf_hd, qf_hd_converse and zxw_vw steps check up to d = 7 (a
+zxw_hd step at d = 7 in 185 s; the converse's closing isomorphism takes longest, about 20
+minutes at d = 6); larger dimensions were not measured.
 
