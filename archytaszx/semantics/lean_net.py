@@ -1403,7 +1403,8 @@ class _Export:
                 raise
             pairs = _perm_to_bijection({x: y for x, y in m.items() if x in set(current.summed)})
             final = self.iso_term(k, current, b.net, pairs, b.name)
-        lines.append(f"exact {final}")
+        head = final.removesuffix(" (by chk)")
+        lines += [f"refine {head} ?_", "chk"] if head != final else [f"exact {final}"]
         return lines
 
     # whole export
@@ -2318,6 +2319,7 @@ class _Export:
             "open ArchytasZX",
             "",
             "set_option linter.unusedVariables false",
+            "set_option maxRecDepth 100000",
             "set_option linter.unusedTactic false",
             "set_option linter.unreachableTactic false",
             "",
@@ -5093,7 +5095,6 @@ def _qf_s1_closed(
 ) -> _Spec:
     """qf_s1 with every leg joined: the boxes as the scalar of their entries' products."""
     _need(all(leg.v in joined for leg in (*la, *lb)), "S1 closed legs")
-    _need(ma.kind == mb.kind == "ZW", "S1 closed weighted boxes")
 
     def num(idx: int) -> int:
         e = c.ex.dim_exprs[idx]
@@ -5117,11 +5118,21 @@ def _qf_s1_closed(
         f"⟨rfl, {_CHK}, {_CHK}, {_CHK}, (by intro l hl; fin_cases hl <;> "
         f"exact ⟨by pos, by phz, by chk, by chk, by chk⟩)⟩"
     )
-    hs = (
-        f"(by simp only [{unfold}, Δ, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, "
-        "mul_one, Finset.sum_range_succ, Finset.sum_range_zero, zero_add]; "
-        "(conv_rhs => simp [labDim, labs, List.lookup, Δ, zc, Ψ, ex_zero]); ring)"
+    head = (
+        f"simp only [{unfold}, Δ, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil, "
+        "mul_one, Finset.sum_range_succ, Finset.sum_range_zero, zero_add]"
     )
+    if ma.kind == mb.kind == "ZW":
+        hs = f"(by {head}; (conv_rhs => simp [labDim, labs, List.lookup, Δ, zc, Ψ, ex_zero]); ring)"
+    else:
+        low_all = min(low, num(ma.dim), num(mb.dim))
+        rws = "; ".join(f"all_goals {r}" for r in _coef_rewrites(c, [ma, mb], range(low_all)))
+        body = _coef_case(c, k_model, rt_a * rt_b * total, [])
+        hs = (
+            f"(by simp only [zc, show {c.env}.dimv {ma.dim} = {num(ma.dim)} from rfl, "
+            f"Finset.sum_range_succ, Finset.sum_range_zero, zero_add]; {rws}; {head}; "
+            f"(conv_rhs => simp [labDim, labs, List.lookup, Δ]); {body})"
+        )
     lemma = (
         f"qfS1c {c.env} {lits_a} {lits_b} {_zc(ma)} {_zc(mb)} {_list(joined)} IFACE _ {ok} {ok} "
         f"(by simp) {_chks(5)} {_chks(2)} {hs}"
