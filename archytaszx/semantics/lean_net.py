@@ -1036,9 +1036,10 @@ class _Export:
         b: Labelled,
         negated: bool = False,
         env: str = "",
+        label: str = "",
     ) -> None:
         """The theorem ``name`` restated on the diagrams ``a`` and ``b`` themselves, at the
-        environment ``env`` or the export's own."""
+        environment ``env`` or the export's own, named ``label`` or ``name_diagrams``."""
         if a.source is None or b.source is None or (self.alias and not self.wire_alias):
             return
         la = self.diagram_literal(a.source, a.net, a.name)
@@ -1065,7 +1066,7 @@ class _Export:
         body = "by\n" + "\n".join(lines)
         self.decls.append(
             "/-- The theorem on the engine's diagrams, through the proved translation "
-            f"`DEqual_iff`. -/\ntheorem {name}_diagrams :\n    {head} := {body}"
+            f"`DEqual_iff`. -/\ntheorem {label or name + '_diagrams'} :\n    {head} := {body}"
         )
 
     @staticmethod
@@ -1550,7 +1551,23 @@ class _Export:
             ),
         ]
         pairs_ab = ((theorem.lhs, fa), (theorem.rhs, fb))
-        if self.family or not all(self.own_check(dg, labs_f, net) for dg, net in pairs_ab):
+        if self.family:
+            return
+        if not all(self.own_check(dg, labs_f, net) for dg, net in pairs_ab):
+            self.wire_alias = True
+            try:
+                self.diagram_theorem(
+                    inner,
+                    _join(self.binders, self.hyps),
+                    _join(self.args, self.hyp_args),
+                    sl,
+                    start,
+                    sr,
+                    goal,
+                    label=f"{outer}_diagrams",
+                )
+            finally:
+                self.wire_alias = False
             return
         lit_a = self.diagram_literal(theorem.lhs, fa, f"{start.name}F", own=True)
         lit_b = (

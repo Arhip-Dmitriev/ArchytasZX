@@ -235,8 +235,9 @@ Dimension equalities a rewrite assumed (deferred constraints) become hypotheses 
 theorem; the proof is carried out over the merged network and transported to the diagrams' own
 dimensions (Equal.of_mapDim'). main_diagrams then states DEqual over the diagrams at their own
 dimensions, with the same hypotheses, when their boundary dimension indices agree; DEqual
-compares indices, so a goal whose boundary carries the other of two dimensions assumed equal
-keeps the statement over networks. A node whose legs differ in dimension, such as d^p and d^q, is
+compares indices, so for a goal whose boundary carries the other of two dimensions assumed
+equal, main_diagrams states DEqual over the diagrams read through the identification of those
+dimensions (D.mapDim (dimMap dimIds), as for a wire below), from the merged theorem mainM. A node whose legs differ in dimension, such as d^p and d^q, is
 proved under the hypothesis d^p = d^q. The shell reports every such condition.
 
 A wire of the start or goal that joins two dimensions (a diagram that is well formed only when
@@ -479,9 +480,11 @@ not identify; a symCheck whose decide does not reduce in the kernel for 8 nodes.
 prover of rule builders relates sqrt 2 and sqrt 3 to roots of unity of order divisible by 8 and
 12 (rt_sub2, rt_sub3); other square roots of naturals stay independent of the roots of unity.
 
-G11 Exports without a diagram statement: a box-free derivation whose assumed equality changes a
-boundary dimension's index (4.4), and a network whose wire labels are not consecutive, keep
-their statement over networks only.
+G11 Exports without a diagram statement: a network whose wire labels are not consecutive keeps
+its statement over networks only (no input producing one is known). A box-free derivation whose
+assumed equality changes a boundary dimension's index (4.4) ends in a diagram statement with the
+assumed-equal dimensions identified (dimIds), beside the network theorem at the diagrams' own
+dimensions.
 
 G12 Weighted spiders at a symbolic dimension: the coefficient table Ψ is the weight entries
 over the weight rule (a function of the index k), times e^{2πi} of the spider's phases (entries
