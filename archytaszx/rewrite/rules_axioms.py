@@ -156,10 +156,7 @@ def shifted_vector(pv: PhaseVector | None, j: int, dim: Dim) -> PhaseVector | No
     pivot = values[(-j) % r]
     if pivot.is_zero or sp.simplify(pivot.to_sympy()) == 0:
         raise RewriteDomainError("k_j(a) needs a_{-j} != 0")
-    out = [
-        Scalar(sp.nsimplify(values[(k - j) % r].to_sympy() / pivot.to_sympy(), rational=False))
-        for k in range(r)
-    ]
+    out = [values[(k - j) % r] * pivot**-1 for k in range(r)]
     return from_coefficients(out, dim)
 
 
