@@ -47,6 +47,8 @@ nowhere else. ``F`` is symmetric, so ``F^dagger = conj(F)``.
 ``out == 0 and in >= 1``, built in closed integer form. ``W`` has ``W[0][0][0] = 1`` and,
 for ``i`` in ``1..d-1``, ``W[0][i][i] = W[i][0][i] = 1``, everything else ``0``.
 
+The discard ``G`` has no pure denotation; :func:`denote` refuses it.
+
 Guards. :func:`denote` raises a typed error, allocating nothing, when any port dimension or
 the phase vector is not concrete, the phase vector's dimension disagrees with the leg
 dimension, an ``ALL_LEGS_EQUAL`` generator's legs differ, the generator name is unregistered,
@@ -65,6 +67,7 @@ from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
     FOURIER_BOX,
+    MIXED_ONLY,
     REGISTRY,
     TRIANGLE,
     TRIANGLE_INVERSE,
@@ -360,6 +363,11 @@ def denote(node: Node) -> np.ndarray:
             "never on a name alone"
         )
     name = node.generator_type.name
+    if name in MIXED_ONLY:
+        raise DenoteGrammarError(
+            f"node {node.id!r} is a discard ({name}), which has no pure denotation; denote "
+            "the doubled diagram archytaszx.diagram.mixed.double(diagram) instead"
+        )
     if name in (DIM_BINDER.name, DIM_SPLITTER.name):
         return _connective_tensor(node)
     d = resolve_dimension(node)
@@ -382,3 +390,22 @@ def denote(node: Node) -> np.ndarray:
     raise DenoteGrammarError(
         f"node {node.id!r} has generator type {name!r}, which denote() does not know how to denote"
     )
+
+
+def denote_mixed(diagram: object) -> np.ndarray:
+    """The CPM of a concrete mixed diagram as a tensor ``T[o, o', i, i']``: the contraction of
+    ``double(diagram)``, its plain outputs, conjugate outputs, plain inputs and conjugate
+    inputs each grouped into one axis under the pairing convention."""
+    from archytaszx.diagram.graph import Diagram
+    from archytaszx.diagram.mixed import double
+    from archytaszx.semantics.contract_numeric import contract
+
+    if not isinstance(diagram, Diagram):
+        raise DenoteGrammarError(f"denote_mixed takes a Diagram, got {type(diagram).__name__}")
+    tensor = contract(double(diagram)).tensor
+    no = len(diagram.boundary_outputs)
+    ni = len(diagram.boundary_inputs)
+    shape = tensor.shape
+    out = int(np.prod(shape[:no])) if no else 1
+    inp = int(np.prod(shape[2 * no : 2 * no + ni])) if ni else 1
+    return np.asarray(tensor.reshape(out, out, inp, inp))

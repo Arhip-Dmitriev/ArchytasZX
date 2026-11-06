@@ -27,6 +27,9 @@
 6. ``INDUCTION``: a recursively decided base case plus a proved step case on one
    multiplicity index.
 
+Mixed operands (a discard on either side, or ``mixed=True``) are ``DOUBLED``: the ladder runs
+unchanged on both doubled diagrams, the settling rung recorded as ``inner_method``.
+
 ``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
 counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form match
 needs rung 3 to find no mismatch before it is reported; ``DEFERRED`` dimension constraints its
@@ -47,7 +50,7 @@ import enum
 import itertools
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 import numpy as np
@@ -59,6 +62,7 @@ from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols, instantiate_symbol
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, PortRef
+from archytaszx.diagram.mixed import double, is_pure
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationReport
 from archytaszx.rewrite.engine import DEFAULT_GUARD, TerminationGuard
@@ -126,6 +130,7 @@ class DecisionMethod(enum.Enum):
     INDUCTION = "induction"
     ORACLE_COUNTEREXAMPLE = "oracle_counterexample"
     SYMBOLIC_WITNESS = "symbolic_witness"
+    DOUBLED = "doubled"
     NONE = "none"
 
 
@@ -154,6 +159,8 @@ class Decision:
     induction_reversed: bool = False
     saturation: SaturationReport | None = None
     witness: EntryWitness | None = None
+    inner_method: DecisionMethod | None = None
+    doubled: tuple[Diagram, Diagram] | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -913,14 +920,40 @@ def decide_equal(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     use_saturation: bool = True,
     saturation_limits: SaturationLimits = DECIDE_SATURATION_LIMITS,
+    mixed: bool = False,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols.
 
     Runs the module docstring's ladder; ``samples`` replaces :func:`sample_grid` for the
     oracle rung and, cut to its symbols, for the induction base case; ``max_depth`` bounds
     nested induction; ``rules`` also replaces the saturation rung's default rules. The
-    induction step is tried left-to-right, then right-to-left.
+    induction step is tried left-to-right, then right-to-left. When either side has a
+    discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
+    is ``DOUBLED``, the rung that settled it in ``inner_method``.
     """
+    if mixed or not (is_pure(left) and is_pure(right)):
+        doubled = (double(left), double(right))
+        inner = decide_equal(
+            *doubled,
+            rules=rules,
+            guard=guard,
+            samples=samples,
+            max_samples=max_samples,
+            use_symbolic=use_symbolic,
+            use_induction=use_induction,
+            max_depth=max_depth,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
+        )
+        return replace(
+            inner,
+            method=DecisionMethod.DOUBLED,
+            inner_method=inner.method,
+            doubled=doubled,
+            reason=f"doubled, {inner.method.value}: {inner.reason}",
+        )
     _check_args(
         left,
         right,

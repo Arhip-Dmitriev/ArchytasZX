@@ -24,14 +24,18 @@ supplied value overrides that binding, so the oracle can spot-check a diagram at
 other than the one its user typed. Only a symbol neither source supplies is refused, never
 defaulted.
 
-Comparison modes. Exactly two, and ``EXACT`` is the default everywhere;
-``UP_TO_GLOBAL_PHASE`` is opt-in, never inferred. ``EXACT`` requires matching shapes and
+Comparison modes. ``EXACT`` is the default everywhere; ``UP_TO_GLOBAL_PHASE`` and
+``UP_TO_POSITIVE_SCALAR`` are opt-in, never inferred. ``EXACT`` requires matching shapes and
 entrywise agreement within ``tolerance``, including the overall scalar.
 ``UP_TO_GLOBAL_PHASE`` asks whether some unit-modulus ``lambda`` has ``b == lambda * a``;
 ``lambda`` is recovered from ``a``'s largest-magnitude entry and then verified against the
 whole tensor. A recovered ``lambda`` with ``|lambda| != 1`` is a non-match: a rescaling by
 2 is not a global phase, and this mode is not an up-to-scale escape hatch. All-zero tensors
-match each other; one zero and one nonzero never match.
+match each other; one zero and one nonzero never match. ``UP_TO_POSITIVE_SCALAR`` recovers
+``lambda`` the same way and requires it to be a positive real.
+
+Mixed operands. :func:`compare` on a diagram with a discard compares the doubled diagrams of
+both sides; there ``UP_TO_GLOBAL_PHASE`` is run as ``EXACT``, the two coinciding on CPMs.
 
 Tolerance is a single explicit parameter defaulting to ``1e-9``, an absolute entrywise
 bound, with no path that silently loosens it.
@@ -57,7 +61,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -203,6 +207,7 @@ class EqualityMode(enum.Enum):
 
     EXACT = "exact"
     UP_TO_GLOBAL_PHASE = "up_to_global_phase"
+    UP_TO_POSITIVE_SCALAR = "up_to_positive_scalar"
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +220,7 @@ class ComparisonResult:
     reason: str
     max_abs_deviation: float
     recovered_lambda: complex | None = None
+    doubled: bool = False
 
 
 def compare_tensors(
@@ -249,16 +255,21 @@ def compare_tensors(
             mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation
         )
 
-    if mode is EqualityMode.UP_TO_GLOBAL_PHASE:
-        return _compare_up_to_global_phase(a, b, tolerance=tolerance)
+    if mode in (EqualityMode.UP_TO_GLOBAL_PHASE, EqualityMode.UP_TO_POSITIVE_SCALAR):
+        return _compare_up_to_global_phase(a, b, tolerance=tolerance, mode=mode)
 
     raise CheckGrammarError(f"unknown equality mode {mode!r}")
 
 
 def _compare_up_to_global_phase(
-    a: np.ndarray, b: np.ndarray, *, tolerance: float
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    tolerance: float,
+    mode: EqualityMode = EqualityMode.UP_TO_GLOBAL_PHASE,
 ) -> ComparisonResult:
-    mode = EqualityMode.UP_TO_GLOBAL_PHASE
+    """``b == lambda a`` with ``|lambda| = 1`` (global phase) or ``lambda > 0`` (positive
+    scalar), ``lambda`` recovered at ``a``'s largest entry."""
     if a.size == 0:
         return ComparisonResult(
             mode=mode, matched=True, reason="both tensors are empty", max_abs_deviation=0.0
@@ -286,6 +297,32 @@ def _compare_up_to_global_phase(
     b_entry = complex(b[idx])
     lam = b_entry / a_entry
     deviation = float(np.max(np.abs(b - lam * a)))
+
+    if mode is EqualityMode.UP_TO_POSITIVE_SCALAR:
+        if abs(lam.imag) > tolerance or lam.real <= tolerance:
+            return ComparisonResult(
+                mode=mode,
+                matched=False,
+                reason=f"recovered factor {lam} is not a positive real",
+                max_abs_deviation=deviation,
+                recovered_lambda=lam,
+            )
+        matched = deviation <= tolerance
+        reason = (
+            f"tensors agree up to the positive scalar {lam.real}"
+            if matched
+            else (
+                f"max abs deviation {deviation} after removing the scalar {lam.real} exceeds "
+                f"tolerance {tolerance}"
+            )
+        )
+        return ComparisonResult(
+            mode=mode,
+            matched=matched,
+            reason=reason,
+            max_abs_deviation=deviation,
+            recovered_lambda=lam,
+        )
 
     if abs(abs(lam) - 1.0) > tolerance:
         return ComparisonResult(
@@ -401,6 +438,20 @@ def compare(
     an interface mismatch is reported as its own non-match result rather than surfacing as
     a numeric deviation. See the module docstring.
     """
+    from archytaszx.diagram.mixed import double, is_pure  # local: mixed imports bangbox
+
+    if not (is_pure(diagram_a) and is_pure(diagram_b)):
+        exact = mode is EqualityMode.UP_TO_GLOBAL_PHASE
+        result = compare(
+            double(diagram_a),
+            double(diagram_b),
+            assignment,
+            mode=EqualityMode.EXACT if exact else mode,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
+        note = "; on CPMs UP_TO_GLOBAL_PHASE coincides with EXACT" if exact else ""
+        return replace(result, reason=f"doubled: {result.reason}{note}", doubled=True)
     instantiated_a = instantiate(diagram_a, assignment)
     instantiated_b = instantiate(diagram_b, assignment)
     result_a = contract(instantiated_a, max_elements=max_elements)

@@ -15,11 +15,12 @@
 export to Lean 4.
 
 A :class:`Theorem` states ``lhs = rhs`` for diagrams, every free multiplicity universally
-quantified over the naturals. Only the rules below construct one:
+quantified over the naturals; for diagrams with a discard, equality of their CPMs. Only the
+rules below construct one:
 
 * :func:`refl` -- ``d = d``;
 * :func:`rule` -- ``d = d'`` for one recorded rewrite step, re-applied by the engine at a
-  match the matcher rediscovers in ``d``;
+  match the matcher rediscovers in ``d``; a pure rule's step may consume no discard;
 * :func:`iso` -- ``a = b`` when their comparison views are isomorphic;
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
 * :func:`induction` -- ``start = goal`` from a base theorem at index 0, a theorem exposing
@@ -56,6 +57,7 @@ from dataclasses import dataclass, field
 
 from archytaszx.diagram.bangbox import free_mult_symbols
 from archytaszx.diagram.compare import isomorphic
+from archytaszx.diagram.generators import MIXED_ONLY
 from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
@@ -151,7 +153,15 @@ def refl(d: Diagram) -> Theorem:
 
 
 def rule(d: Diagram, step: RewriteStep) -> Theorem:
-    """``d = d'`` by re-applying ``step`` to ``d`` at its rediscovered match."""
+    """``d = d'`` by re-applying ``step`` to ``d`` at its rediscovered match; a step of a pure
+    rule must consume no discard."""
+    from archytaszx.rewrite.rules_discard import MIXED_RULES
+
+    if step.rule_name not in MIXED_RULES and any(
+        n in d.nodes and d.nodes[n].generator_type.name in MIXED_ONLY
+        for n in step.consumed_node_ids
+    ):
+        raise KernelError(f"the pure rule {step.rule_name} consumes a discard")
     failure, after = _replay_one(d.copy(), 0, step, True)
     if failure is not None:
         raise KernelError(failure)
@@ -425,7 +435,10 @@ class _Lean:
             return "rfl"
         if inf.kind == "rule":
             note = f"rule {inf.rule}" + (f" at {inf.detail}" if inf.detail else "")
-            return self.axiom("ax", note, binders, self.call(t.lhs), self.call(t.rhs))
+            stem = "ax"
+            if inf.rule is not None and inf.rule.startswith("discard_"):
+                stem = f"unproved_DISCARD_{inf.rule.removeprefix('discard_')}_"
+            return self.axiom(stem, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind == "iso":
             note = "isomorphic comparison views"
             return self.axiom("iso", note, binders, self.call(t.lhs), self.call(t.rhs))

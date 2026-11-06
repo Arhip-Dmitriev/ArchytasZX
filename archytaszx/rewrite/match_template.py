@@ -21,11 +21,11 @@ axiom forwards matches the left side and builds the right; its converse matches 
 side and builds the left.
 
 Matching is subgraph matching up to the symmetry of each generator's legs: every leg of a Z
-spider is interchangeable, in either direction; an X spider's inputs among themselves and its
-outputs among themselves; a W node's outputs. Port-ordered generators (F, T, Ti, B, S) match
-port for port. An open node may carry further legs (its rest), which the built side hands to
-the node its side names. Every matched node lies outside every bang box and every matched leg
-carries the anchor's dimension exactly.
+spider is interchangeable, in either direction, and so is the one leg of a discard; an X
+spider's inputs among themselves and its outputs among themselves; a W node's outputs.
+Port-ordered generators (F, T, Ti, B, S) match port for port. An open node may carry further
+legs (its rest), which the built side hands to the node its side names. Every matched node
+lies outside every bang box and every matched leg carries the anchor's dimension exactly.
 
 A node's parameter is a :class:`Param`: :class:`Var` binds the host's phase vector, a fixed
 vector must equal it, :class:`Kj` recognises the phase vector K_j = (j k / d turns)_k and
@@ -51,6 +51,8 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.generators import (
+    DISCARD,
+    MIXED_ONLY,
     W_NODE,
     X_SPIDER,
     Z_SPIDER,
@@ -393,7 +395,7 @@ def _groups(gen: GeneratorType, ins: int, outs: int) -> dict[str, list[tuple[Dir
     inputs = [(Direction.INPUT, i) for i in range(ins)]
     outputs = [(Direction.OUTPUT, i) for i in range(outs)]
     name = gen.name
-    if name == Z_SPIDER.name:
+    if name in (Z_SPIDER.name, DISCARD.name):
         return {"legs": inputs + outputs}
     if name in (X_SPIDER.name, W_NODE.name):
         return {"in": inputs, "out": outputs}
@@ -408,7 +410,7 @@ _OPEN_GROUPS = {Z_SPIDER.name: ("legs",), X_SPIDER.name: ("in", "out"), W_NODE.n
 
 def _group_of(gen: GeneratorType, direction: Direction, index: int) -> str:
     name = gen.name
-    if name == Z_SPIDER.name:
+    if name in (Z_SPIDER.name, DISCARD.name):
         return "legs"
     if name in (X_SPIDER.name, W_NODE.name):
         return "in" if direction is Direction.INPUT else "out"
@@ -785,6 +787,8 @@ class TemplatePattern(Pattern):
             boundary = [*diagram.boundary_inputs, *diagram.boundary_outputs]
             for ref in sorted(boundary, key=_ref_key):
                 if ref.node_id in boxed or any(template.nodes) or _has_arities(self.axiom):
+                    continue
+                if diagram.nodes[ref.node_id].generator_type.name in MIXED_ONLY:
                     continue
                 node = diagram.nodes[ref.node_id]
                 dim = node.legs(ref.direction)[ref.index].dim
@@ -1215,7 +1219,7 @@ def _build(diagram: Diagram, axiom: TemplateAxiom, match: TemplateMatch) -> Buil
             for i in range(count):
                 tport = (tnode.key, d, i)
                 direction = d
-                if tnode.gen.name == Z_SPIDER.name and tport in wanted:
+                if tnode.gen.name in (Z_SPIDER.name, DISCARD.name) and tport in wanted:
                     direction = wanted[tport]
                 legs.append((direction, tport))
         received = [ref for key in receivers.get(tnode.key, ()) for ref in rest.get(key, ())]

@@ -1163,3 +1163,14 @@ def _drop_scope(working: Diagram, scope: frozenset[NodeId]) -> None:
     for node_id in sorted(scope):
         if node_id in working.nodes:
             working.remove_node(node_id)
+
+
+def contract_mixed_symbolic(
+    diagram: Diagram, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS
+) -> SymbolicTensor:
+    """The CPM of a mixed diagram, formal in every dimension and multiplicity: the symbolic
+    contraction of its doubled diagram, axes plain outputs, conjugate outputs, plain inputs,
+    conjugate inputs."""
+    from archytaszx.diagram.mixed import double  # local: mixed imports bangbox
+
+    return contract_symbolic(double(diagram), max_steps=max_steps)

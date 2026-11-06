@@ -1,0 +1,149 @@
+AXIOMS OF THE DISCARD CONSTRUCTION
+==================================
+
+paper.pdf and src/ below are in references/Papers/carette2019mixed/ (downloaded, not tracked).
+
+Source: [CJPV] T. Carette, E. Jeandel, S. Perdrix, R. Vilmart, "Completeness of graphical
+languages for mixed states quantum mechanics", ICALP 2019, LIPIcs 132, 108:1-108:15;
+arXiv:1902.07143 (v1, the only arXiv version; paper.pdf, 22 pages; LaTeX source
+src/article-arxiv.tex, TikZ sources src/figures/*.tikz). The journal version (ACM TQC 2021)
+was not fetched; every statement below is read from the arXiv source.
+
+Read from: src/article-arxiv.tex, sections 3 "The Discard Construction" (lines 576-866),
+4 "Application to the ZX-Calculus and other graphical languages" (lines 867-1166), the
+appendix "Proofs" (lines 1530-1708), and the TikZ files named below.
+
+
+1. CONVENTIONS OF THE PAPER
+---------------------------
+
+Diagrams are read top to bottom; the discard symbol is drawn below the wire it ends. The
+categories are dagger symmetric monoidal (dagger-SMC); a dagger-CC is a dagger compact
+closed category. Qubit is the full subcategory of FHilb on the objects C^(2^n). An isometry
+is f with f^dagger . f = 1.
+
+
+2. THE CONSTRUCTION (section 3.1)
+---------------------------------
+
+  Definition (C_iso). The subcategory of C with the same objects and the isometries as
+  morphisms.
+
+  Definition (affine completion C^!). C with one added morphism T_A : A -> I per object A,
+  such that T_B . f = T_A for every f in C_iso[A, B].
+
+  Definition (C^ground). The pushout of C <- C_iso -> (C_iso)^!. Its morphisms are diagrams
+  of morphisms of C and of (C_iso)^!, up to the equations of both and i^!(f) = i_iso(f) for
+  every isometry f.
+
+  Definition (discard). ground_A := the image of T_A in C^ground. For every isometry
+  f : A -> B, ground_B . f = ground_A ("any isometry is causal").
+
+
+3. RESULTS (section 3.2, 3.3, 4; proofs in the appendix)
+--------------------------------------------------------
+
+  Lemma (lem:pur). Every f in C^ground[A, B] has a purification: an X and f' in
+  C[A, B (x) X] with f = (1_B (x) ground_X) . f'. Proof: push every discard to the bottom
+  right by naturality of the symmetry.
+
+  Definition. f : A -> B (x) X and g : A -> B (x) Y are related, f ~iso g, when there are
+  isometries u : X -> Z, v : Y -> Z with (1 (x) u) . f = (1 (x) v) . g; ~iso+ is its
+  transitive closure.
+
+  Lemma (lem:unicity). f ~iso+ g iff (1 (x) ground_X) . f = (1 (x) ground_Y) . g.
+
+  Lemma (lem:inclu). ~iso+ is contained in ~cp, the CPM equivalence (f ~cp g iff
+  f_* (x) f = g_* (x) g after tracing the environment).
+
+  Definition (enough isometries). C has enough isometries when ~cp = ~iso+.
+
+  Lemma (thm:cpenv). For a dagger-SMC C the following are equivalent: (1) C has enough
+  isometries; (2) C^ground is an environment structure for C; (3) C^ground is equivalent to
+  CPM(C).
+
+  Proposition (lem:CPFH). FHilb^ground is an environment structure for FHilb, and
+  ~iso+ = ~iso. Proof: Stinespring dilation gives the isometries u, v.
+
+  Proposition (lem:CPQ). Qubit^ground is an environment structure for Qubit. Proof: in the
+  FHilb proof, post-compose u and v with an isometry C^m -> C^(2^n) so that their codomain is
+  an object of Qubit.
+
+  Proposition (lem:CPS). Stab^ground is an environment structure for Stab.
+
+  Proposition (lem:CPC). (Clifford+T)^ground is not an environment structure for Clifford+T:
+  the scalars 1 + 2i and 1 - 2i are ~cp but not ~iso+.
+
+  Lemma (lem:Fis). If F is faithful and F_iso : C_iso -> D_iso is surjective, then
+  F(f) ~iso+ F(g) implies f ~iso+ g.
+
+  Theorem (thm:ground). Let C, D be dagger-SMCs and F : C -> D a dagger-SMC functor. If F is
+  faithful and F_iso : C_iso -> D_iso is surjective, then F^ground : C^ground -> D^ground is
+  faithful. If furthermore F is surjective then F^ground is surjective and faithful.
+
+  Corollary (cor:ground). Given a dagger-CC C with enough isometries, if G is a dagger-CC
+  universal complete graphical language for C then G^ground is a universal complete language
+  for CPM(C).
+
+  The recipe (text after cor:ground). G^ground is presented by one new generator (ground)
+  and one equation ground . D = ground per isometry D of G; given a spanning set of the
+  isometries, one equation per element of the set suffices.
+
+
+4. THE DISCARD AXIOMS OF THE ZX-CALCULUS (section 4.1)
+------------------------------------------------------
+
+Spanning set of the qubit isometries used: (e^{i alpha}, |0>, H, R_Z(alpha), CNot)
+[Nielsen and Chuang]. Five axioms (figures ground-phase, ground-ket-0, ground-H-no-label,
+ground-gn-no-label, ground-cnot-no-label):
+
+  ground-phase   LHS: the scalar e^{i alpha}, drawn as a red pi state into a green alpha
+                 effect next to a red and a green node joined by three wires (the scalar
+                 normalisation). RHS: the empty diagram.
+  ground-ket-0   LHS: the red phaseless state (|0> up to the drawn normalisation, a red and
+                 a green node joined by three wires) followed by a discard. RHS: the empty
+                 diagram.
+  ground-H       LHS: H on a wire, then a discard. RHS: a discard.
+  ground-gn      LHS: the green spider alpha (1 -> 1), then a discard. RHS: a discard.
+  ground-cnot    LHS: CNot (green (1 -> 2) on the control, red (2 -> 1) on the target, one
+                 wire between them), both outputs discarded. RHS: two discards.
+
+The pi/2 fragment (Stab) takes the same five axioms with alpha restricted to multiples of
+pi/2. For Clifford+T the construction is strictly coarser than CPM (lem:CPC); left open.
+
+Section 4.2 (ZW), spanning set (e^{i alpha}, |1>, R_Z(alpha), H, CZ . SWAP); figures
+ground-zw-phase, ground-zw-ket-1, ground-zw-ghz, ground-zw-h, ground-fermionic-swap:
+the scalar e^{i alpha} is empty; a discarded black |1> state is empty; a discard after the
+white phase node e^{i alpha} is a discard; a discard after the ZW gadget for H (with its
+scalar 1/sqrt 2) is a discard; two discards after the fermionic crossing are two discards.
+
+Section 4.3 (ZH), spanning set (e^{i alpha}, |0>, H, R_Z(alpha), CZ); figures
+ground-ZH-phase, ground-ZH-ket-0, ground-ZH-H, ground-ZH-RZ, ground-ZH-CZ: the H box
+e^{i alpha} (no legs) is empty; a discarded red state is empty; a discard after the H box
+(with an H box 1/sqrt 2 scalar) is a discard; a discard after a green node carrying an H box
+e^{i alpha} is a discard; two discards after CZ (two green nodes joined through an H box)
+are two discards.
+
+
+5. QUDIT AND QUFINITE ANALOGUES REGISTERED IN THE ENGINE
+-------------------------------------------------------
+
+[CJPV] is stated for qubit languages only. The engine registers, in
+archytaszx/rewrite/rules_discard.py, the equation ground . V = ground for the qudit analogue of
+each element of the ZX spanning set, through the mapping of docs/COMPLETENESS.txt, section 2,
+and for the [P2] connectives:
+
+  ZX axiom       engine rule         engine diagram of V
+  -------------  ------------------  ----------------------------------------------------
+  ground-phase   (scalar convention) a mixed scalar is compared by modulus (docs/MIXED.txt)
+  ground-ket-0   discard_zero        the pink dot state (X (0 -> 1) times d^(-1/2)), |0>
+  ground-H       discard_fourier     F
+  ground-gn      discard_spider      Z (1 -> n), n >= 1, phases only (n = 1: R_Z(alpha))
+  ground-cnot    discard_cx          Z (1 -> 2) into pink (2 -> 1), the qudit CX
+  -              discard_binder      B (s, t), unitary s (x) t -> st
+  -              discard_splitter    S (s, t), unitary st -> s (x) t
+  -              discard_loop        ground joined to ground: the CPM scalar d
+
+discard_spider for n >= 2 and discard_loop are consequences of the others; they are
+registered as single steps. Whether the analogues form a spanning set of the qudit and
+qufinite isometries is docs/MIXED.txt, section 6.

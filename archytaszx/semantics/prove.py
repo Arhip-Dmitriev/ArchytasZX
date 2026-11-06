@@ -37,6 +37,17 @@ When search finds no path and a multiplicity is free, :func:`prove` tries an
 peeled successor at ``k + 1`` is searched until a union of its regions is that side at ``k``,
 the hypothesis replaces it by the other side at ``k``, and the result is proved against the
 other side's peeled successor. :func:`check_proof` rebuilds and re-checks every piece.
+
+Mixed operands (a discard on either side). :func:`prove` first searches with the discard rules
+added (:func:`~archytaszx.rewrite.tactics.mixed_moves`) and returns a :class:`MixedCertificate`
+of kind ``NATIVE`` holding the checked single-sheet proof. Otherwise, and in
+:func:`prove_exhaustive`, it proves the doubled diagrams of both sides with the pure
+machinery and returns a :class:`MixedCertificate` of kind ``DOUBLED`` in
+:attr:`ProofOutcome.mixed`: both mixed diagrams, their doubled diagrams with the origin of
+every node, and the inner pure proof, which is also
+:attr:`ProofOutcome.certificate` or :attr:`ProofOutcome.induction`. :func:`check_mixed`
+re-doubles both sides, requires them identical id for id to the stored doubled diagrams, and
+checks the inner proof.
 """
 
 from __future__ import annotations
@@ -44,7 +55,7 @@ from __future__ import annotations
 import enum
 import functools
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from archytaszx.algebra.dimension import DimensionError
@@ -60,6 +71,7 @@ from archytaszx.diagram.bangbox import (
 from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, NodeId
+from archytaszx.diagram.mixed import Origin, double_with_origin, is_pure
 from archytaszx.diagram.validate import ValidateError, validate
 from archytaszx.rewrite.cache import RewriteCache
 from archytaszx.rewrite.exhaustive import (
@@ -576,6 +588,162 @@ def _check_whole_induction(
     )
 
 
+class MixedKind(enum.Enum):
+    """How a :class:`MixedCertificate` proves its mixed equality."""
+
+    DOUBLED = "doubled"
+    NATIVE = "native"
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class MixedCertificate:
+    """A proof that two mixed diagrams are equal.
+
+    ``DOUBLED``: ``inner`` proves ``start_doubled`` equal to ``goal_doubled``, the doubled
+    diagrams of ``start`` and ``goal``, whose nodes map back to them through the origins.
+    ``NATIVE``: ``inner`` is a proof between ``start`` and ``goal`` themselves.
+    """
+
+    kind: MixedKind
+    start: Diagram
+    goal: Diagram
+    inner: ProofCertificate | InductionProof
+    start_doubled: Diagram | None = None
+    goal_doubled: Diagram | None = None
+    start_origin: Mapping[NodeId, Origin] | None = None
+    goal_origin: Mapping[NodeId, Origin] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the kind, the diagrams and the inner proof."""
+        if not isinstance(self.kind, MixedKind):
+            raise ProveGrammarError(f"kind must be a MixedKind, got {self.kind!r}")
+        if not isinstance(self.inner, (ProofCertificate, InductionProof)):
+            raise ProveGrammarError("inner must be a ProofCertificate or InductionProof")
+        doubled = (self.start_doubled, self.goal_doubled)
+        if self.kind is MixedKind.DOUBLED and not all(isinstance(d, Diagram) for d in doubled):
+            raise ProveGrammarError("a DOUBLED certificate needs both doubled diagrams")
+
+    @property
+    def length(self) -> int:
+        """The number of steps of the inner proof."""
+        return self.inner.length
+
+
+def check_mixed(
+    certificate: MixedCertificate,
+    *,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    max_samples: int = 24,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+) -> ProofCheck:
+    """Check ``certificate``: re-double both sides against the stored doubled diagrams, then
+    :func:`check_proof` the inner proof."""
+    if not isinstance(certificate, MixedCertificate):
+        raise ProveGrammarError(
+            f"certificate must be a MixedCertificate, got {type(certificate).__name__}"
+        )
+    if certificate.kind is MixedKind.DOUBLED:
+        for side, stored in (
+            (certificate.start, certificate.start_doubled),
+            (certificate.goal, certificate.goal_doubled),
+        ):
+            assert stored is not None
+            redone = double_with_origin(side).diagram
+            same = compare_structure(redone, stored)
+            if not same.identical:
+                return ProofCheck(
+                    False,
+                    f"re-doubling differs from the stored diagram: {same.reason}",
+                    None,
+                    None,
+                    False,
+                    0,
+                    None,
+                    None,
+                )
+    inner = check_proof(
+        certificate.inner,
+        samples=samples,
+        max_samples=max_samples,
+        tolerance=tolerance,
+        max_elements=max_elements,
+    )
+    if not inner.verified:
+        return inner
+    return replace(inner, reason=f"{certificate.kind.value}: {inner.reason}")
+
+
+def _native_outcome(
+    start: Diagram,
+    goal: Diagram,
+    moves: Sequence[Tactic] | None,
+    limits: SearchLimits,
+    bidirectional: bool,
+    cache: RewriteCache | None,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    tolerance: float,
+    max_elements: int,
+) -> ProofOutcome | None:
+    """A ``NATIVE`` proof of two mixed diagrams by search with the discard rules, checked;
+    None when the interface differs, search finds no path or the check fails."""
+    from archytaszx.rewrite.tactics import mixed_moves
+
+    if interface_reason(start, goal) is not None:
+        return None
+    found = search(
+        start,
+        goal,
+        moves=mixed_moves() if moves is None else moves,
+        limits=limits,
+        bidirectional=bidirectional,
+        cache=cache,
+    )
+    if found.path is None:
+        return None
+    certificate = certify_proof(found.path)
+    check = _check(certificate, True, None, samples, max_samples, tolerance, max_elements)
+    if not check.verified:
+        return None
+    mixed = MixedCertificate(MixedKind.NATIVE, start, goal, certificate)
+    return ProofOutcome(
+        ProofStatus.PROVED,
+        f"native: proved in {certificate.length} step(s), {len(certificate.forward.steps)} "
+        f"forward and {len(certificate.backward.steps)} backward; {check.reason}",
+        certificate=certificate,
+        check=check,
+        search=found,
+        assumptions=certificate.assumptions,
+        mixed=mixed,
+    )
+
+
+def _doubled_outcome(
+    start: Diagram, goal: Diagram, prover: Callable[[Diagram, Diagram], ProofOutcome]
+) -> ProofOutcome:
+    """``prover`` on the doubled diagrams of ``start`` and ``goal``, wrapped as ``DOUBLED``."""
+    left = double_with_origin(start)
+    right = double_with_origin(goal)
+    outcome = prover(left.diagram, right.diagram)
+    inner = outcome.certificate if outcome.certificate is not None else outcome.induction
+    mixed = (
+        None
+        if inner is None or outcome.status is not ProofStatus.PROVED
+        else MixedCertificate(
+            MixedKind.DOUBLED,
+            start,
+            goal,
+            inner,
+            left.diagram,
+            right.diagram,
+            left.origin,
+            right.origin,
+        )
+    )
+    return replace(outcome, reason=f"doubled: {outcome.reason}", mixed=mixed)
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class ProofOutcome:
     """A :func:`prove` verdict, its reason, and the evidence behind it."""
@@ -588,6 +756,7 @@ class ProofOutcome:
     counterexample: Mapping[str, CheckAssignmentValue] | None = None
     assumptions: tuple[DimensionConstraint, ...] = ()
     induction: InductionProof | None = None
+    mixed: MixedCertificate | None = None
 
     def __post_init__(self) -> None:
         """Validate every field's type, in declaration order."""
@@ -752,6 +921,38 @@ def prove(
         invalid = _invalid_reason(value)
         if invalid is not None:
             raise ProveGrammarError(f"{name} {invalid}")
+    if not (is_pure(start) and is_pure(goal)):
+        native = _native_outcome(
+            start,
+            goal,
+            moves,
+            limits,
+            bidirectional,
+            cache,
+            samples,
+            max_samples,
+            tolerance,
+            max_elements,
+        )
+        if native is not None:
+            return native
+        return _doubled_outcome(
+            start,
+            goal,
+            functools.partial(
+                prove,
+                moves=moves,
+                limits=limits,
+                bidirectional=bidirectional,
+                cache=cache,
+                refute=refute,
+                samples=samples,
+                max_samples=max_samples,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                induction_depth=induction_depth,
+            ),
+        )
 
     interface = interface_reason(start, goal)
     if interface is not None:
@@ -854,6 +1055,21 @@ def prove_exhaustive(
         if invalid is not None:
             raise ProveGrammarError(f"{name} {invalid}")
     _check_oracle_args(samples, max_samples, tolerance, max_elements)
+    if not (is_pure(start) and is_pure(goal)):
+        return _doubled_outcome(
+            start,
+            goal,
+            functools.partial(
+                prove_exhaustive,
+                refute=refute,
+                samples=samples,
+                max_samples=max_samples,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                on_layer=on_layer,
+                algebraic=algebraic,
+            ),
+        )
     interface = interface_reason(start, goal)
     if interface is not None:
         return ProofOutcome(ProofStatus.REFUTED, f"interfaces never agree: {interface}")

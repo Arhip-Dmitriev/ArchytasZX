@@ -471,11 +471,17 @@ dimension is not a match.
 def lookup_rule(name: str) -> Rule:
     """Resolve a rule name back to its :class:`Rule`.
 
-    Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` if ``name`` is not in
-    :data:`RULES`.
+    Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` if ``name`` is neither in
+    :data:`RULES` nor a discard rule of :mod:`archytaszx.rewrite.rules_discard`.
     """
     try:
         return RULES[name]
+    except KeyError:
+        pass
+    from archytaszx.rewrite.rules_discard import MIXED_RULES  # local: it imports this module
+
+    try:
+        return MIXED_RULES[name]
     except KeyError:
         raise RewriteGrammarError(f"no such rule: {name!r}") from None
 

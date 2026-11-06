@@ -28,8 +28,8 @@ dims equals the product of the output dims, an empty side having product ``Dim.c
 Leg policy is likewise a value object (:class:`LegPolicy`), so a validation report can name
 *which* policy a node's leg count violates.
 
-Registered here: ``"Z"``, ``"X"``, ``"F"``, ``"T"``, ``"Ti"``, ``"W"``, ``"B"``, ``"S"``. No
-bang box is defined here.
+Registered here: ``"Z"``, ``"X"``, ``"F"``, ``"T"``, ``"Ti"``, ``"W"``, ``"B"``, ``"S"``, and the
+discard ``"G"``, which has no pure denotation. No bang box is defined here.
 """
 
 from __future__ import annotations
@@ -75,13 +75,15 @@ class LegPolicy:
     """How many input and output legs a generator type permits.
 
     ``min_inputs`` and ``min_outputs`` are inclusive lower bounds; ``None`` for
-    ``max_inputs`` or ``max_outputs`` means unbounded.
+    ``max_inputs`` or ``max_outputs`` means unbounded. ``total_legs``, when set, is the exact
+    number of legs in both directions together.
     """
 
     min_inputs: int = 0
     max_inputs: int | None = None
     min_outputs: int = 0
     max_outputs: int | None = None
+    total_legs: int | None = None
 
     def __post_init__(self) -> None:
         """Validate that the bounds are non-negative integers with min <= max."""
@@ -105,10 +107,19 @@ class LegPolicy:
                 raise GeneratorDomainError(
                     f"{name} ({bound}) must be >= corresponding min ({value})"
                 )
+        if self.total_legs is not None:
+            if isinstance(self.total_legs, bool) or not isinstance(self.total_legs, int):
+                raise GeneratorGrammarError(
+                    f"total_legs must be an int or None, got {self.total_legs!r}"
+                )
+            if self.total_legs < 0:
+                raise GeneratorDomainError(f"total_legs must be >= 0, got {self.total_legs}")
 
     def allows(self, num_inputs: int, num_outputs: int) -> bool:
         """True iff the given input and output leg counts satisfy this policy."""
         if num_inputs < self.min_inputs or num_outputs < self.min_outputs:
+            return False
+        if self.total_legs is not None and num_inputs + num_outputs != self.total_legs:
             return False
         if self.max_inputs is not None and num_inputs > self.max_inputs:
             return False
@@ -279,6 +290,18 @@ DIM_SPLITTER = GeneratorType(
 )
 """The dimension splitter: one input of dim s*t into two outputs of dims s, t."""
 
+DISCARD = GeneratorType(
+    name="G",
+    leg_policy=LegPolicy(max_inputs=1, max_outputs=1, total_legs=1),
+    phase_schema=PhaseSchema.NONE,
+    dimension_policy=DimensionPolicy.ALL_LEGS_EQUAL,
+)
+"""The discard (ground): one leg of any dimension, as an input the trace effect, as an output
+the unnormalised maximally mixed state. Denoted only through doubling."""
+
+MIXED_ONLY: frozenset[str] = frozenset({DISCARD.name})
+"""Names of the generators that have no pure denotation."""
+
 REGISTRY.register(Z_SPIDER)
 REGISTRY.register(X_SPIDER)
 REGISTRY.register(FOURIER_BOX)
@@ -287,3 +310,4 @@ REGISTRY.register(TRIANGLE_INVERSE)
 REGISTRY.register(W_NODE)
 REGISTRY.register(DIM_BINDER)
 REGISTRY.register(DIM_SPLITTER)
+REGISTRY.register(DISCARD)

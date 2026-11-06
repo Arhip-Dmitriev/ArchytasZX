@@ -18,6 +18,11 @@
 :class:`~archytaszx.rewrite.engine.RewriteResult`, and keys the result by the
 :func:`~archytaszx.diagram.compare.canonical_key` of its :func:`comparison_view`.
 
+:func:`normal_form` on a diagram with a discard runs :func:`mixed_normal_form_rules`, the
+discard rules first, so every discard is pushed through the isometries those rules absorb
+before the pure part is normalised; a mixed diagram's :func:`comparison_view` carries the
+scalar ``c * conj(c)``, the CPM scalar.
+
 :attr:`NormalForm.diagram` is the exact strategy output, so the recorded results replay onto
 it id for id. :func:`comparison_view` sorts each Z and X spider's legs per direction, clears
 the parameter environment and replaces the scalar by its
@@ -188,12 +193,22 @@ def _canonical_legs(diagram: Diagram) -> Diagram:
 
 def comparison_view(diagram: Diagram) -> Diagram:
     """A copy of ``diagram`` with Z and X spider legs in canonical order, an empty parameter
-    environment and a simplified scalar."""
+    environment and a simplified scalar; for a mixed diagram, the scalar ``c * conj(c)``."""
+    from archytaszx.diagram.mixed import is_pure  # local: mixed imports bangbox
+
     _require_diagram("comparison_view: diagram", diagram)
     view = _canonical_legs(diagram).copy()
     view.set_parameters({})
-    view.set_scalar(_simplified(view.scalar))
+    scalar = view.scalar if is_pure(view) else view.scalar * view.scalar.conjugate()
+    view.set_scalar(_simplified(scalar))
     return view
+
+
+def mixed_normal_form_rules() -> tuple[Rule, ...]:
+    """The forward discard rules, then :func:`normal_form_rules`."""
+    from archytaszx.rewrite.rules_discard import DISCARD_AXIOMS, MIXED_RULES
+
+    return (*(MIXED_RULES[a.name] for a in DISCARD_AXIOMS), *normal_form_rules())
 
 
 def algebraic_view(diagram: Diagram) -> Diagram:
@@ -236,10 +251,15 @@ def normal_form(
     guard: TerminationGuard = DEFAULT_GUARD,
     cache: RewriteCache | None = None,
 ) -> NormalForm:
-    """Reduce ``diagram`` under ``rules`` (default :func:`normal_form_rules`) to a fixpoint."""
+    """Reduce ``diagram`` under ``rules`` to a fixpoint; by default :func:`normal_form_rules`,
+    or :func:`mixed_normal_form_rules` for a diagram with a discard."""
+    from archytaszx.diagram.mixed import is_pure  # local: mixed imports bangbox
+
     _require_diagram("normal_form: diagram", diagram)
     if rules is None:
-        rule_set: tuple[Rule, ...] = normal_form_rules()
+        rule_set: tuple[Rule, ...] = (
+            normal_form_rules() if is_pure(diagram) else mixed_normal_form_rules()
+        )
     else:
         if isinstance(rules, (str, bytes)) or not isinstance(rules, Sequence):
             raise RewriteGrammarError(

@@ -573,6 +573,20 @@ def default_moves() -> tuple[Tactic, ...]:
     return (normalize(), *rewrite_tactics())
 
 
+def mixed_moves() -> tuple[Tactic, ...]:
+    """The moves for a diagram with a discard: the fixpoint of
+    :func:`~archytaszx.rewrite.normal_form.mixed_normal_form_rules`, then one :func:`rule`
+    tactic per discard rule and per :func:`~archytaszx.rewrite.egraph.saturation_rules`
+    entry."""
+    from archytaszx.rewrite.normal_form import mixed_normal_form_rules
+    from archytaszx.rewrite.rules_discard import MIXED_RULES
+
+    return (
+        _Fixpoint(mixed_normal_form_rules(), DEFAULT_GUARD, "normalize_mixed"),
+        *rewrite_tactics((*MIXED_RULES.values(), *saturation_rules())),
+    )
+
+
 class SearchStatus(enum.Enum):
     """How :func:`search` ended."""
 
