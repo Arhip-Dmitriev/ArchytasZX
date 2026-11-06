@@ -1,0 +1,10 @@
+# Measuring |0> in the Fourier basis and forgetting the outcome gives the maximally mixed
+# state, for every qudit dimension d.
+
+load
+  x = X(0 -> 1)
+  x -> m = X(1 -> 2)
+  m.out1 -> G
+  outputs m.out0
+  scalar d^(-1/2)
+decide against maxmixed[d]

@@ -1,0 +1,12 @@
+loaded dsl input
+Tr_env[ (sqrt(d)) sum_{k0,q1,j1i0,j1o0=0}^{d-1} d^{-3/2} w_{d}^{q1 (j1o0 - j1i0 - k0)} |k0, j1o0><k0, j1i0| ], env = outputs 1, 2
+decide: equal by doubled: doubled, symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: of the doubled diagrams (DOUBLED)
+proof: re-checkable; certificate kernel / certificate lean
+prove: proved: native: proved in 1 step(s), 1 forward and 0 backward; both halves replay and meet; no oracle mismatch in 4 sample(s)
+proof by search with the discard rules (NATIVE); certificate emits it
+emitted certificate: proof, 1 step
+lean: the doubled diagrams' equality, which is the CPMs' (MIXED.txt, 2.3)
+kernel: (d) sum_{k0,k2,q1,q3,j1i0,j1o0,j3i0=0}^{d-1} d^{-3/2} w_{d}^{q1 (j1o0 - j1i0 - k0)} d^{-3/2} w_{d}^{q3 (j1o0 - j3i0 - k2)} [k0 = k2] <k0, j1i0, k2, j3i0| = sum_{k0,k1=0}^{d-1} <k0, k1, k0, k1| for every dimension and phase, by the normal form of symbolic sums
+lean: tensor-network semantics, the normal form computed by the Lean kernel
+lean: wrote causality_cx.lean

@@ -1,0 +1,5 @@
+loaded dsl input
+Tr_env[ (d) sum_{k0,k2,k4,k5,k9,q1,q8,j6o0,j7o0,j10o0,j11o0=0}^{d-1} d^{-3/2} w_{d}^{q1 (k4 - k2 - k0)} d^{-1/2} w_{d}^{k5 k0} d^{-1/2} w_{d}^{j6o0 k2} d^{-1/2} w_{d}^{j7o0 j6o0} d^{-3/2} w_{d}^{q8 (k9 - j7o0 - k4)} d^{-1/2} w_{d}^{j10o0 k9} d^{-1/2} w_{d}^{j11o0 j10o0} d^{-1/2} w_{d}^{k5 j11o0} |k9, k4, k5><k0| ], env = outputs 2, 3
+decide: equal by doubled: doubled, symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: of the doubled diagrams (DOUBLED)
+proof: re-checkable; certificate kernel / certificate lean

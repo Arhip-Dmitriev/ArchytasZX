@@ -1,0 +1,12 @@
+loaded dirac input
+Tr_env[ sum_{k0,k1=0}^{d-1} [k0 = k1] |k1, k0, k1><k0| ], env = outputs 2, 3
+decide: equal by doubled: doubled, symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: of the doubled diagrams (DOUBLED)
+proof: re-checkable; certificate kernel / certificate lean
+prove: proved: native: proved in 2 step(s), 2 forward and 0 backward; both halves replay and meet; no oracle mismatch in 4 sample(s)
+proof by search with the discard rules (NATIVE); certificate emits it
+emitted certificate: proof, 2 steps
+lean: the doubled diagrams' equality, which is the CPMs' (MIXED.txt, 2.3)
+kernel: sum_{k0,k1,k2,k3=0}^{d-1} [k0 = k1] [k0 = k2] [k1 = k3] [k2 = k3] |k1, k3><k0, k2| = sum_{k0,k1=0}^{d-1} [k0 = k1] |k0, k1><k0, k1| for every dimension and phase, by the normal form of symbolic sums
+lean: tensor-network semantics, the normal form computed by the Lean kernel
+lean: wrote dephase_idempotent.lean

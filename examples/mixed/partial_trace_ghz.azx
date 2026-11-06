@@ -1,0 +1,28 @@
+# Partial trace of qudit GHZ states, for every qudit dimension d: tracing one leg of the Bell
+# state, or three legs of the 4-qudit GHZ state, leaves the maximally mixed state id/d. Over
+# the qudit count, induct checks the schema at n = 0..3 (docs/MIXED.txt, section 8).
+
+load
+  b = Z(0 -> 2)
+  b -> G
+  scalar d^(-1/2)
+decide against maxmixed[d]
+prove against maxmixed[d]
+certificate lean partial_trace_bell.lean
+
+load
+  g = Z(0 -> 4)
+  g.out1 -> G
+  g.out2 -> G
+  g.out3 -> G
+  scalar d^(-1/2)
+decide against maxmixed[d]
+prove against maxmixed[d]
+
+load
+  count n
+  g = Z(0 -> 3)
+  g.out1 -> G
+  repeat n: g.out2 -> G
+  scalar d^(-1/2)
+induct on n d=3 against maxmixed[d]

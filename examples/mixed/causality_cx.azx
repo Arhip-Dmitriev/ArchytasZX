@@ -1,0 +1,14 @@
+# Causality: discarding both outputs of the qudit CX (Z (1 -> 2) into X (2 -> 1), scalar
+# d^(1/2)) is discarding both inputs, for every qudit dimension d.
+
+load
+  c = Z(1 -> 2)
+  t = X(2 -> 1)
+  wire c.out1 -- t.in1
+  c.out0 -> G
+  t.out0 -> G
+  inputs c.in0, t.in0
+  scalar d^(1/2)
+decide against discard[d] (x) discard[d]
+prove against discard[d] (x) discard[d]
+certificate lean causality_cx.lean

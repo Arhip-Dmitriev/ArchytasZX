@@ -1,0 +1,34 @@
+# Qudit teleportation as a CPM, for every qudit dimension d. The input and one half of a Bell
+# pair go through CX and F; the two measured wires are dephased (Z (1 -> 2) with one copy
+# discarded) and their other copies control the corrections on the second half: the antipode
+# F^2, the shift X (2 -> 1), the phase Z (1 -> 2) . F^3. The channel is the identity.
+
+load
+  za = Z(1 -> 2)
+  xb = X(2 -> 1)
+  bell = Z(0 -> 2)
+  wire za.out1 -- xb.in1, bell.out0 -- xb.in0
+  fa = F
+  wire za.out0 -- fa.in0
+  mb = Z(1 -> 2)
+  ma = Z(1 -> 2)
+  wire xb.out0 -- mb.in0, fa.out0 -- ma.in0
+  gb = G
+  ga = G
+  wire mb.out0 -- gb.in0, ma.out0 -- ga.in0
+  c1 = F
+  c2 = F
+  c1 -> c2
+  xc = X(2 -> 1)
+  wire bell.out1 -- c1.in0, c2.out0 -- xc.in0, mb.out1 -- xc.in1
+  zc = Z(1 -> 2)
+  g1 = F
+  g2 = F
+  g3 = F
+  g1 -> g2 -> g3
+  wire xc.out0 -- zc.in0, zc.out1 -- g1.in0, g3.out0 -- ma.out1
+  inputs za.in0
+  outputs zc.out0
+  scalar d
+
+decide against id[d]

@@ -1,0 +1,5 @@
+loaded dsl input
+Tr_env[ (1/sqrt(d)) sum_{q0,q1,j0o0,j1o0,j1o1=0}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-3/2} w_{d}^{q1 (j1o0 + j1o1 - j0o0)} |j1o0, j1o1> ], env = output 2
+decide: equal by doubled: doubled, symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: of the doubled diagrams (DOUBLED)
+proof: re-checkable; certificate kernel / certificate lean

@@ -1,0 +1,7 @@
+# Dephasing is idempotent, for every qudit dimension d: Z (1 -> 2) with one output discarded,
+# applied twice, is applied once.
+
+dephase[d] ; dephase[d]
+decide against dephase[d]
+prove against dephase[d]
+certificate lean dephase_idempotent.lean
