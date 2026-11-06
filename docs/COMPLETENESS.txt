@@ -36,7 +36,9 @@ The claim is an existence statement proved in section 4 from the completeness th
 [P1] (Theorem: every qudit ZXW diagram rewrites to a unique normal form) and [P2] (the same
 for qufinite diagrams). It is not a decision procedure. The automatic search (normal form,
 saturation, tactics) remains sound and incomplete (PROOFS.txt); the exhaustive mode of
-section 6 searches for such derivations without bound.
+section 6 searches for such derivations without bound. A restricted claim whose clauses
+bind every free multiplicity (n = v) and every dimension (d = v) has a restricted pair inside
+this claim (PROOFS.txt, section 8.6).
 
 Lean. The rules marked L in section 3 are proved in Lean step by step by rule lemmas
 (LEAN.txt, section 8); every other step of them exports as a named axiom unproved_RULE_N

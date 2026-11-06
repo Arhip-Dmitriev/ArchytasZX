@@ -1,0 +1,20 @@
+named @zero
+0
+loaded dsl input
+Z_{0->0}(k: k/d) = sum_{k=0}^{d-1} e^{2 pi i ((k/d))}
+decide: unequal by oracle_counterexample: oracle mismatch at {'d': 1}: max abs deviation 1.0 exceeds tolerance 1e-09
+dirac outcome: left != right
+  left:  Z_{0->0}(k: k/d) = sum_{k=0}^{d-1} e^{2 pi i ((k/d))}
+  right: 0
+disproof: re-checkable; certificate lean
+counterexample: d = 1: max abs deviation 1.0 exceeds tolerance 1e-09
+decide: equal for d >= 2 by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal, given d >= 2
+proof: re-checkable; certificate kernel / certificate lean
+proof: assumes the dimension floor(s) d >= 2
+emitted certificate: restricted proof for d >= 2, the restricted pair
+kernel: Z_{0->0}(k: k/d) = sum_{k=0}^{d-1} e^{2 pi i ((k/d))} = 0 for d >= 2, by the normal form of symbolic sums
+  assumes 2 <= d
+kernel: Z_{0->0}(k: k/d) = sum_{k=0}^{d-1} e^{2 pi i ((k/d))} = 0 for d >= 2, by the normal form of symbolic sums
+  assumes 2 <= d
+lean: tensor-network semantics, the normal form computed by the Lean kernel
+lean: wrote floor_d.lean

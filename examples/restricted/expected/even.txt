@@ -1,0 +1,19 @@
+named @plus
+sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
+loaded dsl input
+((-1)^n) sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
+decide: equal for n = 2*m by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
+proof: re-checkable; certificate kernel / certificate lean
+emitted certificate: restricted proof for n = 2*m, the restricted pair
+kernel: theorem sum_{k0[i0]=0, i0=1..2*m}^{d-1} (x)_{i0=1}^{2*m}( |k0[i0]> ) = sum_{k0[i0]=0, i0=1..2*m}^{d-1} (x)_{i0=1}^{2*m}( |k0[i0]> ) for all n = 2*m (m >= 0)
+  10 inferences; rules: none
+kernel: theorem sum_{k0[i0]=0, i0=1..2*m}^{d-1} (x)_{i0=1}^{2*m}( |k0[i0]> ) = sum_{k0[i0]=0, i0=1..2*m}^{d-1} (x)_{i0=1}^{2*m}( |k0[i0]> ) for all n = 2*m (m >= 0)
+  10 inferences; rules: none
+lean: tensor-network semantics, every step proved
+lean: wrote even.lean
+decide: unequal for n = 2*m + 1 by oracle_counterexample: oracle mismatch at {'d': 3, 'n': 1}: max abs deviation 2.0 exceeds tolerance 1e-09
+dirac outcome: left != right
+  left:  ((-1)^n) sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
+  right: sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
+disproof: re-checkable; certificate lean
+counterexample: d = 3, n = 1: max abs deviation 2.0 exceeds tolerance 1e-09

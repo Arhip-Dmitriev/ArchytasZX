@@ -1,0 +1,23 @@
+# One line per error of a restriction clause (PROOFS.txt, restricted decisions).
+
+@ghz =
+  count n
+  g = Z(0 -> 2)
+  repeat n: g.out1
+  scalar d^(-1/2)
+
+load
+  count n = 2
+  X(0 -> 1) -> F -> z = Z(1 -> 2)
+  repeat n: z.out1 -> t = X(2 -> 1), X(0 -> 1) -> t
+  scalar d^(-1/2)
+
+decide @ghz for k = 2
+decide @ghz for n = 2, n >= 3
+decide @ghz for n = 2*d + 1
+decide @ghz for n = 0*m + 1
+decide @ghz for n = -1
+decide @ghz for d = 0
+decide @ghz for d = 2*m
+decide @ghz for n = 3
+decide @ghz for n = 2 m +

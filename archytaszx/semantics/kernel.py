@@ -54,6 +54,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import cast
 
 from archytaszx.diagram.bangbox import free_mult_symbols
 from archytaszx.diagram.compare import isomorphic
@@ -81,6 +82,7 @@ from archytaszx.semantics.prove import (
     induction_hypothesis,
     induction_successor,
 )
+from archytaszx.semantics.restrict import Clause, Restriction
 
 
 class KernelError(Exception):
@@ -92,7 +94,8 @@ _TOKEN = object()
 
 @dataclass(frozen=True, eq=False)
 class Inference:
-    """The rule that built a theorem: ``kind`` is refl, rule, iso, symm, trans or induction."""
+    """The rule that built a theorem: ``kind`` is refl, rule, iso, symm, trans, induction,
+    subst or shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -102,9 +105,11 @@ class Inference:
 
 
 class Theorem:
-    """``lhs = rhs`` for every value of the free multiplicities, under ``assumptions``."""
+    """``lhs = rhs`` for every value of the free multiplicities, under ``assumptions``;
+    ``domain`` holds the restriction clauses that produced it and ``origin`` the unrestricted
+    pair they were substituted into."""
 
-    __slots__ = ("assumptions", "inference", "lhs", "rhs")
+    __slots__ = ("assumptions", "domain", "inference", "lhs", "origin", "rhs")
 
     def __init__(
         self,
@@ -113,12 +118,21 @@ class Theorem:
         rhs: Diagram,
         inference: Inference,
         assumptions: tuple[str, ...] = (),
+        domain: tuple[Clause, ...] = (),
+        origin: tuple[Diagram, Diagram] | None = None,
     ) -> None:
         if token is not _TOKEN:
             raise KernelError("a Theorem is built only by the kernel's inference rules")
         self.lhs, self.rhs = lhs, rhs
         self.inference = inference
         self.assumptions = assumptions
+        self.domain = domain
+        self.origin = origin
+
+    def statement(self) -> str:
+        """The quantifier part of the printed claim: ``for all ...`` over the free
+        multiplicities, each restricted symbol by its clause."""
+        return statement(self.domain, self.variables, self.assumptions)
 
     @property
     def variables(self) -> tuple[str, ...]:
@@ -134,6 +148,39 @@ class Theorem:
         if self.inference.kind == "rule":
             return [self.inference.rule]
         return [name for p in self.inference.premises for name in p.axioms()]
+
+
+def statement(
+    domain: Sequence[Clause], variables: Sequence[str], assumptions: Sequence[str] = ()
+) -> str:
+    """``for all n >= 2``, ``at n = 2``, ``for all n = 2*m + 1 (m >= 0)``, then the dimension
+    clauses; empty when nothing is quantified or restricted."""
+    from archytaszx.semantics.restrict import DIMENSION, EQ, GE
+
+    fresh = {c.fresh for c in domain if c.fresh}
+    free = [v for v in variables if v not in fresh]
+    parts: list[str] = []
+    for c in domain:
+        if c.kind == DIMENSION:
+            continue
+        if c.form == EQ:
+            parts.append(f"at {c.symbol} = {c.c}")
+        elif c.form == GE:
+            parts.append(f"for all {c.symbol} >= {c.c} ({c.symbol} = {c.expression()})")
+        else:
+            parts.append(f"for all {c.symbol} = {c.expression()} ({c.fresh} >= 0)")
+    if free:
+        parts.insert(0, f"for all {', '.join(free)}")
+    for c in domain:
+        if c.kind != DIMENSION:
+            continue
+        if c.form == EQ:
+            parts.append(f"at {c.symbol} = {c.c}")
+        elif f"{c.c} <= {c.symbol}" in assumptions:
+            parts.append(f"for {c.symbol} >= {c.c}")
+        else:
+            parts.append(f"for every {c.symbol}")
+    return ", ".join(parts)
 
 
 def _merge(*groups: tuple[str, ...]) -> tuple[str, ...]:
@@ -264,10 +311,145 @@ def induction(
     )
 
 
+def subst(
+    t: Theorem, clause: Clause, lhs: Diagram | None = None, rhs: Diagram | None = None
+) -> Theorem:
+    """``lhs' = rhs'`` from ``t`` and one clause ``n = e`` or ``d = v``: both sides recomputed
+    from ``t``'s by :func:`~archytaszx.semantics.restrict.apply_clause` and compared id for id
+    with ``lhs`` and ``rhs`` when stated."""
+    from archytaszx.semantics.restrict import _all_symbols, apply_clause
+
+    if not clause.substitutes:
+        raise KernelError(f"subst: {clause.text()} substitutes nothing")
+    if clause.fresh and clause.fresh in _all_symbols(t.lhs, t.rhs):
+        raise KernelError(f"subst: {clause.fresh} is not fresh for the theorem")
+    try:
+        new_l, new_r = apply_clause(t.lhs, clause), apply_clause(t.rhs, clause)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"subst raised {type(exc).__name__}: {exc}") from exc
+    for stated, computed in ((lhs, new_l), (rhs, new_r)):
+        if stated is not None and not _same(stated, computed):
+            raise KernelError(f"subst: a stated side is not the theorem's side at {clause.text()}")
+    inference = Inference("subst", (t,), detail=clause.text(), data={"clause": clause})
+    origin = t.origin if t.origin is not None else (t.lhs, t.rhs)
+    return Theorem(
+        _TOKEN,
+        new_l if lhs is None else lhs,
+        new_r if rhs is None else rhs,
+        inference,
+        t.assumptions,
+        (*t.domain, clause),
+        origin,
+    )
+
+
+def restricted(
+    t: Theorem, left: Diagram, right: Diagram, restriction: Restriction, used: Sequence[str] = ()
+) -> Theorem:
+    """``t`` read as the restricted claim of ``left = right``: its sides must be the
+    restricted pair, or isomorphic to it; ``used`` names the floors the proof assumed."""
+    from archytaszx.semantics.restrict import subst_pair
+
+    try:
+        pair = subst_pair(left, right, restriction)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"restricting raised {type(exc).__name__}: {exc}") from exc
+    for side, target in ((t.lhs, pair[0]), (t.rhs, pair[1])):
+        if not (
+            _same(side, target) or views_isomorphic(comparison_view(side), comparison_view(target))
+        ):
+            raise KernelError("the theorem is not about the restricted pair")
+    floors = tuple(
+        f"{c.c} <= {c.symbol}"
+        for c in restriction.clauses
+        if not c.substitutes and c.symbol in used
+    )
+    return Theorem(
+        _TOKEN,
+        t.lhs,
+        t.rhs,
+        t.inference,
+        _merge(t.assumptions, floors),
+        restriction.clauses,
+        (left, right),
+    )
+
+
+def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
+    """``left = right`` at ``n = a*m + c`` for every ``m``, from ``t`` about both sides with the
+    clause ``n >= c`` or ``n = a*m + c`` substituted: each side rebuilt by
+    :func:`~archytaszx.semantics.restrict.apply_clause` and matched to ``t``'s side id for id or
+    by isomorphic comparison views."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, _all_symbols, apply_clause
+
+    if clause.kind != MULTIPLICITY or not clause.fresh or (clause.a == 1 and clause.c == 0):
+        raise KernelError(f"shift: {clause.text()} is not n = a*m + c with a > 1 or c >= 1")
+    live = free_mult_symbols(left) | free_mult_symbols(right)
+    if clause.symbol not in live or clause.fresh in _all_symbols(left, right):
+        raise KernelError(
+            f"{clause.symbol!r} is not a free multiplicity or {clause.fresh!r} is not fresh"
+        )
+    try:
+        peeled = apply_clause(left, clause)
+        other = apply_clause(right, clause)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"rebuilding the successor raised {type(exc).__name__}: {exc}") from exc
+    body = t
+    if not _same(t.lhs, peeled):
+        body = trans(iso(peeled, t.lhs), body)
+    if not _same(t.rhs, other):
+        body = trans(body, iso(t.rhs, other))
+    data: dict[str, object] = {
+        "index": clause.symbol,
+        "step": clause.fresh,
+        "count": clause.c,
+        "scale": clause.a,
+        "peeled": peeled,
+        "other_peeled": other,
+    }
+    domain = (clause,)
+    inference = Inference("shift", (body,), data=data)
+    return Theorem(_TOKEN, left, right, inference, body.assumptions, domain, (left, right))
+
+
+@dataclass(frozen=True, eq=False)
+class RestrictedProof:
+    """A proof of ``left = right`` under ``restriction``: ``family`` set when ``proof`` proves
+    the unrestricted claim (specialised by subst), otherwise a proof about the restricted
+    pair; ``floors_used`` names the floors a normaliser proof assumed."""
+
+    proof: object
+    restriction: Restriction
+    left: Diagram
+    right: Diagram
+    family: bool
+    floors_used: tuple[str, ...] = ()
+
+
 def check(artefact: object) -> Theorem:
-    """The theorem a certificate, proof certificate or induction proof establishes."""
+    """The theorem a certificate, proof certificate, induction proof or restricted proof
+    establishes."""
     if isinstance(artefact, Theorem):
         return artefact
+    if isinstance(artefact, RestrictedProof):
+        inner = check(artefact.proof)
+        if not artefact.family:
+            return restricted(
+                inner, artefact.left, artefact.right, artefact.restriction, artefact.floors_used
+            )
+        out = inner
+        for clause in artefact.restriction.clauses:
+            if clause.substitutes:
+                out = subst(out, clause)
+        return Theorem(
+            _TOKEN,
+            out.lhs,
+            out.rhs,
+            out.inference,
+            out.assumptions,
+            artefact.restriction.clauses,
+            (inner.lhs, inner.rhs),
+        )
     if isinstance(artefact, Certificate):
         if artefact.derivation.kind is not DerivationKind.STEP_SEQUENCE:
             raise KernelError("an induction certificate carries no re-checkable step")
@@ -311,11 +493,101 @@ class Refutation:
 @dataclass(frozen=True, eq=False)
 class Symbolic:
     """``lhs = rhs`` for every value of the dimensions and phases; ``source`` is its Lean
-    proof by the normaliser of symbolic sums."""
+    proof by the normaliser of symbolic sums; ``domain`` holds the restriction clauses it was
+    read under and ``assumptions`` the floors it assumed."""
 
     lhs: Diagram
     rhs: Diagram
     source: str
+    domain: tuple[Clause, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+    @property
+    def variables(self) -> tuple[str, ...]:
+        """The free multiplicities of both sides, sorted."""
+        return tuple(sorted(free_mult_symbols(self.lhs) | free_mult_symbols(self.rhs)))
+
+    def statement(self) -> str:
+        """The quantifier part of the printed claim, as :meth:`Theorem.statement`."""
+        return statement(self.domain, self.variables, self.assumptions)
+
+
+def restricted_symbolic(
+    proof: RestrictedProof, describe: Callable[[Diagram], str] | None = None
+) -> Symbolic:
+    """The restricted claim of a :class:`RestrictedProof` over a normaliser proof: the family
+    proof followed by its corollary at the clauses, or the restricted pair's proof under the
+    floors it assumed."""
+    from archytaszx.semantics.lean_restrict import RestrictUnsupported, corollary, header
+
+    inner = proof.proof
+    if not isinstance(inner, Symbolic):
+        raise KernelError("the restricted proof is not a normaliser proof")
+    text = proof.restriction.text()
+    if proof.family:
+        source = header(
+            inner.source, f"restricted to {text}: the family theorem, then {_RESTRICTED}"
+        )
+        try:
+            source = corollary(source, proof.restriction.clauses, "main", _var)
+        except RestrictUnsupported as exc:
+            raise KernelError(f"no corollary: {exc}") from exc
+        return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses)
+    floors = tuple(
+        f"{c.c} <= {c.symbol}"
+        for c in proof.restriction.clauses
+        if not c.substitutes and c.symbol in proof.floors_used
+    )
+    shifted = _symbolic_shift(proof, describe)
+    if shifted is not None:
+        source = header(shifted, _pair_note(proof.restriction) + f"; {_SHIFTED}")
+        return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses, floors)
+    source = header(inner.source, _pair_note(proof.restriction))
+    return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses, floors)
+
+
+def _symbolic_shift(
+    proof: RestrictedProof, describe: Callable[[Diagram], str] | None
+) -> str | None:
+    """The normaliser's proof over the original diagrams at ``n = m + c``: the family lemma
+    of both networks split ``c`` times, lifted by ``Equal.of_split_at``, with the corollary
+    over ``n``; None when the restriction is not one clause ``n >= c`` (or ``n = m + c``),
+    ``c >= 1``, beside floors, or the normaliser declines."""
+    from archytaszx.semantics.decide import dimension_floors
+    from archytaszx.semantics.lean_restrict import RestrictUnsupported, shift_corollary
+    from archytaszx.semantics.restrict import MULTIPLICITY
+
+    subs = [c for c in proof.restriction.clauses if c.substitutes]
+    if len(subs) != 1:
+        return None
+    (clause,) = subs
+    if clause.kind != MULTIPLICITY or clause.a != 1 or clause.c < 1:
+        return None
+    floors = dimension_floors(proof.left, proof.right)
+    for name, low in proof.restriction.floors.items():
+        if name in proof.floors_used:
+            floors[name] = max(floors.get(name, 1), low)
+    try:
+        source = lean_sym.export_symbolic(
+            proof.left,
+            proof.right,
+            describe=describe,
+            floors=floors,
+            shift=(clause.symbol, clause.c),
+        )
+        return shift_corollary(source, clause)
+    except (lean_net.NetUnsupported, ScalarUnsupported, RestrictUnsupported):
+        return None
+
+
+_RESTRICTED = "its corollary at the clauses"
+
+
+def _pair_note(restriction: Restriction) -> str:
+    subs = [f"{c.symbol} = {c.expression()}" for c in restriction.clauses if c.substitutes]
+    return f"restricted to {restriction.text()}: the theorem about the restricted pair" + (
+        f", substituted {', '.join(subs)}" if subs else ""
+    )
 
 
 def symbolic(
@@ -448,7 +720,41 @@ class _Lean:
         if inf.kind == "trans":
             a, b = (self.term(p) for p in inf.premises)
             return b if a == "rfl" else a if b == "rfl" else f"({a}).trans ({b})"
+        if inf.kind == "subst":
+            return self.subst(t)
+        if inf.kind == "shift":
+            raise KernelError("a shift has no opaque export")
         return self.induction(t)
+
+    def subst(self, t: Theorem) -> str:
+        """The premise stated as a lemma over its multiplicities, applied at the clause's
+        value, between instantiation axioms onto the substituted sides."""
+        from archytaszx.semantics.restrict import DIMENSION, EQ
+
+        (prem,) = t.inference.premises
+        clause = cast("Clause", t.inference.data["clause"])
+        pb = [_var(v) for v in prem.variables]
+        body = self.term(prem)
+        stmt = f"{self.call(prem.lhs)} = {self.call(prem.rhs)}"
+        lemma = self.fresh("fam")
+        head = f"∀ ({' '.join(pb)} : Nat), {stmt}" if pb else stmt
+        proof = f"fun {' '.join(pb)} => {body}" if pb else body
+        self.decls.append(f"theorem {lemma} : {head} :=\n  {proof}")
+        at: dict[str, str] = {}
+        if clause.kind != DIMENSION:
+            value = (
+                str(clause.c)
+                if clause.form == EQ
+                else (f"({clause.a} * {_var(clause.fresh)} + {clause.c})")
+            )
+            at[clause.symbol] = value
+        args = [at.get(v, _var(v)) for v in prem.variables]
+        applied = f"({lemma} {' '.join(args)})" if args else lemma
+        binders = [_var(v) for v in t.variables]
+        note = f"instantiation at {clause.text()}"
+        inst_l = self.axiom("inst", note, binders, self.call(prem.lhs, at), self.call(t.lhs))
+        inst_r = self.axiom("inst", note, binders, self.call(prem.rhs, at), self.call(t.rhs))
+        return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
 
     def induction(self, t: Theorem, name: str | None = None) -> str:
         inf, data = t.inference, t.inference.data
@@ -550,6 +856,8 @@ def lean(
             raise KernelError(f"no Lean refutation: {exc}") from exc
     if not isinstance(theorem, Theorem):
         raise KernelError(f"lean takes a Theorem, got {type(theorem).__name__}")
+    if theorem.domain:
+        return _lean_restricted(theorem, name, describe, semantic)
     if semantic:
         source: str | None = None
         try:
@@ -591,3 +899,56 @@ def lean(
         "axiom Diagram : Type",
     ]
     return "\n".join([*header, "", "\n\n".join(out.decls), "", "end ArchytasZX", ""])
+
+
+def _lean_restricted(
+    theorem: Theorem, name: str, describe: Callable[[Diagram], str] | None, semantic: bool
+) -> str:
+    """A restricted theorem's export: the family theorem with its corollary at the clauses, or
+    the theorem about the restricted pair with the restriction in its header."""
+    from archytaszx.semantics.lean_restrict import RestrictUnsupported, corollary, header
+
+    base = theorem
+    while base.inference.kind == "subst":
+        base = base.inference.premises[0]
+    plain = Theorem(_TOKEN, base.lhs, base.rhs, base.inference, base.assumptions)
+    source = lean(plain, name, describe, semantic=semantic)
+    origin = theorem.origin
+    text = ", ".join(c.text() for c in theorem.domain)
+    if origin is not None and base.lhs is origin[0] and base.rhs is origin[1]:
+        source = header(source, f"restricted to {text}: the family theorem, then {_RESTRICTED}")
+        try:
+            return corollary(source, theorem.domain, name, _var)
+        except RestrictUnsupported as exc:
+            raise KernelError(f"no corollary: {exc}") from exc
+    restriction = Restriction(theorem.domain)
+    shifted = _lean_shift(plain, theorem, name, describe) if semantic else None
+    if shifted is not None:
+        return header(shifted, _pair_note(restriction) + f"; {_SHIFTED}")
+    return header(source, _pair_note(restriction))
+
+
+_SHIFTED = "stated over the original diagrams by peeling (Equal.of_split_at)"
+
+
+def _lean_shift(
+    plain: Theorem, theorem: Theorem, name: str, describe: Callable[[Diagram], str] | None
+) -> str | None:
+    """The restricted-pair theorem carried to the original diagrams at ``n = m + c`` by
+    :func:`shift`, with the corollary over ``n``; None when the restriction is not one clause
+    ``n >= c`` (or ``n = m + c``) with ``c >= 1`` beside floors, or the export declines."""
+    from archytaszx.semantics.lean_restrict import RestrictUnsupported, shift_corollary
+    from archytaszx.semantics.restrict import MULTIPLICITY
+
+    subs = [c for c in theorem.domain if c.substitutes]
+    if theorem.origin is None or len(subs) != 1:
+        return None
+    (clause,) = subs
+    if clause.kind != MULTIPLICITY or (clause.a == 1 and clause.c == 0):
+        return None
+    try:
+        lifted = shift(plain, theorem.origin[0], theorem.origin[1], clause)
+        source = lean_net.export(lifted, name, describe)
+        return shift_corollary(source, clause, name)
+    except (KernelError, lean_net.NetUnsupported, ScalarUnsupported, RestrictUnsupported):
+        return None

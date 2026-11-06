@@ -1,0 +1,15 @@
+# The closed Z spider with phase k/d at every index k is sum_k e^(2 pi i k/d): zero for d >= 2,
+# one at d = 1.
+# Expected: unequal at d = 1 without a clause; equal for d >= 2 by symbolic contraction, the
+# floor d >= 2 a hypothesis of the proof.
+
+@zero =
+  scalar 0
+
+load
+  z = Z(0 -> 0) phase{k: k/d}
+
+decide @zero
+decide @zero for d >= 2
+certificate kernel
+certificate lean floor_d.lean

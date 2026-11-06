@@ -235,6 +235,14 @@ Canonicalisation substitutes each delta's pivot, merges roots of unity, evaluate
 sorts factors. A phase stored at index j requires d > j, which the theorem states as a
 hypothesis. sym_check in the exporter mirrors the Lean computation to decide whether to export.
 
+Families are proved by induction on each multiplicity, one copy split off per step
+(Equal.of_split_at). A node box meeting only the boundary peels a disjoint copy, plugged beside
+the network at k; a port box steps by Equal.of_port_at. A node box whose copies meet one Z
+spider at its bundled inputs, the spider having a boundary output, steps by unfusing the split
+spider (fusionZG read backwards) so that the network at k, its output renamed to the new wire,
+is a region; the induction hypothesis is plugged there (Equal.rename, plug) and the rest is
+proved against the other side's split by the normaliser.
+
 4.4 Assumptions
 
 Dimension equalities a rewrite assumed (deferred constraints) become hypotheses of the
@@ -273,6 +281,63 @@ doubled diagrams and exports as such (4.1). Otherwise a mixed theorem takes the 
 export of 4.5, each discard step an axiom unproved_DISCARD_<rule>_N. The network semantics has
 no discard Kind; Mixed.lean states the CPM of a network through its purification, and the
 discard rules as tensor identities.
+
+
+4.7 Restricted theorems (archytaszx.semantics.lean_restrict)
+
+A kernel theorem specialised from a family proof (PROOFS.txt, section 8, step 1) is exported
+as the family theorem exactly as above, followed by a corollary stating the restricted claim
+over the same diagrams: the final theorem's binders and statement (main_diagrams where the
+export has one, else main) are copied with, per clause, n = v written for n and its binder
+dropped, n >= c a hypothesis (h_n_ge : c ≤ n) after the binder of n, n = a*m + c written as
+(a * m + c) with m bound in its place, and d = v written for d; a hypothesis binder left
+without variables (0 < 5) is discharged by norm_num. The corollary is proved by applying the
+final theorem:
+
+    theorem main_restricted (d : ℕ) (n : ℕ) (h_n_ge : 2 ≤ n) (h_d : 0 < d) :
+        DEqual ((F d).env (ksOf [n])) ... (D0.expandK (ksOf [n])) ... :=
+      main_diagrams d n h_d
+    theorem main_at (d : ℕ) (h_d : 0 < d) : DEqual ((F d).env (ksOf [3])) ... :=
+      main_diagrams d 3 h_d
+
+(main_at when every clause is n = v or d = v). No translation is involved: the corollary is
+about the same networks and diagram literals as the family theorem. The kernel's subst steps
+are not exported; the corollary replaces them. The opaque export (4.5) of a theorem with subst
+steps states the premise as a lemma over its multiplicities, applies it at the clause's value,
+and joins it to the substituted sides by instantiation axioms.
+
+A theorem about the restricted pair (step 3) under one clause n >= c or n = a*m + c (not
+n = m) is stated over the original diagrams. The kernel's shift (kernel.shift) rebuilds both peeled
+sides by restrict.apply_clause and checks them against the theorem's sides; the export splits
+each original family network c times along the box of n (Net.split at the offsets H, 2H, 4H,
+...), identifies the c-fold split with the peeled network by isoB, applies the restricted
+pair's proof at a*k (the restricted pair's boxes of multiplicity a*k read on the original box's
+multiplicity index), and lifts it by Equal.of_split_at c times:
+
+    theorem main (d : ℕ) (h_d : 0 < d) (k : ℕ) :
+        Equal ((F d).env (ksOf [(k + 2)])) ... N0 ... N1
+    theorem main_diagrams : ∀ (d : ℕ) (h_d : 0 < d) (k : ℕ),
+        DEqual ((F d).env (ksOf [(k + 2)])) ... (D0.expandK (ksOf [(k + 2)])) ...
+    theorem main_restricted (d : ℕ) (h_d : 0 < d) (n : ℕ) (h_n_ge : 2 ≤ n) :
+        DEqual ((F d).env (ksOf [n])) ... (D0.expandK (ksOf [n])) ... := by
+      obtain ⟨k, rfl⟩ : ∃ k, n = k + 2 := ⟨n - 2, by omega⟩
+      exact main_diagrams d h_d k
+
+D0 and D1 are the original boxed diagrams. For a > 1 the statements are at (a * k + c) and
+main_restricted binds k. Other restricted-pair theorems (several substituting clauses, a
+theorem the network export does not cover) are exported
+by the exporters above, unchanged, with the restriction and the substitution in the header
+comment; their statement is about the restricted diagrams, linked to the original diagrams by
+the agreement of the engine's substitution with the network semantics (section 6).
+
+A normaliser proof of a restricted pair under one clause n >= c (or n = m + c), c >= 1, is
+replaced by the normaliser's proof over the original diagrams: the family lemma of both
+networks split c times along the box of n, lifted by Equal.of_split_at, stated at n + c, with
+the corollary main_restricted over n (c ≤ n). A symbolic-contraction EQUAL that needed a floor d >= c is exported by the normaliser (4.3)
+with the floor among the dimension floors, the hypothesis (h_d : c ≤ d) of every theorem; a
+refutation under a floor is refuted at its in-floor point unchanged; a rewriting proof has no
+floor hypothesis (it holds for every d). An instance decided on its expanded pair (n = v) is a
+box-free theorem; its link to the boxed original at v is the expandK item of section 6.
 
 
 5. REFUTATIONS
@@ -320,7 +385,11 @@ Quot.sound. What remains trusted is:
     (D_net), so a wrong translation is rejected, not trusted.
 
 Agreement of Diagram.expandK with the engine's instantiate_symbol is checked on examples/ and the
-battery, not proved.
+battery, not proved. Agreement of the engine's substitution with the network semantics, the
+link of a restricted-pair theorem exported without the peeling wrapper (section 4.7) to the
+original diagrams, is checked by the oracle on examples/restricted and a seeded sweep, not
+proved; a wrapped export states its theorem over the original diagrams and needs no such
+agreement.
 
 A rule step for which no lemma exists, or an isomorphism the exporter cannot match, becomes an
 axiom named unproved_* stating that one step over the same semantics. Such axioms are listed in
@@ -478,8 +547,8 @@ is not exact. An opaque scalar is a parameter of the export (the theorem holds f
 so a step whose proof needs a relation the value satisfies (its minimal polynomial) is an
 unproved axiom; steps that do not need one, such as a fusion of two such weights, are proved.
 
-G6 Node boxes meeting the rest at a wire, and port boxes inside port boxes, under the
-normaliser.
+G6 Under the normaliser: node boxes meeting the rest at a wire other than at the bundled
+inputs of one Z spider with a boundary output, and port boxes inside port boxes.
 
 G7 Deferred dimension constraints in families: a family whose rewrite steps assume dimensions
 equal (d^p = d^q, for example) is proved over the merged bundled networks, and main_diagrams is

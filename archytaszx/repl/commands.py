@@ -106,7 +106,7 @@ from archytaszx.rewrite.sheet import (
     split_scale,
 )
 from archytaszx.rewrite.tactics import DEFAULT_SEARCH_LIMITS
-from archytaszx.semantics import kernel
+from archytaszx.semantics import kernel, lean_net, lean_sym
 from archytaszx.semantics.certificate import (
     Certificate,
     CertificateError,
@@ -144,6 +144,7 @@ from archytaszx.semantics.interop import (
     check_round_trip,
     check_sheet_step,
 )
+from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import (
     InductionProof,
     ProofCertificate,
@@ -155,6 +156,7 @@ from archytaszx.semantics.prove import (
     prove,
     prove_exhaustive,
 )
+from archytaszx.semantics.restrict import Restriction, parse_restriction
 
 
 class CommandError(Exception):
@@ -289,7 +291,7 @@ class ErrorDetail:
 
 ProofArtefact: TypeAlias = (
     "Certificate | ProofCertificate | InductionProof | kernel.Theorem | kernel.Refutation"
-    " | kernel.Symbolic"
+    " | kernel.Symbolic | kernel.RestrictedProof"
 )
 
 
@@ -330,6 +332,7 @@ class Session:
         | None
     ) = None
     induct_pair: tuple[Diagram, Diagram] | None = None
+    induct_restriction: tuple[Restriction, Diagram, Diagram, bool] | None = None
     last_detail: object | None = None
     undo_stack: list[_Snapshot] = field(default_factory=list)
     base: str = ""
@@ -853,21 +856,137 @@ def _decision_proof(
     return outcome if outcome.proved else None
 
 
+_FOR_RE = re.compile(r"(?:^|\s)for\s")
+
+
+def _split_for(text: str) -> tuple[str, Restriction | None]:
+    """``text`` without a trailing ``for CLAUSE, ...``, and those clauses parsed."""
+    found = list(_FOR_RE.finditer(text))
+    if not found:
+        return text, None
+    last = found[-1]
+    return text[: last.start()], parse_restriction(text[last.end() :])
+
+
+def _for_text(restriction: Restriction | None) -> str:
+    return f" for {restriction.text()}" if restriction is not None and restriction.clauses else ""
+
+
+def _every(restriction: Restriction) -> str:
+    return ", ".join(dict.fromkeys(c.symbol for c in restriction.clauses))
+
+
+def _restricted_proof(
+    decision: Decision, left: Diagram, right: Diagram
+) -> kernel.RestrictedProof | None:
+    """The proof of a restricted EQUAL: the family's proof, or the restricted pair's."""
+    assert decision.restriction is not None
+    family = decision.family_holds
+    source = decision.family if family and decision.family is not None else decision
+    pair = (left, right) if family else decision.restricted_pair
+    if pair is None or source is None:
+        return None
+    if source.doubled is not None:
+        pair = source.doubled
+    inner = source
+    if source.doubled is not None and source.inner_method is not None:
+        inner = replace(source, method=source.inner_method)
+    floors = tuple(decision.floors_used or ())
+    evidence: object | None = None
+    if floors and not family:
+        try:
+            evidence = kernel.Symbolic(
+                pair[0],
+                pair[1],
+                lean_sym.export_symbolic(
+                    pair[0],
+                    pair[1],
+                    describe=lambda d: _math(d, True),
+                    floors=_floors_of(pair, decision.restriction),
+                ),
+            )
+        except (lean_net.NetUnsupported, ScalarUnsupported):
+            evidence = None
+    if evidence is None:
+        evidence = _decision_proof(inner, *pair)
+    if evidence is None:
+        return None
+    if isinstance(evidence, ProofOutcome):
+        artefact = evidence.certificate if evidence.certificate is not None else evidence.induction
+        if artefact is None:
+            return None
+        evidence = artefact
+    return kernel.RestrictedProof(evidence, decision.restriction, left, right, family, floors)
+
+
+def _floors_of(pair: tuple[Diagram, Diagram], restriction: Restriction) -> dict[str, int]:
+    from archytaszx.semantics.decide import dimension_floors
+
+    merged = dimension_floors(*pair)
+    for name, low in restriction.floors.items():
+        merged[name] = max(merged.get(name, 1), low)
+    return merged
+
+
+def _bound_line(left: Diagram, right: Diagram, decision: Decision) -> Text | None:
+    """The B.3 line: the instance at the session's bound counts and dimensions, decided."""
+    if decision.verdict is not EqualityVerdict.UNEQUAL:
+        return None
+    env = {**dict(right.parameters), **dict(left.parameters)}
+    _a, dims_l, mults_l = _free_symbols(left)
+    _b, dims_r, mults_r = _free_symbols(right)
+    counts = {n: env[n] for n in sorted(mults_l | mults_r) if n in env}
+    if not counts:
+        return None
+    dims = {d: env[d] for d in sorted((dims_l | dims_r) - set(counts)) if d in env}
+    bound = {**counts, **dims}
+    point = decision.counterexample_original or decision.counterexample or {}
+    if all(point.get(name) == value for name, value in bound.items()):
+        return None
+    text = ", ".join(f"{name} = {value}" for name, value in bound.items())
+    try:
+        instance = decide_equal(left, right, restrict=text)
+    except _ENGINE_ERRORS as exc:
+        return Text(f"at the bound {text}: not decided ({_one_line(exc)})")
+    tail = (
+        f" (decide ... for {text} to certify)" if instance.verdict is EqualityVerdict.EQUAL else ""
+    )
+    return Text(f"at the bound {text}: {instance.verdict.value} by {instance.method.value}{tail}")
+
+
 def _cmd_decide(session: Session, args: str) -> Outcome:
-    left, right = _pair_args(session, args)
-    decision = decide_equal(left, right)
+    text, restriction = _split_for(args)
+    left, right = _pair_args(session, text)
+    decision = decide_equal(left, right, restrict=restriction)
+    restricted = decision.restriction is not None
     payload = _Pair("decide", left, right, decision)
-    head = f"decide: {decision.verdict.value} by {decision.method.value}: {decision.reason}"
+    head = (
+        f"decide: {decision.verdict.value}{_for_text(decision.restriction)} by "
+        f"{decision.method.value}: {decision.reason}"
+    )
     session.certificate, session.certificate_witness = None, None
     proof_pair = (left, right) if decision.doubled is None else decision.doubled
+    if restricted and not decision.family_holds and decision.restricted_pair is not None:
+        proof_pair = decision.restricted_pair if decision.doubled is None else decision.doubled
     if decision.verdict is EqualityVerdict.EQUAL:
         blocks: list[Block] = [Text(head)]
+        if restricted and decision.family_holds:
+            blocks.append(
+                Text(
+                    f"decide: holds for every {_every(decision.restriction)} "  # type: ignore[arg-type]
+                    "(family proof specialised)"
+                )
+            )
         inner = decision
         if decision.doubled is not None and decision.inner_method is not None:
             inner = replace(decision, method=decision.inner_method)
             blocks.append(Text("proof: of the doubled diagrams (DOUBLED)"))
-        evidence = _decision_proof(inner, *proof_pair)
-        session.last_proof = evidence
+        evidence: object | None
+        if restricted:
+            evidence = _restricted_proof(decision, left, right)
+        else:
+            evidence = _decision_proof(inner, *proof_pair)
+        session.last_proof = evidence  # type: ignore[assignment]
         if evidence is None:
             blocks.append(
                 Text(
@@ -880,6 +999,9 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
             condition = _symbolic_condition(evidence)
             if condition:
                 blocks.append(Text(f"proof: conditional on {condition}"))
+        if decision.floors_used:
+            floors = ", ".join(f"{d} >= {c}" for d, c in decision.floors_used.items())
+            blocks.append(Text(f"proof: assumes the dimension floor(s) {floors}"))
         if decision.assumptions:
             blocks.append(
                 Text(
@@ -890,13 +1012,16 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
         return _ok("decide", blocks, payload)
     relation = "!=" if decision.verdict is EqualityVerdict.UNEQUAL else "?="
     blocks = [Text(head), *_dirac_outcome(left, right, relation)]
+    point = decision.counterexample
+    if restricted and decision.counterexample_original is not None:
+        point = decision.counterexample_original
     if decision.verdict is EqualityVerdict.UNEQUAL:
-        refuted = _refutation(left, right, decision.counterexample)
+        refuted = _refutation(left, right, point)
         session.last_proof = refuted
         blocks.append(_disproof(refuted, decision.method.value))
-    if decision.counterexample is not None:
+    if point is not None:
         reason = decision.comparison.reason if decision.comparison is not None else None
-        blocks.append(_counterexample_line(decision.counterexample, reason))
+        blocks.append(_counterexample_line(point, reason))
     elif decision.induction is not None and decision.induction.counterexample is not None:
         blocks.append(_induction_counterexample(decision.induction))
     elif decision.method is not DecisionMethod.INTERFACE:
@@ -910,6 +1035,10 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
                     f"{limits.max_applications} applications)"
                 )
             )
+    if not restricted:
+        line = _bound_line(left, right, decision)
+        if line is not None:
+            blocks.append(line)
     return _fail("decide", blocks, payload)
 
 
@@ -991,36 +1120,57 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
         algebraic = bool(more) and more[0] == "algebraic"
         if algebraic:
             args = more[1] if len(more) > 1 else ""
+    args, restriction = _split_for(args)
     left, right = _pair_args(session, args)
     outcome = (
-        prove_exhaustive(left, right, algebraic=algebraic) if exhaustive else prove(left, right)
+        prove_exhaustive(left, right, algebraic=algebraic, restrict=restriction)
+        if exhaustive
+        else prove(left, right, restrict=restriction)
     )
     session.last_proof = outcome
     payload = _Pair("prove", left, right, outcome)
-    head = f"prove: {outcome.status.value}: {outcome.reason}"
+    head = f"prove: {outcome.status.value}{_for_text(outcome.restriction)}: {outcome.reason}"
     if outcome.proved:
         kind = "induction" if outcome.induction is not None else "search"
         if outcome.mixed is not None and outcome.mixed.kind.value == "doubled":
             kind = f"{kind} on the doubled diagrams (DOUBLED)"
         elif outcome.mixed is not None:
             kind = f"{kind} with the discard rules (NATIVE)"
-        return _ok("prove", [Text(head), Text(f"proof by {kind}; certificate emits it")], payload)
+        blocks: list[Block] = [Text(head)]
+        if outcome.restriction is not None:
+            artefact = outcome.certificate if outcome.certificate is not None else outcome.induction
+            if outcome.family_holds:
+                blocks.append(
+                    Text(
+                        f"prove: holds for every {_every(outcome.restriction)} "
+                        "(family proof specialised)"
+                    )
+                )
+            if artefact is not None and outcome.mixed is None:
+                session.last_proof = kernel.RestrictedProof(  # type: ignore[assignment]
+                    artefact, outcome.restriction, left, right, outcome.family_holds
+                )
+        blocks.append(Text(f"proof by {kind}; certificate emits it"))
+        return _ok("prove", blocks, payload)
     relation = "!=" if outcome.status is ProofStatus.REFUTED else "?="
-    blocks: list[Block] = [Text(head), *_dirac_outcome(left, right, relation)]
-    if outcome.counterexample is not None:
+    blocks = [Text(head), *_dirac_outcome(left, right, relation)]
+    point = outcome.counterexample
+    if outcome.restriction is not None and outcome.counterexample_original is not None:
+        point = outcome.counterexample_original
+    if point is not None:
         reason = None
         if outcome.check is not None and outcome.check.comparison is not None:
             reason = outcome.check.comparison.reason
         if outcome.status is ProofStatus.REFUTED:
-            refuted = _refutation(left, right, outcome.counterexample)
+            refuted = _refutation(left, right, point)
             session.last_proof = refuted if refuted is not None else outcome
             session.certificate, session.certificate_witness = None, None
             blocks.append(_disproof(refuted, "the oracle"))
-        blocks.append(_counterexample_line(outcome.counterexample, reason))
+        blocks.append(_counterexample_line(point, reason))
     elif outcome.status is ProofStatus.CHECK_FAILED and outcome.check is not None:
         blocks.append(Text(f"check failed: {outcome.check.reason}"))
     elif outcome.status is not ProofStatus.REFUTED:
-        blocks += _simplified(left, right)
+        blocks += _simplified(*(outcome.restricted_pair or (left, right)))
         limits = DEFAULT_SEARCH_LIMITS
         status = outcome.search.status.value if outcome.search is not None else "none"
         blocks.append(
@@ -1033,6 +1183,7 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
 
 
 def _cmd_induct(session: Session, args: str) -> Outcome:
+    args, restriction = _split_for(args)
     head, target = _split_against(args)
     index, supplied = _options(head, allow_on=True)
     left, right = _pair(session, target)
@@ -1058,21 +1209,37 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
     }
     witness.update(supplied)
     held = {name for name in live if name != chosen}
-    missing = sorted((required | held) - set(witness))
+    fixed = set()
+    if restriction is not None:
+        fixed = {c.symbol for c in restriction.clauses if c.form == "eq"}
+    missing = sorted((required | held) - set(witness) - fixed)
     if missing:
         raise CommandDomainError(
             f"induct holds {', '.join(missing)} at a value; supply NAME=VALUE for each"
         )
-    result = prove_by_induction(left, right, index=index, witness=witness)
+    result = prove_by_induction(left, right, index=index, witness=witness, restrict=restriction)
     session.last_proof = result
     session.induct_pair = (left, right)
+    session.induct_restriction = None
+    rr = result.restriction if isinstance(result.restriction, Restriction) else None
+    if rr is not None:
+        pair = result.restricted_pair if not result.family_holds else None
+        session.induct_pair = pair or (left, right)
+        session.induct_restriction = (rr, left, right, result.family_holds)
     payload = _Pair("induct", left, right, result)
     discharge = result.discharge.value if result.discharge is not None else "none"
+    over = result.index
+    if rr is not None and not result.family_holds:
+        clause = next((c for c in rr.clauses if c.fresh == result.index), None)
+        if clause is not None:
+            over = f"{result.index} ({clause.symbol} = {clause.expression()})"
     line = (
-        f"induct: {result.verdict.value} over {result.index} from {result.base_value} "
+        f"induct: {result.verdict.value}{_for_text(rr)} over {over} from {result.base_value} "
         f"via {discharge}: {result.reason}"
     )
     blocks: list[Block] = [Text(line), Text(f"witness: {_assignment_text(result.witness)}")]
+    if rr is not None and result.family_holds and result.proved:
+        blocks.append(Text(f"induct: holds for every {_every(rr)} (family proof specialised)"))
     if result.proved:
         blocks.append(
             Text(
@@ -1086,11 +1253,16 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
     blocks += _dirac_outcome(left, right, relation)
     if result.counterexample is not None:
         point = {**dict(result.witness), result.index: result.counterexample}
+        if result.counterexample_original is not None:
+            point = dict(result.counterexample_original)
         refuted = _refutation(left, right, point)
         session.last_proof = refuted if refuted is not None else result
         session.certificate, session.certificate_witness = None, None
         blocks.append(_disproof(refuted, "the oracle"))
-        blocks.append(_induction_counterexample(result))
+        if rr is not None and result.counterexample_original is not None:
+            blocks.append(_counterexample_line(point, None))
+        else:
+            blocks.append(_induction_counterexample(result))
     elif result.discharge is not None:
         blocks += [Text(f"tier {t.discharge.value}: {_one_line(t.reason)}") for t in result.tiers]
         blocks.append(
@@ -1117,7 +1289,14 @@ def _emit(
     for the latest proof artefact falling back to the session derivation."""
     proof = session.last_proof
     if which in ("", "proof") and isinstance(
-        proof, (ProofCertificate, kernel.Theorem, kernel.Refutation, kernel.Symbolic)
+        proof,
+        (
+            ProofCertificate,
+            kernel.Theorem,
+            kernel.Refutation,
+            kernel.Symbolic,
+            kernel.RestrictedProof,
+        ),
     ):
         return proof, None
     if which in ("", "proof") and isinstance(proof, ProofOutcome) and proof.proved:
@@ -1156,6 +1335,9 @@ def _artefact_line(artefact: ProofArtefact) -> str:
         return f"certificate: refutation at {point}"
     if isinstance(artefact, kernel.Symbolic):
         return "certificate: normal form of symbolic sums"
+    if isinstance(artefact, kernel.RestrictedProof):
+        how = "the family proof specialised" if artefact.family else "the restricted pair"
+        return f"certificate: restricted proof for {artefact.restriction.text()}, {how}"
     return f"certificate: induction proof over {artefact.index}, {_count(artefact.length, 'step')}"
 
 
@@ -1227,6 +1409,8 @@ def proof_text(proof: ProofArtefact, *, unicode: bool = False) -> str:
         left, right = proof.initial, proof.final
     elif isinstance(proof, (ProofCertificate, InductionProof)):
         left, right = proof.start, proof.goal
+    elif isinstance(proof, kernel.RestrictedProof):
+        left, right = proof.left, proof.right
     else:
         left, right = proof.lhs, proof.rhs
     lines = [
@@ -1354,6 +1538,9 @@ def _rederive(session: Session) -> kernel.Theorem | None:
     if not outcome.proved or artefact is None:
         return None
     try:
+        if session.induct_restriction is not None:
+            rr, left, right, family = session.induct_restriction
+            return kernel.check(kernel.RestrictedProof(artefact, rr, left, right, family))
         return kernel.check(artefact)
     except kernel.KernelError:
         return None
@@ -1375,6 +1562,15 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
         return _kernel_refutation(session.certificate, action, path, blocks)
     if isinstance(session.certificate, kernel.Symbolic):
         return _kernel_symbolic(session.certificate, action, path, blocks)
+    if isinstance(session.certificate, kernel.RestrictedProof) and isinstance(
+        session.certificate.proof, kernel.Symbolic
+    ):
+        try:
+            restricted = kernel.restricted_symbolic(session.certificate)
+        except kernel.KernelError as exc:
+            text = f"kernel: rejected: {_one_line(exc)}"
+            return _fail("certificate", [*blocks, Text(text)], Text(text))
+        return _kernel_symbolic(restricted, action, path, blocks)
     try:
         theorem = kernel.check(session.certificate)
     except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
@@ -1408,9 +1604,12 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             return _kernel_symbolic(sym, action, path, blocks)
     left, right = _math(theorem.lhs, False), _math(theorem.rhs, False)
     names = ", ".join(dict.fromkeys(theorem.axioms())) or "none"
-    over = f" for all {', '.join(theorem.variables)}" if theorem.variables else ""
+    stated = theorem.statement()
+    over = f" {stated}" if stated else ""
     blocks.append(Text(f"kernel: theorem {left} = {right}{over}"))
-    blocks.append(Text(f"  {_count(theorem.size(), 'inference')}; rules: {names}"))
+    substs = _count_subst(theorem)
+    extra = f" ({substs} subst)" if substs else ""
+    blocks.append(Text(f"  {_count(theorem.size(), 'inference')}{extra}; rules: {names}"))
     blocks += [Text(f"  assumes {a}") for a in theorem.assumptions]
     if action == "lean":
         source = kernel.lean(theorem, describe=lambda d: _math(d, True))
@@ -1441,15 +1640,18 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
     return _ok("certificate", blocks, theorem)
 
 
+def _count_subst(theorem: kernel.Theorem) -> int:
+    """The number of subst inferences in ``theorem``'s proof."""
+    own = 1 if theorem.inference.kind == "subst" else 0
+    return own + sum(_count_subst(p) for p in theorem.inference.premises)
+
+
 def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[Block]) -> Outcome:
     """``certificate kernel`` states the equality; ``certificate lean`` exports its proof."""
     left, right = _math(sym.lhs, False), _math(sym.rhs, False)
-    blocks.append(
-        Text(
-            f"kernel: {left} = {right} for every dimension and phase, by the normal "
-            "form of symbolic sums"
-        )
-    )
+    claim = f"{sym.statement()}," if sym.domain else "for every dimension and phase,"
+    blocks.append(Text(f"kernel: {left} = {right} {claim} by the normal form of symbolic sums"))
+    blocks += [Text(f"  assumes {a}") for a in sym.assumptions]
     condition = _symbolic_condition(sym)
     if condition:
         blocks.append(Text(f"  assumes {condition}"))
@@ -1506,7 +1708,9 @@ def _kernel_refutation(
 
 
 def _proof_blocks(artefact: ProofArtefact) -> list[Block]:
-    if isinstance(artefact, (kernel.Theorem, kernel.Refutation, kernel.Symbolic)):
+    if isinstance(
+        artefact, (kernel.Theorem, kernel.Refutation, kernel.Symbolic, kernel.RestrictedProof)
+    ):
         return [Text(_artefact_line(artefact))]
     return [Text(_artefact_line(artefact)), Proof(artefact)]
 
@@ -1542,6 +1746,17 @@ def _verify(session: Session, args: str) -> Outcome:
         return _verify_refutation(artefact, blocks)
     if isinstance(artefact, kernel.Symbolic):
         text = "verify: verified: certificate lean proves it by the normal form of symbolic sums"
+        return _ok("certificate", [*blocks, Text(text)], artefact)
+    if isinstance(artefact, kernel.RestrictedProof):
+        try:
+            if isinstance(artefact.proof, kernel.Symbolic):
+                kernel.restricted_symbolic(artefact)
+            else:
+                kernel.check(artefact)
+        except (kernel.KernelError, *_ORACLE_ERRORS) as exc:  # type: ignore[misc]
+            text = f"verify: failed: {_one_line(exc)}"
+            return _fail("certificate", [*blocks, Text(text)], Text(text))
+        text = "verify: verified: the proof kernel built it; certificate lean exports it"
         return _ok("certificate", [*blocks, Text(text)], artefact)
     if isinstance(artefact, Certificate):
         left, right = artefact.initial, artefact.final

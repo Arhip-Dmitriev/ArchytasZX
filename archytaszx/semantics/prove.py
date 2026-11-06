@@ -54,9 +54,11 @@ from __future__ import annotations
 
 import enum
 import functools
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, cast
 
 from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
@@ -129,6 +131,10 @@ _CHECK_ERRORS: tuple[type[Exception], ...] = (
     ValidateError,
 )
 _INDUCTION_ERRORS: tuple[type[Exception], ...] = (*_CHECK_ERRORS, InductionError)
+
+
+if TYPE_CHECKING:
+    from archytaszx.semantics.restrict import Restriction
 
 
 class ProveError(Exception):
@@ -746,7 +752,10 @@ def _doubled_outcome(
 
 @dataclass(frozen=True, slots=True, eq=False)
 class ProofOutcome:
-    """A :func:`prove` verdict, its reason, and the evidence behind it."""
+    """A :func:`prove` verdict, its reason, and the evidence behind it; a restricted proof
+    carries its ``restriction``, the unrestricted ``family`` outcome, ``family_holds`` when that
+    outcome proved the claim, the ``restricted_pair`` it proved otherwise and the counterexample
+    in the original symbols."""
 
     status: ProofStatus
     reason: str
@@ -757,6 +766,11 @@ class ProofOutcome:
     assumptions: tuple[DimensionConstraint, ...] = ()
     induction: InductionProof | None = None
     mixed: MixedCertificate | None = None
+    restriction: Restriction | None = None
+    family: ProofOutcome | None = None
+    family_holds: bool = False
+    restricted_pair: tuple[Diagram, Diagram] | None = None
+    counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
 
     def __post_init__(self) -> None:
         """Validate every field's type, in declaration order."""
@@ -785,6 +799,174 @@ class ProofOutcome:
     def proved(self) -> bool:
         """True when the status is PROVED."""
         return self.status is ProofStatus.PROVED
+
+
+def restricted_outcome(
+    left: Diagram,
+    right: Diagram,
+    restrict: Restriction | str | Mapping[str, str],
+    run: Callable[..., ProofOutcome],
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+) -> ProofOutcome:
+    """The three steps of a restricted proof: ``run`` on the family, kept when it proves the
+    claim or refutes it in range; otherwise ``run`` on the restricted pair, ``samples`` read
+    over its symbols."""
+    from archytaszx.semantics.decide import DecideGrammarError
+    from archytaszx.semantics.restrict import (
+        in_domain,
+        parse_restriction,
+        restricted_samples,
+        subst_pair,
+        to_original,
+        validate,
+    )
+
+    try:
+        restriction = validate(parse_restriction(restrict), left, right)
+    except DecideGrammarError as exc:
+        raise ProveGrammarError(str(exc)) from exc
+    if restriction.empty:
+        return run(left, right, samples=samples)
+    family = run(left, right, samples=samples)
+    if family.proved:
+        return replace(family, restriction=restriction, family=family, family_holds=True)
+    point = family.counterexample
+    if family.status is ProofStatus.REFUTED and point is not None and in_domain(restriction, point):
+        return replace(
+            family,
+            restriction=restriction,
+            family=family,
+            counterexample_original=MappingProxyType(dict(point)),
+        )
+    try:
+        pair = subst_pair(left, right, restriction)
+    except DecideGrammarError as exc:
+        raise ProveGrammarError(str(exc)) from exc
+    inner_samples = None if samples is None else restricted_samples(restriction, samples)
+    inner = run(*pair, samples=inner_samples)
+    original = None
+    if inner.counterexample is not None:
+        original = MappingProxyType(to_original(restriction, inner.counterexample))
+    return replace(
+        inner,
+        restriction=restriction,
+        family=family,
+        restricted_pair=pair,
+        counterexample_original=original,
+    )
+
+
+class _Stopped(BaseException):
+    """Raised in a layer callback to stop a search another search has made moot."""
+
+
+def _restricted_exhaustive(
+    left: Diagram,
+    right: Diagram,
+    restrict: Restriction | str | Mapping[str, str],
+    run: Callable[..., ProofOutcome],
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    on_layer: Callable[[LayerReport], None] | None,
+) -> ProofOutcome:
+    """The restricted exhaustive proof: the family search and the restricted pair's search run
+    side by side in two threads, time-sliced; the family's PROVED or in-range REFUTED wins,
+    otherwise the restricted pair's outcome, the other search stopped at its next layer."""
+    from archytaszx.semantics.decide import DecideGrammarError
+    from archytaszx.semantics.restrict import (
+        in_domain,
+        parse_restriction,
+        restricted_samples,
+        subst_pair,
+        to_original,
+        validate,
+    )
+
+    try:
+        restriction = validate(parse_restriction(restrict), left, right)
+        pair = None if restriction.empty else subst_pair(left, right, restriction)
+    except DecideGrammarError as exc:
+        raise ProveGrammarError(str(exc)) from exc
+    if pair is None:
+        return run(left, right, samples=samples, on_layer=on_layer)
+    inner_samples = None if samples is None else restricted_samples(restriction, samples)
+    done = threading.Condition()
+    results: dict[str, ProofOutcome | BaseException] = {}
+    stop: set[str] = set()
+
+    def layer(name: str) -> Callable[[LayerReport], None]:
+        def report(item: LayerReport) -> None:
+            if name in stop:
+                raise _Stopped
+            if on_layer is not None:
+                on_layer(item)
+
+        return report
+
+    def work(name: str, a: Diagram, b: Diagram, pts: object) -> None:
+        try:
+            out: ProofOutcome | BaseException = run(a, b, samples=pts, on_layer=layer(name))
+        except BaseException as exc:  # noqa: BLE001
+            out = exc
+        with done:
+            results[name] = out
+            done.notify_all()
+
+    def decisive_family(out: ProofOutcome) -> bool:
+        if out.proved:
+            return True
+        point = out.counterexample
+        return (
+            out.status is ProofStatus.REFUTED
+            and point is not None
+            and in_domain(restriction, point)
+        )
+
+    threads = [
+        threading.Thread(target=work, args=("family", left, right, samples), daemon=True),
+        threading.Thread(target=work, args=("pair", *pair, inner_samples), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    with done:
+        while True:
+            fam = results.get("family")
+            inner = results.get("pair")
+            if isinstance(fam, ProofOutcome) and decisive_family(fam):
+                stop.add("pair")
+                break
+            if isinstance(inner, ProofOutcome) and (
+                "family" in results or inner.proved or inner.status is ProofStatus.REFUTED
+            ):
+                stop.add("family")
+                break
+            if isinstance(inner, BaseException) and not isinstance(inner, _Stopped):
+                stop.add("family")
+                raise inner
+            done.wait()
+    fam = results.get("family")
+    if isinstance(fam, ProofOutcome) and decisive_family(fam):
+        if fam.proved:
+            return replace(fam, restriction=restriction, family=fam, family_holds=True)
+        point = fam.counterexample
+        assert point is not None
+        return replace(
+            fam,
+            restriction=restriction,
+            family=fam,
+            counterexample_original=MappingProxyType(dict(point)),
+        )
+    inner = results["pair"]
+    assert isinstance(inner, ProofOutcome)
+    original = None
+    if inner.counterexample is not None:
+        original = MappingProxyType(to_original(restriction, inner.counterexample))
+    return replace(
+        inner,
+        restriction=restriction,
+        family=fam if isinstance(fam, ProofOutcome) else None,
+        restricted_pair=pair,
+        counterexample_original=original,
+    )
 
 
 def _search_summary(result: SearchResult) -> str:
@@ -890,10 +1072,31 @@ def prove(
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     induction_depth: int = DEFAULT_INDUCTION_DEPTH,
+    restrict: Restriction | str | Mapping[str, str] | None = None,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by the module docstring's order: interface, oracle,
     search, certification and check, then induction over a free multiplicity when search
-    finds no path, nesting at most ``induction_depth`` inductions (0 turns it off)."""
+    finds no path, nesting at most ``induction_depth`` inductions (0 turns it off); under
+    ``restrict``, by :func:`restricted_outcome`."""
+    if restrict is not None:
+        return restricted_outcome(
+            start,
+            goal,
+            restrict,
+            functools.partial(
+                prove,
+                moves=moves,
+                limits=limits,
+                bidirectional=bidirectional,
+                cache=cache,
+                refute=refute,
+                max_samples=max_samples,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                induction_depth=induction_depth,
+            ),
+            samples,
+        )
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
             raise ProveGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")
@@ -1043,11 +1246,28 @@ def prove_exhaustive(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     on_layer: Callable[[LayerReport], None] | None = None,
     algebraic: bool = False,
+    restrict: Restriction | str | Mapping[str, str] | None = None,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by :func:`~archytaszx.rewrite.exhaustive.exhaustive_search`
     (or, with ``algebraic``, :func:`~archytaszx.rewrite.exhaustive.algebraic_search`) over every
     registered rule, after the interface and oracle refutation rungs of :func:`prove`; no limit
-    bounds the search."""
+    bounds the search; under ``restrict``, by :func:`restricted_outcome`."""
+    if restrict is not None:
+        return _restricted_exhaustive(
+            start,
+            goal,
+            restrict,
+            functools.partial(
+                prove_exhaustive,
+                refute=refute,
+                max_samples=max_samples,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                algebraic=algebraic,
+            ),
+            samples,
+            on_layer,
+        )
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
             raise ProveGrammarError(f"{name} must be a Diagram, got {type(value).__name__}")

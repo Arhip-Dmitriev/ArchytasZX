@@ -1,0 +1,15 @@
+# n self-loops of dimension d against one self-loop of dimension d^2: equal exactly at n = 2.
+# Expected: "decide ... for n = 2" is equal on the restricted pair (step 3); "decide" alone is
+# unequal at n = 0, with the line for the bound n = 2.
+
+@sq =
+  w = Z(1 -> 1, d^2); wire w.out0 -- w.in0
+
+load
+  count n = 2
+  repeat n: z = Z(1 -> 1); wire z.out0 -- z.in0
+
+decide @sq for n = 2
+certificate kernel
+certificate lean loops_n2.lean
+decide @sq

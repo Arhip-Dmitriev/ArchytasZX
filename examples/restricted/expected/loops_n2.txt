@@ -1,0 +1,19 @@
+named @sq
+sum_{k=0}^{(d^2)-1} 1
+loaded dsl input
+sum_{k0[i0]=0, i0=1..n}^{d-1} 1
+at n = 2: sum_{k0[i0]=0, i0=1..2}^{d-1} 1
+decide: equal for n = 2 by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+proof: re-checkable; certificate kernel / certificate lean
+emitted certificate: restricted proof for n = 2, the restricted pair
+kernel: sum_{k1,k2=0}^{d-1} 1 = sum_{k=0}^{(d^2)-1} 1 at n = 2, by the normal form of symbolic sums
+kernel: sum_{k1,k2=0}^{d-1} 1 = sum_{k=0}^{(d^2)-1} 1 at n = 2, by the normal form of symbolic sums
+lean: tensor-network semantics, the normal form computed by the Lean kernel
+lean: wrote loops_n2.lean
+decide: unequal by oracle_counterexample: oracle mismatch at {'d': 2, 'n': 0}: max abs deviation 3.0 exceeds tolerance 1e-09
+dirac outcome: left != right
+  left:  sum_{k0[i0]=0, i0=1..n}^{d-1} 1
+  right: sum_{k=0}^{(d^2)-1} 1
+disproof: re-checkable; certificate lean
+counterexample: d = 2, n = 0: max abs deviation 3.0 exceeds tolerance 1e-09
+at the bound n = 2: equal by symbolic_contraction (decide ... for n = 2 to certify)

@@ -1418,6 +1418,8 @@ class _Export:
         self.binders = self.args = self.hyps = self.hyp_args = ""
         if theorem.inference.kind == "induction":
             return self.finish_induction(theorem, name)
+        if theorem.inference.kind == "shift":
+            return self.finish_shift(theorem, name)
         for v in theorem.variables:
             self.mult_index(str(v))
         start, goal = self.labelled(theorem.lhs), self.labelled(theorem.rhs)
@@ -1649,6 +1651,156 @@ class _Export:
         self.sp_hyps, self.sp_hyp_args = self.hyps, self.hyp_args
         self.induction_lemma(t, name, "")
         return self.render(t)
+
+    def finish_shift(self, t: object, name: str) -> str:
+        """A shift theorem: the family at ``a*k + c`` from its peeled successors at ``a*k``."""
+        if self.alias:
+            self.wire_alias = True
+        self.prepare_induction(t, top=True)
+        data = t.inference.data  # type: ignore[attr-defined]
+        a = int(data.get("scale", 1))
+        if a != 1:
+            idx, ks = str(data["index"]), str(data["step"])
+            self.mult_ix[str(a * _mult_symbol(ks))] = self.mult_ix[idx]
+        self.collect(t)
+        self.set_params()
+        self.sp_binders, self.sp_args = self.binders, self.args
+        self.sp_hyps, self.sp_hyp_args = self.hyps, self.hyp_args
+        self.shift_lemma(t, name)
+        return self.render(t)
+
+    def shift_lemma(self, t: object, name: str) -> None:
+        """``t`` as the Lean theorem ``name``: for every ``k``, Equal of the start and goal
+        families at ``k + 1``, by ``Equal.of_split_at`` from the peeled successors at ``k``."""
+        from archytaszx.semantics.kernel import Theorem
+
+        assert isinstance(t, Theorem)
+        data = t.inference.data
+        (body_t,) = t.inference.premises
+        idx, ks = str(data["index"]), str(data["step"])
+        kk = self.sym.params[ks][0]
+        mi = self.mult_ix[idx]
+        start, goal = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
+        names = list(self.mult_names)
+        syms = list(self.mult_exprs)
+        if any(
+            not self.mult_bare[j] and idx in map(str, syms[j].free_symbols)
+            for j in range(len(names))
+        ):
+            raise NetUnsupported("a box whose multiplicity depends on the shifted index")
+        oth = [j for j in range(len(names)) if j != mi and self.mult_bare[j]]
+        binders = _join(self.sp_binders, *(f"({names[j]} : ℕ)" for j in oth))
+        args = _join(self.sp_args, *(names[j] for j in oth))
+        self.binders, self.args = binders, args
+        self.hyps, self.hyp_args = self.sp_hyps, self.sp_hyp_args
+        hyps_args = _join(args, self.hyp_args)
+        fam = self.fam_text()
+        nn = self.mult_names[mi]
+
+        def vals(v: str) -> list[str]:
+            return [v if j == mi else names[j] for j in range(len(names))]
+
+        def lst(v: str) -> str:
+            return "[" + ", ".join(vals(v)) + "]"
+
+        def ret(x: str, *more: str) -> str:
+            return "(" + _join(x, args, *more) + ")"
+
+        def enter(v: str, sym: sp.Expr) -> None:
+            self.ks_vals = vals(v)
+            self.ks_syms = [sym if j == mi else syms[j] for j in range(len(names))]
+            self.env = self.env_text(self.ks_vals)
+
+        k_sym = _mult_symbol(ks)
+        s_s, s_g = self.scalar(t.lhs.scalar), self.scalar(t.rhs.scalar)
+
+        def at(model: sp.Expr, value: object) -> sp.Expr:
+            return model.xreplace({sym: value for sym in model.free_symbols if str(sym) == idx})
+
+        sS, sG, sc_ = f"{name}_sS", f"{name}_sG", f"{name}_scase"
+        bind = _join(binders, f"({nn} : ℕ)")
+        self.scalar_defs += [sS, sG]
+        self.decls.append(
+            f"/-- The start's scalar. -/\nnoncomputable def {sS} {bind} : ℂ := {self.sc.text(s_s)}"
+        )
+        self.decls.append(
+            f"/-- The goal's scalar. -/\nnoncomputable def {sG} {bind} : ℂ := {self.sc.text(s_g)}"
+        )
+        isb = self.isb(mi)
+        ns, ng = start.name, goal.name
+        spc = f"(SpC {mi})"
+        c = int(cast(int, data.get("count", 1)))
+        a = int(cast(int, data.get("scale", 1)))
+        base = kk if a == 1 else f"({a} * {kk})"
+        k_base = a * k_sym
+        offs = [H_OFFSET << j for j in range(c)]
+        for off in offs[1:]:
+            for lab in [x for x in self.labs if x < H_OFFSET]:
+                self.peel_reg(lab, off)
+        nets_s, nets_g = [start.net], [goal.net]
+        text_s, text_g = [ns], [ng]
+        for off in offs:
+            nets_s.append(_split_net(nets_s[-1], mi, isb, off))
+            nets_g.append(_split_net(nets_g[-1], mi, isb, off))
+            text_s.append(f"(Net.split {spc} {off} {text_s[-1]})")
+            text_g.append(f"(Net.split {spc} {off} {text_g[-1]})")
+
+        def plus(j: int) -> str:
+            return base if j == 0 else f"({base} + {j})"
+
+        peeled = cast(Diagram, data["peeled"])
+        self.slots = self.slots_for(peeled, nets_s[-1])
+        enter(base, k_base)
+        self.binders = _join(binders, f"({kk} : ℕ)")
+        self.args = _join(args, kk)
+        lp = self.labelled(peeled, self.slots)
+        ia = self.iso_b(self.env, text_s[-1], nets_s[-1], lp.name, lp.net)
+        pb = self.term(body_t)
+        lo = self.labelled(cast(Diagram, data["other_peeled"]), self.slots)
+        idd = self.iso_b(self.env, lo.name, lo.net, text_g[-1], nets_g[-1])
+        chain = f"(Equal.mul_trans {ia} (Equal.mul_trans {pb.term} {idd}))"
+        left = ("*", ONE, ("*", pb.left, ONE))
+        right = ("*", ONE, ("*", pb.right, ONE))
+        kc = k_base + c
+        hst = self.sc.prove(at(s_s, kc) * self.flat(right), at(s_g, kc) * self.flat(left))
+        env_k = self.env
+        self.binders, self.args = binders, args
+        self.decls.append(
+            f"theorem {sc_} {_join(binders, self.hyps)} ({kk} : ℕ) :\n"
+            f"    Equal {env_k} {ret(sS, plus(c))} {text_s[-1]} "
+            f"{ret(sG, plus(c))} {text_g[-1]} :=\n"
+            f"  Equal.rescale {chain}\n"
+            f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
+            f"    (by simp only [{self.sdefs()}]; first | "
+            "(simp [pow_mul']; done) | (ring_nf; simp [pow_mul']; done) | "
+            f"({hst[3:]}))"
+        )
+        proof = f"({sc_} {_join(hyps_args, kk)})"
+        for level in range(c - 1, -1, -1):
+            j = c - 1 - level
+            off = offs[level]
+            ok_s = f"(by decide : Spec.splitOK {spc} {off} {text_s[level]} = true)"
+            ok_g = f"(by decide : Spec.splitOK {spc} {off} {text_g[level]} = true)"
+            proof = (
+                f"(Equal.of_split_at {fam} {mi} {off} {plus(j)} {lst(plus(j))} (by simp) "
+                f"{text_s[level]} {text_g[level]} {ok_s} {ok_g} {self.bund_pos(vals(plus(j)))} "
+                f"{proof})"
+            )
+        enter(plus(c), kc)
+        self.decls.append(
+            f"/-- The start and goal families with their own scalars, at `{nn} = {plus(c)}`. -/\n"
+            f"theorem {name} {_join(binders, self.hyps)} ({kk} : ℕ) :\n"
+            f"    Equal {self.env} {ret(sS, plus(c))} {ns} {ret(sG, plus(c))} {ng} :=\n"
+            f"  {proof}"
+        )
+        self.family_diagram_theorem(
+            name,
+            ret(sS, plus(c)),
+            start,
+            ret(sG, plus(c)),
+            goal,
+            (f"({kk} : ℕ)", kk),
+        )
 
     def prepare_induction(self, t: object, top: bool) -> tuple[str, str]:
         """Register an induction's index and step symbols; their Lean names."""

@@ -1,0 +1,23 @@
+named @ghz
+(1/sqrt(d)) sum_{k=0}^{d-1} |k> |k>^{n}
+loaded dsl input
+(1/sqrt(d)) sum_{k2,q0=0}^{d-1} sum_{q3[i0],q4[i0]=0, i0=1..n}^{d-1} sum_{j0o0=0}^{d-1} sum_{j3i1[i0],j3o0[i0]=0, i0=1..n}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{k2 j0o0} prod_{i0=1}^{n}( d^{-3/2} w_{d}^{q3[i0] (j3o0[i0] - k2 - j3i1[i0])} d^{-1/2} w_{d}^{q4[i0] (j3i1[i0])} ) |k2> (x)_{i0=1}^{n}( |j3o0[i0]> )
+at n = 2: (1/sqrt(d)) sum_{k2,q0=0}^{d-1} sum_{q3[i0],q4[i0]=0, i0=1..2}^{d-1} sum_{j0o0=0}^{d-1} sum_{j3i1[i0],j3o0[i0]=0, i0=1..2}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{k2 j0o0} prod_{i0=1}^{2}( d^{-3/2} w_{d}^{q3[i0] (j3o0[i0] - k2 - j3i1[i0])} d^{-1/2} w_{d}^{q4[i0] (j3i1[i0])} ) |k2> (x)_{i0=1}^{2}( |j3o0[i0]> )
+error: clause 'k = 2': k is free in neither diagram (may be constrained: d, n)
+(detail shows the engine detail)
+error: clause 'n >= 3': a second clause on n
+(detail shows the engine detail)
+error: clause 'n = 2*d + 1': d is not fresh (free symbols: d, n)
+(detail shows the engine detail)
+error: clause 'n = 0*m + 1': a = 0; write n = 1
+(detail shows the engine detail)
+error: clause 'n = -1': negative literal -1
+(detail shows the engine detail)
+error: clause 'd = 0': a dimension needs a positive literal
+(detail shows the engine detail)
+error: clause 'd = 2*m': a dimension takes only d = v or d >= c
+(detail shows the engine detail)
+error: clause 'n = 3': the left side binds n = 2
+(detail shows the engine detail)
+error: clause 'n = 2 m +': '2 m +' is neither an integer literal nor A*M + C
+(detail shows the engine detail)

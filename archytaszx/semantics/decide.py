@@ -52,6 +52,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -103,6 +104,9 @@ from archytaszx.semantics.induction import (
     prove_by_induction,
 )
 
+if TYPE_CHECKING:
+    from archytaszx.semantics.restrict import Restriction
+
 
 class DecideError(Exception):
     """Base class for all errors raised by this module."""
@@ -141,7 +145,11 @@ class Decision:
     ``induction_reversed`` is True when :attr:`induction` was run with ``right`` as its left
     side. ``saturation`` is the saturation rung's report whenever that rung's saturation
     finished. ``witness`` is the differing entry behind a ``SYMBOLIC_WITNESS`` verdict, whose
-    assignment is also :attr:`counterexample`.
+    assignment is also :attr:`counterexample`. A restricted decision carries its
+    ``restriction``, the unrestricted ``family`` decision, ``family_holds`` when that decision
+    was EQUAL, the ``restricted_pair`` it decided otherwise, the counterexample in the original
+    symbols as ``counterexample_original``, and the dimension floors a symbolic contraction
+    needed as ``floors_used``.
     """
 
     verdict: EqualityVerdict
@@ -161,6 +169,12 @@ class Decision:
     witness: EntryWitness | None = None
     inner_method: DecisionMethod | None = None
     doubled: tuple[Diagram, Diagram] | None = None
+    restriction: Restriction | None = None
+    family: Decision | None = None
+    family_holds: bool = False
+    counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
+    restricted_pair: tuple[Diagram, Diagram] | None = None
+    floors_used: Mapping[str, int] | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -307,9 +321,18 @@ def _assumption_samples(symbols: frozenset[sp.Symbol]) -> tuple[CheckAssignmentV
     return tuple(itertools.islice(itertools.cycle(chosen), len(PHASE_SAMPLE_VALUES)))
 
 
-def _sample_values(left: Diagram, right: Diagram) -> dict[str, tuple[CheckAssignmentValue, ...]]:
+def _floor_samples(floor: int) -> tuple[int, ...]:
+    """The first four values at least ``floor`` of 2, 3, 4, 1, 5, 6, ..."""
+    order = itertools.chain(DIMENSION_SAMPLE_VALUES, itertools.count(5))
+    return tuple(itertools.islice((v for v in order if v >= floor), len(DIMENSION_SAMPLE_VALUES)))
+
+
+def _sample_values(
+    left: Diagram, right: Diagram, floors: Mapping[str, int] | None = None
+) -> dict[str, tuple[CheckAssignmentValue, ...]]:
     """Every samplable free symbol of either diagram, mapped to the sample values of its role
-    and assumptions."""
+    and assumptions; a dimension with a floor in ``floors`` samples from that floor and its
+    phase-vector floor."""
     dims_l, mults_l, others_l = _free_symbols(left)
     dims_r, mults_r, others_r = _free_symbols(right)
     mults = mults_l | mults_r
@@ -320,6 +343,9 @@ def _sample_values(left: Diagram, right: Diagram) -> dict[str, tuple[CheckAssign
     for name in sorted(mults | dims | others):
         if name in mults:
             values[name] = MULTIPLICITY_SAMPLE_VALUES
+        elif name in dims and floors and name in floors:
+            low = max(floors[name], dimension_floors(left, right).get(name, 1))
+            values[name] = _floor_samples(low)
         elif name in dims:
             values[name] = DIMENSION_SAMPLE_VALUES
         else:
@@ -329,10 +355,13 @@ def _sample_values(left: Diagram, right: Diagram) -> dict[str, tuple[CheckAssign
     return values
 
 
-def sample_grid(left: Diagram, right: Diagram) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
+def sample_grid(
+    left: Diagram, right: Diagram, floors: Mapping[str, int] | None = None
+) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
     """The default assignments over both diagrams' free symbols: diagonals first, then the
-    remaining index tuples by (largest index, index sum, tuple)."""
-    values = _sample_values(left, right)
+    remaining index tuples by (largest index, index sum, tuple); ``floors`` raises the samples
+    of the dimensions it names."""
+    values = _sample_values(left, right, floors)
     names = tuple(values)
     width = len(DIMENSION_SAMPLE_VALUES)
     if not names:
@@ -678,10 +707,24 @@ class _SymbolicRun:
     matched: bool
     reason: str
     tensors: tuple[SymbolicTensor, SymbolicTensor] | None = None
+    floors_used: Mapping[str, int] | None = None
 
 
-def _symbolic_match(left: Diagram, right: Diagram) -> _SymbolicRun:
-    """Whether both symbolic contractions agree exactly over equal boundaries, and a reason."""
+def _merged_floors(
+    left: Diagram, right: Diagram, floors: Mapping[str, int] | None
+) -> dict[str, int]:
+    """The phase-vector floors of both diagrams combined with ``floors`` by maximum."""
+    merged = dimension_floors(left, right)
+    for name, low in (floors or {}).items():
+        merged[name] = max(merged.get(name, 1), low)
+    return merged
+
+
+def _symbolic_match(
+    left: Diagram, right: Diagram, floors: Mapping[str, int] | None = None
+) -> _SymbolicRun:
+    """Whether both symbolic contractions agree exactly over equal boundaries, and a reason;
+    with ``floors``, compared again under them when they disagree without."""
     interface = _symbolic_interface_reason(left, right)
     if interface is not None:
         return _SymbolicRun(False, f"symbolic contraction skipped: {interface}")
@@ -691,6 +734,13 @@ def _symbolic_match(left: Diagram, right: Diagram) -> _SymbolicRun:
         result = compare_symbolic(
             tensor_l, tensor_r, dimension_floors=dimension_floors(left, right)
         )
+        if not result.matched and floors:
+            floored = compare_symbolic(
+                tensor_l, tensor_r, dimension_floors=_merged_floors(left, right, floors)
+            )
+            if floored.matched:
+                used = MappingProxyType(dict(floors))
+                return _SymbolicRun(True, floored.reason, (tensor_l, tensor_r), used)
     except _SYMBOLIC_ERRORS as exc:
         return _SymbolicRun(False, f"symbolic contraction declined: {type(exc).__name__}: {exc}")
     return _SymbolicRun(result.matched, result.reason, (tensor_l, tensor_r))
@@ -700,10 +750,12 @@ def _witness_assignments(
     left: Diagram,
     right: Diagram,
     candidates: Sequence[Mapping[str, CheckAssignmentValue]],
+    restricted: Mapping[str, int] | None = None,
 ) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
-    """``candidates`` that meet every symbol's assumptions and every dimension floor."""
+    """``candidates`` that meet every symbol's assumptions, every dimension floor and every
+    floor in ``restricted``."""
     table = _symbol_table(left, right)
-    floors = dimension_floors(left, right)
+    floors = _merged_floors(left, right, restricted)
     return tuple(
         candidate
         for candidate in candidates
@@ -721,11 +773,12 @@ def _symbolic_witness(
     tensors: tuple[SymbolicTensor, SymbolicTensor],
     candidates: Sequence[Mapping[str, CheckAssignmentValue]],
     tolerance: float,
+    floors: Mapping[str, int] | None = None,
 ) -> EntryWitness | None:
     """The first entry where the two contractions differ at an admissible candidate."""
     try:
         return find_entry_witness(
-            *tensors, _witness_assignments(left, right, candidates), tolerance=tolerance
+            *tensors, _witness_assignments(left, right, candidates, floors), tolerance=tolerance
         )
     except _SYMBOLIC_ERRORS:
         return None
@@ -852,11 +905,13 @@ def _induction_assumptions(
 
 
 def _instantiate_index(diagram: Diagram, index: str, value: int) -> Diagram:
-    """``diagram`` with multiplicity ``index`` set to ``value``, validated."""
+    """``diagram`` with multiplicity ``index`` set to ``value``, scalar included, validated."""
     if index in free_mult_symbols(diagram):
         diagram = instantiate_symbol(diagram, index, value)
     else:
         diagram = diagram.copy()
+    if index in diagram.scalar.free_symbols:
+        diagram.set_scalar(diagram.scalar.substitute({index: value}))
     validate_or_raise(diagram)
     return diagram
 
@@ -921,15 +976,18 @@ def decide_equal(
     use_saturation: bool = True,
     saturation_limits: SaturationLimits = DECIDE_SATURATION_LIMITS,
     mixed: bool = False,
+    restrict: Restriction | str | Mapping[str, str] | None = None,
 ) -> Decision:
-    """Decide whether ``left`` and ``right`` are equal for every value of their free symbols.
+    """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
+    or for the values ``restrict`` covers.
 
     Runs the module docstring's ladder; ``samples`` replaces :func:`sample_grid` for the
     oracle rung and, cut to its symbols, for the induction base case; ``max_depth`` bounds
     nested induction; ``rules`` also replaces the saturation rung's default rules. The
     induction step is tried left-to-right, then right-to-left. When either side has a
     discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
-    is ``DOUBLED``, the rung that settled it in ``inner_method``.
+    is ``DOUBLED``, the rung that settled it in ``inner_method``. A restriction with clauses
+    runs :func:`decide_restricted`.
     """
     _check_args(
         left,
@@ -946,10 +1004,110 @@ def decide_equal(
         use_saturation,
         saturation_limits,
     )
+    options: dict[str, object] = {
+        "rules": rules,
+        "guard": guard,
+        "samples": samples,
+        "max_samples": max_samples,
+        "use_symbolic": use_symbolic,
+        "use_induction": use_induction,
+        "max_depth": max_depth,
+        "tolerance": tolerance,
+        "max_elements": max_elements,
+        "use_saturation": use_saturation,
+        "saturation_limits": saturation_limits,
+        "mixed": mixed,
+    }
+    if restrict is not None:
+        from archytaszx.semantics.restrict import parse_restriction, validate
+
+        restriction = validate(parse_restriction(restrict), left, right)
+        if not restriction.empty:
+            return decide_restricted(left, right, restriction, **options)
+    return _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+
+
+def decide_restricted(
+    left: Diagram, right: Diagram, restriction: Restriction, **options: object
+) -> Decision:
+    """The restricted decision: the family decided first, its EQUAL kept and an in-range
+    counterexample kept, otherwise the ladder on the restricted pair under the restriction's
+    floors."""
+    from archytaszx.semantics.restrict import in_domain, restricted_samples, subst_pair, to_original
+
+    family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+    if family.verdict is EqualityVerdict.EQUAL:
+        return replace(family, restriction=restriction, family=family, family_holds=True)
+    pair = subst_pair(left, right, restriction)
+    if family.verdict is EqualityVerdict.UNEQUAL:
+        point = family.counterexample
+        induced = family.induction
+        if point is None and induced is not None and induced.counterexample is not None:
+            point = {**dict(induced.witness), induced.index: induced.counterexample}
+        if family.method is DecisionMethod.INTERFACE:
+            reason = _interface_reason(_family(pair[0]), _family(pair[1]))
+            if reason is not None:
+                return replace(
+                    family,
+                    reason=reason,
+                    restriction=restriction,
+                    family=family,
+                    restricted_pair=pair,
+                )
+        elif point is not None and in_domain(restriction, point):
+            return replace(
+                family,
+                restriction=restriction,
+                family=family,
+                counterexample_original=MappingProxyType(dict(point)),
+            )
+    samples = options.get("samples")
+    if samples is not None:
+        options = {**options, "samples": restricted_samples(restriction, samples)}  # type: ignore[arg-type]
+    inner = _decide(*pair, floors=restriction.floors, **options)  # type: ignore[arg-type]
+    original = None
+    reason = inner.reason
+    if inner.counterexample is not None:
+        original = MappingProxyType(to_original(restriction, inner.counterexample))
+        where = ", ".join(f"{k} = {v}" for k, v in original.items())
+        reason = f"{reason}; in the original symbols at {where}"
+    return replace(
+        inner,
+        reason=reason,
+        restriction=restriction,
+        family=family,
+        family_holds=False,
+        restricted_pair=pair,
+        counterexample_original=original,
+        samples_checked=family.samples_checked + inner.samples_checked,
+    )
+
+
+def _decide(
+    left: Diagram,
+    right: Diagram,
+    *,
+    rules: Sequence[Rule] | None,
+    guard: TerminationGuard,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    use_symbolic: bool,
+    use_induction: bool,
+    max_depth: int,
+    tolerance: float,
+    max_elements: int,
+    use_saturation: bool,
+    saturation_limits: SaturationLimits,
+    mixed: bool,
+    floors: Mapping[str, int] | None,
+) -> Decision:
+    """The ladder of :func:`decide_equal`, sampling and contracting under ``floors``."""
     if mixed or not (is_pure(left) and is_pure(right)):
         doubled = (double(left), double(right))
-        inner = decide_equal(
+        inner = _decide(
             *doubled,
+            mixed=False,
+            floors=floors,
             rules=rules,
             guard=guard,
             samples=samples,
@@ -1028,7 +1186,7 @@ def decide_equal(
             **evidence,  # type: ignore[arg-type]
         )
 
-    candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
+    candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r, floors)
     oracle = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
     checked = len(oracle.evaluated)
     if oracle.mismatch is not None:
@@ -1080,7 +1238,7 @@ def decide_equal(
     else:
         notes.append("saturation disabled")
     if use_symbolic:
-        symbolic = _symbolic_match(family_l, family_r)
+        symbolic = _symbolic_match(family_l, family_r, floors)
         if symbolic.matched:
             return finish(
                 EqualityVerdict.EQUAL,
@@ -1088,11 +1246,14 @@ def decide_equal(
                 f"symbolic contractions agree: {symbolic.reason}",
                 assumptions=(),
                 samples_checked=checked,
+                floors_used=symbolic.floors_used,
             )
         witness = (
             None
             if symbolic.tensors is None
-            else _symbolic_witness(family_l, family_r, symbolic.tensors, candidates, tolerance)
+            else _symbolic_witness(
+                family_l, family_r, symbolic.tensors, candidates, tolerance, floors
+            )
         )
         if witness is not None:
             return finish(
@@ -1131,6 +1292,7 @@ def decide_equal(
             max_elements=max_elements,
             use_saturation=use_saturation,
             saturation_limits=saturation_limits,
+            floors=floors,
         )
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
@@ -1169,6 +1331,7 @@ def _decide_by_induction(
     max_elements: int,
     use_saturation: bool,
     saturation_limits: SaturationLimits,
+    floors: Mapping[str, int] | None = None,
 ) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
     """The induction rung: a settled (verdict, method, reason, evidence), or why it did not
     settle."""
@@ -1190,9 +1353,11 @@ def _decide_by_induction(
         break
     if base is None or pair is None:
         return f"neither {index}=0 nor {index}=1 instantiates both sides"
-    base_decision = decide_equal(
+    base_decision = _decide(
         pair[0],
         pair[1],
+        mixed=False,
+        floors=floors,
         rules=rules,
         guard=guard,
         samples=None if samples is None else _restrict_samples(samples, index, *pair),

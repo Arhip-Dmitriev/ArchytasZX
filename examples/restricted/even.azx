@@ -1,0 +1,16 @@
+# n |+> states scaled by (-1)^n against n |+> states: equal exactly for even n.
+# Expected: equal for n = 2*m (step 3); unequal for n = 2*m + 1, the counterexample in n.
+
+@plus =
+  count n
+  repeat n: Z(0 -> 1)
+
+load
+  count n
+  repeat n: Z(0 -> 1)
+  scalar (-1)^n
+
+decide @plus for n = 2*m
+certificate kernel
+certificate lean even.lean
+decide @plus for n = 2*m + 1

@@ -408,11 +408,25 @@ class Piece:
 
 @dataclass(frozen=True, slots=True)
 class Result:
-    """A command's printed text, its success, and the decision behind it when there is one."""
+    """A command's printed text, its success, the decision behind it when there is one, and
+    the engine result of a decide, prove or induct."""
 
     text: str
     ok: bool
     decision: Decision | None = None
+    outcome: object | None = None
+
+    @property
+    def restriction(self) -> object | None:
+        return getattr(self.outcome, "restriction", None)
+
+    @property
+    def family(self) -> object | None:
+        return getattr(self.outcome, "family", None)
+
+    @property
+    def family_holds(self) -> bool:
+        return bool(getattr(self.outcome, "family_holds", False))
 
     @property
     def verdict(self) -> str | None:
@@ -433,6 +447,19 @@ class Result:
 
 
 _OWN = frozenset({"_shell", "_bindings", "_values", "_named"})
+
+
+def _where(where: str | Mapping[str, str] | None) -> str:
+    """`` for CLAUSES`` from clause text or a mapping symbol -> ``">= 2"``, ``"= 3"``."""
+    if where is None:
+        return ""
+    if isinstance(where, Mapping):
+        text = ", ".join(f"{name} {str(value).strip()}" for name, value in where.items())
+    elif isinstance(where, str):
+        text = where.strip()
+    else:
+        raise AzxError(f"where takes clause text or a mapping, got {type(where).__name__}")
+    return f" for {text}" if text else ""
 
 
 def _legs(count: object, side: str) -> tuple[int, tuple[tuple[str, int, str], ...]]:
@@ -482,8 +509,9 @@ class Program:
         outcome: Outcome | None = self._shell.last_outcome
         ok = outcome is not None and outcome.ok
         detail = outcome.detail if outcome is not None else None
-        decision = detail.payload if isinstance(detail, _Pair) else None
-        return Result(text, ok, decision if isinstance(decision, Decision) else None)
+        payload = detail.payload if isinstance(detail, _Pair) else None
+        decision = payload if isinstance(payload, Decision) else None
+        return Result(text, ok, decision, payload)
 
     def _source(self, value: Piece | str | Diagram) -> str:
         if isinstance(value, Diagram):
@@ -499,23 +527,47 @@ class Program:
         return self._run("load " + self._source(piece))
 
     def _pair(
-        self, command: str, left: Piece | str | Diagram, right: Piece | str | Diagram | None
+        self,
+        command: str,
+        left: Piece | str | Diagram,
+        right: Piece | str | Diagram | None,
+        where: str | Mapping[str, str] | None = None,
     ) -> Result:
         loaded = self.load(left)
         if not loaded.ok:
             return loaded
+        tail = _where(where)
         if right is None:
-            return self._run(command)
+            return self._run(f"{command}{tail}")
         if not (isinstance(right, str) and right.startswith("@")):
             self._run("@azx_target = " + self._source(right))
             right = "@azx_target"
-        return self._run(f"{command} against {right}")
+        return self._run(f"{command} against {right}{tail}")
 
     def decide(
-        self, left: Piece | str | Diagram, right: Piece | str | Diagram | None = None
+        self,
+        left: Piece | str | Diagram,
+        right: Piece | str | Diagram | None = None,
+        *,
+        where: str | Mapping[str, str] | None = None,
     ) -> Result:
-        """Decides ``left == right`` for every value of their symbols."""
-        return self._pair("decide", left, right)
+        """Decides ``left == right`` for every value of their symbols, or for the values the
+        clauses ``where`` covers."""
+        return self._pair("decide", left, right, where)
+
+    def induct(
+        self,
+        left: Piece | str | Diagram,
+        right: Piece | str | Diagram | None = None,
+        *,
+        on: str | None = None,
+        where: str | Mapping[str, str] | None = None,
+        **values: object,
+    ) -> Result:
+        """Proves ``left == right`` by induction on ``on``, every other symbol held at
+        ``values``, under the clauses ``where``."""
+        head = " ".join([*([f"on {on}"] if on else []), *(f"{k}={v}" for k, v in values.items())])
+        return self._pair(f"induct {head}".rstrip(), left, right, where)
 
     def prove(
         self,
@@ -524,9 +576,10 @@ class Program:
         *,
         exhaustive: bool = False,
         algebraic: bool = False,
+        where: str | Mapping[str, str] | None = None,
     ) -> Result:
         """Searches for a certified derivation of ``left == right``; ``algebraic`` implies
-        ``exhaustive``."""
+        ``exhaustive``; ``where`` restricts the claim."""
         command = (
             "prove exhaustive algebraic"
             if algebraic
@@ -534,7 +587,7 @@ class Program:
             if exhaustive
             else "prove"
         )
-        return self._pair(command, left, right)
+        return self._pair(command, left, right, where)
 
     def check(
         self, left: Piece | str | Diagram, right: Piece | str | Diagram, **values: object

@@ -1144,13 +1144,18 @@ def _unnest(d: Diagram) -> tuple[Diagram, dict[str, str]]:
 
 def _family_mults(left: Diagram, right: Diagram) -> list[sp.Expr]:
     """The multiplicities of the port boxes and of the node boxes, each node box meeting the
-    rest only at the boundary, bare symbols first; :class:`NetUnsupported` for any other box."""
+    rest only at the boundary or at wires into Z spiders, bare symbols first;
+    :class:`NetUnsupported` for any other box."""
     from archytaszx.diagram.bangbox import crossing_wires
 
     names = set()
     for d in (left, right):
         for box in d.bang_boxes.values():
-            if box.is_node_scope and crossing_wires(d, box.node_scope):
+            if box.is_node_scope and not all(
+                d.nodes[(w.b if w.a.node_id in box.node_scope else w.a).node_id].generator_type.name
+                == "Z"
+                for w in crossing_wires(d, box.node_scope)
+            ):
                 raise NetUnsupported("a box meeting the rest at a wire")
             names.add(box.multiplicity.to_sympy())
     return sorted(names, key=lambda m: (not m.is_Symbol, str(m)))
@@ -1359,6 +1364,8 @@ class _SymExport:
         self.fam_decls: list[str] = []
         self.net_decls: list[str] = []
         self.planned: bool | None = None
+        self.shift: tuple[str, int] | None = None
+        self.shifted: Any = None
 
     # tables as Python
 
@@ -1415,17 +1422,95 @@ class _SymExport:
         if self.planned is None:
             try:
                 self.texts()
-                self.fam(
-                    self.a.net,
-                    self.a.name,
-                    self.b.net,
-                    self.b.name,
-                    (sp.sympify(self.m0), sp.sympify(self.m1), self.s0t, self.s1t),
-                )
+                if self.shift is not None:
+                    self.plan_shift()
+                else:
+                    self.fam(
+                        self.a.net,
+                        self.a.name,
+                        self.b.net,
+                        self.b.name,
+                        (sp.sympify(self.m0), sp.sympify(self.m1), self.s0t, self.s1t),
+                    )
                 self.planned = True
             except NetUnsupported as exc:
                 self.planned, self.why = False, str(exc)
         return self.planned
+
+    def plan_shift(self) -> None:
+        """The family lemma for both networks split ``c`` times along the shifted index, its
+        scalars at ``n + c``; the splits' texts and offsets in ``shifted``."""
+        from archytaszx.semantics.lean_net import _split_net
+
+        assert self.shift is not None
+        out = self.out
+        sym_name, c = self.shift
+        if self.common is not None:
+            raise NetUnsupported("a shifted family with a common scalar")
+        if sym_name not in out.mult_ix:
+            raise NetUnsupported("the shifted symbol carries no box")
+        j = out.mult_ix[sym_name]
+        isb = out.isb(j)
+        labels = [
+            lb
+            for net in (self.a.net, self.b.net)
+            for lb in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels()))
+        ]
+        H = 1 << max(16, max(labels, default=0).bit_length())
+        offs = [H << t for t in range(c)]
+        nets = [(self.a.net, self.a.name, self.b.net, self.b.name)]
+        for off in offs:
+            x, xt, y, yt = nets[-1]
+            for net in (x, y):
+                for lab in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels())):
+                    if out.label_chain(lab)[:1] == (j,):
+                        out.peel_reg(lab, off)
+            spc = f"(SpC {j})"
+            nets.append(
+                (
+                    _split_net(x, j, isb, off),
+                    f"(Net.split {spc} {off} {xt})",
+                    _split_net(y, j, isb, off),
+                    f"(Net.split {spc} {off} {yt})",
+                )
+            )
+        sym = self.mult_sym(j)
+        name = self.var_names()[j]
+        if sym is None:
+            raise NetUnsupported("the shifted index is not a bare multiplicity")
+        m0 = sp.sympify(self.m0).subs(sym, sym + c)
+        m1 = sp.sympify(self.m1).subs(sym, sym + c)
+        t0 = self.retext(self.s0t, name, f"({name} + {c})")
+        t1 = self.retext(self.s1t, name, f"({name} + {c})")
+        x, xt, y, yt = nets[-1]
+        self.fam(x, xt, y, yt, (m0, m1, t0, t1))
+        self.shifted = (j, c, offs, nets)
+
+    def shift_proof(self, vals: Sequence[str]) -> tuple[list[str], str]:
+        """The values at ``n + c`` and the proof lifting the split family lemma there by
+        ``Equal.of_split_at`` once per split."""
+        j, c, offs, nets = self.shifted
+        name = vals[j]
+        args = self.args
+        fam = f"(F {args})" if args else "F"
+        hyp0 = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+        fpos = f"(Fpos {_join(args, hyp0)} _)" if (args or hyp0) else "(Fpos _)"
+
+        def plus(t: int) -> str:
+            return name if t == 0 else f"({name} + {t})"
+
+        proof = self.call(self.top, *vals)
+        for level in range(c - 1, -1, -1):
+            t = c - 1 - level
+            lst = [plus(t) if q == j else v for q, v in enumerate(vals)]
+            xt, yt = nets[level][1], nets[level][3]
+            proof = (
+                f"(Equal.of_split_at {fam} {j} {offs[level]} {plus(t)} [{', '.join(lst)}] "
+                f"(by simp) {xt} {yt} {_split_ok(j, offs[level], xt)} "
+                f"{_split_ok(j, offs[level], yt)} (fun _ _ _ => Fam.dimv_pos _ _ _ {fpos}) "
+                f"{proof})"
+            )
+        return [plus(c) if q == j else v for q, v in enumerate(vals)], proof
 
     # scalars
 
@@ -1707,12 +1792,20 @@ class _SymExport:
                 return _paren(out.mult_names[j])
 
             vals = [val(k) for k in keys]
-            _, proof = self.common_wrap(self.call(self.top, *vals))
+            s0, s1 = self.stated_s(0), self.stated_s(1)
+            if self.shifted is not None:
+                j = self.shifted[0]
+                raw = vals[j].strip("()")
+                vals, proof = self.shift_proof(vals)
+                s0 = self.retext(s0, raw, vals[j])
+                s1 = self.retext(s1, raw, vals[j])
+            else:
+                _, proof = self.common_wrap(self.call(self.top, *vals))
             theorem = (
                 "/-- The families are equal for every multiplicity and every value of "
                 f"their dimensions and phases. -/\ntheorem {name} {bh} :\n"
-                f"    ∀ {' '.join(names)} : ℕ, Equal {self.env_at(vals)} {self.stated_s(0)} "
-                f"{A} {self.stated_s(1)} {B} :=\n  fun {' '.join(names)} => {proof}"
+                f"    ∀ {' '.join(names)} : ℕ, Equal {self.env_at(vals)} {s0} "
+                f"{A} {s1} {B} :=\n  fun {' '.join(names)} => {proof}"
             )
             out.decls += [
                 *decls,
@@ -1730,9 +1823,9 @@ class _SymExport:
                 self.env_at(vals),
                 f"(F {fargs})" if fargs else "F",
                 _join("Fpos", self.ah),
-                self.stated_s(0),
+                s0,
                 self.a,
-                self.stated_s(1),
+                s1,
                 self.b,
             )
             mm = ", ".join(names)
@@ -1919,14 +2012,21 @@ class _SymExport:
         isb = out.isb(m)
         spc = f"(SpC {m})"
         if m in ported:
-            return self.port(i, x, xt, y, yt, sc, m, H, vs)
+            try:
+                return self.port(i, x, xt, y, yt, sc, m, H, vs)
+            except NetUnsupported:
+                if not any(isb(lab) for lab in x.summed):
+                    raise
         al, be = self.ratio(mx, m), self.ratio(my, m)
         zx, zy = _zero_net(x, m, isb), _zero_net(y, m, isb)
         lz = self.fam(
             zx, f"(Net.zero {spc} {xt})", zy, f"(Net.zero {spc} {yt})", self.scal_at(sc, m, "0", 0)
         )
         sp0, sp1 = _split_net(x, m, isb, H), _split_net(y, m, isb, H)
-        t0, t1 = _peeled(sp0, x), _peeled(sp1, y)
+        try:
+            t0, t1 = _peeled(sp0, x), _peeled(sp1, y)
+        except NetUnsupported:
+            return self.tower(i, x, xt, y, yt, sc, m, H, vs, lz, (al, be))
         if sorted(t0.bnd) != sorted(t1.bnd):
             raise NetUnsupported("the peeled copies have different boundaries")
         ta, tb = f"T{i}a", f"T{i}b"
@@ -2003,6 +2103,193 @@ class _SymExport:
         if i == 0:
             self.top = f"P{i}"
         return f"P{i}"
+
+    def tower(
+        self,
+        i: int,
+        x: Any,
+        xt: str,
+        y: Any,
+        yt: str,
+        sc: Any,
+        m: int,
+        H: int,
+        vs: list[str],
+        lz: str,
+        ratios: tuple[Any, Any],
+    ) -> str:
+        """The lemma ``P{i}`` for a node box along ``m`` whose copies meet one Z spider of
+        ``x`` at its bundled inputs: zero by the zero networks; ``k + 1`` by splitting a copy
+        off, unfusing the spider (``fusionZG``) so that ``x`` at ``k``, its output renamed to
+        the new wire, is a region, the induction hypothesis plugged there, and the rest
+        normalised against ``y``'s split."""
+        from archytaszx.semantics.lean_net import (
+            LNet,
+            LNode,
+            _head,
+            _list,
+            _pairs,
+            _perm_to_bijection,
+            _rename_net,
+            _split_net,
+            _tail,
+            _zk,
+        )
+
+        out = self.out
+        isb = out.isb(m)
+        spiders = [
+            n
+            for n in x.nodes
+            if _head(n.kind) == "ZB" and any(isb(lab) and lab in x.summed for lab in n.ins)
+        ]
+        if len(spiders) != 1:
+            raise NetUnsupported("a node box meeting other than one Z spider")
+        zn = spiders[0]
+        if any(_head(n.kind) == "Bun" and n.kind[1] != m for n in x.nodes):
+            raise NetUnsupported("towers along two multiplicities")
+        o = next((lab for lab in zn.outs if lab in x.bnd), None)
+        if o is None:
+            raise NetUnsupported("the spider meeting the node box has no boundary output")
+        sp0, sp1 = _split_net(x, m, isb, H), _split_net(y, m, isb, H)
+        others = [n for n in x.nodes if n is not zn]
+        rest = list(sp0.nodes)
+        for n in others:
+            if n not in rest:
+                raise NetUnsupported("the split network does not contain the network")
+            rest.remove(n)
+        split_z = [n for n in rest if _head(n.kind) == "ZB" and n.outs == zn.outs]
+        if len(split_z) != 1:
+            raise NetUnsupported("the split spider is not found")
+        zs = split_z[0]
+        copy = [n for n in rest if n is not zs]
+        extra = [lab for lab in zs.ins if lab not in zn.ins]
+        if len(extra) != 1:
+            raise NetUnsupported("the split spider gains other than one leg")
+        e = extra[0]
+        cs1 = tuple(zn.kind[1])
+        t1 = _tail(zn.ins, cs1)
+        i1 = tuple(zn.ins[: len(zn.ins) - len(cs1)])
+        cs_s = tuple(zs.kind[1])
+        if tuple(zs.ins) != i1 + tuple(t1) + (e,) or cs_s != cs1 + ((),):
+            raise NetUnsupported("the split spider's legs are not the unfused form")
+        w = out.fresh_like(o)
+        o1 = tuple(w if lab == o else lab for lab in zn.outs)
+        za = LNode(zn.kind, o1, zn.ins, zn.dim, zn.ph)
+        zb = LNode(_zk(((),)), (o,), (w, e), zs.dim, 0)
+        spc = f"(SpC {m})"
+        kvs = [("k_" if j == m else v) for j, v in enumerate(vs)]
+        envk = self.env_at(kvs)
+        sk = self.scal_at(sc, m, "k_", sp.Symbol("k_"))
+        sk1 = self.scal_at(sc, m, "(k_ + 1)", sp.Symbol("k_") + 1)
+        al, be = ratios
+        alt, bet = _paren(out.text(al)), _paren(out.text(be))
+        bnd = sp0.bnd
+        bl = _list(bnd)
+
+        def iso_s(a_text: str, a: Any, b_text: str, b: Any) -> str:
+            return out.iso_b(envk, a_text, a, b_text, b)
+
+        def lit(nodes: Sequence[Any]) -> str:
+            return "[" + ", ".join(n.lean() for n in nodes) + "]"
+
+        ctx1 = tuple(copy) + tuple(others)
+        n1 = LNet(ctx1 + (zs,), sp0.summed, bnd)
+        n2 = LNet(ctx1 + (za, zb), sp0.summed + (w,), bnd)
+        n1t, n2t = f"T{i}s", f"T{i}u"
+        self.net_decls += [
+            f"/-- The split network, its spider last. -/\ndef {n1t} : Net := {n1.lean()}",
+            f"/-- The split network with its spider unfused. -/\ndef {n2t} : Net := {n2.lean()}",
+        ]
+        iface = tuple(dict.fromkeys(zs.labels()))
+        fusion = (
+            f"fusionZG {envk} {self.fmt_cs(cs1)} {self.fmt_cs(((),))} {za.ph} {zb.ph} {zs.ph} "
+            f"{zs.dim} {w} {_list(o1)} {_list(i1)} {_list(t1)} {_list(zb.outs)} {_list((w,))} "
+            f"{_list((e,))} {_list(zs.outs)} {_list(i1)} {_list(iface)} (by chk) (by chk) "
+            "(by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by chk) (by phs)"
+        )
+        unfuse = (
+            f"(plug {envk} {lit(ctx1)} {lit([zs])} {lit([za, zb])} {_list(sp0.summed)} [] "
+            f"[{w}] {bl} {_list(iface)} 1 1 (fun τ hτ => (({fusion}) τ hτ).symm) (by chk) "
+            "(by chk) (by chk))"
+        )
+        mapping: dict[int, int] = {o: w}
+        for lab in y.summed:
+            mapping.setdefault(lab, out.fresh_like(lab))
+        pairs = _perm_to_bijection(mapping)
+        pt = _pairs(pairs)
+        rx, ry = _rename_net(x, pairs), _rename_net(y, pairs)
+        ctx3 = tuple(copy) + (zb,)
+        ic3 = tuple(lab for lab in n2.summed if lab not in set(rx.summed))
+        n3 = LNet(ctx3 + rx.nodes, ic3 + rx.summed, bnd)
+        n4 = LNet(ctx3 + ry.nodes, ic3 + ry.summed, bnd)
+
+        def plug_text(t: str) -> str:
+            return (
+                f"⟨{lit(ctx3)} ++ (Net.rename {pt} {t}).nodes, {_list(ic3)} ++ "
+                f"(Net.rename {pt} {t}).int, {bl}⟩"
+            )
+
+        hr = f"(Equal.rename {envk} {pt} {xt} {yt} (by chk) (by chk) ih)"
+        plug = (
+            f"(plug {envk} {lit(ctx3)} (Net.rename {pt} {xt}).nodes (Net.rename {pt} {yt}).nodes "
+            f"{_list(ic3)} (Net.rename {pt} {xt}).int (Net.rename {pt} {yt}).int {bl} "
+            f"(Net.rename {pt} {xt}).bnd {sk[2]} {sk[3]} (Equal.toLocal _ _ _ {hr}) (by chk) "
+            "(by chk) (by chk))"
+        )
+        rt = f"T{i}r"
+        self.net_decls.append(
+            f"/-- The rest after the hypothesis. -/\ndef {rt} : Net := {n4.lean()}"
+        )
+        lt = self.fam(n4, rt, sp1, f"(Net.split {spc} {H} {yt})", (al, be, alt, bet))
+        chain = (
+            "Equal.congr_s (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans (Equal.mul_trans "
+            f"(Equal.mul_trans {iso_s(f'(Net.split {spc} {H} {xt})', sp0, n1t, n1)}\n"
+            f"    {unfuse})\n    {iso_s(n2t, n2, plug_text(xt), n3)})\n    {plug})\n"
+            f"    {iso_s(plug_text(yt), n4, rt, n4)})\n    {self.call(lt, *kvs)}) (by ring) "
+            "(by ring)"
+        )
+        ok0, ok1 = _split_ok(m, H, xt), _split_ok(m, H, yt)
+        args = self.args
+        fam = f"(F {args})" if args else "F"
+        hyp0 = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+        fpos = f"(Fpos {_join(args, hyp0)} _)" if (args or hyp0) else "(Fpos _)"
+        zvs = [("0" if j == m else v) for j, v in enumerate(vs)]
+        kb = " ".join(f"({v} : ℕ)" for v in kvs)
+        vb = " ".join(vs)
+        name = vs[m]
+        _mx, _my, sxt, syt = sc
+        self.fam_decls[i] = "\n\n".join(
+            [
+                (
+                    f"theorem Q{i} {self.bh} {kb} (ih : Equal {envk} {sk[2]} {xt} {sk[3]} {yt}) :\n"
+                    f"    Equal {envk} {sk1[2]} (Net.split {spc} {H} {xt}) {sk1[3]} "
+                    f"(Net.split {spc} {H} {yt}) :=\n  {chain}"
+                ),
+                (
+                    f"theorem P{i} {self.bh} : ∀ {vb} : ℕ, "
+                    f"Equal {self.env_at(vs)} {sxt} {xt} {syt} {yt} "
+                    f":= by\n  intro {vb}\n  induction {name} with\n"
+                    f"  | zero => exact Equal.of_zero_at {fam} {m} {H} [{', '.join(zvs)}] "
+                    f"(by simp) {xt} "
+                    f"{yt} {ok0} {ok1} (by decide +kernel) (Equal.congr_s {self.call(lz, *zvs)} "
+                    "(by ring) (by ring))\n"
+                    f"  | succ k_ ih => exact Equal.of_split_at {fam} {m} {H} k_ "
+                    f"[{', '.join(kvs)}] "
+                    "(by simp) "
+                    f"{xt} {yt} {ok0} {ok1} (fun _ _ _ => Fam.dimv_pos _ _ _ {fpos}) "
+                    f"{self.call(f'Q{i}', *kvs, 'ih')}"
+                ),
+            ]
+        )
+        if i == 0:
+            self.top = f"P{i}"
+        return f"P{i}"
+
+    @staticmethod
+    def fmt_cs(cs: Sequence[Any]) -> str:
+        """Chains as a Lean list of lists."""
+        return "[" + ", ".join("[" + ", ".join(map(str, c)) + "]" for c in cs) + "]"
 
     def port(
         self, i: int, x: Any, xt: str, y: Any, yt: str, sc: Any, m: int, H: int, vs: list[str]
@@ -2151,14 +2438,17 @@ def export_symbolic(
     name: str = "main",
     describe: Callable[[Diagram], str] | None = None,
     floors: Mapping[str, int] | None = None,
+    shift: tuple[str, int] | None = None,
 ) -> str:
     """Lean 4 source proving ``left = right`` for every value of the dimensions and phases by
-    the verified normaliser; :class:`NetUnsupported` when the normaliser does not reach it."""
+    the verified normaliser, at ``n + c`` for every ``n`` when ``shift`` is ``(n, c)``;
+    :class:`NetUnsupported` when the normaliser does not reach it."""
     from archytaszx.semantics.decide import dimension_floors
 
     ex = _SymExport(
         left, right, describe, floors if floors is not None else dimension_floors(left, right)
     )
+    ex.shift = shift
     if not ex.check():
         raise NetUnsupported(getattr(ex, "why", "the normal forms of the two networks differ"))
     return ex.source(name)

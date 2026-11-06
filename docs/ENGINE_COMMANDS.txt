@@ -114,9 +114,36 @@ equal, unequal or unknown, with the method that settled it and the oracle summar
 
     decide: equal by normal_form: normal forms agree; no oracle mismatch in 12 sample(s)
 
+    decide [against] [TARGET] for CLAUSE, ...
+
+restricts the claim to the values the clauses cover (PROOFS.txt, section 8): n = v, n >= c,
+n = a*m + c (m fresh) for a multiplicity, d = v and d >= c for a dimension. "for" is a keyword
+only in this trailing position; spaces around operators are optional, and a*m + c is also
+written a m + c or m + c. The verdict names the restriction; when the family claim was
+decided EQUAL first, a second line says so:
+
+    decide: equal for n >= 2 by normal_form: normal forms agree
+    decide: holds for every n (family proof specialised)
+    proof: re-checkable; certificate kernel / certificate lean
+
+An unequal restricted verdict prints its counterexample in the original symbols:
+
+    decide: unequal for n = 2*m + 1 by oracle_counterexample: ...
+    counterexample: d = 3, n = 1: ...
+
+Without a clause, when the family is unequal and the session binds one or more of the
+diagrams' free counts (count n = v) to values the counterexample does not have, decide also
+decides the instance at every bound count and dimension and appends one line; the verdict
+and exit status are unchanged:
+
+    at the bound n = 2: equal by symbolic_contraction (decide ... for n = 2 to certify)
+
+The line says unequal or unknown when the instance is. A clause error is one line naming the
+clause and the symbols that may be constrained (ERRORS.txt).
+
 2.10 prove
 
-    prove [exhaustive [algebraic]] [against] [TARGET]
+    prove [exhaustive [algebraic]] [against] [TARGET] [for CLAUSE, ...]
 
 Searches for a derivation between the two diagrams by bidirectional tactic search, certifies
 and checks it; when no path is found and a multiplicity is free, tries induction (PROOFS.txt,
@@ -125,15 +152,19 @@ exhaustive, the search is the fair breadth-first search over every registered ru
 PROOFS.txt, section 3.2, with no bound: it may not return (COMPLETENESS.txt, section 6). With
 exhaustive algebraic, the search is the iterative deepening over algebraic values of PROOFS.txt,
 section 3.3, for diagrams at concrete dimensions with algebraic parameters: it returns on every
-equal pair, given time.
+equal pair, given time. A trailing for clause restricts the claim as for decide (PROOFS.txt,
+section 8): the unrestricted proof first, then the restricted pair's.
 
 2.11 induct
 
-    induct [on SYMBOL] [NAME=VALUE ...] [against TARGET]
+    induct [on SYMBOL] [NAME=VALUE ...] [against TARGET] [for CLAUSE, ...]
 
 Proves the equality for every value of one multiplicity symbol by induction (PROOFS.txt,
 section 4). Every other symbol is held at a supplied value used as the witness for the
-oracle tiers; supply one NAME=VALUE for each.
+oracle tiers; supply one NAME=VALUE for each, except for symbols a clause n = v or d = v
+fixes. Under n >= c (or n = a*m + c) the restricted pair is inducted over m from 0:
+
+    induct: proved_induction for n >= 1 over m (n = m + 1) from 0 via ...
 
 2.12 certificate
 

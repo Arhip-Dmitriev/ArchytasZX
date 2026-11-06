@@ -1,0 +1,17 @@
+# [P1] D1 at d = 5: a Z box followed by D = F F is D followed by the Z box with the reversed
+# vector (index k to -k mod 5); zxw_d1 matches only at a concrete dimension.
+# Expected: unknown for symbolic d (no sample has d >= 5); equal for d = 5 by symbolic
+# contraction; proved for d = 5 by prove exhaustive in one zxw_d1 step, kernel-checked and
+# exported to Lean.
+
+@rev =
+  F -> F -> z = Z(1 -> 1) weight{3: 1/3, 4: 1/2}
+
+load
+  z = Z(1 -> 1) weight{1: 1/2, 2: 1/3} -> F -> F
+
+decide @rev
+decide @rev for d = 5
+prove exhaustive against @rev for d = 5
+certificate kernel
+certificate lean fourier_d5.lean

@@ -124,20 +124,31 @@ Each entry: class (base) - when it is raised.
       CheckDomainError         declared; currently not raised
   decide
     DecideError (Exception)
-      DecideGrammarError       a wrong argument type or an out-of-range bound
+      DecideGrammarError       a wrong argument type or an out-of-range bound; a restriction
+                               clause (restrict): one on a symbol free in neither diagram, a
+                               second clause on one symbol, a non-fresh or reused m, a = 0, a
+                               negative literal, a dimension clause other than d = v and
+                               d >= c or with a literal below 1, a binding disagreeing with
+                               n = v or d = v, text outside the grammar; the message names
+                               the clause and the symbols that may be constrained
   prove
     ProveError (Exception)
-      ProveGrammarError        a wrong argument, or a start or goal failing validation
+      ProveGrammarError        a wrong argument, or a start or goal failing validation; a
+                               restriction clause error, as for DecideGrammarError
   induction
     InductionError (Exception)
       InductionDomainError     a value outside the module's domain
-      InductionGrammarError    a malformed request
+      InductionGrammarError    a malformed request; a restriction clause error, as for
+                               DecideGrammarError, an index fixed by n = v, a held value
+                               outside its clause
   certificate
     CertificateError (Exception)
       CertificateDomainError   a value outside a certificate operation's domain
       CertificateGrammarError  a malformed certificate request
   kernel
     KernelError (Exception)    a proof piece the kernel does not accept
+  lean_restrict
+    RestrictUnsupported (Exception)  an export whose final theorem the corollary does not read
   interop
     InteropError (Exception)
       InteropGrammarError      a wrong argument, a bad limit, an unknown operation

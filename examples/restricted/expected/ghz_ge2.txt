@@ -1,0 +1,14 @@
+named @ghz
+(1/sqrt(d)) sum_{k=0}^{d-1} |k> |k>^{n}
+loaded dsl input
+(1/sqrt(d)) sum_{k2,q0=0}^{d-1} sum_{q3[i0],q4[i0]=0, i0=1..n}^{d-1} sum_{j0o0=0}^{d-1} sum_{j3i1[i0],j3o0[i0]=0, i0=1..n}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{k2 j0o0} prod_{i0=1}^{n}( d^{-3/2} w_{d}^{q3[i0] (j3o0[i0] - k2 - j3i1[i0])} d^{-1/2} w_{d}^{q4[i0] (j3i1[i0])} ) |k2> (x)_{i0=1}^{n}( |j3o0[i0]> )
+decide: equal for n >= 2 by normal_form: normal forms agree; no oracle mismatch in 16 sample(s)
+decide: holds for every n (family proof specialised)
+proof: re-checkable; certificate kernel / certificate lean
+emitted certificate: restricted proof for n >= 2, the family proof specialised
+kernel: theorem (1/sqrt(d)) sum_{k10,q0=0}^{d-1} sum_{q3[i0],q4[i0]=0, i0=1..m}^{d-1} sum_{q5,q6,q8,q9,j0o0=0}^{d-1} sum_{j3i1[i0],j3o0[i0]=0, i0=1..m}^{d-1} sum_{j5i1,j5o0,j8i1,j8o0=0}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{k10 j0o0} prod_{i0=1}^{m}( d^{-3/2} w_{d}^{q3[i0] (j3o0[i0] - k10 - j3i1[i0])} d^{-1/2} w_{d}^{q4[i0] (j3i1[i0])} ) d^{-3/2} w_{d}^{q5 (j5o0 - k10 - j5i1)} d^{-1/2} w_{d}^{q6 (j5i1)} d^{-3/2} w_{d}^{q8 (j8o0 - k10 - j8i1)} d^{-1/2} w_{d}^{q9 (j8i1)} |k10> (x)_{i0=1}^{m}( |j3o0[i0]> ) |j8o0, j5o0> = (1/sqrt(d)) sum_{k=0}^{d-1} |k> |k>^{m} |k, k> for all n >= 2 (n = m + 2)
+  17 inferences (1 subst); rules: fourier_state_color_change_swapped, spider_fusion, identity_removal
+kernel: theorem (1/sqrt(d)) sum_{k10,q0=0}^{d-1} sum_{q3[i0],q4[i0]=0, i0=1..m}^{d-1} sum_{q5,q6,q8,q9,j0o0=0}^{d-1} sum_{j3i1[i0],j3o0[i0]=0, i0=1..m}^{d-1} sum_{j5i1,j5o0,j8i1,j8o0=0}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{k10 j0o0} prod_{i0=1}^{m}( d^{-3/2} w_{d}^{q3[i0] (j3o0[i0] - k10 - j3i1[i0])} d^{-1/2} w_{d}^{q4[i0] (j3i1[i0])} ) d^{-3/2} w_{d}^{q5 (j5o0 - k10 - j5i1)} d^{-1/2} w_{d}^{q6 (j5i1)} d^{-3/2} w_{d}^{q8 (j8o0 - k10 - j8i1)} d^{-1/2} w_{d}^{q9 (j8i1)} |k10> (x)_{i0=1}^{m}( |j3o0[i0]> ) |j8o0, j5o0> = (1/sqrt(d)) sum_{k=0}^{d-1} |k> |k>^{m} |k, k> for all n >= 2 (n = m + 2)
+  17 inferences (1 subst); rules: fourier_state_color_change_swapped, spider_fusion, identity_removal
+lean: tensor-network semantics, every step proved
+lean: wrote ghz_ge2.lean

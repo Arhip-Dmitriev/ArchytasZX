@@ -1,0 +1,23 @@
+# n X states fed into a Z spider with one output, against one X state scaled by d^((n-1)/2):
+# false at n = 0 (the spider is then the unpinned |+> state), true for every n >= 1.
+# Expected: unequal at n = 0 without a clause; equal for n >= 1 on the restricted pair
+# (n = m + 1) by symbolic contraction, the peeled copy pinning the spider's value; the Lean
+# export states it over the original diagrams for n >= 1 (the normaliser's family lemma on the
+# split networks, lifted by Equal.of_split_at); induct proves it over m from 0, the step by
+# symbolic contraction.
+
+@x =
+  count n
+  x = X(0 -> 1)
+  scalar d^((n-1)/2)
+
+load
+  count n
+  z = Z(1 -> 1)
+  repeat n: X(0 -> 1) -> z.in0
+
+decide @x
+decide @x for n >= 1
+certificate kernel
+certificate lean shift_ge1.lean
+induct d=2 against @x for n >= 1

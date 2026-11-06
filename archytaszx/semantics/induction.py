@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from archytaszx.algebra.dimension import Dim
@@ -140,7 +140,9 @@ class TierOutcome:
 @dataclass(frozen=True, slots=True, eq=False)
 class InductionResult:
     """A verdict on one equality over one multiplicity index, the tiers that produced it, and the
-    obligation they ran against."""
+    obligation they ran against; a restricted run carries its ``restriction``, the unrestricted
+    ``family`` result, ``family_holds`` when that result proved the claim, the
+    ``restricted_pair`` it ran on otherwise and the counterexample in the original symbols."""
 
     verdict: Verdict
     index: str
@@ -153,6 +155,11 @@ class InductionResult:
     comparison: ComparisonResult | None = None
     counterexample: int | None = None
     derivation: Derivation | None = None
+    restriction: object | None = None
+    family: InductionResult | None = None
+    family_holds: bool = False
+    restricted_pair: tuple[Diagram, Diagram] | None = None
+    counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
 
     @property
     def proved(self) -> bool:
@@ -225,8 +232,8 @@ def choose_index(left: Diagram, right: Diagram, *, index: str | None = None) -> 
 
 
 def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diagram:
-    """Replace every live bang box's multiplicity ``index`` with ``replacement``, together,
-    dropping any parameter binding for ``index``."""
+    """Replace every live bang box's multiplicity ``index`` with ``replacement``, together, and
+    ``index`` in the scalar, dropping any parameter binding for ``index``."""
     working = diagram.copy()
     for box_id, box in sorted(working.bang_boxes.items()):
         if index not in box.multiplicity.free_symbols:
@@ -236,6 +243,8 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
                 f"induction requires a bare multiplicity symbol, got {box.multiplicity!r}"
             )
         working.set_bang_box_multiplicity(box_id, replacement)
+    if index in working.scalar.free_symbols:
+        working.set_scalar(working.scalar.substitute({index: Scalar(replacement.to_sympy())}))
     if index in working.parameters:
         working.set_parameters(
             {name: value for name, value in working.parameters.items() if name != index}
@@ -1081,9 +1090,26 @@ def prove_by_induction(
     mode: EqualityMode = EqualityMode.EXACT,
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
+    restrict: object | None = None,
 ) -> InductionResult:
     """Discharge an equality over one multiplicity index by running the base case then each
-    discharge tier in ladder order until one settles."""
+    discharge tier in ladder order until one settles; under ``restrict``, the family first,
+    kept when proved or refuted in range, otherwise the restricted pair inducted over the fresh
+    symbol of the index's clause from 0."""
+    if restrict is not None:
+        options = {
+            "base": base,
+            "ladder": ladder,
+            "rules": rules,
+            "step_symbol": step_symbol,
+            "width": width,
+            "max_steps": max_steps,
+            "certify_proof": certify_proof,
+            "mode": mode,
+            "tolerance": tolerance,
+            "max_elements": max_elements,
+        }
+        return _restricted_induction(left, right, index, witness, restrict, options)
     obligation = build_obligation(
         left,
         right,
@@ -1175,4 +1201,83 @@ def prove_by_induction(
         witness=obligation.witness,
         base=base_comparison,
         tiers=tuple(tiers),
+    )
+
+
+def _restricted_induction(
+    left: Diagram,
+    right: Diagram,
+    index: str | None,
+    witness: Mapping[str, CheckAssignmentValue],
+    restrict: object,
+    options: Mapping[str, object],
+) -> InductionResult:
+    """The three steps of :func:`prove_by_induction` under a restriction; every clause symbol
+    other than the index is held at its clause's value or a witness value inside it."""
+    from archytaszx.semantics.decide import DecideGrammarError
+    from archytaszx.semantics.restrict import (
+        EQ,
+        in_domain,
+        parse_restriction,
+        subst_pair,
+        to_original,
+        to_restricted,
+        validate,
+    )
+
+    try:
+        restriction = validate(parse_restriction(restrict), left, right)  # type: ignore[arg-type]
+    except DecideGrammarError as exc:
+        raise InductionGrammarError(str(exc)) from exc
+    if restriction.empty:
+        return prove_by_induction(left, right, index=index, witness=witness, **options)  # type: ignore[arg-type]
+    chosen = choose_index(left, right, index=index)
+    held = dict(witness)
+    for clause in restriction.clauses:
+        if clause.symbol == chosen:
+            if clause.form == EQ:
+                raise InductionGrammarError(
+                    f"the induction index {chosen} is fixed by {clause.text()}"
+                )
+            continue
+        if clause.form == EQ:
+            if clause.symbol in held and held[clause.symbol] != clause.c:
+                raise InductionGrammarError(
+                    f"{clause.symbol} = {held[clause.symbol]} lies outside {clause.text()}"
+                )
+            held[clause.symbol] = clause.c
+        elif clause.symbol in held and not clause.contains(held[clause.symbol]):
+            raise InductionGrammarError(
+                f"{clause.symbol} = {held[clause.symbol]} lies outside {clause.text()}"
+            )
+    family = prove_by_induction(left, right, index=chosen, witness=held, **options)  # type: ignore[arg-type]
+    if family.proved:
+        return replace(family, restriction=restriction, family=family, family_holds=True)
+    if family.counterexample is not None:
+        point = {**dict(family.witness), family.index: family.counterexample}
+        if in_domain(restriction, point):
+            return replace(
+                family,
+                restriction=restriction,
+                family=family,
+                counterexample_original=MappingProxyType(point),
+            )
+    try:
+        pair = subst_pair(left, right, restriction)
+    except DecideGrammarError as exc:
+        raise InductionGrammarError(str(exc)) from exc
+    own = restriction.by_symbol.get(chosen)
+    inner_index = own.fresh if own is not None else chosen
+    inner_witness = to_restricted(restriction, held) or {}
+    inner = prove_by_induction(*pair, index=inner_index, witness=inner_witness, **options)  # type: ignore[arg-type]
+    original = None
+    if inner.counterexample is not None:
+        point = {**dict(inner.witness), inner.index: inner.counterexample}
+        original = MappingProxyType(to_original(restriction, point))
+    return replace(
+        inner,
+        restriction=restriction,
+        family=family,
+        restricted_pair=pair,
+        counterexample_original=original,
     )

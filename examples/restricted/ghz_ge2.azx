@@ -1,0 +1,18 @@
+# GHZ-state preparation (examples/ghz_proof.azx) restricted to n >= 2.
+# Expected: equal for n >= 2 by the family proof (step 1), "holds for every n".
+
+@ghz =
+  count n
+  g = Z(0 -> 2)
+  repeat n: g.out1
+  scalar d^(-1/2)
+
+load
+  count n
+  X(0 -> 1) -> F -> z = Z(1 -> 2)
+  repeat n: z.out1 -> t = X(2 -> 1), X(0 -> 1) -> t
+  scalar d^(-1/2)
+
+decide @ghz for n >= 2
+certificate kernel
+certificate lean ghz_ge2.lean

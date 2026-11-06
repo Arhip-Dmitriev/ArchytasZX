@@ -179,15 +179,21 @@ written Z(1 -> 1).
   azx(TEXT)                           runs engine commands, returns their printed output
   azx.NAME = P                        stores P as @NAME
   azx.load(P)                         makes P the current diagram
-  azx.decide(A, B)                    decide A against B
+  azx.decide(A, B, where=None)        decide A against B
   azx.prove(A, B, exhaustive=False,   prove A against B (algebraic: prove exhaustive algebraic)
-            algebraic=False)
+            algebraic=False, where=None)
+  azx.induct(A, B, on=None,           induct [on SYMBOL] NAME=VALUE ... against B
+             where=None, NAME=VALUE)
   azx.check(A, B, NAME=VALUE, ...)    numeric check of A against B
   azx.lean([FILE])                    certificate lean [FILE]
   azx.kernel()                        certificate kernel
 
 A and B are Pieces, DSL text or "@NAME". Each call returns a Result: its printed text, ok,
-and, after decide, verdict and method.
+and, after decide, verdict and method. where restricts the claim (PROOFS.txt, section 8):
+clause text in the grammar of ENGINE_COMMANDS.txt, section 2.9, as where="n >= 2, d = 3", or a
+mapping from symbol to its constraint, as where={"n": ">= 2", "d": "= 3"}. Result.outcome is
+the engine result (Decision, ProofOutcome or InductionResult), and Result.restriction,
+Result.family and Result.family_holds read its restriction fields.
 
 3.4 Example
 

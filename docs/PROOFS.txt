@@ -32,7 +32,11 @@ reported with the verdict as its assumptions; the verdict is conditional on them
     decide_equal(left, right, *, rules=None, guard=DEFAULT_GUARD, samples=None,
                  max_samples=24, use_symbolic=True, use_induction=True, max_depth=2,
                  tolerance=1e-9, max_elements=10_000_000, use_saturation=True,
-                 saturation_limits=DECIDE_SATURATION_LIMITS, mixed=False) -> Decision
+                 saturation_limits=DECIDE_SATURATION_LIMITS, mixed=False,
+                 restrict=None) -> Decision
+
+With restrict (a Restriction, clause text or a mapping, section 8) the decision is the
+restricted decision of section 8; without clauses it is the decision below.
 
 2.1 The ladder
 
@@ -75,13 +79,20 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.assumptions      deferred dimension constraints the verdict rests on
     Decision.samples_checked  oracle samples evaluated
     Decision.parameters_agree whether the two parameter environments agree
+    Decision.restriction      the restriction of a restricted decision (section 8), or None
+    Decision.family           the unrestricted decision of step 1 (section 8), or None
+    Decision.family_holds     True when that decision was EQUAL
+    Decision.restricted_pair  the restricted pair a step 3 decision was made on
+    Decision.counterexample_original
+                              the counterexample in the original symbols (n = a*m + c)
+    Decision.floors_used      the dimension floors a symbolic contraction needed
     Decision.left_nf, right_nf, comparison, induction, saturation, decided
 
 The parameter environment never enters a verdict; parameters_agree reports it separately.
 
 2.3 The sample grid
 
-    sample_grid(left, right) -> tuple[assignment, ...]
+    sample_grid(left, right, floors=None) -> tuple[assignment, ...]
 
 The default assignments range over every free symbol of both diagrams:
 
@@ -97,6 +108,8 @@ Diagonal assignments come first, then the remaining tuples by largest index, ind
 tuple. Only values satisfying each symbol's sympy assumptions are used. A sample at which a
 diagram is outside its domain (for example a phase index above d - 1) is refused and counted;
 the summary line reports how many samples were evaluated and refused, and the first refusal.
+A dimension named in floors samples the first four values at least max(floor, its phase-vector
+floor) of 2, 3, 4, 1, 5, 6, ...
 
 2.4 Partial procedures
 
@@ -113,7 +126,7 @@ the summary line reports how many samples were evaluated and refused, and the fi
 
     prove(start, goal, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, bidirectional=True,
           cache=None, refute=True, samples=None, max_samples=24, tolerance=1e-9,
-          max_elements=10_000_000, induction_depth=2) -> ProofOutcome
+          max_elements=10_000_000, induction_depth=2, restrict=None) -> ProofOutcome
 
 prove settles a goal in this order:
 
@@ -129,7 +142,12 @@ prove settles a goal in this order:
 
     ProofStatus: PROVED | REFUTED | NOT_FOUND | CHECK_FAILED
     ProofOutcome(status, reason, certificate, check, search, counterexample, assumptions,
-                 induction)
+                 induction, mixed, restriction, family, family_holds, restricted_pair,
+                 counterexample_original)
+
+With restrict, prove and prove_exhaustive run the three steps of section 8
+(restricted_outcome): the unrestricted proof first, kept when PROVED or REFUTED inside the
+restriction, otherwise the proof of the restricted pair.
 
 3.1 Proof certificates
 
@@ -200,11 +218,16 @@ compares mixed scalars by modulus. MIXED.txt, section 5.
     prove_by_induction(left, right, *, index=None, base=None, witness={},
                        ladder=DEFAULT_LADDER, rules=None, step_symbol="k", width=4,
                        max_steps=64, certify_proof=True, mode=EXACT, tolerance=1e-9,
-                       max_elements=10_000_000) -> InductionResult
+                       max_elements=10_000_000, restrict=None) -> InductionResult
 
 proves an equality between two families for every value of one multiplicity symbol, index
 (by default the lexicographically least free multiplicity). Every other symbol is either held
 symbolic or fixed at the value witness gives it, for the tiers that need concrete values.
+With restrict, the three steps of section 8: a clause n = v fixes a held symbol at v (the
+index may not have one), a held value must lie inside its clause, and step 3 inducts the
+restricted pair over the fresh symbol m of the index's clause from 0, so induction under
+n >= c starts at n = c. InductionResult gains restriction, family, family_holds,
+restricted_pair and counterexample_original.
 
 4.1 The obligation
 
@@ -315,11 +338,31 @@ these functions construct a Theorem:
                                      successor at k + 1 as a context around that side at k,
                                      and a theorem from that context around the other side at
                                      k to the other peeled successor
+  subst(t, clause, lhs=None, rhs=None)
+                                     lhs' = rhs' from t and one clause n = v, n = a*m + c
+                                     (m fresh for t) or d = v: both sides recomputed from t's
+                                     by restrict.apply_clause (section 8.3) and compared id for
+                                     id with lhs and rhs when stated
+  shift(t, left, right, clause)      left = right at n = m + c for every m, from t about both
+                                     sides with the clause n >= c substituted (apply_clause),
+                                     matched id for id or by isomorphic comparison views; its
+                                     domain is the clause (used by the Lean export, LEAN.txt
+                                     section 4.7)
+  restricted(t, left, right, restriction, used=())
+                                     t read as the restricted claim of left = right: t's sides
+                                     must be the restricted pair or isomorphic to it; the floors
+                                     in used become the assumptions "c <= d"
 
     chain(start, steps) -> Theorem   start = d_n through every step
-    check(artefact) -> Theorem       the theorem a certificate, proof certificate or induction
-                                     proof establishes; KernelError at the first piece that
-                                     does not check
+    check(artefact) -> Theorem       the theorem a certificate, proof certificate, induction
+                                     proof or RestrictedProof establishes; KernelError at the
+                                     first piece that does not check
+    RestrictedProof(proof, restriction, left, right, family, floors_used)
+                                     a family proof (family=True), checked and specialised by
+                                     one subst per substituting clause, or a proof of the
+                                     restricted pair, checked and read by restricted
+    restricted_symbolic(proof) -> Symbolic
+                                     the same for a normaliser proof
     from_decision(decision, left, right) -> Theorem
                                      from a NORMAL_FORM or SATURATION decision's certificates
     symbolic(left, right) -> Symbolic
@@ -330,8 +373,14 @@ these functions construct a Theorem:
     lean(theorem | refutation | symbolic, name="main", ...) -> str
                                      Lean 4 source (LEAN.txt)
 
-Theorem.size() is the number of inferences, Theorem.axioms() the rule names of every rule
-inference in proof order, and Theorem.variables() the free multiplicities of both sides. An
+Theorem.size() is the number of inferences (a subst counts one), Theorem.axioms() the rule
+names of every rule inference in proof order (subst passes them through), and
+Theorem.variables() the free multiplicities of both sides (m, not n, after n = a*m + c).
+Theorem.domain holds the clauses that produced a restricted theorem, empty by default, and
+Theorem.origin the unrestricted pair. Theorem.statement() is the printed claim: "for all n",
+or per clause "for all n >= c (n = m + c)", "for all n = a*m + c (m >= 0)", "at n = v", then
+"at d = v", "for d >= c" when the floor is an assumption "c <= d", and "for every d" when the
+proof did not use the floor. An
 induction certificate of the induction module carries no re-checkable step and is refused by
 check; the shell then re-derives a re-checkable proof by search.
 
@@ -352,3 +401,93 @@ From least to most independent of the engine:
      is a lemma proved in Lean; any step without one is an explicit axiom named unproved_*.
 
 The oracle at every level is evidence at the points it evaluates, never a proof.
+
+
+8. RESTRICTED DECISIONS: archytaszx.semantics.restrict
+------------------------------------------------------
+
+8.1 Clauses
+
+A restriction is a set of clauses, at most one per symbol:
+
+  Clause         Symbol kind     The set of values the claim covers
+  -------------  --------------  ------------------------------------------------------
+  n = v          multiplicity    {v}, v a non-negative integer literal
+  n >= c         multiplicity    {c, c+1, ...}, c a non-negative integer literal
+  n = a*m + c    multiplicity    {a*m + c : m >= 0}, a >= 1 and c >= 0 integer literals,
+                                 m a fresh symbol (free in neither diagram, not used by
+                                 another clause)
+  d = v          dimension       {v}, v a positive integer literal
+  d >= c         dimension       {c, c+1, ...}, c a positive integer literal
+
+Symbols without a clause keep their domains (multiplicities >= 0, dimensions >= 1). n >= 0
+and d >= 1 are accepted and equal no clause. A clause on a symbol free in neither diagram, a
+second clause on one symbol, a non-fresh or reused m, a = 0, a negative literal, a dimension
+clause other than d = v and d >= c, a dimension literal below 1, and a clause n = v or d = v
+whose symbol a side binds to another value are DecideGrammarError naming the clause
+(ERRORS.txt).
+
+    parse_restriction(text | mapping | Restriction | None) -> Restriction
+    validate(restriction, left, right) -> Restriction     kinds resolved, n >= c given its
+                                                          fresh m
+    in_domain(restriction, assignment) -> bool
+    subst_pair(left, right, restriction) -> (Diagram, Diagram)
+    apply_clause(diagram, clause) -> Diagram
+    to_original(restriction, point), to_restricted(restriction, point)
+
+8.2 Meaning
+
+left =_R right means: for every assignment of the free symbols in their domains under R, the
+two denotations are equal, scalar included. UNEQUAL under R means there is such an assignment
+where they differ. A verdict printed for R never claims anything outside R; a stronger fact
+found on the way (step 1 below) is printed as its own line.
+
+8.3 The restricted pair
+
+subst_R(D) is D with every clause substituted in order:
+
+  1. n = v: every box carrying n instantiated at v (instantiate_symbol), n in the scalar and
+     elsewhere set to v;
+  2. n = a*m + c (n >= c is m + c): n replaced by a*m + c in every box multiplicity carrying
+     it and in the scalar (n elsewhere is an error); every box whose multiplicity is concrete
+     expanded, and every box whose multiplicity keeps a constant term c >= 1 peeled by peel_one
+     until it has none, least box id first;
+  3. d = v: Diagram.substitute({d: v}), so d is a literal and the concrete-only axioms match it;
+  4. d >= c: nothing; the floor is recorded on the restriction.
+
+The parameter environments lose the bindings of substituted symbols.
+
+8.4 The three steps
+
+decide_equal(left, right, restrict=R) runs:
+
+  1. Family. The unrestricted decision on (left, right), floors ignored. EQUAL is EQUAL
+     under R: family_holds is True, and the proof is the family proof specialised by subst.
+  2. Counterexample in range. When step 1 is UNEQUAL with a counterexample inside R:
+     UNEQUAL under R with that counterexample. An INTERFACE verdict is re-checked on the
+     restricted pair and kept when it still holds there.
+  3. Restricted pair. Otherwise the ladder on (subst_R(left), subst_R(right)), the sample
+     grid, the symbolic witness search and the symbolic comparison cut to the floors of R.
+     EQUAL is a theorem about the restricted pair; UNEQUAL carries a counterexample over m and,
+     in counterexample_original, the same point in n = a*m + c.
+
+prove exhaustive runs steps 1 and 3 side by side, in two threads stopped at their next layer
+once the other decides: the family's PROVED or in-range REFUTED wins, otherwise the restricted
+pair's outcome (an unprovable family claim never ends its search). samples_checked counts both steps. Without clauses the decision is the unrestricted one,
+field for field. Step 1 never uses a concrete-only axiom (its dimensions stay symbolic); they
+match in step 3, where d = v is a literal.
+
+8.5 Dimension floors
+
+A clause d >= c raises the floor of d in the sample grid of step 3 (section 2.3) and is passed
+to the symbolic rung: the witness search uses only in-floor assignments, and the contractions
+are compared first without the floor, then under it. An EQUAL reached only under the floor
+records it in Decision.floors_used and is exported with the hypothesis c <= d (LEAN.txt,
+section 4.7). Rewriting rungs are unchanged. Floors and phase-vector floors combine by maximum.
+
+8.6 Instances
+
+A restriction binding every free multiplicity (n = v) yields a bang-box-free restricted pair.
+With every dimension concrete too, the pair lies in the regime of COMPLETENESS.txt section 1,
+and prove exhaustive algebraic under that restriction carries the termination theorem of
+COMPLETENESS.txt section 6 for it.
