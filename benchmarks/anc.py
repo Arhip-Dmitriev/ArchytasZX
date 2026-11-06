@@ -37,7 +37,7 @@ Generated {date} by python -m benchmarks anc.
                lemma lists archytaszx/papers/*/LEMMAS.txt)
   results/     every suite's rows (SUITE.json), runs (SUITE.runs.jsonl) and environment
                record (SUITE.env.json)
-  plots/       every plot (PDF and 300 dpi PNG) and the trust mutation table
+  plots/       every plot (PDF and 300 dpi PNG) and every summary table
   BENCHMARKS.txt  the benchmark documentation
 
 Reproduce: install ArchytasZX (docs/INSTALL.txt), copy scripts/ to benchmarks/ in a checkout of

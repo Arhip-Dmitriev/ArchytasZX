@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Correctness checks of the benchmarks themselves (``python -m benchmarks.checks``):
+"""Correctness checks of the benchmarks themselves (``python -m tests._benchmark_checks_script``):
 
 - every true family and breadth workload: its target (``@rhs``) evaluated by the engine's
   numeric oracle against the target computed here from the algorithm's definition, at one

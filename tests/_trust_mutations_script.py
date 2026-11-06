@@ -11,9 +11,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Benchmark: the mutation table. Each mutation is a deliberate translation bug, applied in the
-worker's memory to the exporter (archytaszx.semantics.lean_net._Export) or to the diagrams the
-parser returns to the session, never to the installed files; every exported proof or
+"""Test, ``python -m tests._trust_mutations_script [--quick] [OUT_DIR]``: the mutation table.
+Each mutation is a deliberate translation bug, applied in the worker's memory
+to the exporter (archytaszx.semantics.lean_net._Export) or to the diagrams the parser
+returns to the session, never to the installed files; every exported proof or
 refutation of every example and battery file is then checked by Lean. Rejected is ``ok``,
 accepted is ``wrong`` unless the accepted theorem depends on more ``unproved_*`` axioms than the
 unmutated export (then ``ok``: the mutation surfaced as an unproved step); a mutation with
@@ -300,3 +301,34 @@ def table(rows: list[dict[str, Any]]) -> tuple[str, str]:
     buf = io.StringIO()
     csv.writer(buf).writerows([head, *data])
     return "\n".join(lines) + "\n", buf.getvalue()
+
+
+def _one(case: dict[str, Any]) -> dict[str, Any]:
+    """One case in this (fresh) process: its row."""
+    try:
+        return {**case, "status": "ok", **run(case)}
+    except Exception as exc:  # noqa: BLE001
+        return {**case, "status": "error", "detail": f"{type(exc).__name__}: {exc}"[:400]}
+
+
+def main() -> int:
+    """Every case in its own process; writes trust_mutations.txt and .csv to OUT_DIR (default:
+    the current directory); exit status 1 when a mutation was accepted."""
+    import multiprocessing
+    import sys
+
+    args = [a for a in sys.argv[1:] if a != "--quick"]
+    out = Path(args[0]) if args else Path.cwd()
+    out.mkdir(parents=True, exist_ok=True)
+    context = multiprocessing.get_context("spawn")
+    with context.Pool(processes=4, maxtasksperchild=1) as pool:
+        rows = pool.map(_one, cases("--quick" in sys.argv), chunksize=1)
+    text, csv_text = table(rows)
+    (out / "trust_mutations.txt").write_text(text, encoding="utf-8")
+    (out / "trust_mutations.csv").write_text(csv_text, encoding="utf-8")
+    print(text)
+    return 1 if any(r.get("status") == "wrong" for r in rows) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
