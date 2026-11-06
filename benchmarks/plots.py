@@ -749,20 +749,6 @@ def plot_lean() -> None:
     _save(fig, "lean_coverage")
 
 
-def plot_trust() -> None:
-    """``trust_mutations.txt`` and ``trust_mutations.csv``: the mutation table."""
-    rows = _rows("trust")
-    if not rows:
-        return
-    from benchmarks import trust
-
-    text, csv_text = trust.table(rows)
-    out = plots_dir()
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "trust_mutations.txt").write_text(text, encoding="utf-8")
-    (out / "trust_mutations.csv").write_text(csv_text, encoding="utf-8")
-
-
 def plot_ablation() -> None:
     """``ablation_matrix``: workloads by configuration; a filled cell is settled, its shade the
     log CPU seconds; an empty cell with a cross is not settled; "n/a" is unsupported."""
@@ -1025,7 +1011,12 @@ def _all(*plots: Callable[[], None]) -> Callable[[], None]:
 def plot_mixed() -> None:
     """``mixed_n_d``: median CPU seconds of each case against n, one line per d and one for d
     free; a cross at the top for every case that did not finish."""
-    rows = harness.load("mixed")
+    rows = [
+        r
+        for r in harness.load("mixed")
+        if r.get("family", "partial trace of GHZ") == "partial trace of GHZ"
+    ]
+    plot_mixed_boxed()
     if not rows:
         return
     _style()
@@ -1059,6 +1050,191 @@ def plot_mixed() -> None:
     _save(fig, "mixed_n_d")
 
 
+def plot_mixed_boxed() -> None:
+    """``mixed_boxed``: the boxed family's median CPU seconds against the bound n, one line per
+    d, each d's n-free case as a horizontal line of its colour."""
+    rows = [r for r in harness.load("mixed") if r.get("family") == "partial trace of GHZ, boxed"]
+    if not rows:
+        return
+    _style()
+    fig, ax = plt.subplots(figsize=(6.0, 3.4))
+    ds = sorted({r["d"] for r in rows if r["d"] != "free"}) + ["free"]
+    done = [r for r in rows if r.get("status") == "ok"]
+    for k, d in enumerate(ds):
+        colour = FREE if d == "free" else BLUE_RAMP[min(k * 2, len(BLUE_RAMP) - 1)]
+        line = sorted((r for r in done if r["d"] == d and r["n"] != "free"), key=lambda r: r["n"])
+        if line:
+            ax.plot(
+                [r["n"] for r in line],
+                [r["time"] for r in line],
+                "o-",
+                color=colour,
+                label=_d_label(d),
+                ms=3.5,
+                lw=1.2,
+            )
+        for r in done:
+            if r["d"] == d and r["n"] == "free":
+                ax.axhline(r["time"], color=colour, lw=0.8, alpha=0.6)
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xlabel("n (discarded legs, one node box); horizontal lines: n free, n >= 1")
+    ax.set_ylabel("median CPU seconds")
+    ax.set_title("decide: Tr_n GHZ = id/d, boxed", fontsize=9)
+    ax.legend(fontsize=7, ncol=2, frameon=False)
+    fig.tight_layout()
+    _save(fig, "mixed_boxed")
+
+
+def _wilson(k: int, n: int) -> tuple[float, float]:
+    """The 95 % Wilson interval of k successes in n trials."""
+    if n == 0:
+        return (0.0, 0.0)
+    z, p = 1.959964, k / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def _truth(r: Row) -> str:
+    """A sweep row's truth: true for every rewrite pair (true by construction), else the
+    oracle's, untested when no point was compared."""
+    return "true" if r.get("corpus") == "rewrite" else str(r.get("truth") or "untested")
+
+
+def sweep_summary(rows: list[Row]) -> str:
+    """Per corpus (and rewrite depth k) and truth: pairs, settled, wrong, the settle rate with
+    its Wilson interval, the median CPU seconds of the settled pairs, and the settling rungs."""
+    out = ["corpus      k   truth     pairs  settled  wrong  rate   95% interval   median s  rungs"]
+    groups: dict[tuple[str, int, str], list[Row]] = {}
+    for r in rows:
+        if r.get("status") in ("unsupported", "error"):
+            continue
+        groups.setdefault((r["corpus"], r["k"], _truth(r)), []).append(r)
+    for (corpus, k, truth), group in sorted(groups.items()):
+        settled = [r for r in group if r.get("status") == "ok"]
+        wrong = sum(r.get("status") == "wrong" for r in group)
+        lo, hi = _wilson(len(settled), len(group))
+        rungs: dict[str, int] = {}
+        for r in settled:
+            rungs[r.get("method", "?")] = rungs.get(r.get("method", "?"), 0) + 1
+        times = sorted(r["time"] for r in settled if r.get("time") is not None)
+        median = f"{times[len(times) // 2]:.3f}" if times else "-"
+        rung_text = ", ".join(f"{m} {c}" for m, c in sorted(rungs.items(), key=lambda x: -x[1]))
+        out.append(
+            f"{corpus:<11} {k:<3} {truth:<9} {len(group):>5}  {len(settled):>7}  {wrong:>5}"
+            f"  {len(settled) / len(group):.2f}   [{lo:.2f}, {hi:.2f}]   {median:>8}  {rung_text}"
+        )
+    errors = sum(r.get("status") == "error" for r in rows)
+    out.append(f"errors (benchmark bugs): {errors}")
+    return "\n".join(out) + "\n"
+
+
+def plot_sweep() -> None:
+    """``sweep_summary.txt`` and ``sweep_rates``: the share of pairs settled per corpus and
+    rewrite depth, with its 95 % Wilson interval, true and false pairs apart."""
+    rows = _rows("sweep")
+    if not rows:
+        return
+    out = plots_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "sweep_summary.txt").write_text(sweep_summary(rows), encoding="utf-8")
+    _style()
+    labels, rates, errs, colours = [], [], [], []
+    for corpus in ("rewrite", "scaled", "restricted"):
+        for k in sorted({r["k"] for r in rows if r["corpus"] == corpus}):
+            for truth, colour in (("true", OKABE_ITO[0]), ("false", OKABE_ITO[1])):
+                group = [
+                    r
+                    for r in rows
+                    if r["corpus"] == corpus
+                    and r["k"] == k
+                    and _truth(r) == truth
+                    and r.get("status") not in ("unsupported", "error")
+                ]
+                if not group:
+                    continue
+                settled = sum(r.get("status") == "ok" for r in group)
+                lo, hi = _wilson(settled, len(group))
+                rate = settled / len(group)
+                labels.append(
+                    f"{corpus}{'' if corpus != 'rewrite' else f' k={k}'}, {truth} ({len(group)})"
+                )
+                rates.append(rate)
+                errs.append((max(0.0, rate - lo), max(0.0, hi - rate)))
+                colours.append(colour)
+    fig, ax = plt.subplots(figsize=(6.0, 0.3 * len(labels) + 1.0))
+    ys = list(range(len(labels)))
+    ax.barh(ys, rates, color=colours, height=0.6)
+    ax.errorbar(
+        rates,
+        ys,
+        xerr=list(zip(*errs)) if errs else None,
+        fmt="none",
+        ecolor=INK,
+        lw=0.8,
+        capsize=2,
+    )
+    ax.set_yticks(ys, labels, fontsize=7)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("share settled (EQUAL on true pairs, UNEQUAL on false pairs)")
+    ax.set_title("decide on a seeded random corpus, n and d free", fontsize=9)
+    fig.tight_layout()
+    _save(fig, "sweep_rates")
+
+
+def plot_uniformity() -> None:
+    """``uniformity.txt``: per family and axiom setting, the range over bindings of the step
+    count, the verdict CPU seconds and the binding CPU seconds."""
+    rows = _rows("uniformity")
+    if not rows:
+        return
+    head = "family                   axioms  settled  steps    verdict cpu    binding cpu"
+    lines = [head]
+    for family in sorted({r["family"] for r in rows}):
+        for axioms in ("on", "off"):
+            group = [r for r in rows if r["family"] == family and r["axioms"] == axioms]
+            ok = [r for r in group if r.get("status") == "ok"]
+            if not group:
+                continue
+
+            def span(key: str, fmt: str, ok: list[Row] = ok) -> str:
+                values = [r[key] for r in ok if r.get(key) is not None]
+                return f"{min(values):{fmt}}..{max(values):{fmt}}" if values else "-"
+
+            lines.append(
+                f"{family:<24} {axioms:<7} {len(ok):>3}/{len(group):<3}  {span('steps', 'd'):<8} "
+                f"{span('time', '.3f'):<14} {span('binding_cpu', '.3f')}"
+            )
+    out = plots_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "uniformity.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def plot_restricted() -> None:
+    """``restricted.txt``: one line per claim: script CPU, export CPU, Lean CPU, file lines,
+    then the rung and the axiom class."""
+    rows = _rows("restricted")
+    if not rows:
+        return
+    lines = ["workload        clause          script s  export s  lean s   lines  method / axioms"]
+    for r in rows:
+
+        def num(key: str, r: Row = r) -> str:
+            v = r.get(key)
+            return f"{v:.2f}" if isinstance(v, (int, float)) else "-"
+
+        lines.append(
+            f"{r['workload']:<15} {r['clause']:<15} {num('script_cpu'):>8}  {num('export_cpu'):>8}"
+            f"  {num('lean_cpu'):>6}  {r.get('file_lines') or '-':>6}  {r.get('method')} / "
+            f"{r.get('axiom_class') or r.get('status')}"
+        )
+    out = plots_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "restricted.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 PLOTS: dict[str, Callable[[], None]] = {
     "scaling": _all(plot_scaling, plot_scaling_times, plot_paper_scaling),
     "size": _all(plot_size, plot_size_solved, plot_paper_size),
@@ -1066,7 +1242,6 @@ PLOTS: dict[str, Callable[[], None]] = {
     "refutations": plot_refutations,
     "lean": plot_lean,
     "completeness": plot_completeness,
-    "trust": plot_trust,
     "breadth": plot_breadth,
     "certificates": plot_certificates,
     "exhaustive": plot_exhaustive,
@@ -1074,4 +1249,7 @@ PLOTS: dict[str, Callable[[], None]] = {
     "ablation": plot_ablation,
     "qudits": plot_qudits,
     "mixed": plot_mixed,
+    "sweep": plot_sweep,
+    "uniformity": plot_uniformity,
+    "restricted": plot_restricted,
 }

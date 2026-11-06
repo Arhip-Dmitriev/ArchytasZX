@@ -30,7 +30,6 @@ SUITES = (
     "refutations",
     "lean",
     "completeness",
-    "trust",
     "breadth",
     "certificates",
     "exhaustive",
@@ -38,6 +37,9 @@ SUITES = (
     "ablation",
     "qudits",
     "mixed",
+    "sweep",
+    "uniformity",
+    "restricted",
 )
 DEFAULT_REPEAT = 10
 DEFAULT_TIMEOUT = 600.0

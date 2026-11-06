@@ -13,7 +13,10 @@ Implementation: benchmarks/ (python -m benchmarks), benchmarks/workloads/ (comma
 The benchmark suites measure the engine as a user runs it: scaling in the number of qudits n
 and the dimension d, cost against concrete tools, refutation of wrong algorithms, the breadth
 of algorithms the language states, the completeness of the rule set, the cost and coverage of
-the Lean export, the trust argument of the export, and the engine's documented limits. Every
+the Lean export, settle rates on a random corpus, the cost of bound values, restricted claims
+and the engine's documented limits. Every suite reports quantities (times, counts, sizes,
+rates); pass/fail checks are tests (tests/_benchmark_checks_script.py,
+tests/_trust_mutations_script.py), not suites. Every
 ArchytasZX result comes from symbolic rewriting; the numeric oracle enters only where the
 engine itself uses it. Competitor tools run as they normally run.
 
@@ -93,7 +96,9 @@ or through the documented Python API. The frozen suites keep benchmarks.engine.d
 3.1 The Lean runner (benchmarks/lean.py)
 
 A file is checked by `lake env lean FILE` in archytaszx/lean, with `#print axioms` of its final
-theorem appended, under the harness caps; at most five Lean processes run at a time across
+theorem appended, under the worker's CPU cap and, where systemd scopes are available, in a scope
+of its own capped at 85 % of the total memory (inside the worker's scope the cap evicts the
+mapped Mathlib files and Lean stalls on rereading them); at most five Lean processes run at a time across
 every worker (lock files in the temporary directory). Fields:
 
   lean_status      accepted, rejected, timeout, oom (no export: no file was written)
@@ -118,9 +123,9 @@ archytaszx/papers/*/LEMMAS.txt; a lemma's command file is the one its entry name
 examples/completeness/lemmas/ or benchmarks/workloads/completeness/ by file name
 (p1_lemma07.azx is [P1] Lemma 7, p2_lemmaA03.azx is [P2] Lemma A.3).
 
-3.3 Correctness checks (benchmarks/checks.py)
+3.3 Correctness checks (tests/_benchmark_checks_script.py)
 
-    python -m benchmarks.checks
+    python -m tests._benchmark_checks_script
 
 checks the benchmarks themselves: every family and breadth target against the target written
 from the algorithm's definition (numpy), evaluated by the engine's oracle at one small
@@ -224,23 +229,6 @@ lean_peak_mb, axiom_class, statement_level, unproved.
 Plots: lean_cost (Lean time against file lines), lean_coverage (share of exports per axiom
 class and per statement level).
 
-4.6 trust
-
-Question: does Lean reject every wrong translation?
-Mutations, applied in the worker's memory to the exporter (lean_net._Export) or to the
-diagrams the parser returns to the session, never to the installed files; each consistent
-(every network of the export carries it): swap legs (two wires crossed), drop wire, swap
-boundary, chain off by one (one Bun layer removed), bundle multiplicity (m replaced by m + 1),
-phase entry, scalar (the first one doubled), dimension (the first one increased), source
-literal (the first parsed diagram's scalar doubled).
-Workloads: every verdict of every example and of every battery file present
-(benchmarks/workloads/trust/*.azx, .trust_work/battery*.azx).
-Statuses: rejected is ok; accepted is wrong, unless the theorem depends on more unproved_*
-axioms than the unmutated export (ok: the mutation surfaced as an unproved step); a mutation
-with nothing to act on, an unchanged export, and an export that falls back to the opaque form
-or fails are unsupported. Default 1 run.
-Output: plots/trust_mutations.txt and trust_mutations.csv (no plot).
-
 4.7 ablation
 
 The only suite that runs the engine differently from a user; every row is labelled
@@ -319,8 +307,57 @@ Family: the (n + 1)-qudit GHZ state with n legs discarded, against maxmixed[d] (
 n written out (no bang box): n = 1, 2, 4, .., 32 (beyond 63 legs the numeric oracle exceeds
 numpy's 64 axes), d = 2, 3, 5, 8, 64, 1024 and free. Each case is one decide, settled on the
 doubled diagrams (method doubled).
-Fields and statuses as the scaling suite. Plot: mixed_n_d (median CPU seconds against n, one
-line per d).
+The boxed family: the same state with the n discarded legs in one node box (repeat n:
+g.out1 -> G), decided for n >= 1 with the count free, and for n = 1, 4, 64, 1024, 2^20 by an
+n = v clause, at each d. Fields and statuses as the scaling suite. Plots: mixed_n_d (median CPU
+seconds against n, one line per d, written-out family), mixed_boxed (the boxed family against
+the bound n, one line per d, each d's n-free case a horizontal line).
+
+
+4.13 sweep
+
+Question: what share of true and false family equations does decide settle, and how fast?
+Corpus: a seeded generator (benchmarks/sweep.py, generate) draws a boxed diagram with n and d
+free: one to three Z, X or F nodes with random arities and phases (none, 1/2, k/d), up to two
+wires between them, and a port box, a node box or both on n (closed states, effects, a self
+loop, a closed spider, or legs crossing into a spider). Pairs: rewrite (the diagram against
+itself after k = 1, 4, 8, 16 seeded random rule steps over every registered rule: true by
+construction), scaled (against itself times a factor of FACTORS, among them (-1)^n, d^(n-2),
+2^(n-1) and 1), restricted (the scaled pair under a clause of CLAUSES). 200 seeds per corpus,
+one run, 300 CPU seconds.
+Each verdict is compared with the numeric oracle at up to 40 points (n <= 5, d <= 6, inside the
+clause), which sets the pair's truth (true, false, untested); an EQUAL with a differing point,
+an UNEQUAL whose counterexample agrees or lies outside the clause, and a rule step that changes
+the map are wrong.
+Fields: corpus, seed, k, truth, clause, factor, verdict, method, time, boxes, nodes, checked,
+source.
+Outputs: sweep_summary.txt (per corpus, k and truth: pairs, settled, wrong, the settle rate with
+its 95 % Wilson interval, the median CPU seconds, the settling rungs), sweep_rates (the rates as bars with intervals).
+
+
+4.14 uniformity
+
+Question: how do the derivation's length and CPU time depend on the bound values of n and d?
+Workloads: the families of 3.2, proved by prove (a family prove does not settle is decided),
+with n and d free and bound to every pair of n = free, 1, 16, 2^20 and d = free, 2, 3, 8, 1024;
+concrete axioms on (as a user runs it) and off. Default 3 runs.
+Fields: family, axioms, n, d, command, steps (rewrite steps of the derivation, 0 for an
+induction proof), time (the verdict line's CPU seconds), script_cpu, binding_cpu (script CPU
+outside the verdict line).
+Output: uniformity.txt (per family and setting: bindings settled, and the ranges of steps,
+verdict CPU and binding CPU over the bindings).
+
+
+4.15 restricted
+
+Question: what does a restricted claim (PROOFS.txt, section 8) cost to decide and to certify?
+Workloads: GHZ preparation under n = 0, n = 3, n >= 1, n >= 2, n >= 3, n = 2*m, n = 2*m + 1,
+n = 3*m, n = 2*m + 2, d = 3, d >= 2, "n >= 2, d = 3" and "n = 3, d = 5"; every verdict unit
+of examples/restricted/ except errors.azx. Each is decided as written, then certificate
+kernel, certificate lean and the Lean runner. Default 3 runs.
+Fields: as the lean suite, with workload and clause. A refuted GHZ claim is wrong.
+Output: restricted.txt (per claim: script, export and Lean CPU seconds, file lines, the rung
+and the axiom class).
 
 
 5. COMMANDS
@@ -332,13 +369,15 @@ line per d).
     python -m benchmarks run refutations
     python -m benchmarks run lean
     python -m benchmarks run completeness
-    python -m benchmarks run trust
     python -m benchmarks run breadth
     python -m benchmarks run certificates
     python -m benchmarks run limits
     python -m benchmarks run ablation
     python -m benchmarks run qudits
     python -m benchmarks run mixed
+    python -m benchmarks run sweep
+    python -m benchmarks run uniformity
+    python -m benchmarks run restricted
     python -m benchmarks run exhaustive
 
 Each command also writes its plots; `python -m benchmarks plot SUITE` redraws them from the
@@ -367,13 +406,16 @@ by its first timeout.
   lean             61       3     0.2 h    0.2 h
   completeness    328      10     4.3 h    4.3 h  (exhaustive rows of lemmas the automatic
                                                    search does not prove run to 3600 s)
-  trust            72       1     0.1 h    0.1 h
   breadth         209      10     0.8 h    1.2 h
   certificates    352      10     0.4 h    1.7 h
   limits          107      10     0.2 h    1.4 h
   ablation        186      10     0.2 h    0.2 h
   qudits          356      10     0.4 h    1.8 h
   exhaustive      168       3     0.4 h    3.9 h
+  mixed            72      10     0.2 h    0.2 h
+  sweep          1200       1     0.3 h    4.4 h  (a rewrite sweep stops at its first timeout)
+  uniformity      320       3     0.2 h    0.2 h
+  restricted       20       3     0.2 h    0.2 h
 
 The estimate takes every case at the cost of its kind in the quick run, plus 1.5 s of process
 start per run, divided by the jobs; the second column adds one timed-out run per sweep. Cases
