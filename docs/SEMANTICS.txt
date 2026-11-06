@@ -151,8 +151,14 @@ Bang boxes:
     the rank depend on the multiplicity: the tensor becomes variable-rank, with
     ReplicatedFactor groups (a factor taken once per copy), ReplicatedBlock runs of boundary
     slots laid out copy-major, and SharedIndex sums.
-  - A box wired to a node outside it, a port box over two W nodes, and other shapes not
-    listed raise SymbolicContractionUnsupportedError.
+  - A node-scope box meeting no boundary slot, whose every wire to the rest ends at a Z or X
+    spider outside every box and every port scope (one such box per spider), contributes
+    F(s)^m: F(s) is one copy's contraction with each crossing leg read as the spider's leg at
+    the spider's value s (Z: [leg = s]; X: d^(-1/2) w^(s leg) with the leg's sign), and s is
+    summed with the spider's other factors; a copy outside the box that pins s evaluates the
+    power.
+  - A box wired to any other node outside it, a port box over two W nodes, and other shapes
+    not listed raise SymbolicContractionUnsupportedError.
 
     tensor.substitute(mapping) -> SymbolicTensor       values pushed into every dimension,
                                                        multiplicity, entry and factor

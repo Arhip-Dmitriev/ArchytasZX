@@ -1,6 +1,7 @@
 # Partial trace of qudit GHZ states, for every qudit dimension d: tracing one leg of the Bell
 # state, or three legs of the 4-qudit GHZ state, leaves the maximally mixed state id/d. Over
-# the qudit count, induct checks the schema at n = 0..3 (docs/MIXED.txt, section 8).
+# the qudit count, induct proves it for every n at d = 3, the step by symbolic contraction
+# (docs/MIXED.txt, section 8).
 
 load
   b = Z(0 -> 2)

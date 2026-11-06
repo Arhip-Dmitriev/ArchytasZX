@@ -1,8 +1,9 @@
 # Born probabilities of a qudit GHZ state measured in the computational basis, symbolic in d:
 # the first qudit of the 4-qudit GHZ state gives 0 with probability 1/d whatever the
 # others give (they are discarded). The probability is the closed mixed diagram's CPM scalar;
-# the target is the trace of |0><0| / d. Over the qudit count n, induct checks the schema at
-# n = 0..3; the engine proves no symbolic-n statement here (docs/MIXED.txt, section 8).
+# the target is the trace of |0><0| / d. Over the qudit count n, induct proves it for every n
+# at d = 3, the step by symbolic contraction, with no re-checkable certificate
+# (docs/MIXED.txt, section 8).
 
 @p =
   x = X(0 -> 1)

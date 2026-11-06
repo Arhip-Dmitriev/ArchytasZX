@@ -7,13 +7,6 @@ proof: of the doubled diagrams (DOUBLED)
 proof: re-checkable; certificate kernel / certificate lean
 loaded dsl input
 Tr_env[ (1/d) sum_{k0=0}^{d-1} sum_{k2[i0]=0, i0=1..n}^{d-1} sum_{q1=0}^{d-1} d^{-1/2} w_{d}^{q1 (-k0)} prod_{i0=1}^{n}( [k0 = k2[i0]] ) |k0> (x)_{i0=1}^{n}( |k2[i0]> ) ], env = outputs 1, 2
-induct: schema_checked over n from 0 via oracle_window: equality confirmed at n = 0..3; a finite schema check, not a proof
+induct: proved_induction over n from 0 via symbolic_contraction: successor case closed by symbolic contraction with every symbol formal; the verdict stands and no certificate was built: at k=0: no applicable rule
 witness: d = 3
-dirac outcome: left ?= right
-  left:  (d^(-2)) sum_{k0,k2=0}^{d-1} sum_{k4[i0]=0, i0=1..n}^{d-1} sum_{q1,q3=0}^{d-1} d^{-1/2} w_{d}^{q1 (-k0)} d^{-1/2} w_{d}^{q3 (-k2)} [k0 = k2] prod_{i0=1}^{n}( [k0 = k4[i0]] [k2 = k4[i0]] )
-  right: (d^(-2)) sum_{q0,q1,j0o0=0}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} d^{-1/2} w_{d}^{q1 (j0o0)}
-tier uniform_rewrite: no applicable rule
-tier induction_rewrite: hypothesis not expressible as a rule: bang box 0 carries multiplicity Mult(k) in the hypothesis and Mult(k + 1) in the successor; every Pattern here matches structure only and none unifies Mult arithmetic, and a match ignoring the multiplicity would rewrite the successor straight onto its own target; peeling did not settle it either: the step index is not carried by a single separable bang box on each side, so no copy can be peeled off to expose the hypothesis
-tier symbolic_contraction: bang box 0 has symbolic multiplicity k + 1 and meets the rest of the diagram at a wire
-tier oracle_window: equality confirmed at n = 0..3; a finite schema check, not a proof
-bound: only the oracle_window tier settled the step; not a proof
+no induction certificate was built
