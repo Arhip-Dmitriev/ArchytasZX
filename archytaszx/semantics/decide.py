@@ -1353,22 +1353,23 @@ def _decide_by_induction(
         break
     if base is None or pair is None:
         return f"neither {index}=0 nor {index}=1 instantiates both sides"
-    base_decision = _decide(
-        pair[0],
-        pair[1],
-        mixed=False,
-        floors=floors,
-        rules=rules,
-        guard=guard,
-        samples=None if samples is None else _restrict_samples(samples, index, *pair),
-        max_samples=max_samples,
-        use_symbolic=use_symbolic,
-        use_induction=True,
-        max_depth=max_depth - 1,
-        tolerance=tolerance,
-        max_elements=max_elements,
-        use_saturation=use_saturation,
-        saturation_limits=saturation_limits,
+    base_options: dict[str, object] = {
+        "rules": rules,
+        "guard": guard,
+        "samples": None if samples is None else _restrict_samples(samples, index, *pair),
+        "max_samples": max_samples,
+        "use_symbolic": use_symbolic,
+        "use_induction": True,
+        "max_depth": max_depth - 1,
+        "tolerance": tolerance,
+        "max_elements": max_elements,
+        "use_saturation": use_saturation,
+        "saturation_limits": saturation_limits,
+    }
+    base_decision = (
+        decide_equal(pair[0], pair[1], **base_options)  # type: ignore[arg-type]
+        if floors is None
+        else _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
     )
     if (
         base_decision.verdict is EqualityVerdict.UNEQUAL

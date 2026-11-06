@@ -284,7 +284,7 @@ def test_a_box_meeting_a_wire_is_refused() -> None:
     g = Diagram()
     a, _ = _loop(g, False)
     g.add_bang_box(Mult("n"), node_scope=frozenset({a}))
-    with pytest.raises(L.NetUnsupported, match="meeting the rest at a wire"):
+    with pytest.raises(L.NetUnsupported, match="spider meeting the node box has no boundary"):
         S.export_symbolic(g, g.copy())
 
 

@@ -1016,7 +1016,7 @@ class TestReviewRegressions:
         monkeypatch.setattr(
             decide_module,
             "_symbolic_match",
-            lambda a, b: decide_module._SymbolicRun(True, "patched"),
+            lambda a, b, floors=None: decide_module._SymbolicRun(True, "patched"),
         )
         left, right = deferred_fusion_diagram(), deferred_fusion_diagram()
         decision = decide_equal(left, right, use_saturation=False)
