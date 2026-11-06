@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lean runner: ``lake env lean FILE`` in archytaszx/lean under the harness caps, at most
+"""Lean runner: ``lake env lean FILE`` in archytaszx/lean, in a memory scope of its own (the
+worker's cap would evict the mapped Mathlib files), under the worker's CPU cap, at most
 :data:`SLOTS` at a time across every worker; and the ``lean`` suite: every exportable workload
 exported by ``certificate lean`` and checked by the runner.
 
@@ -40,11 +41,25 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 LEAN_DIR = ROOT / "archytaszx" / "lean"
 SLOTS = 5
+LEAN_MEMORY_FRACTION = 0.85
 SLOT_DIR = Path(tempfile.gettempdir())
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 _DECL = re.compile(r"^(?:private\s+)?(?:theorem|lemma)\s+([^\s(:{\[]+)", re.MULTILINE)
 _AXIOMS = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS = re.compile(r"'([^']+)' does not depend on any axioms")
+
+
+def _scoped(cmd: list[str]) -> list[str]:
+    """``cmd`` in a systemd scope of its own capped at :data:`LEAN_MEMORY_FRACTION` of the total
+    memory, outside the calling worker's scope; ``cmd`` itself without systemd."""
+    from benchmarks import harness
+
+    if not harness._cgroups():
+        return cmd
+    with open("/proc/meminfo", encoding="ascii") as fh:
+        total_kb = next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:"))
+    cap = int(LEAN_MEMORY_FRACTION * total_kb / 1024)
+    return ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={cap}M", *cmd]
 
 
 def lake() -> str:
@@ -147,7 +162,7 @@ def check(path: Path, *, timeout: float | None = None) -> dict[str, Any]:
     try:
         w0 = time.perf_counter()
         proc = subprocess.Popen(
-            [lake(), "env", "lean", str(probe)],
+            _scoped([lake(), "env", "lean", str(probe)]),
             cwd=LEAN_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
