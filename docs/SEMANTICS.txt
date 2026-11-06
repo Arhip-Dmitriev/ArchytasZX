@@ -111,7 +111,15 @@ then contracts and compares.
                       from a's largest entry and verified on the whole tensor. A rescaling by a
                       factor of modulus other than 1 is not a match.
 
-UP_TO_GLOBAL_PHASE is used only when requested. The tolerance is an absolute entrywise bound,
+  UP_TO_POSITIVE_SCALAR
+                      b == lambda * a for some real lambda > 0, recovered the same way.
+
+Mixed operands (a discard on either side) are compared by their doubled diagrams
+(ComparisonResult.doubled); there UP_TO_GLOBAL_PHASE is run as EXACT, the two coinciding on
+CPMs. denote.denote_mixed and contract_symbolic.contract_mixed_symbolic give a mixed
+diagram's CPM numerically and symbolically (MIXED.txt).
+
+UP_TO_GLOBAL_PHASE and UP_TO_POSITIVE_SCALAR are used only when requested. The tolerance is an absolute entrywise bound,
 1e-9 by default, and is never loosened implicitly.
 
 ComparisonResult holds the mode, matched, a reason, the largest deviation and the recovered

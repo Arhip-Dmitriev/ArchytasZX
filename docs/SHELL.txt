@@ -125,6 +125,8 @@ shows the engine's full error record.
   both                   View Dirac notation and the matplotlib ZX drawing.
   raw                    View full ZX graph listings.
   listing                Toggle the graph listing printed under each ZX drawing.
+  doubled                Toggle drawing a mixed diagram doubled, its conjugate sheet shaded
+                         (Unicode and ASCII grids mark it with *).
   publication            Toggle the paper's notation in ZX drawings (section 9.3).
   config                 Show the image settings and the configuration file path.
   config KEY VALUE       Set an image setting: size (a positive number), color ("auto" or

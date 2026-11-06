@@ -136,6 +136,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
                boundary in key order (eval_expandK_evalD, bdims_expandK)
   FamK         DEqual_expandK_of_checks, Equal_of_DEqual_expandK; DEqualF, equality of two
                families at every assignment of their multiplicity symbols
+  Mixed        mixed networks (MIXED.txt): MNet, a network with the labels its discards end;
+               MNet.cpm, the doubled entry sum_env eval(sigma, e) * conj eval(sigma', e);
+               cpm_pure (F3), Equal.cpm (a proved pure equation lifts to every mixed
+               context, its scalar squared in modulus: F4, the lifting lemma), cpm_phase (F5),
+               cpm_conj (F1), cpm_causal (F6); the discard rules as tensor identities
+               discard_fourier, discard_phase, discard_zero, discard_loop, discard_binder
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
                paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
@@ -255,6 +261,18 @@ write) is exported without imports: an opaque Diagram type, one constant per dia
 per rule instance, isomorphism, instantiation, peeling and context the kernel checked, and the
 theorem as their composition. This export records the structure of the proof but does not
 re-prove its steps; the shell reports it as "opaque diagrams, every step an axiom".
+
+
+4.6 Mixed theorems
+
+A kernel theorem between diagrams with discards (MIXED.txt) is exported as the equality of
+their doubled diagrams, which is the equality of their CPMs by definition (MIXED.txt, 2.3),
+through the normaliser of symbolic sums (4.3) when it settles the doubled pair: no axiom
+beyond propext, Classical.choice and Quot.sound. A DOUBLED proof is a pure proof of the
+doubled diagrams and exports as such (4.1). Otherwise a mixed theorem takes the fallback
+export of 4.5, each discard step an axiom unproved_DISCARD_<rule>_N. The network semantics has
+no discard Kind; Mixed.lean states the CPM of a network through its purification, and the
+discard rules as tensor identities.
 
 
 5. REFUTATIONS
@@ -501,3 +519,7 @@ network and is applied by refine before its condition is decided; exports set ma
 zxw_hd step at d = 7 in 185 s; the converse's closing isomorphism takes longest, about 20
 minutes at d = 6); larger dimensions were not measured.
 
+G14 Mixed diagrams: the network export has no discard generator; a mixed theorem is proved
+through its doubled diagrams (4.6). Mixed.lean does not state F2 (doubling is compositional),
+for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
+discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.

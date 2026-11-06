@@ -39,6 +39,9 @@ explicitly.
   REWRITE.txt          Layer C: rules, matching, the rewrite engine, strategies, normal form,
                        equality saturation, tactics, sheet operations and caching.
   RULES.txt            The rule library: every rule, its meaning, scalar and side conditions.
+  MIXED.txt            Mixed states: the discard G, doubling, conjugation, purification, the
+                       standard channels, the discard rules, DOUBLED and NATIVE proofs, and
+                       the completeness of the discard construction.
   COMPLETENESS.txt     The complete axiomatisation: the axioms of [P1] and [P2] as rules, the
                        generator mapping, the transfer argument, exhaustive mode, limits.
   SEMANTICS.txt        Layer D: denotation, numeric and symbolic contraction, the oracle.

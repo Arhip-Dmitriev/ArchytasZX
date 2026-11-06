@@ -32,7 +32,7 @@ reported with the verdict as its assumptions; the verdict is conditional on them
     decide_equal(left, right, *, rules=None, guard=DEFAULT_GUARD, samples=None,
                  max_samples=24, use_symbolic=True, use_induction=True, max_depth=2,
                  tolerance=1e-9, max_elements=10_000_000, use_saturation=True,
-                 saturation_limits=DECIDE_SATURATION_LIMITS) -> Decision
+                 saturation_limits=DECIDE_SATURATION_LIMITS, mixed=False) -> Decision
 
 2.1 The ladder
 
@@ -56,12 +56,18 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             The step is tried left to right, then right to left; nesting is
                             bounded by max_depth.
 
+When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
+diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
+pair in Decision.doubled (MIXED.txt, section 5).
+
 2.2 The Decision
 
     Decision.verdict          EqualityVerdict: EQUAL, UNEQUAL, UNKNOWN
     Decision.method           DecisionMethod: INTERFACE, NORMAL_FORM, SATURATION,
                               SYMBOLIC_CONTRACTION, INDUCTION, ORACLE_COUNTEREXAMPLE,
-                              SYMBOLIC_WITNESS, NONE
+                              SYMBOLIC_WITNESS, DOUBLED, NONE
+    Decision.inner_method     the rung behind a DOUBLED verdict
+    Decision.doubled          the doubled pair of a DOUBLED verdict
     Decision.reason           a sentence explaining the verdict
     Decision.certificates     the certificates behind a NORMAL_FORM or SATURATION verdict
     Decision.counterexample   the assignment behind an UNEQUAL verdict
@@ -175,6 +181,17 @@ minimal polynomial), so equal values compare equal. Both diagrams need concrete 
 algebraic parameters (ProveGrammarError otherwise). Each round is finite; the rounds are not
 bounded. COMPLETENESS.txt, section 6, states the termination theorem. In the shell: prove
 exhaustive algebraic [against] [TARGET].
+
+
+3.4 Mixed operands
+
+prove on mixed operands first searches with the discard rules (tactics.mixed_moves) and returns
+a ProofOutcome whose mixed field is a MixedCertificate of kind NATIVE; otherwise, and in
+prove_exhaustive, it proves the doubled pair and returns kind DOUBLED (both doubled diagrams
+with node origins and the inner pure proof). check_mixed(certificate) re-doubles a DOUBLED
+certificate's sides id for id and checks the inner proof. The kernel refuses a pure rule's
+step that consumes a discard; on mixed diagrams a Theorem states equality of CPMs and its iso
+compares mixed scalars by modulus. MIXED.txt, section 5.
 
 
 4. INDUCTION OVER MULTIPLICITIES: archytaszx.semantics.induction

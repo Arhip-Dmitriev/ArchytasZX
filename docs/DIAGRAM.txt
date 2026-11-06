@@ -32,17 +32,22 @@ the validator (section 5).
   W     W_NODE            1       any      none         all legs equal
   B     DIM_BINDER        2       1        none         product of inputs = product of outputs
   S     DIM_SPLITTER      1       2        none         product of inputs = product of outputs
+  G     DISCARD           one leg in total  none         all legs equal
 
 "Tied to leg" means a phase vector, when present, is built over the same dimension as the
 node's legs. A phase vector may carry complex weights (ALGEBRA.txt, section 3.4), which makes
 a Z spider the Z box of [P1]; an X spider with weights is the Fourier conjugate of that Z box. The binder takes legs of dimensions s and t to one leg of dimension s*t, the
-splitter the reverse.
+splitter the reverse. G, the discard, has exactly one leg in either direction (LegPolicy
+total_legs = 1) and no pure denotation; it is in MIXED_ONLY, and a diagram holding one is
+mixed (MIXED.txt).
 
 2.2 Types
 
     class GeneratorType(name, leg_policy, phase_schema, dimension_policy)
-    class LegPolicy(min_inputs, max_inputs, min_outputs, max_outputs)
-        allows(num_inputs, num_outputs) -> bool         None as a maximum means unbounded
+    class LegPolicy(min_inputs, max_inputs, min_outputs, max_outputs, total_legs=None)
+        allows(num_inputs, num_outputs) -> bool         None as a maximum means unbounded;
+                                                        total_legs fixes inputs + outputs
+    MIXED_ONLY: frozenset[str]                         generators with no pure denotation
     enum PhaseSchema: TIED_TO_LEG_DIM, NONE
     enum DimensionPolicy: ALL_LEGS_EQUAL, PRODUCT_OF_LEGS_EQUAL
 

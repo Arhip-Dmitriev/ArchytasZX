@@ -2228,3 +2228,37 @@ are listed in LEAN.txt, section 9.
 
 A rewrite that changes the denoted linear map, scalar included, is a soundness bug; see
 CONTRIBUTING.md for how to report one.
+
+
+4. DISCARD RULES
+----------------
+
+archytaszx.rewrite.rules_discard.MIXED_RULES: template rules on mixed diagrams (MIXED.txt).
+They are not in RULES; lookup_rule, apply, the kernel and mixed proof search find them. G
+matches in either orientation. A rule's scalar s multiplies the CPM by |s|^2.
+
+  Rule                       Equation                                           Scalar
+  -------------------------  -------------------------------------------------  ----------
+  discard_zero               G after the pink dot state |0> = empty              sqrt(d)
+  discard_fourier            G after F = G                                       1
+  discard_phase              G after Z (1 -> 1), phases only = G                 1
+  discard_spider             G on all n outputs of Z (1 -> n), phases only,      1
+                             n >= 1 = G on its input (derived)
+  discard_cx                 G (x) G after Z (1 -> 2) into X (2 -> 1) =          d^(-1/2)
+                             G (x) G
+  discard_merge              two G legs of one Z spider = one G leg (derived)    1
+  discard_loop               G wired to G = empty (derived)                      sqrt(d)
+  discard_binder             G after B (s, t) = G_s (x) G_t, concrete            1
+  discard_splitter           G_s (x) G_t after S (s, t) = G_st, concrete         1
+  discard_zero_converse      empty = G after |0>                                 d^(-1/2)
+  discard_fourier_converse   G = G after F                                       1
+  discard_phase_converse     G = G after Z (1 -> 1), free phase a (default 0)    1
+  discard_cx_converse        G (x) G = G (x) G after CX                          sqrt(d)
+  discard_binder_converse    G_s (x) G_t = G after B (s, t), concrete            1
+  discard_splitter_converse  G_st = G_s (x) G_t after S (s, t), concrete         1
+
+Side conditions: the template conditions of section 1 (no matched node in a bang box), and
+unit_modulus (no weights) for discard_phase and discard_spider. Sources: [CJPV]'s ZX discard
+axioms (archytaszx/papers/carette2019mixed/AXIOMS.txt) under COMPLETENESS.txt section 2.
+Every rule was checked with the oracle on doubled diagrams at d = 2..12, arities up to 4, in
+random contexts: 990 instances, no mismatch.

@@ -192,6 +192,23 @@ reports state the Dirac-level outcome of both sides, an oracle counterexample wh
 exists, otherwise the furthest-simplified states and the bound that was reached.
 
 
+2.16 double, purify
+
+    double [@NAME | SOURCE]
+    purify [@NAME | SOURCE]
+
+double shows the doubled pure diagram of a mixed diagram (the current one by default):
+outputs plain then conjugate, inputs plain then conjugate. purify shows its purification and
+names the environment outputs. Neither changes the session. MIXED.txt, sections 2 and 3.
+
+Mixed diagrams in other commands. check, decide, prove, induct and certificate accept
+diagrams with discards. check compares the doubled diagrams; decide reports "by doubled"
+with the settling rung; prove reports NATIVE (a search with the discard rules) or DOUBLED (a
+proof of the doubled diagrams); induct runs on the doubled diagrams. certificate lean
+exports a mixed theorem through the normaliser of symbolic sums on the doubled diagrams
+when it applies (LEAN.txt).
+
+
 3. DIAGRAM INPUT FORMS
 ----------------------
 
@@ -228,7 +245,15 @@ Node declarations:
     NAME = S(S, T)                         splitter: input S*T, outputs S and T
     NAME[A..B] = ...                       one node per name NAMEA, ..., NAMEB
 
-GEN is a generator name: Z, X, F, T, Ti, W, B or S (DIAGRAM.txt, section 2). The default
+GEN is a generator name: Z, X, F, T, Ti, W, B, S or G (DIAGRAM.txt, section 2). The discard
+G has one leg:
+
+    NAME = G                               one leg of the default dimension
+    NAME = G(D)                            one leg of dimension D
+    NAME = G(1 -> 0) or G(0 -> 1)          an explicit effect or state
+
+A G written without "->" is a state when a chain leaves it, a wire names its output or
+outputs lists it, and an effect otherwise; "a -> G" discards a's next free output. The default
 dimension is the first symbol declared by dim, or d when there is none. PHASE is
 
     phase{I: EXPR, ...}                    phase entries in turns at indices I >= 1
@@ -322,6 +347,11 @@ Catalog atoms carry their dimension in brackets:
     GHZ_{N}[D]                  the Z spider with N outputs
     copy_{N}[D]                 the Z spider with one input and N outputs
     W_{N}[D]                    the W node with N outputs
+    discard[D]                  the discard effect G
+    maxmixed[D]                 the maximally mixed state: G as a state, scalar D^(-1/2)
+    dephase[D]                  Z (1 -> 2) with its second output discarded
+    measure_x[D]                X (1 -> 2) with its second output discarded
+    ptrace[I, ...](EXPR)        EXPR with its outputs I, ... (from 1, single legs) discarded
     Z_{M->N}(I: EXPR, ...)[D]   a Z spider with phase entries
     X_{M->N}(I: EXPR, ...)[D]   an X spider with phase entries
 
@@ -369,6 +399,11 @@ view a diagram is printed as its structural index sum, prefixed by a catalog nam
 connected component is one bare generator:
 
     Z_{0->3}(1: alpha) = Σ_{k=0}^{d-1} e^{2 π i (alpha [k=1])} |k, k, k⟩
+
+A mixed diagram is printed as its purification P with the environment outputs traced out,
+standing for the CPM rho -> Tr_env(P rho P^dagger), never as a density matrix:
+
+    Tr_env[ copy_{2} = Σ_{k=0}^{d-1} |k, k⟩⟨k| ], env = output 2
 
 A family under a bang box is printed with copy indices:
 

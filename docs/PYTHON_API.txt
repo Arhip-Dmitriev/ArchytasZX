@@ -135,6 +135,9 @@ A Piece is a diagram fragment with ordered free inputs and outputs.
   azx.node(GEN, INS, OUTS, ...)      any generator, with explicit leg dimensions
   azx.id, azx.swap                   one bare wire, two crossing wires
   azx.scalar(EXPR)                   the empty diagram times EXPR
+  azx.discard(D), azx.maxmixed(D)    the discard effect; the state id/d (MIXED.txt)
+  azx.dephase(D), azx.measure_x(D)   Z (1 -> 2) or X (1 -> 2) with its second output discarded
+  azx.ptrace(PIECE, I, ...)          PIECE with its outputs I, ... (from 0) discarded
 
 A symbolic M or N is one leg in a port-scope !-box of that multiplicity. phase and weight
 take 0, one expression at every index k ("-k/d"), or a dict {INDEX: EXPR}.
@@ -205,3 +208,18 @@ The qudit Deutsch-Jozsa circuit with the balanced oracle f(x) = x_n, n = m + 1:
     azx.lean("deutsch_jozsa_balanced.lean")
 
 circuit.dsl() reads back to the diagram of examples/deutsch_jozsa_proof.azx node for node.
+
+3.5 Mixed diagrams
+
+archytaszx.repl.embed also defines, each taking a Piece or a Diagram:
+
+    conj(x) -> Diagram                    the entrywise conjugate
+    double(x) -> Diagram                  the doubled pure diagram
+    purify(x) -> (Diagram, env)           the purification and its environment outputs
+    is_pure(x) -> bool                    no discard
+    denote_mixed(x, **values) -> ndarray  the CPM tensor T[o, o', i, i'] at concrete values,
+                                          numeric (an oracle only)
+
+Program.load, decide, prove and check accept a Diagram, read through its graph listing. A
+Mixed post-state of the language maps to an engine diagram through these and the pieces of
+section 3.2, without a matrix.

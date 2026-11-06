@@ -1,0 +1,304 @@
+ARCHYTASZX DOCUMENTATION
+========================
+
+Mixed States: Discard and the CPM Construction
+
+Applies to: ArchytasZX 2.0.x
+Implementation: archytaszx.diagram.mixed (conj, double, purify, constructions),
+                archytaszx.rewrite.rules_discard (discard rules), archytaszx.semantics
+                (denote_mixed, contract_mixed_symbolic, compare, decide_equal, prove),
+                archytaszx/lean/ArchytasZX/Mixed.lean (Lean semantics)
+Sources:        [CJPV] T. Carette, E. Jeandel, S. Perdrix, R. Vilmart, "Completeness of
+                graphical languages for mixed states quantum mechanics", ICALP 2019,
+                arXiv:1902.07143; axioms read from the source in
+                archytaszx/papers/carette2019mixed/AXIOMS.txt.
+                [CK] B. Coecke, A. Kissinger, "Picturing Quantum Processes", CUP 2017, ch. 6.
+                [P1], [P2] as in COMPLETENESS.txt.
+                [BB] J.-L. Brylinski, R. Brylinski, "Universal quantum gates",
+                arXiv:quant-ph/0108062.
+
+
+1. PURPOSE
+----------
+
+A pure diagram denotes one linear map. A mixed diagram may also contain discard nodes G and
+denotes a completely positive map (CPM) between finite-dimensional systems, for qudits at every
+d and for qufinite (mixed-dimension) diagrams. Mixed states, channels, partial traces and
+measurements with forgotten outcomes are written with G.
+
+
+2. SEMANTICS
+------------
+
+2.1 Conjugation. conj(D) is D with every node replaced by its entrywise complex conjugate,
+wiring, boundary and leg order unchanged, scalar conjugated:
+
+  Generator                      In conj(D)
+  -----------------------------  -----------------------------------------------
+  Z, phase vector alpha          Z, phase vector -alpha
+  Z, weights a                   Z, weights conj(a)
+  X, phase vector alpha          X, phase vector k -> -alpha_{-k mod d}
+  X, weights a                   X, weights k -> conj(a_{-k mod d})
+  F                              F^3 (= F^dagger), three F nodes in series
+  T, Ti, W, B, S, G              unchanged (real tensors)
+
+At a symbolic dimension the reflected index of an X spider's entries is written with the
+exact atom ModDelta (ALGEBRA.txt). Every row was checked with the oracle at d = 2..7 (B and S
+at (s, t) = (2, 3), (3, 2), (2, 2), (3, 4)), with phase entries, weights and rules, at
+concrete and symbolic dimensions: 350 instances, no mismatch.
+
+2.2 The discard G. One leg of any dimension, no phase. As an input it is the trace effect;
+as an output the unnormalised maximally mixed state. G has no pure denotation: denote refuses
+it and names double().
+
+2.3 Doubling (the definition). double(D) is the pure diagram made of:
+
+  1. a copy D0 of D without its G nodes and a copy D1 of conj(D) without its G nodes;
+  2. for every G attached by its leg to a port p, one wire between p in D0 and p in D1 (the
+     trace); a G in a bang box instead becomes a phase-free two-leg Z in that box;
+  3. a G on the boundary becomes a phase-free two-leg Z (the cup or cap); a G wired to a G a
+     phase-free zero-leg Z over the leg dimension (the scalar d);
+  4. boundary: D0 outputs, D1 outputs, D0 inputs, D1 inputs;
+  5. scalar c * conj(c);
+  6. each node-scope bang box as one box over both copies, each port-scope box as one box per
+     copy, all with the original multiplicity symbol.
+
+With T = denote(double(D)) of axes (o, o', i, i'), D is the CPM
+Phi_D(rho)[o, o'] = sum_{i, i'} T[o, o', i, i'] rho[i, i']. A pure U gives rho -> U rho U^dagger;
+G gives the trace. Every node of double(D) maps back to D (double_with_origin).
+
+2.4 Equality. Mixed diagrams with the same boundary are equal iff their doubled diagrams are
+equal. On CPMs UP_TO_GLOBAL_PHASE coincides with EXACT; compare runs it as EXACT and says
+so. UP_TO_POSITIVE_SCALAR (b = lambda a, lambda > 0) is used only when requested.
+
+2.5 The mixed scalar. A mixed diagram keeps a pure scalar c; its CPM scalar is |c|^2. The
+comparison view of a mixed diagram (normal forms, search states, the kernel's iso) carries
+c * conj(c). A rule's pure scalar s multiplies the CPM by |s|^2.
+
+2.6 Facts, checked with the oracle at d = 2..5 on random diagrams with G nodes (scripts kept
+out of the tree; counts are instances, none failed):
+
+  double(D) against the Stinespring form of purify(D)                     176
+  (F1) double(conj D) = double(D) with the two copies swapped               160
+  (F2) double(E . D) = double(E) . double(D); tensor up to the permutation   68, 135
+  (F3) pure D: double(D) = D (x) conj(D) up to the boundary permutation      80
+  (F4) pure L = R exactly: double(C[L]) = double(C[R])                       24
+  (F5) pure D, lambda D: equal iff |lambda| = 1                             160
+  (F6) G after an isometry (Z phase, F, Z (1 -> 2, 3), X (1 -> 2), S)        32
+  channel(purify(D)) = D                                                    160
+  bang boxes: double commutes with expansion at n = 0..3                    20
+
+Lean proves (F1), (F3), (F4), (F5) and (F6) for the Stinespring CPM of Mixed.lean
+(LEAN.txt).
+
+
+3. G AND THE CONSTRUCTIONS
+--------------------------
+
+archytaszx.diagram.mixed:
+
+    is_pure(D), discards(D)            no G node; the G nodes
+    conj(D), conj_with_origin(D)       section 2.1
+    double(D), double_with_origin(D)   section 2.3
+    purify(D) -> (P, env)              Stinespring form: every G removed, its leg moved to
+                                       the end of the boundary outputs (env positions); a G on
+                                       an input port or a boundary output becomes a cup, a G on
+                                       a boundary input an identity Z, a G-G pair a cup
+    channel(P, env)                    the inverse: P with the env outputs discarded
+    partial_trace(D, legs)             G on the boundary outputs at positions legs
+    compose(D, E), tensor(*Ds)         sequential and parallel composition
+
+    discard(d)                         G effect
+    maximally_mixed(d)                 G state, scalar 1/sqrt(d): the CPM id/d
+    dephase(d), measure_z(d)           Z (1 -> 2), second output discarded
+    measure_x(d)                       X (1 -> 2), second output discarded = F . dephase . F^dagger
+    outcome(k, d)                      the pure effect <k| = d^(-1/2) X (1 -> 0) phase jk/d;
+                                       closed with a state through double, the Born probability
+
+mixture(states, probs) is not built: [P1] constructs no sum of arbitrary diagrams (its
+conclusion attributes controlled summation to later work); its only sum is the normal form's
+sum over basis kets, which needs the states' amplitudes, and the engine has no W sum of
+diagrams.
+
+archytaszx.semantics: denote.denote_mixed(D) (the CPM tensor T[o, o', i, i'], numeric, an
+oracle only), contract_symbolic.contract_mixed_symbolic(D) (the doubled symbolic contraction,
+every dimension and multiplicity formal). Applying a channel to a state is composition.
+
+
+4. RULES
+--------
+
+4.1 Lifted pure rules. Every rule of rules_library.RULES applies to a mixed diagram at a match
+holding no G: no pattern matches G (template matching places G only where a template names
+one; boundary insertion never copies a G node), and the kernel refuses a pure rule's step
+that consumes a G. By (F4) such a step is sound. On random mixed diagrams every RULES entry
+was applied at every match: 4369 applications, no G consumed, no doubled-oracle mismatch.
+
+4.2 Discard rules (archytaszx.rewrite.rules_discard.MIXED_RULES, RULES.txt section 9): the
+equation G . V = G of [CJPV] for the qudit analogue of each element of its ZX spanning set
+(e^{i alpha}, |0>, H, R_Z(alpha), CNot), under COMPLETENESS.txt section 2, and for the [P2]
+connectives:
+
+  discard_zero        G . |0> = empty, |0> the pink dot state; scalar sqrt(d)
+  discard_fourier     G . F = G
+  discard_phase       G . Z (1 -> 1, phases only) = G
+  discard_cx          (G (x) G) . CX = G (x) G, CX = Z (1 -> 2) into pink (2 -> 1); scalar
+                      d^(-1/2) for the engine's Z, X pair
+  discard_binder      G . B (s, t) = G (x) G (concrete s, t)
+  discard_splitter    (G (x) G) . S (s, t) = G (concrete s, t)
+  discard_spider      derived: G^(x n) . Z (1 -> n, phases only) = G, n >= 1
+  discard_merge       derived: two discarded legs of one Z spider are one
+  discard_loop        derived: G joined to G = empty; scalar sqrt(d) (CPM d)
+
+with the converses discard_zero_converse, discard_fourier_converse, discard_phase_converse
+(free phase), discard_cx_converse, discard_binder_converse, discard_splitter_converse. The
+[CJPV] phase axiom e^{i alpha} = empty is the scalar convention of 2.5. G matches either
+orientation. Every rule was checked with the oracle on doubled diagrams at d = 2..12, arities
+up to 4, both G orientations, in random pure contexts: 990 instances, no mismatch.
+
+
+5. DECIDING AND PROVING
+-----------------------
+
+5.1 DOUBLED. decide_equal on mixed operands (a G on either side, or mixed=True) runs the
+pure ladder unchanged on both doubled diagrams and reports DecisionMethod.DOUBLED with the
+settling rung in inner_method and the doubled pair in doubled. compare doubles mixed
+operands. prove_exhaustive, and prove when NATIVE finds nothing, prove the doubled pair and
+return a MixedCertificate of kind DOUBLED (both mixed diagrams, both doubled diagrams with the
+origin of every node, the inner pure proof); check_mixed re-doubles both sides, requires them
+identical id for id to the stored ones, and checks the inner proof.
+
+5.2 NATIVE. prove first searches with tactics.mixed_moves (the fixpoint of
+mixed_normal_form_rules, then every discard rule and every saturation rule) and returns a
+MixedCertificate of kind NATIVE: single-sheet steps, lifted pure steps and discard steps,
+replayed and re-checked by the kernel. normal_form on a mixed diagram runs
+mixed_normal_form_rules: the forward discard rules first, then the pure normal-form rules;
+sound, not complete.
+
+5.3 Completeness of the DOUBLED route. Let D1, D2 be mixed diagrams at concrete dimensions
+without bang boxes, with equal CPMs. By definition 2.3 and 2.4, double(D1) and double(D2) are
+pure diagrams at concrete dimensions, without bang boxes, built from the engine's generators,
+denoting the same linear map. By COMPLETENESS.txt section 1 there is a derivation between
+them by the rules of RULES; exhaustive mode searches for it. Hence every true equation of
+mixed diagrams in this regime has a DOUBLED certificate.
+
+
+6. THE [CJPV] THEOREM AND NATIVE COMPLETENESS
+---------------------------------------------
+
+6.1 The theorem, as printed ([CJPV] Corollary cor:ground, from Theorem thm:ground): "Given a
+dagger-CC C with enough isometries, if G is a dagger-CC universal complete graphical language
+for C then G^ground is a universal complete language for CPM(C)." G^ground is G with one new
+generator ground and one equation ground . D = ground per isometry D of G; given a spanning
+set of the isometries, one equation per element suffices (the recipe after cor:ground). The
+statement is not restricted to qubits; the paper's examples are qubit languages (ZX, its
+pi/2 fragment, ZW, ZH), and for Clifford+T the hypothesis fails (Proposition lem:CPC).
+
+6.2 The hypotheses, for the engine at a concrete dimension d (C = Qudit_d, the full
+subcategory of FHilb on the C^(d^n)) and for qufinite diagrams (C = the full subcategory on
+tensor products of C^(d_i)).
+
+  (H1) A dagger-compact universal complete language. Universality and completeness: [P1] for
+       every d >= 2, [P2] for qufinite, transferred to the engine's rules at concrete
+       dimensions without bang boxes (COMPLETENESS.txt, sections 1 and 4). Compact: wires are
+       direction-free. Dagger: each generator's adjoint is a diagram (Z and X with negated
+       phases and conjugated weights, legs reversed; F^dagger = F^3; W, T, Ti, B, S
+       transposed through bent wires), well defined on equivalence classes by completeness.
+  (H2) Enough isometries. [CJPV]'s proof for Qubit (Proposition lem:CPQ) applies verbatim:
+       by Stinespring (Proposition lem:CPFH) two purifications of one CPM are related by
+       isometries u, v into some C^m; post-composing with an isometry C^m -> C^(d^n), d^n >= m,
+       puts their codomain in Qudit_d. For qufinite, C^m is itself an object. Hence both
+       categories have enough isometries, and by lem:thm:cpenv their discard constructions
+       are CPM(C).
+  (H3) The interpretation is faithful (completeness) and full (universality); a faithful
+       dagger functor reflects isometries (F(f)^dagger F(f) = 1 = F(1) gives f^dagger f = 1),
+       so its restriction to isometries is surjective, as thm:ground requires.
+
+6.3 A finite spanning set. Qudit_d, concrete d >= 2. Claim: every isometry V : C^(d^n) ->
+C^(d^m) is a composite of tensor products of identities, swaps, and the elements of
+S_d = (e^{i alpha}, |0>, F, F^3, Z (1 -> 1) with phases, CX).
+
+  (a) V = U . (1 (x) |0>^(x (m - n))) for a unitary U on C^(d^m) (complete V's orthonormal
+      columns to a basis).
+  (b) One qudit: U(d) is generated by the diagonal unitaries T (Z phase gates times
+      e^{i alpha}) and F T F^3. Let H be the subgroup they generate; H is path-connected, so
+      by Yamabe's theorem an analytic subgroup of U(d) whose Lie algebra h contains the
+      diagonal t and F t F^{-1}, the anti-Hermitian circulants. The complexification of h
+      contains every diagonal matrix and the cyclic shift S = sum_i E_{i+1, i}. For a diagonal
+      h with entries a_i = 2^i the components of S under ad h have the distinct eigenvalues
+      a_{i+1} - a_i (indices mod d), so each E_{i+1, i} lies in h_C, and likewise each
+      E_{i, i+1} (from S^{-1}). These generate gl_d, so h = u(d) and H = U(d); every element
+      of H is a finite product.
+  (c) n >= 2 qudits: [BB] (abstract and main theorem): the one-qudit gates together with a
+      two-qudit gate V produce all n-qudit gates exactly iff V is not primitive (does not map
+      every decomposable tensor to a decomposable tensor). CX is not primitive: it maps
+      F|0> (x) |0> to sum_k |k, k> / sqrt(d).
+
+  From G . g = G for every g in S_d, G . V = G follows for every isometry V by induction on
+  its decomposition: G^(x m) . (g (x) 1) = (G . g) (x) G^(x .) = G^(x .). In the engine:
+  discard_zero, discard_fourier (three times for F^3), discard_phase, discard_cx and the
+  scalar convention, with their converses for reading the equations right to left.
+
+  Qufinite. B and S are unitary, so with them every unitary on C^(d_1) (x) ... (x) C^(d_k) is
+  S . U . B for a unitary U on C^(prod d_i), generated by (b) at that dimension. An isometry
+  C^a -> C^b with a dividing b is B . (1 (x) |0>_(b/a)) up to such unitaries. An isometry
+  C^a -> C^b with a not dividing b is not: every composite of the elements above and
+  ancillas |0>_e maps C^a into a space of dimension a * prod e. The canonical injection
+  iota_{a,b} (the phaseless [P2] mixed-dimensional Z spider with legs a and b) must be added,
+  with the equation G_b . iota_{a,b} = G_a.
+
+6.4 The argument of thm:ground, with these sets. If CPM(D1) = CPM(D2), let Pi be the
+purifications (purify). By (H2), P1 and P2 are related by the transitive closure of
+(1 (x) u) P1 = (1 (x) v) P2 with isometries u, v. Each link is: D1 = (1 (x) G) P1, read
+right to left through the converse discard rules to (1 (x) G)(1 (x) u) P1 (u decomposed by
+6.3), then (1 (x) u) P1 = (1 (x) v) P2 by pure rules (completeness, COMPLETENESS.txt), then
+forward discard rules to (1 (x) G) P2 = D2.
+
+6.5 Outcome (ODOACER D.4 (ii)).
+
+  Qudit, concrete d, no bang boxes: native completeness holds. If two mixed diagrams denote
+  the same CPM, there is a derivation between them by the rules of RULES and MIXED_RULES
+  (discard_zero, discard_fourier, discard_phase, discard_cx and their converses suffice
+  among the latter), mixed scalars compared by modulus. Proof: 6.2 to 6.4, resting on
+  [CJPV] thm:ground, [P1] (through COMPLETENESS.txt), Stinespring, Yamabe's theorem and
+  [BB].
+
+  Qufinite, no bang boxes: native completeness holds for the rule set extended by
+  G_b . iota_{a,b} = G_a for every a < b with a not dividing b; the engine registers no such
+  rule, so qufinite native completeness is not claimed for MIXED_RULES. The DOUBLED route
+  (5.3) is complete for qufinite diagrams.
+
+  Symbolic dimensions or bang boxes: as for pure diagrams, no completeness is claimed. The
+  NATIVE search is sound and incomplete; DOUBLED decisions are sound.
+
+  In every regime the engine's guarantee for mixed equality includes 5.3.
+
+
+7. SOURCES AND LITERATURE
+-------------------------
+
+[CJPV] was fetched from arXiv (1902.07143, v1, the only version) into
+references/Papers/carette2019mixed/ (not tracked); its definitions, theorems and the ZX, ZW
+and ZH discard axioms are in archytaszx/papers/carette2019mixed/AXIOMS.txt. [BB] was read at
+its arXiv abstract page.
+
+A search on 2026-11-06 for later work on qudit or qufinite ZXW with discard ("ZXW discard",
+"qudit mixed state completeness ZX", "qufinite ZXW mixed states discard") found none. Related
+results found: the discard construction applied to the qudit stabiliser ZX-calculus in odd
+prime dimensions (arXiv:2204.12531); a complete language for Hermiticity-preserving
+superoperators by an extension of the ZW-calculus (arXiv:2302.04212); the decohered
+ZX-calculus (arXiv:2508.04296), which treats the discard ZX-calculus for qubits; the
+completeness of the finite-dimensional ZX-calculus (arXiv:2405.10896), pure.
+
+
+8. LIMITS
+---------
+
+  - Symbolic multiplicities: a bang box of discards meeting the rest of the diagram at a wire
+    is outside symbolic contraction; decide reports unknown and induct checks only a finite
+    schema (examples/mixed/born_ghz.azx). Removing such a box needs a sheet-level rule.
+  - The qufinite injection rule of 6.5 is not registered.
+  - Lean: the discard rules are proved as tensor identities (Mixed.lean); a NATIVE
+    certificate exports through the Lean-proved normaliser of symbolic sums on the doubled
+    pair when it applies, otherwise opaquely with each discard step an axiom
+    unproved_DISCARD_<rule>_N (LEAN.txt).
