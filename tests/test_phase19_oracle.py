@@ -641,6 +641,8 @@ COMMAND_LINES = {
     "induct": "induct",
     "certificate": "certificate",
     "translate": "translate",
+    "double": "double",
+    "purify": "purify",
     "name": "name g",
     "define": f"define g2 = {EXAMPLE}",
     "names": "names",

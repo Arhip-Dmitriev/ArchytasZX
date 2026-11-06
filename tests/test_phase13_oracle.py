@@ -24,6 +24,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram import mixed as M
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.normal_form import normal_form, same_normal_form
@@ -129,6 +130,13 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         {"use_symbolic": False, "use_induction": False},
         UNKNOWN,
         DecisionMethod.NONE,
+    ),
+    (
+        "dephase_idempotent",
+        lambda: (M.compose(M.dephase(2), M.dephase(2)), M.dephase(2)),
+        {},
+        EQUAL,
+        DecisionMethod.DOUBLED,
     ),
 ]
 

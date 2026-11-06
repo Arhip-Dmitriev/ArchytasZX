@@ -38,8 +38,8 @@ class TestRegistryMembership:
 
     def test_the_registry_holds_exactly_these_names(self) -> None:
         """Pins the whole registry, so an unreviewed tenth generator fails here."""
-        assert REGISTRY.names() == frozenset({"Z", "X", "F", "T", "Ti", "W", "B", "S"})
-        assert set(REGISTRY.all_types()) == {"Z", "X", "F", "T", "Ti", "W", "B", "S"}
+        assert REGISTRY.names() == frozenset({"Z", "X", "F", "T", "Ti", "W", "B", "S", "G"})
+        assert set(REGISTRY.all_types()) == {"Z", "X", "F", "T", "Ti", "W", "B", "S", "G"}
 
     @pytest.mark.parametrize("gen", _NEW, ids=lambda g: g.name)
     def test_get_returns_the_module_constant(self, gen: GeneratorType) -> None:
