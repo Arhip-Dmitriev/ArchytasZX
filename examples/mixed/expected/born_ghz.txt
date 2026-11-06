@@ -5,15 +5,6 @@ Tr_env[ (1/d) sum_{k0,q1=0}^{d-1} d^{-1/2} w_{d}^{q1 (-k0)} |k0, k0, k0> ], env 
 decide: equal by doubled: doubled, symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
 proof: of the doubled diagrams (DOUBLED)
 proof: re-checkable; certificate kernel / certificate lean
-prove: not_found: doubled: search exhausted after 2 layer(s): 3 state(s), 3 expanded, 4 application(s), 0 pruned, 0 failure(s)
-dirac outcome: left ?= right
-  left:  Tr_env[ (1/d) sum_{k0,q1=0}^{d-1} d^{-1/2} w_{d}^{q1 (-k0)} |k0, k0, k0> ], env = outputs 1, 2, 3
-  right: Tr_env[ (1/d) sum_{q0,j0o0=0}^{d-1} d^{-1/2} w_{d}^{q0 (j0o0)} |j0o0> ], env = output 1
-furthest-simplified left (normal form, 1 step, stop fixpoint):
-Tr_env[ (1/d) sum_{k1,q0=0}^{d-1} d^{-1/2} w_{d}^{q0 (-k1)} |k1> ], env = output 1
-furthest-simplified right (normal form, 1 step, stop fixpoint):
-1/sqrt(d)
-bound: search exhausted (limits depth 4, states 2048, applications 20000)
 loaded dsl input
 Tr_env[ (1/d) sum_{k0=0}^{d-1} sum_{k2[i0]=0, i0=1..n}^{d-1} sum_{q1=0}^{d-1} d^{-1/2} w_{d}^{q1 (-k0)} prod_{i0=1}^{n}( [k0 = k2[i0]] ) |k0> (x)_{i0=1}^{n}( |k2[i0]> ) ], env = outputs 1, 2
 induct: schema_checked over n from 0 via oracle_window: equality confirmed at n = 0..3; a finite schema check, not a proof

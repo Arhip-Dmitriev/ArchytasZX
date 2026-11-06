@@ -1,0 +1,7 @@
+partial trace of Bell equal
+partial trace of GHZ_4 equal
+dephasing idempotent equal
+measure_x of |0> equal
+causality of CX equal
+Born probability 1/d equal
+teleportation equal

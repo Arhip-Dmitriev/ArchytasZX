@@ -17,7 +17,6 @@ load
   g.out3 -> G
   scalar d^(-1)
 decide against @p
-prove against @p
 
 load
   count n
