@@ -931,6 +931,21 @@ def decide_equal(
     discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
     is ``DOUBLED``, the rung that settled it in ``inner_method``.
     """
+    _check_args(
+        left,
+        right,
+        rules,
+        guard,
+        samples,
+        max_samples,
+        use_symbolic,
+        use_induction,
+        max_depth,
+        tolerance,
+        max_elements,
+        use_saturation,
+        saturation_limits,
+    )
     if mixed or not (is_pure(left) and is_pure(right)):
         doubled = (double(left), double(right))
         inner = decide_equal(
@@ -954,21 +969,6 @@ def decide_equal(
             doubled=doubled,
             reason=f"doubled, {inner.method.value}: {inner.reason}",
         )
-    _check_args(
-        left,
-        right,
-        rules,
-        guard,
-        samples,
-        max_samples,
-        use_symbolic,
-        use_induction,
-        max_depth,
-        tolerance,
-        max_elements,
-        use_saturation,
-        saturation_limits,
-    )
     parameters_agree = dict(left.parameters) == dict(right.parameters)
     family_l = _family(left)
     family_r = _family(right)
