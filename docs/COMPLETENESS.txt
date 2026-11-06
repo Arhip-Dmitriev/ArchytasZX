@@ -620,3 +620,28 @@ mode reaches in 600 s. Earlier runs gave [P1] Lemmas 7, 23, 28, 29, 32 and 43 36
 (examples/completeness/derivations/p1_lemma38_derivation.azx: w_zero_effect, an identity
 inserted at the boundary, w_identity); exhaustive mode now finds a three-step derivation in
 27 s, through the converse rules added since.
+
+
+10. MIXED DIAGRAMS
+------------------
+
+Diagrams with the discard G denote CPMs (MIXED.txt). Two completeness statements hold, both
+for concrete dimensions and no bang boxes.
+
+  Doubled. If two mixed diagrams denote the same CPM, their doubled diagrams are pure diagrams
+  denoting the same linear map, so section 1 gives a derivation between them by RULES
+  (MIXED.txt, section 5.3). Qudit and qufinite.
+
+  Native, qudit. At a concrete dimension d, if two mixed diagrams denote the same CPM, there
+  is a derivation between them by the rules of RULES and the discard rules discard_zero,
+  discard_fourier, discard_phase, discard_cx and their converses
+  (archytaszx.rewrite.rules_discard), the mixed scalars compared by modulus. Proof: [CJPV]
+  Theorem thm:ground with the hypotheses of MIXED.txt, section 6.2, the finite spanning set of
+  section 6.3 and the argument of section 6.4.
+
+  Native, qufinite: holds for the rule set extended by G_b . iota_{a,b} = G_a for every a < b
+  with a not dividing b (iota_{a,b} the phaseless [P2] mixed-dimensional Z spider); the
+  engine registers no such rule, and no native qufinite completeness is claimed for the
+  registered rules.
+
+The automatic mixed search (NATIVE proofs, the mixed normal form) is sound and incomplete.
