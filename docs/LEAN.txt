@@ -455,7 +455,10 @@ spider's sum is written explicitly (section 4.1).
 
 G4 Multiplicity-dependent scalars that are not geometric, with port boxes.
 
-G5 Opaque scalars (pi, roots of non-monomials) whose ratio is not exact.
+G5 Opaque scalars (pi, roots of non-monomials, algebraic numbers written CRootOf) whose ratio
+is not exact. An opaque scalar is a parameter of the export (the theorem holds for every value),
+so a step whose proof needs a relation the value satisfies (its minimal polynomial) is an
+unproved axiom; steps that do not need one, such as a fusion of two such weights, are proved.
 
 G6 Node boxes meeting the rest at a wire, and port boxes inside port boxes, under the
 normaliser.
