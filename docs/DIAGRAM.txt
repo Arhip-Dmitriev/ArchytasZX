@@ -106,6 +106,8 @@ methods below:
     advance_ids(*, node_id=None, bang_box_id=None)
     substitute(mapping) -> Diagram                    a new diagram, node ids preserved
     copy() -> Diagram                                 a deep copy, node ids preserved
+    is_pure() -> bool                                 no discard node (MIXED.txt)
+    discards() -> tuple[NodeId, ...]                  the discard nodes, by id
 
 Construction and mutation check only the integrity of the data structure (an index is a
 non-negative int, a wire does not join a port to itself, a node exists). Every other kind of

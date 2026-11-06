@@ -346,6 +346,16 @@ class Diagram:
         are themselves immutable."""
         return MappingProxyType(self._bang_boxes)
 
+    def is_pure(self) -> bool:
+        """True iff no node is of a generator without pure denotation (the discard G)."""
+        from archytaszx.diagram.generators import MIXED_ONLY
+
+        return not any(n.generator_type.name in MIXED_ONLY for n in self._nodes.values())
+
+    def discards(self) -> tuple[NodeId, ...]:
+        """The discard (G) nodes, by ascending id."""
+        return tuple(sorted(i for i, n in self._nodes.items() if n.generator_type.name == "G"))
+
     def __iter__(self) -> Iterator[NodeId]:
         """Iterate over node ids, mirroring dict-like iteration over the node keys."""
         return iter(self._nodes)
