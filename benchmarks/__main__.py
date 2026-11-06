@@ -37,6 +37,7 @@ SUITES = (
     "limits",
     "ablation",
     "qudits",
+    "mixed",
 )
 DEFAULT_REPEAT = 10
 DEFAULT_TIMEOUT = 600.0

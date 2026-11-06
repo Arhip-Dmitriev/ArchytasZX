@@ -1022,6 +1022,43 @@ def _all(*plots: Callable[[], None]) -> Callable[[], None]:
     return go
 
 
+def plot_mixed() -> None:
+    """``mixed_n_d``: median CPU seconds of each case against n, one line per d and one for d
+    free; a cross at the top for every case that did not finish."""
+    rows = harness.load("mixed")
+    if not rows:
+        return
+    _style()
+    fig, ax = plt.subplots(figsize=(6.0, 3.4))
+    ds = sorted({r["d"] for r in rows if r["d"] != "free"}) + ["free"]
+    done = [r for r in rows if r.get("status") == "ok"]
+    top = max((r["time"] for r in done), default=1.0) * 2
+    for k, d in enumerate(ds):
+        line = sorted((r for r in done if r["d"] == d), key=lambda r: r["n"])
+        colour = FREE if d == "free" else BLUE_RAMP[min(k * 2, len(BLUE_RAMP) - 1)]
+        if line:
+            ax.plot(
+                [r["n"] for r in line],
+                [r["time"] for r in line],
+                "o-",
+                color=colour,
+                label=_d_label(d),
+                ms=3.5,
+                lw=1.2,
+            )
+        failed = [r for r in rows if r["d"] == d and r.get("status") != "ok"]
+        if failed:
+            ax.plot([r["n"] for r in failed], [top] * len(failed), "x", color=colour, ms=5)
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xlabel("n (qudits traced out of the (n + 1)-qudit GHZ state)")
+    ax.set_ylabel("median CPU seconds")
+    ax.set_title("decide: Tr_n GHZ = id/d", fontsize=9)
+    ax.legend(fontsize=7, ncol=2, frameon=False)
+    fig.tight_layout()
+    _save(fig, "mixed_n_d")
+
+
 PLOTS: dict[str, Callable[[], None]] = {
     "scaling": _all(plot_scaling, plot_scaling_times, plot_paper_scaling),
     "size": _all(plot_size, plot_size_solved, plot_paper_size),
@@ -1036,4 +1073,5 @@ PLOTS: dict[str, Callable[[], None]] = {
     "limits": plot_limits,
     "ablation": plot_ablation,
     "qudits": plot_qudits,
+    "mixed": plot_mixed,
 }

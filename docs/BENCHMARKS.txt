@@ -312,6 +312,17 @@ Fields: kind, workload, param, verdict, method, time, peak_mb, assumptions.
 Plot: limits (one panel per kind).
 
 
+4.12 mixed
+
+Question: how does deciding a mixed equation grow with the number of discards?
+Family: the (n + 1)-qudit GHZ state with n legs discarded, against maxmixed[d] (MIXED.txt),
+n written out (no bang box): n = 1, 2, 4, .., 32 (beyond 63 legs the numeric oracle exceeds
+numpy's 64 axes), d = 2, 3, 5, 8, 64, 1024 and free. Each case is one decide, settled on the
+doubled diagrams (method doubled).
+Fields and statuses as the scaling suite. Plot: mixed_n_d (median CPU seconds against n, one
+line per d).
+
+
 5. COMMANDS
 -----------
 
@@ -327,6 +338,7 @@ Plot: limits (one panel per kind).
     python -m benchmarks run limits
     python -m benchmarks run ablation
     python -m benchmarks run qudits
+    python -m benchmarks run mixed
     python -m benchmarks run exhaustive
 
 Each command also writes its plots; `python -m benchmarks plot SUITE` redraws them from the
