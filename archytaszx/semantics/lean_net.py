@@ -2337,6 +2337,7 @@ class _Export:
             "",
             "set_option linter.unusedVariables false",
             "set_option maxRecDepth 100000",
+            "set_option maxHeartbeats 2000000",
             "set_option linter.unusedTactic false",
             "set_option linter.unreachableTactic false",
             "",
