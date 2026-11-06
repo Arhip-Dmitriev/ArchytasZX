@@ -39,11 +39,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
+from archytaszx.diagram import mixed as _mixed
 from archytaszx.diagram.graph import Diagram
 from archytaszx.repl import zxdraw
 from archytaszx.repl.commands import Outcome, _Pair
 from archytaszx.repl.parser import parse_dsl
-from archytaszx.repl.printer import NotationMode, render
+from archytaszx.repl.printer import NotationMode, render, render_graph
 from archytaszx.repl.shell import Shell, _logical_lines
 from archytaszx.semantics.decide import Decision
 
@@ -484,18 +485,22 @@ class Program:
         decision = detail.payload if isinstance(detail, _Pair) else None
         return Result(text, ok, decision if isinstance(decision, Decision) else None)
 
-    def _source(self, value: Piece | str) -> str:
+    def _source(self, value: Piece | str | Diagram) -> str:
+        if isinstance(value, Diagram):
+            return "\n" + render_graph(value)
         if isinstance(value, Piece):
             return "\n" + value.dsl()
         if isinstance(value, str):
             return value if value.startswith("@") else "\n" + value
         raise AzxError(f"not a diagram: {value!r}")
 
-    def load(self, piece: Piece | str) -> Result:
+    def load(self, piece: Piece | str | Diagram) -> Result:
         """Makes ``piece`` (a Piece, DSL text or ``@NAME``) the current diagram."""
         return self._run("load " + self._source(piece))
 
-    def _pair(self, command: str, left: Piece | str, right: Piece | str | None) -> Result:
+    def _pair(
+        self, command: str, left: Piece | str | Diagram, right: Piece | str | Diagram | None
+    ) -> Result:
         loaded = self.load(left)
         if not loaded.ok:
             return loaded
@@ -506,14 +511,16 @@ class Program:
             right = "@azx_target"
         return self._run(f"{command} against {right}")
 
-    def decide(self, left: Piece | str, right: Piece | str | None = None) -> Result:
+    def decide(
+        self, left: Piece | str | Diagram, right: Piece | str | Diagram | None = None
+    ) -> Result:
         """Decides ``left == right`` for every value of their symbols."""
         return self._pair("decide", left, right)
 
     def prove(
         self,
-        left: Piece | str,
-        right: Piece | str | None = None,
+        left: Piece | str | Diagram,
+        right: Piece | str | Diagram | None = None,
         *,
         exhaustive: bool = False,
         algebraic: bool = False,
@@ -529,7 +536,9 @@ class Program:
         )
         return self._pair(command, left, right)
 
-    def check(self, left: Piece | str, right: Piece | str, **values: object) -> Result:
+    def check(
+        self, left: Piece | str | Diagram, right: Piece | str | Diagram, **values: object
+    ) -> Result:
         """Compares ``left`` and ``right`` with the numeric oracle, at ``values`` when given."""
         given = " ".join(f"{k}={v}" for k, v in values.items())
         return self._pair(f"check {given}".strip(), left, right)
@@ -663,6 +672,42 @@ class Program:
         """The empty diagram times ``value``."""
         return Piece(self, scalar=(_sym(value).text,))
 
+    # -- mixed ---------------------------------------------------------------------------
+
+    def _dim_text(self, dim: object) -> str:
+        return _sym(self.d if dim is None else dim).text
+
+    def discard(self, dim: object = None) -> Piece:
+        """The discard effect: one input, the trace."""
+        return self._piece(_Node(f"G(1 -> 0, {self._dim_text(dim)})", 1, 0))
+
+    def maxmixed(self, dim: object = None) -> Piece:
+        """The maximally mixed state ``id / d``: the discard state times ``d^(-1/2)``."""
+        text = self._dim_text(dim)
+        state = self._piece(_Node(f"G(0 -> 1, {text})", 0, 1))
+        return replace(state, scalar=(f"({text})^(-1/2)",))
+
+    def dephase(self, dim: object = None) -> Piece:
+        """The dephasing channel: ``Z(1 -> 2)`` with its second output discarded."""
+        return (self.id @ self.discard(dim)) | self.Z(1, 2, dim=dim)
+
+    def measure_x(self, dim: object = None) -> Piece:
+        """The Fourier-basis measurement, outcome forgotten: ``X(1 -> 2)`` with its second
+        output discarded."""
+        return (self.id @ self.discard(dim)) | self.X(1, 2, dim=dim)
+
+    def ptrace(self, piece: Piece, *positions: int) -> Piece:
+        """``piece`` with its outputs at ``positions`` (from 0) discarded."""
+        drop = set(positions)
+        if not drop or any(not 0 <= p < len(piece.outs) for p in drop):
+            raise AzxError(f"positions {sorted(drop)} outside 0..{len(piece.outs) - 1}")
+        layer: Piece | None = None
+        for k in range(len(piece.outs)):
+            leg = self.discard() if k in drop else self.id
+            layer = leg if layer is None else layer @ leg
+        assert layer is not None
+        return layer | piece
+
     # -- names ---------------------------------------------------------------------------
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -684,3 +729,41 @@ class Program:
 
 azx = Program()
 """The default program."""
+
+
+def _diagram(value: Piece | Diagram) -> Diagram:
+    if isinstance(value, Piece):
+        return value.diagram()
+    if isinstance(value, Diagram):
+        return value
+    raise AzxError(f"not a diagram: {value!r}")
+
+
+def conj(value: Piece | Diagram) -> Diagram:
+    """The entrywise complex conjugate."""
+    return _mixed.conj(_diagram(value))
+
+
+def double(value: Piece | Diagram) -> Diagram:
+    """The doubled pure diagram: outputs plain then conjugate, inputs plain then conjugate."""
+    return _mixed.double(_diagram(value))
+
+
+def purify(value: Piece | Diagram) -> tuple[Diagram, tuple[int, ...]]:
+    """The purification and the boundary-output positions of its environment."""
+    pure = _mixed.purify(_diagram(value))
+    return pure.diagram, pure.env
+
+
+def is_pure(value: Piece | Diagram) -> bool:
+    """True iff there is no discard."""
+    return _mixed.is_pure(_diagram(value))
+
+
+def denote_mixed(value: Piece | Diagram, **values: int) -> object:
+    """The CPM tensor ``T[o, o', i, i']`` at concrete ``values``; numeric, an oracle only."""
+    from archytaszx.semantics.check import instantiate
+    from archytaszx.semantics.denote import denote_mixed as _denote
+
+    diagram = _diagram(value)
+    return _denote(instantiate(diagram, values) if values else diagram)

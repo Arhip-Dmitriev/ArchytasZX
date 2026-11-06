@@ -44,7 +44,7 @@ import difflib
 import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -56,6 +56,7 @@ from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, Mult, free_mult_symbols
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, Direction, GraphError, NodeId, PortRef, Wire
+from archytaszx.diagram.mixed import Sheet, double, double_with_origin, is_pure, purify
 from archytaszx.diagram.scalable import (
     ScalableDiagram,
     ScalableError,
@@ -650,6 +651,26 @@ def _cmd_show(session: Session, args: str) -> Outcome:
     return _ok("show", [State(diagram)], diagram)
 
 
+def _cmd_double(session: Session, args: str) -> Outcome:
+    what = args.strip()
+    diagram = _require_current(session) if not what else _resolve(session, what)[0]
+    doubled = double(diagram)
+    line = Text(
+        f"double: {_count(len(doubled.nodes), 'node')}; outputs plain then conjugate, inputs "
+        "plain then conjugate"
+    )
+    return _ok("double", [line, State(doubled)], doubled)
+
+
+def _cmd_purify(session: Session, args: str) -> Outcome:
+    what = args.strip()
+    diagram = _require_current(session) if not what else _resolve(session, what)[0]
+    pure, env = purify(diagram)
+    where = ", ".join(str(i + 1) for i in env) if env else "none"
+    line = Text(f"purify: environment = output(s) {where}")
+    return _ok("purify", [line, State(pure)], pure)
+
+
 def _rule_lines(name: str) -> list[str]:
     rule = RULES[name]
     guards = ", ".join(
@@ -838,9 +859,14 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
     payload = _Pair("decide", left, right, decision)
     head = f"decide: {decision.verdict.value} by {decision.method.value}: {decision.reason}"
     session.certificate, session.certificate_witness = None, None
+    proof_pair = (left, right) if decision.doubled is None else decision.doubled
     if decision.verdict is EqualityVerdict.EQUAL:
         blocks: list[Block] = [Text(head)]
-        evidence = _decision_proof(decision, left, right)
+        inner = decision
+        if decision.doubled is not None and decision.inner_method is not None:
+            inner = replace(decision, method=decision.inner_method)
+            blocks.append(Text("proof: of the doubled diagrams (DOUBLED)"))
+        evidence = _decision_proof(inner, *proof_pair)
         session.last_proof = evidence
         if evidence is None:
             blocks.append(
@@ -874,7 +900,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
     elif decision.induction is not None and decision.induction.counterexample is not None:
         blocks.append(_induction_counterexample(decision.induction))
     elif decision.method is not DecisionMethod.INTERFACE:
-        blocks += _simplified(left, right, decision.left_nf, decision.right_nf)
+        blocks += _simplified(*proof_pair, decision.left_nf, decision.right_nf)
         if decision.saturation is not None:
             limits = DECIDE_SATURATION_LIMITS
             blocks.append(
@@ -892,6 +918,8 @@ def _refutation(
 ) -> kernel.Refutation | None:
     """The refutation of ``left = right`` at ``point`` with its Lean export, or None when it
     has none."""
+    if not (is_pure(left) and is_pure(right)):
+        left, right = double(left), double(right)
     ref = kernel.Refutation(left, right, dict(point or {}))
     try:
         source = kernel.lean(ref, describe=lambda d: _math(d, True))
@@ -972,6 +1000,10 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
     head = f"prove: {outcome.status.value}: {outcome.reason}"
     if outcome.proved:
         kind = "induction" if outcome.induction is not None else "search"
+        if outcome.mixed is not None and outcome.mixed.kind.value == "doubled":
+            kind = f"{kind} on the doubled diagrams (DOUBLED)"
+        elif outcome.mixed is not None:
+            kind = f"{kind} with the discard rules (NATIVE)"
         return _ok("prove", [Text(head), Text(f"proof by {kind}; certificate emits it")], payload)
     relation = "!=" if outcome.status is ProofStatus.REFUTED else "?="
     blocks: list[Block] = [Text(head), *_dirac_outcome(left, right, relation)]
@@ -1004,6 +1036,8 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
     head, target = _split_against(args)
     index, supplied = _options(head, allow_on=True)
     left, right = _pair(session, target)
+    if not (is_pure(left) and is_pure(right)):
+        left, right = double(left), double(right)
     _check_supplied(supplied, (left, right))
     if index is not None and index in supplied:
         raise CommandDomainError(f"{index} is the induction index; it takes no value")
@@ -1360,6 +1394,18 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             return _fail("certificate", [*blocks, Text(text)], Text(text))
         theorem = rederived
         blocks.append(Text(f"kernel: {_one_line(exc)}; re-derived a re-checkable proof by search"))
+    if action == "lean" and not (is_pure(theorem.lhs) and is_pure(theorem.rhs)):
+        try:
+            sym = kernel.symbolic(
+                double(theorem.lhs), double(theorem.rhs), describe=lambda d: _math(d, True)
+            )
+        except kernel.KernelError:
+            sym = None
+        if sym is not None:
+            blocks.append(
+                Text("lean: the doubled diagrams' equality, which is the CPMs' (MIXED.txt, 2.3)")
+            )
+            return _kernel_symbolic(sym, action, path, blocks)
     left, right = _math(theorem.lhs, False), _math(theorem.rhs, False)
     names = ", ".join(dict.fromkeys(theorem.axioms())) or "none"
     over = f" for all {', '.join(theorem.variables)}" if theorem.variables else ""
@@ -1778,6 +1824,8 @@ COMMANDS: Mapping[str, Handler] = MappingProxyType(
     {
         "load": _cmd_load,
         "show": _cmd_show,
+        "double": _cmd_double,
+        "purify": _cmd_purify,
         "rules": _cmd_rules,
         "match": _cmd_match,
         "apply": _cmd_apply,
@@ -1815,6 +1863,10 @@ HELP: Mapping[str, str] = MappingProxyType(
         "load": "load SOURCE|@NAME -- read a diagram (Dirac, DSL or listing); any non-command "
         "line is load",
         "show": "show [derivation|start|scalable|certificate|@NAME|SOURCE] -- show a state",
+        "double": "double [@NAME|SOURCE] -- the doubled pure diagram of a mixed one (the "
+        "current diagram by default)",
+        "purify": "purify [@NAME|SOURCE] -- the purification of a mixed diagram, its "
+        "environment outputs named",
         "rules": "rules [RULE] -- rule names, or one rule's quantifiers, side conditions, "
         "dimension guards and scalar (alias list-rules)",
         "match": "match [RULE] -- matches in the current diagram, all rules when none",
@@ -1856,6 +1908,7 @@ HELP: Mapping[str, str] = MappingProxyType(
         "both": "both -- Dirac notation and ZX drawings",
         "raw": "raw -- full ZX graph listings, nothing summarised or capped",
         "listing": "listing -- toggle the ZX graph listing under each drawing",
+        "doubled": "doubled -- toggle drawing mixed diagrams doubled, the conjugate sheet shaded",
         "publication": "publication -- toggle the paper's notation in ZX drawings",
         "config": "config [KEY VALUE | save | reset] -- image settings: size, color, format, "
         "publication",
@@ -1974,10 +2027,12 @@ def format_outcome(
     unicode: bool = False,
     zx_style: str = "matplot",
     listing: bool = False,
+    doubled: bool = False,
 ) -> str:
     """``outcome``'s blocks joined by newlines: Text as is, State via ``printer.render`` in
     ``mode``, Proof via :func:`proof_text`; ZX and BOTH draw each diagram in ``zx_style``, its
-    graph listing under it when ``listing``."""
+    graph listing under it when ``listing``; with ``doubled`` a mixed diagram is drawn doubled,
+    its conjugate sheet shaded."""
     if not isinstance(outcome, Outcome):
         raise CommandGrammarError(f"outcome must be an Outcome, got {type(outcome).__name__}")
     if not isinstance(mode, NotationMode):
@@ -1986,7 +2041,12 @@ def format_outcome(
         raise CommandGrammarError(f"unknown ZX drawing style {zx_style!r}")
 
     def draw(diagram: Diagram) -> str:
-        text = zxdraw.draw(zxdraw.View(diagram), zx_style)
+        view = zxdraw.View(diagram)
+        if doubled and not is_pure(diagram):
+            twin = double_with_origin(diagram)
+            shaded = frozenset(n for n, o in twin.origin.items() if o.sheet is Sheet.CONJUGATE)
+            view = zxdraw.View(twin.diagram, shaded=shaded)
+        text = zxdraw.draw(view, zx_style)
         return f"{text}\n{render_graph(diagram)}" if listing else text
 
     parts: list[str] = []

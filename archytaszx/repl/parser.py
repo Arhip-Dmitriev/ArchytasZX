@@ -46,7 +46,7 @@ import itertools
 import math
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import ParamSpec, TypeAlias, TypeVar
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -993,6 +993,7 @@ class _NodeDraft:
     phase_dim: Dim | None = None
     phase_entries: str | None = None
     weight_entries: str | None = None
+    flexible: bool = False
 
 
 def _place_nodes(diagram: Diagram, drafts: Mapping[int, _NodeDraft]) -> None:
@@ -1514,6 +1515,7 @@ class _Dsl:
     def draft(self, generator: GeneratorType, args: str | None, rest: str, name: str) -> _NodeDraft:
         """The node ``GEN(args) rest`` declares; ``args`` is ``None`` without parentheses."""
         inputs, outputs, default = self.legs(generator, args or "")
+        flexible = generator.name == "G" and "->" not in (args or "")
         phase_dim = None
         entries = None
         weights = None
@@ -1530,7 +1532,17 @@ class _Dsl:
                 raise ParseDomainError(f"node {name!r} has no legs; its phase needs 'phase[D]'")
             entries = phase["entries"] or ""
             weights = phase["wentries"]
-        return _NodeDraft(generator, inputs, outputs, phase_dim, entries, weights)
+        return _NodeDraft(generator, inputs, outputs, phase_dim, entries, weights, flexible)
+
+    def orient(self) -> None:
+        """Turn each bare ``G`` that a wire leaves or an ``outputs`` entry names into a state."""
+        ends = [end for wire in self.wires for end in wire]
+        sources = {left for left, _ in self.wires if "." not in left}
+        sources |= {end.split(".", 1)[0] for end in ends if ".out" in end}
+        sources |= {ref.split(".", 1)[0] for ref in self.boundary.get("outputs", [])}
+        for name, draft in list(self.nodes.items()):
+            if draft.flexible and name in sources:
+                self.nodes[name] = replace(draft, inputs=(), outputs=draft.inputs, flexible=False)
 
     def legs(
         self, generator: GeneratorType, args: str
@@ -1552,6 +1564,9 @@ class _Dsl:
             inputs = tuple(self.dim(t) for t in _split_top(explicit["ins"]))
             outputs = tuple(self.dim(t) for t in _split_top(explicit["outs"]))
             return inputs, outputs, None
+        if generator.name == "G" and len(parts) <= 1:
+            dim = self.dim(parts[0]) if parts else self.fallback_dim()
+            return (dim,), (), dim
         if generator.name in _ONE_TO_ONE and len(parts) <= 1:
             dim = self.dim(parts[0]) if parts else self.fallback_dim()
             return (dim,), (dim,), dim
@@ -1740,6 +1755,7 @@ class _Dsl:
         return pairs
 
     def build(self) -> Diagram:
+        self.orient()
         diagram = Diagram()
         drafts = dict(enumerate(self.nodes.values()))
         _place_nodes(diagram, drafts)
@@ -1885,6 +1901,7 @@ def parse_dsl(source: str) -> Diagram:
 
 _DIRAC_WORDS = frozenset({"plus", "id", "copy", "zero", "F", "triangle", "bind", "split"})
 _DIRAC_RESERVED = _DIRAC_WORDS | {"GHZ", "Z", "X", "W", "Z_phase"}
+_MIXED_WORDS = frozenset({"discard", "maxmixed", "dephase", "measure_x"})
 _DIRAC_ATOM_RE = re.compile(r"(?P<sub>GHZ|copy|W|Z|X)_\{|(?P<word>[A-Za-z_]\w*)")
 _DIRAC_SUM_RE = re.compile(r"(?:sum|Σ)_\{")
 _DIRAC_NAMES_RE = re.compile(rf"\s*(?P<names>{_IDENTIFIER}(?:\s*,\s*{_IDENTIFIER})*)\s*=\s*0\s*")
@@ -2182,7 +2199,60 @@ class _Dirac:
             return piece
         if _DIRAC_SUM_RE.match(self.text, start):
             return self.ketsum()
+        if self.text.startswith("ptrace[", start):
+            return self.ptrace()
+        word = _DIRAC_ATOM_RE.match(self.text, start)
+        if word is not None and word["word"] in _MIXED_WORDS:
+            return self.mixed_atom(word["word"], word.end())
         return self.atom()
+
+    def ptrace(self) -> _Piece:
+        """``ptrace[i, ...](EXPR)``: ``EXPR`` with its outputs ``i, ...`` (from 1) discarded."""
+        self.pos += len("ptrace")
+        positions = [_int_token(t, "ptrace position") for t in _split_top(self.braced("["))]
+        if self.ws() >= len(self.text) or self.text[self.pos] != "(":
+            raise self.error("expected '(' after ptrace[...]")
+        self.pos += 1
+        piece = self.feed()
+        if self.ws() >= len(self.text) or self.text[self.pos] != ")":
+            raise self.error("expected ')'")
+        self.pos += 1
+        if any(not 1 <= p <= len(piece.outputs) for p in positions) or not positions:
+            raise ParseDomainError(f"ptrace positions {positions} outside 1..{len(piece.outputs)}")
+        for p in sorted(set(positions)):
+            leg = piece.outputs[p - 1]
+            if leg.count is not None or leg.mult is not None:
+                raise ParseDomainError(f"ptrace position {p} is a fan, not one leg")
+            ground = _DiracNode(REGISTRY.get("G"), "ptrace", None)
+            ground.inputs = [_Leg(ground, leg.dim)]
+            piece.nodes.append(ground)
+            piece.wires.append((leg, ground.inputs[0]))
+        drop = {p - 1 for p in positions}
+        piece.outputs = [leg for i, leg in enumerate(piece.outputs) if i not in drop]
+        return piece
+
+    def mixed_atom(self, name: str, end: int) -> _Piece:
+        """``discard[D]``, ``maxmixed[D]``, ``dephase[D]`` or ``measure_x[D]``."""
+        self.pos = end
+        inner = self.braced("[") if self.at("[") else ""
+        if name == "maxmixed" and not inner.strip():
+            raise ParseGrammarError("maxmixed needs its dimension, 'maxmixed[D]'")
+        dim = self.dim(inner) if inner.strip() else None
+        var = _Var(name, dim)
+        ground = _DiracNode(REGISTRY.get("G"), name, None)
+        if name == "discard":
+            ground.inputs = [_Leg(ground, (var,))]
+            return _Piece([ground], [], list(ground.inputs), [])
+        if name == "maxmixed":
+            ground.outputs = [_Leg(ground, (var,))]
+            scalar = _parse_expr(f"({dim})^(-1/2)", "scalar")
+            return _Piece([ground], [], [], list(ground.outputs), [scalar])
+        spider = _DiracNode(Z_SPIDER if name == "dephase" else X_SPIDER, name, var)
+        spider.inputs = [_Leg(spider, (var,))]
+        spider.outputs = [_Leg(spider, (var,)), _Leg(spider, (var,))]
+        ground.inputs = [_Leg(ground, (var,))]
+        wires = [(spider.outputs[1], ground.inputs[0])]
+        return _Piece([spider, ground], wires, list(spider.inputs), [spider.outputs[0]])
 
     # -- composition
 

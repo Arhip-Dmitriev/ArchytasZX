@@ -82,6 +82,7 @@ from archytaszx.diagram.graph import (
     PortRef,
     Wire,
 )
+from archytaszx.diagram.mixed import is_pure, purify
 from archytaszx.diagram.scalable import (
     BoundaryItem,
     Bundle,
@@ -1058,8 +1059,26 @@ def to_dirac_source(diagram: Diagram) -> str | None:
         raise PrinterDomainError(f"cannot emit parser source: {exc}") from exc
 
 
+def _traced(text: str, env: Sequence[int], unicode: bool) -> str:
+    """``text`` inside the partial trace over the environment outputs ``env`` (from 1)."""
+    where = ", ".join(str(i + 1) for i in env)
+    noun = "output" if len(env) == 1 else "outputs"
+    return f"Tr_env[ {text} ], env = {noun} {where}"
+
+
 def dirac(diagram: Diagram, *, unicode: bool = False) -> DiracRendering:
-    """Every Dirac view of ``diagram``: term, name, text, instance text, parser source."""
+    """Every Dirac view of ``diagram``: term, name, text, instance text, parser source.
+
+    A mixed diagram is its purification ``P`` with the environment outputs traced out,
+    ``Tr_env[ P ]`` standing for the CPM ``rho -> Tr_env(P rho P^dagger)``.
+    """
+    if not is_pure(_require_diagram(diagram)):
+        pure, env = purify(diagram)
+        inner = dirac(pure, unicode=unicode)
+        instance = inner.instance_text
+        if instance is not None:
+            instance = _traced(instance, env, unicode)
+        return DiracRendering(inner.term, None, _traced(inner.text, env, unicode), instance, None)
     term = dirac_term(diagram)
     name = recognize(diagram)
     formula = render_term(term, unicode=unicode)

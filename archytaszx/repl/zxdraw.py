@@ -51,14 +51,16 @@ from archytaszx.repl.printer import rule_turns, rule_weight
 @dataclass
 class View:
     """A diagram with the nodes of each summed term grouped: ``groups`` maps a node to its
-    term, ``labels`` names each term, ``outputs`` names the outputs (``out k`` when empty) and
-    ``notes`` define dimension names."""
+    term, ``labels`` names each term, ``outputs`` names the outputs (``out k`` when empty),
+    ``notes`` define dimension names and ``shaded`` nodes (the conjugate sheet of a doubled
+    diagram) are drawn shaded."""
 
     diagram: Diagram
     groups: dict[NodeId, int] = field(default_factory=dict)
     labels: dict[int, str] = field(default_factory=dict)
     outputs: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    shaded: frozenset[NodeId] = frozenset()
 
 
 MAX_NODES = 150
@@ -98,6 +100,7 @@ class Item:
     right: list[str] = field(default_factory=list)
     boxes: list[int] = field(default_factory=list)
     component: int = 0
+    shaded: bool = False
 
 
 @dataclass
@@ -470,7 +473,7 @@ def _extract(view: View, max_nodes: int) -> Layout:
             owner[nid] = key
             continue
         key = f"n{int(nid)}"
-        items[key] = Item(key, node.generator_type.name, node=node)
+        items[key] = Item(key, node.generator_type.name, node=node, shaded=nid in view.shaded)
         owner[nid] = key
     if summary:
         _merge_chains(g, owner, items)
@@ -1502,6 +1505,7 @@ _GLYPHS = {
         "Ti": "▶T⁻¹",
         "S": "⊳S",
         "B": "⊲B",
+        "G": "⏚",
     },
     False: {
         "Z": "Z",
@@ -1512,11 +1516,17 @@ _GLYPHS = {
         "Ti": "|>T^-1",
         "S": ">S",
         "B": "<B",
+        "G": "_|_",
     },
 }
 
 
 def _cell(it: Item, unicode: bool) -> str:
+    text = _plain_cell(it, unicode)
+    return f"{text}*" if it.shaded and text else text
+
+
+def _plain_cell(it: Item, unicode: bool) -> str:
     fmt = "uni" if unicode else "ascii"
     if it.kind in ("out", "in"):
         return it.label
@@ -1865,7 +1875,7 @@ def _figure(
     )
     pl = plan(lay, metrics)
     items, ports = lay.items, lay.ports
-    big = {"F", "T", "Ti", "W", "S", "B"}
+    big = {"F", "T", "Ti", "W", "S", "B", "G"}
 
     def shape_w(it: Item) -> float:
         if it.kind in ("Z", "X"):
@@ -2087,8 +2097,11 @@ def _figure(
     for k, it in items.items():
         if it.kind == "dummy":
             continue
+        drawn = (len(ax.patches), len(ax.lines), len(ax.texts))
         x, y = cx[k], cy[k]
         kind = "box" if _boxed(it) else it.kind
+        if it.shaded:
+            ax.add_patch(Circle((x, y), 1.6 * max(r, hb), fc=fg, ec="none", alpha=0.12, zorder=3))
         if kind in ("Z", "X"):
             ax.add_patch(Circle((x, y), r, fc=_FILL[kind], ec=fg, lw=lw, zorder=4))
             if not T.CONFIG.publication:
@@ -2124,6 +2137,12 @@ def _figure(
             ax.text(
                 x, y, "F", color="#111111", fontsize=fs_letter, ha="center", va="center", zorder=5
             )
+        elif kind == "G":
+            sgn = -1 if it.left else 1
+            ax.plot([x + sgn * hb, x + sgn * 0.4 * hb], [y, y], color=fg, lw=lw, zorder=4)
+            for step, half in ((0.4, 1.0), (0.0, 0.62), (-0.4, 0.28)):
+                bx = x + sgn * step * hb
+                ax.plot([bx, bx], [y - half * hb, y + half * hb], color=fg, lw=1.6 * lw, zorder=4)
         elif kind in ("S", "B"):
             wide, narrow = hb, hb * 0.5
             lh, rh = (wide, narrow) if kind == "S" else (narrow, wide)
@@ -2174,6 +2193,13 @@ def _figure(
                 va="center",
                 zorder=5,
             )
+        if it.shaded:
+            for artist in (
+                *ax.patches[drawn[0] + 1 :],
+                *ax.lines[drawn[1] :],
+                *ax.texts[drawn[2] :],
+            ):
+                artist.set_alpha(0.55)
         if lines[k]:
             size = fs_label * shrink[k]
             n = len(lines[k])

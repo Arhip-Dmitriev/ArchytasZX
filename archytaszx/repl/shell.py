@@ -20,7 +20,8 @@ input line goes through :meth:`Shell.run_line`, a leading ``:`` optional:
 * blank lines and ``#`` comment lines produce nothing and are not recorded;
 * ``history`` and ``quit``/``exit`` are handled here;
 * ``dirac``, ``zx`` (``zxrender``), ``zxunicode``, ``zxascii``, ``both`` and ``raw`` pick how
-  diagrams are printed, ``listing`` toggles the graph listing under each drawing,
+  diagrams are printed, ``listing`` toggles the graph listing under each drawing, ``doubled``
+  toggles drawing mixed diagrams doubled,
   ``publication`` toggles the paper's notation in ZX drawings and ``config`` shows or sets the
   image settings;
 * every other line is an engine command, run by :func:`~archytaszx.repl.commands.run` and
@@ -100,6 +101,7 @@ class Shell:
         self.session = session if session is not None else Session()
         self.color = color
         self.listing = listing
+        self.doubled = False
         self.history: list[str] = []
         self.errors = 0
         """Count of lines whose outcome had ``ok=False``, shell errors included."""
@@ -134,6 +136,9 @@ class Shell:
         if word == "listing" and not rest:
             self.listing = not self.listing
             return f"listing: {'on' if self.listing else 'off'}"
+        if word == "doubled" and not rest:
+            self.doubled = not self.doubled
+            return f"doubled: {'on' if self.doubled else 'off'}"
         if word == "publication" and not rest:
             T.CONFIG.publication = not T.CONFIG.publication
             return f"publication: {'on' if T.CONFIG.publication else 'off'}"
@@ -161,7 +166,12 @@ class Shell:
         if outcome.ok and outcome.command == "detail" and self.unicode:
             return detail_text(outcome.detail, unicode=True)
         return format_outcome(
-            outcome, self.mode, unicode=self.unicode, zx_style=self.zx_style, listing=self.listing
+            outcome,
+            self.mode,
+            unicode=self.unicode,
+            zx_style=self.zx_style,
+            listing=self.listing,
+            doubled=self.doubled,
         )
 
     def _red(self, text: str) -> str:
