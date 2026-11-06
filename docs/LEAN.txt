@@ -520,6 +520,7 @@ zxw_hd step at d = 7 in 185 s; the converse's closing isomorphism takes longest,
 minutes at d = 6); larger dimensions were not measured.
 
 G14 Mixed diagrams: the network export has no discard generator; a mixed theorem is proved
-through its doubled diagrams (4.6). Mixed.lean does not state F2 (doubling is compositional),
+through its doubled diagrams (4.6). The conjugation of MIXED.txt 2.1 is not stated per
+generator in Lean; cpm_conj states its effect on any network whose entries are conjugated. Mixed.lean does not state F2 (doubling is compositional),
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.

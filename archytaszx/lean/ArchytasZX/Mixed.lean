@@ -136,7 +136,7 @@ theorem ex_mul_conj (θ : ℝ) : ex θ * (starRingEnd ℂ) (ex θ) = 1 := by
   rw [Complex.mul_conj, Complex.normSq_eq_norm_sq, h]
   simp
 
-theorem tZ_two (d : ℕ) (φ : ℕ → ℝ) (o i : ℕ) (hi : i < d) :
+theorem mixed_tZ_leg (d : ℕ) (φ : ℕ → ℝ) (o i : ℕ) (hi : i < d) :
     tZ d φ [o, i] = if o = i then ex (φ i) else 0 := by
   simp only [tZ, List.mem_cons, List.not_mem_nil, or_false, forall_eq_or_imp, forall_eq]
   by_cases ho : o = i
@@ -154,7 +154,7 @@ theorem tZ_two (d : ℕ) (φ : ℕ → ℝ) (o i : ℕ) (hi : i < d) :
 theorem discard_phase (d : ℕ) (φ : ℕ → ℝ) (i i' : ℕ) (hi : i < d) (hi' : i' < d) :
     ∑ o ∈ range d, tZ d φ [o, i] * (starRingEnd ℂ) (tZ d φ [o, i']) =
       if i = i' then 1 else 0 := by
-  simp only [tZ_two d φ _ i hi, tZ_two d φ _ i' hi']
+  simp only [mixed_tZ_leg d φ _ i hi, mixed_tZ_leg d φ _ i' hi']
   rw [Finset.sum_eq_single i (fun o _ ho => by simp [ho])
     (fun h => absurd (Finset.mem_range.2 hi) h)]
   by_cases hii : i = i'
