@@ -599,9 +599,11 @@ __all__ = [
     "css_into",
     "css_spec",
     "encoder",
+    "independent",
     "logical_phase",
     "mul",
     "pauli",
+    "pauli_string",
     "pre_diagonal",
     "pre_unary",
     "projector_spec",
@@ -631,6 +633,39 @@ def hadamard_conjugate(gens: Sequence[str], qubits: Sequence[int]) -> list[str]:
         body = g[1:] if sign else g
         out.append(sign + "".join(sw[ch] if j in set(qubits) else ch for j, ch in enumerate(body)))
     return out
+
+
+def independent(gens: Sequence[str]) -> list[str]:
+    """The generators in order, each dropped when it is a product of the earlier kept ones
+    (up to sign)."""
+    kept: list[str] = []
+    basis: dict[int, int] = {}
+    for g in gens:
+        p = pauli(g)
+        v = int("".join(map(str, (*p.x, *p.z))), 2)
+        while v:
+            top = v.bit_length() - 1
+            if top not in basis:
+                basis[top] = v
+                kept.append(g)
+                break
+            v ^= basis[top]
+    return kept
+
+
+def pauli_string(n: int, ops: Sequence[tuple[int, str]]) -> str:
+    """The n-qubit Pauli string of the product of single-qubit factors (qubit, letter), phases
+    dropped."""
+    s = ["I"] * n
+    for q, p in ops:
+        a = s[q]
+        if a == "I":
+            s[q] = p
+        elif a == p:
+            s[q] = "I"
+        else:
+            s[q] = ({"X", "Y", "Z"} - {a, p}).pop()
+    return "".join(s)
 
 
 @functools.cache

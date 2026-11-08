@@ -133,7 +133,7 @@ values reported beside it. Literal dimensions and unrolled counts are instances.
 
 3.5 The catalogue
 
-The catalogue holds 177 subjects giving 202 S equations (python -m benchmarks list):
+The catalogue holds 203 subjects giving 228 S equations (python -m benchmarks list):
 
   Category   Subjects
   ---------  ------------------------------------------------------------------------------
@@ -142,45 +142,48 @@ The catalogue holds 177 subjects giving 202 S equations (python -m benchmarks li
              coined_quantum_walk, cooley_tukey_qft, deutsch (f00, f01, f10, f11),
              deutsch_jozsa (constant, balanced), discrete_log, dqc1, fixed_point_search,
              forrelation, grover, grover_marked (m00, m01, m10, m11), grover_ququart,
-             grover_rudolph, grover_two_marked, hadamard_test, hhl,
-             hidden_linear_function, hidden_shift, inverse_qft,
-             iterative_phase_estimation, lcu_shift_average, period_finding,
-             phase_estimation, phase_estimation_digit, qaoa_maxcut, qft, qft_roundtrip,
-             qft_zero_state, quantum_counting, quantum_walk_hypercube, semiclassical_qft,
-             shor_factoring, simon, swap_test, swap_test_register
+             grover_rudolph, grover_two_marked, hadamard_test, hhl, hidden_linear_function,
+             hidden_shift, inverse_qft, iqp_circuit, iterative_phase_estimation,
+             lcu_shift_average, period_finding, phase_estimation, phase_estimation_digit,
+             qaoa_maxcut, qft, qft_roundtrip, qft_zero_state, quantum_counting,
+             quantum_walk_hypercube, qubitization_chebyshev, semiclassical_qft,
+             shor_factoring, simon, swap_test, swap_test_register, trotter_ising, vqe_ucc
   code       bacon_shor_code, bacon_shor_family, bit_flip_correction (errornone, error0,
-             error1, error2), cube_code (encoding, transversal_t), dual_rail_code,
-             five_qubit_code (encoding, correction), five_qudit_code, four_qubit_code,
-             golay_code, gottesman_code (encoding, correction), heavy_hexagon_code,
-             hypergraph_product_code, iceberg_code, iceberg_family, parity_check,
-             parity_decoding, phase_flip_code, phase_flip_decoding, polynomial_code,
-             quantum_hamming_code, quantum_hamming_family, qudit_four_code,
-             qudit_toric_code, qudit_toric_family, qutrit_code, reed_muller_code
-             (encoding, transversal_t), repetition_code (encoding, syndrome),
-             repetition_decoding, repetition_error_syndrome, rotated_surface_code
-             (encoding, correction), shor_code, steane_code (encoding, correction,
-             transversal_h), surface_code_family, tesseract_code, toric_code,
-             toric_code_family, transversal_cnot, xy_surface_code, xzzx_surface_code
+             error1, error2), bivariate_bicycle_code, color_code, cube_code (encoding,
+             transversal_t), dual_rail_code, ea_code, five_qubit_code (encoding,
+             correction), five_qudit_code, four_qubit_code, golay_code, gottesman_code
+             (encoding, correction), haah_code, happy_code, heavy_hexagon_code,
+             honeycomb_code, hypergraph_product_code, iceberg_code, iceberg_family,
+             parity_check, parity_decoding, phase_flip_code, phase_flip_decoding,
+             polynomial_code, quantum_hamming_code, quantum_hamming_family, qudit_four_code,
+             qudit_toric_code, qudit_toric_family, qutrit_code, reed_muller_code (encoding,
+             transversal_t), repetition_code (encoding, syndrome), repetition_decoding,
+             repetition_error_syndrome, rotated_surface_code (encoding, correction),
+             shor_code, steane_code (encoding, correction, transversal_h),
+             surface_code_family, tesseract_code, toric_code, toric_code_3d,
+             toric_code_family, transversal_cnot, x_cube_code, xy_surface_code,
+             xzzx_surface_code
   protocol   b92, bb84, bb84_intercept_resend, bbm92, blind_computation, chsh_game,
-             dejmps_purification, dephasing_twirl, entanglement_purification,
+             dejmps_purification, dephasing_twirl, e91, entanglement_purification,
              entanglement_swapping, gate_teleportation, ghz_fusion, ghz_game (xxx, xyy),
-             ghz_key_agreement, ghz_metrology, hbb_secret_sharing,
-             magic_state_distillation, magic_state_injection, mbqc_cnot, mbqc_j_gate,
-             mbqc_wire, nonlocal_cnot, nonlocal_cz, one_bit_teleportation, one_time_pad
-             (correctness, secrecy), random_access_code, randomized_compiling,
-             remote_state_preparation, repeater_chain, superdense_coding,
-             superdense_register, teleportation, teleportation_chain,
-             teleportation_register, threshold_secret_sharing, wiesner_money,
-             y_state_injection
-  circuit    bell_basis_change, bell_register, bell_stabilizers, bell_state, bridge_gate,
+             ghz_key_agreement, ghz_metrology, hbb_secret_sharing, magic_state_distillation,
+             magic_state_injection, mbqc_cnot, mbqc_j_gate, mbqc_wire, mdi_qkd,
+             nonlocal_cnot, nonlocal_cz, one_bit_teleportation, one_time_pad (correctness,
+             secrecy), random_access_code, randomized_compiling, remote_state_preparation,
+             repeater_chain, six_state_qkd, superdense_coding, superdense_register,
+             teleportation, teleportation_chain, teleportation_register,
+             threshold_secret_sharing, universal_cloner, wiesner_money, y_state_injection
+  circuit    amm_barenco_tof_3, amm_barenco_tof_4, amm_barenco_tof_5, amm_gf24_mult,
+             amm_hwb6, amm_mod5_4, amm_tof_3, amm_tof_4, amm_tof_5, amm_vbe_adder_3,
+             bell_basis_change, bell_register, bell_stabilizers, bell_state, bridge_gate,
              ccz_decomposition, ccz_t_depth_one, clifford_relation, cluster_stabilizer,
              cluster_state, cluster_state_2d, cnot_from_ms, cnot_reversal,
              complete_graph_state, controlled_phase_decomposition (cs, ct), cuccaro_adder,
              cx_from_cz, cx_inverse, cyclic_shift, cz_symmetry, draper_adder,
              fermionic_swap, fourier_basis_state, fourier_conjugation,
-             fourier_constant_adder, fourier_order_four, fredkin_decomposition,
-             full_adder, ghz (1 restricted), ghz_disentangle, ghz_log_depth, ghz_x_basis,
-             gidney_and, givens_rotation, hadamard_euler, hypergraph_state, incrementer,
+             fourier_constant_adder, fourier_order_four, fredkin_decomposition, full_adder,
+             ghz (1 restricted), ghz_disentangle, ghz_log_depth, ghz_x_basis, gidney_and,
+             givens_rotation, hadamard_euler, hypergraph_state, incrementer,
              iswap_decomposition, local_complementation, margolus_gate,
              measurement_uncomputation, modular_multiplication, multi_controlled_toffoli,
              pauli_gadget, pauli_propagation (x, z), peres_gate, phase_kickback,
@@ -196,11 +199,129 @@ binders and splitters, register addition, Pauli gadgets), _stab.py (qubit stabil
 their generators: Gottesman's standard form and logical operators, the standard-form encoder,
 syndrome measurement and lookup correction, the CSS normal form and the projector form
 2^(r/2) P_S Xbar^x |b> as specifications, transversal logical gates, code families indexed by n)
-and _qudit_codes.py (qudit CSS codes from integer checks and qudit graph codes). A code subject
+_qudit_codes.py (qudit CSS codes from integer checks and qudit graph codes), _clifford.py (qubit
+Clifford synthesis from Pauli images, stabilizer-state contraction on Bell pairs), _lattice.py
+(the honeycomb and cubic tori of the topological codes) and _qc.py (the reader of the
+Amy-Maslov-Mosca .qc circuits in amm/, copied from Feynman with its BSD licence in
+amm/LICENSE.md, and the builder of their subjects). A code subject
 gives its encoding equation and, where named, a correction equation (encode, one error, the
 syndrome measured onto ancillas, every single-qubit error corrected by multi-controlled gates on
 its syndrome, decode) and logical-gate equations (a transversal gate after the encoder against
 the logical gate before the specification).
+
+3.6 Coverage rule
+
+The catalogue is the set the following rule defines; every family it lists is met.
+
+Scope. A subject is a finite-dimensional gate-model claim (gates, preparations, measurements,
+post-selection, discards) with an exact closed-form specification. Out of scope: continuous-
+variable and bosonic systems (GKP, cat and binomial codes, boson sampling), analog, adiabatic
+and annealing computation, claims that hold only approximately (product-formula error bounds,
+approximated rotations, polynomial approximations by signal processing), non-additive and
+approximate codes, and sampling experiments without a closed-form output (random circuit
+sampling).
+
+Rule. The catalogue holds at least one subject for every family below and one subject for every
+algorithm, protocol, construction or code named in it; codes are represented by one member of
+each stabilizer-code family. The families follow the divisions of the standard surveys; the
+named members are the ones those divisions are illustrated by.
+
+  Family                          Named members (subjects)
+  ------------------------------  -----------------------------------------------------------
+  A1 query and oracle problems    deutsch, deutsch_jozsa, bernstein_vazirani, simon,
+                                  hidden_shift, forrelation
+  A2 Fourier transform and        qft, semiclassical_qft, cooley_tukey_qft, phase_estimation,
+     abelian hidden subgroups     iterative_phase_estimation, period_finding, shor_factoring,
+                                  discrete_log
+  A3 search and amplitudes        grover, amplitude_amplification, fixed_point_search,
+                                  amplitude_estimation, quantum_counting
+  A4 quantum walks                quantum_walk_hypercube (continuous time),
+                                  coined_quantum_walk (discrete time)
+  A5 Hamiltonian simulation       trotter_ising (product formula), lcu_shift_average (linear
+                                  combination of unitaries), qubitization_chebyshev
+  A6 linear algebra               hhl, block_encoding
+  A7 variational algorithms       qaoa_maxcut, vqe_ucc
+  A8 sampling with a closed form  iqp_circuit, hidden_linear_function
+  A9 estimation primitives        hadamard_test, swap_test, dqc1
+  A10 state preparation           grover_rudolph
+  P1 teleportation                teleportation, gate_teleportation, one_bit_teleportation,
+                                  entanglement_swapping, repeater_chain,
+                                  remote_state_preparation
+  P2 dense coding                 superdense_coding
+  P3 key distribution             bb84 (and bb84_intercept_resend), b92, six_state_qkd, bbm92,
+                                  e91, mdi_qkd, ghz_key_agreement
+  P4 secret sharing               hbb_secret_sharing, threshold_secret_sharing
+  P5 cryptographic primitives     one_time_pad, wiesner_money, blind_computation
+  P6 nonlocal games               chsh_game, ghz_game, random_access_code
+  P7 distributed operations       nonlocal_cnot, nonlocal_cz, ghz_fusion
+  P8 measurement-based computing  mbqc_wire, mbqc_j_gate, mbqc_cnot
+  P9 magic states                 magic_state_injection, y_state_injection,
+                                  magic_state_distillation
+  P10 entanglement purification   entanglement_purification (BBPSSW), dejmps_purification
+  P11 cloning                     universal_cloner
+  P12 metrology                   ghz_metrology
+  P13 noise tailoring             randomized_compiling, dephasing_twirl
+  C1 entangled states             bell_state, ghz, w_state, cluster_state, cluster_state_2d,
+                                  star_graph_state, hypergraph_state
+  C2 gate decompositions          toffoli_decomposition, ccz_decomposition,
+                                  fredkin_decomposition, peres_gate, margolus_gate,
+                                  multi_controlled_toffoli, sleator_weinfurter_toffoli,
+                                  iswap_decomposition, cnot_from_ms, sqrt_swap,
+                                  controlled_phase_decomposition, givens_rotation,
+                                  fermionic_swap, hadamard_euler, pauli_gadget
+  C3 arithmetic                   draper_adder, cuccaro_adder, fourier_constant_adder,
+                                  full_adder, incrementer, modular_multiplication, qram,
+                                  gidney_and
+  C4 identities and rewrites      cnot_reversal, local_complementation, bridge_gate,
+                                  clifford_relation, phase_polynomial_synthesis
+  C5 standard benchmark circuits  amm_tof_3, amm_tof_4, amm_tof_5, amm_barenco_tof_3,
+                                  amm_barenco_tof_4, amm_barenco_tof_5, amm_mod5_4,
+                                  amm_vbe_adder_3, amm_gf24_mult, amm_hwb6
+  K1 repetition codes             repetition_code, bit_flip_correction, phase_flip_code
+  K2 concatenated codes           shor_code
+  K3 CSS codes from classical     steane_code, quantum_hamming_code, reed_muller_code,
+     codes                        golay_code
+  K4 non-CSS stabilizer codes     five_qubit_code, gottesman_code
+  K5 error-detecting codes        four_qubit_code, iceberg_code, tesseract_code, cube_code
+  K6 2D topological codes         surface_code_family, rotated_surface_code,
+                                  xzzx_surface_code, xy_surface_code, toric_code, color_code
+  K7 3D topological codes         toric_code_3d
+  K8 fracton codes                x_cube_code, haah_code
+  K9 subsystem codes              bacon_shor_code, heavy_hexagon_code
+  K10 Floquet codes               honeycomb_code
+  K11 quantum LDPC codes          hypergraph_product_code, bivariate_bicycle_code
+  K12 holographic codes           happy_code
+  K13 entanglement-assisted       ea_code
+      codes
+  K14 qudit codes                 five_qudit_code, qudit_toric_code, qutrit_code,
+                                  polynomial_code
+  K15 encodings into qubit pairs  dual_rail_code
+
+Subjects outside these rows (for example the register and family variants, Fourier identities,
+Pauli propagation) are further instances of the same families.
+
+C5 is the Amy-Maslov-Mosca reversible benchmark set as distributed with Feynman, restricted to the
+circuits that are exact over Clifford+T, compute a reversible function documented in closed form
+(their working wires end in documented values) and fit the dense oracle (wires plus inputs at
+most 22). That leaves the ten above; excluded by size: tof_10, barenco_tof_10, rc_adder_6,
+gf2^5_mult and larger, hwb8 and larger, adder_8, the qcla, mod_adder and ham15 circuits,
+csum_mux_9, cycle_17_3; by undocumented working-wire outputs: csla_mux_3, mod_mult_55,
+mod_red_21; as a state with an undocumented oracle: grover_5; as not exact (approximated
+rotations): qft_4. Each C5 circuit runs on its .i inputs with every other wire initialised to
+|0> (vbe_adder_3 also initialises its internal carries c1, c2); the specification is, after
+those initialisations, one multi-controlled X for the Toffoli circuits, one Toffoli per reduced
+term of the bilinear product for gf2^4_mult, and for mod5_4, hwb6 and vbe_adder_3 the
+documented function bit by bit: each changed input bit is copied to a fresh wire by the oracle
+of its output value, the old bit is cleared by the oracle of its preimage value and
+post-selected on 0, and each working wire gets the oracle of its output value.
+
+Codes too large for the dense oracle are checked by a Clifford tableau of their encoder (every
+generator and logical operator pulled back to the initialised Z basis): bivariate_bicycle_code,
+toric_code_3d, x_cube_code, happy_code, and, with the dense encoder check, haah_code and
+honeycomb_code. The Floquet code is its instantaneous stabilizer group after a round of
+colour-0 checks; the holographic code is the stabilizer group of the contracted network on its
+open legs.
+
 
 4. THE FALSE SET
 ----------------
@@ -356,7 +477,7 @@ Implementation: benchmarks/tools/archytaszx.py, benchmarks/stages.py
   lean_export  certificate lean FILE
   lean_check   the Lean runner on FILE with #print axioms; class clean, unproved, opaque
 
-Each stage has its own CPU limit (stages.timeout_seconds, default one day), enforced by a
+Each stage has its own CPU limit (stages.timeout_seconds, default one hour), enforced by a
 profiling timer that re-fires until it escapes the engine; the worker is killed after wall_factor
 times the sum of its stage limits. A stage that cannot run (certificate and Lean after an
 unknown verdict) is recorded not_run. Only decide decides success; later stages are recorded
@@ -397,7 +518,7 @@ benchmarks/config.toml.
 
 Units run platform.jobs at a time; a unit's runs go in order. Every run is a fresh worker process
 (python -m benchmarks.worker) under a memory cap of memory_fraction of the available memory
-divided by the workers (a systemd scope without swap, else a soft RLIMIT_AS, which Lean and
+(at most the Slurm allocation) divided by the workers (a systemd scope without swap, else a soft RLIMIT_AS, which Lean and
 the Quantomatic JVM lift: they are bounded by the Lean slots and -Xmx2g). The worker announces each
 stage, so a killed run records the stage it died in.
 
@@ -561,9 +682,10 @@ tests/_trust_mutations_script.py (the Lean mutation table) uses tests/trust_help
 A unit costs about (K + 1) x runs x (decide + certificate + export + Lean check) for its
 successes plus the failures that end phase 1 and phase 2, each failure up to the stage limits.
 On the development laptop (8 threads, 4 workers) a successful sample point takes 0.1 to 20 s to
-decide and about 60 s to check in Lean, so a fully successful ArchytasZX unit takes about
-17 x 3 x 1.5 min = 75 min; a failure by timeout costs up to timeout_seconds per stage. With the
-default one-day limit the laptop run is bounded by the failures, not the successes: count one
-limit per unit (ArchytasZX and each rival) divided by the workers. For a laptop pass, lower
-stages.timeout_seconds (for example 600) and repeat with the default limits on the cluster,
-where the job array spreads the units over its cores.
+decide and 10 to 230 s to check in Lean (shor_code, symbolic: 226 s), so a fully successful
+ArchytasZX unit takes about 17 x 3 x 1.5 min = 75 min; a failure by timeout costs up to
+timeout_seconds per stage. The default limits are twice the longest successful stage expected:
+one hour per stage (decide up to about 30 min, Lean up to about 15 min, SQIR's Teleport.v about
+20 min), 120 s per witness probe and 1800 s per equation for the F search. The run is bounded by
+the failures, not the successes: count one limit per unit (ArchytasZX and each rival) divided by
+the workers; for a quicker laptop pass, lower stages.timeout_seconds (for example 600).
