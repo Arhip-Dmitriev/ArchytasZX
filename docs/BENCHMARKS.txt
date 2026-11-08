@@ -605,10 +605,15 @@ recorded with the reason and counted.
                           match (drivers/QuantoBench.scala in the jar); boundary order and scalars
                           not compared; binders, W, triangles and discards unsupported
   Published     adapter   B1 only, the symbolic run: the published proof files re-checked by coqc
-  proofs                  with their project's load paths (SQIR: Bernstein-Vazirani, Deutsch,
-                          Deutsch-Jozsa, Grover, QPE, superdense coding, teleportation, GHZ, the
-                          three- and nine-qubit codes; VyZX: Bell state, teleportation, three-CNOT
-                          SWAP), timed, with proof lines and bytes; CoqQ and QBricks fetched
+  proofs                  with their project's load paths, each project in its own opam switch:
+                          SQIR 134fb94 (Coq 8.20.1, QuantumLib 1.8.0): Deutsch, superdense
+                          coding, teleportation, the three- and nine-qubit codes; SQIR b1a3ef4
+                          (Coq 8.16.1, QuantumLib 1.1.0), where these last build: Bernstein-
+                          Vazirani, Deutsch-Jozsa, Grover, QPE, GHZ, Simon, Wiesner; VyZX: Bell
+                          state, teleportation, three-CNOT SWAP; CoqQ b169ea4 (Coq 8.18.0, mathcomp
+                          2.2): example/coqq_paper/example.v for QFT, phase estimation, HHL, hidden
+                          linear function, Grover. Timed, with proof lines and bytes. QBricks
+                          fetched, not mapped
 
 Every rival is built by benchmarks/tools/setup_rivals.sh (pinned commits and versions); until
 then each instance is recorded unsupported with "not installed". The Coq toolchain and the
