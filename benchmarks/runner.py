@@ -190,6 +190,21 @@ def memory_cap_mb(cfg: dict[str, Any], jobs: int) -> int:
     return int(cfg["stages"]["memory_fraction"] * avail / max(1, jobs))
 
 
+def terminate(proc: subprocess.Popen[str], grace: float = 5.0) -> None:
+    """SIGTERM to the worker's process group (the worker kills its Lean checks), then SIGKILL
+    after ``grace`` seconds."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            return
+        try:
+            proc.wait(grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     """One worker process on ``job``: its result, or the stage it was killed in."""
     st = ctx.cfg["stages"]
@@ -228,6 +243,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
     with _children_lock:
         _children.add(proc)
@@ -235,7 +251,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
 
     def kill() -> None:
         killed.set()
-        proc.kill()
+        terminate(proc)
 
     timer = threading.Timer(wall_limit, kill)
     timer.start()
@@ -576,11 +592,9 @@ def run(
     def handler(signum: int, frame: Any) -> None:
         _stop.set()
         with _children_lock:
-            for p in list(_children):
-                try:
-                    p.kill()
-                except OSError:
-                    pass
+            procs = list(_children)
+        for p in procs:
+            threading.Thread(target=terminate, args=(p,), daemon=True).start()
 
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)

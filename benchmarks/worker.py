@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 from typing import Any
 
@@ -49,7 +50,16 @@ def instance(job: dict[str, Any]) -> Any:
     return insts[job["equation"]]
 
 
+def _terminate(signum: int, frame: Any) -> None:
+    """Kills the running Lean checks, then exits."""
+    lean = sys.modules.get("benchmarks.lean")
+    if lean is not None:
+        lean.kill_active()
+    os._exit(128 + signum)
+
+
 def main() -> None:
+    signal.signal(signal.SIGTERM, _terminate)
     with open(sys.argv[1], encoding="utf-8") as fh:
         job = json.load(fh)
     os.environ["ARCHYTASZX_TRACE"] = "1" if job.get("trace") else "0"

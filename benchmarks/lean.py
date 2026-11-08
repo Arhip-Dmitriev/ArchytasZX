@@ -35,6 +35,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -93,12 +94,32 @@ def scoped(cmd: list[str], fraction: float) -> list[str]:
     return ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={cap}M", *cmd]
 
 
-def _lift_address_space() -> None:
-    """Raises the soft RLIMIT_AS to the hard limit (the worker's cap is soft only)."""
-    import resource
+_ACTIVE: set[int] = set()
 
-    hard = resource.getrlimit(resource.RLIMIT_AS)[1]
-    resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+
+def _child_limits(cpu: float | None) -> Callable[[], None]:
+    """A preexec function: the soft RLIMIT_AS raised to the hard limit (the worker's cap is soft
+    only) and RLIMIT_CPU at ``cpu`` seconds per process."""
+
+    def apply() -> None:
+        import resource
+
+        hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+        resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+        if cpu:
+            c = max(1, int(cpu))
+            resource.setrlimit(resource.RLIMIT_CPU, (c, c + 5))
+
+    return apply
+
+
+def kill_active() -> None:
+    """SIGKILL to the process group of every running Lean check."""
+    for pg in list(_ACTIVE):
+        try:
+            os.killpg(pg, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def lake() -> str:
@@ -115,11 +136,18 @@ def slots() -> int:
     return max(1, min(MAX_SLOTS, int(0.85 * total_memory_mb() // LEAN_PEAK_MB)))
 
 
+def _slot_scope() -> str:
+    """The slot pool's name: the Slurm job and array task (each has its own allocation), else
+    the machine's single pool."""
+    job = os.environ.get("SLURM_JOB_ID")
+    return f"{job}-{os.environ.get('SLURM_ARRAY_TASK_ID', '0')}" if job else "local"
+
+
 def _slot() -> Any:
     """An exclusive lock on one of :func:`slots` slot files, waited for."""
     while True:
         for k in range(slots()):
-            fh = open(SLOT_DIR / f"archytaszx-bench-lean-{k}.lock", "w")  # noqa: SIM115
+            fh = open(SLOT_DIR / f"archytaszx-bench-lean-{_slot_scope()}-{k}.lock", "w")  # noqa: SIM115
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
@@ -245,6 +273,7 @@ def check(
     probe = path.with_name(path.stem + "_probe.lean")
     probe.write_text(instrument(source, name), encoding="utf-8")
     slot = _slot()
+    proc: subprocess.Popen[str] | None = None
     try:
         w0 = time.perf_counter()
         proc = subprocess.Popen(
@@ -253,13 +282,19 @@ def check(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            preexec_fn=_lift_address_space,  # noqa: PLW1509  # noqa: PLW1509
+            start_new_session=True,
+            preexec_fn=_child_limits(timeout),  # noqa: PLW1509
         )
+        pgid = proc.pid
+        _ACTIVE.add(pgid)
         killed = threading.Event()
 
         def kill() -> None:
             killed.set()
-            proc.kill()
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
 
         timer = threading.Timer(timeout, kill) if timeout else None
         if timer is not None:
@@ -270,6 +305,8 @@ def check(
             timer.cancel()
         wall = time.perf_counter() - w0
     finally:
+        if proc is not None:
+            _ACTIVE.discard(proc.pid)
         slot.close()
     code = os.waitstatus_to_exitcode(status)
     out |= {

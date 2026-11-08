@@ -530,8 +530,10 @@ results/raw/HOST-JOB-TASK-wK.jsonl, one file per worker thread; lines are never 
 keyed by (config hash, equation, version, tool, point, repeat, trace). On start every log is read
 and every key present is reused: the schedule replays from logged outcomes, and a unit whose
 unit record exists is skipped. A run cut off before its line was written leaves nothing and is
-re-run whole; a truncated last line is ignored. SIGINT or SIGTERM stops new runs and kills
-running workers, whose runs are re-run on resume. Aggregates and plots come only from the logs.
+re-run whole; a truncated last line is ignored. SIGINT or SIGTERM stops new runs and sends
+SIGTERM to each running worker's process group (the worker kills its Lean check, whose process
+group is its own), SIGKILL after 5 s; those runs are re-run on resume. Aggregates and plots come
+only from the logs.
 
 10.3 Cluster (Zaratan)
 
@@ -549,7 +551,8 @@ scaled by the calibration beside the raw times; raw times are compared within on
 Lean runs in a systemd scope of its own capped at memory_fraction of the total memory, outside
 the worker's scope (whose cap would evict the memory-mapped Mathlib files). At most
 floor(0.85 x total memory / 7000 MiB) checks run at a time across workers (one Lean check peaks
-near 6.7 GiB), between 1 and 5; BENCH_LEAN_SLOTS overrides. Peak memory is recorded per stage.
+near 6.7 GiB), between 1 and 5, per Slurm task (else per machine); BENCH_LEAN_SLOTS overrides.
+Peak memory is recorded per stage.
 
 10.5 Laptop
 
