@@ -80,6 +80,7 @@ from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import (
     Dim,
     DimSubstituteValue,
@@ -1106,6 +1107,7 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
             )
 
 
+@_trace.traced("input.validate")
 def validate(diagram: Diagram) -> ValidationReport:
     """Run every well-formedness check against ``diagram`` and return the full report.
 

@@ -56,6 +56,7 @@ from typing import TypeAlias
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError
 from archytaszx.algebra.phase import INDEX, Phase, PhaseError, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarError
@@ -1086,10 +1087,12 @@ def dirac(diagram: Diagram, *, unicode: bool = False) -> DiracRendering:
         name = name.replace(" (x) ", " ⊗ ")
     text = formula if name is None else f"{name} = {formula}"
     params = dict(diagram.parameters)
-    instance = render_term(term, env=params, unicode=unicode) if params else None
+    with _trace.span("output.bound_values"):
+        instance = render_term(term, env=params, unicode=unicode) if params else None
     return DiracRendering(term, name, text, instance, to_dirac_source(diagram))
 
 
+@_trace.traced("output.display")
 def render_dirac(diagram: Diagram, *, unicode: bool = False, instance: bool = False) -> str:
     """The Dirac text of ``diagram``; with ``instance``, the ``at d = 3: ...`` line follows."""
     rendering = dirac(diagram, unicode=unicode)
@@ -1749,6 +1752,7 @@ def _mode_sheet_step(step: SheetStep, mode: NotationMode, unicode: bool) -> str:
     return "\n".join(lines)
 
 
+@_trace.traced("output.display")
 def render(state: object, mode: NotationMode = DEFAULT_MODE, *, unicode: bool = False) -> str:
     """``state`` in ``mode``: DIRAC emits Dirac blocks only, ZX each diagram's drawing (its graph
     listing outside :func:`drawing`), BOTH that then the Dirac block, RAW the graph listing.

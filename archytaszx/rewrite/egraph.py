@@ -51,6 +51,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import NewType
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
@@ -587,13 +588,14 @@ class EGraph:
                     raise _Stop(SaturationStop.ITERATION_LIMIT)
                 iterations += 1
                 backoff.start(iterations)
-                for index in pending:
-                    done = applied.setdefault(index, set())
-                    due = tuple(r for r in rule_set if id(r) not in done and backoff.allows(r))
-                    self._expand(index, due, limits, bound, cache, counts, failed, backoff)
-                    done.update(id(r) for r in due if not backoff.cut(r))
-                    if all(id(r) in done for r in rule_set):
-                        self._expanded[index] = (rule_set, bound)
+                with _trace.span("saturation.iteration", iterations):
+                    for index in pending:
+                        done = applied.setdefault(index, set())
+                        due = tuple(r for r in rule_set if id(r) not in done and backoff.allows(r))
+                        self._expand(index, due, limits, bound, cache, counts, failed, backoff)
+                        done.update(id(r) for r in due if not backoff.cut(r))
+                        if all(id(r) in done for r in rule_set):
+                            self._expanded[index] = (rule_set, bound)
                 backoff.finish(iterations)
         except _Stop as signal:
             stop = signal.reason

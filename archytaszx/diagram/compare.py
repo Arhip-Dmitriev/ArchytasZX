@@ -19,6 +19,7 @@ import hashlib
 from collections import Counter
 from dataclasses import dataclass
 
+from archytaszx import trace as _trace
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef, Wire
@@ -317,6 +318,7 @@ def _profile(
     )
 
 
+@_trace.traced("rewrite.canonical_key")
 def canonical_key(diagram: Diagram, *, symmetric_legs: bool = False) -> str:
     """A hashable key for ``diagram`` up to node-id and bang-box-id renaming, from colour
     refinement over the graph's invariants; up to each Z and X spider's leg order per
@@ -378,6 +380,7 @@ def _extend(
     return False
 
 
+@_trace.traced("rewrite.isomorphism")
 def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
     """Whether a node-id and bang-box-id renaming carries ``a`` onto ``b`` exactly, scalar
     and parameter environment included; up to each Z and X spider's leg order per direction
@@ -385,6 +388,7 @@ def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
     return isomorphism(a, b, symmetric_legs=symmetric_legs) is not None
 
 
+@_trace.traced("rewrite.isomorphism")
 def isomorphism(
     a: Diagram, b: Diagram, *, symmetric_legs: bool = False
 ) -> dict[NodeId, NodeId] | None:

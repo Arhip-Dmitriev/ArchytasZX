@@ -50,6 +50,7 @@ from typing import TypeAlias
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import ScalarError
@@ -928,6 +929,7 @@ def _floors_of(pair: tuple[Diagram, Diagram], restriction: Restriction) -> dict[
     return merged
 
 
+@_trace.traced("output.bound_values")
 def _bound_line(left: Diagram, right: Diagram, decision: Decision) -> Text | None:
     """The B.3 line: the instance at the session's bound counts and dimensions, decided."""
     if decision.verdict is not EqualityVerdict.UNEQUAL:

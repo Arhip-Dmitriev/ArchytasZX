@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import ScalarError
@@ -422,6 +423,7 @@ def _boundary_dims(diagram: Diagram, refs: Sequence[PortRef]) -> tuple[Dim, ...]
     return tuple(dims)
 
 
+@_trace.traced("decide.interface")
 def _interface_reason(left: Diagram, right: Diagram) -> str | None:
     """Why the two interfaces can never agree, or None when they might."""
     if _in_box_scope(left) or _in_box_scope(right):
@@ -532,6 +534,7 @@ def _magnitude(
     return float(np.max(np.abs(tensor))) if tensor.size else 0.0
 
 
+@_trace.traced("decide.oracle.sample")
 def _oracle_compare(
     left: Diagram,
     right: Diagram,
@@ -572,6 +575,7 @@ def _oracle_compare(
     return None, result
 
 
+@_trace.traced("decide.oracle")
 def _run_oracle(
     left: Diagram,
     right: Diagram,
@@ -720,6 +724,7 @@ def _merged_floors(
     return merged
 
 
+@_trace.traced("decide.symbolic_contraction")
 def _symbolic_match(
     left: Diagram, right: Diagram, floors: Mapping[str, int] | None = None
 ) -> _SymbolicRun:
@@ -767,6 +772,7 @@ def _witness_assignments(
     )
 
 
+@_trace.traced("decide.counterexample_search")
 def _symbolic_witness(
     left: Diagram,
     right: Diagram,
@@ -828,6 +834,7 @@ class _SaturationRun:
     reason: str
 
 
+@_trace.traced("decide.saturation")
 def _run_saturation(
     left: Diagram, right: Diagram, rules: Sequence[Rule] | None, limits: SaturationLimits
 ) -> _SaturationRun:
@@ -1035,10 +1042,12 @@ def decide_restricted(
     floors."""
     from archytaszx.semantics.restrict import in_domain, restricted_samples, subst_pair, to_original
 
-    family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+    with _trace.span("decide.restriction.family"):
+        family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
     if family.verdict is EqualityVerdict.EQUAL:
         return replace(family, restriction=restriction, family=family, family_holds=True)
-    pair = subst_pair(left, right, restriction)
+    with _trace.span("decide.restriction.substitute"):
+        pair = subst_pair(left, right, restriction)
     if family.verdict is EqualityVerdict.UNEQUAL:
         point = family.counterexample
         induced = family.induction
@@ -1064,7 +1073,8 @@ def decide_restricted(
     samples = options.get("samples")
     if samples is not None:
         options = {**options, "samples": restricted_samples(restriction, samples)}  # type: ignore[arg-type]
-    inner = _decide(*pair, floors=restriction.floors, **options)  # type: ignore[arg-type]
+    with _trace.span("decide.restriction.pair"):
+        inner = _decide(*pair, floors=restriction.floors, **options)  # type: ignore[arg-type]
     original = None
     reason = inner.reason
     if inner.counterexample is not None:
@@ -1147,8 +1157,9 @@ def _decide(
     nf_reason = "normal forms differ"
     nf_equal = False
     try:
-        nf_l = normal_form(family_l, rules=rules, guard=guard)
-        nf_r = normal_form(family_r, rules=rules, guard=guard)
+        with _trace.span("decide.normal_form"):
+            nf_l = normal_form(family_l, rules=rules, guard=guard)
+            nf_r = normal_form(family_r, rules=rules, guard=guard)
         certificates = (
             certify(nf_l.source, nf_l.results, label="left normal form"),
             certify(nf_r.source, nf_r.results, label="right normal form"),
@@ -1316,6 +1327,7 @@ def _decide(
     )
 
 
+@_trace.traced("decide.induction")
 def _decide_by_induction(
     left: Diagram,
     right: Diagram,
@@ -1366,11 +1378,12 @@ def _decide_by_induction(
         "use_saturation": use_saturation,
         "saturation_limits": saturation_limits,
     }
-    base_decision = (
-        decide_equal(pair[0], pair[1], **base_options)  # type: ignore[arg-type]
-        if floors is None
-        else _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
-    )
+    with _trace.span("decide.induction.base"):
+        base_decision = (
+            decide_equal(pair[0], pair[1], **base_options)  # type: ignore[arg-type]
+            if floors is None
+            else _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
+        )
     if (
         base_decision.verdict is EqualityVerdict.UNEQUAL
         and base_decision.counterexample is not None
@@ -1392,17 +1405,18 @@ def _decide_by_induction(
     for reversed_ in (False, True):
         first, second = (right, left) if reversed_ else (left, right)
         try:
-            result = prove_by_induction(
-                first,
-                second,
-                index=index,
-                base=base,
-                witness=witness,
-                ladder=_STEP_LADDER,
-                rules=rules,
-                tolerance=tolerance,
-                max_elements=max_elements,
-            )
+            with _trace.span("decide.induction.step", "reversed" if reversed_ else "forward"):
+                result = prove_by_induction(
+                    first,
+                    second,
+                    index=index,
+                    base=base,
+                    witness=witness,
+                    ladder=_STEP_LADDER,
+                    rules=rules,
+                    tolerance=tolerance,
+                    max_elements=max_elements,
+                )
         except _INDUCTION_ERRORS as exc:
             reasons.append(f"step case declined: {type(exc).__name__}: {exc}")
             continue

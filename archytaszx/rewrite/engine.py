@@ -76,6 +76,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TypeVar
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.compare import canonical_key, isomorphic
@@ -319,6 +320,7 @@ def _remap_endpoint(
     return port_mapping[ref]
 
 
+@_trace.traced("rewrite.apply", lambda diagram, rule, match: rule.name)
 def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
@@ -802,6 +804,7 @@ def _tracked(matcher: IncrementalMatcher, pattern: Pattern) -> bool:
     )
 
 
+@_trace.traced("rewrite.match", lambda diagram, rule, *a, **k: rule.name)
 def _rule_matches(
     diagram: Diagram,
     rule: Rule,

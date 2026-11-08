@@ -51,6 +51,7 @@ from typing import ParamSpec, TypeAlias, TypeVar
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError
 from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
@@ -1887,14 +1888,17 @@ def parse_dsl(source: str) -> Diagram:
     def read(reserved: str) -> _Dsl:
         dsl = _Dsl(_Abstraction(f"{source} {reserved}", pre.reuse), pre.mults, pre.default_dim)
         dsl.names = pre.names
-        for text in statements:
-            dsl.statement(text)
+        with _trace.span("input.parse.statements"):
+            for text in statements:
+                dsl.statement(text)
         return dsl
 
     dsl = read("")
     if dsl.used_default:
         dsl = read(pre.default_dim)
-    return _finish(_check_phase_range(dsl.build()))
+    with _trace.span("input.build"):
+        built = dsl.build()
+    return _finish(_check_phase_range(built))
 
 
 # -- form 3: Dirac -------------------------------------------------------------------------
@@ -3011,6 +3015,7 @@ def _form(source: str) -> InputForm:
 
 
 @_guarded
+@_trace.traced("input.parse")
 def parse(source: str) -> ParsedDiagram | RuleStep:
     """``source`` with ``#`` comments cut, read in the form :func:`_form` picks."""
     source = _require_text(source)
