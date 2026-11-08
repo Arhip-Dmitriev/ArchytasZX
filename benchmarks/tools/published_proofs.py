@@ -32,17 +32,26 @@ COQ_HOME = Path(
 )
 SRC = COQ_HOME / "src"
 PROOFS: dict[str, list[tuple[str, str]]] = {
-    "bernstein_vazirani": [("SQIR", "examples/examples/BernsteinVazirani.v")],
+    "bernstein_vazirani": [("SQIR-2023", "examples/examples/BernsteinVazirani.v")],
     "deutsch": [("SQIR", "examples/examples/Deutsch.v")],
-    "deutsch_jozsa": [("SQIR", "examples/examples/DeutschJozsa.v")],
-    "grover": [("SQIR", "examples/examples/Grover.v")],
-    "phase_estimation_digit": [("SQIR", "examples/examples/QPE.v")],
+    "deutsch_jozsa": [("SQIR-2023", "examples/examples/DeutschJozsa.v")],
+    "grover": [
+        ("SQIR-2023", "examples/examples/Grover.v"),
+        ("CoqQ", "src/example/coqq_paper/example.v"),
+    ],
+    "phase_estimation_digit": [("SQIR-2023", "examples/examples/QPE.v")],
     "superdense_coding": [("SQIR", "examples/examples/Superdense.v")],
     "teleportation": [
         ("SQIR", "examples/examples/Teleport.v"),
         ("VyZX", "src/Examples/Teleportation.v"),
     ],
-    "ghz": [("SQIR", "examples/ghz/GHZ.v")],
+    "ghz": [("SQIR-2023", "examples/ghz/GHZ.v")],
+    "simon": [("SQIR-2023", "examples/examples/Simon.v")],
+    "wiesner_money": [("SQIR-2023", "examples/examples/Wiesner.v")],
+    "qft": [("CoqQ", "src/example/coqq_paper/example.v")],
+    "phase_estimation": [("CoqQ", "src/example/coqq_paper/example.v")],
+    "hhl": [("CoqQ", "src/example/coqq_paper/example.v")],
+    "hidden_linear_function": [("CoqQ", "src/example/coqq_paper/example.v")],
     "repetition_code": [("SQIR", "examples/error-correction/ThreeQubitCode.v")],
     "shor_code": [("SQIR", "examples/error-correction/NineQubitCode.v")],
     "bell_state": [("VyZX", "src/Examples/Bell.v")],
@@ -50,7 +59,7 @@ PROOFS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-SWITCH = {"CoqQ": "coqq"}
+SWITCH = {"CoqQ": "coqq", "SQIR-2023": "sqir23"}
 
 
 def coqc(project: str = "SQIR") -> Path:

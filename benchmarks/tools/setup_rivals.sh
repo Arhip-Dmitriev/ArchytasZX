@@ -78,39 +78,60 @@ quantomatic() {  # Quantomatic at its pinned commit with the headless driver, sb
         && cp "$V/src/quantomatic/rulesets/red_green/default.rules" "$V/quantomatic/red_green.rules")
 }
 
-coq() {  # opam root with Coq 8.20.1 and why3; SQIR/VOQC, VyZX, CoqQ, QBricks at pinned commits,
-         # all under an ASCII path (Coq's dune build rejects non-ASCII paths)
+coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1) and coqq (Coq 8.18.0);
+         # SQIR/VOQC, VyZX, CoqQ, QBricks at pinned commits, all under an ASCII path (Coq's dune
+         # build rejects non-ASCII paths). Every opam command names its switch (OPAMSWITCH).
     local C="${BENCH_COQ_HOME:-$HOME/.cache/archytaszx-bench/coq}"
     mkdir -p "$C/src"
     export OPAMROOT="$C/opam" OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes
     [ -d "$OPAMROOT" ] || opam init --bare -n --disable-sandboxing
-    [ -d "$OPAMROOT/bench" ] || opam switch create bench ocaml-base-compiler.4.14.2
-    eval "$(opam env --switch=bench)"
-    opam repo add coq-released https://coq.inria.fr/opam/released || true
-    opam install dune coq.8.20.1
-    opam install coq-mathcomp-ssreflect coq-interval || true
-    opam pin add -n coq-quantumlib https://github.com/inQWIRE/QuantumLib.git#0b72c0fa552986c8a6b82f4cb56384c99b9de963 || true
-    opam install coq-quantumlib || true
+    newswitch() { [ -d "$OPAMROOT/$1" ] || opam switch create --no-switch "$1" ocaml-base-compiler.4.14.2; }
     coqclone() {  # coqclone URL DIR COMMIT, under the ASCII source directory
         [ -d "$C/src/$2/.git" ] || git clone -q "$1" "$C/src/$2"
         git -C "$C/src/$2" fetch -q --depth 200 origin || true
         git -C "$C/src/$2" checkout -q "$3"
     }
     coqclone https://github.com/inQWIRE/SQIR SQIR 134fb942265091baa3e3972f78f72da41827351f
+    coqclone https://github.com/inQWIRE/SQIR SQIR-2023 b1a3ef452c95f13a9a3f79fb26064a21df1570ab
     coqclone https://github.com/inQWIRE/VyZX VyZX 10f8c16741952dbaa2bb7a73e13767945e696b8f
     coqclone https://github.com/coq-quantum/CoqQ CoqQ b169ea462b13d20b05e03615ad1d56cc8d8f5784
     coqclone https://github.com/Qbricks/qbricks.github.io qbricks e00fc97f14fb9fcbc44bbfbc5e5ec3e483f87367
-    opam pin add -y coq-sqir "$C/src/SQIR" || true
-    opam pin add -y coq-voqc "$C/src/SQIR" || true
-    (cd "$C/src/SQIR" && dune build) || true
-    (cd "$C/src/VyZX" && dune build) || true
-    CC="gcc -std=gnu17 -Wno-error=incompatible-pointer-types" \
-        opam install why3.1.8.0 alt-ergo.2.6.2 || true  # QBricks' pins; why3's C predates GCC 15
-    # CoqQ pins Coq 8.18.0 and mathcomp 2.2 / analysis 1.3.1: a switch of its own
-    [ -d "$OPAMROOT/coqq" ] || opam switch create coqq ocaml-base-compiler.4.14.2
-    opam repo add coq-released https://coq.inria.fr/opam/released --switch=coqq || true
-    opam install --switch=coqq --deps-only "$C/src/CoqQ/coq-mathcomp-quantum.opam"
-    (eval "$(opam env --switch=coqq)" && cd "$C/src/CoqQ" && make -j6) || true
+    (   # bench: SQIR 134fb94 and VyZX on QuantumLib 1.8.0; why3 and alt-ergo for QBricks
+        newswitch bench
+        export OPAMSWITCH=bench
+        eval "$(opam env)"
+        opam repo add coq-released https://coq.inria.fr/opam/released || true
+        opam install dune coq.8.20.1
+        opam install coq-mathcomp-ssreflect coq-interval || true
+        opam pin add -n coq-quantumlib https://github.com/inQWIRE/QuantumLib.git#0b72c0fa552986c8a6b82f4cb56384c99b9de963 || true
+        opam install coq-quantumlib || true
+        opam pin add -y coq-sqir "$C/src/SQIR" || true
+        opam pin add -y coq-voqc "$C/src/SQIR" || true
+        (cd "$C/src/SQIR" && dune build) || true
+        (cd "$C/src/VyZX" && dune build) || true
+        CC="gcc -std=gnu17 -Wno-error=incompatible-pointer-types" \
+            opam install why3.1.8.0 alt-ergo.2.6.2 || true  # QBricks' pins; why3's C predates GCC 15
+    )
+    (   # sqir23: SQIR's Bernstein-Vazirani, Deutsch-Jozsa, Grover, QPE and GHZ proofs, which last
+        # build at SQIR b1a3ef4 (2023-04-08), on Coq 8.16.1 and QuantumLib 1.1.0
+        newswitch sqir23
+        export OPAMSWITCH=sqir23
+        eval "$(opam env)"
+        opam repo add coq-released https://coq.inria.fr/opam/released || true
+        opam pin remove -n coq-quantumlib || true
+        opam install dune coq.8.16.1 coq-quantumlib.1.1.0
+        (cd "$C/src/SQIR-2023" && dune build SQIR examples/examples examples/ghz) || true
+    )
+    (   # coqq: CoqQ's own pins (Coq 8.18.0, mathcomp 2.2, analysis 1.3.1); its dune-configurator
+        # 3.12.1 is in the opam archive repository
+        newswitch coqq
+        export OPAMSWITCH=coqq
+        eval "$(opam env)"
+        opam repo add coq-released https://coq.inria.fr/opam/released || true
+        opam repo add archive git+https://github.com/ocaml/opam-repository-archive || true
+        opam install --deps-only "$C/src/CoqQ/coq-mathcomp-quantum.opam" || true
+        (cd "$C/src/CoqQ" && make -j6) || true
+    )
 }
 
 case "${1:-all}" in
