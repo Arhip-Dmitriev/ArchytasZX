@@ -69,3 +69,4 @@ FULL_PLAN.txt
 !archytaszx/lean/**/*.lean
 Random_crap/
 .lia.cache
+.nia.cache
