@@ -1,5 +1,5 @@
 {
- "fingerprint": "2bc122bfae00eece",
+ "fingerprint": "abd0ef7c4dfb4075",
  "records": [
   {
    "equation": "amm_barenco_tof_3/main",
@@ -2466,6 +2466,42 @@
    ]
   },
   {
+   "equation": "dihedral_qft/main",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
+   "params": {
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     1,
+     1
+    ],
+    "ins": [
+     0,
+     0,
+     0
+    ],
+    "left": [
+     -0.4999999999999993,
+     7.79707221282369e-17
+    ],
+    "right": [
+     0.5000000000000001,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "outputs_not_all": 1
+   },
+   "skipped": []
+  },
+  {
    "equation": "discrete_log/main",
    "kind": "wrong_phase",
    "label": "gate 5 CX",
@@ -2494,16 +2530,14 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "single_entry"
-   ]
+   "skipped": []
   },
   {
    "equation": "dqc1/main",
-   "kind": "wrong_phase",
-   "label": "gate 7 ZPhase",
+   "kind": "missing_gate",
+   "label": "drop gate 10 F",
    "params": {
-    "index": 7
+    "index": 10
    },
    "witness": {
     "n": 1,
@@ -2514,8 +2548,8 @@
     ],
     "ins": [],
     "left": [
-     0.5915063509461084,
-     0.0
+     0.499999999999999,
+     1.1102230246251565e-16
     ],
     "right": [
      0.75,
@@ -2529,25 +2563,27 @@
   },
   {
    "equation": "draper_adder/main",
-   "kind": "missing_gate",
-   "label": "drop gate 2 F",
+   "kind": "extra_gate",
+   "label": "X on b0",
    "params": {
-    "index": 2
+    "wire": "b0",
+    "role": "phase",
+    "slot": 0
    },
    "witness": {
     "n": 1,
     "d": 2,
     "outs": [
      0,
-     1
+     0
     ],
     "ins": [
      0,
-     1
+     0
     ],
     "left": [
-     -0.7071067811865475,
-     8.659560562354932e-17
+     -8.74065022274112e-17,
+     1.2246467991473522e-16
     ],
     "right": [
      0.9999999999999998,
@@ -2561,28 +2597,28 @@
   },
   {
    "equation": "dual_rail_code/main",
-   "kind": "extra_gate",
-   "label": "X on b",
+   "kind": "swapped_control_target",
+   "label": "gate 1 CX reversed",
    "params": {
-    "wire": "b"
+    "index": 1
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     1
-    ],
-    "ins": [
+     1,
      0
     ],
+    "ins": [
+     1
+    ],
     "left": [
-     -1.222460681318787e-17,
-     1.2246467991473522e-16
+     -2.2371143170757372e-17,
+     1.9911336075032464e-33
     ],
     "right": [
      0.9999999999999998,
-     -6.123233995736765e-17
+     6.123233995736765e-17
     ],
     "interface": null,
     "method": "entry"
@@ -2592,10 +2628,10 @@
   },
   {
    "equation": "e91/main",
-   "kind": "swapped_control_target",
-   "label": "gate 10 CX reversed",
+   "kind": "wrong_phase",
+   "label": "gate 12 ZPhase",
    "params": {
-    "index": 10
+    "index": 12
    },
    "witness": {
     "n": null,
@@ -2608,8 +2644,8 @@
     ],
     "ins": [],
     "left": [
-     0.1666666666666639,
-     1.1270945014464745e-16
+     0.37499999999999384,
+     -5.060859146820625e-16
     ],
     "right": [
      0.5,
@@ -2619,7 +2655,22 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": []
+   "skipped": [
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase",
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map",
+    "single_entry"
+   ]
   },
   {
    "equation": "ea_code/encoding",
@@ -2656,7 +2707,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "off_by_one_n",
     "wrong_dimension",
     "beyond_oracle",
     "beyond_N",
@@ -2698,7 +2748,6 @@
    },
    "equal_where": {},
    "skipped": [
-    "wrong_dimension",
     "beyond_oracle",
     "beyond_N",
     "prime_only",
@@ -2710,27 +2759,34 @@
   },
   {
    "equation": "entanglement_swapping/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on e",
+   "kind": "prime_only",
+   "label": "Z Fermat phase on e",
    "params": {
     "wire": "e",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "rule": "(k^d - k)/d",
     "gen": "Z"
    },
    "witness": {
     "n": null,
-    "d": 5,
+    "d": 4,
     "outs": [],
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [5, 5, 5, 5]->[], right [5, 5]->[]",
+    "interface": "left [4, 4, 4, 4]->[], right [4, 4]->[]",
     "method": "entry"
    },
    "equal_where": {
-    "grid": "oracle"
+    "d_prime": true,
+    "also": [
+     561,
+     1105,
+     1729
+    ]
    },
-   "skipped": []
+   "skipped": [
+    "beyond_N"
+   ]
   },
   {
    "equation": "fermionic_swap/main",
@@ -2765,7 +2821,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "beyond_N",
     "prime_only",
     "qubit_only",
     "coincident_dims",
@@ -2807,7 +2862,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one"
@@ -2852,7 +2906,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "qubit_only",
     "coincident_dims",
     "scalar_small_one"
    ]
@@ -2891,9 +2944,7 @@
    "equal_where": {
     "grid": "oracle"
    },
-   "skipped": [
-    "coincident_dims"
-   ]
+   "skipped": []
   },
   {
    "equation": "fixed_point_search/main",
@@ -2923,7 +2974,6 @@
    },
    "equal_where": {},
    "skipped": [
-    "scalar_small_one",
     "global_phase",
     "tiny_phase",
     "leg_order",
@@ -2934,10 +2984,10 @@
   },
   {
    "equation": "forrelation/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "box_boundary",
+   "label": "factor at n = 0",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "factor": "1 + 0^(n - 0)"
    },
    "witness": {
     "n": 0,
@@ -2945,8 +2995,8 @@
     "outs": [],
     "ins": [],
     "left": [
-     0.6234898018587335,
-     0.7818314824680298
+     2.0,
+     0.0
     ],
     "right": [
      1.0,
@@ -2956,39 +3006,41 @@
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "n_gt": 0
    },
-   "skipped": []
+   "skipped": [
+    "tiny_phase",
+    "leg_order"
+   ]
   },
   {
    "equation": "four_qubit_code/encoding",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on q3",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
    "params": {
-    "wire": "q3",
-    "k": 3,
-    "d_min": 2
+    "i": 2,
+    "j": 3
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
      0,
-     0,
      1,
+     0,
      1
     ],
     "ins": [
-     1,
+     0,
      1
     ],
     "left": [
-     0.4999999999999993,
-     0.49999999999999944
+     3.398920125257211e-33,
+     5.548938723289195e-49
     ],
     "right": [
      0.7071067811865469,
-     8.659560562354925e-17
+     -6.1629758220391506e-33
     ],
     "interface": null,
     "method": "entry"
@@ -3022,46 +3074,14 @@
    "equal_where": {
     "n_gt": 0
    },
-   "skipped": [
-    "leg_order"
-   ]
-  },
-  {
-   "equation": "fourier_conjugation/main",
-   "kind": "box_boundary",
-   "label": "factor at n = 0",
-   "params": {
-    "factor": "1 + 0^(n - 0)"
-   },
-   "witness": {
-    "n": 0,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [
-     2.0,
-     0.0
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "n_gt": 0
-   },
    "skipped": []
   },
   {
-   "equation": "fourier_constant_adder/main",
+   "equation": "fourier_conjugation/main",
    "kind": "state_not_map",
-   "label": "Z on input x0",
+   "label": "Z on input r",
    "params": {
-    "wire": "x0",
-    "role": "inputs",
-    "slot": 0
+    "wire": "r"
    },
    "witness": {
     "n": 1,
@@ -3073,7 +3093,39 @@
      1
     ],
     "left": [
-     -0.9999999999999996,
+     0.9999999999999996,
+     -2.449293598294705e-16
+    ],
+    "right": [
+     -1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "input_zero": "r"
+   },
+   "skipped": []
+  },
+  {
+   "equation": "fourier_constant_adder/main",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
+   "params": {
+    "d_min": 2
+   },
+   "witness": {
+    "n": 1,
+    "d": 2,
+    "outs": [
+     1
+    ],
+    "ins": [
+     1
+    ],
+    "left": [
+     -0.9999999999999997,
      2.4492935982947054e-16
     ],
     "right": [
@@ -3084,7 +3136,7 @@
     "method": "entry"
    },
    "equal_where": {
-    "input_zero": "x0"
+    "outputs_not_all": 1
    },
    "skipped": []
   },
@@ -3117,37 +3169,36 @@
    },
    "equal_where": {},
    "skipped": [
-    "single_entry",
     "wrong_phase"
    ]
   },
   {
    "equation": "fredkin_decomposition/main",
-   "kind": "wrong_phase",
-   "label": "gate 3 ZPhase",
+   "kind": "missing_gate",
+   "label": "drop gate 16 CX",
    "params": {
-    "index": 3
+    "index": 16
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
      1,
-     1,
-     0
-    ],
-    "ins": [
-     1,
      0,
      1
     ],
+    "ins": [
+     1,
+     1,
+     0
+    ],
     "left": [
-     0.24999999999999917,
-     0.43301270189221847
+     1.2213348419483175e-17,
+     -1.2752361447207305e-16
     ],
     "right": [
      1.0,
-     -2.331468351712829e-15
+     -1.9380580975559982e-15
     ],
     "interface": null,
     "method": "entry"
@@ -3157,32 +3208,32 @@
   },
   {
    "equation": "full_adder/main",
-   "kind": "missing_gate",
-   "label": "drop gate 33 CX",
+   "kind": "extra_gate",
+   "label": "X on z",
    "params": {
-    "index": 33
+    "wire": "z"
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     1,
      0,
      0,
-     1
+     0,
+     0
     ],
     "ins": [
-     1,
      0,
-     1
+     0,
+     0
     ],
     "left": [
-     8.01238494473791e-48,
-     6.417385536818203e-48
+     -3.3306690738754864e-16,
+     -3.7422613048836586e-16
     ],
     "right": [
-     0.9999999999999997,
-     3.309365662853685e-15
+     1.0000000000000002,
+     -1.089470499013156e-33
     ],
     "interface": null,
     "method": "entry"
@@ -3192,10 +3243,10 @@
   },
   {
    "equation": "gate_teleportation/main",
-   "kind": "extra_gate",
-   "label": "X on b",
+   "kind": "swapped_control_target",
+   "label": "gate 3 CX reversed",
    "params": {
-    "wire": "b"
+    "index": 3
    },
    "witness": {
     "n": null,
@@ -3212,28 +3263,17 @@
   },
   {
    "equation": "ghz/main",
-   "kind": "swapped_control_target",
-   "label": "gate 3 CX reversed",
-   "params": {
-    "index": 3
-   },
+   "kind": "off_by_one_n",
+   "label": "n + 1 in the circuit",
+   "params": {},
    "witness": {
-    "n": 1,
+    "n": 0,
     "d": 2,
-    "outs": [
-     1,
-     1
-    ],
+    "outs": [],
     "ins": [],
-    "left": [
-     -3.773734306841389e-49,
-     4.329780281177464e-17
-    ],
-    "right": [
-     0.7071067811865476,
-     0.0
-    ],
-    "interface": null,
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[], right [2]->[]",
     "method": "entry"
    },
    "equal_where": {},
@@ -3241,21 +3281,39 @@
   },
   {
    "equation": "ghz/main/r0",
-   "kind": "off_by_one_n",
-   "label": "n + 1 in the circuit",
-   "params": {},
+   "kind": "beyond_oracle",
+   "label": "Z phase on c",
+   "params": {
+    "wire": "c",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "Z"
+   },
    "witness": {
     "n": 2,
-    "d": 2,
-    "outs": [],
+    "d": 5,
+    "outs": [
+     2,
+     2,
+     2
+    ],
     "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2, 2, 2]->[], right [2, 2, 2]->[]",
+    "left": [
+     -0.36180339887498925,
+     -0.26286555605956663
+    ],
+    "right": [
+     0.4472135954999579,
+     0.0
+    ],
+    "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": [
+    "wrong_dimension"
+   ]
   },
   {
    "equation": "ghz_disentangle/main",
@@ -3287,33 +3345,38 @@
    "equal_where": {
     "grid": "oracle"
    },
-   "skipped": [
-    "wrong_dimension"
-   ]
+   "skipped": []
   },
   {
    "equation": "ghz_fusion/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on s",
+   "kind": "prime_only",
+   "label": "Z Fermat phase on s",
    "params": {
     "wire": "s",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "rule": "(k^d - k)/d",
     "gen": "Z"
    },
    "witness": {
     "n": null,
-    "d": 5,
+    "d": 4,
     "outs": [],
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [5, 5, 5, 5, 5, 5]->[], right [5, 5, 5]->[]",
+    "interface": "left [4, 4, 4, 4, 4, 4]->[], right [4, 4, 4]->[]",
     "method": "entry"
    },
    "equal_where": {
-    "grid": "oracle"
+    "d_prime": true,
+    "also": [
+     561,
+     1105,
+     1729
+    ]
    },
-   "skipped": []
+   "skipped": [
+    "beyond_N"
+   ]
   },
   {
    "equation": "ghz_game/xxx",
@@ -3336,7 +3399,6 @@
     "outputs_not_all": 1
    },
    "skipped": [
-    "beyond_N",
     "prime_only",
     "qubit_only",
     "coincident_dims",
@@ -3369,7 +3431,6 @@
     "outputs_not_all": 1
    },
    "skipped": [
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one",
@@ -3410,7 +3471,6 @@
     "grid": "oracle"
    },
    "skipped": [
-    "qubit_only",
     "coincident_dims"
    ]
   },
@@ -3442,46 +3502,10 @@
    "equal_where": {
     "grid": "oracle"
    },
-   "skipped": [
-    "coincident_dims"
-   ]
-  },
-  {
-   "equation": "ghz_metrology/main",
-   "kind": "scalar_small_one",
-   "label": "n scalar",
-   "params": {
-    "factor": "1 + n*(n-1)*(n-2)*(n-3)"
-   },
-   "witness": {
-    "n": 4,
-    "d": 2,
-    "outs": [
-     1,
-     0,
-     0,
-     0,
-     0
-    ],
-    "ins": [],
-    "left": [
-     -12.499999999999968,
-     -12.499999999999984
-    ],
-    "right": [
-     -0.4999999999999999,
-     -0.4999999999999999
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "grid": "oracle"
-   },
    "skipped": []
   },
   {
-   "equation": "ghz_x_basis/main",
+   "equation": "ghz_metrology/main",
    "kind": "global_phase",
    "label": "phase 1/7",
    "params": {
@@ -3495,11 +3519,11 @@
     ],
     "ins": [],
     "left": [
-     0.6234898018587334,
-     0.7818314824680296
+     0.44087386689496727,
+     0.5528383429982751
     ],
     "right": [
-     1.0,
+     0.7071067811865476,
      0.0
     ],
     "interface": null,
@@ -3511,33 +3535,63 @@
    "skipped": []
   },
   {
-   "equation": "gidney_and/main",
+   "equation": "ghz_x_basis/main",
    "kind": "tiny_phase",
-   "label": "1/d^3 on t",
+   "label": "1/d^3 on c",
    "params": {
-    "wire": "t",
+    "wire": "c",
     "k": 3,
     "d_min": 2
+   },
+   "witness": {
+    "n": 1,
+    "d": 2,
+    "outs": [
+     1,
+     1
+    ],
+    "ins": [],
+    "left": [
+     0.49999999999999983,
+     0.4999999999999996
+    ],
+    "right": [
+     0.7071067811865475,
+     -8.659560562354932e-17
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "gidney_and/main",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
+   "params": {
+    "i": 1,
+    "j": 2
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
+     0,
      1,
-     1,
-     1
+     0
     ],
     "ins": [
-     1,
+     0,
      1
     ],
     "left": [
-     0.7071067811865464,
-     0.7071067811865464
+     -2.29934717029309e-17,
+     4.329780281177458e-17
     ],
     "right": [
-     0.9999999999999997,
-     -1.8369701987210287e-16
+     0.9999999999999996,
+     3.0111995671280964e-33
     ],
     "interface": null,
     "method": "entry"
@@ -3547,42 +3601,44 @@
   },
   {
    "equation": "givens_rotation/main",
-   "kind": "leg_order",
-   "label": "swap last two outputs",
+   "kind": "state_not_map",
+   "label": "Z on input a",
    "params": {
-    "i": 0,
-    "j": 1
+    "wire": "a"
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
      1,
-     0
+     1
     ],
     "ins": [
-     0,
+     1,
      1
     ],
     "left": [
-     0.7071067811865467,
-     -5.2182272454595276e-17
+     -0.9999999999999989,
+     1.5509107624155384e-16
     ],
     "right": [
-     -0.7071067811865467,
-     1.6653345369377348e-16
+     0.9999999999999989,
+     -4.440892098500626e-16
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "input_zero": "a"
+   },
+   "skipped": [
+    "box_boundary"
+   ]
   },
   {
    "equation": "golay_code/encoding",
    "kind": null,
    "skipped": [
-    "box_boundary",
     "state_not_map",
     "single_entry",
     "wrong_phase",
@@ -3599,48 +3655,49 @@
     "scalar_small_one",
     "global_phase",
     "tiny_phase",
-    "leg_order"
+    "leg_order",
+    "box_boundary"
    ],
    "reason": "oracle size"
   },
   {
    "equation": "gottesman_code/encoding",
-   "kind": "state_not_map",
-   "label": "Z on input q5",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "wire": "q5"
+    "d_min": 2
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     0,
-     0,
-     0,
      1,
-     0,
      1,
-     0
-    ],
-    "ins": [
      1,
-     0,
+     1,
+     1,
+     1,
+     1,
      1
     ],
+    "ins": [
+     0,
+     0,
+     0
+    ],
     "left": [
-     0.24999999999999867,
-     9.184850993605098e-17
+     -0.24999999999999867,
+     1.2246467991473466e-16
     ],
     "right": [
-     -0.2499999999999982,
-     -8.876250158879676e-17
+     0.24999999999999822,
+     -2.511999153443822e-16
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "input_zero": "q5"
+    "outputs_not_all": 1
    },
    "skipped": []
   },
@@ -3686,16 +3743,14 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "single_entry"
-   ]
+   "skipped": []
   },
   {
    "equation": "grover/main",
-   "kind": "wrong_phase",
-   "label": "gate 7 X",
+   "kind": "missing_gate",
+   "label": "drop gate 13 F",
    "params": {
-    "index": 7
+    "index": 13
    },
    "witness": {
     "n": null,
@@ -3706,8 +3761,8 @@
     ],
     "ins": [],
     "left": [
-     1.0356380079197337e-31,
-     1.8369701987210262e-16
+     -0.7071067811865465,
+     2.1648901405887296e-16
     ],
     "right": [
      0.9999999999999998,
@@ -3721,35 +3776,6 @@
   },
   {
    "equation": "grover_marked/m00",
-   "kind": "missing_gate",
-   "label": "drop gate 17 F",
-   "params": {
-    "index": 17
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     0,
-     1
-    ],
-    "ins": [],
-    "left": [
-     0.7071067811865457,
-     -4.329780281177454e-17
-    ],
-    "right": [
-     0.0,
-     6.123233995736765e-17
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "grover_marked/m01",
    "kind": "extra_gate",
    "label": "X on b",
    "params": {
@@ -3760,12 +3786,41 @@
     "d": 2,
     "outs": [
      0,
+     0
+    ],
+    "ins": [],
+    "left": [
+     -2.7755575615628707e-17,
+     -2.465190328815662e-32
+    ],
+    "right": [
+     0.9999999999999998,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "grover_marked/m01",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0,
      1
     ],
     "ins": [],
     "left": [
-     1.3877787807814472e-16,
-     -6.123233995736752e-17
+     0.6234898018587323,
+     0.781831482468028
     ],
     "right": [
      0.9999999999999998,
@@ -3774,8 +3829,20 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "swapped_control_target",
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "grover_marked/m10",
@@ -3807,7 +3874,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "swapped_control_target",
     "off_by_one_n",
     "wrong_dimension",
     "beyond_oracle",
@@ -3848,7 +3914,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "off_by_one_n",
     "wrong_dimension",
     "beyond_oracle",
     "beyond_N",
@@ -3887,7 +3952,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "wrong_dimension",
     "beyond_oracle",
     "beyond_N",
     "prime_only",
@@ -3926,7 +3990,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "beyond_oracle",
     "beyond_N",
     "prime_only",
     "qubit_only",
@@ -3965,7 +4028,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "beyond_N",
     "prime_only",
     "qubit_only",
     "coincident_dims",
@@ -4023,7 +4085,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one"
@@ -4060,7 +4121,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "qubit_only",
     "coincident_dims",
     "scalar_small_one"
    ]
@@ -4093,7 +4153,6 @@
    },
    "equal_where": {},
    "skipped": [
-    "coincident_dims",
     "scalar_small_one",
     "global_phase",
     "tiny_phase",
@@ -4107,15 +4166,13 @@
    "equation": "happy_code/encoding",
    "kind": null,
    "skipped": [
-    "scalar_small_one",
     "global_phase",
     "tiny_phase",
     "leg_order",
     "box_boundary",
     "state_not_map",
     "single_entry",
-    "wrong_phase",
-    "missing_gate"
+    "wrong_phase"
    ],
    "reason": "time budget"
   },
@@ -4139,31 +4196,28 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "global_phase"
-   ]
+   "skipped": []
   },
   {
    "equation": "heavy_hexagon_code/encoding",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on q8",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
    "params": {
-    "wire": "q8",
-    "k": 3,
-    "d_min": 2
+    "i": 7,
+    "j": 8
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     1,
-     1,
-     0,
-     0,
      0,
      0,
      0,
      1,
+     1,
+     0,
+     1,
+     0,
      1
     ],
     "ins": [
@@ -4172,12 +4226,12 @@
      1
     ],
     "left": [
-     0.35355339059327173,
-     0.3535533905932724
+     4.806798938561591e-33,
+     1.7272837094688748e-48
     ],
     "right": [
      0.4999999999999987,
-     3.0616169978683753e-16
+     1.22464679914735e-16
     ],
     "interface": null,
     "method": "entry"
@@ -4216,7 +4270,6 @@
     "input_zero": "b"
    },
    "skipped": [
-    "leg_order",
     "box_boundary"
    ]
   },
@@ -4252,7 +4305,6 @@
    },
    "equal_where": {},
    "skipped": [
-    "box_boundary",
     "state_not_map",
     "single_entry"
    ]
@@ -4285,16 +4337,13 @@
    },
    "equal_where": {},
    "skipped": [
-    "state_not_map",
     "single_entry"
    ]
   },
   {
    "equation": "honeycomb_code/encoding",
    "kind": null,
-   "skipped": [
-    "single_entry"
-   ],
+   "skipped": [],
    "reason": "time budget"
   },
   {
@@ -4337,16 +4386,14 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "wrong_phase"
-   ]
+   "skipped": []
   },
   {
    "equation": "hypergraph_state/main",
-   "kind": "missing_gate",
-   "label": "drop gate 18 CX",
+   "kind": "extra_gate",
+   "label": "X on c",
    "params": {
-    "index": 18
+    "wire": "c"
    },
    "witness": {
     "n": null,
@@ -4358,8 +4405,8 @@
     ],
     "ins": [],
     "left": [
-     0.3535533905932733,
-     4.306366060497078e-17
+     0.35355339059327323,
+     3.3862249825370526e-17
     ],
     "right": [
      -0.35355339059327356,
@@ -4373,10 +4420,10 @@
   },
   {
    "equation": "iceberg_code/encoding",
-   "kind": "extra_gate",
-   "label": "X on q5",
+   "kind": "swapped_control_target",
+   "label": "gate 2 CX reversed",
    "params": {
-    "wire": "q5"
+    "index": 2
    },
    "witness": {
     "n": null,
@@ -4384,24 +4431,24 @@
     "outs": [
      0,
      0,
+     1,
      0,
      0,
-     0,
-     0
+     1
     ],
     "ins": [
+     1,
      0,
      0,
-     0,
-     0
+     1
     ],
     "left": [
-     7.174684663993232e-18,
-     4.329780281177455e-17
+     9.197388681172349e-17,
+     1.5473129736464677e-32
     ],
     "right": [
      0.7071067811865464,
-     -6.438919874147279e-98
+     8.659560562354918e-17
     ],
     "interface": null,
     "method": "entry"
@@ -4411,33 +4458,17 @@
   },
   {
    "equation": "iceberg_family/encoding",
-   "kind": "swapped_control_target",
-   "label": "gate 2 CX reversed",
-   "params": {
-    "index": 2
-   },
+   "kind": "off_by_one_n",
+   "label": "n + 1 in the circuit",
+   "params": {},
    "witness": {
     "n": 2,
     "d": 2,
-    "outs": [
-     0,
-     0,
-     1,
-     1
-    ],
-    "ins": [
-     1,
-     1
-    ],
-    "left": [
-     4.598694340586179e-17,
-     -8.659560562354919e-17
-    ],
-    "right": [
-     0.7071067811865469,
-     8.659560562354925e-17
-    ],
-    "interface": null,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2, 2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2, 2, 2]->[2, 2]",
     "method": "entry"
    },
    "equal_where": {},
@@ -4445,42 +4476,78 @@
   },
   {
    "equation": "incrementer/main",
-   "kind": "off_by_one_n",
-   "label": "n + 1 in the circuit",
-   "params": {},
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
    "witness": {
     "n": 1,
     "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
+    "outs": [
+     1
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     0.6234898018587334,
+     0.7818314824680296
+    ],
+    "right": [
+     0.9999999999999998,
+     -6.123233995736765e-17
+    ],
+    "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "inverse_qft/main",
-   "kind": "wrong_dimension",
-   "label": "dimension + 1 on q0",
+   "kind": "beyond_oracle",
+   "label": "Z phase on q0",
    "params": {
     "wire": "q0",
-    "role": "all",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "Z",
+    "role": "phase",
     "slot": 0
    },
    "witness": {
     "n": 1,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [3]->[3], right [2]->[2]",
+    "d": 5,
+    "outs": [
+     2
+    ],
+    "ins": [
+     3
+    ],
+    "left": [
+     -0.3618033988749893,
+     0.2628655560595669
+    ],
+    "right": [
+     0.1381966011250103,
+     -0.4253254041760199
+    ],
+    "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
+   "equal_where": {
+    "grid": "oracle"
+   },
    "skipped": []
   },
   {
@@ -4544,9 +4611,7 @@
    "equal_where": {
     "n_max": 32
    },
-   "skipped": [
-    "beyond_oracle"
-   ]
+   "skipped": []
   },
   {
    "equation": "iswap_decomposition/main",
@@ -4581,7 +4646,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "beyond_N",
     "prime_only",
     "qubit_only",
     "coincident_dims",
@@ -4609,7 +4673,6 @@
    },
    "equal_where": {},
    "skipped": [
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one",
@@ -4647,8 +4710,39 @@
     "grid": "oracle"
    },
    "skipped": [
-    "qubit_only",
     "coincident_dims"
+   ]
+  },
+  {
+   "equation": "legendre_hidden_shift/main",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     3
+    ],
+    "ins": [],
+    "left": [
+     0.49879184148698646,
+     0.6254651859744229
+    ],
+    "right": [
+     0.8,
+     -0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "scalar_small_one"
    ]
   },
   {
@@ -4681,49 +4775,14 @@
    "equal_where": {
     "up_to_global_phase": true
    },
-   "skipped": [
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "skipped": []
   },
   {
-   "equation": "magic_state_distillation/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "equation": "magic_square_game/r1c3",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "factor": "exp(2*pi*I/7)"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     0
-    ],
-    "ins": [],
-    "left": [
-     0.013777308340467451,
-     0.017276198218695745
-    ],
-    "right": [
-     0.02209708691207961,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": [
-    "scalar_small_one"
-   ]
-  },
-  {
-   "equation": "magic_state_injection/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
-   "params": {
-    "factor": "exp(2*pi*I/7)"
+    "d_min": 2
    },
    "witness": {
     "n": null,
@@ -4732,73 +4791,104 @@
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
+    "interface": "left [2, 2]->[], right [2]->[]",
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "outputs_not_all": 1
    },
-   "skipped": []
+   "skipped": [
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map"
+   ]
   },
   {
-   "equation": "margolus_gate/main",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on c",
+   "equation": "magic_square_game/r3c1",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "wire": "c",
-    "k": 3,
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[], right [2]->[]",
+    "method": "entry"
+   },
+   "equal_where": {
+    "outputs_not_all": 1
+   },
+   "skipped": [
+    "leg_order",
+    "box_boundary",
+    "state_not_map"
+   ]
+  },
+  {
+   "equation": "magic_square_game/r3c3",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
+   "params": {
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[], right [2]->[]",
+    "method": "entry"
+   },
+   "equal_where": {
+    "outputs_not_all": 1
+   },
+   "skipped": [
+    "box_boundary",
+    "state_not_map"
+   ]
+  },
+  {
+   "equation": "magic_state_distillation/main",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
+   "params": {
     "d_min": 2
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     1,
      1
     ],
-    "ins": [
-     0,
-     1,
-     1
-    ],
+    "ins": [],
     "left": [
-     0.7071067811865469,
-     0.7071067811865467
+     -0.01562499999999968,
+     0.015624999999999695
     ],
     "right": [
-     0.9999999999999997,
-     -2.4492935982947054e-16
+     0.015625000000000003,
+     -0.015625000000000003
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "outputs_not_all": 1
+   },
+   "skipped": [
+    "state_not_map"
+   ]
   },
   {
-   "equation": "mbqc_cnot/main",
-   "kind": "leg_order",
-   "label": "swap last two outputs",
-   "params": {
-    "i": 0,
-    "j": 1
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2]->[2, 2]",
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "mbqc_j_gate/main",
+   "equation": "magic_state_injection/main",
    "kind": "single_entry",
    "label": "phase where every output is 1",
    "params": {
@@ -4817,44 +4907,101 @@
    "equal_where": {
     "outputs_not_all": 1
    },
-   "skipped": [
-    "box_boundary",
-    "state_not_map"
-   ]
+   "skipped": []
   },
   {
-   "equation": "mbqc_wire/main",
-   "kind": "state_not_map",
-   "label": "Z on input q",
+   "equation": "margolus_gate/main",
+   "kind": "wrong_phase",
+   "label": "gate 0 ZPhase",
    "params": {
-    "wire": "q",
-    "role": "inputs",
-    "slot": 0
+    "index": 0
    },
    "witness": {
-    "n": 0,
+    "n": null,
     "d": 2,
     "outs": [
+     0,
+     0,
      1
     ],
     "ins": [
+     0,
+     0,
      1
     ],
     "left": [
-     -1.0,
-     0.0
+     -0.49999999999999906,
+     0.866025403784438
     ],
     "right": [
-     1.0,
-     0.0
+     0.9999999999999997,
+     -2.4492935982947054e-16
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "q"
-   },
+   "equal_where": {},
    "skipped": []
+  },
+  {
+   "equation": "mbqc_cnot/main",
+   "kind": "missing_gate",
+   "label": "drop gate 14 F",
+   "params": {
+    "index": 14
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2]->[2, 2]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "mbqc_j_gate/main",
+   "kind": "extra_gate",
+   "label": "X on a",
+   "params": {
+    "wire": "a"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "mbqc_wire/main",
+   "kind": "off_by_one_n",
+   "label": "n + 1 in the circuit",
+   "params": {},
+   "witness": {
+    "n": 0,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": [
+    "swapped_control_target"
+   ]
   },
   {
    "equation": "mdi_qkd/main",
@@ -4886,15 +5033,30 @@
    },
    "equal_where": {},
    "skipped": [
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase",
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map",
     "single_entry"
    ]
   },
   {
    "equation": "measurement_uncomputation/main",
-   "kind": "wrong_phase",
-   "label": "gate 2 CX",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on b",
    "params": {
-    "index": 2
+    "wire": "b",
+    "k": 3,
+    "d_min": 2
    },
    "witness": {
     "n": null,
@@ -4907,14 +5069,23 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": []
+   "skipped": [
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase"
+   ]
   },
   {
    "equation": "modular_multiplication/main",
-   "kind": "missing_gate",
-   "label": "drop gate 12 X",
+   "kind": "global_phase",
+   "label": "phase 1/7",
    "params": {
-    "index": 12
+    "factor": "exp(2*pi*I/7)"
    },
    "witness": {
     "n": null,
@@ -4932,8 +5103,8 @@
      1
     ],
     "left": [
-     3.2517679528326846e-17,
-     -6.123233995736748e-17
+     0.6234898018587314,
+     0.7818314824680279
     ],
     "right": [
      1.0,
@@ -4942,100 +5113,117 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "multi_controlled_toffoli/main",
-   "kind": "extra_gate",
-   "label": "X on t",
+   "kind": "global_phase",
+   "label": "phase 1/7",
    "params": {
-    "wire": "t",
-    "role": "phase",
-    "slot": 0
+    "factor": "exp(2*pi*I/7)"
    },
    "witness": {
     "n": 2,
     "d": 2,
     "outs": [
+     0,
      1,
-     1,
-     0
+     1
     ],
     "ins": [
-     1,
+     0,
      1,
      1
     ],
     "left": [
-     -3.9531269055757184e-16,
-     -8.523925487295637e-17
+     0.6234898018587327,
+     0.7818314824680289
     ],
     "right": [
-     0.9999999999999996,
-     -6.123233995736762e-17
+     0.9999999999999997,
+     -2.4492935982947054e-16
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "nonlocal_cnot/main",
-   "kind": "swapped_control_target",
-   "label": "gate 3 CX reversed",
+   "kind": "prime_only",
+   "label": "Z Fermat phase on t",
    "params": {
-    "index": 3
+    "wire": "t",
+    "rule": "(k^d - k)/d",
+    "gen": "Z"
    },
    "witness": {
     "n": null,
-    "d": 2,
+    "d": 4,
     "outs": [],
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2]->[2, 2]",
+    "interface": "left [4, 4, 4, 4]->[4, 4, 4, 4], right [4, 4]->[4, 4]",
     "method": "entry"
    },
-   "equal_where": {},
+   "equal_where": {
+    "d_prime": true,
+    "also": [
+     561,
+     1105,
+     1729
+    ]
+   },
    "skipped": []
   },
   {
    "equation": "nonlocal_cz/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on t",
+   "kind": "qubit_only",
+   "label": "antipode on t",
    "params": {
-    "wire": "t",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z"
+    "wire": "t"
    },
    "witness": {
     "n": null,
-    "d": 5,
+    "d": 3,
     "outs": [],
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [5, 5, 5, 5]->[5, 5, 5, 5], right [5, 5]->[5, 5]",
+    "interface": "left [3, 3, 3, 3]->[3, 3, 3, 3], right [3, 3]->[3, 3]",
     "method": "entry"
    },
    "equal_where": {
-    "grid": "oracle"
+    "d_max": 2
    },
-   "skipped": [
-    "off_by_one_n",
-    "wrong_dimension"
-   ]
+   "skipped": []
   },
   {
    "equation": "one_bit_teleportation/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on a",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "wire": "a",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z"
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": null,
@@ -5051,17 +5239,15 @@
     "grid": "oracle"
    },
    "skipped": [
-    "wrong_dimension"
+    "coincident_dims"
    ]
   },
   {
    "equation": "one_time_pad/correctness",
-   "kind": "beyond_oracle",
-   "label": "Z phase on q",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "wire": "q",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z"
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": null,
@@ -5080,207 +5266,66 @@
   },
   {
    "equation": "one_time_pad/secrecy",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
+   "kind": "missing_gate",
+   "label": "drop gate 7 CZ",
    "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
-   },
-   "witness": {
-    "n": null,
-    "d": 5,
-    "outs": [
-     0,
-     0
-    ],
-    "ins": [
-     0,
-     0
-    ],
-    "left": [
-     124.9999999999999,
-     -1.3877787807814413e-15
-    ],
-    "right": [
-     0.2,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "grid": "oracle"
-   },
-   "skipped": [
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims"
-   ]
-  },
-  {
-   "equation": "parity_check/syndrome",
-   "kind": "prime_only",
-   "label": "X Fermat phase on p",
-   "params": {
-    "wire": "p",
-    "rule": "(k^d - k)/d",
-    "gen": "X"
-   },
-   "witness": {
-    "n": 0,
-    "d": 4,
-    "outs": [
-     0
-    ],
-    "ins": [],
-    "left": [
-     4.290891544582347e-18,
-     2.559465532742302e-16
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "d_prime": true,
-    "also": [
-     561,
-     1105,
-     1729
-    ]
-   },
-   "skipped": []
-  },
-  {
-   "equation": "parity_decoding/decoding",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
-   "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
-   },
-   "witness": {
-    "n": 0,
-    "d": 5,
-    "outs": [
-     0
-    ],
-    "ins": [],
-    "left": [
-     24.999999999999993,
-     -4.181930829155127e-32
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "grid": "oracle"
-   },
-   "skipped": [
-    "qubit_only",
-    "coincident_dims"
-   ]
-  },
-  {
-   "equation": "pauli_gadget/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
-   "params": {
-    "factor": "exp(2*pi*I/7)"
+    "index": 7
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
      0,
-     0,
-     0
+     1
     ],
     "ins": [
      0,
-     0,
-     0
+     1
     ],
     "left": [
-     0.5760294666668007,
-     0.7223181045251689
+     0.49999999999999917,
+     9.184850993605132e-17
     ],
     "right": [
-     0.9238795325112861,
-     -4.972901376090257e-17
+     0.0,
+     0.0
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
+   "equal_where": {},
    "skipped": [
-    "coincident_dims",
-    "scalar_small_one"
+    "global_phase",
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map",
+    "single_entry",
+    "wrong_phase"
    ]
   },
   {
-   "equation": "pauli_propagation/x",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
+   "equation": "parity_check/syndrome",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on p",
    "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
+    "wire": "p",
+    "k": 3,
+    "d_min": 2
    },
    "witness": {
-    "n": null,
-    "d": 5,
+    "n": 1,
+    "d": 2,
     "outs": [
      1,
      1
     ],
     "ins": [
-     0,
-     0
+     1
     ],
     "left": [
-     24.999999999999993,
-     -1.153378968395462e-15
-    ],
-    "right": [
-     0.9999999999999997,
-     -9.930136612989089e-17
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "grid": "oracle"
-   },
-   "skipped": []
-  },
-  {
-   "equation": "pauli_propagation/z",
-   "kind": "global_phase",
-   "label": "phase 1/7",
-   "params": {
-    "factor": "exp(2*pi*I/7)"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     0,
-     0
-    ],
-    "ins": [
-     0,
-     0
-    ],
-    "left": [
-     0.6234898018587334,
-     0.7818314824680296
+     0.7071067811865474,
+     0.7071067811865474
     ],
     "right": [
      0.9999999999999998,
@@ -5289,19 +5334,153 @@
     "interface": null,
     "method": "entry"
    },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "parity_decoding/decoding",
+   "kind": "box_boundary",
+   "label": "factor at n = 0",
+   "params": {
+    "factor": "1 + 0^(n - 0)"
+   },
+   "witness": {
+    "n": 0,
+    "d": 2,
+    "outs": [
+     0
+    ],
+    "ins": [],
+    "left": [
+     1.9999999999999993,
+     -5.4793497754670385e-33
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
    "equal_where": {
-    "up_to_global_phase": true
+    "n_gt": 0
+   },
+   "skipped": [
+    "leg_order"
+   ]
+  },
+  {
+   "equation": "pauli_gadget/main",
+   "kind": "state_not_map",
+   "label": "Z on input a",
+   "params": {
+    "wire": "a"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     0,
+     0
+    ],
+    "ins": [
+     1,
+     0,
+     0
+    ],
+    "left": [
+     -0.9238795325112855,
+     -5.1680662653735025e-17
+    ],
+    "right": [
+     0.9238795325112861,
+     -1.052401649921604e-16
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "input_zero": "a"
+   },
+   "skipped": [
+    "box_boundary"
+   ]
+  },
+  {
+   "equation": "pauli_propagation/x",
+   "kind": "state_not_map",
+   "label": "Z on input c",
+   "params": {
+    "wire": "c"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0,
+     0
+    ],
+    "ins": [
+     1,
+     0
+    ],
+    "left": [
+     -0.9999999999999997,
+     -6.123233995736764e-17
+    ],
+    "right": [
+     0.9999999999999996,
+     1.2246467991473525e-16
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "input_zero": "c"
+   },
+   "skipped": []
+  },
+  {
+   "equation": "pauli_propagation/z",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
+   "params": {
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     1
+    ],
+    "ins": [
+     1,
+     0
+    ],
+    "left": [
+     -0.9999999999999998,
+     8.715763992105247e-33
+    ],
+    "right": [
+     0.9999999999999998,
+     -8.715763992105247e-33
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "outputs_not_all": 1
    },
    "skipped": []
   },
   {
    "equation": "peres_gate/main",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on c",
+   "kind": "wrong_phase",
+   "label": "gate 2 ZPhase",
    "params": {
-    "wire": "c",
-    "k": 3,
-    "d_min": 2
+    "index": 2
    },
    "witness": {
     "n": null,
@@ -5317,8 +5496,8 @@
      1
     ],
     "left": [
-     0.7071067811865464,
-     0.7071067811865466
+     0.24999999999999944,
+     0.4330127018922187
     ],
     "right": [
      1.0,
@@ -5332,25 +5511,24 @@
   },
   {
    "equation": "period_finding/main",
-   "kind": "leg_order",
-   "label": "swap last two outputs",
+   "kind": "missing_gate",
+   "label": "drop gate 8 F",
    "params": {
-    "i": 0,
-    "j": 1
+    "index": 8
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     1,
      0,
-     1,
+     0,
+     0,
      0
     ],
     "ins": [],
     "left": [
-     -3.936869429487358e-32,
-     -1.3906825039669524e-63
+     0.24999999999999925,
+     7.654042494670934e-17
     ],
     "right": [
      0.4999999999999999,
@@ -5364,10 +5542,12 @@
   },
   {
    "equation": "phase_estimation/main",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
+   "kind": "extra_gate",
+   "label": "X on u",
    "params": {
-    "d_min": 2
+    "wire": "u",
+    "role": "phase",
+    "slot": 0
    },
    "witness": {
     "n": 1,
@@ -5378,8 +5558,8 @@
     ],
     "ins": [],
     "left": [
-     -0.9999999999999996,
-     2.449293598294705e-16
+     -2.237114317075738e-17,
+     5.479349775467038e-33
     ],
     "right": [
      0.9999999999999998,
@@ -5388,178 +5568,48 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "outputs_not_all": 1
-   },
-   "skipped": [
-    "box_boundary",
-    "state_not_map"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "phase_estimation_digit/main",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
+   "kind": "beyond_oracle",
+   "label": "Z phase on t",
    "params": {
-    "d_min": 2
+    "wire": "t",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "Z"
    },
    "witness": {
     "n": null,
-    "d": 2,
+    "d": 5,
     "outs": [
      1,
      1
     ],
     "ins": [],
     "left": [
-     -0.9999999999999993,
-     3.0616169978683807e-16
+     0.3090169943749468,
+     -0.951056516295153
     ],
     "right": [
-     0.9999999999999998,
-     -1.224646799147353e-16
+     0.9999999999999997,
+     -1.2412670766236363e-16
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "outputs_not_all": 1
+    "grid": "oracle"
    },
    "skipped": [
-    "state_not_map"
+    "swapped_control_target",
+    "off_by_one_n",
+    "wrong_dimension"
    ]
   },
   {
    "equation": "phase_flip_code/encoding",
-   "kind": "wrong_phase",
-   "label": "gate 1 CX",
-   "params": {
-    "index": 1
-   },
-   "witness": {
-    "n": 1,
-    "d": 3,
-    "outs": [
-     0,
-     1
-    ],
-    "ins": [
-     2
-    ],
-    "left": [
-     -0.16666666666666624,
-     0.28867513459481325
-    ],
-    "right": [
-     -0.1666666666666668,
-     -0.28867513459481287
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": [
-    "single_entry"
-   ]
-  },
-  {
-   "equation": "phase_flip_decoding/decoding",
-   "kind": "wrong_phase",
-   "label": "gate 1 CX",
-   "params": {
-    "index": 1
-   },
-   "witness": {
-    "n": 1,
-    "d": 3,
-    "outs": [
-     1,
-     1
-    ],
-    "ins": [
-     1
-    ],
-    "left": [
-     1.0000000000000007,
-     -2.9275417258451535e-15
-    ],
-    "right": [
-     -3.204937810639273e-17,
-     1.2819751242557092e-16
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "phase_kickback/main",
-   "kind": "missing_gate",
-   "label": "drop gate 2 CX",
-   "params": {
-    "index": 2
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     1,
-     0
-    ],
-    "ins": [
-     1
-    ],
-    "left": [
-     0.7071067811865475,
-     -4.329780281177466e-17
-    ],
-    "right": [
-     -0.7071067811865476,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "phase_polynomial_synthesis/main",
-   "kind": "extra_gate",
-   "label": "X on t",
-   "params": {
-    "wire": "t"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     1,
-     1,
-     1
-    ],
-    "ins": [
-     1,
-     1,
-     1
-    ],
-    "left": [
-     2.2760308089134964e-16,
-     1.221176630667726e-16
-    ],
-    "right": [
-     -0.7071067811865476,
-     0.7071067811865476
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "plus_state/main",
    "kind": "off_by_one_n",
    "label": "n + 1 in the circuit",
    "params": {},
@@ -5570,23 +5620,161 @@
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [2]->[], right []->[]",
+    "interface": "left [2, 2]->[2], right [2]->[2]",
     "method": "entry"
    },
    "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "phase_flip_decoding/decoding",
+   "kind": "beyond_oracle",
+   "label": "Z phase on q",
+   "params": {
+    "wire": "q",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "Z"
+   },
+   "witness": {
+    "n": 0,
+    "d": 5,
+    "outs": [
+     2
+    ],
+    "ins": [
+     2
+    ],
+    "left": [
+     -0.8090169943749472,
+     -0.5877852522924727
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "grid": "oracle"
+   },
    "skipped": [
-    "swapped_control_target"
+    "wrong_dimension"
+   ]
+  },
+  {
+   "equation": "phase_kickback/main",
+   "kind": "beyond_oracle",
+   "label": "Z phase on y",
+   "params": {
+    "wire": "y",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "Z"
+   },
+   "witness": {
+    "n": null,
+    "d": 5,
+    "outs": [
+     0,
+     2
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     0.44721359549995787,
+     -8.326672684688674e-17
+    ],
+    "right": [
+     -0.36180339887498947,
+     0.2628655560595668
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": []
+  },
+  {
+   "equation": "phase_polynomial_synthesis/main",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     0,
+     0
+    ],
+    "ins": [
+     1,
+     0,
+     0
+    ],
+    "left": [
+     0.6234898018587329,
+     0.7818314824680292
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
+  },
+  {
+   "equation": "plus_state/main",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
+   "params": {
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
+   },
+   "witness": {
+    "n": 0,
+    "d": 5,
+    "outs": [],
+    "ins": [],
+    "left": [
+     25.0,
+     0.0
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": [
+    "prime_only",
+    "qubit_only",
+    "coincident_dims"
    ]
   },
   {
    "equation": "polynomial_code/main",
    "kind": null,
    "skipped": [
-    "off_by_one_n",
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one",
@@ -5599,7 +5787,12 @@
     "wrong_phase",
     "missing_gate",
     "extra_gate",
-    "swapped_control_target"
+    "swapped_control_target",
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only"
    ],
    "reason": "oracle size"
   },
@@ -5634,38 +5827,29 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
     "coincident_dims",
     "scalar_small_one"
    ]
   },
   {
    "equation": "qft/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on q0",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "wire": "q0",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z",
-    "role": "phase",
-    "slot": 0
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": 1,
     "d": 5,
     "outs": [
-     2
+     0
     ],
     "ins": [
      0
     ],
     "left": [
-     -0.36180339887498947,
-     -0.2628655560595668
+     11.180339887498949,
+     0.0
     ],
     "right": [
      0.4472135954999579,
@@ -5681,88 +5865,6 @@
   },
   {
    "equation": "qft_roundtrip/main",
-   "kind": "prime_only",
-   "label": "Z Fermat phase on q0",
-   "params": {
-    "wire": "q0",
-    "rule": "(k^d - k)/d",
-    "gen": "Z",
-    "role": "phase",
-    "slot": 0
-   },
-   "witness": {
-    "n": 1,
-    "d": 4,
-    "outs": [
-     2
-    ],
-    "ins": [
-     2
-    ],
-    "left": [
-     -1.0,
-     7.34788079488412e-16
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "d_prime": true,
-    "also": [
-     561,
-     1105,
-     1729
-    ]
-   },
-   "skipped": [
-    "beyond_N"
-   ]
-  },
-  {
-   "equation": "qft_zero_state/main",
-   "kind": "prime_only",
-   "label": "Z Fermat phase on q0",
-   "params": {
-    "wire": "q0",
-    "rule": "(k^d - k)/d",
-    "gen": "Z",
-    "role": "phase",
-    "slot": 0
-   },
-   "witness": {
-    "n": 1,
-    "d": 4,
-    "outs": [
-     2
-    ],
-    "ins": [],
-    "left": [
-     -0.49999999999999994,
-     3.061616997868382e-17
-    ],
-    "right": [
-     0.5,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "d_prime": true,
-    "also": [
-     561,
-     1105,
-     1729
-    ]
-   },
-   "skipped": []
-  },
-  {
-   "equation": "qram/main",
    "kind": "global_phase",
    "label": "phase 1/7",
    "params": {
@@ -5772,20 +5874,85 @@
     "n": 1,
     "d": 2,
     "outs": [
-     1,
-     1,
+     0
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     0.6234898018587333,
+     0.7818314824680295
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": []
+  },
+  {
+   "equation": "qft_zero_state/main",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on q0",
+   "params": {
+    "wire": "q0",
+    "k": 3,
+    "d_min": 2,
+    "role": "phase",
+    "slot": 0
+   },
+   "witness": {
+    "n": 1,
+    "d": 2,
+    "outs": [
+     1
+    ],
+    "ins": [],
+    "left": [
+     0.5,
+     0.5
+    ],
+    "right": [
+     0.7071067811865476,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "qram/main",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
+   "params": {
+    "i": 2,
+    "j": 3
+   },
+   "witness": {
+    "n": 1,
+    "d": 2,
+    "outs": [
+     0,
+     0,
      0,
      1
     ],
     "ins": [
-     1,
-     1,
+     0,
+     0,
      0,
      1
     ],
     "left": [
-     0.6234898018587304,
-     0.7818314824680271
+     -4.991475333540646e-32,
+     7.128024630155573e-34
     ],
     "right": [
      0.9999999999999997,
@@ -5794,22 +5961,15 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": [
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "quantum_counting/main",
-   "kind": "leg_order",
-   "label": "swap last two outputs",
+   "kind": "wrong_phase",
+   "label": "gate 6 Z",
    "params": {
-    "i": 0,
-    "j": 1
+    "index": 6
    },
    "witness": {
     "n": null,
@@ -5822,8 +5982,8 @@
     ],
     "ins": [],
     "left": [
-     -2.2496396739927757e-32,
-     1.7907591168935964e-47
+     -3.936869429487355e-32,
+     1.0927007713899425e-48
     ],
     "right": [
      0.4999999999999999,
@@ -5834,18 +5994,17 @@
    },
    "equal_where": {},
    "skipped": [
-    "coincident_dims",
-    "scalar_small_one",
-    "global_phase",
-    "tiny_phase"
+    "box_boundary",
+    "state_not_map",
+    "single_entry"
    ]
   },
   {
    "equation": "quantum_hamming_code/encoding",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "missing_gate",
+   "label": "drop gate 50 F",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "index": 50
    },
    "witness": {
     "n": null,
@@ -5877,8 +6036,8 @@
      0
     ],
     "left": [
-     0.15587245046468085,
-     0.19545787061700437
+     0.35355339059326824,
+     6.494670421766095e-17
     ],
     "right": [
      0.2499999999999977,
@@ -5887,59 +6046,57 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
+   "equal_where": {},
    "skipped": [
-    "scalar_small_one"
+    "state_not_map",
+    "single_entry",
+    "wrong_phase"
    ]
   },
   {
    "equation": "quantum_hamming_family/encoding",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "d_min": 2
    },
    "witness": {
     "n": 3,
     "d": 2,
     "outs": [
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
     ],
     "ins": [
-     0
+     1
     ],
     "left": [
-     0.2204369334474829,
-     0.2764191714991367
+     -0.3535533905932726,
+     -1.0824450702943628e-16
     ],
     "right": [
      0.35355339059327306,
-     -3.1208240925216295e-65
+     1.7319121124709829e-16
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "outputs_not_all": 1
    },
    "skipped": []
   },
   {
    "equation": "quantum_walk_hypercube/main",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on q",
+   "kind": "wrong_phase",
+   "label": "gate 2 ZPhase",
    "params": {
-    "wire": "q",
-    "k": 3,
-    "d_min": 2
+    "index": 2
    },
    "witness": {
     "n": 1,
@@ -5949,8 +6106,8 @@
     ],
     "ins": [],
     "left": [
-     0.7071067811865474,
-     -0.7071067811865475
+     0.43301270189221913,
+     -0.25000000000000006
     ],
     "right": [
      -6.123233995736766e-17,
@@ -5964,15 +6121,13 @@
   },
   {
    "equation": "qubitization_chebyshev/main",
-   "kind": "state_not_map",
-   "label": "Z on input s",
+   "kind": "missing_gate",
+   "label": "drop gate 7 Z",
    "params": {
-    "wire": "s",
-    "role": "inputs",
-    "slot": 0
+    "index": 7
    },
    "witness": {
-    "n": 1,
+    "n": 3,
     "d": 2,
     "outs": [
      0
@@ -5981,30 +6136,25 @@
      1
     ],
     "left": [
-     -0.49999999999999944,
-     -9.184850993605139e-17
+     0.49999999999999856,
+     -2.755455298081536e-16
     ],
     "right": [
-     0.5,
+     -0.5,
      0.0
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "s"
-   },
-   "skipped": [
-    "leg_order",
-    "box_boundary"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "qudit_four_code/encoding",
-   "kind": "state_not_map",
-   "label": "Z on input q0",
+   "kind": "extra_gate",
+   "label": "X on q3",
    "params": {
-    "wire": "q0"
+    "wire": "q3"
    },
    "witness": {
     "n": null,
@@ -6012,37 +6162,33 @@
     "outs": [
      0,
      0,
-     1,
-     1
+     0,
+     0
     ],
     "ins": [
-     1,
+     0,
      0
     ],
     "left": [
-     -0.7071067811865459,
-     1.298934084353237e-16
+     -1.581878703893763e-17,
+     -9.686213456814305e-34
     ],
     "right": [
      0.7071067811865464,
-     -8.659560562354919e-17
+     2.4304563379357897e-33
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "q0"
-   },
-   "skipped": [
-    "box_boundary"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "qudit_swap/main",
-   "kind": "state_not_map",
-   "label": "Z on input a",
+   "kind": "swapped_control_target",
+   "label": "gate 0 CX reversed",
    "params": {
-    "wire": "a"
+    "index": 0
    },
    "witness": {
     "n": null,
@@ -6056,8 +6202,8 @@
      0
     ],
     "left": [
-     -0.999999999999999,
-     5.354792940735236e-33
+     -2.2371143170757354e-17,
+     6.12323399573676e-17
     ],
     "right": [
      1.0,
@@ -6066,66 +6212,73 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "a"
-   },
+   "equal_where": {},
    "skipped": []
   },
   {
    "equation": "qudit_toric_code/encoding",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
+   "kind": "beyond_oracle",
+   "label": "X phase on q7",
    "params": {
-    "d_min": 2
+    "wire": "q7",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "X"
    },
    "witness": {
     "n": null,
-    "d": 2,
+    "d": 5,
     "outs": [
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
     ],
     "ins": [
      0,
      0
     ],
     "left": [
-     -0.35355339059327207,
-     2.381379154647595e-16
+     3.6609293564096635e-17,
+     -1.3438075625845207e-17
     ],
     "right": [
-     0.3535533905932727,
-     -1.7319121124709811e-16
+     0.08944271909999135,
+     1.5801268160241037e-33
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "outputs_not_all": 1
+    "grid": "oracle"
    },
-   "skipped": []
+   "skipped": [
+    "off_by_one_n",
+    "wrong_dimension"
+   ]
   },
   {
    "equation": "qudit_toric_family/encoding",
-   "kind": "wrong_phase",
-   "label": "gate 6 CX",
+   "kind": "beyond_oracle",
+   "label": "X phase on q7",
    "params": {
-    "index": 6
+    "wire": "q7",
+    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
+    "gen": "X",
+    "role": "phase",
+    "slot": 0
    },
    "witness": {
     "n": 2,
-    "d": 3,
+    "d": 5,
     "outs": [
      0,
-     1,
      0,
-     2,
+     0,
+     0,
      0,
      0,
      0,
@@ -6133,60 +6286,73 @@
     ],
     "ins": [
      0,
-     1
+     0
     ],
     "left": [
-     0.19245008972987665,
-     7.338265628714682e-17
+     3.6609293564096635e-17,
+     -1.3438075625845207e-17
     ],
     "right": [
-     4.3702579559695216e-18,
-     3.11091322992267e-17
+     0.08944271909999135,
+     1.5801268160241037e-33
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": [
+    "wrong_dimension"
+   ]
   },
   {
    "equation": "qutrit_code/encoding",
-   "kind": "missing_gate",
-   "label": "drop gate 6 CX",
+   "kind": "global_phase",
+   "label": "phase 1/7",
    "params": {
-    "index": 6
+    "factor": "exp(2*pi*I/7)"
    },
    "witness": {
     "n": null,
     "d": 3,
     "outs": [
-     1,
-     1,
+     0,
+     0,
      0
     ],
     "ins": [
      0
     ],
     "left": [
-     0.5773502691896266,
-     -1.8048352047920555e-16
+     0.359972004940127,
+     0.4513906168638424
     ],
     "right": [
-     -2.2943425389098643e-17,
-     -8.508150131376103e-17
+     0.5773502691896265,
+     -3.9551513979461295e-48
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "random_access_code/main",
-   "kind": "swapped_control_target",
-   "label": "gate 13 CX reversed",
+   "kind": "wrong_phase",
+   "label": "gate 9 ZPhase",
    "params": {
-    "index": 13
+    "index": 9
    },
    "witness": {
     "n": null,
@@ -6197,8 +6363,8 @@
     ],
     "ins": [],
     "left": [
-     0.4999999999999982,
-     6.814968365820079e-17
+     0.017037086855465768,
+     -2.4801772489206317e-17
     ],
     "right": [
      0.8535533905932737,
@@ -6209,27 +6375,46 @@
    },
    "equal_where": {},
    "skipped": [
-    "extra_gate"
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase",
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map",
+    "single_entry"
    ]
   },
   {
    "equation": "randomized_compiling/main",
-   "kind": "swapped_control_target",
-   "label": "gate 13 CX reversed",
+   "kind": "prime_only",
+   "label": "Z Fermat phase on t",
    "params": {
-    "index": 13
+    "wire": "t",
+    "rule": "(k^d - k)/d",
+    "gen": "Z"
    },
    "witness": {
     "n": null,
-    "d": 2,
+    "d": 4,
     "outs": [],
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2]->[2, 2]",
+    "interface": "left [4, 4, 4, 4]->[4, 4, 4, 4], right [4, 4]->[4, 4]",
     "method": "entry"
    },
-   "equal_where": {},
+   "equal_where": {
+    "d_prime": true,
+    "also": [
+     561,
+     1105,
+     1729
+    ]
+   },
    "skipped": []
   },
   {
@@ -6277,11 +6462,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "off_by_one_n",
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
     "qubit_only",
     "coincident_dims",
     "scalar_small_one"
@@ -6332,23 +6512,16 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
     "coincident_dims",
     "scalar_small_one"
    ]
   },
   {
    "equation": "remote_state_preparation/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on b",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "wire": "b",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z"
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": null,
@@ -6367,44 +6540,84 @@
   },
   {
    "equation": "repeater_chain/main",
-   "kind": "beyond_N",
-   "label": "X on output -1 beyond N",
+   "kind": "global_phase",
+   "label": "phase 1/7",
    "params": {
-    "index": -1,
-    "N": 32
+    "factor": "exp(2*pi*I/7)"
    },
    "witness": {
-    "n": 33,
+    "n": 0,
     "d": 2,
-    "outs": [],
+    "outs": [
+     0,
+     0
+    ],
     "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2, 2, 2]->[], right [2, 2]->[]",
+    "left": [
+     0.4408738668949671,
+     0.5528383429982748
+    ],
+    "right": [
+     0.7071067811865476,
+     0.0
+    ],
+    "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "n_max": 32
+    "up_to_global_phase": true
    },
    "skipped": []
   },
   {
    "equation": "repetition_code/encoding",
-   "kind": "prime_only",
-   "label": "Z Fermat phase on q",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on q",
    "params": {
     "wire": "q",
-    "rule": "(k^d - k)/d",
-    "gen": "Z"
+    "k": 3,
+    "d_min": 2
    },
    "witness": {
     "n": 0,
-    "d": 4,
+    "d": 2,
     "outs": [
-     2
+     1
     ],
     "ins": [
-     2
+     1
+    ],
+    "left": [
+     0.7071067811865476,
+     0.7071067811865476
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "repetition_code/syndrome",
+   "kind": "state_not_map",
+   "label": "Z on input x0",
+   "params": {
+    "wire": "x0",
+    "role": "inputs",
+    "slot": 0
+   },
+   "witness": {
+    "n": 0,
+    "d": 2,
+    "outs": [
+     1
+    ],
+    "ins": [
+     1
     ],
     "left": [
      -1.0,
@@ -6418,195 +6631,159 @@
     "method": "entry"
    },
    "equal_where": {
-    "d_prime": true,
-    "also": [
-     561,
-     1105,
-     1729
-    ]
+    "input_zero": "x0"
+   },
+   "skipped": [
+    "leg_order",
+    "box_boundary"
+   ]
+  },
+  {
+   "equation": "repetition_decoding/decoding",
+   "kind": "box_boundary",
+   "label": "factor at n = 0",
+   "params": {
+    "factor": "1 + 0^(n - 0)"
+   },
+   "witness": {
+    "n": 0,
+    "d": 2,
+    "outs": [
+     0
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     2.0,
+     0.0
+    ],
+    "right": [
+     1.0,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "n_gt": 0
    },
    "skipped": []
   },
   {
-   "equation": "repetition_code/syndrome",
-   "kind": "qubit_only",
-   "label": "antipode on x0",
+   "equation": "repetition_error_syndrome/main",
+   "kind": "state_not_map",
+   "label": "Z on input x0",
    "params": {
     "wire": "x0",
-    "role": "phase",
+    "role": "inputs",
     "slot": 0
    },
    "witness": {
     "n": 0,
-    "d": 3,
+    "d": 2,
     "outs": [
-     2
-    ],
-    "ins": [
-     2
-    ],
-    "left": [
-     -1.6653345369377348e-16,
-     4.2691399988700755e-16
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "d_max": 2
-   },
-   "skipped": []
-  },
-  {
-   "equation": "repetition_decoding/decoding",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
-   "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
-   },
-   "witness": {
-    "n": 0,
-    "d": 5,
-    "outs": [
-     0
-    ],
-    "ins": [
-     0
-    ],
-    "left": [
-     25.0,
-     0.0
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "grid": "oracle"
-   },
-   "skipped": [
-    "coincident_dims"
-   ]
-  },
-  {
-   "equation": "repetition_error_syndrome/main",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
-   "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
-   },
-   "witness": {
-    "n": 0,
-    "d": 5,
-    "outs": [
-     0,
      1,
-     4
+     0,
+     1
     ],
     "ins": [
-     0
+     1
     ],
     "left": [
-     24.999999999999975,
-     -5.572893620855274e-15
+     -0.9999999999999988,
+     -6.123233995736756e-17
     ],
     "right": [
-     0.9999999999999997,
-     -1.613647199610727e-16
+     0.9999999999999998,
+     4.880546742363662e-33
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "grid": "oracle"
+    "input_zero": "x0"
    },
    "skipped": []
   },
   {
    "equation": "ring_cluster_state/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "d_min": 2
    },
    "witness": {
     "n": 3,
     "d": 2,
     "outs": [
-     0,
-     0,
-     0
+     1,
+     1,
+     1
     ],
     "ins": [],
     "left": [
-     0.22043693344748347,
-     0.2764191714991375
+     0.3535533905932735,
+     -1.9484011265298582e-16
     ],
     "right": [
-     0.3535533905932737,
-     0.0
+     -0.3535533905932737,
+     1.2989340843532396e-16
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "outputs_not_all": 1
    },
    "skipped": []
   },
   {
    "equation": "rotated_surface_code/encoding",
-   "kind": "tiny_phase",
-   "label": "1/d^3 on q8",
+   "kind": "missing_gate",
+   "label": "drop gate 23 CX",
    "params": {
-    "wire": "q8",
-    "k": 3,
-    "d_min": 2
+    "index": 23
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     1,
-     1,
-     1,
      0,
      0,
+     0,
+     0,
+     0,
+     0,
+     0,
      1,
-     0,
-     0,
      1
     ],
     "ins": [
-     1
+     0
     ],
     "left": [
-     0.17677669529663612,
-     0.17677669529663628
+     8.129419882081693e-18,
+     1.530808498934186e-17
     ],
     "right": [
      0.2499999999999995,
-     -8.402427628425e-34
+     -3.517639233210116e-33
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": []
+   "skipped": [
+    "wrong_phase"
+   ]
   },
   {
    "equation": "rotated_surface_code/correction",
-   "kind": "state_not_map",
-   "label": "Z on input q8",
+   "kind": "missing_gate",
+   "label": "drop gate 121 CX",
    "params": {
-    "wire": "q8"
+    "index": 121
    },
    "witness": {
     "n": null,
@@ -6634,8 +6811,8 @@
      1
     ],
     "left": [
-     -0.9999999999999778,
-     2.204364238465187e-15
+     1.0145548499425651e-16,
+     2.755455298081483e-16
     ],
     "right": [
      0.9999999999999982,
@@ -6644,57 +6821,36 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "q8"
-   },
-   "skipped": [
-    "leg_order",
-    "box_boundary"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "semiclassical_qft/main",
-   "kind": "missing_gate",
-   "label": "drop gate 0 F",
-   "params": {
-    "index": 0
-   },
+   "kind": "off_by_one_n",
+   "label": "n + 1 in the circuit",
+   "params": {},
    "witness": {
     "n": 1,
     "d": 2,
-    "outs": [
-     0,
-     0
-    ],
-    "ins": [
-     0,
-     0
-    ],
-    "left": [
-     1.0,
-     0.0
-    ],
-    "right": [
-     0.4999999999999995,
-     1.5308084989341898e-16
-    ],
-    "interface": null,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2, 2, 2]->[2, 2, 2, 2], right [2, 2]->[2, 2]",
     "method": "entry"
    },
    "equal_where": {},
    "skipped": [
-    "box_boundary",
-    "state_not_map",
-    "single_entry",
-    "wrong_phase"
+    "extra_gate",
+    "swapped_control_target"
    ]
   },
   {
    "equation": "shor_code/encoding",
-   "kind": "state_not_map",
-   "label": "Z on input q0",
+   "kind": "swapped_control_target",
+   "label": "gate 8 CX reversed",
    "params": {
-    "wire": "q0"
+    "index": 8
    },
    "witness": {
     "n": null,
@@ -6703,9 +6859,9 @@
      0,
      0,
      0,
-     0,
-     0,
-     0,
+     1,
+     1,
+     1,
      0,
      0,
      0
@@ -6714,27 +6870,26 @@
      1
     ],
     "left": [
-     -0.3535533905932728,
-     -8.184564474521989e-33
+     0.3535533905932728,
+     -4.329780281177454e-17
     ],
     "right": [
-     0.3535533905932736,
-     2.1648901405887323e-17
+     -0.3535533905932736,
+     6.494670421766197e-17
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "input_zero": "q0"
-   },
+   "equal_where": {},
    "skipped": []
   },
   {
    "equation": "shor_factoring/main",
-   "kind": "wrong_phase",
-   "label": "gate 10 X",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
    "params": {
-    "index": 10
+    "i": 1,
+    "j": 2
    },
    "witness": {
     "n": null,
@@ -6749,8 +6904,8 @@
     ],
     "ins": [],
     "left": [
-     6.938893903907238e-18,
-     -5.9285372918396784e-33
+     -1.968434714743628e-32,
+     -3.59134606324926e-47
     ],
     "right": [
      0.24999999999999994,
@@ -6761,46 +6916,62 @@
    },
    "equal_where": {},
    "skipped": [
-    "single_entry"
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase",
+    "tiny_phase"
    ]
   },
   {
    "equation": "simon/main",
-   "kind": "missing_gate",
-   "label": "drop gate 2 F",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "index": 2
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": 1,
-    "d": 2,
+    "d": 5,
     "outs": [
      0,
      0
     ],
     "ins": [],
     "left": [
-     0.4999999999999997,
-     9.184850993605142e-17
+     624.9999999999998,
+     7.751718495994048e-30
     ],
     "right": [
-     0.9999999999999998,
+     1.0000000000000002,
      0.0
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
+   "equal_where": {
+    "grid": "oracle"
+   },
    "skipped": [
-    "wrong_phase"
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims"
    ]
   },
   {
    "equation": "six_state_qkd/main",
-   "kind": "missing_gate",
-   "label": "drop gate 32 F",
+   "kind": "wrong_phase",
+   "label": "gate 12 ZPhase",
    "params": {
-    "index": 32
+    "index": 12
    },
    "witness": {
     "n": null,
@@ -6813,8 +6984,8 @@
     ],
     "ins": [],
     "left": [
-     0.24999999999999825,
-     -5.181040781584063e-16
+     0.12499999999999903,
+     -2.1279274638648832e-16
     ],
     "right": [
      0.5,
@@ -6824,111 +6995,119 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": []
+   "skipped": [
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase",
+    "tiny_phase",
+    "leg_order",
+    "box_boundary",
+    "state_not_map",
+    "single_entry"
+   ]
   },
   {
    "equation": "sleator_weinfurter_toffoli/main",
-   "kind": "extra_gate",
-   "label": "X on c",
+   "kind": "global_phase",
+   "label": "phase 1/7",
    "params": {
-    "wire": "c"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     0,
-     0,
-     1
-    ],
-    "ins": [
-     0,
-     0,
-     1
-    ],
-    "left": [
-     -1.6653345369377397e-16,
-     4.747338203594756e-16
-    ],
-    "right": [
-     0.9999999999999997,
-     -2.4492935982947054e-16
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "sqrt_swap/main",
-   "kind": "swapped_control_target",
-   "label": "gate 0 CX reversed",
-   "params": {
-    "index": 0
+    "factor": "exp(2*pi*I/7)"
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
      1,
-     0
-    ],
-    "ins": [
-     0,
+     1,
      1
     ],
+    "ins": [
+     1,
+     1,
+     0
+    ],
     "left": [
-     0.4999999999999994,
-     0.4999999999999997
+     0.623489801858732,
+     0.7818314824680286
     ],
     "right": [
-     0.4999999999999991,
-     -0.49999999999999933
+     0.9999999999999997,
+     -1.836970198721029e-16
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {},
-   "skipped": []
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
+  },
+  {
+   "equation": "sqrt_swap/main",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     1
+    ],
+    "ins": [
+     1,
+     1
+    ],
+    "left": [
+     0.6234898018587328,
+     0.7818314824680289
+    ],
+    "right": [
+     0.9999999999999984,
+     -2.7755575615628914e-16
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "star_graph_ghz/main",
-   "kind": "off_by_one_n",
-   "label": "n + 1 in the circuit",
-   "params": {},
-   "witness": {
-    "n": 0,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2]->[], right [2]->[]",
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "star_graph_state/main",
-   "kind": "beyond_oracle",
-   "label": "Z phase on c",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
    "params": {
-    "wire": "c",
-    "rule": "k*(d-1)*(d-2)*(d-3)*(d-4)/d",
-    "gen": "Z"
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
    },
    "witness": {
     "n": 0,
     "d": 5,
     "outs": [
-     3
+     0
     ],
     "ins": [],
     "left": [
-     -0.36180339887498947,
-     0.26286555605956674
+     11.180339887498949,
+     0.0
     ],
     "right": [
      0.4472135954999579,
@@ -6941,7 +7120,40 @@
     "grid": "oracle"
    },
    "skipped": [
-    "wrong_dimension"
+    "qubit_only",
+    "coincident_dims"
+   ]
+  },
+  {
+   "equation": "star_graph_state/main",
+   "kind": "scalar_small_one",
+   "label": "d scalar",
+   "params": {
+    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
+   },
+   "witness": {
+    "n": 0,
+    "d": 5,
+    "outs": [
+     0
+    ],
+    "ins": [],
+    "left": [
+     11.180339887498949,
+     0.0
+    ],
+    "right": [
+     0.4472135954999579,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": [
+    "coincident_dims"
    ]
   },
   {
@@ -6981,11 +7193,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
     "scalar_small_one"
    ]
   },
@@ -7031,20 +7238,16 @@
    "equal_where": {
     "up_to_global_phase": true
    },
-   "skipped": [
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "skipped": []
   },
   {
    "equation": "steane_code/transversal_h",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on q6",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "wire": "q6",
+    "k": 3,
+    "d_min": 2
    },
    "witness": {
     "n": null,
@@ -7062,8 +7265,8 @@
      1
     ],
     "left": [
-     -0.15587245046468262,
-     -0.19545787061700665
+     -0.17677669529663612,
+     -0.1767766952966362
     ],
     "right": [
      -0.24999999999999956,
@@ -7072,31 +7275,25 @@
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": [
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "superdense_coding/main",
-   "kind": "qubit_only",
-   "label": "antipode on q",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
    "params": {
-    "wire": "q"
+    "i": 0,
+    "j": 1
    },
    "witness": {
     "n": null,
-    "d": 3,
+    "d": 2,
     "outs": [
      0,
-     2,
+     1,
      0,
-     2
+     1
     ],
     "ins": [
      0,
@@ -7105,35 +7302,33 @@
      1
     ],
     "left": [
-     1.000000000000005,
-     -7.965678176888785e-15
+     -3.749399456654628e-33,
+     -1.3106799163554716e-47
     ],
     "right": [
-     0.0,
+     1.0,
      0.0
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "d_max": 2
-   },
+   "equal_where": {},
    "skipped": []
   },
   {
    "equation": "superdense_register/main",
-   "kind": "scalar_small_one",
-   "label": "d scalar",
+   "kind": "box_boundary",
+   "label": "factor at n = 0",
    "params": {
-    "factor": "1 + (d-1)*(d-2)*(d-3)*(d-4)"
+    "factor": "1 + 0^(n - 0)"
    },
    "witness": {
     "n": 0,
-    "d": 5,
+    "d": 2,
     "outs": [],
     "ins": [],
     "left": [
-     25.0,
+     2.0,
      0.0
     ],
     "right": [
@@ -7144,18 +7339,18 @@
     "method": "entry"
    },
    "equal_where": {
-    "grid": "oracle"
+    "n_gt": 0
    },
-   "skipped": [
-    "coincident_dims"
-   ]
+   "skipped": []
   },
   {
    "equation": "surface_code_family/encoding",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "state_not_map",
+   "label": "Z on input q8",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "wire": "q8",
+    "role": "inputs",
+    "slot": 0
    },
    "witness": {
     "n": 3,
@@ -7163,56 +7358,54 @@
     "outs": [
      0,
      0,
+     1,
      0,
      0,
+     1,
      0,
      0,
-     0,
-     0,
-     0
+     1
     ],
     "ins": [
-     0
+     1
     ],
     "left": [
-     0.15587245046468282,
-     0.19545787061700684
+     -0.24999999999999917,
+     -9.184850993605116e-17
     ],
     "right": [
      0.24999999999999947,
-     -1.9911336075032426e-33
+     9.184850993605129e-17
     ],
     "interface": null,
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "input_zero": "q8"
    },
-   "skipped": [
-    "scalar_small_one"
-   ]
+   "skipped": []
   },
   {
    "equation": "swap_from_cz/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "d_min": 2
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     0
+     1,
+     1
     ],
     "ins": [
-     0,
-     0
+     1,
+     1
     ],
     "left": [
-     0.6234898018587325,
-     0.7818314824680285
+     -0.9999999999999984,
+     7.347880794884108e-16
     ],
     "right": [
      1.0,
@@ -7222,7 +7415,7 @@
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "outputs_not_all": 1
    },
    "skipped": []
   },
@@ -7253,13 +7446,7 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "tiny_phase",
-    "leg_order",
-    "box_boundary",
-    "state_not_map",
-    "single_entry"
-   ]
+   "skipped": []
   },
   {
    "equation": "swap_test_register/main",
@@ -7288,117 +7475,32 @@
     "method": "entry"
    },
    "equal_where": {},
-   "skipped": [
-    "leg_order",
-    "box_boundary",
-    "state_not_map",
-    "single_entry",
-    "wrong_phase"
-   ]
+   "skipped": []
   },
   {
-   "equation": "teleportation/main",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
+   "equation": "szegedy_walk/main",
+   "kind": "extra_gate",
+   "label": "X on y",
    "params": {
-    "d_min": 2
+    "wire": "y"
    },
    "witness": {
     "n": null,
     "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
-    "method": "entry"
-   },
-   "equal_where": {
-    "outputs_not_all": 1
-   },
-   "skipped": [
-    "box_boundary",
-    "state_not_map"
-   ]
-  },
-  {
-   "equation": "teleportation_chain/main",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
-   "params": {
-    "d_min": 2
-   },
-   "witness": {
-    "n": 0,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
-    "method": "entry"
-   },
-   "equal_where": {
-    "outputs_not_all": 1
-   },
-   "skipped": [
-    "state_not_map"
-   ]
-  },
-  {
-   "equation": "teleportation_register/main",
-   "kind": "wrong_phase",
-   "label": "gate 3 CX",
-   "params": {
-    "index": 3
-   },
-   "witness": {
-    "n": 1,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [],
-    "right": [],
-    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": [
-    "single_entry"
-   ]
-  },
-  {
-   "equation": "tesseract_code/encoding",
-   "kind": null,
-   "skipped": [],
-   "reason": "time budget"
-  },
-  {
-   "equation": "threshold_secret_sharing/main",
-   "kind": "missing_gate",
-   "label": "drop gate 9 CX",
-   "params": {
-    "index": 9
-   },
-   "witness": {
-    "n": null,
-    "d": 3,
     "outs": [
-     1,
-     1,
      0,
      0
     ],
     "ins": [
-     1,
-     0
+     0,
+     1
     ],
     "left": [
-     0.3333333333333354,
-     3.3523722581799685e-16
+     -1.9373978297574595e-17,
+     9.244463733058732e-33
     ],
     "right": [
-     0.0,
+     0.8660254037844386,
      0.0
     ],
     "interface": null,
@@ -7408,41 +7510,7 @@
    "skipped": []
   },
   {
-   "equation": "toffoli_decomposition/main",
-   "kind": "extra_gate",
-   "label": "X on c",
-   "params": {
-    "wire": "c"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     1,
-     1,
-     0
-    ],
-    "ins": [
-     1,
-     1,
-     1
-    ],
-    "left": [
-     -3.9531269055757184e-16,
-     -8.523925487295637e-17
-    ],
-    "right": [
-     0.9999999999999998,
-     -6.123233995736765e-17
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": []
-  },
-  {
-   "equation": "toffoli_temporary_and/main",
+   "equation": "teleportation/main",
    "kind": "swapped_control_target",
    "label": "gate 3 CX reversed",
    "params": {
@@ -7455,11 +7523,225 @@
     "ins": [],
     "left": [],
     "right": [],
-    "interface": "left [2, 2, 2, 2, 2, 2]->[2, 2, 2, 2, 2, 2], right [2, 2, 2]->[2, 2, 2]",
+    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
     "method": "entry"
    },
    "equal_where": {},
    "skipped": []
+  },
+  {
+   "equation": "teleportation_chain/main",
+   "kind": "off_by_one_n",
+   "label": "n + 1 in the circuit",
+   "params": {},
+   "witness": {
+    "n": 0,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[2, 2], right [2]->[2]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "teleportation_register/main",
+   "kind": "beyond_oracle",
+   "label": "Z n-phase on b",
+   "params": {
+    "wire": "b",
+    "rule": "k*n*(n-1)*(n-2)*(n-3)/(24*d)",
+    "gen": "Z"
+   },
+   "witness": {
+    "n": 4,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2, 2, 2, 2, 2, 2, 2]->[2, 2, 2, 2, 2, 2, 2, 2], right [2, 2, 2, 2]->[2, 2, 2, 2]",
+    "method": "entry"
+   },
+   "equal_where": {
+    "grid": "oracle"
+   },
+   "skipped": [
+    "wrong_dimension"
+   ]
+  },
+  {
+   "equation": "tesseract_code/encoding",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ins": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "left": [
+     0.1102184667237398,
+     0.13820958574956632
+    ],
+    "right": [
+     0.1767766952966369,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
+  },
+  {
+   "equation": "threshold_secret_sharing/main",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on q2",
+   "params": {
+    "wire": "q2",
+    "k": 3,
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 3,
+    "outs": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "ins": [
+     0,
+     1
+    ],
+    "left": [
+     0.324348290193276,
+     -0.0768719569141481
+    ],
+    "right": [
+     0.3333333333333333,
+     0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": [
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase"
+   ]
+  },
+  {
+   "equation": "toffoli_decomposition/main",
+   "kind": "global_phase",
+   "label": "phase 1/7",
+   "params": {
+    "factor": "exp(2*pi*I/7)"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0,
+     1,
+     1
+    ],
+    "ins": [
+     0,
+     1,
+     1
+    ],
+    "left": [
+     0.6234898018587327,
+     0.7818314824680289
+    ],
+    "right": [
+     0.9999999999999998,
+     -1.224646799147353e-16
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {
+    "up_to_global_phase": true
+   },
+   "skipped": [
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
+  },
+  {
+   "equation": "toffoli_temporary_and/main",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on c",
+   "params": {
+    "wire": "c",
+    "k": 3,
+    "d_min": 2
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2, 2, 2, 2, 2]->[2, 2, 2, 2, 2, 2], right [2, 2, 2]->[2, 2, 2]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": [
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase"
+   ]
   },
   {
    "equation": "toric_code/encoding",
@@ -7500,12 +7782,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "off_by_one_n",
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
     "coincident_dims",
     "scalar_small_one"
    ]
@@ -7566,12 +7842,6 @@
     "up_to_global_phase": true
    },
    "skipped": [
-    "wrong_dimension",
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
     "scalar_small_one"
    ]
   },
@@ -7613,127 +7883,108 @@
    "equal_where": {
     "up_to_global_phase": true
    },
-   "skipped": [
-    "beyond_oracle",
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "skipped": []
   },
   {
    "equation": "transversal_cnot/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on b6",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "wire": "b6",
+    "k": 3,
+    "d_min": 2
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     1,
-     1,
-     1,
+     0,
      1,
      1,
      1,
      1,
      0,
      0,
+     1,
      0,
      0,
      0,
      0,
-     0
-    ],
-    "ins": [
      1,
      1
     ],
+    "ins": [
+     0,
+     1
+    ],
     "left": [
-     0.07793622523234088,
-     0.09772893530850299
+     0.08838834764831759,
+     0.08838834764831782
     ],
     "right": [
      0.1249999999999995,
-     4.592425496802555e-17
+     3.061616997868371e-17
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": [
-    "beyond_N",
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "trotter_ising/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "leg_order",
+   "label": "swap last two outputs",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "i": 0,
+    "j": 1
    },
    "witness": {
     "n": 2,
     "d": 2,
     "outs": [
-     1,
-     0
+     0,
+     1
     ],
     "ins": [
      1,
      0
     ],
     "left": [
-     0.23629388941330295,
-     0.8201942382260476
+     0.7885805074747371,
+     0.3266407412190941
     ],
     "right": [
-     0.7885805074747367,
-     0.32664074121909353
+     -0.1352990250365491,
+     -0.0560426911459955
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": [
-    "prime_only",
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
-   ]
+   "equal_where": {},
+   "skipped": []
   },
   {
    "equation": "universal_cloner/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "state_not_map",
+   "label": "Z on input a",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "wire": "a"
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     0,
-     0
+     1,
+     1,
+     1
     ],
     "ins": [
-     0
+     1
     ],
     "left": [
-     0.44087386689496605,
-     0.5528383429982736
+     -0.7071067811865456,
+     -5.887846720064157e-17
     ],
     "right": [
      0.707106781186547,
@@ -7743,56 +7994,52 @@
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "input_zero": "a"
    },
    "skipped": [
-    "qubit_only",
-    "coincident_dims",
-    "scalar_small_one"
+    "box_boundary"
    ]
   },
   {
    "equation": "vqe_ucc/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "wrong_phase",
+   "label": "gate 12 ZPhase",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "index": 12
    },
    "witness": {
     "n": null,
     "d": 2,
     "outs": [
-     0,
-     0,
      1,
-     1
+     1,
+     0,
+     0
     ],
     "ins": [],
     "left": [
-     0.4408738668949596,
-     0.5528383429982648
+     -0.12940952255125807,
+     -0.22414386804200917
     ],
     "right": [
      0.7071067811865464,
-     -4.329780281177459e-17
+     4.3297802811774566e-17
     ],
     "interface": null,
     "method": "entry"
    },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
+   "equal_where": {},
    "skipped": [
-    "coincident_dims",
-    "scalar_small_one"
+    "state_not_map",
+    "single_entry"
    ]
   },
   {
    "equation": "w_state/main",
-   "kind": "global_phase",
-   "label": "phase 1/7",
+   "kind": "single_entry",
+   "label": "phase where every output is 1",
    "params": {
-    "factor": "exp(2*pi*I/7)"
+    "d_min": 2
    },
    "witness": {
     "n": 0,
@@ -7802,8 +8049,8 @@
     ],
     "ins": [],
     "left": [
-     0.6234898018587335,
-     0.7818314824680295
+     -0.9999999999999998,
+     6.123233995736765e-17
     ],
     "right": [
      1.0,
@@ -7813,14 +8060,161 @@
     "method": "entry"
    },
    "equal_where": {
-    "up_to_global_phase": true
+    "outputs_not_all": 1
    },
-   "skipped": [
-    "scalar_small_one"
-   ]
+   "skipped": []
   },
   {
    "equation": "weyl_commutation/main",
+   "kind": "wrong_phase",
+   "label": "gate 0 X",
+   "params": {
+    "index": 0
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     0.9999999999999998,
+     0.0
+    ],
+    "right": [
+     2.2371143170757382e-17,
+     -0.0
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "wiesner_money/main",
+   "kind": "missing_gate",
+   "label": "drop gate 30 CX",
+   "params": {
+    "index": 30
+   },
+   "witness": {
+    "n": 1,
+    "d": 2,
+    "outs": [],
+    "ins": [],
+    "left": [],
+    "right": [],
+    "interface": "left [2, 2]->[], right [2]->[]",
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "x_cube_code/encoding",
+   "kind": "extra_gate",
+   "label": "X on q23",
+   "params": {
+    "wire": "q23"
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ins": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "left": [
+     2.5366340893923327e-18,
+     1.616862967388082e-33
+    ],
+    "right": [
+     0.24999999999999695,
+     -4.793428953793445e-33
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "xy_surface_code/encoding",
+   "kind": "swapped_control_target",
+   "label": "gate 13 CX reversed",
+   "params": {
+    "index": 13
+   },
+   "witness": {
+    "n": null,
+    "d": 2,
+    "outs": [
+     1,
+     1,
+     0,
+     1,
+     1,
+     0,
+     1,
+     1,
+     1
+    ],
+    "ins": [
+     0
+    ],
+    "left": [
+     0.06249999999999962,
+     -4.209723372069001e-17
+    ],
+    "right": [
+     -2.4393029799824746e-17,
+     5.724587470723481e-17
+    ],
+    "interface": null,
+    "method": "entry"
+   },
+   "equal_where": {},
+   "skipped": []
+  },
+  {
+   "equation": "xzzx_surface_code/encoding",
    "kind": "global_phase",
    "label": "phase 1/7",
    "params": {
@@ -7830,136 +8224,6 @@
     "n": null,
     "d": 2,
     "outs": [
-     1
-    ],
-    "ins": [
-     0
-    ],
-    "left": [
-     -0.6234898018587334,
-     -0.7818314824680296
-    ],
-    "right": [
-     -0.9999999999999998,
-     6.123233995736765e-17
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "up_to_global_phase": true
-   },
-   "skipped": []
-  },
-  {
-   "equation": "wiesner_money/main",
-   "kind": "box_boundary",
-   "label": "factor at n = 0",
-   "params": {
-    "factor": "1 + 0^(n - 0)"
-   },
-   "witness": {
-    "n": 0,
-    "d": 2,
-    "outs": [],
-    "ins": [],
-    "left": [
-     2.0,
-     0.0
-    ],
-    "right": [
-     1.0,
-     0.0
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "n_gt": 0
-   },
-   "skipped": [
-    "tiny_phase",
-    "leg_order"
-   ]
-  },
-  {
-   "equation": "x_cube_code/encoding",
-   "kind": "missing_gate",
-   "label": "drop gate 63 CX",
-   "params": {
-    "index": 63
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1,
-     1
-    ],
-    "ins": [
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     0
-    ],
-    "left": [
-     9.373498641636418e-34,
-     9.955668037516076e-34
-    ],
-    "right": [
-     0.24999999999999695,
-     7.347880794884028e-16
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {},
-   "skipped": [
-    "leg_order",
-    "box_boundary",
-    "state_not_map",
-    "single_entry",
-    "wrong_phase"
-   ]
-  },
-  {
-   "equation": "xy_surface_code/encoding",
-   "kind": "state_not_map",
-   "label": "Z on input q8",
-   "params": {
-    "wire": "q8"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
      0,
      0,
      0,
@@ -7974,50 +8238,8 @@
      1
     ],
     "left": [
-     -0.062499999999999625,
-     -2.296212748401273e-17
-    ],
-    "right": [
-     0.06249999999999951,
-     -1.1321014604924982e-17
-    ],
-    "interface": null,
-    "method": "entry"
-   },
-   "equal_where": {
-    "input_zero": "q8"
-   },
-   "skipped": [
-    "box_boundary"
-   ]
-  },
-  {
-   "equation": "xzzx_surface_code/encoding",
-   "kind": "state_not_map",
-   "label": "Z on input q6",
-   "params": {
-    "wire": "q6"
-   },
-   "witness": {
-    "n": null,
-    "d": 2,
-    "outs": [
-     0,
-     0,
-     0,
-     0,
-     0,
-     0,
-     1,
-     0,
-     0
-    ],
-    "ins": [
-     1
-    ],
-    "left": [
-     -0.0624999999999998,
-     -3.061616997868373e-17
+     0.03896811261617069,
+     0.048864467654251724
     ],
     "right": [
      0.06249999999999968,
@@ -8027,15 +8249,26 @@
     "method": "entry"
    },
    "equal_where": {
-    "input_zero": "q6"
+    "up_to_global_phase": true
    },
-   "skipped": []
+   "skipped": [
+    "off_by_one_n",
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one"
+   ]
   },
   {
    "equation": "y_state_injection/main",
-   "kind": "single_entry",
-   "label": "phase where every output is 1",
+   "kind": "tiny_phase",
+   "label": "1/d^3 on q",
    "params": {
+    "wire": "q",
+    "k": 3,
     "d_min": 2
    },
    "witness": {
@@ -8048,10 +8281,17 @@
     "interface": "left [2, 2]->[2, 2], right [2]->[2]",
     "method": "entry"
    },
-   "equal_where": {
-    "outputs_not_all": 1
-   },
-   "skipped": []
+   "equal_where": {},
+   "skipped": [
+    "wrong_dimension",
+    "beyond_oracle",
+    "beyond_N",
+    "prime_only",
+    "qubit_only",
+    "coincident_dims",
+    "scalar_small_one",
+    "global_phase"
+   ]
   }
  ]
 }
