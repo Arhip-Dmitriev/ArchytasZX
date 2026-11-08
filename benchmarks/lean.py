@@ -11,22 +11,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lean runner: ``lake env lean FILE`` in archytaszx/lean, in a memory scope of its own (the
-worker's cap would evict the mapped Mathlib files), under the worker's CPU cap, at most
-:data:`SLOTS` at a time across every worker; and the ``lean`` suite: every exportable workload
-exported by ``certificate lean`` and checked by the runner.
+"""Lean runner: ``lake env lean FILE`` in archytaszx/lean, in a systemd scope of its own capped
+at a fraction of the total memory, at most :func:`slots` at a time across every worker.
 
-The runner reports ``lean_status`` (accepted, rejected, timeout, oom), CPU and wall seconds,
-peak memory, file bytes and lines, the ``#print axioms`` result of the final theorem as
-``axiom_class`` (clean: only propext, Classical.choice and Quot.sound; unproved: some
-``unproved_*`` axiom; opaque: the fallback export of LEAN.txt section 4.5; other: any other
-axiom; for a file Lean does not accept, its ``lean_status``) and ``statement_level``
-(source, diagram, network, opaque).
+The file is checked as a probe copy with ``set_option profiler true``, a ``#print`` marker
+before every declaration and ``#print axioms`` of the final theorem appended. The runner
+reports ``lean_status`` (accepted, rejected, timeout, oom), CPU and wall seconds, peak memory,
+file bytes and lines, ``decl_ms`` (profiler milliseconds per declaration), ``axiom_class``
+(clean: only propext, Classical.choice and Quot.sound; unproved: some ``unproved_*`` axiom;
+opaque: no ``import ArchytasZX``; other: any other axiom; else the ``lean_status``) and
+``statement_level`` (source, diagram, network, opaque).
 """
 
 from __future__ import annotations
 
 import fcntl
+import functools
 import os
 import re
 import shutil
@@ -40,26 +40,53 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 LEAN_DIR = ROOT / "archytaszx" / "lean"
-SLOTS = 5
-LEAN_MEMORY_FRACTION = 0.85
+LEAN_PEAK_MB = 7000
+MAX_SLOTS = 5
 SLOT_DIR = Path(tempfile.gettempdir())
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 _DECL = re.compile(r"^(?:private\s+)?(?:theorem|lemma)\s+([^\s(:{\[]+)", re.MULTILINE)
+_ANY_DECL = re.compile(
+    r"^(?:(?:/--(?:(?!-/)[\s\S])*-/|set_option[^\n]*\sin)[ \t]*\n)*"
+    r"(?:@\[[^\]]*\]\s*)?(?:private\s+|noncomputable\s+|protected\s+)*"
+    r"(theorem|lemma|def|abbrev|instance|example)\b\s*([^\s(:{\[]*)",
+    re.MULTILINE,
+)
 _AXIOMS = re.compile(r"'([^']+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS = re.compile(r"'([^']+)' does not depend on any axioms")
+_TOOK = re.compile(r"^(.*?) took ([0-9.]+)(ms|s)$")
+MARK = "@@DECL "
 
 
-def _scoped(cmd: list[str]) -> list[str]:
-    """``cmd`` in a systemd scope of its own capped at :data:`LEAN_MEMORY_FRACTION` of the total
-    memory, outside the calling worker's scope; ``cmd`` itself without systemd."""
-    from benchmarks import harness
+@functools.cache
+def cgroups() -> bool:
+    """True when ``systemd-run --user --scope`` can hold a process to a memory cap."""
+    if shutil.which("systemd-run") is None:
+        return False
+    cmd = ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=64M", "true"]
+    return subprocess.run(cmd, capture_output=True, check=False).returncode == 0
 
-    if not harness._cgroups():
-        return cmd
+
+def total_memory_mb() -> float:
+    """MemTotal in MiB."""
     with open("/proc/meminfo", encoding="ascii") as fh:
-        total_kb = next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:"))
-    cap = int(LEAN_MEMORY_FRACTION * total_kb / 1024)
+        return next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:")) / 1024
+
+
+def scoped(cmd: list[str], fraction: float) -> list[str]:
+    """``cmd`` in a systemd scope of its own capped at ``fraction`` of the total memory, outside
+    the calling worker's scope; ``cmd`` itself without systemd."""
+    if not cgroups():
+        return cmd
+    cap = int(fraction * total_memory_mb())
     return ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={cap}M", *cmd]
+
+
+def _lift_address_space() -> None:
+    """Raises the soft RLIMIT_AS to the hard limit (the worker's cap is soft only)."""
+    import resource
+
+    hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+    resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
 
 
 def lake() -> str:
@@ -67,10 +94,19 @@ def lake() -> str:
     return shutil.which("lake") or str(Path.home() / ".elan" / "bin" / "lake")
 
 
+@functools.cache
+def slots() -> int:
+    """Concurrent Lean checks: the checks of LEAN_PEAK_MB that fit in 85 % of the total memory,
+    between 1 and MAX_SLOTS (BENCH_LEAN_SLOTS overrides)."""
+    if os.environ.get("BENCH_LEAN_SLOTS"):
+        return max(1, int(os.environ["BENCH_LEAN_SLOTS"]))
+    return max(1, min(MAX_SLOTS, int(0.85 * total_memory_mb() // LEAN_PEAK_MB)))
+
+
 def _slot() -> Any:
-    """An exclusive lock on one of :data:`SLOTS` slot files, waited for."""
+    """An exclusive lock on one of :func:`slots` slot files, waited for."""
     while True:
-        for k in range(SLOTS):
+        for k in range(slots()):
             fh = open(SLOT_DIR / f"archytaszx-bench-lean-{k}.lock", "w")  # noqa: SIM115
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -144,9 +180,47 @@ def parse_axioms(output: str, name: str) -> list[str] | None:
     return None
 
 
-def check(path: Path, *, timeout: float | None = None) -> dict[str, Any]:
-    """Runs Lean on ``path`` (a copy with ``#print axioms`` of the final theorem appended)
-    and returns the runner's fields (see the module docstring)."""
+def instrument(source: str, name: str | None) -> str:
+    """``source`` with the profiler on after its imports, a marker before every declaration and
+    ``#print axioms name`` appended."""
+    lines = source.splitlines()
+    head = max((i + 1 for i, ln in enumerate(lines) if ln.startswith("import ")), default=0)
+    body = "\n".join(lines[head:])
+    body = _ANY_DECL.sub(
+        lambda m: f'#print "{MARK}{m.group(1)} {m.group(2) or "_"}"\n{m.group(0)}', body
+    )
+    tail = f'\n#print "{MARK}end _"\n' + (f"#print axioms {name}\n" if name else "")
+    profiler = "set_option profiler true\nset_option profiler.threshold 0\n"
+    return "\n".join(lines[:head]) + "\n" + profiler + body + tail
+
+
+def declaration_times(output: str) -> list[dict[str, Any]]:
+    """Per marked declaration: ``kind``, ``name`` and the profiler milliseconds that follow its
+    marker, by category and in total."""
+    out: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
+    for raw in output.splitlines():
+        line = raw.strip()
+        if line.startswith(MARK):
+            kind, _, name = line[len(MARK) :].partition(" ")
+            cur = None if kind == "end" else {"kind": kind, "name": name, "ms": 0.0, "by": {}}
+            if cur is not None:
+                out.append(cur)
+            continue
+        m = _TOOK.match(line)
+        if m and cur is not None:
+            ms = float(m.group(2)) * (1000.0 if m.group(3) == "s" else 1.0)
+            cat = re.sub(r" of .*$", "", m.group(1))
+            cur["ms"] += ms
+            cur["by"][cat] = cur["by"].get(cat, 0.0) + ms
+    return out
+
+
+def check(
+    path: Path, *, timeout: float | None = None, memory_fraction: float = 0.85
+) -> dict[str, Any]:
+    """Runs Lean on an instrumented copy of ``path`` and returns the runner's fields (see the
+    module docstring)."""
     source = path.read_text(encoding="utf-8")
     name = final_theorem(source)
     out: dict[str, Any] = {
@@ -156,17 +230,18 @@ def check(path: Path, *, timeout: float | None = None) -> dict[str, Any]:
         "statement_level": statement_level(source),
         "unproved_declared": len(re.findall(r"^axiom unproved_", source, re.MULTILINE)),
     }
-    probe = path.with_name(path.stem + "_axioms.lean")
-    probe.write_text(source + (f"\n#print axioms {name}\n" if name else ""), encoding="utf-8")
+    probe = path.with_name(path.stem + "_probe.lean")
+    probe.write_text(instrument(source, name), encoding="utf-8")
     slot = _slot()
     try:
         w0 = time.perf_counter()
         proc = subprocess.Popen(
-            _scoped([lake(), "env", "lean", str(probe)]),
+            scoped([lake(), "env", "lean", str(probe)], memory_fraction),
             cwd=LEAN_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            preexec_fn=_lift_address_space,  # noqa: PLW1509  # noqa: PLW1509
         )
         killed = threading.Event()
 
@@ -185,11 +260,11 @@ def check(path: Path, *, timeout: float | None = None) -> dict[str, Any]:
     finally:
         slot.close()
     code = os.waitstatus_to_exitcode(status)
-    cpu = usage.ru_utime + usage.ru_stime
     out |= {
-        "lean_cpu": cpu,
+        "lean_cpu": usage.ru_utime + usage.ru_stime,
         "lean_wall": wall,
         "lean_peak_mb": round(usage.ru_maxrss / 1024, 1),
+        "decl_ms": declaration_times(text),
     }
     if killed.is_set() or code in (-signal.SIGXCPU, 128 + signal.SIGXCPU):
         out["lean_status"] = "timeout"
@@ -206,68 +281,10 @@ def check(path: Path, *, timeout: float | None = None) -> dict[str, Any]:
     out["axiom_class"] = (
         classify(axioms, source) if out["lean_status"] == "accepted" else out["lean_status"]
     )
-    out["unproved_axioms"] = (
-        sorted(a for a in axioms if a.rsplit(".", 1)[-1].startswith("unproved_"))
+    out["unproved"] = (
+        sum(1 for a in axioms if a.rsplit(".", 1)[-1].startswith("unproved_"))
         if axioms is not None
         else None
     )
-    out["unproved"] = len(out["unproved_axioms"]) if axioms is not None else None
     probe.unlink(missing_ok=True)
     return out
-
-
-SIZE = "size"
-REPEAT = 3
-RECORD_ENV = True
-QUICK_WORKLOADS = ("examples/copy_induction.azx #1", "spider fusion")
-
-
-def cases(quick: bool) -> list[dict[str, Any]]:
-    """Every proof workload of :func:`benchmarks.workloads.unit_scripts`; ``quick`` keeps
-    two."""
-    from benchmarks import workloads
-
-    return [
-        {"suite": "lean", "group": group, "workload": name, "size": 1}
-        for group, name, _, _ in workloads.unit_scripts()
-        if not quick or name in QUICK_WORKLOADS
-    ]
-
-
-def export_and_check(script: str, base: str, path: Path) -> dict[str, Any]:
-    """Runs ``script`` with ``certificate kernel`` and ``certificate lean PATH`` appended, then
-    the Lean runner on the file written; ``cpu`` and ``wall`` are Lean's (0 without a file);
-    an unknown verdict is ``inconclusive`` and not exported."""
-    from benchmarks import engine, workloads
-
-    run_ = engine.run_script(workloads.with_lean(script, path), base=base)
-    v = engine.verdict(run_)
-    cpu, wall = engine.until_verdict(run_)
-    out: dict[str, Any] = {
-        "cpu": 0.0,
-        "wall": 0.0,
-        "script_cpu": cpu,
-        "script_wall": wall,
-        **{k: v[k] for k in ("verdict", "method", "nodes", "wires", "derivation_length")},
-        **engine.kernel_fields(run_),
-        **engine.lean_export_fields(run_),
-    }
-    if v["verdict"] == "unknown":
-        return out | {"status": "inconclusive", "detail": str(v["reason"])[:400]}
-    if not path.exists():
-        out["lean_status"] = "no export"
-        return out
-    out |= check(path)
-    return out | {"cpu": out["lean_cpu"], "wall": out["lean_wall"]}
-
-
-def run(case: dict[str, Any]) -> dict[str, Any]:
-    """Export one workload and check it in Lean."""
-    from benchmarks import workloads
-
-    match = [w for w in workloads.unit_scripts() if w[1] == case["workload"]]
-    if not match:
-        raise ValueError(f"no workload {case['workload']!r}")
-    _, _, script, base = match[0]
-    with tempfile.TemporaryDirectory(prefix="bench-lean-") as tmp:
-        return export_and_check(script, base, Path(tmp) / "export.lean")

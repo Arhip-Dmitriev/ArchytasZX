@@ -11,174 +11,115 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Benchmark 6: C followed by C^-1 equals the identity, for a seeded random circuit C of ``s``
-gates on ``w`` wires.
+"""B3 element counts of a diagram, and the smallest diagram of a decision's derivations
+(BENCHMARKS.txt, section 6, B3).
 
-Gates: the phase Z(1 -> 1) phase{k: S k/(M d)} (S = +-1, M in 1, 2, 4), the Fourier box F, and
-the controlled X (Z(1 -> 2) into X(2 -> 1), scaled by d^(1/2)). Inverses: the negated phase,
-F^3, and the controlled X with F^2 on its control leg. Tools:
-
-- ``azx-family``: ArchytasZX with d free and the whole circuit in a bang box of size n.
-- ``azx-qubit``: ArchytasZX at ``dim d = 2``.
-- ``pyzx``: PyZX at d = 2 (phase pi S/M, F as HAD, controlled X as CNOT), ``full_reduce`` to
-  the identity with scalar 1.
+Counted: nodes per generator, node-scope and port-scope boxes and the deepest nesting, phase
+entries (a rule counts once), weight entries, wires, self-loops, boundary inputs and outputs,
+and the scalar's sympy operation count. ``total`` is nodes + boxes + phases + weights + wires;
+the smallest diagram has the least total, ties broken by fewer wires.
 """
 
 from __future__ import annotations
 
-import random
-import time
-from fractions import Fraction
+from collections.abc import Iterator
+from typing import Any
 
-from benchmarks.harness import Inconclusive
-
-SIZE = "s"
-SIZES = [2**k for k in range(1, 11)]
-WIDTHS = [2, 4, 8]
-SEEDS = range(5)
-TOOLS = ("azx-family", "azx-qubit", "pyzx")
-QUICK_SIZES = [2, 8]
-QUICK_WIDTHS = [2]
-QUICK_SEEDS = range(1)
-
-Gate = tuple
+GENERATORS = ("Z", "X", "W", "F", "T", "Ti", "B", "S", "G")
 
 
-def cases(quick: bool) -> list[dict]:
-    """Every tool at every (w, seed, s); ``quick`` keeps a few."""
-    sizes, widths, seeds = (
-        (QUICK_SIZES, QUICK_WIDTHS, QUICK_SEEDS)
-        if quick
-        else (
-            SIZES,
-            WIDTHS,
-            SEEDS,
-        )
-    )
-    return [
-        {"suite": "size", "tool": tool, "w": w, "seed": seed, "s": s}
-        for tool in TOOLS
-        for w in widths
-        for seed in seeds
-        for s in sizes
-    ]
+def counts(diagram: Any) -> dict[str, int]:
+    """The element counts of one diagram."""
+    import sympy as sp
+
+    out: dict[str, int] = {f"node_{g}": 0 for g in GENERATORS}
+    phases = weights = 0
+    for node in diagram.nodes.values():
+        name = node.generator_type.name
+        out[f"node_{name}"] = out.get(f"node_{name}", 0) + 1
+        ph = node.phase
+        if ph is not None:
+            phases += len(ph.entries()) + (1 if ph.rule is not None else 0)
+            w = getattr(ph, "weights", None)
+            if callable(w):
+                weights += len(w()) + (1 if getattr(ph, "weight_rule", None) is not None else 0)
+    boxes = list(diagram.bang_boxes.values())
+    node_boxes = sum(1 for b in boxes if b.node_scope)
+    port_boxes = sum(1 for b in boxes if b.port_scope)
+    depth = 0
+    by_id = {b.id: b for b in boxes}
+    for b in boxes:
+        k, cur = 1, b
+        while cur.parent is not None and cur.parent in by_id:
+            k += 1
+            cur = by_id[cur.parent]
+        depth = max(depth, k)
+    wires = list(diagram.wires)
+    loops = sum(1 for w in wires if w.a.node_id == w.b.node_id)
+    try:
+        scalar_size = int(sp.count_ops(diagram.scalar.to_sympy())) + 1
+    except Exception:  # noqa: BLE001
+        scalar_size = len(str(diagram.scalar))
+    nodes = len(diagram.nodes)
+    out |= {
+        "nodes": nodes,
+        "node_boxes": node_boxes,
+        "port_boxes": port_boxes,
+        "box_depth": depth,
+        "phases": phases,
+        "weights": weights,
+        "wires": len(wires),
+        "self_loops": loops,
+        "inputs": len(diagram.boundary_inputs),
+        "outputs": len(diagram.boundary_outputs),
+        "scalar_size": scalar_size,
+    }
+    out["total"] = nodes + node_boxes + port_boxes + phases + weights + len(wires)
+    return out
 
 
-def circuit(w: int, s: int, seed: int) -> list[Gate]:
-    """C then C^-1: ("P", wire, S, M), ("F", wire, power) or ("C", control, target, inverse)."""
-    rng = random.Random(f"{seed}-{w}-{s}")
-    forward: list[Gate] = []
-    for _ in range(s):
-        kind = rng.choice("PFC") if w > 1 else rng.choice("PF")
-        if kind == "P":
-            forward.append(("P", rng.randrange(w), rng.choice((1, -1)), rng.choice((1, 2, 4))))
-        elif kind == "F":
-            forward.append(("F", rng.randrange(w), 1))
-        else:
-            c, t = rng.sample(range(w), 2)
-            forward.append(("C", c, t, False))
-    inverse: list[Gate] = []
-    for gate in reversed(forward):
-        if gate[0] == "P":
-            inverse.append(("P", gate[1], -gate[2], gate[3]))
-        elif gate[0] == "F":
-            inverse.append(("F", gate[1], 3))
-        else:
-            inverse.append(("C", gate[1], gate[2], True))
-    return forward + inverse
+def _derivation_diagrams(derivation: Any) -> Iterator[Any]:
+    from archytaszx.semantics.certificate import _replay_one
+
+    yield derivation.initial
+    working = derivation.initial.copy()
+    for k, step in enumerate(derivation.steps):
+        failure, working = _replay_one(working, k, step, True)
+        if failure is not None:
+            break
+        yield working
+    yield derivation.final
+    for child in derivation.children:
+        yield from _derivation_diagrams(child)
 
 
-def azx_script(gates: list[Gate], w: int, family: bool) -> str:
-    """The .azx script deciding the circuit against the identity."""
-    head = ["dim d", "count n"] if family else ["dim d = 2"]
-    body: list[str] = []
-    names: list[str] = []
-    cursor: list[str | None] = [None] * w
-    start: list[str | None] = [None] * w
-
-    def node(decl: str) -> str:
-        name = f"g{len(names)}"
-        names.append(name)
-        body.append(f"{name} = {decl}")
-        return name
-
-    def through(wire: int, name: str, port: int = 0) -> None:
-        if cursor[wire] is None:
-            start[wire] = f"{name}.in{port}"
-        else:
-            body.append(f"wire {cursor[wire]} -- {name}.in{port}")
-        cursor[wire] = f"{name}.out0"
-
-    cx = 0
-    for gate in gates:
-        if gate[0] == "P":
-            through(gate[1], node(f"Z(1 -> 1) phase{{k: {gate[2]}*k/({gate[3]}*d)}}"))
-        elif gate[0] == "F":
-            for _ in range(gate[2]):
-                through(gate[1], node("F"))
-        else:
-            a, b = node("Z(1 -> 2)"), node("X(2 -> 1)")
-            through(gate[1], a)
-            through(gate[2], b)
-            leg = f"{a}.out1"
-            if gate[3]:
-                for _ in range(2):
-                    f = node("F")
-                    body.append(f"wire {leg} -- {f}.in0")
-                    leg = f"{f}.out0"
-            body.append(f"wire {leg} -- {b}.in1")
-            cx += 1
-    for wire in range(w):
-        if cursor[wire] is None:
-            through(wire, node("Z(1 -> 1)"))
-    body.append("inputs " + ", ".join(p for p in start if p is not None))
-    body.append("outputs " + ", ".join(p for p in cursor if p is not None))
-    if family:
-        body.append("repeat n: " + ", ".join(names))
-        body.append(f"scalar d^(n*{cx}/2)")
-    elif cx:
-        body.append(f"scalar d^({cx}/2)")
-    ids = [f"e{k} = Z(1 -> 1)" for k in range(w)]
-    if family:
-        ids.append("repeat n: " + ", ".join(f"e{k}" for k in range(w)))
-    indent = lambda lines: "\n".join("    " + ln for ln in lines)
-    return f"@rhs =\n{indent(head + ids)}\n\nload\n{indent(head + body)}\n\ndecide against @rhs\n"
+def diagrams_of(decision: Any, left: Any, right: Any) -> Iterator[Any]:
+    """Both sides, both normal forms and every diagram of every certificate's derivation."""
+    yield left
+    yield right
+    for nf in (decision.left_nf, decision.right_nf):
+        if nf is not None:
+            yield nf
+    for cert in decision.certificates or ():
+        yield from _derivation_diagrams(cert.derivation)
 
 
-def pyzx_check(gates: list[Gate], w: int) -> dict:
-    """PyZX: build the circuit, ``full_reduce`` its graph, require the identity with scalar 1."""
-    import pyzx as zx
-
-    def go() -> tuple[bool, object, int]:
-        c = zx.Circuit(w)
-        for gate in gates:
-            if gate[0] == "P":
-                c.add_gate("ZPhase", gate[1], phase=Fraction(gate[2], gate[3]))
-            elif gate[0] == "F":
-                for _ in range(gate[2]):
-                    c.add_gate("HAD", gate[1])
-            else:
-                c.add_gate("CNOT", gate[1], gate[2])
-        g = c.to_graph()
-        size = g.num_vertices()
-        zx.full_reduce(g)
-        return g.is_id(), g.scalar, size
-
-    c0, w0 = time.process_time(), time.perf_counter()
-    is_id, scalar, size = go()
-    cpu, wall = time.process_time() - c0, time.perf_counter() - w0
-    if not is_id:
-        raise Inconclusive("full_reduce did not reach the identity")
-    if abs(scalar.to_number() - 1) > 1e-9:
-        raise Inconclusive(f"identity reached with scalar {scalar}")
-    return {"cpu": cpu, "wall": wall, "nodes": size, "method": "full_reduce"}
+def smallest(diagrams: Iterator[Any]) -> dict[str, int] | None:
+    """The counts of the smallest diagram (least total, then fewest wires)."""
+    best: dict[str, int] | None = None
+    for d in diagrams:
+        try:
+            c = counts(d)
+        except Exception:  # noqa: BLE001, S112
+            continue
+        if best is None or (c["total"], c["wires"]) < (best["total"], best["wires"]):
+            best = c
+    return best
 
 
-def run(case: dict) -> dict:
-    """One check of the case's circuit by its tool."""
-    gates = circuit(case["w"], case["s"], case["seed"])
-    if case["tool"] == "pyzx":
-        return pyzx_check(gates, case["w"])
-    from benchmarks.engine import decide_script
-
-    return decide_script(azx_script(gates, case["w"], case["tool"] == "azx-family"))
+def b3(decision: Any, left: Any, right: Any) -> dict[str, Any]:
+    """``naive`` (the circuit's counts), ``smallest`` and ``ratio`` naive / smallest total."""
+    naive = counts(left)
+    small = smallest(diagrams_of(decision, left, right))
+    ratio = naive["total"] / small["total"] if small and small["total"] else None
+    return {"naive": naive, "smallest": small, "ratio": ratio}

@@ -1,0 +1,74 @@
+# ArchytasZX benchmark suite, version 2: everything that defines what runs (BENCHMARKS.txt).
+# Every value can be overridden with --set key=value (for example --set points.K=4).
+
+[subjects]
+catalogue = "benchmarks/subjects"     # directory of subject files
+include = ["*"]                       # subject ids or globs that make up S
+exclude = []
+categories = ["algorithm", "code", "protocol", "circuit"]
+
+[false_set]
+enabled = true
+kinds = ["*"]                         # break kinds allowed
+assignment = "round_robin"            # round_robin or random
+seed = 20261106
+beyond_N = 32                         # N of the beyond_N kind
+tiny_k = 3                            # tiny_phase is 1/d^k of a turn
+probe_seconds = 60                    # time for one witness probe; overrun = no witness there
+equation_seconds = 900                # time for all kinds of one equation; overrun = no F
+
+[points]
+K = 16                                # successful data points per equation and tool
+n_min = 0
+n_max = 100_000_000
+d_min = 1
+d_max = 2048
+distribution = "log_uniform"
+seed = 20261106
+phase2_extra_failures = 32            # cap on failed phase 2 draws per equation and tool
+symbolic = true                       # run the symbolic version too, outside K
+
+[stages]
+decide = true
+certificate = true                    # proof object build plus kernel check
+lean_export = true
+lean_check = true
+timeout_seconds = 86400               # CPU seconds per stage per run
+wall_factor = 4                       # a run is killed after this many times its stage limits in wall time
+memory_fraction = 0.85
+
+[repeats.cluster]
+mode = "adaptive"
+min_runs = 5
+max_runs = 30
+confidence = 0.99
+precision = 0.05                      # 99 % CI half-width of the median, relative
+
+[repeats.laptop]
+mode = "fixed"
+runs = 3
+
+[trace]
+enabled = true
+overhead_sample = 0.05                # share of points also run with tracing off
+
+[tools]
+enabled = ["archytaszx", "pyzx", "quizx", "qcec", "feynman", "dizx", "qiskit",
+           "cirq", "autoq_para", "tket", "quantomatic", "published_proofs"]
+
+[platform]
+profile = "laptop"                    # or "cluster"
+jobs = "auto"
+
+[output]
+results = "benchmarks/results"
+plots = "benchmarks/plots"
+
+[slurm]                               # the cluster profile's job array (Zaratan)
+partition = "scavenger"
+array = 32                            # array tasks; each runs one shard of the units
+cpus_per_task = 8                     # whole cores per task; one worker per core
+mem_per_cpu = "4G"
+time = "7-00:00:00"
+account = ""
+venv = "~/.venvs/personal_lab"        # the environment on the cluster

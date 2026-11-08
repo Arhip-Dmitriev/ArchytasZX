@@ -33,7 +33,7 @@ Mutations (all consistent: every network the export builds carries the same bug)
 - ``dimension``: the first dimension of the table increased by 1.
 - ``source literal``: the scalar of the first diagram the parser returns doubled.
 
-Battery files: benchmarks/workloads/trust/*.azx and .trust_work/battery*.azx when present.
+Battery files: tests/data/trust/*.azx and .trust_work/battery*.azx when present.
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from benchmarks import engine, lean, workloads
+from benchmarks import lean
+from tests import trust_helpers as engine
+from tests import trust_helpers as workloads
 
 SIZE = "size"
 REPEAT = 1

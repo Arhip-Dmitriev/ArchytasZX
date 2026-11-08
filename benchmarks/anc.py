@@ -11,80 +11,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``python -m benchmarks anc OUT_DIR``: the EPTCS ancillary files. Copies the benchmark
-scripts, the case files (benchmarks/workloads/, examples/ and the lemma corpus), every results
-file of the results directory and every plot of the plots directory into OUT_DIR, with a plain
-text README. OUT_DIR must not lie under publications/ or public_publications/."""
+"""The ancillary-file export: ``python -m benchmarks anc OUT_DIR`` copies the benchmark
+scripts, the subject catalogue, the config, the logs, the aggregates, the plots and
+docs/BENCHMARKS.txt into OUT_DIR."""
 
 from __future__ import annotations
 
 import shutil
-import sys
-import time
 from pathlib import Path
+from typing import Any
 
-from benchmarks import harness, plots
+from benchmarks import config
 
 ROOT = Path(__file__).resolve().parent.parent
-FORBIDDEN = ("publications", "public_publications")
-README = """ARCHYTASZX BENCHMARKS: ANCILLARY FILES
-=====================================
-
-Generated {date} by python -m benchmarks anc.
-
-  scripts/     the benchmark suites (python -m benchmarks run SUITE; see BENCHMARKS.txt)
-  workloads/   the command files the suites run (benchmarks/workloads/, examples/, and the
-               lemma lists archytaszx/papers/*/LEMMAS.txt)
-  results/     every suite's rows (SUITE.json), runs (SUITE.runs.jsonl) and environment
-               record (SUITE.env.json)
-  plots/       every plot (PDF and 300 dpi PNG) and every summary table
-  BENCHMARKS.txt  the benchmark documentation
-
-Reproduce: install ArchytasZX (docs/INSTALL.txt), copy scripts/ to benchmarks/ in a checkout of
-the commit named in results/*.env.json, and run the commands of BENCHMARKS.txt, section 5.
-"""
+IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".venvs", "results", "plots", "slurm")
 
 
-def export(out: Path) -> None:
-    """Writes the ancillary files to ``out``."""
-    out = out.resolve()
-    for name in FORBIDDEN:
-        banned = (ROOT / name).resolve()
-        if out == banned or banned in out.parents:
-            raise SystemExit(f"refusing to write under {banned}")
+def main(cfg: dict[str, Any], out: Path) -> None:
+    """Copies everything listed in the module docstring into ``out``."""
     out.mkdir(parents=True, exist_ok=True)
-    bench = ROOT / "benchmarks"
-    scripts = out / "scripts"
-    scripts.mkdir(exist_ok=True)
-    for path in sorted(bench.glob("*.py")):
-        shutil.copy2(path, scripts / path.name)
-    work = out / "workloads"
-    shutil.copytree(bench / "workloads", work / "benchmarks", dirs_exist_ok=True)
-    shutil.copytree(
-        ROOT / "examples",
-        work / "examples",
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns("*.lean", "*.png"),
-    )
-    for key in ("poor2023zxw", "wang2023qufinitezxw"):
-        target = work / "papers" / key
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "archytaszx" / "papers" / key / "LEMMAS.txt", target / "LEMMAS.txt")
-    for source, name in ((harness.results_dir(), "results"), (plots.plots_dir(), "plots")):
-        if source.exists():
-            shutil.copytree(source, out / name, dirs_exist_ok=True)
-    doc = ROOT / "docs" / "BENCHMARKS.txt"
-    if doc.exists():
-        shutil.copy2(doc, out / "BENCHMARKS.txt")
-    (out / "README").write_text(README.format(date=time.strftime("%Y-%m-%d")), encoding="utf-8")
-
-
-def main(argv: list[str]) -> None:
-    """Command-line entry: ``anc OUT_DIR``."""
-    if len(argv) != 1:
-        raise SystemExit("usage: python -m benchmarks anc OUT_DIR")
-    export(Path(argv[0]))
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])
+    shutil.copytree(ROOT / "benchmarks", out / "benchmarks", ignore=IGNORE, dirs_exist_ok=True)
+    results = config.path(cfg, "results")
+    for sub in ("raw", "aggregate", "environment", "configs"):
+        if (results / sub).exists():
+            shutil.copytree(results / sub, out / "results" / sub, dirs_exist_ok=True)
+    if (results / "false_set.json").exists():
+        shutil.copy2(results / "false_set.json", out / "results" / "false_set.json")
+    plots = config.path(cfg, "plots")
+    if plots.exists():
+        shutil.copytree(plots, out / "plots", dirs_exist_ok=True)
+    (out / "docs").mkdir(exist_ok=True)
+    shutil.copy2(ROOT / "docs" / "BENCHMARKS.txt", out / "docs" / "BENCHMARKS.txt")
+    print(f"anc -> {out}")
