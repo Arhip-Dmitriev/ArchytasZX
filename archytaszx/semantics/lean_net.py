@@ -46,6 +46,9 @@ from typing import Any, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx import trace as _trace
+from archytaszx.algebra import numfield
+from archytaszx.algebra.algebraic import NotAlgebraicError
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import Scalar
@@ -54,7 +57,16 @@ from archytaszx.diagram.compare import isomorphism
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.semantics.denote import DenoteDomainError, resolve_dim
-from archytaszx.semantics.lean_scalar import NC, Inv, Om, Rt, Scalars, ScalarUnsupported
+from archytaszx.semantics.lean_scalar import (
+    II,
+    NC,
+    Field,
+    Inv,
+    Om,
+    Rt,
+    Scalars,
+    ScalarUnsupported,
+)
 
 __all__ = ["NetUnsupported", "check", "export", "lean_project"]
 
@@ -277,6 +289,11 @@ class _Sym:
         raise NetUnsupported(f"cannot write {expr} ({type(expr).__name__}) in Lean")
 
 
+def _inference_field(t: object, name: str) -> object:
+    """A field of a theorem's inference, for span labels."""
+    return getattr(getattr(t, "inference", None), name, None)
+
+
 class _Export:
     """Accumulates the tables, networks and proofs of one export."""
 
@@ -330,10 +347,14 @@ class _Export:
         self.scalar_defs: list[str] = []
         self.unfold = "E"
         self.family = False
+        self.alg_cert: numfield.FieldCertificate | None = None
+        self.alg_everything = False
+        self.box_syms: set[str] = set()
+        self.in_table = False
         self.sc = Scalars(
-            nat=lambda sym: self.sym.name(sym, "ℕ"),
+            nat=lambda sym: self.sym.name(self.table_sym(sym), "ℕ"),
             other=lambda sym: (
-                self.sym.name(sym, self.sym.kind_of(sym, "ℂ")),
+                self.sym.name(self.table_sym(sym), self.sym.kind_of(sym, "ℂ")),
                 self.sym.kind_of(sym, "ℂ"),
             ),
             positive=lambda text: _POSITIVE,
@@ -407,21 +428,42 @@ class _Export:
         """The phases of ``pv`` in turns, as the body of a Lean ``fun k``."""
         parts = []
         for index, ph in sorted(pv.entries().items()):
-            parts.append((index, self.sym.render(ph.to_sympy_turns(), "ℝ", "ℝ")))
+            parts.append((index, self.sym.render(self.table_expr(ph.to_sympy_turns()), "ℝ", "ℝ")))
         body = "0"
         for index, text in reversed(parts):
             body = f"if k = {index} then {text} else {body}"
         if pv.rule is not None:
             k = sp.Symbol("k_lean_index", integer=True, nonnegative=True)
             turns = pv.rule.to_sympy_turns().xreplace({INDEX: k})
-            self.sym.params.setdefault(str(k.name), ("(k : ℝ)", "ℝ"))
-            rule = self.sym.render(turns, "ℝ", "ℝ")
+            self.sym.params.setdefault(str(k.name), ("k", "ℕ"))
+            self.sc.nats.add(str(k.name))
+            rule = self.sym.render(self.table_expr(turns), "ℝ", "ℝ")
             body = f"({body}) + (if k = 0 then 0 else {rule})"
         return body
+
+    def table_sym(self, sym: sp.Symbol) -> sp.Symbol:
+        """``sym``, or inside a node table the parameter standing for a box multiplicity."""
+        if self.in_table and str(sym.name) in self.box_syms:
+            new = sp.Symbol(f"table_{sym.name}", integer=True, nonnegative=True)
+            self.sym.name(new, "ℕ")
+            self.sc.nats.add(str(new.name))
+            return new
+        return sym
+
+    def table_expr(self, expr: sp.Expr) -> sp.Expr:
+        """``expr`` with its box multiplicities replaced by their table parameters."""
+        return expr.xreplace({x: self.table_sym(x) for x in expr.free_symbols})
 
     def phase(self, pv: PhaseVector | None) -> int:
         if pv is None or pv.is_zero:
             return 0
+        outer, self.in_table = self.in_table, True
+        try:
+            return self._phase(pv)
+        finally:
+            self.in_table = outer
+
+    def _phase(self, pv: PhaseVector) -> int:
         body = self.phase_body(pv)
         weights = self.weights(pv) if pv.is_weighted else None
         key = body if weights is None else f"{body}|{weights}"
@@ -456,7 +498,8 @@ class _Export:
         rule = pv.weight_rule
         if rule is not None and INDEX in rule.to_sympy().free_symbols:
             k = sp.Symbol("k_lean_index", integer=True, nonnegative=True)
-            self.sym.params.setdefault(str(k.name), ("(k : ℝ)", "ℝ"))
+            self.sym.params.setdefault(str(k.name), ("k", "ℕ"))
+            self.sc.nats.add(str(k.name))
             try:
                 body = self.sc.text(self.sc._model(rule.to_sympy().xreplace({INDEX: k})))
             except ScalarUnsupported as exc:
@@ -1136,6 +1179,7 @@ class _Export:
         net = name or b.lean()
         return f"isoB {self.env} {_paren(s)} _ {net} {_pairs(pairs)} {_list(p)} (by chk)"
 
+    @_trace.traced("lean.export.step", lambda self, t: _inference_field(t, "kind"))
     def term(self, t: object) -> Proof:
         from archytaszx.semantics.kernel import Theorem
 
@@ -1156,6 +1200,8 @@ class _Export:
             )
         if inf.kind == "iso":
             return self.iso(t.lhs, t.rhs)
+        if inf.kind == "algebraic":
+            return self.algebraic(t.lhs, t.rhs)
         if inf.kind == "rule":
             return self.rule(t)
         if inf.kind == "induction" and self.family:
@@ -1229,6 +1275,58 @@ class _Export:
             return self.axiom("iso", f"isomorphic comparison views ({exc})", a, b, ONE)
         return self.theorem(a, b, ONE, [f"exact {tactic}"])
 
+    def algebraic(self, x: Diagram, y: Diagram) -> Proof:
+        """``x = y`` for diagrams of one structure whose spider coefficients are equal: each
+        changed node by ``valCoefZ`` or ``valCoefX`` into ``x``'s network with ``y``'s
+        coefficient tables, then ``isoB``."""
+        a, b = self.labelled(x, self.slots), self.labelled(y, self.slots)
+        if a.name == b.name:
+            return Proof(f"(Equal.refl {self.env} 1 {a.name})", ONE, ONE)
+        try:
+            if a.order != b.order:
+                raise NetUnsupported("the diagrams have different nodes")
+            ctx = _Ctx(self, x, y, cast(RewriteStep, None), a, {}, [])
+            nodes: list[LNode] = []
+            links: list[str] = []
+            for n, m in zip(a.net.nodes, b.net.nodes, strict=True):
+                if (n.kind, n.ph, n.dim) == (m.kind, m.ph, m.dim):
+                    nodes.append(n)
+                    links.append("(fun _ => rfl)")
+                    continue
+                r = replace(n, kind=m.kind, ph=m.ph)
+                if n.kind in _ZC and m.kind in _ZC:
+                    lemma, fn = "valCoefZ", "zc"
+                elif n.kind in ("X", "XW") and m.kind in ("X", "XW"):
+                    lemma, fn = "valCoefX", "xc"
+                else:
+                    raise NetUnsupported("a changed node that is not a spider")
+                hc = _coef_hyp(ctx, n, [r], fn)
+                links.append(
+                    f"({lemma} {self.env} {_zc(n)} {_zc(r)} (by decide) (by decide) rfl rfl rfl "
+                    f"{hc})"
+                )
+                nodes.append(r)
+            mid = LNet(tuple(nodes), a.net.summed, a.net.bnd)
+            chain = "List.Forall₂.nil"
+            for link in reversed(links):
+                chain = f"(List.Forall₂.cons {link} {chain})"
+            mapping = {a.port[w.a]: b.port[w.a] for w in x.wires}
+            if sorted(mapping) != sorted(a.net.summed):
+                raise NetUnsupported("the summed labels do not correspond")
+            tactic = self.iso_term("1", mid, b.net, _perm_to_bijection(mapping), b.name)
+        except NetUnsupported as exc:
+            return self.axiom("algebraic", f"equal algebraic values ({exc})", a, b, ONE)
+        return self.theorem(
+            a,
+            b,
+            ONE,
+            [
+                f"refine Equal.trans (netCoef {self.env} {a.name} {mid.lean()} rfl rfl {chain}) ?_",
+                f"exact {tactic}",
+            ],
+        )
+
+    @_trace.traced("lean.export.rule", lambda self, t: _inference_field(t, "rule"))
     def rule(self, t: object) -> Proof:
         from archytaszx.semantics.kernel import Theorem
 
@@ -1410,6 +1508,7 @@ class _Export:
 
     # whole export
 
+    @_trace.traced("lean.export.finish")
     def finish(self, theorem: object, name: str) -> str:
         from archytaszx.semantics.kernel import Theorem
 
@@ -1422,6 +1521,7 @@ class _Export:
             return self.finish_shift(theorem, name)
         for v in theorem.variables:
             self.mult_index(str(v))
+        self.setup_field(theorem, self.alg_everything)
         start, goal = self.labelled(theorem.lhs), self.labelled(theorem.rhs)
         merged = bool(self.alias) and not self.wire_alias and not theorem.variables
         if merged:
@@ -2336,6 +2436,90 @@ class _Export:
             l_nodes,
         )
 
+    def setup_field(self, theorem: object, everything: bool = False) -> None:
+        """Write the algebraic values the scalar model has no atom for (every closed algebraic
+        atom with ``everything``) over a real root ``θ``: a checked number-field certificate,
+        ``θ``'s binder, and the forms in the scalar model."""
+        values = _field_values(theorem)
+        scratch = Scalars(
+            nat=lambda sym: str(sym), other=lambda sym: (str(sym), "ℂ"), positive=lambda x: ""
+        )
+        for v in values:
+            scratch.model(v)
+        wanted = [e for _, e in scratch.opaques.values()]
+        if everything:
+            for v in values:
+                if not v.free_symbols:
+                    wanted += [a for a in numfield.atoms(v) if a not in wanted]
+        found = [e for e in wanted if _algebraic_atom(e)]
+        if not found:
+            return
+        try:
+            cert = numfield.certificate(found)
+        except (numfield.NumberFieldError, NotAlgebraicError):
+            return
+        theta = sp.Symbol("alg_theta")
+        self.sym.params[str(theta)] = ("θ", "ℝ")
+
+        def form(re: numfield.Coeffs, im: numfield.Coeffs) -> sp.Expr:
+            return sp.Add(*(c * theta**k for k, c in enumerate(re))) + II * sp.Add(
+                *(c * theta**k for k, c in enumerate(im))
+            )
+
+        forms = {a: form(re, im) for a, re, im, _ in cert.atoms}
+        p = sp.Add(*(c * theta**k for k, c in enumerate(cert.poly)))
+        relation = (
+            f"({self.sc.text(p)} = 0 := (by have h := pevC_root θp θ hθ; "
+            "simp only [pevC, θp] at h; push_cast at h; linear_combination h))"
+        )
+
+        def inverse(e: sp.Expr) -> sp.Expr:
+            inv = numfield.inverse(cert, e.xreplace({theta: numfield.T, II: sp.I}))
+            return sp.expand(inv.xreplace({numfield.T: theta, sp.I: II}))
+
+        self.sc.alg = Field(theta, p, relation, forms, inverse)
+        self.alg_cert = cert
+
+    def field_tables(self) -> list[str]:
+        """θ's polynomial, interval and the proof that the interval holds exactly one root."""
+        cert = self.alg_cert
+        assert cert is not None
+        poly = ", ".join(str(c) for c in cert.poly)
+        lo, hi = (self.sc.real_text(v) for v in (cert.lo, cert.hi))
+        der = numfield.derivative(cert.poly)
+        n = len(der) - 1
+        width = cert.hi - cert.lo
+        bern = numfield.bernstein_derivative(cert)
+        weights = [b * sp.binomial(n, j) / width**n for j, b in enumerate(bern)]
+        terms = [
+            f"{self.sc.real_text(w)} * (x - {lo}) ^ {j} * ({hi} - x) ^ {n - j}"
+            for j, w in enumerate(weights)
+        ]
+        proofs = [
+            f"(mul_pos (mul_pos (by norm_num) (pow_pos ha {j})) (pow_pos hb {n - j}))"
+            for j in range(n + 1)
+        ]
+        total = proofs[0]
+        for pr in proofs[1:]:
+            total = f"(add_pos {total} {pr})"
+        return [
+            f"/-- θ's polynomial, constant term first. -/\ndef θp : List ℤ := [{poly}]",
+            f"/-- The interval holding θ. -/\nnoncomputable def θlo : ℝ := {lo}",
+            f"/-- The interval holding θ. -/\nnoncomputable def θhi : ℝ := {hi}",
+            (
+                "/-- The interval holds exactly one root of θp. -/\n"
+                "theorem θ_isolated : ∃! x : ℝ, θlo < x ∧ x < θhi ∧ pev θp x = 0 :=\n"
+                "  root_unique θp _ _ (by norm_num [θlo, θhi]) (by norm_num [pev, θp, θlo])\n"
+                "    (by norm_num [pev, θp, θhi]) (fun x h1 h2 => by\n"
+                "      simp only [θlo, θhi] at h1 h2\n"
+                f"      have ha : 0 < x - {lo} := by linarith\n"
+                f"      have hb : 0 < {hi} - x := by linarith\n"
+                f"      have key : pdv θp x = {' + '.join(terms)} := by\n"
+                "        simp only [pdv, pev, θp]; push_cast; ring\n"
+                f"      rw [key]\n      exact {total})"
+            ),
+        ]
+
     def register(self, d: Diagram) -> None:
         """Every dimension, phase and scalar symbol of ``d``."""
         for node in d.nodes.values():
@@ -2367,11 +2551,14 @@ class _Export:
             for raw, (n, ty) in self.sym.params.items()
             if raw != "k_lean_index" and raw not in self.mults
         ]
-        nats = [n for n, ty in params if ty == "ℕ"]
+        nats = [n for n, ty in params if ty == "ℕ" and not n.startswith("table_")]
         self.binders = " ".join(f"({n} : {ty})" for n, ty in params)
         self.args = " ".join(n for n, _ in params)
         self.hyps = " ".join(f"(h_{n} : 0 < {n})" for n in nats)
         self.hyp_args = " ".join(f"h_{n}" for n in nats)
+        if self.alg_cert is not None:
+            self.hyps = _join(self.hyps, _THETA_HYPS)
+            self.hyp_args = _join(self.hyp_args, "hθ hθlo hθhi")
         self.env = f"(E {self.args})" if params else "E"
 
     def render(self, theorem: object) -> str:
@@ -2404,8 +2591,6 @@ class _Export:
             f"{{ dimv := Δ {args}, phase := Φ {args}, labs := labs{coef} }}".replace("  ", " "),
         ]
         if self.weight_tab:
-            if self.family:
-                raise NetUnsupported("a family with complex weights")
             weights = "\n".join(
                 f"  | {i} => fun k => {t}" for i, t in sorted(self.weight_tab.items())
             )
@@ -2414,8 +2599,10 @@ class _Export:
                 f"/-- Weight vectors. -/\nnoncomputable def Ψ {binders} : ℕ → ℕ → ℂ\n"
                 f"{weights}\n  | _ => fun _ => 1",
             )
+        if self.alg_cert is not None:
+            tables = self.field_tables() + tables
         if self.family:
-            nats = [n for n, ty in params if ty == "ℕ"]
+            nats = [n for n, ty in params if ty == "ℕ" and not n.startswith("table_")]
             hyps = " ".join(f"(h_{n} : 0 < {n})" for n in nats)
             tables.insert(
                 1,
@@ -2437,11 +2624,12 @@ class _Export:
                     f"/-- Each bundle dimension index with its base index and multiplicity. -/\n"
                     f"def bundL : List (ℕ × ℕ × ℕ) := [{bund}]"
                 ),
-                f"/-- The family, its multiplicities in order: {names}. -/\n"
-                f"noncomputable def F {binders} : Fam := "
-                f"{{ dims := Δ {args}, bund := bundL, phase := Φ {args}, labs := labs }}".replace(
-                    "  ", " "
-                ),
+                (
+                    f"/-- The family, its multiplicities in order: {names}. -/\n"
+                    f"noncomputable def F {binders} : Fam := "
+                    f"{{ dims := Δ {args}, bund := bundL, phase := Φ {args}, "
+                    f"labs := labs{coef} }}"
+                ).replace("  ", " "),
                 f"/-- Every dimension value of the family is positive. -/\ntheorem Fpos "
                 f"{_join(binders, hyps)} : ∀ i, 0 < (F {args}).dims i := fun i => Δpos "
                 f"{_join(args, ' '.join('h_' + n for n in nats))} i".replace("(F )", "F"),
@@ -2466,6 +2654,13 @@ class _Export:
                 + ", ".join(self.constraints)
                 + " (hypotheses of the theorem)"
             )
+        if self.alg_cert is not None and self.sc.alg is not None:
+            notes.append(
+                "  θ is the real root of θp between θlo and θhi (theorem θ_isolated); the "
+                "hypotheses hθ, hθlo, hθhi state it"
+            )
+            for atom, form in self.sc.alg.forms.items():
+                notes.append(f"  {self.sc.text(form)} stands for {atom}")
         for sym, expr in self.sc.opaques.values():
             notes.append(f"  {self.sym.name(sym, 'ℂ')} stands for the scalar {expr}")
         if self.unproved:
@@ -2503,6 +2698,47 @@ class _Export:
         return "\n".join(
             [*header, "", "\n\n".join([*tables, *self.decls]), "", "end ArchytasZX.Export", ""]
         )
+
+
+_THETA_HYPS = "(hθ : pev θp θ = 0) (hθlo : θlo < θ) (hθhi : θ < θhi)"
+"""The hypotheses fixing θ."""
+
+
+def _algebraic_atom(e: sp.Expr) -> bool:
+    """Whether ``e`` is a closed algebraic number with a minimal polynomial."""
+    if e.free_symbols:
+        return False
+    try:
+        return all(numfield.algebraic(a) for a in numfield.atoms(e))
+    except (NotAlgebraicError, numfield.NumberFieldError):
+        return False
+
+
+def _field_values(t: object) -> list[sp.Expr]:
+    """Every scalar and spider coefficient of the diagrams of ``t`` and its premises, and every
+    step's scalar."""
+    out: list[sp.Expr] = []
+    stack = [t]
+    while stack:
+        u = stack.pop()
+        inf = u.inference  # type: ignore[attr-defined]
+        stack.extend(inf.premises)
+        ds = [u.lhs, u.rhs]  # type: ignore[attr-defined]
+        ds += [d for d in inf.data.values() if isinstance(d, Diagram)]
+        step = inf.data.get("step")
+        if isinstance(step, RewriteStep):
+            out.append(step.scalar_introduced.to_sympy())
+        for d in ds:
+            out.append(d.scalar.to_sympy())
+            for node in d.nodes.values():
+                pv = node.phase
+                if pv is None or not pv.is_weighted:
+                    continue
+                if pv.dim.is_concrete:
+                    out += [pv.coefficient(k).to_sympy() for k in range(1, pv.dim.to_int())]
+                else:
+                    out += [w.to_sympy() for w in pv.weights().values()]
+    return out
 
 
 def _norm_tail(ls: Sequence[int], cs: Sequence[Chain]) -> tuple[tuple[int, ...], list[Chain]]:
@@ -3984,8 +4220,8 @@ def _coef_sym(c: _Ctx) -> str:
     psi = "(try simp only [Ψ]); " if c.ex.weight_tab else ""
     return (
         f"{psi}(try split_ifs) <;> first | (exfalso; omega) | (simp [ex_zero]; done) | "
-        "(norm_num [ex_zero]; done) | ring1 | (subst_vars; norm_num [ex_zero]; done) | "
-        "(subst_vars; push_cast; ring)"
+        "(norm_num [ex_zero]; done) | ring1 | (subst_vars; norm_num [ex_zero, rt_one]; done) | "
+        "(subst_vars; push_cast; ring; done) | (exfalso; simp_all; done) | (simp_all; done)"
     )
 
 
@@ -4017,7 +4253,7 @@ def _zc_ad(c: _Ctx) -> _Spec:
     cases = ["· exact absurd rfl hk0"]
     for k in range(1, int(d_expr)):
         rhs = model(na, k) * model(nb, 0) + model(na, 0) * model(nb, k)
-        pairs = [(n, q) for q in (k, 0) for n in nodes3]
+        pairs = [(r, k), (na, k), (nb, k), (na, 0), (nb, 0)]
         body = _coef_case(c, model(r, k), rhs, _pair_rewrites(c, pairs))
         cases.append(f"· simp only [zc]; {body}")
     body = "\n    ".join(cases)
@@ -7106,6 +7342,7 @@ def _closes_at_end(text: str) -> bool:
     return depth == 0
 
 
+@_trace.traced("lean.export")
 def export(
     theorem: object, name: str = "main", describe: Callable[[Diagram], str] | None = None
 ) -> str:
@@ -7114,18 +7351,47 @@ def export(
 
     if not isinstance(theorem, Theorem):
         raise NetUnsupported(f"export takes a Theorem, got {type(theorem).__name__}")
-    out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
-    deferred = _deferred(theorem)
-    for a, b in deferred:
-        out.assume(a, b)
-    if not deferred:
-        for a, b in _wire_constraints(theorem):
+
+    def run(everything: bool) -> tuple[str, _Export]:
+        out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
+        out.alg_everything = everything
+        out.box_syms = _box_syms(theorem)
+        deferred = _deferred(theorem)
+        for a, b in deferred:
             out.assume(a, b)
-            out.wire_alias = True
-    try:
-        return out.finish(theorem, name)
-    except ScalarUnsupported as exc:
-        raise NetUnsupported(str(exc)) from exc
+        if not deferred:
+            for a, b in _wire_constraints(theorem):
+                out.assume(a, b)
+                out.wire_alias = True
+        try:
+            return out.finish(theorem, name), out
+        except ScalarUnsupported as exc:
+            raise NetUnsupported(str(exc)) from exc
+
+    source, first = run(False)
+    if first.alg_cert is not None and first.unproved:
+        try:
+            again, second = run(True)
+        except NetUnsupported:
+            return source
+        if len(second.unproved) < len(first.unproved):
+            return again
+    return source
+
+
+def _box_syms(t: object) -> set[str]:
+    """The symbols of every box multiplicity in the diagrams of ``t`` and its premises."""
+    from archytaszx.semantics.kernel import Theorem
+
+    assert isinstance(t, Theorem)
+    out: set[str] = set()
+    diagrams = [t.lhs, t.rhs, *(v for v in t.inference.data.values() if isinstance(v, Diagram))]
+    for d in diagrams:
+        for box in d.bang_boxes.values():
+            out |= {str(x) for x in box.multiplicity.to_sympy().free_symbols}
+    for p in t.inference.premises:
+        out |= _box_syms(p)
+    return out
 
 
 RAW_OFFSET = 1000000

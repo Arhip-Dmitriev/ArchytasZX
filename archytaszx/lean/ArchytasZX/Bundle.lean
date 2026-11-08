@@ -53,12 +53,14 @@ theorem sum_range_mul (a b : ℕ) (f : ℕ → ℂ) :
 /-! ## Families -/
 
 /-- A family's data: dimension values, each bundle dimension index with the index it bundles
-and its multiplicity, phases, and label dimension indices. -/
+and its multiplicity, phases, label dimension indices, and coefficient vectors shared by every
+copy. -/
 structure Fam where
   dims : ℕ → ℕ
   bund : List (ℕ × ℕ × ℕ)
   phase : ℕ → ℕ → ℝ
   labs : List (ℕ × ℕ)
+  coef : ℕ → ℕ → ℂ := fun _ _ => 1
 
 /-- The multiplicities a dimension index bundles along, outermost first, within `n` steps. -/
 def Fam.chainF (F : Fam) : ℕ → ℕ → List ℕ
@@ -93,7 +95,7 @@ def Fam.dimv (F : Fam) (ks : ℕ → ℕ) (i : ℕ) : ℕ :=
 
 /-- The environment at the multiplicities `ks`. -/
 noncomputable def Fam.env (F : Fam) (ks : ℕ → ℕ) : Env :=
-  { dimv := F.dimv ks, phase := F.phase, labs := F.labs, mult := ks }
+  { dimv := F.dimv ks, phase := F.phase, labs := F.labs, mult := ks, coef := F.coef }
 
 theorem lookup_mem {α : Type*} {l : List (ℕ × α)} {x : ℕ} {i : α} (h : l.lookup x = some i) :
     (x, i) ∈ l := by

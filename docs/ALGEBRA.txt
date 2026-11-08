@@ -269,3 +269,52 @@ irreducible integer polynomials of degree D >= 2 and largest coefficient H with 
 algebraic number has a level; algebraic_numbers() lists each once, by level; up_to_level(K) is
 every number of level at most K, as scalars. The exhaustive search over algebraic values
 (PROOFS.txt, section 3.3) draws its free values from up_to_level.
+
+
+6. NUMBER FIELDS: archytaszx.algebra.numfield
+---------------------------------------------
+
+A FieldCertificate writes finitely many algebraic numbers over one real algebraic number θ:
+
+    FieldCertificate(poly, lo, hi, atoms)
+        poly    the integer coefficients of p, constant term first
+        lo, hi  rationals with p(lo) < 0 < p(hi), exactly one root of p in [lo, hi], and every
+                Bernstein coefficient of p' on [lo, hi] positive; θ is that root
+        atoms   (atom, re, im, rect) per atom: atom = re(θ) + i im(θ), re and im rational
+                coefficient tuples (constant first) of degree below deg p, rect a rational
+                rectangle (ax, ay, bx, by) holding the atom and one root of its minimal
+                polynomial
+
+An atom is a maximal subterm of a closed value that is not a rational, i, a sum, a product or an
+integer power: a CRootOf, a radical, a root of unity e^{2 pi i r}, any closed algebraic
+subterm.
+
+    atoms(expr) -> list                      the atoms of a closed value
+    algebraic(atom) -> bool                  a minimal polynomial and an isolated numeric value
+    certificate(values) -> FieldCertificate  a checked certificate for every atom of values
+    check(cert)                              NumberFieldError unless every claim holds
+    element(cert, expr) -> (re, im)          expr over the atoms, reduced modulo p
+    key(cert, expr) -> sympy.Expr            re + i im of expr: equal values, equal keys
+    inverse(cert, expr) -> sympy.Expr        the inverse of re + i im, in the field
+    derivative(poly), bernstein_derivative(cert)
+
+check uses exact arithmetic only: p irreducible over Q; the sign change, a Sturm count of one
+root and positive Bernstein coefficients of p' on [lo, hi]; for each atom, its minimal
+polynomial m evaluated at re + i im is 0 modulo p and i^2 = -1; a rational interval enclosure of
+re(θ) + i im(θ) over [lo, hi] lies in rect; rect contains sympy's isolating interval of the atom
+and exactly one root of m (count_roots); a real atom has im = 0, a rational atom a constant
+re. So the root of m in rect is both the atom and re(θ) + i im(θ).
+
+certificate finds a certificate by exact algebra, then checks it. Each real atom is a real
+generator with its minimal polynomial; a non-real atom α of minimal polynomial m (degree n)
+contributes the real generator re α + c im α, whose polynomial is the resultant over pairs of
+roots of m (degree n^2). Generators combine one at a time into θ = θ_old + c g (c from a fixed
+list), with the minimal polynomial of θ an irreducible factor of a resultant and g and θ_old
+recovered as polynomials in θ from a linear gcd over Q(θ); a non-real atom is recovered from a
+linear gcd over Q(θ)(i). Numerics (mpmath, 60 digits) only select factors and roots. The
+interval is dyadic, shrunk until p' has positive Bernstein coefficients on it and the rectangles
+isolate. Values that are not algebraic (pi, e^{2 pi i r} with r irrational) have no certificate
+(NotAlgebraicError).
+
+The kernel inference of PROOFS.txt, section 3.3, compares values by key; the Lean export states
+θ through p, lo and hi (LEAN.txt, section 6).

@@ -14,10 +14,11 @@
 """Exact scalars written in Lean, and Lean proofs of identities between them.
 
 A scalar is a sympy expression over the atoms ``Rt(x)`` (``√x`` for a natural ``x``),
-``Om(m)`` (``e^{2πi/m}``), ``Inv(e)`` (``e⁻¹``), ``Ex(t)`` (``e^t``), the imaginary unit and
-free symbols. An identity ``a = b`` is proved by ``linear_combination`` over the relations
-``√x² = x``, ``e · e⁻¹ = 1``, ``ω_m^m = 1`` and ``i² = -1``, with coefficients from a
-polynomial division; Lean's ``ring`` checks the result.
+``Om(m)`` (``e^{2πi/m}``), ``Inv(e)`` (``e⁻¹``), ``Ex(t)`` (``e^t``), the imaginary unit,
+free symbols and, with a :class:`Field`, a real root ``θ`` of an integer polynomial ``p`` over
+which the field's atoms are written. An identity ``a = b`` is proved by ``linear_combination``
+over the relations ``√x² = x``, ``e · e⁻¹ = 1``, ``ω_m^m = 1``, ``i² = -1`` and ``p(θ) = 0``,
+with coefficients from a polynomial division; Lean's ``ring`` checks the result.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+from archytaszx.algebra.scalar import ModDelta, ModGcd
 
 
 class ScalarUnsupported(Exception):
@@ -43,6 +46,19 @@ II = sp.Symbol("ii")
 
 
 @dataclass
+class Field:
+    """A real root ``theta`` of ``poly`` (an expression in ``theta``), the Lean proof text of
+    ``poly = 0`` over ℂ, each atom's form over ``theta`` and :data:`II`, and the inverse of a
+    nonzero form."""
+
+    theta: sp.Symbol
+    poly: sp.Expr
+    relation: str
+    forms: dict[sp.Expr, sp.Expr]
+    inverse: Callable[[sp.Expr], sp.Expr]
+
+
+@dataclass
 class Scalars:
     """Renders scalars over named symbols and proves identities between them.
 
@@ -55,6 +71,7 @@ class Scalars:
     positive: Callable[[str], str]
     nats: set[str] = field(default_factory=set)
     opaques: dict[str, tuple[sp.Symbol, sp.Expr]] = field(default_factory=dict)
+    alg: Field | None = None
 
     # conversion from engine scalars
 
@@ -75,12 +92,20 @@ class Scalars:
         return self.opaques[key][0]
 
     def _model(self, expr: sp.Expr) -> sp.Expr:
+        if self.alg is not None and expr in self.alg.forms:
+            return self.alg.forms[expr]
         if expr.is_Number or expr.is_Symbol:
+            return expr
+        if isinstance(expr, (ModDelta, ModGcd)):
+            if not all(self._nat_arg(a) for a in expr.args):
+                raise ScalarUnsupported(f"{expr} has a non-natural argument")
             return expr
         if expr is sp.I:
             return II
         if expr is sp.pi:
             raise ScalarUnsupported("a bare π")
+        if expr is sp.E:
+            return Ex(sp.Integer(1))
         if expr.is_Add:
             return sp.Add(*(self.model(a) for a in expr.args))
         if expr.is_Mul:
@@ -102,7 +127,11 @@ class Scalars:
             base, exp = expr.args
             if exp.is_Integer:
                 inner = self.model(base)
-                return inner ** int(exp) if int(exp) >= 0 else Inv(inner) ** (-int(exp))
+                if int(exp) >= 0:
+                    return inner ** int(exp)
+                if self.alg is not None and inner.has(self.alg.theta):
+                    return sp.expand(self.alg.inverse(inner) ** (-int(exp)))
+                return Inv(inner) ** (-int(exp))
             if exp.is_Rational and exp.q == 2 and self._natural(base):
                 root = Rt(base)
                 return root**exp.p if exp.p > 0 else Inv(root) ** (-exp.p)
@@ -125,6 +154,16 @@ class Scalars:
                 return Om(q.q) ** q.p if q != 0 else sp.Integer(1)
             return Ex(expr.args[0])
         raise ScalarUnsupported(f"the scalar {expr} ({type(expr).__name__})")
+
+    def _nat_arg(self, e: sp.Expr) -> bool:
+        """Whether ``e`` is a natural-number expression over natural symbols."""
+        try:
+            self.nat_text(e)
+        except ScalarUnsupported:
+            return False
+        return all(str(s) in self.nats for s in e.free_symbols) and not (
+            e.is_Integer and int(e) < 0
+        )
 
     def _natural(self, base: sp.Expr) -> bool:
         if base.is_Integer:
@@ -185,6 +224,12 @@ class Scalars:
             return f"(om {self.nat_text(expr.args[0])})"
         if isinstance(expr, NC):
             return f"(({self.nat_text(expr.args[0])} : ℕ) : ℂ)"
+        if isinstance(expr, ModDelta):
+            j, m = (self.nat_text(a) for a in expr.args)
+            return f"(if {j} % {m} = 0 then (1 : ℂ) else 0)"
+        if isinstance(expr, ModGcd):
+            c, m = (self.nat_text(a) for a in expr.args)
+            return f"((Nat.gcd {c} {m} : ℕ) : ℂ)"
         if isinstance(expr, Inv):
             return f"({self.text(expr.args[0])})⁻¹"
         if isinstance(expr, Ex):
@@ -263,6 +308,13 @@ class Scalars:
     def nonzero_expr(self, expr: sp.Expr) -> str:
         """A Lean proof that ``expr`` as written by :meth:`text` is nonzero."""
         expr = sp.sympify(expr)
+        if self.alg is not None and expr.has(self.alg.theta):
+            inv = self.alg.inverse(expr)
+            body = self.prove(expr * inv, sp.Integer(1))
+            return (
+                f"(left_ne_zero_of_mul_eq_one (show {self.text(expr)} * {self.text(inv)} = 1 "
+                f"{body}))"
+            )
         if expr == 1:
             return "one_ne_zero"
         if expr.is_Rational and not expr.is_Integer:
@@ -313,7 +365,7 @@ class Scalars:
                 return sym(sp.Pow(base, rest, evaluate=False)) * poly(base) ** int(const)
             if isinstance(expr, NC):
                 return poly(expr.args[0])
-            if isinstance(expr, (Rt, Om, Ex, Inv, GS)):
+            if isinstance(expr, (Rt, Om, Ex, Inv, GS, ModDelta, ModGcd)):
                 return sym(expr)
             raise ScalarUnsupported(f"no polynomial model for {expr}")
 
@@ -328,6 +380,8 @@ class Scalars:
             s = atoms[atom]
             if atom == II:
                 relations.append((s**2 + 1, "Complex.I_sq"))
+            elif self.alg is not None and atom == self.alg.theta:
+                relations.append((poly(self.alg.poly), self.alg.relation))
             elif isinstance(atom, Rt):
                 x = atom.args[0]
                 before = set(atoms)

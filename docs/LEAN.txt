@@ -59,6 +59,9 @@ between two scaled networks under one environment: the same tensor, scalars incl
   -----------  ----------------------------------------------------------------------------
   Net          networks over ℂ and their evaluation; node kinds include the weighted Z and X
                spiders Kind.ZW and Kind.XW (tZw, tXw, coefficient table Env.coef)
+  Diagram      the engine's diagrams as data: nodes, wires, boundary and boxes (DBox),
+               Diagram.eval, Diagram.toNet, DEqual, and Diagram.mapDim renaming dimension
+               indices
   Iso          isoOK, a decidable check that two networks agree up to renaming of summed
                labels, node order and spider leg order; iso proves it sound
   Rules        every rule of the engine as a local equation (LocalEq) between its two sides,
@@ -142,8 +145,12 @@ between two scaled networks under one environment: the same tensor, scalars incl
                context, its scalar squared in modulus: F4, the lifting lemma), cpm_phase (F5),
                cpm_conj (F1), cpm_causal (F6); the discard rules as tensor identities
                discard_fourier, discard_phase, discard_zero, discard_loop, discard_binder
+  NumField     integer polynomials on ℝ and ℂ (pev, pdv, pevC); root_unique, exactly one
+               root in an interval where the polynomial changes sign from negative to positive
+               and its derivative is positive; valCoefZ, valCoefX, netCoef: networks equal
+               when their Z and X spiders have equal coefficient tables
   Paper        the generators of [P1] and [P2] as their papers define them (paperH, paperZ,
-               paperW, paperT, paperTi, paperSplit, paperPink, paperD), each proved equal to
+               paperW, paperT, paperTi, paperSplit, paperPink, paperD, paperZbox), each proved equal to
                the engine generator it maps to, with the scalar of COMPLETENESS.txt, section 2
 
 
@@ -372,10 +379,11 @@ are written differently are refuted after instantiating their multiplicities.
 6. WHAT IS TRUSTED
 ------------------
 
-    #print axioms main_diagrams
+    #print axioms ArchytasZX.Export.main_diagrams
 
-(main where an export has no diagram statement) should list only propext, Classical.choice and
-Quot.sound. What remains trusted is:
+(main where an export has no diagram statement; network, normaliser and refutation exports
+declare their theorems in the namespace ArchytasZX.Export, the opaque export of 4.5 in
+ArchytasZX) should list only propext, Classical.choice and Quot.sound. What remains trusted is:
 
   - Lean and Mathlib;
   - the definitions of the bundled library (the tensors of the generators);
@@ -383,6 +391,28 @@ Quot.sound. What remains trusted is:
     (D0, D1: nodes, wires, boundary and boxes, as data) that the final theorem main_diagrams
     is stated over; the translation of a diagram into a network is checked by the kernel
     (D_net), so a wrong translation is rejected, not trusted.
+
+Algebraic scalars (CRootOf values, roots of non-monomials, sums and quotients of them) are
+exported over one real number θ, the primitive element of a number-field certificate
+(archytaszx.algebra.numfield, ALGEBRA.txt section 6): an irreducible integer polynomial θp and a
+dyadic interval (θlo, θhi). Every algebraic value is written qa(θ) + I qb(θ), qa and qb rational
+polynomials. The kernel inference algebraic (PROOFS.txt 3.3) checks that both sides of a meet
+have the same coefficients in this form and that each atom's form is a root of its minimal
+polynomial inside its own isolating rectangle. In Lean, θ is a binder of every theorem with the
+hypotheses
+
+    (hθ : pev θp θ = 0) (hθlo : θlo < θ) (hθhi : θ < θhi)
+
+and the file proves
+
+    theorem θ_isolated : ∃! x, θlo < x ∧ x < θhi ∧ pev θp x = 0
+
+by root_unique (the sign of θp at θlo and θhi by norm_num, the derivative positive on the
+interval by its Bernstein coefficients, an identity checked by ring). The hypotheses therefore
+name exactly one real number, and every step uses only the relation pev θp θ = 0
+(linear_combination); which atom each form stands for is stated in the file header and is not
+part of the theorem. Nothing about the certificate is trusted outside Lean: a wrong polynomial,
+form or interval makes a step or θ_isolated fail to check.
 
 Agreement of Diagram.expandK with the engine's instantiate_symbol is checked on examples/ and the
 battery, not proved. Agreement of the engine's substitution with the network semantics, the
@@ -542,10 +572,12 @@ spider's sum is written explicitly (section 4.1).
 
 G4 Multiplicity-dependent scalars that are not geometric, with port boxes.
 
-G5 Opaque scalars (pi, roots of non-monomials, algebraic numbers written CRootOf) whose ratio
-is not exact. An opaque scalar is a parameter of the export (the theorem holds for every value),
-so a step whose proof needs a relation the value satisfies (its minimal polynomial) is an
-unproved axiom; steps that do not need one, such as a fusion of two such weights, are proved.
+G5 Transcendental and oversized scalars. Algebraic values are exported over the number-field
+certificate of section 6. A value that is not algebraic (pi, E, exp of a non-rational multiple of
+pi I) stays a parameter of the export (the theorem holds for every value of it), so a step whose
+proof needs a relation between such values is an unproved axiom. The cost of an algebraic export
+grows with the degree of θ: for a non-real root of x^5 - x - 1 (degree 20) the export takes 144 s
+and the Lean check 576 s.
 
 G6 Under the normaliser: node boxes meeting the rest at a wire other than at the bundled
 inputs of one Z spider with a boundary output, and port boxes inside port boxes.
@@ -576,17 +608,22 @@ assumed equality changes a boundary dimension's index (4.4) ends in a diagram st
 assumed-equal dimensions identified (dimIds), beside the network theorem at the diagrams' own
 dimensions.
 
-G12 Weighted spiders at a symbolic dimension: the coefficient table Ψ is the weight entries
-over the weight rule (a function of the index k), times e^{2πi} of the spider's phases (entries
-and phase rule); a weight rule the scalar model cannot write raises NetUnsupported, and steps on
-such nodes are unproved axioms. Weighted X spiders are exported as Kind.XW.
+G12 Weighted spiders with bundled legs. Weighted Z and X spiders (Kind.ZW, Kind.XW) are exported at
+symbolic dimensions with their weight rule as a function of the index k : ℕ, and in families
+through Fam.coef (a box multiplicity n inside a weight or phase is the parameter table_n of the
+tables, so main_diagrams holds for every table_n and n); Iverson atoms ModDelta and gcd atoms ModGcd of k are written as Lean terms. A
+weighted spider inside a port box (one leg bundling k legs) has no network kind: the bundled
+kinds ZB and XB carry phases only, so its export raises NetUnsupported "a weighted spider with
+bundled legs". The engine has no proof of such an induction either (state copy refuses a
+weighted spider). A weight rule the scalar model cannot write still raises NetUnsupported.
 
 G13 Cost of large steps: structural side conditions (among them the isomorphism condition isoOKB
 of isoB) are decided in the kernel first (decide +kernel); a step's closing isoB names its target
 network and is applied by refine before its condition is decided; exports set maxRecDepth to
-100000. zxw_hd, zxw_hd_converse, qf_hd, qf_hd_converse and zxw_vw steps check up to d = 7 (a
-zxw_hd step at d = 7 in 185 s; the converse's closing isomorphism takes longest, about 20
-minutes at d = 6); larger dimensions were not measured.
+100000 and maxHeartbeats to 2000000. zxw_hd, zxw_hd_converse, qf_hd, qf_hd_converse, zxw_vw and
+zxw_vw_converse steps check up to d = 8 (at d = 8 on a cluster node: zxw_hd 298 s, zxw_hd_converse
+351 s; at the default heartbeat limit both d = 8 steps end in a heartbeat timeout); larger
+dimensions were not measured.
 
 G14 Mixed diagrams: the network export has no discard generator; a mixed theorem is proved
 through its doubled diagrams (4.6). The conjugation of MIXED.txt 2.1 is not stated per

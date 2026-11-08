@@ -47,6 +47,17 @@ theorem paperZ_eq (d : ℕ) (φ : ℕ → ℝ) (vs : List ℕ) : paperZ d φ vs 
   rw [prod_indicator]
   split_ifs <;> simp
 
+/-- [P1] Z box with complex weights `a` (`a₀ = 1`): `∑_j a_j |j..j⟩⟨j..j|`. -/
+noncomputable def paperZbox (d : ℕ) (a : ℕ → ℂ) (vs : List ℕ) : ℂ :=
+  ∑ j ∈ range d, (if j = 0 then 1 else a j) * (vs.map fun v => if v = j then (1 : ℂ) else 0).prod
+
+theorem paperZbox_eq (d : ℕ) (a : ℕ → ℂ) (vs : List ℕ) :
+    paperZbox d a vs = tZw d (fun j => if j = 0 then 1 else a j) vs := by
+  unfold paperZbox tZw
+  refine Finset.sum_congr rfl fun j _ => ?_
+  rw [prod_indicator]
+  by_cases hj : j = 0 <;> split_ifs <;> simp_all
+
 /-- [P1] W node with one input and two outputs:
 `|00⟩⟨0| + ∑_{i=1}^{d-1} (|0i⟩ + |i0⟩)⟨i|`. -/
 def paperW (d o₁ o₂ i : ℕ) : ℂ :=

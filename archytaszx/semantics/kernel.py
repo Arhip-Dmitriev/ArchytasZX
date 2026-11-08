@@ -56,8 +56,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+from archytaszx import trace as _trace
+from archytaszx.algebra import numfield
+from archytaszx.algebra.algebraic import NotAlgebraicError
+from archytaszx.algebra.phase import PhaseVector
+from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import free_mult_symbols
-from archytaszx.diagram.compare import isomorphic
+from archytaszx.diagram.compare import isomorphic, isomorphism
 from archytaszx.diagram.generators import MIXED_ONLY
 from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
@@ -94,8 +101,8 @@ _TOKEN = object()
 
 @dataclass(frozen=True, eq=False)
 class Inference:
-    """The rule that built a theorem: ``kind`` is refl, rule, iso, symm, trans, induction,
-    subst or shift."""
+    """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, symm, trans,
+    induction, subst or shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -194,11 +201,13 @@ def _same(a: Diagram, b: Diagram) -> bool:
     return compare_structure(a, b).identical
 
 
+@_trace.traced("kernel.refl")
 def refl(d: Diagram) -> Theorem:
     """``d = d``."""
     return Theorem(_TOKEN, d, d, Inference("refl"))
 
 
+@_trace.traced("kernel.rule")
 def rule(d: Diagram, step: RewriteStep) -> Theorem:
     """``d = d'`` by re-applying ``step`` to ``d`` at its rediscovered match; a step of a pure
     rule must consume no discard."""
@@ -220,6 +229,7 @@ def rule(d: Diagram, step: RewriteStep) -> Theorem:
     return Theorem(_TOKEN, d, after, inference, deferred)
 
 
+@_trace.traced("kernel.iso")
 def iso(a: Diagram, b: Diagram) -> Theorem:
     """``a = b`` for isomorphic comparison views."""
     if not (_same(a, b) or views_isomorphic(comparison_view(a), comparison_view(b))):
@@ -227,11 +237,74 @@ def iso(a: Diagram, b: Diagram) -> Theorem:
     return Theorem(_TOKEN, a, b, Inference("iso"))
 
 
+def _values(d: Diagram) -> list[sp.Expr]:
+    """The coefficients of every Z and X spider of ``d`` and its scalar."""
+    out = [d.scalar.to_sympy()]
+    for node in d.nodes.values():
+        if node.phase is None:
+            continue
+        if not node.phase.dim.is_concrete:
+            raise KernelError("a spider parameter at a symbolic dimension")
+        out += [node.phase.coefficient(k).to_sympy() for k in range(1, node.phase.dim.to_int())]
+    return out
+
+
+def _keyed(d: Diagram, cert: numfield.FieldCertificate, tokens: dict[str, int]) -> Diagram:
+    """A copy of ``d`` with each spider coefficient replaced by an integer naming its field key,
+    scalar one and no parameters."""
+    out = d.copy()
+    out.set_parameters({})
+    out.set_scalar(Scalar.one())
+    for nid, node in d.nodes.items():
+        if node.phase is None:
+            continue
+        dim = node.phase.dim
+        weights = {}
+        for k in range(1, dim.to_int()):
+            key = str(numfield.key(cert, node.phase.coefficient(k).to_sympy()))
+            weights[k] = Scalar(sp.Integer(tokens.setdefault(key, len(tokens) + 2)))
+        out.set_phase(nid, PhaseVector.from_weights(dim, weights))
+    return out
+
+
+@_trace.traced("kernel.algebraic")
+def algebraic(a: Diagram, b: Diagram, cert: numfield.FieldCertificate | None = None) -> Theorem:
+    """``a = b`` when a node renaming carries ``a`` onto ``b`` with every spider coefficient
+    and the scalar equal in the number field of ``cert``: ``a = a'`` (``a`` with ``b``'s
+    values), then :func:`iso`. ``cert`` is built from the values when not given; it is
+    checked either way."""
+    if a.bang_boxes or b.bang_boxes:
+        raise KernelError("an algebraic meet of diagrams with bang boxes")
+    values = _values(a) + _values(b)
+    try:
+        if cert is None:
+            cert = numfield.certificate(values)
+        numfield.check(cert)
+        tokens: dict[str, int] = {}
+        ka, kb = _keyed(a, cert, tokens), _keyed(b, cert, tokens)
+        same_scalar = numfield.key(cert, a.scalar.to_sympy()) == numfield.key(
+            cert, b.scalar.to_sympy()
+        )
+    except (numfield.NumberFieldError, NotAlgebraicError) as exc:
+        raise KernelError(f"no number-field certificate: {exc}") from exc
+    nodes = isomorphism(ka, kb, symmetric_legs=True)
+    if nodes is None or not same_scalar:
+        raise KernelError("the diagrams differ beyond equal algebraic values")
+    target = a.copy()
+    for nid in a.nodes:
+        target.set_phase(nid, b.nodes[nodes[nid]].phase)
+    target.set_scalar(b.scalar)
+    step = Theorem(_TOKEN, a, target, Inference("algebraic", data={"field": cert}))
+    return trans(step, iso(target, b))
+
+
+@_trace.traced("kernel.symm")
 def symm(t: Theorem) -> Theorem:
     """``rhs = lhs`` from ``lhs = rhs``."""
     return Theorem(_TOKEN, t.rhs, t.lhs, Inference("symm", (t,)), t.assumptions)
 
 
+@_trace.traced("kernel.trans")
 def trans(a: Theorem, b: Theorem) -> Theorem:
     """``a.lhs = b.rhs`` when ``a.rhs`` is ``b.lhs``."""
     if not _same(a.rhs, b.lhs):
@@ -252,6 +325,7 @@ def chain(start: Diagram, steps: Sequence[RewriteStep]) -> Theorem:
     return out if out is not None else refl(start)
 
 
+@_trace.traced("kernel.induction")
 def induction(
     start: Diagram,
     goal: Diagram,
@@ -311,6 +385,7 @@ def induction(
     )
 
 
+@_trace.traced("kernel.subst")
 def subst(
     t: Theorem, clause: Clause, lhs: Diagram | None = None, rhs: Diagram | None = None
 ) -> Theorem:
@@ -375,6 +450,7 @@ def restricted(
     )
 
 
+@_trace.traced("kernel.shift")
 def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
     """``left = right`` at ``n = a*m + c`` for every ``m``, from ``t`` about both sides with the
     clause ``n >= c`` or ``n = a*m + c`` substituted: each side rebuilt by
@@ -426,6 +502,7 @@ class RestrictedProof:
     floors_used: tuple[str, ...] = ()
 
 
+@_trace.traced("proof.kernel_check")
 def check(artefact: object) -> Theorem:
     """The theorem a certificate, proof certificate, induction proof or restricted proof
     establishes."""
@@ -463,7 +540,14 @@ def check(artefact: object) -> Theorem:
                 raise KernelError("a proof half does not begin at its end of the goal")
         forward = check(artefact.forward)
         backward = check(artefact.backward)
-        return trans(forward, trans(iso(forward.rhs, backward.rhs), symm(backward)))
+        try:
+            meet = iso(forward.rhs, backward.rhs)
+        except KernelError as exc:
+            try:
+                meet = algebraic(forward.rhs, backward.rhs)
+            except KernelError:
+                raise exc from None
+        return trans(forward, trans(meet, symm(backward)))
     if isinstance(artefact, InductionProof):
         return induction(
             artefact.start,
@@ -611,6 +695,7 @@ def refutation(decision: object, left: Diagram, right: Diagram) -> Refutation:
     return Refutation(left, right, dict(decision.counterexample))
 
 
+@_trace.traced("proof.build")
 def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
     """``left = right`` from a decision's normal-form or saturation certificates."""
     from archytaszx.semantics.decide import Decision, DecisionMethod
