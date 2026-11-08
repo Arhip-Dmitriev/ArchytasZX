@@ -439,11 +439,34 @@ def calibration_table(results: Path) -> list[dict[str, Any]]:
     return out
 
 
+def current(cfg: dict[str, Any], recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The records whose ``source`` digest matches today's sources of their instance (runs of
+    an edited or removed subject dropped)."""
+    from benchmarks import breaks, sources, subject
+
+    sc = cfg["subjects"]
+    insts = {i.id: i for i in subject.instances(list(subject.catalogue(sc["catalogue"])))}
+    falses = {}
+    if cfg["false_set"]["enabled"]:
+        fs = config.path(cfg, "results") / "false_set.json"
+        if fs.exists():
+            for rec in json.loads(fs.read_text(encoding="utf-8")).get("records", []):
+                if rec.get("kind") is not None and rec["equation"] in insts:
+                    fi = breaks.false_instance(rec, insts)
+                    falses[fi.id] = (fi, rec)
+    want: dict[str, str] = {}
+    for iid, inst in insts.items():
+        want[iid] = sources.source_digest(inst, None, sc["catalogue"])
+    for fid, (fi, rec) in falses.items():
+        want[fid] = sources.source_digest(fi, rec, sc["catalogue"])
+    return [r for r in recs if want.get(r.get("equation", "")) == r.get("source")]
+
+
 def main(cfg: dict[str, Any]) -> None:
     """Writes every aggregate of the config's logs."""
     results = config.path(cfg, "results")
     h = config.digest(cfg)
-    recs = list(log.index(results, h).values())
+    recs = current(cfg, list(log.index(results, h).values()))
     runs = [r for r in recs if not r.get("unit")]
     units = [r for r in recs if r.get("unit")]
     out = results / "aggregate"

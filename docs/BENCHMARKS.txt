@@ -503,7 +503,7 @@ the median, quartiles, minimum, maximum, the interval, the number of runs and th
 -------------
 
 Implementation: benchmarks/runner.py, benchmarks/worker.py, benchmarks/log.py,
-benchmarks/slurm.py
+benchmarks/sources.py, benchmarks/slurm.py
 
 10.1 The runner
 
@@ -527,13 +527,16 @@ stage, so a killed run records the stage it died in.
 
 Each finished run is appended at once, with flush and fsync, as one JSON line to
 results/raw/HOST-JOB-TASK-wK.jsonl, one file per worker thread; lines are never edited. A run is
-keyed by (config hash, equation, version, tool, point, repeat, trace). On start every log is read
-and every key present is reused: the schedule replays from logged outcomes, and a unit whose
-unit record exists is skipped. A run cut off before its line was written leaves nothing and is
-re-run whole; a truncated last line is ignored. SIGINT or SIGTERM stops new runs and sends
+keyed by (config hash, equation and its source digest, version, tool, point, repeat, trace); the
+source digest hashes the subject file, the catalogue's helper modules and data files, ir.py,
+translate.py and subject.py (for an F equation also breaks.py and its F record), so adding a
+subject leaves every other key unchanged and editing one re-runs only its runs. On start every log
+is read and every key present is reused: the schedule replays from logged outcomes, and a unit
+whose unit record exists is skipped. A run cut off before its line was written leaves nothing and
+is re-run whole; a truncated last line is ignored. SIGINT or SIGTERM stops new runs and sends
 SIGTERM to each running worker's process group (the worker kills its Lean check, whose process
 group is its own), SIGKILL after 5 s; those runs are re-run on resume. Aggregates and plots come
-only from the logs.
+only from the logs, from the records whose source digest matches the current sources.
 
 10.3 Cluster (Zaratan)
 

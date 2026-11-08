@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from benchmarks import breaks, config, lean, log, points, stats, subject
+from benchmarks import breaks, config, lean, log, points, sources, stats, subject
 
 ROOT = Path(__file__).resolve().parent.parent
 STAGE_MARK = "@@STAGE "
@@ -309,6 +309,7 @@ class UnitRun:
         self.unit, self.inst, self.ctx = unit, inst, ctx
         self.cfg = ctx.cfg
         self.eq = inst.id
+        self.source = sources.source_digest(inst, unit.false, self.cfg["subjects"]["catalogue"])
 
     def version(self, point: Any) -> str:
         if self.inst.restriction:
@@ -318,7 +319,15 @@ class UnitRun:
     def run(self, point: Any, repeat: int, trace: bool, phase: str) -> dict[str, Any]:
         """One run, from the log when present."""
         version = self.version(point)
-        k = log.key(self.ctx.cfg_hash, self.eq, version, self.unit.tool, point, repeat, trace)
+        k = log.key(
+            self.ctx.cfg_hash,
+            f"{self.eq}@{self.source}",
+            version,
+            self.unit.tool,
+            point,
+            repeat,
+            trace,
+        )
         if k in self.ctx.done:
             return self.ctx.done[k]
         if _stop.is_set():
@@ -338,6 +347,7 @@ class UnitRun:
             "key": k,
             "config": self.ctx.cfg_hash,
             "equation": self.eq,
+            "source": self.source,
             "truth": self.inst.truth,
             "kind": self.unit.false["kind"] if self.unit.false else None,
             "subject": self.inst.subject.id,
@@ -389,7 +399,7 @@ class UnitRun:
     def execute(self) -> None:
         """Symbolic run, phase 1, phase 2, then the unit record."""
         tool = self.unit.tool
-        unit_key = f"{self.ctx.cfg_hash}|{self.eq}|unit|{tool}"
+        unit_key = f"{self.ctx.cfg_hash}|{self.eq}@{self.source}|unit|{tool}"
         if unit_key in self.ctx.done:
             return
         from benchmarks import tools
@@ -465,6 +475,7 @@ class UnitRun:
             "config": self.ctx.cfg_hash,
             "unit": True,
             "equation": self.eq,
+            "source": self.source,
             "truth": self.inst.truth,
             "subject": self.inst.subject.id,
             "category": self.inst.subject.category,
