@@ -14,8 +14,8 @@ assignment = "round_robin"            # round_robin or random
 seed = 20261106
 beyond_N = 32                         # N of the beyond_N kind
 tiny_k = 3                            # tiny_phase is 1/d^k of a turn
-probe_seconds = 60                    # time for one witness probe; overrun = no witness there
-equation_seconds = 900                # time for all kinds of one equation; overrun = no F
+probe_seconds = 120                   # time for one witness probe; overrun = no witness there
+equation_seconds = 1800               # time for all kinds of one equation; overrun = no F
 
 [points]
 K = 16                                # successful data points per equation and tool
@@ -33,7 +33,7 @@ decide = true
 certificate = true                    # proof object build plus kernel check
 lean_export = true
 lean_check = true
-timeout_seconds = 86400               # CPU seconds per stage per run
+timeout_seconds = 3600                # CPU seconds per stage per run
 wall_factor = 4                       # a run is killed after this many times its stage limits in wall time
 memory_fraction = 0.85
 

@@ -66,10 +66,22 @@ def cgroups() -> bool:
     return subprocess.run(cmd, capture_output=True, check=False).returncode == 0
 
 
+def slurm_memory_mb() -> float | None:
+    """The Slurm job's memory allocation in MiB (SLURM_MEM_PER_NODE, else SLURM_MEM_PER_CPU
+    times SLURM_CPUS_PER_TASK), None outside Slurm."""
+    node = os.environ.get("SLURM_MEM_PER_NODE")
+    if node:
+        return float(node)
+    per_cpu, cpus = os.environ.get("SLURM_MEM_PER_CPU"), os.environ.get("SLURM_CPUS_PER_TASK")
+    return float(per_cpu) * int(cpus) if per_cpu and cpus else None
+
+
 def total_memory_mb() -> float:
-    """MemTotal in MiB."""
+    """MemTotal in MiB, at most the Slurm allocation."""
     with open("/proc/meminfo", encoding="ascii") as fh:
-        return next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:")) / 1024
+        total = next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:")) / 1024
+    alloc = slurm_memory_mb()
+    return min(total, alloc) if alloc else total
 
 
 def scoped(cmd: list[str], fraction: float) -> list[str]:

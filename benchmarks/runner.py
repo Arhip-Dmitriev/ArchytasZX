@@ -180,10 +180,14 @@ def environment(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def memory_cap_mb(cfg: dict[str, Any], jobs: int) -> int:
-    """memory_fraction of the available memory, shared by the workers."""
+    """memory_fraction of the available memory (at most the Slurm allocation), shared by the
+    workers."""
     with open("/proc/meminfo", encoding="ascii") as fh:
         info = {ln.split(":")[0]: int(ln.split()[1]) for ln in fh}
-    return int(cfg["stages"]["memory_fraction"] * info["MemAvailable"] / 1024 / max(1, jobs))
+    avail = info["MemAvailable"] / 1024
+    alloc = lean.slurm_memory_mb()
+    avail = min(avail, alloc) if alloc else avail
+    return int(cfg["stages"]["memory_fraction"] * avail / max(1, jobs))
 
 
 def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:

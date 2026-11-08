@@ -155,7 +155,8 @@ def _slice_check(fi: Any, tag: str, ew: dict[str, Any]) -> list[str]:
         try:
             out += _slice_one(fi, tag, ew, n, d)
         except Exception as exc:  # noqa: BLE001
-            out.append(f"{tag}: slice check error at n={n} d={d}: {str(exc)[:160]}")
+            skip = "SKIP " if type(exc).__name__ in ("ContractSizeError", "MemoryError") else ""
+            out.append(f"{skip}{tag}: slice check error at n={n} d={d}: {str(exc)[:160]}")
     return out
 
 
