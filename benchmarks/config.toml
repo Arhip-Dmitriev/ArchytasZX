@@ -41,8 +41,8 @@ memory_fraction = 0.85
 mode = "adaptive"
 min_runs = 5
 max_runs = 30
-confidence = 0.99
-precision = 0.05                      # 99 % CI half-width of the median, relative
+confidence = 0.95
+precision = 0.05                      # 95 % CI half-width of the median, relative
 
 [repeats.laptop]
 mode = "fixed"

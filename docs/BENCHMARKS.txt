@@ -491,10 +491,10 @@ with their status.
 Implementation: benchmarks/stats.py
 
 Laptop: exactly repeats.laptop.runs runs (3) of every successful point. Cluster: at least
-min_runs (5), then until the 99 % confidence interval of the median decide CPU has half-width
+min_runs (5), then until the 95 % confidence interval of the median decide CPU has half-width
 within precision (5 %) of the median, or max_runs (30). The interval is the exact order-statistic
 interval: the largest j with 2 P(Binomial(m, 1/2) <= j - 1) <= 1 - confidence gives
-[x_(j), x_(m+1-j)]; at 99 % it exists from m = 8. Points reaching max_runs are noisy; a point is
+[x_(j), x_(m+1-j)]; at 95 % it exists from m = 6. Points reaching max_runs are noisy; a point is
 decided by its first run, and a later failing repeat makes it unstable. Every aggregate row has
 the median, quartiles, minimum, maximum, the interval, the number of runs and the raw values.
 
