@@ -98,10 +98,10 @@ keys:
 
   Key          Type     Default  Meaning
   -----------  -------  -------  ----------------------------------------------------------
-  size         number   1        Scale of rendered images; 1 is one terminal cell of text
-                                 height.
-  color        string   "auto"   "auto" follows the terminal; otherwise any matplotlib
-                                 colour name.
+  size         number   1        Scale of rendered images, in (0, 10]; 1 is one terminal
+                                 cell of text height.
+  color        string   "auto"   "auto" follows the terminal; otherwise #rgb, #rrggbb or
+                                 any matplotlib colour name.
   format       string   "auto"   Format of drawings saved by --images and --images_white:
                                  "png", "pdf" or "svg"; "auto" is PDF in publication mode
                                  and PNG otherwise.
@@ -129,6 +129,8 @@ input is a terminal.
                           COLORFGBG is consulted, and the default is dark.
   ARCHYTASZX_IMAGE_FG     Foreground colour of images, overriding the terminal's own.
   NO_COLOR                When set and non-empty, error lines are not coloured.
+  ARCHYTASZX_TRACE        1 at import turns on the timing spans of archytaszx.trace
+                          (BENCHMARKS.txt, section 7); any other value leaves them off.
 
 
 5. RUNNING THE TEST SUITE

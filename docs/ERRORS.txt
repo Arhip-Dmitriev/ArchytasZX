@@ -51,6 +51,9 @@ Each entry: class (base) - when it is raised.
       ScalarGrammarError       inexact or malformed input
       ScalarSumError           a malformed index sum, or a bound index used as a free symbol
       ScalarBudgetError        simplification exceeded its step budget
+  algebraic
+    NotAlgebraicError (ValueError)  a value with free symbols or no algebraic minimal
+                                    polynomial
 
 2.2 Layer B: archytaszx.diagram
 
@@ -74,10 +77,14 @@ Each entry: class (base) - when it is raised.
   validate
     ValidateError (Exception)
       ValidationFailedError    validate_or_raise found a hard error; carries .report
+  mixed
+    MixedError (Exception)
+      MixedDomainError         a G leg neither wired nor on the boundary, a leg index out of
+                               range
 
 2.3 Layer C: archytaszx.rewrite
 
-  rule (the base of every module in archytaszx.rewrite)
+  rule (the base of every module in archytaszx.rewrite except exhaustive)
     RewriteError (Exception)
       RewriteDomainError       a match whose conditions did not all pass, a scalar
                                disagreeing with the rule's, a phase outside the shared
@@ -92,6 +99,9 @@ Each entry: class (base) - when it is raised.
                                no correspondence
         SheetDomainError       (also a RewriteDomainError) a multiplicity outside the
                                operation's domain
+  exhaustive
+    ExhaustedError (Exception) exhaustive_search: both sides closed without meeting;
+                               prove_exhaustive reports it as NOT_FOUND
   cache
     CacheError (Exception)
       CacheGrammarError        a cache argument of the wrong type or shape
@@ -164,6 +174,10 @@ Each entry: class (base) - when it is raised.
       ParseGrammarError        the source does not match its form's grammar
       ParseDomainError         the source parses but names a value or diagram outside the
                                accepted domain
+    DiracError, DiracGrammarError and DiracDomainError are other names of these three.
+  embed
+    AzxError (Exception)       a piece that cannot be built or compiled (PYTHON_API.txt,
+                               section 3)
   printer
     PrinterError (Exception)
       PrinterDomainError       a diagram with no Dirac form

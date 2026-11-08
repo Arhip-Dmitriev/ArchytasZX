@@ -129,9 +129,9 @@ shows the engine's full error record.
                          (Unicode and ASCII grids mark it with *).
   publication            Toggle the paper's notation in ZX drawings (section 9.3).
   config                 Show the image settings and the configuration file path.
-  config KEY VALUE       Set an image setting: size (a positive number), color ("auto" or
-                         a matplotlib colour), format ("auto", "png", "pdf" or "svg") or
-                         publication ("true" or "false").
+  config KEY VALUE       Set an image setting: size (a number in (0, 10]), color ("auto",
+                         #rgb, #rrggbb or a matplotlib colour), format ("auto", "png",
+                         "pdf" or "svg") or publication ("true" or "false").
   config save            Write the settings to the configuration file.
   config reset           Restore the default settings.
   help [CMD]             List every command, or show one command's usage.
@@ -142,7 +142,8 @@ shows the engine's full error record.
 
 A command file is UTF-8 text with one engine or shell command per line, a leading colon
 optional. Files given together share one session: diagrams named by an earlier file are
-visible to a later one.
+visible to a later one. A relative FILE path in a command file (certificate lean FILE)
+resolves against that file's directory.
 
 An indented line continues the command above it on a new line, so a diagram spans several
 lines under load or @NAME =. Blank and comment lines inside such a block are skipped. A line
@@ -179,6 +180,9 @@ colour are set by the configuration file (INSTALL.txt, section 4.1).
 
 9. ZX DRAWINGS
 --------------
+
+Implementation: archytaszx.repl.zxdraw (layout and drawing), archytaszx.repl.terminal (image
+protocols, configuration)
 
 9.1 Layout
 

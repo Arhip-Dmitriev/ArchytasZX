@@ -77,7 +77,7 @@ family
 
 generator
     A node type: Z and X spiders, the Fourier box F, the triangle T and its inverse Ti, the W
-    node, the binder B and the splitter S.
+    node, the binder B, the splitter S and the discard G (mixed diagrams only).
 
 induction
     Proof of an equality between families for every value of a multiplicity, from a base case

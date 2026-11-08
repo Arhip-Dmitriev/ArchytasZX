@@ -176,6 +176,8 @@ of spiders with symbolic phases, roughly fourfold per spider).
 
 5.1 Symbolic comparison
 
+Both functions are in archytaszx.semantics.check.
+
     compare_symbolic(left, right, *, mode=EXACT, max_steps=1024, dimension_floors=None)
         -> ComparisonResult
     find_entry_witness(left, right, assignments, *, tolerance=1e-9, ...) -> EntryWitness | None

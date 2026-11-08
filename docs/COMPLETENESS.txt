@@ -277,9 +277,10 @@ registered rules, every step replayable.
 
 4.4 Lean. ArchytasZX.Paper proves the mapping of section 2 for every d: paperH_eq (H = F),
 paperZ_eq (green circle spider), paperW_eq (W node), paperT_eq and paperTi_eq (triangles),
-paperSplit_eq (splitter), paperD_eq (D = F F), and pink_eq (the pink K_j spider is
-d^((m+n)/2 - 1) times the X spider with phases j k/d). Not proved: the Z box with complex
-weights (outside the Lean semantics), and the statement of each axiom in paper conventions:
+paperSplit_eq (splitter), paperD_eq (D = F F), pink_eq (the pink K_j spider is
+d^((m+n)/2 - 1) times the X spider with phases j k/d), and paperZbox_eq (the Z box with
+complex weights a, a_0 = 1, is the weighted Z spider tZw with coefficient table
+j -> if j = 0 then 1 else a_j). Not proved: the statement of each axiom in paper conventions:
 the rule lemmas are local equations between labelled networks (LocalEq), and restating them
 over the paper* tensors needs an evaluation of each axiom's network, which is not written.
 

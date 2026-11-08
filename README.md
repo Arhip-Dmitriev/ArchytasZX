@@ -31,21 +31,25 @@ proof: re-checkable; certificate kernel / certificate lean
 emitted certificate: kernel theorem, 16 inferences
 ...
 lean: tensor-network semantics, every step proved
-lean: wrote ghz.lean
+lean: wrote examples/ghz.lean
 $ python examples/ghz_proof.py                     # Python library, same verdict and proof
 ```
 
-To re-check `ghz.lean` in Lean, install [elan](https://github.com/leanprover/elan), then build
-the bundled library once (prebuilt Mathlib is downloaded) and check the file:
+A relative path in a script resolves against the script's directory, so the proof lands in
+`examples/ghz.lean`. To re-check it in Lean, install [elan](https://github.com/leanprover/elan),
+then build the bundled library once (prebuilt Mathlib is downloaded) and check the file:
 
 ```console
 $ cd archytaszx/lean && lake exe cache get && lake build
-$ lake env lean ../../ghz.lean
+$ lake env lean ../../examples/ghz.lean
 ```
 
 The other examples prove the qudit Deutsch–Jozsa and Bernstein–Vazirani circuits
 (`deutsch_jozsa_proof.azx`, `bernstein_vazirani_proof.azx`), prove a family by induction
-(`copy_induction.azx`) and refute false claims with Lean counterexamples (`refutations.azx`).
+(`copy_induction.azx`), refute false claims with Lean counterexamples (`refutations.azx`), and
+cover restricted claims and mixed states (`examples/restricted/`, `examples/mixed/`).
+`python examples/tutorial.py` is an interactive course on the ZXW calculus run live on the
+engine.
 
 ## Example: Deutsch–Jozsa for every `n` and every `d`
 
@@ -60,11 +64,11 @@ $ archytaszx --unicode examples/deutsch_jozsa_proof.azx
 decide: equal by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
 proof: re-checkable; certificate kernel / certificate lean
 lean: tensor-network semantics, the normal form computed by the Lean kernel
-lean: wrote deutsch_jozsa_constant.lean
+lean: wrote examples/deutsch_jozsa_constant.lean
 ...
 decide: equal by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
 ...
-lean: wrote deutsch_jozsa_balanced.lean
+lean: wrote examples/deutsch_jozsa_balanced.lean
 ```
 
 Both equalities hold for every `n` and every `d`, and both are written out as Lean 4 files.
@@ -81,7 +85,8 @@ Both equalities hold for every `n` and every `d`, and both are written out as Le
 - **A complete rule set.** Every axiom of qudit ZXW (Poór et al., LICS 2023) and qufinite ZXW
   (Wang, Poór & Shaikh, 2023) is a rule, with Z spiders carrying phases or arbitrary complex
   weights. Any two bang-box-free diagrams at concrete dimensions that denote the same map are
-  joined by a derivation, and `prove exhaustive` finds it, given enough time.
+  joined by a derivation; with algebraic parameters, `prove exhaustive algebraic` finds one,
+  given enough time.
 - **Independent checking.** Every proof emits a replayable certificate, is re-checked by a small
   proof kernel, and is exported to Lean 4 and Mathlib, where it is checked again from scratch.
 
@@ -234,16 +239,18 @@ The full reference documentation is in [`docs/`](https://github.com/Arhip-Dmitri
 | [`OVERVIEW.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/OVERVIEW.txt) | What the engine is, its guarantees and its limits |
 | [`INSTALL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/INSTALL.txt) | Installation, the Lean library, configuration and environment variables |
 | [`SHELL.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SHELL.txt) | The `archytaszx` command: flags, views, shell commands, exit codes |
-| [`ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt) | The `:` engine commands and the diagram input forms |
+| [`ENGINE_COMMANDS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ENGINE_COMMANDS.txt) | The engine commands and the diagram input forms |
 | [`PYTHON_API.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PYTHON_API.txt) | The engine import map and a worked example |
 | [`ALGEBRA.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ALGEBRA.txt) | Layer A: dimensions, phases, exact scalars |
 | [`DIAGRAM.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/DIAGRAM.txt) | Layer B: generators, diagrams, bang boxes, scalable notation, validation |
 | [`REWRITE.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/REWRITE.txt) | Layer C: rules, matching, strategies, normal form, e-graph, tactics |
 | [`RULES.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/RULES.txt) | Every rewrite rule with its scalar and side conditions |
+| [`MIXED.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/MIXED.txt) | Mixed states: the discard, doubling, purification, channels and the discard rules |
 | [`SEMANTICS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/SEMANTICS.txt) | Layer D: denotation, contraction, the oracle |
 | [`PROOFS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/PROOFS.txt) | Deciding equality, proof search, induction, certificates, the kernel |
 | [`COMPLETENESS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/COMPLETENESS.txt) | The ZXW axioms as rules, the completeness argument, exhaustive search |
 | [`LEAN.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/LEAN.txt) | The Lean 4 library and the export of proofs and refutations |
+| [`BENCHMARKS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/BENCHMARKS.txt) | The benchmark suite: subjects, false set, points, timing spans, rival tools, outputs |
 | [`ERRORS.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/ERRORS.txt) | The exception hierarchy of every module |
 | [`GLOSSARY.txt`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/docs/GLOSSARY.txt) | Definitions of the terms used throughout |
 
@@ -283,8 +290,9 @@ Four engine layers, depending strictly downward, with the shell on top:
 | D | [`semantics`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/semantics) | Symbolic and numeric contraction; the `decide_equal` ladder; induction; certificates, proof kernel and Lean export |
 | — | [`repl`](https://github.com/Arhip-Dmitriev/ArchytasZX/tree/main/archytaszx/repl) | Diagram parser and printer, ZX drawing, engine commands, shell |
 
-The package and sub-package `__init__.py` files export nothing, so engine objects are imported
-by full module path. Each module raises only its own
+The package exports only `azx`, `Program`, `Piece` and `Sym`, and the sub-package `__init__.py`
+files export nothing, so engine objects are imported by full module path. `archytaszx.trace`,
+outside the layers, times engine work when `ARCHYTASZX_TRACE=1`. Each module raises only its own
 `<Area>Error` hierarchy: `<Area>GrammarError` for a wrong call and `<Area>DomainError` for a case
 not implemented yet.
 
@@ -292,9 +300,10 @@ not implemented yet.
 
 In **beta and under active development**: the API is unstable and changes between
 releases. The automatic decision procedure is sound but not complete, so `decide` and `prove`
-can answer "unknown"; `prove exhaustive` is guaranteed to terminate only on equal inputs in the
-complete fragment (no bang boxes, concrete dimensions), and has no depth or time cap. Known
-limits:
+can answer "unknown". `prove exhaustive` has no depth or time cap; at concrete dimensions
+without bang boxes it refutes unequal inputs and proves equal ones joined by the derivations it
+enumerates, and `prove exhaustive algebraic` proves every equal pair with algebraic parameters,
+given time; elsewhere neither need terminate. Known limits:
 
 - Symbolic contraction slows sharply as the number of phased spiders grows.
 - Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two
@@ -354,7 +363,7 @@ ArchytasZX builds chiefly on the qufinite ZX-calculus of Wang
 Wang et al. ([arXiv:2302.12135](https://arxiv.org/abs/2302.12135),
 [arXiv:2309.13014](https://arxiv.org/abs/2309.13014)), and bang boxes and scalable notation
 ([arXiv:2204.11702](https://arxiv.org/abs/2204.11702)). Full BibTeX is in
-[`REFERENCES.bib`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/REFERENCES.bib).
+[`REFERENCES.bib`](https://github.com/Arhip-Dmitriev/ArchytasZX/blob/main/public_publications/references/REFERENCES.bib).
 
 <details>
 <summary>Full reference list</summary>

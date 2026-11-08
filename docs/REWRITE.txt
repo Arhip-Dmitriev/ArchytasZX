@@ -5,7 +5,8 @@ Layer C: Rewriting
 
 Applies to: ArchytasZX 2.0.x
 Package: archytaszx.rewrite (modules rule, match, match_zxw, match_box, rules_library, engine,
-         normal_form, egraph, tactics, sheet, cache)
+         normal_form, egraph, tactics, sheet, cache; match_template, rules_axioms and
+         exhaustive, documented in COMPLETENESS.txt; rules_discard, documented in MIXED.txt)
 
 
 1. PURPOSE
@@ -24,7 +25,7 @@ notation, and caches. The rules themselves are catalogued in RULES.txt.
 2.1 Rule
 
     Rule(name, pattern, builder, side_conditions, quantifiers, scalar_introduced,
-         scalar_in_dim, dimension_guards, scalar_in_match)
+         scalar_in_dim, dimension_guards, scalar_in_match, automatic=True)
 
 A Rule is a frozen value object performing no graph surgery:
 
@@ -37,6 +38,8 @@ A Rule is a frozen value object performing no graph surgery:
   scalar_in_match    for rules whose scalar depends on the match (for example on a leg
                      count), the function computing it per match
   dimension_guards   arithmetic restrictions on the matched dimension
+  automatic          whether normal form, saturation and tactics may use the rule; False
+                     leaves it to apply, matches, certificates and exhaustive mode
 
 2.2 Pattern and Match
 
@@ -208,10 +211,11 @@ archytaszx.rewrite.engine, in that order:
     connective_states_swapped, triangle_zero_state, triangle_zero_effect, w_zero_effect,
     w_z_effect, fourier_cancellation, fourier_state_color_change,
     fourier_state_color_change_swapped, spider_fusion, hopf, hopf_swapped, state_copy,
-    state_copy_swapped, w_zero_copy, zx_cap, zx_cap_swapped
+    state_copy_swapped, w_zero_copy, zx_cap, zx_cap_swapped, zxw_ept, scalar_box
 
-The library rules outside this set are z_fusion_prime_d (subsumed by spider_fusion), and
-bialgebra, bialgebra_swapped, wz_bialgebra and port_box_unfusion, which grow the diagram.
+Of rules 2.1 to 2.28 (RULES.txt) the ones outside this set are z_fusion_prime_d (subsumed by
+spider_fusion), and bialgebra, bialgebra_swapped, wz_bialgebra and port_box_unfusion, which
+grow the diagram; of the template rules from 2.29 on only zxw_ept and scalar_box are in it.
 
 A NormalForm holds the source, the reduced diagram, the strategy outcome, the results (which
 replay onto the reduced diagram id for id), and a key. Two normal forms are the same when
@@ -246,10 +250,14 @@ already in its own class is redundant; a result larger than the node bound is pr
 application that raises is recorded as a FailedApplication. The default rules are every rule
 in the library (saturation_rules()).
 
-    SaturationLimits(max_iterations=6, max_enodes=512, max_applications=20000, node_margin=4)
+    SaturationLimits(max_iterations=6, max_enodes=512, max_applications=20000, node_margin=4,
+                     match_limit=1000, ban_length=5)
     SaturationStop: SATURATED | ITERATION_LIMIT | ENODE_LIMIT | APPLICATION_LIMIT
 
-The node bound is the largest root's node count plus node_margin. Every edge stored is one
+The node bound is the largest root's node count plus node_margin. Rules are scheduled with
+backoff: a rule applied more than match_limit << b times in one iteration, b the number of
+bans it has had, is cut for the rest of that iteration and banned for the next
+ban_length << b iterations. Every edge stored is one
 apply call, so every equivalence the e-graph reports can be explained by a path of
 replayable steps (explain). extract returns the class member of least cost, ties going to the
 lowest id; default_cost is (node count, wire count, number of phased nodes).

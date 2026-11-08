@@ -37,6 +37,9 @@ depends only on the layers below it.
   -      archytaszx.repl       The diagram parser and printer, ZX drawing, the engine
                                commands, the shell.
 
+archytaszx.trace, outside the layers, times named sections of engine work when
+ARCHYTASZX_TRACE=1 (BENCHMARKS.txt, section 7); it imports nothing from the package.
+
 
 3. THE ENGINE
 -------------
