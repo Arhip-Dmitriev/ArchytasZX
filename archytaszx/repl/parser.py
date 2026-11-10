@@ -39,6 +39,7 @@ no unknown-parameter issue. Every failure is a :class:`ParseError`.
 
 from __future__ import annotations
 
+import contextvars
 import difflib
 import enum
 import functools
@@ -484,16 +485,29 @@ _INT_LIMIT = 10**_MAX_EXPR_DIGITS
 _MAX_POWER_BITS = 4096
 _MAX_ROOT_BITS = 256
 _MAX_TERMS = 4096
+_SCALAR_BITS_PER_NODE = 64
+_INT_CHUNK_DIGITS = 4000
+_EXTRA_BITS: contextvars.ContextVar[int] = contextvars.ContextVar("_EXTRA_BITS", default=0)
+"""Bits a numeral, product or power may hold beyond the fixed bounds."""
 
 
 def _expr_numeral(token: str) -> int:
-    """The int of an expression digit run of at most :data:`_MAX_EXPR_DIGITS` digits."""
-    if len(token) > _MAX_EXPR_DIGITS:
+    """The int of an expression digit run of at most :data:`_MAX_EXPR_DIGITS` digits, plus
+    one digit per three bits of :data:`_EXTRA_BITS`."""
+    bound = _MAX_EXPR_DIGITS + _EXTRA_BITS.get() // 3
+    if len(token) > bound:
         raise ParseDomainError(
-            f"numeral {token[:16]}... is {len(token)} digits long, above the bound of "
-            f"{_MAX_EXPR_DIGITS}"
+            f"numeral {token[:16]}... is {len(token)} digits long, above the bound of {bound}"
         )
-    return int(token)
+    return _digits_int(token)
+
+
+def _digits_int(token: str) -> int:
+    """The int of a decimal digit run, converted in halves past :data:`_INT_CHUNK_DIGITS`."""
+    if len(token) <= _INT_CHUNK_DIGITS:
+        return int(token)
+    half = len(token) // 2
+    return _digits_int(token[:-half]) * 10**half + _digits_int(token[-half:])
 
 
 class _ExprParser:
@@ -620,16 +634,18 @@ def _numeric_bits(expr: sp.Expr) -> int:
 
 
 def _bounded(expr: sp.Expr) -> sp.Expr:
-    """``expr``, once every rational atom has at most :data:`_MAX_EXPR_DIGITS` digits."""
+    """``expr``, once every rational atom is below :data:`_INT_LIMIT` times two to the
+    :data:`_EXTRA_BITS`."""
+    limit = _INT_LIMIT << _EXTRA_BITS.get()
     for atom in expr.atoms(sp.Rational):
-        if abs(atom.p) >= _INT_LIMIT or atom.q >= _INT_LIMIT:
-            raise ParseDomainError(f"a value has more than {_MAX_EXPR_DIGITS} digits")
+        if abs(atom.p) >= limit or atom.q >= limit:
+            raise ParseDomainError(f"a value is above the size bound of {_MAX_EXPR_DIGITS} digits")
     return expr
 
 
 def _product(values: Sequence[sp.Expr]) -> sp.Expr:
     """``Mul`` of ``values`` in one call, refused when the numeric atoms are too large."""
-    if sum(_numeric_bits(v) for v in values) > _MAX_POWER_BITS:
+    if sum(_numeric_bits(v) for v in values) > _MAX_POWER_BITS + _EXTRA_BITS.get():
         raise ParseDomainError("product is too large")
     return _bounded(sp.Mul(*values))
 
@@ -642,7 +658,7 @@ def _power(base: sp.Expr, exponent: sp.Expr) -> sp.Expr:
     bits = _numeric_bits(base)
     if bits:
         size = 1 + sum(abs(a.p) // a.q for a in exponent.atoms(sp.Rational))
-        if bits * size > _MAX_POWER_BITS:
+        if bits * size > _MAX_POWER_BITS + _EXTRA_BITS.get():
             raise ParseDomainError(f"power ({base})^({exponent}) is too large")
         if any(not a.is_Integer for a in exponent.atoms(sp.Rational)) and any(
             _bits(a) > _MAX_ROOT_BITS for a in base.atoms(sp.Rational)
@@ -891,6 +907,16 @@ def _scalar_expr(node: _Expr, table: Mapping[str, sp.Symbol]) -> sp.Expr:
 def _scalar_of(node: _Expr, table: Mapping[str, sp.Symbol]) -> Scalar:
     """A scalar; unknown names become :meth:`Scalar.symbol`."""
     return Scalar(_check_terms(_scalar_expr(node, table), "scalar"))
+
+
+def _diagram_scalar(diagram: Diagram, text: str, table: Mapping[str, sp.Symbol]) -> Scalar:
+    """The scalar ``text`` of ``diagram``, its size bounds widened by
+    :data:`_SCALAR_BITS_PER_NODE` bits per node of ``diagram``."""
+    token = _EXTRA_BITS.set(_SCALAR_BITS_PER_NODE * len(diagram.nodes))
+    try:
+        return _scalar_of(_parse_expr(text, "scalar"), table)
+    finally:
+        _EXTRA_BITS.reset(token)
 
 
 def _phase_entries(text: str, table: Mapping[str, sp.Symbol]) -> dict[int, Phase]:
@@ -1294,7 +1320,7 @@ def parse_listing(source: str) -> Diagram:
     box_mults = [b.multiplicity for b in boxes.values()]
     _set_phases(diagram, drafts, _role_table(_draft_dims(drafts), box_mults, seeds=seeds))
     table = _role_table(_draft_dims(drafts), box_mults, _phases(diagram), seeds)
-    diagram.set_scalar(_scalar_of(_parse_expr(scalar_text, "scalar"), table))
+    diagram.set_scalar(_diagram_scalar(diagram, scalar_text, table))
     return _finish(diagram)
 
 
@@ -1814,7 +1840,7 @@ class _Dsl:
         _set_phases(diagram, drafts, _role_table(dims, mults))
         if self.scalar is not None:
             table = _role_table(dims, mults, _phases(diagram))
-            diagram.set_scalar(_scalar_of(_parse_expr(self.scalar, "scalar"), table))
+            diagram.set_scalar(_diagram_scalar(diagram, self.scalar, table))
         uncarried = sorted(set(self.bindings) - _carried(diagram))
         if uncarried:
             raise ParseDomainError(f"binding(s) {uncarried} name no symbol the diagram carries")

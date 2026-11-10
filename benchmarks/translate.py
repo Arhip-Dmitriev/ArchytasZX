@@ -92,6 +92,41 @@ def _expr(e: Any) -> str:
     return s
 
 
+_LONG_BITS = 160
+_SMALL_PRIMES = tuple(sp.primerange(2, 1000))
+
+
+def _prime_powers(m: int) -> str | None:
+    """``m`` as a product of powers of primes below 1000, or None when it has a larger factor."""
+    parts: list[str] = []
+    for p in _SMALL_PRIMES:
+        if m == 1:
+            break
+        if m % p:
+            continue
+        e = int(sp.multiplicity(p, m))
+        m //= p**e
+        parts.append(f"{p}^{e}" if e > 1 else str(p))
+    return ("*".join(parts) or "1") if m == 1 else None
+
+
+def _scalar_text(e: Any) -> str:
+    """A scalar as DSL text, a rational coefficient above :data:`_LONG_BITS` bits written as
+    prime powers."""
+    coeff, rest = sp.sympify(e).as_coeff_Mul()
+    if not coeff.is_Rational or max(abs(coeff.p), coeff.q).bit_length() <= _LONG_BITS:
+        return _expr(e)
+    num, den = _prime_powers(abs(int(coeff.p))), _prime_powers(int(coeff.q))
+    if num is None or den is None:
+        return _expr(e)
+    text = ("-" if coeff.p < 0 else "") + f"({num})"
+    if den != "1":
+        text += f"/({den})"
+    if rest != 1:
+        text += f"*({_expr(rest)})"
+    return text
+
+
 def _turns(value: Any) -> Fraction | None:
     """A concrete number of turns reduced into [0, 1), or None when symbolic."""
     e = sp.nsimplify(sp.sympify(value))
@@ -469,7 +504,7 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
         lines.append("outputs " + ", ".join(outs))
     total = sp.powsimp(sp.Mul(*b.scalar, ctx.value(c.scalar)), force=True)
     if total != 1:
-        lines.append("scalar " + _expr(total))
+        lines.append("scalar " + _scalar_text(total))
     counts = tuple(sorted({str(v) for v in c.registers.values() if not str(v).isdigit()}))
     return Translation("\n".join(lines), len(b.decls), counts)
 
