@@ -1034,9 +1034,20 @@ def test_nineteen_digit_numerals_are_accepted() -> None:
 
 
 def test_expression_numeral_cap() -> None:
-    assert scalar_of("1" + "0" * 999) == Scalar.rational(10**999)
+    assert scalar_of("1" + "0" * 1018) == Scalar.rational(10**1018)
     with pytest.raises(PR.ParseDomainError):
-        PR.parse_dsl("a = Z(0 -> 1, d); scalar 1" + "0" * 1000)
+        PR.parse_dsl("a = Z(0 -> 1, d); scalar 1" + "0" * 1019)
+    two = "a = Z(0 -> 1, d); b = Z(0 -> 1, d)"
+    assert scalar_of("1" + "0" * 1037, two) == Scalar.rational(10**1037)
+
+
+def test_scalar_power_bound_scales_with_nodes() -> None:
+    with pytest.raises(PR.ParseDomainError):
+        scalar_of("2^3980*sqrt(2)")
+    with pytest.raises(PR.ParseDomainError):
+        scalar_of("2^99999999", "; ".join(f"a{i} = Z(0 -> 1, d)" for i in range(100)))
+    many = "; ".join(f"a{i} = Z(0 -> 1, d)" for i in range(100))
+    assert scalar_of("2^3980*sqrt(2)", many) == Scalar(sp.Integer(2) ** 3980 * sp.sqrt(2))
 
 
 @pytest.mark.parametrize("name", ["I", "E", "pi", "exp", "sqrt", "δ", "θ_1"])

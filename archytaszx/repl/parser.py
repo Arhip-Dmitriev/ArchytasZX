@@ -493,8 +493,8 @@ _EXTRA_BITS: contextvars.ContextVar[int] = contextvars.ContextVar("_EXTRA_BITS",
 
 def _expr_numeral(token: str) -> int:
     """The int of an expression digit run of at most :data:`_MAX_EXPR_DIGITS` digits, plus
-    one digit per three bits of :data:`_EXTRA_BITS`."""
-    bound = _MAX_EXPR_DIGITS + _EXTRA_BITS.get() // 3
+    the decimal digits :data:`_EXTRA_BITS` bits hold."""
+    bound = _MAX_EXPR_DIGITS + _EXTRA_BITS.get() * 30103 // 100000
     if len(token) > bound:
         raise ParseDomainError(
             f"numeral {token[:16]}... is {len(token)} digits long, above the bound of {bound}"
@@ -507,7 +507,8 @@ def _digits_int(token: str) -> int:
     if len(token) <= _INT_CHUNK_DIGITS:
         return int(token)
     half = len(token) // 2
-    return _digits_int(token[:-half]) * 10**half + _digits_int(token[-half:])
+    scale: int = 10**half
+    return _digits_int(token[:-half]) * scale + _digits_int(token[-half:])
 
 
 class _ExprParser:
