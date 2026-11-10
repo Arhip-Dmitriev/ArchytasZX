@@ -202,6 +202,37 @@ def test_rule_step_exports_without_axioms(name: str) -> None:
     assert "\naxiom " not in source and "import ArchytasZX" in source
 
 
+THROUGH_FORWARD: dict[str, tuple[str, bool]] = {
+    "x_spider_definition_converse": ("fourier_state_color_change", False),
+    "hopf_converse": ("identity_removal", False),
+    "hopf_swapped_converse": ("identity_removal", False),
+    "x_fusion_converse": ("bialgebra", False),
+    "fourier_effect_color_change_converse": ("identity_removal", False),
+    "triangle_zero_effect_converse": ("triangle_inverse_cancellation", True),
+    "fourier_cancellation_converse": ("connective_inverse_bind_first", True),
+    "zxw_s1_converse": ("bialgebra", False),
+    "zxw_ad_converse": ("fourier_cancellation", False),
+    "zxw_zv_converse": ("zx_cap_swapped", False),
+    "zxw_k0_converse": ("w_zero_copy", True),
+}
+"""A rule without a direct translator and a case (after one step of its own rule when True)
+on which every match exports through :func:`L._through_forward`."""
+
+
+@pytest.mark.parametrize("name", sorted(THROUGH_FORWARD))
+def test_rule_without_a_translator_exports_without_axioms(name: str) -> None:
+    case, stepped = THROUGH_FORWARD[name]
+    diagram = CASES[case]()
+    if stepped:
+        diagram = _one_step(case, diagram).rhs
+    rule = lookup_rule(name)
+    matches = rule.pattern.find_matches(diagram)
+    assert matches, name
+    for match in matches[:3]:
+        source = L.export(K.rule(diagram, apply(diagram, rule, match).step))
+        assert "\naxiom " not in source, name
+
+
 def test_rule_without_a_lemma_is_an_unproved_axiom(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(L._RULES, "wz_bialgebra")
     monkeypatch.delitem(L._RULES, "wz_bialgebra_converse")

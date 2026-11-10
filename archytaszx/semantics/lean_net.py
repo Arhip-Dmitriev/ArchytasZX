@@ -3721,9 +3721,11 @@ def _iso_pairs(x: Diagram, y: Diagram, a: Labelled, b: Labelled) -> list[tuple[i
     symmetric = {"Z", "X"}
 
     def fits(ref: PortRef, target: PortRef) -> bool:
-        if nodes[ref.node_id] != target.node_id or ref.direction != target.direction:
+        if nodes[ref.node_id] != target.node_id:
             return False
         kind = x.nodes[ref.node_id].generator_type.name
+        if ref.direction != target.direction and kind != "Z":
+            return False
         return kind in symmetric or ref.index == target.index
 
     for wire in sorted(x.wires, key=lambda w: w.sort_key()):
@@ -7498,16 +7500,17 @@ _FORWARD: dict[str, str] = {
 
 def _through_forward(t: object) -> object | None:
     """A step's theorem rebuilt as the symmetric of a step of its reverse rule (the forward
-    rule of a converse, the converse of a rule) applied to the step's result and closed by an
-    isomorphism; None when no such step exists."""
-    from archytaszx.diagram.compare import isomorphic
+    rule of a converse, the converse of a rule) applied to the step's result, then
+    :func:`_tidy` steps, closed by an isomorphism; None when no such step exists."""
     from archytaszx.rewrite.engine import apply as apply_rule
-    from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
     from archytaszx.rewrite.rule import RewriteError
     from archytaszx.rewrite.rules_library import RULES
     from archytaszx.semantics import kernel
 
     assert isinstance(t, kernel.Theorem)
+    only = _tidy(t, t.rhs, [])
+    if only is not None:
+        return only
     name = t.inference.rule
     if name.endswith("_converse"):
         forward = _FORWARD.get(name, name.removesuffix("_converse"))
@@ -7516,84 +7519,90 @@ def _through_forward(t: object) -> object | None:
     if forward == name or forward not in RULES or forward not in _RULES:
         return None
     rule = RULES[forward]
-    target = comparison_view(t.lhs)
     try:
         matches = rule.pattern.find_matches(t.rhs)
     except RewriteError:
         return None
-    identity = RULES["identity_removal"]
-    only = _identities_only(t, identity, target)
-    if only is not None:
-        return only
     for match in matches:
         try:
             result = apply_rule(t.rhs, rule, match)
         except RewriteError:
             continue
-        chain = [(t.rhs, result)]
-        fresh = set(result.diagram.nodes) - set(t.lhs.nodes)
-        while not (
-            isomorphic(chain[-1][1].diagram, t.lhs)
-            or views_isomorphic(comparison_view(chain[-1][1].diagram), target)
-        ):
-            current = chain[-1][1].diagram
-            removal = None
-            for m in identity.pattern.find_matches(current):
-                if getattr(m, "node_id", None) in fresh:
-                    try:
-                        removal = apply_rule(current, identity, m)
-                    except RewriteError:
-                        continue
-                    break
-            if removal is None:
-                break
-            chain.append((current, removal))
-        last = chain[-1][1].diagram
-        if not (isomorphic(last, t.lhs) or views_isomorphic(comparison_view(last), target)):
-            continue
-        try:
-            closed = kernel.rule(t.rhs, result.step)
-            for before, removal in chain[1:]:
-                closed = kernel.trans(closed, kernel.rule(before, removal.step))
-            closed = kernel.trans(closed, kernel.iso(last, t.lhs))
-        except kernel.KernelError:
-            continue
-        return kernel.symm(closed)
+        closed = _tidy(t, result.diagram, [(t.rhs, result.step)])
+        if closed is not None:
+            return closed
     return None
 
 
-def _identities_only(t: object, identity: Any, target: Any) -> object | None:
-    """A step's theorem rebuilt as identity removals on its result closed by an isomorphism;
-    None when they do not reach the step's start."""
+def _tidy(t: object, current: Diagram, steps: list[tuple[Diagram, RewriteStep]]) -> object | None:
+    """``t`` as the symmetric of ``steps`` from ``t``'s result to ``current``, then identity
+    removals and spider fusions consuming only nodes absent from ``t``'s start, found by
+    depth-first search, closed by an isomorphism or an algebraic meet onto that start; None when
+    none reaches it or there are no steps."""
     from archytaszx.diagram.compare import isomorphic
     from archytaszx.rewrite.engine import apply as apply_rule
-    from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
+    from archytaszx.rewrite.normal_form import (
+        algebraic_view,
+        comparison_view,
+        view_key,
+        views_isomorphic,
+    )
     from archytaszx.rewrite.rule import RewriteError
+    from archytaszx.rewrite.rules_library import RULES
     from archytaszx.semantics import kernel
 
     assert isinstance(t, kernel.Theorem)
-    fresh = set(t.rhs.nodes) - set(t.lhs.nodes)
-    current, steps = t.rhs, []
-    while not (isomorphic(current, t.lhs) or views_isomorphic(comparison_view(current), target)):
-        removal = None
-        for m in identity.pattern.find_matches(current):
-            if getattr(m, "node_id", None) in fresh:
+    target = comparison_view(t.lhs)
+    old = set(t.lhs.nodes)
+    tidiers = (RULES["identity_removal"], RULES["spider_fusion"])
+    steps = list(steps)
+
+    def reached(d: Diagram) -> bool:
+        if isomorphic(d, t.lhs) or views_isomorphic(comparison_view(d), target):
+            return True
+        try:
+            return views_isomorphic(algebraic_view(d), algebraic_view(t.lhs))
+        except (ArithmeticError, TypeError, ValueError, NotImplementedError):
+            return False
+
+    seen: set[str] = set()
+
+    def search(d: Diagram) -> tuple[list[tuple[Diagram, RewriteStep]], Diagram] | None:
+        if reached(d):
+            return [], d
+        key = view_key(comparison_view(d))
+        if len(d.nodes) <= len(t.lhs.nodes) or key in seen:
+            return None
+        seen.add(key)
+        for tidier in tidiers:
+            for m in tidier.pattern.find_matches(d):
                 try:
-                    removal = apply_rule(current, identity, m)
+                    result = apply_rule(d, tidier, m)
                 except RewriteError:
                     continue
-                break
-        if removal is None:
-            return None
-        steps.append((current, removal))
-        current = removal.diagram
+                if not old.isdisjoint(result.step.consumed_node_ids):
+                    continue
+                found = search(result.diagram)
+                if found is not None:
+                    return [(d, result.step), *found[0]], found[1]
+        return None
+
+    found = search(current)
+    if found is None:
+        return None
+    steps += found[0]
+    current = found[1]
     if not steps:
         return None
     try:
-        closed = kernel.rule(steps[0][0], steps[0][1].step)
-        for before, removal in steps[1:]:
-            closed = kernel.trans(closed, kernel.rule(before, removal.step))
-        closed = kernel.trans(closed, kernel.iso(current, t.lhs))
+        closed = kernel.rule(steps[0][0], steps[0][1])
+        for before, step in steps[1:]:
+            closed = kernel.trans(closed, kernel.rule(before, step))
+        try:
+            close = kernel.iso(current, t.lhs)
+        except kernel.KernelError:
+            close = kernel.algebraic(current, t.lhs)
+        closed = kernel.trans(closed, close)
     except kernel.KernelError:
         return None
     return kernel.symm(closed)
