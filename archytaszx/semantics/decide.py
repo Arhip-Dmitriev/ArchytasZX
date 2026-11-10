@@ -48,6 +48,7 @@ and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the witness search
 
 from __future__ import annotations
 
+import contextvars
 import enum
 import itertools
 import math
@@ -219,6 +220,8 @@ DECIDE_SATURATION_LIMITS = SaturationLimits(
     max_iterations=3, max_enodes=128, max_applications=1024, node_margin=4
 )
 _MAX_GRID_PRODUCT = 4096
+_NESTED: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_nested", default=False)
+"""True inside an induction base case's :func:`decide_equal`, which is not certified."""
 _STEP_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.UNIFORM_REWRITE,
     StepDischarge.INDUCTION_REWRITE,
@@ -1047,17 +1050,19 @@ def lean_refutation(
     right: Diagram,
     point: Mapping[str, CheckAssignmentValue] | None,
     describe: Callable[[Diagram], str] | None = None,
+    index: Sequence[int] | None = None,
 ) -> str:
     """The Lean refutation of ``left = right`` at ``point`` (or a default sample point), over
-    the doubled diagrams when either side has a discard; raises
-    :class:`~archytaszx.semantics.lean_net.NetUnsupported` when there is none."""
+    the doubled diagrams when either side has a discard, the boundary values ``index`` tried
+    first; raises :class:`~archytaszx.semantics.lean_net.NetUnsupported` when there is none."""
     from archytaszx.semantics.lean_net import NetUnsupported
     from archytaszx.semantics.lean_refute import export_refutation
 
     if not (is_pure(left) and is_pure(right)):
         left, right = double(left), double(right)
+        index = None
     try:
-        return export_refutation(left, right, dict(point or {}), describe=describe)
+        return export_refutation(left, right, dict(point or {}), describe=describe, index=index)
     except NetUnsupported:
         raise
     except Exception as exc:
@@ -1067,16 +1072,19 @@ def lean_refutation(
 def _certified(
     decision: Decision, left: Diagram, right: Diagram, describe: Callable[[Diagram], str] | None
 ) -> Decision:
-    """``decision`` with its Lean refutation when UNEQUAL past rung 1; UNKNOWN, the missing
-    refutation named in its reason, when there is none."""
+    """``decision`` with its Lean refutation when UNEQUAL past rung 1 and not by a boundary
+    arity mismatch; UNKNOWN, the missing refutation named in its reason, when there is none."""
     from archytaszx.semantics.lean_net import NetUnsupported
 
-    if decision.verdict is not EqualityVerdict.UNEQUAL:
+    if decision.verdict is not EqualityVerdict.UNEQUAL or _NESTED.get():
         return decision
     if decision.method is DecisionMethod.INTERFACE or (
         decision.method is DecisionMethod.DOUBLED
         and decision.inner_method is DecisionMethod.INTERFACE
     ):
+        return decision
+    comparison = decision.comparison
+    if comparison is not None and comparison.reason.startswith("boundary arity mismatch"):
         return decision
     point = decision.counterexample
     if decision.restriction is not None and decision.counterexample_original is not None:
@@ -1084,9 +1092,11 @@ def _certified(
     induced = decision.induction
     if point is None and induced is not None and induced.counterexample is not None:
         point = {**dict(induced.witness), induced.index: induced.counterexample}
+    witness = decision.witness
+    index = witness.index if witness is not None and point is decision.counterexample else None
     try:
         with _trace.span("decide.refutation"):
-            source = lean_refutation(left, right, point, describe)
+            source = lean_refutation(left, right, point, describe, index)
     except NetUnsupported as exc:
         return replace(
             decision,
@@ -1442,7 +1452,15 @@ def _decide_by_induction(
         "saturation_limits": saturation_limits,
     }
     with _trace.span("decide.induction.base"):
-        base_decision = _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
+        token = _NESTED.set(True)
+        try:
+            base_decision = (
+                decide_equal(pair[0], pair[1], **base_options)  # type: ignore[arg-type]
+                if floors is None
+                else _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
+            )
+        finally:
+            _NESTED.reset(token)
     if (
         base_decision.verdict is EqualityVerdict.UNEQUAL
         and base_decision.counterexample is not None

@@ -65,9 +65,11 @@ def export_refutation(
     point: Mapping[str, object],
     name: str = "main",
     describe: Callable[[Diagram], str] | None = None,
+    index: Sequence[int] | None = None,
 ) -> str:
     """Lean 4 source proving that ``left`` and ``right`` are not equal for every value of
-    their parameters, at ``point`` or else at the first default sample point that works."""
+    their parameters, at ``point`` or else at the first default sample point that works;
+    ``index``, a boundary value per slot, is the first assignment tried at ``point``."""
     from archytaszx.semantics.decide import sample_grid
 
     if _interfaces_differ(left, right) and (
@@ -91,7 +93,10 @@ def export_refutation(
             seen.append(candidate)
     for candidate in seen:
         try:
-            return _Refuter(left, right, candidate, describe).run(name)
+            refuter = _Refuter(left, right, candidate, describe)
+            if index is not None and candidate == seen[0]:
+                refuter.hint = tuple(index)
+            return refuter.run(name)
         except ScalarUnsupported as exc:
             first = first or NetUnsupported(str(exc))
         except NetUnsupported as exc:
@@ -291,6 +296,7 @@ class _Refuter:
         opaque: bool = False,
     ) -> None:
         self.out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
+        self.hint: tuple[int, ...] | None = None
         self.point = {str(k): sp.nsimplify(v) for k, v in point.items()}
         for d in (left, right):
             for box in d.bang_boxes.values():
@@ -1051,8 +1057,21 @@ class _Refuter:
         f0, f1 = self.poly(s0 * k0), self.poly(s1 * k1)
         ranges = [range(self.labdim(x)) for x in bnd]
         found = None
-        for count, values in enumerate(itertools.product(*ranges)):
-            if count >= MAX_ASSIGNMENTS:
+        first: list[tuple[int, ...]] = []
+        if (
+            self.hint is not None
+            and len(self.hint) == len(bnd)
+            and sorted(bnd) == list(range(len(bnd)))
+            and all(0 <= v < len(r) for v, r in zip(self.hint, ranges, strict=True))
+        ):
+            order = sorted(range(len(bnd)), key=lambda i: bnd[i])
+            hinted = [0] * len(bnd)
+            for slot, i in enumerate(order):
+                hinted[i] = self.hint[slot]
+            first.append(tuple(hinted))
+        tried = itertools.chain(first, itertools.product(*ranges))
+        for count, values in enumerate(tried):
+            if count >= MAX_ASSIGNMENTS + len(first):
                 break
             sigma = dict(zip(bnd, values, strict=True))
             c0, c1 = self.evaluate(self.a.net, sigma), self.evaluate(self.b.net, sigma)

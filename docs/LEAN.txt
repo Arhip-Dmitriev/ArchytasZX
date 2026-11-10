@@ -437,8 +437,10 @@ refutation"). The shell prints such a counterexample as "uncertified counterexam
 appends "not reported refuted: no Lean refutation", and certificate refuses to fall back to the
 session derivation after a decide that built no certificate. The oracle's check of a
 normal-form verdict (rung 2) and of a proof's two halves is not a certificate; the certificate
-of such a verdict is the kernel theorem of section 4.1. A rung 1 (interface) verdict is
-exact and keeps its verdict; its export is that of 5.3.
+of such a verdict is the kernel theorem of section 4.1. A rung 1 (interface) verdict, and an
+oracle mismatch in the numbers of boundary outputs and inputs (which DEqual, comparing the
+boundary dimensions outputs then inputs, does not see), are exact and keep their verdict; the
+export of the first is that of 5.3.
 
 Points with no refutation: a scalar or phase with a transcendental constant other than π and
 its integer powers (E, exp of a non-rational multiple of π I, for example), and points every
