@@ -346,10 +346,11 @@ def _copy_boxes(
     extra: Mapping[NodeId, Sequence[NodeId]],
 ) -> None:
     """Each node-scope box of ``source`` as one box over its images under every map, each
-    port-scope box as one box per map, all sharing the source box's multiplicity."""
+    port-scope box as one box per map, all sharing the source box's multiplicity; a port-scope
+    box's copy under a map has as parent the image of its parent under the same map."""
     order = sorted(source.bang_boxes.values(), key=lambda b: (_depth(source, b), b.id))
     new_id: dict[BangBoxId, BangBoxId] = {}
-    port_ids: dict[BangBoxId, list[BangBoxId]] = {}
+    port_ids: dict[BangBoxId, dict[int, BangBoxId]] = {}
     for box in order:
         parent = None if box.parent is None else new_id.get(box.parent)
         if box.is_node_scope:
@@ -362,17 +363,21 @@ def _copy_boxes(
                 box.multiplicity, node_scope=frozenset(scope), parent=parent
             )
         else:
-            port_ids[box.id] = []
-            for m in maps:
+            port_ids[box.id] = {}
+            for i, m in enumerate(maps):
                 ports = frozenset(
                     PortRef(m[r.node_id], r.direction, r.index)
                     for r in box.port_scope
                     if r.node_id in m
                 )
-                if ports:
-                    port_ids[box.id].append(
-                        target.add_bang_box(box.multiplicity, port_scope=ports, parent=parent)
-                    )
+                if not ports:
+                    continue
+                own = parent
+                if box.parent is not None and box.parent in port_ids:
+                    own = port_ids[box.parent].get(i)
+                port_ids[box.id][i] = target.add_bang_box(
+                    box.multiplicity, port_scope=ports, parent=own
+                )
 
 
 def double_with_origin(diagram: Diagram) -> Doubled:
