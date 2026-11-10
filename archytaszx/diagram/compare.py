@@ -20,12 +20,16 @@ from collections import Counter
 from dataclasses import dataclass
 
 from archytaszx import trace as _trace
+from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
-from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef, Wire
+from archytaszx.diagram.graph import BangBoxId, Diagram, Node, NodeId, PortRef, Wire
 
 _SYMMETRIC_GENERATORS = frozenset((Z_SPIDER.name, X_SPIDER.name))
 """The generators whose legs, within one direction, are interchangeable."""
+
+_FLEXSYMMETRIC_GENERATORS = frozenset((Z_SPIDER.name,))
+"""The generators whose legs are interchangeable across both directions."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +176,23 @@ def _leg(diagram: Diagram, ref: PortRef, symmetric: bool) -> int:
     return ref.index
 
 
+def _dir(diagram: Diagram, ref: PortRef, symmetric: bool) -> str:
+    """``ref``'s direction, or ``*`` for a leg of a flexsymmetric generator when ``symmetric``."""
+    node = diagram.nodes.get(ref.node_id)
+    if symmetric and node is not None and node.generator_type.name in _FLEXSYMMETRIC_GENERATORS:
+        return "*"
+    return ref.direction.value
+
+
+def _phase_key(node: Node) -> str:
+    """A node's phase as a string, a Z or X spider's absent phase read as the zero phase vector
+    at its leg dimension."""
+    ports = (*node.inputs, *node.outputs)
+    if node.phase is None and ports and node.generator_type.name in _SYMMETRIC_GENERATORS:
+        return repr(PhaseVector(ports[0].dim))
+    return repr(node.phase)
+
+
 def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
     """A colour per node from its own id-independent data: generator, port dims, phase,
     boundary positions and bang-box membership."""
@@ -180,7 +201,8 @@ def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, 
         for position, ref in enumerate(refs):
             if ref.node_id in boundary:
                 index = _leg(diagram, ref, symmetric)
-                boundary[ref.node_id].append((f"{side}:{ref.direction.value}:{index}", position, 0))
+                direction = _dir(diagram, ref, symmetric)
+                boundary[ref.node_id].append((f"{side}:{direction}:{index}", position, 0))
 
     membership: dict[NodeId, list[tuple[str, ...]]] = {nid: [] for nid in diagram.nodes}
     for box_id in sorted(diagram.bang_boxes):
@@ -200,14 +222,16 @@ def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, 
         node = diagram.nodes[nid]
         inputs = [repr(port.dim) for port in node.inputs]
         outputs = [repr(port.dim) for port in node.outputs]
-        if symmetric and node.generator_type.name in _SYMMETRIC_GENERATORS:
+        if symmetric and node.generator_type.name in _FLEXSYMMETRIC_GENERATORS:
+            inputs, outputs = sorted(inputs + outputs), []
+        elif symmetric and node.generator_type.name in _SYMMETRIC_GENERATORS:
             inputs, outputs = sorted(inputs), sorted(outputs)
         colours[nid] = _digest(
             (
                 node.generator_type.name,
                 tuple(inputs),
                 tuple(outputs),
-                repr(node.phase),
+                _phase_key(node),
                 tuple(sorted(boundary[nid])),
                 tuple(sorted(membership[nid])),
             )
@@ -228,10 +252,10 @@ def _incidence(
             if near.node_id in incidence:
                 incidence[near.node_id].append(
                     (
-                        near.direction.value,
+                        _dir(diagram, near, symmetric),
                         _leg(diagram, near, symmetric),
                         far.node_id,
-                        far.direction.value,
+                        _dir(diagram, far, symmetric),
                         _leg(diagram, far, symmetric),
                     )
                 )
@@ -300,7 +324,7 @@ def _profile(
     """The whole diagram rewritten in terms of ``label`` instead of node ids."""
 
     def end(ref: PortRef) -> tuple[str, str, int]:
-        return (label[ref.node_id], ref.direction.value, _leg(diagram, ref, symmetric))
+        return (label[ref.node_id], _dir(diagram, ref, symmetric), _leg(diagram, ref, symmetric))
 
     wires = sorted(
         tuple(sorted((end(wire.a), end(wire.b))))
@@ -321,8 +345,8 @@ def _profile(
 @_trace.traced("rewrite.canonical_key")
 def canonical_key(diagram: Diagram, *, symmetric_legs: bool = False) -> str:
     """A hashable key for ``diagram`` up to node-id and bang-box-id renaming, from colour
-    refinement over the graph's invariants; up to each Z and X spider's leg order per
-    direction too when ``symmetric_legs``.
+    refinement over the graph's invariants; up to each Z spider's leg order and leg directions
+    and each X spider's leg order per direction too when ``symmetric_legs``.
 
     Isomorphic diagrams always share a key; distinct diagrams may collide, so a key match is
     a candidate that :func:`isomorphic` decides.
@@ -383,8 +407,8 @@ def _extend(
 @_trace.traced("rewrite.isomorphism")
 def isomorphic(a: Diagram, b: Diagram, *, symmetric_legs: bool = False) -> bool:
     """Whether a node-id and bang-box-id renaming carries ``a`` onto ``b`` exactly, scalar
-    and parameter environment included; up to each Z and X spider's leg order per direction
-    too when ``symmetric_legs``."""
+    and parameter environment included; up to each Z spider's leg order and leg directions and
+    each X spider's leg order per direction too when ``symmetric_legs``."""
     return isomorphism(a, b, symmetric_legs=symmetric_legs) is not None
 
 

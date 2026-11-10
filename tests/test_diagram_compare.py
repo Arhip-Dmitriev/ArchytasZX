@@ -202,3 +202,41 @@ print(canonical_key(diagram))
         second = self._run_with_seed("2147483647")
         assert first.strip()
         assert second == first
+
+
+def _state_into_identity(
+    phase: PhaseVector | None, flipped: bool, gen: object = Z_SPIDER
+) -> Diagram:
+    """A one-legged spider of ``gen`` wired into a Z identity's input, the identity's output a
+    boundary output; the spider's leg an input wired input to input when ``flipped``."""
+    d = Diagram()
+    dim = Dim(3)
+    if flipped:
+        s = d.add_node(gen, [dim], [], phase=phase)  # type: ignore[arg-type]
+        leg = PortRef(s, Direction.INPUT, 0)
+    else:
+        s = d.add_node(gen, [], [dim], phase=phase)  # type: ignore[arg-type]
+        leg = PortRef(s, Direction.OUTPUT, 0)
+    z = d.add_node(Z_SPIDER, [dim], [dim])
+    d.add_wire(leg, PortRef(z, Direction.INPUT, 0))
+    d.set_boundary_outputs([PortRef(z, Direction.OUTPUT, 0)])
+    return d
+
+
+def test_absent_phase_is_the_zero_phase() -> None:
+    zero = _state_into_identity(PhaseVector(Dim(3)), False)
+    assert isomorphic(_state_into_identity(None, False), zero)
+    assert canonical_key(_state_into_identity(None, False)) == canonical_key(zero)
+    assert not compare_structure(_state_into_identity(None, False), zero).identical
+
+
+def test_z_leg_direction_is_symmetric() -> None:
+    plain, flipped = _state_into_identity(None, False), _state_into_identity(None, True)
+    assert isomorphic(plain, flipped, symmetric_legs=True)
+    assert not isomorphic(plain, flipped)
+
+
+def test_x_leg_direction_is_not_symmetric() -> None:
+    plain = _state_into_identity(None, False, X_SPIDER)
+    flipped = _state_into_identity(None, True, X_SPIDER)
+    assert not isomorphic(plain, flipped, symmetric_legs=True)
