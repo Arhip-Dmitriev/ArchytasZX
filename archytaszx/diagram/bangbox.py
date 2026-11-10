@@ -442,6 +442,56 @@ def free_mult_symbols(diagram: Diagram) -> frozenset[str]:
     return frozenset(symbols)
 
 
+def _port_multiplicity(diagram: Diagram, ref: PortRef) -> sp.Expr | None:
+    """The product of the multiplicities of every box covering ``ref``, or None when those
+    boxes are not one parent chain of covering boxes with no node scope under a port scope."""
+    boxes = diagram.bang_boxes
+    covering = {
+        box_id
+        for box_id, box in boxes.items()
+        if ref.node_id in box.node_scope or ref in box.port_scope
+    }
+    if not covering:
+        return sp.Integer(1)
+    chains: dict[BangBoxId, list[BangBoxId]] = {}
+    for box_id in covering:
+        chain = [box_id]
+        current = boxes[box_id].parent
+        while current is not None:
+            if current not in boxes or current in chain:
+                return None
+            chain.append(current)
+            current = boxes[current].parent
+        chains[box_id] = chain
+    deepest = max(chains.values(), key=len)
+    if set(deepest) != covering:
+        return None
+    seen_port_scope = False
+    for box_id in reversed(deepest):
+        if boxes[box_id].is_node_scope and seen_port_scope:
+            return None
+        seen_port_scope = seen_port_scope or not boxes[box_id].is_node_scope
+    product = sp.Integer(1)
+    for box_id in deepest:
+        product = product * boxes[box_id].multiplicity.to_sympy()
+    return product
+
+
+def boundary_arity(diagram: Diagram) -> tuple[sp.Expr, sp.Expr] | None:
+    """The boundary input and output counts as expanded polynomials in the free
+    multiplicities, or None when a boundary port's covering boxes are not one nesting chain."""
+    counts: list[sp.Expr] = []
+    for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
+        total = sp.Integer(0)
+        for ref in refs:
+            mult = _port_multiplicity(diagram, ref)
+            if mult is None:
+                return None
+            total = total + mult
+        counts.append(sp.expand(total))
+    return counts[0], counts[1]
+
+
 def _purge_symbol_if_dead(diagram: Diagram, name: str | None) -> None:
     """Drop ``name`` from the parameter environment if no live box still carries it.
 

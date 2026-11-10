@@ -44,7 +44,14 @@ restricted decision of section 8; without clauses it is the decision below.
 decide_equal tries the following rungs in order and stops at the first that settles:
 
   1. INTERFACE              The numbers of boundary inputs or outputs differ, or a pair of
-                            boundary dimensions has no solution: UNEQUAL.
+                            boundary dimensions has no solution: UNEQUAL. A boundary port
+                            under bang boxes counts as the product of their multiplicities,
+                            so each count is a polynomial in the free multiplicities; counts
+                            that differ as polynomials are UNEQUAL with the first point of
+                            the grid {0..e_1} x ... x {0..e_k} (e_i the degree of the
+                            difference in the i-th multiplicity) where they differ and both
+                            sides instantiate, named in the reason. With a port under a bang
+                            box and equal counts, per-position dimensions are not compared.
   2. NORMAL_FORM            Both diagrams are reduced to normal form (REWRITE.txt, section 6).
                             When the normal forms agree and rung 3 finds no mismatch: EQUAL.
   3. ORACLE_COUNTEREXAMPLE  The numeric oracle evaluates both diagrams at the sample grid; a

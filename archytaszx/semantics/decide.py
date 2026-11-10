@@ -15,7 +15,8 @@
 
 :func:`decide_equal` climbs a ladder and stops at the first rung that settles:
 
-1. ``INTERFACE``: boundary arity differs, or a boundary dimension pair has no solution.
+1. ``INTERFACE``: boundary arity differs as a polynomial in the free multiplicities, or a
+   boundary dimension pair has no solution.
 2. ``NORMAL_FORM``: both :func:`~archytaszx.rewrite.normal_form.normal_form` results agree.
 3. ``ORACLE_COUNTEREXAMPLE``: the numeric oracle, on the original diagrams, mismatches at a
    small deterministic assignment.
@@ -64,7 +65,12 @@ from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import ScalarError
-from archytaszx.diagram.bangbox import BangBoxError, free_mult_symbols, instantiate_symbol
+from archytaszx.diagram.bangbox import (
+    BangBoxError,
+    boundary_arity,
+    free_mult_symbols,
+    instantiate_symbol,
+)
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, PortRef
 from archytaszx.diagram.mixed import double, is_pure
@@ -430,11 +436,71 @@ def _boundary_dims(diagram: Diagram, refs: Sequence[PortRef]) -> tuple[Dim, ...]
     return tuple(dims)
 
 
+def _instantiate_at(diagram: Diagram, point: Mapping[str, int]) -> Diagram:
+    """``diagram`` with every multiplicity symbol of ``point`` it carries instantiated."""
+    for name, value in point.items():
+        if name in free_mult_symbols(diagram):
+            diagram = instantiate_symbol(diagram, name, value)
+    return diagram
+
+
+def _arity_witness(
+    left: Diagram,
+    right: Diagram,
+    arity_l: tuple[sp.Expr, sp.Expr],
+    arity_r: tuple[sp.Expr, sp.Expr],
+    counts: tuple[sp.Expr, sp.Expr],
+) -> dict[str, int] | None:
+    """The first point of the degree grid from 0, over the symbols of ``counts``, where their
+    difference is nonzero and both sides instantiate to the substituted arities, or None."""
+    difference = sp.expand(counts[0] - counts[1])
+    names = sorted(counts[0].free_symbols | counts[1].free_symbols, key=lambda symbol: symbol.name)
+    ranges = [range(int(sp.degree(difference, symbol)) + 1) for symbol in names]
+    for values in itertools.product(*ranges):
+        point = {symbol.name: value for symbol, value in zip(names, values, strict=True)}
+        mapping = dict(zip(names, values, strict=True))
+        if difference.subs(mapping) == 0:
+            continue
+        try:
+            instances = (_instantiate_at(left, point), _instantiate_at(right, point))
+        except _DOMAIN_ERRORS:
+            continue
+        for instance, arity in zip(instances, (arity_l, arity_r), strict=True):
+            expected = tuple(sp.expand(count.subs(mapping)) for count in arity)
+            if boundary_arity(instance) != expected:
+                return None
+        return point
+    return None
+
+
+def _arity_reason(left: Diagram, right: Diagram) -> str | None:
+    """Why the boundary counts, as multiplicity polynomials, differ at an admissible point."""
+    arity_l = boundary_arity(left)
+    arity_r = boundary_arity(right)
+    if arity_l is None or arity_r is None:
+        return None
+    for label, count_l, count_r in (
+        ("input", arity_l[0], arity_r[0]),
+        ("output", arity_l[1], arity_r[1]),
+    ):
+        difference = sp.expand(count_l - count_r)
+        if difference == 0:
+            continue
+        if not (count_l.free_symbols or count_r.free_symbols):
+            return f"boundary {label} count {count_l} != {count_r}"
+        point = _arity_witness(left, right, arity_l, arity_r, (count_l, count_r))
+        if point is None:
+            return None
+        where = ", ".join(f"{name} = {value}" for name, value in point.items())
+        return f"boundary {label} count {count_l} != {count_r}, differing at {where}"
+    return None
+
+
 @_trace.traced("decide.interface")
 def _interface_reason(left: Diagram, right: Diagram) -> str | None:
     """Why the two interfaces can never agree, or None when they might."""
     if _in_box_scope(left) or _in_box_scope(right):
-        return None
+        return _arity_reason(left, right)
     for label, refs_l, refs_r in (
         ("input", left.boundary_inputs, right.boundary_inputs),
         ("output", left.boundary_outputs, right.boundary_outputs),
@@ -1055,8 +1121,8 @@ def lean_refutation(
 def _certified(
     decision: Decision, left: Diagram, right: Diagram, describe: Callable[[Diagram], str] | None
 ) -> Decision:
-    """``decision`` with its Lean refutation when UNEQUAL past rung 1 and not by a boundary
-    arity mismatch; UNKNOWN, the missing refutation named in its reason, when there is none."""
+    """``decision`` with its Lean refutation when UNEQUAL past rung 1; UNKNOWN, the missing
+    refutation named in its reason, when there is none."""
     from archytaszx.semantics.lean_net import NetUnsupported
 
     if decision.verdict is not EqualityVerdict.UNEQUAL or _NESTED.get():
@@ -1065,9 +1131,6 @@ def _certified(
         decision.method is DecisionMethod.DOUBLED
         and decision.inner_method is DecisionMethod.INTERFACE
     ):
-        return decision
-    comparison = decision.comparison
-    if comparison is not None and comparison.reason.startswith("boundary arity mismatch"):
         return decision
     point = decision.counterexample
     if decision.restriction is not None and decision.counterexample_original is not None:
