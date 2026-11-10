@@ -54,6 +54,7 @@ axes that are boundary outputs. The split count is carried rather than recompute
 
 from __future__ import annotations
 
+import cmath
 import itertools
 import math
 from dataclasses import dataclass
@@ -363,8 +364,13 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
     extents: dict[int, int] = {}
     for tensor, axis_labels in operands:
         extents.update(zip(axis_labels, tensor.shape, strict=True))
+    factor = diagram.scalar.to_complex()
+    if not cmath.isfinite(factor) or (factor == 0 and not diagram.scalar.is_zero):
+        raise ContractDomainError("the diagram's scalar has no finite nonzero complex value")
     raw_tensor = _contract_network(operands, output_labels, extents, max_elements)
-    tensor = np.asarray(raw_tensor, dtype=np.complex128) * diagram.scalar.to_complex()
+    tensor = np.asarray(raw_tensor, dtype=np.complex128) * factor
+    if not np.all(np.isfinite(tensor)):
+        raise ContractDomainError("the contracted tensor leaves the complex float range")
     return ContractionResult(
         tensor=tensor, axis_refs=axis_refs, num_boundary_outputs=num_boundary_outputs
     )
