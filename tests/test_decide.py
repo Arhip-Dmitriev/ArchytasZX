@@ -1139,7 +1139,7 @@ class TestSaturationRung:
         )
         assert decision.method is DecisionMethod.SATURATION, decision.reason
         assert decision.assumptions == (deferred_constraint(),)
-        assert "conditional on the 1 deferred dimension constraint(s)" in decision.reason
+        assert "conditional on the assumed dimension equation(s) d**p = d**q" in decision.reason
         assert f"no oracle mismatch in {decision.samples_checked} sample(s)" in decision.reason
         assert decision.samples_checked >= 1
         assert_oracle_agrees(left, right, decision)
