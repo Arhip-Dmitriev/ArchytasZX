@@ -572,7 +572,12 @@ class TestFailureReports:
         assert "  right: GHZ_{n+3} = sum_{k=0}^{d-1} |k>^{n} |k, k, k>" in lines
         target = C.Session()
         C.run(target, UNEQUAL)
-        point = counterexample(out)
+        if command == "check":
+            point = counterexample(out)
+        else:
+            assert not [ln for ln in lines if ln.startswith("counterexample: ")]
+            assert any("count n + 2 != n + 3, differing at n = 0" in ln for ln in lines)
+            point = {"n": 0, "d": 2}
         assert not compare(shell.session.current, target.current, point).matched
         assert recognize(shell.session.current) == "GHZ_{n+2}"
 

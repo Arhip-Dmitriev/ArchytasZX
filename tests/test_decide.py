@@ -1049,15 +1049,14 @@ class TestReviewRegressions:
         assert_oracle_agrees(left, right, decision)
 
     @pytest.mark.parametrize("cap", [0, 24])
-    def test_symbolic_rung_skips_a_boxed_boundary_of_another_interface(self, cap: int) -> None:
+    def test_boxed_boundary_of_another_interface_is_settled_by_the_interface(
+        self, cap: int
+    ) -> None:
         left, right = boxed_cup_vs_identity()
         decision = decide_equal(left, right, max_samples=cap)
-        assert decision.verdict is not EqualityVerdict.EQUAL, decision.reason
-        if cap == 0:
-            assert decision.verdict is EqualityVerdict.UNKNOWN
-            assert "boundary input dimensions" in decision.reason
-        else:
-            assert decision.method is DecisionMethod.ORACLE_COUNTEREXAMPLE
+        assert decision.verdict is EqualityVerdict.UNEQUAL, decision.reason
+        assert decision.method is DecisionMethod.INTERFACE
+        assert decision.reason == "boundary input count 0 != 1"
         assert_oracle_agrees(left, right, decision)
 
     def test_symbolic_interface_reason_compares_splits(self) -> None:

@@ -199,6 +199,12 @@ def assignment_of(line: str) -> dict[str, int]:
     return {k: int(v) for k, v in re.findall(r"(\w+) = (-?\d+)", head)}
 
 
+def witness_of(line: str) -> dict[str, int]:
+    """The ``NAME = INT`` pairs after ``differing at`` in an interface reason."""
+    head = line.split("differing at ", 1)[1]
+    return {k: int(v) for k, v in re.findall(r"(\w+) = (-?\d+)", head)}
+
+
 def signature(outcome: Outcome) -> tuple[object, ...]:
     """Command, ok, changed and the blocks, State blocks by type and graph listing."""
     blocks: list[object] = []
@@ -725,12 +731,13 @@ class TestDecide:
     def test_unequal_target(self) -> None:
         s = session(WORKED, "apply spider_fusion")
         lines = texts(failed(s, f"decide against {UNEQUAL}"))
-        assert lines[0].startswith("decide: unequal by ")
+        assert lines[0] == (
+            "decide: unequal by interface: boundary output count n + 2 != n, differing at n = 0"
+        )
         assert lines[1] == "dirac outcome: left != right"
-        counter = [line for line in lines if line.startswith("counterexample: ")]
-        assert len(counter) == 1
+        assert not [line for line in lines if line.startswith("counterexample: ")]
         assert s.current is not None
-        assert not compare(s.current, parse_diagram(UNEQUAL), assignment_of(counter[0])).matched
+        assert not compare(s.current, parse_diagram(UNEQUAL), witness_of(lines[0])).matched
 
     def test_unsettled_reports_furthest_simplified_and_bound(self) -> None:
         left, right = boxed_state_copy()
@@ -792,11 +799,13 @@ class TestProve:
     def test_refuted(self) -> None:
         s = session(WORKED, "apply spider_fusion")
         lines = texts(failed(s, f"prove against {UNEQUAL}"))
-        assert lines[0].startswith("prove: refuted: ")
+        assert lines[0] == (
+            "prove: refuted: interfaces never agree: boundary output count n + 2 != n, "
+            "differing at n = 0"
+        )
         assert lines[1] == "dirac outcome: left != right"
-        assert lines[-1].startswith("counterexample: ")
         assert s.current is not None
-        assert not compare(s.current, parse_diagram(UNEQUAL), assignment_of(lines[-1])).matched
+        assert not compare(s.current, parse_diagram(UNEQUAL), witness_of(lines[0])).matched
 
     def test_not_found_reports_furthest_simplified_and_bound(self) -> None:
         lines = texts(failed(session(THIRD_PHASE), f"prove against {THIRD_WEIGHT}"))
