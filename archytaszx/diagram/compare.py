@@ -383,25 +383,36 @@ def _extend(
     incidence_a: _Incidence,
     incidence_b: _Incidence,
 ) -> bool:
-    """Search for a node bijection extending ``mapping`` under which each assigned node's
-    wires to assigned nodes are, as a multiset, its image's wires to their images."""
-    if depth == len(order):
-        return True
-    source = order[depth]
-    for target in candidates[source]:
-        if target in used or len(incidence_b[target]) != len(incidence_a[source]):
+    """Search, depth-first from ``depth`` over ``order`` with an explicit stack, for a node
+    bijection extending ``mapping`` under which each assigned node's wires to assigned nodes
+    are, as a multiset, its image's wires to their images."""
+    start = depth
+    cursor = [0] * (len(order) + 1)
+    while depth < len(order):
+        source = order[depth]
+        choices = candidates[source]
+        while cursor[depth] < len(choices):
+            target = choices[cursor[depth]]
+            cursor[depth] += 1
+            if target in used or len(incidence_b[target]) != len(incidence_a[source]):
+                continue
+            mapping[source] = target
+            used.add(target)
+            forward = _edges_to(target, incidence_a[source], mapping)
+            backward = _edges_to(target, incidence_b[target], {node: node for node in used})
+            if forward == backward:
+                break
+            used.discard(target)
+            del mapping[source]
+        else:
+            if depth == start:
+                return False
+            depth -= 1
+            used.discard(mapping.pop(order[depth]))
             continue
-        mapping[source] = target
-        used.add(target)
-        forward = _edges_to(target, incidence_a[source], mapping)
-        backward = _edges_to(target, incidence_b[target], {node: node for node in used})
-        if forward == backward and _extend(
-            order, depth + 1, mapping, used, candidates, incidence_a, incidence_b
-        ):
-            return True
-        used.discard(target)
-        del mapping[source]
-    return False
+        depth += 1
+        cursor[depth] = 0
+    return True
 
 
 @_trace.traced("rewrite.isomorphism")
