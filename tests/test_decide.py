@@ -22,7 +22,7 @@ import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimensionError
-from archytaszx.algebra.phase import Phase, PhaseError, PhaseVector
+from archytaszx.algebra.phase import INDEX, Phase, PhaseError, PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import BangBoxError, Mult
 from archytaszx.diagram.compare import canonical_key, isomorphic
@@ -190,6 +190,16 @@ def zero_phase_pair(dim: Dim = D) -> Pair:
     return z_state(dim, PhaseVector(dim, {})), z_state(dim)
 
 
+def phase_weight_pair(dim: Dim = D) -> Pair:
+    """A Z state with phase k/3 turns at every index k, and the one with weight
+    exp(2 pi i k / 3) there."""
+    weight = Scalar(sp.exp(2 * sp.pi * sp.I * INDEX / 3))
+    return (
+        z_state(dim, PhaseVector(dim, rule=Phase(INDEX / 3))),
+        z_state(dim, PhaseVector.from_weights(dim, rule=weight)),
+    )
+
+
 # -- oracle cross-checks ----------------------------------------------------------------
 
 
@@ -285,6 +295,8 @@ NF_EQUAL: dict[str, Callable[[], Pair]] = {
     "ghz_fused": lambda: ghz_pair(D),
     "state_copy_rewrite": lambda: state_copy_pair(3, 3),
     "fusion_node_orders": lambda: (fusion_chain("sme"), fusion_chain("ems")),
+    "zero_phase_vector": zero_phase_pair,
+    "full_turn_phase": lambda: (z_state(D, phase_turns(D, sp.Rational(1, 1))), z_state(D)),
 }
 
 UNEQUAL_INTERFACE: dict[str, Callable[[], Pair]] = {
@@ -306,8 +318,7 @@ UNEQUAL_ORACLE: dict[str, Callable[[], Pair]] = {
 }
 
 SYMBOLIC_EQUAL: dict[str, Callable[[], Pair]] = {
-    "zero_phase_vector": zero_phase_pair,
-    "full_turn_phase": lambda: (z_state(D, phase_turns(D, sp.Rational(1, 1))), z_state(D)),
+    "phase_vs_weight": phase_weight_pair,
     "concrete_self_loop": lambda: (self_loop(Dim.concrete(2)), z_state(Dim.concrete(2))),
 }
 
@@ -536,8 +547,8 @@ class TestLadder:
 class TestUnknown:
     """Pairs no enabled rung settles."""
 
-    def test_zero_phase_with_symbolic_and_induction_disabled(self) -> None:
-        left, right = zero_phase_pair()
+    def test_phase_and_weight_with_symbolic_and_induction_disabled(self) -> None:
+        left, right = phase_weight_pair()
         decision = decide_equal(left, right, use_symbolic=False, use_induction=False)
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.method is DecisionMethod.NONE
@@ -583,12 +594,12 @@ class TestSamples:
 
     @pytest.mark.parametrize("cap", [0, 1, 2, 3, 4, 10])
     def test_samples_checked_never_exceeds_the_cap(self, cap: int) -> None:
-        decision = decide_equal(*zero_phase_pair(), max_samples=cap)
+        decision = decide_equal(*phase_weight_pair(), max_samples=cap)
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert decision.samples_checked == min(cap, 4)
 
     def test_refused_samples_are_not_counted(self) -> None:
-        left, right = zero_phase_pair()
+        left, right = phase_weight_pair()
         decision = decide_equal(left, right, samples=[{}, {"e": 2}, {"d": 2}])
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert decision.samples_checked == 1
@@ -1171,7 +1182,7 @@ class TestSaturationRung:
         assert decision.saturation is None
 
     def test_an_unsettled_rung_still_reports(self) -> None:
-        left, right = zero_phase_pair()
+        left, right = phase_weight_pair()
         decision = decide_equal(left, right)
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION, decision.reason
         assert decision.saturation is not None and decision.saturation.merges == 0

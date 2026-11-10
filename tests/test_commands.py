@@ -74,7 +74,8 @@ from .test_phase15_oracle import PROVED, boxed_state_copy
 WORKED = "sum_{k=0}^{3-1} |k>^{30}; copy"
 DSL_GHZ = "a = Z(0 -> 2, d); b = Z(1 -> 2, d); wire a.out0 -- b.in0; outputs a.out1, b.out0, b.out1"
 BOXED = "count n; a = Z(0 -> 2, d); b = Z(1 -> 1, d); wire a.out0 -- b.in0; box p x n ports a.out1"
-ZERO_PHASE = "a = Z(0 -> 1, d) phase 0"
+THIRD_PHASE = "a = Z(0 -> 1, d) phase {1: 1/3}"
+THIRD_WEIGHT = "a = Z(0 -> 1, d) weight {1: exp(2*pi*I/3)}"
 PLUS = "a = Z(0 -> 1, d)"
 COPIES4 = "a = Z(0 -> 1, d); box p x literal 4 nodes a"
 TWO_PLUS = "a = Z(0 -> 1, d); b = Z(0 -> 1, d)"
@@ -300,7 +301,7 @@ def _payload_script() -> list[tuple[Session, list[str]]]:
             ],
         ),
         (Session(), [WORKED, "saturate", "reset", "undo"]),
-        (Session(), [ZERO_PHASE, f"prove against {PLUS}"]),
+        (Session(), [THIRD_PHASE, f"prove against {THIRD_WEIGHT}"]),
         (Session(), [BOXED, "induct d=2", "certificate emit", "certificate verify"]),
         (Session(), [DSL_GHZ, "translate fuse n0.out0 -- n1.in0", "translate back"]),
         (induction, ["load @l", "prove against @r", "certificate emit", "certificate verify"]),
@@ -798,7 +799,7 @@ class TestProve:
         assert not compare(s.current, parse_diagram(UNEQUAL), assignment_of(lines[-1])).matched
 
     def test_not_found_reports_furthest_simplified_and_bound(self) -> None:
-        lines = texts(failed(session(ZERO_PHASE), f"prove against {PLUS}"))
+        lines = texts(failed(session(THIRD_PHASE), f"prove against {THIRD_WEIGHT}"))
         assert lines[0].startswith("prove: not_found: ")
         assert lines[1] == "dirac outcome: left ?= right"
         assert any(line.startswith("furthest-simplified left") for line in lines)

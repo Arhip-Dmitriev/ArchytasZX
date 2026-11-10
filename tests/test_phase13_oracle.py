@@ -67,16 +67,11 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
     ("different_phases", TD.UNEQUAL_ORACLE["different_phases"], {}, UNEQUAL, ORACLE),
     ("extra_scalar", TD.UNEQUAL_ORACLE["extra_scalar"], {}, UNEQUAL, ORACLE),
     ("z_cup_vs_x_cup", TD.UNEQUAL_ORACLE["z_cup_vs_x_cup"], {}, UNEQUAL, ORACLE),
+    ("zero_phase_vector", TD.zero_phase_pair, {}, EQUAL, NF),
+    ("full_turn_phase", TD.NF_EQUAL["full_turn_phase"], {}, EQUAL, NF),
     (
-        "zero_phase_vector",
-        TD.zero_phase_pair,
-        {},
-        EQUAL,
-        DecisionMethod.SYMBOLIC_CONTRACTION,
-    ),
-    (
-        "full_turn_phase",
-        TD.SYMBOLIC_EQUAL["full_turn_phase"],
+        "phase_vs_weight",
+        TD.phase_weight_pair,
         {},
         EQUAL,
         DecisionMethod.SYMBOLIC_CONTRACTION,
@@ -125,8 +120,8 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         DecisionMethod.SYMBOLIC_WITNESS,
     ),
     (
-        "zero_phase_rungs_disabled",
-        TD.zero_phase_pair,
+        "phase_weight_rungs_disabled",
+        TD.phase_weight_pair,
         {"use_symbolic": False, "use_induction": False},
         UNKNOWN,
         DecisionMethod.NONE,
@@ -199,8 +194,9 @@ def concrete_pairs(d: int) -> dict[str, tuple[TD.Pair, EqualityVerdict, Decision
             (TD.cup(Z_SPIDER, dim), TD.cup(X_SPIDER, dim)),
             *((EQUAL, DecisionMethod.SYMBOLIC_CONTRACTION) if d == 2 else (UNEQUAL, ORACLE)),
         ),
-        "zero_phase_vector": (
-            TD.zero_phase_pair(dim),
+        "zero_phase_vector": (TD.zero_phase_pair(dim), EQUAL, NF),
+        "phase_vs_weight": (
+            TD.phase_weight_pair(dim),
             EQUAL,
             DecisionMethod.SYMBOLIC_CONTRACTION,
         ),
