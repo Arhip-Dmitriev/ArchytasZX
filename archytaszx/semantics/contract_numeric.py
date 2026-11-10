@@ -69,6 +69,9 @@ DEFAULT_MAX_ELEMENTS = 10_000_000
 """The default cap on the element count of any single tensor this module allocates, inputs,
 intermediates and output alike."""
 
+MAX_AXES = 64
+"""The most axes numpy gives one array."""
+
 
 class ContractError(Exception):
     """Base class for all errors raised by this module."""
@@ -204,6 +207,11 @@ def _check_size(elements: int, *, max_elements: int, what: str) -> None:
         )
 
 
+def _check_axes(axes: int, *, what: str) -> None:
+    if axes > MAX_AXES:
+        raise ContractSizeError(f"{what} would have {axes} axes, above numpy's {MAX_AXES}")
+
+
 def _squeezed(tensor: np.ndarray, axis_labels: list[int]) -> tuple[np.ndarray, list[int]]:
     """``tensor`` without its extent-one axes, and the labels of the axes kept."""
     kept = [i for i, extent in enumerate(tensor.shape) if extent != 1]
@@ -317,6 +325,7 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
     for node_id, node in diagram.nodes.items():
         elements = math.prod(leg_dimensions(node))
         _check_size(elements, max_elements=max_elements, what=f"node {node_id!r}'s tensor")
+        _check_axes(len(leg_dimensions(node)), what=f"node {node_id!r}'s tensor")
         tensor = denote(node)
         port_refs = [PortRef(node_id, Direction.OUTPUT, i) for i in range(node.num_outputs)] + [
             PortRef(node_id, Direction.INPUT, i) for i in range(node.num_inputs)
@@ -349,6 +358,7 @@ def contract(diagram: Diagram, *, max_elements: int = DEFAULT_MAX_ELEMENTS) -> C
         port = node.legs(ref.direction)[ref.index]
         output_elements *= port.dim.to_int()
     _check_size(output_elements, max_elements=max_elements, what="the contracted output tensor")
+    _check_axes(len(axis_refs), what="the contracted output tensor")
 
     extents: dict[int, int] = {}
     for tensor, axis_labels in operands:
