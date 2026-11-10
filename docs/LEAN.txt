@@ -407,17 +407,42 @@ its atoms and of ζ, into a nonzero integer vector of length at most φ(M); cyc_
 such a vector does not vanish, by the degree of the cyclotomic minimal polynomial. √p for an
 odd prime p is a quadratic Gauss sum, checked by its square and the sign of its real part.
 
+The points tried are the counterexample, then the default sample points ordered by the sum of
+the absolute values of their coordinates, smallest first (lean_refute._by_size), at most 16; a
+point whose evaluation needs a factor table above 200000 entries is skipped, so a large
+counterexample is replaced by the smallest sample point that still separates. When no point
+gives an exact refutation, the same points are tried by ball arithmetic (5.2).
+
 5.2 Numeric refutations (archytaszx.semantics.lean_numeric)
 
 A point involving π, an irrational phase or another value outside ℚ(ζ) is refuted by ball
 arithmetic (ArchytasZX.Ball): every subterm receives an enclosure, square roots from their
 squares, π from its 20-digit bounds, exponentials from a Taylor bound, and a ball that excludes
-zero contradicts the equality.
+zero contradicts the equality. A negative integer power of a positive constant is enclosed
+from the enclosure of its base (nearR_inv), so 1/π and π⁻² have balls.
 
 5.3 Interfaces
 
 Diagrams whose interfaces differ are refuted on their leg dimensions. Families whose boundaries
 are written differently are refuted after instantiating their multiplicities.
+
+5.4 Verdicts without a refutation
+
+decide_equal reports UNEQUAL from the oracle, a symbolic witness or induction only with its
+Lean refutation (Decision.refutation, decide.lean_refutation, over the doubled diagrams when
+either side has a discard); without one the verdict is UNKNOWN and its reason ends in "not
+reported unequal: no Lean refutation (...)". prove reports an oracle REFUTED only with its
+Lean refutation (ProofOutcome.refutation), otherwise NOT_FOUND ("not refuted: no Lean
+refutation"). The shell prints such a counterexample as "uncertified counterexample", induct
+appends "not reported refuted: no Lean refutation", and certificate refuses to fall back to the
+session derivation after a decide that built no certificate. The oracle's check of a
+normal-form verdict (rung 2) and of a proof's two halves is not a certificate; the certificate
+of such a verdict is the kernel theorem of section 4.1. A rung 1 (interface) verdict is
+exact and keeps its verdict; its export is that of 5.3.
+
+Points with no refutation: a scalar or phase with a transcendental constant other than π and
+its integer powers (E, exp of a non-rational multiple of π I, for example), and points every
+one of which needs a factor table above the bound.
 
 
 6. WHAT IS TRUSTED
@@ -459,11 +484,10 @@ part of the theorem. Nothing about the certificate is trusted outside Lean: a wr
 form or interval makes a step or θ_isolated fail to check.
 
 Agreement of Diagram.expandK with the engine's instantiate_symbol is checked on examples/ and the
-battery, not proved. Agreement of the engine's substitution with the network semantics, the
-link of a restricted-pair theorem exported without the peeling wrapper (section 4.7) to the
-original diagrams, is checked by the oracle on examples/restricted and a seeded sweep, not
-proved; a wrapped export states its theorem over the original diagrams and needs no such
-agreement.
+battery, not proved. A restricted-pair theorem exported without a statement over the original
+diagrams (section 4.7) is not a certificate of the restricted claim: its header carries the
+note "UNCERTIFIED for the original diagrams" and the shell reports it as uncertified; an export
+with main_diagrams over the original boxed diagrams, or with main_diagrams_original, is.
 
 A rule step for which no lemma exists, or an isomorphism the exporter cannot match, becomes an
 axiom named unproved_* stating that one step over the same semantics. Such axioms are listed in
@@ -486,6 +510,10 @@ for each, in section 9.
     archytaszx.semantics.lean_sym.export_symbolic, sym_check
     archytaszx.semantics.lean_refute.export_refutation
     archytaszx.semantics.lean_numeric.export_numeric_refutation
+    archytaszx.semantics.decide.lean_refutation(left, right, point, describe=None) -> str
+            the refutation decide_equal and prove require (5.4).
+    archytaszx.semantics.kernel.lift(t, left, right, clauses) -> Theorem
+            the restricted-pair theorem t under several multiplicity clauses (4.7).
 
 
 8. RULE LEMMAS OF THE COMPLETE AXIOMATISATION

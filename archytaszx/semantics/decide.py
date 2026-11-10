@@ -31,7 +31,9 @@ Mixed operands (a discard on either side, or ``mixed=True``) are ``DOUBLED``: th
 unchanged on both doubled diagrams, the settling rung recorded as ``inner_method``.
 
 ``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
-counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. A normal-form match
+counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. :func:`decide_equal`
+reports an ``UNEQUAL`` not settled by rung 1 only with its Lean refutation
+(:attr:`Decision.refutation`, :func:`lean_refutation`), else ``UNKNOWN``. A normal-form match
 needs rung 3 to find no mismatch before it is reported; ``DEFERRED`` dimension constraints its
 derivations assumed are carried in :attr:`Decision.assumptions`. A saturation merge yields one
 certificate per edge of :meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its
@@ -49,7 +51,7 @@ from __future__ import annotations
 import enum
 import itertools
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -150,7 +152,8 @@ class Decision:
     ``restriction``, the unrestricted ``family`` decision, ``family_holds`` when that decision
     was EQUAL, the ``restricted_pair`` it decided otherwise, the counterexample in the original
     symbols as ``counterexample_original``, and the dimension floors a symbolic contraction
-    needed as ``floors_used``.
+    needed as ``floors_used``. ``refutation`` is the Lean refutation source of an UNEQUAL
+    verdict not settled by the interface.
     """
 
     verdict: EqualityVerdict
@@ -176,6 +179,7 @@ class Decision:
     counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
     restricted_pair: tuple[Diagram, Diagram] | None = None
     floors_used: Mapping[str, int] | None = None
+    refutation: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -984,9 +988,11 @@ def decide_equal(
     saturation_limits: SaturationLimits = DECIDE_SATURATION_LIMITS,
     mixed: bool = False,
     restrict: Restriction | str | Mapping[str, str] | None = None,
+    describe: Callable[[Diagram], str] | None = None,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
-    or for the values ``restrict`` covers.
+    or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's diagram
+    comments.
 
     Runs the module docstring's ladder; ``samples`` replaces :func:`sample_grid` for the
     oracle rung and, cut to its symbols, for the induction base case; ``max_depth`` bounds
@@ -1030,8 +1036,65 @@ def decide_equal(
 
         restriction = validate(parse_restriction(restrict), left, right)
         if not restriction.empty:
-            return decide_restricted(left, right, restriction, **options)
-    return _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+            decision = decide_restricted(left, right, restriction, **options)
+            return _certified(decision, left, right, describe)
+    decision = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+    return _certified(decision, left, right, describe)
+
+
+def lean_refutation(
+    left: Diagram,
+    right: Diagram,
+    point: Mapping[str, CheckAssignmentValue] | None,
+    describe: Callable[[Diagram], str] | None = None,
+) -> str:
+    """The Lean refutation of ``left = right`` at ``point`` (or a default sample point), over
+    the doubled diagrams when either side has a discard; raises
+    :class:`~archytaszx.semantics.lean_net.NetUnsupported` when there is none."""
+    from archytaszx.semantics.lean_net import NetUnsupported
+    from archytaszx.semantics.lean_refute import export_refutation
+
+    if not (is_pure(left) and is_pure(right)):
+        left, right = double(left), double(right)
+    try:
+        return export_refutation(left, right, dict(point or {}), describe=describe)
+    except NetUnsupported:
+        raise
+    except Exception as exc:
+        raise NetUnsupported(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _certified(
+    decision: Decision, left: Diagram, right: Diagram, describe: Callable[[Diagram], str] | None
+) -> Decision:
+    """``decision`` with its Lean refutation when UNEQUAL past rung 1; UNKNOWN, the missing
+    refutation named in its reason, when there is none."""
+    from archytaszx.semantics.lean_net import NetUnsupported
+
+    if decision.verdict is not EqualityVerdict.UNEQUAL:
+        return decision
+    if decision.method is DecisionMethod.INTERFACE or (
+        decision.method is DecisionMethod.DOUBLED
+        and decision.inner_method is DecisionMethod.INTERFACE
+    ):
+        return decision
+    point = decision.counterexample
+    if decision.restriction is not None and decision.counterexample_original is not None:
+        point = decision.counterexample_original
+    induced = decision.induction
+    if point is None and induced is not None and induced.counterexample is not None:
+        point = {**dict(induced.witness), induced.index: induced.counterexample}
+    try:
+        with _trace.span("decide.refutation"):
+            source = lean_refutation(left, right, point, describe)
+    except NetUnsupported as exc:
+        return replace(
+            decision,
+            verdict=EqualityVerdict.UNKNOWN,
+            method=DecisionMethod.NONE,
+            reason=f"{decision.reason}; not reported unequal: no Lean refutation ({exc})",
+        )
+    return replace(decision, refutation=source)
 
 
 def decide_restricted(
@@ -1379,11 +1442,7 @@ def _decide_by_induction(
         "saturation_limits": saturation_limits,
     }
     with _trace.span("decide.induction.base"):
-        base_decision = (
-            decide_equal(pair[0], pair[1], **base_options)  # type: ignore[arg-type]
-            if floors is None
-            else _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
-        )
+        base_decision = _decide(pair[0], pair[1], mixed=False, floors=floors, **base_options)  # type: ignore[arg-type]
     if (
         base_decision.verdict is EqualityVerdict.UNEQUAL
         and base_decision.counterexample is not None

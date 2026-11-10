@@ -297,6 +297,8 @@ class _NumRefuter(_Refuter):
             for _ in range(int(e.args[1]) - 1):
                 out = f"({out} * {self.rtext(e.args[0])})"
             return out
+        if e.is_Pow and e.args[1].is_Integer and e.args[0].is_positive:
+            return f"({self.rtext(e.args[0] ** -int(e.args[1]))})⁻¹"
         raise NetUnsupported(f"the real constant {e}")
 
     def ctext(self, e: sp.Expr) -> str:
@@ -383,6 +385,15 @@ class _NumRefuter(_Refuter):
                 )
                 m, d = rm, rd
             return name, m, d
+        if e.is_Pow and e.args[1].is_Integer and e.args[0].is_positive:
+            name, m, d = self.rball(e.args[0] ** -int(e.args[1]))
+            if m - d <= 0:
+                raise NetUnsupported(f"the real constant {e}")
+            lo, hi = 1 / (m + d), 1 / (m - d)
+            m2 = _round((lo + hi) / 2)
+            d2 = _up(max(hi - m2, m2 - lo))
+            proof = f"nearR_inv {name} (by norm_num) (by norm_num) (by norm_num)"
+            return self.have(f"NearR {_paren(self.rtext(e))} {_q(m2)} {_q(d2)}", proof), m2, d2
         raise NetUnsupported(f"the real constant {e}")
 
     @staticmethod

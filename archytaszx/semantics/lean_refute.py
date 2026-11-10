@@ -84,7 +84,7 @@ def export_refutation(
     first: NetUnsupported | None = None
     candidates = [dict(point)]
     with contextlib.suppress(Exception):
-        candidates += [dict(p) for p in sample_grid(left, right)][:MAX_POINTS]
+        candidates += _by_size(sample_grid(left, right))[:MAX_POINTS]
     seen: list[dict[str, object]] = []
     for candidate in candidates:
         if candidate not in seen:
@@ -105,6 +105,21 @@ def export_refutation(
             pass
     assert first is not None
     raise first
+
+
+def _by_size(points: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """``points`` ordered by the sum of their absolute values, smallest first, ties in order."""
+
+    def size(p: Mapping[str, Any]) -> float:
+        total = 0.0
+        for v in p.values():
+            try:
+                total += abs(float(sp.sympify(v)))
+            except (TypeError, ValueError, sp.SympifyError):
+                total += 1.0
+        return total
+
+    return sorted((dict(p) for p in points), key=size)
 
 
 def _legs(d: Diagram) -> list[tuple[sp.Expr, sp.Expr]]:
@@ -209,7 +224,7 @@ def _instantiated_refutation(
         }
     )
     first: NetUnsupported | None = None
-    for cand in [dict(point)] + [dict(p) for p in sample_grid(left, right)][:MAX_POINTS]:
+    for cand in [dict(point)] + _by_size(sample_grid(left, right))[:MAX_POINTS]:
         if any(m not in cand for m in mults):
             continue
         pair = []
@@ -568,6 +583,8 @@ class _Refuter:
 
     def table(self, scope: Sequence[int], entry: Callable[[dict[int, int]], Vec]) -> list[Vec]:
         dims = [self.labdim(x) for x in scope]
+        if math.prod(dims) > MAX_TERMS:
+            raise NetUnsupported("a factor table is too large at the counterexample")
         out = []
         for i in range(math.prod(dims)):
             tau, rest = {}, i

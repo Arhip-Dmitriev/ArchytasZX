@@ -1263,7 +1263,7 @@ class _Export:
             stmt = f"¬ {stmt}"
             body = (
                 f"by\n  intro h\n  apply {name}\n{intro}"
-                f"  rw [← {na}_net, ← {nbt}_net]\n"
+                f"  rw [{', '.join(dict.fromkeys((f'← {na}_net', f'← {nbt}_net')))}]\n"
                 f"  exact Diagram.Equal_of_DEqual_expandK {ks} _ _\n{checks}"
                 f"    {'(h ' + args + ')' if args else 'h'}"
             )
@@ -1306,7 +1306,7 @@ class _Export:
         rw = (
             f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labs) rfl (by decide +kernel) "
             "(by decide +kernel), "
-            f"{na}_net, {nbt}_net]"
+            f"{', '.join(dict.fromkeys((f'{na}_net', f'{nbt}_net')))}]"
         )
         intro = [f"  intro {args}"] if args else []
         if negated:
@@ -1896,7 +1896,8 @@ class _Export:
         head = f"∀ {binders}, " if binders else ""
         rw = (
             f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labsF) rfl (by decide +kernel) "
-            f"(by decide +kernel), {_dname(da)}_net, {_dname(db)}_net]"
+            f"(by decide +kernel), "
+            f"{', '.join(dict.fromkeys((f'{_dname(da)}_net', f'{_dname(db)}_net')))}]"
         )
         intro = f"  intro {args}\n" if args else ""
         self.decls.append(

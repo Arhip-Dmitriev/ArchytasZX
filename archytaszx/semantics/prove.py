@@ -15,7 +15,9 @@
 
 :func:`prove` settles a goal in order: an interface that can never agree
 (:func:`~archytaszx.semantics.decide.interface_reason`) is ``REFUTED``; when ``refute`` is set,
-an oracle counterexample (:func:`~archytaszx.semantics.decide.refute_by_oracle`) is ``REFUTED``;
+an oracle counterexample (:func:`~archytaszx.semantics.decide.refute_by_oracle`) is ``REFUTED``
+with its Lean refutation (:func:`~archytaszx.semantics.decide.lean_refutation`), else
+``NOT_FOUND``;
 a :func:`~archytaszx.rewrite.tactics.search` that finds no path is ``NOT_FOUND``; a found path
 is certified by :func:`certify_proof` and checked by :func:`check_proof`, giving ``PROVED`` or
 ``CHECK_FAILED``.
@@ -107,6 +109,7 @@ from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS
 from archytaszx.semantics.decide import (
     OracleRefutation,
     interface_reason,
+    lean_refutation,
     oracle_summary,
     refute_by_oracle,
 )
@@ -755,7 +758,8 @@ class ProofOutcome:
     """A :func:`prove` verdict, its reason, and the evidence behind it; a restricted proof
     carries its ``restriction``, the unrestricted ``family`` outcome, ``family_holds`` when that
     outcome proved the claim, the ``restricted_pair`` it proved otherwise and the counterexample
-    in the original symbols."""
+    in the original symbols; ``refutation`` is the Lean refutation source of an oracle
+    ``REFUTED``."""
 
     status: ProofStatus
     reason: str
@@ -771,6 +775,7 @@ class ProofOutcome:
     family_holds: bool = False
     restricted_pair: tuple[Diagram, Diagram] | None = None
     counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
+    refutation: str | None = None
 
     def __post_init__(self) -> None:
         """Validate every field's type, in declaration order."""
@@ -1058,6 +1063,26 @@ def _induct(start: Diagram, goal: Diagram, run: _Searcher, depth: int) -> Induct
 DEFAULT_INDUCTION_DEPTH = 2
 
 
+def _oracle_refuted(start: Diagram, goal: Diagram, oracle: OracleRefutation) -> ProofOutcome:
+    """``REFUTED`` at the oracle's counterexample with its Lean refutation; ``NOT_FOUND``, the
+    missing refutation named in its reason, when there is none."""
+    from archytaszx.semantics.lean_net import NetUnsupported
+
+    detail = oracle.comparison.reason if oracle.comparison is not None else ""
+    reason = f"oracle mismatch at {dict(oracle.counterexample or {})!r}: {detail}"
+    try:
+        source = lean_refutation(start, goal, oracle.counterexample)
+    except NetUnsupported as exc:
+        return ProofOutcome(
+            ProofStatus.NOT_FOUND,
+            f"{reason}; not refuted: no Lean refutation ({exc})",
+            counterexample=oracle.counterexample,
+        )
+    return ProofOutcome(
+        ProofStatus.REFUTED, reason, counterexample=oracle.counterexample, refutation=source
+    )
+
+
 def prove(
     start: Diagram,
     goal: Diagram,
@@ -1171,12 +1196,7 @@ def prove(
             max_elements=max_elements,
         )
         if oracle.counterexample is not None:
-            detail = oracle.comparison.reason if oracle.comparison is not None else ""
-            return ProofOutcome(
-                ProofStatus.REFUTED,
-                f"oracle mismatch at {dict(oracle.counterexample)!r}: {detail}",
-                counterexample=oracle.counterexample,
-            )
+            return _oracle_refuted(start, goal, oracle)
     found = search(
         start, goal, moves=moves, limits=limits, bidirectional=bidirectional, cache=cache
     )
@@ -1304,12 +1324,7 @@ def prove_exhaustive(
             max_elements=max_elements,
         )
         if oracle.counterexample is not None:
-            detail = oracle.comparison.reason if oracle.comparison is not None else ""
-            return ProofOutcome(
-                ProofStatus.REFUTED,
-                f"oracle mismatch at {dict(oracle.counterexample)!r}: {detail}",
-                counterexample=oracle.counterexample,
-            )
+            return _oracle_refuted(start, goal, oracle)
     if algebraic:
         for name, value in (("start", start), ("goal", goal)):
             try:

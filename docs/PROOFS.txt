@@ -17,9 +17,10 @@ generality the question is undecidable, so every procedure below is sound and in
   - EQUAL is reported only with evidence that holds for every value: a replayable derivation,
     a symbolic contraction with every symbol formal, or an induction whose base and step are
     both settled.
-  - UNEQUAL is reported only with a refutation: interfaces that can never agree, an oracle
-    counterexample at an assignment that satisfies every symbol's assumptions, or a symbolic
-    witness entry.
+  - UNEQUAL is reported only with a refutation: interfaces that can never agree, or an oracle
+    counterexample at an assignment that satisfies every symbol's assumptions or a symbolic
+    witness entry, either with its Lean refutation (LEAN.txt, section 5.4); a counterexample
+    without one is UNKNOWN.
   - Every other outcome is UNKNOWN, with the reason the procedure stopped.
 
 Equalities that a derivation assumed rather than verified (deferred dimension constraints) are
@@ -75,6 +76,7 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.reason           a sentence explaining the verdict
     Decision.certificates     the certificates behind a NORMAL_FORM or SATURATION verdict
     Decision.counterexample   the assignment behind an UNEQUAL verdict
+    Decision.refutation       the Lean refutation source of an UNEQUAL verdict past rung 1
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
     Decision.assumptions      deferred dimension constraints the verdict rests on
     Decision.samples_checked  oracle samples evaluated
@@ -133,7 +135,8 @@ floor) of 2, 3, 4, 1, 5, 6, ...
 prove settles a goal in this order:
 
   1. Interfaces that can never agree: REFUTED.
-  2. With refute, an oracle counterexample: REFUTED.
+  2. With refute, an oracle counterexample: REFUTED with its Lean refutation
+     (ProofOutcome.refutation); NOT_FOUND when it has none.
   3. Bidirectional tactic search (REWRITE.txt, section 8). A path found is certified and
      checked: PROVED, or CHECK_FAILED if the check fails.
   4. When search finds no path and a multiplicity is free, induction: the base case at 0 is

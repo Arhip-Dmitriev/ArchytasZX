@@ -332,6 +332,7 @@ class Session:
         | kernel.Symbolic
         | None
     ) = None
+    no_proof: str | None = None
     induct_pair: tuple[Diagram, Diagram] | None = None
     induct_restriction: tuple[Restriction, Diagram, Diagram, bool] | None = None
     last_detail: object | None = None
@@ -622,6 +623,7 @@ def _cmd_load(session: Session, args: str) -> Outcome:
     session.start = diagram
     session.results = []
     session.last_proof = None
+    session.no_proof = None
     session.certificate, session.certificate_witness = None, None
     return _ok("load", [Text(f"loaded {origin}"), State(diagram)], diagram, True)
 
@@ -959,7 +961,7 @@ def _bound_line(left: Diagram, right: Diagram, decision: Decision) -> Text | Non
 def _cmd_decide(session: Session, args: str) -> Outcome:
     text, restriction = _split_for(args)
     left, right = _pair_args(session, text)
-    decision = decide_equal(left, right, restrict=restriction)
+    decision = decide_equal(left, right, restrict=restriction, describe=lambda d: _math(d, True))
     restricted = decision.restriction is not None
     payload = _Pair("decide", left, right, decision)
     head = (
@@ -967,6 +969,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
         f"{decision.method.value}: {decision.reason}"
     )
     session.certificate, session.certificate_witness = None, None
+    session.no_proof = None
     proof_pair = (left, right) if decision.doubled is None else decision.doubled
     if restricted and not decision.family_holds and decision.restricted_pair is not None:
         proof_pair = decision.restricted_pair if decision.doubled is None else decision.doubled
@@ -990,6 +993,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
             evidence = _decision_proof(inner, *proof_pair)
         session.last_proof = evidence  # type: ignore[assignment]
         if evidence is None:
+            session.no_proof = f"the decide built no proof: it rests on {decision.method.value}"
             blocks.append(
                 Text(
                     "proof: none the kernel re-checks; the verdict rests on "
@@ -1018,12 +1022,19 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
     if restricted and decision.counterexample_original is not None:
         point = decision.counterexample_original
     if decision.verdict is EqualityVerdict.UNEQUAL:
-        refuted = _refutation(left, right, point)
+        refuted = _refutation(left, right, point, decision.refutation)
         session.last_proof = refuted
+        if refuted is None:
+            session.no_proof = "the decide built no Lean refutation"
         blocks.append(_disproof(refuted, decision.method.value))
+    else:
+        session.no_proof = f"the decide built no certificate: {_one_line(decision.reason)}"
     if point is not None:
         reason = decision.comparison.reason if decision.comparison is not None else None
-        blocks.append(_counterexample_line(point, reason))
+        cex = _counterexample_line(point, reason)
+        if decision.verdict is not EqualityVerdict.UNEQUAL:
+            cex = Text(f"uncertified {cex.text}")
+        blocks.append(cex)
     elif decision.induction is not None and decision.induction.counterexample is not None:
         blocks.append(_induction_counterexample(decision.induction))
     elif decision.method is not DecisionMethod.INTERFACE:
@@ -1045,12 +1056,17 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
 
 
 def _refutation(
-    left: Diagram, right: Diagram, point: Mapping[str, CheckAssignmentValue] | None
+    left: Diagram,
+    right: Diagram,
+    point: Mapping[str, CheckAssignmentValue] | None,
+    source: str | None = None,
 ) -> kernel.Refutation | None:
-    """The refutation of ``left = right`` at ``point`` with its Lean export, or None when it
-    has none."""
+    """The refutation of ``left = right`` at ``point`` with its Lean export (``source`` when
+    given), or None when it has none."""
     if not (is_pure(left) and is_pure(right)):
         left, right = double(left), double(right)
+    if source:
+        return kernel.Refutation(left, right, dict(point or {}), source)
     ref = kernel.Refutation(left, right, dict(point or {}))
     try:
         source = kernel.lean(ref, describe=lambda d: _math(d, True))
@@ -1154,21 +1170,28 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
                 )
         blocks.append(Text(f"proof by {kind}; certificate emits it"))
         return _ok("prove", blocks, payload)
-    relation = "!=" if outcome.status is ProofStatus.REFUTED else "?="
-    blocks = [Text(head), *_dirac_outcome(left, right, relation)]
     point = outcome.counterexample
     if outcome.restriction is not None and outcome.counterexample_original is not None:
         point = outcome.counterexample_original
+    refuted = None
+    if point is not None and outcome.status is ProofStatus.REFUTED:
+        own = outcome.refutation if outcome.restriction is None else None
+        refuted = _refutation(left, right, point, own)
+    plain = outcome.status is ProofStatus.REFUTED and point is None
+    relation = "!=" if refuted is not None or plain else "?="
+    blocks = [Text(head), *_dirac_outcome(left, right, relation)]
     if point is not None:
         reason = None
         if outcome.check is not None and outcome.check.comparison is not None:
             reason = outcome.check.comparison.reason
         if outcome.status is ProofStatus.REFUTED:
-            refuted = _refutation(left, right, point)
             session.last_proof = refuted if refuted is not None else outcome
             session.certificate, session.certificate_witness = None, None
             blocks.append(_disproof(refuted, "the oracle"))
-        blocks.append(_counterexample_line(point, reason))
+        line = _counterexample_line(point, reason)
+        if refuted is None and outcome.status is not ProofStatus.CHECK_FAILED:
+            line = Text(f"uncertified {line.text}")
+        blocks.append(line)
     elif outcome.status is ProofStatus.CHECK_FAILED and outcome.check is not None:
         blocks.append(Text(f"check failed: {outcome.check.reason}"))
     elif outcome.status is not ProofStatus.REFUTED:
@@ -1251,13 +1274,17 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
             )
         )
         return _ok("induct", blocks, payload)
-    relation = "!=" if result.counterexample is not None else "?="
-    blocks += _dirac_outcome(left, right, relation)
+    refuted = None
     if result.counterexample is not None:
         point = {**dict(result.witness), result.index: result.counterexample}
         if result.counterexample_original is not None:
             point = dict(result.counterexample_original)
         refuted = _refutation(left, right, point)
+        if refuted is None:
+            blocks[0] = Text(f"{line}; not reported refuted: no Lean refutation")
+    relation = "!=" if refuted is not None else "?="
+    blocks += _dirac_outcome(left, right, relation)
+    if result.counterexample is not None:
         session.last_proof = refuted if refuted is not None else result
         session.certificate, session.certificate_witness = None, None
         blocks.append(_disproof(refuted, "the oracle"))
@@ -1315,6 +1342,10 @@ def _emit(
         return certificate, dict(proof.witness)
     if which == "induction" and isinstance(proof, ProofOutcome) and proof.induction is not None:
         return proof.induction, None
+    if which == "" and proof is None and session.no_proof is not None:
+        raise CommandDomainError(
+            f"{session.no_proof}; certificate derivation exports the session derivation"
+        )
     if which in ("", "derivation"):
         return _session_certificate(session), None
     if which == "induction" and isinstance(proof, InductionResult) and proof.proved:
@@ -1627,6 +1658,8 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             blocks.append(Text(f"lean: tensor-network semantics, {note}"))
         else:
             blocks.append(Text("lean: opaque diagrams, every step an axiom"))
+        if kernel.UNLINKED in source.split("-/")[0]:
+            blocks.append(Text(_UNLINKED_LINE))
         condition = _symbolic_condition(source)
         if condition:
             blocks.append(Text(f"lean: conditional on {condition}"))
@@ -1640,6 +1673,12 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
         else:
             blocks.append(Text(source.rstrip("\n")))
     return _ok("certificate", blocks, theorem)
+
+
+_UNLINKED_LINE = (
+    "lean: uncertified for the original claim: the theorem is about the restricted diagrams; "
+    "its link to the original diagrams is not proved"
+)
 
 
 def _count_subst(theorem: kernel.Theorem) -> int:
@@ -1661,6 +1700,8 @@ def _kernel_symbolic(sym: kernel.Symbolic, action: str, path: str, blocks: list[
         blocks.append(
             Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
         )
+        if kernel.UNLINKED in sym.source.split("-/")[0]:
+            blocks.append(Text(_UNLINKED_LINE))
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as handle:
