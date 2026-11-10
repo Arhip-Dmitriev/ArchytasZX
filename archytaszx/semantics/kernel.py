@@ -455,9 +455,11 @@ def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
     """``left = right`` at ``n = a*m + c`` for every ``m``, from ``t`` about both sides with the
     clause ``n >= c`` or ``n = a*m + c`` substituted: each side rebuilt by
     :func:`~archytaszx.semantics.restrict.apply_clause` and matched to ``t``'s side id for id or
-    by isomorphic comparison views."""
-    from archytaszx.semantics.restrict import MULTIPLICITY, _all_symbols, apply_clause
+    by isomorphic comparison views; at ``n = c``, :func:`lift`."""
+    from archytaszx.semantics.restrict import EQ, MULTIPLICITY, _all_symbols, apply_clause
 
+    if clause.kind == MULTIPLICITY and clause.form == EQ:
+        return lift(t, left, right, (clause,))
     if clause.kind != MULTIPLICITY or not clause.fresh or (clause.a == 1 and clause.c == 0):
         raise KernelError(f"shift: {clause.text()} is not n = a*m + c with a > 1 or c >= 1")
     live = free_mult_symbols(left) | free_mult_symbols(right)
@@ -470,11 +472,7 @@ def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
         other = apply_clause(right, clause)
     except _INDUCTION_ERRORS as exc:
         raise KernelError(f"rebuilding the successor raised {type(exc).__name__}: {exc}") from exc
-    body = t
-    if not _same(t.lhs, peeled):
-        body = trans(iso(peeled, t.lhs), body)
-    if not _same(t.rhs, other):
-        body = trans(body, iso(t.rhs, other))
+    body = _onto(t, peeled, other)
     data: dict[str, object] = {
         "index": clause.symbol,
         "step": clause.fresh,
@@ -486,6 +484,49 @@ def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
     domain = (clause,)
     inference = Inference("shift", (body,), data=data)
     return Theorem(_TOKEN, left, right, inference, body.assumptions, domain, (left, right))
+
+
+@_trace.traced("kernel.lift")
+def lift(t: Theorem, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -> Theorem:
+    """``left = right`` under the multiplicity clauses ``clauses`` (``n = c``, ``n >= c``,
+    ``n = a*m + c``), from ``t`` about both sides with the clauses substituted in order, matched
+    to ``t``'s sides id for id or by isomorphic comparison views; the inference ``shift`` with
+    scale 0, each clause as ``(n, a, c, m)`` under ``lift`` (``a = 0`` for ``n = c``)."""
+    from archytaszx.semantics.restrict import EQ, MULTIPLICITY, _all_symbols, apply_clause
+
+    live = free_mult_symbols(left) | free_mult_symbols(right)
+    taken = _all_symbols(left, right)
+    for clause in clauses:
+        if clause.kind != MULTIPLICITY:
+            raise KernelError(f"lift: {clause.text()} is not a multiplicity clause")
+        if clause.symbol not in live:
+            raise KernelError(f"{clause.symbol!r} is not a free multiplicity")
+        if clause.form != EQ and (not clause.fresh or clause.fresh in taken):
+            raise KernelError(f"lift: {clause.text()} has no fresh symbol")
+    if len({c.symbol for c in clauses}) != len(clauses) or not clauses:
+        raise KernelError("lift: one clause per multiplicity")
+    try:
+        peeled, other = left, right
+        for clause in clauses:
+            peeled, other = apply_clause(peeled, clause), apply_clause(other, clause)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"rebuilding the instance raised {type(exc).__name__}: {exc}") from exc
+    body = _onto(t, peeled, other)
+    data: dict[str, object] = {
+        "index": clauses[0].symbol,
+        "step": None,
+        "count": clauses[0].c,
+        "scale": 0,
+        "fixed": tuple((c.symbol, c.c) for c in clauses if c.form == EQ),
+        "lift": tuple(
+            (c.symbol, 0, c.c, None) if c.form == EQ else (c.symbol, c.a, c.c, c.fresh)
+            for c in clauses
+        ),
+        "peeled": peeled,
+        "other_peeled": other,
+    }
+    inference = Inference("shift", (body,), data=data)
+    return Theorem(_TOKEN, left, right, inference, body.assumptions, tuple(clauses), (left, right))
 
 
 @dataclass(frozen=True, eq=False)
@@ -624,43 +665,64 @@ def restricted_symbolic(
     )
     shifted = _symbolic_shift(proof, describe)
     if shifted is not None:
-        source = header(shifted, _pair_note(proof.restriction) + f"; {_SHIFTED}")
+        source = header(
+            shifted, _pair_note(proof.restriction) + f"; {_lifted_note(proof.restriction)}"
+        )
         return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses, floors)
-    source = header(inner.source, _pair_note(proof.restriction))
+    source = header(inner.source, _pair_note(proof.restriction) + _unlinked(proof.restriction))
     return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses, floors)
 
 
 def _symbolic_shift(
     proof: RestrictedProof, describe: Callable[[Diagram], str] | None
 ) -> str | None:
-    """The normaliser's proof over the original diagrams at ``n = m + c``: the family lemma
-    of both networks split ``c`` times, lifted by ``Equal.of_split_at``, with the corollary
-    over ``n``; None when the restriction is not one clause ``n >= c`` (or ``n = m + c``),
-    ``c >= 1``, beside floors, or the normaliser declines."""
+    """The normaliser's proof over the original diagrams: the family lemma of both networks,
+    along each multiplicity clause in order split ``c`` times, and zeroed at ``n = c``; lifted
+    by ``Equal.of_split_at`` and ``Equal.of_zero_at``, with the corollary over each ``n`` of a
+    clause ``n >= c`` (``n = m + c``); at its clauses ``d = v``, restated over the original
+    diagrams. None at a clause ``n = a*m + c`` with ``a > 1``, or when the normaliser
+    declines."""
     from archytaszx.semantics.decide import dimension_floors
     from archytaszx.semantics.lean_restrict import RestrictUnsupported, shift_corollary
-    from archytaszx.semantics.restrict import MULTIPLICITY
+    from archytaszx.semantics.restrict import DIMENSION, EQ, MULTIPLICITY, apply_clause
 
     subs = [c for c in proof.restriction.clauses if c.substitutes]
-    if len(subs) != 1:
+    dims = [c for c in subs if c.kind == DIMENSION and c.form == EQ]
+    mults = [c for c in subs if c not in dims]
+    if not subs or any(c.kind != MULTIPLICITY or (c.form != EQ and c.a != 1) for c in mults):
         return None
-    (clause,) = subs
-    if clause.kind != MULTIPLICITY or clause.a != 1 or clause.c < 1:
+    steps = [c for c in mults if c.form != EQ]
+    single = len(mults) == 1 and bool(steps)
+    if single and steps[0].c < 1:
         return None
     floors = dimension_floors(proof.left, proof.right)
     for name, low in proof.restriction.floors.items():
         if name in proof.floors_used:
             floors[name] = max(floors.get(name, 1), low)
     try:
+        left, right = proof.left, proof.right
+        for c in dims:
+            left, right = apply_clause(left, c), apply_clause(right, c)
+        for c in dims:
+            floors.pop(c.symbol, None)
+        original = (
+            ({c.symbol: c.c for c in dims}, [(left, proof.left), (right, proof.right)])
+            if dims
+            else None
+        )
+        if not mults and original is None:
+            return None
         source = lean_sym.export_symbolic(
-            proof.left,
-            proof.right,
+            left,
+            right,
             describe=describe,
             floors=floors,
-            shift=(clause.symbol, clause.c),
+            shift=(steps[0].symbol, steps[0].c) if single else None,
+            original=original,
+            fixed=None if single or not mults else [(c.symbol, c.c, c.form == EQ) for c in mults],
         )
-        return shift_corollary(source, clause)
-    except (lean_net.NetUnsupported, ScalarUnsupported, RestrictUnsupported):
+        return shift_corollary(source, steps) if steps else source
+    except (lean_net.NetUnsupported, ScalarUnsupported, RestrictUnsupported, KernelError):
         return None
 
 
@@ -1009,31 +1071,89 @@ def _lean_restricted(
     restriction = Restriction(theorem.domain)
     shifted = _lean_shift(plain, theorem, name, describe) if semantic else None
     if shifted is not None:
-        return header(shifted, _pair_note(restriction) + f"; {_SHIFTED}")
-    return header(source, _pair_note(restriction))
+        return header(shifted, _pair_note(restriction) + f"; {_lifted_note(restriction)}")
+    return header(source, _pair_note(restriction) + _unlinked(restriction))
 
+
+def _unlinked(restriction: Restriction) -> str:
+    """``; UNLINKED`` when a clause substitutes, else empty."""
+    return f"; {UNLINKED}" if any(c.substitutes for c in restriction.clauses) else ""
+
+
+UNLINKED = (
+    "UNCERTIFIED for the original diagrams: the theorem is about the restricted diagrams, "
+    "their link to the original diagrams not proved"
+)
+"""The header note of a restricted-pair export with no statement over the original
+diagrams."""
 
 _SHIFTED = "stated over the original diagrams by peeling (Equal.of_split_at)"
+
+
+def _lifted_note(restriction: Restriction) -> str:
+    """How a restricted-pair theorem is carried to the original diagrams."""
+    from archytaszx.semantics.restrict import DIMENSION, EQ
+
+    subs = [c for c in restriction.clauses if c.substitutes]
+    dims = [c.symbol for c in subs if c.kind == DIMENSION and c.form == EQ]
+    parts = [_SHIFTED] if len(dims) < len(subs) else []
+    if dims:
+        parts.append(
+            f"restated over the original diagrams with {', '.join(dims)} free "
+            "(main_diagrams_original)"
+        )
+    return "; ".join(parts)
 
 
 def _lean_shift(
     plain: Theorem, theorem: Theorem, name: str, describe: Callable[[Diagram], str] | None
 ) -> str | None:
-    """The restricted-pair theorem carried to the original diagrams at ``n = m + c`` by
-    :func:`shift`, with the corollary over ``n``; None when the restriction is not one clause
-    ``n >= c`` (or ``n = m + c``) with ``c >= 1`` beside floors, or the export declines."""
+    """The restricted-pair theorem carried to the original diagrams: through :func:`shift` at
+    one clause ``n >= c`` or ``n = a*m + c``, through :func:`lift` at several multiplicity
+    clauses or clauses ``n = c``, with the corollary over each ``n``, and restated over the
+    original diagrams at its clauses ``d = v``; None when the one clause is ``n = m`` or the
+    export declines."""
     from archytaszx.semantics.lean_restrict import RestrictUnsupported, shift_corollary
-    from archytaszx.semantics.restrict import MULTIPLICITY
+    from archytaszx.semantics.restrict import DIMENSION, EQ, MULTIPLICITY, apply_clause
 
     subs = [c for c in theorem.domain if c.substitutes]
-    if theorem.origin is None or len(subs) != 1:
+    if theorem.origin is None or not subs:
         return None
-    (clause,) = subs
-    if clause.kind != MULTIPLICITY or (clause.a == 1 and clause.c == 0):
+    dims = [c for c in subs if c.kind == DIMENSION and c.form == EQ]
+    mults = [c for c in subs if c not in dims]
+    if any(c.kind != MULTIPLICITY for c in mults):
         return None
+    single = len(mults) == 1 and mults[0].form != EQ
+    if single and mults[0].a == 1 and mults[0].c == 0:
+        return None
+    left0, right0 = theorem.origin
     try:
-        lifted = shift(plain, theorem.origin[0], theorem.origin[1], clause)
-        source = lean_net.export(lifted, name, describe)
-        return shift_corollary(source, clause, name)
+        mid_l, mid_r = left0, right0
+        for c in dims:
+            mid_l, mid_r = apply_clause(mid_l, c), apply_clause(mid_r, c)
+        if single:
+            body = shift(plain, mid_l, mid_r, mults[0])
+        elif mults:
+            body = lift(plain, mid_l, mid_r, mults)
+        else:
+            body = _onto(plain, mid_l, mid_r)
+        original = (
+            ({c.symbol: c.c for c in dims}, [(body.lhs, left0), (body.rhs, right0)])
+            if dims
+            else None
+        )
+        source = lean_net.export(body, name, describe, original=original)
+        steps = [c for c in mults if c.form != EQ]
+        return shift_corollary(source, steps, name) if steps else source
     except (KernelError, lean_net.NetUnsupported, ScalarUnsupported, RestrictUnsupported):
         return None
+
+
+def _onto(t: Theorem, left: Diagram, right: Diagram) -> Theorem:
+    """``t`` with its sides replaced by ``left`` and ``right`` through isomorphisms."""
+    body = t
+    if not _same(t.lhs, left):
+        body = trans(iso(left, t.lhs), body)
+    if not _same(t.rhs, right):
+        body = trans(body, iso(t.rhs, right))
+    return body

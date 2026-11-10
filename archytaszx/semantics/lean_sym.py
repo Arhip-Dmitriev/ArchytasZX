@@ -1366,6 +1366,8 @@ class _SymExport:
         self.planned: bool | None = None
         self.shift: tuple[str, int] | None = None
         self.shifted: Any = None
+        self.fixed: Sequence[tuple[str, int] | tuple[str, int, bool]] | None = None
+        self.fixed_steps: Any = None
 
     # tables as Python
 
@@ -1422,7 +1424,9 @@ class _SymExport:
         if self.planned is None:
             try:
                 self.texts()
-                if self.shift is not None:
+                if self.fixed:
+                    self.plan_fixed()
+                elif self.shift is not None:
                     self.plan_shift()
                 else:
                     self.fam(
@@ -1451,20 +1455,12 @@ class _SymExport:
             raise NetUnsupported("the shifted symbol carries no box")
         j = out.mult_ix[sym_name]
         isb = out.isb(j)
-        labels = [
-            lb
-            for net in (self.a.net, self.b.net)
-            for lb in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels()))
-        ]
-        H = 1 << max(16, max(labels, default=0).bit_length())
+        H = self.offset_base()
         offs = [H << t for t in range(c)]
         nets = [(self.a.net, self.a.name, self.b.net, self.b.name)]
         for off in offs:
             x, xt, y, yt = nets[-1]
-            for net in (x, y):
-                for lab in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels())):
-                    if out.label_chain(lab)[:1] == (j,):
-                        out.peel_reg(lab, off)
+            self.peel_regs((x, y), j, off)
             spc = f"(SpC {j})"
             nets.append(
                 (
@@ -1485,6 +1481,119 @@ class _SymExport:
         x, xt, y, yt = nets[-1]
         self.fam(x, xt, y, yt, (m0, m1, t0, t1))
         self.shifted = (j, c, offs, nets)
+
+    def offset_base(self) -> int:
+        """The first split offset: a power of two above every label of both networks."""
+        labels = [
+            lb
+            for net in (self.a.net, self.b.net)
+            for lb in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels()))
+        ]
+        return 1 << max(16, max(labels, default=0).bit_length())
+
+    def peel_regs(self, nets: Sequence[Any], j: int, off: int) -> None:
+        """Declare the copies at ``off`` of the labels of ``nets`` bundled along ``j``."""
+        for net in nets:
+            for lab in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels())):
+                if self.out.label_chain(lab)[:1] == (j,):
+                    self.out.peel_reg(lab, off)
+
+    def plan_fixed(self) -> None:
+        """The family lemma for both networks, along each clause of ``fixed`` in turn split
+        ``c`` times, and zeroed at ``n = c``, its scalars at the clauses' values (``n + c`` at
+        ``n >= c``, ``n`` standing for the step); the steps in ``fixed_steps``."""
+        from archytaszx.semantics.lean_net import _split_net, _zero_net
+
+        assert self.fixed is not None
+        out = self.out
+        if self.common is not None:
+            raise NetUnsupported("a fixed family with a common scalar")
+        js = []
+        for sym_name, *_ in self.fixed:
+            if sym_name not in out.mult_ix:
+                raise NetUnsupported("a fixed symbol carries no box")
+            js.append(out.mult_ix[sym_name])
+        fixed = {j: bool(f[2]) if len(f) > 2 else True for j, f in zip(js, self.fixed)}
+        depth = dict.fromkeys(js, 0)
+        for net in (self.a.net, self.b.net):
+            for lab in (*net.summed, *net.bnd, *(q for n in net.nodes for q in n.labels())):
+                inner = [j for j in out.label_chain(lab) if j in depth]
+                for pos, j in enumerate(inner):
+                    depth[j] = max(depth[j], pos)
+                if any(not fixed[j] for j in inner[:-1]):
+                    raise NetUnsupported("a lifted box inside a box at n >= c")
+        order = sorted(range(len(js)), key=lambda q: depth[js[q]])
+        H = self.offset_base()
+        t_off = 0
+        x, xt, y, yt = self.a.net, self.a.name, self.b.net, self.b.name
+        cur = {j: c for j, (_, c, *_) in zip(js, self.fixed, strict=True)}
+        steps: list[tuple[str, int, int, dict[int, int], str, str]] = []
+        m0, m1, t0, t1 = sp.sympify(self.m0), sp.sympify(self.m1), self.s0t, self.s1t
+        names = self.var_names()
+        for j, (_, c, *_) in ((js[q], self.fixed[q]) for q in order):
+            isb = out.isb(j)
+            spc = f"(SpC {j})"
+            for _ in range(c):
+                off = H << t_off
+                t_off += 1
+                self.peel_regs((x, y), j, off)
+                cur[j] -= 1
+                steps.append(("split", j, off, dict(cur), xt, yt))
+                x, y = _split_net(x, j, isb, off), _split_net(y, j, isb, off)
+                xt, yt = f"(Net.split {spc} {off} {xt})", f"(Net.split {spc} {off} {yt})"
+            sym = self.mult_sym(j)
+            if sym is None:
+                raise NetUnsupported("a fixed index is not a bare multiplicity")
+            if not fixed[j]:
+                if c:
+                    m0, m1 = m0.subs(sym, sym + c), m1.subs(sym, sym + c)
+                    t0 = self.retext(t0, names[j], f"({names[j]} + {c})")
+                    t1 = self.retext(t1, names[j], f"({names[j]} + {c})")
+                continue
+            off = H << t_off
+            t_off += 1
+            self.peel_regs((x, y), j, off)
+            steps.append(("zero", j, off, dict(cur), xt, yt))
+            x, xt = _zero_net(x, j, isb), f"(Net.zero {spc} {xt})"
+            y, yt = _zero_net(y, j, isb), f"(Net.zero {spc} {yt})"
+            m0, m1 = m0.subs(sym, c), m1.subs(sym, c)
+            t0, t1 = self.retext(t0, names[j], str(c)), self.retext(t1, names[j], str(c))
+        self.fam(x, xt, y, yt, (m0, m1, t0, t1))
+        self.fixed_steps = (js, steps, cur, fixed)
+
+    def fixed_proof(self, vals: Sequence[str]) -> tuple[list[str], str]:
+        """The values at the clauses and the proof lifting the split and zeroed nets' lemma
+        there by ``Equal.of_zero_at`` and ``Equal.of_split_at``, one per step."""
+        js, steps, zero, fixed = self.fixed_steps
+        args = self.args
+        fam = f"(F {args})" if args else "F"
+        hyp0 = " ".join(f"(by omega : 0 < {n})" for n in self.dnames)
+        fpos = f"(Fpos {_join(args, hyp0)} _)" if (args or hyp0) else "(Fpos _)"
+
+        def one(q: int, t: int) -> str:
+            if fixed[q]:
+                return str(t)
+            return vals[q] if t == 0 else f"({vals[q].strip('()')} + {t})"
+
+        def at(cur: dict[int, int]) -> list[str]:
+            return [one(q, cur[q]) if q in cur else v for q, v in enumerate(vals)]
+
+        proof = self.call(self.top, *at(zero))
+        for kind, j, off, cur, xt, yt in reversed(steps):
+            lst = ", ".join(at(cur))
+            oks = f"{_split_ok(j, off, xt)} {_split_ok(j, off, yt)}"
+            if kind == "zero":
+                proof = (
+                    f"(Equal.of_zero_at {fam} {j} {off} [{lst}] (by simp) {xt} {yt} {oks} "
+                    f"(by decide) {proof})"
+                )
+            else:
+                proof = (
+                    f"(Equal.of_split_at {fam} {j} {off} {one(j, cur[j])} [{lst}] (by simp) "
+                    f"{xt} {yt} {oks} (fun _ _ _ => Fam.dimv_pos _ _ _ {fpos}) {proof})"
+                )
+        final = {j: c for j, (_, c, *_) in zip(js, self.fixed or (), strict=True)}
+        return at(final), proof
 
     def shift_proof(self, vals: Sequence[str]) -> tuple[list[str], str]:
         """The values at ``n + c`` and the proof lifting the split family lemma there by
@@ -1793,7 +1902,15 @@ class _SymExport:
 
             vals = [val(k) for k in keys]
             s0, s1 = self.stated_s(0), self.stated_s(1)
-            if self.shifted is not None:
+            if self.fixed_steps is not None:
+                js, fixed = self.fixed_steps[0], self.fixed_steps[3]
+                raws = [vals[j].strip("()") for j in js]
+                names = [n for n in names if n not in {out.mult_names[j] for j in js if fixed[j]}]
+                vals, proof = self.fixed_proof(vals)
+                for j, raw in zip(js, raws, strict=True):
+                    s0 = self.retext(s0, raw, vals[j])
+                    s1 = self.retext(s1, raw, vals[j])
+            elif self.shifted is not None:
                 j = self.shifted[0]
                 raw = vals[j].strip("()")
                 vals, proof = self.shift_proof(vals)
@@ -1801,11 +1918,13 @@ class _SymExport:
                 s1 = self.retext(s1, raw, vals[j])
             else:
                 _, proof = self.common_wrap(self.call(self.top, *vals))
+            quant = f"∀ {' '.join(names)} : ℕ, " if names else ""
+            lam = f"fun {' '.join(names)} => " if names else ""
             theorem = (
                 "/-- The families are equal for every multiplicity and every value of "
                 f"their dimensions and phases. -/\ntheorem {name} {bh} :\n"
-                f"    ∀ {' '.join(names)} : ℕ, Equal {self.env_at(vals)} {s0} "
-                f"{A} {s1} {B} :=\n  fun {' '.join(names)} => {proof}"
+                f"    {quant}Equal {self.env_at(vals)} {s0} "
+                f"{A} {s1} {B} :=\n  {lam}{proof}"
             )
             out.decls += [
                 *decls,
@@ -1829,10 +1948,13 @@ class _SymExport:
                 self.b,
             )
             mm = ", ".join(names)
-            lead += (
-                f"\n  by induction on the multiplicit{'ies' if len(names) > 1 else 'y'} {mm}, "
-                "one copy peeled per step"
-            )
+            if names:
+                lead += (
+                    f"\n  by induction on the multiplicit{'ies' if len(names) > 1 else 'y'} {mm}, "
+                    "one copy peeled per step"
+                )
+            else:
+                lead += "\n  at fixed multiplicities, every copy peeled"
         floors = [
             f"{n} ≥ {self.fl[i]}"
             for i, n in enumerate(self.dnames)
@@ -2428,7 +2550,8 @@ class _SymExport:
             f"List.sum_cons, List.sum_nil, add_zero, den_zero, bodyOf, List.prod_nil, "
             f"mul_one, CMon.den_mul {rho} hρ, ofQ_den, exQ_den, rtD_den, dP_den, "
             f"phC_den {rho} _ hg] <;> "
-            f"simp [DMon.den, npow, ρ, zpow_neg, inv_pow] <;> push_cast <;> ring_nf"
+            f"simp [DMon.den, npow, ρ, zpow_neg, inv_pow] <;> push_cast <;> ring_nf <;> "
+            "try simp"
         )
 
 
@@ -2439,9 +2562,14 @@ def export_symbolic(
     describe: Callable[[Diagram], str] | None = None,
     floors: Mapping[str, int] | None = None,
     shift: tuple[str, int] | None = None,
+    original: tuple[dict[str, int], list[tuple[Diagram, Diagram]]] | None = None,
+    fixed: Sequence[tuple[str, int] | tuple[str, int, bool]] | None = None,
 ) -> str:
     """Lean 4 source proving ``left = right`` for every value of the dimensions and phases by
-    the verified normaliser, at ``n + c`` for every ``n`` when ``shift`` is ``(n, c)``;
+    the verified normaliser, at ``n + c`` for every ``n`` when ``shift`` is ``(n, c)``, at
+    each clause ``(n, c, at)`` of ``fixed`` (``n = c`` when ``at``, else ``n + c``); with
+    ``original``, restated over the original diagrams as in
+    :func:`~archytaszx.semantics.lean_net.export`;
     :class:`NetUnsupported` when the normaliser does not reach it."""
     from archytaszx.semantics.decide import dimension_floors
 
@@ -2449,6 +2577,8 @@ def export_symbolic(
         left, right, describe, floors if floors is not None else dimension_floors(left, right)
     )
     ex.shift = shift
+    ex.fixed = fixed
+    ex.out.original = original
     if not ex.check():
         raise NetUnsupported(getattr(ex, "why", "the normal forms of the two networks differ"))
     return ex.source(name)

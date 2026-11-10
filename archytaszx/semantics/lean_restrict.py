@@ -95,7 +95,7 @@ def _split_proof(text: str) -> str:
 def _final(source: str, name: str) -> tuple[str, list[_Binder], str]:
     """The final theorem's name, all its binders (signature, then a leading ``∀``) and its
     statement body."""
-    for candidate in (f"{name}_diagrams", name):
+    for candidate in (f"{name}_diagrams_original", f"{name}_diagrams", name):
         match = re.search(
             rf"^theorem {re.escape(candidate)}\b(.*)", source, re.MULTILINE | re.DOTALL
         )
@@ -202,41 +202,98 @@ def header(source: str, note: str) -> str:
     return f"/-\n{note}\n-/\n{source}"
 
 
-def shift_corollary(source: str, clause: Clause, name: str = "main") -> str:
-    """``source`` followed by its final theorem at ``n = k + c`` restated over ``n``: the binder
-    of ``k`` (the last one) replaced by ``n`` and the hypothesis ``c ≤ n``, proved by writing
-    ``n`` as ``k + c``."""
+def shift_corollary(source: str, clauses: Clause | Sequence[Clause], name: str = "main") -> str:
+    """``source`` followed by its final theorem at ``n = k + c`` restated over ``n`` for each
+    clause ``n >= c`` (``n = k + c``) of ``clauses``: the binder of ``k`` replaced by ``n`` and
+    the hypothesis ``c ≤ n``, proved by writing ``n`` as ``k + c``; a clause ``n = a*k + c``
+    with ``a > 1`` keeps its binder ``k``; ``source`` unchanged when every clause is
+    ``n = c``. With one clause its binder is the last; with several, each clause's binder is
+    the one whose value ``(k + c)``, ``(a * k)`` or ``((a * k) + c)`` the statement holds."""
+    group = [clauses] if isinstance(clauses, Clause) else list(clauses)
+    group = [c for c in group if c.form != EQ]
+    if not group:
+        return source
     final, binders, body = _final(source, name)
-    if not binders or binders[-1].open != "(" or len(binders[-1].names) != 1:
-        raise RestrictUnsupported("the final theorem does not end in its step binder")
-    k = binders[-1].names[0]
-    if clause.a != 1:
-        sig = " ".join(b.text() for b in binders)
-        applied = " ".join(x for b in binders if b.open == "(" for x in b.names)
-        decl = (
-            f"/-- The final theorem at {clause.text()}, over {k}. -/\n"
-            f"theorem {name}_restricted {sig} :\n    {body} :=\n  {final} {applied}\n"
-        )
-        return _before_end(source, decl)
-    taken = {x for b in binders for x in b.names}
-    n = clause.symbol if clause.symbol not in taken else f"{clause.symbol}'"
-    plus = f"({k} + {clause.c})"
-    if plus not in body:
-        raise RestrictUnsupported("the final theorem is not stated at k + c")
-    stated = [
-        *binders[:-1],
-        _Binder("(", (n,), "ℕ"),
-        _Binder("(", (f"h_{n}_ge",), f"{clause.c} ≤ {n}"),
+    plain = [
+        x for b in binders if b.open == "(" and b.type == "ℕ" and len(b.names) == 1 for x in b.names
     ]
-    args = [x for b in binders[:-1] if b.open == "(" for x in b.names]
+    if len(group) == 1:
+        if not binders or binders[-1].open != "(" or len(binders[-1].names) != 1:
+            raise RestrictUnsupported("the final theorem does not end in its step binder")
+        steps = {binders[-1].names[0]: group[0]}
+    else:
+        steps = _step_binders(group, plain, body)
+    taken = {x for b in binders for x in b.names}
+    renamed: dict[str, str] = {}
+    hyps: dict[str, _Binder] = {}
+    obtains: list[str] = []
+    for k, clause in steps.items():
+        if clause.a != 1:
+            continue
+        n = clause.symbol if clause.symbol not in taken else f"{clause.symbol}'"
+        taken.add(n)
+        if clause.c == 0:
+            continue
+        plus = f"({k} + {clause.c})"
+        if plus not in body:
+            raise RestrictUnsupported("the final theorem is not stated at k + c")
+        body = body.replace(plus, n)
+        renamed[k] = n
+        hyps[k] = _Binder("(", (f"h_{n}_ge",), f"{clause.c} ≤ {n}")
+        obtains.append(
+            f"  obtain ⟨{k}, rfl⟩ : ∃ {k}, {n} = {k} + {clause.c} := ⟨{n} - {clause.c}, by omega⟩\n"
+        )
+    stated: list[_Binder] = []
+    for b in binders:
+        if len(b.names) == 1 and b.names[0] in renamed:
+            k = b.names[0]
+            stated += [_Binder("(", (renamed[k],), "ℕ"), hyps[k]]
+        else:
+            stated.append(b)
+    args = [x for b in binders if b.open == "(" for x in b.names]
     sig = " ".join(b.text() for b in stated)
-    decl = (
-        f"/-- The final theorem at {clause.text()}, over {n}. -/\n"
-        f"theorem {name}_restricted {sig} :\n    {body.replace(plus, n)} := by\n"
-        f"  obtain ⟨{k}, rfl⟩ : ∃ {k}, {n} = {k} + {clause.c} := ⟨{n} - {clause.c}, by omega⟩\n"
-        f"  exact {final} {' '.join([*args, k])}\n"
-    )
+    text = ", ".join(c.text() for c in group)
+    over = ", ".join(renamed.get(k, k) for k in steps)
+    if not obtains:
+        decl = (
+            f"/-- The final theorem at {text}, over {over}. -/\n"
+            f"theorem {name}_restricted {sig} :\n    {body} :=\n  {final} {' '.join(args)}\n"
+        )
+    else:
+        decl = (
+            f"/-- The final theorem at {text}, over {over}. -/\n"
+            f"theorem {name}_restricted {sig} :\n    {body} := by\n{''.join(obtains)}"
+            f"  exact {final} {' '.join(args)}\n"
+        )
     return _before_end(source, decl)
+
+
+def _step_binders(group: Sequence[Clause], plain: Sequence[str], body: str) -> dict[str, Clause]:
+    """Each clause's step binder among ``plain``: the one binder whose value the statement
+    holds, in clause order."""
+    out: dict[str, Clause] = {}
+    for clause in group:
+
+        def value(k: str, clause: Clause = clause) -> str:
+            base = k if clause.a == 1 else f"({clause.a} * {k})"
+            return f"({base} + {clause.c})" if clause.c else base
+
+        hits = [
+            k
+            for k in plain
+            if k not in out
+            and (
+                re.search(rf"(?<![\w'.]){re.escape(value(k))}(?![\w'])", body)
+                if clause.c or clause.a != 1
+                else False
+            )
+        ]
+        if clause.c == 0 and clause.a == 1:
+            continue
+        if len(hits) != 1:
+            raise RestrictUnsupported(f"no single step binder for {clause.text()}")
+        out[hits[0]] = clause
+    return out
 
 
 def _before_end(source: str, decl: str) -> str:

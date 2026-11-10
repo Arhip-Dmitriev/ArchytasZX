@@ -320,6 +320,10 @@ class _Export:
         self.next_label = 0
         self.nets: dict[object, Labelled] = {}
         self.boxed: dict[str, tuple[Diagram, tuple[NodeId, ...]]] = {}
+        self.literal_info: dict[
+            str, tuple[Diagram, list[tuple[NodeId, int, int, list[int], list[int]]]]
+        ] = {}
+        self.original: tuple[dict[str, int], list[tuple[Diagram, Diagram]]] | None = None
         self.wire_alias = False
         self.raw_ix: dict[str, int] = {}
         self.raw_pairs: dict[int, int] = {}
@@ -860,6 +864,7 @@ class _Export:
             return f"⟨{int(ref.node_id)}, {out}, {ref.index}⟩"
 
         nodes = []
+        info: list[tuple[NodeId, int, int, list[int], list[int]]] = []
         for nid, n in zip(sorted(d.nodes), net.nodes, strict=True):
             node = d.nodes[nid]
             dimfn = self.raw_dim if own else self.raw_index
@@ -870,8 +875,19 @@ class _Export:
             if not own and legs and n.dim == self.dim(legs[0].dim) and n.kind not in ("B", "S"):
                 ndim = self.raw_index(legs[0].dim)
             nodes.append(f"⟨{int(nid)}, {_klean(n.kind)}, {ndim}, {n.ph}, {outs}, {ins}⟩")
+            info.append(
+                (
+                    nid,
+                    ndim,
+                    n.ph,
+                    [dimfn(p.dim) for p in node.outputs],
+                    [dimfn(p.dim) for p in node.inputs],
+                )
+            )
         wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
         dname = f"D{name[1:]}"
+        if not own:
+            self.literal_info[dname] = (d, info)
         self.decls.append(
             f"/-- {_comment(self.describe(d))}, as the engine's diagram. -/\n"
             f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
@@ -884,6 +900,184 @@ class _Export:
             f"theorem {dname}_net : {dexpr}.toNet {off} = {name} := by decide +kernel"
         )
         return dexpr, off
+
+    def original_block(self) -> str:
+        """The final ``_diagrams`` theorem restated over the original diagrams of
+        :attr:`original`: their dimension, phase and weight tables with the substituted
+        dimension symbols free (``Δo``, ``Φo``, ``Ψo``), those tables equal to the export's at
+        the substituted values, and the theorem for every value of the symbols equal to them."""
+        assert self.original is not None
+        sigma, sources = self.original
+        if self.raw_ix or self.alg_cert is not None:
+            raise NetUnsupported("an original-diagram statement with identified dimensions")
+        final = next(
+            (
+                x
+                for x in reversed(self.decls)
+                if re.search(r"^theorem \S+_diagrams :", x, re.MULTILINE)
+            ),
+            None,
+        )
+        if final is None:
+            raise NetUnsupported("no diagram statement to restate over the original diagrams")
+        head = re.search(r"^theorem (\S+) :\n    ", final, re.MULTILINE)
+        assert head is not None
+        fname = head.group(1)
+        stmt = final[head.end() : final.index(" := by", head.end())]
+        dim_over: dict[int, sp.Expr] = {}
+        ph_over: dict[int, PhaseVector] = {}
+        values = {sp.Symbol(k): v for k, v in sigma.items()}
+
+        def at(e: sp.Expr) -> sp.Expr:
+            return e.xreplace(
+                {
+                    x: values[sp.Symbol(x.name)]
+                    for x in e.free_symbols
+                    if sp.Symbol(x.name) in values
+                }
+            )
+
+        def add_dim(i: int, dim: Dim) -> None:
+            e = self.canon(dim.to_sympy())
+            if sp.simplify(at(e) - self.dim_exprs[i]) != 0:
+                raise NetUnsupported("an original dimension does not substitute to the export's")
+            if i in dim_over and sp.simplify(dim_over[i] - e) != 0:
+                raise NetUnsupported("two original dimensions share one index")
+            dim_over[i] = e
+
+        for dname in sorted(set(re.findall(r"\bD\d+\b", stmt))):
+            rd, info = self.literal_info[dname]
+            key = self.structure_key(rd)
+            orig = next((o for m, o in sources if m is rd or self.structure_key(m) == key), None)
+            if orig is None:
+                raise NetUnsupported(f"no original diagram for {dname}")
+            for nid, ndim, ph, outs, ins in info:
+                on, rn = orig.nodes.get(nid), rd.nodes[nid]
+                if (
+                    on is None
+                    or on.generator_type is not rn.generator_type
+                    or len(on.outputs) != len(outs)
+                    or len(on.inputs) != len(ins)
+                ):
+                    raise NetUnsupported("the original diagram differs from the restricted one")
+                for idx, port in zip([*outs, *ins], [*on.outputs, *on.inputs], strict=True):
+                    add_dim(idx, port.dim)
+                if ndim not in (*outs, *ins):
+                    if on.phase is None:
+                        raise NetUnsupported("a node dimension without legs or phase")
+                    add_dim(ndim, on.phase.dim)
+                if ph != 0:
+                    if on.phase is None:
+                        raise NetUnsupported("a phase index without an original phase")
+                    if ph in ph_over and ph_over[ph] != on.phase:
+                        raise NetUnsupported("two original phases share one index")
+                    ph_over[ph] = on.phase
+        saved = (dict(self.sym.params), set(self.sc.nats))
+        outer, self.in_table = self.in_table, True
+        try:
+            dtext = {i: self.sym.render(e, "ℕ", "ℕ") for i, e in dim_over.items()}
+            ptext = {i: f"fun k => {self.phase_body(pv)}" for i, pv in ph_over.items()}
+            wtext = {i: self.weights(pv) for i, pv in ph_over.items() if pv.is_weighted}
+            names = {}
+            for e in dim_over.values():
+                for x in e.free_symbols:
+                    if x.name in sigma:
+                        names[x.name] = self.sym.name(x, "ℕ")
+        finally:
+            self.in_table = outer
+            self.sym.params.clear()
+            self.sym.params.update(saved[0])
+            self.sc.nats.clear()
+            self.sc.nats.update(saved[1])
+        if set(self.weight_tab) != set(self.weight_tab) | set(wtext):
+            raise NetUnsupported("an original weight vector at an unweighted index")
+        params = [
+            (n, ty)
+            for raw, (n, ty) in self.sym.params.items()
+            if raw != "k_lean_index" and raw not in self.mults
+        ]
+        eb = " ".join(f"({n} : {ty})" for n, ty in params)
+        ea = " ".join(n for n, _ in params)
+        syms = sorted(names)
+        ob = _join(*(f"({names[x]} : ℕ)" for x in syms), eb)
+        oa = _join(*(names[x] for x in syms), ea)
+        va = _join(*(str(sigma[x]) for x in syms), ea)
+        dims = "\n".join(f"  | {i} => {dtext.get(i, t)}" for i, t in enumerate(self.dims))
+        phases = "\n".join(f"  | {i} => {ptext.get(i, t)}" for i, t in enumerate(self.phases))
+        k = len(self.dims)
+        kp = len(self.phases)
+        pat = " | ".join(["_"] * k + ["i"])
+        ppat = " | ".join(["_"] * kp + ["i"])
+        names_text = ", ".join(names[x] for x in syms)
+        out = [
+            (
+                f"/-- The original diagrams' dimension values, {names_text} free. -/\n"
+                f"def Δo {ob} : ℕ → ℕ\n{dims}\n  | _ => 1"
+            ),
+            (
+                f"/-- The original diagrams' phase vectors in turns. -/\n"
+                f"noncomputable def Φo {ob} : ℕ → ℕ → ℝ\n{phases}\n  | _ => fun _ => 0"
+            ),
+            (
+                f"theorem Δo_at {eb} : Δo {va} = Δ {ea} := by\n  funext i\n"
+                f"  rcases i with {pat} <;> "
+                "first | rfl | (simp [Δo, Δ]; done) | (norm_num [Δo, Δ]; done)"
+            ),
+            (
+                f"theorem Φo_at {eb} : Φo {va} = Φ {ea} := by\n  funext i k\n"
+                f"  rcases i with {ppat} <;> first | rfl | (simp [Φo, Φ]; done) | "
+                "(simp only [Φo, Φ]; push_cast; ring_nf; done) | (norm_num [Φo, Φ]; done)"
+            ),
+        ]
+        rw = ["Δo_at", "Φo_at"]
+        coef_o = ""
+        if self.weight_tab:
+            weights = "\n".join(
+                f"  | {i} => fun k => {wtext.get(i, t)}" for i, t in sorted(self.weight_tab.items())
+            )
+            out += [
+                (
+                    f"/-- The original diagrams' weight vectors. -/\n"
+                    f"noncomputable def Ψo {ob} : ℕ → ℕ → ℂ\n{weights}\n  | _ => fun _ => 1"
+                ),
+                (
+                    f"theorem Ψo_at {eb} : Ψo {va} = Ψ {ea} := by\n  funext i k\n"
+                    f"  rcases i with {ppat} <;> (try simp only [Ψo, Ψ]) <;> (try split_ifs) <;> "
+                    "first | rfl | omega | (norm_num; done) | (simp_all; done)"
+                ),
+            ]
+            rw.append("Ψo_at")
+            coef_o = f", coef := Ψo {oa}"
+        env_name, env_o = ("F", "Fo") if self.family else ("E", "Eo")
+        if self.family:
+            out.append(
+                f"/-- The original diagrams' family. -/\nnoncomputable def Fo {ob} : Fam := "
+                f"{{ dims := Δo {oa}, bund := bundL, phase := Φo {oa}, labs := labs{coef_o} }}"
+            )
+            unf = "Fo, F"
+        else:
+            out.append(
+                f"/-- The original diagrams' environment. -/\nnoncomputable def Eo {ob} : Env := "
+                f"{{ dimv := Δo {oa}, phase := Φo {oa}, labs := labs{coef_o} }}"
+            )
+            unf = "Eo, E"
+        out.append(
+            f"theorem {env_o}_at {eb} : {env_o} {va} = {env_name} {ea} := by\n"
+            f"  simp only [{unf}, {', '.join(rw)}]"
+        )
+        dv = " ".join(names[x] for x in syms)
+        stmt_o = re.sub(rf"\({env_name} ", f"({env_o} {dv} ", stmt)
+        stmt_o = re.sub(rf"(?<![\w.']){env_name}(?![\w'])", f"({env_o} {dv})", stmt_o)
+        sig = " ".join(
+            f"({names[x]} : ℕ) (h_{names[x]}_eq : {names[x]} = {sigma[x]})" for x in syms
+        )
+        subst = "\n".join(f"  subst h_{names[x]}_eq" for x in syms)
+        out.append(
+            "/-- The theorem on the original diagrams, their substituted dimension symbols "
+            f"free and equal to the restriction's values. -/\ntheorem {fname}_original {sig} :\n"
+            f"    {stmt_o} := by\n{subst}\n  simp only [{env_o}_at]\n  exact {fname}"
+        )
+        return "\n\n".join(out)
 
     def dim_ids(self, dname: str) -> str:
         """``dname``, read through the dimensions its wires identify (``dimIds``, emitted once)
@@ -953,6 +1147,7 @@ class _Export:
             return {"ZB": "Z", "XB": "X", "WB": "W"}.get(_head(kind), kind)
 
         nodes = []
+        info: list[tuple[NodeId, int, int, list[int], list[int]]] = []
         for nid, n in zip(order, net.nodes, strict=True):
             node = d.nodes[nid]
             outs = _list([self.raw_index(p.dim) for p in node.outputs])
@@ -962,6 +1157,15 @@ class _Export:
             if legs and n.dim == self.dim(legs[0].dim) and base(n.kind) not in ("B", "S"):
                 ndim = self.raw_index(legs[0].dim)
             nodes.append(f"⟨{int(nid)}, {_klean(base(n.kind))}, {ndim}, {n.ph}, {outs}, {ins}⟩")
+            info.append(
+                (
+                    nid,
+                    ndim,
+                    n.ph,
+                    [self.raw_index(p.dim) for p in node.outputs],
+                    [self.raw_index(p.dim) for p in node.inputs],
+                )
+            )
         wires = [f"({port(w.a)}, {port(w.b)})" for w in sorted(d.wires, key=lambda w: w.sort_key())]
         boxes = []
         for bid, b in sorted(d.bang_boxes.items()):
@@ -971,6 +1175,7 @@ class _Export:
             m = self.mult_of(b.multiplicity.to_sympy())
             boxes.append(f"⟨{int(bid)}, {m}, {par}, [{ns}], [{ps}]⟩")
         dname = f"D{a.name[1:]}"
+        self.literal_info[dname] = (d, info)
         self.decls.append(
             f"/-- {_comment(self.describe(d))}, as the engine's boxed diagram. -/\n"
             f"def {dname} : Diagram :=\n  {{ nodes := [{', '.join(nodes)}],\n"
@@ -1032,6 +1237,12 @@ class _Export:
         """The family theorem ``name``, applied to ``args`` at the multiplicities ``ks``, restated
         on the expansions of the boxed diagrams ``a`` and ``b``, boundaries in key order; for a
         refutation, its negation."""
+        for side, other in ((a, b), (b, a)):
+            src = side.source
+            if side.name in self.boxed or src is None or src.bang_boxes:
+                continue
+            if other.name in self.boxed and _unboxed_boundary(self.boxed[other.name][0]):
+                self.boxed[side.name] = (src, side.order)
         la = self.boxed_literal(a)
         lb = self.boxed_literal(b) if b.name != a.name else la
         if la is None or lb is None:
@@ -1753,21 +1964,220 @@ class _Export:
         return self.render(t)
 
     def finish_shift(self, t: object, name: str) -> str:
-        """A shift theorem: the family at ``a*k + c`` from its peeled successors at ``a*k``."""
+        """A shift theorem: the family at ``a*k + c`` from its peeled successors at ``a*k``, or
+        under several multiplicity clauses from the lifted pair (scale 0)."""
         if self.alias:
             self.wire_alias = True
-        self.prepare_induction(t, top=True)
         data = t.inference.data  # type: ignore[attr-defined]
         a = int(data.get("scale", 1))
-        if a != 1:
+        if a == 0:
+            live = set(map(str, t.variables))  # type: ignore[attr-defined]
+            for idx, *_ in data["lift"]:
+                if str(idx) not in live:
+                    raise NetUnsupported("an instance at a fixed multiplicity")
+            for v in t.variables:  # type: ignore[attr-defined]
+                self.mult_index(str(v))
+            for idx, sa, _, ks in data["lift"]:
+                if ks is None:
+                    continue
+                mi = self.mult_ix[str(idx)]
+                taken = set(self.mult_names) | {n for n, _ in self.sym.params.values()}
+                kk = f"{self.mult_names[mi]}k"
+                while kk in taken:
+                    kk += "'"
+                self.sym.params[str(ks)] = (kk, "ℕ")
+                self.mult_ix[str(ks)] = mi
+                self.mults.add(str(ks))
+                self.sc.nats.add(str(ks))
+                if sa != 1:
+                    self.mult_ix[str(sa * _mult_symbol(str(ks)))] = mi
+        else:
+            self.prepare_induction(t, top=True)
+        if a not in (0, 1):
             idx, ks = str(data["index"]), str(data["step"])
             self.mult_ix[str(a * _mult_symbol(ks))] = self.mult_ix[idx]
         self.collect(t)
         self.set_params()
         self.sp_binders, self.sp_args = self.binders, self.args
         self.sp_hyps, self.sp_hyp_args = self.hyps, self.hyp_args
-        self.shift_lemma(t, name)
+        if a == 0:
+            self.lift_lemma(t, name)
+        else:
+            self.shift_lemma(t, name)
         return self.render(t)
+
+    def lift_lemma(self, t: object, name: str) -> None:
+        """``t`` as the Lean theorem ``name`` under the multiplicity clauses of its data: along
+        each in turn, both families split ``c`` times, and zeroed at ``n = c``, by
+        ``Equal.of_split_at`` and ``Equal.of_zero_at`` from the lifted pair, a box at ``n = c``
+        before the boxes nested in it; a step binder per clause ``n = a*k + c``, last, in clause
+        order."""
+        from archytaszx.semantics.kernel import Theorem
+
+        assert isinstance(t, Theorem)
+        data = t.inference.data
+        (body_t,) = t.inference.premises
+        lifts = [
+            (str(i), int(sa), int(c), None if ks is None else str(ks))
+            for i, sa, c, ks in cast("tuple[tuple[str, int, int, str | None], ...]", data["lift"])
+        ]
+        mis = [self.mult_ix[i] for i, *_ in lifts]
+        start, goal = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
+        names = list(self.mult_names)
+        syms = list(self.mult_exprs)
+        idxs = {i for i, *_ in lifts}
+        if any(
+            not self.mult_bare[j] and idxs & set(map(str, syms[j].free_symbols))
+            for j in range(len(names))
+        ):
+            raise NetUnsupported("a box whose multiplicity depends on a lifted multiplicity")
+        depth = dict.fromkeys(mis, 0)
+        nested = False
+        for lab in self.labs:
+            lchain = self.label_chain(lab)
+            inner = [m for m in lchain if m in depth]
+            for pos, m in enumerate(inner):
+                depth[m] = max(depth[m], pos)
+            if len(inner) > 1:
+                nested = True
+                if any(lifts[mis.index(m)][3] is not None for m in inner[:-1]):
+                    raise NetUnsupported("a lifted box inside a box at n >= c")
+        kks = {m: self.sym.params[ks][0] for m, (_, _, _, ks) in zip(mis, lifts) if ks is not None}
+        scale = {m: sa for m, (_, sa, _, _) in zip(mis, lifts)}
+        oth = [j for j in range(len(names)) if j not in mis and self.mult_bare[j]]
+        binders = _join(self.sp_binders, *(f"({names[j]} : ℕ)" for j in oth))
+        args = _join(self.sp_args, *(names[j] for j in oth))
+        kbind = _join(*(f"({kk} : ℕ)" for kk in kks.values()))
+        kargs = _join(*kks.values())
+        self.hyps, self.hyp_args = self.sp_hyps, self.sp_hyp_args
+        hyps_args = _join(args, self.hyp_args)
+        fam = self.fam_text()
+
+        def text(m: int, c: int) -> str:
+            if m not in kks:
+                return str(c)
+            base = kks[m] if scale[m] == 1 else f"({scale[m]} * {kks[m]})"
+            return base if c == 0 else f"({base} + {c})"
+
+        def value(m: int, c: int) -> sp.Expr:
+            if m not in kks:
+                return sp.Integer(c)
+            ks = next(k for i, (_, _, _, k) in zip(mis, lifts) if i == m)
+            return scale[m] * _mult_symbol(str(ks)) + c
+
+        def vals(cur: dict[int, int]) -> list[str]:
+            return [text(j, cur[j]) if j in cur else names[j] for j in range(len(names))]
+
+        def lst(cur: dict[int, int]) -> str:
+            return "[" + ", ".join(vals(cur)) + "]"
+
+        final = {m: c for m, (_, _, c, _) in zip(mis, lifts)}
+
+        def ret(x: str) -> str:
+            return "(" + _join(x, args, *(text(m, final[m]) for m in mis)) + ")"
+
+        def enter(cur: dict[int, int]) -> None:
+            self.ks_vals = vals(cur)
+            self.ks_syms = [value(j, cur[j]) if j in cur else syms[j] for j in range(len(names))]
+            self.env = self.env_text(self.ks_vals)
+
+        s_s, s_g = self.scalar(t.lhs.scalar), self.scalar(t.rhs.scalar)
+        sub = {sp.Symbol(i): value(m, final[m]) for m, (i, *_) in zip(mis, lifts)}
+
+        def at(model: sp.Expr) -> sp.Expr:
+            return model.xreplace(
+                {x: sub[sp.Symbol(x.name)] for x in model.free_symbols if sp.Symbol(x.name) in sub}
+            )
+
+        sS, sG, sc_ = f"{name}_sS", f"{name}_sG", f"{name}_scase"
+        bind = _join(binders, *(f"({names[m]} : ℕ)" for m in mis))
+        self.scalar_defs += [sS, sG]
+        self.decls.append(
+            f"/-- The start's scalar. -/\nnoncomputable def {sS} {bind} : ℂ := {self.sc.text(s_s)}"
+        )
+        self.decls.append(
+            f"/-- The goal's scalar. -/\nnoncomputable def {sG} {bind} : ℂ := {self.sc.text(s_g)}"
+        )
+        ns, ng = start.name, goal.name
+        cur = dict(final)
+        text_s, text_g, net_s, net_g = ns, ng, start.net, goal.net
+        steps: list[tuple[str, int, int, dict[int, int], str, str]] = []
+        t_off = 0
+        if nested:
+            labels = [*self.labs, *start.net.summed, *goal.net.summed]
+            t_off = max(0, max(labels, default=0).bit_length() - H_OFFSET.bit_length() + 1)
+        order = sorted(range(len(mis)), key=lambda q: depth[mis[q]])
+        for m, (_, sa, c, ks) in ((mis[q], lifts[q]) for q in order):
+            isb = self.isb(m)
+            spc = f"(SpC {m})"
+            for _ in range(c):
+                off = H_OFFSET << t_off
+                t_off += 1
+                for lab in [x for x in self.labs if nested or x < H_OFFSET]:
+                    self.peel_reg(lab, off)
+                cur[m] -= 1
+                steps.append(("split", m, off, dict(cur), text_s, text_g))
+                net_s, net_g = _split_net(net_s, m, isb, off), _split_net(net_g, m, isb, off)
+                text_s = f"(Net.split {spc} {off} {text_s})"
+                text_g = f"(Net.split {spc} {off} {text_g})"
+            if ks is not None:
+                continue
+            off = H_OFFSET << t_off
+            t_off += 1
+            if nested:
+                for lab in list(self.labs):
+                    self.peel_reg(lab, off)
+            steps.append(("zero", m, off, dict(cur), text_s, text_g))
+            net_s, net_g = _zero_net(net_s, m, isb), _zero_net(net_g, m, isb)
+            text_s, text_g = f"(Net.zero {spc} {text_s})", f"(Net.zero {spc} {text_g})"
+        peeled = cast(Diagram, data["peeled"])
+        self.slots = self.slots_for(peeled, net_s)
+        enter(cur)
+        self.binders, self.args = _join(binders, kbind), _join(args, kargs)
+        lp = self.labelled(peeled, self.slots)
+        ia = self.iso_b(self.env, text_s, net_s, lp.name, lp.net)
+        pb = self.term(body_t)
+        lo = self.labelled(cast(Diagram, data["other_peeled"]), self.slots)
+        idd = self.iso_b(self.env, lo.name, lo.net, text_g, net_g)
+        chain = f"(Equal.mul_trans {ia} (Equal.mul_trans {pb.term} {idd}))"
+        left = ("*", ONE, ("*", pb.left, ONE))
+        right = ("*", ONE, ("*", pb.right, ONE))
+        hst = self.sc.prove(at(s_s) * self.flat(right), at(s_g) * self.flat(left))
+        env_0 = self.env
+        self.binders, self.args = binders, args
+        self.decls.append(
+            f"theorem {sc_} {_join(binders, self.hyps, kbind)} :\n"
+            f"    Equal {env_0} {ret(sS)} {text_s} {ret(sG)} {text_g} :=\n"
+            f"  Equal.rescale {chain}\n"
+            f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
+            f"    (by simp only [{self.sdefs()}]; first | "
+            "(simp [pow_mul']; done) | (ring_nf; simp [pow_mul']; done) | "
+            f"({hst[3:]}))"
+        )
+        proof = f"({_join(sc_, hyps_args, kargs)})" if _join(hyps_args, kargs) else sc_
+        for kind, m, off, at_cur, xs, xg in reversed(steps):
+            spc = f"(SpC {m})"
+            ok_s = f"(by decide : Spec.splitOK {spc} {off} {xs} = true)"
+            ok_g = f"(by decide : Spec.splitOK {spc} {off} {xg} = true)"
+            if kind == "zero":
+                proof = (
+                    f"(Equal.of_zero_at {fam} {m} {off} {lst(at_cur)} (by simp) {xs} {xg} "
+                    f"{ok_s} {ok_g} (by decide) {proof})"
+                )
+            else:
+                proof = (
+                    f"(Equal.of_split_at {fam} {m} {off} {text(m, at_cur[m])} {lst(at_cur)} "
+                    f"(by simp) {xs} {xg} {ok_s} {ok_g} {self.bund_pos(vals(at_cur))} {proof})"
+                )
+        enter(final)
+        shown = ", ".join(f"{names[m]} = {text(m, final[m])}" for m in mis)
+        self.decls.append(
+            f"/-- The start and goal families with their own scalars, at `{shown}`. -/\n"
+            f"theorem {name} {_join(binders, self.hyps, kbind)} :\n"
+            f"    Equal {self.env} {ret(sS)} {ns} {ret(sG)} {ng} :=\n"
+            f"  {proof}"
+        )
+        self.family_diagram_theorem(name, ret(sS), start, ret(sG), goal, (kbind, kargs))
 
     def shift_lemma(self, t: object, name: str) -> None:
         """``t`` as the Lean theorem ``name``: for every ``k``, Equal of the start and goal
@@ -2569,6 +2979,9 @@ class _Export:
 
     def source(self, assumptions: Sequence[object] = (), lead: str = "") -> str:
         """The file: header with ``lead`` and notes, tables and declarations."""
+        if self.original is not None:
+            self.decls.append(self.original_block())
+            self.original = None
         params = [
             (n, ty)
             for raw, (n, ty) in self.sym.params.items()
@@ -6909,12 +7322,14 @@ def _zc_scalar(c: _Ctx) -> _Spec:
             )
             lemma = f"zcScalar {env} {_zc(n)} IFACE _ (by decide) rfl rfl {hs}"
             return _Spec((nodes["z"],), [], lemma, k)
+        fam_dimv = " try simp [Fam.dimv, Δ];" if c.ex.family else ""
+        fam_rfl = "; try rfl" if c.ex.family else ""
         hs = (
             f"(by have hz : ∀ k < {env}.dimv {n.dim}, ex ({env}.phase {n.ph} k) = 1 := "
             f"{_phaseless(c, n)}; rw [Finset.sum_congr rfl fun k hk => (show zc {env} {_zc(n)} k "
             f"= 1 by simp only [zc, one_mul]; exact hz k (Finset.mem_range.1 hk))]; "
             f"simp only [Finset.sum_const, Finset.card_range, nsmul_eq_mul, mul_one]; "
-            f"try simp only [{c.ex.unfold}, Δ]; try push_cast; try ring)"
+            f"try simp only [{c.ex.unfold}, Δ];{fam_dimv} try push_cast; try ring{fam_rfl})"
         )
         lemma = f"zcScalar {env} {_zc(n)} IFACE _ (by decide) rfl rfl {hs}"
         return _Spec((nodes["z"],), [], lemma, k)
@@ -7320,6 +7735,16 @@ _RULES: dict[str, _RuleBuilder] = {
 }
 
 
+def _unboxed_boundary(d: Diagram) -> bool:
+    """Whether no boundary port of ``d`` lies on a node in a node-scoped box or in a port
+    scope."""
+    for ref in (*d.boundary_outputs, *d.boundary_inputs):
+        for box in d.bang_boxes.values():
+            if ref.node_id in box.node_scope or ref in box.port_scope:
+                return False
+    return True
+
+
 def _join(*parts: str) -> str:
     """The non-empty parts, space-separated."""
     return " ".join(p for p in parts if p)
@@ -7344,9 +7769,14 @@ def _closes_at_end(text: str) -> bool:
 
 @_trace.traced("lean.export")
 def export(
-    theorem: object, name: str = "main", describe: Callable[[Diagram], str] | None = None
+    theorem: object,
+    name: str = "main",
+    describe: Callable[[Diagram], str] | None = None,
+    original: tuple[dict[str, int], list[tuple[Diagram, Diagram]]] | None = None,
 ) -> str:
-    """Lean 4 source proving ``theorem`` over the tensor-network semantics."""
+    """Lean 4 source proving ``theorem`` over the tensor-network semantics; with ``original``
+    (the substituted dimension values and each side paired with its original diagram), the
+    final theorem restated over the original diagrams too."""
     from archytaszx.semantics.kernel import Theorem
 
     if not isinstance(theorem, Theorem):
@@ -7355,6 +7785,7 @@ def export(
     def run(everything: bool) -> tuple[str, _Export]:
         out = _Export(describe or (lambda d: f"a diagram of {len(d.nodes)} nodes"))
         out.alg_everything = everything
+        out.original = original
         out.box_syms = _box_syms(theorem)
         deferred = _deferred(theorem)
         for a, b in deferred:

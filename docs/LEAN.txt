@@ -331,11 +331,55 @@ multiplicity index), and lifts it by Equal.of_split_at c times:
       exact main_diagrams d h_d k
 
 D0 and D1 are the original boxed diagrams. For a > 1 the statements are at (a * k + c) and
-main_restricted binds k. Other restricted-pair theorems (several substituting clauses, a
-theorem the network export does not cover) are exported
-by the exporters above, unchanged, with the restriction and the substitution in the header
-comment; their statement is about the restricted diagrams, linked to the original diagrams by
-the agreement of the engine's substitution with the network semantics (section 6).
+main_restricted binds k. The normaliser's export (4.3) does the same on the split networks.
+
+Several multiplicity clauses, or clauses n = c (kernel.lift, the inference shift at scale 0,
+each clause recorded as (n, a, c, m), a = 0 for n = c): along each clause's multiplicity in
+turn, both original family networks are split c times, and zeroed (Net.zero) at n = c; the
+result is identified with the restricted pair by isoB, and the proof is lifted by
+Equal.of_split_at and Equal.of_zero_at, one per step. A clause n >= c or n = a*m + c keeps a
+step binder (nk for n, last, in clause order) and its value (nk + c), (a * nk) or
+((a * nk) + c); a clause n = c its value. main and main_diagrams are stated at these values,
+over the original boxed diagrams:
+
+    theorem main_diagrams : ∀ (d : ℕ) (h_d : 0 < d),
+        DEqual ((F d).env (ksOf [1, 2])) ... (D0.expandK (ksOf [1, 2])) ...
+    theorem main_diagrams : ∀ (d : ℕ) (h_d : 0 < d) (nk : ℕ) (pk : ℕ),
+        DEqual ((F d).env (ksOf [(2 * nk), (pk + 1)])) ... (D0.expandK ...) ...
+
+main_restricted (lean_restrict.shift_corollary) then binds n with c ≤ n in place of nk for each
+clause n >= c, each step binder found by its value in the statement; a clause n = a*m + c with
+a > 1 keeps nk. A box at n = c is peeled before the boxes nested in it: its copies are split
+off and the box zeroed, then each nested box is split in every copy at once, the split offsets
+starting above every label of both networks and every offset, the zero steps' included,
+registered in the label table. A box nested in a box under n >= c or n = a*m + c is not lifted.
+A side without boxes is stated through expandK too when the other side's boundary lies outside
+every box. The normaliser's export (4.3) lifts the same way along clauses n = c and n >= c
+(a = 1).
+
+Clauses d = v: the export states its final theorem over the restricted diagrams, then
+main_diagrams_original over the same diagram literals read with the original tables: Δo, Φo
+and Ψo are the dimension, phase and weight tables of the original diagrams with d free, at the
+indices of the export's tables (each node of the restricted literal matched to the original
+node of the same id); Δo_at, Φo_at and Ψo_at prove them equal to Δ, Φ and Ψ at d = v, and
+Eo_at (Fo_at for families) the environments:
+
+    theorem main_diagrams_original (d : ℕ) (h_d_eq : d = 5) :
+        DEqual (Eo d) 1 D0 1 D1 := by
+      subst h_d_eq
+      simp only [Eo_at]
+      exact main_diagrams
+
+Clauses d = v combine with the multiplicity clauses above (the d clauses substituted first),
+and main_restricted is then stated over main_diagrams_original. Other restricted-pair
+theorems (a box nested in a box under n >= c or n = a*m + c; two original dimensions or
+phases on one index, or identified dimensions, under d = v; a single clause n = m; a clause
+n = a*m + c with a > 1 under the normaliser; a theorem the network export does not cover) are
+exported by the exporters above, unchanged, with the restriction, the substitution and the
+note "UNCERTIFIED for the original diagrams" (kernel.UNLINKED) in the header comment; their
+statement is about the restricted diagrams only, and the shell reports "lean: uncertified for
+the original claim". A restriction of floors d >= c alone substitutes nothing and carries no
+such note.
 
 A normaliser proof of a restricted pair under one clause n >= c (or n = m + c), c >= 1, is
 replaced by the normaliser's proof over the original diagrams: the family lemma of both
