@@ -1805,6 +1805,8 @@ class _Dsl:
                 ports = frozenset(self.ref(item, named) for item in items)
                 diagram.add_bang_box(box.multiplicity, port_scope=ports, parent=parent)
         dims = [*_draft_dims(drafts), *(Dim.symbol(n) for n in sorted(self.declared_dims))]
+        if self.default_dim.isidentifier():
+            dims.append(Dim.symbol(self.default_dim))
         mults = [
             *(box.multiplicity for box in self.boxes.values()),
             *(Mult.symbol(n) for n in sorted(self.declared_counts)),
