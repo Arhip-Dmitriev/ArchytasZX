@@ -252,14 +252,17 @@ proved against the other side's split by the normaliser.
 
 4.4 Assumptions
 
-Dimension equalities a rewrite assumed (deferred constraints) become hypotheses of the
-theorem; the proof is carried out over the merged network and transported to the diagrams' own
-dimensions (Equal.of_mapDim'). main_diagrams then states DEqual over the diagrams at their own
+Dimension equations a rewrite assumed (DEFERRED and BOUND constraints) become hypotheses of
+the theorem; the proof is carried out over the merged network and transported to the diagrams'
+own dimensions (Equal.of_mapDim'). main_diagrams then states DEqual over the diagrams at their own
 dimensions, with the same hypotheses, when their boundary dimension indices agree; DEqual
 compares indices, so for a goal whose boundary carries the other of two dimensions assumed
 equal, main_diagrams states DEqual over the diagrams read through the identification of those
 dimensions (D.mapDim (dimMap dimIds), as for a wire below), from the merged theorem mainM. A node whose legs differ in dimension, such as d^p and d^q, is
-proved under the hypothesis d^p = d^q. The shell reports every such condition.
+proved under the hypothesis d^p = d^q. The shell reports every such condition. An assumed
+equation that is also the mismatch of a wire of the start or goal, as every BOUND one is, has
+no network at the diagrams' own dimensions; the export raises NetUnsupported ("a wire joins
+dimensions assumed equal").
 
 A wire of the start or goal that joins two dimensions (a diagram that is well formed only when
 they are equal) identifies them: the networks are the merged ones, and main_diagrams states

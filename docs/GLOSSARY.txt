@@ -11,8 +11,8 @@ abstraction
     the parameter environment. Dim.abstract, Mult.abstract.
 
 assumption
-    A dimension equality a derivation relied on without verifying it (a deferred dimension
-    constraint). Reported with every verdict and certificate that depends on it, and stated as
+    A dimension equation a derivation relied on without verifying it (a DEFERRED or BOUND
+    dimension constraint, one per equation up to orientation). Reported with every verdict and certificate that depends on it, and stated as
     a hypothesis of an exported Lean theorem.
 
 bang box
@@ -48,7 +48,7 @@ CPM
 deferred
     Said of a dimension equation the unifier could not decide, and of a validation issue or
     match condition resting on one. Deferred items never fail validation; they become
-    assumptions.
+    assumptions, as do equations that hold only under a binding (BOUND).
 
 derivation
     A sequence of rewrite steps from an initial to a final diagram.

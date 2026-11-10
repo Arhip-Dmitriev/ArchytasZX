@@ -7847,20 +7847,18 @@ def _wire_constraints(t: object) -> list[tuple[sp.Expr, sp.Expr]]:
 
 
 def _deferred(t: object) -> list[tuple[sp.Expr, sp.Expr]]:
-    """Every dimension equality a step of ``t`` assumed."""
-    from archytaszx.rewrite.rule import ConstraintOutcome
+    """Every dimension equation a step of ``t`` assumed, by :func:`assumed`."""
+    from archytaszx.rewrite.rule import DimensionConstraint, assumed
 
-    found: list[tuple[sp.Expr, sp.Expr]] = []
+    found: list[DimensionConstraint] = []
     stack = [t]
     while stack:
         u = stack.pop()
         stack.extend(u.inference.premises)  # type: ignore[attr-defined]
         step = u.inference.data.get("step")  # type: ignore[attr-defined]
         if isinstance(step, RewriteStep):
-            for c in step.dimension_constraints:
-                if c.outcome is ConstraintOutcome.DEFERRED:
-                    found.append((c.assumed.to_sympy(), c.equal_to.to_sympy()))
-    return found
+            found.extend(step.dimension_constraints)
+    return [(c.assumed.to_sympy(), c.equal_to.to_sympy()) for c in assumed(found)]
 
 
 def lean_project() -> str:

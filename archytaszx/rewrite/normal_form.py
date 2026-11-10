@@ -51,10 +51,10 @@ from archytaszx.rewrite.engine import (
     normal_form_rules,
 )
 from archytaszx.rewrite.rule import (
-    ConstraintOutcome,
     DimensionConstraint,
     RewriteGrammarError,
     Rule,
+    assumed,
 )
 
 
@@ -98,16 +98,8 @@ class NormalForm:
 
     @property
     def assumed_constraints(self) -> tuple[DimensionConstraint, ...]:
-        """Every ``DEFERRED`` dimension constraint across the steps, in step order, deduplicated."""
-        seen: set[DimensionConstraint] = set()
-        collected: list[DimensionConstraint] = []
-        for step in self.outcome.steps:
-            for constraint in step.dimension_constraints:
-                if constraint.outcome is not ConstraintOutcome.DEFERRED or constraint in seen:
-                    continue
-                seen.add(constraint)
-                collected.append(constraint)
-        return tuple(collected)
+        """Every assumed dimension equation across the steps, by :func:`assumed`."""
+        return assumed(c for step in self.outcome.steps for c in step.dimension_constraints)
 
 
 def _require_diagram(what: str, value: object) -> Diagram:

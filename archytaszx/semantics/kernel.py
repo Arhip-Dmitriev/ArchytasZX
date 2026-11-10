@@ -69,7 +69,7 @@ from archytaszx.diagram.generators import MIXED_ONLY
 from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
-from archytaszx.rewrite.rule import ConstraintOutcome
+from archytaszx.rewrite.rule import assumed
 from archytaszx.semantics import lean_net, lean_refute, lean_sym
 from archytaszx.semantics.certificate import (
     Certificate,
@@ -222,11 +222,9 @@ def rule(d: Diagram, step: RewriteStep) -> Theorem:
     if failure is not None:
         raise KernelError(failure)
     nodes = ", ".join(f"n{int(n)}" for n in sorted(step.consumed_node_ids, key=int))
-    deferred = tuple(
-        str(c) for c in step.dimension_constraints if c.outcome is ConstraintOutcome.DEFERRED
-    )
+    equations = tuple(c.equation for c in assumed(step.dimension_constraints))
     inference = Inference("rule", rule=step.rule_name, detail=nodes, data={"step": step})
-    return Theorem(_TOKEN, d, after, inference, deferred)
+    return Theorem(_TOKEN, d, after, inference, equations)
 
 
 @_trace.traced("kernel.iso")

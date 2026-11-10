@@ -78,7 +78,7 @@ from archytaszx.rewrite.normal_form import (
     same_normal_form,
     views_isomorphic,
 )
-from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError, Rule
+from archytaszx.rewrite.rule import DimensionConstraint, RewriteError, Rule, assumed
 from archytaszx.semantics.certificate import Certificate, CertificateError, certify, replay
 from archytaszx.semantics.check import (
     DEFAULT_TOLERANCE,
@@ -882,40 +882,23 @@ def _run_saturation(
             certificates.append(certificate)
     except _NORMAL_FORM_ERRORS as exc:
         return _SaturationRun(report, None, (), f"failed: {type(exc).__name__}: {exc}")
-    deferred = _dedupe(
-        [
-            constraint
-            for certificate in certificates
-            for step in certificate.steps
-            for constraint in step.dimension_constraints
-            if constraint.outcome is ConstraintOutcome.DEFERRED
-        ]
+    deferred = assumed(
+        c
+        for certificate in certificates
+        for step in certificate.steps
+        for c in step.dimension_constraints
     )
     reason = f"{len(edges)} edge(s)" if edges else "0 edge(s), both sides one e-node"
     return _SaturationRun(report, tuple(certificates), deferred, reason)
 
 
-def _dedupe(constraints: Sequence[DimensionConstraint]) -> tuple[DimensionConstraint, ...]:
-    """``constraints`` without repeats, first occurrence order kept."""
-    kept: list[DimensionConstraint] = []
-    for constraint in constraints:
-        if constraint not in kept:
-            kept.append(constraint)
-    return tuple(kept)
-
-
 def _induction_assumptions(
     base: Decision, result: InductionResult
 ) -> tuple[DimensionConstraint, ...]:
-    """``base``'s assumptions, then every ``DEFERRED`` constraint of ``result``'s tier steps."""
-    deferred = (
-        constraint
-        for tier in result.tiers
-        for step in tier.steps
-        for constraint in step.dimension_constraints
-        if constraint.outcome is ConstraintOutcome.DEFERRED
-    )
-    return _dedupe((*base.assumptions, *deferred))
+    """``base``'s assumptions, then every assumed dimension equation of ``result``'s tier
+    steps, by :func:`assumed`."""
+    steps = (c for tier in result.tiers for step in tier.steps for c in step.dimension_constraints)
+    return assumed((*base.assumptions, *steps))
 
 
 def _instantiate_index(diagram: Diagram, index: str, value: int) -> Diagram:
@@ -1237,7 +1220,7 @@ def _decide(
             certify(nf_l.source, nf_l.results, label="left normal form"),
             certify(nf_r.source, nf_r.results, label="right normal form"),
         )
-        nf_assumptions = _dedupe((*nf_l.assumed_constraints, *nf_r.assumed_constraints))
+        nf_assumptions = assumed((*nf_l.assumed_constraints, *nf_r.assumed_constraints))
         nf_equal = same_normal_form(nf_l, nf_r)
     except _NORMAL_FORM_ERRORS as exc:
         nf_l = nf_r = None
@@ -1287,8 +1270,8 @@ def _decide(
     sampled = oracle_summary(checked, oracle.refusals)
     if nf_equal:
         conditional = (
-            f", conditional on the {len(nf_assumptions)} deferred dimension constraint(s) in "
-            "assumptions"
+            f", conditional on the assumed dimension equation(s) "
+            f"{', '.join(c.equation for c in nf_assumptions)}"
             if nf_assumptions
             else ""
         )
@@ -1305,8 +1288,8 @@ def _decide(
         saturation = run.report
         if run.certificates is not None:
             conditional = (
-                f", conditional on the {len(run.assumptions)} deferred dimension constraint(s) "
-                f"in assumptions; {sampled}"
+                ", conditional on the assumed dimension equation(s) "
+                f"{', '.join(c.equation for c in run.assumptions)}; {sampled}"
                 if run.assumptions
                 else ""
             )

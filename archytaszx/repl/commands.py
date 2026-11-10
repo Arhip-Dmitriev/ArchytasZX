@@ -1012,7 +1012,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
             blocks.append(
                 Text(
                     "conditional on "
-                    f"{_count(len(decision.assumptions), 'deferred dimension constraint')}"
+                    f"{_count(len(decision.assumptions), 'assumed dimension equation')}"
                 )
             )
         return _ok("decide", blocks, payload)

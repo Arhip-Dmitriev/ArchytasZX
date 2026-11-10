@@ -23,8 +23,8 @@ generality the question is undecidable, so every procedure below is sound and in
     without one is UNKNOWN.
   - Every other outcome is UNKNOWN, with the reason the procedure stopped.
 
-Equalities that a derivation assumed rather than verified (deferred dimension constraints) are
-reported with the verdict as its assumptions; the verdict is conditional on them.
+Equations that a derivation assumed rather than verified (DEFERRED and BOUND dimension
+constraints, one per equation up to orientation) are reported with the verdict as its assumptions; the verdict is conditional on them.
 
 
 2. DECIDING EQUALITY: archytaszx.semantics.decide
@@ -78,7 +78,7 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.counterexample   the assignment behind an UNEQUAL verdict
     Decision.refutation       the Lean refutation source of an UNEQUAL verdict past rung 1
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
-    Decision.assumptions      deferred dimension constraints the verdict rests on
+    Decision.assumptions      assumed dimension equations the verdict rests on
     Decision.samples_checked  oracle samples evaluated
     Decision.parameters_agree whether the two parameter environments agree
     Decision.restriction      the restriction of a restricted decision (section 8), or None
@@ -327,8 +327,8 @@ diagram. verify runs replay and then compares the two ends with the oracle at th
     derives afresh.
   - For a NUMERIC_ORACLE certificate, the two ends denote the same tensor at the assignment.
 
-It establishes nothing about other assignments, about the satisfiability of a deferred
-dimension constraint, or about a rule whose meaning changed under a name it kept. For an
+It establishes nothing about other assignments, about the satisfiability of an assumed
+dimension equation, or about a rule whose meaning changed under a name it kept. For an
 INDUCTION certificate, the checked parts are the base case and one concrete instance of the
 step; the step schema itself is discharged by the induction module and is not recorded in
 re-checkable form. Tampering with any recorded field makes replay fail.

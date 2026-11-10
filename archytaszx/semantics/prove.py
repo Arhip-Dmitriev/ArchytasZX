@@ -85,7 +85,7 @@ from archytaszx.rewrite.exhaustive import (
     exhaustive_search,
 )
 from archytaszx.rewrite.normal_form import algebraic_view, comparison_view, views_isomorphic
-from archytaszx.rewrite.rule import ConstraintOutcome, DimensionConstraint, RewriteError
+from archytaszx.rewrite.rule import DimensionConstraint, RewriteError, assumed
 from archytaszx.rewrite.tactics import (
     DEFAULT_SEARCH_LIMITS,
     ProofPath,
@@ -157,15 +157,14 @@ class ProofStatus(enum.Enum):
     CHECK_FAILED = "check_failed"
 
 
-def _deferred(certificates: Sequence[Certificate]) -> tuple[DimensionConstraint, ...]:
-    """Every ``DEFERRED`` constraint of ``certificates``' steps, first occurrence order kept."""
-    kept: list[DimensionConstraint] = []
-    for certificate in certificates:
-        for step in certificate.steps:
-            for constraint in step.dimension_constraints:
-                if constraint.outcome is ConstraintOutcome.DEFERRED and constraint not in kept:
-                    kept.append(constraint)
-    return tuple(kept)
+def _assumed(certificates: Sequence[Certificate]) -> tuple[DimensionConstraint, ...]:
+    """Every assumed dimension equation of ``certificates``' steps, by :func:`assumed`."""
+    return assumed(
+        c
+        for certificate in certificates
+        for step in certificate.steps
+        for c in step.dimension_constraints
+    )
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -198,7 +197,7 @@ class ProofCertificate:
     @property
     def assumptions(self) -> tuple[DimensionConstraint, ...]:
         """Every ``DEFERRED`` dimension constraint of both halves, deduplicated in order."""
-        return _deferred((self.forward, self.backward))
+        return _assumed((self.forward, self.backward))
 
     @property
     def length(self) -> int:
@@ -231,12 +230,8 @@ class InductionProof:
 
     @property
     def assumptions(self) -> tuple[DimensionConstraint, ...]:
-        """Every ``DEFERRED`` dimension constraint of every piece, deduplicated in order."""
-        kept = list(self.base.assumptions)
-        for constraint in (*_deferred((self.expose,)), *self.step.assumptions):
-            if constraint not in kept:
-                kept.append(constraint)
-        return tuple(kept)
+        """Every assumed dimension equation of every piece, by :func:`assumed`."""
+        return assumed((*self.base.assumptions, *_assumed((self.expose,)), *self.step.assumptions))
 
     @property
     def length(self) -> int:

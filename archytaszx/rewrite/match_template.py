@@ -59,6 +59,7 @@ from archytaszx.diagram.generators import (
     GeneratorType,
 )
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
+from archytaszx.rewrite.match import _spliced_constraint, _wire_by_port
 from archytaszx.rewrite.rule import (
     BuildResult,
     DimensionConstraint,
@@ -1007,6 +1008,9 @@ class TemplatePattern(Pattern):
         built = self.axiom.right.template(dim, arities)
         if built is None:
             return None
+        spliced = _bare_constraints(diagram, built.bare, template, state)
+        if spliced is None:
+            return None
         try:
             for tnode in built.nodes:
                 tnode.param.build(dim, bindings)
@@ -1059,8 +1063,34 @@ class TemplatePattern(Pattern):
             bindings=tuple(sorted(bindings.items(), key=lambda item: item[0])),
             shared_dim=host_dim,
             side_condition_outcomes=tuple(outcomes),
+            dimension_constraints=spliced,
             value_dim=None if host_dim == dim else dim,
         )
+
+
+def _bare_constraints(
+    diagram: Diagram, bare: Iterable[tuple[str, str]], template: Template, state: _State
+) -> tuple[DimensionConstraint, ...] | None:
+    """The equations the right-hand side's bare wires drop, by the builder's splice choice;
+    None when one has no solution."""
+    partner = _partner_map(diagram)
+    by_port = _wire_by_port(diagram)
+    consumed = set(state.nodes.values())
+    found: list[DimensionConstraint] = []
+    for first, second in bare:
+        h1, h2 = state.ports[template.terminals[first]], state.ports[template.terminals[second]]
+        far1, far2 = partner.get(h1), partner.get(h2)
+        if far1 is not None and far1.node_id not in consumed and far1 != h2:
+            pair = (h2, far1)
+        elif far2 is not None and far2.node_id not in consumed and far2 != h1:
+            pair = (h1, far2)
+        else:
+            continue
+        spliced = _spliced_constraint(diagram, *pair, by_port)
+        if spliced is None:
+            return None
+        found.extend(spliced)
+    return tuple(found)
 
 
 def template_scalar(axiom: TemplateAxiom, match: Match, diagram: Diagram | None = None) -> Scalar:

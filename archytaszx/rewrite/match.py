@@ -1946,6 +1946,34 @@ class IdentityMatch:
         )
 
 
+def _spliced_constraint(
+    diagram: Diagram, surviving_ref: PortRef, far_ref: PortRef, by_port: Mapping[PortRef, Wire]
+) -> tuple[DimensionConstraint, ...] | None:
+    """The equation ``surviving == far`` that splicing ``surviving_ref`` onto ``far_ref`` drops,
+    as a ``DEFERRED`` or ``BOUND`` entry; empty when the result keeps it, None when it has no
+    solution."""
+
+    def dim(ref: PortRef) -> Dim:
+        return diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim
+
+    here, far_dim = dim(surviving_ref), dim(far_ref)
+    result = here.unify(far_dim)
+    if result.is_failure:
+        return None
+    neighbour = by_port.get(surviving_ref)
+    if here == far_dim or (
+        neighbour is not None and dim(_far_end(neighbour, surviving_ref)) == here
+    ):
+        return ()
+    source = ConstraintSource.connecting_pair()
+    if result.is_deferred:
+        return (DimensionConstraint(here, far_dim, source, ConstraintOutcome.DEFERRED),)
+    if result.bindings:
+        bound = tuple(sorted(result.bindings.items()))
+        return (DimensionConstraint(here, far_dim, source, ConstraintOutcome.BOUND, bound),)
+    return ()
+
+
 def find_identity_matches(
     diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
 ) -> tuple[IdentityMatch, ...]:
@@ -1997,6 +2025,9 @@ def find_identity_matches(
             continue
         if _has_port_boxed_leg(diagram, (node_id,)):
             continue
+        spliced = _spliced_constraint(diagram, surviving_ref, far_ref, by_port)
+        if spliced is None:
+            continue
         lifted = (
             _liftable_box(diagram, node_id, surviving_ref, far_ref) if neighbour is None else None
         )
@@ -2019,6 +2050,7 @@ def find_identity_matches(
                 far_ref=far_ref,
                 shared_dim=shared_dim,
                 side_condition_outcomes=_all_passed(IDENTITY_SIDE_CONDITIONS),
+                dimension_constraints=spliced,
                 lifted_box=lifted,
             )
         )
@@ -2190,6 +2222,9 @@ def find_triangle_matches(
             )
             if not _splice_keeps_copies(diagram, first.id, ends):  # type: ignore[arg-type]
                 continue
+            spliced_eq = _spliced_constraint(diagram, surviving_ref, far_ref, by_port)
+            if spliced_eq is None:
+                continue
             matches.append(
                 TriangleMatch(
                     first_id=first.id,
@@ -2200,6 +2235,7 @@ def find_triangle_matches(
                     far_ref=far_ref,
                     shared_dim=next(iter(dims)),
                     side_condition_outcomes=_all_passed(TRIANGLE_SIDE_CONDITIONS),
+                    dimension_constraints=spliced_eq,
                 )
             )
     matches.sort(key=lambda m: (int(m.first_id), int(m.second_id)))

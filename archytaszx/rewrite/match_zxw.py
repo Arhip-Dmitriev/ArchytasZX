@@ -64,6 +64,7 @@ from archytaszx.rewrite.match import (
     _port_claims,
     _seed_meets_anchors,
     _splice_keeps_copies,
+    _spliced_constraint,
     _support_ids,
     _uniform_leg_dim,
     _wire_by_port,
@@ -286,6 +287,9 @@ def find_w_identity_matches(
             ),
         ):
             continue
+        spliced = _spliced_constraint(diagram, surviving_ref, far_ref, by_port)
+        if spliced is None:
+            continue
         matches.append(
             IdentityMatch(
                 node_id=node_id,
@@ -294,6 +298,7 @@ def find_w_identity_matches(
                 far_ref=far_ref,
                 shared_dim=shared_dim,
                 side_condition_outcomes=_all_passed(W_IDENTITY_SIDE_CONDITIONS),
+                dimension_constraints=spliced,
             )
         )
     return tuple(matches)
@@ -689,6 +694,12 @@ def _connective_candidate(
     far = [s.far_ref for s in splices]
     if len(set(far)) != len(far):
         return None
+    constraints: list[DimensionConstraint] = []
+    for s in splices:
+        spliced = _spliced_constraint(diagram, s.surviving_ref, s.far_ref, by_port)
+        if spliced is None:
+            return None
+        constraints.extend(spliced)
     if _in_any_bang_box(diagram, (first.id, second.id)):
         return None
     return ConnectiveInverseMatch(
@@ -698,6 +709,7 @@ def _connective_candidate(
         splices=tuple(splices),
         bind_first=bind_first,
         side_condition_outcomes=_all_passed(CONNECTIVE_INVERSE_SIDE_CONDITIONS),
+        dimension_constraints=tuple(constraints),
     )
 
 

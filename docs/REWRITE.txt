@@ -67,8 +67,12 @@ the outcomes cover exactly its declared conditions and all passed.
 A DimensionConstraint records one dimension equality a match accepted without a syntactic
 identity: assumed, equal_to, the source of the check (the connecting pair, a surviving leg or
 a node's phase), and the outcome, DEFERRED (unify could not decide) or BOUND (it holds under a
-binding, listed in bound_here). Deferred constraints travel into every certificate, decision
-and Lean theorem built on the step.
+binding, listed in bound_here). A splice (identity removal, W identity, T/Ti cancellation,
+connective inverse, a template's bare wire) records the equation between the surviving leg and
+the far port when the result no longer carries it. DEFERRED and BOUND constraints alike travel
+into every certificate, decision and Lean theorem built on the step, as assumed dimension
+equations: rule.assumed keeps one per equation up to orientation and equal sympy forms, and
+drops none that the other side implies.
 
 2.5 Dimension guards
 
@@ -221,8 +225,8 @@ A NormalForm holds the source, the reduced diagram, the strategy outcome, the re
 replay onto the reduced diagram id for id), and a key. Two normal forms are the same when
 their comparison views share a key and are isomorphic. The comparison view of a diagram sorts
 each Z and X spider's legs within a direction, clears the parameter environment and simplifies
-the scalar. NormalForm.assumed_constraints lists every deferred dimension constraint of its
-steps.
+the scalar. NormalForm.assumed_constraints lists every assumed dimension equation (DEFERRED or
+BOUND) of its steps.
 
 The normal form is a reduction, not a canonical form: two equal diagrams can have different
 normal forms. Agreement of normal forms proves equality; disagreement proves nothing.

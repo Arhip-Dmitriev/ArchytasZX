@@ -26,7 +26,7 @@ from __future__ import annotations
 import abc
 import enum
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -242,6 +242,35 @@ class DimensionConstraint:
 
     def __str__(self) -> str:
         return f"{self.assumed} == {self.equal_to} ({self.outcome.value}, {self.source})"
+
+    @property
+    def equation(self) -> str:
+        """The bare equation ``a = b``, a symbolic side first, then the shorter side."""
+        a, b = (str(x.to_sympy()) for x in (self.assumed, self.equal_to))
+        key = {s: (s.lstrip("-").isdigit(), len(s), s) for s in (a, b)}
+        first, second = sorted((a, b), key=key.__getitem__)
+        return f"{first} = {second}"
+
+
+def _equation_key(constraint: DimensionConstraint) -> frozenset[sp.Expr]:
+    """Both sides of ``constraint``, expanded, as an unordered pair."""
+    return frozenset(sp.expand(x.to_sympy()) for x in (constraint.assumed, constraint.equal_to))
+
+
+def assumed(
+    constraints: Iterable[DimensionConstraint],
+) -> tuple[DimensionConstraint, ...]:
+    """The ``DEFERRED`` and ``BOUND`` entries of ``constraints`` that are not identities, one
+    per equation up to orientation and equal sympy forms, first occurrence order kept."""
+    seen: set[frozenset[sp.Expr]] = set()
+    kept: list[DimensionConstraint] = []
+    for constraint in constraints:
+        key = _equation_key(constraint)
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        kept.append(constraint)
+    return tuple(kept)
 
 
 class DimensionGuardKind(enum.Enum):
