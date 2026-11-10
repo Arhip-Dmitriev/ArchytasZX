@@ -5052,10 +5052,16 @@ def _h1(c: _Ctx) -> _Spec:
     _need([i for i, _, _ in cs] == [i for i, _ in pi], "H1 input order")
     _need(c.ex.scalar(c.step.scalar_introduced) == ONE, "H1 scalar")
     d_expr = c.ex.dim_exprs[p.dim]
-    _need(d_expr.is_Integer, "K_j phases at a concrete dimension")
-    d = int(d_expr)
-    j = int(sp.Integer(dict(m.bindings)["j"])) % d
-    j2 = (d - j) % d
+    if d_expr.is_Integer:
+        d = int(d_expr)
+        j = int(sp.Integer(dict(m.bindings)["j"])) % d
+        j2 = (d - j) % d
+        hb = (
+            f"(kjNeg _ {j} {j2} {_positive(c, p.dim)} {_CHK} _ _ {_kj_proof(c, p.ph, p.dim, j)} "
+            f"{_kj_proof(c, g.ph, p.dim, j2)})"
+        )
+    else:
+        hb = _kj_antipode(c, p.ph, g.ph, d_expr, int(sp.Integer(dict(m.bindings)["j"])))
 
     def pairs(xs: Sequence[tuple[int, int]]) -> str:
         return "[" + ", ".join(f"({a}, {b})" for a, b in xs) + "]"
@@ -5069,9 +5075,7 @@ def _h1(c: _Ctx) -> _Spec:
     )
     right = (
         f"(xDefT {c.env} {p.ph} {g.ph} {p.dim} {pairs(pi)} {chains(cs2)} IFACE "
-        f"{_positive(c, p.dim)} (by decide) (by decide) {_chks(2)} "
-        f"(kjNeg _ {j} {j2} {_positive(c, p.dim)} {_CHK} _ _ {_kj_proof(c, p.ph, p.dim, j)} "
-        f"{_kj_proof(c, g.ph, p.dim, j2)}))"
+        f"{_positive(c, p.dim)} (by decide) (by decide) {_chks(2)} {hb})"
     )
     i_l = [z for z, _ in po] + [z for _, _, z in cs] + [v for _, (a, b), _ in cs for v in (a, b)]
     i_r = [z for z, _, _ in cs2] + [z for _, z in pi] + [v for _, (a, b), _ in cs2 for v in (a, b)]
@@ -5081,6 +5085,30 @@ def _h1(c: _Ctx) -> _Spec:
         f"LocalEq.trans' {left} {right}",
         i_l=tuple(i_l),
         i_r=tuple(i_r),
+    )
+
+
+def _kj_antipode(c: _Ctx, a: int, b: int, d_expr: sp.Expr, j: int) -> str:
+    """A proof of ``∀ k < E.dimv dz, ex (E.phase b k) = ex (E.phase a ((E.dimv dz - k) %
+    E.dimv dz))`` for ``a`` the phase K_j and ``b`` the phase K_{-j} at a symbolic dimension:
+    both unfolded, ``ex_congr_int`` with ``-j``; ``simp`` when both are zero."""
+    if a == 0 and b == 0 and j == 0:
+        return "(by intro k _; simp [E, Φ])"
+    for ph, sign in ((a, 1), (b, -1)):
+        _need(ph != 0, "K_j phases written entry by entry")
+        entries, rule = c.ex.phase_specs[ph]
+        _need(
+            not entries and rule is not None and sp.simplify(rule - sign * j * INDEX / d_expr) == 0,
+            f"phase is not K_{sign * j}",
+        )
+    return (
+        "(by\n    intro k hk\n    simp only [E, Φ, Δ] at hk ⊢\n    apply ex_congr_int\n"
+        "    rcases Nat.eq_zero_or_pos k with h0 | h0\n"
+        "    · subst h0; refine ⟨0, ?_⟩; simp\n"
+        "    · rw [Nat.mod_eq_of_lt (Nat.sub_lt (lt_of_le_of_lt (Nat.zero_le _) hk) h0)]\n"
+        f"      refine ⟨-({j}), ?_⟩\n"
+        "      split_ifs <;> first | (exfalso; omega) | "
+        "(push_cast [Nat.cast_sub hk.le]; field_simp; ring))"
     )
 
 
@@ -7446,8 +7474,21 @@ def _w_aso(c: _Ctx) -> _Spec:
 
 def _kj_proof(c: _Ctx, ph: int, dz: int, j: int) -> str:
     """A proof of ``∀ q < E.dimv dz, ex (E.phase ph q) = om (E.dimv dz) ^ (q * j)`` at a
-    concrete dimension: one ``ex_of`` per index."""
+    concrete dimension: one ``ex_of`` per index; ``simp`` for the zero phase at ``j = 0``."""
+    if ph == 0 and j == 0:
+        return "(by intro q _; simp [E, Φ, ex_zero])"
     d_expr = c.ex.dim_exprs[dz]
+    if not d_expr.is_Integer:
+        _need(ph != 0, "K_j phases written entry by entry")
+        entries, rule = c.ex.phase_specs[ph]
+        _need(
+            not entries and rule is not None and sp.simplify(rule - j * INDEX / d_expr) == 0,
+            f"phase is not K_{j}",
+        )
+        return (
+            "(by\n    intro q hq\n    rw [om_eq_ex]\n    simp only [E, Φ, Δ]\n"
+            "    split_ifs with h\n    · subst h; simp\n    · push_cast; ring_nf)"
+        )
     _need(d_expr.is_Integer, "K_j phases at a concrete dimension")
     d = int(d_expr)
     entries, rule = c.ex.phase_specs[ph]
