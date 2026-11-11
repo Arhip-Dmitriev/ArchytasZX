@@ -1776,7 +1776,7 @@ class _Export:
                 f"  Equal.rescale {proof.term}\n    "
                 + (
                     f"(by (try simp only [{self.sdefs()}]); nzt)\n    "
-                    f"(by simp only [{self.sdefs()}]; {hst[3:]})"
+                    f"(by simp only [{self.sdefs()}]; all_goals ({hst[3:]}))"
                     if self.scalar_defs
                     else f"{self.nonzero(proof.left)}\n    ({hst})"
                 )
@@ -2151,9 +2151,9 @@ class _Export:
             f"    Equal {env_0} {ret(sS)} {text_s} {ret(sG)} {text_g} :=\n"
             f"  Equal.rescale {chain}\n"
             f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
-            f"    (by simp only [{self.sdefs()}]; first | "
+            f"    (by simp only [{self.sdefs()}]; all_goals (first | "
             "(simp [pow_mul']; done) | (ring_nf; simp [pow_mul']; done) | "
-            f"({hst[3:]}))"
+            f"({hst[3:]})))"
         )
         proof = f"({_join(sc_, hyps_args, kargs)})" if _join(hyps_args, kargs) else sc_
         for kind, m, off, at_cur, xs, xg in reversed(steps):
@@ -2282,9 +2282,9 @@ class _Export:
             f"{ret(sG, plus(c))} {text_g[-1]} :=\n"
             f"  Equal.rescale {chain}\n"
             f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
-            f"    (by simp only [{self.sdefs()}]; first | "
+            f"    (by simp only [{self.sdefs()}]; all_goals (first | "
             "(simp [pow_mul']; done) | (ring_nf; simp [pow_mul']; done) | "
-            f"({hst[3:]}))"
+            f"({hst[3:]})))"
         )
         proof = f"({sc_} {_join(hyps_args, kk)})"
         for level in range(c - 1, -1, -1):
@@ -2420,7 +2420,7 @@ class _Export:
             f"{ret(sS, '0')} (Net.zero {spc} {ns}) {ret(sG, '0')} (Net.zero {spc} {ng}) :=\n"
             f"  Equal.rescale (Equal.mul_trans {i1} (Equal.mul_trans {p0.term} {i2}))\n"
             f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
-            f"    (by simp only [{self.sdefs()}]; {hst[3:]})"
+            f"    (by simp only [{self.sdefs()}]; all_goals ({hst[3:]}))"
         )
 
         # k + 1
@@ -2515,7 +2515,7 @@ class _Export:
             f"{ret(sG, f'({kk} + 1)')} (Net.split {spc} {H} {ng}) :=\n"
             f"  Equal.rescale {chain}\n"
             f"    (by (try simp only [{self.sdefs()}]); nzt)\n"
-            f"    (by simp only [{self.sdefs()}]; {hst[3:]})"
+            f"    (by simp only [{self.sdefs()}]; all_goals ({hst[3:]}))"
         )
 
         # the theorem
