@@ -403,6 +403,16 @@ last two record region_exhausted. A domain of fewer than K points is run whole.
 The symbolic version is one more run outside K. A restricted equation draws from its restricted
 domain.
 
+An F equation draws only points where its pair differs (benchmarks/differs.py), decided exactly
+from the F record's kind and edit parameters: beyond_oracle, prime_only and coincident_dims are
+equal where the phase rule is an integer at every k < d (for the d rule also d = 6, 8, 12, 24;
+for the Fermat rule every prime and Carmichael d); scalar_small_one and box_boundary where the
+scalar factor is 1; beyond_N unrolled where n <= N, boxed except at n = N + 1 mod N + 2;
+qubit_only where d <= 2; every other kind differs everywhere. Moving a ladder step to the next
+point raises n, then d, at most 4096 values each (MAX_SCAN), then takes the first differing
+domain point among the first 4096 K. The domain size that selects the whole-domain schedule
+counts every domain point.
+
 
 6. BENCHMARKS
 -------------
@@ -418,7 +428,8 @@ unequal_uncertified) is logged uncertified; a run giving the opposite verdict is
 when certified and wrong (uncertified) when not. Only successes count toward K. A record from
 before the uncertified verdicts (no certified field) is read by aggregate.py as: equal with
 certificate kernel rejected is equal_uncertified, unknown with "not reported unequal:" in its
-reason is unequal_uncertified, every other verdict unchanged.
+reason is unequal_uncertified, every other verdict unchanged. An F run at a point where its pair is
+equal (section 5) is excluded from every table and counted in the aggregate summary line.
 
 B3, diagram size (benchmarks/size.py): for every successful ArchytasZX B1 run, the smallest
 diagram over both sides, both normal forms and every diagram of every certificate (replayed
@@ -537,7 +548,9 @@ source digest hashes the subject file, the catalogue's helper modules and data f
 translate.py and subject.py (for an F equation also breaks.py and its F record), so adding a
 subject leaves every other key unchanged and editing one re-runs only its runs. On start every log
 is read and every key present is reused: the schedule replays from logged outcomes, and a unit
-whose unit record exists is skipped. A run cut off before its line was written leaves nothing and
+whose unit record exists is skipped, except a finished F unit whose unit record lacks
+differs_checked and which ran a point where its pair is equal: its schedule replays under the
+differs filter and writes a new unit record with differs_checked, which the index prefers. A run cut off before its line was written leaves nothing and
 is re-run whole; a truncated last line is ignored. SIGINT or SIGTERM stops new runs and sends
 SIGTERM to each running worker's process group (the worker kills its Lean check, whose process
 group is its own), SIGKILL after 5 s; those runs are re-run on resume. Aggregates and plots come

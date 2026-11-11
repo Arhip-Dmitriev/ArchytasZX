@@ -29,6 +29,7 @@ from typing import Any
 
 Point = tuple[int | None, int]
 MAX_DRAWS = 200_000
+MAX_SCAN = 4096
 
 
 @dataclass(frozen=True)
@@ -42,19 +43,23 @@ class Axes:
     d_hi: int
     has_n: Any
     has_d: Any
+    differs: Any = field(default=lambda p: True)
 
     def contains(self, p: Point) -> bool:
-        """Whether ``p`` lies in the domain and the ranges."""
+        """Whether ``p`` lies in the domain and the ranges, and an F pair differs there."""
         n, d = p
         if n is not None and (self.n_lo is None or not (self.n_lo <= n <= (self.n_hi or n))):
             return False
         if not (self.d_lo <= d <= self.d_hi):
             return False
-        return (n is None or self.has_n(n)) and self.has_d(d)
+        return (n is None or self.has_n(n)) and self.has_d(d) and self.differs(p)
 
 
-def axes(inst: Any, cfg: dict[str, Any]) -> Axes:
-    """The schedule ranges of ``inst`` under the ``points`` config."""
+def axes(inst: Any, cfg: dict[str, Any], false: dict[str, Any] | None = None) -> Axes:
+    """The schedule ranges of ``inst`` under the ``points`` config; with the F record
+    ``false``, only points where its pair differs."""
+    from benchmarks.differs import differs
+
     pc = cfg["points"]
     dom = inst.domain
     if inst.subject.size_parameter is None:
@@ -67,7 +72,7 @@ def axes(inst: Any, cfg: dict[str, Any]) -> Axes:
         d_hi = pc["d_max"] if dom.d_max is None else min(pc["d_max"], dom.d_max)
     else:
         d_lo = d_hi = int(inst.subject.dimension)
-    return Axes(n_lo, n_hi, d_lo, d_hi, dom.has_n, dom.has_d)
+    return Axes(n_lo, n_hi, d_lo, d_hi, dom.has_n, dom.has_d, lambda p: differs(false, p[0], p[1]))
 
 
 def seed(base: int, equation: str, tool: str) -> int:
@@ -135,18 +140,22 @@ def ladder(ax: Axes, cfg: dict[str, Any]) -> list[Point]:
 def _distinct(ax: Axes, p: Point, used: set[Point]) -> Point | None:
     """``p``, or the next domain point not in ``used``: n raised first, then d."""
     n, d = p
-    if p not in used:
+    if p not in used and ax.differs(p):
         return p
     if n is not None:
         v = _next_n(ax, n + 1)
-        while v is not None:
-            if (v, d) not in used:
+        for _ in range(MAX_SCAN):
+            if v is None:
+                break
+            if (v, d) not in used and ax.differs((v, d)):
                 return (v, d)
             v = _next_n(ax, v + 1)
     w = _next_d(ax, d + 1)
-    while w is not None:
+    for _ in range(MAX_SCAN):
+        if w is None:
+            break
         q = (n, w)
-        if q not in used:
+        if q not in used and ax.differs(q):
             return q
         w = _next_d(ax, w + 1)
     for q in enumerate_domain(ax, limit=10_000):
@@ -155,15 +164,22 @@ def _distinct(ax: Axes, p: Point, used: set[Point]) -> Point | None:
     return None
 
 
-def enumerate_domain(ax: Axes, limit: int) -> Iterator[Point]:
-    """Domain points in (n, d) order, at most ``limit``."""
+def enumerate_domain(ax: Axes, limit: int, differing: bool = True) -> Iterator[Point]:
+    """Domain points in (n, d) order, at most ``limit``; with ``differing``, only those where
+    an F pair differs, among the first ``MAX_SCAN`` times ``limit`` domain points."""
     ns: Any = [None] if ax.n_lo is None else range(ax.n_lo, (ax.n_hi or ax.n_lo) + 1)
     count = 0
+    scanned = 0
     for n in ns:
         if n is not None and not ax.has_n(n):
             continue
         for d in range(ax.d_lo, ax.d_hi + 1):
-            if ax.has_d(d):
+            if not ax.has_d(d):
+                continue
+            scanned += 1
+            if differing and scanned > MAX_SCAN * limit:
+                return
+            if not differing or ax.differs((n, d)):
                 yield (n, d)
                 count += 1
                 if count >= limit:
@@ -172,7 +188,7 @@ def enumerate_domain(ax: Axes, limit: int) -> Iterator[Point]:
 
 def domain_size(ax: Axes, cap: int) -> int:
     """The number of domain points, counted up to ``cap``."""
-    return sum(1 for _ in enumerate_domain(ax, cap))
+    return sum(1 for _ in enumerate_domain(ax, cap, differing=False))
 
 
 def dominated(p: Point, failed: list[Point]) -> bool:

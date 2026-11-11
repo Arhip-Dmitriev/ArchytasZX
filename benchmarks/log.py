@@ -85,10 +85,15 @@ def lines(results: Path) -> Iterator[dict[str, Any]]:
 
 
 def index(results: Path, cfg_hash: str | None = None) -> dict[str, dict[str, Any]]:
-    """The first record of every key (of one config hash when given)."""
+    """The first record of every key, a unit record with ``differs_checked`` preferred (of one
+    config hash when given)."""
     out: dict[str, dict[str, Any]] = {}
     for rec in lines(results):
         if cfg_hash is not None and rec.get("config") != cfg_hash:
             continue
-        out.setdefault(rec["key"], rec)
+        old = out.get(rec["key"])
+        if old is None or (
+            rec.get("unit") and rec.get("differs_checked") and not old.get("differs_checked")
+        ):
+            out[rec["key"]] = rec
     return out

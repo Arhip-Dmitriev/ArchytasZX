@@ -100,6 +100,7 @@ class Context:
     cgroup: bool
     writers: dict[int, log.Writer] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    stale: set[str] = field(default_factory=set)
 
     def writer(self) -> log.Writer:
         tid = threading.get_ident()
@@ -400,7 +401,7 @@ class UnitRun:
         """Symbolic run, phase 1, phase 2, then the unit record."""
         tool = self.unit.tool
         unit_key = f"{self.ctx.cfg_hash}|{self.eq}@{self.source}|unit|{tool}"
-        if unit_key in self.ctx.done:
+        if unit_key in self.ctx.done and unit_key not in self.ctx.stale:
             return
         from benchmarks import tools
 
@@ -414,7 +415,7 @@ class UnitRun:
             rec = self.run(None, 0, trace, "symbolic")
             if _success(rec):
                 self.repeats(None, rec, "symbolic")
-        ax = points.axes(self.inst, self.cfg)
+        ax = points.axes(self.inst, self.cfg, self.unit.false)
         k_target = int(pc["K"])
         size = points.domain_size(ax, k_target)
         used: set[Any] = set()
@@ -483,6 +484,7 @@ class UnitRun:
             "kind": self.unit.false["kind"] if self.unit.false else None,
             "restricted": bool(self.inst.restriction),
             "K": self.cfg["points"]["K"],
+            "differs_checked": self.unit.false is not None,
             **fields,
         }
         self.ctx.writer().append(rec)
@@ -548,6 +550,22 @@ def units_of(cfg: dict[str, Any], false_records: list[dict[str, Any]]) -> list[t
     return out
 
 
+def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, Any]]) -> set[str]:
+    """The unit keys of finished F units whose unit record predates the differs check and
+    that ran a point where their pair is equal."""
+    from benchmarks.differs import differs
+
+    falses = {f"{r['equation']}!": r for r in false_records if r.get("kind") is not None}
+    out: set[str] = set()
+    for rec in done.values():
+        false = falses.get(rec.get("equation", ""))
+        if rec.get("unit") or false is None or rec.get("d") is None:
+            continue
+        if not differs(false, rec.get("n"), rec["d"]):
+            out.add(f"{rec['config']}|{rec['equation']}@{rec['source']}|unit|{rec['tool']}")
+    return {k for k in out if k in done and not done[k].get("differs_checked")}
+
+
 def run(
     cfg: dict[str, Any], shard: tuple[int, int] = (0, 1), only: list[str] | None = None
 ) -> None:
@@ -584,6 +602,7 @@ def run(
         memory_cap_mb(cfg, jobs),
         lean.cgroups(),
     )
+    ctx.stale = stale_units(ctx.done, false_records)
     units = units_of(cfg, false_records)
     i, total = shard
     units = [

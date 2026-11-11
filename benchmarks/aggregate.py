@@ -489,11 +489,34 @@ def current(cfg: dict[str, Any], recs: list[dict[str, Any]]) -> list[dict[str, A
     return [r for r in recs if want.get(r.get("equation", "")) == r.get("source")]
 
 
+def equal_points(cfg: dict[str, Any], runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The F runs at a concrete point where their pair is equal."""
+    from benchmarks.differs import differs
+
+    fs = config.path(cfg, "results") / "false_set.json"
+    if not cfg["false_set"]["enabled"] or not fs.exists():
+        return []
+    falses = {
+        f"{r['equation']}!": r
+        for r in json.loads(fs.read_text(encoding="utf-8")).get("records", [])
+        if r.get("kind") is not None
+    }
+    return [
+        r
+        for r in runs
+        if r.get("equation") in falses
+        and r.get("d") is not None
+        and not differs(falses[r["equation"]], r.get("n"), r["d"])
+    ]
+
+
 def main(cfg: dict[str, Any]) -> None:
     """Writes every aggregate of the config's logs."""
     results = config.path(cfg, "results")
     h = config.digest(cfg)
     recs = [upgrade(r) for r in current(cfg, list(log.index(results, h).values()))]
+    excluded = {id(r) for r in equal_points(cfg, recs)}
+    recs = [r for r in recs if id(r) not in excluded]
     runs = [r for r in recs if not r.get("unit")]
     units = [r for r in recs if r.get("unit")]
     out = results / "aggregate"
@@ -511,7 +534,8 @@ def main(cfg: dict[str, Any]) -> None:
     _write(out, "wrong", wrong)
     print(
         f"aggregate: {len(runs)} runs, {len(rows)} points, {len(units)} units, "
-        f"{len(wrong)} wrong verdicts -> {out}"
+        f"{len(wrong)} wrong verdicts, {len(excluded)} F runs at points where the pair is "
+        f"equal excluded -> {out}"
     )
     for r in rows:
         if r["tool"] == "archytaszx" and r["outcome"] in ("wrong", "wrong (uncertified)"):
