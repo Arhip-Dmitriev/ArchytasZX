@@ -139,7 +139,19 @@ other pattern requires its nodes to lie outside every node-scope box.
 Port-box unfusion: a spider leg that alone forms the scope of a port-scope box is moved onto a
 new phaseless spider of the same colour, joined to the rest by one wire.
 
-3.4 Determinism
+3.4 Template phase parameters
+
+A template rule (match_template, documented in COMPLETENESS.txt) compares a node's phase
+parameter with the vector its template expects. Equal vectors match at once. At a concrete
+dimension the comparison walks the indices where either vector has an explicit entry or
+weight (every index when either carries a rule), entry by entry on exact data. Two unweighted
+entries are equal when their turns agree, unequal when both turns are distinct rationals
+(turns are normalised mod 1), and otherwise equal only when their difference simplifies to an
+integer. Weighted entries compare as coefficients: by exact Scalar equality, then, when both
+are free of symbols, by their canonical algebraic forms, and only when no canonical form exists
+by sympy simplification of that one difference.
+
+3.5 Determinism
 
 Every matcher returns its matches sorted by a hash-independent key; no result depends on set
 iteration order.

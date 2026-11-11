@@ -260,10 +260,37 @@ def _same_vector(a: PhaseVector | None, b: PhaseVector | None, dim: Dim) -> bool
     if not dim.is_concrete:
         return False
     r = dim.to_int()
-    return all(
-        sp.simplify(left.coefficient(k).to_sympy() - right.coefficient(k).to_sympy()) == 0
-        for k in range(1, r)
+    dense = any(v.rule is not None or v.weight_rule is not None for v in (left, right))
+    indices: Iterable[int] = (
+        range(1, r)
+        if dense
+        else sorted({*left.entries(), *left.weights(), *right.entries(), *right.weights()})
     )
+    weighted = left.is_weighted or right.is_weighted
+    return all(_same_entry(left, right, k, weighted) for k in indices)
+
+
+def _same_entry(left: PhaseVector, right: PhaseVector, k: int, weighted: bool) -> bool:
+    """Whether the two vectors provably agree at index ``k``, on exact turns and weights."""
+    ta, tb = left.get(k).to_sympy_turns(), right.get(k).to_sympy_turns()
+    if not weighted:
+        if ta == tb:
+            return True
+        if ta.is_Rational and tb.is_Rational:
+            return False
+        return sp.simplify(ta - tb).is_integer is True
+    ca, cb = left.coefficient(k), right.coefficient(k)
+    if ca == cb:
+        return True
+    a, b = ca.to_sympy(), cb.to_sympy()
+    if not a.free_symbols and not b.free_symbols:
+        from archytaszx.algebra.pathsum import PathSumUnsupported, constant, with_sqrt2
+
+        try:
+            return with_sqrt2(*constant(a)) == with_sqrt2(*constant(b))
+        except PathSumUnsupported:
+            pass
+    return bool(sp.simplify(a - b) == 0)
 
 
 @dataclass(frozen=True)
