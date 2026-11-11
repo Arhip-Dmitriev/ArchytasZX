@@ -114,9 +114,13 @@ hypotheses.
   - A rule fires only when every one of its declared side conditions has been checked and
     passed; the outcome of each is recorded.
   - A reported EQUAL verdict rests on a replayable derivation, a symbolic contraction with
-    every symbol formal, or an induction whose base and step are both settled.
+    every symbol formal, or an induction whose base and step are both settled, and carries a
+    proof the kernel re-checks.
   - A reported UNEQUAL verdict rests on an interface mismatch, a numeric counterexample at an
-    assignment satisfying every symbol's assumptions, or a symbolic witness entry.
+    assignment satisfying every symbol's assumptions, or a symbolic witness entry; past the
+    interface it carries a Lean refutation.
+  - The same evidence without the proof or the refutation is reported as EQUAL_UNCERTIFIED or
+    UNEQUAL_UNCERTIFIED, never as EQUAL or UNEQUAL.
   - A proof exported to Lean is checked by Lean independently of the engine. A step for which
     no Lean lemma exists appears as an explicitly named axiom (unproved_*), never silently.
 
@@ -124,7 +128,8 @@ hypotheses.
 6. CURRENT LIMITS
 -----------------
 
-  - Decision procedures can return UNKNOWN; read the reason they give.
+  - Decision procedures can return UNKNOWN or an uncertified verdict; read the reason they
+    give.
   - Symbolic contraction becomes slow as the number of phased spiders grows (roughly a factor
     of four per symbolic phase in a chain).
   - Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two

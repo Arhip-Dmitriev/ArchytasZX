@@ -300,9 +300,10 @@ not implemented yet.
 
 In **beta and under active development**: the API is unstable and changes between
 releases. The automatic decision procedure is sound but not complete, so `decide` and `prove`
-can answer "unknown". `prove exhaustive` has no depth or time cap; at concrete dimensions
-without bang boxes it refutes unequal inputs and proves equal ones joined by the derivations it
-enumerates, and `prove exhaustive algebraic` proves every equal pair with algebraic parameters,
+can answer "unknown"; a verdict without a proof the kernel re-checks or a Lean refutation
+is reported as "equal (uncertified)" or "unequal (uncertified)". `prove exhaustive` has no
+depth or time cap; at concrete dimensions without bang boxes it refutes unequal inputs and
+proves equal ones joined by the derivations it enumerates, and `prove exhaustive algebraic` proves every equal pair with algebraic parameters,
 given time; elsewhere neither need terminate. Known limits:
 
 - Symbolic contraction slows sharply as the number of phased spiders grows.
@@ -316,7 +317,7 @@ given time; elsewhere neither need terminate. Known limits:
   does not match.
 - Every rule is a proved Lean lemma. A few verdicts reached only by symbolic contraction
   (evaluated quadratic Gauss sums, phases with a symbolic coefficient, scalars outside the exact
-  model) have no Lean proof path.
+  model) have no Lean proof path and are reported uncertified.
 
 ## Development
 

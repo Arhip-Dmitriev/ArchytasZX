@@ -4,7 +4,8 @@ ARCHYTASZX DOCUMENTATION
 Layer D (part 2): Deciding and Proving Equality
 
 Applies to: ArchytasZX 2.0.x
-Modules: archytaszx.semantics.decide, prove, induction, certificate, kernel, restrict
+Modules: archytaszx.semantics.decide, certify_decision, prove, induction, induction_kernel,
+         certificate, kernel, restrict
 
 
 1. THE QUESTION AND THE ANSWERS
@@ -39,7 +40,10 @@ constraints, one per equation up to orientation) are reported with the verdict a
                  restrict=None, describe=None, prove_equal=True) -> Decision
 
 prove_equal=False skips the proof of an EQUAL verdict: EQUAL is kept and Decision.proof is
-None. describe gives the diagram comments of the Lean refutation and the normaliser proof.
+None. The proof is built by archytaszx.semantics.certify_decision.decision_proof: the
+decision's own certificates, else the normaliser of symbolic sums, else prove; a restricted
+decision through the family's proof or the restricted pair's. describe gives the diagram
+comments of the Lean refutation and the normaliser proof.
 
 With restrict (a Restriction, clause text or a mapping, section 8) the decision is the
 restricted decision of section 8; without clauses it is the decision below.
@@ -175,7 +179,7 @@ prove settles a goal in this order:
     ProofStatus: PROVED | REFUTED | NOT_FOUND | CHECK_FAILED
     ProofOutcome(status, reason, certificate, check, search, counterexample, assumptions,
                  induction, mixed, restriction, family, family_holds, restricted_pair,
-                 counterexample_original)
+                 counterexample_original, refutation)
 
 With restrict, prove and prove_exhaustive run the three steps of section 8
 (restricted_outcome): the unrestricted proof first, kept when PROVED or REFUTED inside the
@@ -199,7 +203,7 @@ sides.
 
     prove_exhaustive(start, goal, *, refute=True, samples=None, max_samples=24,
                      tolerance=1e-9, max_elements=10_000_000, on_layer=None,
-                     algebraic=False) -> ProofOutcome
+                     algebraic=False, restrict=None) -> ProofOutcome
 
 prove_exhaustive runs steps 1 and 2 of prove, then archytaszx.rewrite.exhaustive
 .exhaustive_search: a breadth-first search from start and from goal at once over every rule

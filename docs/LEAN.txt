@@ -508,15 +508,16 @@ for each, in section 9.
         -> str
             Lean source for a Theorem, Refutation or Symbolic; semantic=False forces the
             opaque export.
-    archytaszx.semantics.lean_net.check(source, path)
+    archytaszx.semantics.lean_net.check(source, path, timeout=1800) -> (accepted, output)
             write and check.
     archytaszx.semantics.lean_net.NetUnsupported
             raised for a theorem outside the network semantics.
     archytaszx.semantics.lean_sym.export_symbolic, sym_check
     archytaszx.semantics.lean_refute.export_refutation
     archytaszx.semantics.lean_numeric.export_numeric_refutation
-    archytaszx.semantics.decide.lean_refutation(left, right, point, describe=None) -> str
-            the refutation decide_equal and prove require (5.4).
+    archytaszx.semantics.decide.lean_refutation(left, right, point, describe=None, index=None) -> str
+            the refutation decide_equal and prove require (5.4); the boundary values index
+            are tried first.
     archytaszx.semantics.kernel.lift(t, left, right, clauses) -> Theorem
             the restricted-pair theorem t under several multiplicity clauses (4.7).
 
@@ -528,6 +529,9 @@ Each rule of COMPLETENESS.txt, section 3, marked L there is proved step by step 
 stated as LocalEq between the rule's two sides for every leg labelling, dimension, phase and
 coefficient vector the lemma quantifies, with side conditions as hypotheses that the exporter
 discharges per step by decide, rfl, or a case split over the indices at a concrete dimension.
+At a symbolic dimension the K_j phase hypotheses of zxw_k0, zxw_k1 and zxw_h1 are discharged
+by om_eq_ex, and the H1 antipode (K_{-j} against K_j) by ex_congr_int with -j; the zero phase
+at j = 0 by simp.
 
   Rule (and converse)            Lemma (module)        Builder in lean_net
   -----------------------------  --------------------  -----------------------------------
@@ -606,10 +610,12 @@ discharges per step by decide, rfl, or a case split over the indices at a concre
                                  chainsClosed,         by LocalEq.flip')
                                  zhdChainVal, vBoxVal
 
-A converse is proved through its forward rule (lean_net._through_forward): the forward rule is
-applied to the step's result, the identity spiders that application leaves are removed by
-identity_removal steps, the outcome is matched to the step's start by an isomorphism, and the
-composite is reversed by Equal.symm; identity removals alone are tried first. qf_d1_converse,
+A step of a rule without a builder is proved through its reverse rule (lean_net._through_forward;
+the forward rule of a converse, the converse of a rule): the reverse rule is applied to the
+step's result, then identity_removal and spider_fusion steps consuming only nodes absent from
+the step's start, found by depth-first search, reach a diagram matched to that start by an
+isomorphism or an algebraic meet, and the composite is reversed by Equal.symm; those tidying
+steps alone are tried first. qf_d1_converse,
 zxw_va_converse, qf_va_converse, zxw_kz_converse, qf_hd_converse, zxw_hd_converse,
 w_z_effect_converse and wz_bialgebra_converse have builders of their own (LocalEq.symm' or
 LocalEq.flip' of the forward lemma). Converses with free values (zxw_s1, zxw_ad, zxw_ept,

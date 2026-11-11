@@ -185,6 +185,10 @@ count.
     crossing_wires, internal_wires, outside_crossings, boundary_refs_in_scope
     scope_is_closed(diagram, node_scope) -> bool
     free_mult_symbols(diagram) -> frozenset[str]
+    boundary_arity(diagram) -> (sympy.Expr, sympy.Expr) | None
+            The boundary input and output counts as expanded polynomials in the free
+            multiplicities (a port under boxes counts as the product of their
+            multiplicities); None when a port's covering boxes are not one nesting chain.
 
 4.4 Layout
 
