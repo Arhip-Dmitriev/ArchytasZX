@@ -163,7 +163,11 @@ Bang boxes:
     entry and every factor; the group factor is Sum_x inner(t, x) prod_k perleg_k(x_k, s),
     inner the contraction of one copy with its boundary slots (template order) and crossing
     legs (wire order) open, perleg as above. The index s is eliminated when the entry pins
-    it. A bridged box holding a variable-rank part raises.
+    it: every term of the entry carries [s = v] (v a boundary index or a constant) and either
+    simplifies to [s = v] times itself at s = v, or is [s = v] times a part periodic in s mod
+    d (deltas mod d, exp(2 pi i P/d) over integer polynomials P) with every group factor
+    periodic too; then v replaces s in the entry and the factors. A bridged box holding a
+    variable-rank part raises.
   - A box wired to any other node outside it, two node-scope boxes meeting one spider, a port
     box over two W nodes, and other shapes not listed raise
     SymbolicContractionUnsupportedError.

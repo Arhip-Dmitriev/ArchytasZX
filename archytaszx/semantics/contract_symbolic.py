@@ -791,8 +791,47 @@ def _pins(term: sp.Expr, shared: sp.Symbol, modulus: sp.Expr) -> list[sp.Expr]:
     return found
 
 
-def _pinned_value(entry: Scalar, index: SharedIndex, max_steps: int) -> sp.Expr | None:
-    """The value every term of ``entry`` pins ``index`` to, or None when there is none."""
+def _periodic(expr: sp.Expr, symbol: sp.Symbol, modulus: sp.Expr) -> bool:
+    """Whether ``expr`` is unchanged by ``symbol -> symbol + modulus``, read off its structure:
+    deltas mod ``modulus`` and ``exp(2 pi i P / modulus)`` over integer polynomials ``P``."""
+    if symbol not in expr.free_symbols:
+        return True
+    if isinstance(expr, (sp.Add, sp.Mul)):
+        return all(_periodic(arg, symbol, modulus) for arg in expr.args)
+    if isinstance(expr, sp.Pow):
+        return symbol not in expr.exp.free_symbols and _periodic(expr.base, symbol, modulus)
+    if isinstance(expr, ModDelta):
+        argument, m = expr.args
+        return bool(m == modulus) and _integer_poly(sp.expand(argument), symbol)
+    if isinstance(expr, sp.exp):
+        return _integer_poly(sp.expand(expr.args[0] * modulus / (2 * sp.pi * sp.I)), symbol)
+    return False
+
+
+def _integer_poly(expr: sp.Expr, symbol: sp.Symbol) -> bool:
+    """Whether ``expr`` is a polynomial in ``symbol`` with integer-valued coefficients."""
+    try:
+        poly = sp.Poly(expr, symbol)
+    except sp.PolynomialError:
+        return False
+    return all(c.is_integer for c in poly.all_coeffs())
+
+
+def _pinned_by_delta(term: sp.Expr, symbol: sp.Symbol, value: sp.Expr, modulus: sp.Expr) -> bool:
+    """Whether ``term`` is a delta pinning ``symbol`` to ``value`` times a part periodic in
+    ``symbol``."""
+    for factor in sp.Mul.make_args(term):
+        if value in _pins(factor, symbol, modulus):
+            rest = sp.Mul(*(f for f in sp.Mul.make_args(term) if f is not factor))
+            return _periodic(rest, symbol, modulus)
+    return False
+
+
+def _pinned_value(
+    entry: Scalar, index: SharedIndex, max_steps: int, others: Sequence[sp.Expr] = ()
+) -> sp.Expr | None:
+    """The value every term of ``entry`` pins ``index`` to, or None when there is none; a term
+    passes by simplification, or as a delta times a periodic part when ``others`` are periodic."""
     symbol = _engine_index(index.name)
     modulus = index.dim.to_sympy()
     terms = sp.Add.make_args(entry.to_sympy())
@@ -801,10 +840,13 @@ def _pinned_value(entry: Scalar, index: SharedIndex, max_steps: int) -> sp.Expr 
         for pin in _pins(term, symbol, modulus):
             if pin not in candidates:
                 candidates.append(pin)
+    periodic_others = all(_periodic(e, symbol, modulus) for e in others)
     for value in candidates:
         pinned = cast(sp.Expr, ModDelta(symbol - value, modulus))
+        structural = periodic_others and bool(value.is_integer)
         if all(
-            Scalar(term - pinned * term.xreplace({symbol: value}))
+            (structural and _pinned_by_delta(term, symbol, value, modulus))
+            or Scalar(term - pinned * term.xreplace({symbol: value}))
             .simplify(max_steps=max_steps)
             .is_zero
             for term in terms
@@ -1299,7 +1341,8 @@ def contract_symbolic(
 
     kept: list[SharedIndex] = []
     for index in shared:
-        value = _pinned_value(closed, index, max_steps)
+        others = [*factors, *(m for m in marked if m is not None)]
+        value = _pinned_value(closed, index, max_steps, others)
         if value is None:
             kept.append(index)
             continue
