@@ -27,14 +27,25 @@ def expected(inst: Any) -> str:
 
 
 def outcome(inst: Any, status: str, verdict: str | None) -> str:
-    """ok (the expected verdict), wrong (the opposite verdict), unknown, or the failing
+    """ok (the expected verdict, certified), uncertified (the expected verdict, uncertified),
+    wrong (the opposite verdict, certified), wrong (uncertified), unknown, or the failing
     stage's status."""
+    return verdict_outcome(bool(inst.truth), status, verdict)
+
+
+def verdict_outcome(truth: bool, status: str, verdict: str | None) -> str:
+    """The :func:`outcome` of a verdict on an equation whose truth is ``truth``."""
     if status != "ok":
         return status
-    if verdict == expected(inst):
+    want = "equal" if truth else "unequal"
+    if verdict == want:
         return "ok"
+    if verdict == f"{want}_uncertified":
+        return "uncertified"
     if verdict in ("equal", "unequal"):
         return "wrong"
+    if verdict in ("equal_uncertified", "unequal_uncertified"):
+        return "wrong (uncertified)"
     return "unknown"
 
 

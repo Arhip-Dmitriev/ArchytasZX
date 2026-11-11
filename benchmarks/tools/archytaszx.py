@@ -63,6 +63,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     out["stages"]["decide"] = dec
     verdict = dec.get("verdict")
     out["verdict"] = verdict
+    out["certified"] = dec.get("certified")
     out["outcome"] = common.outcome(inst, dec["status"], verdict)
     out["wrong"] = out["outcome"] == "wrong"
     if dec["status"] == "ok" and verdict == "equal" and inst.truth:
@@ -70,7 +71,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
             out["b3"] = _b3(run_)
         except Exception as exc:  # noqa: BLE001
             out["b3"] = {"error": str(exc)[:200]}
-    decided = dec["status"] == "ok" and verdict in ("equal", "unequal")
+    decided = dec["status"] == "ok" and verdict in ("equal", "unequal", "equal_uncertified")
     reason = "no decided verdict" if not decided else None
     if st["certificate"]:
         if reason is None:

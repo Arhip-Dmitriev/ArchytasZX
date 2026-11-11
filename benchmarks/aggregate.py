@@ -66,6 +66,33 @@ def d_bin(d: int | None) -> str:
     return f"{2 ** (k - 1) + 1}-{2**k}"
 
 
+def upgrade(rec: dict[str, Any]) -> dict[str, Any]:
+    """An ArchytasZX run record from before the certified verdicts, its verdict mapped onto
+    the five and its outcome recomputed; any other record unchanged."""
+    from benchmarks.tools import common
+
+    if rec.get("tool") != "archytaszx" or "certified" in rec or rec.get("verdict") is None:
+        return rec
+    stages = rec.get("stages") or {}
+    verdict = rec["verdict"]
+    kernel = (stages.get("certificate") or {}).get("kernel")
+    reason = str((stages.get("decide") or {}).get("reason") or "")
+    if verdict == "equal" and kernel == "rejected":
+        verdict = "equal_uncertified"
+    elif verdict == "unknown" and "not reported unequal:" in reason:
+        verdict = "unequal_uncertified"
+    status = (stages.get("decide") or {}).get("status", "ok")
+    oc = common.verdict_outcome(bool(rec.get("truth")), status, verdict)
+    certified = verdict in ("equal", "unequal")
+    return {
+        **rec,
+        "verdict": verdict,
+        "certified": certified,
+        "outcome": oc,
+        "wrong": oc == "wrong",
+    }
+
+
 def _point_key(r: dict[str, Any]) -> tuple[Any, ...]:
     return (r["equation"], r["version"], r["tool"], r.get("n"), r.get("d"))
 
@@ -466,7 +493,7 @@ def main(cfg: dict[str, Any]) -> None:
     """Writes every aggregate of the config's logs."""
     results = config.path(cfg, "results")
     h = config.digest(cfg)
-    recs = current(cfg, list(log.index(results, h).values()))
+    recs = [upgrade(r) for r in current(cfg, list(log.index(results, h).values()))]
     runs = [r for r in recs if not r.get("unit")]
     units = [r for r in recs if r.get("unit")]
     out = results / "aggregate"
@@ -486,9 +513,10 @@ def main(cfg: dict[str, Any]) -> None:
         f"aggregate: {len(runs)} runs, {len(rows)} points, {len(units)} units, "
         f"{len(wrong)} wrong verdicts -> {out}"
     )
-    for r in wrong:
-        if r["tool"] == "archytaszx":
+    for r in rows:
+        if r["tool"] == "archytaszx" and r["outcome"] in ("wrong", "wrong (uncertified)"):
+            tag = "" if r["wrong"] else " (uncertified)"
             print(
-                f"  ENGINE WRONG VERDICT: {r['equation']} {r['version']} "
+                f"  ENGINE WRONG VERDICT{tag}: {r['equation']} {r['version']} "
                 f"n={r['n']} d={r['d']}: {r['verdict']}"
             )

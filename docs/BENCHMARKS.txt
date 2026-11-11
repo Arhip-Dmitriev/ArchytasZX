@@ -412,8 +412,13 @@ memory, the derivation steps, kernel inferences (per kind), certificate bytes (t
 certificate show), Lean lines and bytes, Lean check CPU and per-declaration profiler
 milliseconds, the axiom class, and the span tree (section 7); per unit, the frontier, K reached
 and region_exhausted. B2 adds the counterexample point and the Lean refutation's size. A run is
-successful when stage decide gives the expected verdict (equal for S, unequal for F); a run
-giving the opposite verdict is logged wrong.
+successful when stage decide gives the expected verdict certified (equal for S, unequal for F;
+the record's certified field). A run giving the expected verdict uncertified (equal_uncertified,
+unequal_uncertified) is logged uncertified; a run giving the opposite verdict is logged wrong
+when certified and wrong (uncertified) when not. Only successes count toward K. A record from
+before the uncertified verdicts (no certified field) is read by aggregate.py as: equal with
+certificate kernel rejected is equal_uncertified, unknown with "not reported unequal:" in its
+reason is unequal_uncertified, every other verdict unchanged.
 
 B3, diagram size (benchmarks/size.py): for every successful ArchytasZX B1 run, the smallest
 diagram over both sides, both normal forms and every diagram of every certificate (replayed
@@ -481,8 +486,8 @@ Implementation: benchmarks/tools/archytaszx.py, benchmarks/stages.py
 Each stage has its own CPU limit (stages.timeout_seconds, default one hour), enforced by a
 profiling timer that re-fires until it escapes the engine; the worker is killed after wall_factor
 times the sum of its stage limits. A stage that cannot run (certificate and Lean after an
-unknown verdict) is recorded not_run. Only decide decides success; later stages are recorded
-with their status.
+unknown or unequal_uncertified verdict) is recorded not_run. Only decide decides success; later
+stages are recorded with their status.
 
 
 9. STATISTICS
@@ -575,7 +580,7 @@ recorded with the reason and counted.
 
   Tool          State     Instances, verdict and limitations
   ------------  --------  ---------------------------------------------------------------------
-  ArchytasZX    built     everything; EQUAL, UNEQUAL, UNKNOWN; Lean proof
+  ArchytasZX    built     everything; EQUAL, UNEQUAL, both uncertified, UNKNOWN; Lean proof
   PyZX 0.10.8   built     d = 2, concrete n, pure circuits; maps: full_reduce of circuit .
                           spec^dagger to the identity (else unknown); states: |<s|c>|^2 =
                           <c|c><s|s> (unknown when an inner product keeps vertices after
