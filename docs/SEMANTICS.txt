@@ -157,8 +157,16 @@ Bang boxes:
     the spider's value s (Z: [leg = s]; X: d^(-1/2) w^(s leg) with the leg's sign), and s is
     summed with the spider's other factors; a copy outside the box that pins s evaluates the
     power.
-  - A box wired to any other node outside it, a port box over two W nodes, and other shapes
-    not listed raise SymbolicContractionUnsupportedError.
+  - A node-scope box meeting boundary slots and, at its other wires, only Z or X spiders
+    outside every box and every port scope (bridged) is a ReplicatedFactor group like a
+    boundary-only box. Each spider it reaches carries a SharedIndex s, summed around the
+    entry and every factor; the group factor is Sum_x inner(t, x) prod_k perleg_k(x_k, s),
+    inner the contraction of one copy with its boundary slots (template order) and crossing
+    legs (wire order) open, perleg as above. The index s is eliminated when the entry pins
+    it. A bridged box holding a variable-rank part raises.
+  - A box wired to any other node outside it, two node-scope boxes meeting one spider, a port
+    box over two W nodes, and other shapes not listed raise
+    SymbolicContractionUnsupportedError.
 
     tensor.substitute(mapping) -> SymbolicTensor       values pushed into every dimension,
                                                        multiplicity, entry and factor
@@ -186,7 +194,13 @@ compare_symbolic simplifies the difference of two symbolic tensors. It has three
 equal ("entries are exactly equal with d formal"), unequal, and indeterminate, when the
 difference still carries an index sum the simplifier could not decide. An indeterminate result
 has matched=False and a reason beginning "indeterminate"; it does not mean unequal. Variable-
-rank tensors are compared only when their layouts, shared indices and replicated factors agree.
+rank tensors are compared only when their layouts and shared indices agree. Each replicated
+factor is first normalised: the product c of its Mul arguments free of the group's template
+indices and of every shared index moves into the entry as c^m, m the multiplicity, and both
+are simplified. Groups agree when their multiplicities, marks and inner tensors agree and
+their factors are syntactically equal or their difference simplifies to zero, template
+indices aligned by position; the entries are then compared. Factors that differ leave the
+result indeterminate.
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 
 find_entry_witness looks for one assignment and one index tuple at which the two entries

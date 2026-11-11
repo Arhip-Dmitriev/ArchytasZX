@@ -68,6 +68,7 @@ from typing import TypeAlias
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
@@ -83,7 +84,13 @@ from archytaszx.diagram.bangbox import (
 )
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
-from archytaszx.semantics.contract_symbolic import SymbolicContractionError, SymbolicTensor
+from archytaszx.semantics.contract_symbolic import (
+    ReplicatedBlock,
+    ReplicatedFactor,
+    SymbolicAxis,
+    SymbolicContractionError,
+    SymbolicTensor,
+)
 
 CheckAssignmentValue: TypeAlias = "int | sp.Rational"
 DEFAULT_TOLERANCE = 1e-9
@@ -466,6 +473,69 @@ def compare(
     return compare_tensors(result_a.tensor, result_b.tensor, mode=mode, tolerance=tolerance)
 
 
+def _group_ranges(t: SymbolicTensor, group: int) -> dict[str, Dim]:
+    """The dimension of each template index of ``group``'s top-level blocks."""
+    out: dict[str, Dim] = {}
+    for slot in t.slots():
+        if isinstance(slot, ReplicatedBlock) and slot.group == group:
+            for axis in slot.axes:
+                if isinstance(axis, SymbolicAxis):
+                    out[axis.index] = axis.dim
+    return out
+
+
+def _normalise_groups(t: SymbolicTensor, max_steps: int) -> SymbolicTensor:
+    """``t`` with each plain group's index-free factor constant moved into the entry as its
+    power by the multiplicity."""
+    if not t.groups:
+        return t
+    shared = {index.name for index in t.shared}
+    entry = t.entry.to_sympy()
+    groups: list[ReplicatedFactor] = []
+    moved = False
+    for g, group in enumerate(t.groups):
+        if group.marked is not None or group.inner is not None:
+            groups.append(group)
+            continue
+        names = set(_group_ranges(t, g)) | shared
+        prefix = f"_t{g}_"
+        constant: list[sp.Expr] = []
+        rest: list[sp.Expr] = []
+        for arg in sp.Mul.make_args(group.factor.to_sympy()):
+            symbols = {str(symbol.name) for symbol in arg.free_symbols}
+            bound = symbols & names or any(name.startswith(prefix) for name in symbols)
+            (rest if bound else constant).append(arg)
+        if not constant:
+            groups.append(group)
+            continue
+        moved = True
+        entry = entry * sp.Mul(*constant) ** group.multiplicity.to_sympy()
+        factor = Scalar(sp.Mul(*rest)).simplify(max_steps=max_steps)
+        groups.append(replace(group, factor=factor))
+    if not moved:
+        return t
+    simplified = Scalar(entry).simplify(max_steps=max_steps, ranges=t.ranges())
+    return replace(t, entry=simplified, groups=tuple(groups))
+
+
+def _same_groups(left: SymbolicTensor, right: SymbolicTensor, max_steps: int) -> bool:
+    """Whether every group of ``left`` and ``right`` has the same multiplicity, mark, inner
+    tensor and, syntactically or after simplifying the difference, factor."""
+    if len(left.groups) != len(right.groups):
+        return False
+    for g, (a, b) in enumerate(zip(left.groups, right.groups, strict=True)):
+        if (a.multiplicity, a.marked, a.inner) != (b.multiplicity, b.marked, b.inner):
+            return False
+        if a.factor == b.factor:
+            continue
+        if a.marked is not None or a.inner is not None:
+            return False
+        ranges = {**_group_ranges(left, g), **left.ranges()}
+        if not (a.factor - b.factor).simplify(max_steps=max_steps, ranges=ranges).is_zero:
+            return False
+    return True
+
+
 def compare_symbolic(
     left: SymbolicTensor,
     right: SymbolicTensor,
@@ -497,9 +567,9 @@ def compare_symbolic(
                 "indeterminate: the variable-rank layouts or shared indices differ",
                 float("inf"),
             )
-        if tuple((g.factor, g.marked, g.inner) for g in left.groups) != tuple(
-            (g.factor, g.marked, g.inner) for g in right.groups
-        ):
+        left = _normalise_groups(left, max_steps)
+        right = _normalise_groups(right, max_steps)
+        if not _same_groups(left, right, max_steps):
             return ComparisonResult(
                 mode, False, "indeterminate: the replicated factors differ", float("inf")
             )

@@ -877,16 +877,19 @@ class _BoxPlan:
     replicated: tuple[BangBoxId, ...]
     ported: tuple[BangBoxId, ...]
     crossing: tuple[BangBoxId, ...] = ()
+    bridged: tuple[BangBoxId, ...] = ()
 
 
 def _plan_boxes(diagram: Diagram) -> _BoxPlan:
     """Sort every top-level box: a node scope closed off, a node scope meeting only the
     boundary, a node scope meeting the rest only at wires into Z and X spiders outside every
-    box, or a port scope on Z and X spiders and at most one W node; raise on any other box."""
+    box, one meeting the boundary and such wires, or a port scope on Z and X spiders and at
+    most one W node; raise on any other box."""
     closed: list[BangBoxId] = []
     replicated: list[BangBoxId] = []
     ported: list[BangBoxId] = []
     crossing: list[BangBoxId] = []
+    bridged: list[BangBoxId] = []
     boxed_nodes = {
         node_id
         for box in diagram.bang_boxes.values()
@@ -915,6 +918,8 @@ def _plan_boxes(diagram: Diagram) -> _BoxPlan:
                 replicated.append(box_id)
             elif _crosses_into_spiders(diagram, box.node_scope, boxed_nodes, ported_nodes):
                 crossing.append(box_id)
+            elif _wires_into_spiders(diagram, box.node_scope, boxed_nodes, ported_nodes):
+                bridged.append(box_id)
             else:
                 raise SymbolicContractionUnsupportedError(
                     f"bang box {box_id} has symbolic multiplicity {box.multiplicity} and meets "
@@ -943,16 +948,24 @@ def _plan_boxes(diagram: Diagram) -> _BoxPlan:
                     "lies in a node-scope bang box"
                 )
         ported.append(box_id)
+    meeting = [*crossing, *bridged]
     touched = [
-        _outside_end(diagram, box.node_scope, w).node_id
-        for box_id in crossing
+        (box_id, _outside_end(diagram, diagram.bang_boxes[box_id].node_scope, w).node_id)
+        for box_id in meeting
         for w in crossing_wires(diagram, diagram.bang_boxes[box_id].node_scope)
     ]
-    if len(crossing) > 1 and len(set(touched)) < len(touched):
+    owners: dict[NodeId, set[BangBoxId]] = {}
+    for box_id, node_id in touched:
+        owners.setdefault(node_id, set()).add(box_id)
+    if (len(crossing) > 1 and len({n for _b, n in touched}) < len(touched)) or any(
+        len(boxes) > 1 for boxes in owners.values()
+    ):
         raise SymbolicContractionUnsupportedError(
             "two node-scope bang boxes meet one spider at wires"
         )
-    return _BoxPlan(tuple(closed), tuple(replicated), tuple(ported), tuple(crossing))
+    return _BoxPlan(
+        tuple(closed), tuple(replicated), tuple(ported), tuple(crossing), tuple(bridged)
+    )
 
 
 def _outside_end(diagram: Diagram, scope: frozenset[NodeId], wire: Wire) -> PortRef:
@@ -974,6 +987,26 @@ def _crosses_into_spiders(
     """Whether ``scope`` meets no boundary slot and every wire leaving it ends at a Z or X
     spider outside every box and every port scope."""
     if boundary_refs_in_scope(diagram, scope):
+        return False
+    for wire in crossing_wires(diagram, scope):
+        end = _outside_end(diagram, scope, wire)
+        node = diagram.nodes[end.node_id]
+        if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name):
+            return False
+        if end.node_id in boxed_nodes or end.node_id in ported_nodes:
+            return False
+    return True
+
+
+def _wires_into_spiders(
+    diagram: Diagram,
+    scope: frozenset[NodeId],
+    boxed_nodes: set[NodeId],
+    ported_nodes: set[NodeId],
+) -> bool:
+    """Whether ``scope`` meets a boundary slot and every wire leaving it ends at a Z or X
+    spider outside every box and every port scope."""
+    if not boundary_refs_in_scope(diagram, scope):
         return False
     for wire in crossing_wires(diagram, scope):
         end = _outside_end(diagram, scope, wire)
@@ -1051,7 +1084,7 @@ def contract_symbolic(
 
     scope_of: dict[NodeId, BangBoxId] = {
         node_id: box_id
-        for box_id in plan.replicated
+        for box_id in (*plan.replicated, *plan.bridged)
         for node_id in diagram.bang_boxes[box_id].node_scope
     }
     port_box: dict[PortRef, BangBoxId] = {
@@ -1121,6 +1154,46 @@ def contract_symbolic(
         names = {axis.index: _engine_index(t.index) for axis, t in zip(inner.axes, templates[g])}
         factors[g] = _rename(inner.entry.to_sympy(), names)
         _drop_scope(working, box.node_scope)
+    bridged_leg: dict[PortRef, int] = {}
+    bridged_sums: dict[int, list[tuple[sp.Symbol, Dim]]] = {}
+    for box_id in plan.bridged:
+        box = diagram.bang_boxes[box_id]
+        g = group(box_id)
+        if len(factors) <= g:
+            factors.append(sp.Integer(1))
+        wires = sorted(crossing_wires(diagram, box.node_scope), key=Wire.sort_key)
+        ends = [_inside_end(diagram, box.node_scope, w) for w in wires]
+        cross_out = [e for e in ends if e.direction is Direction.OUTPUT]
+        cross_in = [e for e in ends if e.direction is Direction.INPUT]
+        run_out = [a.port for a in templates[g] if a.port.direction is Direction.OUTPUT]
+        run_in = [a.port for a in templates[g] if a.port.direction is Direction.INPUT]
+        inner = contract_symbolic(
+            _scope_subdiagram(
+                diagram, box.node_scope, box_id, [*run_out, *cross_out], [*run_in, *cross_in]
+            ),
+            max_steps=max_steps,
+        )
+        if inner.is_variable_rank:
+            raise SymbolicContractionUnsupportedError(
+                f"bang box {box_id} meets the boundary and spiders and holds a variable-rank part"
+            )
+        template_of = {t.port: t.index for t in templates[g]}
+        leg_names: dict[str, sp.Symbol] = {}
+        sums: list[tuple[sp.Symbol, Dim]] = []
+        for ref, axis in zip([*run_out, *cross_out, *run_in, *cross_in], inner.axes, strict=True):
+            if ref in template_of:
+                leg_names[axis.index] = _engine_index(template_of[ref])
+                continue
+            wire = next(w for w in wires if _inside_end(diagram, box.node_scope, w) == ref)
+            outside = _outside_end(diagram, box.node_scope, wire)
+            leg = _engine_index(f"_b{len(bridged_leg)}")
+            leg_names[axis.index] = leg
+            boxed[outside] = leg
+            bridged_leg[outside] = g
+            sums.append((leg, _port_dim(diagram, ref)))
+        factors[g] = _rename(inner.entry.to_sympy(), leg_names)
+        bridged_sums[g] = sums
+        _drop_scope(working, box.node_scope)
     for box_id in plan.ported:
         working.remove_bang_box(box_id)
 
@@ -1184,6 +1257,9 @@ def contract_symbolic(
                 if ref in crossing_leg:
                     copy_factor[crossing_leg[ref]] = copy_factor[crossing_leg[ref]] * factor
                     continue
+                if ref in bridged_leg:
+                    factors[bridged_leg[ref]] = factors[bridged_leg[ref]] * factor
+                    continue
                 g = group_of[port_box[ref]]
                 factors[g] = factors[g] * factor
             continue
@@ -1199,6 +1275,12 @@ def contract_symbolic(
         )
         marked[g] = factors[g] * excited
         factors[g] = factors[g] * sp.Mul(*vacuum)
+
+    for g, sums in sorted(bridged_sums.items()):
+        summed: sp.Expr = factors[g]
+        for symbol, dim in reversed(sums):
+            summed = sp.Sum(summed, (symbol, 0, dim.to_sympy() - 1))
+        factors[g] = Scalar(summed).simplify(max_steps=max_steps).to_sympy()
 
     for box_id in plan.crossing:
         inner, legs = crossing_inner[box_id]
