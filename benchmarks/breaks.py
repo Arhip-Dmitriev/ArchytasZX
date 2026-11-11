@@ -172,8 +172,16 @@ def _e_input_z(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) ->
     return _prepend(c, _wire(c, p), ir.Z(_wire(c, p), 1))
 
 
+def _entry_outputs(c: ir.Circuit) -> list[str]:
+    """Open single outputs that are not measured."""
+    m = _measured(c)
+    return [q for q in _outputs(c) if c.count(q) is None and q not in m]
+
+
 def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
-    outs = tuple(q for q in _outputs(c) if c.count(q) is None)
+    outs = tuple(_entry_outputs(c))
+    if not outs:
+        return c
 
     def f(x: tuple[int, ...]) -> Fraction:
         return Fraction(1, 2) if all(v == 1 for v in x) else Fraction(0)
@@ -456,9 +464,7 @@ def _variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
         for q in [w for w in _inputs(c) if w not in m]:
             yield Variant(f"Z on input {q}", {"wire": q}, small, {"input_zero": q})
     elif kind == "single_entry":
-        if any(c.count(q) is None for q in _outputs(c)) and not any(
-            c.count(q) is not None for q in _outputs(c)
-        ):
+        if _entry_outputs(c) and not any(c.count(q) is not None for q in _outputs(c)):
             yield Variant(
                 "phase where every output is 1", {"d_min": 2}, small, {"outputs_not_all": 1}
             )
@@ -557,12 +563,13 @@ def plugged(diagram: Any, outs: tuple[int, ...], ins: tuple[int, ...]) -> comple
     return complex(np.asarray(t).reshape(-1)[0]) * norm
 
 
-def _pure(diagram: Any) -> Any:
+def _pure(diagram: Any, doubled: bool = False) -> Any:
+    """The instantiated diagram, doubled when it is mixed or ``doubled`` is set."""
     from archytaszx.diagram.mixed import double
     from archytaszx.semantics import check
 
     inst = check.instantiate(diagram, {})
-    return inst if inst.is_pure() else double(inst)
+    return inst if inst.is_pure() and not doubled else double(inst)
 
 
 def _boundary_dims(d: Any) -> tuple[list[int], list[int]]:
@@ -614,12 +621,15 @@ def _pair(inst: Any, n: int | None, d: int) -> tuple[Any, Any]:
     return stages.diagrams(sc.text)
 
 
-def _symbolic_entry(diagram: Any, outs: tuple[int, ...], ins: tuple[int, ...]) -> complex:
-    """One entry by symbolic contraction at the diagram's bound values."""
+def _symbolic_entry(
+    diagram: Any, outs: tuple[int, ...], ins: tuple[int, ...], doubled: bool = False
+) -> complex:
+    """One entry by symbolic contraction at the diagram's bound values, of the doubled diagram
+    when it is mixed or ``doubled`` is set."""
     from archytaszx.diagram.mixed import double
     from archytaszx.semantics.contract_symbolic import contract_symbolic
 
-    d = diagram if diagram.is_pure() else double(diagram)
+    d = diagram if diagram.is_pure() and not doubled else double(diagram)
     t = contract_symbolic(d).substitute(dict(d.parameters))
     return complex(sp.N(t.value_at((*outs, *ins)).to_sympy()))
 
@@ -645,11 +655,12 @@ def _candidates(
 def differing_entry(
     raw_left: Any, raw_right: Any, n: int | None, d: int, rng: random.Random
 ) -> Witness | None:
-    """A differing entry of two loaded diagrams: dense when small, else candidate index tuples
-    by plugging (small nodes) or symbolic contraction."""
+    """A differing entry of two loaded diagrams, both doubled when either is mixed: dense when
+    small, else candidate index tuples by plugging (small nodes) or symbolic contraction."""
     from archytaszx.semantics import check
 
-    left, right = _pure(raw_left), _pure(raw_right)
+    mixed = not (raw_left.is_pure() and raw_right.is_pure())
+    left, right = _pure(raw_left, mixed), _pure(raw_right, mixed)
     lo, li = _boundary_dims(left)
     ro, ri = _boundary_dims(right)
     if (lo, li) != (ro, ri):
@@ -676,7 +687,7 @@ def differing_entry(
     def entry(raw: Any, inst: Any, outs: tuple[int, ...], ins: tuple[int, ...]) -> complex:
         if narrow[id(inst)]:
             return plugged(inst, outs, ins)
-        return _symbolic_entry(raw, outs, ins)
+        return _symbolic_entry(raw, outs, ins, mixed)
 
     for outs, ins in _candidates(lo, li, rng):
         x, y = entry(raw_left, left, outs, ins), entry(raw_right, right, outs, ins)
@@ -737,15 +748,18 @@ def _factored_witness(
     broken: Any, params: dict[str, Any], n: int, d: int, rng: random.Random
 ) -> Witness | None:
     """The boxed beyond_N witness: a nonzero entry e of the specification at (n, d) and the
-    gadget's value g there; the broken circuit's entry is g e."""
+    gadget's value g there (|g|^2 on doubled diagrams when either side is mixed); the broken
+    circuit's entry is g e."""
+    left, right = _pair(broken, n, d)
+    mixed = not (left.is_pure() and right.is_pure())
     g = gadget_value(params, n)
+    g = abs(g) ** 2 if mixed else g
     if abs(g - 1) <= TOL:
         return None
-    _, right = _pair(broken, n, d)
-    pr = _pure(right)
+    pr = _pure(right, mixed)
     ro, ri = _boundary_dims(pr)
     for outs, ins in [*_extrapolated(broken, n, d, len(ro)), *_candidates(ro, ri, rng)]:
-        e = _symbolic_entry(right, outs, ins)
+        e = _symbolic_entry(right, outs, ins, mixed)
         if abs(e) > TOL:
             x = g * e
             return Witness(
@@ -754,11 +768,11 @@ def _factored_witness(
     return None
 
 
-def _first_nonzero(diagram: Any) -> tuple[list[int], int] | None:
+def _first_nonzero(diagram: Any, doubled: bool = False) -> tuple[list[int], int] | None:
     """The first nonzero entry's index (outputs then inputs) and the output count, densely."""
     from archytaszx.semantics import check
 
-    p = _pure(diagram)
+    p = _pure(diagram, doubled)
     lo, li = _boundary_dims(p)
     if math.prod(lo) * math.prod(li) > DENSE_LIMIT:
         return None
@@ -779,8 +793,8 @@ def _extrapolated(
         return []
     pats = []
     for v in small:
-        _, right = _pair(broken, v, d)
-        hit = _first_nonzero(right)
+        left, right = _pair(broken, v, d)
+        hit = _first_nonzero(right, not (left.is_pure() and right.is_pure()))
         if hit is None:
             return []
         pats.append((v, *hit))

@@ -69,6 +69,7 @@ def _limit_memory() -> None:
 def _false_job(rec: dict[str, Any]) -> list[str]:
     from archytaszx.semantics import check
     from benchmarks import breaks, config, subject
+    from benchmarks.differs import doubling_mismatch
 
     cfg = config.load()
     insts = {i.id: i for i in subject.instances(breaks._selected(cfg))}
@@ -77,23 +78,23 @@ def _false_job(rec: dict[str, Any]) -> list[str]:
     out: list[str] = []
     w = rec["witness"]
     try:
+        left, right = breaks._pair(fi, w["n"], w["d"])
+        mixed = not (left.is_pure() and right.is_pure())
         if w.get("method") == "factored":
             g = breaks.gadget_value(rec["params"], w["n"])
-            _, right = breaks._pair(fi, w["n"], w["d"])
-            e = breaks._symbolic_entry(right, tuple(w["outs"]), tuple(w["ins"]))
+            g = abs(g) ** 2 if mixed else g
+            e = breaks._symbolic_entry(right, tuple(w["outs"]), tuple(w["ins"]), mixed)
             if abs(e) <= TOL or abs(g - 1) <= TOL:
                 out.append(f"{tag}: factored witness does not differ (e={e}, g={g})")
         elif w.get("interface"):
-            left, right = breaks._pair(fi, w["n"], w["d"])
-            lo = breaks._boundary_dims(breaks._pure(left))
-            ro = breaks._boundary_dims(breaks._pure(right))
-            if lo == ro:
+            lo = breaks._boundary_dims(breaks._pure(left, mixed))
+            ro = breaks._boundary_dims(breaks._pure(right, mixed))
+            if lo == ro or doubling_mismatch(w["interface"]):
                 out.append(f"{tag}: interfaces agree at the witness")
         else:
-            left, right = breaks._pair(fi, w["n"], w["d"])
-            pl, pr = breaks._pure(left), breaks._pure(right)
-            x = _entry(left, pl, w["outs"], w["ins"])
-            y = _entry(right, pr, w["outs"], w["ins"])
+            pl, pr = breaks._pure(left, mixed), breaks._pure(right, mixed)
+            x = _entry(left, pl, w["outs"], w["ins"], mixed)
+            y = _entry(right, pr, w["outs"], w["ins"], mixed)
             if abs(x - y) <= TOL:
                 out.append(f"{tag}: equal at the stored witness")
     except Exception as exc:  # noqa: BLE001
@@ -129,7 +130,7 @@ def _false_job(rec: dict[str, Any]) -> list[str]:
     return out
 
 
-def _entry(raw: Any, pure: Any, outs: list[int], ins: list[int]) -> complex:
+def _entry(raw: Any, pure: Any, outs: list[int], ins: list[int], mixed: bool = False) -> complex:
     from benchmarks import breaks
 
     arity = max((len(n.inputs) + len(n.outputs) for n in pure.nodes.values()), default=0)
@@ -141,7 +142,7 @@ def _entry(raw: Any, pure: Any, outs: list[int], ins: list[int]) -> complex:
         return complex(t[tuple(outs) + tuple(ins)]) if t.ndim else complex(t)
     if arity <= 12:
         return breaks.plugged(pure, tuple(outs), tuple(ins))
-    return breaks._symbolic_entry(raw, tuple(outs), tuple(ins))
+    return breaks._symbolic_entry(raw, tuple(outs), tuple(ins), mixed)
 
 
 def _slice_check(fi: Any, tag: str, ew: dict[str, Any]) -> list[str]:

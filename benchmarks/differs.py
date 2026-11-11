@@ -22,12 +22,16 @@ Decided from the F record's kind and edit parameters by exact integer arithmetic
                                               n = N + 1 mod N + 2
   qubit_only                                  equal iff d <= 2
 
-Every other kind differs at every point of its domain.
+Every other kind differs at every point of its domain, unless its witness is an interface
+mismatch between a pure side and a doubled side (one side's boundary is the other's taken
+twice): such a witness reads no entry, and the pair counts as not differing.
 """
 
 from __future__ import annotations
 
 import functools
+import re
+from collections import Counter
 from typing import Any
 
 import sympy as sp  # type: ignore[import-untyped]
@@ -86,6 +90,26 @@ def _factor_one(factor: str, n: int | None, d: int) -> bool:
     return difference is not None and difference(n or 0, d) == 0
 
 
+_INTERFACE = re.compile(r"left \[(.*?)\]->\[(.*?)\], right \[(.*?)\]->\[(.*?)\]")
+
+
+def _dims(text: str) -> Counter[int]:
+    return Counter(int(v) for v in text.split(",") if v.strip())
+
+
+def doubling_mismatch(interface: str | None) -> bool:
+    """Whether ``interface`` pairs a boundary with the same boundary taken twice."""
+    m = _INTERFACE.fullmatch(interface or "")
+    if m is None:
+        return False
+    lo, li, ro, ri = (_dims(g) for g in m.groups())
+
+    def twice(c: Counter[int]) -> Counter[int]:
+        return Counter({k: 2 * v for k, v in c.items()})
+
+    return (lo, li) == (twice(ro), twice(ri)) or (ro, ri) == (twice(lo), twice(li))
+
+
 def differs(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool:
     """Whether the F pair of ``false`` differs at ``(n, d)``; True for an S equation, a
     symbolic point (``d`` None) or a kind with no equal region."""
@@ -104,7 +128,10 @@ def differs(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool:
         return n % (big_n + 2) == big_n + 1
     if kind == "qubit_only":
         return d > 2
-    return True
+    witness = false.get("witness") or {}
+    return not (
+        witness.get("method", "entry") == "entry" and doubling_mismatch(witness.get("interface"))
+    )
 
 
-__all__ = ["differs"]
+__all__ = ["differs", "doubling_mismatch"]

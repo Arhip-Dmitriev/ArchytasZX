@@ -334,7 +334,7 @@ is never edited, so every tool sees the same pair). The kind is picked per equat
 assignment rule (round_robin from the equation's index, or a seeded shuffle); a kind with no
 variant that yields a witness is skipped for the next. Each F record stores the edit, a witness
 (a point, output and input indices, both values; for a mixed equation, indices of the doubled
-diagram) and where the pair stays equal.
+diagram, both sides doubled when either is mixed) and where the pair stays equal.
 
   Kind                    Edit                                              Equal where
   ----------------------  ------------------------------------------------  -------------------
@@ -354,7 +354,8 @@ diagram) and where the pair stays equal.
                           the last two outputs
   box_boundary            scalar 1 + 0^(n - n_min)                           n > n_min
   state_not_map           Z at the start of an input wire                    on input 0
-  single_entry            a phase table: -1 where every output is 1          elsewhere
+  single_entry            a phase table: -1 where every unmeasured single    elsewhere
+                          output is 1 (no variant when none is left)
   wrong_phase             one phase or amount changed                        nowhere
   missing_gate            one gate dropped                                   nowhere
   extra_gate              X appended on an output                            nowhere
@@ -365,7 +366,8 @@ diagram) and where the pair stays equal.
 Witnesses are found densely when the tensor has at most 2^18 entries, else by plugging basis
 states and effects into the closed diagram (nodes of at most 12 legs) or by symbolic contraction
 at the bound values. The boxed beyond_N witness is factored: a nonzero specification entry e at
-n = N + 1 (symbolic contraction) and the gadget's value g there, the broken entry being g e; the
+n = N + 1 (symbolic contraction) and the gadget's value g there, the broken entry being g e (on a
+mixed equation, doubled entries and |g|^2, so the sign alone is no witness); the
 gadget's closed form is tested at N = 1, 2, 3 (section 13). F has the same three versions as S.
 Kinds tiny_phase and single_entry raise the F equation's d floor to 2.
 
@@ -408,7 +410,10 @@ from the F record's kind and edit parameters: beyond_oracle, prime_only and coin
 equal where the phase rule is an integer at every k < d (for the d rule also d = 6, 8, 12, 24;
 for the Fermat rule every prime and Carmichael d); scalar_small_one and box_boundary where the
 scalar factor is 1; beyond_N unrolled where n <= N, boxed except at n = N + 1 mod N + 2;
-qubit_only where d <= 2; every other kind differs everywhere. Moving a ladder step to the next
+qubit_only where d <= 2; every other kind differs everywhere, except a record whose witness is
+an interface mismatch between a boundary and the same boundary taken twice (a pure side against
+a doubled one, from a false set generated before both sides were doubled), which differs
+nowhere. Moving a ladder step to the next
 point raises n, then d, at most 4096 values each (MAX_SCAN), then takes the first differing
 domain point among the first 4096 K. The domain size that selects the whole-domain schedule
 counts every domain point.
