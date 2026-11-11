@@ -129,7 +129,9 @@ def _scalar_text(e: Any) -> str:
 
 def _turns(value: Any) -> Fraction | None:
     """A concrete number of turns reduced into [0, 1), or None when symbolic."""
-    e = sp.nsimplify(sp.sympify(value))
+    e = sp.sympify(value)
+    if e.is_Float:
+        e = sp.nsimplify(e, rational=True)
     if not e.is_Rational:
         return None
     f = Fraction(int(e.p), int(e.q)) % 1
