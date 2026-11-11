@@ -148,6 +148,7 @@ class _Named:
 
     text: str
     model: sp.Expr
+    nonzero: str | None = None
 
 
 @dataclass(frozen=True)
@@ -554,6 +555,8 @@ class _Export:
 
     def drop_ones(self, k: object) -> str:
         """A product tree as Lean without the factors ``simp only [one_mul, mul_one]`` removes."""
+        if isinstance(k, _Named):
+            return k.text
         if isinstance(k, tuple):
             left, right = self.drop_ones(k[1]), self.drop_ones(k[2])
             if left == "1":
@@ -567,6 +570,8 @@ class _Export:
         """A Lean proof that a product tree is nonzero."""
         if isinstance(k, tuple):
             return f"(mul_ne_zero {self.nonzero(k[1])} {self.nonzero(k[2])})"
+        if isinstance(k, _Named):
+            return k.nonzero or f"(by (try simp only [{self.sdefs()}]); nzt)"
         return self.sc.nonzero_expr(k)
 
     def flat(self, k: object) -> sp.Expr:
@@ -2833,7 +2838,11 @@ class _Export:
             f"(Equal.rescale {chain_t} (by norm_num) (by ring))"
         )
         cur = vals[mb]
-        k_model = _Named(f"({k1}) ^ {_paren(cur)}", self.flat(inner.k) ** syms[mb])
+        k_model = _Named(
+            f"({k1}) ^ {_paren(cur)}",
+            self.flat(inner.k) ** syms[mb],
+            f"(pow_ne_zero _ {self.nonzero(inner.k)})",
+        )
         applied = _join(
             name, self.sp_args, *(_paren(vals[k]) for k in oth), _paren(cur), self.sp_hyp_args
         )
