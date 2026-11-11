@@ -71,10 +71,7 @@ decide_equal tries the following rungs in order and stops at the first that sett
   6. INDUCTION              A base case decided recursively plus a step case proved on one
                             multiplicity index: EQUAL. Induction proves EQUAL only from base 0.
                             The step is tried left to right, then right to left; nesting is
-                            bounded by max_depth. A step case settled by uniform rewrite or
-                            induction rewrite gives the verdict a kernel theorem
-                            (Decision.induction_proof, section 6); one settled by symbolic
-                            contraction gives none.
+                            bounded by max_depth.
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -97,8 +94,6 @@ pair in Decision.doubled (MIXED.txt, section 5).
                               the kernel Theorem of the certificates, the normaliser's
                               kernel.Symbolic, a prove() ProofOutcome, or for a restricted
                               decision a kernel.RestrictedProof
-    Decision.induction_proof  the kernel Theorem of an INDUCTION verdict whose step case was
-                              settled by uniform rewrite or induction rewrite, else None
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
     Decision.assumptions      assumed dimension equations the verdict rests on
     Decision.samples_checked  oracle samples evaluated
@@ -406,8 +401,7 @@ these functions construct a Theorem:
     restricted_symbolic(proof) -> Symbolic
                                      the same for a normaliser proof
     from_decision(decision, left, right) -> Theorem
-                                     from a NORMAL_FORM or SATURATION decision's certificates,
-                                     or an INDUCTION decision's induction_proof
+                                     from a NORMAL_FORM or SATURATION decision's certificates
     symbolic(left, right) -> Symbolic
                                      left = right for every value of the dimensions and
                                      phases, by the Lean normaliser of symbolic sums
@@ -426,25 +420,6 @@ or per clause "for all n >= c (n = m + c)", "for all n = a*m + c (m >= 0)", "at 
 proof did not use the floor. An
 induction certificate of the induction module carries no re-checkable step and is refused by
 check; the shell then re-derives a re-checkable proof by search.
-
-The induction rung of decide_equal builds Decision.induction_proof itself
-(archytaszx.semantics.induction_kernel), its reason ending in "; kernel proof built" or
-"; no kernel proof: <why>":
-
-  uniform rewrite       the tier's steps re-applied to the left side, each at the match of
-                        its rule that consumes the same nodes: a chain of rule, trans and iso
-                        inferences, with no induction
-  induction rewrite     an induction theorem: the base from the base decision's certificates
-                        (from_decision), else a prove() search; the tier's peeled successor as
-                        the exposed diagram (refl, or iso to the kernel's); its residual as the
-                        region; the step from a derivation between the two peeled copies
-                        (their normal forms meeting by iso, else a prove() search) re-applied
-                        inside both successors
-  symbolic contraction  none; the Lean side has no induction over multiplicities for a
-                        symbolic step
-
-When no theorem is built the verdict's proof comes from the later builders of Decision.proof
-(the normaliser, then search) as before.
 
 
 7. TRUST MODEL

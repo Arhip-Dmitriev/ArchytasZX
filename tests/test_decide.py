@@ -227,7 +227,7 @@ def oracle_samples(left: Diagram, right: Diagram) -> list[tuple[Mapping[str, obj
 
 def assert_oracle_agrees(left: Diagram, right: Diagram, decision: Decision) -> None:
     """Fail unless the numeric oracle supports ``decision``'s verdict."""
-    if decision.verdict is EqualityVerdict.EQUAL:
+    if decision.claims_equal:
         evaluated = oracle_samples(left, right)
         assert evaluated, "the oracle evaluated no assignment"
         assert all(matched for _, matched in evaluated), evaluated
@@ -321,6 +321,8 @@ SYMBOLIC_EQUAL: dict[str, Callable[[], Pair]] = {
     "phase_vs_weight": phase_weight_pair,
     "concrete_self_loop": lambda: (self_loop(Dim.concrete(2)), z_state(Dim.concrete(2))),
 }
+
+SYMBOLIC_UNPROVED = frozenset({"phase_vs_weight"})
 
 INDUCTION_EQUAL: dict[str, Callable[[], Pair]] = {
     "boxed_fusion": T8._build_boxed_fusion_family,
@@ -501,7 +503,11 @@ class TestLadder:
     def test_symbolic_contraction_equal(self, name: str) -> None:
         left, right = SYMBOLIC_EQUAL[name]()
         decision = decide_equal(left, right)
-        assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+        if name in SYMBOLIC_UNPROVED:
+            assert decision.verdict is EqualityVerdict.EQUAL_UNCERTIFIED, decision.reason
+            assert "uncertified: no proof the kernel re-checks" in decision.reason
+        else:
+            assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert decision.samples_checked >= 1
         assert decision.left_nf is not None and decision.right_nf is not None
