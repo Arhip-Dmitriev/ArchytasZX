@@ -133,6 +133,13 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         EQUAL,
         DecisionMethod.DOUBLED,
     ),
+    (
+        "self_loop_path_sum",
+        lambda: concrete_pairs(2)["self_loop"][0],
+        {"use_symbolic": False},
+        EqualityVerdict.EQUAL_UNCERTIFIED,
+        DecisionMethod.PATH_SUM,
+    ),
 ]
 
 KNOWN_EQUAL = [row[0] for row in TABLE if row[4] is NF]

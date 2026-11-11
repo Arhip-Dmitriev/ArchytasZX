@@ -1173,7 +1173,12 @@ class TestSaturationRung:
     def test_disabled_saturation_falls_through(self) -> None:
         left, right = bialgebra_pair()
         decision = decide_equal(
-            left, right, use_saturation=False, use_symbolic=False, use_induction=False
+            left,
+            right,
+            use_saturation=False,
+            use_symbolic=False,
+            use_induction=False,
+            use_path_sum=False,
         )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.method is DecisionMethod.NONE
@@ -1205,7 +1210,12 @@ class TestSaturationRung:
         left, right = bialgebra_pair()
         limits = SaturationLimits(max_iterations=0)
         decision = decide_equal(
-            left, right, saturation_limits=limits, use_symbolic=False, use_induction=False
+            left,
+            right,
+            saturation_limits=limits,
+            use_symbolic=False,
+            use_induction=False,
+            use_path_sum=False,
         )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.saturation is not None
@@ -1218,7 +1228,12 @@ class TestSaturationRung:
         )
         assert settled.method is DecisionMethod.SATURATION, settled.reason
         decision = decide_equal(
-            left, right, rules=[STATE_COPY], use_symbolic=False, use_induction=False
+            left,
+            right,
+            rules=[STATE_COPY],
+            use_symbolic=False,
+            use_induction=False,
+            use_path_sum=False,
         )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.saturation is not None and decision.saturation.applications == 0
@@ -1229,7 +1244,9 @@ class TestSaturationRung:
                 raise GraphDomainError("patched")
 
         monkeypatch.setattr(decide_module, "EGraph", Failing)
-        decision = decide_equal(*bialgebra_pair(), use_symbolic=False, use_induction=False)
+        decision = decide_equal(
+            *bialgebra_pair(), use_symbolic=False, use_induction=False, use_path_sum=False
+        )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert decision.saturation is None
         assert "saturation: failed: GraphDomainError: patched" in decision.reason
@@ -1241,7 +1258,9 @@ class TestSaturationRung:
             return ReplayResult(False, "patched", Diagram(), ())
 
         monkeypatch.setattr(decide_module, "replay", failing)
-        decision = decide_equal(*bialgebra_pair(), use_symbolic=False, use_induction=False)
+        decision = decide_equal(
+            *bialgebra_pair(), use_symbolic=False, use_induction=False, use_path_sum=False
+        )
         assert decision.verdict is EqualityVerdict.UNKNOWN
         assert "edge 0 did not replay: patched" in decision.reason
 

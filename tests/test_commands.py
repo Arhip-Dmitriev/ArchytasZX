@@ -274,6 +274,8 @@ def _payload_script() -> list[tuple[Session, list[str]]]:
     left, right = boxed_state_copy()
     induction = Session()
     induction.names.update(l=left, r=right)
+    unsettled = Session()
+    unsettled.names.update(l=left, r=right)
     return [
         (
             Session(),
@@ -311,7 +313,7 @@ def _payload_script() -> list[tuple[Session, list[str]]]:
         (Session(), [BOXED, "induct d=2", "certificate emit", "certificate verify"]),
         (Session(), [DSL_GHZ, "translate fuse n0.out0 -- n1.in0", "translate back"]),
         (induction, ["load @l", "prove against @r", "certificate emit", "certificate verify"]),
-        (induction, ["load @l", "decide against @r"]),
+        (unsettled, ["load @l", "decide against @r"]),
     ]
 
 
@@ -319,7 +321,17 @@ def _payload_script() -> list[tuple[Session, list[str]]]:
 def payloads() -> list[tuple[str, Outcome]]:
     """Every outcome of a broad script set, paired with its line."""
     collected: list[tuple[str, Outcome]] = []
-    for s, lines in _payload_script():
+    scripts = _payload_script()
+    for s, lines in scripts[:-1]:
+        for line in lines:
+            collected.append((line, run(s, line)))
+    s, lines = scripts[-1]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            C,
+            "decide_equal",
+            functools.partial(decide_equal, use_symbolic=False, use_induction=False),
+        )
         for line in lines:
             collected.append((line, run(s, line)))
     return collected
@@ -739,7 +751,14 @@ class TestDecide:
         assert s.current is not None
         assert not compare(s.current, parse_diagram(UNEQUAL), witness_of(lines[0])).matched
 
-    def test_unsettled_reports_furthest_simplified_and_bound(self) -> None:
+    def test_unsettled_reports_furthest_simplified_and_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            C,
+            "decide_equal",
+            functools.partial(decide_equal, use_symbolic=False, use_induction=False),
+        )
         left, right = boxed_state_copy()
         s = Session()
         s.names.update(l=left, r=right)

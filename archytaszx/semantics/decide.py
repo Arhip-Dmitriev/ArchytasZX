@@ -22,19 +22,19 @@
    small deterministic assignment.
 4. ``SATURATION``: an :class:`~archytaszx.rewrite.egraph.EGraph` holding both original
    diagrams, saturated within ``saturation_limits``, merges their e-classes.
-   ``PATH_SUM``: both diagrams, every dimension a concrete power of two and every generator Z,
-   X, F, B or S, reduce to one canonical path sum (:mod:`archytaszx.algebra.pathsum`);
-   canonical forms that differ give a ``SYMBOLIC_WITNESS`` at a boundary index.
 5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal;
    ``SYMBOLIC_WITNESS``: otherwise, one entry of the two contractions, evaluated at a sample
    assignment and an index tuple the difference's deltas pin, differs.
+   ``PATH_SUM``: both diagrams, every dimension a concrete power of two and every generator Z,
+   X, F, B or S, reduce to one canonical path sum (:mod:`archytaszx.algebra.pathsum`);
+   canonical forms that differ give a ``SYMBOLIC_WITNESS`` at a boundary index.
 6. ``INDUCTION``: a recursively decided base case plus a proved step case on one
    multiplicity index.
 
 Mixed operands (a discard on either side, or ``mixed=True``) are ``DOUBLED``: the ladder runs
 unchanged on both doubled diagrams, the settling rung recorded as ``inner_method``.
 
-``EQUAL`` comes only from rungs 2, 4 (saturation or path sum), 5 and 6; ``UNEQUAL`` only
+``EQUAL`` comes only from rungs 2, 4, 5 (symbolic contraction or path sum) and 6; ``UNEQUAL`` only
 from rung 1, an oracle counterexample or a symbolic witness; every other outcome is
 ``UNKNOWN``. :func:`decide_equal` reports an ``UNEQUAL`` not settled by rung 1 only with its
 Lean refutation
@@ -695,14 +695,16 @@ def _run_oracle(
     max_samples: int,
     tolerance: float,
     max_elements: int,
+    fallback_point: bool = False,
 ) -> _OracleRun:
     """Compare ``left`` and ``right`` at each candidate until ``max_samples`` evaluate or one
-    mismatches; a candidate the oracle refuses or that breaks an assumption is skipped."""
+    mismatches; a candidate the oracle refuses or that breaks an assumption is skipped, and
+    with ``fallback_point`` the smallest admissible point is queued after the first refusal."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
     seen = [dict(c) for c in candidates]
-    fallback = _smallest_admissible(left, right, table)
+    fallback = _smallest_admissible(left, right, table) if fallback_point else None
     queue = list(candidates)
     while queue:
         if len(evaluated) >= max_samples:
@@ -819,7 +821,9 @@ def refute_by_oracle(
     family_l = _family(left)
     family_r = _family(right)
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
-    run = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
+    run = _run_oracle(
+        family_l, family_r, candidates, max_samples, tolerance, max_elements, samples is None
+    )
     return OracleRefutation(run.evaluated, run.mismatch, run.comparison, run.refusals)
 
 
@@ -1481,7 +1485,9 @@ def _decide(
         )
 
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r, floors)
-    oracle = _run_oracle(family_l, family_r, candidates, max_samples, tolerance, max_elements)
+    oracle = _run_oracle(
+        family_l, family_r, candidates, max_samples, tolerance, max_elements, samples is None
+    )
     checked = len(oracle.evaluated)
     if oracle.mismatch is not None:
         return finish(
@@ -1531,46 +1537,6 @@ def _decide(
         notes.append(f"saturation: {run.reason}")
     else:
         notes.append("saturation disabled")
-    if _USE_PATH_SUM.get():
-        settled_ps = _path_sum_rung(family_l, family_r)
-        if isinstance(settled_ps, str):
-            notes.append(settled_ps)
-        elif settled_ps.status == "equal":
-            return finish(
-                EqualityVerdict.EQUAL,
-                DecisionMethod.PATH_SUM,
-                f"{settled_ps.reason}; {sampled}",
-                assumptions=(),
-                proofs=(),
-                samples_checked=checked,
-            )
-        elif settled_ps.status == "unequal":
-            assert settled_ps.index is not None
-            assert settled_ps.left is not None and settled_ps.right is not None
-            ps_witness = EntryWitness(
-                MappingProxyType({}),
-                settled_ps.index,
-                settled_ps.left.to_complex(),
-                settled_ps.right.to_complex(),
-            )
-            return finish(
-                EqualityVerdict.UNEQUAL,
-                DecisionMethod.SYMBOLIC_WITNESS,
-                f"path sums differ at boundary index {ps_witness.index}: "
-                f"{ps_witness.left} vs {ps_witness.right} ({settled_ps.reason})",
-                assumptions=(),
-                counterexample=ps_witness.assignment,
-                comparison=ComparisonResult(
-                    EqualityMode.EXACT,
-                    False,
-                    f"entry {ps_witness.index} differs by {ps_witness.deviation}",
-                    ps_witness.deviation,
-                ),
-                samples_checked=checked,
-                witness=ps_witness,
-            )
-        else:
-            notes.append(settled_ps.reason)
     if use_symbolic:
         symbolic = _symbolic_match(family_l, family_r, floors)
         if symbolic.matched:
@@ -1609,6 +1575,45 @@ def _decide(
         notes.append(f"symbolic: {symbolic.reason}")
     else:
         notes.append("symbolic contraction disabled")
+    if _USE_PATH_SUM.get():
+        settled_ps = _path_sum_rung(family_l, family_r)
+        if isinstance(settled_ps, str):
+            notes.append(settled_ps)
+        elif settled_ps.status == "equal":
+            return finish(
+                EqualityVerdict.EQUAL,
+                DecisionMethod.PATH_SUM,
+                f"{settled_ps.reason}; {sampled}",
+                assumptions=(),
+                samples_checked=checked,
+            )
+        elif settled_ps.status == "unequal":
+            assert settled_ps.index is not None
+            assert settled_ps.left is not None and settled_ps.right is not None
+            ps_witness = EntryWitness(
+                MappingProxyType({}),
+                settled_ps.index,
+                settled_ps.left.to_complex(),
+                settled_ps.right.to_complex(),
+            )
+            return finish(
+                EqualityVerdict.UNEQUAL,
+                DecisionMethod.SYMBOLIC_WITNESS,
+                f"path sums differ at boundary index {ps_witness.index}: "
+                f"{ps_witness.left} vs {ps_witness.right} ({settled_ps.reason})",
+                assumptions=(),
+                counterexample=ps_witness.assignment,
+                comparison=ComparisonResult(
+                    EqualityMode.EXACT,
+                    False,
+                    f"entry {ps_witness.index} differs by {ps_witness.deviation}",
+                    ps_witness.deviation,
+                ),
+                samples_checked=checked,
+                witness=ps_witness,
+            )
+        else:
+            notes.append(settled_ps.reason)
 
     live = free_mult_symbols(family_l) | free_mult_symbols(family_r)
     if use_induction and max_depth > 0 and live:
