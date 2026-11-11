@@ -44,7 +44,7 @@ import difflib
 import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -107,7 +107,7 @@ from archytaszx.rewrite.sheet import (
     split_scale,
 )
 from archytaszx.rewrite.tactics import DEFAULT_SEARCH_LIMITS
-from archytaszx.semantics import kernel, lean_net, lean_sym
+from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import (
     Certificate,
     CertificateError,
@@ -145,7 +145,6 @@ from archytaszx.semantics.interop import (
     check_round_trip,
     check_sheet_step,
 )
-from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import (
     InductionProof,
     ProofCertificate,
@@ -831,34 +830,6 @@ def _cmd_normalize(session: Session, args: str) -> Outcome:
     return _ok("normalize", [State(nf.diagram), line], nf, bool(nf.results))
 
 
-def _decision_proof(
-    decision: Decision, left: Diagram, right: Diagram
-) -> ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | None:
-    """A Lean-checkable proof of an EQUAL decision: its own certificates, else the normaliser
-    of symbolic sums, else a search."""
-    if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
-        forward, backward = decision.certificates
-        if forward.initial is left and backward.initial is right:
-            return ProofCertificate(
-                left,
-                right,
-                forward,
-                backward,
-                tuple(s.rule_name for s in forward.steps),
-                tuple(s.rule_name for s in backward.steps),
-            )
-    try:
-        return kernel.from_decision(decision, left, right)
-    except kernel.KernelError:
-        pass
-    try:
-        return kernel.symbolic(left, right, describe=lambda d: _math(d, True))
-    except kernel.KernelError:
-        pass
-    outcome = prove(left, right)
-    return outcome if outcome.proved else None
-
-
 _FOR_RE = re.compile(r"(?:^|\s)for\s")
 
 
@@ -879,58 +850,6 @@ def _every(restriction: Restriction) -> str:
     return ", ".join(dict.fromkeys(c.symbol for c in restriction.clauses))
 
 
-def _restricted_proof(
-    decision: Decision, left: Diagram, right: Diagram
-) -> kernel.RestrictedProof | None:
-    """The proof of a restricted EQUAL: the family's proof, or the restricted pair's."""
-    assert decision.restriction is not None
-    family = decision.family_holds
-    source = decision.family if family and decision.family is not None else decision
-    pair = (left, right) if family else decision.restricted_pair
-    if pair is None or source is None:
-        return None
-    if source.doubled is not None:
-        pair = source.doubled
-    inner = source
-    if source.doubled is not None and source.inner_method is not None:
-        inner = replace(source, method=source.inner_method)
-    floors = tuple(decision.floors_used or ())
-    evidence: object | None = None
-    if floors and not family:
-        try:
-            evidence = kernel.Symbolic(
-                pair[0],
-                pair[1],
-                lean_sym.export_symbolic(
-                    pair[0],
-                    pair[1],
-                    describe=lambda d: _math(d, True),
-                    floors=_floors_of(pair, decision.restriction),
-                ),
-            )
-        except (lean_net.NetUnsupported, ScalarUnsupported):
-            evidence = None
-    if evidence is None:
-        evidence = _decision_proof(inner, *pair)
-    if evidence is None:
-        return None
-    if isinstance(evidence, ProofOutcome):
-        artefact = evidence.certificate if evidence.certificate is not None else evidence.induction
-        if artefact is None:
-            return None
-        evidence = artefact
-    return kernel.RestrictedProof(evidence, decision.restriction, left, right, family, floors)
-
-
-def _floors_of(pair: tuple[Diagram, Diagram], restriction: Restriction) -> dict[str, int]:
-    from archytaszx.semantics.decide import dimension_floors
-
-    merged = dimension_floors(*pair)
-    for name, low in restriction.floors.items():
-        merged[name] = max(merged.get(name, 1), low)
-    return merged
-
-
 @_trace.traced("output.bound_values")
 def _bound_line(left: Diagram, right: Diagram, decision: Decision) -> Text | None:
     """The B.3 line: the instance at the session's bound counts and dimensions, decided."""
@@ -949,13 +868,25 @@ def _bound_line(left: Diagram, right: Diagram, decision: Decision) -> Text | Non
         return None
     text = ", ".join(f"{name} = {value}" for name, value in bound.items())
     try:
-        instance = decide_equal(left, right, restrict=text)
+        instance = decide_equal(left, right, restrict=text, prove_equal=False)
     except _ENGINE_ERRORS as exc:
         return Text(f"at the bound {text}: not decided ({_one_line(exc)})")
     tail = (
         f" (decide ... for {text} to certify)" if instance.verdict is EqualityVerdict.EQUAL else ""
     )
-    return Text(f"at the bound {text}: {instance.verdict.value} by {instance.method.value}{tail}")
+    return Text(
+        f"at the bound {text}: {_verdict_text(instance.verdict)} by {instance.method.value}{tail}"
+    )
+
+
+def _verdict_text(verdict: EqualityVerdict) -> str:
+    """The verdict as printed: equal, unequal, equal (uncertified), unequal (uncertified),
+    unknown."""
+    if verdict is EqualityVerdict.EQUAL_UNCERTIFIED:
+        return "equal (uncertified)"
+    if verdict is EqualityVerdict.UNEQUAL_UNCERTIFIED:
+        return "unequal (uncertified)"
+    return str(verdict.value)
 
 
 def _cmd_decide(session: Session, args: str) -> Outcome:
@@ -965,7 +896,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
     restricted = decision.restriction is not None
     payload = _Pair("decide", left, right, decision)
     head = (
-        f"decide: {decision.verdict.value}{_for_text(decision.restriction)} by "
+        f"decide: {_verdict_text(decision.verdict)}{_for_text(decision.restriction)} by "
         f"{decision.method.value}: {decision.reason}"
     )
     session.certificate, session.certificate_witness = None, None
@@ -973,7 +904,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
     proof_pair = (left, right) if decision.doubled is None else decision.doubled
     if restricted and not decision.family_holds and decision.restricted_pair is not None:
         proof_pair = decision.restricted_pair if decision.doubled is None else decision.doubled
-    if decision.verdict is EqualityVerdict.EQUAL:
+    if decision.claims_equal:
         blocks: list[Block] = [Text(head)]
         if restricted and decision.family_holds:
             blocks.append(
@@ -982,15 +913,9 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
                     "(family proof specialised)"
                 )
             )
-        inner = decision
         if decision.doubled is not None and decision.inner_method is not None:
-            inner = replace(decision, method=decision.inner_method)
             blocks.append(Text("proof: of the doubled diagrams (DOUBLED)"))
-        evidence: object | None
-        if restricted:
-            evidence = _restricted_proof(decision, left, right)
-        else:
-            evidence = _decision_proof(inner, *proof_pair)
+        evidence = decision.proof
         session.last_proof = evidence  # type: ignore[assignment]
         if evidence is None:
             session.no_proof = f"the decide built no proof: it rests on {decision.method.value}"
@@ -1015,8 +940,13 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
                     f"{_count(len(decision.assumptions), 'assumed dimension equation')}"
                 )
             )
-        return _ok("decide", blocks, payload)
-    relation = "!=" if decision.verdict is EqualityVerdict.UNEQUAL else "?="
+        if decision.verdict is EqualityVerdict.EQUAL:
+            return _ok("decide", blocks, payload)
+        return _fail("decide", blocks, payload)
+    relation = {
+        EqualityVerdict.UNEQUAL: "!=",
+        EqualityVerdict.UNEQUAL_UNCERTIFIED: "!=?",
+    }.get(decision.verdict, "?=")
     blocks = [Text(head), *_dirac_outcome(left, right, relation)]
     point = decision.counterexample
     if restricted and decision.counterexample_original is not None:
@@ -1027,6 +957,9 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
         if refuted is None:
             session.no_proof = "the decide built no Lean refutation"
         blocks.append(_disproof(refuted, decision.method.value))
+    elif decision.verdict is EqualityVerdict.UNEQUAL_UNCERTIFIED:
+        session.no_proof = "the decide built no Lean refutation"
+        blocks.append(_disproof(None, decision.method.value))
     else:
         session.no_proof = f"the decide built no certificate: {_one_line(decision.reason)}"
     if point is not None:

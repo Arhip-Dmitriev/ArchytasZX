@@ -189,7 +189,8 @@ written Z(1 -> 1).
   azx.kernel()                        certificate kernel
 
 A and B are Pieces, DSL text or "@NAME". Each call returns a Result: its printed text, ok,
-and, after decide, verdict and method. where restricts the claim (PROOFS.txt, section 8):
+and, after decide, verdict (equal, unequal, equal_uncertified, unequal_uncertified, unknown)
+and method. where restricts the claim (PROOFS.txt, section 8):
 clause text in the grammar of ENGINE_COMMANDS.txt, section 2.9, as where="n >= 2, d = 3", or a
 mapping from symbol to its constraint, as where={"n": ">= 2", "d": "= 3"}. Result.outcome is
 the engine result (Decision, ProofOutcome or InductionResult), and Result.restriction,

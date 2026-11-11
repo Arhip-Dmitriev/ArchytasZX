@@ -110,9 +110,22 @@ the cheapest equivalent diagram found, appending the steps that reach it.
 
 Decides whether the start and current diagrams, or the current diagram and TARGET, are equal
 for every value of their free symbols, by the ladder of PROOFS.txt, section 2. The verdict is
-equal, unequal or unknown, with the method that settled it and the oracle summary:
+equal, unequal, equal (uncertified), unequal (uncertified) or unknown, with the method that
+settled it and the oracle summary:
 
     decide: equal by normal_form: normal forms agree; no oracle mismatch in 12 sample(s)
+
+equal and unequal carry a proof or Lean refutation (certificate kernel, certificate lean). An
+uncertified verdict names the missing one at the end of its reason and fails like unknown:
+
+    decide: equal (uncertified) by symbolic_contraction: symbolic contractions agree: ...;
+        uncertified: no proof the kernel re-checks (...)
+    proof: none the kernel re-checks; the verdict rests on symbolic_contraction
+
+    decide: unequal (uncertified) by oracle_counterexample: oracle mismatch at {}: ...;
+        uncertified: no Lean refutation (an intermediate factor is too large)
+    dirac outcome: left !=? right
+    disproof: none Lean re-checks; the verdict rests on oracle_counterexample
 
     decide [against] [TARGET] for CLAUSE, ...
 

@@ -34,17 +34,20 @@ unchanged on both doubled diagrams, the settling rung recorded as ``inner_method
 ``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
 counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. :func:`decide_equal`
 reports an ``UNEQUAL`` not settled by rung 1 only with its Lean refutation
-(:attr:`Decision.refutation`, :func:`lean_refutation`), else ``UNKNOWN``. A normal-form match
-needs rung 3 to find no mismatch before it is reported; ``DEFERRED`` dimension constraints its
-derivations assumed are carried in :attr:`Decision.assumptions`. A saturation merge yields one
-certificate per edge of :meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its
-edge's parent to its child; each must replay onto a diagram whose comparison view is isomorphic
-to its child's, and their ``DEFERRED`` constraints become the assumptions; sides sharing one
-e-node need none. An oracle mismatch counts only above ``tolerance`` times the larger entry
-magnitude (at least 1), at an assignment satisfying every symbol's sympy assumptions. Induction
-proves ``EQUAL`` only from base 0. The parameter environment never enters a verdict;
-:attr:`Decision.parameters_agree` reports it. :func:`interface_reason`, :func:`refute_by_oracle`
-and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the witness search alone.
+(:attr:`Decision.refutation`, :func:`lean_refutation`), else ``UNEQUAL_UNCERTIFIED``, and an
+``EQUAL`` only with its proof (:attr:`Decision.proof`), else ``EQUAL_UNCERTIFIED``. A
+normal-form match needs rung 3 to find no mismatch before it is reported; ``DEFERRED``
+dimension constraints its derivations assumed are carried in :attr:`Decision.assumptions`. A
+saturation merge yields one certificate per edge of
+:meth:`~archytaszx.rewrite.egraph.EGraph.explain`'s path, each from its edge's parent to its
+child; each must replay onto a diagram whose comparison view is isomorphic to its child's, and
+their ``DEFERRED`` constraints become the assumptions; sides sharing one e-node need none. An
+oracle mismatch counts only above ``tolerance`` times the larger entry magnitude (at least 1),
+at an assignment satisfying every symbol's sympy assumptions. Induction proves ``EQUAL`` only
+from base 0. The parameter environment never enters a verdict;
+:attr:`Decision.parameters_agree` reports it. :func:`interface_reason`,
+:func:`refute_by_oracle` and :func:`refute_by_symbolic_witness` run rung 1, rung 3 and the
+witness search alone.
 """
 
 from __future__ import annotations
@@ -115,6 +118,7 @@ from archytaszx.semantics.induction import (
 )
 
 if TYPE_CHECKING:
+    from archytaszx.semantics.kernel import Theorem
     from archytaszx.semantics.restrict import Restriction
 
 
@@ -127,10 +131,13 @@ class DecideGrammarError(DecideError):
 
 
 class EqualityVerdict(enum.Enum):
-    """What :func:`decide_equal` established."""
+    """What :func:`decide_equal` established; the uncertified verdicts carry no proof or Lean
+    refutation."""
 
     EQUAL = "equal"
     UNEQUAL = "unequal"
+    EQUAL_UNCERTIFIED = "equal_uncertified"
+    UNEQUAL_UNCERTIFIED = "unequal_uncertified"
     UNKNOWN = "unknown"
 
 
@@ -160,7 +167,9 @@ class Decision:
     was EQUAL, the ``restricted_pair`` it decided otherwise, the counterexample in the original
     symbols as ``counterexample_original``, and the dimension floors a symbolic contraction
     needed as ``floors_used``. ``refutation`` is the Lean refutation source of an UNEQUAL
-    verdict not settled by the interface.
+    verdict not settled by the interface; ``proof`` is the proof of an EQUAL verdict;
+    ``induction_proof`` is the kernel theorem of an INDUCTION verdict whose step case was
+    settled by rewriting.
     """
 
     verdict: EqualityVerdict
@@ -187,6 +196,8 @@ class Decision:
     restricted_pair: tuple[Diagram, Diagram] | None = None
     floors_used: Mapping[str, int] | None = None
     refutation: str | None = None
+    proof: object | None = None
+    induction_proof: Theorem | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -200,7 +211,25 @@ class Decision:
     @property
     def decided(self) -> bool:
         """True when the verdict is EQUAL or UNEQUAL."""
-        return self.verdict is not EqualityVerdict.UNKNOWN
+        return self.verdict in (EqualityVerdict.EQUAL, EqualityVerdict.UNEQUAL)
+
+    @property
+    def holds_uncertified(self) -> bool:
+        """True when the verdict is EQUAL_UNCERTIFIED or UNEQUAL_UNCERTIFIED."""
+        return self.verdict in (
+            EqualityVerdict.EQUAL_UNCERTIFIED,
+            EqualityVerdict.UNEQUAL_UNCERTIFIED,
+        )
+
+    @property
+    def claims_equal(self) -> bool:
+        """True when the verdict is EQUAL or EQUAL_UNCERTIFIED."""
+        return self.verdict in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED)
+
+    @property
+    def claims_unequal(self) -> bool:
+        """True when the verdict is UNEQUAL or UNEQUAL_UNCERTIFIED."""
+        return self.verdict in (EqualityVerdict.UNEQUAL, EqualityVerdict.UNEQUAL_UNCERTIFIED)
 
 
 DIMENSION_SAMPLE_VALUES: tuple[int, ...] = (2, 3, 4, 1)
@@ -1041,10 +1070,11 @@ def decide_equal(
     mixed: bool = False,
     restrict: Restriction | str | Mapping[str, str] | None = None,
     describe: Callable[[Diagram], str] | None = None,
+    prove_equal: bool = True,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
-    or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's diagram
-    comments.
+    or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's and the
+    proof's diagram comments.
 
     Runs the module docstring's ladder; ``samples`` replaces :func:`sample_grid` for the
     oracle rung and, cut to its symbols, for the induction base case; ``max_depth`` bounds
@@ -1052,8 +1082,10 @@ def decide_equal(
     induction step is tried left-to-right, then right-to-left. When either side has a
     discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
     is ``DOUBLED``, the rung that settled it in ``inner_method``. A restriction with clauses
-    runs :func:`decide_restricted`.
+    runs :func:`decide_restricted`. ``prove_equal=False`` leaves EQUAL unproved and unchanged.
     """
+    if not isinstance(prove_equal, bool):
+        raise DecideGrammarError(f"prove_equal must be a bool, got {prove_equal!r}")
     _check_args(
         left,
         right,
@@ -1089,9 +1121,9 @@ def decide_equal(
         restriction = validate(parse_restriction(restrict), left, right)
         if not restriction.empty:
             decision = decide_restricted(left, right, restriction, **options)
-            return _certified(decision, left, right, describe)
+            return _certify(decision, left, right, describe, prove_equal)
     decision = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
-    return _certified(decision, left, right, describe)
+    return _certify(decision, left, right, describe, prove_equal)
 
 
 def lean_refutation(
@@ -1118,14 +1150,35 @@ def lean_refutation(
         raise NetUnsupported(f"{type(exc).__name__}: {exc}") from exc
 
 
-def _certified(
-    decision: Decision, left: Diagram, right: Diagram, describe: Callable[[Diagram], str] | None
+def _certify(
+    decision: Decision,
+    left: Diagram,
+    right: Diagram,
+    describe: Callable[[Diagram], str] | None,
+    prove_equal: bool,
 ) -> Decision:
-    """``decision`` with its Lean refutation when UNEQUAL past rung 1; UNKNOWN, the missing
-    refutation named in its reason, when there is none."""
+    """``decision`` with its Lean refutation when UNEQUAL past rung 1 and with its proof when
+    EQUAL and ``prove_equal``; the uncertified verdict, the missing one named in its reason,
+    when there is none."""
     from archytaszx.semantics.lean_net import NetUnsupported
 
-    if decision.verdict is not EqualityVerdict.UNEQUAL or _NESTED.get():
+    if _NESTED.get():
+        return decision
+    if decision.verdict is EqualityVerdict.EQUAL:
+        if not prove_equal:
+            return decision
+        from archytaszx.semantics.certify_decision import decision_proof
+
+        with _trace.span("decide.proof"):
+            proof, why = decision_proof(decision, left, right, describe)
+        if proof is None:
+            return replace(
+                decision,
+                verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
+                reason=f"{decision.reason}; uncertified: no proof the kernel re-checks ({why})",
+            )
+        return replace(decision, proof=proof)
+    if decision.verdict is not EqualityVerdict.UNEQUAL:
         return decision
     if decision.method is DecisionMethod.INTERFACE or (
         decision.method is DecisionMethod.DOUBLED
@@ -1146,9 +1199,8 @@ def _certified(
     except NetUnsupported as exc:
         return replace(
             decision,
-            verdict=EqualityVerdict.UNKNOWN,
-            method=DecisionMethod.NONE,
-            reason=f"{decision.reason}; not reported unequal: no Lean refutation ({exc})",
+            verdict=EqualityVerdict.UNEQUAL_UNCERTIFIED,
+            reason=f"{decision.reason}; uncertified: no Lean refutation ({exc})",
         )
     return replace(decision, refutation=source)
 
@@ -1574,14 +1626,22 @@ def _decide_by_induction(
                 f"{proof}; proved for {index} >= {base} only, {index}=0 does not instantiate",
                 {"induction": result, "induction_reversed": reversed_},
             )
+        from archytaszx.semantics.induction_kernel import induction_theorem
+
+        with _trace.span("decide.induction.kernel"):
+            theorem, why = induction_theorem(
+                left, right, result, reversed_, pair, base_decision, rules
+            )
+        built = "kernel proof built" if theorem is not None else f"no kernel proof: {why}"
         return (
             EqualityVerdict.EQUAL,
             DecisionMethod.INDUCTION,
-            f"{proof}; holds for {index} >= 0",
+            f"{proof}; holds for {index} >= 0; {built}",
             {
                 "induction": result,
                 "induction_reversed": reversed_,
                 "assumptions": _induction_assumptions(base_decision, result),
+                "induction_proof": theorem,
             },
         )
     return "; reversed: ".join(reasons)

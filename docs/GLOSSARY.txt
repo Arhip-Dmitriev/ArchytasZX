@@ -30,6 +30,10 @@ certificate
     A replayable record of a derivation, with the method by which its claimed equality is
     checked. PROOFS.txt, section 5.
 
+certified
+    A verdict (EQUAL, UNEQUAL) carried with its proof the kernel re-checks or its Lean
+    refutation; an interface UNEQUAL is exact and certified. PROOFS.txt, section 1.
+
 character sum
     The identity sum_{k=0}^{d-1} omega_d^{j k} = d [j == 0 mod d], central to symbolic
     contraction and to the Lean normaliser.
@@ -147,6 +151,10 @@ tactic
 
 turn
     The unit of phase: t turns is the angle 2*pi*t.
+
+uncertified
+    A verdict (EQUAL_UNCERTIFIED, UNEQUAL_UNCERTIFIED) a ladder rung settled without a proof
+    the kernel re-checks or a Lean refutation. PROOFS.txt, section 1.
 
 UNKNOWN
     The verdict of a decision procedure that could neither prove nor refute an equality.

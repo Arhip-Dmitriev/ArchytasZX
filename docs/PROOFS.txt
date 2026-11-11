@@ -16,11 +16,13 @@ generality the question is undecidable, so every procedure below is sound and in
 
   - EQUAL is reported only with evidence that holds for every value: a replayable derivation,
     a symbolic contraction with every symbol formal, or an induction whose base and step are
-    both settled.
+    both settled, and with a proof the kernel re-checks (Decision.proof).
   - UNEQUAL is reported only with a refutation: interfaces that can never agree, or an oracle
     counterexample at an assignment that satisfies every symbol's assumptions or a symbolic
-    witness entry, either with its Lean refutation (LEAN.txt, section 5.4); a counterexample
-    without one is UNKNOWN.
+    witness entry, either with its Lean refutation (LEAN.txt, section 5.4).
+  - EQUAL_UNCERTIFIED and UNEQUAL_UNCERTIFIED carry the same evidence as EQUAL and UNEQUAL
+    without the proof or Lean refutation; their reason ends in "uncertified: no proof the
+    kernel re-checks (...)" or "uncertified: no Lean refutation (...)".
   - Every other outcome is UNKNOWN, with the reason the procedure stopped.
 
 Equations that a derivation assumed rather than verified (DEFERRED and BOUND dimension
@@ -34,7 +36,10 @@ constraints, one per equation up to orientation) are reported with the verdict a
                  max_samples=24, use_symbolic=True, use_induction=True, max_depth=2,
                  tolerance=1e-9, max_elements=10_000_000, use_saturation=True,
                  saturation_limits=DECIDE_SATURATION_LIMITS, mixed=False,
-                 restrict=None) -> Decision
+                 restrict=None, describe=None, prove_equal=True) -> Decision
+
+prove_equal=False skips the proof of an EQUAL verdict: EQUAL is kept and Decision.proof is
+None. describe gives the diagram comments of the Lean refutation and the normaliser proof.
 
 With restrict (a Restriction, clause text or a mapping, section 8) the decision is the
 restricted decision of section 8; without clauses it is the decision below.
@@ -66,7 +71,10 @@ decide_equal tries the following rungs in order and stops at the first that sett
   6. INDUCTION              A base case decided recursively plus a step case proved on one
                             multiplicity index: EQUAL. Induction proves EQUAL only from base 0.
                             The step is tried left to right, then right to left; nesting is
-                            bounded by max_depth.
+                            bounded by max_depth. A step case settled by uniform rewrite or
+                            induction rewrite gives the verdict a kernel theorem
+                            (Decision.induction_proof, section 6); one settled by symbolic
+                            contraction gives none.
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -74,7 +82,8 @@ pair in Decision.doubled (MIXED.txt, section 5).
 
 2.2 The Decision
 
-    Decision.verdict          EqualityVerdict: EQUAL, UNEQUAL, UNKNOWN
+    Decision.verdict          EqualityVerdict: EQUAL, UNEQUAL, EQUAL_UNCERTIFIED,
+                              UNEQUAL_UNCERTIFIED, UNKNOWN
     Decision.method           DecisionMethod: INTERFACE, NORMAL_FORM, SATURATION,
                               SYMBOLIC_CONTRACTION, INDUCTION, ORACLE_COUNTEREXAMPLE,
                               SYMBOLIC_WITNESS, DOUBLED, NONE
@@ -84,6 +93,12 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.certificates     the certificates behind a NORMAL_FORM or SATURATION verdict
     Decision.counterexample   the assignment behind an UNEQUAL verdict
     Decision.refutation       the Lean refutation source of an UNEQUAL verdict past rung 1
+    Decision.proof            the proof of an EQUAL verdict: the normal-form ProofCertificate,
+                              the kernel Theorem of the certificates, the normaliser's
+                              kernel.Symbolic, a prove() ProofOutcome, or for a restricted
+                              decision a kernel.RestrictedProof
+    Decision.induction_proof  the kernel Theorem of an INDUCTION verdict whose step case was
+                              settled by uniform rewrite or induction rewrite, else None
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
     Decision.assumptions      assumed dimension equations the verdict rests on
     Decision.samples_checked  oracle samples evaluated
@@ -97,7 +112,12 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.floors_used      the dimension floors a symbolic contraction needed
     Decision.induction_reversed
                               True when Decision.induction ran with right as its left side
-    Decision.left_nf, right_nf, comparison, induction, saturation, decided
+    Decision.decided          True for EQUAL and UNEQUAL
+    Decision.holds_uncertified
+                              True for EQUAL_UNCERTIFIED and UNEQUAL_UNCERTIFIED
+    Decision.claims_equal     True for EQUAL and EQUAL_UNCERTIFIED
+    Decision.claims_unequal   True for UNEQUAL and UNEQUAL_UNCERTIFIED
+    Decision.left_nf, right_nf, comparison, induction, saturation
 
 The parameter environment never enters a verdict; parameters_agree reports it separately.
 
@@ -386,7 +406,8 @@ these functions construct a Theorem:
     restricted_symbolic(proof) -> Symbolic
                                      the same for a normaliser proof
     from_decision(decision, left, right) -> Theorem
-                                     from a NORMAL_FORM or SATURATION decision's certificates
+                                     from a NORMAL_FORM or SATURATION decision's certificates,
+                                     or an INDUCTION decision's induction_proof
     symbolic(left, right) -> Symbolic
                                      left = right for every value of the dimensions and
                                      phases, by the Lean normaliser of symbolic sums
@@ -405,6 +426,25 @@ or per clause "for all n >= c (n = m + c)", "for all n = a*m + c (m >= 0)", "at 
 proof did not use the floor. An
 induction certificate of the induction module carries no re-checkable step and is refused by
 check; the shell then re-derives a re-checkable proof by search.
+
+The induction rung of decide_equal builds Decision.induction_proof itself
+(archytaszx.semantics.induction_kernel), its reason ending in "; kernel proof built" or
+"; no kernel proof: <why>":
+
+  uniform rewrite       the tier's steps re-applied to the left side, each at the match of
+                        its rule that consumes the same nodes: a chain of rule, trans and iso
+                        inferences, with no induction
+  induction rewrite     an induction theorem: the base from the base decision's certificates
+                        (from_decision), else a prove() search; the tier's peeled successor as
+                        the exposed diagram (refl, or iso to the kernel's); its residual as the
+                        region; the step from a derivation between the two peeled copies
+                        (their normal forms meeting by iso, else a prove() search) re-applied
+                        inside both successors
+  symbolic contraction  none; the Lean side has no induction over multiplicities for a
+                        symbolic step
+
+When no theorem is built the verdict's proof comes from the later builders of Decision.proof
+(the normaliser, then search) as before.
 
 
 7. TRUST MODEL

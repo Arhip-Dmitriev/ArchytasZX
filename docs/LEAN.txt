@@ -433,8 +433,8 @@ are written differently are refuted after instantiating their multiplicities.
 
 decide_equal reports UNEQUAL from the oracle, a symbolic witness or induction only with its
 Lean refutation (Decision.refutation, decide.lean_refutation, over the doubled diagrams when
-either side has a discard); without one the verdict is UNKNOWN and its reason ends in "not
-reported unequal: no Lean refutation (...)". prove reports an oracle REFUTED only with its
+either side has a discard); without one the verdict is UNEQUAL_UNCERTIFIED and its reason
+ends in "uncertified: no Lean refutation (...)". prove reports an oracle REFUTED only with its
 Lean refutation (ProofOutcome.refutation), otherwise NOT_FOUND ("not refuted: no Lean
 refutation"). The shell prints such a counterexample as "uncertified counterexample", induct
 appends "not reported refuted: no Lean refutation", and certificate refuses to fall back to the
