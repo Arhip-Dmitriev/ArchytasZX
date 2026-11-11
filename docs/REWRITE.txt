@@ -190,9 +190,15 @@ that has one, until nothing matches or the guard trips.
 
     TerminationGuard(max_steps=128, max_nodes=None, detect_loops=True)
 
-Loop detection compares each new diagram's canonical key with the earlier ones and confirms a
-hit by isomorphism. The key includes the scalar, so a cycle that introduces a factor each time
-is not a loop and runs to the step ceiling instead.
+Loop detection uses the measure mu(D) = (wire count, node count, W output count), compared
+lexicographically. The initial diagram is registered. After a step from D to D', D' is
+registered only when mu(D') >= mu(D): its canonical key is computed, compared with the keys of
+the registered diagrams, a hit confirmed by isomorphism, and D' kept. A step with mu(D') <
+mu(D) computes no key and keeps no diagram. A cycle contains at least one step that does not
+lower mu, so a repeating cycle is detected on its second pass. Under the normal-form rule set
+every step lowers mu, so normal_form computes no per-step key and keeps no history. With
+detect_loops=False no key is computed. The key includes the scalar, so a cycle that
+introduces a factor each time is not a loop and runs to the step ceiling instead.
 
     StrategyOutcome(diagram, steps, stop_reason, scalar_accumulated, steps_attempted)
     StopReason: FIXPOINT | STEP_LIMIT | NODE_LIMIT | LOOP_DETECTED

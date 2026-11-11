@@ -886,6 +886,14 @@ def _canonical(
     )
 
 
+def _loop_measure(diagram: Diagram) -> tuple[int, int, int]:
+    """The triple (wire count, node count, W output count) of ``diagram``."""
+    w_outputs = sum(
+        len(node.outputs) for node in diagram.nodes.values() if node.generator_type.name == "W"
+    )
+    return (len(diagram.wires), len(diagram.nodes), w_outputs)
+
+
 def apply_until_fixpoint(
     diagram: Diagram,
     rules: Sequence[Rule],
@@ -899,10 +907,12 @@ def apply_until_fixpoint(
 
     Each iteration checks the node ceiling, then the step ceiling, then takes the first match
     of the earliest rule in ``rules`` that has one and applies it through :func:`apply`, so
-    every step carries full provenance. Loop detection looks each new diagram's
-    :func:`~archytaszx.diagram.compare.canonical_key` up among the earlier ones and confirms
-    a hit with :func:`~archytaszx.diagram.compare.isomorphic`; the key reads the scalar, so a
-    cycle that introduces a factor each time reaches the step ceiling.
+    every step carries full provenance. Loop detection runs only after a step that does not
+    lower the triple (wire count, node count, W output count) lexicographically: it looks the
+    new diagram's :func:`~archytaszx.diagram.compare.canonical_key` up among the diagrams kept
+    after such steps and confirms a hit with :func:`~archytaszx.diagram.compare.isomorphic`;
+    the key reads the scalar, so a cycle that introduces a factor each time reaches the step
+    ceiling.
 
     With ``strict=True`` any :attr:`~StopReason` other than ``FIXPOINT`` raises
     :class:`TerminationGuardTripped` carrying the outcome. Anything :func:`apply` raises
@@ -935,7 +945,10 @@ def apply_until_fixpoint(
 
     current = diagram
     fp = _fingerprint_for(diagram, cache)
-    history: dict[str, list[Diagram]] = {_canonical(diagram, cache, fp): [diagram]}
+    history: dict[str, list[Diagram]] = (
+        {_canonical(diagram, cache, fp): [diagram]} if guard.detect_loops else {}
+    )
+    measure = _loop_measure(diagram)
     steps: list[RewriteStep] = []
     scalar_accumulated = Scalar.one()
     steps_attempted = 0
@@ -967,9 +980,12 @@ def apply_until_fixpoint(
         scalar_accumulated = scalar_accumulated * result.step.scalar_introduced
         current = result.diagram
         fp = _fingerprint_for(current, cache)
+        previous, measure = measure, _loop_measure(current)
+        if not guard.detect_loops or measure < previous:
+            continue
         key = _canonical(current, cache, fp)
         bucket = history.setdefault(key, [])
-        if guard.detect_loops and any(isomorphic(current, seen) for seen in bucket):
+        if any(isomorphic(current, seen) for seen in bucket):
             stop_reason = StopReason.LOOP_DETECTED
             break
         bucket.append(current)
