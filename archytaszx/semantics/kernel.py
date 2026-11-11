@@ -757,11 +757,15 @@ def refutation(decision: object, left: Diagram, right: Diagram) -> Refutation:
 
 @_trace.traced("proof.build")
 def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
-    """``left = right`` from a decision's normal-form or saturation certificates."""
+    """``left = right`` from a decision's normal-form or saturation certificates or its
+    induction theorem."""
     from archytaszx.semantics.decide import Decision, DecisionMethod
 
     if not isinstance(decision, Decision):
         raise KernelError(f"cannot read a {type(decision).__name__}")
+    if decision.method is DecisionMethod.INDUCTION and decision.induction_proof is not None:
+        proved = check(decision.induction_proof)
+        return trans(trans(iso(left, proved.lhs), proved), iso(proved.rhs, right))
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         to_l, to_r = (check(c) for c in decision.certificates)
         return trans(

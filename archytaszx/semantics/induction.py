@@ -127,7 +127,8 @@ class InductionObligation:
 
 @dataclass(frozen=True, slots=True)
 class TierOutcome:
-    """The result of running one discharge tier."""
+    """The result of running one discharge tier; a settled peeling tier carries each peeled
+    successor and its peeled copy's node ids."""
 
     discharge: StepDischarge
     settled: bool
@@ -135,6 +136,10 @@ class TierOutcome:
     comparisons: tuple[ComparisonResult, ...] = ()
     steps: tuple[RewriteStep, ...] = ()
     counterexample: int | None = None
+    left_peeled: Diagram | None = None
+    left_copy: frozenset[NodeId] | None = None
+    right_peeled: Diagram | None = None
+    right_copy: frozenset[NodeId] | None = None
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -835,6 +840,10 @@ def discharge_peeled_hypothesis(
             True,
             "peeled one copy off each successor; the residuals are the hypothesis diagrams and "
             "the peeled copies are structurally identical",
+            left_peeled=left_peeled,
+            left_copy=left_copy,
+            right_peeled=right_peeled,
+            right_copy=right_copy,
         )
     try:
         contracted_left = contract_symbolic(left_extra, max_steps=max_steps)
@@ -852,6 +861,10 @@ def discharge_peeled_hypothesis(
             "peeled one copy off each successor; the residuals are the hypothesis diagrams and "
             "the peeled copies agree under symbolic contraction with d formal",
             (comparison,),
+            left_peeled=left_peeled,
+            left_copy=left_copy,
+            right_peeled=right_peeled,
+            right_copy=right_copy,
         )
     return TierOutcome(
         StepDischarge.INDUCTION_REWRITE,

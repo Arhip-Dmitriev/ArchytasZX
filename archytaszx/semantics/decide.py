@@ -118,6 +118,7 @@ from archytaszx.semantics.induction import (
 )
 
 if TYPE_CHECKING:
+    from archytaszx.semantics.kernel import Theorem
     from archytaszx.semantics.restrict import Restriction
 
 
@@ -166,7 +167,9 @@ class Decision:
     was EQUAL, the ``restricted_pair`` it decided otherwise, the counterexample in the original
     symbols as ``counterexample_original``, and the dimension floors a symbolic contraction
     needed as ``floors_used``. ``refutation`` is the Lean refutation source of an UNEQUAL
-    verdict not settled by the interface; ``proof`` is the proof of an EQUAL verdict.
+    verdict not settled by the interface; ``proof`` is the proof of an EQUAL verdict;
+    ``induction_proof`` is the kernel theorem of an INDUCTION verdict whose step case was
+    settled by rewriting.
     """
 
     verdict: EqualityVerdict
@@ -194,6 +197,7 @@ class Decision:
     floors_used: Mapping[str, int] | None = None
     refutation: str | None = None
     proof: object | None = None
+    induction_proof: Theorem | None = None
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -1622,14 +1626,22 @@ def _decide_by_induction(
                 f"{proof}; proved for {index} >= {base} only, {index}=0 does not instantiate",
                 {"induction": result, "induction_reversed": reversed_},
             )
+        from archytaszx.semantics.induction_kernel import induction_theorem
+
+        with _trace.span("decide.induction.kernel"):
+            theorem, why = induction_theorem(
+                left, right, result, reversed_, pair, base_decision, rules
+            )
+        built = "kernel proof built" if theorem is not None else f"no kernel proof: {why}"
         return (
             EqualityVerdict.EQUAL,
             DecisionMethod.INDUCTION,
-            f"{proof}; holds for {index} >= 0",
+            f"{proof}; holds for {index} >= 0; {built}",
             {
                 "induction": result,
                 "induction_reversed": reversed_,
                 "assumptions": _induction_assumptions(base_decision, result),
+                "induction_proof": theorem,
             },
         )
     return "; reversed: ".join(reasons)
