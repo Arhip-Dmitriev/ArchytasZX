@@ -69,6 +69,15 @@ decide_equal tries the following rungs in order and stops at the first that sett
   4. SATURATION             Both diagrams are added to one e-graph, saturated within
                             saturation_limits; when their classes merge: EQUAL. Each edge of
                             the explaining path yields a certificate that must replay.
+  4b. PATH_SUM              When both diagrams translate to path sums (every dimension a
+                            concrete power of two, generators Z, X, F, B, S; SEMANTICS.txt,
+                            section 5.2): equal canonical forms are EQUAL; different canonical
+                            forms are UNEQUAL as SYMBOLIC_WITNESS at the boundary index where
+                            the entries differ; otherwise the reason names the path variables
+                            left and the ladder goes on. use_path_sum=False turns it off. An
+                            EQUAL by path_sum carries no kernel proof of its own: the proof is
+                            sought as for any EQUAL (section 6), else EQUAL_UNCERTIFIED; the
+                            Lean export of the reduction trace (lean_pathsum) is not written.
   5. SYMBOLIC_CONTRACTION   Both diagrams are contracted with every symbol formal; equal
                             tensors are EQUAL. Otherwise SYMBOLIC_WITNESS: an entry at a sample
                             assignment and an index tuple where the two differ is UNEQUAL.

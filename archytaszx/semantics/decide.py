@@ -22,6 +22,9 @@
    small deterministic assignment.
 4. ``SATURATION``: an :class:`~archytaszx.rewrite.egraph.EGraph` holding both original
    diagrams, saturated within ``saturation_limits``, merges their e-classes.
+   ``PATH_SUM``: both diagrams, every dimension a concrete power of two and every generator Z,
+   X, F, B or S, reduce to one canonical path sum (:mod:`archytaszx.algebra.pathsum`);
+   canonical forms that differ give a ``SYMBOLIC_WITNESS`` at a boundary index.
 5. ``SYMBOLIC_CONTRACTION``: both symbolic contractions agree with every symbol formal;
    ``SYMBOLIC_WITNESS``: otherwise, one entry of the two contractions, evaluated at a sample
    assignment and an index tuple the difference's deltas pin, differs.
@@ -31,9 +34,10 @@
 Mixed operands (a discard on either side, or ``mixed=True``) are ``DOUBLED``: the ladder runs
 unchanged on both doubled diagrams, the settling rung recorded as ``inner_method``.
 
-``EQUAL`` comes only from rungs 2, 4, 5 and 6; ``UNEQUAL`` only from rung 1, an oracle
-counterexample or a symbolic witness; every other outcome is ``UNKNOWN``. :func:`decide_equal`
-reports an ``UNEQUAL`` not settled by rung 1 only with its Lean refutation
+``EQUAL`` comes only from rungs 2, 4 (saturation or path sum), 5 and 6; ``UNEQUAL`` only
+from rung 1, an oracle counterexample or a symbolic witness; every other outcome is
+``UNKNOWN``. :func:`decide_equal` reports an ``UNEQUAL`` not settled by rung 1 only with its
+Lean refutation
 (:attr:`Decision.refutation`, :func:`lean_refutation`), else ``UNEQUAL_UNCERTIFIED``, and an
 ``EQUAL`` only with its proof (:attr:`Decision.proof`), else ``EQUAL_UNCERTIFIED``. A
 normal-form match needs rung 3 to find no mismatch before it is reported; ``DEFERRED``
@@ -117,6 +121,7 @@ from archytaszx.semantics.induction import (
     choose_index,
     prove_by_induction,
 )
+from archytaszx.semantics.pathsum_diagram import PathSumComparison
 
 if TYPE_CHECKING:
     from archytaszx.semantics.kernel import Theorem
@@ -148,6 +153,7 @@ class DecisionMethod(enum.Enum):
     INTERFACE = "interface"
     NORMAL_FORM = "normal_form"
     SATURATION = "saturation"
+    PATH_SUM = "path_sum"
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
     INDUCTION = "induction"
     ORACLE_COUNTEREXAMPLE = "oracle_counterexample"
@@ -257,6 +263,9 @@ DECIDE_SATURATION_LIMITS = SaturationLimits(
 )
 _MAX_GRID_PRODUCT = 4096
 _NESTED: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_nested", default=False)
+_USE_PATH_SUM: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "decide_use_path_sum", default=True
+)
 """True inside an induction base case's :func:`decide_equal`, which is not certified."""
 _STEP_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.UNIFORM_REWRITE,
@@ -915,6 +924,18 @@ def _witness_assignments(
 
 
 @_trace.traced("decide.counterexample_search")
+@_trace.traced("decide.path_sum")
+def _path_sum_rung(left: Diagram, right: Diagram) -> PathSumComparison | str:
+    """The path-sum rung's comparison, or why the pair is outside its class."""
+    from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.semantics.pathsum_diagram import compare_path_sums
+
+    try:
+        return compare_path_sums(left, right)
+    except PathSumUnsupported as exc:
+        return f"path_sum: not applicable ({exc})"
+
+
 def _symbolic_witness(
     left: Diagram,
     right: Diagram,
@@ -1112,6 +1133,7 @@ def decide_equal(
     restrict: Restriction | str | Mapping[str, str] | None = None,
     describe: Callable[[Diagram], str] | None = None,
     prove_equal: bool = True,
+    use_path_sum: bool = True,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
     or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's and the
@@ -1123,10 +1145,59 @@ def decide_equal(
     induction step is tried left-to-right, then right-to-left. When either side has a
     discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
     is ``DOUBLED``, the rung that settled it in ``inner_method``. A restriction with clauses
-    runs :func:`decide_restricted`. ``prove_equal=False`` leaves EQUAL unproved and unchanged.
+    runs :func:`decide_restricted`. ``prove_equal=False`` leaves EQUAL unproved and unchanged;
+    ``use_path_sum=False`` turns the path-sum rung off.
     """
     if not isinstance(prove_equal, bool):
         raise DecideGrammarError(f"prove_equal must be a bool, got {prove_equal!r}")
+    if not isinstance(use_path_sum, bool):
+        raise DecideGrammarError(f"use_path_sum must be a bool, got {use_path_sum!r}")
+    token = _USE_PATH_SUM.set(use_path_sum)
+    try:
+        return _decide_equal(
+            left,
+            right,
+            rules=rules,
+            guard=guard,
+            samples=samples,
+            max_samples=max_samples,
+            use_symbolic=use_symbolic,
+            use_induction=use_induction,
+            max_depth=max_depth,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
+            mixed=mixed,
+            restrict=restrict,
+            describe=describe,
+            prove_equal=prove_equal,
+        )
+    finally:
+        _USE_PATH_SUM.reset(token)
+
+
+def _decide_equal(
+    left: Diagram,
+    right: Diagram,
+    *,
+    rules: Sequence[Rule] | None,
+    guard: TerminationGuard,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    max_samples: int,
+    use_symbolic: bool,
+    use_induction: bool,
+    max_depth: int,
+    tolerance: float,
+    max_elements: int,
+    use_saturation: bool,
+    saturation_limits: SaturationLimits,
+    mixed: bool,
+    restrict: Restriction | str | Mapping[str, str] | None,
+    describe: Callable[[Diagram], str] | None,
+    prove_equal: bool,
+) -> Decision:
+    """:func:`decide_equal` after its own argument checks."""
     _check_args(
         left,
         right,
@@ -1460,6 +1531,46 @@ def _decide(
         notes.append(f"saturation: {run.reason}")
     else:
         notes.append("saturation disabled")
+    if _USE_PATH_SUM.get():
+        settled_ps = _path_sum_rung(family_l, family_r)
+        if isinstance(settled_ps, str):
+            notes.append(settled_ps)
+        elif settled_ps.status == "equal":
+            return finish(
+                EqualityVerdict.EQUAL,
+                DecisionMethod.PATH_SUM,
+                f"{settled_ps.reason}; {sampled}",
+                assumptions=(),
+                proofs=(),
+                samples_checked=checked,
+            )
+        elif settled_ps.status == "unequal":
+            assert settled_ps.index is not None
+            assert settled_ps.left is not None and settled_ps.right is not None
+            ps_witness = EntryWitness(
+                MappingProxyType({}),
+                settled_ps.index,
+                settled_ps.left.to_complex(),
+                settled_ps.right.to_complex(),
+            )
+            return finish(
+                EqualityVerdict.UNEQUAL,
+                DecisionMethod.SYMBOLIC_WITNESS,
+                f"path sums differ at boundary index {ps_witness.index}: "
+                f"{ps_witness.left} vs {ps_witness.right} ({settled_ps.reason})",
+                assumptions=(),
+                counterexample=ps_witness.assignment,
+                comparison=ComparisonResult(
+                    EqualityMode.EXACT,
+                    False,
+                    f"entry {ps_witness.index} differs by {ps_witness.deviation}",
+                    ps_witness.deviation,
+                ),
+                samples_checked=checked,
+                witness=ps_witness,
+            )
+        else:
+            notes.append(settled_ps.reason)
     if use_symbolic:
         symbolic = _symbolic_match(family_l, family_r, floors)
         if symbolic.matched:

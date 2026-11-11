@@ -114,7 +114,7 @@ hypotheses.
   - A rule fires only when every one of its declared side conditions has been checked and
     passed; the outcome of each is recorded.
   - A reported EQUAL verdict rests on a replayable derivation, a symbolic contraction with
-    every symbol formal, or an induction whose base and step are both settled, and carries a
+    every symbol formal, a path-sum reduction to one canonical form, or an induction whose base and step are both settled, and carries a
     proof the kernel re-checks.
   - A reported UNEQUAL verdict rests on an interface mismatch, a numeric counterexample at an
     assignment satisfying every symbol's assumptions, or a symbolic witness entry; past the
@@ -132,8 +132,13 @@ hypotheses.
     give.
   - Symbolic contraction becomes slow as the number of phased spiders grows (roughly a factor
     of four per symbolic phase in a chain).
-  - Symbolic contraction refuses a bang box wired to a node outside it, and a port box over two
-    W nodes.
+  - Symbolic contraction refuses a bang box wired to a W, F, triangle or connective node
+    outside it, two boxes meeting one spider, and a port box over two W nodes. A node-scope box
+    meeting the boundary and outside Z or X spiders contracts (SEMANTICS.txt).
+  - The path-sum rung covers diagrams whose every dimension is a concrete power of two and
+    whose every generator is Z, X, F, B or S; its EQUAL verdicts are uncertified until the
+    path-sum Lean export exists, and a sum with path variables left after reduction (T
+    gates that do not cancel) is UNKNOWN.
   - The dimension unifier defers equations with several solution branches, such as
     d1*d2 == 6 or d^n == d^m; such equalities become recorded assumptions.
   - A rule restricted to prime dimensions does not fire at a symbolic dimension.

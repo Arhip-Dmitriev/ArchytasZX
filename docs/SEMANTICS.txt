@@ -207,6 +207,66 @@ find_entry_witness looks for one assignment and one index tuple at which the two
 differ, trying the given assignments and then the points the difference's deltas pin.
 
 
+5.2 Path sums: archytaszx.algebra.pathsum and archytaszx.semantics.pathsum_diagram
+
+    from_diagram(diagram) -> PathSum
+    reduce(ps) -> PathSum
+    canonical(ps) -> Canon | None
+    entry_at(ps, values) -> Cyclo
+    compare_path_sums(left, right) -> PathSumComparison
+
+Representation. A PathSum denotes E(i) = c sqrt(2)^k [C(i) = 0] Sum_{y in Z_2^m} exp(2 pi i
+P(i, y)) over boundary Boolean variables i (outputs then inputs, the Choi form, low binary
+place first) and path variables y. P is a multilinear polynomial with coefficients in Q/Z
+(turns); each constraint in C is a polynomial over F_2 (an XOR of monomials); c is a Cyclo, an
+element of Q(zeta_N) stored as rational coefficients over powers of zeta_N, compared modulo the
+cyclotomic polynomial Phi_N at a common N; k is an integer. The module uses Python integers and
+Fractions only and never enumerates a sum.
+
+Translation (from_diagram). Every dimension must be a concrete power of two and every
+generator Z, X, F, B or S; a W, triangle, discard, symbolic dimension, weighted or irrational
+phase, symbolic bang box or non-cyclotomic scalar raises PathSumUnsupported naming it. Bang
+boxes of concrete multiplicity are expanded first. A leg of dimension 2^k is k Boolean places.
+A Z spider identifies the places of all its legs and adds the multilinear interpolation of its
+phase table (Moebius inversion, exact); an X spider adds a fresh place vector y, the phase
+Sum_{a+b<k} sign 2^(a+b-k) y_a l_b for each leg l and its table over y, and sqrt(2)^(-kL); F
+adds Sum_{a+b<k} 2^(a+b-k) x_a z_b and sqrt(2)^(-k); B and S regroup place vectors (low part,
+then high part). Identified boundary places become constraints i_a + i_b = 0.
+
+Rules (reduce), each an identity over Z_2, applied to a fixpoint in the order below, lowest
+variable first; each application is recorded in PathSum.trace:
+
+  [Elim]           y in no term: drop y, factor 2.
+  [HH] pivot       every term of y has coefficient 1/2, so they are y Q / 2 with Q over F_2,
+                   and Q = z + Q' for a path variable z in no other monomial of Q: substitute
+                   z := Q' (its Boolean lift, a xor b = a + b - 2ab, terms with integer
+                   coefficients dropped), drop y and z, factor 2.
+  [omega]          y carries 1/4 (or 3/4) alone and 1/2 elsewhere, y Q / 2: drop y, add -Q/4
+                   (+Q/4), multiply by sqrt(2) zeta_8 (sqrt(2) zeta_8^-1).
+  [HH] constraint  as [HH] with Q over boundary variables only: keep [Q = 0], drop y, factor 2.
+
+Canonical form. A reduced sum with no path variable is put in canonical form by Gauss-Jordan
+elimination of its constraints over F_2 polynomials (eliminate): the variables are taken in
+ascending order, a pivot is a variable occurring in some constraint only as a degree-one
+monomial, and the pivot is substituted out of every other constraint and row. Each row then
+sets its pivot to a polynomial of the free variables; for affine constraints this is the
+reduced row echelon form. Each pivot is substituted out of P by its Boolean lift, P is stored
+as multilinear coefficients mod 1 over the free variables, and c sqrt(2)^k exp(2 pi i P(0))
+becomes one Cyclo. Equal canonical data mean one function: the rows parametrise the support by
+the free variables, and P and c give the value at each support point. For affine supports the
+converse holds too (the RREF is fixed by the support, the coefficients by Moebius inversion of
+the values, the constant by one support point), so every Clifford diagram reduces to a form
+complete for equality (the Dehaene-De Moor form of stabilizer maps). A Toffoli-type support
+(a pivot set to a product of free variables) is canonical in the same way but not proved
+unique, so differing forms there give UNEQUAL only through an evaluated point. A sum with path
+variables left (T gates not paired) or a constraint without a pivot has no canonical form.
+
+The rung (decide, PROOFS.txt section 2.1) compares the canonical forms. When they differ it
+evaluates both at points that separate them (a support point of each, a point of one support
+outside the other, the indicator point of each free monomial) and reports the first index tuple
+where the entries differ.
+
+
 6. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop
 ---------------------------------------------------------
 

@@ -70,6 +70,8 @@ def pair_proof(
                 ),
                 "",
             )
+    if decision.method is DecisionMethod.PATH_SUM:
+        return None, "a path_sum verdict has no proof export yet (lean_pathsum)"
     try:
         return kernel.from_decision(decision, left, right), ""
     except kernel.KernelError as exc:
