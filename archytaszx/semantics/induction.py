@@ -27,7 +27,14 @@ from types import MappingProxyType
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar, ScalarBudgetError
-from archytaszx.diagram.bangbox import BangBox, BangBoxError, Mult, free_mult_symbols, peel_one
+from archytaszx.diagram.bangbox import (
+    BangBox,
+    BangBoxError,
+    Mult,
+    free_mult_symbols,
+    peel_one,
+    substitute_index_phases,
+)
 from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
@@ -238,7 +245,7 @@ def choose_index(left: Diagram, right: Diagram, *, index: str | None = None) -> 
 
 def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diagram:
     """Replace every live bang box's multiplicity ``index`` with ``replacement``, together, and
-    ``index`` in the scalar, dropping any parameter binding for ``index``."""
+    ``index`` in the scalar and node phases, dropping any parameter binding for ``index``."""
     working = diagram.copy()
     for box_id, box in sorted(working.bang_boxes.items()):
         if index not in box.multiplicity.free_symbols:
@@ -250,6 +257,7 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
         working.set_bang_box_multiplicity(box_id, replacement)
     if index in working.scalar.free_symbols:
         working.set_scalar(working.scalar.substitute({index: Scalar(replacement.to_sympy())}))
+    working = substitute_index_phases(working, index, replacement)
     if index in working.parameters:
         working.set_parameters(
             {name: value for name, value in working.parameters.items() if name != index}

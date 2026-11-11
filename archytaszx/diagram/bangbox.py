@@ -940,6 +940,18 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
 _MAX_INSTANTIATE_ROUNDS = 10_000
 
 
+def substitute_index_phases(diagram: Diagram, name: str, value: int | Mult) -> Diagram:
+    """``diagram`` with ``name`` replaced by ``value`` in every node phase vector."""
+    from archytaszx.algebra.phase import Phase
+
+    sub: int | Phase = value if isinstance(value, int) else Phase(value.to_sympy())
+    working = diagram.copy()
+    for node_id, node in sorted(diagram.nodes.items()):
+        if node.phase is not None and name in node.phase.free_symbols:
+            working.set_phase(node_id, node.phase.substitute({name: sub}))
+    return working
+
+
 def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
     """Substitute ``value`` for ``name`` in every live bang box's multiplicity, expanding
     each box whose multiplicity thereby becomes concrete.

@@ -71,6 +71,7 @@ from archytaszx.diagram.bangbox import (
     free_mult_symbols,
     instantiate_symbol,
     peel_one,
+    substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import GeneratorError
@@ -252,11 +253,11 @@ def _with_scalar_index(diagram: Diagram, index: str, value: Mult) -> Diagram:
 
 
 def induction_base(diagram: Diagram, index: str) -> Diagram:
-    """``diagram`` with the multiplicity ``index`` at 0, boxes expanded and scalar substituted."""
+    """``diagram`` with the multiplicity ``index`` at 0 in boxes, scalar and phases."""
     based = instantiate_symbol(diagram, index, 0)
     if index in based.scalar.free_symbols:
         based.set_scalar(based.scalar.substitute({index: 0}))
-    return based
+    return substitute_index_phases(based, index, 0)
 
 
 def induction_hypothesis(diagram: Diagram, index: str, step_symbol: str) -> Diagram:

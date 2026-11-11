@@ -73,6 +73,7 @@ from archytaszx.diagram.bangbox import (
     boundary_arity,
     free_mult_symbols,
     instantiate_symbol,
+    substitute_index_phases,
 )
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError, PortRef
@@ -997,13 +998,14 @@ def _induction_assumptions(
 
 
 def _instantiate_index(diagram: Diagram, index: str, value: int) -> Diagram:
-    """``diagram`` with multiplicity ``index`` set to ``value``, scalar included, validated."""
+    """``diagram`` with multiplicity ``index`` set to ``value`` in boxes, scalar and phases."""
     if index in free_mult_symbols(diagram):
         diagram = instantiate_symbol(diagram, index, value)
     else:
         diagram = diagram.copy()
     if index in diagram.scalar.free_symbols:
         diagram.set_scalar(diagram.scalar.substitute({index: value}))
+    diagram = substitute_index_phases(diagram, index, value)
     validate_or_raise(diagram)
     return diagram
 
