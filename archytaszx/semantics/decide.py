@@ -692,18 +692,57 @@ def _run_oracle(
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
-    for candidate in candidates:
+    seen = [dict(c) for c in candidates]
+    fallback = _smallest_admissible(left, right, table)
+    queue = list(candidates)
+    while queue:
         if len(evaluated) >= max_samples:
             break
-        assignment = MappingProxyType(dict(candidate))
+        assignment = MappingProxyType(dict(queue.pop(0)))
         refusal, mismatch = _oracle_compare(left, right, assignment, table, tolerance, max_elements)
         if refusal is not None:
             refusals.append(f"{dict(assignment)!r}: {refusal}")
+            if fallback is not None and dict(fallback) not in seen:
+                seen.append(dict(fallback))
+                queue.insert(0, fallback)
             continue
         evaluated.append(assignment)
         if mismatch is not None:
             return _OracleRun(tuple(evaluated), assignment, mismatch, tuple(refusals))
     return _OracleRun(tuple(evaluated), None, None, tuple(refusals))
+
+
+_ADMISSIBLE_SEARCH = 64
+
+
+def _smallest_admissible(
+    left: Diagram, right: Diagram, table: Mapping[str, frozenset[sp.Symbol]]
+) -> Mapping[str, CheckAssignmentValue] | None:
+    """The point giving each free symbol its least value meeting its assumptions: a
+    multiplicity from 0, a dimension from its floor, any other symbol its first sample; None
+    when a symbol has none."""
+    dims_l, mults_l, others_l = _free_symbols(left)
+    dims_r, mults_r, others_r = _free_symbols(right)
+    mults = mults_l | mults_r
+    dims = (dims_l | dims_r) - mults
+    others = (others_l | others_r) - mults - dims
+    floors = dimension_floors(left, right)
+    point: dict[str, CheckAssignmentValue] = {}
+    for name in sorted(mults | dims | others):
+        symbols = table.get(name, frozenset())
+        chosen: CheckAssignmentValue | None
+        if name in others:
+            pool = _assumption_samples(symbols)
+            chosen = pool[0] if pool else None
+        else:
+            low = 0 if name in mults else floors.get(name, 1)
+            chosen = next(
+                (v for v in range(low, low + _ADMISSIBLE_SEARCH) if _satisfies(v, symbols)), None
+            )
+        if chosen is None:
+            return None
+        point[name] = chosen
+    return MappingProxyType(point) if point else None
 
 
 def oracle_summary(checked: int, refusals: Sequence[str]) -> str:
