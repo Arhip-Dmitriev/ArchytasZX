@@ -352,6 +352,10 @@ The rung (decide, PROOFS.txt section 2.1) compares the canonical forms. When the
 evaluates both at points that separate them (a support point of each, a point of one support
 outside the other, the indicator point of each free monomial) and reports the first index tuple
 where the entries differ.
+A pair with a symbolic dimension that both sides' parameters bind (a script's "dim d = 3") is
+compared again instantiated at those parameters: a difference there is UNEQUAL with the
+parameters as the counterexample, an agreement is UNKNOWN (it holds at one point, not over the
+family the decision is about).
 
 
 6. SCALABLE-NOTATION CHECKS: archytaszx.semantics.interop

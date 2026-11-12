@@ -1051,15 +1051,36 @@ def _witness_assignments(
 
 @_trace.traced("decide.counterexample_search")
 @_trace.traced("decide.path_sum")
-def _path_sum_rung(left: Diagram, right: Diagram) -> PathSumComparison | str:
-    """The path-sum rung's comparison, or why the pair is outside its class."""
+def _path_sum_rung(
+    left: Diagram, right: Diagram, parameters: Mapping[str, int]
+) -> PathSumComparison | str:
+    """The path-sum rung's comparison, or why the pair is outside its class; a pair outside it
+    on its symbols is compared again instantiated at ``parameters``: a difference there is
+    unequal at that point, an agreement is unknown for the family."""
     from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.semantics.check import instantiate
     from archytaszx.semantics.pathsum_diagram import compare_path_sums
 
     try:
         return compare_path_sums(left, right)
     except PathSumUnsupported as exc:
-        return f"path_sum: not applicable ({exc})"
+        why = f"path_sum: not applicable ({exc})"
+    if not parameters:
+        return why
+    try:
+        at_l, at_r = instantiate(left, parameters), instantiate(right, parameters)
+        found = compare_path_sums(at_l, at_r)
+    except (PathSumUnsupported, CheckError) as exc:
+        return f"{why}; at {dict(parameters)!r}: {exc}"
+    point = tuple(sorted(parameters.items()))
+    if found.status == "equal":
+        return replace(
+            found,
+            status="unknown",
+            reason=f"path_sum: equal at {dict(point)!r} only, not over the family",
+            point=point,
+        )
+    return replace(found, reason=f"{found.reason} at {dict(point)!r}", point=point)
 
 
 def _symbolic_witness(
@@ -1772,7 +1793,9 @@ def _decide(
     else:
         notes.append("symbolic contraction disabled")
     if _USE_PATH_SUM.get():
-        settled_ps = _path_sum_rung(family_l, family_r)
+        settled_ps = _path_sum_rung(
+            family_l, family_r, dict(left.parameters) if parameters_agree else {}
+        )
         stops.append(
             (
                 "path_sum",
@@ -1797,7 +1820,7 @@ def _decide(
             assert settled_ps.index is not None
             assert settled_ps.left is not None and settled_ps.right is not None
             ps_witness = EntryWitness(
-                MappingProxyType({}),
+                MappingProxyType(dict(settled_ps.point)),
                 settled_ps.index,
                 settled_ps.left.to_complex(),
                 settled_ps.right.to_complex(),

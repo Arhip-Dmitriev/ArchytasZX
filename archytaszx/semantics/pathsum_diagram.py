@@ -402,13 +402,14 @@ def index_tuple(bits: Iterable[int], values: dict[int, int], base: int = 2) -> t
 @dataclass(frozen=True)
 class PathSumComparison:
     """The path-sum rung's outcome: ``equal``, ``unequal`` with the differing boundary index
-    and both entries, or ``unknown``, with a reason."""
+    and both entries, or ``unknown``, with a reason, and the parameter point it holds at."""
 
     status: str
     reason: str
     index: tuple[int, ...] | None = None
     left: Cyclo | None = None
     right: Cyclo | None = None
+    point: tuple[tuple[str, int], ...] = ()
 
 
 def compare_path_sums(left: Diagram, right: Diagram) -> PathSumComparison:
