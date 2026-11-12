@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.Sym
+import ArchytasZX.Cyclo
 
 /-!
 # Path-sum rules
@@ -47,20 +48,21 @@ theorem ps_omega1 : (1 : ℂ) + om 8 ^ 6 = rt 2 * om 8 * om 8 ^ 6 := by
 theorem ps_omega_conj0 : (1 : ℂ) + om 8 ^ 6 = rt 2 * om 8 ^ 7 := by
   rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
   have h8 := om_pow_self 8 (by norm_num)
-  linear_combination (-(om 8 ^ 6) : ℂ) * h8
+  linear_combination (-(1 + om 8 ^ 6) : ℂ) * h8
 
 /-- [omega] conjugate at Q = 1: `1 + i = sqrt 2 zeta_8^(-1) zeta_8^2`. -/
 theorem ps_omega_conj1 : (1 : ℂ) + om 8 ^ 2 = rt 2 * om 8 ^ 7 * om 8 ^ 2 := by
   rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
   have h8 := om_pow_self 8 (by norm_num)
-  linear_combination (-(1 + om 8 ^ 2) : ℂ) * h8
+  linear_combination (-(om 8 ^ 8 + 1 + om 8 ^ 2) : ℂ) * h8
 
 /-- [HHgen]: with bits a, b not both 0, `Sum_z (1 + (-1)^(z a + b)) g z = (1 + (-1)^(b (1 +
 a))) g b`. -/
 theorem ps_hh_gen (g : ℕ → ℂ) (a b : ℕ) (ha : a ≤ 1) (hb : b ≤ 1) (hab : 1 ≤ a + b) :
     ((1 : ℂ) + (-1) ^ (0 * a + b)) * g 0 + ((1 : ℂ) + (-1) ^ (1 * a + b)) * g 1
       = ((1 : ℂ) + (-1) ^ (b * (1 + a))) * g b := by
-  interval_cases a <;> interval_cases b <;> norm_num at hab ⊢ <;> ring
+  interval_cases a <;> interval_cases b
+  all_goals first | (exfalso; omega) | (norm_num; done) | (norm_num; ring)
 
 /-- [Rem]: a factor `c^m` beside `1 + (-1)^m`, m a bit, drops. -/
 theorem ps_rem (m : ℕ) (hm : m ≤ 1) (c g : ℂ) :
@@ -97,7 +99,7 @@ theorem ps_digits (S : ℕ) : ∀ k : ℕ,
     rw [prod_range_succ, ps_digits S k, ps_hh]
     have hsplit : S % 2 ^ (k + 1) = S % 2 ^ k + 2 ^ k * (S / 2 ^ k % 2) := by
       rw [pow_succ, Nat.mod_mul]
-    have hp : 0 < 2 ^ k := Nat.pos_pow_of_pos k (by norm_num)
+    have hp : 0 < 2 ^ k := pow_pos (by norm_num) k
     rw [hsplit]
     rcases Nat.mod_two_eq_zero_or_one (S / 2 ^ k) with hb | hb <;>
       by_cases hs : S % 2 ^ k = 0 <;> simp [hb, hs, pow_succ] <;> omega
@@ -107,7 +109,7 @@ the j-th binary digit of S. -/
 theorem ps_dyadic (k S : ℕ) :
     ∑ Y ∈ range (2 ^ k), om (2 ^ k) ^ (Y * S) =
       ∏ j ∈ range k, ((1 : ℂ) + (-1) ^ (S / 2 ^ j % 2)) := by
-  rw [ps_geom _ _ (Nat.pos_pow_of_pos k (by norm_num)), ps_digits]
+  rw [ps_geom _ _ (pow_pos (by norm_num) k), ps_digits]
   simp only [Nat.cast_pow, Nat.cast_ofNat]
 
 /-- [Elim] over Z_p: a sum of p equal terms. -/
