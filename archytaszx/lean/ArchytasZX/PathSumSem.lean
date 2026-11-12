@@ -247,7 +247,7 @@ theorem mz_squash (σ : ℕ → ZMod 2) : ∀ l : List ℕ, mz σ (squash l) = m
     have ih := mz_squash σ (b :: l)
     by_cases h : a = b
     · subst h
-      simp only [squash, if_pos rfl]
+      simp only [squash, ↓reduceIte]
       rw [ih]
       show mz σ (a :: l) = σ a * (σ a * mz σ l)
       show σ a * mz σ l = σ a * (σ a * mz σ l)
@@ -286,10 +286,10 @@ theorem pn_ins (σ : ℕ → ZMod 2) (M : ℕ) (t : Mono × ℕ) :
     · have := peq_mod M t.2 (zq (mz σ t.1))
       rw [h] at this
       obtain ⟨n, hn⟩ := this
-      exact ⟨-n, by simp [pn] at *; linarith⟩
+      exact ⟨n, by simp [pn] at *; linarith⟩
     · rw [pn_cons, pn_nil]
       obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ t.1))
-      exact ⟨n, by simp [pn]; linarith⟩
+      exact ⟨n, by simp [pn] at *; push_cast at *; linarith⟩
   | u :: P => by
     simp only [ins]
     split_ifs with h1 h2
