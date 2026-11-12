@@ -831,7 +831,8 @@ def _pinned_value(
     entry: Scalar, index: SharedIndex, max_steps: int, others: Sequence[sp.Expr] = ()
 ) -> sp.Expr | None:
     """The value every term of ``entry`` pins ``index`` to, or None when there is none; a term
-    passes by simplification, or as a delta times a periodic part when ``others`` are periodic."""
+    passes by simplification, or as a delta times a periodic part when ``others`` are periodic.
+    A value other than 0 or a bare index needs ``others`` periodic."""
     symbol = _engine_index(index.name)
     modulus = index.dim.to_sympy()
     terms = sp.Add.make_args(entry.to_sympy())
@@ -842,6 +843,8 @@ def _pinned_value(
                 candidates.append(pin)
     periodic_others = all(_periodic(e, symbol, modulus) for e in others)
     for value in candidates:
+        if not (periodic_others or value == 0 or value.is_Symbol):
+            continue
         pinned = cast(sp.Expr, ModDelta(symbol - value, modulus))
         structural = periodic_others and bool(value.is_integer)
         if all(
