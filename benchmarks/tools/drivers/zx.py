@@ -2,11 +2,13 @@
 
 The circuit is read from QASM, its Init and Post wires plugged with basis states and effects,
 the specification read from PyZX JSON. A map is checked by full reduction of circuit . spec^dagger
-to the identity (equal when every input meets its output by a plain wire, unknown otherwise); a
-state by the three closed inner products <s|c>, <c|c>, <s|s> (equal when |<s|c>|^2 = <c|c><s|s>,
-unequal otherwise, unknown when one does not reduce to a scalar), the identity tested on the
-scalars' stored parts in log space when one is beyond float range (norm_identity). Scalars are not
-compared otherwise.
+to the identity (every input meets its output by a plain wire; unknown otherwise); a state by
+the three closed inner products <s|c>, <c|c>, <s|s> (unknown when one does not reduce to a
+scalar). Both tests are exact: the circuit's global phase
+and the specification's scalar (payload "phase" and rhs "scalar") are applied, a state is equal
+when <s|c> = <c|c> = <s|s> (states_equal) and a map when the reduced identity's scalar is 1
+(map_scalar_one), each value compared from the scalars' stored parts (in log space beyond float
+range); equal_up_to_scalar records the comparison without them.
 Prints one JSON line.
 """
 
@@ -60,13 +62,18 @@ def main() -> None:
             out["verdict"] = "unknown"
             out["reason"] = "an inner product did not reduce to a scalar"
         else:
-            out["verdict"] = "equal" if norm_identity(s_cs, s_cc, s_ss) else "unequal"
+            out["equal_up_to_scalar"] = norm_identity(s_cs, s_cc, s_ss)
+            out["verdict"] = "equal" if states_equal(s_cs, s_cc, s_ss, p) else "unequal"
     else:
         g = lhs.copy()
         g.compose(rhs.adjoint())
         reduce(g)
-        out["verdict"] = "equal" if _identity(g) else "unknown"
-        out["mode"] = "identity up to scalar"
+        out["mode"] = "identity"
+        if not _identity(g):
+            out["verdict"] = "unknown"
+        else:
+            out["equal_up_to_scalar"] = True
+            out["verdict"] = "equal" if map_scalar_one(g.scalar, p) else "unequal"
         lhs = g
     out["cpu"] = time.process_time() - c0
     out["wall"] = time.perf_counter() - w0
@@ -128,6 +135,52 @@ def scalar_parts(s):
         logm += math.log(abs(z))
         ang += cmath.phase(z)
     return False, logm, ang
+
+
+def _shift(parts, log_add, arg_add):
+    """``parts`` times a factor of log magnitude ``log_add`` and argument ``arg_add``."""
+    zero, lg, ang = parts
+    return zero, lg + log_add, ang + arg_add
+
+
+def _same(x, y):
+    """Whether two (zero, log, arg) values are equal: as complex numbers (relative 1e-9) when
+    both are within LOG_LIMIT or zero, else in log space (LOG_TOL, PHASE_TOL)."""
+    import cmath
+    import math
+
+    if all(z or abs(lg) <= LOG_LIMIT for z, lg, _ in (x, y)):
+        a, b = (0j if z else cmath.rect(math.exp(lg), ang) for z, lg, ang in (x, y))
+        return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
+    if x[0] or y[0]:
+        return x[0] and y[0]
+    return (
+        abs(x[1] - y[1]) <= LOG_TOL and abs(math.remainder(x[2] - y[2], 2 * math.pi)) <= PHASE_TOL
+    )
+
+
+def states_equal(cs, cc, ss, p):
+    """Whether the circuit's state c equals the specification's s exactly: <s|c> = <c|c> =
+    <s|s>, the circuit's global phase phi and the specification's scalar lambda applied
+    (<s|c> e^(i phi) conj(lambda), <s|s> |lambda|^2)."""
+    zero, lam_log, lam_arg = p["rhs"]["scalar"]
+    if zero:
+        return scalar_parts(cc)[0]
+    phi = float(p.get("phase", 0.0))
+    a = _shift(scalar_parts(cs), lam_log, phi - lam_arg)
+    b = scalar_parts(cc)
+    c = _shift(scalar_parts(ss), 2 * lam_log, 0.0)
+    return _same(a, b) and _same(b, c)
+
+
+def map_scalar_one(scalar, p):
+    """Whether the scalar of the reduced circuit . spec^dagger, times e^(i phi) conj(lambda),
+    is exactly 1."""
+    zero, lam_log, lam_arg = p["rhs"]["scalar"]
+    if zero:
+        return False
+    phi = float(p.get("phase", 0.0))
+    return _same(_shift(scalar_parts(scalar), lam_log, phi - lam_arg), (False, 0.0, 0.0))
 
 
 def norm_identity(cs, cc, ss):

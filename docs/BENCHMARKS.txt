@@ -656,7 +656,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      (0..64) unless the circuit is unrolled or has no size parameter, and d
                      (1..64) unless the script is literal in d, since decide settles the family
                      at a bound count and dimension. A failure there keeps its outcome and is
-                     flagged point_invalid. equal_at is None, not equal, for an F record whose
+                     flagged point_invalid. Cause tool.up_to_scalar: a scalar-only F break for a
+                     tool that decides up to a scalar (section 11). equal_at is None, not
+                     equal, for an F record whose
                      witness pairs a pure boundary with the same boundary doubled.
 
 The rung stop codes (RUNGS) are read from the decide reason's "; "-separated notes:
@@ -706,19 +708,24 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
   Tool          State     Instances, verdict and limitations
   ------------  --------  ---------------------------------------------------------------------
   ArchytasZX    built     everything; EQUAL, UNEQUAL, both uncertified, UNKNOWN; Lean proof
-  PyZX 0.10.8   built     d = 2, concrete n, pure circuits; maps: full_reduce of circuit .
-                          spec^dagger to the identity (else unknown); states: |<s|c>|^2 =
-                          <c|c><s|s> (unknown when an inner product keeps vertices after
-                          reduction), as complex numbers (relative 1e-9) when every scalar's
-                          |log| is at most 600, else from the scalars' stored parts in log
-                          space (power2 exactly; log magnitudes within 1e-9, the phase of
-                          <c|c><s|s> within 1e-6 rad of 0; to_number never called beyond
-                          float range); scalars not compared otherwise; specifications with W, triangle,
-                          binder, splitter or weighted spiders unsupported
+  PyZX 0.10.8   built     d = 2, concrete n, pure circuits; exact equality, scalar included: the
+                          circuit's global phase (Qiskit's, minus theta/2 per rz, since PyZX reads
+                          rz(theta) as diag(1, e^(i theta))) and the specification's exact scalar
+                          (the engine diagram's) are applied. Maps: full_reduce of circuit .
+                          spec^dagger to the identity (else unknown) whose scalar is 1; states:
+                          <s|c> = <c|c> = <s|s> (unknown when an inner product keeps vertices
+                          after reduction). Values compare as complex numbers (relative 1e-9)
+                          when every |log| is at most 600, else from the scalars' stored parts
+                          in log space (power2 exactly; log magnitudes within 1e-9, phases within
+                          1e-6 rad; to_number never called beyond float range); the comparison up
+                          to a scalar is kept as equal_up_to_scalar; specifications with W,
+                          triangle, binder, splitter or weighted spiders unsupported
   QuiZX 0.4.0   built     as PyZX, with full_simp
   QCEC 3.11.0   built     d = 2, concrete n; the circuit against the reference circuit (its own,
                           else the specification as one dense Unitary or Prepare gate); equivalent /
-                          not equivalent / no information, up to global phase flagged
+                          not equivalent / no information, up to global phase flagged; up to a
+                          scalar (QASM 2 carries no global phase and a dense reference is
+                          normalised)
   Qiskit 2.6.2  built     d = 2, at most 26 qubits for states and 13 for maps; Operator or
                           Statevector against the specification tensor; simulation, not proof;
                           exact and up-to-global-phase both recorded
@@ -731,10 +738,11 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           identity mod d (else unknown). Gates are sent as powers of plain HAD,
                           Z, CX, CZ (DiZX's adjoint flag and X gate do not reach its graph).
                           States and scalars unsupported. Pauli-Z propagation through CX and
-                          Fourier conjugation of X read unknown
+                          Fourier conjugation of X read unknown; up to a scalar
   Feynman       built     d = 2, Clifford+T (phases multiples of pi/4), explicit reference; feynver
                           on .qc files (Init wires ancillas); Equal / Not equal / Inconclusive;
-                          .qc has no global phase, so a circuit scalar -1 reads Inconclusive
+                          .qc has no global phase, so a circuit scalar -1 reads Inconclusive; up
+                          to a scalar
   AutoQ-Para    built     AutoQ 2.0 (AutoQ-Para has no public release, so symbolic n is
                           unsupported); states at d = 2: autoq ver with the specification as an
                           .hsl postcondition, up to a scalar; [OK] equal, [failed] unequal
@@ -743,7 +751,12 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           of Quantomatic's red_green rule set (the shared rule set; test 3 checks
                           every rule's sides agree up to a scalar), equal when the normal forms
                           match (drivers/QuantoBench.scala in the jar); boundary order and scalars
-                          not compared; binders, W, triangles and discards unsupported
+                          not compared (up to a scalar); binders, W, triangles and discards
+                          unsupported
+  The truth is exact equality. For a tool marked up to a scalar (QCEC, DiZX, Feynman, AutoQ,
+  Quantomatic), a run with a verdict on an F equation whose break changes only the scalar
+  (scalar_small_one, global_phase, box_boundary, boxed beyond_N) is invalid_point, cause
+  tool.up_to_scalar; ArchytasZX, PyZX, QuiZX, Qiskit and Cirq decide exact equality.
   Published     adapter   B1 only, the symbolic run: the published proof files re-checked by coqc
   proofs                  with their project's load paths, each project in its own opam switch:
                           SQIR 134fb94 (Coq 8.20.1, QuantumLib 1.8.0): Deutsch, superdense

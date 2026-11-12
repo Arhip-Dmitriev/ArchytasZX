@@ -39,6 +39,9 @@ OUTCOMES = (
 STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check", "prepare", "rival")
 NOT_SCORED = ("harness_error", "invalid_point")
 VERDICT_OUTCOMES = ("ok", "uncertified", "wrong", "wrong (uncertified)", "unknown")
+EXACT_TOOLS = ("archytaszx", "pyzx", "quizx", "cirq", "qiskit")
+UP_TO_SCALAR_TOOLS = ("qcec", "dizx", "feynman", "autoq_para", "quantomatic")
+SCALAR_KINDS = ("scalar_small_one", "global_phase", "box_boundary")
 ENGINE_STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check")
 
 UNSUPPORTED: dict[str, str] = {
@@ -96,6 +99,7 @@ UNSUPPORTED: dict[str, str] = {
 
 CAUSES: dict[str, str] = {
     "verdict": "verdict.<verdict>: the run's verdict (ok, uncertified, wrong)",
+    "tool.up_to_scalar": "a scalar-only F break, for a tool that decides up to a scalar",
     "pair_equal_at_point": "the F pair is equal at this point (benchmarks.differs)",
     "rival.no_verdict": "the rival returned no verdict",
     "kill.stage_timer": "the runner's wall timer killed the worker",
@@ -380,6 +384,15 @@ def reclassify_record(
     return classify(rec, falses.get(eq), free)
 
 
+def scalar_only(false: dict[str, Any]) -> bool:
+    """Whether an F record's break changes only the circuit's scalar (SCALAR_KINDS, and
+    beyond_N in its boxed sign form)."""
+    kind = false.get("kind")
+    return kind in SCALAR_KINDS or (
+        kind == "beyond_N" and "index" not in (false.get("params") or {})
+    )
+
+
 def classify(
     rec: dict[str, Any], false: dict[str, Any] | None = None, free: tuple[str, ...] = ()
 ) -> dict[str, Any]:
@@ -408,6 +421,13 @@ def classify(
     )
     if invalid and oc2 in VERDICT_OUTCOMES:
         oc2, cause = "invalid_point", "pair_equal_at_point"
+    elif (
+        false is not None
+        and tool in UP_TO_SCALAR_TOOLS
+        and scalar_only(false)
+        and oc2 in VERDICT_OUTCOMES
+    ):
+        oc2, cause = "invalid_point", "tool.up_to_scalar"
     out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
     if invalid:
         out["point_invalid"] = True
@@ -441,5 +461,6 @@ __all__ = [
     "instances",
     "reclassify_record",
     "rung_codes",
+    "scalar_only",
     "unsupported_code",
 ]

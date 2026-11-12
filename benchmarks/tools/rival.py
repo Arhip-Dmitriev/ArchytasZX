@@ -194,9 +194,21 @@ def qasm_and_phase(qc: Any) -> tuple[str, float]:
     phase (QASM 2 has none)."""
     from qiskit import qasm2, transpile
 
-    basis = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]
-    t = transpile(qc, basis_gates=basis, optimization_level=0)
+    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0)
     return exact_angles(qasm2.dumps(t)), float(t.global_phase)
+
+
+QELIB_BASIS = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]
+
+
+def qasm_and_zx_phase(qc: Any) -> tuple[str, float]:
+    """As :func:`qasm_and_phase`, the phase for a reader taking rz(theta) as diag(1, e^(i
+    theta)) (PyZX, QuiZX): Qiskit's global phase minus theta/2 for every rz."""
+    from qiskit import qasm2, transpile
+
+    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0)
+    shift = sum(float(ins.operation.params[0]) / 2 for ins in t.data if ins.operation.name == "rz")
+    return exact_angles(qasm2.dumps(t)), float(t.global_phase) - shift
 
 
 _FLOAT = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
@@ -284,7 +296,8 @@ def spec_tensor(inst: Any, n: int | None, d: int) -> np.ndarray:
 def spec_pyzx(inst: Any, n: int | None) -> dict[str, Any]:
     """The specification at d = 2 as a ZX graph (vertex types and phases in units of pi, edges
     with their types, boundary vertices): Z and X spiders with their phases, each F a Z vertex
-    with a Hadamard edge on its input side; any other generator is unsupported."""
+    with a Hadamard edge on its input side, and the diagram's exact scalar as
+    :func:`scalar_parts`; any other generator is unsupported."""
     from archytaszx.diagram.graph import Direction
 
     right = spec_diagram(inst, n, 2)
@@ -326,7 +339,23 @@ def spec_pyzx(inst: Any, n: int | None) -> dict[str, Any]:
         outs.append(len(verts))
         edges.append([vid[ref.node_id], len(verts), 1])
         verts.append(["B", "0"])
-    return {"vertices": verts, "edges": edges, "inputs": ins, "outputs": outs}
+    return {
+        "vertices": verts,
+        "edges": edges,
+        "inputs": ins,
+        "outputs": outs,
+        "scalar": scalar_parts(right.scalar.to_sympy()),
+    }
+
+
+def scalar_parts(value: Any) -> list[Any]:
+    """[zero, log|value|, arg value] of an exact scalar, by sympy at 30 digits."""
+    import sympy as sp
+
+    v = sp.sympify(value)
+    if v.is_zero:
+        return [True, 0.0, 0.0]
+    return [False, float(sp.N(sp.log(sp.Abs(v)), 30)), float(sp.N(sp.arg(v), 30))]
 
 
 def reference_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
