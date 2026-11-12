@@ -661,14 +661,19 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      equal, for an F record whose
                      witness pairs a pure boundary with the same boundary doubled.
 
-The rung stop codes (RUNGS) are read from the decide reason's "; "-separated notes:
-normal_form.differ and .agree; oracle.no_mismatch, .refused, .none_evaluated, .mismatch;
-saturation.iteration_limit, .enode_limit, .saturated; symbolic.declined.box_meets_wire,
-.declined.scalar_budget, .declined.other, .indeterminate.replicated_factors, .indeterminate,
-.entries_differ, .differ; induction.base_not_proved, .step_not_discharged and the same under
-induction_reversed; refutation.no_lean; a doubled. prefix for notes of the doubled comparison;
-RUNG.other for a note no pattern matches and RUNG.truncated for the last note of a reason cut at
-400 characters. Notes after an induction note belong to its base case and are not read.
+The rung stop codes are the engine's Decision.stops, one (rung, code) per rung tried in ladder
+order, written RUNG.CODE (outcomes.stop_codes): normal_form.agree, .differ; oracle.mismatch,
+.none_evaluated, .refused, .no_mismatch; saturation.merged, .saturated, .iteration_limit,
+.enode_limit, .application_limit; symbolic.equal, .differ, .entries_differ, .indeterminate,
+.indeterminate.replicated_factors, .declined.box_meets_wire, .declined.scalar_budget,
+.declined.other; path_sum.equal, .unequal, .residual, .not_applicable; induction.proved,
+.refuted, .base_not_proved, .step_not_discharged and the same under induction_reversed;
+proof.no_proof and refutation.no_lean from certification; the stops after ("doubled",
+"doubled") prefixed doubled., another doubled stop written doubled.CODE. A record written before
+Decision.stops existed has its codes read from the decide reason's "; "-separated notes (RUNGS):
+the same codes where a note matches, RUNG.other where none does, RUNG.truncated for the last
+note of a reason cut at 400 characters, notes after an induction note (its base case's own
+decision) not read.
 
 Aggregates read the codes, never the messages; harness_error and invalid_point points, and runs
 flagged point_invalid, are left out of the counts' points (harness_error and invalid_point have

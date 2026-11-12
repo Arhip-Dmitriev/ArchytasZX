@@ -21,6 +21,7 @@ logged ones (benchmarks/reclassify.py) alike.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any
 
 OUTCOMES = (
@@ -202,6 +203,22 @@ def rung_codes(reason: str) -> list[str]:
         code = prefix + code
         if not out or out[-1] != code:
             out.append(code)
+    return out
+
+
+def stop_codes(stops: Sequence[tuple[str, str]]) -> list[str]:
+    """``rung.code`` of every (rung, code) in a Decision's stops, those after
+    ("doubled", "doubled") prefixed ``doubled.``; another doubled stop is ``doubled.CODE``."""
+    out: list[str] = []
+    doubled = False
+    for rung, code in stops:
+        if rung == "doubled":
+            if code == "doubled":
+                doubled = True
+            else:
+                out.append(f"doubled.{code}")
+            continue
+        out.append(("doubled." if doubled else "") + f"{rung}.{code}")
     return out
 
 
@@ -462,5 +479,6 @@ __all__ = [
     "reclassify_record",
     "rung_codes",
     "scalar_only",
+    "stop_codes",
     "unsupported_code",
 ]

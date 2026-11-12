@@ -150,12 +150,12 @@ def diagrams(script: str) -> tuple[Any, Any]:
 
 def verdict_fields(outcome: Any) -> dict[str, Any]:
     """``verdict`` (equal, unequal, equal_uncertified, unequal_uncertified, unknown),
-    ``certified``, ``method``, ``inner_method``, ``reason``, ``rungs`` (outcomes.rung_codes of
-    the whole reason), ``derivation_steps``, ``samples`` and ``assumptions`` of a decide
-    outcome."""
+    ``certified``, ``method``, ``inner_method``, ``reason``, ``rungs`` (outcomes.stop_codes of
+    the Decision's stops, else outcomes.rung_codes of the whole reason), ``derivation_steps``,
+    ``samples`` and ``assumptions`` of a decide outcome."""
     from archytaszx.repl.commands import _Pair
     from archytaszx.semantics.decide import Decision
-    from benchmarks.outcomes import rung_codes
+    from benchmarks.outcomes import rung_codes, stop_codes
 
     detail = outcome.detail
     if not isinstance(detail, _Pair) or not isinstance(detail.payload, Decision):
@@ -170,7 +170,9 @@ def verdict_fields(outcome: Any) -> dict[str, Any]:
         "method": dec.method.value,
         "inner_method": dec.inner_method.value if dec.inner_method is not None else None,
         "reason": str(dec.reason)[:400],
-        "rungs": rung_codes(str(dec.reason)),
+        "rungs": stop_codes(dec.stops)
+        if getattr(dec, "stops", ())
+        else rung_codes(str(dec.reason)),
         "derivation_steps": steps,
         "samples": dec.samples_checked,
         "assumptions": len(dec.assumptions),
