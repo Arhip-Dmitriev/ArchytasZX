@@ -202,8 +202,10 @@ Result.family and Result.family_holds read its restriction fields. family_first=
 "only for": the restricted pair alone, Result.family None (PROOFS.txt, section 8.4). The
 engine functions decide_equal, decide_restricted, prove, prove_exhaustive and
 prove_by_induction take the same keyword family_first: bool = True; a non-bool is the module's
-grammar error. decide_equal also takes enumerate_residual: bool = False and
-max_residual_paths: int = 6 (PROOFS.txt, rung 5b).
+grammar error. decide_equal and prove also take enumerate_residual: bool = False and
+max_residual_paths: int = 6 (PROOFS.txt, rung 5b); prove applies it to an unrestricted pure
+pair left NOT_FOUND, which becomes REFUTED at the differing boundary index. The REPL's prove
+follows --tgateenum.
 
 3.4 Example
 

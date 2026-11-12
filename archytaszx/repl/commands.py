@@ -1100,7 +1100,13 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
             left, right, algebraic=algebraic, restrict=restriction, family_first=family_first
         )
         if exhaustive
-        else prove(left, right, restrict=restriction, family_first=family_first)
+        else prove(
+            left,
+            right,
+            restrict=restriction,
+            family_first=family_first,
+            enumerate_residual=session.tgateenum,
+        )
     )
     session.last_proof = outcome
     payload = _Pair("prove", left, right, outcome)

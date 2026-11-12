@@ -1237,6 +1237,31 @@ def _oracle_refuted(start: Diagram, goal: Diagram, oracle: OracleRefutation) -> 
     )
 
 
+def _residual_refuted(
+    start: Diagram, goal: Diagram, outcome: ProofOutcome, max_paths: int
+) -> ProofOutcome:
+    """``outcome`` REFUTED when both pure diagrams' path sums, residual sums evaluated exactly
+    up to ``max_paths`` path variables, differ at a boundary index; else ``outcome`` with the
+    comparison's reason appended."""
+    from archytaszx.algebra.pathsum import PathSumUnsupported
+    from archytaszx.semantics.pathsum_diagram import compare_path_sums
+
+    if not (is_pure(start) and is_pure(goal)):
+        return outcome
+    try:
+        found = compare_path_sums(start, goal, max_paths)
+    except PathSumUnsupported:
+        return outcome
+    if found.status != "unequal" or found.left is None or found.right is None:
+        return replace(outcome, reason=f"{outcome.reason}; {found.reason}")
+    return ProofOutcome(
+        ProofStatus.REFUTED,
+        f"path sums differ at boundary index {found.index}: {found.left.to_complex()} vs "
+        f"{found.right.to_complex()} ({found.reason})",
+        counterexample=MappingProxyType({}),
+    )
+
+
 def prove(
     start: Diagram,
     goal: Diagram,
@@ -1253,14 +1278,48 @@ def prove(
     induction_depth: int = DEFAULT_INDUCTION_DEPTH,
     restrict: Restriction | str | Mapping[str, str] | None = None,
     family_first: bool = True,
+    enumerate_residual: bool = False,
+    max_residual_paths: int = 6,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by the module docstring's order: interface, oracle,
     search, certification and check, then induction over a free multiplicity when search
     finds no path, nesting at most ``induction_depth`` inductions (0 turns it off); under
     ``restrict``, by :func:`restricted_outcome`, the family skipped when ``family_first`` is
-    False."""
+    False. With ``enumerate_residual``, an unrestricted pure pair left NOT_FOUND is REFUTED
+    when the path-sum comparison with residual enumeration (at most ``max_residual_paths``
+    path variables) finds a differing entry."""
     if not isinstance(family_first, bool):
         raise ProveGrammarError(f"family_first must be a bool, got {family_first!r}")
+    if not isinstance(enumerate_residual, bool):
+        raise ProveGrammarError(f"enumerate_residual must be a bool, got {enumerate_residual!r}")
+    if (
+        isinstance(max_residual_paths, bool)
+        or not isinstance(max_residual_paths, int)
+        or max_residual_paths < 0
+    ):
+        raise ProveGrammarError(
+            f"max_residual_paths must be a nonnegative int, got {max_residual_paths!r}"
+        )
+    if enumerate_residual:
+        outcome = prove(
+            start,
+            goal,
+            moves=moves,
+            limits=limits,
+            bidirectional=bidirectional,
+            cache=cache,
+            refute=refute,
+            samples=samples,
+            max_samples=max_samples,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            induction_depth=induction_depth,
+            restrict=restrict,
+            family_first=family_first,
+        )
+        if outcome.status is not ProofStatus.NOT_FOUND or restrict is not None:
+            return outcome
+        return _residual_refuted(start, goal, outcome, max_residual_paths)
     if restrict is not None:
         return restricted_outcome(
             start,
