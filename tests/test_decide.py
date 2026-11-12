@@ -48,7 +48,7 @@ from archytaszx.semantics.certificate import (
     verify,
 )
 from archytaszx.semantics.check import CheckError, compare, score
-from archytaszx.semantics.contract_numeric import ContractError
+from archytaszx.semantics.contract_numeric import FALLBACK_MAX_ELEMENTS, ContractError
 from archytaszx.semantics.decide import (
     DECIDE_SATURATION_LIMITS,
     DecideError,
@@ -1387,7 +1387,7 @@ class TestSymbolicWitness:
     @pytest.mark.parametrize("legs", [24, 40])
     @pytest.mark.parametrize("dim", [D, Dim.concrete(2)], ids=["d", "2"])
     def test_wide_ghz_with_one_phase_is_unequal(self, legs: int, dim: Dim) -> None:
-        decision = decide_equal(*wide_ghz_phase_pair(legs, dim))
+        decision = decide_equal(*wide_ghz_phase_pair(legs, dim), max_elements=FALLBACK_MAX_ELEMENTS)
         assert decision.verdict is EqualityVerdict.UNEQUAL, decision.reason
         assert decision.method is DecisionMethod.SYMBOLIC_WITNESS
         assert decision.samples_checked == 0

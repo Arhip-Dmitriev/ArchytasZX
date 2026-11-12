@@ -68,7 +68,7 @@ whose legs disagree, or whose shape is illegal.
 3. NUMERIC CONTRACTION: archytaszx.semantics.contract_numeric
 -------------------------------------------------------------
 
-    contract(diagram, *, max_elements=10_000_000) -> ContractionResult
+    contract(diagram, *, max_elements=DEFAULT_MAX_ELEMENTS) -> ContractionResult
 
 contracts a fully concrete diagram without bang boxes into one tensor. The diagram is first
 validated; a hard error or a deferred dimension issue is refused with ContractValidationError.
@@ -78,7 +78,10 @@ smallest result first. The exact scalar is multiplied in last.
 
 ContractionResult holds the tensor, the PortRef of each axis (boundary outputs, then inputs)
 and the number of output axes. A tensor larger than max_elements entries, whether a node's,
-an intermediate or the result, raises ContractSizeError.
+an intermediate or the result, raises ContractSizeError. DEFAULT_MAX_ELEMENTS is computed once
+per process: the memory limit / 16 bytes / 4, the limit read from the smallest cgroup v2
+memory.max on the process's cgroup path, else RLIMIT_AS, else 10_000_000 elements;
+DEFAULT_CAP_SOURCE names which, and a refusal at the default cap says so in its message.
 
 Numeric contraction is the oracle of the engine (section 4): it is used to search for
 counterexamples and to cross-check derivations at small concrete sizes, never to produce a

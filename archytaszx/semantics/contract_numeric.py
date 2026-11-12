@@ -42,9 +42,11 @@ An empty diagram evaluates directly to the rank-0 array holding
 ``diagram.scalar.to_complex()``.
 
 Size guard. A node's element count is the product of its per-leg dimensions.
-``max_elements`` (default ``10_000_000``, about 160 MB of ``complex128``) is checked
-against each node's own tensor before it is denoted, against the output tensor before
-contraction, and against every intermediate, raising :class:`ContractSizeError`.
+``max_elements`` (default :data:`DEFAULT_MAX_ELEMENTS`: the process's memory limit / 16 bytes
+/ 4, read once from the smallest cgroup v2 ``memory.max`` on the process's cgroup path, then
+from ``RLIMIT_AS``, else ``10_000_000``) is checked against each node's own tensor before it is
+denoted, against the output tensor before contraction, and against every intermediate,
+raising :class:`ContractSizeError`.
 
 Return type. :func:`contract` returns a :class:`ContractionResult`: the tensor, the ordered
 :class:`~archytaszx.diagram.graph.PortRef`\\ s that produced its axes, and the count of leading
@@ -58,6 +60,7 @@ import cmath
 import itertools
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -67,9 +70,57 @@ from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.diagram.validate import ValidationReport, validate
 from archytaszx.semantics.denote import denote, leg_dimensions
 
-DEFAULT_MAX_ELEMENTS = 10_000_000
+FALLBACK_MAX_ELEMENTS = 10_000_000
+"""The element cap when the process has no memory limit."""
+
+
+def _memory_limit() -> tuple[int, str] | None:
+    """The process's memory limit in bytes and its source: the smallest ``memory.max`` on its
+    cgroup v2 path, else ``RLIMIT_AS``; None when neither is set."""
+    root = Path("/sys/fs/cgroup")
+    try:
+        lines = Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines()
+        relative = next(line.split("::", 1)[1] for line in lines if line.startswith("0::"))
+        path = root / relative.lstrip("/")
+        limits: list[int] = []
+        while True:
+            text = (
+                (path / "memory.max").read_text(encoding="utf-8").strip()
+                if (path / "memory.max").exists()
+                else "max"
+            )
+            if text != "max":
+                limits.append(int(text))
+            if path == root or root not in path.parents:
+                break
+            path = path.parent
+        if limits:
+            return min(limits), "cgroup memory.max"
+    except (OSError, StopIteration, ValueError):
+        pass
+    try:
+        import resource
+
+        soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
+    except (ImportError, OSError, ValueError):
+        return None
+    if soft == resource.RLIM_INFINITY or soft <= 0:
+        return None
+    return soft, "RLIMIT_AS"
+
+
+def _default_cap() -> tuple[int, str]:
+    """The default element cap and a note naming where it came from."""
+    found = _memory_limit()
+    if found is None:
+        return FALLBACK_MAX_ELEMENTS, "no memory limit, fallback"
+    limit, source = found
+    return max(1, limit // 16 // 4), f"{source} {format_count(limit)} bytes / 16 / 4"
+
+
+DEFAULT_MAX_ELEMENTS, DEFAULT_CAP_SOURCE = _default_cap()
 """The default cap on the element count of any single tensor this module allocates, inputs,
-intermediates and output alike."""
+intermediates and output alike, and where it came from."""
 
 MAX_AXES = 64
 """The most axes numpy gives one array."""
@@ -203,9 +254,10 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
 
 def _check_size(elements: int, *, max_elements: int, what: str) -> None:
     if elements > max_elements:
+        source = f" ({DEFAULT_CAP_SOURCE})" if max_elements == DEFAULT_MAX_ELEMENTS else ""
         raise ContractSizeError(
             f"{what} would have {format_count(elements)} elements, exceeding the cap of "
-            f"{format_count(max_elements)}; "
+            f"{format_count(max_elements)}{source}; "
             "pass a larger max_elements to contract() if this is intentional"
         )
 

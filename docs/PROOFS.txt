@@ -35,7 +35,7 @@ constraints, one per equation up to orientation) are reported with the verdict a
 
     decide_equal(left, right, *, rules=None, guard=DEFAULT_GUARD, samples=None,
                  max_samples=24, use_symbolic=True, use_induction=True, max_depth=2,
-                 tolerance=1e-9, max_elements=10_000_000, use_saturation=True,
+                 tolerance=1e-9, max_elements=DEFAULT_MAX_ELEMENTS, use_saturation=True,
                  saturation_limits=DECIDE_SATURATION_LIMITS, mixed=False,
                  restrict=None, describe=None, prove_equal=True) -> Decision
 
@@ -65,7 +65,9 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             When the normal forms agree and rung 3 finds no mismatch: EQUAL.
   3. ORACLE_COUNTEREXAMPLE  The numeric oracle evaluates both diagrams at the sample grid; a
                             mismatch above tolerance (relative to the larger entry, at least 1)
-                            is UNEQUAL.
+                            is UNEQUAL. A sample whose tensors exceed max_elements (default:
+                            the process's memory limit / 16 B / 4, SEMANTICS.txt section 4) is
+                            refused, the reason naming the cap and its source.
   4. SATURATION             Both diagrams are added to one e-graph, saturated within
                             saturation_limits; when their classes merge: EQUAL. Each edge of
                             the explaining path yields a certificate that must replay.
@@ -200,7 +202,7 @@ floor) of 2, 3, 4, 1, 5, 6, ...
 
     prove(start, goal, *, moves=None, limits=DEFAULT_SEARCH_LIMITS, bidirectional=True,
           cache=None, refute=True, samples=None, max_samples=24, tolerance=1e-9,
-          max_elements=10_000_000, induction_depth=2, restrict=None) -> ProofOutcome
+          max_elements=DEFAULT_MAX_ELEMENTS, induction_depth=2, restrict=None) -> ProofOutcome
 
 prove settles a goal in this order:
 
@@ -241,7 +243,7 @@ sides.
 3.2 Exhaustive search
 
     prove_exhaustive(start, goal, *, refute=True, samples=None, max_samples=24,
-                     tolerance=1e-9, max_elements=10_000_000, on_layer=None,
+                     tolerance=1e-9, max_elements=DEFAULT_MAX_ELEMENTS, on_layer=None,
                      algebraic=False, restrict=None) -> ProofOutcome
 
 prove_exhaustive runs steps 1 and 2 of prove, then archytaszx.rewrite.exhaustive
@@ -303,7 +305,7 @@ compares mixed scalars by modulus. MIXED.txt, section 5.
     prove_by_induction(left, right, *, index=None, base=None, witness={},
                        ladder=DEFAULT_LADDER, rules=None, step_symbol="k", width=4,
                        max_steps=64, certify_proof=True, mode=EXACT, tolerance=1e-9,
-                       max_elements=10_000_000, restrict=None) -> InductionResult
+                       max_elements=DEFAULT_MAX_ELEMENTS, restrict=None) -> InductionResult
 
 proves an equality between two families for every value of one multiplicity symbol, index
 (by default the lexicographically least free multiplicity). Every other symbol is either held
