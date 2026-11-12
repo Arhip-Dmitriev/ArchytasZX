@@ -221,9 +221,9 @@ def _data_term(ps: PathSum, m: int) -> str:
     return f"{{ path := {sorted(ps.path)}, phase := [{phase}], cons := [{cons}], rows := [] }}"
 
 
-def _steps(raw: PathSum, ps: PathSum, order: Sequence[int]) -> list[str]:
+def _steps(raw: PathSum, ps: PathSum, order: Sequence[int], boolean: bool) -> list[str]:
     """The PSem.Step list replaying the trace of ``ps``, reduced from ``raw``, then the canon
-    steps at ``order``."""
+    steps at ``order`` (gather and bcanon steps when ``boolean``)."""
     cur = sorted(raw.path)
     out: list[str] = []
     for step in ps.trace:
@@ -236,6 +236,8 @@ def _steps(raw: PathSum, ps: PathSum, order: Sequence[int]) -> list[str]:
             out += [f".perm {[step.var, step.pivot, *cur]}", ".hhPivot"]
         else:
             raise PathSumUnsupported(f"the rule {step.rule} has no PathSumSem step")
+    if boolean:
+        return [*out, ".gather", *(f".bcanon {v}" for v in order)]
     return out + [f".canon {v}" for v in order]
 
 
@@ -251,11 +253,15 @@ def _const_model(c: Cyclo, k: int) -> sp.Expr:
     return sp.expand(value * root)
 
 
-def _const_turn(ps: PathSum, m: int) -> int:
+def _const_turn(ps: PathSum, m: int, boolean: bool) -> int:
     """The constant phase term of the canonical form of a reduced sum, in units of 1 / m."""
-    from archytaszx.algebra.pathsum import eliminate
+    from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
 
-    rows = eliminate(ps.constraints, ps.boundary)
+    rows = (
+        boolean_eliminate(ps.constraints, ps.boundary)[0]
+        if boolean
+        else eliminate(ps.constraints, ps.boundary)
+    )
     phase = ps.phase.copy()
     for pivot, rest in cast(list[tuple[int, frozenset[frozenset[int]]]], rows or []):
         phase.substitute(pivot, rest)
@@ -279,16 +285,23 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     for ps in (raw_l, raw_r):
         for c in ps.phase.terms.values():
             m = math.lcm(m, c.denominator)
-    from archytaszx.algebra.pathsum import eliminate
+    from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
 
-    for red in (red_l, red_r):
-        if eliminate(red.constraints, red.boundary) is None:
-            raise PathSumUnsupported("a support constraint has no degree-one pivot")
-    order = _elimination_order(red_l.constraints, red_l.boundary)
-    steps_l, steps_r = _steps(raw_l, red_l, order), _steps(raw_r, red_r, order)
+    boolean = any(eliminate(red.constraints, red.boundary) is None for red in (red_l, red_r))
+    if boolean:
+        rows_l, g_l = boolean_eliminate(red_l.constraints, red_l.boundary)
+        rows_r, g_r = boolean_eliminate(red_r.constraints, red_r.boundary)
+        order = [v for v, _r in rows_l]
+        one: frozenset[frozenset[int]] = frozenset({frozenset()})
+        if g_l != one or g_r != one or order != [v for v, _r in rows_r]:
+            raise PathSumUnsupported("the Boolean eliminations differ or leave a support")
+    else:
+        order = _elimination_order(red_l.constraints, red_l.boundary)
+    steps_l = _steps(raw_l, red_l, order, boolean)
+    steps_r = _steps(raw_r, red_r, order, boolean)
     two_l = sum(1 for st in steps_l if st in (".elim", ".hhCons", ".hhPivot"))
     two_r = sum(1 for st in steps_r if st in (".elim", ".hhCons", ".hhPivot"))
-    k_l, k_r = _const_turn(red_l, m), _const_turn(red_r, m)
+    k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
     sc = Scalars(
         nat=lambda sym: str(sym),
         other=lambda sym: (str(sym), "ℂ"),

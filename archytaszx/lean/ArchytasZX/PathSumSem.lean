@@ -885,6 +885,244 @@ theorem final_sound (M : ℕ) (hM : 0 < M) (cL cR : ℂ) (sL sR : Data) (σ : �
     linear_combination ex (((pn σ (strip sR.phase) : ℤ) : ℝ) / M) * hc
   · rfl
 
+/-! ## The exact split at the head variable -/
+
+/-- The terms of `y` with `y` removed from each monomial. -/
+def yq (y : ℕ) (P : Poly) : Poly := (yTerms y P).map fun t => (t.1.filter (· != y), t.2)
+
+theorem pn_yupd (τ : ℕ → ZMod 2) (y : ℕ) (b : ZMod 2) :
+    ∀ P : Poly, pn (Function.update τ y b) P = zq b * pn τ (yq y P) + pn τ (rest y P)
+  | [] => by simp [pn, yq, yTerms, rest]
+  | t :: P => by
+    have ih := pn_yupd τ y b P
+    by_cases hy : y ∈ t.1
+    · have hq : yq y (t :: P) = (t.1.filter (· != y), t.2) :: yq y P := by
+        simp [yq, yTerms, hy]
+      have hr : rest y (t :: P) = rest y P := by simp [rest, hy]
+      rw [hq, hr, pn_cons, pn_cons, ih, mz_update_in τ y b t.1 hy, zq_mul]
+      ring
+    · have hq : yq y (t :: P) = yq y P := by simp [yq, yTerms, hy]
+      have hr : rest y (t :: P) = t :: rest y P := by simp [rest, hy]
+      rw [hq, hr, pn_cons, pn_cons, ih, mz_update_not τ y b t.1 hy]
+      ring
+
+theorem pn_allhalf (τ : ℕ → ZMod 2) (M : ℕ) :
+    ∀ P : Poly, (∀ t ∈ P, 2 * t.2 = M) →
+      2 * pn τ P = (M : ℤ) * ((P.map fun t => zq (mz τ t.1)).sum)
+  | [] => fun _ => by simp [pn]
+  | t :: P => fun h => by
+    have ih := pn_allhalf τ M P (fun u hu => h u (List.mem_cons_of_mem _ hu))
+    have ht : (2 : ℤ) * t.2 = M := by exact_mod_cast h t List.mem_cons_self
+    rw [pn_cons, List.map_cons, List.sum_cons, mul_add, ih, ← ht]
+    ring
+
+theorem zsum_mz (τ : ℕ → ZMod 2) (Q : F2) :
+    ((((Q.map fun m => zq (mz τ m)).sum : ℤ)) : ZMod 2) = fz τ Q := by
+  rw [show (Q.map fun m => zq (mz τ m)) = (Q.map (mz τ)).map zq by simp [List.map_map],
+    zsum_cast]
+  rfl
+
+/-! ## [omega] at Q = 0 and Q = 1, as powers of zeta_8 -/
+
+theorem om8_four : om 8 ^ 4 = -1 := by
+  rw [om_eq_ex, show ((4 : ℕ) : ℝ) / ((8 : ℕ) : ℝ) = 1 / 2 by norm_num]
+  exact ex_half
+
+theorem omega_e1F0 : (1 : ℂ) + om 8 ^ 2 = rt 2 * om 8 := by
+  rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
+  linear_combination (1 - om 8 ^ 4) * om8_four
+
+theorem omega_e1F1 : (1 : ℂ) - om 8 ^ 2 = rt 2 * om 8 * om 8 ^ 6 := by
+  rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
+  linear_combination (-om 8 ^ 10 + om 8 ^ 6 - om 8 ^ 4 - om 8 ^ 2 + 1) * om8_four
+
+theorem omega_e3F0 : (1 : ℂ) + om 8 ^ 6 = rt 2 * om 8 ^ 7 := by
+  rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
+  linear_combination (-om 8 ^ 10 + om 8 ^ 6 - om 8 ^ 4 + 1) * om8_four
+
+theorem omega_e3F1 : (1 : ℂ) - om 8 ^ 6 = rt 2 * om 8 ^ 7 * om 8 ^ 2 := by
+  rw [rt_sub2 8 1 (by norm_num) (by norm_num)]
+  linear_combination (-om 8 ^ 12 + om 8 ^ 8 - om 8 ^ 6 - om 8 ^ 4 + 1) * om8_four
+
+/-! ## Boolean elimination -/
+
+/-- The product of two F_2 polynomials. -/
+def f2mul (a b : F2) : F2 := a.flatMap fun m => b.map fun u => m ++ u
+
+theorem fz_f2mul (τ : ℕ → ZMod 2) (b : F2) : ∀ a : F2, fz τ (f2mul a b) = fz τ a * fz τ b
+  | [] => by simp [f2mul, fz]
+  | m :: a => by
+    have ih := fz_f2mul τ b a
+    have hs : f2mul (m :: a) b = (b.map fun u => m ++ u) ++ f2mul a b := by
+      simp [f2mul, List.flatMap_cons]
+    rw [hs, fz_append, fz_mapprefix, ih, fz_cons]
+    ring
+
+/-- The support indicator `Prod (1 + c)` of a list of constraints. -/
+def gatherPoly (C : List F2) : F2 := C.foldr (fun c acc => f2mul ([] :: c) acc) [[]]
+
+theorem fz_gather (τ : ℕ → ZMod 2) :
+    ∀ C : List F2, (fz τ (gatherPoly C) = 1 ↔ ∀ q ∈ C, fz τ q = 0)
+  | [] => by simp [gatherPoly, fz, mz]
+  | c :: C => by
+    have ih := fz_gather τ C
+    have hs : gatherPoly (c :: C) = f2mul ([] :: c) (gatherPoly C) := rfl
+    rw [hs, fz_f2mul, fz_cons, show mz τ [] = 1 from rfl, List.forall_mem_cons, ← ih]
+    rcases z2_cases (fz τ c) with h | h <;> rcases z2_cases (fz τ (gatherPoly C)) with g | g <;>
+      simp [h, g] <;> decide
+
+/-- Whether there is a constraint to gather and no path variable. -/
+def gatherOK (s : Data) : Bool := decide (s.path = [])
+
+/-- Every constraint replaced by the one constraint `1 + Prod (1 + c)`. -/
+def gatherS (s : Data) : Data := { s with cons := [normF ([] :: gatherPoly s.cons)] }
+
+theorem gather_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (_h : gatherOK s = true) :
+    val M c s σ = val M c (gatherS s) σ := by
+  unfold val gatherS
+  apply bsum_congr
+  intro τ
+  unfold summand
+  have hiff : (∀ q ∈ s.cons ++ s.rows, fz τ q = 0) ↔
+      (∀ q ∈ [normF ([] :: gatherPoly s.cons)] ++ s.rows, fz τ q = 0) := by
+    simp only [List.mem_append, List.mem_singleton]
+    have hg : fz τ (normF ([] :: gatherPoly s.cons)) = 0 ↔ ∀ q ∈ s.cons, fz τ q = 0 := by
+      rw [fz_normF, fz_cons, show mz τ [] = 1 from rfl, ← fz_gather τ s.cons]
+      rcases z2_cases (fz τ (gatherPoly s.cons)) with g | g <;> simp [g] <;> decide
+    constructor
+    · rintro H q (rfl | hq)
+      · exact hg.2 fun q hq => H q (Or.inl hq)
+      · exact H q (Or.inr hq)
+    · rintro H q (hq | hq)
+      · exact hg.1 (H _ (Or.inl rfl)) q hq
+      · exact H q (Or.inr hq)
+  simp only [hiff]
+  rfl
+
+/-- The monomials of `g` with `v`, `v` removed, and those without `v`. -/
+def splitAt (v : ℕ) (g : F2) : F2 × F2 :=
+  ((g.filter fun m => decide (v ∈ m)).map fun m => m.filter (· != v),
+    g.filter fun m => !decide (v ∈ m))
+
+theorem fz_splitAt (τ : ℕ → ZMod 2) (v : ℕ) :
+    ∀ g : F2, fz τ g = τ v * fz τ (splitAt v g).1 + fz τ (splitAt v g).2
+  | [] => by simp [splitAt, fz]
+  | m :: g => by
+    have ih := fz_splitAt τ v g
+    by_cases hv : v ∈ m
+    · have h1 : (splitAt v (m :: g)).1 = m.filter (· != v) :: (splitAt v g).1 := by
+        simp [splitAt, hv]
+      have h2 : (splitAt v (m :: g)).2 = (splitAt v g).2 := by simp [splitAt, hv]
+      rw [h1, h2, fz_cons, fz_cons, ih]
+      have hm := mz_update_in τ v (τ v) m hv
+      rw [Function.update_eq_self] at hm
+      rw [hm]
+      ring
+    · have h1 : (splitAt v (m :: g)).1 = (splitAt v g).1 := by simp [splitAt, hv]
+      have h2 : (splitAt v (m :: g)).2 = m :: (splitAt v g).2 := by simp [splitAt, hv]
+      rw [h1, h2, fz_cons, fz_cons, ih]
+      ring
+
+/-- The value `A + B` of a determined variable `v` of the indicator `g = 1 + q`. -/
+def detValue (v : ℕ) (q : F2) : F2 :=
+  let g := normF ([] :: q)
+  (splitAt v g).1 ++ (splitAt v g).2
+
+/-- Whether `v`, not a path variable, is determined on the support of the first constraint:
+`B (A + B) = 0` for its indicator `v A + B`. -/
+def bcanonOK (v : ℕ) (s : Data) : Bool :=
+  match s.cons with
+  | [] => false
+  | q :: _ =>
+    let g := normF ([] :: q)
+    !decide (v ∈ s.path) && decide (normF (f2mul (splitAt v g).2 (detValue v q)) = [])
+
+/-- The first constraint's determined variable `v` made a row `v + A + B`, substituted out of
+the phase, the constraints and the rows. -/
+def bcanonS (M v : ℕ) (s : Data) : Data :=
+  match s.cons with
+  | [] => s
+  | q :: rest =>
+    let val := detValue v q
+    { path := s.path, phase := normP M (substP M v val s.phase),
+      cons := (q :: rest).map fun r => normF (substF v val r),
+      rows := (s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)] }
+
+theorem z2_add_self : ∀ x : ZMod 2, x + x = 0 := by decide
+
+theorem det_bits : ∀ x a b : ZMod 2, x * a + b = 1 → b * (a + b) = 0 → x = a + b := by decide
+
+theorem bcanon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ : ℕ → ZMod 2)
+    (h : bcanonOK v s = true) : val M c s σ = val M c (bcanonS M v s) σ := by
+  unfold val
+  rcases hq : s.cons with _ | ⟨q, rest⟩
+  · simp [bcanonOK, hq] at h
+  · simp only [bcanonOK, hq, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+      decide_eq_true_eq] at h
+    obtain ⟨_, hdet⟩ := h
+    simp only [bcanonS, hq]
+    apply bsum_congr
+    intro τ
+    set val := detValue v q
+    set g := normF ([] :: q)
+    have hg : fz τ g = 1 + fz τ q := by
+      rw [fz_normF, fz_cons]; rfl
+    have hval : fz τ val = fz τ (splitAt v g).1 + fz τ (splitAt v g).2 := by
+      simp only [val, detValue]; rw [fz_append]
+    have hzero : fz τ (splitAt v g).2 * fz τ val = 0 := by
+      have := congrArg (fz τ) hdet
+      rw [fz_normF, fz_f2mul] at this
+      simpa [fz] using this
+    unfold summand
+    simp only [hq]
+    have hM0 : 0 < M := by omega
+    by_cases hrow : τ v = fz τ val
+    · have hτ : Function.update τ v (fz τ val) = τ := by rw [← hrow, Function.update_eq_self]
+      have hsub : ∀ r, fz τ (normF (substF v val r)) = fz τ r := by
+        intro r; rw [fz_normF, fz_substF, hτ]
+      have hrowz : fz τ (normF ([v] :: val)) = 0 := by
+        have e : mz τ [v] = τ v := by simp [mz]
+        rw [fz_normF, fz_cons, e, hrow]
+        exact z2_add_self _
+      have hcond : (∀ r ∈ (q :: rest).map (fun r => normF (substF v val r)) ++
+          ((s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)]), fz τ r = 0) ↔
+          (∀ r ∈ (q :: rest) ++ s.rows, fz τ r = 0) := by
+        simp only [List.mem_append, List.mem_map, List.mem_singleton]
+        constructor
+        · rintro H r (hr | hr)
+          · have := H _ (Or.inl ⟨r, hr, rfl⟩); rwa [hsub] at this
+          · have := H _ (Or.inr (Or.inl ⟨r, hr, rfl⟩)); rwa [hsub] at this
+        · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩ | rfl)
+          · rw [hsub]; exact H r' (Or.inl hr')
+          · rw [hsub]; exact H r' (Or.inr hr')
+          · exact hrowz
+      simp only [hcond]
+      split_ifs
+      · congr 1
+        apply ex_peq hM0
+        have := peq_trans (pn_normP τ M _) (pn_substP τ M v hM val s.phase)
+        rwa [hτ] at this
+      · rfl
+    · have hr : ¬ (∀ r ∈ (q :: rest).map (fun r => normF (substF v val r)) ++
+          ((s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)]),
+            fz τ r = 0) := by
+        intro H
+        apply hrow
+        have := H (normF ([v] :: val)) (by simp)
+        rw [fz_normF, fz_cons] at this
+        have e : mz τ [v] = τ v := by simp [mz]
+        rw [e] at this
+        exact z2_eq_of_add _ _ this
+      have hl : ¬ (∀ r ∈ (q :: rest) ++ s.rows, fz τ r = 0) := by
+        intro H
+        apply hrow
+        have hq0 : fz τ q = 0 := H q (by simp)
+        have hg1 : fz τ g = 1 := by rw [hg, hq0, add_zero]
+        rw [fz_splitAt τ v g] at hg1
+        rw [hval]
+        exact det_bits _ _ _ hg1 (by rw [← hval]; exact hzero)
+      rw [if_neg hr, if_neg hl]
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -894,6 +1132,8 @@ inductive Step where
   | hhCons
   | hhPivot
   | canon (v : ℕ)
+  | gather
+  | bcanon (v : ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -902,6 +1142,8 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .hhCons, s => hhConsOK M s
   | .hhPivot, s => hhPivotOK M s
   | .canon v, s => canonOK v s
+  | .gather, s => gatherOK s
+  | .bcanon v, s => bcanonOK v s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -910,6 +1152,8 @@ def stepS (M : ℕ) : Step → Data → Data
   | .hhCons, s => hhConsS s
   | .hhPivot, s => hhPivotS M s
   | .canon v, s => canonS M v s
+  | .gather, s => gatherS s
+  | .bcanon v, s => bcanonS M v s
 
 /-- The power of 2 a step multiplies the constant by. -/
 def stepTwo : Step → ℕ
@@ -939,6 +1183,8 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | hhCons => simpa [stepTwo, stepS] using hhCons_sound M c s σ h
   | hhPivot => simpa [stepTwo, stepS] using hhPivot_sound M c s σ h
   | canon v => simpa [stepTwo, stepS] using canon_sound M hM c v s σ h
+  | gather => simpa [stepTwo, stepS] using gather_sound M c s σ h
+  | bcanon v => simpa [stepTwo, stepS] using bcanon_sound M hM c v s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →
