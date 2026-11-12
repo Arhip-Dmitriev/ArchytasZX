@@ -67,7 +67,11 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             mismatch above tolerance (relative to the larger entry, at least 1)
                             is UNEQUAL. A sample whose tensors exceed max_elements (default:
                             the process's memory limit / 16 B / 4, SEMANTICS.txt section 4) is
-                            refused, the reason naming the cap and its source.
+                            refused, the reason naming the cap and its source. Samples run in
+                            increasing planned size (the larger boundary-dimension product of
+                            the two sides instantiated at the sample); once one has evaluated, a
+                            sample planning more than 16 times the largest evaluated size is
+                            refused as "larger than needed". The sample grid is unchanged.
   4. SATURATION             Both diagrams are added to one e-graph, saturated within
                             saturation_limits; when their classes merge: EQUAL. Each edge of
                             the explaining path yields a certificate that must replay.

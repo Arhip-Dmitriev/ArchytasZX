@@ -80,7 +80,7 @@ from archytaszx.diagram.bangbox import (
     substitute_index_phases,
 )
 from archytaszx.diagram.generators import GeneratorError
-from archytaszx.diagram.graph import Diagram, GraphError, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, GraphError, PortRef
 from archytaszx.diagram.mixed import double, is_pure
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationReport
@@ -753,6 +753,32 @@ def _oracle_compare(
     return None, result
 
 
+_SIZE_GROWTH = 16
+"""How many times the largest evaluated sample's size a later oracle sample may plan."""
+
+
+def _planned_size(
+    left: Diagram, right: Diagram, assignment: Mapping[str, CheckAssignmentValue]
+) -> float:
+    """The larger boundary-dimension product of the two sides instantiated at ``assignment``,
+    or infinity when either does not instantiate."""
+    from archytaszx.semantics.check import instantiate
+
+    size = 1
+    try:
+        for diagram in (left, right):
+            inst = instantiate(diagram, dict(assignment))
+            product = 1
+            for ref in (*inst.boundary_outputs, *inst.boundary_inputs):
+                node = inst.nodes[ref.node_id]
+                legs = node.outputs if ref.direction is Direction.OUTPUT else node.inputs
+                product *= inst.resolve_dim(legs[ref.index].dim).to_int()
+            size = max(size, product)
+    except Exception:  # noqa: BLE001
+        return math.inf
+    return float(size)
+
+
 @_trace.traced("decide.oracle")
 def _run_oracle(
     left: Diagram,
@@ -763,19 +789,29 @@ def _run_oracle(
     max_elements: int,
     fallback_point: bool = False,
 ) -> _OracleRun:
-    """Compare ``left`` and ``right`` at each candidate until ``max_samples`` evaluate or one
-    mismatches; a candidate the oracle refuses or that breaks an assumption is skipped, and
+    """Compare ``left`` and ``right`` at each candidate, in increasing planned size, until
+    ``max_samples`` evaluate or one mismatches; a candidate the oracle refuses, that breaks an
+    assumption, or that plans more than 16 times the largest evaluated size is skipped, and
     with ``fallback_point`` the smallest admissible point is queued after the first refusal."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
     seen = [dict(c) for c in candidates]
     fallback = _smallest_admissible(left, right, table) if fallback_point else None
-    queue = list(candidates)
+    sizes = [_planned_size(left, right, c) for c in candidates]
+    queue = [c for _, c in sorted(zip(sizes, candidates), key=lambda pair: pair[0])]
+    largest = 0.0
     while queue:
         if len(evaluated) >= max_samples:
             break
         assignment = MappingProxyType(dict(queue.pop(0)))
+        planned = _planned_size(left, right, assignment)
+        if evaluated and planned > _SIZE_GROWTH * largest:
+            refusals.append(
+                f"{dict(assignment)!r}: larger than needed (planned {planned:g} elements, "
+                f"over {_SIZE_GROWTH} x the largest evaluated {largest:g})"
+            )
+            continue
         refusal, mismatch = _oracle_compare(left, right, assignment, table, tolerance, max_elements)
         if refusal is not None:
             refusals.append(f"{dict(assignment)!r}: {refusal}")
@@ -784,6 +820,7 @@ def _run_oracle(
                 queue.insert(0, fallback)
             continue
         evaluated.append(assignment)
+        largest = max(largest, planned)
         if mismatch is not None:
             return _OracleRun(tuple(evaluated), assignment, mismatch, tuple(refusals))
     return _OracleRun(tuple(evaluated), None, None, tuple(refusals))
