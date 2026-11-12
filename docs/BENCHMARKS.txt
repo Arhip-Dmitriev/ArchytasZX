@@ -761,7 +761,9 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           normalised)
   Qiskit 2.6.2  built     d = 2, at most 26 qubits for states and 13 for maps; Operator or
                           Statevector against the specification tensor; simulation, not proof;
-                          exact and up-to-global-phase both recorded
+                          exact and up-to-global-phase both recorded, entrywise within 1e-10
+                          times the largest entry magnitude, no relative tolerance (max_rel_diff
+                          records the measured gap)
   Cirq 1.7.0    built     qudits, concrete n and d, at most 2^26 entries; every gate a
                           MatrixGate; as Qiskit
   tket 2.18.5   built     B3 only: gates and two-qubit gates after FullPeepholeOptimise

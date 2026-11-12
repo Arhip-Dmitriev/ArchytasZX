@@ -1,13 +1,16 @@
 """Simulation driver for Qiskit and Cirq, run as ``python -I sim.py PAYLOAD`` in the tool's
 environment: the circuit's state (every input initialised) or unitary, sliced at its Init
 inputs and Post outputs, compared with the specification tensor (outputs then inputs, first
-wire most significant): exactly, and up to a global phase. Prints one JSON line."""
+wire most significant): exactly, and up to a global phase, entrywise within REL times the
+largest entry magnitude (no relative tolerance). Prints one JSON line."""
 
 import json
 import sys
 import time
 
 import numpy as np
+
+REL = 1e-10
 
 
 def qiskit_tensor(p):
@@ -82,10 +85,13 @@ def main():
         out["verdict"] = "unequal"
         out["reason"] = "shape"
     else:
-        exact = bool(np.allclose(a, b, atol=1e-8))
+        scale = max(float(np.max(np.abs(a), initial=0.0)), float(np.max(np.abs(b), initial=0.0)))
+        tol = REL * scale
+        exact = bool(np.allclose(a, b, rtol=0.0, atol=tol))
         k = int(np.argmax(np.abs(b)))
-        lam = a[k] / b[k] if abs(b[k]) > 1e-12 else 0
-        phase = bool(abs(abs(lam) - 1) < 1e-8 and np.allclose(a, lam * b, atol=1e-8))
+        lam = a[k] / b[k] if abs(b[k]) > tol else 0
+        phase = bool(abs(abs(lam) - 1) <= REL and np.allclose(a, lam * b, rtol=0.0, atol=tol))
+        out["max_rel_diff"] = float(np.max(np.abs(a - b), initial=0.0)) / scale if scale else 0.0
         out["verdict"] = "equal" if exact else "unequal"
         out["equal_up_to_global_phase"] = phase
     out["cpu"] = time.process_time() - c0
