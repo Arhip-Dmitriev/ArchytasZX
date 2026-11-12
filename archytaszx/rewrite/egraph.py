@@ -194,6 +194,11 @@ class SaturationStop(enum.Enum):
     APPLICATION_LIMIT = "application_limit"
 
 
+STORED_NODE_BUDGET = 1 << 17
+"""The most nodes the e-nodes of one e-graph may hold together; past it saturation stops with
+ENODE_LIMIT."""
+
+
 @dataclass(frozen=True, slots=True)
 class SaturationLimits:
     """Ceilings on one :meth:`EGraph.saturate` call and the node margin of its bound."""
@@ -388,6 +393,7 @@ class EGraph:
     def __init__(self) -> None:
         """An empty e-graph."""
         self._reps: list[Diagram] = []
+        self._stored = 0
         self._views: list[Diagram] = []
         self._parent: list[int] = []
         self._buckets: dict[str, list[int]] = {}
@@ -448,6 +454,7 @@ class EGraph:
     def _insert(self, diagram: Diagram, view: Diagram, key: str, eclass: int | None) -> int:
         """A new e-node for ``diagram``, in ``eclass`` or in a class of its own."""
         index = len(self._reps)
+        self._stored += len(diagram.nodes)
         self._reps.append(diagram)
         self._views.append(view)
         self._parent.append(index if eclass is None else eclass)
@@ -657,7 +664,10 @@ class EGraph:
         key, found = self._find_view(view)
         parent = ENodeId(index)
         if found is None:
-            if len(self._reps) >= limits.max_enodes:
+            if (
+                len(self._reps) >= limits.max_enodes
+                or self._stored + len(result.diagram.nodes) > STORED_NODE_BUDGET
+            ):
                 raise _Stop(SaturationStop.ENODE_LIMIT)
             child = self._insert(result.diagram, view, key, self._root(index))
             self._tree_edge[child] = len(self._edges)

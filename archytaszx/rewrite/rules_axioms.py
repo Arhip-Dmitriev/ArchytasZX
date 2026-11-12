@@ -63,6 +63,7 @@ from archytaszx.rewrite.match_template import (
     TNode,
     TPort,
     Var,
+    check_template_budget,
     k_vector,
 )
 from archytaszx.rewrite.rule import RewriteDomainError
@@ -285,6 +286,7 @@ class TB:
     ) -> str:
         key = self._key(key)
         self.nodes.append(TNode(key, gen, ins, outs, param, open, pink, dim))
+        check_template_budget(len(self.nodes) + len(self.wires))
         return key
 
     def z(
@@ -323,6 +325,7 @@ class TB:
 
     def wire(self, a: TPort, b: TPort) -> None:
         self.wires.append((a, b))
+        check_template_budget(len(self.nodes) + len(self.wires))
 
     def term(self, name: str, port: TPort) -> None:
         self.terminals[name] = port

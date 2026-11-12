@@ -280,7 +280,11 @@ in the library (saturation_rules()).
                      match_limit=1000, ban_length=5)
     SaturationStop: SATURATED | ITERATION_LIMIT | ENODE_LIMIT | APPLICATION_LIMIT
 
-The node bound is the largest root's node count plus node_margin. Rules are scheduled with
+The node bound is the largest root's node count plus node_margin. The e-nodes of one e-graph
+hold at most STORED_NODE_BUDGET = 2^17 nodes together; a new e-node past it stops saturation
+with ENODE_LIMIT. A template axiom's left side is built once per (dimension, arities) and kept
+(256 per side); while matching, a template that grows past the host diagram's node-plus-wire
+count stops being built (TemplateTooLarge), as it cannot match. Rules are scheduled with
 backoff: a rule applied more than match_limit << b times in one iteration, b the number of
 bans it has had, is cut for the rest of that iteration and banned for the next
 ban_length << b iterations. Every edge stored is one

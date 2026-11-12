@@ -41,8 +41,10 @@ entry stands in for the wire.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import functools
 import itertools
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -359,6 +361,55 @@ Arities = Mapping[str, int]
 """Arity parameters of a family of templates, e.g. ``{"n": 3}``."""
 
 
+class TemplateTooLarge(Exception):
+    """A template under construction holds more nodes and wires than the host it is matched
+    against."""
+
+
+_TEMPLATE_BUDGET: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_TEMPLATE_BUDGET", default=None
+)
+"""The node-plus-wire count a template built during matching may reach, or None."""
+
+
+def check_template_budget(size: int) -> None:
+    """Raise :class:`TemplateTooLarge` when ``size`` exceeds the active template budget."""
+    budget = _TEMPLATE_BUDGET.get()
+    if budget is not None and size > budget:
+        raise TemplateTooLarge(f"template of more than {budget} nodes and wires")
+
+
+_TEMPLATE_MEMO = 256
+"""How many (dimension, arities) templates one side keeps."""
+
+
+def _memoised_template(
+    build: Callable[[Dim, Arities], Template | None],
+) -> Callable[[Dim, Arities], Template | None]:
+    """``build`` with its last :data:`_TEMPLATE_MEMO` results kept per (dim, sorted arities)."""
+    if getattr(build, "_memoised", False):
+        return build
+    memo: OrderedDict[tuple[Dim, tuple[tuple[str, int], ...]], Template | None] = OrderedDict()
+
+    def template(dim: Dim, arities: Arities) -> Template | None:
+        try:
+            key = (dim, tuple(sorted(arities.items())))
+            hash(key)
+        except TypeError:
+            return build(dim, arities)
+        if key in memo:
+            memo.move_to_end(key)
+            return memo[key]
+        made = build(dim, arities)
+        memo[key] = made
+        if len(memo) > _TEMPLATE_MEMO:
+            memo.popitem(last=False)
+        return made
+
+    template._memoised = True  # type: ignore[attr-defined]
+    return template
+
+
 @dataclass(frozen=True)
 class Side:
     """One side of an axiom: a template per dimension and arities, and the arities a host
@@ -368,6 +419,10 @@ class Side:
     arities: Callable[[Diagram, NodeId, Dim], Iterable[Arities]] = lambda _d, _n, _dim: ({},)
     min_size: Callable[[Dim], int] = lambda _dim: 0
     """A lower bound on the template's node count plus internal wire count at a dimension."""
+
+    def __post_init__(self) -> None:
+        """Memoise ``template`` per (dimension, arities)."""
+        object.__setattr__(self, "template", _memoised_template(self.template))
 
 
 @dataclass(frozen=True)
@@ -797,7 +852,11 @@ class TemplatePattern(Pattern):
             if self.axiom.left.min_size(dim) > len(diagram.nodes) + len(diagram.wires):
                 continue
             for arities in self.axiom.left.arities(diagram, anchor, dim):
-                template = _cached_template(self.axiom.left, dim, arities, templates)
+                token = _TEMPLATE_BUDGET.set(len(diagram.nodes) + len(diagram.wires))
+                try:
+                    template = _cached_template(self.axiom.left, dim, arities, templates)
+                finally:
+                    _TEMPLATE_BUDGET.reset(token)
                 if template is None or not template.nodes:
                     continue
                 if diagram.nodes[anchor].generator_type.name != template.nodes[0].gen.name:
@@ -1444,7 +1503,10 @@ def _cached_template(
     except TypeError:
         return side.template(dim, arities)
     if key not in memo:
-        memo[key] = side.template(dim, arities)
+        try:
+            memo[key] = side.template(dim, arities)
+        except TemplateTooLarge:
+            memo[key] = None
     return memo[key]
 
 
