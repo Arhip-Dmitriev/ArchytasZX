@@ -14,6 +14,7 @@ import time
 
 
 def main() -> None:
+    sys.set_int_max_str_digits(0)
     with open(sys.argv[1], encoding="utf-8") as fh:
         p = json.load(fh)
     tool = p["tool"]

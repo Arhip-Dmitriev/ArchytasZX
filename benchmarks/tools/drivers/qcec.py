@@ -10,6 +10,7 @@ import time
 
 
 def main():
+    sys.set_int_max_str_digits(0)
     from mqt.core.ir import QuantumComputation
     from mqt.qcec import verify
 

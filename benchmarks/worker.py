@@ -59,6 +59,7 @@ def _terminate(signum: int, frame: Any) -> None:
 
 
 def main() -> None:
+    sys.set_int_max_str_digits(0)
     signal.signal(signal.SIGTERM, _terminate)
     with open(sys.argv[1], encoding="utf-8") as fh:
         job = json.load(fh)

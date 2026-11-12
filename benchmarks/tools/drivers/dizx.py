@@ -22,6 +22,7 @@ def add(circuit, op, inverse, d):
 
 
 def main():
+    sys.set_int_max_str_digits(0)
     import dizx
     from dizx.simplify import clifford_simp
     from dizx.utils import VertexType

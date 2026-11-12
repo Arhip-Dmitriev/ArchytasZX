@@ -7,6 +7,7 @@ import time
 
 
 def main():
+    sys.set_int_max_str_digits(0)
     from pytket.passes import FullPeepholeOptimise
     from pytket.qasm import circuit_from_qasm_str
 
