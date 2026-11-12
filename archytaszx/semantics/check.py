@@ -750,6 +750,7 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     whose concrete range equals the modulus of a delta it appears in alone."""
     if expr.atoms(sp.Sum):
         return False
+    expr = _constant_bases(expr)
     folded = _fold_residues(_reduce_exponents(sp.expand(expr.rewrite(sp.exp), power_exp=True)))
     folded = sp.expand(folded)
     if folded == 0:
@@ -763,6 +764,24 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     return all(
         _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size)
         for v in range(size)
+    )
+
+
+def _constant_bases(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with the base of each power to a symbolic exponent, when the base is a constant,
+    written in its simplified exact form."""
+
+    def simple(base: sp.Expr) -> sp.Expr:
+        return sp.radsimp(sp.expand_complex(base.rewrite(sp.exp)))
+
+    return expr.replace(
+        lambda e: (
+            isinstance(e, sp.Pow)
+            and not e.base.free_symbols
+            and bool(e.exp.free_symbols)
+            and not e.base.is_Rational
+        ),
+        lambda e: sp.Pow(simple(e.base), e.exp),
     )
 
 
