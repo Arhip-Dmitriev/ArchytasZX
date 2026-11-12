@@ -234,6 +234,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
             "--user",
             "--scope",
             "--quiet",
+            "--collect",
             "-p",
             f"MemoryMax={ctx.mem_mb}M",
             "-p",

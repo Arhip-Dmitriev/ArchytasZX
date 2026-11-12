@@ -63,7 +63,16 @@ def cgroups() -> bool:
     """True when ``systemd-run --user --scope`` can hold a process to a memory cap."""
     if shutil.which("systemd-run") is None:
         return False
-    cmd = ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=64M", "true"]
+    cmd = [
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "-p",
+        "MemoryMax=64M",
+        "true",
+    ]
     return subprocess.run(cmd, capture_output=True, check=False).returncode == 0
 
 
@@ -91,7 +100,16 @@ def scoped(cmd: list[str], fraction: float) -> list[str]:
     if not cgroups():
         return cmd
     cap = int(fraction * total_memory_mb())
-    return ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={cap}M", *cmd]
+    return [
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "-p",
+        f"MemoryMax={cap}M",
+        *cmd,
+    ]
 
 
 _ACTIVE: set[int] = set()

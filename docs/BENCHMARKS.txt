@@ -540,7 +540,7 @@ benchmarks/config.toml.
 
 Units run platform.jobs at a time; a unit's runs go in order. Every run is a fresh worker process
 (python -m benchmarks.worker) under a memory cap of memory_fraction of the available memory
-(at most the Slurm allocation) divided by the workers (a systemd scope without swap, else a soft RLIMIT_AS, which Lean and
+(at most the Slurm allocation) divided by the workers (a systemd scope without swap, unloaded on exit even when it failed (--collect), else a soft RLIMIT_AS, which Lean and
 the Quantomatic JVM lift: they are bounded by the Lean slots and -Xmx2g). The worker announces each
 stage, so a killed run records the stage it died in. The worker and every driver lift Python's
 integer string conversion limit (sys.set_int_max_str_digits(0)) at start.
