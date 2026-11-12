@@ -395,10 +395,13 @@ Phase 1, the ladder: step k = 1..K at n_k = floor((n_max + 1)^(k/K)) - 1 and
 d_k = floor((d_max + 1)^(k/K)), clamped to the range, moved up to the nearest domain point and,
 when already used, to the next unused one (n raised first, then d). Steps run in order; the
 first failure (timeout, error, out of memory, wrong or unknown result, unsupported) ends the
-ladder and is recorded.
+ladder and is recorded; a harness_error, an invalid_point or a run flagged point_invalid (10.6)
+is neither a success nor a failure: it is recorded under the unit's skipped and the ladder goes
+on.
 
 Phase 2, the fill: draws are kept when not at least as large, in both n and d, as some failed
-point, and not used before. A success counts toward K; a failure joins the failed points. The
+point, and not used before. A success counts toward K; a failure joins the failed points (a
+skipped run, as in phase 1, does neither). The
 fill stops at K successes, at phase2_extra_failures failures, or when the draws run out; the
 last two record region_exhausted. A domain of fewer than K points is run whole.
 
@@ -545,27 +548,7 @@ the Quantomatic JVM lift: they are bounded by the Lean slots and -Xmx2g). The wo
 stage, so a killed run records the stage it died in. The worker and every driver lift Python's
 integer string conversion limit (sys.set_int_max_str_digits(0)) at start.
 
-A run's outcome:
-
-  ok, uncertified    the expected verdict, certified or not
-  wrong              the opposite verdict (wrong (uncertified) when uncertified)
-  unknown            no verdict
-  unsupported        the tool cannot run the instance; detail gives the reason
-  timeout            a stage's CPU limit, or the stage timer killed the worker (kill: stage
-                     timer)
-  oom                the worker or a child was killed for memory: SIGKILL or exit 137 (kill:
-                     SIGKILL), a rise of the systemd scope's memory.events oom_kill counter
-                     reported by the worker on the scope's SIGTERM (kill: cgroup oom_kill), or a
-                     MemoryError in preparation (killed_in prepare)
-  error              the tool failed: a driver or binary exiting nonzero, an exception inside
-                     ArchytasZX, or a worker that died otherwise (kill: exit CODE)
-  harness_error      an exception raised in the worker while preparing a rival's input
-                     (rival.py, tools/*.py, the engine's loader or oracle): every rival's own call
-                     runs in a subprocess, so such an exception is the harness's; reason is
-                     "prepare: " and the exception
-
-Aggregates leave harness_error points out of every count's points and list them in
-results/aggregate/harness_errors.*.
+Each run record carries an outcome, a stage and a cause code (10.6).
 
 10.2 Log and resume
 
@@ -606,6 +589,77 @@ Peak memory is recorded per stage.
 10.5 Laptop
 
 The same runner and log with the laptop profile; interruption and resume as in 10.2.
+
+10.6 Outcomes, stages and causes
+
+Implementation: benchmarks/outcomes.py (the tables OUTCOMES, STAGES, UNSUPPORTED, CAUSES and
+RUNGS, and classify), benchmarks/reclassify.py
+
+The runner gives every run record, as it is written, the fields of outcomes.classify:
+
+  outcome         ok, uncertified, wrong, wrong (uncertified), unknown, unsupported, timeout,
+                  oom, error, harness_error, invalid_point
+  stage           generate, decide, certificate, lean_export, lean_check (ArchytasZX), prepare
+                  (a rival's input, in the worker), rival (the rival's own call); none when a
+                  killed worker had not announced one
+  cause           a short stable code (below)
+  cause_message   the message behind the code, at most 300 characters
+  raw_outcome     the outcome before classification, when classify replaced it
+
+  ok, uncertified    the expected verdict, certified or not; cause verdict.VERDICT
+  wrong              the opposite verdict (wrong (uncertified) when uncertified); cause
+                     verdict.VERDICT
+  unknown            no verdict. ArchytasZX: unknown.RUNG.STOP, the last rung note of the decide
+                     reason (decide's rungs field holds every note's code, read from the whole
+                     reason); a rival: rival.no_verdict
+  unsupported        unsupported.CODE, the UNSUPPORTED code of the reason, set where the record
+                     is made (unsupported_code)
+  timeout            limit.stage_cpu (a stage's CPU limit), limit.rival_cpu, limit.rival_wall,
+                     kill.stage_timer (the runner's wall timer killed the worker)
+  oom                kill.sigkill (SIGKILL or exit 137), kill.cgroup_oom_kill (a rise of the
+                     systemd scope's memory.events oom_kill counter, reported by the worker on
+                     the scope's SIGTERM), memory.error (MemoryError in the worker),
+                     memory.rival, memory.lean
+  error              the tool failed: rival.exception (a driver traceback whose frame is the
+                     rival's library or a driver line calling the rival), rival.exit (a binary or
+                     driver exiting nonzero without a traceback), engine.load_refused (a load
+                     line of the script failed), engine.exception (another exception in an
+                     ArchytasZX stage), lean.rejected, kill.exit (a worker that died otherwise)
+  harness_error      the harness failed, by the frame the exception came from: harness.prepare (an
+                     exception in the worker while preparing a rival's input; every rival's own
+                     call runs in a subprocess), harness.driver (a driver traceback whose deepest
+                     driver frame is a harness helper, number, _build, _identity or add, or a
+                     driver line that calls none of the rival's names), harness.generate (an
+                     exception while generating the ArchytasZX script)
+  invalid_point      a run with a verdict (ok to unknown) of an F equation whose pair is equal on
+                     the run's region by benchmarks.differs.equal_at; cause pair_equal_at_point.
+                     The region is the run's point for a rival; for ArchytasZX it also spans n
+                     (0..64) unless the circuit is unrolled or has no size parameter, and d
+                     (1..64) unless the script is literal in d, since decide settles the family
+                     at a bound count and dimension. A failure there keeps its outcome and is
+                     flagged point_invalid. equal_at is None, not equal, for an F record whose
+                     witness pairs a pure boundary with the same boundary doubled.
+
+The rung stop codes (RUNGS) are read from the decide reason's "; "-separated notes:
+normal_form.differ and .agree; oracle.no_mismatch, .refused, .none_evaluated, .mismatch;
+saturation.iteration_limit, .enode_limit, .saturated; symbolic.declined.box_meets_wire,
+.declined.scalar_budget, .declined.other, .indeterminate.replicated_factors, .indeterminate,
+.entries_differ, .differ; induction.base_not_proved, .step_not_discharged and the same under
+induction_reversed; refutation.no_lean; a doubled. prefix for notes of the doubled comparison;
+RUNG.other for a note no pattern matches and RUNG.truncated for the last note of a reason cut at
+400 characters. Notes after an induction note belong to its base case and are not read.
+
+Aggregates read the codes, never the messages; harness_error and invalid_point points, and runs
+flagged point_invalid, are left out of the counts' points (harness_error and invalid_point have
+their own columns), and causes.* counts points per tool, version, set, outcome, stage and cause.
+
+    python -m benchmarks.reclassify RAW_DIR FALSE_SET OUT_JSONL [--journal]
+
+re-reads logged records without re-running them and writes them, classified afresh, to OUT_JSONL
+(outside RAW_DIR, which it never writes), printing the outcome counts per tool before and after.
+--journal maps a worker that died with exit 143 to oom (kill.cgroup_oom_kill) when the user
+journal has a scope's "Failed with result 'oom-kill'" from 10 s before to 2 s after the record's
+finish time; records written before the worker reported its oom_kill rise need it.
 
 
 11. TOOLS
@@ -705,6 +759,7 @@ Implementation: benchmarks/aggregate.py, benchmarks/plots.py, benchmarks/anc.py
   results/aggregate/wrong.*          every wrong verdict; ArchytasZX ones are engine bugs
   results/aggregate/harness_errors.* every point whose first run was a harness_error, with
                                      its reason
+  results/aggregate/causes.*         points per tool, version, set, outcome, stage and cause
   plots/*.png, *.pdf                 time in n and in d per stage (a panel per category, faint
                                      line per equation, bold median per tool), 3D time over n
                                      and d, the frontier per tool, Lean time and size, B3 sizes

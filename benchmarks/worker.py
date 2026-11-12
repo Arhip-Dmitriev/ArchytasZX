@@ -79,11 +79,16 @@ def _terminate(signum: int, frame: Any) -> None:
 
 
 def failure(tool: str, exc: BaseException) -> dict[str, Any]:
-    """The record of an exception raised in the worker: oom for MemoryError, error for
-    ArchytasZX, harness_error (reason "prepare: ...") for a rival, whose own call runs in a
-    subprocess."""
+    """The record of an exception raised in the worker: unsupported for a translate or rival
+    Unsupported, oom for MemoryError, error for ArchytasZX, harness_error (reason
+    "prepare: ...") for a rival, whose own call runs in a subprocess."""
     import traceback
 
+    from benchmarks import translate
+    from benchmarks.tools import common, rival
+
+    if isinstance(exc, (translate.Unsupported, rival.Unsupported)):
+        return common.unsupported(str(exc))
     msg = traceback.format_exception_only(exc)[-1].strip()[:500]
     if isinstance(exc, MemoryError):
         return {"outcome": "oom", "killed_in": "prepare", "detail": msg}
@@ -110,6 +115,8 @@ def main() -> None:
 
     inst = instance(job)
     adapter = tools.adapter(job["tool"])
+    if job["tool"] != "archytaszx":
+        mark("prepare")
     try:
         out = adapter.run(inst, job)
     except Exception as exc:  # noqa: BLE001

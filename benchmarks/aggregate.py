@@ -12,7 +12,8 @@
 # limitations under the License.
 
 """Aggregates from the logs (BENCHMARKS.txt, section 12.1), written to results/aggregate as CSV
-and JSON: points, units, counts, breakdown, b3, overhead, calibration, wrong and harness_errors.
+and JSON: points, units, counts, causes, breakdown, b3, overhead, calibration, wrong and
+harness_errors.
 
 A point's outcome is its first run's; its statistics are over its successful runs; it is
 ``unstable`` when a later repeat failed and ``noisy`` when it reached the cluster maximum of
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks import config, log, stats
+from benchmarks.outcomes import NOT_SCORED
 
 B3_ONLY = ("tket",)
 STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check", "check")
@@ -203,6 +205,8 @@ def points_table(runs: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[s
             "calibration": (first.get("calibration") or {}).get("median"),
             "detail": (first.get("detail") or "")[:200],
             "reason": first.get("reason"),
+            "stage": first.get("stage"),
+            "cause": first.get("cause"),
         }
         for stage in STAGES:
             cpus = [
@@ -255,7 +259,7 @@ def points_table(runs: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[s
 def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Points proved (S) and refuted (F) per category, version, tool, break kind and n, d bins;
     wrongly accepted F points and unknown points counted beside; harness_error points counted
-    in their own column and left out of ``points``."""
+    and invalid_point points in their own columns and left out of ``points``."""
     acc: dict[tuple[Any, ...], dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for r in rows:
         if r["tool"] in B3_ONLY:
@@ -271,7 +275,7 @@ def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         slot = acc[key]
         oc = r["outcome"]
-        if oc != "harness_error":
+        if oc not in NOT_SCORED:
             slot["points"] += 1
         if oc == "ok":
             slot["proved" if r["truth"] else "refuted"] += 1
@@ -508,24 +512,56 @@ def current(cfg: dict[str, Any], recs: list[dict[str, Any]]) -> list[dict[str, A
     return [r for r in recs if want.get(r.get("equation", "")) == r.get("source")]
 
 
-def equal_points(cfg: dict[str, Any], runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The F runs at a concrete point where their pair is equal."""
-    from benchmarks.differs import differs
-
+def false_records(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The F record of every F equation id (``EQUATION!``) in results/false_set.json."""
     fs = config.path(cfg, "results") / "false_set.json"
     if not cfg["false_set"]["enabled"] or not fs.exists():
-        return []
-    falses = {
+        return {}
+    return {
         f"{r['equation']}!": r
         for r in json.loads(fs.read_text(encoding="utf-8")).get("records", [])
         if r.get("kind") is not None
     }
+
+
+def classified(
+    recs: list[dict[str, Any]], falses: dict[str, dict[str, Any]], catalogue: str
+) -> list[dict[str, Any]]:
+    """Every run record given outcomes.classify's fields when it has none; unit records
+    unchanged."""
+    from benchmarks import outcomes
+
+    insts = outcomes.instances(catalogue)
     return [
-        r
-        for r in runs
-        if r.get("equation") in falses
-        and r.get("d") is not None
-        and not differs(falses[r["equation"]], r.get("n"), r["d"])
+        r if r.get("unit") or "cause" in r else outcomes.reclassify_record(r, insts, falses)
+        for r in recs
+    ]
+
+
+def causes_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Points per tool, version, set, outcome, stage and cause code."""
+    acc: dict[tuple[Any, ...], int] = defaultdict(int)
+    for r in rows:
+        key = (
+            r["tool"],
+            r["version"],
+            "S" if r["truth"] else "F",
+            r["outcome"],
+            r.get("stage"),
+            r.get("cause"),
+        )
+        acc[key] += 1
+    return [
+        {
+            "tool": k[0],
+            "version": k[1],
+            "set": k[2],
+            "outcome": k[3],
+            "stage": k[4],
+            "cause": k[5],
+            "points": v,
+        }
+        for k, v in sorted(acc.items(), key=lambda kv: tuple(str(x) for x in kv[0]))
     ]
 
 
@@ -534,7 +570,10 @@ def main(cfg: dict[str, Any]) -> None:
     results = config.path(cfg, "results")
     h = config.digest(cfg)
     recs = [upgrade(r) for r in current(cfg, list(log.index(results, h).values()))]
-    excluded = {id(r) for r in equal_points(cfg, recs)}
+    recs = classified(recs, false_records(cfg), cfg["subjects"]["catalogue"])
+    excluded = {
+        id(r) for r in recs if r.get("outcome") == "invalid_point" or r.get("point_invalid")
+    }
     recs = [r for r in recs if id(r) not in excluded]
     runs = [r for r in recs if not r.get("unit")]
     units = [r for r in recs if r.get("unit")]
@@ -544,6 +583,7 @@ def main(cfg: dict[str, Any]) -> None:
     _write(out, "points", rows)
     _write(out, "units", units_table(units, rows))
     _write(out, "counts", counts_table(rows))
+    _write(out, "causes", causes_table(rows))
     _write(out, "equations", equations_table(rows))
     _write(out, "breakdown", breakdown_table(runs))
     _write(out, "b3", b3_table(runs))
@@ -555,8 +595,9 @@ def main(cfg: dict[str, Any]) -> None:
     _write(out, "harness_errors", harness)
     print(
         f"aggregate: {len(runs)} runs, {len(rows)} points, {len(units)} units, "
-        f"{len(wrong)} wrong verdicts, {len(harness)} harness errors, {len(excluded)} F runs at "
-        f"points where the pair is equal excluded -> {out}"
+        f"{len(wrong)} wrong verdicts, {len(harness)} harness errors, {len(excluded)} "
+        f"runs at points where the F pair is equal (invalid_point, point_invalid) excluded "
+        f"-> {out}"
     )
     for r in rows:
         if r["tool"] == "archytaszx" and r["outcome"] in ("wrong", "wrong (uncertified)"):

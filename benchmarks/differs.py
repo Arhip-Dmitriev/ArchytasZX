@@ -110,28 +110,38 @@ def doubling_mismatch(interface: str | None) -> bool:
     return (lo, li) == (twice(ro), twice(ri)) or (ro, ri) == (twice(lo), twice(li))
 
 
-def differs(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool:
-    """Whether the F pair of ``false`` differs at ``(n, d)``; True for an S equation, a
-    symbolic point (``d`` None) or a kind with no equal region."""
+def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool | None:
+    """True when the F pair of ``false`` is equal at ``(n, d)`` by its kind's closed-form rule,
+    False when it differs there, None when only the F record's witness speaks (a witness that
+    pairs a pure boundary with the same boundary doubled); False for an S equation and a
+    symbolic point (``d`` None)."""
     if false is None or d is None:
-        return True
+        return False
     kind = false.get("kind")
     params = false.get("params") or {}
     if kind in ("beyond_oracle", "prime_only", "coincident_dims") and "rule" in params:
-        return not _phase_trivial(params["rule"], n, d)
+        return _phase_trivial(params["rule"], n, d)
     if kind in ("scalar_small_one", "box_boundary") and "factor" in params:
-        return not _factor_one(params["factor"], n, d)
+        return _factor_one(params["factor"], n, d)
     if kind == "beyond_N" and n is not None:
         big_n = int(params["N"])
         if "index" in params:
-            return n > big_n
-        return n % (big_n + 2) == big_n + 1
+            return n <= big_n
+        return n % (big_n + 2) != big_n + 1
     if kind == "qubit_only":
-        return d > 2
+        return d <= 2
+    if kind == "off_by_one_n":
+        return False
     witness = false.get("witness") or {}
-    return not (
-        witness.get("method", "entry") == "entry" and doubling_mismatch(witness.get("interface"))
-    )
+    if witness.get("method", "entry") == "entry" and doubling_mismatch(witness.get("interface")):
+        return None
+    return False
 
 
-__all__ = ["differs", "doubling_mismatch"]
+def differs(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool:
+    """Whether the F pair of ``false`` differs at ``(n, d)`` (:func:`equal_at` False); True for
+    an S equation, a symbolic point (``d`` None) or a kind with no equal region."""
+    return equal_at(false, n, d) is False
+
+
+__all__ = ["differs", "doubling_mismatch", "equal_at"]

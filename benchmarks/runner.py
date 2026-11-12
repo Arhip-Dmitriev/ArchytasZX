@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from benchmarks import breaks, config, lean, log, points, sources, stats, subject
+from benchmarks import breaks, config, lean, log, outcomes, points, sources, stats, subject
 
 ROOT = Path(__file__).resolve().parent.parent
 STAGE_MARK = "@@STAGE "
@@ -346,7 +346,8 @@ class UnitRun:
             trace,
         )
         if k in self.ctx.done:
-            return self.ctx.done[k]
+            old = self.ctx.done[k]
+            return old if "cause" in old else self.classify(old)
         if _stop.is_set():
             raise InterruptedError
         job = {
@@ -382,9 +383,14 @@ class UnitRun:
             "calibration": self.ctx.calibration,
             **res,
         }
+        rec = self.classify(rec)
         self.ctx.writer().append(rec)
         self.ctx.done[k] = rec
         return rec
+
+    def classify(self, rec: dict[str, Any]) -> dict[str, Any]:
+        """``rec`` with outcomes.classify's fields for this unit."""
+        return outcomes.classify(rec, self.unit.false, outcomes.free_axes(self.inst, rec))
 
     def repeats(self, point: Any, first: dict[str, Any], phase: str) -> None:
         """The repeats of a successful point."""
@@ -424,7 +430,14 @@ class UnitRun:
         trace = bool(self.cfg["trace"]["enabled"])
         why = tools.adapter(tool).supports(self.inst, None)
         if why is not None:
-            self._finish(unit_key, {"unsupported": why, "successes": 0})
+            self._finish(
+                unit_key,
+                {
+                    "unsupported": why,
+                    "unsupported_code": outcomes.unsupported_code(why),
+                    "successes": 0,
+                },
+            )
             return
         pc = self.cfg["points"]
         if pc["symbolic"] and subject.has_symbolic(self.inst):
@@ -437,6 +450,7 @@ class UnitRun:
         used: set[Any] = set()
         failed: list[Any] = []
         fails: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
         succ = 0
         if size < k_target:
             for p in points.enumerate_domain(ax, k_target):
@@ -445,16 +459,27 @@ class UnitRun:
                 if _success(rec):
                     succ += 1
                     self.repeats(p, rec, "all")
-                else:
+                elif outcomes.counted(rec):
                     fails.append({"point": p, "outcome": rec.get("outcome")})
+                else:
+                    skipped.append({"point": p, "outcome": rec.get("outcome")})
             self._finish(
                 unit_key,
-                {"successes": succ, "failures": fails, "domain": size, "region_exhausted": False},
+                {
+                    "successes": succ,
+                    "failures": fails,
+                    "skipped": skipped,
+                    "domain": size,
+                    "region_exhausted": False,
+                },
             )
             return
         for p in points.ladder(ax, self.cfg):
             used.add(p)
             rec = self.run(p, 0, trace, "ladder")
+            if not _success(rec) and not outcomes.counted(rec):
+                skipped.append({"point": p, "outcome": rec.get("outcome"), "phase": 1})
+                continue
             if not _success(rec):
                 failed.append(p)
                 fails.append({"point": p, "outcome": rec.get("outcome"), "phase": 1})
@@ -475,6 +500,8 @@ class UnitRun:
                 if _success(rec):
                     succ += 1
                     self.repeats(p, rec, "random")
+                elif not outcomes.counted(rec):
+                    skipped.append({"point": p, "outcome": rec.get("outcome"), "phase": 2})
                 else:
                     failed.append(p)
                     fails.append({"point": p, "outcome": rec.get("outcome"), "phase": 2})
@@ -483,7 +510,13 @@ class UnitRun:
                         exhausted = True
                         break
         self._finish(
-            unit_key, {"successes": succ, "failures": fails, "region_exhausted": exhausted}
+            unit_key,
+            {
+                "successes": succ,
+                "failures": fails,
+                "skipped": skipped,
+                "region_exhausted": exhausted,
+            },
         )
 
     def _finish(self, unit_key: str, fields: dict[str, Any]) -> None:

@@ -58,8 +58,14 @@ def point(job: dict[str, Any]) -> tuple[int | None, int | None]:
 
 
 def unsupported(reason: str) -> dict[str, Any]:
-    """The record of an instance the tool cannot run."""
-    return {"outcome": "unsupported", "detail": reason}
+    """The record of an instance the tool cannot run, with its outcomes.UNSUPPORTED code."""
+    from benchmarks.outcomes import unsupported_code
+
+    return {
+        "outcome": "unsupported",
+        "detail": reason,
+        "unsupported_code": unsupported_code(reason),
+    }
 
 
 def expand(c: ir.Circuit, n: int) -> ir.Circuit:

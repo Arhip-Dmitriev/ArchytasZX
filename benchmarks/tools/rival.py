@@ -346,6 +346,13 @@ def reference_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
     return ir.Circuit(wires, (ir.Unitary(wires, rows),), {}, {}, "1")
 
 
+def _mark_rival() -> None:
+    """Announces the rival stage to the runner."""
+    from benchmarks.worker import mark
+
+    mark("rival")
+
+
 def run_driver(
     env: str, driver: str, payload: dict[str, Any], limit: float, wall_factor: float = 4.0
 ) -> dict[str, Any]:
@@ -358,6 +365,7 @@ def run_driver(
         cpu = max(1, int(limit))
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 5))
 
+    _mark_rival()
     w0 = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -370,7 +378,7 @@ def run_driver(
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "wall": time.perf_counter() - w0}
+        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0}
     finally:
         os.unlink(path)
     if proc.returncode != 0:
@@ -381,11 +389,14 @@ def run_driver(
                 "oom" if proc.returncode in (-9, 137) or "MemoryError" in proc.stderr else "error"
             )
         )
-        return {
+        out = {
             "status": status,
-            "detail": proc.stderr.strip()[-400:],
+            "detail": proc.stderr.strip()[-2000:],
             "wall": time.perf_counter() - w0,
         }
+        if status == "timeout":
+            out["limit"] = "cpu"
+        return out
     return {"status": "ok", **json.loads(proc.stdout.strip().splitlines()[-1])}
 
 
@@ -412,6 +423,7 @@ def run_binary(
         if lift_memory:
             lift_address_space()
 
+    _mark_rival()
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     w0 = time.perf_counter()
     try:
@@ -424,7 +436,7 @@ def run_binary(
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "wall": time.perf_counter() - w0}
+        return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0}
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime + after.ru_stime) - (before.ru_utime + before.ru_stime)
     out: dict[str, Any] = {
@@ -440,6 +452,8 @@ def run_binary(
         killed = proc.returncode in (-24, 152)
         oom = proc.returncode in (-9, 137)
         out["status"] = "timeout" if killed else ("oom" if oom else "error")
+        if killed:
+            out["limit"] = "cpu"
         out["detail"] = (proc.stderr or proc.stdout).strip()[-400:]
     return out
 
