@@ -233,7 +233,12 @@ differ, trying the given assignments and then the points the difference's deltas
     from_diagram(diagram) -> PathSum
     reduce(ps) -> PathSum
     canonical(ps) -> Canon | None
+    residual_form(ps) -> Residual | None
     entry_at(ps, values) -> Cyclo
+    reduce_qudit(ps) -> QuditPathSum
+    canonical_qudit(ps) -> QuditCanon | None
+    entry_at_qudit(ps, values) -> Cyclo
+    diagram_base(diagram) -> int
     compare_path_sums(left, right) -> PathSumComparison
 
 Representation. A PathSum denotes E(i) = c sqrt(2)^k [C(i) = 0] Sum_{y in Z_2^m} exp(2 pi i
@@ -262,9 +267,35 @@ variable first; each application is recorded in PathSum.trace:
                    and Q = z + Q' for a path variable z in no other monomial of Q: substitute
                    z := Q' (its Boolean lift, a xor b = a + b - 2ab, terms with integer
                    coefficients dropped), drop y and z, factor 2.
+  [HHgen]          every term of y has coefficient 1/2, y Q / 2, and Q = z A + B for a path
+                   variable z with (1 + A)(1 + B) = 0 over F_2 and A not 1: substitute
+                   z := B, keep y. On the support of [Q = 0], A = 1 and z = B.
   [omega]          y carries 1/4 (or 3/4) alone and 1/2 elsewhere, y Q / 2: drop y, add -Q/4
                    (+Q/4), multiply by sqrt(2) zeta_8 (sqrt(2) zeta_8^-1).
-  [HH] constraint  as [HH] with Q over boundary variables only: keep [Q = 0], drop y, factor 2.
+  [Dyadic]         path variables Y_0 .. Y_(k-1), k >= 2, carry exactly the terms of
+                   Y S / 2^k with Y = Sum_a 2^a Y_a and S an integer polynomial in the other
+                   variables (Y_0's largest denominator is 2^k): replace them by k fresh path
+                   variables y'_j with terms y'_j b_j / 2, b_j the j-th binary digit of S as
+                   an F_2 polynomial (b_0 = S mod 2, S_(j+1) = (S_j - lift(b_j)) / 2). The
+                   identity is Sum_Y omega_(2^k)^(Y S) = 2^k [S = 0 mod 2^k].
+  [Rem]            y Q / 2 with Q one monomial m: drop every other term divisible by m.
+  [HH] constraint  as [HH] with Q over boundary variables only: keep [Q = 0], drop y, factor 2;
+                   Q = 1 + m for a monomial m of degree above one is kept as one constraint
+                   [x = 1] per variable of m.
+  [HHnl]           y Q / 2 and y' Q' / 2, all their terms 1/2, y not in Q', y' not in Q:
+                   substitute y' := y + y Q, factor 2; y's quotient becomes Q or Q'.
+
+[HHgen], [Rem] and [HHnl] are rules of R. Vilmart, "Rewriting and Completeness of
+Sum-Over-Paths in Dyadic Fragments of Quantum Computing", LMCS 20(1), 2024 (arXiv
+2307.14223), extending the CSL 2023 paper (LIPIcs.CSL.2023.36): (HHgen') of Lemma 2.11 in
+the general form above, (Rem) of section 2.3 for a monomial quotient, and (HHnl) of
+section 2.3. Vilmart's system is complete as an equational theory for the Toffoli-Hadamard
+fragment (Theorem 5.3) and, with (sqrt 2), for every dyadic fragment (Theorem 6.11), but it is
+not confluent (Lemma 5.4), so it has no normal form; [omega] covers (sqrt 2). [Dyadic] is not
+from the paper. Every rule strictly decreases (number of path variables, number of path
+variables carrying a coefficient other than 1/2, number of phase terms) lexicographically:
+[Dyadic] keeps the first and lowers the second, [Rem] keeps both and lowers the third, every
+other rule lowers the first.
 
 Canonical form. A reduced sum with no path variable is put in canonical form by Gauss-Jordan
 elimination of its constraints over F_2 polynomials (eliminate): the variables are taken in
@@ -281,6 +312,41 @@ complete for equality (the Dehaene-De Moor form of stabilizer maps). A Toffoli-t
 (a pivot set to a product of free variables) is canonical in the same way but not proved
 unique, so differing forms there give UNEQUAL only through an evaluated point. A sum with path
 variables left (T gates not paired) or a constraint without a pivot has no canonical form.
+eliminate repeats its pass over the variables while a pass finds a pivot.
+
+Residual form (residual_form). A reduced, nonzero sum without a canonical form gets its
+constraints eliminated as above (kept as raw sorted constraints when they have no pivots),
+the pivots substituted into P and the constant folded; its path variables are coloured by
+refinement over the terms they carry and renamed len(boundary), .. in colour order, the
+least term encoding taken over the orderings within each colour class (at most
+RESIDUAL_ORDERINGS = 5040 orderings, else None). Equal residual forms denote one function;
+the rung reports EQUAL on them and UNKNOWN otherwise.
+
+Odd prime d (QuditPathSum). When every leg dimension is a power of one odd prime p
+(diagram_base), the sum is const [C(i) = 0] Sum_{y in Z_p^m} omega_p^P(i, y), P and each
+constraint a polynomial over F_p in reduced form (ModPoly: exponents below p, x^p = x). A Z
+spider on p^k adds the tensor Lagrange interpolation of p times its phase table (indicators
+1 - (x - c)^(p-1)); every table entry must be a multiple of 1/p. An X spider on p adds
+y (Sum outputs - Sum inputs) + table(y) and p^(-1/2) per leg; F on p adds x z and p^(-1/2);
+B and S regroup base-p digits; X and F on p^k with k > 1 raise PathSumUnsupported. Rules
+(reduce_qudit), each an identity over Z_p:
+
+  [Elim]           y in no term: drop y, factor p.
+  [HH] pivot       y of degree one, y Q, with Q = a z + Q' for a path variable z only in the
+                   term a z: substitute z := -Q'/a, drop y and z, factor p.
+  [Gauss]          y of degree two with a constant y^2 coefficient a, a y^2 + y Q: drop y, add
+                   -Q^2/(4a), multiply by G(a) = (a/p) Sum_b (b/p) zeta_p^b (Legendre
+                   symbols; G(a) = (a/p) epsilon_p sqrt(p)).
+  [HH] constraint  y of degree one with Q over boundary variables only: keep [Q = 0], drop y,
+                   factor p.
+
+The canonical form (canonical_qudit) is as for d = 2 over F_p: pivots are variables
+occurring in a constraint only as a v, rows set pivots to polynomials of the free variables,
+P is stored reduced. A reduced polynomial is fixed by its values on F_p^n, so for affine
+supports equal data is necessary and sufficient, and the form is complete for qudit Clifford
+maps. Witness points (witness_points_qudit) add, for each monomial of either phase, the grid
+of its variables' values up to their exponents. Phases that are not multiples of 1/p (for
+example a Legendre-symbol phase 1/2), composite odd d and mixed bases are declined.
 
 The rung (decide, PROOFS.txt section 2.1) compares the canonical forms. When they differ it
 evaluates both at points that separate them (a support point of each, a point of one support
