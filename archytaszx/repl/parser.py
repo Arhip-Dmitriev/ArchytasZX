@@ -39,6 +39,7 @@ no unknown-parameter issue. Every failure is a :class:`ParseError`.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import difflib
 import enum
@@ -46,7 +47,7 @@ import functools
 import itertools
 import math
 import re
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import ParamSpec, TypeAlias, TypeVar
 
@@ -123,8 +124,24 @@ _MAX_NUMERAL_DIGITS = 18
 """Longest digit run converted with ``int()``."""
 
 
+_LIFTED: contextvars.ContextVar[bool] = contextvars.ContextVar("_LIFTED", default=False)
+"""Whether :func:`lifted_bounds` is active."""
+
+
+@contextlib.contextmanager
+def lifted_bounds() -> Iterator[None]:
+    """Lift the leg-count, digit, power and size bounds of this parser for the block."""
+    token = _LIFTED.set(True)
+    try:
+        yield
+    finally:
+        _LIFTED.reset(token)
+
+
 def _numeral(token: str, what: str) -> int:
     """The int a checked digit run names, as this module's own error when it is too long."""
+    if _LIFTED.get():
+        return _digits_int(token)
     if len(token) > _MAX_NUMERAL_DIGITS:
         raise DiracDomainError(
             f"{what} {token[:16]}... is {len(token)} digits long, above this parser's bound "
@@ -155,7 +172,7 @@ def _leg_count_from_body(body: str, power: str | None, *, eager: bool = True) ->
         raise DiracDomainError(
             f"ket family declares {leg_count} output legs; at least 1 is required"
         )
-    if eager and leg_count > _MAX_KET_LEG_COUNT:
+    if eager and leg_count > _MAX_KET_LEG_COUNT and not _LIFTED.get():
         raise DiracDomainError(
             f"ket family declares {leg_count} output legs, above this parser's sanity bound "
             f"of {_MAX_KET_LEG_COUNT} (see _MAX_KET_LEG_COUNT's docstring)"
@@ -495,7 +512,7 @@ def _expr_numeral(token: str) -> int:
     """The int of an expression digit run of at most :data:`_MAX_EXPR_DIGITS` digits, plus
     the decimal digits :data:`_EXTRA_BITS` bits hold."""
     bound = _MAX_EXPR_DIGITS + _EXTRA_BITS.get() * 30103 // 100000
-    if len(token) > bound:
+    if len(token) > bound and not _LIFTED.get():
         raise ParseDomainError(
             f"numeral {token[:16]}... is {len(token)} digits long, above the bound of {bound}"
         )
@@ -637,6 +654,8 @@ def _numeric_bits(expr: sp.Expr) -> int:
 def _bounded(expr: sp.Expr) -> sp.Expr:
     """``expr``, once every rational atom is below :data:`_INT_LIMIT` times two to the
     :data:`_EXTRA_BITS`."""
+    if _LIFTED.get():
+        return expr
     limit = _INT_LIMIT << _EXTRA_BITS.get()
     for atom in expr.atoms(sp.Rational):
         if abs(atom.p) >= limit or atom.q >= limit:
@@ -646,7 +665,9 @@ def _bounded(expr: sp.Expr) -> sp.Expr:
 
 def _product(values: Sequence[sp.Expr]) -> sp.Expr:
     """``Mul`` of ``values`` in one call, refused when the numeric atoms are too large."""
-    if sum(_numeric_bits(v) for v in values) > _MAX_POWER_BITS + _EXTRA_BITS.get():
+    if not _LIFTED.get() and (
+        sum(_numeric_bits(v) for v in values) > _MAX_POWER_BITS + _EXTRA_BITS.get()
+    ):
         raise ParseDomainError("product is too large")
     return _bounded(sp.Mul(*values))
 
@@ -657,7 +678,7 @@ def _power(base: sp.Expr, exponent: sp.Expr) -> sp.Expr:
     if exponent.is_Rational and exponent.is_negative and base.is_zero:
         raise ParseDomainError("division by zero")
     bits = _numeric_bits(base)
-    if bits:
+    if bits and not _LIFTED.get():
         size = 1 + sum(abs(a.p) // a.q for a in exponent.atoms(sp.Rational))
         if bits * size > _MAX_POWER_BITS + _EXTRA_BITS.get():
             raise ParseDomainError(
@@ -1442,7 +1463,7 @@ def _name(name: str, what: str) -> str:
 def _name_range(lo: str, hi: str) -> range:
     """The integers ``lo..hi``, both ends included."""
     a, b = _numeral(lo, "range start"), _numeral(hi, "range end")
-    if b < a or b - a >= _MAX_KET_LEG_COUNT:
+    if b < a or (b - a >= _MAX_KET_LEG_COUNT and not _LIFTED.get()):
         raise ParseGrammarError(f"range {a}..{b} is empty or longer than {_MAX_KET_LEG_COUNT}")
     return range(a, b + 1)
 
@@ -1585,7 +1606,7 @@ class _Dsl:
                 raise ParseGrammarError(f"{args!r} is not 'm -> n[, D]'")
             ins_text, _, outs_text = parts[0].partition("->")
             counts = (_int_token(ins_text, "input count"), _int_token(outs_text, "output count"))
-            if max(counts) > _MAX_KET_LEG_COUNT:
+            if max(counts) > _MAX_KET_LEG_COUNT and not _LIFTED.get():
                 raise ParseDomainError(f"leg count above the bound of {_MAX_KET_LEG_COUNT}")
             dim = self.dim(parts[1]) if len(parts) == 2 else self.fallback_dim()
             return (dim,) * counts[0], (dim,) * counts[1], dim
@@ -1659,7 +1680,7 @@ class _Dsl:
             )
         args = anon["args"][1:-1] if anon["args"] else None
         times = 1 if anon["times"] is None else _numeral(anon["times"], "repeat count")
-        if not 1 <= times <= _MAX_KET_LEG_COUNT:
+        if times < 1 or (times > _MAX_KET_LEG_COUNT and not _LIFTED.get()):
             raise ParseDomainError(f"{item!r}: repeat count outside 1..{_MAX_KET_LEG_COUNT}")
         draft = self.draft(_generator(anon["gen"]), args, anon["phase"] or "", anon["gen"])
         out: list[tuple[str, str]] = []
@@ -2332,7 +2353,7 @@ class _Dirac:
                     f"input fan x {leg.mult} of {leg.owner.label!r} cannot be fed: its count "
                     "is symbolic"
                 )
-            if leg.count is not None and leg.count > _MAX_KET_LEG_COUNT:
+            if leg.count is not None and leg.count > _MAX_KET_LEG_COUNT and not _LIFTED.get():
                 raise ParseDomainError(
                     f"fan of {leg.count} legs is above the bound of {_MAX_KET_LEG_COUNT}"
                 )
@@ -2777,7 +2798,7 @@ def _parse_dim_token(token: str, literal: bool, abstraction: _Abstraction) -> Di
 def _literal_count(value: int, minimum: int = 0) -> int:
     if value < minimum:
         raise ParseDomainError(f"leg count {format_count(value)} is below {minimum}")
-    if value > _MAX_KET_LEG_COUNT:
+    if value > _MAX_KET_LEG_COUNT and not _LIFTED.get():
         raise ParseDomainError(
             f"leg count {format_count(value)} is above the bound of {_MAX_KET_LEG_COUNT}"
         )

@@ -267,7 +267,10 @@ word literal. Every diagram read passes validation without a hard error.
 Size bounds. A numeral in an expression has at most 1000 digits, and a product or power at
 most 4096 bits of numeric atoms; past these the input is refused (ParseDomainError). A
 diagram's scalar line may exceed them by 64 bits per node of the diagram (digits: the decimal
-digits those bits hold).
+digits those bits hold). Leg counts, fan widths, ranges and repeat counts are at most 1024.
+From Python, archytaszx.repl.parser.lifted_bounds() is a context manager that lifts all of
+these bounds (leg count, digits, product and power bits, fractional-root bits) for its block;
+outside it they are as above.
 
 3.1 The DSL form
 
