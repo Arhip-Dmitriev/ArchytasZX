@@ -705,7 +705,9 @@ def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
     """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B|
     < t``, else None."""
     frequency, modulus = delta.args
-    if modulus.is_Integer or len(sp.Mul.make_args(modulus)) < 2:
+    if modulus.is_Integer:
+        return _radix_split_concrete(frequency, int(modulus), ranges)
+    if len(sp.Mul.make_args(modulus)) < 2:
         return None
     for t in (f for f in sp.Mul.make_args(modulus) if not f.is_Integer):
         carry: sp.Expr = sp.Integer(0)
@@ -727,6 +729,38 @@ def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
                 continue
         rest = sp.cancel(modulus / t)
         return cast(sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), rest))
+    return None
+
+
+def _radix_split_concrete(
+    frequency: sp.Expr, modulus: int, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> sp.Expr | None:
+    """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` for a divisor ``t`` of the
+    concrete ``modulus`` splitting ``frequency``'s integer terms, when ``ranges`` keep
+    ``|B| < t``, else None."""
+    pieces = sp.Add.make_args(sp.expand(frequency))
+    for t in range(2, modulus):
+        if modulus % t:
+            continue
+        carry: sp.Expr = sp.Integer(0)
+        digit: sp.Expr = sp.Integer(0)
+        for piece in pieces:
+            coefficient, _rest = piece.as_coeff_Mul()
+            if coefficient.is_Integer and int(coefficient) % t == 0:
+                carry += piece / t
+            else:
+                digit += piece
+        if digit == 0 or carry == 0:
+            continue
+        bounds = _bounds(digit, ranges)
+        if bounds is None:
+            continue
+        least, greatest = bounds
+        if not (sp.expand(t - greatest).is_positive and sp.expand(t + least).is_positive):
+            continue
+        return cast(
+            sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), modulus // t)
+        )
     return None
 
 
@@ -868,18 +902,61 @@ def _delta_step(
     return None
 
 
+def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int] | None:
+    """``(X, t)`` with ``frequency == X/t``, ``X`` an integer polynomial in integer symbols,
+    when a factor ``[Y == 0 mod t']`` of ``term`` with ``t | t'`` makes ``X == l*Y mod t`` for a
+    unit ``l`` (so ``X/t`` is an integer wherever the term is nonzero), else None."""
+    numerator, denominator = sp.fraction(sp.together(sp.expand(frequency)))
+    if not denominator.is_Integer or int(denominator) < 2:
+        return None
+    t = int(denominator)
+    numerator = sp.expand(numerator)
+    symbols = sorted(numerator.free_symbols, key=lambda x: str(x.name))
+    if not symbols or any(x.is_integer is not True for x in symbols):
+        return None
+    try:
+        poly = sp.Poly(numerator, *symbols)
+    except sp.PolynomialError:
+        return None
+    if not all(c.is_Integer for c in poly.coeffs()):
+        return None
+    for factor in sp.Mul.make_args(term):
+        delta = _delta_base(factor)
+        if delta is None:
+            continue
+        carry, modulus = delta.args
+        if not modulus.is_Integer or int(modulus) % t:
+            continue
+        for unit in range(1, t):
+            if math.gcd(unit, t) != 1:
+                continue
+            try:
+                rest = sp.Poly(sp.expand(numerator - unit * carry), *symbols)
+            except sp.PolynomialError:
+                break
+            if all(c.is_Integer and int(c) % t == 0 for c in rest.coeffs()):
+                return numerator, t
+    return None
+
+
 def _character_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Limit]] | None:
     """Close one index read only through omega powers:
-    Sum_u omega_d^{u*j + o} = omega_d^o * d * [d | j]."""
+    Sum_u omega_d^{u*j + o} = omega_d^o * d * [d | j]; a fractional ``j = X/t`` made integral by a
+    delta factor of the term gives ``omega_d^o * d * [t*d | X]``."""
     for index, (var, _lower, upper) in enumerate(limits):
         size = sp.expand(upper + 1)
         split = _split_term(term, var, size)
         if split is None:
             continue
         constant, frequency, offset = split
-        if frequency.is_integer is not True:
-            continue
         shift = sp.exp(2 * sp.pi * sp.I * offset / size)
+        if frequency.is_integer is not True:
+            carried = _carried_frequency(term, frequency)
+            if carried is None or not size.is_Integer:
+                continue
+            numerator, t = carried
+            delta = ModDelta(numerator, sp.Integer(t) * size)
+            return constant * shift * size * delta, _without(limits, index)
         return constant * shift * size * ModDelta(frequency, size), _without(limits, index)
     return None
 
@@ -1003,9 +1080,47 @@ def _echelon(
             return pivots, pending
 
 
+def _implies(big: ModDelta, small: ModDelta) -> bool:
+    """Whether ``[X == 0 mod M]`` forces ``[Y == 0 mod t]``: integer moduli with ``t | M`` and
+    ``X == l*Y mod t`` coefficientwise for a unit ``l``."""
+    (x, m), (y, t) = big.args, small.args
+    if not (m.is_Integer and t.is_Integer) or int(t) < 2 or int(m) % int(t) or m == t:
+        return False
+    symbols = sorted(x.free_symbols | y.free_symbols, key=lambda v: str(v.name))
+    if any(v.is_integer is not True for v in symbols):
+        return False
+    modulus = int(t)
+    for unit in range(1, modulus):
+        if math.gcd(unit, modulus) != 1:
+            continue
+        difference = sp.expand(x - unit * y)
+        try:
+            coefficients = sp.Poly(difference, *symbols).coeffs() if symbols else [difference]
+        except sp.PolynomialError:
+            return False
+        if all(c.is_Integer and int(c) % modulus == 0 for c in coefficients):
+            return True
+    return False
+
+
+def _drop_implied(term: sp.Expr) -> sp.Expr:
+    """``term`` without each ModDelta factor another of its ModDelta factors implies."""
+    factors = list(sp.Mul.make_args(term))
+    deltas = [(i, _delta_base(f)) for i, f in enumerate(factors)]
+    present = [(i, d) for i, d in deltas if d is not None]
+    dropped: set[int] = set()
+    for i, small in present:
+        if any(j != i and j not in dropped and _implies(big, small) for j, big in present):
+            dropped.add(i)
+    if not dropped:
+        return term
+    return cast(sp.Expr, sp.Mul(*(f for i, f in enumerate(factors) if i not in dropped)))
+
+
 def _canonical_deltas(term: sp.Expr) -> sp.Expr:
-    """A product with its linear ModDelta factors in echelon form, each pivot substituted
-    into the rest wherever that rest is periodic in it."""
+    """A product with its implied ModDelta factors dropped and its linear ModDelta factors in
+    echelon form, each pivot substituted into the rest wherever that rest is periodic in it."""
+    term = _drop_implied(term)
     by_modulus: dict[sp.Expr, list[sp.Expr]] = {}
     others: list[sp.Expr] = []
     for factor in sp.Mul.make_args(term):

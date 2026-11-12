@@ -1563,7 +1563,13 @@ def contract_symbolic(
             copy = sp.Sum(copy, (symbol, 0, _port_dim(diagram, ref).to_sympy() - 1))
         copy = Scalar(copy).simplify(max_steps=max_steps).to_sympy()
         parts.append(sp.Pow(copy, diagram.bang_boxes[box_id].multiplicity.to_sympy()))
-    closed = _sum_out(head, parts, [*summed_shared, *wire_indices], max_steps)
+    closed = _sum_out(
+        head,
+        parts,
+        [*summed_shared, *wire_indices],
+        max_steps,
+        {axis.index: axis.dim for axis in fixed_axes},
+    )
     if not group_boxes:
         return SymbolicTensor(tuple(fixed_axes), closed)
 
@@ -1723,11 +1729,13 @@ def _sum_out(
     parts: Sequence[sp.Expr],
     summed: Sequence[tuple[sp.Symbol, Dim]],
     max_steps: int,
+    boundary: Mapping[str, Dim] | None = None,
 ) -> Scalar:
     """``head`` times the product of ``parts`` summed over ``summed``, simplified: at concrete
     dimensions one index at a time over only the parts it occurs in, the index whose parts
-    carry the fewest other summed indices first, each partial sum simplified; otherwise one
-    nested sum simplified once."""
+    carry the fewest other summed indices first, each partial sum simplified with the
+    ``boundary`` indices and the summed indices still open sized; otherwise one nested sum
+    simplified once."""
     if not all(dim.is_concrete for _symbol, dim in summed):
         entry = head * sp.Mul(*parts)
         for symbol, dim in reversed(summed):
@@ -1769,15 +1777,19 @@ def _sum_out(
         if not product:
             head = head * (top + 1)
             continue
+        open_ranges = {
+            **(boundary or {}),
+            **{str(s.name): dims[s] for s in touched - {symbol} if dims[s].is_concrete},
+        }
         add(
             Scalar(sp.Sum(sp.Mul(*product), (symbol, 0, top)))
-            .simplify(max_steps=max_steps)
+            .simplify(max_steps=max_steps, ranges=open_ranges)
             .to_sympy()
         )
         for other in touched - {symbol}:
             widths[other] = width(other)
     return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(
-        max_steps=max_steps
+        max_steps=max_steps, ranges=boundary
     )
 
 
