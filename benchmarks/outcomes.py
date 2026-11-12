@@ -402,8 +402,12 @@ def reclassify_record(
 
 
 def scalar_only(false: dict[str, Any]) -> bool:
-    """Whether an F record's break changes only the circuit's scalar (SCALAR_KINDS, and
-    beyond_N in its boxed sign form)."""
+    """Whether an F record's break changes only the circuit's scalar: its witness's
+    ``proportional`` flag when set, else the kind (SCALAR_KINDS, and beyond_N in its boxed sign
+    form)."""
+    flag = (false.get("witness") or {}).get("proportional")
+    if flag is not None:
+        return bool(flag)
     kind = false.get("kind")
     return kind in SCALAR_KINDS or (
         kind == "beyond_N" and "index" not in (false.get("params") or {})

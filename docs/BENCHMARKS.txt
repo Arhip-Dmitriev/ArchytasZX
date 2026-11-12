@@ -369,7 +369,10 @@ states and effects into the closed diagram (nodes of at most 12 legs) or by symb
 at the bound values. The boxed beyond_N witness is factored: a nonzero specification entry e at
 n = N + 1 (symbolic contraction) and the gadget's value g there, the broken entry being g e (on a
 mixed equation, doubled entries and |g|^2, so the sign alone is no witness); the
-gadget's closed form is tested at N = 1, 2, 3 (section 13). F has the same three versions as S.
+gadget's closed form is tested at N = 1, 2, 3 (section 13). Each witness records proportional:
+whether the pair differs only by a scalar at the witness point (true when the dense tensors are
+one scalar times each other, and for the factored witness; false for an interface difference;
+null when the witness was found without the dense tensors). F has the same three versions as S.
 Kinds tiny_phase and single_entry raise the F equation's d floor to 2.
 
 The search is bounded in time: one probe (one point of one variant) gets
@@ -760,8 +763,8 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           unsupported
   The truth is exact equality. For a tool marked up to a scalar (QCEC, DiZX, Feynman, AutoQ,
   Quantomatic), a run with a verdict on an F equation whose break changes only the scalar
-  (scalar_small_one, global_phase, box_boundary, boxed beyond_N) is invalid_point, cause
-  tool.up_to_scalar; ArchytasZX, PyZX, QuiZX, Qiskit and Cirq decide exact equality.
+  (its witness's proportional flag when set, else the kind: scalar_small_one, global_phase,
+  box_boundary, boxed beyond_N) is invalid_point, cause tool.up_to_scalar; ArchytasZX, PyZX, QuiZX, Qiskit and Cirq decide exact equality.
   Published     adapter   B1 only, the symbolic run: the published proof files re-checked by coqc
   proofs                  with their project's load paths, each project in its own opam switch:
                           SQIR 134fb94 (Coq 8.20.1, QuantumLib 1.8.0): Deutsch, superdense

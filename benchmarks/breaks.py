@@ -589,7 +589,8 @@ def _boundary_dims(d: Any) -> tuple[list[int], list[int]]:
 @dataclass
 class Witness:
     """A differing entry: the point, output and input indices (of the doubled diagram for a
-    mixed equation), both values, or an interface difference."""
+    mixed equation), both values, or an interface difference; ``proportional`` says whether
+    the pair differs only by a scalar there (None when no dense check ran)."""
 
     n: int | None
     d: int
@@ -599,6 +600,7 @@ class Witness:
     right: list[float]
     interface: str | None = None
     method: str = "entry"
+    proportional: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -610,6 +612,7 @@ class Witness:
             "right": self.right,
             "interface": self.interface,
             "method": self.method,
+            "proportional": self.proportional,
         }
 
 
@@ -652,6 +655,15 @@ def _candidates(
             yield cand
 
 
+def proportional(a: np.ndarray, b: np.ndarray) -> bool:
+    """Whether a = lambda b for one scalar lambda (both nonzero, within TOL entrywise)."""
+    j = int(np.argmax(np.abs(b)))
+    if abs(b[j]) <= TOL or float(np.max(np.abs(a))) <= TOL:
+        return False
+    lam = a[j] / b[j]
+    return bool(np.allclose(a, lam * b, atol=TOL, rtol=0.0))
+
+
 def differing_entry(
     raw_left: Any, raw_right: Any, n: int | None, d: int, rng: random.Random
 ) -> Witness | None:
@@ -664,7 +676,16 @@ def differing_entry(
     lo, li = _boundary_dims(left)
     ro, ri = _boundary_dims(right)
     if (lo, li) != (ro, ri):
-        return Witness(n, d, [], [], [], [], interface=f"left {lo}->{li}, right {ro}->{ri}")
+        return Witness(
+            n,
+            d,
+            [],
+            [],
+            [],
+            [],
+            interface=f"left {lo}->{li}, right {ro}->{ri}",
+            proportional=False,
+        )
     size = math.prod(lo) * math.prod(li)
     if size <= DENSE_LIMIT:
         a = np.asarray(check.contract(left).tensor).reshape(-1)
@@ -676,7 +697,13 @@ def differing_entry(
         idx = np.unravel_index(k, [*lo, *li]) if lo or li else ()
         idx = [int(v) for v in idx]
         return Witness(
-            n, d, idx[: len(lo)], idx[len(lo) :], [a[k].real, a[k].imag], [b[k].real, b[k].imag]
+            n,
+            d,
+            idx[: len(lo)],
+            idx[len(lo) :],
+            [a[k].real, a[k].imag],
+            [b[k].real, b[k].imag],
+            proportional=proportional(a, b),
         )
 
     def arity(dg: Any) -> int:
@@ -763,7 +790,14 @@ def _factored_witness(
         if abs(e) > TOL:
             x = g * e
             return Witness(
-                n, d, list(outs), list(ins), [x.real, x.imag], [e.real, e.imag], method="factored"
+                n,
+                d,
+                list(outs),
+                list(ins),
+                [x.real, x.imag],
+                [e.real, e.imag],
+                method="factored",
+                proportional=True,
             )
     return None
 
