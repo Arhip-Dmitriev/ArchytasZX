@@ -645,7 +645,14 @@ finite clause as a hypothesis ("for all alpha = s (s >= 0, s <= 1/2; alpha >= 0,
 1/2)", "for n >= 1, n in Z, n != 2"), and the Lean corollary main_restricted takes them as
 hypotheses on its binders (0 ≤ s, s ≤ 1/2, n ≠ 2; a lattice step k : ℤ). A claim decided
 instance by instance (a bounded domain or a periodic phase lattice) stays uncertified: the
-kernel has no proof combining the instances. An UNEQUAL is kept
+kernel has no proof combining the instances.
+
+The fresh symbol of a shift carries its lower bound as sympy assumptions: real and
+nonnegative for s >= 0, positive for s > 0, integer (and nonnegative) on a lattice. Every rung
+reads them, so a comparison that holds only on the restricted range (sqrt(e^2) = e for e >= 0,
+or for 0 <= e <= 2) decides there; the bound is the hypothesis the theorem states. An upper
+bound s <= b - c has no sympy encoding and is checked only on points (the oracle's samples
+and every UNEQUAL's point). An UNEQUAL is kept
 only when its point, read in the original symbols, satisfies every clause and side condition
 (in_domain), else UNKNOWN; the restricted pair's oracle samples only points inside. prove and
 induct use the same plans; a refutation outside the restriction is not found, and a claim

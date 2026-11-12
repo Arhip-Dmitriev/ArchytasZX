@@ -875,15 +875,23 @@ def _apply_real(diagram: Diagram, clause: Clause) -> Diagram:
         return working.substitute(
             {clause.symbol: int(value) if value.denominator == 1 else rational}
         )
-    fresh = (
-        sp.Symbol(clause.fresh, integer=True) if clause.q else sp.Symbol(clause.fresh, real=True)
-    )
+    fresh = _fresh_symbol(clause)
     a, c = Fraction(clause.a), Fraction(clause.c)
     expr = sp.Rational(c.numerator, c.denominator) + sp.Rational(a.numerator, a.denominator) * fresh
     working = working.substitute({clause.symbol: Phase(expr)})
     if clause.symbol in working.scalar.free_symbols:
         working = working.substitute({clause.symbol: Scalar(expr)})
     return working
+
+
+def _fresh_symbol(clause: Clause) -> sp.Symbol:
+    """A shift's fresh symbol carrying its range's lower bound as sympy assumptions: integer
+    on a lattice, nonnegative (positive when strict) from ``s >= 0`` (``s > 0``)."""
+    fd = clause.fresh_domain
+    flags: dict[str, bool] = {"integer": True} if clause.q else {"real": True}
+    if fd is not None and fd.lo == 0:
+        flags["positive" if fd.lo_strict else "nonnegative"] = True
+    return sp.Symbol(clause.fresh, **flags)
 
 
 def subst_one(diagram: Diagram, restriction: Restriction) -> Diagram:
