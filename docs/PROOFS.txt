@@ -640,7 +640,12 @@ excluded points, and planned:
   - excluded points only: no substitution, a side condition.
 
 An EQUAL of any rung holds for every value of the fresh symbol, hence on the restricted set,
-and is kept; it is uncertified, since the kernel states no such clause. An UNEQUAL is kept
+and is kept and certified as in 8.4: the kernel theorem states each shift, side condition and
+finite clause as a hypothesis ("for all alpha = s (s >= 0, s <= 1/2; alpha >= 0, alpha <=
+1/2)", "for n >= 1, n in Z, n != 2"), and the Lean corollary main_restricted takes them as
+hypotheses on its binders (0 ≤ s, s ≤ 1/2, n ≠ 2; a lattice step k : ℤ). A claim decided
+instance by instance (a bounded domain or a periodic phase lattice) stays uncertified: the
+kernel has no proof combining the instances. An UNEQUAL is kept
 only when its point, read in the original symbols, satisfies every clause and side condition
 (in_domain), else UNKNOWN; the restricted pair's oracle samples only points inside. prove and
 induct use the same plans; a refutation outside the restriction is not found, and a claim

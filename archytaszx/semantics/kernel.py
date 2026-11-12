@@ -162,12 +162,15 @@ def statement(
 ) -> str:
     """``for all n >= 2``, ``at n = 2``, ``for all n = 2*m + 1 (m >= 0)``, then the dimension
     clauses; empty when nothing is quantified or restricted."""
-    from archytaszx.semantics.restrict import DIMENSION, EQ, GE
+    from archytaszx.semantics.restrict import DIMENSION, EQ, FINITE, GE, SHIFT, SIDE
 
     fresh = {c.fresh for c in domain if c.fresh}
     free = [v for v in variables if v not in fresh]
     parts: list[str] = []
     for c in domain:
+        if c.form in (SHIFT, SIDE, FINITE):
+            parts.append(_hypothesis(c))
+            continue
         if c.kind == DIMENSION:
             continue
         if c.form == EQ:
@@ -179,7 +182,7 @@ def statement(
     if free:
         parts.insert(0, f"for all {', '.join(free)}")
     for c in domain:
-        if c.kind != DIMENSION:
+        if c.kind != DIMENSION or c.form in (SHIFT, SIDE, FINITE):
             continue
         if c.form == EQ:
             parts.append(f"at {c.symbol} = {c.c}")
@@ -188,6 +191,38 @@ def statement(
         else:
             parts.append(f"for every {c.symbol}")
     return ", ".join(parts)
+
+
+def _range_text(name: str, domain: object) -> str:
+    """A Domain's interval, lattice and excluded points over ``name``, comma separated."""
+    lo, hi = getattr(domain, "lo", None), getattr(domain, "hi", None)
+    out: list[str] = []
+    if lo is not None:
+        out.append(f"{name} {'>' if getattr(domain, 'lo_strict', False) else '>='} {lo}")
+    if hi is not None:
+        out.append(f"{name} {'<' if getattr(domain, 'hi_strict', False) else '<='} {hi}")
+    q = getattr(domain, "q", 0)
+    if q:
+        out.append(f"{name} in Z" if q == 1 else f"{name} in (1/{q})Z")
+    step = getattr(domain, "step", None)
+    if step is not None:
+        out.append(f"{name} in {getattr(domain, 'offset', 0)} + {step}Z")
+    out += [f"{name} != {v}" for v in getattr(domain, "excluded", ())]
+    return ", ".join(out)
+
+
+def _hypothesis(c: Clause) -> str:
+    """A shift, side condition or finite clause as the hypothesis the theorem states."""
+    from archytaszx.semantics.restrict import FINITE, SHIFT
+
+    if c.form == SHIFT:
+        inner = _range_text(c.fresh, c.fresh_domain)
+        side = _range_text(c.symbol, c.domain) if c.domain is not None else ""
+        extra = f"; {side}" if side else ""
+        return f"for all {c.symbol} = {c.expression()} ({inner}{extra})"
+    if c.form == FINITE:
+        return f"at {c.symbol} in {{{', '.join(str(v) for v in c.values)}}}"
+    return f"for {_range_text(c.symbol, c.domain)}"
 
 
 def _merge(*groups: tuple[str, ...]) -> tuple[str, ...]:
@@ -432,11 +467,7 @@ def restricted(
             _same(side, target) or views_isomorphic(comparison_view(side), comparison_view(target))
         ):
             raise KernelError("the theorem is not about the restricted pair")
-    floors = tuple(
-        f"{c.c} <= {c.symbol}"
-        for c in restriction.clauses
-        if not c.substitutes and c.symbol in used
-    )
+    floors = _floors_used(restriction, used)
     return Theorem(
         _TOKEN,
         t.lhs,
@@ -445,6 +476,17 @@ def restricted(
         _merge(t.assumptions, floors),
         restriction.clauses,
         (left, right),
+    )
+
+
+def _floors_used(restriction: Restriction, used: Sequence[str]) -> tuple[str, ...]:
+    """The ``c <= d`` floors of the dimension clauses ``d >= c`` a proof assumed."""
+    from archytaszx.semantics.restrict import DIMENSION, GE
+
+    return tuple(
+        f"{c.c} <= {c.symbol}"
+        for c in restriction.clauses
+        if c.kind == DIMENSION and c.form == GE and c.symbol in used
     )
 
 
@@ -656,11 +698,7 @@ def restricted_symbolic(
         except RestrictUnsupported as exc:
             raise KernelError(f"no corollary: {exc}") from exc
         return Symbolic(inner.lhs, inner.rhs, source, proof.restriction.clauses)
-    floors = tuple(
-        f"{c.c} <= {c.symbol}"
-        for c in proof.restriction.clauses
-        if not c.substitutes and c.symbol in proof.floors_used
-    )
+    floors = _floors_used(proof.restriction, proof.floors_used)
     shifted = _symbolic_shift(proof, describe)
     if shifted is not None:
         source = header(

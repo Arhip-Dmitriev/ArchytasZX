@@ -27,7 +27,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from archytaszx.semantics.restrict import DIMENSION, EQ, GE, Clause
+from archytaszx.semantics.restrict import DIMENSION, EQ, GE, SHIFT, SIDE, Clause, Domain
 
 _OPEN = "([{⟨"
 _CLOSE = ")]}⟩"
@@ -127,6 +127,26 @@ def _sub(text: str, var: str, value: str) -> str:
     return re.sub(rf"(?<![\w'.₀-₉]){re.escape(var)}(?![\w'₀-₉])", value, text)
 
 
+def _num(value: object) -> str:
+    """A rational literal for a Lean real expression."""
+    text = str(value)
+    return f"({text})" if "/" in text or text.startswith("-") else text
+
+
+def _hypotheses(name: str, expr: str, domain: Domain, tag: str) -> list[_Binder]:
+    """The hypotheses a Domain puts on ``expr``, named after ``name`` and ``tag``."""
+    out: list[_Binder] = []
+    if domain.lo is not None:
+        op = "<" if domain.lo_strict else "≤"
+        out.append(_Binder("(", (f"h_{name}_{tag}_lo",), f"{_num(domain.lo)} {op} {expr}"))
+    if domain.hi is not None:
+        op = "<" if domain.hi_strict else "≤"
+        out.append(_Binder("(", (f"h_{name}_{tag}_hi",), f"{expr} {op} {_num(domain.hi)}"))
+    for k, v in enumerate(domain.excluded):
+        out.append(_Binder("(", (f"h_{name}_{tag}_ne{k}",), f"{expr} ≠ {_num(v)}"))
+    return out
+
+
 def corollary(
     source: str,
     clauses: Sequence[Clause],
@@ -139,10 +159,28 @@ def corollary(
     values: dict[str, str] = {}
     after: dict[str, list[_Binder]] = {}
     fresh: dict[str, str] = {}
+    integral: set[str] = set()
     for clause in clauses:
+        v = var(clause.symbol)
+        if clause.form == SIDE and clause.domain is not None:
+            after.setdefault(v, []).extend(_hypotheses(v, v, clause.domain, "side"))
+            continue
         if not clause.substitutes:
             continue
-        v = var(clause.symbol)
+        if clause.form == SHIFT:
+            m = var(clause.fresh)
+            fresh[v] = m
+            term = f"({m} : ℝ)" if clause.q else m
+            values[v] = f"({_num(clause.c)} + {_num(clause.a)} * {term})"
+            if clause.q:
+                integral.add(m)
+            hyps: list[_Binder] = []
+            if clause.fresh_domain is not None:
+                hyps += _hypotheses(m, m, clause.fresh_domain, "fresh")
+            if clause.domain is not None and clause.domain.excluded:
+                hyps += _hypotheses(v, values[v], Domain(excluded=clause.domain.excluded), "ne")
+            after.setdefault(v, []).extend(hyps)
+            continue
         if clause.form == EQ:
             values[v] = str(clause.c)
         elif clause.kind != DIMENSION and clause.form == GE:
@@ -163,7 +201,10 @@ def corollary(
             if closed:
                 args.append("(by norm_num)")
                 continue
-            if n in fresh:
+            if n in fresh and fresh[n] in integral:
+                stated.append(_Binder("(", (fresh[n],), "ℤ"))
+                arg = values[n]
+            elif n in fresh:
                 kept.append(fresh[n])
                 arg = values[n]
             elif n in values:
@@ -180,7 +221,7 @@ def corollary(
     for v, value in values.items():
         body = _sub(body, v, value)
     label = "at" if all(c.form == EQ for c in clauses if c.substitutes) else "restricted"
-    text = ", ".join(c.text() for c in clauses)
+    text = ", ".join(t for t in (c.text() for c in clauses) if t)
     sig = " ".join(b.text() for b in stated)
     decl = (
         f"/-- The final theorem at {text}. -/\n"

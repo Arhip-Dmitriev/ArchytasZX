@@ -165,8 +165,10 @@ finitely many values, decided one instance at a time:
 
     decide: equal (uncertified) for n < 4 by normal_form: every instance equal (n = 0; ...)
 
-A verdict under these forms is uncertified ("the kernel states no clause of ..."), and an
-unequal verdict's point satisfies every clause and side condition (PROOFS.txt, section 8.7).
+A verdict under these forms is certified with each clause as a hypothesis of the theorem,
+except a claim decided instance by instance, which is uncertified ("the kernel has no proof
+combining the instances"); an unequal verdict's point satisfies every clause and side
+condition (PROOFS.txt, section 8.7).
 
     decide [against] [TARGET] only for CLAUSE, ...
 

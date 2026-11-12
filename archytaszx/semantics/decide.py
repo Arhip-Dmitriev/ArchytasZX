@@ -1557,14 +1557,6 @@ def decide_restricted(
     def finish(d: Decision) -> Decision:
         if restriction.certifiable:
             return d
-        if d.verdict is EqualityVerdict.EQUAL:
-            return replace(
-                d,
-                verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
-                reason=f"{d.reason}; uncertified: the kernel states no clause of "
-                f"{restriction.text()}",
-                stops=(*d.stops, ("proof", "no_proof")),
-            )
         point = d.counterexample_original or d.counterexample
         if (
             d.verdict is EqualityVerdict.UNEQUAL
@@ -1615,7 +1607,7 @@ def decide_restricted(
             last,
             verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
             reason=f"every instance equal ({'; '.join(settled)}); uncertified: the kernel "
-            f"states no clause of {restriction.text()}",
+            "has no proof combining the instances",
             restriction=restriction,
             family=None,
             family_holds=False,

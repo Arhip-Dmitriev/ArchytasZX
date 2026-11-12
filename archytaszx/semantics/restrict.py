@@ -675,8 +675,6 @@ def _plan(
         return [Clause(symbol, kind, FINITE, source=texts, domain=domain, values=tuple(points))]
     if kind == PHASE and q and _periodic(symbol, left, right):
         values = tuple(Fraction(j, q) for j in range(q))
-        if len(values) == 1:
-            return [Clause(symbol, kind, EQ, c=0, source=texts, domain=domain)]
         rep_domain = Domain(q=q, excluded=domain.excluded)
         return [Clause(symbol, kind, FINITE, source=texts, domain=rep_domain, values=values)]
     if integer:
