@@ -52,6 +52,7 @@ MAX_ASSIGNMENTS = 4096
 MAX_POINTS = 16
 BRUTE_LIMIT = 256
 MAX_TERMS = 200_000
+MAX_CYCLOTOMIC_DEGREE = 512
 
 _Z = sp.Symbol("zeta_lean")
 
@@ -720,6 +721,10 @@ class _Refuter:
                 if c:
                     needs |= self.atom_needs(Rt(d))
         self.M = math.lcm(*needs)
+        if sp.totient(self.M) > MAX_CYCLOTOMIC_DEGREE:
+            raise NetUnsupported(
+                f"the cyclotomic field of order {self.M} has degree above {MAX_CYCLOTOMIC_DEGREE}"
+            )
         self.ptab: dict[tuple[int, int], tuple[int, tuple[int, ...]]] = {}
         for (ph, j), t in zip(self.keys, dens, strict=True):
             self.ptab[(ph, j)] = (int((t * self.M) % self.M), ())

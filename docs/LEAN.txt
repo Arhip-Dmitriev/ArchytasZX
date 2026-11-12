@@ -464,7 +464,8 @@ odd prime p is a quadratic Gauss sum, checked by its square and the sign of its 
 The points tried are the counterexample, then the default sample points ordered by the sum of
 the absolute values of their coordinates, smallest first (lean_refute._by_size), at most 16; a
 point whose evaluation needs a factor table above 200000 entries, or whose factor tables
-together hold more than 200000 cyclotomic terms, is skipped, so a large
+together hold more than 200000 cyclotomic terms, or whose field ℚ(ζ) has φ(M) above 512, is
+skipped, so a large
 counterexample is replaced by the smallest sample point that still separates. When no point
 gives an exact refutation, the same points are tried by ball arithmetic (5.2). Boundary
 assignments are enumerated lazily, at most 4096 per point.
