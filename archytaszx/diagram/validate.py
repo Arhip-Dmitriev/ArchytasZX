@@ -452,7 +452,9 @@ def _symbol_roles(diagram: Diagram) -> dict[str, dict[str, sp.Symbol]]:
         if node.phase is not None:
             _note(node.phase.dim.to_sympy())
             for entry in node.phase.entries().values():
-                _note(entry.to_sympy_turns())
+                turns = entry.to_sympy_turns()
+                if not turns.is_Rational:
+                    _note(turns)
             if node.phase.rule is not None:
                 _note(node.phase.rule.to_sympy_turns().xreplace({INDEX: sp.Integer(1)}))
     _note(diagram.scalar.to_sympy())
