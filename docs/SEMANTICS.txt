@@ -179,6 +179,12 @@ Bang boxes:
     delta factor of the entry pins is replaced by its pinned value in the group factors when
     they are periodic in it mod the delta's modulus. A bridged box holding a variable-rank part
     raises.
+  - A Z(1 -> 1) phase table at a concrete dimension D = d1 d2 fed by a binder B(d1, d2) whose
+    explicit entries all equal a x y + b x + c y mod 1 turns at index x d2 + y (a, b, c read
+    from the entries at (1, 1), (1, 0), (0, 1), then every stored entry checked exactly) is
+    denoted [out = in] exp(2 pi i (a x y + b x + c y)) over the binder's inputs (x, y); a
+    splitter S(d1, d2) that such a table feeds is denoted [out0 = x][out1 = y]. Any entry that
+    does not match leaves the table denoted entry by entry.
   - A box wired to any other node outside it, two node-scope boxes meeting one spider, a port
     box over two W nodes, and other shapes not listed raise
     SymbolicContractionUnsupportedError.
@@ -219,9 +225,11 @@ several top-level blocks is split into one group per block when its factor, afte
 template index a delta pins is substituted into the periodic rest, separates by block; groups
 are renumbered by first appearance in the layout. Factors that differ leave the
 result indeterminate. A difference the simplifier leaves nonzero is also equal when it
-vanishes after powers are written through exp, exponentials are split, and every complete set
+vanishes after powers are written through exp, exponentials are split and each
+exp(2 pi i P) over integer indices has P's coefficients reduced mod 1, and every complete set
 of residue deltas [x + r] (r = 0 .. m - 1, m concrete) with one coefficient is replaced by that
-coefficient.
+coefficient; failing that, in each case x = 0 .. m - 1 of an index x of concrete range m that
+a delta mod m reads alone (at most 4096 cases in all).
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 
 find_entry_witness looks for one assignment and one index tuple at which the two entries

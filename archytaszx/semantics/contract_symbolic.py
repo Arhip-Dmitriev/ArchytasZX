@@ -559,6 +559,130 @@ def _node_leg_dims(node: Node) -> tuple[Dim, ...]:
     return tuple(port.dim for port in (*node.outputs, *node.inputs))
 
 
+def _partner_port(diagram: Diagram, ref: PortRef) -> PortRef | None:
+    """The port wired to ``ref``, or None."""
+    return next((w.b if w.a == ref else w.a for w in diagram.wires if ref in (w.a, w.b)), None)
+
+
+def _bilinear_table(
+    diagram: Diagram, node_id: NodeId
+) -> tuple[NodeId, int, int, tuple[sp.Rational, sp.Rational, sp.Rational]] | None:
+    """For a Z(1 -> 1) phase table fed by a binder B(d1, d2): the binder, d1, d2 and (a, b, c)
+    with every stored entry at index x*d2 + y equal to ``a x y + b x + c y`` mod 1 turns, a,
+    b, c read from the entries at (1, 1), (1, 0), (0, 1); None otherwise."""
+    from fractions import Fraction
+
+    node = diagram.nodes[node_id]
+    phase = node.phase
+    if (
+        node.generator_type.name != Z_SPIDER.name
+        or node.num_inputs != 1
+        or node.num_outputs != 1
+        or phase is None
+        or phase.rule is not None
+        or phase.is_weighted
+    ):
+        return None
+    dim = resolve_dim(node)
+    if not dim.is_concrete:
+        return None
+    entries = phase.entries()
+    if not entries:
+        return None
+    source = _partner_port(diagram, PortRef(node_id, Direction.INPUT, 0))
+    if source is None or source.direction is not Direction.OUTPUT:
+        return None
+    binder = diagram.nodes[source.node_id]
+    if binder.generator_type.name != DIM_BINDER.name or len(binder.inputs) != 2:
+        return None
+    d1_dim = diagram.resolve_dim(binder.inputs[0].dim)
+    d2_dim = diagram.resolve_dim(binder.inputs[1].dim)
+    if not (d1_dim.is_concrete and d2_dim.is_concrete):
+        return None
+    d1, d2 = d1_dim.to_int(), d2_dim.to_int()
+    if d1 * d2 != dim.to_int():
+        return None
+    turns: dict[int, Fraction] = {}
+    for index, value in entries.items():
+        t = value.to_sympy_turns()
+        if not t.is_Rational:
+            return None
+        turns[index] = Fraction(int(t.p), int(t.q))
+
+    def at(j: int) -> Fraction:
+        return turns.get(j, Fraction(0))
+
+    b = at(d2) if d1 > 1 else Fraction(0)
+    c = at(1) if d2 > 1 else Fraction(0)
+    a = at(d2 + 1) - b - c if d1 > 1 and d2 > 1 else Fraction(0)
+    for x in range(d1):
+        for y in range(d2):
+            if (a * x * y + b * x + c * y - at(x * d2 + y)) % 1:
+                return None
+
+    def rational(f: Fraction) -> sp.Rational:
+        return sp.Rational(f.numerator, f.denominator)
+
+    return source.node_id, d1, d2, (rational(a), rational(b), rational(c))
+
+
+def _binder_digits(
+    binder: NodeId, port_index: Mapping[PortRef, sp.Symbol]
+) -> tuple[sp.Symbol, sp.Symbol] | None:
+    """The index symbols on a binder's two inputs, or None when either has none."""
+    xs = port_index.get(PortRef(binder, Direction.INPUT, 0))
+    ys = port_index.get(PortRef(binder, Direction.INPUT, 1))
+    return None if xs is None or ys is None else (xs, ys)
+
+
+def _bilinear_table_entry(
+    diagram: Diagram, node_id: NodeId, port_index: Mapping[PortRef, sp.Symbol]
+) -> sp.Expr | None:
+    """A phase table :func:`_bilinear_table` recognises, as ``[out = in] exp(2 pi i P(x, y))``
+    over its binder's inputs (x, y); None otherwise."""
+    found = _bilinear_table(diagram, node_id)
+    if found is None:
+        return None
+    binder, _d1, _d2, (a, b, c) = found
+    digits = _binder_digits(binder, port_index)
+    if digits is None:
+        return None
+    xs, ys = digits
+    out = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
+    inp = port_index[PortRef(node_id, Direction.INPUT, 0)]
+    dim = resolve_dim(diagram.nodes[node_id])
+    return cast(
+        sp.Expr, _delta(dim, out, inp) * sp.exp(2 * sp.pi * sp.I * (a * xs * ys + b * xs + c * ys))
+    )
+
+
+def _table_splitter_entry(
+    diagram: Diagram, node_id: NodeId, port_index: Mapping[PortRef, sp.Symbol]
+) -> sp.Expr | None:
+    """A splitter S(d1, d2) fed by a recognised phase table fed by B(d1, d2), as
+    ``[out0 = x][out1 = y]`` over the binder's inputs (x, y); None otherwise."""
+    node = diagram.nodes[node_id]
+    if node.generator_type.name != DIM_SPLITTER.name or len(node.outputs) != 2:
+        return None
+    feed = _partner_port(diagram, PortRef(node_id, Direction.INPUT, 0))
+    if feed is None or feed.direction is not Direction.OUTPUT:
+        return None
+    found = _bilinear_table(diagram, feed.node_id)
+    if found is None:
+        return None
+    binder, d1, d2, _coefficients = found
+    s1 = diagram.resolve_dim(node.outputs[0].dim)
+    s2 = diagram.resolve_dim(node.outputs[1].dim)
+    if not (s1.is_concrete and s2.is_concrete) or (s1.to_int(), s2.to_int()) != (d1, d2):
+        return None
+    digits = _binder_digits(binder, port_index)
+    if digits is None:
+        return None
+    out0 = port_index[PortRef(node_id, Direction.OUTPUT, 0)]
+    out1 = port_index[PortRef(node_id, Direction.OUTPUT, 1)]
+    return cast(sp.Expr, _delta(s1, out0, digits[0]) * _delta(s2, out1, digits[1]))
+
+
 def _node_entry(
     diagram: Diagram,
     node_id: NodeId,
@@ -573,7 +697,8 @@ def _node_entry(
         )
     name = node.generator_type.name
     if name in (DIM_BINDER.name, DIM_SPLITTER.name):
-        return _connective_entry(node, node_id, port_index)
+        split = _table_splitter_entry(diagram, node_id, port_index)
+        return split if split is not None else _connective_entry(node, node_id, port_index)
     dim = resolve_dim(node)
     d_expr = dim.to_sympy()
     outputs = [port_index[PortRef(node_id, Direction.OUTPUT, i)] for i in range(node.num_outputs)]
@@ -605,6 +730,10 @@ def _node_entry(
 
     if node.phase is not None and (node.phase.rule is not None or node.phase.is_weighted):
         return _ruled_entry(node, node_id, dim, outputs, inputs)
+
+    bilinear = _bilinear_table_entry(diagram, node_id, port_index)
+    if bilinear is not None:
+        return bilinear
 
     corrections = _phase_corrections(node)
 

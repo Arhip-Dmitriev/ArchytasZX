@@ -683,7 +683,7 @@ def compare_symbolic(
         )
     ranges = left.ranges() if left.ranges() == right.ranges() else None
     difference = (left.entry - right.entry).simplify(max_steps=max_steps, ranges=ranges)
-    if difference.is_zero or _vanishes(difference.to_sympy()):
+    if difference.is_zero or _vanishes(difference.to_sympy(), ranges):
         return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
     if dimension_floors:
         difference = difference.with_dimension_floors(dimension_floors).simplify(
@@ -731,14 +731,78 @@ class EntryWitness:
         return abs(self.left - self.right)
 
 
-def _vanishes(expr: sp.Expr) -> bool:
-    """Whether ``expr`` is zero once powers are written through exp, exponentials split, and
-    every complete set of residue deltas mod a concrete modulus with one coefficient is
-    replaced by that coefficient."""
+_MAX_CASES = 4096
+
+
+def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int = 1) -> bool:
+    """Whether ``expr`` is zero once powers are written through exp, exponentials split and
+    reduced mod one turn, every complete set of residue deltas mod a concrete modulus with one
+    coefficient is replaced by that coefficient, and, failing that, in each case of an index
+    whose concrete range equals the modulus of a delta it appears in alone."""
     if expr.atoms(sp.Sum):
         return False
-    folded = _fold_residues(sp.expand(expr.rewrite(sp.exp), power_exp=True))
-    return bool(sp.expand(folded) == 0)
+    folded = _fold_residues(_reduce_exponents(sp.expand(expr.rewrite(sp.exp), power_exp=True)))
+    folded = sp.expand(folded)
+    if folded == 0:
+        return True
+    split = _case_index(folded, ranges or {})
+    if split is None:
+        return False
+    symbol, size = split
+    if cases * size > _MAX_CASES:
+        return False
+    return all(
+        _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size)
+        for v in range(size)
+    )
+
+
+def _case_index(expr: sp.Expr, ranges: Mapping[str, Dim]) -> tuple[sp.Symbol, int] | None:
+    """An index symbol of concrete range m that a delta mod m reads alone, plus a constant."""
+    for delta in sorted(expr.atoms(ModDelta), key=str):
+        argument, modulus = delta.args
+        if not modulus.is_Integer:
+            continue
+        free = list(argument.free_symbols)
+        if len(free) != 1:
+            continue
+        (symbol,) = free
+        dim = ranges.get(str(symbol.name))
+        if dim is None or not dim.is_concrete or dim.to_int() != int(modulus):
+            continue
+        if sp.expand(argument - symbol).is_Integer or sp.expand(argument + symbol).is_Integer:
+            return symbol, int(modulus)
+    return None
+
+
+def _reduce_exponents(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each ``exp(2 pi i P)``, P a polynomial over integer symbols, rewritten with
+    every coefficient of P reduced mod 1."""
+
+    def reduce(arg: sp.Expr) -> sp.Expr:
+        turns = sp.expand(arg / (2 * sp.pi * sp.I))
+        if not all(x.is_integer for x in turns.free_symbols):
+            return sp.exp(arg)
+        if not turns.free_symbols:
+            if not turns.is_Rational:
+                return sp.exp(arg)
+            return sp.exp(2 * sp.pi * sp.I * (turns - sp.floor(turns)))
+        try:
+            poly = sp.Poly(turns, *sorted(turns.free_symbols, key=str))
+        except sp.PolynomialError:
+            return sp.exp(arg)
+        if not all(c.is_Rational for c in poly.coeffs()):
+            return sp.exp(arg)
+        reduced = sp.Add(
+            *(
+                (c - sp.floor(c))
+                * sp.Mul(*(g**e for g, e in zip(poly.gens, monomial, strict=True)))
+                for monomial, c in poly.terms()
+            )
+        )
+        return sp.exp(2 * sp.pi * sp.I * reduced)
+
+    return expr.replace(lambda e: isinstance(e, sp.exp), lambda e: reduce(e.args[0]))
 
 
 def _fold_residues(expr: sp.Expr) -> sp.Expr:
