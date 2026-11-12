@@ -205,6 +205,8 @@ class Decision:
     refutation: str | None = None
     proof: object | None = None
     induction_proof: Theorem | None = None
+    stops: tuple[tuple[str, str], ...] = ()
+    """One (rung, stop code) per rung tried, in ladder order."""
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -636,6 +638,45 @@ class _OracleRun:
     mismatch: Mapping[str, CheckAssignmentValue] | None
     comparison: ComparisonResult | None
     refusals: tuple[str, ...] = ()
+
+
+def _oracle_stop(oracle: _OracleRun) -> str:
+    """The oracle rung's stop code."""
+    if oracle.mismatch is not None:
+        return "mismatch"
+    if not oracle.evaluated:
+        return "none_evaluated"
+    return "refused" if oracle.refusals else "no_mismatch"
+
+
+def _symbolic_stop(reason: str, matched: bool) -> str:
+    """The symbolic rung's stop code from its comparison reason."""
+    if matched:
+        return "equal"
+    if "declined" in reason or "skipped" in reason:
+        if "meets the rest" in reason:
+            return "declined.box_meets_wire"
+        if "budget" in reason:
+            return "declined.scalar_budget"
+        return "declined.other"
+    if "replicated factors differ" in reason:
+        return "indeterminate.replicated_factors"
+    if reason.startswith("indeterminate"):
+        return "indeterminate"
+    return "entries_differ"
+
+
+def _induction_stops(reason: str) -> list[tuple[str, str]]:
+    """The induction rung's stop codes, forward and reversed, from its reason."""
+    forward, _, reversed_part = reason.partition("reversed:")
+
+    def code(text: str) -> str:
+        return "base_not_proved" if "base case" in text else "step_not_discharged"
+
+    out = [("induction", code(forward))]
+    if reversed_part:
+        out.append(("induction_reversed", code(reversed_part)))
+    return out
 
 
 def _magnitude(
@@ -1346,6 +1387,7 @@ def _certify(
         if proof is None:
             return replace(
                 decision,
+                stops=(*decision.stops, ("proof", "no_proof")),
                 verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
                 reason=f"{decision.reason}; uncertified: no proof the kernel re-checks ({why})",
             )
@@ -1371,6 +1413,7 @@ def _certify(
     except NetUnsupported as exc:
         return replace(
             decision,
+            stops=(*decision.stops, ("refutation", "no_lean")),
             verdict=EqualityVerdict.UNEQUAL_UNCERTIFIED,
             reason=f"{decision.reason}; uncertified: no Lean refutation ({exc})",
         )
@@ -1478,6 +1521,7 @@ def _decide(
             method=DecisionMethod.DOUBLED,
             inner_method=inner.method,
             doubled=doubled,
+            stops=(("doubled", "doubled"), *inner.stops),
             reason=f"doubled, {inner.method.value}: {inner.reason}",
         )
     parameters_agree = dict(left.parameters) == dict(right.parameters)
@@ -1537,14 +1581,18 @@ def _decide(
             assumptions=assumptions,
             parameters_agree=parameters_agree,
             saturation=saturation,
+            stops=tuple(stops),
             **evidence,  # type: ignore[arg-type]
         )
+
+    stops: list[tuple[str, str]] = [("normal_form", "agree" if nf_equal else "differ")]
 
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r, floors)
     oracle = _run_oracle(
         family_l, family_r, candidates, max_samples, tolerance, max_elements, samples is None
     )
     checked = len(oracle.evaluated)
+    stops.append(("oracle", _oracle_stop(oracle)))
     if oracle.mismatch is not None:
         return finish(
             EqualityVerdict.UNEQUAL,
@@ -1575,6 +1623,14 @@ def _decide(
     if use_saturation:
         run = _run_saturation(family_l, family_r, rules, saturation_limits)
         saturation = run.report
+        stops.append(
+            (
+                "saturation",
+                "merged"
+                if run.certificates is not None
+                else (run.report.stop_reason.value if run.report is not None else "error"),
+            )
+        )
         if run.certificates is not None:
             conditional = (
                 ", conditional on the assumed dimension equation(s) "
@@ -1595,6 +1651,7 @@ def _decide(
         notes.append("saturation disabled")
     if use_symbolic:
         symbolic = _symbolic_match(family_l, family_r, floors)
+        stops.append(("symbolic", _symbolic_stop(symbolic.reason, symbolic.matched)))
         if symbolic.matched:
             return finish(
                 EqualityVerdict.EQUAL,
@@ -1633,6 +1690,7 @@ def _decide(
                     samples_checked=checked,
                 )
         if witness is not None:
+            stops[-1] = ("symbolic", "differ")
             return finish(
                 EqualityVerdict.UNEQUAL,
                 DecisionMethod.SYMBOLIC_WITNESS,
@@ -1654,6 +1712,16 @@ def _decide(
         notes.append("symbolic contraction disabled")
     if _USE_PATH_SUM.get():
         settled_ps = _path_sum_rung(family_l, family_r)
+        stops.append(
+            (
+                "path_sum",
+                "not_applicable"
+                if isinstance(settled_ps, str)
+                else settled_ps.status
+                if settled_ps.status in ("equal", "unequal")
+                else "residual",
+            )
+        )
         if isinstance(settled_ps, str):
             notes.append(settled_ps)
         elif settled_ps.status == "equal":
@@ -1710,10 +1778,15 @@ def _decide(
             saturation_limits=saturation_limits,
             floors=floors,
         )
+        stops.extend(_induction_stops(settled if isinstance(settled, str) else settled[2]))
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
         else:
             verdict, method, reason, evidence = settled
+            if verdict is not EqualityVerdict.UNKNOWN:
+                code = "proved" if verdict.value.startswith("equal") else "refuted"
+                stops[:] = [x for x in stops if not x[0].startswith("induction")]
+                stops.append(("induction", code))
             if verdict is EqualityVerdict.UNKNOWN:
                 reason = "; ".join([*notes, f"induction: {reason}"])
             return finish(verdict, method, reason, samples_checked=checked, **evidence)  # type: ignore[arg-type]

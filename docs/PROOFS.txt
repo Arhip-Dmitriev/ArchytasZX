@@ -119,6 +119,23 @@ pair in Decision.doubled (MIXED.txt, section 5).
     Decision.induction_proof  the kernel Theorem of an INDUCTION verdict whose step case was
                               settled by uniform rewrite or induction rewrite, else None
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
+    Decision.stops            one (rung, stop code) per rung tried, in ladder order:
+                                normal_form  agree, differ
+                                oracle       no_mismatch, refused, none_evaluated, mismatch
+                                saturation   merged, saturated, iteration_limit, enode_limit,
+                                             application_limit
+                                symbolic     equal, differ, entries_differ, indeterminate,
+                                             indeterminate.replicated_factors,
+                                             declined.box_meets_wire, declined.scalar_budget,
+                                             declined.other
+                                path_sum     equal, unequal, residual, not_applicable
+                                induction, induction_reversed
+                                             proved, refuted, base_not_proved,
+                                             step_not_discharged
+                                proof        no_proof (EQUAL_UNCERTIFIED)
+                                refutation   no_lean (UNEQUAL_UNCERTIFIED)
+                              a DOUBLED decision's stops start with (doubled, doubled), then
+                              the doubled comparison's own; the reason text is unchanged
     Decision.assumptions      assumed dimension equations the verdict rests on
     Decision.samples_checked  oracle samples evaluated
     Decision.parameters_agree whether the two parameter environments agree
