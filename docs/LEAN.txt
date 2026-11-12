@@ -422,8 +422,24 @@ No lemma enumerates the instance's variables; each case-splits only its own bits
 QCanon carry canonical-form data. export_pair(left, right, name) writes, for a pair whose path
 sums reduce to one canonical form, the left trace (one rule-lemma instance per PathSum.trace
 step, its variable, pivot and substitution as a comment), both canonical forms as PSCanon or
-QCanon literals with canon_eq : canonL = canonR := rfl, and the right trace. The file does not
-state L = R; G15 names what is missing.
+QCanon literals with canon_eq : canonL = canonR := rfl, and the right trace.
+
+ArchytasZX/PathSumSem.lean gives a qubit path sum a value. Data holds the path variables, phase
+terms (monomial, k) worth k / M turns, constraints and support rows (F_2 polynomials);
+val M c s sigma sums summand over the path variables at a boundary assignment
+sigma : N -> ZMod 2. Lemmas: lift (the integer polynomial of an F_2 polynomial, -2 written
+M - 2) with pn_lift, substP and substF with pn_substP and fz_substF (substitution agrees with
+the updated assignment, modulo M for phases, exactly over F_2), normP and normF (sorted, merged,
+mod M) with pn_normP and fz_normF, and bsum_perm, bsum_head for the path order. Steps, each with
+a Bool side condition and a soundness theorem: perm (path reordered), elim (factor 2), hhCons
+(factor 2, quotient as a constraint), hhPivot (factor 2, z := the rest of y's quotient), canon v
+(a constraint pivotable at v becomes a row, v substituted out); run_sound composes a step list
+(constant times 2^twos), final_sound compares two path-free sums with equal rows and phase up to
+the constant term, given the constants' identity. export_proof(left, right, name) writes both
+path sums as Data literals, each side's trace as a step list with the canonical pivots in
+eliminate's order, the constants' identity by lean_scalar, and
+main : val M cL sL sigma = val M cR sR sigma for every sigma. It raises for a trace step with no
+PathSumSem step and for qudit sums; G15 names what is missing.
 
 5. REFUTATIONS
 --------------
@@ -745,11 +761,11 @@ generator in Lean; cpm_conj states its effect on any network whose entries are c
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
-G15 Path-sum composition. A lean_pathsum file checks every step's local identity and the
-canonical-form equality, not L = R. Missing: the semantic value of a PathSum as a Boolean sum
-over listed path variables, its link to the network value (the translation lemmas of
-PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations), and the step lemma
-that composes a local identity with the rest of the sum (splitting the phase into the terms of
-the eliminated variable and the rest, the Boolean lift of a substitution with x^2 = x and
-integer terms dropped, path-variable order). Until they exist a path_sum EQUAL stays
-EQUAL_UNCERTIFIED. PathSum.lean is not in the ArchytasZX root import list until it is checked.
+G15 Path-sum proofs. PathSumSem has no step for [omega], [HHgen], [Rem], [HHnl] or [Dyadic] and
+no qudit semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines
+traces using them (clifford_relation: omega; amm_tof_3, grover_marked/m01: rem). main is about
+path sums: the link from a diagram's network value to val of its from_diagram Data (the
+translation lemmas of PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations,
+boundary identification) is not written, so a path_sum EQUAL stays EQUAL_UNCERTIFIED.
+PathSum.lean and PathSumSem.lean are not in the ArchytasZX root import list until they are
+checked.

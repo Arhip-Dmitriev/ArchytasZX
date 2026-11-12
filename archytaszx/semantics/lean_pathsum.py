@@ -11,13 +11,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lean output for a path-sum EQUAL: each side's reduction trace as one rule-lemma instance per
-step (ArchytasZX/PathSum.lean), then both canonical forms as data and their equality by rfl.
-
-The file states the left trace, the canonical-form equality, then the right trace; it never
-enumerates a sum. It does not yet state L = R: the lemma that composes a step's local identity
-with the rest of the sum (phase split, Boolean-lift substitution, path-variable order) is not in
-the library.
+"""Lean output for a path-sum EQUAL. export_pair writes each side's reduction trace as one
+rule-lemma instance per step (ArchytasZX/PathSum.lean) and the canonical forms' equality by rfl.
+export_proof writes the theorem that both sides' path sums have one value at every boundary
+assignment (ArchytasZX/PathSumSem.lean): each side's trace replayed as a step list checked by
+``decide``, the canonical pivots as canon steps, and the constants' identity by
+``linear_combination``. Neither enumerates a sum.
 """
 
 from __future__ import annotations
@@ -25,6 +24,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from fractions import Fraction
+from typing import cast
+
+import sympy as sp  # type: ignore[import-untyped]
 
 from archytaszx.algebra.pathsum import (
     Canon,
@@ -178,4 +180,158 @@ def export_pair(left: Diagram, right: Diagram, name: str = "pair") -> str:
     return "\n".join(lines)
 
 
-__all__ = ["export_pair"]
+def _elimination_order(
+    constraints: Sequence[frozenset[frozenset[int]]], boundary: Sequence[int]
+) -> list[int]:
+    """The pivots of pathsum.eliminate in the order it takes them."""
+    from archytaszx.algebra.pathsum import f2_substitute
+
+    work = [c for c in constraints if c]
+    order: list[int] = []
+    progress = True
+    while work and progress:
+        progress = False
+        for v in sorted(set(boundary) - set(order)):
+            single = frozenset({v})
+            hit = next(
+                (c for c in work if single in c and not any(v in m for m in c if m != single)),
+                None,
+            )
+            if hit is None:
+                continue
+            work.remove(hit)
+            rest = frozenset(hit - {single})
+            work = [f2_substitute(c, v, rest) for c in work]
+            work = [c for c in work if c]
+            order.append(v)
+            progress = True
+    return order
+
+
+def _data_term(ps: PathSum, m: int) -> str:
+    """A path sum as a PSem.Data literal, coefficients k of k / m turns."""
+    phase = ", ".join(
+        f"({sorted(mono)}, {int(c * m) % m})"
+        for mono, c in sorted(ps.phase.terms.items(), key=lambda t: (len(t[0]), sorted(t[0])))
+    )
+    cons = ", ".join(
+        "[" + ", ".join(str(sorted(mono)) for mono in sorted(q, key=sorted)) + "]"
+        for q in ps.constraints
+    )
+    return f"{{ path := {sorted(ps.path)}, phase := [{phase}], cons := [{cons}], rows := [] }}"
+
+
+def _steps(raw: PathSum, ps: PathSum, order: Sequence[int]) -> list[str]:
+    """The PSem.Step list replaying the trace of ``ps``, reduced from ``raw``, then the canon
+    steps at ``order``."""
+    cur = sorted(raw.path)
+    out: list[str] = []
+    for step in ps.trace:
+        if step.rule in ("elim", "hh_constraint"):
+            cur.remove(step.var)
+            out += [f".perm {[step.var, *cur]}", ".elim" if step.rule == "elim" else ".hhCons"]
+        elif step.rule == "hh_pivot" and step.pivot is not None:
+            cur.remove(step.var)
+            cur.remove(step.pivot)
+            out += [f".perm {[step.var, step.pivot, *cur]}", ".hhPivot"]
+        else:
+            raise PathSumUnsupported(f"the rule {step.rule} has no PathSumSem step")
+    return out + [f".canon {v}" for v in order]
+
+
+def _const_model(c: Cyclo, k: int) -> sp.Expr:
+    """``c * sqrt(2)^k`` over the lean_scalar atoms Om and Rt."""
+    from archytaszx.semantics.lean_scalar import Inv, Om, Rt
+
+    value = sum(
+        (sp.Rational(v.numerator, v.denominator) * Om(c.n) ** e for e, v in sorted(c.c.items())),
+        sp.Integer(0),
+    )
+    root = Rt(2) ** k if k >= 0 else Inv(Rt(2)) ** (-k)
+    return sp.expand(value * root)
+
+
+def _const_turn(ps: PathSum, m: int) -> int:
+    """The constant phase term of the canonical form of a reduced sum, in units of 1 / m."""
+    from archytaszx.algebra.pathsum import eliminate
+
+    rows = eliminate(ps.constraints, ps.boundary)
+    phase = ps.phase.copy()
+    for pivot, rest in cast(list[tuple[int, frozenset[frozenset[int]]]], rows or []):
+        phase.substitute(pivot, rest)
+    return int(phase.terms.get(frozenset(), Fraction(0)) * m) % m
+
+
+def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
+    """The Lean file proving that both diagrams' path sums agree at every boundary assignment;
+    raises :class:`PathSumUnsupported` when they do not reduce to one canonical form or a
+    trace step has no PathSumSem step."""
+    from archytaszx.semantics.lean_scalar import Om, Scalars
+
+    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
+        raise PathSumUnsupported("export_proof covers qubit path sums only")
+    red_l, red_r = reduce(raw_l), reduce(raw_r)
+    can_l, can_r = canonical(red_l), canonical(red_r)
+    if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
+        raise PathSumUnsupported("the path sums do not reduce to one canonical form")
+    m = 4
+    for ps in (raw_l, raw_r):
+        for c in ps.phase.terms.values():
+            m = math.lcm(m, c.denominator)
+    order = _elimination_order(red_l.constraints, red_l.boundary)
+    steps_l, steps_r = _steps(raw_l, red_l, order), _steps(raw_r, red_r, order)
+    two_l = sum(1 for st in steps_l if st in (".elim", ".hhCons", ".hhPivot"))
+    two_r = sum(1 for st in steps_r if st in (".elim", ".hhCons", ".hhPivot"))
+    k_l, k_r = _const_turn(red_l, m), _const_turn(red_r, m)
+    sc = Scalars(
+        nat=lambda sym: str(sym),
+        other=lambda sym: (str(sym), "ℂ"),
+        positive=lambda x: "(by norm_num)",
+    )
+    c_l, c_r = _const_model(raw_l.const, raw_l.sqrt2), _const_model(raw_r.const, raw_r.sqrt2)
+    lhs = sp.Integer(2) ** two_l * c_l * Om(m) ** k_l
+    rhs = sp.Integer(2) ** two_r * c_r * Om(m) ** k_r
+    proof = sc.prove(lhs, rhs)
+    ns = f"ArchytasZX.PathSumProof.{name}"
+    lines = [
+        "import ArchytasZX.PathSumSem",
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}`",
+        "",
+        "Both path sums, each side's steps replayed and checked by `decide`, the constants'",
+        "identity, and the value equality at every boundary assignment.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        f"def sL : Data := {_data_term(raw_l, m)}",
+        f"def sR : Data := {_data_term(raw_r, m)}",
+        f"def stepsL : List Step := [{', '.join(steps_l)}]",
+        f"def stepsR : List Step := [{', '.join(steps_r)}]",
+        "",
+        f"theorem consts : (2 : ℂ) ^ {two_l} * {sc.text(c_l)} * om {m} ^ {k_l} =",
+        f"    (2 : ℂ) ^ {two_r} * {sc.text(c_r)} * om {m} ^ {k_r} := by",
+        f"  have key : {sc.text(lhs)} = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        "theorem main (σ : ℕ → ZMod 2) :",
+        f"    val {m} {sc.text(c_l)} sL σ = val {m} {sc.text(c_r)} sR σ := by",
+        f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ (by decide),",
+        f"    run_sound {m} (by norm_num) stepsR sR _ σ (by decide)]",
+        f"  apply final_sound {m} (by norm_num) _ _ _ _ σ {k_l} {k_r} (by decide) (by decide)",
+        "    (by decide)",
+        f"  rw [show twos stepsL = {two_l} from rfl, show twos stepsR = {two_r} from rfl]",
+        "  exact consts",
+        "",
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = ["export_pair", "export_proof"]
