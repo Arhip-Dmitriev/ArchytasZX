@@ -755,6 +755,8 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     folded = sp.expand(folded)
     if folded == 0:
         return True
+    if not folded.free_symbols:
+        return _cyclotomic_zero(folded)
     split = _case_index(folded, ranges or {})
     if split is None:
         return False
@@ -765,6 +767,18 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
         _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size)
         for v in range(size)
     )
+
+
+def _cyclotomic_zero(expr: sp.Expr) -> bool:
+    """Whether the constant ``expr``, read exactly as a cyclotomic number times a power of
+    sqrt 2, is zero; False when it is not one."""
+    from archytaszx.algebra.pathsum import PathSumUnsupported, constant, with_sqrt2
+
+    try:
+        value, half_powers = constant(expr)
+    except (PathSumUnsupported, ValueError, TypeError, ZeroDivisionError):
+        return False
+    return with_sqrt2(value, half_powers).is_zero
 
 
 def _constant_bases(expr: sp.Expr) -> sp.Expr:

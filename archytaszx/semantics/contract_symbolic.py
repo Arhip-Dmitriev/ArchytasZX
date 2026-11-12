@@ -1292,6 +1292,10 @@ def contract_symbolic(
         raise SymbolicContractionValidationError(report)
 
     diagram = expand_concrete_boxes(diagram)
+    if not diagram.bang_boxes:
+        reduced = _path_sum_tensor(diagram, max_steps)
+        if reduced is not None:
+            return reduced
     plan = _plan_boxes(diagram)
 
     box_factor: sp.Expr = sp.Integer(1)
@@ -1492,7 +1496,8 @@ def contract_symbolic(
         port_index[wire.b] = symbol
         wire_indices.append((symbol, _port_dim(working, wire.a)))
 
-    entry: sp.Expr = working.scalar.to_sympy() * box_factor
+    head: sp.Expr = working.scalar.to_sympy() * box_factor
+    parts: list[sp.Expr] = []
     for node_id in sorted(working.nodes):
         node = working.nodes[node_id]
         for direction in (Direction.OUTPUT, Direction.INPUT):
@@ -1512,7 +1517,7 @@ def contract_symbolic(
                 shared_of[node_id],
                 [_mark_symbol(g) for g in touched],
             )
-            entry = entry * part
+            parts.append(part)
             for ref, pair in legs.items():
                 w_legs.setdefault(group_of[port_box[ref]], []).append(pair)
             continue
@@ -1520,7 +1525,7 @@ def contract_symbolic(
             part, per_leg = _shared_spider_entry(
                 node, node_id, port_index, boxed, shared_of[node_id]
             )
-            entry = entry * part
+            parts.append(part)
             for ref, factor in per_leg.items():
                 if ref in crossing_leg:
                     copy_factor[crossing_leg[ref]] = copy_factor[crossing_leg[ref]] * factor
@@ -1531,7 +1536,7 @@ def contract_symbolic(
                 g = group_of[port_box[ref]]
                 factors[g] = factors[g] * factor
             continue
-        entry = entry * _node_entry(working, node_id, port_index)
+        parts.append(_node_entry(working, node_id, port_index))
 
     for g, pairs in sorted(w_legs.items()):
         vacuum = [zero for zero, _excited in pairs]
@@ -1556,12 +1561,8 @@ def contract_symbolic(
         for ref, symbol in reversed(list(legs.items())):
             copy = sp.Sum(copy, (symbol, 0, _port_dim(diagram, ref).to_sympy() - 1))
         copy = Scalar(copy).simplify(max_steps=max_steps).to_sympy()
-        entry = entry * sp.Pow(copy, diagram.bang_boxes[box_id].multiplicity.to_sympy())
-    for symbol, dim in reversed(wire_indices):
-        entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))
-    for symbol, dim in reversed(summed_shared):
-        entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))
-    closed = Scalar(entry).simplify(max_steps=max_steps)
+        parts.append(sp.Pow(copy, diagram.bang_boxes[box_id].multiplicity.to_sympy()))
+    closed = _sum_out(head, parts, [*summed_shared, *wire_indices], max_steps)
     if not group_boxes:
         return SymbolicTensor(tuple(fixed_axes), closed)
 
@@ -1632,6 +1633,146 @@ def contract_symbolic(
             for g, (box_id, factor) in enumerate(zip(group_boxes, factors, strict=True))
         ),
         tuple(kept),
+    )
+
+
+def _cyclo_expr(value: object) -> sp.Expr:
+    """A cyclotomic number as its sum of rational multiples of roots of unity."""
+    from archytaszx.algebra.pathsum import Cyclo
+
+    assert isinstance(value, Cyclo)
+    return sp.Add(
+        *(
+            sp.Rational(c.numerator, c.denominator)
+            * sp.exp(2 * sp.pi * sp.I * sp.Rational(k, value.n))
+            for k, c in sorted(value.c.items())
+        )
+    )
+
+
+def _parity_expr(poly: frozenset[frozenset[int]], var: Mapping[int, sp.Expr]) -> sp.Expr:
+    """An F_2 polynomial as the integer sum of its monomials, whose parity is its value."""
+    return sp.Add(*(sp.Mul(*(var[v] for v in sorted(mono))) for mono in sorted(poly, key=sorted)))
+
+
+def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
+    """The contraction of a diagram of Z, X, F, B and S nodes at concrete power-of-two
+    dimensions with boundary legs of dimension at most 2, read from its reduced path sum:
+    constant, sqrt 2 power, a mod-2 delta per support constraint, a sum over each path variable
+    left, the phase as one exponential and each amplitude atom ``a^F`` as
+    ``[F even] + a [F odd]``; None outside that class."""
+    from archytaszx.algebra.pathsum import PathSum, PathSumUnsupported, reduce
+    from archytaszx.semantics.pathsum_diagram import diagram_base, from_diagram
+
+    refs = (*diagram.boundary_outputs, *diagram.boundary_inputs)
+    dims = [_port_dim(diagram, ref) for ref in refs]
+    if not all(d.is_concrete and d.to_int() in (1, 2) for d in dims):
+        return None
+    try:
+        if diagram_base(diagram) != 2:
+            return None
+        raw = from_diagram(diagram)
+    except PathSumUnsupported:
+        return None
+    if not isinstance(raw, PathSum):
+        return None
+    ps = reduce(raw)
+    axes = tuple(
+        SymbolicAxis(ref, dim, f"_i{k}")
+        for k, (ref, dim) in enumerate(zip(refs, dims, strict=True))
+    )
+    two = [axis for axis in axes if axis.dim.to_int() == 2]
+    if len(two) != len(ps.boundary):
+        return None
+    var: dict[int, sp.Expr] = {
+        v: _engine_index(axis.index) for v, axis in zip(ps.boundary, two, strict=True)
+    }
+    path = sorted(ps.path)
+    for v in path:
+        var[v] = _engine_index(f"_p{v}")
+    used = ps.phase.variables() | ps.amp_vars()
+    used |= {v for c in ps.constraints for m in c for v in m}
+    if not used <= var.keys():
+        return None
+    phase = sp.Add(
+        *(
+            sp.Rational(c.numerator, c.denominator) * sp.Mul(*(var[v] for v in sorted(mono)))
+            for mono, c in sorted(ps.phase.terms.items(), key=lambda item: sorted(item[0]))
+        )
+    )
+    entry: sp.Expr = (
+        _cyclo_expr(ps.const) * sp.sqrt(2) ** ps.sqrt2 * sp.exp(2 * sp.pi * sp.I * phase)
+    )
+    for constraint in ps.constraints:
+        entry = entry * ModDelta(_parity_expr(constraint, var), 2)
+    for base, exponent in ps.amps:
+        even = ModDelta(_parity_expr(exponent, var), 2)
+        entry = entry * (even + _cyclo_expr(base) * (1 - even))
+    for v in reversed(path):
+        entry = sp.Sum(entry, (var[v], 0, 1))
+    return SymbolicTensor(axes, Scalar(entry).simplify(max_steps=max_steps))
+
+
+def _sum_out(
+    head: sp.Expr,
+    parts: Sequence[sp.Expr],
+    summed: Sequence[tuple[sp.Symbol, Dim]],
+    max_steps: int,
+) -> Scalar:
+    """``head`` times the product of ``parts`` summed over ``summed``, simplified: at concrete
+    dimensions one index at a time over only the parts it occurs in, the index whose parts
+    carry the fewest other summed indices first, each partial sum simplified; otherwise one
+    nested sum simplified once."""
+    if not all(dim.is_concrete for _symbol, dim in summed):
+        entry = head * sp.Mul(*parts)
+        for symbol, dim in reversed(summed):
+            entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))
+        return Scalar(entry).simplify(max_steps=max_steps)
+    dims = dict(summed)
+    live: dict[int, tuple[sp.Expr, frozenset[sp.Symbol]]] = {}
+    where: dict[sp.Symbol, set[int]] = {symbol: set() for symbol in dims}
+    serial = 0
+
+    def add(expr: sp.Expr) -> None:
+        nonlocal serial
+        symbols = frozenset(s for s in expr.free_symbols if s in dims)
+        live[serial] = (expr, symbols)
+        for symbol in symbols:
+            where[symbol].add(serial)
+        serial += 1
+
+    for part in parts:
+        add(part)
+
+    def width(symbol: sp.Symbol) -> int:
+        return len(frozenset().union(*(live[i][1] for i in where[symbol])))
+
+    widths = {symbol: width(symbol) for symbol in dims}
+    while widths:
+        symbol = min(widths, key=lambda s: (widths[s], str(s.name)))
+        del widths[symbol]
+        bucket = sorted(where.pop(symbol))
+        touched: frozenset[sp.Symbol] = frozenset()
+        product: list[sp.Expr] = []
+        for i in bucket:
+            expr, symbols = live.pop(i)
+            product.append(expr)
+            touched |= symbols
+            for other in symbols - {symbol}:
+                where[other].discard(i)
+        top = dims[symbol].to_sympy() - 1
+        if not product:
+            head = head * (top + 1)
+            continue
+        add(
+            Scalar(sp.Sum(sp.Mul(*product), (symbol, 0, top)))
+            .simplify(max_steps=max_steps)
+            .to_sympy()
+        )
+        for other in touched - {symbol}:
+            widths[other] = width(other)
+    return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(
+        max_steps=max_steps
     )
 
 

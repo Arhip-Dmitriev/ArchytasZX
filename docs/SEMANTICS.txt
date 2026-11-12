@@ -204,6 +204,16 @@ diagram: the cost does not depend on the size of the value substituted.
 The cost of symbolic contraction grows quickly with the number of phased spiders (in a chain
 of spiders with symbolic phases, roughly fourfold per spider).
 
+Two routes apply at concrete dimensions. A diagram without bang boxes whose nodes are Z, X, F,
+B and S at powers of two, with every boundary leg of dimension 1 or 2, is read from its reduced
+path sum (section 5.2): the constant times sqrt 2 to its power, a delta [P = 0 mod 2] per
+support constraint (P the F_2 polynomial as an integer sum of monomials), one sum over 0..1 per
+path variable left, exp(2 pi i phase), and [F even] + a [F odd] per amplitude atom a^F, boundary
+bit k read as index _i{k}. Otherwise, when every summed index has a concrete range, the indices
+are summed out one at a time: the product of only the factors carrying the index is summed and
+simplified, and the index whose factors carry the fewest other summed indices goes first (ties
+by name). A symbolic range keeps one nested sum simplified once.
+
 5.1 Symbolic comparison
 
 Both functions are in archytaszx.semantics.check.
@@ -230,7 +240,8 @@ vanishes after powers are written through exp, exponentials are split and each
 exp(2 pi i P) over integer indices has P's coefficients reduced mod 1, and every complete set
 of residue deltas [x + r] (r = 0 .. m - 1, m concrete) with one coefficient is replaced by that
 coefficient; failing that, in each case x = 0 .. m - 1 of an index x of concrete range m that
-a delta mod m reads alone (at most 4096 cases in all).
+a delta mod m reads alone (at most 4096 cases in all). A constant left in a case is zero when
+it reads exactly as a cyclotomic number times a power of sqrt 2 that is zero (pathsum.constant).
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 
 find_entry_witness looks for one assignment and one index tuple at which the two entries
