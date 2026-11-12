@@ -245,7 +245,18 @@ simplify closes index sums. Its central identity is the character sum
 where the bracket is the exact atom ModDelta(j, d). After closing sums it removes the bound
 indices the resulting deltas pin and puts the remaining deltas in echelon form. ranges gives
 the extents of free indices. A simplification that exceeds max_steps raises
-ScalarBudgetError.
+ScalarBudgetError. With enumerate_concrete=False a sum no identity closes is left as a Sum
+instead of being expanded over one concrete index.
+
+Carries at a concrete modulus are kept unsplit. An index u < m pinned by a delta
+[c u + r == 0 mod M], m | M and c a unit mod M, whose weight is not m-periodic in u or whose
+-c r leaves [0, m), is replaced by the atom ModResidue(-c r, m), the delta kept at that value
+when m < M. The atom reads as its argument where only the residue matters: in omega powers
+whose coefficient times m is an integer, in deltas [a x + r == 0 mod M] with M | a m, and when
+ranges bound the argument in [0, m). A free index v of range m that a delta of the term pins
+to the same residue (c v + L with -c L == x mod m) replaces ModResidue(x, m). An echelon pivot
+v == value mod m with v of range m and value bounded in [0, m) is substituted everywhere,
+deltas of other moduli included; otherwise only where the expression is m-periodic in v.
 
 with_dimension_floors sets to zero every [s | c] whose modulus symbol s has, by the given
 floors, a least value above |c|; it is how facts such as "d >= 3" enter a comparison.
@@ -255,6 +266,8 @@ floors, a least value above |c|; it is how facts such as "d >= 3" enter a compar
     ModDelta(j, m)     [j == 0 mod m]; evaluates when decidable, otherwise moves j to a
                        canonical residue
     ModGcd(c, m)       gcd(c, m); evaluates when decidable
+    ModResidue(x, m)   x mod m in [0, m) for a concrete m; evaluates when x is an integer,
+                       otherwise takes x's coefficients into [0, m)
 
 Errors: ScalarDomainError (numeric evaluation of a symbolic scalar, zero denominator, zero to a
 negative power), ScalarGrammarError (inexact input), ScalarSumError (a malformed index sum),

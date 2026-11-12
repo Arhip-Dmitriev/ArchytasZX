@@ -49,6 +49,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -162,7 +163,7 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
         expr.is_Add
         or expr.is_Mul
         or expr.is_Pow
-        or isinstance(expr, (sp.exp, sp.conjugate, ModDelta, ModGcd))
+        or isinstance(expr, (sp.exp, sp.conjugate, ModDelta, ModGcd, ModResidue))
     ):
         for arg in expr.args:
             _check_scalar_domain(arg)
@@ -229,8 +230,26 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
 _Limit = tuple[sp.Symbol, sp.Expr, sp.Expr]
 
 
+def _freeze(*exprs: sp.Expr) -> tuple[list[sp.Expr], dict[sp.Symbol, sp.Expr]]:
+    """``exprs`` with every :class:`ModResidue` atom replaced by an integer dummy symbol, and the
+    map back."""
+    atoms: set[sp.Expr] = set()
+    for expr in exprs:
+        atoms |= expr.atoms(ModResidue)
+    if not atoms:
+        return list(exprs), {}
+    forward = {
+        atom: sp.Dummy(f"r{i}", integer=True, nonnegative=True)
+        for i, atom in enumerate(sorted(atoms, key=sp.default_sort_key))
+    }
+    return [expr.xreplace(forward) for expr in exprs], {v: k for k, v in forward.items()}
+
+
 def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
     """``expr`` with every integer coefficient taken into ``(-modulus/2, modulus/2]``."""
+    if expr.has(ModResidue):
+        (frozen,), back = _freeze(expr)
+        return cast(sp.Expr, _reduce_mod(frozen, modulus).xreplace(back))
     symbols = sorted(expr.free_symbols, key=lambda symbol: str(symbol.name))
     if not symbols:
         if not expr.is_Integer:
@@ -319,6 +338,138 @@ class ModGcd(sp.Function):  # type: ignore[misc]  # sympy is untyped
             if residue.is_Integer:
                 return sp.Integer(math.gcd(int(c), int(residue)))
         return None
+
+
+class ModResidue(sp.Function):  # type: ignore[misc]  # sympy is untyped
+    """``x mod m``: the residue in ``[0, m)`` of an integer ``x`` for a concrete modulus ``m``."""
+
+    nargs = 2
+    is_integer = True
+    is_nonnegative = True
+
+    @classmethod
+    def eval(cls, x: sp.Expr, m: sp.Expr) -> sp.Expr | None:
+        """The value when ``x`` is an integer, else ``x`` with its coefficients taken into
+        ``[0, m)`` and each term ``c*(y mod m')`` with ``m | c*m'`` read as ``c*y``."""
+        if not m.is_Integer or int(m) < 1:
+            return None
+        modulus = int(m)
+        if modulus == 1:
+            return sp.Integer(0)
+        x = sp.expand(x)
+        if x.is_Integer:
+            return sp.Integer(int(x) % modulus)
+        reduced: sp.Expr = sp.Integer(0)
+        for term in sp.Add.make_args(x):
+            coefficient, rest = term.as_coeff_Mul()
+            if not coefficient.is_Integer or rest.is_integer is not True:
+                return None
+            inner = rest.args[1] if isinstance(rest, ModResidue) else None
+            if inner is not None and inner.is_Integer and int(coefficient * inner) % modulus == 0:
+                rest = rest.args[0]
+            reduced += (int(coefficient) % modulus) * rest
+        reduced = sp.expand(reduced)
+        if reduced.is_Integer:
+            return sp.Integer(int(reduced) % modulus)
+        return cast(sp.Expr, cls(reduced, m)) if reduced != x else None
+
+
+def _multiple_of(expr: sp.Expr, modulus: int) -> bool:
+    """Whether every term of ``expr`` is an integer multiple of ``modulus`` times an integer."""
+    for term in sp.Add.make_args(sp.expand(expr)):
+        coefficient, rest = term.as_coeff_Mul()
+        if not coefficient.is_Integer or int(coefficient) % modulus:
+            return False
+        if rest != 1 and rest.is_integer is not True:
+            return False
+    return True
+
+
+def _residue_coefficient(expr: sp.Expr, atom: sp.Expr) -> sp.Expr | None:
+    """``a`` with ``expr == a*atom + rest``, neither ``a`` nor ``rest`` reading ``atom``, else
+    None."""
+    expanded = sp.expand(expr)
+    coefficient = expanded.coeff(atom)
+    if coefficient.has(atom) or sp.expand(expanded - coefficient * atom).has(atom):
+        return None
+    return cast(sp.Expr, coefficient)
+
+
+def _collapse_residues(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``expr`` with each ``x mod m`` read as ``x`` where only ``x mod m`` matters: an exponent
+    ``2 pi i a (x mod m)`` with ``a*m`` an integer, a delta ``[a (x mod m) + r == 0 mod M]`` with
+    ``a*m/M`` an integer, or ``x`` bounded in ``[0, m)`` by ``ranges``."""
+    if not expr.has(ModResidue):
+        return expr
+
+    def phase(node: sp.Expr) -> sp.Expr:
+        q = sp.expand(node.args[0] / (2 * sp.pi * sp.I))
+        for atom in sorted(q.atoms(ModResidue), key=sp.default_sort_key):
+            a = _residue_coefficient(q, atom)
+            if a is not None and sp.expand(a * atom.args[1]).is_integer is True:
+                q = sp.expand(q.xreplace({atom: atom.args[0]}))
+        return cast(sp.Expr, sp.exp(2 * sp.pi * sp.I * q))
+
+    def delta(node: sp.Expr) -> sp.Expr:
+        frequency, modulus = node.args
+        for atom in sorted(frequency.atoms(ModResidue), key=sp.default_sort_key):
+            a = _residue_coefficient(frequency, atom)
+            if a is not None and sp.cancel(a * atom.args[1] / modulus).is_integer is True:
+                frequency = sp.expand(frequency.xreplace({atom: atom.args[0]}))
+        return cast(sp.Expr, ModDelta(frequency, modulus))
+
+    def bounded(node: sp.Expr) -> sp.Expr:
+        x, m = node.args
+        found = _bounds(x, ranges) if x.free_symbols <= set(ranges) else None
+        if found is None:
+            return node
+        least, greatest = found
+        if least.is_nonnegative is True and sp.expand(m - 1 - greatest).is_nonnegative is True:
+            return cast(sp.Expr, x)
+        return node
+
+    expr = expr.replace(lambda n: isinstance(n, ModResidue), bounded)
+    expr = expr.replace(lambda n: isinstance(n, sp.exp) and n.has(ModResidue), phase)
+    return cast(
+        sp.Expr, expr.replace(lambda n: isinstance(n, ModDelta) and n.has(ModResidue), delta)
+    )
+
+
+def _pin_residues(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """``term`` with each free ``x mod m`` replaced by an index ``v`` of range ``m`` that a delta
+    factor ``[c*v + L == 0 mod M]`` of the term, ``m | M``, ``c`` a unit, pins to ``x mod m``."""
+    bound = _bound_symbols(term)
+    atoms = [
+        a for a in term.atoms(ModResidue) if a.args[1].is_Integer and not a.free_symbols & bound
+    ]
+    if not atoms:
+        return term
+    deltas = [d for d in map(_delta_base, sp.Mul.make_args(term)) if d is not None]
+    mapping: dict[sp.Expr, sp.Expr] = {}
+    for atom in atoms:
+        x, m = atom.args
+        modulus = int(m)
+        for d in deltas:
+            frequency, big = d.args
+            if not big.is_Integer or int(big) % modulus:
+                continue
+            form = _linear_form(frequency)
+            if form is None:
+                continue
+            for var, coefficient in sorted(form.items(), key=lambda item: str(item[0].name)):
+                size = ranges.get(var)
+                if var in bound or size is None or sp.expand(size - modulus) != 0:
+                    continue
+                sign = _unit_sign(sp.Integer(coefficient), m)
+                if sign is None:
+                    continue
+                rest = sp.expand(frequency - coefficient * var)
+                if _multiple_of(sp.expand(-sign * rest - x), modulus):
+                    mapping[atom] = var
+                    break
+            if atom in mapping:
+                break
+    return cast(sp.Expr, term.xreplace(mapping)) if mapping else term
 
 
 def _rename_indices(expr: sp.Expr) -> sp.Expr:
@@ -518,6 +669,9 @@ def _is_periodic_in(expr: sp.Expr, var: sp.Symbol, d_expr: sp.Expr) -> bool:
         return True
     if isinstance(expr, sp.exp):
         return _integer_slope(expr.args[0] * d_expr / (2 * sp.pi * sp.I), var)
+    if isinstance(expr, ModResidue):
+        found = _linear_in(sp.expand(expr.args[0]), var)
+        return found is not None and sp.cancel(found[0] * d_expr / expr.args[1]).is_integer is True
     if isinstance(expr, ModDelta):
         frequency, modulus = expr.args
         if var in modulus.free_symbols:
@@ -865,7 +1019,7 @@ def _delta_step(
         weight = cast(sp.Expr, sp.Mul(*(f for i, f in enumerate(factors) if i != position)))
         for index, (var, _lower, upper) in enumerate(limits):
             size = sp.expand(upper + 1)
-            if var not in frequency.free_symbols or not _divides(modulus, size):
+            if var not in frequency.free_symbols:
                 continue
             linear = _linear_in(frequency, var)
             if linear is None:
@@ -874,6 +1028,11 @@ def _delta_step(
             if rest.is_integer is not True or _bound_symbols(weight) & rest.free_symbols:
                 continue
             sign = _unit_sign(sp.Integer(coefficient), modulus)
+            if not _divides(modulus, size):
+                wrapped = _wrap_pin(weight, var, coefficient, rest, modulus, size)
+                if wrapped is not None:
+                    return wrapped, _without(limits, index)
+                continue
             if not _is_periodic_in(weight, var, modulus):
                 if sign is None or sp.expand(modulus - size) != 0:
                     continue
@@ -883,7 +1042,10 @@ def _delta_step(
                     bounds[0].is_nonnegative is True
                     and sp.expand(size - 1 - bounds[1]).is_nonnegative is True
                 ):
-                    continue
+                    wrapped = _wrap_pin(weight, var, coefficient, rest, modulus, size)
+                    if wrapped is None:
+                        continue
+                    return wrapped, _without(limits, index)
                 return weight.xreplace({var: sp.expand(-sign * rest)}), _without(limits, index)
             scaled = weight * sp.cancel(size / modulus)
             if sign is not None:
@@ -902,10 +1064,39 @@ def _delta_step(
     return None
 
 
+def _wrap_pin(
+    weight: sp.Expr,
+    var: sp.Symbol,
+    coefficient: int,
+    rest: sp.Expr,
+    modulus: sp.Expr,
+    size: sp.Expr,
+) -> sp.Expr | None:
+    """``Sum_{var < m} [c*var + rest == 0 mod M] * weight`` for concrete ``m | M`` and ``c`` a unit
+    mod ``M``: ``weight`` at ``var = (-c*rest) mod m`` times the delta at that value (dropped when
+    ``m == M``), else None."""
+    if not (modulus.is_Integer and size.is_Integer) or int(modulus) % int(size):
+        return None
+    sign = _unit_sign(sp.Integer(coefficient), modulus)
+    if sign is None:
+        return None
+    value = ModResidue(sp.expand(-sign * rest), size)
+    pinned = weight.xreplace({var: value})
+    if int(modulus) == int(size):
+        return cast(sp.Expr, pinned)
+    return cast(sp.Expr, pinned * ModDelta(sp.expand(coefficient * value + rest), modulus))
+
+
 def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int] | None:
     """``(X, t)`` with ``frequency == X/t``, ``X`` an integer polynomial in integer symbols,
     when a factor ``[Y == 0 mod t']`` of ``term`` with ``t | t'`` makes ``X == l*Y mod t`` for a
     unit ``l`` (so ``X/t`` is an integer wherever the term is nonzero), else None."""
+    if frequency.has(ModResidue) or term.has(ModResidue):
+        (frozen_term, frozen_frequency), back = _freeze(term, frequency)
+        found = _carried_frequency(frozen_term, frozen_frequency)
+        if found is None:
+            return None
+        return cast(sp.Expr, found[0].xreplace(back)), found[1]
     numerator, denominator = sp.fraction(sp.together(sp.expand(frequency)))
     if not denominator.is_Integer or int(denominator) < 2:
         return None
@@ -995,8 +1186,12 @@ def _reduce_term(
     return cast(sp.Expr, sp.Add(*pieces)), True
 
 
+_ENUMERATE: ContextVar[bool] = ContextVar("enumerate_concrete", default=True)
+
+
 def _close_sum(node: sp.Sum, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
-    """Close what the identities reach of one Sum node, else enumerate one concrete index."""
+    """Close what the identities reach of one Sum node, else enumerate one concrete index when
+    enumeration is on."""
     limits: list[_Limit] = list(node.limits)
     body = sp.expand(sp.powsimp(sp.expand(node.function), force=True))
     pieces: list[sp.Expr] = []
@@ -1008,7 +1203,7 @@ def _close_sum(node: sp.Sum, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | N
     if changed:
         return cast(sp.Expr, sp.Add(*pieces))
     concrete = [i for i, limit in enumerate(limits) if sp.expand(limit[2] + 1).is_Integer]
-    if not concrete:
+    if not concrete or not _ENUMERATE.get():
         return None
     position = min(concrete, key=lambda i: (int(sp.expand(limits[i][2] + 1)), -i))
     var, _lower, upper = limits[position]
@@ -1086,6 +1281,8 @@ def _implies(big: ModDelta, small: ModDelta) -> bool:
     (x, m), (y, t) = big.args, small.args
     if not (m.is_Integer and t.is_Integer) or int(t) < 2 or int(m) % int(t) or m == t:
         return False
+    if x.has(ModResidue) or y.has(ModResidue):
+        (x, y), _back = _freeze(x, y)
     symbols = sorted(x.free_symbols | y.free_symbols, key=lambda v: str(v.name))
     if any(v.is_integer is not True for v in symbols):
         return False
@@ -1117,9 +1314,27 @@ def _drop_implied(term: sp.Expr) -> sp.Expr:
     return cast(sp.Expr, sp.Mul(*(f for i, f in enumerate(factors) if i not in dropped)))
 
 
-def _canonical_deltas(term: sp.Expr) -> sp.Expr:
+def _exact_pivot(
+    var: sp.Symbol, value: sp.Expr, modulus: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]
+) -> bool:
+    """Whether ``var == value mod modulus`` forces ``var == value``: ``var`` ranges over
+    ``modulus`` and ``ranges`` bound ``value`` in ``[0, modulus)``."""
+    size = ranges.get(var)
+    if size is None or sp.expand(size - modulus) != 0:
+        return False
+    found = _bounds(value, ranges)
+    return (
+        found is not None
+        and found[0].is_nonnegative is True
+        and sp.expand(modulus - 1 - found[1]).is_nonnegative is True
+    )
+
+
+def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None = None) -> sp.Expr:
     """A product with its implied ModDelta factors dropped and its linear ModDelta factors in
-    echelon form, each pivot substituted into the rest wherever that rest is periodic in it."""
+    echelon form, each pivot substituted into the rest wherever that rest is periodic in it, or
+    everywhere when ``ranges`` force the pivot exactly."""
+    ranges = ranges or {}
     term = _drop_implied(term)
     by_modulus: dict[sp.Expr, list[sp.Expr]] = {}
     others: list[sp.Expr] = []
@@ -1133,30 +1348,46 @@ def _canonical_deltas(term: sp.Expr) -> sp.Expr:
         return term
     rest = cast(sp.Expr, sp.Mul(*others))
     emitted: list[sp.Expr] = []
+    substitutions: list[tuple[sp.Symbol, sp.Expr, sp.Expr, bool]] = []
     for modulus in sorted(by_modulus, key=sp.default_sort_key):
         pivots, residual = _echelon(by_modulus[modulus], modulus)
         for var in sorted(pivots, key=lambda symbol: str(symbol.name)):
             value = pivots[var]
+            exact = _exact_pivot(var, value, modulus, ranges)
             if (
                 var in rest.free_symbols
                 and var not in _bound_symbols(rest)
                 and not _bound_symbols(rest) & value.free_symbols
-                and _is_periodic_in(rest, var, modulus)
+                and (exact or _is_periodic_in(rest, var, modulus))
             ):
                 rest = rest.xreplace({var: value})
             emitted.append(ModDelta(var - value, modulus))
+            substitutions.append((var, value, modulus, exact))
         emitted.extend(ModDelta(row, modulus) for row in residual)
+    if len(by_modulus) > 1:
+        for var, value, modulus, exact in substitutions:
+            emitted = [
+                delta.xreplace({var: value})
+                if isinstance(delta, ModDelta)
+                and delta.args[1] != modulus
+                and var in delta.free_symbols
+                and (exact or _is_periodic_in(delta, var, modulus))
+                else delta
+                for delta in emitted
+            ]
+        return _drop_implied(cast(sp.Expr, rest * sp.Mul(*emitted)))
     return cast(sp.Expr, rest * sp.Mul(*emitted))
 
 
-def _canonical_top(expr: sp.Expr) -> sp.Expr:
-    """:func:`_canonical_deltas` over every top-level term of ``expr``."""
+def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+    """:func:`_pin_residues` and :func:`_canonical_deltas` over every top-level term of ``expr``."""
     collapsed = expr.replace(
         lambda node: _delta_base(node) is not None and node.is_Pow,
         lambda node: node.base,
     )
     terms = sp.Add.make_args(sp.expand(collapsed))
-    return cast(sp.Expr, sp.expand(sp.Add(*(_canonical_deltas(t) for t in terms))))
+    pinned = (_collapse_residues(_pin_residues(t, ranges), ranges) for t in terms)
+    return cast(sp.Expr, sp.expand(sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
 
 
 def _pull_constants(expr: sp.Expr) -> sp.Expr:
@@ -1318,7 +1549,7 @@ def _simplify_expr(
         radix_changed = split != expr
         expr, changed = _close_all(split, budget, ranges)
         changed = changed or radix_changed
-        expr = _canonical_top(_reduce_integer_phases(expr))
+        expr = _canonical_top(_reduce_integer_phases(expr), ranges)
         expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
         if not changed:
             break
@@ -1451,13 +1682,18 @@ class Scalar:
         *,
         max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS,
         ranges: Mapping[str, Dim] | None = None,
+        enumerate_concrete: bool = True,
     ) -> Scalar:
         """Close every index sum the identities reach and put the remaining deltas in echelon form;
-        ``ranges`` sizes free indices."""
+        ``ranges`` sizes free indices; ``enumerate_concrete`` False leaves a stuck concrete sum
+        unexpanded."""
         known = {_index_symbol(name): dim.to_sympy() for name, dim in (ranges or {}).items()}
-        return Scalar(
-            _rename_indices(_simplify_expr(_rename_indices(self._expr), [max_steps], known))
-        )
+        token = _ENUMERATE.set(enumerate_concrete)
+        try:
+            simplified = _simplify_expr(_rename_indices(self._expr), [max_steps], known)
+        finally:
+            _ENUMERATE.reset(token)
+        return Scalar(_rename_indices(simplified))
 
     def with_dimension_floors(self, floors: Mapping[str, int]) -> Scalar:
         """This scalar with every ``[s | c]`` set to zero, ``c`` a nonzero integer and ``s`` a

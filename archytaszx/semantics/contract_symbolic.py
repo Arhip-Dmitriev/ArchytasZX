@@ -1799,31 +1799,37 @@ def _sum_out(
         return len(frozenset().union(*(live[i][1] for i in where[symbol])))
 
     widths = {symbol: width(symbol) for symbol in dims}
+    deferred: set[sp.Symbol] = set()
     while widths:
-        symbol = min(widths, key=lambda s: (widths[s], str(s.name)))
-        del widths[symbol]
-        bucket = sorted(where.pop(symbol))
-        touched: frozenset[sp.Symbol] = frozenset()
-        product: list[sp.Expr] = []
-        for i in bucket:
-            expr, symbols = live.pop(i)
-            product.append(expr)
-            touched |= symbols
-            for other in symbols - {symbol}:
-                where[other].discard(i)
+        ready = [s for s in widths if s not in deferred] or list(widths)
+        symbol = min(ready, key=lambda s: (widths[s], str(s.name)))
+        final = symbol in deferred
+        bucket = sorted(where[symbol])
+        touched: frozenset[sp.Symbol] = frozenset().union(*(live[i][1] for i in bucket))
         top = dims[symbol].to_sympy() - 1
-        if not product:
+        if not bucket:
+            del widths[symbol]
+            where.pop(symbol)
             head = head * (top + 1)
             continue
-        open_ranges = {
-            **(boundary or {}),
-            **{str(s.name): dims[s] for s in touched - {symbol} if dims[s].is_concrete},
-        }
-        add(
-            Scalar(sp.Sum(sp.Mul(*product), (symbol, 0, top)))
-            .simplify(max_steps=max_steps, ranges=open_ranges)
+        open_ranges = {**(boundary or {}), **{str(s.name): dims[s] for s in touched - {symbol}}}
+        product = sp.Mul(*(live[i][0] for i in bucket))
+        closed = (
+            Scalar(sp.Sum(product, (symbol, 0, top)))
+            .simplify(max_steps=max_steps, ranges=open_ranges, enumerate_concrete=final)
             .to_sympy()
         )
+        if not final and len(closed.atoms(sp.Sum)) > len(product.atoms(sp.Sum)):
+            deferred.add(symbol)
+            continue
+        del widths[symbol]
+        where.pop(symbol)
+        deferred -= touched
+        for i in bucket:
+            _expr, symbols = live.pop(i)
+            for other in symbols - {symbol}:
+                where[other].discard(i)
+        add(closed)
         for other in touched - {symbol}:
             widths[other] = width(other)
     return Scalar(head * sp.Mul(*(expr for expr, _symbols in live.values()))).simplify(

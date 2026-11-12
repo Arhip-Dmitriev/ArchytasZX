@@ -73,6 +73,7 @@ from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
     ModGcd,
+    ModResidue,
     Scalar,
     ScalarError,
 )
@@ -711,7 +712,7 @@ def compare_symbolic(
             float("inf"),
             difference=difference,
         )
-    if difference.to_sympy().atoms(sp.Sum, ModDelta, ModGcd):
+    if difference.to_sympy().atoms(sp.Sum, ModDelta, ModGcd, ModResidue):
         return ComparisonResult(
             mode,
             False,
