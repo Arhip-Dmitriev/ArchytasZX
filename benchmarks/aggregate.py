@@ -539,7 +539,7 @@ def classified(
 
 
 def causes_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Points per tool, version, set, outcome, stage and cause code."""
+    """Points per tool, version, set, outcome, stage, cause code and tags."""
     acc: dict[tuple[Any, ...], int] = defaultdict(int)
     for r in rows:
         key = (
@@ -549,6 +549,7 @@ def causes_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             r["outcome"],
             r.get("stage"),
             r.get("cause"),
+            ",".join(r.get("tags") or ()) or None,
         )
         acc[key] += 1
     return [
@@ -559,6 +560,7 @@ def causes_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "outcome": k[3],
             "stage": k[4],
             "cause": k[5],
+            "tags": k[6],
             "points": v,
         }
         for k, v in sorted(acc.items(), key=lambda kv: tuple(str(x) for x in kv[0]))

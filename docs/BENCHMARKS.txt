@@ -769,7 +769,10 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
   The truth is exact equality, and every tool is scored against it the same way. A tool that
   decides only up to a scalar (QCEC, DiZX, Feynman, AutoQ, Quantomatic) answers equal on an F
   equation whose break changes only the scalar, and that answer is scored wrong; ArchytasZX,
-  PyZX, QuiZX, Qiskit and Cirq decide exact equality.
+  PyZX, QuiZX, Qiskit and Cirq decide exact equality. Such a record carries the tag
+  global_phase (the factor has modulus 1) or scalar_factor (it also changes the magnitude),
+  read from the witness's entry ratio, else from the kind; tags do not change the outcome and
+  are a column of causes.*.
   Published     adapter   B1 only, the symbolic run: the published proof files re-checked by coqc
   proofs                  with their project's load paths, each project in its own opam switch:
                           SQIR 134fb94 (Coq 8.20.1, QuantumLib 1.8.0): Deutsch, superdense

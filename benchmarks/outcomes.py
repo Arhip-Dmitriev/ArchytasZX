@@ -416,6 +416,21 @@ def scalar_only(false: dict[str, Any]) -> bool:
     )
 
 
+def scalar_tag(false: dict[str, Any]) -> str | None:
+    """``global_phase`` or ``scalar_factor`` for an F record whose break changes only the
+    scalar (by the witness's left/right ratio when both are given, else by its kind); None
+    otherwise."""
+    if not scalar_only(false):
+        return None
+    witness = false.get("witness") or {}
+    left, right = witness.get("left"), witness.get("right")
+    if isinstance(left, list) and isinstance(right, list) and len(left) == len(right) == 2:
+        num, den = complex(left[0], left[1]), complex(right[0], right[1])
+        if num != 0 and den != 0:
+            return "global_phase" if abs(abs(num / den) - 1) <= 1e-9 else "scalar_factor"
+    return "global_phase" if false.get("kind") == "global_phase" else "scalar_factor"
+
+
 def classify(
     rec: dict[str, Any], false: dict[str, Any] | None = None, free: tuple[str, ...] = ()
 ) -> dict[str, Any]:
@@ -445,6 +460,9 @@ def classify(
     if invalid and oc2 in VERDICT_OUTCOMES:
         oc2, cause = "invalid_point", "pair_equal_at_point"
     out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
+    tag = None if false is None else scalar_tag(false)
+    if tag is not None:
+        out["tags"] = sorted({*(rec.get("tags") or ()), tag})
     if invalid:
         out["point_invalid"] = True
     if oc2 != oc and "raw_outcome" not in rec:
@@ -478,6 +496,7 @@ __all__ = [
     "reclassify_record",
     "rung_codes",
     "scalar_only",
+    "scalar_tag",
     "stop_codes",
     "unsupported_code",
 ]
