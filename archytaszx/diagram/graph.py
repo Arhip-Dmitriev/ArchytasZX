@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, NewType, cast
 
@@ -123,9 +123,11 @@ class PortRef:
     node_id: NodeId
     direction: Direction
     index: int
+    _hash: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Validate that ``direction`` is a Direction and ``index`` a non-negative int."""
+        """Validate that ``direction`` is a Direction and ``index`` a non-negative int, then
+        store the hash."""
         if not isinstance(self.direction, Direction):
             raise GraphGrammarError(
                 f"PortRef direction must be a Direction, got {self.direction!r}"
@@ -134,11 +136,13 @@ class PortRef:
             raise GraphGrammarError(f"PortRef index must be an int, got {self.index!r}")
         if self.index < 0:
             raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
+        output = self.direction is Direction.OUTPUT
+        object.__setattr__(self, "_hash", hash((self.node_id, output, self.index)))
 
     def __hash__(self) -> int:
-        """The hash of ``(node_id, direction is OUTPUT, index)``, agreeing with the field
-        equality."""
-        return hash((self.node_id, self.direction is Direction.OUTPUT, self.index))
+        """The stored hash of ``(node_id, direction is OUTPUT, index)``, agreeing with the
+        field equality."""
+        return self._hash
 
     def __repr__(self) -> str:
         return (
