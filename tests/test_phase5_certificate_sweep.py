@@ -792,6 +792,7 @@ def _find_matches_with_adequacy_instrumentation(
         wire: object,
         *,
         dimension_guards: tuple[DimensionGuard, ...] = (),
+        index: object = None,
     ) -> match_module.FusionResolution:
         nonlocal checked, skipped
         asserted_pairs: list[tuple[Dim, Dim]] = []
@@ -815,6 +816,7 @@ def _find_matches_with_adequacy_instrumentation(
                 b_id,  # type: ignore[arg-type]
                 wire,  # type: ignore[arg-type]
                 dimension_guards=dimension_guards,
+                index=index,  # type: ignore[arg-type]
             )
         if resolution.passed:
             outcome_ = _check_adequacy(resolution, asserted_pairs)
