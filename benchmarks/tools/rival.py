@@ -273,13 +273,15 @@ class SpecBound(Exception):
 
 
 def spec_diagram(inst: Any, n: int | None, d: int) -> Any:
-    """The specification diagram at (n, d), instantiated; SpecBound when the loader refuses
-    the script."""
+    """The specification diagram at (n, d), instantiated, loaded with the parser's input
+    bounds lifted (parser.lifted_bounds); SpecBound when the loader still refuses the script."""
+    from archytaszx.repl.parser import lifted_bounds
     from archytaszx.semantics import check
 
     sc = subject.script(inst, n, d)
     try:
-        _, right = stages.diagrams(sc.text)
+        with lifted_bounds():
+            _, right = stages.diagrams(sc.text)
     except RuntimeError as exc:
         raise SpecBound(str(exc).splitlines()[0][:400]) from exc
     return check.instantiate(right, {})

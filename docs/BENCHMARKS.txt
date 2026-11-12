@@ -640,7 +640,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      ArchytasZX stage), lean.rejected, kill.exit (a worker that died otherwise)
   harness_error      the harness failed, by the frame the exception came from: harness.spec_bound
                      (the engine's loader refused a rival's specification script, reason "spec
-                     bound: MESSAGE"; the loader keeps its default bounds), harness.prepare (an
+                     bound: MESSAGE"; a rival's specification is loaded inside
+                     parser.lifted_bounds(), so only what still fails lands here; ArchytasZX's
+                     own runs keep the default bounds), harness.prepare (an
                      exception in the worker while preparing a rival's input; every rival's own
                      call runs in a subprocess), harness.driver (a driver traceback whose deepest
                      driver frame is a harness helper, number, _build, _identity or add, or a
