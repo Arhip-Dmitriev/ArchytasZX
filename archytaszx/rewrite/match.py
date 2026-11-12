@@ -782,18 +782,43 @@ def _phase_failure_detail(failure: _ResolutionFailure) -> str:
     )
 
 
+@dataclass(frozen=True)
+class _WireIndex:
+    """One diagram's wires, the wire count on each port and between each node pair, and its
+    boundary ports."""
+
+    wires: frozenset[Wire]
+    per_port: Mapping[PortRef, int]
+    per_pair: Mapping[frozenset[NodeId], int]
+    boundary: frozenset[PortRef]
+
+
+def _wire_index(diagram: Diagram) -> _WireIndex:
+    """The :class:`_WireIndex` of ``diagram``."""
+    wires = diagram.wires
+    per_port: dict[PortRef, int] = {}
+    per_pair: dict[frozenset[NodeId], int] = {}
+    for w in wires:
+        per_port[w.a] = per_port.get(w.a, 0) + 1
+        per_port[w.b] = per_port.get(w.b, 0) + 1
+        pair = frozenset((w.a.node_id, w.b.node_id))
+        per_pair[pair] = per_pair.get(pair, 0) + 1
+    boundary = frozenset((*diagram.boundary_inputs, *diagram.boundary_outputs))
+    return _WireIndex(wires, per_port, per_pair, boundary)
+
+
 def _consumed_port_claim_conflict(
-    diagram: Diagram, ref: PortRef, consuming_wire: Wire
+    diagram: Diagram, ref: PortRef, consuming_wire: Wire, index: _WireIndex | None = None
 ) -> str | None:
     """``None`` if ``ref`` is claimed only by ``consuming_wire`` and is on no boundary list.
 
     Otherwise a description of what else claims it: a second wire, a boundary entry, or both.
     Recomputed from ``diagram`` alone on every call.
     """
-    other_wire_claims = sum(
-        1 for wire in diagram.wires if ref in (wire.a, wire.b) and wire != consuming_wire
-    )
-    on_boundary = ref in diagram.boundary_inputs or ref in diagram.boundary_outputs
+    if index is None:
+        index = _wire_index(diagram)
+    other_wire_claims = index.per_port.get(ref, 0) - (ref in (consuming_wire.a, consuming_wire.b))
+    on_boundary = ref in index.boundary
     if not other_wire_claims and not on_boundary:
         return None
     parts = []
@@ -863,6 +888,7 @@ def resolve_fusion_match(
     wire: Wire,
     *,
     dimension_guards: tuple[DimensionGuard, ...] = (),
+    index: _WireIndex | None = None,
 ) -> FusionResolution:
     """Decide, from ``diagram`` alone, whether ``wire`` is a legal fusion of ``a_id``/``b_id``.
 
@@ -899,7 +925,9 @@ def resolve_fusion_match(
 
     # A freestanding Wire built against two real, correctly-incident ports would otherwise
     # reach graph surgery. Snapshotted once: Diagram.wires rebuilds on every access.
-    all_wires = diagram.wires
+    if index is None:
+        index = _wire_index(diagram)
+    all_wires = index.wires
     if wire not in all_wires:
         raise RewriteGrammarError(
             f"resolve_fusion_match: wire {wire!r} is not an element of diagram.wires -- "
@@ -910,11 +938,7 @@ def resolve_fusion_match(
     ref_a = wire.a if wire.a.node_id == a_id else wire.b
     ref_b = wire.b if wire.a.node_id == a_id else wire.a
 
-    other_wire_count = sum(
-        1
-        for other in all_wires
-        if {other.a.node_id, other.b.node_id} == {a_id, b_id} and other != wire
-    )
+    other_wire_count = index.per_pair.get(frozenset((a_id, b_id)), 0) - 1
 
     outcomes: list[SideConditionOutcome] = [
         SideConditionOutcome("distinct_nodes", True, f"{a_id!r} != {b_id!r}"),
@@ -1021,8 +1045,8 @@ def resolve_fusion_match(
 
     # Condition 5. A candidate that fails it has no legal port_mapping regardless of what
     # the fixpoint would find, so it is checked before paying for one.
-    claim_conflict_a = _consumed_port_claim_conflict(diagram, ref_a, wire)
-    claim_conflict_b = _consumed_port_claim_conflict(diagram, ref_b, wire)
+    claim_conflict_a = _consumed_port_claim_conflict(diagram, ref_a, wire, index)
+    claim_conflict_b = _consumed_port_claim_conflict(diagram, ref_b, wire, index)
     claims_ok = claim_conflict_a is None and claim_conflict_b is None
     claim_detail = (
         f"neither {ref_a} nor {ref_b} is claimed by another wire or listed on a boundary"
@@ -1362,6 +1386,7 @@ def find_matches(
     ]
 
     matches: list[FusionMatch] = []
+    index = _wire_index(diagram) if wire_candidates else None
     for wire in wire_candidates:
         a_id, b_id = _ordered_pair(wire)
         if not _seed_meets_anchors(anchors, None, (a_id, b_id), 0):
@@ -1370,7 +1395,7 @@ def find_matches(
         # Conditions 2 and 4-7 are decided by exactly this call -- the same function
         # spider_fusion_builder calls again to re-verify the match.
         resolution = resolve_fusion_match(
-            diagram, a_id, b_id, wire, dimension_guards=dimension_guards
+            diagram, a_id, b_id, wire, dimension_guards=dimension_guards, index=index
         )
         if not resolution.passed:
             continue
