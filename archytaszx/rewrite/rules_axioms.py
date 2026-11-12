@@ -26,6 +26,7 @@ name to its :class:`~archytaszx.rewrite.rule.Rule`; every one is ``automatic=Fal
 
 from __future__ import annotations
 
+import functools
 import itertools
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
@@ -150,13 +151,21 @@ def _rule_coefficient(pv: PhaseVector) -> sp.Expr:
 
 
 def shifted_vector(pv: PhaseVector | None, j: int, dim: Dim) -> PhaseVector | None:
-    """``k_j(a) = (a_{1-j}/a_{-j}, ..., a_{d-1-j}/a_{-j})``; concrete dimension."""
+    """``k_j(a) = (a_{1-j}/a_{-j}, ..., a_{d-1-j}/a_{-j})``; concrete dimension; memoised on
+    (vector, j, dimension)."""
+    return _shifted_vector(pv, j % dim.to_int(), dim)
+
+
+@functools.lru_cache(maxsize=256)
+def _shifted_vector(pv: PhaseVector | None, j: int, dim: Dim) -> PhaseVector | None:
+    """shifted_vector with ``1 / a_{-j}`` computed once."""
     r = dim.to_int()
     values = coefficients(pv, dim)
     pivot = values[(-j) % r]
     if pivot.is_zero or sp.simplify(pivot.to_sympy()) == 0:
         raise RewriteDomainError("k_j(a) needs a_{-j} != 0")
-    out = [values[(k - j) % r] * pivot**-1 for k in range(r)]
+    inverse = pivot**-1
+    out = [values[(k - j) % r] * inverse for k in range(r)]
     return from_coefficients(out, dim)
 
 
@@ -2208,11 +2217,21 @@ def _e_right(_dim: Dim, _a: Arities) -> Template:
 
 
 def _e_arities(diagram: Diagram, anchor: NodeId, dim: Dim) -> Iterator[Arities]:
+    """The (n, e) of qf_e at a phaseless pink state: e at most the leg count of the Z spider
+    its output reaches, which the template's multiplier top must be."""
     node = diagram.nodes[anchor]
     if node.generator_type.name != X_SPIDER.name or node.num_inputs or not dim.is_concrete:
         return
     n = dim.to_int()
-    for e in range(1, n):
+    out = PortRef(anchor, Direction.OUTPUT, 0)
+    other = next((w.b if w.a == out else w.a for w in diagram.wires if out in (w.a, w.b)), None)
+    if other is None:
+        return
+    top = diagram.nodes[other.node_id]
+    if top.generator_type.name != Z_SPIDER.name:
+        return
+    legs = top.num_inputs + top.num_outputs
+    for e in range(1, min(n, legs + 1)):
         yield {"n": n, "e": e}
 
 

@@ -834,8 +834,15 @@ class _Search:
 
     def expand(self, index: int) -> None:
         """Run every move on state ``index`` and record what its outcomes reach."""
+        from archytaszx.rewrite.match_template import resolved_view_scope
+
         self.expanded += 1
         state = self.states[index]
+        with resolved_view_scope():
+            self._expand_moves(index, state)
+
+    def _expand_moves(self, index: int, state: _State) -> None:
+        """expand's loop over the moves."""
         for move in self.moves:
             for outcome in move._outcomes(state.diagram, self.ctx):
                 if not outcome.results:

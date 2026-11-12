@@ -40,6 +40,8 @@ entry stands in for the wire.
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import itertools
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -220,10 +222,18 @@ def k_vector(j: sp.Expr | int, dim: Dim) -> PhaseVector | None:
         jr = int(j_expr) % r
         if jr == 0:
             return None
-        return PhaseVector(dim, {k: Phase.turns(sp.Rational(jr * k % r, r)) for k in range(1, r)})
+        return _concrete_k_vector(jr, r)
     if j_expr == 0:
         return None
     return PhaseVector(dim, rule=Phase(j_expr * INDEX / dim.to_sympy()))
+
+
+@functools.lru_cache(maxsize=512)
+def _concrete_k_vector(jr: int, r: int) -> PhaseVector:
+    """K_j at the concrete dimension r, 0 < jr < r."""
+    return PhaseVector(
+        Dim.concrete(r), {k: Phase.turns(sp.Rational(jr * k % r, r)) for k in range(1, r)}
+    )
 
 
 def kj_index(phase: PhaseVector | None, dim: Dim) -> sp.Expr | None:
@@ -776,6 +786,7 @@ class TemplatePattern(Pattern):
             return self._insertions(host, diagram, insertion)
         partner = _partner_map(diagram)
         boxed = _boxed_nodes(diagram)
+        templates: dict[object, Template | None] = {}
         for anchor in sorted(diagram.nodes, key=int):
             dim = _node_dim(diagram, anchor)
             host_dim = _node_dim(host, anchor)
@@ -786,7 +797,7 @@ class TemplatePattern(Pattern):
             if self.axiom.left.min_size(dim) > len(diagram.nodes) + len(diagram.wires):
                 continue
             for arities in self.axiom.left.arities(diagram, anchor, dim):
-                template = self.axiom.left.template(dim, arities)
+                template = _cached_template(self.axiom.left, dim, arities, templates)
                 if template is None or not template.nodes:
                     continue
                 if diagram.nodes[anchor].generator_type.name != template.nodes[0].gen.name:
@@ -1423,11 +1434,54 @@ CONCRETE_AXIOMS = True
 axioms; when False, neither."""
 
 
+def _cached_template(
+    side: Side, dim: Dim, arities: Arities, memo: dict[object, Template | None]
+) -> Template | None:
+    """``side.template(dim, arities)``, built once per (dimension, arities) in ``memo``."""
+    try:
+        key: object = (dim, tuple(sorted(arities.items())))
+        hash(key)
+    except TypeError:
+        return side.template(dim, arities)
+    if key not in memo:
+        memo[key] = side.template(dim, arities)
+    return memo[key]
+
+
+_VIEW_SCOPE: list[dict[int, tuple[Diagram, Diagram]]] = []
+"""The resolved-view memo of the innermost :func:`resolved_view_scope`, keyed by diagram id."""
+
+
+@contextlib.contextmanager
+def resolved_view_scope() -> Iterator[None]:
+    """A scope in which :func:`resolved_view` returns one view per diagram object; the
+    diagrams matched inside it are not mutated."""
+    _VIEW_SCOPE.append({})
+    try:
+        yield
+    finally:
+        _VIEW_SCOPE.pop()
+
+
 def resolved_view(diagram: Diagram) -> Diagram:
     """``diagram`` with every dimension symbol its parameter environment binds substituted,
-    or ``diagram`` itself when :data:`CONCRETE_AXIOMS` is False; node ids preserved."""
+    or ``diagram`` itself when :data:`CONCRETE_AXIOMS` is False; node ids preserved;
+    memoised inside a :func:`resolved_view_scope`."""
     if not CONCRETE_AXIOMS:
         return diagram
+    if _VIEW_SCOPE:
+        memo = _VIEW_SCOPE[-1]
+        hit = memo.get(id(diagram))
+        if hit is not None and hit[0] is diagram:
+            return hit[1]
+        view = _resolved_view(diagram)
+        memo[id(diagram)] = (diagram, view)
+        return view
+    return _resolved_view(diagram)
+
+
+def _resolved_view(diagram: Diagram) -> Diagram:
+    """resolved_view without the memo."""
     names: set[str] = set()
     for node in diagram.nodes.values():
         for port in (*node.inputs, *node.outputs):
