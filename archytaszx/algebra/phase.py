@@ -339,6 +339,7 @@ class PhaseVector:
     """
 
     __slots__ = (
+        "_digest",
         "_dim",
         "_entries",
         "_hash",
@@ -360,6 +361,7 @@ class PhaseVector:
     _view: dict[int, Phase] | None
     _weight_view: dict[int, Scalar] | None
     _hash: int | None
+    _digest: str | None
 
     def __init__(
         self,
@@ -419,6 +421,7 @@ class PhaseVector:
         self._view = None
         self._weight_view = None
         self._hash = None
+        self._digest = None
 
     def _expanded(self) -> dict[int, Phase]:
         """The nonzero phases at every index of a concrete dimension, rule included (cached)."""
@@ -748,6 +751,14 @@ class PhaseVector:
                 wkey = tuple(sorted(weights.items(), key=lambda kv: kv[0]))
                 self._hash = hash((self._dim, key, rule, wkey, weight_rule))
         return self._hash
+
+    def digest(self) -> str:
+        """A 128-bit blake2b digest of :meth:`__repr__`, computed once."""
+        if self._digest is None:
+            import hashlib
+
+            self._digest = hashlib.blake2b(repr(self).encode(), digest_size=16).hexdigest()
+        return self._digest
 
     def __repr__(self) -> str:
         entries, rule_, weights_, weight_rule = self._public()

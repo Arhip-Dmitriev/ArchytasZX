@@ -189,8 +189,8 @@ def _phase_key(node: Node) -> str:
     at its leg dimension."""
     ports = (*node.inputs, *node.outputs)
     if node.phase is None and ports and node.generator_type.name in _SYMMETRIC_GENERATORS:
-        return repr(PhaseVector(ports[0].dim))
-    return repr(node.phase)
+        return PhaseVector(ports[0].dim).digest()
+    return "None" if node.phase is None else node.phase.digest()
 
 
 def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:

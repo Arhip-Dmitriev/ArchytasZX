@@ -145,7 +145,7 @@ def _node_payload(
         node.generator_type.name,
         tuple(repr(port.dim) for port in node.inputs),
         tuple(repr(port.dim) for port in node.outputs),
-        repr(node.phase),
+        ("None" if node.phase is None else node.phase.digest()),
         tuple(sorted(boundary)),
         tuple(sorted(membership)),
     )
@@ -626,7 +626,7 @@ def node_key(node: Node) -> str:
             node.generator_type.name,
             tuple(repr(port.dim) for port in node.inputs),
             tuple(repr(port.dim) for port in node.outputs),
-            repr(node.phase),
+            ("None" if node.phase is None else node.phase.digest()),
         )
     )
 

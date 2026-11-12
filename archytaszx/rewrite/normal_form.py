@@ -136,7 +136,7 @@ def _leg_key(diagram: Diagram, ref: PortRef, partner: PortRef | None) -> tuple[o
         -1 if spider else partner.index,
         node.num_inputs,
         node.num_outputs,
-        repr(node.phase),
+        ("None" if node.phase is None else node.phase.digest()),
         ref.index,
     )
 
