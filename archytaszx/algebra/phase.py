@@ -43,7 +43,9 @@ and must not be anticipated by this module or by :mod:`archytaszx.algebra.scalar
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+from fractions import Fraction
 from typing import TYPE_CHECKING, Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -333,12 +335,28 @@ class PhaseVector:
     trying to construct a ``Dim`` for it.
     """
 
-    __slots__ = ("_dim", "_entries", "_rule", "_weight_rule", "_weights")
+    __slots__ = (
+        "_dim",
+        "_entries",
+        "_hash",
+        "_lazy_rule",
+        "_lazy_weight",
+        "_rule",
+        "_view",
+        "_weight_rule",
+        "_weight_view",
+        "_weights",
+    )
     _dim: Dim
     _entries: Mapping[int, Phase]
     _rule: Phase | None
     _weights: Mapping[int, Scalar]
     _weight_rule: Scalar | None
+    _lazy_rule: bool
+    _lazy_weight: bool
+    _view: dict[int, Phase] | None
+    _weight_view: dict[int, Scalar] | None
+    _hash: int | None
 
     def __init__(
         self,
@@ -354,8 +372,8 @@ class PhaseVector:
         Every index must be >= 1 and, when ``dim`` is concrete, <= dim - 1; violations
         raise PhaseDomainError. Explicit zero entries are dropped (they are equivalent
         to absence). An explicit nonzero entry at index 0 raises PhaseDomainError, as does
-        a rule that is not zero at index 0. At a concrete ``dim`` the rule is expanded into
-        entries unless ``expand`` is False.
+        a rule that is not zero at index 0. At a concrete ``dim`` a rule is kept and read as
+        expanded entries (``entries()``, ``rule`` None) unless ``expand`` is False.
         """
         if not isinstance(dim, Dim):
             raise TypeError(f"PhaseVector requires a Dim, got {type(dim).__name__}")
@@ -389,17 +407,48 @@ class PhaseVector:
                 raise PhaseDomainError("a phase-vector rule must be zero at index 0")
             if rule.is_zero:
                 rule = None
-            elif dim.is_concrete and expand:
-                for index in range(1, dim.to_int()):
-                    phase = cleaned.get(index, Phase.zero()) + rule.at(index)
-                    if phase.is_zero:
-                        cleaned.pop(index, None)
-                    else:
-                        cleaned[index] = phase
-                rule = None
         self._entries = cleaned
         self._rule = rule
-        self._weights, self._weight_rule = _clean_weights(dim, weights, weight_rule, expand)
+        self._lazy_rule = rule is not None and dim.is_concrete and expand
+        self._weights, self._weight_rule = _clean_weights(dim, weights, weight_rule)
+        self._lazy_weight = self._weight_rule is not None and dim.is_concrete and expand
+        self._view = None
+        self._weight_view = None
+        self._hash = None
+
+    def _expanded(self) -> dict[int, Phase]:
+        """The nonzero phases at every index of a concrete dimension, rule included (cached)."""
+        if self._view is None:
+            if self._rule is None:
+                self._view = dict(self._entries)
+            else:
+                at = _rule_values(self._rule, self._dim.to_int())
+                view = {}
+                for index in range(1, self._dim.to_int()):
+                    phase = at[index - 1]
+                    extra = self._entries.get(index)
+                    phase = phase if extra is None else extra + phase
+                    if not phase.is_zero:
+                        view[index] = phase
+                self._view = view
+        return self._view
+
+    def _expanded_weights(self) -> dict[int, Scalar]:
+        """The weights other than 1 at every index of a concrete dimension (cached)."""
+        if self._weight_view is None:
+            from archytaszx.algebra.scalar import Scalar
+
+            if self._weight_rule is None:
+                self._weight_view = dict(self._weights)
+            else:
+                one = Scalar.one()
+                view = {}
+                for index in range(1, self._dim.to_int()):
+                    weight = self.weight(index)
+                    if weight != one:
+                        view[index] = weight
+                self._weight_view = view
+        return self._weight_view
 
     @classmethod
     def from_weights(
@@ -429,13 +478,19 @@ class PhaseVector:
         return self._dim.to_int() - 1
 
     def entries(self) -> Mapping[int, Phase]:
-        """The sparse nonzero entries of this vector, index -> Phase; the rule not included."""
-        return dict(self._entries)
+        """The sparse nonzero entries of this vector, index -> Phase; the rule not included,
+        except a kept rule at a concrete dimension, which is read expanded."""
+        return dict(self._expanded()) if self._lazy_rule else dict(self._entries)
 
     @property
     def rule(self) -> Phase | None:
         """The Phase in :data:`INDEX` added at every index: at a symbolic dimension, or at a
         concrete one built with ``expand=False``."""
+        return None if self._lazy_rule else self._rule
+
+    @property
+    def stored_rule(self) -> Phase | None:
+        """The rule as stored, also when it is read expanded at a concrete dimension."""
         return self._rule
 
     def get(self, index: int) -> Phase:
@@ -446,13 +501,14 @@ class PhaseVector:
         return phase if self._rule is None else phase + self._rule.at(index)
 
     def weights(self) -> Mapping[int, Scalar]:
-        """The explicit weight entries, index -> Scalar; the weight rule not included."""
-        return dict(self._weights)
+        """The explicit weight entries, index -> Scalar; the weight rule not included, except
+        a kept rule at a concrete dimension, which is read expanded."""
+        return dict(self._expanded_weights()) if self._lazy_weight else dict(self._weights)
 
     @property
     def weight_rule(self) -> Scalar | None:
         """The weight, a Scalar in :data:`INDEX`, at every index >= 1 without an entry."""
-        return self._weight_rule
+        return None if self._lazy_weight else self._weight_rule
 
     @property
     def is_weighted(self) -> bool:
@@ -505,7 +561,11 @@ class PhaseVector:
     @property
     def is_zero(self) -> bool:
         """True iff every phase is provably zero and every weight is 1."""
-        return not self._entries and self._rule is None and not self.is_weighted
+        if self.is_weighted:
+            return False
+        if self._lazy_rule:
+            return not self._expanded()
+        return not self._entries and self._rule is None
 
     @property
     def is_concrete(self) -> bool:
@@ -591,6 +651,9 @@ class PhaseVector:
         phase symbols: substitution reaches only the entries, unmentioned symbols are
         left symbolic, and this PhaseVector is never mutated.
         """
+        names = {k if isinstance(k, str) else Phase._phase_symbol_name(k) for k in mapping}
+        if not names & self.free_symbols:
+            return self
         dim_symbols = self._dim.free_symbols
         dim_mapping: dict[str | Dim, int | Dim] = {}
         for key, value in mapping.items():
@@ -619,7 +682,10 @@ class PhaseVector:
                     f"sympy Rational, got {type(value).__name__}"
                 )
         new_dim = self._dim.substitute(dim_mapping) if dim_mapping else self._dim
-        new_entries = {index: phase.substitute(mapping) for index, phase in self._entries.items()}
+        new_entries = {
+            index: phase.substitute(mapping) if names & phase.free_symbols else phase
+            for index, phase in self._entries.items()
+        }
         rule = None
         own = {k: v for k, v in mapping.items() if k != INDEX.name}
         if self._rule is not None:
@@ -627,53 +693,81 @@ class PhaseVector:
         if not self.is_weighted:
             return PhaseVector(new_dim, new_entries, rule)
         scalar_mapping = _scalar_mapping(own)
-        weights = {i: w.substitute(scalar_mapping) for i, w in self._weights.items()}
+        weights = {
+            i: w.substitute(scalar_mapping) if names & w.free_symbols else w
+            for i, w in self._weights.items()
+        }
         weight_rule = (
             None if self._weight_rule is None else self._weight_rule.substitute(scalar_mapping)
         )
         return PhaseVector(new_dim, new_entries, rule, weights=weights, weight_rule=weight_rule)
 
+    def _public(
+        self,
+    ) -> tuple[Mapping[int, Phase], Phase | None, Mapping[int, Scalar], Scalar | None]:
+        """Entries, rule, weights and weight rule as read (kept rules expanded)."""
+        return (
+            self._expanded() if self._lazy_rule else self._entries,
+            self.rule,
+            self._expanded_weights() if self._lazy_weight else self._weights,
+            self.weight_rule,
+        )
+
     def __eq__(self, other: object) -> bool:
-        """Equal iff same Dim and same entries after dropping implicit zeros."""
+        """Equal iff same Dim and same entries after dropping implicit zeros, kept rules read
+        expanded."""
         if not isinstance(other, PhaseVector):
             return NotImplemented
-        return (
-            self._dim == other._dim
-            and self._entries == other._entries
-            and self._rule == other._rule
-            and self._weights == other._weights
-            and self._weight_rule == other._weight_rule
-        )
+        if self is other:
+            return True
+        if self._dim != other._dim:
+            return False
+        if (self._lazy_rule, self._lazy_weight) == (other._lazy_rule, other._lazy_weight) and (
+            self._entries,
+            self._rule,
+            self._weights,
+            self._weight_rule,
+        ) == (other._entries, other._rule, other._weights, other._weight_rule):
+            return True
+        if hash(self) != hash(other):
+            return False
+        return self._public() == other._public()
 
     def __hash__(self) -> int:
         """Hash agrees with __eq__: equal PhaseVectors hash equal."""
-        entries = tuple(sorted(self._entries.items(), key=lambda kv: kv[0]))
-        if not self.is_weighted:
-            return hash((self._dim, entries, self._rule))
-        weights = tuple(sorted(self._weights.items(), key=lambda kv: kv[0]))
-        return hash((self._dim, entries, self._rule, weights, self._weight_rule))
+        if self._hash is None:
+            entries, rule, weights, weight_rule = self._public()
+            key = tuple(sorted(entries.items(), key=lambda kv: kv[0]))
+            if not weights and weight_rule is None:
+                self._hash = hash((self._dim, key, rule))
+            else:
+                wkey = tuple(sorted(weights.items(), key=lambda kv: kv[0]))
+                self._hash = hash((self._dim, key, rule, wkey, weight_rule))
+        return self._hash
 
     def __repr__(self) -> str:
-        entries_repr = ", ".join(f"{i}: {p!r}" for i, p in sorted(self._entries.items()))
-        rule = "" if self._rule is None else f", rule={self._rule!r}"
+        entries, rule_, weights_, weight_rule = self._public()
+        entries_repr = ", ".join(f"{i}: {p!r}" for i, p in sorted(entries.items()))
+        rule = "" if rule_ is None else f", rule={rule_!r}"
         weights = ""
-        if self.is_weighted:
-            weights_repr = ", ".join(f"{i}: {w!r}" for i, w in sorted(self._weights.items()))
+        if weights_ or weight_rule is not None:
+            weights_repr = ", ".join(f"{i}: {w!r}" for i, w in sorted(weights_.items()))
             weights = f", weights={{{weights_repr}}}"
-            if self._weight_rule is not None:
-                weights += f", weight_rule={self._weight_rule!r}"
+            if weight_rule is not None:
+                weights += f", weight_rule={weight_rule!r}"
         return f"PhaseVector(dim={self._dim!r}, entries={{{entries_repr}}}{rule}{weights})"
 
     def __str__(self) -> str:
-        parts = [f"{i}: {p}" for i, p in sorted(self._entries.items())]
-        if self._rule is not None:
-            parts.append(f"k: {self._rule.to_sympy_turns().xreplace({INDEX: sp.Symbol('k')})}")
+        entries, rule, weights_, weight_rule = self._public()
+        parts = [f"{i}: {p}" for i, p in sorted(entries.items())]
+        if rule is not None:
+            parts.append(f"k: {rule.to_sympy_turns().xreplace({INDEX: sp.Symbol('k')})}")
         text = f"PhaseVector[{self._dim}]({{{', '.join(parts)}}})"
-        if not self.is_weighted:
+        if not weights_ and weight_rule is None:
             return text
-        weights = [f"{i}: {w}" for i, w in sorted(self._weights.items())]
-        if self._weight_rule is not None:
-            weights.append(f"k: {self._weight_rule.to_sympy().xreplace({INDEX: sp.Symbol('k')})}")
+        weights = [f"{i}: {w}" for i, w in sorted(weights_.items())]
+        if weight_rule is not None:
+            weights.append(f"k: {weight_rule.to_sympy().xreplace({INDEX: sp.Symbol('k')})}")
         return f"{text} weights{{{', '.join(weights)}}}"
 
 
@@ -693,14 +787,35 @@ def _scalar_mapping(
     return out
 
 
+def _rule_values(rule: Phase, r: int) -> list[Phase]:
+    """``rule`` at indices 1 .. r - 1, through exact rational arithmetic when it is a
+    polynomial in :data:`INDEX` with rational coefficients."""
+    turns = rule.to_sympy_turns()
+    if turns.free_symbols <= {INDEX}:
+        try:
+            poly = sp.Poly(turns, INDEX)
+        except sp.PolynomialError:
+            poly = None
+        if poly is not None and all(c.is_Rational for c in poly.all_coeffs()):
+            coeffs = [Fraction(int(c.p), int(c.q)) for c in poly.all_coeffs()]
+            out = []
+            for k in range(1, r):
+                value = Fraction(0)
+                for c in coeffs:
+                    value = value * k + c
+                value -= math.floor(value)
+                out.append(Phase.turns(sp.Rational(value.numerator, value.denominator)))
+            return out
+    return [rule.at(k) for k in range(1, r)]
+
+
 def _clean_weights(
     dim: Dim,
     weights: Mapping[int, Scalar] | None,
     rule: Scalar | None,
-    expand: bool,
 ) -> tuple[Mapping[int, Scalar], Scalar | None]:
     """Checked weight entries and rule: entries equal to the default dropped, a rule of 1
-    dropped, a rule expanded into entries at a concrete ``dim`` unless ``expand`` is False."""
+    dropped."""
     from archytaszx.algebra.scalar import Scalar
 
     if rule is not None:
@@ -726,11 +841,6 @@ def _clean_weights(
                 f"(valid range is 1..{dim.to_int() - 1})"
             )
         cleaned[index] = weight
-    if rule is not None and dim.is_concrete and expand:
-        for index in range(1, dim.to_int()):
-            if index not in cleaned:
-                cleaned[index] = Scalar(rule.to_sympy().xreplace({INDEX: sp.Integer(index)}))
-        rule = None
     kept: dict[int, Scalar] = {}
     for index, weight in cleaned.items():
         default = (

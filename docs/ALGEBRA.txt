@@ -145,12 +145,22 @@ storage is what allows a phase vector at a symbolic dimension to exist.
 
   - Index 0 is the gauge and must not carry a nonzero entry.
   - At a concrete dimension, indices must lie in 1 .. d-1.
-  - At a symbolic dimension a rule is kept as a rule; at a concrete dimension it is expanded
-    into entries unless expand=False.
+  - At a symbolic dimension a rule is kept as a rule. At a concrete dimension the rule is
+    also stored unexpanded but read as expanded entries (entries() lists every nonzero index,
+    rule is None), unless expand=False, which leaves the rule visible. get(k) evaluates the
+    rule at k on demand (exact rational arithmetic for a polynomial rule with rational
+    coefficients); the expanded entries are built on first read and cached. Equality,
+    hashing, repr and str use the expanded reading, so a rule-built vector and its
+    entry-built twin are equal, hash equal and print alike.
+  - substitute returns the vector itself when the mapping names none of its free symbols,
+    and substitutes only the entries and weights whose symbols it names; a rule stays
+    unexpanded when the dimension is or becomes concrete.
 
     v.dim, v.length                             length is d - 1, or None when d is symbolic
-    v.entries() -> Mapping[int, Phase]          the stored entries, the rule excluded
-    v.rule -> Phase | None
+    v.entries() -> Mapping[int, Phase]          the entries, the rule excluded unless it is
+                                                read expanded (see above)
+    v.rule -> Phase | None                      None when read expanded
+    v.stored_rule -> Phase | None               the rule as stored
     v.get(index) -> Phase                       zero when absent or at index 0
     v.at(index) -> sympy.Expr                   the turns at a possibly symbolic index
     v.is_zero, v.is_concrete, v.free_symbols
@@ -179,8 +189,9 @@ the spider's coefficient at index k is
     v.is_weighted                               some weight differs from 1
 
 An entry overrides the weight rule at its index; an entry equal to the value it would
-otherwise take is dropped. At a concrete dimension a weight rule is expanded into entries
-unless expand=False. is_zero is False for a weighted vector, so every rule requiring a
+otherwise take is dropped. At a concrete dimension a weight rule is stored unexpanded and
+read as expanded entries (weights(), weight_rule None) unless expand=False, as for the phase
+rule. is_zero is False for a weighted vector, so every rule requiring a
 phaseless spider refuses it. v + w multiplies weights and adds phases (the fusion of Z boxes).
 A vector without weights is stored, compared, hashed and printed exactly as before.
 
