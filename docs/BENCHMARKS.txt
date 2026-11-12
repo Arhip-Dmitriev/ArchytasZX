@@ -545,6 +545,28 @@ the Quantomatic JVM lift: they are bounded by the Lean slots and -Xmx2g). The wo
 stage, so a killed run records the stage it died in. The worker and every driver lift Python's
 integer string conversion limit (sys.set_int_max_str_digits(0)) at start.
 
+A run's outcome:
+
+  ok, uncertified    the expected verdict, certified or not
+  wrong              the opposite verdict (wrong (uncertified) when uncertified)
+  unknown            no verdict
+  unsupported        the tool cannot run the instance; detail gives the reason
+  timeout            a stage's CPU limit, or the stage timer killed the worker (kill: stage
+                     timer)
+  oom                the worker or a child was killed for memory: SIGKILL or exit 137 (kill:
+                     SIGKILL), a rise of the systemd scope's memory.events oom_kill counter
+                     reported by the worker on the scope's SIGTERM (kill: cgroup oom_kill), or a
+                     MemoryError in preparation (killed_in prepare)
+  error              the tool failed: a driver or binary exiting nonzero, an exception inside
+                     ArchytasZX, or a worker that died otherwise (kill: exit CODE)
+  harness_error      an exception raised in the worker while preparing a rival's input
+                     (rival.py, tools/*.py, the engine's loader or oracle): every rival's own call
+                     runs in a subprocess, so such an exception is the harness's; reason is
+                     "prepare: " and the exception
+
+Aggregates leave harness_error points out of every count's points and list them in
+results/aggregate/harness_errors.*.
+
 10.2 Log and resume
 
 Each finished run is appended at once, with flush and fsync, as one JSON line to
@@ -679,6 +701,8 @@ Implementation: benchmarks/aggregate.py, benchmarks/plots.py, benchmarks/anc.py
   results/aggregate/overhead.*       traced over untraced decide CPU
   results/aggregate/calibration.*    calibration per job and node
   results/aggregate/wrong.*          every wrong verdict; ArchytasZX ones are engine bugs
+  results/aggregate/harness_errors.* every point whose first run was a harness_error, with
+                                     its reason
   plots/*.png, *.pdf                 time in n and in d per stage (a panel per category, faint
                                      line per equation, bold median per tool), 3D time over n
                                      and d, the frontier per tool, Lean time and size, B3 sizes

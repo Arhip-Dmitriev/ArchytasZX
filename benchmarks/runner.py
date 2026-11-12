@@ -44,6 +44,7 @@ from benchmarks import breaks, config, lean, log, points, sources, stats, subjec
 ROOT = Path(__file__).resolve().parent.parent
 STAGE_MARK = "@@STAGE "
 RESULT_MARK = "@@RESULT "
+OOMKILL_MARK = "@@OOMKILL "
 CALIBRATION = """@rhs =
     dim d
     count n
@@ -206,6 +207,18 @@ def terminate(proc: subprocess.Popen[str], grace: float = 5.0) -> None:
             continue
 
 
+def killed_status(timer: bool, code: int, oom_rise: int) -> tuple[str, str]:
+    """(outcome, kill source) of a worker that ended without a result: timeout by the stage
+    timer, oom by SIGKILL or a rise of the scope's oom_kill counter, else error."""
+    if timer:
+        return "timeout", "stage timer"
+    if code in (-signal.SIGKILL, 137):
+        return "oom", "SIGKILL"
+    if oom_rise > 0:
+        return "oom", "cgroup oom_kill"
+    return "error", f"exit {code}"
+
+
 def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     """One worker process on ``job``: its result, or the stage it was killed in."""
     st = ctx.cfg["stages"]
@@ -258,12 +271,15 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     timer.start()
     stage = "start"
     result: dict[str, Any] | None = None
+    oom_rise = 0
     assert proc.stdout is not None
     for line in proc.stdout:
         if line.startswith(STAGE_MARK):
             stage = line[len(STAGE_MARK) :].strip()
         elif line.startswith(RESULT_MARK):
             result = json.loads(line[len(RESULT_MARK) :])
+        elif line.startswith(OOMKILL_MARK):
+            oom_rise = int(line[len(OOMKILL_MARK) :])
     err = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()
     timer.cancel()
@@ -276,13 +292,12 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     if result is not None:
         result["process_wall"] = wall
         return result
-    status = (
-        "timeout" if killed.is_set() else ("oom" if code in (-signal.SIGKILL, 137) else "error")
-    )
+    status, kill = killed_status(killed.is_set(), code, oom_rise)
     return {
         "outcome": status,
         "killed_in": stage,
         "exit": code,
+        "kill": kill,
         "detail": err.strip()[-400:],
         "process_wall": wall,
     }

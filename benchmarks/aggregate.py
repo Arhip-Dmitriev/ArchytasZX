@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """Aggregates from the logs (BENCHMARKS.txt, section 12.1), written to results/aggregate as CSV
-and JSON: points, units, counts, breakdown, b3, overhead, calibration and wrong.
+and JSON: points, units, counts, breakdown, b3, overhead, calibration, wrong and harness_errors.
 
 A point's outcome is its first run's; its statistics are over its successful runs; it is
 ``unstable`` when a later repeat failed and ``noisy`` when it reached the cluster maximum of
@@ -202,6 +202,7 @@ def points_table(runs: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[s
             "cpu_model": (first.get("machine") or {}).get("cpu_model"),
             "calibration": (first.get("calibration") or {}).get("median"),
             "detail": (first.get("detail") or "")[:200],
+            "reason": first.get("reason"),
         }
         for stage in STAGES:
             cpus = [
@@ -253,7 +254,8 @@ def points_table(runs: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[s
 
 def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Points proved (S) and refuted (F) per category, version, tool, break kind and n, d bins;
-    wrongly accepted F points and unknown points counted beside."""
+    wrongly accepted F points and unknown points counted beside; harness_error points counted
+    in their own column and left out of ``points``."""
     acc: dict[tuple[Any, ...], dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for r in rows:
         if r["tool"] in B3_ONLY:
@@ -268,8 +270,9 @@ def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             d_bin(r["d"]),
         )
         slot = acc[key]
-        slot["points"] += 1
         oc = r["outcome"]
+        if oc != "harness_error":
+            slot["points"] += 1
         if oc == "ok":
             slot["proved" if r["truth"] else "refuted"] += 1
         elif oc == "wrong":
@@ -291,6 +294,22 @@ def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def harness_errors_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The points whose first run failed in the harness's own preparation, with the reason."""
+    return [
+        {
+            "equation": r["equation"],
+            "version": r["version"],
+            "tool": r["tool"],
+            "n": r["n"],
+            "d": r["d"],
+            "reason": r.get("reason"),
+        }
+        for r in rows
+        if r["outcome"] == "harness_error"
+    ]
 
 
 def equations_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -532,10 +551,12 @@ def main(cfg: dict[str, Any]) -> None:
     _write(out, "calibration", calibration_table(results))
     wrong = [r for r in rows if r["wrong"]]
     _write(out, "wrong", wrong)
+    harness = harness_errors_table(rows)
+    _write(out, "harness_errors", harness)
     print(
         f"aggregate: {len(runs)} runs, {len(rows)} points, {len(units)} units, "
-        f"{len(wrong)} wrong verdicts, {len(excluded)} F runs at points where the pair is "
-        f"equal excluded -> {out}"
+        f"{len(wrong)} wrong verdicts, {len(harness)} harness errors, {len(excluded)} F runs at "
+        f"points where the pair is equal excluded -> {out}"
     )
     for r in rows:
         if r["tool"] == "archytaszx" and r["outcome"] in ("wrong", "wrong (uncertified)"):
