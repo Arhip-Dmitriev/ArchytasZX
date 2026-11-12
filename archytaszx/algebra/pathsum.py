@@ -502,7 +502,8 @@ class Step:
 
 @dataclass
 class PathSum:
-    """``const * sqrt(2)^sqrt2 * [constraints = 0] * Sum_path exp(2 pi i phase)``."""
+    """``const * sqrt(2)^sqrt2 * [constraints = 0] * Sum_path exp(2 pi i phase) * Prod a^F``,
+    each amplitude atom ``a^F`` a cyclotomic base to the power of an F_2 polynomial."""
 
     boundary: tuple[int, ...]
     path: set[int]
@@ -511,6 +512,7 @@ class PathSum:
     sqrt2: int = 0
     constraints: list[F2Poly] = field(default_factory=list)
     trace: list[Step] = field(default_factory=list)
+    amps: list[tuple[Cyclo, F2Poly]] = field(default_factory=list)
 
     def copy(self) -> PathSum:
         """An independent copy."""
@@ -522,7 +524,12 @@ class PathSum:
             self.sqrt2,
             list(self.constraints),
             list(self.trace),
+            list(self.amps),
         )
+
+    def amp_vars(self) -> set[int]:
+        """Every variable an amplitude exponent carries."""
+        return {v for _a, f in self.amps for m in f for v in m}
 
     @property
     def is_zero(self) -> bool:
@@ -765,25 +772,106 @@ def _try_hh_nl(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> b
     return False
 
 
+def _fold_amps(ps: PathSum) -> None:
+    """Amplitude atoms with a constant exponent into the constant; a zero base with an exponent
+    free of path variables into the constraint ``F = 0``."""
+    keep = []
+    for a, f in ps.amps:
+        if not f:
+            continue
+        if f == ONE:
+            ps.const = ps.const * a
+        elif a.is_zero and not any(v in ps.path for m in f for v in m):
+            ps.constraints.append(f)
+        else:
+            keep.append((a, f))
+    ps.amps = keep
+
+
+def _try_average(ps: PathSum) -> bool:
+    """[Average]: y in no phase term or constraint, its atoms alpha^(f (1 + y)) and
+    beta^(f y), f free of y: Sum_y = 2 ((alpha + beta) / 2)^f."""
+    phase_vars = ps.phase.variables()
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    for y in sorted(ps.path & ps.amp_vars() - phase_vars - cons_vars):
+        alpha, beta = Cyclo.rational(1), Cyclo.rational(1)
+        guard: F2Poly | None = None
+        hit = []
+        ok = True
+        for i, (a, f) in enumerate(ps.amps):
+            if not any(y in m for m in f):
+                continue
+            quotient = frozenset(m - {y} for m in f if y in m)
+            rest = frozenset(m for m in f if y not in m)
+            if guard is None:
+                guard = quotient
+            if quotient != guard or rest not in (frozenset(), guard):
+                ok = False
+                break
+            if rest:
+                alpha = alpha * a
+            else:
+                beta = beta * a
+            hit.append(i)
+        if not ok or guard is None:
+            continue
+        ps.amps = [t for i, t in enumerate(ps.amps) if i not in hit]
+        ps.amps.append(((alpha + beta).scale(Fraction(1, 2)), guard))
+        ps.path.discard(y)
+        ps.sqrt2 += 2
+        ps.trace.append(Step("average", y, None, guard))
+        _fold_amps(ps)
+        return True
+    return False
+
+
 def reduce(ps: PathSum) -> PathSum:
     """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
-    boundary constraint and [HHnl] applied to a fixpoint, in that order, the lowest variable
-    first."""
+    boundary constraint, [HHnl] and [Average] applied to a fixpoint, in that order, the lowest
+    variable first; variables in an amplitude exponent take only [Average], and substitutions
+    reach the exponents."""
     out = ps.copy()
+    _fold_amps(out)
     while out.path and not out.is_zero:
-        occ = _occurrences(out.phase)
-        if not (
-            _try_elim(out, occ)
-            or _try_hh_pivot(out, occ)
-            or _try_hh_gen(out, occ)
-            or _try_omega(out, occ)
-            or _try_dyadic(out, occ)
-            or _try_rem(out, occ)
-            or _try_hh_constraint(out, occ)
-            or _try_hh_nl(out, occ)
-        ):
+        if out.amps:
+            blocked = out.path & out.amp_vars()
+            out.path -= blocked
+            before = (frozenset(out.path), len(out.trace))
+            _reduce_round(out)
+            stepped = len(out.trace) != before[1]
+            out.path |= blocked
+            if stepped:
+                last = out.trace[-1]
+                for sub in ("hh_pivot", "hh_gen"):
+                    if last.rule == sub and last.pivot is not None and last.value is not None:
+                        out.amps = [
+                            (a, f2_substitute(f, last.pivot, last.value)) for a, f in out.amps
+                        ]
+                _fold_amps(out)
+                continue
+            if _try_average(out):
+                continue
+            break
+        if not _reduce_round(out):
             break
     return out
+
+
+def _reduce_round(out: PathSum) -> bool:
+    """One rule application of reduce's balanced rules, or False."""
+    if not out.path:
+        return False
+    occ = _occurrences(out.phase)
+    return (
+        _try_elim(out, occ)
+        or _try_hh_pivot(out, occ)
+        or _try_hh_gen(out, occ)
+        or _try_omega(out, occ)
+        or _try_dyadic(out, occ)
+        or _try_rem(out, occ)
+        or _try_hh_constraint(out, occ)
+        or _try_hh_nl(out, occ)
+    )
 
 
 # -- canonical form ----------------------------------------------------------------------
@@ -802,6 +890,7 @@ class Canon:
     const: Cyclo
     boundary: tuple[int, ...]
     support: tuple[tuple[int, ...], ...] = ()
+    amps: tuple[tuple[tuple[tuple[int, ...], ...], Cyclo], ...] = ()
 
     def same(self, other: Canon) -> bool:
         """Whether both forms carry the same data, so denote one function."""
@@ -811,6 +900,10 @@ class Canon:
             self.boundary == other.boundary
             and self.rows == other.rows
             and self.support == other.support
+            and len(self.amps) == len(other.amps)
+            and all(
+                a[0] == b[0] and a[1] == b[1] for a, b in zip(self.amps, other.amps, strict=True)
+            )
             and self.phase == other.phase
             and self.const == other.const
         )
@@ -821,6 +914,10 @@ class Canon:
             return Cyclo.rational(0)
         if self.support and _f2_eval(self.support, values) != 1:
             return Cyclo.rational(0)
+        scale = Cyclo.rational(1)
+        for expo, base in self.amps:
+            if _f2_eval(expo, values):
+                scale = scale * base
         for pivot, rest in self.rows:
             if values[pivot] != _f2_eval(rest, values):
                 return Cyclo.rational(0)
@@ -828,7 +925,7 @@ class Canon:
             (c for m, c in self.phase if all(values[v] for v in m)),
             Fraction(0),
         )
-        return self.const * Cyclo.root(turns)
+        return scale * self.const * Cyclo.root(turns)
 
     def support_point(self) -> dict[int, int]:
         """The support point with every free variable 0."""
@@ -971,6 +1068,11 @@ def canonical(ps: PathSum) -> Canon | None:
         return _zero_canon(ps.boundary)
     if ps.path:
         return None
+    if ps.amps:
+        ps = ps.copy()
+        _fold_amps(ps)
+        if ps.is_zero:
+            return _zero_canon(ps.boundary)
     rows = eliminate(ps.constraints, ps.boundary)
     support: F2Poly = ONE
     if rows is None:
@@ -982,14 +1084,37 @@ def canonical(ps: PathSum) -> Canon | None:
     pivots = cast(list[tuple[int, F2Poly]], rows)
 
     phase = ps.phase.copy()
+    amps = list(ps.amps)
     for pivot, rest in pivots:
         phase.substitute(pivot, rest)
+        amps = [(a, f2_substitute(f, pivot, rest)) for a, f in amps]
     const = with_sqrt2(ps.const, ps.sqrt2)
+    merged: dict[F2Poly, Cyclo] = {}
+    for a, f in amps:
+        if not f:
+            continue
+        if f == ONE:
+            const = const * a
+            continue
+        terms = [(e, q) for e, q in a.c.items() if q]
+        if len(terms) == 1 and abs(terms[0][1]) == 1:
+            ((e, q),) = terms
+            turns = (Fraction(e, a.n) + (Fraction(1, 2) if q < 0 else 0)) % 1
+            for mono, coeff in _lift_terms(sorted(f, key=_mono_key), turns):
+                phase.add(mono, coeff)
+            continue
+        merged[f] = merged[f] * a if f in merged else a
     c0 = phase.terms.pop(EMPTY, Fraction(0))
     if c0:
         const = const * Cyclo.root(c0)
     if const.is_zero:
         return _zero_canon(ps.boundary)
+    amp_key = tuple(
+        sorted(
+            ((tuple(sorted(tuple(sorted(m)) for m in f)), a) for f, a in merged.items()),
+            key=lambda t: t[0],
+        )
+    )
     return Canon(
         False,
         tuple((p, tuple(sorted(tuple(sorted(m)) for m in rest))) for p, rest in pivots),
@@ -997,6 +1122,7 @@ def canonical(ps: PathSum) -> Canon | None:
         const,
         ps.boundary,
         () if support == ONE else tuple(sorted(tuple(sorted(m)) for m in support)),
+        amp_key,
     )
 
 
@@ -1062,6 +1188,8 @@ def residual_form(ps: PathSum) -> Residual | None:
     """The residual form of a reduced, nonzero path sum: support rows substituted, path
     variables renamed by colour refinement and the least encoding over tied orderings; None
     when the tied orderings exceed RESIDUAL_ORDERINGS."""
+    if ps.amps:
+        return None
     rows = eliminate(ps.constraints, ps.boundary)
     phase = ps.phase.copy()
     raw: tuple[tuple[tuple[int, ...], ...], ...] = ()
@@ -1120,6 +1248,7 @@ def entry_at(ps: PathSum, values: Mapping[int, int]) -> Cyclo:
     at = ps.copy()
     at.phase.assign(values)
     at.constraints = [f2_assign(c, values) for c in at.constraints]
+    at.amps = [(a, f2_assign(f, values)) for a, f in at.amps]
     if any(c == frozenset({EMPTY}) for c in at.constraints):
         return Cyclo.rational(0)
     at = reduce(at)

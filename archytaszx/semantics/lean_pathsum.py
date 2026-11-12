@@ -277,6 +277,8 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("export_proof covers qubit path sums only")
+    if raw_l.amps or raw_r.amps:
+        raise PathSumUnsupported("export_proof has no amplitude atoms")
     red_l, red_r = reduce(raw_l), reduce(raw_r)
     can_l, can_r = canonical(red_l), canonical(red_r)
     if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:

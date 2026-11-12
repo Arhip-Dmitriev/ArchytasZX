@@ -28,7 +28,9 @@ from fractions import Fraction
 from itertools import combinations
 
 from archytaszx.algebra.pathsum import (
+    SQRT2,
     Cyclo,
+    F2Poly,
     ModPoly,
     PathSum,
     PathSumUnsupported,
@@ -177,6 +179,21 @@ def _interpolate(
                 phase.add((*(digits[j] for j in subset), *extra), coeff)
 
 
+def _f2_indicator(digits: list[int], table: list[int]) -> F2Poly:
+    """The F_2 polynomial over ``digits`` with the 0/1 values ``table`` (Moebius mod 2)."""
+    k = len(digits)
+    out: set[frozenset[int]] = set()
+    for size in range(k + 1):
+        for subset in combinations(range(k), size):
+            coeff = 0
+            for inner in range(size + 1):
+                for sub in combinations(subset, inner):
+                    coeff += table[sum(1 << j for j in sub)]
+            if coeff % 2:
+                out.add(frozenset(digits[j] for j in subset))
+    return frozenset(out)
+
+
 def _weights(
     node_id: NodeId, node: Node, d: int
 ) -> tuple[list[Fraction], list[int], list[int], Fraction, int]:
@@ -310,6 +327,7 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
     if base != 2:
         return _qudit_sum(diagram, base, bits, uf, var_of, boundary, path, same, fresh, digit)
     phase = PhasePoly()
+    amps: list[tuple[Cyclo, F2Poly]] = []
     c, s2 = constant(diagram.scalar.to_sympy())
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
@@ -325,15 +343,9 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
             _interpolate(phase, digits, turns)
             c, s2 = c.scale(mag), s2 + mag_k
             if any(zero):
-                _interpolate(phase, digits, [Fraction(z, 2) for z in zero], fresh())
-                s2 -= 2
-            if all(root2):
-                s2 += 1
-            elif any(root2):
-                ones = [1 - r for r in root2]
-                _interpolate(phase, digits, [Fraction(o, 4) for o in ones], fresh())
-                _interpolate(phase, digits, [Fraction(-o, 8) for o in ones])
-                s2 -= 1
+                amps.append((Cyclo.rational(0), _f2_indicator(digits, zero)))
+            if any(root2):
+                amps.append((SQRT2, _f2_indicator(digits, root2)))
         elif name == X_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             ys = [fresh() for _ in range(k)]
@@ -350,7 +362,7 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
                 for b in range(k - a):
                     phase.add((digit(out, a), digit(inp, b)), Fraction(1 << (a + b), 1 << k))
             s2 -= k
-    return PathSum(tuple(boundary), path, phase, c, s2, constraints)
+    return PathSum(tuple(boundary), path, phase, c, s2, constraints, [], amps)
 
 
 def _phase_bits(node_id: NodeId, node: Node, base: int = 2) -> int:
