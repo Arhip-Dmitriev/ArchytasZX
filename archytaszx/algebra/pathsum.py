@@ -229,6 +229,60 @@ def _sqrt_integer(n: int) -> tuple[Cyclo, int]:
     return out, k
 
 
+def _cyclo_sqrt(square: Cyclo, approx: complex) -> Cyclo | None:
+    """A cyclotomic r with r * r == square exactly and r near ``approx``, searched among
+    a z^i + b z^j over z = zeta_M, M a multiple of square's order up to 8 times it, a and b
+    rationals of denominator at most 64 fitted to ``approx``."""
+    import cmath
+
+    for factor in (1, 2, 4, 8):
+        m = math.lcm(square.n, 8) * factor
+        roots = [cmath.exp(2j * math.pi * e / m) for e in range(m)]
+        for i in range(m):
+            for j in range(i, m):
+                u, v = roots[i], roots[j]
+                det = (u.conjugate() * v).imag
+                if abs(det) < 1e-12:
+                    if i != j:
+                        continue
+                    a = (approx / u).real
+                    cand = Cyclo(m, {i: Fraction(a).limit_denominator(64)})
+                else:
+                    a = (approx.conjugate() * v).imag / det
+                    b = (u.conjugate() * approx).imag / det
+                    cand = Cyclo(
+                        m,
+                        {
+                            i: Fraction(a).limit_denominator(64),
+                            j: Fraction(b).limit_denominator(64),
+                        },
+                    )
+                if abs(cand.to_complex() - approx) < 1e-9 and cand * cand == square:
+                    return cand
+    return None
+
+
+def _cyclo_inverse(c: Cyclo) -> Cyclo | None:
+    """1 / c in Q(zeta_n): the solution of c x = 1 over the basis zeta_n^0 .. zeta_n^(phi-1)
+    by Gauss-Jordan elimination over the rationals; None when c is zero."""
+    n = c.n
+    cols = [(c * Cyclo(n, {j: Fraction(1)})).reduced(n) for j in range(len(c.reduced(n)))]
+    size = len(cols)
+    rows = [[cols[j][i] for j in range(size)] + [Fraction(1 if i == 0 else 0)] for i in range(size)]
+    for col in range(size):
+        piv = next((r for r in range(col, size) if rows[r][col]), None)
+        if piv is None:
+            return None
+        rows[col], rows[piv] = rows[piv], rows[col]
+        lead = rows[col][col]
+        rows[col] = [v / lead for v in rows[col]]
+        for r in range(size):
+            if r != col and rows[r][col]:
+                f = rows[r][col]
+                rows[r] = [a - f * b for a, b in zip(rows[r], rows[col], strict=True)]
+    return Cyclo(n, {j: rows[j][size] for j in range(size) if rows[j][size]})
+
+
 def constant(expr: Any) -> tuple[Cyclo, int]:
     """A diagram scalar as (cyclotomic number, power of sqrt 2); raises when it is not one."""
     import sympy as sp  # type: ignore[import-untyped]
@@ -277,6 +331,17 @@ def constant(expr: Any) -> tuple[Cyclo, int]:
             return Cyclo.root(Fraction(int(exp.p), 4 * int(exp.q))), 0
         if base.is_Rational and exp.is_Integer:
             return Cyclo.rational(Fraction(int(base.p), int(base.q)) ** int(exp)), 0
+        if exp.is_Rational and abs(exp) == sp.Rational(1, 2) and not base.is_Integer:
+            cb, kb = constant(base)
+            square = with_sqrt2(cb, kb)
+            half_power = _cyclo_sqrt(square, complex(sp.N(sp.sqrt(base), 30)))
+            if half_power is not None:
+                if exp < 0:
+                    inv = _cyclo_inverse(half_power)
+                    if inv is None:
+                        raise PathSumUnsupported(f"the scalar {expr} has no inverse found")
+                    half_power = inv
+                return half_power, 0
         if exp.is_Integer and int(exp) >= 0:
             cb, kb = constant(base)
             c, k = Cyclo.rational(1), 0

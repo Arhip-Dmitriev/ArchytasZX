@@ -158,11 +158,15 @@ def _turns_table(node_id: NodeId, node: Node, d: int) -> list[Fraction]:
     return out
 
 
-def _interpolate(phase: PhasePoly, digits: list[int], table: list[Fraction]) -> None:
-    """Add the multilinear interpolation of ``table`` over ``digits`` (Moebius inversion)."""
+def _interpolate(
+    phase: PhasePoly, digits: list[int], table: list[Fraction], times: int | None = None
+) -> None:
+    """Add the multilinear interpolation of ``table`` over ``digits`` (Moebius inversion),
+    each term multiplied by the variable ``times`` when given."""
     k = len(digits)
     if not any(table):
         return
+    extra = () if times is None else (times,)
     for size in range(k + 1):
         for subset in combinations(range(k), size):
             coeff = Fraction(0)
@@ -170,7 +174,46 @@ def _interpolate(phase: PhasePoly, digits: list[int], table: list[Fraction]) -> 
                 for sub in combinations(subset, inner):
                     coeff += (-1) ** (size - inner) * table[sum(1 << j for j in sub)]
             if coeff % 1:
-                phase.add((digits[j] for j in subset), coeff)
+                phase.add((*(digits[j] for j in subset), *extra), coeff)
+
+
+def _weights(
+    node_id: NodeId, node: Node, d: int
+) -> tuple[list[Fraction], list[int], list[int], Fraction, int]:
+    """A weighted table as turns, zero indicator, sqrt-2 indicator and base magnitude (a
+    rational times sqrt(2)^power): each nonzero coefficient is a root of unity times the base
+    or sqrt(2) times it; raises otherwise."""
+    assert node.phase is not None
+    turns: list[Fraction] = []
+    zero: list[int] = []
+    mags: list[tuple[Fraction, Fraction, int] | None] = []
+    for v in range(d):
+        c, k = constant(node.phase.coefficient(v).to_sympy())
+        if c.is_zero:
+            turns.append(Fraction(0))
+            zero.append(1)
+            mags.append(None)
+            continue
+        terms = [(e, q) for e, q in c.c.items() if q]
+        if len(terms) != 1:
+            raise PathSumUnsupported(
+                f"node {node_id!r} has a weight {c} that is not a root times a real"
+            )
+        ((e, q),) = terms
+        turns.append((Fraction(e, c.n) + (Fraction(1, 2) if q < 0 else 0)) % 1)
+        zero.append(0)
+        mags.append((abs(q) ** 2 * Fraction(2) ** k, abs(q), k))
+    present = [m for m in mags if m is not None]
+    if not present:
+        raise PathSumUnsupported(f"node {node_id!r} has every weight zero")
+    base = min(present, key=lambda m: m[0])
+    root2 = []
+    for m in mags:
+        ratio = Fraction(1) if m is None else m[0] / base[0]
+        if ratio not in (1, 2):
+            raise PathSumUnsupported(f"node {node_id!r} has weights of magnitude ratio {ratio}")
+        root2.append(1 if ratio == 2 else 0)
+    return turns, zero, root2, base[1], base[2]
 
 
 def port_bits(diagram: Diagram, base: int = 2) -> list[int]:
@@ -275,7 +318,22 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
         if name == Z_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             digits = [var_of[uf.find(("z", node_id, j))] for j in range(k)]
-            _interpolate(phase, digits, _turns_table(node_id, node, 1 << k))
+            if node.phase is None or not node.phase.is_weighted:
+                _interpolate(phase, digits, _turns_table(node_id, node, 1 << k))
+                continue
+            turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
+            _interpolate(phase, digits, turns)
+            c, s2 = c.scale(mag), s2 + mag_k
+            if any(zero):
+                _interpolate(phase, digits, [Fraction(z, 2) for z in zero], fresh())
+                s2 -= 2
+            if all(root2):
+                s2 += 1
+            elif any(root2):
+                ones = [1 - r for r in root2]
+                _interpolate(phase, digits, [Fraction(o, 4) for o in ones], fresh())
+                _interpolate(phase, digits, [Fraction(-o, 8) for o in ones])
+                s2 -= 1
         elif name == X_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             ys = [fresh() for _ in range(k)]

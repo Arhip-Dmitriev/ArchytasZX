@@ -258,6 +258,15 @@ phase table (Moebius inversion, exact); an X spider adds a fresh place vector y,
 Sum_{a+b<k} sign 2^(a+b-k) y_a l_b for each leg l and its table over y, and sqrt(2)^(-kL); F
 adds Sum_{a+b<k} 2^(a+b-k) x_a z_b and sqrt(2)^(-k); B and S regroup place vectors (low part,
 then high part). Identified boundary places become constraints i_a + i_b = 0.
+A weighted Z spider on 2^k is accepted when every nonzero coefficient is a root of unity times
+a base magnitude R or times R sqrt(2), R a rational times a power of sqrt(2): its phases are
+interpolated as a table, the constant gains R, zero coefficients add a fresh y with
+y Z(x) / 2 (Z the zero indicator) and 2^(-1), and when the sqrt(2) indicator M is not constant a
+fresh y with y (1 - M(x)) / 4, the table -(1 - M(x)) / 8 and sqrt(2)^(-1) (Sum_y i^(y N) zeta_8^-N
+/ sqrt 2 is sqrt 2 at N = 0 and 1 at N = 1). A scalar sqrt(b) with b cyclotomic and not an
+integer is the cyclotomic r with r r = b exactly, found among two-term sums a zeta_M^i + b zeta_M^j
+near the numeric root; its inverse solves c x = 1 over the power basis. A discard (G) has no pure
+path sum; the doubled ladder translates the doubled diagram, where it is a cap.
 
 Rules (reduce), each an identity over Z_2, applied to a fixpoint in the order below, lowest
 variable first; each application is recorded in PathSum.trace:
