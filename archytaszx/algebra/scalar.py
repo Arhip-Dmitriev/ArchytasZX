@@ -172,6 +172,31 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
     )
 
 
+def _is_pi_rational(arg: sp.Expr) -> bool:
+    """Whether ``arg`` is a rational multiple of pi."""
+    return bool((arg / sp.pi).is_Rational)
+
+
+def cyclotomic_trig(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with every cos(q pi) and sin(q pi), q rational, as (z + 1/z)/2 and
+    (z - 1/z)/(2 I) for z = exp(I q pi)."""
+    if not expr.has(sp.cos, sp.sin):
+        return expr
+
+    def exact(e: sp.Expr) -> sp.Expr:
+        z = sp.exp(sp.I * e.args[0])
+        if isinstance(e, sp.cos):
+            return (z + 1 / z) / 2
+        return (z - 1 / z) / (2 * sp.I)
+
+    return cast(
+        sp.Expr,
+        expr.replace(
+            lambda e: isinstance(e, (sp.cos, sp.sin)) and _is_pi_rational(e.args[0]), exact
+        ),
+    )
+
+
 def _normalize(expr: sp.Expr) -> sp.Expr:
     """Cheap, always-sound normalization: expand/collect, fold same-base exponentials, and
     alpha-rename bound indices.
@@ -187,13 +212,16 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     summation index a name fixed by its binder depth, so two scalars differing only in a
     bound name are the same object here.
 
+    cos(q pi) and sin(q pi) with q rational enter as their cyclotomic values
+    (:func:`cyclotomic_trig`) before the expansion.
+
     Before any of that: an expression containing an ``sp.Float`` atom anywhere in its
     tree (not just at the top level) is rejected outright, since this module tracks
     scalars exactly, never approximately.
     """
     if expr.atoms(sp.Float):
         raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
-    normalized = _rename_indices(sp.powsimp(sp.expand(expr), force=True))
+    normalized = _rename_indices(sp.powsimp(sp.expand(cyclotomic_trig(expr)), force=True))
     _check_scalar_domain(normalized)
     return cast(sp.Expr, normalized)
 

@@ -393,8 +393,10 @@ When inputs or outputs is omitted, every port not otherwise wired becomes a boun
 order of node declaration and port index.
 
 Expressions (dimensions, multiplicities, phases, scalars) are built from integers, names,
-+ - * / ^ ** and parentheses, the constants I, pi (or π) and E, and the functions exp and
-sqrt.
++ - * / ^ ** and parentheses, the constants I, pi (or π) and E, and the functions exp,
+sqrt, and cos and sin of a rational multiple of pi (taken exactly: cos(q pi) = (z + 1/z)/2 and
+sin(q pi) = (z - 1/z)/(2 I), z = exp(I q pi)). A scalar sympy builds with such a cos or sin (the
+conjugate of (-1)^(2/7), say) is normalised the same way.
 
 An unknown node, generator, statement or rule is reported with the closest known name.
 

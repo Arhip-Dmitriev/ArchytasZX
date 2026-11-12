@@ -495,7 +495,7 @@ _Expr: TypeAlias = _Num | _Lit | _Name | _Const | _Neg | _Sum | _Prod | _Pow | _
 _EXPR_TOKEN_RE = re.compile(r"(?P<int>[0-9]+)|(?P<name>[^\W\d]\w*)|(?P<op>\*\*|[-+*/^(),])")
 _SPACE_RE = re.compile(r"\s*")
 _CONSTANTS = {"I": sp.I, "pi": sp.pi, "π": sp.pi, "E": sp.E}
-_FUNCTIONS = frozenset({"exp", "sqrt"})
+_FUNCTIONS = frozenset({"exp", "sqrt", "cos", "sin"})
 _MAX_EXPR_DEPTH = 100
 _MAX_EXPR_DIGITS = 1000
 _INT_LIMIT = 10**_MAX_EXPR_DIGITS
@@ -752,6 +752,11 @@ def _sympy_of(node: _Expr, resolve: Callable[[str], sp.Expr]) -> sp.Expr:
     if isinstance(node, _Pow):
         return _power(_sympy_of(node.base, resolve), _sympy_of(node.exponent, resolve))
     value = _sympy_of(node.arg, resolve)
+    if node.fn in ("cos", "sin"):
+        if not (value / sp.pi).is_Rational:
+            raise ParseDomainError(f"{node.fn} of {value}: only rational multiples of pi")
+        z = sp.exp(sp.I * value)
+        return (z + 1 / z) / 2 if node.fn == "cos" else (z - 1 / z) / (2 * sp.I)
     return sp.exp(value) if node.fn == "exp" else _power(value, sp.Rational(1, 2))
 
 
