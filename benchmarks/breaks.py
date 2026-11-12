@@ -45,6 +45,9 @@ TOL = 1e-8
 DENSE_LIMIT = 1 << 18
 ORACLE_D = 4
 ORACLE_N = 3
+TABLE_D = 4
+TABLE_N = 4
+TABLE_N_FIXED_D = 12
 CARMICHAEL = (561, 1105, 1729)
 
 
@@ -723,6 +726,91 @@ def differing_entry(
     return None
 
 
+def dense_differs(raw_left: Any, raw_right: Any) -> bool | None:
+    """Whether two loaded diagrams differ (both doubled when either is mixed): a boundary
+    mismatch other than in dimension-1 legs, or a dense entry apart by more than TOL; None when
+    the tensor exceeds DENSE_LIMIT."""
+    from archytaszx.semantics import check
+
+    mixed = not (raw_left.is_pure() and raw_right.is_pure())
+    left, right = _pure(raw_left, mixed), _pure(raw_right, mixed)
+    lo, li = _boundary_dims(left)
+    ro, ri = _boundary_dims(right)
+    if [[v for v in x if v != 1] for x in (lo, li)] != [[v for v in x if v != 1] for x in (ro, ri)]:
+        return True
+    if math.prod(lo) * math.prod(li) > DENSE_LIMIT:
+        return None
+    a = np.asarray(check.contract(left).tensor).reshape(-1)
+    b = np.asarray(check.contract(right).tensor).reshape(-1)
+    return bool(np.max(np.abs(a - b), initial=0.0) > TOL)
+
+
+def table_grid(inst: Any) -> list[tuple[int | None, int]]:
+    """The domain points with d <= TABLE_D and n <= TABLE_N (TABLE_N_FIXED_D at a fixed d),
+    by d then n."""
+    has_n = inst.subject.size_parameter is not None
+    top = TABLE_N if inst.subject.general_d else TABLE_N_FIXED_D
+    ns: list[int | None] = [n for n in range(top + 1) if inst.domain.has_n(n)] if has_n else [None]
+    ds = (
+        [d for d in range(1, TABLE_D + 1) if inst.domain.has_d(d)]
+        if inst.subject.general_d
+        else [int(inst.subject.dimension)]
+    )
+    return [(n, d) for d in ds for n in ns]
+
+
+def differs_table(broken: Any, seconds: float) -> list[list[Any]]:
+    """[n, d, differs] at the table_grid points the dense check settles, each within
+    ``seconds``; a d's line stops at its first unsettled n."""
+    out: list[list[Any]] = []
+    stopped: set[int] = set()
+    for n, d in table_grid(broken):
+        if d in stopped:
+            continue
+        try:
+            with _limit(seconds):
+                left, right = _pair(broken, n, d)
+                v = dense_differs(left, right)
+        except (_Overrun, Exception):  # noqa: BLE001
+            v = None
+        if v is None:
+            stopped.add(d)
+            continue
+        out.append([n, d, v])
+    return out
+
+
+def annotate(rec: dict[str, Any], insts: dict[str, Any], seconds: float) -> dict[str, Any]:
+    """``rec`` with its differs_at table; a pure-against-doubled interface witness is replaced
+    by a dense one on the doubled pair at the first differing table point (none: kept)."""
+    from benchmarks.differs import doubling_mismatch
+
+    if rec.get("kind") is None:
+        return rec
+    broken = false_instance(rec, insts)
+    table = differs_table(broken, seconds)
+    out = {**rec, "differs_at": table}
+    w = rec.get("witness") or {}
+    if not doubling_mismatch(w.get("interface")):
+        if w.get("d") is not None and not any(r[:2] == [w.get("n"), w["d"]] for r in table):
+            table.append([w.get("n"), w["d"], True])
+    else:
+        rng = random.Random(0)
+        for n, d, v in table:
+            if not v:
+                continue
+            try:
+                with _limit(seconds):
+                    left, right = _pair(broken, n, d)
+                    nw = differing_entry(left, right, n, d, rng)
+            except (_Overrun, Exception):  # noqa: BLE001
+                continue
+            if nw is not None:
+                out["witness"] = nw.to_dict()
+                break
+    return out
+
+
 @dataclass
 class FalseEquation:
     """One F record: the S equation's id, the edit and its witness."""
@@ -949,7 +1037,8 @@ def generate_one(job: tuple[int, str, dict[str, Any]]) -> dict[str, Any]:
         except _Overrun:
             return {"equation": eq_id, "kind": None, "skipped": tried, "reason": "time budget"}
         if rec is not None:
-            return {**rec.to_dict(), "skipped": tried}
+            probe = float(cfg["false_set"].get("probe_seconds", 0))
+            return {**annotate(rec.to_dict(), insts, probe), "skipped": tried}
         tried.append(kind)
     rec: dict[str, Any] = {"equation": eq_id, "kind": None, "skipped": tried}
     if eq_id in _OVERFLOWS:
@@ -1023,4 +1112,27 @@ def oracle_grid(inst: Any) -> list[tuple[int | None, int]]:
     return [(n, d) for n in ns for d in ds]
 
 
-__all__ = ["KINDS", "Edit", "FalseEquation", "generate", "product"]
+def _annotate_job(job: tuple[dict[str, Any], dict[str, Any], float]) -> dict[str, Any]:
+    rec, cfg, seconds = job
+    insts = {i.id: i for i in subject.instances(_selected(cfg))}
+    if rec.get("kind") is None or rec["equation"] not in insts:
+        return rec
+    return annotate(rec, insts, seconds)
+
+
+def annotate_file(src: Path, dst: Path, cfg: dict[str, Any], jobs: int) -> None:
+    """The false set at ``src`` with every record annotated (:func:`annotate`), written to
+    ``dst`` under the same fingerprint."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    data = json.loads(src.read_text(encoding="utf-8"))
+    seconds = float(cfg["false_set"].get("probe_seconds", 0))
+    work = [(r, cfg, seconds) for r in data["records"]]
+    with ProcessPoolExecutor(max(1, jobs)) as pool:
+        records = list(pool.map(_annotate_job, work, chunksize=1))
+    dst.write_text(
+        json.dumps({**data, "records": records}, indent=1, default=str), encoding="utf-8"
+    )
+
+
+__all__ = ["KINDS", "Edit", "FalseEquation", "annotate", "generate", "product"]

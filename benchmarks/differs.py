@@ -22,9 +22,17 @@ Decided from the F record's kind and edit parameters by exact integer arithmetic
                                               n = N + 1 mod N + 2
   qubit_only                                  equal iff d <= 2
 
-Every other kind differs at every point of its domain, unless its witness is an interface
-mismatch between a pure side and a doubled side (one side's boundary is the other's taken
-twice): such a witness reads no entry, and the pair counts as not differing.
+An F record's ``differs_at`` table (breaks.differs_table: [n, d, differs] by a dense check at
+small points) decides its own points first. Off the table, a kind without a rule above is
+equal where the table shows it equal along the whole line: at d = 1 when every tabled d = 1
+point is equal, at n = 0 when every tabled n = 0 point is, at every point when every tabled
+point is (a no-op edit), and beyond the largest tabled n (d) when the last TAIL tabled values
+of n (d) are equal at every tabled d (n), and at an n beyond the table where the tabled n line
+of its d repeats with a period p (at least PERIODS checks of v(m) = v(m + p)) and the tabled m
+= n mod p is equal. Otherwise it differs at every point of its domain,
+unless its witness is an interface mismatch between a pure side and a doubled side (one side's
+boundary is the other's taken twice): such a witness reads no entry, and the pair counts as
+not differing.
 """
 
 from __future__ import annotations
@@ -37,6 +45,8 @@ from typing import Any
 import sympy as sp  # type: ignore[import-untyped]
 
 _K, _N, _D = sp.symbols("k n d", integer=True)
+TAIL = 3
+PERIODS = 3
 
 
 @functools.cache
@@ -110,13 +120,72 @@ def doubling_mismatch(interface: str | None) -> bool:
     return (lo, li) == (twice(ro), twice(ri)) or (ro, ri) == (twice(lo), twice(li))
 
 
+@functools.lru_cache(maxsize=4096)
+def _table(rows: tuple[tuple[Any, int, bool], ...]) -> dict[tuple[Any, int], bool]:
+    return {(n, d): v for n, d, v in rows}
+
+
+def _table_of(false: dict[str, Any]) -> dict[tuple[Any, int], bool] | None:
+    rows = false.get("differs_at")
+    if not rows:
+        return None
+    return _table(tuple((r[0], int(r[1]), bool(r[2])) for r in rows))
+
+
+def _tail_equal(table: dict[tuple[Any, int], bool], axis: int) -> bool:
+    """Whether the last TAIL tabled values of ``axis`` (0: n, 1: d) are equal at every tabled
+    value of the other axis."""
+    others = {k[1 - axis] for k in table}
+    for o in others:
+        line = sorted(
+            (k[axis], v) for k, v in table.items() if k[1 - axis] == o and k[axis] is not None
+        )
+        if len(line) < TAIL or any(v for _, v in line[-TAIL:]):
+            return False
+    return bool(others)
+
+
+def _periodic_equal(table: dict[tuple[Any, int], bool], n: int, d: int) -> bool:
+    """Whether d's tabled n line has a least period p with the tabled m = n mod p equal."""
+    line = {k[0]: v for k, v in table.items() if k[1] == d and k[0] is not None}
+    if len(line) < 2 or all(line.values()):
+        return False
+    lo, hi = min(line), max(line)
+    for p in range(1, (hi - lo) // 2 + 1):
+        pairs = [(m, m + p) for m in line if m + p in line]
+        if len(pairs) < PERIODS or any(line[a] != line[b] for a, b in pairs):
+            continue
+        reps = [m for m in line if (m - n) % p == 0]
+        return bool(reps) and not line[reps[0]]
+    return False
+
+
+def _table_equal(table: dict[tuple[Any, int], bool], n: int | None, d: int) -> bool:
+    """Whether the table's lines show the pair equal at an untabled ``(n, d)``."""
+    if not any(table.values()):
+        return True
+    for axis, at in ((1, 1), (0, 0)):
+        value = d if axis == 1 else n
+        line = [v for k, v in table.items() if k[axis] == at]
+        if value == at and line and not any(line):
+            return True
+    ns = [k[0] for k in table if k[0] is not None]
+    if n is not None and ns and n > max(ns):
+        if _tail_equal(table, 0) or _periodic_equal(table, n, d):
+            return True
+    return d > max(k[1] for k in table) and _tail_equal(table, 1)
+
+
 def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool | None:
-    """True when the F pair of ``false`` is equal at ``(n, d)`` by its kind's closed-form rule,
-    False when it differs there, None when only the F record's witness speaks (a witness that
+    """True when the F pair of ``false`` is equal at ``(n, d)`` by its differs_at table, its
+    kind's closed-form rule or the table's lines, False when it differs there, None when only the F record's witness speaks (a witness that
     pairs a pure boundary with the same boundary doubled); False for an S equation and a
     symbolic point (``d`` None)."""
     if false is None or d is None:
         return False
+    table = _table_of(false)
+    if table is not None and (n, d) in table:
+        return not table[(n, d)]
     kind = false.get("kind")
     params = false.get("params") or {}
     if kind in ("beyond_oracle", "prime_only", "coincident_dims") and "rule" in params:
@@ -130,6 +199,8 @@ def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool
         return n % (big_n + 2) != big_n + 1
     if kind == "qubit_only":
         return d <= 2
+    if table is not None and _table_equal(table, n, d):
+        return True
     if kind == "off_by_one_n":
         return False
     witness = false.get("witness") or {}

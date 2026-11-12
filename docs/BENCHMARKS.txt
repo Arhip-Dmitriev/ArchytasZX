@@ -415,15 +415,24 @@ last two record region_exhausted. A domain of fewer than K points is run whole.
 The symbolic version is one more run outside K. A restricted equation draws from its restricted
 domain.
 
-An F equation draws only points where its pair differs (benchmarks/differs.py), decided exactly
-from the F record's kind and edit parameters: beyond_oracle, prime_only and coincident_dims are
+An F equation draws only points where its pair differs (benchmarks/differs.py). Each F record
+carries differs_at, [n, d, differs] by a dense check of the broken pair (both sides doubled when
+either is mixed; a boundary difference only in dimension-1 legs is no difference) at the domain
+points with d <= 4 and n <= 4 (n <= 12 at a fixed d), a d's line stopping at its first point
+past 2^18 entries or probe_seconds, plus the witness point; breaks.annotate adds it (generation
+does), and replaces a pure-against-doubled interface witness by a dense one on the doubled pair.
+A tabled point is decided by the table. Elsewhere the kind's rule decides: beyond_oracle, prime_only and coincident_dims are
 equal where the phase rule is an integer at every k < d (for the d rule also d = 6, 8, 12, 24;
 for the Fermat rule every prime and Carmichael d); scalar_small_one and box_boundary where the
 scalar factor is 1; beyond_N unrolled where n <= N, boxed except at n = N + 1 mod N + 2;
-qubit_only where d <= 2; every other kind differs everywhere, except a record whose witness is
-an interface mismatch between a boundary and the same boundary taken twice (a pure side against
-a doubled one, from a false set generated before both sides were doubled), which differs
-nowhere. Moving a ladder step to the next
+qubit_only where d <= 2. Any other kind is equal off the table where the table shows it: at
+d = 1 when every tabled d = 1 point is equal, at n = 0 when every tabled n = 0 point is,
+everywhere when every tabled point is (a no-op edit), beyond the largest tabled n (d) when the
+last 3 tabled n (d) are equal at every tabled d (n), and at an n beyond the table whose d line
+repeats with a period p (at least 3 checks) with the tabled n mod p equal. Otherwise it differs
+everywhere, except a record without a table whose witness is an interface mismatch between a
+boundary and the same boundary taken twice (a pure side against a doubled one), which differs
+nowhere. outcomes.equal_at uses the same predicate, so a run at such a point is invalid_point. Moving a ladder step to the next
 point raises n, then d, at most 4096 values each (MAX_SCAN), then takes the first differing
 domain point among the first 4096 K. The domain size that selects the whole-domain schedule
 counts every domain point.
