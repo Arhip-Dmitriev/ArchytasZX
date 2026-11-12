@@ -72,7 +72,7 @@ from __future__ import annotations
 import enum
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeVar
 
@@ -81,7 +81,7 @@ from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.graph import Diagram, NodeId, PortRef, Wire
-from archytaszx.diagram.validate import IssueKind, ValidationIssue, validate
+from archytaszx.diagram.validate import IssueKind, ValidationIssue, ValidationReport, validate
 from archytaszx.rewrite.cache import (
     CacheError,
     DiagramFingerprint,
@@ -210,6 +210,8 @@ class RewriteResult:
     diagram: Diagram
     new_node_ids: tuple[NodeId, ...]
     step: RewriteStep
+    report: ValidationReport | None = field(default=None, compare=False)
+    """The validation report of ``diagram``, as :func:`apply` computed it."""
 
 
 def _issue_key(issue: ValidationIssue) -> tuple[IssueKind, object]:
@@ -320,11 +322,14 @@ def _remap_endpoint(
     return port_mapping[ref]
 
 
-@_trace.traced("rewrite.apply", lambda diagram, rule, match: rule.name)
-def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
+@_trace.traced("rewrite.apply", lambda diagram, rule, match, **_: rule.name)
+def apply(
+    diagram: Diagram, rule: Rule, match: Match, *, input_report: ValidationReport | None = None
+) -> RewriteResult:
     """Apply ``rule`` at ``match`` against ``diagram``, returning a new diagram and provenance.
 
-    Never mutates ``diagram``; the module docstring numbers the steps below.
+    Never mutates ``diagram``; the module docstring numbers the steps below. ``input_report``,
+    when given, is taken as ``validate(diagram)``.
     ``test_engine.py::TestApplyDocstringMatchesRaiseSites`` pins this body's raise count.
 
     Raises :class:`~archytaszx.rewrite.rule.RewriteDomainError` at step 1 (``match``'s
@@ -621,7 +626,8 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
 
     # One validate call per diagram: .errors/.deferred are tuple filters over the same
     # report, so both compares below read one validation snapshot.
-    input_report = validate(diagram)
+    if input_report is None:
+        input_report = validate(diagram)
     result_report = validate(working)
 
     input_hard_counts = Counter(
@@ -690,7 +696,9 @@ def apply(diagram: Diagram, rule: Rule, match: Match) -> RewriteResult:
         phase_substitutions=step_phase_substitutions,
         deferred_issue_identity_ambiguous=removed_ambiguous or introduced_ambiguous,
     )
-    return RewriteResult(diagram=working, new_node_ids=build_result.new_node_ids, step=step)
+    return RewriteResult(
+        diagram=working, new_node_ids=build_result.new_node_ids, step=step, report=result_report
+    )
 
 
 class StopReason(enum.Enum):
@@ -953,6 +961,7 @@ def apply_until_fixpoint(
     scalar_accumulated = Scalar.one()
     steps_attempted = 0
     stop_reason = StopReason.FIXPOINT
+    report: ValidationReport | None = None
 
     while True:
         steps_attempted += 1
@@ -973,12 +982,13 @@ def apply_until_fixpoint(
             stop_reason = StopReason.FIXPOINT
             break
         rule, match = candidate
-        result = apply(current, rule, match)
+        result = apply(current, rule, match, input_report=report)
         if on_result is not None:
             on_result(result)
         steps.append(result.step)
         scalar_accumulated = scalar_accumulated * result.step.scalar_introduced
         current = result.diagram
+        report = result.report
         fp = _fingerprint_for(current, cache)
         previous, measure = measure, _loop_measure(current)
         if not guard.detect_loops or measure < previous:

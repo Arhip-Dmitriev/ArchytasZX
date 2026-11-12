@@ -160,7 +160,7 @@ iteration order.
 4. APPLYING A RULE: archytaszx.rewrite.engine
 ---------------------------------------------
 
-    apply(diagram, rule, match) -> RewriteResult
+    apply(diagram, rule, match, *, input_report=None) -> RewriteResult
 
 apply is the single entry point for every rule. It proceeds as follows:
 
@@ -176,12 +176,14 @@ apply is the single entry point for every rule. It proceeds as follows:
      a wire-count postcondition catches any wire lost.
   6. Remove the consumed nodes.
   7. Multiply the scalar.
-  8. Validate the input and the result; a hard error in the result that the input did not
-     have raises RewriteDomainError. Deferred issues never block, and are recorded as removed
+  8. Validate the input (or take input_report as its report) and the result; a hard error in
+     the result that the input did not have raises RewriteDomainError. RewriteResult.report
+     holds the result's report, and apply_until_fixpoint passes it on as the next step's
+     input_report, so each diagram of a run is validated once. Deferred issues never block, and are recorded as removed
      or introduced.
   9. Record a RewriteStep.
 
-    RewriteResult(diagram, new_node_ids, step)
+    RewriteResult(diagram, new_node_ids, step, report=None)
     RewriteStep(rule_name, match, consumed_node_ids, consumed_wires, side_condition_outcomes,
                 dimension_constraints, scalar_introduced, port_mapping, new_node_ids,
                 removed_deferred_issues, introduced_deferred_issues, phase_substitutions, ...)
