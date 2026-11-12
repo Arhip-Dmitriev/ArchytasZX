@@ -948,6 +948,22 @@ def _phase_entries(text: str, table: Mapping[str, sp.Symbol]) -> dict[int, Phase
     return _phase_vector_parts(text, table)[0]
 
 
+_PLAIN_RATIONAL_RE = re.compile(r"\s*(-?)\s*(\d{1,30})\s*(?:/\s*(\d{1,30})\s*)?")
+
+
+def _plain_phase(expr: str) -> Phase | None:
+    """The Phase of a phase entry written as a plain integer or ``p/q`` (at most 30 digits
+    each, q nonzero), else None."""
+    m = _PLAIN_RATIONAL_RE.fullmatch(expr)
+    if m is None:
+        return None
+    den = int(m.group(3)) if m.group(3) is not None else 1
+    if den == 0:
+        return None
+    num = int(m.group(2))
+    return Phase(sp.Rational(-num if m.group(1) else num, den))
+
+
 def _phase_vector_parts(
     text: str, table: Mapping[str, sp.Symbol]
 ) -> tuple[dict[int, Phase], Phase | None]:
@@ -967,7 +983,8 @@ def _phase_vector_parts(
         i = _int_token(index, "phase index")
         if i in entries:
             raise ParseGrammarError(f"phase index {i} appears twice")
-        entries[i] = _phase_of(_parse_expr(expr, "phase"), table)
+        plain = _plain_phase(expr)
+        entries[i] = plain if plain is not None else _phase_of(_parse_expr(expr, "phase"), table)
     return entries, rule
 
 
@@ -1431,24 +1448,26 @@ def _closing_paren(text: str, open_at: int) -> int:
     raise ParseGrammarError(f"unbalanced '(' in {text!r}")
 
 
+@functools.cache
+def _split_pattern(token: str) -> re.Pattern[str]:
+    return re.compile(r"[(\[{)\]}]|" + re.escape(token))
+
+
 def _split_token(text: str, token: str) -> list[str]:
-    """``text`` split at ``token`` outside brackets, parts stripped."""
+    """``text`` split at ``token`` outside brackets, parts stripped (the brackets and the
+    token located by one compiled pattern)."""
     parts: list[str] = []
     depth = 0
     start = 0
-    i = 0
-    while i < len(text):
-        ch = text[i]
+    for m in _split_pattern(token).finditer(text):
+        ch = m.group()
         if ch in "([{":
             depth += 1
         elif ch in ")]}":
             depth -= 1
-        elif depth == 0 and text.startswith(token, i):
-            parts.append(text[start:i].strip())
-            i += len(token)
-            start = i
-            continue
-        i += 1
+        elif depth == 0:
+            parts.append(text[start : m.start()].strip())
+            start = m.end()
     parts.append(text[start:].strip())
     return parts
 

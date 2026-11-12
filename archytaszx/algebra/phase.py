@@ -107,7 +107,10 @@ def _normalize_turns(expr: sp.Expr) -> sp.Expr:
     passes through unchanged.
 
     An expression carrying an ``sp.Float`` atom anywhere in its tree is rejected first.
+    A concrete Rational is reduced directly.
     """
+    if isinstance(expr, sp.Rational):
+        return sp.Rational(expr.p % expr.q, expr.q)
     if expr.atoms(sp.Float):
         raise PhaseGrammarError(
             f"Phase requires an exact turns-expression, got a float in {expr!r}"
@@ -379,6 +382,7 @@ class PhaseVector:
             raise TypeError(f"PhaseVector requires a Dim, got {type(dim).__name__}")
         self._dim = dim
         cleaned: dict[int, Phase] = {}
+        top = dim.to_int() - 1 if dim.is_concrete else None
         for index, phase in (entries or {}).items():
             if not isinstance(index, int) or isinstance(index, bool):
                 raise PhaseGrammarError(f"phase-vector index must be an int, got {index!r}")
@@ -392,7 +396,7 @@ class PhaseVector:
                 continue
             if index < 0:
                 raise PhaseDomainError(f"phase-vector index must be >= 1, got {index}")
-            if dim.is_concrete and index > dim.to_int() - 1:
+            if top is not None and index > top:
                 raise PhaseDomainError(
                     f"phase-vector index {index} out of range for dim={dim} "
                     f"(valid range is 1..{dim.to_int() - 1})"
