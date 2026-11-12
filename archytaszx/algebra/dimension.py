@@ -36,6 +36,7 @@ special case of one shared value.
 from __future__ import annotations
 
 import enum
+import functools
 import itertools
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -163,6 +164,12 @@ def _check_dimension_domain(expr: sp.Expr) -> None:
         f"expression {expr} is outside the dimension grammar "
         "(sums, quotients, roots, and floats are not allowed)"
     )
+
+
+@functools.lru_cache(maxsize=4096)
+def _expr_str(expr: sp.Expr) -> str:
+    """``str(expr)``, memoised."""
+    return str(expr)
 
 
 DimSymbolKey = Union[str, "Dim"]
@@ -411,10 +418,10 @@ class Dim:
         return hash(self._expr)
 
     def __repr__(self) -> str:
-        return f"Dim({self._expr})"
+        return f"Dim({_expr_str(self._expr)})"
 
     def __str__(self) -> str:
-        return str(self._expr)
+        return _expr_str(self._expr)
 
     def rewrite(self, mapping: Mapping[DimSymbolKey, Dim]) -> Dim:
         """Return a new Dim with symbols replaced by arbitrary (possibly symbolic) Dims.
@@ -671,15 +678,15 @@ def _dedupe_pairs(pairs: Sequence[tuple[Dim, Dim]]) -> tuple[tuple[Dim, Dim], ..
 def solve(constraints: Sequence[tuple[Dim, Dim]], *, max_passes: int | None = None) -> SolveResult:
     """Resolve a system of asserted dimension equalities to a monotone fixpoint.
 
-    Sorts ``constraints`` first, so the result depends only on the set of constraints. Each
-    pass resolves both members of every pair through the running bindings and calls
-    :meth:`Dim.unify`. A symbol rebound to a Dim that does not unify with its current value
-    is FAILURE; a binding whose value contains the symbol being bound is deferred as a
-    residual pair. Converged with residuals is DEFERRED with ``exhausted=False``; a budget
-    of :data:`_MAX_SOLVE_PASSES` passes (or ``max_passes``) running out is DEFERRED with
-    ``exhausted=True``.
+    Sorts the distinct non-trivial ``constraints`` first, so the result depends only on the
+    set of constraints. Each pass resolves both members of every pair through the running
+    bindings and calls :meth:`Dim.unify`. A symbol rebound to a Dim that does not unify with
+    its current value is FAILURE; a binding whose value contains the symbol being bound is
+    deferred as a residual pair. Converged with residuals is DEFERRED with
+    ``exhausted=False``; a budget of :data:`_MAX_SOLVE_PASSES` passes (or ``max_passes``)
+    running out is DEFERRED with ``exhausted=True``.
     """
-    pairs = tuple(sorted(constraints, key=_pair_sort_key))
+    pairs = tuple(sorted({(a, b) for a, b in constraints if a != b}, key=_pair_sort_key))
     if not pairs:
         return SolveResult(status=UnifyStatus.SUCCESS)
     budget = _MAX_SOLVE_PASSES if max_passes is None else max_passes
