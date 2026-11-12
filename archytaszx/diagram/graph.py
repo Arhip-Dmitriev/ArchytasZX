@@ -135,6 +135,12 @@ class PortRef:
         if self.index < 0:
             raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
 
+    def __hash__(self) -> int:
+        """Arithmetic over ``(node_id, direction, index)``, agreeing with the field equality."""
+        return ((int(self.node_id) << 1) | (self.direction is Direction.OUTPUT)) * 1000003 + (
+            self.index
+        )
+
     def __repr__(self) -> str:
         return (
             f"PortRef(node_id={self.node_id!r}, direction={self.direction.value}, "
@@ -192,11 +198,13 @@ class Wire:
         """Equal iff the same two ports, regardless of stored order."""
         if not isinstance(other, Wire):
             return NotImplemented
-        return self.endpoints() == other.endpoints()
+        a, b = self.a, self.b
+        return (a == other.a and b == other.b) or (a == other.b and b == other.a)
 
     def __hash__(self) -> int:
         """Hash agrees with __eq__: order-independent."""
-        return hash(self.endpoints())
+        ha, hb = hash(self.a), hash(self.b)
+        return hash((ha, hb) if ha <= hb else (hb, ha))
 
     def __repr__(self) -> str:
         return f"Wire({self.a!r}, {self.b!r})"
