@@ -378,8 +378,8 @@ P is stored reduced. A reduced polynomial is fixed by its values on F_p^n, so fo
 supports equal data is necessary and sufficient, and the form is complete for qudit Clifford
 maps. Witness points (witness_points_qudit) add, for each monomial of either phase, the grid
 of its variables' values up to their exponents. Phases that are not multiples of 1/p (for
-example a Legendre-symbol phase 1/2) and weighted tables on dimension p become atoms, below;
-on p^k with k > 1 they, composite odd d and mixed bases are declined.
+example a Legendre-symbol phase 1/2) and weighted tables become atoms, below (k-ary atoms on
+p^k); composite odd d and mixed bases are declined.
 
 Atoms. A QuditPathSum also carries atoms f(A): an argument polynomial A over F_p and a table f
 of p values in Q(zeta), the summand multiplied by f(A). A Z or X table on dimension p whose
@@ -396,6 +396,14 @@ Variables in an atom take only three rules, after the four above:
                    constant: drop x and these atoms, add the atom (M, H), H(m) = Sum_v A(v)
                    g(a v + m) (with no g, multiply the constant by Sum_v A(v)).
 
+A k-ary atom f(A_0, .., A_(k-1)) (a table on p^k, index Sum_j t_j p^j) comes from such a
+table on dimension p^k over its k digits; [Fourier] and [Convolve] also apply along one of its
+components when the variable is in that component only (linearly, unit coefficient) and in no
+unary atom other than ones on itself alone; a k-ary atom with one non-constant component becomes
+a unary atom (table sliced), with none it folds into the constant. Canonically each component
+is made monic and constant-free (axes permuted), components are sorted, equal argument tuples
+merged, root-of-unity tables written back as phase (multivariate Lagrange), the rest scaled;
+witness points include the joint grid of a k-ary atom's variables (at most 625 points).
 An atom with a constant argument is folded into the constant. In the canonical form atoms are
 made monic and constant-free (tables permuted), equal arguments merged, a single-variable atom
 absorbs the phase terms in that variable alone, a table that is a constant times p-th roots of

@@ -24,7 +24,7 @@ Fractions throughout; no sum is ever enumerated.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
@@ -1479,6 +1479,7 @@ class QuditPathSum:
     constraints: list[ModPoly] = field(default_factory=list)
     trace: list[Step] = field(default_factory=list)
     atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]] = field(default_factory=list)
+    katoms: list[tuple[tuple[ModPoly, ...], tuple[Cyclo, ...]]] = field(default_factory=list)
 
     def copy(self) -> QuditPathSum:
         """An independent copy."""
@@ -1491,11 +1492,14 @@ class QuditPathSum:
             [c.copy() for c in self.constraints],
             list(self.trace),
             [(a.copy(), t) for a, t in self.atoms],
+            [(tuple(c.copy() for c in a), t) for a, t in self.katoms],
         )
 
     def atom_vars(self) -> set[int]:
         """Every variable some atom argument carries."""
-        return {v for a, _t in self.atoms for v in a.variables()}
+        return {v for a, _t in self.atoms for v in a.variables()} | {
+            v for args, _t in self.katoms for a in args for v in a.variables()
+        }
 
     @property
     def is_zero(self) -> bool:
@@ -1530,6 +1534,21 @@ def _q_fold_atoms(ps: QuditPathSum) -> None:
         else:
             ps.const = ps.const * table[arg.terms.get(ONE_Q, 0) % ps.p]
     ps.atoms = keep
+    p = ps.p
+    kkeep = []
+    for args, table in ps.katoms:
+        live = [j for j, a in enumerate(args) if a.variables()]
+        fixed = {j: a.terms.get(ONE_Q, 0) % p for j, a in enumerate(args) if j not in live}
+        if len(live) >= 2:
+            kkeep.append((args, table))
+            continue
+        if not live:
+            ps.const = ps.const * table[sum(fixed[j] * p**j for j in fixed)]
+            continue
+        (j0,) = live
+        base = sum(fixed[j] * p**j for j in fixed)
+        ps.atoms.append((args[j0], tuple(table[base + t * p**j0] for t in range(p))))
+    ps.katoms = kkeep
 
 
 def _q_try_elim(ps: QuditPathSum) -> bool:
@@ -1558,6 +1577,8 @@ def _q_try_hh_pivot(ps: QuditPathSum) -> bool:
         ps.phase = ps.phase.without(y).substitute(z, value)
         ps.constraints = [c.substitute(z, value) for c in ps.constraints]
         ps.atoms = [(a.substitute(z, value), t) for a, t in ps.atoms]
+        ps.katoms = [(tuple(c.substitute(z, value) for c in a), t) for a, t in ps.katoms]
+        _q_fold_atoms(ps)
         ps.path.discard(y)
         ps.path.discard(z)
         ps.const = ps.const.scale(ps.p)
@@ -1611,7 +1632,8 @@ def _q_try_fourier(ps: QuditPathSum) -> bool:
     """[Fourier]: y of degree at most one in the phase, y Q, and in one atom f(a y + c), a a
     unit constant: Sum_y omega^(y Q) f(a y + c) = omega^(-Q c / a) f^(Q / a), f^ the DFT of f."""
     cons_vars = {v for c in ps.constraints for v in c.variables()}
-    for y in sorted(ps.path - cons_vars):
+    kvars = {v for args, _t in ps.katoms for a in args for v in a.variables()}
+    for y in sorted(ps.path - cons_vars - kvars):
         if ps.phase.degree_in(y) > 1:
             continue
         hits = [i for i, (a, _t) in enumerate(ps.atoms) if y in a.variables()]
@@ -1662,7 +1684,8 @@ def _q_try_convolve(ps: QuditPathSum) -> bool:
     constant: Sum_x A(x) g(a x + M) = H(M), H(m) = Sum_v A(v) g(a v + m)."""
     p = ps.p
     cons_vars = {v for c in ps.constraints for v in c.variables()}
-    for x in sorted(ps.path - cons_vars):
+    kvars = {v for args, _t in ps.katoms for a in args for v in a.variables()}
+    for x in sorted(ps.path - cons_vars - kvars):
         mixed = [m for m in ps.phase.terms if any(v == x for v, _e in m) and len(m) > 1]
         if mixed:
             continue
@@ -1705,6 +1728,125 @@ def _q_try_convolve(ps: QuditPathSum) -> bool:
     return False
 
 
+def _kslot(ps: QuditPathSum, y: int) -> tuple[int, int, int] | None:
+    """The one k-ary atom and component carrying ``y``, linearly with a unit constant
+    coefficient, with that coefficient; None otherwise."""
+    found = [
+        (i, j)
+        for i, (args, _t) in enumerate(ps.katoms)
+        for j, a in enumerate(args)
+        if y in a.variables()
+    ]
+    if len(found) != 1:
+        return None
+    i, j = found[0]
+    arg = ps.katoms[i][0][j]
+    if arg.degree_in(y) != 1:
+        return None
+    lin = arg.coefficient(y, 1)
+    if set(lin.terms) != {ONE_Q}:
+        return None
+    return i, j, lin.terms[ONE_Q]
+
+
+def _axis_map(
+    table: Sequence[Cyclo],
+    k: int,
+    j: int,
+    p: int,
+    fn: Callable[[Callable[[int], Cyclo], int], Cyclo],
+) -> tuple[Cyclo, ...]:
+    """A new k-ary table whose entry at t is ``fn(g, t_j)``, g reading the old table along
+    axis j with the other coordinates of t."""
+    out = []
+    for idx in range(p**k):
+        tj = idx // p**j % p
+        base = idx - tj * p**j
+
+        def read(u: int, base: int = base) -> Cyclo:
+            return cast(Cyclo, table[base + (u % p) * p**j])
+
+        out.append(fn(read, tj))
+    return tuple(out)
+
+
+def _q_try_kfourier(ps: QuditPathSum) -> bool:
+    """[Fourier] along one component of a k-ary atom: y of degree at most one in the phase,
+    in no constraint or unary atom, in one component a y + c."""
+    p = ps.p
+    cons_vars = {v for c in ps.constraints for v in c.variables()}
+    unary = {v for a, _t in ps.atoms for v in a.variables()}
+    for y in sorted(ps.path - cons_vars - unary):
+        if ps.phase.degree_in(y) > 1:
+            continue
+        slot = _kslot(ps, y)
+        if slot is None:
+            continue
+        i, j, a = slot
+        args, table = ps.katoms[i]
+        if any(y in b.variables() for jj, b in enumerate(args) if jj != j):
+            continue
+        inv = pow(a, -1, p)
+        q = ps.phase.coefficient(y, 1)
+        c = args[j].without(y)
+        ps.phase = ps.phase.without(y) + (q * c).scale(-inv)
+        new_args = tuple(q.scale(inv) if jj == j else b for jj, b in enumerate(args))
+
+        def dft(g: Callable[[int], Cyclo], t: int) -> Cyclo:
+            return sum((Cyclo.root(Fraction(u * t, p)) * g(u) for u in range(p)), Cyclo.rational(0))
+
+        new_table = _axis_map(table, len(args), j, p, dft)
+        ps.katoms[i] = (new_args, new_table)
+        ps.path.discard(y)
+        _q_fold_atoms(ps)
+        ps.trace.append(_q_step("q_kfourier", y, a, args[j]))
+        return True
+    return False
+
+
+def _q_try_kconvolve(ps: QuditPathSum) -> bool:
+    """[Convolve] along one component of a k-ary atom: x in no constraint, in the phase only
+    through terms in x alone, in unary atoms on x alone and in one component a x + M."""
+    p = ps.p
+    cons_vars = {v for c in ps.constraints for v in c.variables()}
+    for x in sorted(ps.path - cons_vars):
+        if any(any(v == x for v, _e in m) and len(m) > 1 for m in ps.phase.terms):
+            continue
+        if any(x in a.variables() and a.variables() != {x} for a, _t in ps.atoms):
+            continue
+        slot = _kslot(ps, x)
+        if slot is None:
+            continue
+        i, j, a = slot
+        args, g = ps.katoms[i]
+        if any(x in b.variables() for jj, b in enumerate(args) if jj != j):
+            continue
+        alone = [n for n, (b, _t) in enumerate(ps.atoms) if b.variables() == {x}]
+        table = [Cyclo.rational(1)] * p
+        for n in alone:
+            b, t = ps.atoms[n]
+            table = [table[v] * t[b.value({x: v})] for v in range(p)]
+        own = ModPoly(p, {m: c for m, c in ps.phase.terms.items() if any(u == x for u, _e in m)})
+        table = [table[v] * Cyclo.root(Fraction(own.value({x: v}), p)) for v in range(p)]
+        rest = args[j].without(x)
+        weights = list(table)
+
+        def conv(
+            read: Callable[[int], Cyclo], m: int, weights: list[Cyclo] = weights, a: int = a
+        ) -> Cyclo:
+            return sum((weights[v] * read(a * v + m) for v in range(p)), Cyclo.rational(0))
+
+        new_table = _axis_map(g, len(args), j, p, conv)
+        ps.phase = ps.phase.without(x)
+        ps.atoms = [t for n, t in enumerate(ps.atoms) if n not in alone]
+        ps.katoms[i] = (tuple(rest if jj == j else b for jj, b in enumerate(args)), new_table)
+        ps.path.discard(x)
+        _q_fold_atoms(ps)
+        ps.trace.append(_q_step("q_kconvolve", x, a, ModPoly(p)))
+        return True
+    return False
+
+
 def reduce_qudit(ps: QuditPathSum) -> QuditPathSum:
     """``ps`` with [Elim], [HH] on a path pivot (z := -Q'/a), [Gauss], [HH] on a boundary
     constraint, [Fourier], [HH] into an atom and [Convolve] applied to a fixpoint over Z_p, in
@@ -1720,6 +1862,8 @@ def reduce_qudit(ps: QuditPathSum) -> QuditPathSum:
             or _q_try_fourier(out)
             or _q_try_hh_atom(out)
             or _q_try_convolve(out)
+            or _q_try_kfourier(out)
+            or _q_try_kconvolve(out)
         ):
             break
     return out
@@ -1740,6 +1884,7 @@ class QuditCanon:
     const: Cyclo
     boundary: tuple[int, ...]
     atoms: tuple[tuple[tuple[tuple[QMono, int], ...], tuple[Cyclo, ...]], ...] = ()
+    katoms: tuple[tuple[tuple[tuple[tuple[QMono, int], ...], ...], tuple[Cyclo, ...]], ...] = ()
 
     def same(self, other: QuditCanon) -> bool:
         """Whether both forms carry the same data, so denote one function."""
@@ -1756,6 +1901,11 @@ class QuditCanon:
                 a[0] == b[0] and all(x == y for x, y in zip(a[1], b[1], strict=True))
                 for a, b in zip(self.atoms, other.atoms, strict=True)
             )
+            and len(self.katoms) == len(other.katoms)
+            and all(
+                a[0] == b[0] and all(x == y for x, y in zip(a[1], b[1], strict=True))
+                for a, b in zip(self.katoms, other.katoms, strict=True)
+            )
         )
 
     def value(self, values: Mapping[int, int]) -> Cyclo:
@@ -1769,6 +1919,11 @@ class QuditCanon:
         out = self.const * Cyclo.root(Fraction(e, self.p))
         for arg, table in self.atoms:
             out = out * table[ModPoly(self.p, dict(arg)).value(values)]
+        for args, table in self.katoms:
+            idx = sum(
+                ModPoly(self.p, dict(a)).value(values) * self.p**j for j, a in enumerate(args)
+            )
+            out = out * table[idx]
         return out
 
     def complete(self, free: Mapping[int, int]) -> dict[int, int]:
@@ -1837,15 +1992,19 @@ def canonical_qudit(ps: QuditPathSum) -> QuditCanon | None:
         return zero
     pivots = cast(list[tuple[int, ModPoly]], rows)
     phase = ps.phase.copy()
-    atoms = [(a.copy(), t) for a, t in ps.atoms]
+    hold = ps.copy()
     for pivot, rest in pivots:
         phase = phase.substitute(pivot, rest)
-        atoms = [(a.substitute(pivot, rest), t) for a, t in atoms]
-    phase, const, canon_atoms = _canon_atoms(atoms, phase, ps.const, ps.p)
+        hold.atoms = [(a.substitute(pivot, rest), t) for a, t in hold.atoms]
+        hold.katoms = [(tuple(c.substitute(pivot, rest) for c in a), t) for a, t in hold.katoms]
+    hold.const = ps.const
+    _q_fold_atoms(hold)
+    phase, const, canon_atoms = _canon_atoms(hold.atoms, phase, hold.const, ps.p)
+    phase, const, canon_katoms = _canon_katoms(hold.katoms, phase, const, ps.p)
     c0 = phase.terms.pop(ONE_Q, 0)
     if c0:
         const = const * Cyclo.root(Fraction(c0, ps.p))
-    if const.is_zero or any(all(v.is_zero for v in t) for _a, t in canon_atoms):
+    if const.is_zero or any(all(v.is_zero for v in t) for _a, t in (*canon_atoms, *canon_katoms)):
         return zero
     return QuditCanon(
         ps.p,
@@ -1855,7 +2014,84 @@ def canonical_qudit(ps: QuditPathSum) -> QuditCanon | None:
         const,
         ps.boundary,
         canon_atoms,
+        canon_katoms,
     )
+
+
+def _canon_katoms(
+    katoms: Sequence[tuple[tuple[ModPoly, ...], tuple[Cyclo, ...]]],
+    phase: ModPoly,
+    const: Cyclo,
+    p: int,
+) -> tuple[
+    ModPoly,
+    Cyclo,
+    tuple[tuple[tuple[tuple[tuple[QMono, int], ...], ...], tuple[Cyclo, ...]], ...],
+]:
+    """k-ary atoms with each component monic and constant-free (axes permuted), components
+    sorted, equal argument tuples merged, a root-of-unity table written back as phase and
+    constant, and every other table scaled to 1 at its first nonzero entry."""
+    merged: dict[tuple[tuple[tuple[QMono, int], ...], ...], list[Cyclo]] = {}
+    for args, table0 in katoms:
+        k = len(args)
+        table = list(table0)
+        keys = []
+        for j, arg in enumerate(args):
+            lead = min(m for m in arg.terms if m)
+            a = arg.terms[lead]
+            c0 = arg.terms.get(ONE_Q, 0)
+            monic = (arg + ModPoly.const(p, -c0)).scale(pow(a, -1, p))
+
+            def shift(read: Callable[[int], Cyclo], t: int, a: int = a, c0: int = c0) -> Cyclo:
+                return read(a * t + c0)
+
+            table = list(_axis_map(table, k, j, p, shift))
+            keys.append(monic.key())
+        order = sorted(range(k), key=lambda j: keys[j])
+        new = []
+        for idx in range(p**k):
+            coords = [idx // p**n % p for n in range(k)]
+            old = sum(coords[n] * p ** order[n] for n in range(k))
+            new.append(table[old])
+        key = tuple(keys[j] for j in order)
+        if key in merged:
+            merged[key] = [x * y for x, y in zip(merged[key], new, strict=True)]
+        else:
+            merged[key] = new
+    out = []
+    for key in sorted(merged):
+        tab = merged[key]
+        k = len(key)
+        if all(not v.is_zero for v in tab):
+            inv0 = _inverse_or_none(tab[0])
+            exps = [_root_exponent(v * inv0, p) for v in tab]
+            if all(e is not None for e in exps):
+                const = const * tab[0]
+                e_poly = ModPoly(p)
+                for idx, e in enumerate(exps):
+                    if not e:
+                        continue
+                    term = ModPoly.const(p, int(e))
+                    for n in range(k):
+                        t = idx // p**n % p
+                        holder = -1 - n
+                        shifted = ModPoly(
+                            p, {((holder, 1),): 1, (): -t % p} if t else {((holder, 1),): 1}
+                        )
+                        term = term * (ModPoly.const(p, 1) + shifted.power(p - 1).scale(-1))
+                    e_poly = e_poly + term
+                for n in range(k):
+                    e_poly = e_poly.substitute(-1 - n, ModPoly(p, dict(key[n])))
+                phase = phase + e_poly
+                continue
+        if all(v.is_zero for v in tab):
+            const = Cyclo.rational(0)
+            continue
+        lead_value = next(v for v in tab if not v.is_zero)
+        inv = _inverse_or_none(lead_value)
+        const = const * lead_value
+        out.append((key, tuple(v * inv for v in tab)))
+    return phase, const, tuple(out)
 
 
 def _interp_mod(values: Sequence[int], var: int, p: int) -> ModPoly:
@@ -1915,6 +2151,9 @@ def _canon_atoms(
                 e_poly = _interp_mod([int(e) for e in exps if e is not None], placeholder, p)
                 phase = phase + e_poly.substitute(placeholder, arg)
                 continue
+        if all(v.is_zero for v in tab):
+            const = Cyclo.rational(0)
+            continue
         lead_value = next(v for v in tab if not v.is_zero)
         inv = _inverse_or_none(lead_value)
         const = const * lead_value
@@ -2004,9 +2243,23 @@ def witness_points_qudit(a: QuditCanon, b: QuditCanon) -> list[dict[int, int]]:
         for mono in sorted(monos):
             for vals in product(*(range(e + 1) for _v, e in mono)):
                 points.append(x.complete({v: c for (v, _e), c in zip(mono, vals, strict=True)}))
-        atom_vars = sorted({v for arg, _t in (*x.atoms, *y.atoms) for m, _c in arg for v, _e in m})
+        atom_vars = sorted(
+            {v for arg, _t in (*x.atoms, *y.atoms) for m, _c in arg for v, _e in m}
+            | {
+                v
+                for args, _t in (*x.katoms, *y.katoms)
+                for arg in args
+                for m, _c in arg
+                for v, _e in m
+            }
+        )
         for v in atom_vars:
             points.extend(x.complete({v: t}) for t in range(x.p))
+        for args, _t in (*x.katoms, *y.katoms):
+            kv = sorted({v for arg in args for m, _c in arg for v, _e in m})
+            if x.p ** len(kv) <= 625:
+                for vals in product(range(x.p), repeat=len(kv)):
+                    points.append(x.complete(dict(zip(kv, vals, strict=True))))
     return points
 
 
@@ -2017,6 +2270,7 @@ def entry_at_qudit(ps: QuditPathSum, values: Mapping[int, int]) -> Cyclo:
     at.phase = at.phase.assign(values)
     at.constraints = [c.assign(values) for c in at.constraints]
     at.atoms = [(a.assign(values), t) for a, t in at.atoms]
+    at.katoms = [(tuple(c.assign(values) for c in a), t) for a, t in at.katoms]
     if any(c.terms for c in at.constraints):
         return Cyclo.rational(0)
     at = reduce_qudit(at)

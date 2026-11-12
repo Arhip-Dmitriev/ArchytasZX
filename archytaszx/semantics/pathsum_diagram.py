@@ -416,6 +416,7 @@ def _qudit_sum(
     dimension p adds ``x * z`` and p^(-1/2); X and F on p^k, k > 1, raise."""
     phase = ModPoly(p)
     atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]] = []
+    katoms: list[tuple[tuple[ModPoly, ...], tuple[Cyclo, ...]]] = []
     c, s2 = constant(diagram.scalar.to_sympy())
     if s2:
         c = with_sqrt2(c, s2)
@@ -427,7 +428,7 @@ def _qudit_sum(
         if name == Z_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node, p)
             digits = [var_of[uf.find(("z", node_id, j))] for j in range(k)]
-            phase = phase + _qudit_part(node_id, node, digits, p, atoms)
+            phase = phase + _qudit_part(node_id, node, digits, p, atoms, katoms)
         elif name in (X_SPIDER.name, FOURIER_BOX.name):
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node, p)
             if k != 1:
@@ -453,11 +454,11 @@ def _qudit_sum(
                     ),
                     sign,
                 )
-            phase = phase + _qudit_part(node_id, node, [y], p, atoms)
+            phase = phase + _qudit_part(node_id, node, [y], p, atoms, katoms)
             for _leg in legs:
                 c = c * inv_root
     constraints = [ModPoly(p, {((a, 1),): 1, ((b, 1),): p - 1}) for a, b in same]
-    return QuditPathSum(p, tuple(boundary), path, phase, c, constraints, [], atoms)
+    return QuditPathSum(p, tuple(boundary), path, phase, c, constraints, [], atoms, katoms)
 
 
 def _qudit_part(
@@ -466,19 +467,23 @@ def _qudit_part(
     digits: list[int],
     p: int,
     atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]],
+    katoms: list[tuple[tuple[ModPoly, ...], tuple[Cyclo, ...]]],
 ) -> ModPoly:
     """A spider table as an F_p phase polynomial, or, on dimension p when its entries are not
     multiples of 1/p or carry weights, as an atom on its variable (its p coefficients)."""
     try:
         return _qudit_table(node_id, node, digits, p)
     except PathSumUnsupported:
-        if len(digits) != 1 or node.phase is None:
+        if node.phase is None:
             raise
     table = []
-    for v in range(p):
+    for v in range(p ** len(digits)):
         cv, kv = constant(node.phase.coefficient(v).to_sympy())
         table.append(with_sqrt2(cv, kv))
-    atoms.append((ModPoly(p, {((digits[0], 1),): 1}), tuple(table)))
+    if len(digits) == 1:
+        atoms.append((ModPoly(p, {((digits[0], 1),): 1}), tuple(table)))
+    else:
+        katoms.append((tuple(ModPoly(p, {((x, 1),): 1}) for x in digits), tuple(table)))
     return ModPoly(p)
 
 
