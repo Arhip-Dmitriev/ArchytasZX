@@ -452,9 +452,9 @@ def compare(
     if not (is_pure(diagram_a) and is_pure(diagram_b)):
         exact = mode is EqualityMode.UP_TO_GLOBAL_PHASE
         result = compare(
-            double(diagram_a),
-            double(diagram_b),
-            assignment,
+            double(instantiate(diagram_a, assignment)),
+            double(instantiate(diagram_b, assignment)),
+            {},
             mode=EqualityMode.EXACT if exact else mode,
             tolerance=tolerance,
             max_elements=max_elements,

@@ -80,7 +80,7 @@ from archytaszx.diagram.bangbox import (
     substitute_index_phases,
 )
 from archytaszx.diagram.generators import GeneratorError
-from archytaszx.diagram.graph import Diagram, GraphError, PortRef
+from archytaszx.diagram.graph import BangBoxId, Diagram, GraphError, PortRef
 from archytaszx.diagram.mixed import double, is_pure
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationReport
@@ -638,6 +638,43 @@ class _OracleRun:
     mismatch: Mapping[str, CheckAssignmentValue] | None
     comparison: ComparisonResult | None
     refusals: tuple[str, ...] = ()
+
+
+def _box_boundary_shape(diagram: Diagram) -> tuple[object, ...]:
+    """Per boundary slot (outputs, then inputs): the kind, first-appearance rank and
+    multiplicity of the bang box owning it, or None."""
+    rank: dict[BangBoxId, int] = {}
+    shape: list[object] = []
+    for refs in (diagram.boundary_outputs, diagram.boundary_inputs):
+        for ref in refs:
+            owner = None
+            for box_id, box in sorted(diagram.bang_boxes.items()):
+                if ref.node_id in box.node_scope:
+                    owner = ("node", box_id)
+                elif ref in box.port_scope:
+                    owner = ("port", box_id)
+            if owner is None:
+                shape.append(None)
+                continue
+            kind, box_id = owner
+            rank.setdefault(box_id, len(rank))
+            shape.append((kind, rank[box_id], str(diagram.bang_boxes[box_id].multiplicity)))
+        shape.append("|")
+    return tuple(shape)
+
+
+def _doubled_order_withheld(left: Diagram, right: Diagram) -> str | None:
+    """Why the doubled pair cannot be compared box by box, or None: a node-scope box with
+    boundary slots doubles to one copy-major block over both sheets, so two sides whose
+    boundary box shapes differ would be compared under permuted orders."""
+    shape_l, shape_r = _box_boundary_shape(left), _box_boundary_shape(right)
+    node_boxed = any(isinstance(s, tuple) and s[0] == "node" for s in (*shape_l, *shape_r))
+    if not node_boxed or shape_l == shape_r:
+        return None
+    return (
+        "a node-scope bang box with boundary slots doubles to one copy-major block over both "
+        "sheets, and the two sides' boundary box shapes differ"
+    )
 
 
 def _oracle_stop(oracle: _OracleRun) -> str:
@@ -1499,6 +1536,42 @@ def _decide(
 ) -> Decision:
     """The ladder of :func:`decide_equal`, sampling and contracting under ``floors``."""
     if mixed or not (is_pure(left) and is_pure(right)):
+        withheld = _doubled_order_withheld(left, right)
+        if withheld is not None:
+            family_l, family_r = _family(left), _family(right)
+            candidates = (
+                tuple(samples) if samples is not None else sample_grid(family_l, family_r, floors)
+            )
+            oracle = _run_oracle(
+                family_l,
+                family_r,
+                candidates,
+                max_samples,
+                tolerance,
+                max_elements,
+                samples is None,
+            )
+            checked = len(oracle.evaluated)
+            withheld_stops = (("doubled", "withheld"), ("oracle", _oracle_stop(oracle)))
+            if oracle.mismatch is not None:
+                return Decision(
+                    EqualityVerdict.UNEQUAL,
+                    DecisionMethod.ORACLE_COUNTEREXAMPLE,
+                    f"oracle mismatch at {dict(oracle.mismatch)!r} (expanded, then doubled): "
+                    f"{oracle.comparison.reason if oracle.comparison else ''}",
+                    counterexample=oracle.mismatch,
+                    comparison=oracle.comparison,
+                    samples_checked=checked,
+                    stops=withheld_stops,
+                )
+            return Decision(
+                EqualityVerdict.UNKNOWN,
+                DecisionMethod.NONE,
+                f"doubled comparison withheld: {withheld}; "
+                f"{oracle_summary(checked, oracle.refusals)} (expanded, then doubled)",
+                samples_checked=checked,
+                stops=withheld_stops,
+            )
         doubled = (double(left), double(right))
         inner = _decide(
             *doubled,

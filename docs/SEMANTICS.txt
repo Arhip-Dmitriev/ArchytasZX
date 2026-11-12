@@ -114,7 +114,8 @@ then contracts and compares.
   UP_TO_POSITIVE_SCALAR
                       b == lambda * a for some real lambda > 0, recovered the same way.
 
-Mixed operands (a discard on either side) are compared by their doubled diagrams
+Mixed operands (a discard on either side) are compared by their doubled diagrams, each
+instantiated at the assignment before it is doubled
 (ComparisonResult.doubled); there UP_TO_GLOBAL_PHASE is run as EXACT, the two coinciding on
 CPMs. denote.denote_mixed and contract_symbolic.contract_mixed_symbolic give a mixed
 diagram's CPM numerically and symbolically (MIXED.txt).
