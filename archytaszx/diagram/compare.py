@@ -268,35 +268,39 @@ def _incidence(
 def _refine(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
     """Colours refined by repeated rounds of folding each node's neighbours' colours into
     its own, until the partition stops splitting."""
-    colours = _initial_colours(diagram, symmetric)
-    incidence = _incidence(diagram, symmetric)
-    for _round in range(len(colours) + 1):
-        updated = {
-            nid: _digest(
-                (
-                    colours[nid],
-                    tuple(
-                        sorted(
-                            (own_dir, own_index, colours[other], other_dir, other_index)
-                            for own_dir, own_index, other, other_dir, other_index in incidence[nid]
-                        )
-                    ),
-                )
-            )
-            for nid in sorted(colours)
-        }
-        if _classes(updated) == _classes(colours):
-            return colours
-        colours = updated
-    return colours
+    return _refine_jointly(((diagram, symmetric),))[0]
 
 
-def _classes(colours: dict[NodeId, str]) -> tuple[tuple[NodeId, ...], ...]:
-    """The partition ``colours`` induces, as sorted node-id blocks in sorted colour order."""
-    blocks: dict[str, list[NodeId]] = {}
-    for nid in sorted(colours):
-        blocks.setdefault(colours[nid], []).append(nid)
-    return tuple(tuple(blocks[colour]) for colour in sorted(blocks))
+def _refine_jointly(parts: tuple[tuple[Diagram, bool], ...]) -> list[dict[NodeId, str]]:
+    """:func:`_refine` over the disjoint union of ``parts``: each round ranks the nodes'
+    ``(rank, sorted neighbour ranks)`` signatures in sorted order, until the class count stops
+    growing; a node's colour is its initial colour and its final rank."""
+    initial = [_initial_colours(d, sym) for d, sym in parts]
+    nodes = [(p, nid) for p, colours in enumerate(initial) for nid in sorted(colours)]
+    index = {key: i for i, key in enumerate(nodes)}
+    ends: list[list[tuple[str, int, int, str, int]]] = [[] for _ in nodes]
+    for p, (d, sym) in enumerate(parts):
+        for nid, items in _incidence(d, sym).items():
+            ends[index[(p, nid)]] = [
+                (od, oi, index[(p, other)], fd, fi) for od, oi, other, fd, fi in items
+            ]
+    order = {c: r for r, c in enumerate(sorted({initial[p][nid] for p, nid in nodes}))}
+    rank = [order[initial[p][nid]] for p, nid in nodes]
+    classes = len(order)
+    for _round in range(len(nodes) + 1):
+        sigs = [
+            (rank[i], tuple(sorted((od, oi, rank[o], fd, fi) for od, oi, o, fd, fi in ends[i])))
+            for i in range(len(nodes))
+        ]
+        ranked = {sig: r for r, sig in enumerate(sorted(set(sigs)))}
+        if len(ranked) == classes:
+            break
+        classes = len(ranked)
+        rank = [ranked[sig] for sig in sigs]
+    out: list[dict[NodeId, str]] = [{} for _ in parts]
+    for i, (p, nid) in enumerate(nodes):
+        out[p][nid] = f"{initial[p][nid]}.{rank[i]}"
+    return out
 
 
 def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[object, ...], ...]:
@@ -448,8 +452,7 @@ def isomorphism(
         return None
     symmetric = _symmetric(a, symmetric_legs) and _symmetric(b, symmetric_legs)
 
-    colours_a = _refine(a, symmetric)
-    colours_b = _refine(b, symmetric)
+    colours_a, colours_b = _refine_jointly(((a, symmetric), (b, symmetric)))
     by_colour: dict[str, list[NodeId]] = {}
     for nid in sorted(colours_b):
         by_colour.setdefault(colours_b[nid], []).append(nid)
