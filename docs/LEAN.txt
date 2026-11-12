@@ -394,6 +394,37 @@ floor hypothesis (it holds for every d). An instance decided on its expanded pai
 box-free theorem; its link to the boxed original at v is the expandK item of section 6.
 
 
+4.8 Path-sum certificates (archytaszx.semantics.lean_pathsum)
+
+ArchytasZX/PathSum.lean holds one lemma per rule of pathsum.reduce and reduce_qudit, each the
+identity the rule applies to the sum over its eliminated variables, at Boolean values of the
+variables its quotients read ((-1)^q for exp(2 pi i q / 2), om 8 ^ e for zeta_8^e):
+
+  ps_elim          c + c = 2 c                                          [Elim]
+  ps_hh            1 + (-1)^q = 2 [q even]                              [HH] constraint
+  ps_hh_pin        Sum_z (1 + (-1)^(z + q)) g z = 2 g q, q a bit         [HH] pivot
+  ps_omega0/1      1 + zeta_8^2 = sqrt 2 zeta_8, 1 + zeta_8^6 = sqrt 2 zeta_8 zeta_8^6
+                                                                        [omega]
+  ps_omega_conj0/1 the conjugate pair                                   [omega] conjugate
+  ps_hh_gen        Sum_z (1 + (-1)^(z a + b)) g z = (1 + (-1)^(b (1 + a))) g b, a + b >= 1
+                                                                        [HHgen]
+  ps_rem           (1 + (-1)^m) c^m g = (1 + (-1)^m) g, m a bit          [Rem]
+  ps_hh_nl         (1 + (-1)^q)(1 + (-1)^q') = 2 (1 + (-1)^(q + q' + q q'))
+                                                                        [HHnl]
+  ps_dyadic        Sum_{Y < 2^k} zeta_(2^k)^(Y S) = Prod_{j<k} (1 + (-1)^(digit j of S)),
+                   through ps_geom (N [S = 0 mod N]) and ps_digits       [Dyadic]
+  q_elim, q_hh     the Z_p sums p c and p [q = 0 mod p] (q_hh is ps_geom) [Elim], [HH] over Z_p
+  q_gauss          Sum_y zeta_p^(a y^2 + q y) = zeta_p^e Sum_y zeta_p^(a y^2) when 2 a c = q and
+                   e + a c^2 = 0 mod p, by q_shift (a p-periodic sum is shift invariant)
+                                                                        [Gauss]
+
+No lemma enumerates the instance's variables; each case-splits only its own bits. PSCanon and
+QCanon carry canonical-form data. export_pair(left, right, name) writes, for a pair whose path
+sums reduce to one canonical form, the left trace (one rule-lemma instance per PathSum.trace
+step, its variable, pivot and substitution as a comment), both canonical forms as PSCanon or
+QCanon literals with canon_eq : canonL = canonR := rfl, and the right trace. The file does not
+state L = R; G15 names what is missing.
+
 5. REFUTATIONS
 --------------
 
@@ -713,3 +744,12 @@ through its doubled diagrams (4.6). The conjugation of MIXED.txt 2.1 is not stat
 generator in Lean; cpm_conj states its effect on any network whose entries are conjugated. Mixed.lean does not state F2 (doubling is compositional),
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
+
+G15 Path-sum composition. A lean_pathsum file checks every step's local identity and the
+canonical-form equality, not L = R. Missing: the semantic value of a PathSum as a Boolean sum
+over listed path variables, its link to the network value (the translation lemmas of
+PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations), and the step lemma
+that composes a local identity with the rest of the sum (splitting the phase into the terms of
+the eliminated variable and the rest, the Boolean lift of a substitution with x^2 = x and
+integer terms dropped, path-variable order). Until they exist a path_sum EQUAL stays
+EQUAL_UNCERTIFIED. PathSum.lean is not in the ArchytasZX root import list until it is checked.
