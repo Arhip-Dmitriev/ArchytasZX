@@ -718,8 +718,9 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
   ArchytasZX    built     everything; EQUAL, UNEQUAL, both uncertified, UNKNOWN; Lean proof
   PyZX 0.10.8   built     d = 2, concrete n, pure circuits; exact equality, scalar included: the
                           circuit's global phase (Qiskit's, minus theta/2 per rz, since PyZX reads
-                          rz(theta) as diag(1, e^(i theta))) and the specification's exact scalar
-                          (the engine diagram's) are applied. Maps: full_reduce of circuit .
+                          rz(theta) as diag(1, e^(i theta))), the magnitude of a circuit scalar
+                          of modulus other than 1 (the other rivals refuse such a circuit) and
+                          the specification's exact scalar (the engine diagram's) are applied. Maps: full_reduce of circuit .
                           spec^dagger to the identity (else unknown) whose scalar is 1; states:
                           <s|c> = <c|c> = <s|s> (unknown when an inner product keeps vertices
                           after reduction). Values compare as complex numbers (relative 1e-9)

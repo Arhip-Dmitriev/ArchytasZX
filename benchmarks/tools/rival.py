@@ -81,9 +81,13 @@ def _num(expr: Any) -> float:
     return float(sp.N(sp.sympify(expr).subs({sp.Symbol("d"): 2})))
 
 
-def qiskit_circuit(c: ir.Circuit) -> tuple[Any, dict[int, int], dict[int, int]]:
+def qiskit_circuit(
+    c: ir.Circuit, unit_scalar: bool = True
+) -> tuple[Any, dict[int, int], dict[int, int]]:
     """The unitary part of a qubit IR circuit as a Qiskit circuit (qubit i is wire i), the Init
-    values and the Post values by wire index."""
+    values and the Post values by wire index; the circuit scalar's argument is the global
+    phase, a scalar of modulus other than 1 refused unless ``unit_scalar`` is False (its
+    magnitude then left to the caller, :func:`scalar_parts` of ``c.scalar``)."""
     import sympy as sp
     from qiskit import QuantumCircuit
     from qiskit.circuit.library import DiagonalGate, UnitaryGate, XGate, ZGate
@@ -160,6 +164,10 @@ def qiskit_circuit(c: ir.Circuit) -> tuple[Any, dict[int, int], dict[int, int]]:
             qc.append(UnitaryGate(_little(mat, len(ws))), [idx[q] for q in ws])
         else:
             raise Unsupported(f"gate {type(g).__name__}")
+    if not unit_scalar:
+        zero, _, arg = scalar_parts(c.scalar)
+        qc.global_phase = 0.0 if zero else arg
+        return qc, inits, posts
     val = complex(sp.N(sp.sympify(c.scalar)))
     if abs(abs(val) - 1) > 1e-12:
         raise Unsupported("a circuit scalar of modulus other than 1")

@@ -46,12 +46,13 @@ def zx_run(tool: str, env: str, package: str, inst: Any, job: dict[str, Any]) ->
     c0 = time.process_time()
     try:
         c = rival.qubit_ir(inst, n)
-        qc, inits, posts = rival.qiskit_circuit(c)
+        qc, inits, posts = rival.qiskit_circuit(c, unit_scalar=False)
         text, phase = rival.qasm_and_zx_phase(qc)
         payload = {
             "tool": tool,
             "qasm": text,
             "phase": phase,
+            "circuit_scalar": rival.scalar_parts(c.scalar)[:2],
             "inits": {str(k): v for k, v in inits.items()},
             "posts": {str(k): v for k, v in posts.items()},
             "wires": len(c.wires),

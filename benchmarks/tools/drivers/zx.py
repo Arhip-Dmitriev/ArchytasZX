@@ -137,10 +137,11 @@ def scalar_parts(s):
     return False, logm, ang
 
 
-def _shift(parts, log_add, arg_add):
-    """``parts`` times a factor of log magnitude ``log_add`` and argument ``arg_add``."""
+def _shift(parts, log_add, arg_add, zero_factor=False):
+    """``parts`` times a factor of log magnitude ``log_add`` and argument ``arg_add`` (zero
+    when ``zero_factor``)."""
     zero, lg, ang = parts
-    return zero, lg + log_add, ang + arg_add
+    return zero or zero_factor, lg + log_add, ang + arg_add
 
 
 def _same(x, y):
@@ -161,26 +162,27 @@ def _same(x, y):
 
 def states_equal(cs, cc, ss, p):
     """Whether the circuit's state c equals the specification's s exactly: <s|c> = <c|c> =
-    <s|s>, the circuit's global phase phi and the specification's scalar lambda applied
-    (<s|c> e^(i phi) conj(lambda), <s|s> |lambda|^2)."""
+    <s|s>, the circuit's global phase phi, its scalar's magnitude m and the specification's
+    scalar lambda applied (<s|c> m e^(i phi) conj(lambda), <c|c> m^2, <s|s> |lambda|^2)."""
     zero, lam_log, lam_arg = p["rhs"]["scalar"]
-    if zero:
-        return scalar_parts(cc)[0]
+    c_zero, c_log = p.get("circuit_scalar", [False, 0.0])
     phi = float(p.get("phase", 0.0))
-    a = _shift(scalar_parts(cs), lam_log, phi - lam_arg)
-    b = scalar_parts(cc)
-    c = _shift(scalar_parts(ss), 2 * lam_log, 0.0)
+    a = _shift(scalar_parts(cs), lam_log + c_log, phi - lam_arg, zero or c_zero)
+    b = _shift(scalar_parts(cc), 2 * c_log, 0.0, c_zero)
+    c = _shift(scalar_parts(ss), 2 * lam_log, 0.0, zero)
     return _same(a, b) and _same(b, c)
 
 
 def map_scalar_one(scalar, p):
-    """Whether the scalar of the reduced circuit . spec^dagger, times e^(i phi) conj(lambda),
-    is exactly 1."""
+    """Whether the scalar of the reduced circuit . spec^dagger, times m e^(i phi) conj(lambda)
+    (m the circuit scalar's magnitude), is exactly 1."""
     zero, lam_log, lam_arg = p["rhs"]["scalar"]
-    if zero:
+    c_zero, c_log = p.get("circuit_scalar", [False, 0.0])
+    if zero or c_zero:
         return False
     phi = float(p.get("phase", 0.0))
-    return _same(_shift(scalar_parts(scalar), lam_log, phi - lam_arg), (False, 0.0, 0.0))
+    shifted = _shift(scalar_parts(scalar), lam_log + c_log, phi - lam_arg)
+    return _same(shifted, (False, 0.0, 0.0))
 
 
 def norm_identity(cs, cc, ss):
