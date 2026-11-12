@@ -13,7 +13,10 @@
 
 """Quantum RAM lookup with n address bits and 2^n memory bits by swap routing: per address bit
 (least significant first) controlled swaps pair the memory cells and bring the addressed cell to
-cell 0, CX onto the output, the routing undone; equals |a, m, t> -> |a, m, t + m_a>."""
+cell 0, CX onto the output, the routing undone; equals one MCX per address value v, controlled on
+a = v and m_v, onto t."""
+
+from fractions import Fraction
 
 from benchmarks.subjects._common import *
 from benchmarks.subjects._gates import cswap
@@ -38,18 +41,23 @@ def _circuit(n, d):
     return circuit([*a, *m, t], [*route, CX(m[0], t), *unroute])
 
 
-def _lookup(n):
-    def f(x):
-        addr = sum(x[j] << j for j in range(n))
-        return x[n + addr]
+def _flip(x):
+    return Fraction(x[-1], 2)
 
-    return f
+
+def _mcx(cs, t, values):
+    """MCX of ``cs`` = ``values`` onto t: F, the phase table with its one nonzero entry, F^3."""
+    return [F(t), PhaseFn((*cs, t), _flip, support=((*values, 1),)), F(t, 3)]
 
 
 def _spec(c):
-    """The oracle t += m[a]."""
-    a, m, t = _wires(c.nv)
-    return defining(c, [*a, *m, t], [Oracle((*a, *m), t, _lookup(c.nv))])
+    """Per address value v, the MCX on a = v and m_v onto t."""
+    n = c.nv
+    a, m, t = _wires(n)
+    gates = [
+        g for v in range(2**n) for g in _mcx((*a, m[v]), t, (*((v >> j) & 1 for j in range(n)), 1))
+    ]
+    return defining(c, [*a, *m, t], gates)
 
 
 SUBJECT = Subject(

@@ -13,12 +13,12 @@
 
 """QAOA, one layer, for MaxCut on the n-cycle: |+>^n, the cost unitary e^(-i gamma C) with gamma
 = pi/4 as CX, P(-1/8), CX per edge, the mixer e^(-i beta X) per qubit; the specification writes
-the cost unitary as the diagonal of the cut function."""
+the cost unitary as one two-wire phase gadget per edge."""
 
 from fractions import Fraction
 
 from benchmarks.subjects._common import *
-from benchmarks.subjects._spec import defining
+from benchmarks.subjects._spec import Dsl
 
 _BETA = Fraction(1, 8)
 
@@ -45,14 +45,27 @@ def _circuit(n, d):
 
 
 def _spec(c):
-    """|+>^n, the cut diagonal, X phases."""
+    """|+>^n, per edge the gadget Z legs, X hub, phase -1/8 on odd parity, X phases."""
     n = c.nv
     q = unrolled("q", n)
-
-    def cut(x):
-        return Fraction(-sum(x[a] ^ x[b] for a, b in _edges(n)), 8)
-
-    return defining(c, q, [*_start(q), PhaseFn(tuple(q), cut), *_mixer(q)])
+    b = Dsl()
+    ports = {x: f"{b.node(f'Z(0 -> 1, {c.D})')}.out0" for x in q}
+    for i, j in _edges(n):
+        hub = b.node(f"X(2 -> 1, {c.D})")
+        for k, x in enumerate((q[i], q[j])):
+            leg = b.node(f"Z(1 -> 2, {c.D})")
+            b.wire(ports[x], f"{leg}.in0")
+            b.wire(f"{leg}.out1", f"{hub}.in{k}")
+            ports[x] = f"{leg}.out0"
+        ph = b.node(f"Z(1 -> 0, {c.D}) phase{{1: -1/8}}")
+        b.wire(f"{hub}.out0", f"{ph}.in0")
+    for x in q:
+        mix = b.node(f"X(1 -> 1, {c.D}) phase{{1: {_BETA}}}")
+        b.wire(ports[x], f"{mix}.in0")
+        ports[x] = f"{mix}.out0"
+    b.outs += [ports[x] for x in q]
+    b.scalar.append(f"2^(-{n}/2) * 2^({len(_edges(n))}/2)")
+    return b.text()
 
 
 SUBJECT = Subject(

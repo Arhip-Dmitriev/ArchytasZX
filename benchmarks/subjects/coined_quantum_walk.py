@@ -13,10 +13,10 @@
 
 """Coined quantum walk on the cycle of 2^n sites, one step: the Hadamard coin, then the shift x
 + 1 when the coin is 1 and x - 1 when it is 0, each a multi-controlled incrementer; equals F on
-the coin followed by the shift permutation."""
+the coin followed by the conditional shift x -> x + 2 coin - 1 on the bound position register."""
 
 from benchmarks.subjects._common import *
-from benchmarks.subjects._spec import defining
+from benchmarks.subjects._spec import Dsl, bind, split
 
 
 def _inc(x, coin, value):
@@ -32,20 +32,33 @@ def _circuit(n, d):
     return circuit(["coin", *x], gates)
 
 
-def _shift(n):
-    N = 2**n
-
-    def p(v):
-        c, x = divmod(v, N)
-        return c * N + ((x + 1) % N if c else (x - 1) % N)
-
-    return p
-
-
 def _spec(c):
-    """F on the coin, then the shift."""
-    x = unrolled("x", c.nv)
-    return defining(c, ["coin", *x], [F("coin"), Perm(("coin", *x), _shift(c.nv))])
+    """F on the coin; x bound, shifted by -1, the copied coin added at bit value 2, split."""
+    n = c.nv
+    N = 2**n
+    b = Dsl()
+    f = b.node(f"F({c.D})")
+    b.ins.append(f"{f}.in0")
+    ins, port = bind(b, n, 2)
+    b.ins += ins
+    dec = b.node(f"X(1 -> 1, literal {N}) phase{{k: k/{N}}}")
+    b.wire(port, f"{dec}.in0")
+    port, coin = f"{dec}.out0", f"{f}.out0"
+    if n >= 2:
+        z = b.node(f"Z(1 -> 2, {c.D})")
+        b.wire(coin, f"{z}.in0")
+        coin = f"{z}.out0"
+        bits, two_c = bind(b, n, 2)
+        for i, p in enumerate(bits):
+            leg = f"{z}.out1" if i == n - 2 else f"{b.node(f'X(0 -> 1, {c.D})')}.out0"
+            b.wire(leg, p)
+        add = b.node(f"X(2 -> 1, literal {N})")
+        b.wire(port, f"{add}.in0")
+        b.wire(two_c, f"{add}.in1")
+        port = f"{add}.out0"
+        b.scalar.append(f"2^(-{n - 1}/2) * {N}^(1/2)")
+    b.outs += [coin, *split(b, port, n, 2)]
+    return b.text()
 
 
 SUBJECT = Subject(
