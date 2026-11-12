@@ -1553,12 +1553,81 @@ def decide_restricted(
 
     if not isinstance(family_first, bool):
         raise DecideGrammarError(f"family_first must be a bool, got {family_first!r}")
+
+    def finish(d: Decision) -> Decision:
+        if restriction.certifiable:
+            return d
+        if d.verdict is EqualityVerdict.EQUAL:
+            return replace(
+                d,
+                verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
+                reason=f"{d.reason}; uncertified: the kernel states no clause of "
+                f"{restriction.text()}",
+                stops=(*d.stops, ("proof", "no_proof")),
+            )
+        point = d.counterexample_original or d.counterexample
+        if (
+            d.verdict is EqualityVerdict.UNEQUAL
+            and point is not None
+            and not in_domain(restriction, point)
+        ):
+            return replace(
+                d,
+                verdict=EqualityVerdict.UNKNOWN,
+                method=DecisionMethod.NONE,
+                reason=f"{d.reason}; that point lies outside {restriction.text()}",
+                counterexample=None,
+                counterexample_original=None,
+            )
+        return d
+
+    if restriction.finite:
+        finite = restriction.finite
+        settled: list[str] = []
+        left_open: list[str] = []
+        last: Decision | None = None
+        for combo in itertools.product(*(c.values for c in finite)):
+            at = {c.symbol: v for c, v in zip(finite, combo, strict=True)}
+            label = ", ".join(f"{k} = {v}" for k, v in at.items())
+            one = decide_restricted(
+                left, right, restriction.instance_at(at), family_first=family_first, **options
+            )
+            if one.verdict in (EqualityVerdict.UNEQUAL, EqualityVerdict.UNEQUAL_UNCERTIFIED):
+                return replace(
+                    one,
+                    reason=f"instance {label}: {one.reason}",
+                    restriction=restriction,
+                )
+            if one.verdict in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED):
+                settled.append(label)
+                last = one
+            else:
+                left_open.append(label)
+        if left_open or last is None:
+            return Decision(
+                EqualityVerdict.UNKNOWN,
+                DecisionMethod.NONE,
+                f"instances left undecided: {'; '.join(left_open)}"
+                + (f" (equal at {'; '.join(settled)})" if settled else ""),
+                restriction=restriction,
+            )
+        return replace(
+            last,
+            verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
+            reason=f"every instance equal ({'; '.join(settled)}); uncertified: the kernel "
+            f"states no clause of {restriction.text()}",
+            restriction=restriction,
+            family=None,
+            family_holds=False,
+        )
     family: Decision | None = None
     if family_first:
         with _trace.span("decide.restriction.family"):
             family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
         if family.verdict is EqualityVerdict.EQUAL:
-            return replace(family, restriction=restriction, family=family, family_holds=True)
+            return finish(
+                replace(family, restriction=restriction, family=family, family_holds=True)
+            )
     with _trace.span("decide.restriction.substitute"):
         pair = subst_pair(left, right, restriction)
     if family is not None and family.verdict is EqualityVerdict.UNEQUAL:
@@ -1569,23 +1638,31 @@ def decide_restricted(
         if family.method is DecisionMethod.INTERFACE:
             reason = _interface_reason(_family(pair[0]), _family(pair[1]))
             if reason is not None:
-                return replace(
-                    family,
-                    reason=reason,
-                    restriction=restriction,
-                    family=family,
-                    restricted_pair=pair,
+                return finish(
+                    replace(
+                        family,
+                        reason=reason,
+                        restriction=restriction,
+                        family=family,
+                        restricted_pair=pair,
+                    )
                 )
         elif point is not None and in_domain(restriction, point):
-            return replace(
-                family,
-                restriction=restriction,
-                family=family,
-                counterexample_original=MappingProxyType(dict(point)),
+            return finish(
+                replace(
+                    family,
+                    restriction=restriction,
+                    family=family,
+                    counterexample_original=MappingProxyType(dict(point)),
+                )
             )
     samples = options.get("samples")
     if samples is not None:
         options = {**options, "samples": restricted_samples(restriction, samples)}  # type: ignore[arg-type]
+    elif not restriction.certifiable:
+        grid = sample_grid(_family(pair[0]), _family(pair[1]), restriction.floors)
+        inside = tuple(p for p in grid if in_domain(restriction, to_original(restriction, p)))
+        options = {**options, "samples": inside}
     with _trace.span("decide.restriction.pair"):
         inner = _decide(*pair, floors=restriction.floors, **options)  # type: ignore[arg-type]
     original = None
@@ -1594,15 +1671,18 @@ def decide_restricted(
         original = MappingProxyType(to_original(restriction, inner.counterexample))
         where = ", ".join(f"{k} = {v}" for k, v in original.items())
         reason = f"{reason}; in the original symbols at {where}"
-    return replace(
-        inner,
-        reason=reason,
-        restriction=restriction,
-        family=family,
-        family_holds=False,
-        restricted_pair=pair,
-        counterexample_original=original,
-        samples_checked=(0 if family is None else family.samples_checked) + inner.samples_checked,
+    return finish(
+        replace(
+            inner,
+            reason=reason,
+            restriction=restriction,
+            family=family,
+            family_holds=False,
+            restricted_pair=pair,
+            counterexample_original=original,
+            samples_checked=(0 if family is None else family.samples_checked)
+            + inner.samples_checked,
+        )
     )
 
 

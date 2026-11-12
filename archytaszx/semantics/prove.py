@@ -949,6 +949,7 @@ def restricted_outcome(
     original = None
     if inner.counterexample is not None:
         original = MappingProxyType(to_original(restriction, inner.counterexample))
+        inner = _inside(inner, restriction, original)
     return replace(
         inner,
         restriction=restriction,
@@ -979,6 +980,7 @@ def _pair_only(
     original = None
     if inner.counterexample is not None:
         original = MappingProxyType(to_original(restriction, inner.counterexample))
+        inner = _inside(inner, restriction, original)
     return replace(
         inner,
         restriction=restriction,
@@ -987,6 +989,23 @@ def _pair_only(
         restricted_pair=pair,
         counterexample_original=original,
     )
+
+
+def _inside(
+    outcome: ProofOutcome, restriction: Restriction, original: Mapping[str, object]
+) -> ProofOutcome:
+    """``outcome``, a REFUTED one turned NOT_FOUND when its counterexample lies outside the
+    restriction's clauses and side conditions."""
+    from archytaszx.semantics.restrict import in_domain
+
+    if outcome.status is ProofStatus.REFUTED and not in_domain(restriction, original):
+        return replace(
+            outcome,
+            status=ProofStatus.NOT_FOUND,
+            reason=f"{outcome.reason}; that point lies outside {restriction.text()}",
+            counterexample=None,
+        )
+    return outcome
 
 
 class _Stopped(BaseException):
@@ -1099,6 +1118,7 @@ def _restricted_exhaustive(
     original = None
     if inner.counterexample is not None:
         original = MappingProxyType(to_original(restriction, inner.counterexample))
+        inner = _inside(inner, restriction, original)
     return replace(
         inner,
         restriction=restriction,

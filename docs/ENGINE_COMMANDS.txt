@@ -154,6 +154,20 @@ and exit status are unchanged:
 The line says unequal or unknown when the instance is. A clause error is one line naming the
 clause and the symbols that may be constrained (ERRORS.txt).
 
+Every kind of symbol also takes the forms x != v, x > c, x <= c, x < c, a <= x <= b (and its
+strict variants, < for either side), x in Z, x in (1/q)Z and x in Z/q, with the Unicode forms
+≥, ≤ and ≠; a phase symbol (free in a phase vector only) and an exponent symbol (free in a
+scalar, in no phase, multiplicity or dimension) take rational literals p/q, signed, and
+x = a*m + c with rational a and c. Several clauses of these forms on one symbol are
+intersected; an empty intersection is an error naming the clauses. A bounded multiplicity or
+dimension, a bounded lattice and a lattice phase symbol whose phases repeat with period 1 have
+finitely many values, decided one instance at a time:
+
+    decide: equal (uncertified) for n < 4 by normal_form: every instance equal (n = 0; ...)
+
+A verdict under these forms is uncertified ("the kernel states no clause of ..."), and an
+unequal verdict's point satisfies every clause and side condition (PROOFS.txt, section 8.7).
+
     decide [against] [TARGET] only for CLAUSE, ...
 
 decides the restricted claim on the restricted pair alone, without the family step

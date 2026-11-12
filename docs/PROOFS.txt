@@ -614,3 +614,35 @@ A restriction binding every free multiplicity (n = v) yields a bang-box-free res
 With every dimension concrete too, the pair lies in the regime of COMPLETENESS.txt section 1,
 and prove exhaustive algebraic under that restriction carries the termination theorem of
 COMPLETENESS.txt section 6 for it.
+
+8.7 Phase and exponent symbols, inequalities
+
+Kinds: a multiplicity, a dimension, an exponent (free in a scalar and in no phase,
+multiplicity or dimension) and a phase (free in a phase vector only), the most restrictive
+role winning. Forms, for every kind: x = v, x != v, x >= c, x > c, x <= c, x < c, a <= x <= b
+(strict variants too), x = a*m + c, x in Z, x in (1/q)Z, x in Z/q; integer literals for
+multiplicities and dimensions, rationals for phases and exponents. The old forms on a
+multiplicity or dimension keep sections 8.1-8.4 exactly, one clause per symbol; clauses of the
+new forms, and every clause on a phase or exponent symbol, are intersected per symbol into an
+interval (integer bounds for integer kinds, lattice bounds on a lattice), a lattice (1/q)Z and
+excluded points, and planned:
+
+  - one value: x = v substituted;
+  - finitely many values (a bounded integer or lattice interval, or a phase symbol on (1/q)Z
+    whose every phase expression changes by an integer when the symbol grows by 1): each value
+    decided as its own instance; EQUAL when every instance is, UNEQUAL at the first unequal
+    instance, else UNKNOWN naming the instances left;
+  - a multiplicity or dimension with a lower bound: n >= c or the floor d >= c of 8.1, the
+    excluded points a side condition;
+  - a phase or exponent with a lower bound c: x = c + s (s >= 0, s > 0 when strict, s <= b - c
+    a side condition when bounded above), with an upper bound only x = c - s, on a lattice the
+    step s = k/q with k a fresh integer; x = a*m + c with m a fresh integer;
+  - excluded points only: no substitution, a side condition.
+
+An EQUAL of any rung holds for every value of the fresh symbol, hence on the restricted set,
+and is kept; it is uncertified, since the kernel states no such clause. An UNEQUAL is kept
+only when its point, read in the original symbols, satisfies every clause and side condition
+(in_domain), else UNKNOWN; the restricted pair's oracle samples only points inside. prove and
+induct use the same plans; a refutation outside the restriction is not found, and a claim
+with finitely many instances is decided, not proved, when the family proof fails.
+
