@@ -167,8 +167,14 @@ Bang boxes:
     simplifies to [s = v] times itself at s = v, or is [s = v] times a part periodic in s mod
     d (deltas mod d, exp(2 pi i P/d) over integer polynomials P) with every group factor
     periodic too; then v replaces s in the entry and the factors. A pin v other than 0 or a
-    bare boundary index needs every group factor periodic on either route. A bridged box
-    holding a variable-rank part raises.
+    bare boundary index needs every group factor periodic on either route. A shared index no
+    group factor mentions is summed into the entry. When every term of the entry pins every
+    shared index to a constant and each group factor at each term's pins is a constant
+    multiple lambda of its value at the first term's pins, the shared indices are summed out:
+    the entry becomes Sum_k e_k prod_g lambda_kg^m_g over the terms. A boundary index that a
+    delta factor of the entry pins is replaced by its pinned value in the group factors when
+    they are periodic in it mod the delta's modulus. A bridged box holding a variable-rank part
+    raises.
   - A box wired to any other node outside it, two node-scope boxes meeting one spider, a port
     box over two W nodes, and other shapes not listed raise
     SymbolicContractionUnsupportedError.

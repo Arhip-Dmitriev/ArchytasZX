@@ -858,6 +858,89 @@ def _pinned_value(
     return None
 
 
+def _split_pinned_terms(
+    closed: Scalar,
+    shared: Sequence[SharedIndex],
+    factors: Sequence[sp.Expr],
+    multiplicities: Sequence[sp.Expr],
+    max_steps: int,
+) -> tuple[Scalar, list[sp.Expr]] | None:
+    """The entry and group factors with every shared index summed out, when each term of the
+    entry pins every shared index and each group factor at every term's pins is a constant
+    multiple of its value at the first term's pins: entry ``Sum_k e_k prod_g lambda_kg^m_g``,
+    factors the first term's; None otherwise."""
+    terms = sp.Add.make_args(closed.to_sympy())
+    pinned: list[tuple[sp.Expr, dict[sp.Symbol, sp.Expr]]] = []
+    for term in terms:
+        pins: dict[sp.Symbol, sp.Expr] = {}
+        for index in shared:
+            symbol = _engine_index(index.name)
+            modulus = index.dim.to_sympy()
+            found = [
+                v
+                for v in _pins(term, symbol, modulus)
+                if v.is_Integer
+                and _pinned_by_delta(term, symbol, v, modulus)
+                and all(_periodic(f, symbol, modulus) for f in factors)
+            ]
+            if not found:
+                return None
+            pins[symbol] = found[0]
+        pinned.append((term, pins))
+    if any(s in v.free_symbols for _, pins in pinned for v in pins.values() for s in pins):
+        return None
+
+    def at(expr: sp.Expr, pins: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
+        return Scalar(expr.xreplace(dict(pins))).simplify(max_steps=max_steps).to_sympy()
+
+    base = [at(f, pinned[0][1]) for f in factors]
+    if any(b == 0 for b in base):
+        return None
+    entry: sp.Expr = sp.Integer(0)
+    for term, pins in pinned:
+        weight = at(term, pins)
+        for factor, first, m in zip(factors, base, multiplicities, strict=True):
+            ratio = Scalar(at(factor, pins) / first).simplify(max_steps=max_steps).to_sympy()
+            ratio = ratio.rewrite(sp.exp)
+            if ratio.has(sp.zoo, sp.nan) or any(
+                str(x.name).startswith("_t") for x in ratio.free_symbols
+            ):
+                return None
+            weight = weight * sp.Pow(ratio, m)
+        entry = entry + weight
+    return Scalar(entry).simplify(max_steps=max_steps), base
+
+
+def _pin_boundary_in_factors(
+    closed: Scalar,
+    factors: list[sp.Expr],
+    marked: list[sp.Expr | None],
+    boundary: Sequence[sp.Symbol],
+) -> tuple[list[sp.Expr], list[sp.Expr | None]]:
+    """``factors`` and ``marked`` with each boundary index the entry pins by a delta factor
+    replaced by its pinned value, where every factor is periodic in that index mod the delta's
+    modulus."""
+    deltas = [f for f in sp.Mul.make_args(closed.to_sympy()) if isinstance(f, ModDelta)]
+    for delta in deltas:
+        modulus = delta.args[1]
+        for symbol in boundary:
+            present = [e for e in (*factors, *(m for m in marked if m is not None))]
+            if not any(symbol in e.free_symbols for e in present):
+                continue
+            pins = [
+                v
+                for v in _pins(delta, symbol, modulus)
+                if not any(str(x.name).startswith("_t") for x in v.free_symbols)
+            ]
+            if not pins or not all(_periodic(e, symbol, modulus) for e in present):
+                continue
+            pin = {symbol: pins[0]}
+            factors = [f.xreplace(pin) for f in factors]
+            marked = [None if m is None else m.xreplace(pin) for m in marked]
+            break
+    return factors, marked
+
+
 def _scope_subdiagram(
     diagram: Diagram,
     node_scope: frozenset[NodeId],
@@ -1353,6 +1436,29 @@ def contract_symbolic(
         closed = Scalar(closed.to_sympy().xreplace(pin)).simplify(max_steps=max_steps)
         factors = [factor.xreplace(pin) for factor in factors]
         marked = [None if m is None else m.xreplace(pin) for m in marked]
+    in_factors: set[sp.Basic] = set()
+    for expr in (*factors, *(m for m in marked if m is not None)):
+        in_factors |= expr.free_symbols
+    for index in list(kept):
+        symbol = _engine_index(index.name)
+        if symbol in in_factors:
+            continue
+        summed = sp.Sum(closed.to_sympy(), (symbol, 0, index.dim.to_sympy() - 1))
+        closed = Scalar(summed).simplify(max_steps=max_steps)
+        kept.remove(index)
+    if kept and all(m is None for m in marked):
+        split = _split_pinned_terms(
+            closed,
+            kept,
+            factors,
+            [diagram.bang_boxes[b].multiplicity.to_sympy() for b in group_boxes],
+            max_steps,
+        )
+        if split is not None:
+            closed, factors = split
+            kept = []
+    boundary = [_engine_index(axis.index) for axis in fixed_axes]
+    factors, marked = _pin_boundary_in_factors(closed, factors, marked, boundary)
 
     def nested(slot: LayoutSlot) -> LayoutSlot:
         if isinstance(slot, SymbolicAxis) or inner_of.get(slot.group) is None:
