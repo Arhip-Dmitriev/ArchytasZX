@@ -322,7 +322,8 @@ class ModGcd(sp.Function):  # type: ignore[misc]  # sympy is untyped
 
 
 def _rename_indices(expr: sp.Expr) -> sp.Expr:
-    """Alpha-rename every bound summation index by how many binders enclose it.
+    """Alpha-rename every bound summation index by how many binders enclose it, numbered past
+    every free ``_k`` index.
 
     Two alpha-equivalent subexpressions are named identically wherever they sit, so sibling
     sums that differ only in their bound name cancel; a counter running over the whole
@@ -346,8 +347,14 @@ def _rename_indices(expr: sp.Expr) -> sp.Expr:
         return cast(sp.Expr, node.func(*new_args))
 
     staged = stage_a(expr, 0)
+    free = [
+        int(str(s.name)[2:])
+        for s in staged.free_symbols
+        if isinstance(s, sp.Symbol) and re.match(r"^_k[0-9]+$", str(s.name))
+    ]
+    offset = max(free) + 1 if free else 0
     mapping = {
-        symbol: sp.Symbol(f"_k{symbol.name[4:]}", integer=True, nonnegative=True)
+        symbol: sp.Symbol(f"_k{int(symbol.name[4:]) + offset}", integer=True, nonnegative=True)
         for symbol in staged.atoms(sp.Symbol)
         if str(symbol.name).startswith("_tmp")
     }
