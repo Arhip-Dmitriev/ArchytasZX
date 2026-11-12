@@ -671,7 +671,15 @@ coefficient vanish on the real range of the single symbol left (a <= s <= b with
 excluded points): reduce_inequalities finds no point of the range where a real part is above
 or below 0, and solveset finds every point of it a root (|e - 1| = 1 - e for -1 <= e <= 1).
 A range point a lattice symbol does not take is checked too, which only strengthens the
-check. The kernel has no proof of the vanishing. When the check fails because a real part is
+check. A multiplicity floor n >= c (or n = a*m + c) with excluded points gives its fresh m
+the range m >= 0 without the excluded points read in m ((n^2 - 9)/(n - 3) = n + 3 for
+n >= 1, n != 3). With two or more symbols left, each with a range (a half-line shift
+included) and one of them bounded or punctured, every |g| of one symbol is replaced by g or
+-g when reduce_inequalities shows g of one sign on that symbol's range, and the rest must
+simplify to 0 (|e - 1| |f - 1| = (1 - e)(1 - f) for -1 <= e <= 1, -1 <= f <= 1); when it
+does not, the points built from each range's midpoint and quarter points are tried as
+oracle candidates (UNEQUAL at e = 0, f = 2 for -1 <= f <= 3). The oracle candidate takes the
+default samples' values for the other symbols (d). The kernel has no proof of the vanishing. When the check fails because a real part is
 above or below 0 somewhere in the range, a rational point there (an interval's midpoint, one
 past a finite end of a half-line) goes to the oracle; a mismatch there is an UNEQUAL, its
 point read in the original symbols and kept only inside the restriction (|e - 2| = 2 - e for

@@ -1704,15 +1704,20 @@ def decide_restricted(
             probe = None
             if tensors is not None and not run.matched:
                 tl, tr = tensors
-                if not tl.is_variable_rank and not tr.is_variable_rank and tl.dims() == tr.dims():
+                same = (not tl.is_variable_rank and not tr.is_variable_rank) or (
+                    (tl.groups, tl.shared, tl.layout) == (tr.groups, tr.shared, tr.layout)
+                )
+                if same and tl.dims() == tr.dims():
                     difference = (tl.entry - tr.entry).to_sympy()
                     on = vanishes_on_range(restriction, difference)
                     point = None if on is not None else range_point(restriction, difference)
                     if point is not None and is_pure(family_l) and is_pure(family_r):
+                        grid = sample_grid(family_l, family_r, restriction.floors)
+                        filled = [{**base, **point} for base in grid[:4]] or [point]
                         probe = _run_oracle(
                             family_l,
                             family_r,
-                            [point],
+                            filled,
                             1,
                             cast(float, options.get("tolerance", DEFAULT_TOLERANCE)),
                             cast(int, options.get("max_elements", DEFAULT_MAX_ELEMENTS)),

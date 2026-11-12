@@ -39,6 +39,7 @@ checks every clause and side condition.
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -755,19 +756,39 @@ def _real_set(hull: Domain, holes: Sequence[Fraction]) -> sp.Set:
     return sp.Complement(sp.Interval(lo, hi, hull.lo_strict, hull.hi_strict), points)
 
 
-def _range_of(restriction: Restriction, name: str) -> sp.Set | None:
-    """The real hull of the range a ranged shift gives its fresh symbol ``name``, or a lone side
-    condition its symbol ``name``, without the excluded points; None otherwise."""
+def _range_of(restriction: Restriction, name: str, half_lines: bool = False) -> sp.Set | None:
+    """The real hull of the range a ranged shift gives its fresh symbol ``name``, a multiplicity
+    base ``n = a*m + c`` with excluded points its fresh ``m``, or a side condition its symbol
+    ``name`` (beside a dimension floor at most), without the excluded points; with
+    ``half_lines``, a shift's unbounded range too; None otherwise."""
     for clause in restriction.clauses:
         if clause.form == SHIFT and clause.fresh == name and clause.fresh_domain is not None:
             excluded = () if clause.domain is None else clause.domain.excluded
-            if clause.fresh_domain.hi is None and not excluded:
+            if clause.fresh_domain.hi is None and not excluded and not half_lines:
                 return None
             a, c = Fraction(clause.a), Fraction(clause.c)
             return _real_set(clause.fresh_domain, [(x - c) / a for x in excluded])
+        if (
+            clause.kind == MULTIPLICITY
+            and clause.form in (GE, AFFINE)
+            and clause.fresh == name
+            and clause.fresh
+        ):
+            holes_at = [
+                x
+                for o in restriction.clauses
+                if o.symbol == clause.symbol and o.form == SIDE and o.domain is not None
+                for x in o.domain.excluded
+            ]
+            if not holes_at and not half_lines:
+                return None
+            a, c = Fraction(clause.a), Fraction(clause.c)
+            holes = [(x - c) / a for x in holes_at]
+            return _real_set(Domain(Fraction(0)), [h for h in holes if h >= 0])
         if clause.form == SIDE and clause.symbol == name and clause.domain is not None:
             if not clause.domain.excluded or any(
-                o.symbol == name and o.form != SIDE for o in restriction.clauses
+                o.symbol == name and o.form != SIDE and not (o.form == GE and o.kind == DIMENSION)
+                for o in restriction.clauses
             ):
                 return None
             return _real_set(clause.domain, clause.domain.excluded)
@@ -775,13 +796,18 @@ def _range_of(restriction: Restriction, name: str) -> sp.Set | None:
 
 
 def _real_parts(expr: sp.Expr) -> list[sp.Expr] | None:
-    """``expr`` with radicands factored, as itself or its real and imaginary parts, or None when
-    sympy cannot show the parts real."""
+    """``expr`` with radicands factored (cancelled when sympy cannot show it real), as itself or
+    its real and imaginary parts, or None when sympy cannot show the parts real."""
     expr = expr.replace(
         lambda e: e.is_Pow and e.exp.is_Rational and not e.exp.is_Integer,
         lambda e: sp.factor(e.base) ** e.exp,
     )
-    if expr.is_extended_real is True:
+    if expr.is_extended_real is not True:
+        try:
+            expr = sp.cancel(expr)
+        except (sp.PolynomialError, NotImplementedError):
+            pass
+    if expr.is_extended_real is True or expr == 0:
         return [expr]
     parts = [sp.re(expr), sp.im(expr)]
     for part in parts:
@@ -839,14 +865,91 @@ def _signs(var: sp.Dummy, part: sp.Expr) -> sp.Set:
     )
 
 
+def _without_abs(part: sp.Expr, domains: Mapping[sp.Dummy, sp.Set]) -> sp.Expr | None:
+    """``part`` with every ``Abs(g)`` of a one-symbol ``g`` replaced by ``g`` or ``-g`` when
+    ``reduce_inequalities`` shows ``g`` of one sign on that symbol's domain; None when an
+    ``Abs`` stays."""
+    while True:
+        atoms = sorted(part.atoms(sp.Abs), key=sp.default_sort_key)
+        if not atoms:
+            return part
+        node = atoms[0]
+        (arg,) = node.args
+        symbols = arg.free_symbols
+        if len(symbols) != 1:
+            return None
+        (var,) = symbols
+        domain = domains.get(var)
+        if domain is None:
+            return None
+        below = sp.reduce_inequalities([arg < 0], [var]).as_set().intersect(domain)
+        above = sp.reduce_inequalities([arg > 0], [var]).as_set().intersect(domain)
+        if below is sp.S.EmptySet:
+            part = part.xreplace({node: arg})
+        elif above is sp.S.EmptySet:
+            part = part.xreplace({node: -arg})
+        else:
+            return None
+
+
+def _vanishes_on_ranges(restriction: Restriction, expr: sp.Expr) -> str | None:
+    """The ranges, as text, on whose product every coefficient of ``expr`` (read as for
+    :func:`vanishes_on_range`) is zero, when the coefficients carry two or more symbols, each
+    with a range (a half-line shift included) and one with a bounded or punctured range:
+    every ``Abs`` of one symbol resolved by its sign there, the rest simplifying to 0; None
+    otherwise."""
+    gens = sorted(
+        (
+            a
+            for a in expr.atoms(sp.Function, sp.Sum)
+            if not isinstance(a, sp.Abs) and a.free_symbols
+        ),
+        key=sp.default_sort_key,
+    )
+    bound: set[sp.Symbol] = set().union(*(g.free_symbols for g in gens))
+    indices = sorted(
+        (x for x in expr.free_symbols - bound if _INDEX_NAME.match(str(x.name))), key=str
+    )
+    names = sorted(expr.free_symbols - bound - set(indices), key=lambda x: str(x.name))
+    if len(names) < 2:
+        return None
+    ranged = [_range_of(restriction, str(x)) for x in names]
+    if all(r is None for r in ranged):
+        return None
+    domains: dict[sp.Dummy, sp.Set] = {}
+    swap: dict[sp.Symbol, sp.Dummy] = {}
+    for x, r in zip(names, ranged, strict=True):
+        domain = r if r is not None else _range_of(restriction, str(x), half_lines=True)
+        if domain is None:
+            return None
+        var = sp.Dummy(str(x), real=True)
+        swap[x], domains[var] = var, domain
+    try:
+        coeffs = sp.Poly(expr, *gens, *indices).coeffs() if gens or indices else [expr]
+        for coeff in coeffs:
+            parts = _real_parts(sp.sympify(coeff).xreplace(swap))
+            if parts is None:
+                return None
+            for part in parts:
+                if part == 0:
+                    continue
+                resolved = _without_abs(sp.sympify(part), domains)
+                if resolved is None or sp.simplify(resolved) != 0:
+                    return None
+    except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
+        return None
+    return ", ".join(f"{x} in {domains[swap[x]]}" for x in names)
+
+
 def vanishes_on_range(restriction: Restriction, expr: sp.Expr) -> str | None:
     """The range, as text, on which every coefficient of ``expr`` as a polynomial in its index
     atoms is zero, when those coefficients carry one symbol and a ranged clause gives it that
     range: ``reduce_inequalities`` finds no point there with a coefficient part above or below
-    0, and ``solveset`` finds every point there a root; None otherwise."""
+    0, and ``solveset`` finds every point there a root; for several symbols
+    :func:`_vanishes_on_ranges`; None otherwise."""
     found = _range_parts(restriction, expr)
     if found is None:
-        return None
+        return _vanishes_on_ranges(restriction, expr)
     symbol, domain, parts = found
     try:
         for var, part in parts:
@@ -895,7 +998,7 @@ def range_point(restriction: Restriction, expr: sp.Expr) -> dict[str, sp.Rationa
     None when there is none."""
     found = _range_parts(restriction, expr)
     if found is None:
-        return None
+        return _ranges_point(restriction, expr)
     symbol, domain, parts = found
     try:
         for var, part in parts:
@@ -905,6 +1008,72 @@ def range_point(restriction: Restriction, expr: sp.Expr) -> dict[str, sp.Rationa
     except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
         return None
     return None
+
+
+def _ranges_point(restriction: Restriction, expr: sp.Expr) -> dict[str, sp.Rational] | None:
+    """For two or more ranged symbols (read as for :func:`_vanishes_on_ranges`), the point of
+    each range's :func:`_rational_in` when some coefficient of ``expr`` is exactly nonzero
+    there; None otherwise."""
+    gens = sorted(
+        (
+            a
+            for a in expr.atoms(sp.Function, sp.Sum)
+            if not isinstance(a, sp.Abs) and a.free_symbols
+        ),
+        key=sp.default_sort_key,
+    )
+    bound: set[sp.Symbol] = set().union(*(g.free_symbols for g in gens))
+    indices = sorted(
+        (x for x in expr.free_symbols - bound if _INDEX_NAME.match(str(x.name))), key=str
+    )
+    names = sorted(expr.free_symbols - bound - set(indices), key=lambda x: str(x.name))
+    if len(names) < 2 or all(_range_of(restriction, str(x)) is None for x in names):
+        return None
+    choices: list[list[sp.Rational]] = []
+    for x in names:
+        domain = _range_of(restriction, str(x), half_lines=True)
+        values = [] if domain is None else _rational_candidates(domain)
+        if not values:
+            return None
+        choices.append(values)
+    try:
+        coeffs = sp.Poly(expr, *gens, *indices).coeffs() if gens or indices else [expr]
+        for chosen in itertools.product(*choices):
+            point = dict(zip(names, chosen, strict=True))
+            for coeff in coeffs:
+                if sp.simplify(sp.sympify(coeff).xreplace(point)) != 0:
+                    return {str(x): v for x, v in point.items()}
+    except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
+        return None
+    return None
+
+
+def _rational_candidates(region: sp.Set) -> list[sp.Rational]:
+    """:func:`_rational_in` of ``region``, then its first interval's quarter points (or the
+    next two points past a finite end of a half-line) that lie inside."""
+    first = _rational_in(region)
+    if first is None:
+        return []
+    out = [first]
+    interval = region
+    if isinstance(region, sp.Union):
+        interval = next((a for a in region.args if isinstance(a, sp.Interval)), region)
+    if isinstance(region, sp.Complement):
+        interval = region.args[0]
+    if isinstance(interval, sp.Interval):
+        lo, hi = interval.start, interval.end
+        if lo.is_finite and hi.is_finite:
+            extra = [lo + (hi - lo) / 4, lo + 3 * (hi - lo) / 4]
+        elif lo.is_finite:
+            extra = [lo + 2, lo + 3]
+        elif hi.is_finite:
+            extra = [hi - 2, hi - 3]
+        else:
+            extra = [sp.Integer(1), sp.Integer(-1)]
+        for value in extra:
+            if value.is_Rational and region.contains(value) is sp.true and value not in out:
+                out.append(sp.Rational(value))
+    return out
 
 
 def to_restricted(
