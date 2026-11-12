@@ -240,7 +240,9 @@ vanishes after powers are written through exp, exponentials are split and each
 exp(2 pi i P) over integer indices has P's coefficients reduced mod 1, and every complete set
 of residue deltas [x + r] (r = 0 .. m - 1, m concrete) with one coefficient is replaced by that
 coefficient; failing that, in each case x = 0 .. m - 1 of an index x of concrete range m that
-a delta mod m reads alone (at most 4096 cases in all). A constant left in a case is zero when
+a delta mod m reads alone, or else of the first by name of the indices of concrete range m a
+delta mod m reads among others (ModDelta(_i0 + _i3, 2) splits on _i0), at most 4096 cases in
+all. A constant left in a case is zero when
 it reads exactly as a cyclotomic number times a power of sqrt 2 that is zero (pathsum.constant).
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 

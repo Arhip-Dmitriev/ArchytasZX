@@ -884,20 +884,27 @@ def _lower_bound(x: sp.Expr) -> sp.Expr | None:
 
 
 def _case_index(expr: sp.Expr, ranges: Mapping[str, Dim]) -> tuple[sp.Symbol, int] | None:
-    """An index symbol of concrete range m that a delta mod m reads alone, plus a constant."""
-    for delta in sorted(expr.atoms(ModDelta), key=str):
+    """An index symbol of concrete range m that a delta mod m reads alone, plus a constant;
+    failing that, the first by name of the index symbols of concrete range m that a delta mod
+    m reads among others."""
+    deltas = sorted(expr.atoms(ModDelta), key=str)
+    shared: list[tuple[str, sp.Symbol, int]] = []
+    for delta in deltas:
         argument, modulus = delta.args
         if not modulus.is_Integer:
             continue
-        free = list(argument.free_symbols)
-        if len(free) != 1:
-            continue
-        (symbol,) = free
-        dim = ranges.get(str(symbol.name))
-        if dim is None or not dim.is_concrete or dim.to_int() != int(modulus):
-            continue
-        if sp.expand(argument - symbol).is_Integer or sp.expand(argument + symbol).is_Integer:
-            return symbol, int(modulus)
+        for symbol in argument.free_symbols:
+            dim = ranges.get(str(symbol.name))
+            if dim is None or not dim.is_concrete or dim.to_int() != int(modulus):
+                continue
+            if len(argument.free_symbols) == 1 and (
+                sp.expand(argument - symbol).is_Integer or sp.expand(argument + symbol).is_Integer
+            ):
+                return symbol, int(modulus)
+            shared.append((str(symbol.name), symbol, int(modulus)))
+    if shared:
+        _name, symbol, size = min(shared, key=lambda item: item[0])
+        return symbol, size
     return None
 
 
