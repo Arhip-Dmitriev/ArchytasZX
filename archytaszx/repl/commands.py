@@ -833,17 +833,29 @@ def _cmd_normalize(session: Session, args: str) -> Outcome:
 _FOR_RE = re.compile(r"(?:^|\s)for\s")
 
 
-def _split_for(text: str) -> tuple[str, Restriction | None]:
-    """``text`` without a trailing ``for CLAUSE, ...``, and those clauses parsed."""
+_ONLY_RE = re.compile(r"(?:^|\s)only\s*$")
+
+
+def _split_for(text: str) -> tuple[str, Restriction | None, bool]:
+    """``text`` without a trailing ``[only] for CLAUSE, ...``, those clauses parsed, and
+    ``family_first`` (False after ``only``)."""
     found = list(_FOR_RE.finditer(text))
     if not found:
-        return text, None
+        if _ONLY_RE.search(text):
+            raise CommandGrammarError("only needs a for clause")
+        return text, None, True
     last = found[-1]
-    return text[: last.start()], parse_restriction(text[last.end() :])
+    head = text[: last.start()]
+    only = _ONLY_RE.search(head)
+    if only is not None:
+        head = head[: only.start()]
+    return head, parse_restriction(text[last.end() :]), only is None
 
 
-def _for_text(restriction: Restriction | None) -> str:
-    return f" for {restriction.text()}" if restriction is not None and restriction.clauses else ""
+def _for_text(restriction: Restriction | None, family_first: bool = True) -> str:
+    if restriction is None or not restriction.clauses:
+        return ""
+    return f" for {restriction.text()}" + ("" if family_first else " (restricted pair only)")
 
 
 def _every(restriction: Restriction) -> str:
@@ -890,13 +902,20 @@ def _verdict_text(verdict: EqualityVerdict) -> str:
 
 
 def _cmd_decide(session: Session, args: str) -> Outcome:
-    text, restriction = _split_for(args)
+    text, restriction, family_first = _split_for(args)
     left, right = _pair_args(session, text)
-    decision = decide_equal(left, right, restrict=restriction, describe=lambda d: _math(d, True))
+    decision = decide_equal(
+        left,
+        right,
+        restrict=restriction,
+        describe=lambda d: _math(d, True),
+        family_first=family_first,
+    )
     restricted = decision.restriction is not None
     payload = _Pair("decide", left, right, decision)
     head = (
-        f"decide: {_verdict_text(decision.verdict)}{_for_text(decision.restriction)} by "
+        f"decide: {_verdict_text(decision.verdict)}"
+        f"{_for_text(decision.restriction, family_first)} by "
         f"{decision.method.value}: {decision.reason}"
     )
     session.certificate, session.certificate_witness = None, None
@@ -1071,16 +1090,21 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
         algebraic = bool(more) and more[0] == "algebraic"
         if algebraic:
             args = more[1] if len(more) > 1 else ""
-    args, restriction = _split_for(args)
+    args, restriction, family_first = _split_for(args)
     left, right = _pair_args(session, args)
     outcome = (
-        prove_exhaustive(left, right, algebraic=algebraic, restrict=restriction)
+        prove_exhaustive(
+            left, right, algebraic=algebraic, restrict=restriction, family_first=family_first
+        )
         if exhaustive
-        else prove(left, right, restrict=restriction)
+        else prove(left, right, restrict=restriction, family_first=family_first)
     )
     session.last_proof = outcome
     payload = _Pair("prove", left, right, outcome)
-    head = f"prove: {outcome.status.value}{_for_text(outcome.restriction)}: {outcome.reason}"
+    head = (
+        f"prove: {outcome.status.value}{_for_text(outcome.restriction, family_first)}: "
+        f"{outcome.reason}"
+    )
     if outcome.proved:
         kind = "induction" if outcome.induction is not None else "search"
         if outcome.mixed is not None and outcome.mixed.kind.value == "doubled":
@@ -1141,7 +1165,7 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
 
 
 def _cmd_induct(session: Session, args: str) -> Outcome:
-    args, restriction = _split_for(args)
+    args, restriction, family_first = _split_for(args)
     head, target = _split_against(args)
     index, supplied = _options(head, allow_on=True)
     left, right = _pair(session, target)
@@ -1175,7 +1199,9 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
         raise CommandDomainError(
             f"induct holds {', '.join(missing)} at a value; supply NAME=VALUE for each"
         )
-    result = prove_by_induction(left, right, index=index, witness=witness, restrict=restriction)
+    result = prove_by_induction(
+        left, right, index=index, witness=witness, restrict=restriction, family_first=family_first
+    )
     session.last_proof = result
     session.induct_pair = (left, right)
     session.induct_restriction = None
@@ -1192,7 +1218,8 @@ def _cmd_induct(session: Session, args: str) -> Outcome:
         if clause is not None:
             over = f"{result.index} ({clause.symbol} = {clause.expression()})"
     line = (
-        f"induct: {result.verdict.value}{_for_text(rr)} over {over} from {result.base_value} "
+        f"induct: {result.verdict.value}{_for_text(rr, family_first)} over {over} from "
+        f"{result.base_value} "
         f"via {discharge}: {result.reason}"
     )
     blocks: list[Block] = [Text(line), Text(f"witness: {_assignment_text(result.witness)}")]

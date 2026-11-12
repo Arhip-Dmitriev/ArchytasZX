@@ -179,11 +179,14 @@ written Z(1 -> 1).
   azx(TEXT)                           runs engine commands, returns their printed output
   azx.NAME = P                        stores P as @NAME
   azx.load(P)                         makes P the current diagram
-  azx.decide(A, B, where=None)        decide A against B
+  azx.decide(A, B, where=None,        decide A against B
+             family_first=True)
   azx.prove(A, B, exhaustive=False,   prove A against B (algebraic: prove exhaustive algebraic)
-            algebraic=False, where=None)
+            algebraic=False, where=None,
+            family_first=True)
   azx.induct(A, B, on=None,           induct [on SYMBOL] NAME=VALUE ... against B
-             where=None, NAME=VALUE)
+             where=None, family_first=True,
+             NAME=VALUE)
   azx.check(A, B, NAME=VALUE, ...)    numeric check of A against B
   azx.lean([FILE])                    certificate lean [FILE]
   azx.kernel()                        certificate kernel
@@ -194,7 +197,11 @@ and method. where restricts the claim (PROOFS.txt, section 8):
 clause text in the grammar of ENGINE_COMMANDS.txt, section 2.9, as where="n >= 2, d = 3", or a
 mapping from symbol to its constraint, as where={"n": ">= 2", "d": "= 3"}. Result.outcome is
 the engine result (Decision, ProofOutcome or InductionResult), and Result.restriction,
-Result.family and Result.family_holds read its restriction fields.
+Result.family and Result.family_holds read its restriction fields. family_first=False writes
+"only for": the restricted pair alone, Result.family None (PROOFS.txt, section 8.4). The
+engine functions decide_equal, decide_restricted, prove, prove_exhaustive and
+prove_by_induction take the same keyword family_first: bool = True; a non-bool is the module's
+grammar error.
 
 3.4 Example
 

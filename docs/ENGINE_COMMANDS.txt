@@ -154,6 +154,17 @@ and exit status are unchanged:
 The line says unequal or unknown when the instance is. A clause error is one line naming the
 clause and the symbols that may be constrained (ERRORS.txt).
 
+    decide [against] [TARGET] only for CLAUSE, ...
+
+decides the restricted claim on the restricted pair alone, without the family step
+(PROOFS.txt, section 8.4); the verdict line adds "(restricted pair only)":
+
+    decide: equal for n >= 1 (restricted pair only) by normal_form: ...
+
+"only" is a keyword only directly before the trailing for; a diagram named only, written just
+before for, is read as the keyword. "only" without a for clause is the error "only needs a
+for clause". With clauses that are all identities, only has no effect.
+
 2.10 prove
 
     prove [exhaustive [algebraic]] [against] [TARGET] [for CLAUSE, ...]
@@ -166,7 +177,8 @@ PROOFS.txt, section 3.2, with no bound: it may not return (COMPLETENESS.txt, sec
 exhaustive algebraic, the search is the iterative deepening over algebraic values of PROOFS.txt,
 section 3.3, for diagrams at concrete dimensions with algebraic parameters: it returns on every
 equal pair, given time. A trailing for clause restricts the claim as for decide (PROOFS.txt,
-section 8): the unrestricted proof first, then the restricted pair's.
+section 8): the unrestricted proof first, then the restricted pair's. "only for" proves the
+restricted pair alone, as for decide; prove exhaustive then runs one search, the pair's.
 
 2.11 induct
 
@@ -178,6 +190,8 @@ oracle tiers; supply one NAME=VALUE for each, except for symbols a clause n = v 
 fixes. Under n >= c (or n = a*m + c) the restricted pair is inducted over m from 0:
 
     induct: proved_induction for n >= 1 over m (n = m + 1) from 0 via ...
+
+"only for" inducts the restricted pair alone, as for decide.
 
 2.12 certificate
 

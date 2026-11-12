@@ -1113,11 +1113,15 @@ def prove_by_induction(
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     restrict: object | None = None,
+    family_first: bool = True,
 ) -> InductionResult:
     """Discharge an equality over one multiplicity index by running the base case then each
     discharge tier in ladder order until one settles; under ``restrict``, the family first,
     kept when proved or refuted in range, otherwise the restricted pair inducted over the fresh
-    symbol of the index's clause from 0."""
+    symbol of the index's clause from 0; ``family_first=False`` inducts the restricted pair
+    only."""
+    if not isinstance(family_first, bool):
+        raise InductionGrammarError(f"family_first must be a bool, got {family_first!r}")
     if restrict is not None:
         options = {
             "base": base,
@@ -1131,7 +1135,9 @@ def prove_by_induction(
             "tolerance": tolerance,
             "max_elements": max_elements,
         }
-        return _restricted_induction(left, right, index, witness, restrict, options)
+        return _restricted_induction(
+            left, right, index, witness, restrict, options, family_first=family_first
+        )
     obligation = build_obligation(
         left,
         right,
@@ -1233,9 +1239,11 @@ def _restricted_induction(
     witness: Mapping[str, CheckAssignmentValue],
     restrict: object,
     options: Mapping[str, object],
+    family_first: bool = True,
 ) -> InductionResult:
     """The three steps of :func:`prove_by_induction` under a restriction; every clause symbol
-    other than the index is held at its clause's value or a witness value inside it."""
+    other than the index is held at its clause's value or a witness value inside it; the
+    family step skipped when ``family_first`` is False."""
     from archytaszx.semantics.decide import DecideGrammarError
     from archytaszx.semantics.restrict import (
         EQ,
@@ -1272,10 +1280,14 @@ def _restricted_induction(
             raise InductionGrammarError(
                 f"{clause.symbol} = {held[clause.symbol]} lies outside {clause.text()}"
             )
-    family = prove_by_induction(left, right, index=chosen, witness=held, **options)  # type: ignore[arg-type]
-    if family.proved:
+    family = (
+        prove_by_induction(left, right, index=chosen, witness=held, **options)  # type: ignore[arg-type]
+        if family_first
+        else None
+    )
+    if family is not None and family.proved:
         return replace(family, restriction=restriction, family=family, family_holds=True)
-    if family.counterexample is not None:
+    if family is not None and family.counterexample is not None:
         point = {**dict(family.witness), family.index: family.counterexample}
         if in_domain(restriction, point):
             return replace(
@@ -1300,6 +1312,7 @@ def _restricted_induction(
         inner,
         restriction=restriction,
         family=family,
+        family_holds=False,
         restricted_pair=pair,
         counterexample_original=original,
     )

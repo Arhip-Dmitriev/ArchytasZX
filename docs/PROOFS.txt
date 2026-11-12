@@ -590,7 +590,13 @@ decide_equal(left, right, restrict=R) runs:
 
 prove exhaustive runs steps 1 and 3 side by side, in two threads stopped at their next layer
 once the other decides: the family's PROVED or in-range REFUTED wins, otherwise the restricted
-pair's outcome (an unprovable family claim never ends its search). samples_checked counts both steps. Without clauses the decision is the unrestricted one,
+pair's outcome (an unprovable family claim never ends its search). samples_checked counts both steps.
+With family_first=False (decide_equal, prove, prove_exhaustive, prove_by_induction; "only
+for" in the REPL) steps 1 and 2 are skipped: step 3 runs alone, with the same samples and
+floors; the result has restriction and restricted_pair set, family None and family_holds
+False, and samples_checked counts step 3 only; prove exhaustive runs only the pair's search.
+Certification takes the restricted-pair route. Clauses that are all identities make the flag
+inert. Without clauses the decision is the unrestricted one,
 field for field. Step 1 never uses a concrete-only axiom (its dimensions stay symbolic); they
 match in step 3, where d = v is a literal.
 

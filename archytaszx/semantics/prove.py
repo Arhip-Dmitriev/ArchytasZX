@@ -321,6 +321,98 @@ class ProofCheck:
     comparison: ComparisonResult | None
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _DeferredOracle(OracleRefutation):
+    """An oracle run with its deferred large samples."""
+
+    deferred: tuple[Mapping[str, CheckAssignmentValue], ...] = ()
+
+
+def _run_deferred(
+    oracle: OracleRefutation,
+    left: Diagram,
+    right: Diagram,
+    max_samples: int,
+    tolerance: float,
+    max_elements: int,
+) -> OracleRefutation:
+    """``oracle``, or its deferred samples run when it evaluated none."""
+    if isinstance(oracle, _DeferredOracle) and not oracle.evaluated and oracle.deferred:
+        return refute_by_oracle(
+            left,
+            right,
+            samples=oracle.deferred,
+            max_samples=max_samples,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
+    return oracle
+
+
+CERTIFY_SAMPLE_ELEMENTS = 2**20
+"""The largest planned sample size certification's oracle evaluates before every smaller one."""
+
+
+def _certify_oracle(
+    left: Diagram,
+    right: Diagram,
+    *,
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    max_samples: int = 24,
+    tolerance: float = DEFAULT_TOLERANCE,
+    max_elements: int = DEFAULT_MAX_ELEMENTS,
+    defer: bool = False,
+) -> OracleRefutation:
+    """:func:`refute_by_oracle` with samples planned above :data:`CERTIFY_SAMPLE_ELEMENTS`
+    deferred: they run only when no smaller sample evaluates, or, with ``defer``, not at all,
+    kept on the result for :func:`_run_deferred`."""
+    from archytaszx.semantics.decide import _family, _planned_size, sample_grid
+
+    family_l, family_r = _family(left), _family(right)
+    candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
+    sizes = [_planned_size(family_l, family_r, c) for c in candidates]
+    large = [c for c, n in zip(candidates, sizes, strict=True) if n > CERTIFY_SAMPLE_ELEMENTS]
+    if not large:
+        return refute_by_oracle(
+            left,
+            right,
+            samples=samples,
+            max_samples=max_samples,
+            tolerance=tolerance,
+            max_elements=max_elements,
+        )
+    small = [c for c, n in zip(candidates, sizes, strict=True) if n <= CERTIFY_SAMPLE_ELEMENTS]
+    first = refute_by_oracle(
+        left,
+        right,
+        samples=small,
+        max_samples=max_samples,
+        tolerance=tolerance,
+        max_elements=max_elements,
+    )
+    if first.counterexample is not None or first.evaluated or defer:
+        deferred = tuple(
+            f"{dict(c)!r}: deferred (planned {n:g} elements, over {CERTIFY_SAMPLE_ELEMENTS})"
+            for c, n in zip(candidates, sizes, strict=True)
+            if n > CERTIFY_SAMPLE_ELEMENTS
+        )
+        return _DeferredOracle(
+            first.evaluated,
+            first.counterexample,
+            first.comparison,
+            (*first.refusals, *deferred),
+            tuple(large),
+        )
+    return refute_by_oracle(
+        left,
+        right,
+        samples=large,
+        max_samples=max_samples,
+        tolerance=tolerance,
+        max_elements=max_elements,
+    )
+
+
 def _check_oracle_args(
     samples: object, max_samples: object, tolerance: object, max_elements: object
 ) -> None:
@@ -399,7 +491,7 @@ def _check(
     if not meet:
         return failed("the two halves end on diagrams with different comparison views")
     if oracle is None:
-        oracle = refute_by_oracle(
+        oracle = _certify_oracle(
             certificate.start,
             certificate.goal,
             samples=samples,
@@ -407,6 +499,9 @@ def _check(
             tolerance=tolerance,
             max_elements=max_elements,
         )
+    oracle = _run_deferred(
+        oracle, certificate.start, certificate.goal, max_samples, tolerance, max_elements
+    )
     checked = len(oracle.evaluated)
     if oracle.counterexample is not None:
         detail = oracle.comparison.reason if oracle.comparison is not None else ""
@@ -559,7 +654,7 @@ def _check_whole_induction(
     if failure is not None:
         return ProofCheck(False, failure, None, None, False, 0, None, None)
     if oracle is None:
-        oracle = refute_by_oracle(
+        oracle = _certify_oracle(
             proof.start,
             proof.goal,
             samples=samples,
@@ -567,6 +662,7 @@ def _check_whole_induction(
             tolerance=tolerance,
             max_elements=max_elements,
         )
+    oracle = _run_deferred(oracle, proof.start, proof.goal, max_samples, tolerance, max_elements)
     checked = len(oracle.evaluated)
     if oracle.counterexample is not None:
         detail = oracle.comparison.reason if oracle.comparison is not None else ""
@@ -808,10 +904,11 @@ def restricted_outcome(
     restrict: Restriction | str | Mapping[str, str],
     run: Callable[..., ProofOutcome],
     samples: Sequence[Mapping[str, CheckAssignmentValue]] | None = None,
+    family_first: bool = True,
 ) -> ProofOutcome:
     """The three steps of a restricted proof: ``run`` on the family, kept when it proves the
     claim or refutes it in range; otherwise ``run`` on the restricted pair, ``samples`` read
-    over its symbols."""
+    over its symbols. ``family_first=False`` runs the restricted pair only."""
     from archytaszx.semantics.decide import DecideGrammarError
     from archytaszx.semantics.restrict import (
         in_domain,
@@ -822,12 +919,16 @@ def restricted_outcome(
         validate,
     )
 
+    if not isinstance(family_first, bool):
+        raise ProveGrammarError(f"family_first must be a bool, got {family_first!r}")
     try:
         restriction = validate(parse_restriction(restrict), left, right)
     except DecideGrammarError as exc:
         raise ProveGrammarError(str(exc)) from exc
     if restriction.empty:
         return run(left, right, samples=samples)
+    if not family_first:
+        return _pair_only(left, right, restriction, run, samples)
     family = run(left, right, samples=samples)
     if family.proved:
         return replace(family, restriction=restriction, family=family, family_holds=True)
@@ -857,6 +958,37 @@ def restricted_outcome(
     )
 
 
+def _pair_only(
+    left: Diagram,
+    right: Diagram,
+    restriction: Restriction,
+    run: Callable[..., ProofOutcome],
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    **extra: object,
+) -> ProofOutcome:
+    """``run`` on the restricted pair alone, the outcome carrying the restriction, no family."""
+    from archytaszx.semantics.decide import DecideGrammarError
+    from archytaszx.semantics.restrict import restricted_samples, subst_pair, to_original
+
+    try:
+        pair = subst_pair(left, right, restriction)
+    except DecideGrammarError as exc:
+        raise ProveGrammarError(str(exc)) from exc
+    inner_samples = None if samples is None else restricted_samples(restriction, samples)
+    inner = run(*pair, samples=inner_samples, **extra)
+    original = None
+    if inner.counterexample is not None:
+        original = MappingProxyType(to_original(restriction, inner.counterexample))
+    return replace(
+        inner,
+        restriction=restriction,
+        family=None,
+        family_holds=False,
+        restricted_pair=pair,
+        counterexample_original=original,
+    )
+
+
 class _Stopped(BaseException):
     """Raised in a layer callback to stop a search another search has made moot."""
 
@@ -868,10 +1000,12 @@ def _restricted_exhaustive(
     run: Callable[..., ProofOutcome],
     samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
     on_layer: Callable[[LayerReport], None] | None,
+    family_first: bool = True,
 ) -> ProofOutcome:
     """The restricted exhaustive proof: the family search and the restricted pair's search run
     side by side in two threads, time-sliced; the family's PROVED or in-range REFUTED wins,
-    otherwise the restricted pair's outcome, the other search stopped at its next layer."""
+    otherwise the restricted pair's outcome, the other search stopped at its next layer.
+    ``family_first=False`` runs the restricted pair's search only."""
     from archytaszx.semantics.decide import DecideGrammarError
     from archytaszx.semantics.restrict import (
         in_domain,
@@ -882,6 +1016,8 @@ def _restricted_exhaustive(
         validate,
     )
 
+    if not isinstance(family_first, bool):
+        raise ProveGrammarError(f"family_first must be a bool, got {family_first!r}")
     try:
         restriction = validate(parse_restriction(restrict), left, right)
         pair = None if restriction.empty else subst_pair(left, right, restriction)
@@ -889,6 +1025,8 @@ def _restricted_exhaustive(
         raise ProveGrammarError(str(exc)) from exc
     if pair is None:
         return run(left, right, samples=samples, on_layer=on_layer)
+    if not family_first:
+        return _pair_only(left, right, restriction, run, samples, on_layer=on_layer)
     inner_samples = None if samples is None else restricted_samples(restriction, samples)
     done = threading.Condition()
     results: dict[str, ProofOutcome | BaseException] = {}
@@ -1094,11 +1232,15 @@ def prove(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     induction_depth: int = DEFAULT_INDUCTION_DEPTH,
     restrict: Restriction | str | Mapping[str, str] | None = None,
+    family_first: bool = True,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by the module docstring's order: interface, oracle,
     search, certification and check, then induction over a free multiplicity when search
     finds no path, nesting at most ``induction_depth`` inductions (0 turns it off); under
-    ``restrict``, by :func:`restricted_outcome`."""
+    ``restrict``, by :func:`restricted_outcome`, the family skipped when ``family_first`` is
+    False."""
+    if not isinstance(family_first, bool):
+        raise ProveGrammarError(f"family_first must be a bool, got {family_first!r}")
     if restrict is not None:
         return restricted_outcome(
             start,
@@ -1117,6 +1259,7 @@ def prove(
                 induction_depth=induction_depth,
             ),
             samples,
+            family_first,
         )
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
@@ -1183,13 +1326,14 @@ def prove(
         return ProofOutcome(ProofStatus.REFUTED, f"interfaces never agree: {interface}")
     oracle: OracleRefutation | None = None
     if refute:
-        oracle = refute_by_oracle(
+        oracle = _certify_oracle(
             start,
             goal,
             samples=samples,
             max_samples=max_samples,
             tolerance=tolerance,
             max_elements=max_elements,
+            defer=True,
         )
         if oracle.counterexample is not None:
             return _oracle_refuted(start, goal, oracle)
@@ -1263,11 +1407,15 @@ def prove_exhaustive(
     on_layer: Callable[[LayerReport], None] | None = None,
     algebraic: bool = False,
     restrict: Restriction | str | Mapping[str, str] | None = None,
+    family_first: bool = True,
 ) -> ProofOutcome:
     """Prove ``start`` equal to ``goal`` by :func:`~archytaszx.rewrite.exhaustive.exhaustive_search`
     (or, with ``algebraic``, :func:`~archytaszx.rewrite.exhaustive.algebraic_search`) over every
     registered rule, after the interface and oracle refutation rungs of :func:`prove`; no limit
-    bounds the search; under ``restrict``, by :func:`restricted_outcome`."""
+    bounds the search; under ``restrict``, by :func:`restricted_outcome`, the family skipped
+    when ``family_first`` is False."""
+    if not isinstance(family_first, bool):
+        raise ProveGrammarError(f"family_first must be a bool, got {family_first!r}")
     if restrict is not None:
         return _restricted_exhaustive(
             start,
@@ -1283,6 +1431,7 @@ def prove_exhaustive(
             ),
             samples,
             on_layer,
+            family_first,
         )
     for name, value in (("start", start), ("goal", goal)):
         if not isinstance(value, Diagram):
@@ -1311,13 +1460,14 @@ def prove_exhaustive(
         return ProofOutcome(ProofStatus.REFUTED, f"interfaces never agree: {interface}")
     oracle: OracleRefutation | None = None
     if refute:
-        oracle = refute_by_oracle(
+        oracle = _certify_oracle(
             start,
             goal,
             samples=samples,
             max_samples=max_samples,
             tolerance=tolerance,
             max_elements=max_elements,
+            defer=True,
         )
         if oracle.counterexample is not None:
             return _oracle_refuted(start, goal, oracle)

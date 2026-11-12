@@ -449,8 +449,11 @@ class Result:
 _OWN = frozenset({"_shell", "_bindings", "_values", "_named"})
 
 
-def _where(where: str | Mapping[str, str] | None) -> str:
-    """`` for CLAUSES`` from clause text or a mapping symbol -> ``">= 2"``, ``"= 3"``."""
+def _where(where: str | Mapping[str, str] | None, family_first: bool = True) -> str:
+    """`` for CLAUSES`` from clause text or a mapping symbol -> ``">= 2"``, ``"= 3"``;
+    `` only for`` when ``family_first`` is False."""
+    if not isinstance(family_first, bool):
+        raise AzxError(f"family_first must be a bool, got {family_first!r}")
     if where is None:
         return ""
     if isinstance(where, Mapping):
@@ -459,7 +462,9 @@ def _where(where: str | Mapping[str, str] | None) -> str:
         text = where.strip()
     else:
         raise AzxError(f"where takes clause text or a mapping, got {type(where).__name__}")
-    return f" for {text}" if text else ""
+    if not text:
+        return ""
+    return f" for {text}" if family_first else f" only for {text}"
 
 
 def _legs(count: object, side: str) -> tuple[int, tuple[tuple[str, int, str], ...]]:
@@ -532,11 +537,12 @@ class Program:
         left: Piece | str | Diagram,
         right: Piece | str | Diagram | None,
         where: str | Mapping[str, str] | None = None,
+        family_first: bool = True,
     ) -> Result:
         loaded = self.load(left)
         if not loaded.ok:
             return loaded
-        tail = _where(where)
+        tail = _where(where, family_first)
         if right is None:
             return self._run(f"{command}{tail}")
         if not (isinstance(right, str) and right.startswith("@")):
@@ -550,10 +556,12 @@ class Program:
         right: Piece | str | Diagram | None = None,
         *,
         where: str | Mapping[str, str] | None = None,
+        family_first: bool = True,
     ) -> Result:
         """Decides ``left == right`` for every value of their symbols, or for the values the
-        clauses ``where`` covers."""
-        return self._pair("decide", left, right, where)
+        clauses ``where`` covers, on the restricted pair alone when ``family_first`` is
+        False."""
+        return self._pair("decide", left, right, where, family_first)
 
     def induct(
         self,
@@ -562,12 +570,14 @@ class Program:
         *,
         on: str | None = None,
         where: str | Mapping[str, str] | None = None,
+        family_first: bool = True,
         **values: object,
     ) -> Result:
         """Proves ``left == right`` by induction on ``on``, every other symbol held at
-        ``values``, under the clauses ``where``."""
+        ``values``, under the clauses ``where``, on the restricted pair alone when
+        ``family_first`` is False."""
         head = " ".join([*([f"on {on}"] if on else []), *(f"{k}={v}" for k, v in values.items())])
-        return self._pair(f"induct {head}".rstrip(), left, right, where)
+        return self._pair(f"induct {head}".rstrip(), left, right, where, family_first)
 
     def prove(
         self,
@@ -577,9 +587,11 @@ class Program:
         exhaustive: bool = False,
         algebraic: bool = False,
         where: str | Mapping[str, str] | None = None,
+        family_first: bool = True,
     ) -> Result:
         """Searches for a certified derivation of ``left == right``; ``algebraic`` implies
-        ``exhaustive``; ``where`` restricts the claim."""
+        ``exhaustive``; ``where`` restricts the claim, proved on the restricted pair alone when
+        ``family_first`` is False."""
         command = (
             "prove exhaustive algebraic"
             if algebraic
@@ -587,7 +599,7 @@ class Program:
             if exhaustive
             else "prove"
         )
-        return self._pair(command, left, right, where)
+        return self._pair(command, left, right, where, family_first)
 
     def check(
         self, left: Piece | str | Diagram, right: Piece | str | Diagram, **values: object

@@ -1342,6 +1342,7 @@ def decide_equal(
     describe: Callable[[Diagram], str] | None = None,
     prove_equal: bool = True,
     use_path_sum: bool = True,
+    family_first: bool = True,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
     or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's and the
@@ -1354,8 +1355,11 @@ def decide_equal(
     discard, or ``mixed`` is set, the ladder runs on both doubled diagrams and the decision
     is ``DOUBLED``, the rung that settled it in ``inner_method``. A restriction with clauses
     runs :func:`decide_restricted`. ``prove_equal=False`` leaves EQUAL unproved and unchanged;
-    ``use_path_sum=False`` turns the path-sum rung off.
+    ``use_path_sum=False`` turns the path-sum rung off; ``family_first=False`` decides a
+    restricted claim on the restricted pair alone.
     """
+    if not isinstance(family_first, bool):
+        raise DecideGrammarError(f"family_first must be a bool, got {family_first!r}")
     if not isinstance(prove_equal, bool):
         raise DecideGrammarError(f"prove_equal must be a bool, got {prove_equal!r}")
     if not isinstance(use_path_sum, bool):
@@ -1380,6 +1384,7 @@ def decide_equal(
             restrict=restrict,
             describe=describe,
             prove_equal=prove_equal,
+            family_first=family_first,
         )
     finally:
         _USE_PATH_SUM.reset(token)
@@ -1404,6 +1409,7 @@ def _decide_equal(
     restrict: Restriction | str | Mapping[str, str] | None,
     describe: Callable[[Diagram], str] | None,
     prove_equal: bool,
+    family_first: bool = True,
 ) -> Decision:
     """:func:`decide_equal` after its own argument checks."""
     _check_args(
@@ -1440,7 +1446,9 @@ def _decide_equal(
 
         restriction = validate(parse_restriction(restrict), left, right)
         if not restriction.empty:
-            decision = decide_restricted(left, right, restriction, **options)
+            decision = decide_restricted(
+                left, right, restriction, family_first=family_first, **options
+            )
             return _certify(decision, left, right, describe, prove_equal)
     decision = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
     return _certify(decision, left, right, describe, prove_equal)
@@ -1531,20 +1539,29 @@ def _certify(
 
 
 def decide_restricted(
-    left: Diagram, right: Diagram, restriction: Restriction, **options: object
+    left: Diagram,
+    right: Diagram,
+    restriction: Restriction,
+    *,
+    family_first: bool = True,
+    **options: object,
 ) -> Decision:
     """The restricted decision: the family decided first, its EQUAL kept and an in-range
     counterexample kept, otherwise the ladder on the restricted pair under the restriction's
-    floors."""
+    floors; ``family_first=False`` runs the ladder on the restricted pair alone."""
     from archytaszx.semantics.restrict import in_domain, restricted_samples, subst_pair, to_original
 
-    with _trace.span("decide.restriction.family"):
-        family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
-    if family.verdict is EqualityVerdict.EQUAL:
-        return replace(family, restriction=restriction, family=family, family_holds=True)
+    if not isinstance(family_first, bool):
+        raise DecideGrammarError(f"family_first must be a bool, got {family_first!r}")
+    family: Decision | None = None
+    if family_first:
+        with _trace.span("decide.restriction.family"):
+            family = _decide(left, right, floors=None, **options)  # type: ignore[arg-type]
+        if family.verdict is EqualityVerdict.EQUAL:
+            return replace(family, restriction=restriction, family=family, family_holds=True)
     with _trace.span("decide.restriction.substitute"):
         pair = subst_pair(left, right, restriction)
-    if family.verdict is EqualityVerdict.UNEQUAL:
+    if family is not None and family.verdict is EqualityVerdict.UNEQUAL:
         point = family.counterexample
         induced = family.induction
         if point is None and induced is not None and induced.counterexample is not None:
@@ -1585,7 +1602,7 @@ def decide_restricted(
         family_holds=False,
         restricted_pair=pair,
         counterexample_original=original,
-        samples_checked=family.samples_checked + inner.samples_checked,
+        samples_checked=(0 if family is None else family.samples_checked) + inner.samples_checked,
     )
 
 
