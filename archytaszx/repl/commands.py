@@ -1121,6 +1121,8 @@ def _cmd_prove(session: Session, args: str) -> Outcome:
         elif outcome.mixed is not None:
             kind = f"{kind} with the discard rules (NATIVE)"
         blocks: list[Block] = [Text(head)]
+        for label, one in outcome.instances:
+            blocks.append(Text(f"prove: instance {label}: {one.reason}"))
         if outcome.restriction is not None:
             artefact = outcome.certificate if outcome.certificate is not None else outcome.induction
             if outcome.family_holds:

@@ -640,7 +640,9 @@ excluded points, and planned:
   - finitely many values (a bounded integer or lattice interval, or a phase symbol on (1/q)Z
     whose every phase expression changes by an integer when the symbol grows by 1): each value
     decided as its own instance; EQUAL when every instance is, UNEQUAL at the first unequal
-    instance, else UNKNOWN naming the instances left;
+    instance, else UNKNOWN naming the instances left; prove likewise: PROVED when every
+    instance is proved, carrying each instance's outcome and certificate (instances), REFUTED
+    at the first refuted instance, else NOT_FOUND naming the instances left;
   - a multiplicity or dimension with a lower bound: n >= c or the floor d >= c of 8.1, the
     excluded points a side condition;
   - a phase or exponent with a lower bound c: x = c + s (s >= 0, s > 0 when strict, s <= b - c
@@ -663,7 +665,8 @@ or for 0 <= e <= 2) decides there; the bound is the hypothesis the theorem state
 assumptions make a substituted scalar leave the scalar grammar (an Abs), the shift is
 substituted with a plain symbol instead. An upper bound s <= b - c and excluded points have
 no sympy encoding; a restricted pair the ladder leaves UNKNOWN under them is EQUAL_UNCERTIFIED
-when its symbolic contractions' entry difference, a polynomial in its index atoms, has every
+when its symbolic contractions' entry difference, a polynomial in its index atoms and the
+index symbols outside them, has every
 coefficient vanish on the real range of the single symbol left (a <= s <= b without the
 excluded points): reduce_inequalities finds no point of the range where a real part is above
 or below 0, and solveset finds every point of it a root (|e - 1| = 1 - e for -1 <= e <= 1).

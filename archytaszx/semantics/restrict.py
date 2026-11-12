@@ -81,6 +81,7 @@ _NEW_FORMS = frozenset({NE, GT, LE, LT, RANGE, LATTICE})
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _CLAUSE_RE = re.compile(rf"\s*({_IDENT})\s*(!=|≠|>=|≥|<=|≤|=|>|<)\s*(.*?)\s*")
 _INT_RE = re.compile(r"[+-]?\d+")
+_INDEX_NAME = re.compile(r"^_[ikq][0-9]+$")
 _NUM = r"[+-]?\d+(?:/\d+)?"
 _NUM_RE = re.compile(_NUM)
 _AFFINE_RE = re.compile(rf"(?:({_NUM})\s*\*?\s*)?({_IDENT})\s*(?:\+\s*({_NUM}))?")
@@ -804,7 +805,11 @@ def _range_parts(
         key=sp.default_sort_key,
     )
     bound: set[sp.Symbol] = set().union(*(g.free_symbols for g in gens))
-    names = expr.free_symbols - bound
+    indices = sorted(
+        (x for x in expr.free_symbols - bound if _INDEX_NAME.match(str(x.name))), key=str
+    )
+    gens = [*gens, *indices]
+    names = expr.free_symbols - bound - set(indices)
     if len(names) != 1:
         return None
     (symbol,) = names

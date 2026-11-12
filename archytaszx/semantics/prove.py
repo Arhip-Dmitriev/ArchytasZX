@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import enum
 import functools
+import itertools
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -851,7 +852,8 @@ class ProofOutcome:
     carries its ``restriction``, the unrestricted ``family`` outcome, ``family_holds`` when that
     outcome proved the claim, the ``restricted_pair`` it proved otherwise and the counterexample
     in the original symbols; ``refutation`` is the Lean refutation source of an oracle
-    ``REFUTED``."""
+    ``REFUTED``; ``instances`` holds, for a restriction with finitely many values, each
+    instance's label and outcome (one certificate per instance)."""
 
     status: ProofStatus
     reason: str
@@ -868,6 +870,7 @@ class ProofOutcome:
     restricted_pair: tuple[Diagram, Diagram] | None = None
     counterexample_original: Mapping[str, CheckAssignmentValue] | None = None
     refutation: str | None = None
+    instances: tuple[tuple[str, ProofOutcome], ...] = ()
 
     def __post_init__(self) -> None:
         """Validate every field's type, in declaration order."""
@@ -928,6 +931,8 @@ def restricted_outcome(
     if restriction.empty:
         return run(left, right, samples=samples)
     if not family_first:
+        if restriction.finite:
+            return _by_instances(left, right, restriction, run, samples)
         return _pair_only(left, right, restriction, run, samples)
     family = run(left, right, samples=samples)
     if family.proved:
@@ -940,6 +945,8 @@ def restricted_outcome(
             family=family,
             counterexample_original=MappingProxyType(dict(point)),
         )
+    if restriction.finite:
+        return replace(_by_instances(left, right, restriction, run, samples), family=family)
     try:
         pair = subst_pair(left, right, restriction)
     except DecideGrammarError as exc:
@@ -956,6 +963,47 @@ def restricted_outcome(
         family=family,
         restricted_pair=pair,
         counterexample_original=original,
+    )
+
+
+def _by_instances(
+    left: Diagram,
+    right: Diagram,
+    restriction: Restriction,
+    run: Callable[..., ProofOutcome],
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+) -> ProofOutcome:
+    """``run`` on each instance of the finite clauses: PROVED when every instance is, carrying
+    each instance's outcome; the first REFUTED instance; else NOT_FOUND naming the instances
+    left."""
+    finite = restriction.finite
+    done: list[tuple[str, ProofOutcome]] = []
+    open_: list[str] = []
+    for combo in itertools.product(*(c.values for c in finite)):
+        at = {c.symbol: v for c, v in zip(finite, combo, strict=True)}
+        label = ", ".join(f"{k} = {v}" for k, v in at.items())
+        one = restricted_outcome(
+            left, right, restriction.instance_at(at), run, samples, family_first=False
+        )
+        if one.status is ProofStatus.REFUTED:
+            return replace(one, reason=f"instance {label}: {one.reason}", restriction=restriction)
+        if one.proved:
+            done.append((label, one))
+        else:
+            open_.append(label)
+    if open_ or not done:
+        settled = f" (proved at {'; '.join(k for k, _o in done)})" if done else ""
+        return ProofOutcome(
+            ProofStatus.NOT_FOUND,
+            f"instances left unproved: {'; '.join(open_)}{settled}",
+            restriction=restriction,
+            instances=tuple(done),
+        )
+    return ProofOutcome(
+        ProofStatus.PROVED,
+        f"every instance proved ({'; '.join(k for k, _o in done)}), one certificate each",
+        restriction=restriction,
+        instances=tuple(done),
     )
 
 
