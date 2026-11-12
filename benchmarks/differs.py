@@ -170,16 +170,20 @@ def _table_equal(table: dict[tuple[Any, int], bool], n: int | None, d: int) -> b
         if value == at and line and not any(line):
             return True
     ns = [k[0] for k in table if k[0] is not None]
-    if n is not None and ns and n > max(ns):
-        if _tail_equal(table, 0) or _periodic_equal(table, n, d):
-            return True
+    if (
+        n is not None
+        and ns
+        and n > max(ns)
+        and (_tail_equal(table, 0) or _periodic_equal(table, n, d))
+    ):
+        return True
     return d > max(k[1] for k in table) and _tail_equal(table, 1)
 
 
 def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool | None:
     """True when the F pair of ``false`` is equal at ``(n, d)`` by its differs_at table, its
-    kind's closed-form rule or the table's lines, False when it differs there, None when only the F record's witness speaks (a witness that
-    pairs a pure boundary with the same boundary doubled); False for an S equation and a
+    kind's closed-form rule or the table's lines, False when it differs there, None when only
+    the F record's witness speaks (a witness that pairs a pure boundary with the same boundary doubled); False for an S equation and a
     symbolic point (``d`` None)."""
     if false is None or d is None:
         return False

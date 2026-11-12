@@ -803,7 +803,7 @@ def annotate(rec: dict[str, Any], insts: dict[str, Any], seconds: float) -> dict
                 with _limit(seconds):
                     left, right = _pair(broken, n, d)
                     nw = differing_entry(left, right, n, d, rng)
-            except (_Overrun, Exception):  # noqa: BLE001
+            except (_Overrun, Exception):  # noqa: BLE001, S112
                 continue
             if nw is not None:
                 out["witness"] = nw.to_dict()
