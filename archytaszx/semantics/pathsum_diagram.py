@@ -403,6 +403,7 @@ def _qudit_sum(
     table, X on dimension p adds ``y * (signed leg total) + table(y)`` and p^(-legs/2), F on
     dimension p adds ``x * z`` and p^(-1/2); X and F on p^k, k > 1, raise."""
     phase = ModPoly(p)
+    atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]] = []
     c, s2 = constant(diagram.scalar.to_sympy())
     if s2:
         c = with_sqrt2(c, s2)
@@ -414,7 +415,7 @@ def _qudit_sum(
         if name == Z_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node, p)
             digits = [var_of[uf.find(("z", node_id, j))] for j in range(k)]
-            phase = phase + _qudit_table(node_id, node, digits, p)
+            phase = phase + _qudit_part(node_id, node, digits, p, atoms)
         elif name in (X_SPIDER.name, FOURIER_BOX.name):
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node, p)
             if k != 1:
@@ -440,11 +441,33 @@ def _qudit_sum(
                     ),
                     sign,
                 )
-            phase = phase + _qudit_table(node_id, node, [y], p)
+            phase = phase + _qudit_part(node_id, node, [y], p, atoms)
             for _leg in legs:
                 c = c * inv_root
     constraints = [ModPoly(p, {((a, 1),): 1, ((b, 1),): p - 1}) for a, b in same]
-    return QuditPathSum(p, tuple(boundary), path, phase, c, constraints)
+    return QuditPathSum(p, tuple(boundary), path, phase, c, constraints, [], atoms)
+
+
+def _qudit_part(
+    node_id: NodeId,
+    node: Node,
+    digits: list[int],
+    p: int,
+    atoms: list[tuple[ModPoly, tuple[Cyclo, ...]]],
+) -> ModPoly:
+    """A spider table as an F_p phase polynomial, or, on dimension p when its entries are not
+    multiples of 1/p or carry weights, as an atom on its variable (its p coefficients)."""
+    try:
+        return _qudit_table(node_id, node, digits, p)
+    except PathSumUnsupported:
+        if len(digits) != 1 or node.phase is None:
+            raise
+    table = []
+    for v in range(p):
+        cv, kv = constant(node.phase.coefficient(v).to_sympy())
+        table.append(with_sqrt2(cv, kv))
+    atoms.append((ModPoly(p, {((digits[0], 1),): 1}), tuple(table)))
+    return ModPoly(p)
 
 
 def index_tuple(bits: Iterable[int], values: dict[int, int], base: int = 2) -> tuple[int, ...]:

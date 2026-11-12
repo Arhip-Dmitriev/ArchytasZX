@@ -371,7 +371,29 @@ P is stored reduced. A reduced polynomial is fixed by its values on F_p^n, so fo
 supports equal data is necessary and sufficient, and the form is complete for qudit Clifford
 maps. Witness points (witness_points_qudit) add, for each monomial of either phase, the grid
 of its variables' values up to their exponents. Phases that are not multiples of 1/p (for
-example a Legendre-symbol phase 1/2), composite odd d and mixed bases are declined.
+example a Legendre-symbol phase 1/2) and weighted tables on dimension p become atoms, below;
+on p^k with k > 1 they, composite odd d and mixed bases are declined.
+
+Atoms. A QuditPathSum also carries atoms f(A): an argument polynomial A over F_p and a table f
+of p values in Q(zeta), the summand multiplied by f(A). A Z or X table on dimension p whose
+entries are not multiples of 1/p, or that carries weights, is the atom (x, its p coefficients).
+Variables in an atom take only three rules, after the four above:
+
+  [Fourier]        y of degree at most one in P, y Q, in no constraint and in one atom
+                   f(a y + c), a a unit constant: drop y and the atom, add -Q c / a to P, and add
+                   the atom (Q / a, f^), f^(t) = Sum_u zeta_p^(u t) f(u).
+  [HH] into atom   y of degree one, y Q, Q with a path variable, y in no atom: drop y, factor p,
+                   add the atom (Q, delta_0).
+  [Convolve]       x in no constraint, in P only through terms in x alone, in atoms on x alone
+                   (their product with those terms is A) and at most one atom g(a x + M), a a unit
+                   constant: drop x and these atoms, add the atom (M, H), H(m) = Sum_v A(v)
+                   g(a v + m) (with no g, multiply the constant by Sum_v A(v)).
+
+An atom with a constant argument is folded into the constant. In the canonical form atoms are
+made monic and constant-free (tables permuted), equal arguments merged, a single-variable atom
+absorbs the phase terms in that variable alone, a table that is a constant times p-th roots of
+unity is written back as phase and constant, and each other table is scaled to 1 at its first
+nonzero entry; equal atom data is compared entrywise.
 
 The rung (decide, PROOFS.txt section 2.1) compares the canonical forms. When they differ it
 evaluates both at points that separate them (a support point of each, a point of one support
