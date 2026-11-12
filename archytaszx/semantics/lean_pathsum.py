@@ -279,6 +279,11 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     for ps in (raw_l, raw_r):
         for c in ps.phase.terms.values():
             m = math.lcm(m, c.denominator)
+    from archytaszx.algebra.pathsum import eliminate
+
+    for red in (red_l, red_r):
+        if eliminate(red.constraints, red.boundary) is None:
+            raise PathSumUnsupported("a support constraint has no degree-one pivot")
     order = _elimination_order(red_l.constraints, red_l.boundary)
     steps_l, steps_r = _steps(raw_l, red_l, order), _steps(raw_r, red_r, order)
     two_l = sum(1 for st in steps_l if st in (".elim", ".hhCons", ".hhPivot"))

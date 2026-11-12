@@ -331,6 +331,13 @@ complete for equality (the Dehaene-De Moor form of stabilizer maps). A Toffoli-t
 unique, so differing forms there give UNEQUAL only through an evaluated point. A sum with path
 variables left (T gates not paired) or a constraint without a pivot has no canonical form.
 eliminate repeats its pass over the variables while a pass finds a pivot.
+When constraints are left without a pivot, canonical uses boolean_eliminate: the support
+indicator g = Prod (1 + c) over F_2 with x^2 = x (the Boolean ideal of the constraints is the
+principal ideal of 1 + g, so g is the Boolean Groebner basis), then for each boundary variable v
+ascending with g = v A + B and B (A + B) = 0, v is determined on the support as A + B and is
+substituted out of g and the earlier rows. The rows and the residual g (the Canon's support,
+empty when g = 1) replace the eliminated constraints; g = 0 is the zero form. Monomials are
+bitmasks inside boolean_eliminate.
 
 Residual form (residual_form). A reduced, nonzero sum without a canonical form gets its
 constraints eliminated as above (kept as raw sorted constraints when they have no pivots),

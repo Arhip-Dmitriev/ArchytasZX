@@ -793,13 +793,15 @@ def reduce(ps: PathSum) -> PathSum:
 class Canon:
     """A reduced path sum with no path variable: ``const * exp(2 pi i phase) * [rows]``. Each
     row sets a pivot boundary variable to an F_2 polynomial (monomials, XOR) of the free
-    variables; the phase is over the free variables."""
+    variables; the phase is over the free variables; ``support``, when not empty, is the
+    indicator (an F_2 polynomial) the free variables must satisfy."""
 
     zero: bool
     rows: tuple[tuple[int, tuple[tuple[int, ...], ...]], ...]
     phase: tuple[tuple[tuple[int, ...], Fraction], ...]
     const: Cyclo
     boundary: tuple[int, ...]
+    support: tuple[tuple[int, ...], ...] = ()
 
     def same(self, other: Canon) -> bool:
         """Whether both forms carry the same data, so denote one function."""
@@ -808,6 +810,7 @@ class Canon:
         return (
             self.boundary == other.boundary
             and self.rows == other.rows
+            and self.support == other.support
             and self.phase == other.phase
             and self.const == other.const
         )
@@ -815,6 +818,8 @@ class Canon:
     def value(self, values: Mapping[int, int]) -> Cyclo:
         """The entry at a full boundary assignment."""
         if self.zero:
+            return Cyclo.rational(0)
+        if self.support and _f2_eval(self.support, values) != 1:
             return Cyclo.rational(0)
         for pivot, rest in self.rows:
             if values[pivot] != _f2_eval(rest, values):
@@ -884,20 +889,94 @@ def eliminate(
     return sorted(rows, key=lambda r: r[0])
 
 
+def _bmul(a: set[int], b: set[int]) -> set[int]:
+    """The product of two F_2 polynomials over bitmask monomials."""
+    out: set[int] = set()
+    for x in a:
+        for y in b:
+            k = x | y
+            if k in out:
+                out.remove(k)
+            else:
+                out.add(k)
+    return out
+
+
+def _bsub(p: set[int], bit: int, value: set[int]) -> set[int]:
+    """``p`` with the variable at ``bit`` replaced by ``value``, over bitmask monomials."""
+    out: set[int] = set()
+    for x in p:
+        for k in ((x & ~bit) | y for y in value) if x & bit else (x,):
+            if k in out:
+                out.remove(k)
+            else:
+                out.add(k)
+    return out
+
+
+def boolean_eliminate(
+    constraints: Iterable[F2Poly], boundary: Sequence[int]
+) -> tuple[list[tuple[int, F2Poly]], F2Poly]:
+    """Rows and residual indicator of nonlinear F_2 constraints: the support indicator g =
+    Prod (1 + c) (the Boolean ideal of the constraints is the principal ideal of 1 + g); each
+    variable v ascending with g = v A + B and B (A + B) = 0 is determined, v = A + B on the
+    support, and is substituted out of g and the rows. An empty indicator is the empty
+    support. Monomials are bitmasks internally."""
+    cons = [c for c in constraints if c]
+    names = sorted({v for c in cons for m in c for v in m} | set(boundary))
+    bit = {v: 1 << i for i, v in enumerate(names)}
+
+    def enc(p: F2Poly) -> set[int]:
+        out: set[int] = set()
+        for m in p:
+            k = sum(bit[v] for v in m)
+            if k in out:
+                out.remove(k)
+            else:
+                out.add(k)
+        return out
+
+    def dec(p: set[int]) -> F2Poly:
+        return frozenset(frozenset(v for v in names if k & bit[v]) for k in p)
+
+    g: set[int] = {0}
+    for c in cons:
+        g = _bmul(g, {0} ^ enc(c))
+        if not g:
+            return [], frozenset()
+    rows: list[tuple[int, set[int]]] = []
+    for v in sorted(boundary):
+        b_v = bit[v]
+        a = {k & ~b_v for k in g if k & b_v}
+        if not a:
+            continue
+        b = {k for k in g if not k & b_v}
+        value = a ^ b
+        if _bmul(b, value):
+            continue
+        g = _bsub(g, b_v, value)
+        rows = [(q, _bsub(r, b_v, value)) for q, r in rows]
+        rows.append((v, value))
+    return sorted(((q, dec(r)) for q, r in rows), key=lambda r: r[0]), dec(g)
+
+
 def _zero_canon(boundary: tuple[int, ...]) -> Canon:
     return Canon(True, (), (), Cyclo.rational(0), boundary)
 
 
 def canonical(ps: PathSum) -> Canon | None:
-    """The canonical form of a reduced path sum; None when a path variable remains or a
-    constraint has no pivot."""
+    """The canonical form of a reduced path sum; None when a path variable remains. Constraints
+    without a degree-one pivot go through boolean_eliminate."""
     if ps.is_zero:
         return _zero_canon(ps.boundary)
     if ps.path:
         return None
     rows = eliminate(ps.constraints, ps.boundary)
+    support: F2Poly = ONE
     if rows is None:
-        return None
+        rows, support = boolean_eliminate(ps.constraints, ps.boundary)
+        if not support:
+            return _zero_canon(ps.boundary)
     if rows and rows[0] is None:
         return _zero_canon(ps.boundary)
     pivots = cast(list[tuple[int, F2Poly]], rows)
@@ -917,6 +996,7 @@ def canonical(ps: PathSum) -> Canon | None:
         tuple(sorted(((tuple(sorted(m)), c) for m, c in phase.terms.items()))),
         const,
         ps.boundary,
+        () if support == ONE else tuple(sorted(tuple(sorted(m)) for m in support)),
     )
 
 
@@ -1609,6 +1689,7 @@ __all__ = [
     "QuditPathSum",
     "Residual",
     "Step",
+    "boolean_eliminate",
     "canonical",
     "canonical_qudit",
     "constant",
