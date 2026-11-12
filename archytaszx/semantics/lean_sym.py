@@ -28,6 +28,7 @@ and a term ``(CMon, sums, dels, phs)``.
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -56,6 +57,7 @@ STm = tuple[CMon, tuple[tuple[int, DMon], ...], tuple[Fac, ...], tuple[Fac, ...]
 OFF = 1000000
 ROUNDS = 3
 FULL_TERMS = 4096
+NORM_TERMS = 1 << 14
 """The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
 
@@ -756,13 +758,31 @@ def tm_add(t: STm, lst: tuple[STm, ...]) -> tuple[STm, ...]:
     return tuple(out + ([t] if t[0][0] != 0 else []))
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _norm_cached(fl: tuple[int, ...], t: STm) -> STm | None:
+    return norm_tm(fl, ROUNDS, t)
+
+
 def nf_ex(fl: Sequence[int], e: Sequence[STm]) -> tuple[STm, ...]:
-    acc: tuple[STm, ...] = ()
+    """``tm_add`` folded over the normalised terms, by a shape-keyed dict in insertion order."""
+    key = tuple(fl)
+    acc: dict[STm, STm] = {}
     for t in e:
-        n = norm_tm(fl, ROUNDS, t)
-        if n is not None:
-            acc = tm_add(n, acc)
-    return acc
+        n = _norm_cached(key, t)
+        if n is None:
+            continue
+        st = shape(n)
+        u = acc.get(st)
+        if u is None:
+            if n[0][0] != 0:
+                acc[st] = n
+            continue
+        q = u[0][0] + n[0][0]
+        if q == 0:
+            del acc[st]
+        else:
+            acc[st] = with_q(u, q)
+    return tuple(acc.values())
 
 
 # networks
@@ -887,16 +907,21 @@ def tr_nodes(
     pre: tuple[int, ...],
     i: int,
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
+    budget: list[int] | None = None,
 ) -> list[STm] | None:
-    """``trNodesB``."""
+    """``trNodesB``; :class:`NetUnsupported` once the terms normalised exceed ``budget[0]``."""
     if not nodes:
         return [(of_q(1), (), (), ())]
     _kind, os, is_, _dim, _ph = nodes[0]
     legs = (*os, *is_)
     a = tr_node(dt, pt, OFF + i, *nodes[0])
-    b = tr_nodes(fl, dt, pt, labs, internal, pre + tuple(legs), i + 1, nodes[1:])
+    b = tr_nodes(fl, dt, pt, labs, internal, pre + tuple(legs), i + 1, nodes[1:], budget)
     if a is None or b is None or not ex_mul_ok(a, b):
         return None
+    if budget is not None:
+        budget[0] -= len(a) * len(b)
+        if budget[0] < 0:
+            raise NetUnsupported(f"the normaliser's expansion exceeds {NORM_TERMS} terms")
     first = tuple(
         (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pre
     )
@@ -947,7 +972,7 @@ def tr_net(
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
     internal: Sequence[int],
 ) -> list[STm] | None:
-    e = tr_nodes(fl, dt, pt, labs, internal, (), 0, nodes)
+    e = tr_nodes(fl, dt, pt, labs, internal, (), 0, nodes, [NORM_TERMS])
     if e is None:
         return None
     used = {lab for n in nodes for lab in (*n[1], *n[2])}
