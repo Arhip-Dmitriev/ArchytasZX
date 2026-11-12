@@ -480,6 +480,33 @@ def _phase_corrections(node: Node) -> tuple[tuple[int, sp.Expr], ...]:
     return tuple(corrections)
 
 
+def _linear_table(node: Node, dim: Dim) -> int | None:
+    """The integer ``a`` when ``node``'s stored phases at a concrete dimension ``D`` are exactly
+    ``a*k/D`` turns mod 1 at every index ``k`` (``a`` nonzero mod ``D``, entry 1 giving ``a``),
+    else None."""
+    phase = node.phase
+    if phase is None or not dim.is_concrete:
+        return None
+    size = dim.to_int()
+    entries = phase.entries()
+    if size < 3 or len(entries) != size - 1:
+        return None
+    first = entries.get(1)
+    if first is None or not sp.sympify(first.to_sympy_turns()).is_Rational:
+        return None
+    slope = sp.Rational(first.to_sympy_turns()) * size
+    if not slope.is_Integer or int(slope) % size == 0:
+        return None
+    a = int(slope) % size
+    for k in range(1, size):
+        stored = entries.get(k)
+        if stored is None or not sp.sympify(stored.to_sympy_turns()).is_Rational:
+            return None
+        if not (sp.Rational(stored.to_sympy_turns()) - sp.Rational(a * k, size)).is_Integer:
+            return None
+    return a
+
+
 def _z_entry(
     dim: Dim, legs: list[sp.Symbol], corrections: tuple[tuple[int, sp.Expr], ...]
 ) -> sp.Expr:
@@ -735,6 +762,17 @@ def _node_entry(
     bilinear = _bilinear_table_entry(diagram, node_id, port_index)
     if bilinear is not None:
         return bilinear
+
+    slope = _linear_table(node, dim)
+    legs = outputs + inputs
+    if slope is not None and node.generator_type.name == X_SPIDER.name:
+        total = sum(outputs, sp.Integer(0)) - sum(inputs, sp.Integer(0))
+        return sp.Pow(d_expr, sp.Rational(-len(legs), 2)) * d_expr * ModDelta(total + slope, d_expr)
+    if slope is not None and node.generator_type.name == Z_SPIDER.name and legs:
+        entry = sp.exp(2 * sp.pi * sp.I * slope * legs[0] / d_expr)
+        for leg in legs[1:]:
+            entry = entry * _delta(dim, legs[0], leg)
+        return cast(sp.Expr, entry)
 
     corrections = _phase_corrections(node)
 
