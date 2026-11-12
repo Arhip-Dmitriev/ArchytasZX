@@ -664,8 +664,7 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      (0..64) unless the circuit is unrolled or has no size parameter, and d
                      (1..64) unless the script is literal in d, since decide settles the family
                      at a bound count and dimension. A failure there keeps its outcome and is
-                     flagged point_invalid. Cause tool.up_to_scalar: a scalar-only F break for a
-                     tool that decides up to a scalar (section 11). equal_at is None, not
+                     flagged point_invalid. equal_at is None, not
                      equal, for an F record whose
                      witness pairs a pure boundary with the same boundary doubled.
 
@@ -767,10 +766,10 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           match (drivers/QuantoBench.scala in the jar); boundary order and scalars
                           not compared (up to a scalar); binders, W, triangles and discards
                           unsupported
-  The truth is exact equality. For a tool marked up to a scalar (QCEC, DiZX, Feynman, AutoQ,
-  Quantomatic), a run with a verdict on an F equation whose break changes only the scalar
-  (its witness's proportional flag when set, else the kind: scalar_small_one, global_phase,
-  box_boundary, boxed beyond_N) is invalid_point, cause tool.up_to_scalar; ArchytasZX, PyZX, QuiZX, Qiskit and Cirq decide exact equality.
+  The truth is exact equality, and every tool is scored against it the same way. A tool that
+  decides only up to a scalar (QCEC, DiZX, Feynman, AutoQ, Quantomatic) answers equal on an F
+  equation whose break changes only the scalar, and that answer is scored wrong; ArchytasZX,
+  PyZX, QuiZX, Qiskit and Cirq decide exact equality.
   Published     adapter   B1 only, the symbolic run: the published proof files re-checked by coqc
   proofs                  with their project's load paths, each project in its own opam switch:
                           SQIR 134fb94 (Coq 8.20.1, QuantumLib 1.8.0): Deutsch, superdense

@@ -100,7 +100,6 @@ UNSUPPORTED: dict[str, str] = {
 
 CAUSES: dict[str, str] = {
     "verdict": "verdict.<verdict>: the run's verdict (ok, uncertified, wrong)",
-    "tool.up_to_scalar": "a scalar-only F break, for a tool that decides up to a scalar",
     "pair_equal_at_point": "the F pair is equal at this point (benchmarks.differs)",
     "rival.no_verdict": "the rival returned no verdict",
     "kill.stage_timer": "the runner's wall timer killed the worker",
@@ -445,13 +444,6 @@ def classify(
     )
     if invalid and oc2 in VERDICT_OUTCOMES:
         oc2, cause = "invalid_point", "pair_equal_at_point"
-    elif (
-        false is not None
-        and tool in UP_TO_SCALAR_TOOLS
-        and scalar_only(false)
-        and oc2 in VERDICT_OUTCOMES
-    ):
-        oc2, cause = "invalid_point", "tool.up_to_scalar"
     out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
     if invalid:
         out["point_invalid"] = True
