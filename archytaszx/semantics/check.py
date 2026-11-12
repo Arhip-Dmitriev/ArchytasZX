@@ -231,6 +231,9 @@ class ComparisonResult:
     doubled: bool = False
     difference: Scalar | None = None
     """The nonzero entry difference of a symbolic comparison that found one."""
+    index: tuple[int, ...] | None = None
+    """The index tuple (outputs, then inputs) of the largest entrywise deviation, when an
+    EXACT dense comparison failed."""
 
 
 def compare_tensors(
@@ -254,15 +257,21 @@ def compare_tensors(
         )
 
     if mode is EqualityMode.EXACT:
-        deviation = float(np.max(np.abs(a - b))) if a.size else 0.0
+        gap = np.abs(a - b)
+        deviation = float(np.max(gap)) if a.size else 0.0
         matched = deviation <= tolerance
+        worst = (
+            None
+            if matched or not a.size
+            else tuple(int(v) for v in np.unravel_index(int(np.argmax(gap)), gap.shape))
+        )
         reason = (
             "tensors agree entrywise within tolerance"
             if matched
             else f"max abs deviation {deviation} exceeds tolerance {tolerance}"
         )
         return ComparisonResult(
-            mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation
+            mode=mode, matched=matched, reason=reason, max_abs_deviation=deviation, index=worst
         )
 
     if mode in (EqualityMode.UP_TO_GLOBAL_PHASE, EqualityMode.UP_TO_POSITIVE_SCALAR):

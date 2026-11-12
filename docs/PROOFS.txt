@@ -118,7 +118,9 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
     Decision.reason           a sentence explaining the verdict
     Decision.certificates     the certificates behind a NORMAL_FORM or SATURATION verdict
     Decision.counterexample   the assignment behind an UNEQUAL verdict
-    Decision.refutation       the Lean refutation source of an UNEQUAL verdict past rung 1
+    Decision.refutation       the Lean refutation source of an UNEQUAL verdict past rung 1; its
+                              search tries first the witness index, else the index of the
+                              oracle comparison's largest deviation
     Decision.proof            the proof of an EQUAL verdict: the normal-form ProofCertificate,
                               the kernel Theorem of the certificates, the normaliser's
                               kernel.Symbolic, a prove() ProofOutcome, or for a restricted

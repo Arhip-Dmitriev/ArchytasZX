@@ -1453,6 +1453,9 @@ def _certify(
         point = {**dict(induced.witness), induced.index: induced.counterexample}
     witness = decision.witness
     index = witness.index if witness is not None and point is decision.counterexample else None
+    comparison = decision.comparison
+    if index is None and comparison is not None and point is decision.counterexample:
+        index = comparison.index
     try:
         with _trace.span("decide.refutation"):
             source = lean_refutation(left, right, point, describe, index)

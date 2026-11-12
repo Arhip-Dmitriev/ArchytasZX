@@ -126,7 +126,8 @@ diagram's CPM numerically and symbolically (MIXED.txt).
 UP_TO_GLOBAL_PHASE and UP_TO_POSITIVE_SCALAR are used only when requested. The tolerance is an absolute entrywise bound,
 1e-9 by default, and is never loosened implicitly.
 
-ComparisonResult holds the mode, matched, a reason, the largest deviation and the recovered
+ComparisonResult holds the mode, matched, a reason, the largest deviation (and, for a failed
+EXACT dense comparison, the index of that entry, outputs then inputs) and the recovered
 lambda.
 
 4.2 Limits of the oracle
