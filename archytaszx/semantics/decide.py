@@ -1548,8 +1548,16 @@ def decide_restricted(
 ) -> Decision:
     """The restricted decision: the family decided first, its EQUAL kept and an in-range
     counterexample kept, otherwise the ladder on the restricted pair under the restriction's
-    floors; ``family_first=False`` runs the ladder on the restricted pair alone."""
-    from archytaszx.semantics.restrict import in_domain, restricted_samples, subst_pair, to_original
+    floors; ``family_first=False`` runs the ladder on the restricted pair alone. An undecided
+    pair under a bounded or punctured range is EQUAL_UNCERTIFIED when its contractions'
+    difference vanishes on that range."""
+    from archytaszx.semantics.restrict import (
+        in_domain,
+        restricted_samples,
+        subst_pair,
+        to_original,
+        vanishes_on_range,
+    )
 
     if not isinstance(family_first, bool):
         raise DecideGrammarError(f"family_first must be a bool, got {family_first!r}")
@@ -1657,6 +1665,28 @@ def decide_restricted(
         options = {**options, "samples": inside}
     with _trace.span("decide.restriction.pair"):
         inner = _decide(*pair, floors=restriction.floors, **options)  # type: ignore[arg-type]
+    if (
+        inner.verdict is EqualityVerdict.UNKNOWN
+        and restriction.ranged
+        and options.get("use_symbolic", True)
+    ):
+        with _trace.span("decide.restriction.range"):
+            run = _symbolic_match(_family(pair[0]), _family(pair[1]), restriction.floors)
+            tensors = run.tensors
+            on = None
+            if tensors is not None and not run.matched:
+                tl, tr = tensors
+                if not tl.is_variable_rank and not tr.is_variable_rank and tl.dims() == tr.dims():
+                    on = vanishes_on_range(restriction, (tl.entry - tr.entry).to_sympy())
+        if on is not None:
+            inner = replace(
+                inner,
+                verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
+                method=DecisionMethod.SYMBOLIC_CONTRACTION,
+                reason=f"symbolic contractions agree on {on}: their difference vanishes there "
+                "(interval reduction); uncertified: the kernel has no proof of the vanishing",
+                counterexample=None,
+            )
     original = None
     reason = inner.reason
     if inner.counterexample is not None:

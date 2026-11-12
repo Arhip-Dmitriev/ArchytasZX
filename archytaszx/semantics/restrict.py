@@ -49,7 +49,7 @@ from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.scalar import Scalar
+from archytaszx.algebra.scalar import Scalar, ScalarGrammarError
 from archytaszx.diagram.bangbox import (
     Mult,
     expand_concrete_boxes,
@@ -243,6 +243,16 @@ class Restriction:
             else:
                 out.append(c)
         return Restriction(tuple(out))
+
+    @property
+    def ranged(self) -> bool:
+        """True when a shift's range has an upper end or a shift or side condition excludes
+        points."""
+        return any(
+            (c.form == SHIFT and c.fresh_domain is not None and c.fresh_domain.hi is not None)
+            or (c.form in (SHIFT, SIDE) and c.domain is not None and bool(c.domain.excluded))
+            for c in self.clauses
+        )
 
     @property
     def empty(self) -> bool:
@@ -736,6 +746,94 @@ def in_domain(restriction: Restriction, assignment: Mapping[str, object]) -> boo
     )
 
 
+def _real_set(hull: Domain, holes: Sequence[Fraction]) -> sp.Set:
+    """The real interval of ``hull`` without ``holes``."""
+    lo = -sp.oo if hull.lo is None else sp.Rational(hull.lo.numerator, hull.lo.denominator)
+    hi = sp.oo if hull.hi is None else sp.Rational(hull.hi.numerator, hull.hi.denominator)
+    points = sp.FiniteSet(*(sp.Rational(h.numerator, h.denominator) for h in holes))
+    return sp.Complement(sp.Interval(lo, hi, hull.lo_strict, hull.hi_strict), points)
+
+
+def _range_of(restriction: Restriction, name: str) -> sp.Set | None:
+    """The real hull of the range a ranged shift gives its fresh symbol ``name``, or a lone side
+    condition its symbol ``name``, without the excluded points; None otherwise."""
+    for clause in restriction.clauses:
+        if clause.form == SHIFT and clause.fresh == name and clause.fresh_domain is not None:
+            excluded = () if clause.domain is None else clause.domain.excluded
+            if clause.fresh_domain.hi is None and not excluded:
+                return None
+            a, c = Fraction(clause.a), Fraction(clause.c)
+            return _real_set(clause.fresh_domain, [(x - c) / a for x in excluded])
+        if clause.form == SIDE and clause.symbol == name and clause.domain is not None:
+            if not clause.domain.excluded or any(
+                o.symbol == name and o.form != SIDE for o in restriction.clauses
+            ):
+                return None
+            return _real_set(clause.domain, clause.domain.excluded)
+    return None
+
+
+def _real_parts(expr: sp.Expr) -> list[sp.Expr] | None:
+    """``expr`` with radicands factored, as itself or its real and imaginary parts, or None when
+    sympy cannot show the parts real."""
+    expr = expr.replace(
+        lambda e: e.is_Pow and e.exp.is_Rational and not e.exp.is_Integer,
+        lambda e: sp.factor(e.base) ** e.exp,
+    )
+    if expr.is_extended_real is True:
+        return [expr]
+    parts = [sp.re(expr), sp.im(expr)]
+    for part in parts:
+        if part.is_extended_real is not True or part.atoms(sp.re, sp.im, sp.arg, sp.atan2):
+            return None
+    return parts
+
+
+def vanishes_on_range(restriction: Restriction, expr: sp.Expr) -> str | None:
+    """The range, as text, on which every coefficient of ``expr`` as a polynomial in its index
+    atoms is zero, when those coefficients carry one symbol and a ranged clause gives it that
+    range: ``reduce_inequalities`` finds no point there with a coefficient part above or below
+    0, and ``solveset`` finds every point there a root; None otherwise."""
+    gens = sorted(
+        (
+            a
+            for a in expr.atoms(sp.Function, sp.Sum)
+            if not isinstance(a, sp.Abs) and a.free_symbols
+        ),
+        key=sp.default_sort_key,
+    )
+    bound: set[sp.Symbol] = set().union(*(g.free_symbols for g in gens))
+    names = expr.free_symbols - bound
+    if len(names) != 1:
+        return None
+    (symbol,) = names
+    domain = _range_of(restriction, str(symbol))
+    if domain is None:
+        return None
+    var = sp.Dummy(str(symbol), real=True)
+    try:
+        coeffs = sp.Poly(expr, *gens).coeffs() if gens else [expr]
+        for coeff in coeffs:
+            if sp.sympify(coeff).free_symbols - {symbol}:
+                return None
+            parts = _real_parts(sp.sympify(coeff).subs(symbol, var))
+            if parts is None:
+                return None
+            for part in parts:
+                if part == 0:
+                    continue
+                signs = sp.Union(
+                    *(sp.reduce_inequalities([rel], [var]).as_set() for rel in (part > 0, part < 0))
+                )
+                if signs.intersect(domain) is not sp.S.EmptySet:
+                    return None
+                if sp.Complement(domain, sp.solveset(part, var, domain)) is not sp.S.EmptySet:
+                    return None
+    except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
+        return None
+    return f"{symbol} in {domain}"
+
+
 def to_restricted(
     restriction: Restriction, assignment: Mapping[str, object]
 ) -> dict[str, object] | None:
@@ -863,7 +961,8 @@ def apply_clause(diagram: Diagram, clause: Clause) -> Diagram:
 
 def _apply_real(diagram: Diagram, clause: Clause) -> Diagram:
     """A phase or exponent clause substituted: ``x = v`` by its rational, ``x = c + a*s`` by
-    the expression over the fresh symbol (an integer symbol on a lattice)."""
+    the expression over the fresh symbol (an integer symbol on a lattice), with its range's
+    assumptions unless they take the scalar outside the grammar."""
     from archytaszx.algebra.phase import Phase
 
     working = _drop_parameter(diagram.copy(), clause.symbol)
@@ -875,13 +974,23 @@ def _apply_real(diagram: Diagram, clause: Clause) -> Diagram:
         return working.substitute(
             {clause.symbol: int(value) if value.denominator == 1 else rational}
         )
-    fresh = _fresh_symbol(clause)
     a, c = Fraction(clause.a), Fraction(clause.c)
-    expr = sp.Rational(c.numerator, c.denominator) + sp.Rational(a.numerator, a.denominator) * fresh
-    working = working.substitute({clause.symbol: Phase(expr)})
-    if clause.symbol in working.scalar.free_symbols:
-        working = working.substitute({clause.symbol: Scalar(expr)})
-    return working
+    plain = sp.Symbol(clause.fresh, complex=True)
+    for fresh in (_fresh_symbol(clause), plain):
+        expr = (
+            sp.Rational(c.numerator, c.denominator)
+            + sp.Rational(a.numerator, a.denominator) * fresh
+        )
+        try:
+            out = working.substitute({clause.symbol: Phase(expr)})
+            if clause.symbol in out.scalar.free_symbols:
+                out = out.substitute({clause.symbol: Scalar(expr)})
+        except ScalarGrammarError:
+            if fresh is plain:
+                raise
+            continue
+        return out
+    raise AssertionError("unreachable")
 
 
 def _fresh_symbol(clause: Clause) -> sp.Symbol:
