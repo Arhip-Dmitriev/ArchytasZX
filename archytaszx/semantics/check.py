@@ -750,7 +750,7 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     whose concrete range equals the modulus of a delta it appears in alone."""
     if expr.atoms(sp.Sum):
         return False
-    expr = _constant_bases(expr)
+    expr = _square_moduli(_constant_bases(expr))
     folded = _fold_residues(_reduce_exponents(sp.expand(expr.rewrite(sp.exp), power_exp=True)))
     folded = sp.expand(folded)
     if folded == 0:
@@ -783,6 +783,90 @@ def _constant_bases(expr: sp.Expr) -> sp.Expr:
         ),
         lambda e: sp.Pow(simple(e.base), e.exp),
     )
+
+
+def _square_moduli(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each ``sqrt(X) conjugate(sqrt(X))`` replaced by ``X`` when ``X`` is real
+    (:func:`_is_real`) and bounded below by zero (:func:`_lower_bound`)."""
+
+    def fold(term: sp.Expr) -> sp.Expr:
+        factors = list(sp.Mul.make_args(term))
+        for i, f in enumerate(factors):
+            if not (isinstance(f, sp.Pow) and f.exp == sp.Rational(1, 2)):
+                continue
+            partner = sp.conjugate(f)
+            if partner not in factors:
+                continue
+            x = f.base
+            bound = _lower_bound(x)
+            if bound is None or not _is_real(x) or not bool(bound >= 0):
+                continue
+            rest = list(factors)
+            rest.pop(i)
+            rest.remove(partner)
+            return sp.Mul(x, *rest)
+        return term
+
+    if not expr.atoms(sp.conjugate):
+        return expr
+    return sp.Add(*(fold(t) for t in sp.Add.make_args(sp.expand(expr, power_exp=False))))
+
+
+def _is_real(x: sp.Expr) -> bool:
+    """Whether ``x`` equals its conjugate, exponents over integer symbols reduced mod 1."""
+    difference = sp.expand(sp.expand(x - sp.conjugate(x)).rewrite(sp.exp), power_exp=True)
+    return bool(sp.expand(_reduce_exponents(difference)) == 0)
+
+
+def _unimodular(f: sp.Expr) -> bool:
+    """Whether ``f`` is ``exp(i r)`` or ``(-1)^q``, r real and q rational."""
+    if isinstance(f, sp.exp):
+        arg = f.args[0]
+        return bool((arg / sp.I).is_real)
+    return bool(isinstance(f, sp.Pow) and f.base == -1 and f.exp.is_Rational)
+
+
+def _modulus_sup(c: sp.Expr) -> sp.Expr | None:
+    """The supremum over non-negative integer symbols of a positive modulus ``c`` built from
+    constants and powers ``b^e`` (b > 1, e linear with non-positive coefficients, or b < 1
+    with non-negative ones): ``c`` at every symbol 0; None for any other shape."""
+    for f in sp.Mul.make_args(c):
+        if not f.free_symbols:
+            if not (f.is_real and f.is_positive):
+                return None
+            continue
+        if not isinstance(f, sp.Pow) or f.base.free_symbols or not f.base.is_positive:
+            return None
+        try:
+            poly = sp.Poly(f.exp, *sorted(f.exp.free_symbols, key=str))
+        except sp.PolynomialError:
+            return None
+        if poly.total_degree() > 1:
+            return None
+        if not all(x.is_integer and x.is_nonnegative for x in f.exp.free_symbols):
+            return None
+        coefficients = [poly.coeff_monomial(g) for g in poly.gens]
+        growing = f.base > 1
+        if any((cf > 0) if growing else (cf < 0) for cf in coefficients):
+            return None
+    return c.xreplace({x: sp.Integer(0) for x in c.free_symbols})
+
+
+def _lower_bound(x: sp.Expr) -> sp.Expr | None:
+    """A lower bound of the real part of ``x``: its real constant terms minus the supremum of
+    each other term's modulus (unimodular factors dropped); None when a term has no such
+    form."""
+    bound: sp.Expr = sp.Integer(0)
+    for term in sp.Add.make_args(sp.expand(x, power_exp=False)):
+        if not term.free_symbols and term.is_real:
+            bound += term
+            continue
+        modulus = sp.Mul(*(f for f in sp.Mul.make_args(term) if not _unimodular(f)))
+        sup = _modulus_sup(sp.Abs(modulus) if modulus.is_negative else modulus)
+        if sup is None:
+            return None
+        bound -= sup
+    return sp.simplify(bound)
 
 
 def _case_index(expr: sp.Expr, ranges: Mapping[str, Dim]) -> tuple[sp.Symbol, int] | None:
