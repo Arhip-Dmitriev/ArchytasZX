@@ -583,7 +583,7 @@ def compare_symbolic(
         )
     ranges = left.ranges() if left.ranges() == right.ranges() else None
     difference = (left.entry - right.entry).simplify(max_steps=max_steps, ranges=ranges)
-    if difference.is_zero:
+    if difference.is_zero or _vanishes(difference.to_sympy()):
         return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
     if dimension_floors:
         difference = difference.with_dimension_floors(dimension_floors).simplify(
@@ -629,6 +629,48 @@ class EntryWitness:
     def deviation(self) -> float:
         """The modulus of the entries' difference."""
         return abs(self.left - self.right)
+
+
+def _vanishes(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is zero once powers are written through exp, exponentials split, and
+    every complete set of residue deltas mod a concrete modulus with one coefficient is
+    replaced by that coefficient."""
+    if expr.atoms(sp.Sum):
+        return False
+    folded = _fold_residues(sp.expand(expr.rewrite(sp.exp), power_exp=True))
+    return bool(sp.expand(folded) == 0)
+
+
+def _fold_residues(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each sum ``c [x + r_0] + ... + c [x + r_(m-1)]`` over all residues mod a
+    concrete m replaced by ``c``."""
+    groups: dict[tuple[sp.Expr, sp.Symbol, int], dict[int, sp.Expr]] = {}
+    rest: list[sp.Expr] = []
+    for term in sp.Add.make_args(expr):
+        deltas = [f for f in sp.Mul.make_args(term) if isinstance(f, ModDelta)]
+        key = None
+        if len(deltas) == 1 and deltas[0].args[1].is_Integer:
+            argument, modulus = deltas[0].args
+            free = sorted(argument.free_symbols, key=lambda x: str(x))
+            if len(free) == 1 and sp.expand(argument).coeff(free[0]) == 1:
+                offset = sp.expand(argument - free[0])
+                if offset.is_Integer:
+                    coeff = sp.Mul(*(f for f in sp.Mul.make_args(term) if f is not deltas[0]))
+                    key = (coeff, free[0], int(modulus))
+                    residue = int(offset) % int(modulus)
+                    if residue in groups.setdefault(key, {}):
+                        key = None
+                    else:
+                        groups[key][residue] = term
+        if key is None:
+            rest.append(term)
+    out = list(rest)
+    for (coeff, _symbol, modulus), by_residue in groups.items():
+        if len(by_residue) == modulus:
+            out.append(coeff)
+        else:
+            out.extend(by_residue.values())
+    return sp.Add(*out)
 
 
 def _pin(delta: ModDelta, pins: Mapping[sp.Symbol, int]) -> tuple[sp.Symbol, int] | None:

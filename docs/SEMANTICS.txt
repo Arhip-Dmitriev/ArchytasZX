@@ -211,7 +211,10 @@ indices and of every shared index moves into the entry as c^m, m the multiplicit
 are simplified. Groups agree when their multiplicities, marks and inner tensors agree and
 their factors are syntactically equal or their difference simplifies to zero, template
 indices aligned by position; the entries are then compared. Factors that differ leave the
-result indeterminate.
+result indeterminate. A difference the simplifier leaves nonzero is also equal when it
+vanishes after powers are written through exp, exponentials are split, and every complete set
+of residue deltas [x + r] (r = 0 .. m - 1, m concrete) with one coefficient is replaced by that
+coefficient.
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 
 find_entry_witness looks for one assignment and one index tuple at which the two entries
