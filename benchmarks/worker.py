@@ -172,8 +172,9 @@ def _terminate(signum: int, frame: Any) -> None:
 
 def failure(tool: str, exc: BaseException) -> dict[str, Any]:
     """The record of an exception raised in the worker: unsupported for a translate or rival
-    Unsupported, oom for MemoryError, error for ArchytasZX, harness_error (reason
-    "prepare: ...") for a rival, whose own call runs in a subprocess."""
+    Unsupported, oom for MemoryError, error for ArchytasZX, harness_error for a rival, whose
+    own call runs in a subprocess (reason "spec bound: ..." when the loader refused the
+    specification, else "prepare: ...")."""
     import traceback
 
     from benchmarks import translate
@@ -186,6 +187,13 @@ def failure(tool: str, exc: BaseException) -> dict[str, Any]:
         return {"outcome": "oom", "killed_in": "prepare", "detail": msg}
     if tool == "archytaszx":
         return {"outcome": "error", "detail": msg}
+    if isinstance(exc, rival.SpecBound):
+        return {
+            "outcome": "harness_error",
+            "reason": f"spec bound: {exc}",
+            "harness_cause": "spec_bound",
+            "detail": msg,
+        }
     return {"outcome": "harness_error", "reason": f"prepare: {msg}", "detail": msg}
 
 

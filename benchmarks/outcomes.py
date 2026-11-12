@@ -119,6 +119,7 @@ CAUSES: dict[str, str] = {
     "engine.exception": "an exception in an ArchytasZX stage",
     "lean.rejected": "Lean did not accept the exported file",
     "harness.prepare": "an exception in the worker while preparing a rival's input",
+    "harness.spec_bound": "the engine's loader refused a rival's specification script",
     "harness.driver": "an exception raised in the harness's own driver code",
     "harness.generate": "an exception while generating the ArchytasZX script",
     "unsupported.<code>": "a code of UNSUPPORTED",
@@ -310,6 +311,8 @@ def _rival(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str, str]:
         if oc in ("error", "harness_error"):
             if "MemoryError" in detail.split(":", 1)[0]:
                 return "oom", "prepare", "memory.error", detail
+            if rec.get("harness_cause") == "spec_bound":
+                return "harness_error", "prepare", "harness.spec_bound", detail
             return "harness_error", "prepare", "harness.prepare", detail
         return oc, "prepare", "unknown.none", detail
     detail = str(check.get("detail") or "")
