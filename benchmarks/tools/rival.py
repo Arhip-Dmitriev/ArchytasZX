@@ -25,10 +25,12 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import resource
 import subprocess
 import tempfile
 import time
+from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -191,7 +193,55 @@ def qasm_and_phase(qc: Any) -> tuple[str, float]:
 
     basis = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]
     t = transpile(qc, basis_gates=basis, optimization_level=0)
-    return qasm2.dumps(t), float(t.global_phase)
+    return exact_angles(qasm2.dumps(t)), float(t.global_phase)
+
+
+_FLOAT = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+_INT64 = 2**63
+
+
+def angle_text(a: float) -> str:
+    """``a`` radians as ``p*pi/q`` when a/pi has a convergent p/q within 2^-50 relative with
+    |p|, q < 2^63, else as a fixed-point decimal without exponent."""
+    r = Fraction(a / math.pi)
+    if r == 0:
+        return "0"
+    h0, h1, k0, k1 = 0, 1, 1, 0
+    x = r
+    while True:
+        m = math.floor(x)
+        h0, h1 = h1, m * h1 + h0
+        k0, k1 = k1, m * k1 + k0
+        if abs(h1) >= _INT64 or k1 >= _INT64:
+            break
+        if abs(Fraction(h1, k1) - r) <= abs(r) * Fraction(1, 2**50):
+            p, q = h1, k1
+            num = "pi" if abs(p) == 1 else f"{abs(p)}*pi"
+            return ("-" if p < 0 else "") + num + ("" if q == 1 else f"/{q}")
+        if x == m:
+            break
+        x = 1 / (x - m)
+    return format(Decimal(repr(a)), "f")
+
+
+def exact_angles(text: str) -> str:
+    """QASM 2 ``text`` with every gate parameter that is a bare number rewritten by
+    :func:`angle_text`; other parameters unchanged."""
+
+    def one(par: str) -> str:
+        return angle_text(float(par)) if _FLOAT.fullmatch(par.strip()) else par
+
+    def params(mt: re.Match[str]) -> str:
+        return "(" + ",".join(one(par) for par in mt.group(1).split(",")) + ")"
+
+    out = []
+    for line in text.splitlines(keepends=True):
+        head = line.lstrip()
+        if head.startswith(("OPENQASM", "include", "qreg", "creg", "//")):
+            out.append(line)
+        else:
+            out.append(re.sub(r"\(([^()]*)\)", params, line, count=1))
+    return "".join(out)
 
 
 def spec_diagram(inst: Any, n: int | None, d: int) -> Any:

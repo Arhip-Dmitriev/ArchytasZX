@@ -595,7 +595,9 @@ benchmarks/tools/drivers/, environments in benchmarks/.venvs/ (Python 3.12, one 
 Every tool follows the same points, limits and repeats. Rival preparation (the expanded circuit,
 QASM through Qiskit, the specification as a dense tensor or a ZX graph) is untimed; the tool's
 own work runs in its own environment and is the timed check stage. Unsupported instances are
-recorded with the reason and counted.
+recorded with the reason and counted. Every QASM angle is written as p*pi/q when angle/pi has a
+continued-fraction convergent p/q within 2^-50 relative with |p| and q below 2^63 (the integer
+range of the QuiZX and QCEC readers), else as a fixed-point decimal; no angle carries an exponent.
 
   Tool          State     Instances, verdict and limitations
   ------------  --------  ---------------------------------------------------------------------
