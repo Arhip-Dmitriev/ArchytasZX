@@ -38,9 +38,15 @@ class StageTimeout(Exception):
 
 
 _expired = [False]
+_at_timeout: list[list[dict[str, Any]] | None] = [None]
 
 
 def _alarm(signum: int, frame: Any) -> None:
+    """Raises StageTimeout, re-armed every 0.5 s CPU; the first one keeps the span snapshot."""
+    if not _expired[0]:
+        from archytaszx import trace
+
+        _at_timeout[0] = trace.snapshot() if trace.ON else None
     _expired[0] = True
     signal.setitimer(signal.ITIMER_PROF, 0.5)
     raise StageTimeout()
@@ -53,11 +59,13 @@ def peak_mb() -> float:
 
 def timed(fn: Callable[[], dict[str, Any]], limit: float | None) -> dict[str, Any]:
     """``fn()`` under a CPU limit of ``limit`` seconds: its fields plus ``status`` (ok,
-    timeout, oom, error), ``cpu``, ``wall`` and ``peak_mb``."""
+    timeout, oom, error), ``cpu``, ``wall`` and ``peak_mb``; on a timeout also
+    ``spans_at_timeout`` (trace.snapshot when the limit was reached) and ``open_span``."""
     from archytaszx import trace
 
     old = signal.signal(signal.SIGPROF, _alarm)
     _expired[0] = False
+    _at_timeout[0] = None
     if limit:
         signal.setitimer(signal.ITIMER_PROF, limit)
     trace.reset()
@@ -81,6 +89,10 @@ def timed(fn: Callable[[], dict[str, Any]], limit: float | None) -> dict[str, An
     out["peak_mb"] = round(peak_mb(), 1)
     if trace.ON:
         out["spans"] = trace.tree()
+        snap = _at_timeout[0]
+        if out["status"] == "timeout" and snap is not None:
+            out["spans_at_timeout"] = snap
+            out["open_span"] = "/".join(trace.open_path(snap)) or None
     return out
 
 

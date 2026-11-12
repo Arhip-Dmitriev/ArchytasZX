@@ -69,8 +69,9 @@ class Node:
 
 _root = Node("root", None)
 _gen = 0
-_lock = threading.Lock()
+_lock = threading.RLock()
 _local = threading.local()
+_starts: dict[int, list[tuple[Node, float, float]]] = {}
 
 
 def _stack() -> list[Node]:
@@ -78,6 +79,8 @@ def _stack() -> list[Node]:
     if st is None or getattr(_local, "gen", -1) != _gen:
         st = _local.stack = [_root]
         _local.gen = _gen
+        with _lock:
+            _starts[threading.get_ident()] = []
     return st
 
 
@@ -86,14 +89,18 @@ def _open(name: str, label: str | None) -> Iterator[None]:
     st = _stack()
     with _lock:
         node = st[-1].child(name, label)
+        opened = _starts.setdefault(threading.get_ident(), [])
     st.append(node)
     c0, w0 = time.process_time(), time.perf_counter()
+    opened.append((node, c0, w0))
     try:
         yield
     finally:
         c1, w1 = time.process_time(), time.perf_counter()
         st.pop()
         with _lock:
+            if opened and opened[-1][0] is node:
+                opened.pop()
             node.cpu += c1 - c0
             node.wall += w1 - w0
             node.calls += 1
@@ -136,3 +143,35 @@ def tree() -> list[dict[str, Any]]:
     """The recorded top-level spans with their children."""
     with _lock:
         return [c.to_dict() for c in _root.children.values()]
+
+
+def snapshot() -> list[dict[str, Any]]:
+    """:func:`tree` with every span still open given its partial CPU (process CPU, every
+    thread) and wall seconds so far and ``"open": True``."""
+    c1, w1 = time.process_time(), time.perf_counter()
+    with _lock:
+        partial = {
+            id(node): (c1 - c0, w1 - w0) for opened in _starts.values() for node, c0, w0 in opened
+        }
+
+        def walk(node: Node) -> dict[str, Any]:
+            out = node.to_dict()
+            if id(node) in partial:
+                dc, dw = partial[id(node)]
+                out["cpu"] = round(node.cpu + dc, 6)
+                out["wall"] = round(node.wall + dw, 6)
+                out["open"] = True
+            if node.children:
+                out["children"] = [walk(c) for c in node.children.values()]
+            return out
+
+        return [walk(c) for c in _root.children.values()]
+
+
+def open_path(spans: list[dict[str, Any]]) -> list[str]:
+    """The names (with labels) of the deepest chain of open spans in a :func:`snapshot`."""
+    for s in spans:
+        if s.get("open"):
+            name = s["name"] + (f"[{s['label']}]" if "label" in s else "")
+            return [name, *open_path(s.get("children", []))]
+    return []

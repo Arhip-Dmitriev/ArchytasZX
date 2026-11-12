@@ -29,6 +29,8 @@ from typing import Any
 STAGE = "@@STAGE "
 RESULT = "@@RESULT "
 OOMKILL = "@@OOMKILL "
+SPANS = "@@SPANS "
+SNAPSHOT_SECONDS = 30.0
 _oom_start: int | None = None
 _prepare: dict[str, Any] = {"on": False, "expired": False, "limit": 0.0, "used": 0.0, "t0": 0.0}
 PREPARE_TIMEOUT = {
@@ -124,12 +126,44 @@ def oom_kills() -> int | None:
         return None
 
 
+def _spans() -> list[dict[str, Any]] | None:
+    """The engine's span snapshot (archytaszx.trace.snapshot), None when tracing is off or the
+    engine is not loaded."""
+    trace = sys.modules.get("archytaszx.trace")
+    if trace is None or not trace.ON:
+        return None
+    try:
+        return list(trace.snapshot())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _snapshots(path: str, stop: Any) -> None:
+    """Writes the span snapshot to ``path`` every SNAPSHOT_SECONDS until ``stop`` is set."""
+    while not stop.wait(SNAPSHOT_SECONDS):
+        spans = _spans()
+        if spans is None:
+            continue
+        tmp = f"{path}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"spans": spans}, fh)
+            os.replace(tmp, path)
+        except OSError:
+            continue
+
+
 def _terminate(signum: int, frame: Any) -> None:
-    """Writes the scope's oom_kill rise since start, kills the running Lean checks, then
-    exits."""
+    """Writes the scope's oom_kill rise since start and the open span snapshot, kills the
+    running Lean checks, then exits."""
     now = oom_kills()
     if now is not None and _oom_start is not None:
         os.write(1, f"{OOMKILL}{now - _oom_start}\n".encode())
+    spans = _spans()
+    if spans is not None:
+        data = (SPANS + json.dumps(spans) + "\n").encode()
+        while data:
+            data = data[os.write(1, data) :]
     lean = sys.modules.get("benchmarks.lean")
     if lean is not None:
         lean.kill_active()
@@ -164,6 +198,12 @@ def main() -> None:
     with open(sys.argv[1], encoding="utf-8") as fh:
         job = json.load(fh)
     os.environ["ARCHYTASZX_TRACE"] = "1" if job.get("trace") else "0"
+    side = os.environ.get("BENCH_SPAN_FILE")
+    if side and job.get("trace") and job["tool"] == "archytaszx":
+        import threading
+
+        stop = threading.Event()
+        threading.Thread(target=_snapshots, args=(side, stop), daemon=True).start()
     cap = os.environ.get("BENCH_MEMORY_MB")
     if cap:
         import resource

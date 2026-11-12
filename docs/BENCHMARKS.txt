@@ -483,6 +483,15 @@ under one parent merge into a node holding CPU seconds, wall seconds and a call 
   output.bound_values,              repl/printer.py, repl/commands.py
   output.display
 
+A killed run keeps its profile. trace.snapshot gives the span tree with every still-open span's
+CPU and wall seconds so far and "open": true. A traced ArchytasZX worker writes it to stdout
+(@@SPANS) when it receives SIGTERM (the runner's wall timer, a scope stop after an OOM kill), and
+every 30 s to a side file (BENCH_SPAN_FILE) for a kill it cannot see (SIGKILL). The runner
+attaches the SIGTERM tree, else the latest side-file tree, to the killed record as spans, with
+spans_source (sigterm or snapshot) and open_span, the chain of open spans. A stage that reaches
+its own CPU limit keeps the snapshot taken when the limit fired as spans_at_timeout, with its
+open_span. classify puts open_span into cause_message.
+
 Lean check time per declaration comes from Lean's profiler (benchmarks/lean.py): a #print marker
 before every declaration, the "took" lines summed between markers. Aggregates give time per rung,
 per rule (total, calls, mean) and per inference kind. A share trace.overhead_sample of points is

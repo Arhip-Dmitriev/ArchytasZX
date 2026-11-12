@@ -45,6 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STAGE_MARK = "@@STAGE "
 RESULT_MARK = "@@RESULT "
 OOMKILL_MARK = "@@OOMKILL "
+SPANS_MARK = "@@SPANS "
 CALIBRATION = """@rhs =
     dim d
     count n
@@ -248,6 +249,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         "PYTHONHASHSEED": "0",
         "PYTHONPATH": str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
         "BENCH_MEMORY_MB": "" if ctx.cgroup else str(ctx.mem_mb),
+        "BENCH_SPAN_FILE": job_path + ".spans",
     }
 
     w0 = time.perf_counter()
@@ -273,6 +275,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     stage = "start"
     result: dict[str, Any] | None = None
     oom_rise = 0
+    spans: list[Any] | None = None
     assert proc.stdout is not None
     for line in proc.stdout:
         if line.startswith(STAGE_MARK):
@@ -281,12 +284,24 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
             result = json.loads(line[len(RESULT_MARK) :])
         elif line.startswith(OOMKILL_MARK):
             oom_rise = int(line[len(OOMKILL_MARK) :])
+        elif line.startswith(SPANS_MARK):
+            spans = json.loads(line[len(SPANS_MARK) :])
     err = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()
     timer.cancel()
     with _children_lock:
         _children.discard(proc)
     os.unlink(job_path)
+    source = "sigterm" if spans is not None else None
+    side = Path(job_path + ".spans")
+    if spans is None and result is None and side.exists():
+        try:
+            spans = json.loads(side.read_text(encoding="utf-8"))["spans"]
+            source = "snapshot"
+        except (OSError, ValueError, KeyError):
+            spans = None
+    for f in (side, side.with_name(side.name + ".tmp")):
+        f.unlink(missing_ok=True)
     wall = time.perf_counter() - w0
     if _stop.is_set() and result is None:
         raise InterruptedError
@@ -294,7 +309,7 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         result["process_wall"] = wall
         return result
     status, kill = killed_status(killed.is_set(), code, oom_rise)
-    return {
+    out: dict[str, Any] = {
         "outcome": status,
         "killed_in": stage,
         "exit": code,
@@ -302,6 +317,13 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         "detail": err.strip()[-400:],
         "process_wall": wall,
     }
+    if spans is not None:
+        from archytaszx.trace import open_path
+
+        out["spans"] = spans
+        out["spans_source"] = source
+        out["open_span"] = "/".join(open_path(spans)) or None
+    return out
 
 
 def _success(rec: dict[str, Any]) -> bool:

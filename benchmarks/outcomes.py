@@ -268,6 +268,8 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
         return "error", None, "engine.exception", detail
     status = failed.get("status")
     if status == "timeout":
+        if failed.get("open_span"):
+            detail = f"open span {failed['open_span']}" + (f"; {detail}" if detail else "")
         return "timeout", s, "limit.stage_cpu", detail
     if status == "oom":
         return "oom", s, "memory.lean" if s == "lean_check" else "memory.error", detail
@@ -370,6 +372,8 @@ def classify(
     if "killed_in" in rec and not rec.get("stages"):
         oc2, stage, cause = _killed(rec, tool)
         msg = str(rec.get("detail") or "")
+        if rec.get("open_span"):
+            msg = f"open span {rec['open_span']}" + (f"; {msg}" if msg else "")
     elif oc == "unsupported":
         oc2, msg = "unsupported", str(rec.get("detail") or "")
         stage = "generate" if tool == "archytaszx" else "prepare"
