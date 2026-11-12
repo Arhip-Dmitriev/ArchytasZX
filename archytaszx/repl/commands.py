@@ -312,7 +312,8 @@ class Session:
     """REPL state: the current diagram, the derivation start and its replayable results, named
     diagrams, the scalable form and its sheet steps, the stored certificate (and the witness an
     induction certificate verifies at), the latest proof, the latest detail payload, the
-    undo stack, and the directory relative FILE paths resolve against."""
+    undo stack, the directory relative FILE paths resolve against, and whether decide
+    evaluates stuck residual path sums (``tgateenum``)."""
 
     current: Diagram | None = None
     start: Diagram | None = None
@@ -337,6 +338,7 @@ class Session:
     last_detail: object | None = None
     undo_stack: list[_Snapshot] = field(default_factory=list)
     base: str = ""
+    tgateenum: bool = False
 
     def _snapshot(self, command: str) -> _Snapshot:
         return _Snapshot(
@@ -910,6 +912,7 @@ def _cmd_decide(session: Session, args: str) -> Outcome:
         restrict=restriction,
         describe=lambda d: _math(d, True),
         family_first=family_first,
+        enumerate_residual=session.tgateenum,
     )
     restricted = decision.restriction is not None
     payload = _Pair("decide", left, right, decision)

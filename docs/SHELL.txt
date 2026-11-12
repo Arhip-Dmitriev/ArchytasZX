@@ -35,6 +35,9 @@ interactive shell starts.
   --no-concrete-axioms   Rewrite with bound dimensions kept symbolic: the axioms defined only
                          at a concrete dimension never match, and the other axioms match
                          without substituting bound values.
+  --tgateenum            decide's path-sum rung evaluates residual sums of at most 6 path
+                         variables exactly at boundary points, for an UNEQUAL only (PROOFS.txt,
+                         rung 5b). Off by default; the tgateenum line toggles it.
 
 3.2 Views
 
@@ -128,6 +131,7 @@ shows the engine's full error record.
   doubled                Toggle drawing a mixed diagram doubled, its conjugate sheet shaded
                          (Unicode and ASCII grids mark it with *).
   publication            Toggle the paper's notation in ZX drawings (section 9.3).
+  tgateenum              Toggle --tgateenum for this session's decide.
   config                 Show the image settings and the configuration file path.
   config KEY VALUE       Set an image setting: size (a number in (0, 10]), color ("auto",
                          #rgb, #rrggbb or a matplotlib colour), format ("auto", "png",

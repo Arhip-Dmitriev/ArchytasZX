@@ -93,7 +93,14 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             section 5.2): equal canonical forms are EQUAL; different canonical
                             forms are UNEQUAL as SYMBOLIC_WITNESS at the boundary index where
                             the entries differ; otherwise the reason names the path variables
-                            left and the ladder goes on. use_path_sum=False turns it off. An
+                            left and the ladder goes on. use_path_sum=False turns it off. With
+                            enumerate_residual=True (--tgateenum) a pair left with differing
+                            residual forms is evaluated exactly: each entry's residual sum over
+                            its 2^k path assignments (k at most max_residual_paths, default 6,
+                            refused above it with the reason), at boundary points in increasing
+                            Hamming weight (at most 64); the first difference is UNEQUAL as
+                            SYMBOLIC_WITNESS, stop path_sum.residual_enum. It never gives EQUAL.
+                            Off by default. An
                             EQUAL by path_sum carries no kernel proof of its own: the proof is
                             sought as for any EQUAL (section 6), else EQUAL_UNCERTIFIED; the
                             Lean export of the reduction trace (lean_pathsum) is not written.
@@ -147,7 +154,8 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
                                              indeterminate.replicated_factors,
                                              declined.box_meets_wire, declined.scalar_budget,
                                              declined.other
-                                path_sum     equal, unequal, residual, not_applicable
+                                path_sum     equal, unequal, residual, residual_enum,
+                                             not_applicable
                                 induction, induction_reversed
                                              proved, refuted, base_not_proved,
                                              step_not_discharged

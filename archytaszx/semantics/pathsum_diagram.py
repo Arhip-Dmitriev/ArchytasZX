@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, islice
 
 from archytaszx.algebra.pathsum import (
     SQRT2,
@@ -39,6 +39,7 @@ from archytaszx.algebra.pathsum import (
     canonical,
     canonical_qudit,
     constant,
+    entry_enumerated,
     reduce,
     reduce_qudit,
     residual_form,
@@ -508,10 +509,15 @@ class PathSumComparison:
     left: Cyclo | None = None
     right: Cyclo | None = None
     point: tuple[tuple[str, int], ...] = ()
+    residual_enum: bool = False
 
 
-def compare_path_sums(left: Diagram, right: Diagram) -> PathSumComparison:
-    """Reduce both path sums and compare their canonical forms; raises
+def compare_path_sums(
+    left: Diagram, right: Diagram, max_residual_paths: int | None = None
+) -> PathSumComparison:
+    """Reduce both path sums and compare their canonical forms; with ``max_residual_paths``, two
+    binary sums left with differing residual forms are evaluated exactly at boundary points by
+    :func:`_enumerate_residual`, which only finds an UNEQUAL; raises
     :class:`PathSumUnsupported` when either diagram is outside the class."""
     base = diagram_base(left)
     if diagram_base(right) != base:
@@ -536,12 +542,14 @@ def compare_path_sums(left: Diagram, right: Diagram) -> PathSumComparison:
                     f"path sums reduce to one residual form up to renaming of {left_n} path "
                     f"variable(s) ({len(ps_l.trace)} and {len(ps_r.trace)} rule steps)",
                 )
-        return PathSumComparison(
-            "unknown",
+        stuck = (
             f"path_sum: {left_n} and {right_n} path variable(s) left after reduction"
             if left_n or right_n
-            else "path_sum: a support constraint is not affine",
+            else "path_sum: a support constraint is not affine"
         )
+        if max_residual_paths is not None:
+            return _enumerate_residual(ps_l, ps_r, bits_l, max_residual_paths, stuck)
+        return PathSumComparison("unknown", stuck)
     if canon_l.same(canon_r):
         return PathSumComparison(
             "equal",
@@ -559,6 +567,51 @@ def compare_path_sums(left: Diagram, right: Diagram) -> PathSumComparison:
                 b,
             )
     return PathSumComparison("unknown", "path_sum: the canonical forms differ at no tried point")
+
+
+_RESIDUAL_POINTS = 64
+"""The most boundary points :func:`_enumerate_residual` evaluates."""
+
+
+def _enumerate_residual(
+    ps_l: PathSum, ps_r: PathSum, bits: list[int], max_paths: int, stuck: str
+) -> PathSumComparison:
+    """Both entries evaluated exactly (each residual sum over its 2^k path assignments, k at
+    most ``max_paths`` after the boundary is substituted) at boundary points in increasing
+    Hamming weight, at most ``_RESIDUAL_POINTS``: ``unequal`` at the first that differ, else
+    ``unknown``."""
+    k = max(len(ps_l.path), len(ps_r.path))
+    if k > max_paths:
+        return PathSumComparison(
+            "unknown",
+            f"{stuck}; path_sum.residual_enum refused: {k} path variables over "
+            f"max_residual_paths {max_paths}",
+        )
+    boundary = list(ps_l.boundary)
+    by_weight = (
+        ones for weight in range(len(boundary) + 1) for ones in combinations(boundary, weight)
+    )
+    order = list(islice(by_weight, _RESIDUAL_POINTS))
+    for ones in order:
+        point = {v: int(v in ones) for v in boundary}
+        a = entry_enumerated(ps_l, point, max_paths)
+        b = entry_enumerated(ps_r, point, max_paths)
+        if a is None or b is None:
+            continue
+        if a != b:
+            return PathSumComparison(
+                "unequal",
+                f"path sums differ at a boundary point, the residual sums evaluated exactly "
+                f"(path_sum.residual_enum, {k} path variable(s) at most)",
+                index_tuple(bits, point),
+                a,
+                b,
+                residual_enum=True,
+            )
+    return PathSumComparison(
+        "unknown",
+        f"{stuck}; path_sum.residual_enum: equal at the {len(order)} boundary point(s) tried",
+    )
 
 
 def _compare_qudit(left: Diagram, right: Diagram, p: int, bits: list[int]) -> PathSumComparison:

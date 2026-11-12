@@ -270,6 +270,9 @@ _NESTED: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_nested", 
 _USE_PATH_SUM: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "decide_use_path_sum", default=True
 )
+_RESIDUAL_PATHS: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "decide_residual_paths", default=None
+)
 """True inside an induction base case's :func:`decide_equal`, which is not certified."""
 _STEP_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.UNIFORM_REWRITE,
@@ -1122,15 +1125,16 @@ def _path_sum_rung(
     from archytaszx.semantics.check import instantiate
     from archytaszx.semantics.pathsum_diagram import compare_path_sums
 
+    paths = _RESIDUAL_PATHS.get()
     try:
-        return compare_path_sums(left, right)
+        return compare_path_sums(left, right, paths)
     except PathSumUnsupported as exc:
         why = f"path_sum: not applicable ({exc})"
     if not parameters:
         return why
     try:
         at_l, at_r = instantiate(left, parameters), instantiate(right, parameters)
-        found = compare_path_sums(at_l, at_r)
+        found = compare_path_sums(at_l, at_r, paths)
     except (PathSumUnsupported, CheckError) as exc:
         return f"{why}; at {dict(parameters)!r}: {exc}"
     point = tuple(sorted(parameters.items()))
@@ -1343,6 +1347,8 @@ def decide_equal(
     prove_equal: bool = True,
     use_path_sum: bool = True,
     family_first: bool = True,
+    enumerate_residual: bool = False,
+    max_residual_paths: int = 6,
 ) -> Decision:
     """Decide whether ``left`` and ``right`` are equal for every value of their free symbols,
     or for the values ``restrict`` covers; ``describe`` gives the Lean refutation's and the
@@ -1356,7 +1362,9 @@ def decide_equal(
     is ``DOUBLED``, the rung that settled it in ``inner_method``. A restriction with clauses
     runs :func:`decide_restricted`. ``prove_equal=False`` leaves EQUAL unproved and unchanged;
     ``use_path_sum=False`` turns the path-sum rung off; ``family_first=False`` decides a
-    restricted claim on the restricted pair alone.
+    restricted claim on the restricted pair alone; ``enumerate_residual=True`` lets the
+    path-sum rung evaluate residual sums of at most ``max_residual_paths`` path variables
+    exactly at boundary points, for an UNEQUAL only.
     """
     if not isinstance(family_first, bool):
         raise DecideGrammarError(f"family_first must be a bool, got {family_first!r}")
@@ -1364,7 +1372,18 @@ def decide_equal(
         raise DecideGrammarError(f"prove_equal must be a bool, got {prove_equal!r}")
     if not isinstance(use_path_sum, bool):
         raise DecideGrammarError(f"use_path_sum must be a bool, got {use_path_sum!r}")
+    if not isinstance(enumerate_residual, bool):
+        raise DecideGrammarError(f"enumerate_residual must be a bool, got {enumerate_residual!r}")
+    if (
+        isinstance(max_residual_paths, bool)
+        or not isinstance(max_residual_paths, int)
+        or max_residual_paths < 0
+    ):
+        raise DecideGrammarError(
+            f"max_residual_paths must be a nonnegative int, got {max_residual_paths!r}"
+        )
     token = _USE_PATH_SUM.set(use_path_sum)
+    residual = _RESIDUAL_PATHS.set(max_residual_paths if enumerate_residual else None)
     try:
         return _decide_equal(
             left,
@@ -1387,6 +1406,7 @@ def decide_equal(
             family_first=family_first,
         )
     finally:
+        _RESIDUAL_PATHS.reset(residual)
         _USE_PATH_SUM.reset(token)
 
 
@@ -2047,6 +2067,8 @@ def _decide(
                 "path_sum",
                 "not_applicable"
                 if isinstance(settled_ps, str)
+                else "residual_enum"
+                if settled_ps.residual_enum
                 else settled_ps.status
                 if settled_ps.status in ("equal", "unequal")
                 else "residual",

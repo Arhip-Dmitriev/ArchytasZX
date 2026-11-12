@@ -557,11 +557,20 @@ class Program:
         *,
         where: str | Mapping[str, str] | None = None,
         family_first: bool = True,
+        enumerate_residual: bool = False,
     ) -> Result:
         """Decides ``left == right`` for every value of their symbols, or for the values the
         clauses ``where`` covers, on the restricted pair alone when ``family_first`` is
-        False."""
-        return self._pair("decide", left, right, where, family_first)
+        False; ``enumerate_residual`` lets the path-sum rung evaluate stuck residual sums for
+        an UNEQUAL, as ``--tgateenum``."""
+        if not isinstance(enumerate_residual, bool):
+            raise AzxError(f"enumerate_residual must be a bool, got {enumerate_residual!r}")
+        session = self._shell.session
+        before, session.tgateenum = session.tgateenum, enumerate_residual
+        try:
+            return self._pair("decide", left, right, where, family_first)
+        finally:
+            session.tgateenum = before
 
     def induct(
         self,

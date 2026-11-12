@@ -1262,6 +1262,40 @@ def entry_at(ps: PathSum, values: Mapping[int, int]) -> Cyclo:
     return with_sqrt2(at.const, at.sqrt2) * Cyclo.root(turns)
 
 
+def entry_enumerated(ps: PathSum, values: Mapping[int, int], max_paths: int) -> Cyclo | None:
+    """The entry at one boundary assignment: the boundary substituted and reduced, then the
+    sum over every assignment of each path variable left (at most ``max_paths`` of them)
+    evaluated exactly; None when more remain."""
+    at = ps.copy()
+    at.phase.assign(values)
+    at.constraints = [f2_assign(c, values) for c in at.constraints]
+    at.amps = [(a, f2_assign(f, values)) for a, f in at.amps]
+    if any(c == frozenset({EMPTY}) for c in at.constraints):
+        return Cyclo.rational(0)
+    at = reduce(at)
+    if at.is_zero:
+        return Cyclo.rational(0)
+    path = sorted(at.path)
+    if len(path) > max_paths:
+        return None
+    total = Cyclo.rational(0)
+    for bits in range(1 << len(path)):
+        point = {v: (bits >> j) & 1 for j, v in enumerate(path)}
+        if any(f2_assign(c, point) == frozenset({EMPTY}) for c in at.constraints):
+            continue
+        term = Cyclo.root(_phase_at(at.phase, point))
+        for base, exponent in at.amps:
+            if f2_assign(exponent, point) == frozenset({EMPTY}):
+                term = term * base
+        total = total + term
+    return with_sqrt2(at.const, at.sqrt2) * total
+
+
+def _phase_at(phase: PhasePoly, values: Mapping[int, int]) -> Fraction:
+    """The phase polynomial's value in turns at an assignment of all its variables."""
+    return sum((c for m, c in phase.terms.items() if all(values.get(v, 0) for v in m)), Fraction(0))
+
+
 def rref(rows: Iterable[tuple[set[int], int]]) -> list[tuple[int, set[int], int]] | None:
     """Reduced row echelon form over F_2 with the variables in ascending order, as (pivot,
     other variables, constant); None when the system has no solution."""

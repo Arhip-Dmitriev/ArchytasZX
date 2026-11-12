@@ -139,6 +139,9 @@ class Shell:
         if word == "doubled" and not rest:
             self.doubled = not self.doubled
             return f"doubled: {'on' if self.doubled else 'off'}"
+        if word == "tgateenum" and not rest:
+            self.session.tgateenum = not self.session.tgateenum
+            return f"tgateenum: {'on' if self.session.tgateenum else 'off'}"
         if word == "publication" and not rest:
             T.CONFIG.publication = not T.CONFIG.publication
             return f"publication: {'on' if T.CONFIG.publication else 'off'}"
@@ -479,6 +482,12 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="never substitute bound dimensions while rewriting; no concrete-only axioms",
     )
     parser.add_argument(
+        "--tgateenum",
+        action="store_true",
+        help="let decide's path-sum rung evaluate residual sums of at most 6 path variables "
+        "exactly at boundary points (Clifford+T), for an UNEQUAL only; off by default",
+    )
+    parser.add_argument(
         "-c",
         "--command",
         action="append",
@@ -519,6 +528,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         unicode=args.unicode,
         color=_isatty(sys.stdout) and not os.environ.get("NO_COLOR"),
     )
+    shell.session.tgateenum = args.tgateenum
     if mode is not NotationMode.DIRAC and zx_style == "matplot" and (args.scripts or args.command):
         T.prepare()
     commands: list[str] = list(args.command)
