@@ -789,11 +789,12 @@ def _real_parts(expr: sp.Expr) -> list[sp.Expr] | None:
     return parts
 
 
-def vanishes_on_range(restriction: Restriction, expr: sp.Expr) -> str | None:
-    """The range, as text, on which every coefficient of ``expr`` as a polynomial in its index
-    atoms is zero, when those coefficients carry one symbol and a ranged clause gives it that
-    range: ``reduce_inequalities`` finds no point there with a coefficient part above or below
-    0, and ``solveset`` finds every point there a root; None otherwise."""
+def _range_parts(
+    restriction: Restriction, expr: sp.Expr
+) -> tuple[sp.Symbol, sp.Set, list[tuple[sp.Dummy, sp.Expr]]] | None:
+    """The single symbol of ``expr`` outside its index atoms, the range a ranged clause gives
+    it, and the real parts of every coefficient of ``expr`` as a polynomial in those atoms over
+    a real dummy; None when there is no such symbol, range or real reading."""
     gens = sorted(
         (
             a
@@ -811,27 +812,94 @@ def vanishes_on_range(restriction: Restriction, expr: sp.Expr) -> str | None:
     if domain is None:
         return None
     var = sp.Dummy(str(symbol), real=True)
+    out: list[tuple[sp.Dummy, sp.Expr]] = []
     try:
         coeffs = sp.Poly(expr, *gens).coeffs() if gens else [expr]
-        for coeff in coeffs:
-            if sp.sympify(coeff).free_symbols - {symbol}:
+    except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
+        return None
+    for coeff in coeffs:
+        if sp.sympify(coeff).free_symbols - {symbol}:
+            return None
+        parts = _real_parts(sp.sympify(coeff).subs(symbol, var))
+        if parts is None:
+            return None
+        out.extend((var, part) for part in parts if part != 0)
+    return symbol, domain, out
+
+
+def _signs(var: sp.Dummy, part: sp.Expr) -> sp.Set:
+    """The real points where ``part`` is above or below 0, by ``reduce_inequalities``."""
+    return sp.Union(
+        *(sp.reduce_inequalities([rel], [var]).as_set() for rel in (part > 0, part < 0))
+    )
+
+
+def vanishes_on_range(restriction: Restriction, expr: sp.Expr) -> str | None:
+    """The range, as text, on which every coefficient of ``expr`` as a polynomial in its index
+    atoms is zero, when those coefficients carry one symbol and a ranged clause gives it that
+    range: ``reduce_inequalities`` finds no point there with a coefficient part above or below
+    0, and ``solveset`` finds every point there a root; None otherwise."""
+    found = _range_parts(restriction, expr)
+    if found is None:
+        return None
+    symbol, domain, parts = found
+    try:
+        for var, part in parts:
+            if _signs(var, part).intersect(domain) is not sp.S.EmptySet:
                 return None
-            parts = _real_parts(sp.sympify(coeff).subs(symbol, var))
-            if parts is None:
+            if sp.Complement(domain, sp.solveset(part, var, domain)) is not sp.S.EmptySet:
                 return None
-            for part in parts:
-                if part == 0:
-                    continue
-                signs = sp.Union(
-                    *(sp.reduce_inequalities([rel], [var]).as_set() for rel in (part > 0, part < 0))
-                )
-                if signs.intersect(domain) is not sp.S.EmptySet:
-                    return None
-                if sp.Complement(domain, sp.solveset(part, var, domain)) is not sp.S.EmptySet:
-                    return None
     except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
         return None
     return f"{symbol} in {domain}"
+
+
+def _rational_in(region: sp.Set) -> sp.Rational | None:
+    """A rational point of ``region``: an interval's midpoint (one past a finite end when the
+    other is infinite, rounded to 20 digits when irrational), a finite set's rational element,
+    the first such point of a union; None when the point is not shown inside."""
+    candidates: list[sp.Expr] = []
+    if isinstance(region, sp.Union):
+        for arg in region.args:
+            point = _rational_in(arg)
+            if point is not None:
+                return point
+        return None
+    if isinstance(region, sp.FiniteSet):
+        candidates = [e for e in region.args if e.is_Rational]
+    elif isinstance(region, sp.Interval):
+        lo, hi = region.start, region.end
+        if lo.is_finite and hi.is_finite:
+            mid = (lo + hi) / 2
+        elif lo.is_finite:
+            mid = lo + 1
+        elif hi.is_finite:
+            mid = hi - 1
+        else:
+            mid = sp.Integer(0)
+        candidates = [mid if mid.is_Rational else sp.Rational(str(sp.N(mid, 20)))]
+    for point in candidates:
+        if region.contains(point) is sp.true:
+            return sp.Rational(point)
+    return None
+
+
+def range_point(restriction: Restriction, expr: sp.Expr) -> dict[str, sp.Rational] | None:
+    """A rational point of the ranged clause's range, over its symbol, at which a coefficient of
+    ``expr`` (read as for :func:`vanishes_on_range`) is nonzero by ``reduce_inequalities``;
+    None when there is none."""
+    found = _range_parts(restriction, expr)
+    if found is None:
+        return None
+    symbol, domain, parts = found
+    try:
+        for var, part in parts:
+            point = _rational_in(_signs(var, part).intersect(domain))
+            if point is not None:
+                return {str(symbol): point}
+    except (NotImplementedError, TypeError, ValueError, sp.PolynomialError):
+        return None
+    return None
 
 
 def to_restricted(

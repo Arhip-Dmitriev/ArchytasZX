@@ -659,7 +659,11 @@ coefficient vanish on the real range of the single symbol left (a <= s <= b with
 excluded points): reduce_inequalities finds no point of the range where a real part is above
 or below 0, and solveset finds every point of it a root (|e - 1| = 1 - e for -1 <= e <= 1).
 A range point a lattice symbol does not take is checked too, which only strengthens the
-check. The kernel has no proof of the vanishing. An UNEQUAL is kept
+check. The kernel has no proof of the vanishing. When the check fails because a real part is
+above or below 0 somewhere in the range, a rational point there (an interval's midpoint, one
+past a finite end of a half-line) goes to the oracle; a mismatch there is an UNEQUAL, its
+point read in the original symbols and kept only inside the restriction (|e - 2| = 2 - e for
+0 <= e <= 3: UNEQUAL at e = 5/2). An UNEQUAL is kept
 only when its point, read in the original symbols, satisfies every clause and side condition
 (in_domain), else UNKNOWN; the restricted pair's oracle samples only points inside. prove and
 induct use the same plans; a refutation outside the restriction is not found, and a claim

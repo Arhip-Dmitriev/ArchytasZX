@@ -63,7 +63,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -1553,6 +1553,7 @@ def decide_restricted(
     difference vanishes on that range."""
     from archytaszx.semantics.restrict import (
         in_domain,
+        range_point,
         restricted_samples,
         subst_pair,
         to_original,
@@ -1671,14 +1672,38 @@ def decide_restricted(
         and options.get("use_symbolic", True)
     ):
         with _trace.span("decide.restriction.range"):
-            run = _symbolic_match(_family(pair[0]), _family(pair[1]), restriction.floors)
+            family_l, family_r = _family(pair[0]), _family(pair[1])
+            run = _symbolic_match(family_l, family_r, restriction.floors)
             tensors = run.tensors
             on = None
+            probe = None
             if tensors is not None and not run.matched:
                 tl, tr = tensors
                 if not tl.is_variable_rank and not tr.is_variable_rank and tl.dims() == tr.dims():
-                    on = vanishes_on_range(restriction, (tl.entry - tr.entry).to_sympy())
-        if on is not None:
+                    difference = (tl.entry - tr.entry).to_sympy()
+                    on = vanishes_on_range(restriction, difference)
+                    point = None if on is not None else range_point(restriction, difference)
+                    if point is not None and is_pure(family_l) and is_pure(family_r):
+                        probe = _run_oracle(
+                            family_l,
+                            family_r,
+                            [point],
+                            1,
+                            cast(float, options.get("tolerance", DEFAULT_TOLERANCE)),
+                            cast(int, options.get("max_elements", DEFAULT_MAX_ELEMENTS)),
+                        )
+        if probe is not None and probe.mismatch is not None:
+            inner = Decision(
+                EqualityVerdict.UNEQUAL,
+                DecisionMethod.ORACLE_COUNTEREXAMPLE,
+                f"oracle mismatch at {dict(probe.mismatch)!r}, a point of the range where the "
+                "symbolic contractions' difference is nonzero (interval reduction): "
+                f"{probe.comparison.reason if probe.comparison else ''}",
+                counterexample=probe.mismatch,
+                comparison=probe.comparison,
+                samples_checked=inner.samples_checked + len(probe.evaluated),
+            )
+        elif on is not None:
             inner = replace(
                 inner,
                 verdict=EqualityVerdict.EQUAL_UNCERTIFIED,
