@@ -231,15 +231,15 @@ _Limit = tuple[sp.Symbol, sp.Expr, sp.Expr]
 
 
 def _freeze(*exprs: sp.Expr) -> tuple[list[sp.Expr], dict[sp.Symbol, sp.Expr]]:
-    """``exprs`` with every :class:`ModResidue` atom replaced by an integer dummy symbol, and the
-    map back."""
+    """``exprs`` with every :class:`ModResidue` atom replaced by an integer symbol
+    ``_frozen<i>``, and the map back."""
     atoms: set[sp.Expr] = set()
     for expr in exprs:
         atoms |= expr.atoms(ModResidue)
     if not atoms:
         return list(exprs), {}
     forward = {
-        atom: sp.Dummy(f"r{i}", integer=True, nonnegative=True)
+        atom: sp.Symbol(f"_frozen{i}", integer=True, nonnegative=True)
         for i, atom in enumerate(sorted(atoms, key=sp.default_sort_key))
     }
     return [expr.xreplace(forward) for expr in exprs], {v: k for k, v in forward.items()}
