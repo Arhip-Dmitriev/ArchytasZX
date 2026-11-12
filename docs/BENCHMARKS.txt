@@ -614,7 +614,8 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      reason); a rival: rival.no_verdict
   unsupported        unsupported.CODE, the UNSUPPORTED code of the reason, set where the record
                      is made (unsupported_code)
-  timeout            limit.stage_cpu (a stage's CPU limit), limit.rival_cpu, limit.rival_wall,
+  timeout            limit.stage_cpu (a stage's CPU limit), limit.prepare_cpu (a rival's
+                     preparation), limit.rival_cpu, limit.rival_wall,
                      kill.stage_timer (the runner's wall timer killed the worker)
   oom                kill.sigkill (SIGKILL or exit 137), kill.cgroup_oom_kill (a rise of the
                      systemd scope's memory.events oom_kill counter, reported by the worker on
@@ -669,7 +670,11 @@ Implementation: benchmarks/tools/ (one adapter per tool: supports, run), drivers
 benchmarks/tools/drivers/, environments in benchmarks/.venvs/ (Python 3.12, one per tool)
 
 Every tool follows the same points, limits and repeats. Rival preparation (the expanded circuit,
-QASM through Qiskit, the specification as a dense tensor or a ZX graph) is untimed; the tool's
+QASM through Qiskit, the specification as a dense tensor or a ZX graph) is the stage prepare: it
+is not part of the measured check time but runs under a CPU limit of its own
+(stages.prepare_timeout_seconds when set, else stages.timeout_seconds), a profiling timer that
+re-fires until it escapes and stops when the rival's call starts; a preparation over its limit
+is a timeout in stage prepare (cause limit.prepare_cpu) and the rival is not called. The tool's
 own work runs in its own environment and is the timed check stage. Unsupported instances are
 recorded with the reason and counted. Every QASM angle is written as p*pi/q when angle/pi has a
 continued-fraction convergent p/q within 2^-50 relative with |p| and q below 2^63 (the integer

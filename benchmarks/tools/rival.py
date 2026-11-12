@@ -347,9 +347,10 @@ def reference_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
 
 
 def _mark_rival() -> None:
-    """Announces the rival stage to the runner."""
-    from benchmarks.worker import mark
+    """Ends the preparation timer (worker.end_prepare) and announces the rival stage."""
+    from benchmarks.worker import end_prepare, mark
 
+    end_prepare()
     mark("rival")
 
 

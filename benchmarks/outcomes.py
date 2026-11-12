@@ -103,6 +103,7 @@ CAUSES: dict[str, str] = {
     "kill.cgroup_oom_kill": "the scope's memory.events oom_kill rose",
     "kill.exit": "the worker died with another exit code",
     "limit.stage_cpu": "a stage used up its CPU limit",
+    "limit.prepare_cpu": "a rival's preparation in the worker used up its CPU limit",
     "limit.rival_cpu": "the rival used up its CPU limit",
     "limit.rival_wall": "the rival used up its wall limit",
     "memory.error": "MemoryError in the worker",
@@ -238,6 +239,8 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
     stage = None if stage in (None, "start") else stage
     kill = rec.get("kill")
     code = rec.get("exit")
+    if rec.get("limit") == "prepare_cpu":
+        return "timeout", "prepare", "limit.prepare_cpu"
     if kill == "stage timer" or (kill is None and oc == "timeout"):
         return "timeout", stage, "kill.stage_timer"
     if kill == "cgroup oom_kill" or rec.get("journal_oom_kill"):

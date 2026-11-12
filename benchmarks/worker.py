@@ -30,6 +30,36 @@ STAGE = "@@STAGE "
 RESULT = "@@RESULT "
 OOMKILL = "@@OOMKILL "
 _oom_start: int | None = None
+_prepare = {"on": False, "expired": False}
+
+
+class PrepareTimeout(Exception):
+    """A rival's preparation used up its CPU limit."""
+
+
+def _prepare_alarm(signum: int, frame: Any) -> None:
+    """Raises PrepareTimeout, re-armed every 0.5 s CPU until it escapes."""
+    if not _prepare["on"]:
+        return
+    _prepare["expired"] = True
+    signal.setitimer(signal.ITIMER_PROF, 0.5)
+    raise PrepareTimeout()
+
+
+def start_prepare(limit: float) -> None:
+    """Arms a CPU timer of ``limit`` seconds over a rival's preparation."""
+    _prepare.update(on=True, expired=False)
+    signal.signal(signal.SIGPROF, _prepare_alarm)
+    signal.setitimer(signal.ITIMER_PROF, limit)
+
+
+def end_prepare() -> None:
+    """Disarms the preparation timer; raises PrepareTimeout when it had expired."""
+    was = _prepare["on"]
+    _prepare["on"] = False
+    signal.setitimer(signal.ITIMER_PROF, 0)
+    if was and _prepare["expired"]:
+        raise PrepareTimeout()
 
 
 def mark(stage: str) -> None:
@@ -115,12 +145,24 @@ def main() -> None:
 
     inst = instance(job)
     adapter = tools.adapter(job["tool"])
-    if job["tool"] != "archytaszx":
+    rival = job["tool"] != "archytaszx"
+    st = job["config"]["stages"]
+    if rival:
         mark("prepare")
+        start_prepare(float(st.get("prepare_timeout_seconds", st["timeout_seconds"])))
     try:
         out = adapter.run(inst, job)
+        if rival:
+            end_prepare()
+    except PrepareTimeout:
+        out = {"outcome": "timeout", "killed_in": "prepare", "limit": "prepare_cpu"}
     except Exception as exc:  # noqa: BLE001
         out = failure(job["tool"], exc)
+    finally:
+        _prepare["on"] = False
+        signal.setitimer(signal.ITIMER_PROF, 0)
+    if rival and _prepare["expired"] and out.get("outcome") != "timeout":
+        out = {"outcome": "timeout", "killed_in": "prepare", "limit": "prepare_cpu"}
     print(RESULT + json.dumps(out, default=str), flush=True)
 
 
