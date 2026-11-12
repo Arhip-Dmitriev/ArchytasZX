@@ -620,6 +620,8 @@ own work runs in its own environment and is the timed check stage. Unsupported i
 recorded with the reason and counted. Every QASM angle is written as p*pi/q when angle/pi has a
 continued-fraction convergent p/q within 2^-50 relative with |p| and q below 2^63 (the integer
 range of the QuiZX and QCEC readers), else as a fixed-point decimal; no angle carries an exponent.
+A dense specification or Cirq simulation with more than 64 tensor axes (numpy's limit) is
+unsupported, checked before any entry count, since at d = 1 the entry count stays 1.
 
   Tool          State     Instances, verdict and limitations
   ------------  --------  ---------------------------------------------------------------------

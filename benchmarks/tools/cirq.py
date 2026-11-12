@@ -56,7 +56,10 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         inits = {idx[g.q]: g.v % d for g in c.gates if isinstance(g, ir.Init)}
         posts = {idx[g.q]: g.v % d for g in c.gates if isinstance(g, ir.Post)}
         state = len(inits) == m
-        if d ** (m if state else 2 * m) > MAX_ENTRIES:
+        axes = m if state else 2 * m
+        if axes > rival.MAX_AXES:
+            raise rival.Unsupported(f"{axes} tensor axes: above numpy's {rival.MAX_AXES}")
+        if d**axes > MAX_ENTRIES:
             raise rival.Unsupported(f"{m} qudits of dimension {d}: too large to simulate")
         gates = []
         for g in c.gates:

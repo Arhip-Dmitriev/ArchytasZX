@@ -43,6 +43,7 @@ from benchmarks.tools import common
 VENVS = Path(__file__).resolve().parent.parent / ".venvs"
 DRIVERS = Path(__file__).resolve().parent / "drivers"
 DENSE_CAP = 1 << 24
+MAX_AXES = 64
 
 
 class Unsupported(Exception):
@@ -261,6 +262,8 @@ def spec_tensor(inst: Any, n: int | None, d: int) -> np.ndarray:
     right = spec_diagram(inst, n, d)
     if not right.is_pure():
         raise Unsupported("a mixed specification")
+    if len(right.boundary_outputs) + len(right.boundary_inputs) > MAX_AXES:
+        raise Unsupported(f"the specification has more than {MAX_AXES} axes")
     try:
         return np.asarray(check.contract(right, max_elements=DENSE_CAP).tensor)
     except ContractSizeError as exc:
