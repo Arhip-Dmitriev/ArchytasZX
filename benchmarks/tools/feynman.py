@@ -26,6 +26,7 @@ from typing import Any
 from benchmarks.tools import common, rival
 
 ENV = "feynman"
+DIMENSIONS = (2,)
 BASIS = ["h", "x", "z", "s", "sdg", "t", "tdg", "cx", "ccx", "swap", "p"]
 EIGHTHS = {1: ["T"], 2: ["P"], 3: ["P", "T"], 4: ["Z"], 5: ["Z", "T"], 6: ["P*"], 7: ["T*"]}
 NAMES = {

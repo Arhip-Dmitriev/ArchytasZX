@@ -13,7 +13,8 @@
 # limitations under the License.
 #
 # Builds every rival tool at its pinned version under benchmarks/.venvs/ (docs/BENCHMARKS.txt,
-# section 11). Usage: bash benchmarks/tools/setup_rivals.sh [python|haskell|autoq|quantomatic|coq|all]
+# section 11), and the harness extra (.[benchmarks]) into the active Python. Usage:
+# bash benchmarks/tools/setup_rivals.sh [harness|python|haskell|autoq|quantomatic|coq|all]
 
 set -euo pipefail
 V="$(cd "$(dirname "$0")/.." && pwd)/.venvs"
@@ -24,6 +25,11 @@ clone() {  # clone URL DIR COMMIT
     [ -d "$V/src/$2/.git" ] || git clone -q "$1" "$V/src/$2"
     git -C "$V/src/$2" fetch -q --depth 200 origin || true
     git -C "$V/src/$2" checkout -q "$3"
+}
+
+harness() {  # the in-process imports of the adapters, into the Python running the harness
+    local py="${HARNESS_PYTHON:-$(command -v python)}"
+    "$UV" pip install -q --python "$py" -e "$(cd "$(dirname "$0")/../.." && pwd)[benchmarks]"
 }
 
 python_envs() {
@@ -135,11 +141,12 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
 }
 
 case "${1:-all}" in
+    harness) harness ;;
     python) python_envs ;;
     haskell) haskell ;;
     autoq) autoq ;;
     quantomatic) quantomatic ;;
     coq) coq ;;
-    all) python_envs; haskell; autoq; quantomatic; coq ;;
+    all) harness; python_envs; haskell; autoq; quantomatic; coq ;;
     *) echo "unknown target $1" >&2; exit 2 ;;
 esac

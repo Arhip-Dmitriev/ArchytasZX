@@ -71,6 +71,11 @@ archytaszx = "archytaszx.repl.shell:main"
 viz = [
     "matplotlib",
 ]
+benchmarks = [
+    "qiskit==2.6.2",
+    "numpy",
+    "matplotlib",
+]
 dev = [
     "pytest",
     "pytest-xdist",

@@ -100,6 +100,7 @@ class Context:
     calibration: dict[str, Any] | None
     mem_mb: int
     cgroup: bool
+    git: dict[str, Any] = field(default_factory=dict)
     writers: dict[int, log.Writer] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     stale: set[str] = field(default_factory=set)
@@ -172,7 +173,7 @@ def environment(cfg: dict[str, Any]) -> dict[str, Any]:
         "config": cfg,
         "config_hash": config.digest(cfg),
         "git_commit": git("rev-parse", "HEAD"),
-        "git_dirty": bool(git("status", "--porcelain")),
+        "git_dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
         "machine": machine(),
         "software": versions,
         "lean_toolchain": toolchain,
@@ -403,6 +404,7 @@ class UnitRun:
             "finished": time.time(),
             "machine": self.ctx.machine,
             "calibration": self.ctx.calibration,
+            "git": self.ctx.git,
             **res,
         }
         rec = self.classify(rec)
@@ -466,9 +468,21 @@ class UnitRun:
             rec = self.run(None, 0, trace, "symbolic")
             if _success(rec):
                 self.repeats(None, rec, "symbolic")
-        ax = points.axes(self.inst, self.cfg, self.unit.false)
+        dims = getattr(tools.adapter(tool), "DIMENSIONS", None)
+        ax = points.axes(self.inst, self.cfg, self.unit.false, dims)
         k_target = int(pc["K"])
         size = points.domain_size(ax, k_target)
+        if dims and size == 0:
+            why = "qubits only (d = 2)" if tuple(dims) == (2,) else f"dimensions {dims} only"
+            self._finish(
+                unit_key,
+                {
+                    "unsupported": why,
+                    "unsupported_code": outcomes.unsupported_code(why),
+                    "successes": 0,
+                },
+            )
+            return
         used: set[Any] = set()
         failed: list[Any] = []
         fails: list[dict[str, Any]] = []
@@ -649,6 +663,14 @@ def run(
     (results / "configs").mkdir(exist_ok=True)
     (results / "configs" / f"{cfg_hash}.json").write_text(json.dumps(cfg, indent=1, default=str))
     jobs = int(cfg["platform"]["jobs"])
+    from benchmarks import tools
+
+    problems = tools.preflight([t for t in cfg["tools"]["enabled"] if t in tools.NAMES])
+    if problems:
+        print("benchmarks: preflight failed, not starting:", flush=True)
+        for p in problems:
+            print(f"  {p}", flush=True)
+        sys.exit(2)
     env = environment(cfg)
     calib = calibrate(cfg, results)
     env["calibration"] = calib
@@ -672,6 +694,7 @@ def run(
         {"median": calib["median"], "tag": tag},
         memory_cap_mb(cfg, jobs),
         lean.cgroups(),
+        {"commit": env["git_commit"], "dirty": env["git_dirty"]},
     )
     ctx.stale = stale_units(ctx.done, false_records)
     units = units_of(cfg, false_records)

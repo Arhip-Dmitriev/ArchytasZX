@@ -32,6 +32,7 @@ import numpy as np
 from benchmarks.tools import common, rival
 
 ENV = "autoq"
+DIMENSIONS = (2,)
 BASIS = ["x", "z", "h", "s", "sdg", "t", "tdg", "cx", "cz", "ccx", "swap"]
 
 

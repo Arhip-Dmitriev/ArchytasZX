@@ -22,6 +22,8 @@ from benchmarks.tools import rival
 
 ENV = "quizx"
 PACKAGE = "quizx"
+PROBE = ("quizx",)
+DIMENSIONS = (2,)
 
 
 def supports(inst: Any, point: Any) -> str | None:

@@ -14,19 +14,60 @@
 """The cluster profile's Slurm job array: ``python -m benchmarks slurm [--set k=v ...]`` writes
 benchmarks/slurm/run.sbatch (submitted from the repository root; scavenger partition, requeue,
 whole cores, one worker per core, one shard of the units per array task) and prints the sbatch
-command."""
+command. The checkout must be at origin/dev's latest green commit (or slurm.commit): a
+clean checkout elsewhere is moved there, a dirty one is refused, and every array task checks
+the commit again before it runs."""
 
 from __future__ import annotations
 
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def script(cfg: dict[str, Any], sets: list[str]) -> str:
-    """The sbatch file of the config."""
+def _git(*args: str) -> str:
+    r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False)
+    return r.stdout.strip()
+
+
+def green_commit(cfg: dict[str, Any]) -> str | None:
+    """slurm.commit when set, else the head of origin/dev's latest successful CI run (gh)."""
+    if cfg["slurm"].get("commit"):
+        return str(cfg["slurm"]["commit"])
+    cmd = ["gh", "run", "list", "--branch", "dev", "--status", "success", "--workflow"]
+    cmd += ["ci.yml", "--limit", "1", "--json", "headSha", "-q", ".[0].headSha"]
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() or None
+
+
+def checkout(cfg: dict[str, Any]) -> str:
+    """The green commit, the checkout moved onto it when clean; exits when it cannot be."""
+    target = green_commit(cfg)
+    if not target:
+        sys.exit("slurm: no green dev commit found (gh unavailable?); set slurm.commit=SHA")
+    _git("fetch", "-q", "origin", "dev")
+    sha = _git("rev-parse", "--verify", f"{target}^{{commit}}")
+    if not sha:
+        sys.exit(f"slurm: commit {target} not in this checkout")
+    dirty = bool(_git("status", "--porcelain", "--untracked-files=no"))
+    if dirty:
+        sys.exit("slurm: checkout has local changes")
+    if _git("rev-parse", "HEAD") != sha:
+        _git("checkout", "-q", "--detach", sha)
+        if _git("rev-parse", "HEAD") != sha:
+            sys.exit(f"slurm: could not check out {sha}")
+    return sha
+
+
+def script(cfg: dict[str, Any], sets: list[str], commit: str) -> str:
+    """The sbatch file of the config, run only at ``commit`` with a clean checkout."""
     sc = cfg["slurm"]
     if sc["partition"] != "scavenger":
         raise ValueError("Zaratan jobs run on the scavenger partition only")
@@ -46,6 +87,8 @@ def script(cfg: dict[str, Any], sets: list[str]) -> str:
 {account}
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
+[ "$(git rev-parse HEAD)" = "{commit}" ] || {{ echo "checkout is not at {commit}" >&2; exit 1; }}
+[ -z "$(git status --porcelain --untracked-files=no)" ] || {{ echo "dirty checkout" >&2; exit 1; }}
 source {sc["venv"]}/bin/activate
 export PYTHONPATH="$SLURM_SUBMIT_DIR"
 python -m benchmarks run --profile cluster --shard ${{SLURM_ARRAY_TASK_ID}}/{int(sc["array"])} \\
@@ -54,10 +97,11 @@ python -m benchmarks run --profile cluster --shard ${{SLURM_ARRAY_TASK_ID}}/{int
 
 
 def main(cfg: dict[str, Any], args: Any) -> None:
-    """Writes the sbatch file and prints how to submit it."""
+    """Checks out the green commit, writes the sbatch file and prints how to submit it."""
     cfg["platform"]["profile"] = "cluster"
     out = ROOT / "benchmarks" / "slurm"
     (out / "logs").mkdir(parents=True, exist_ok=True)
+    commit = checkout(cfg)
     path = out / "run.sbatch"
-    path.write_text(script(cfg, list(args.sets)), encoding="utf-8")
-    print(f"wrote {path}; submit with: sbatch {path.relative_to(ROOT)}")
+    path.write_text(script(cfg, list(args.sets), commit), encoding="utf-8")
+    print(f"wrote {path} at {commit}; submit with: sbatch {path.relative_to(ROOT)}")

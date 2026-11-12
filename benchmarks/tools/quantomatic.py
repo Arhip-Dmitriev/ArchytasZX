@@ -32,6 +32,7 @@ from benchmarks import stages, subject
 from benchmarks.tools import common, rival
 
 ENV = "quantomatic"
+DIMENSIONS = (2,)
 MAX_STEPS = 100_000
 
 

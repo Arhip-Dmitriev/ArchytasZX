@@ -24,6 +24,8 @@ from benchmarks.tools import common, rival
 
 ENV = "tket"
 PACKAGE = "pytket"
+PROBE = ("pytket.passes", "pytket.qasm")
+DIMENSIONS = (2,)
 
 
 def supports(inst: Any, point: Any) -> str | None:

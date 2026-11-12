@@ -29,6 +29,7 @@ from benchmarks.tools import common, dense, rival
 
 ENV = "cirq"
 PACKAGE = "cirq-core"
+PROBE = ("cirq", "numpy")
 MAX_ENTRIES = 1 << 26
 
 

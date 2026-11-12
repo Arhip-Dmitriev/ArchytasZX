@@ -24,6 +24,8 @@ from benchmarks.tools import common, rival
 
 ENV = "pyzx"
 PACKAGE = "pyzx"
+PROBE = ("pyzx", "numpy")
+DIMENSIONS = (2,)
 
 
 def supports(inst: Any, point: Any) -> str | None:

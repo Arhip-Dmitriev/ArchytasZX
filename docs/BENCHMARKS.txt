@@ -594,6 +594,17 @@ decide) three times; its median CPU is stored with every run and in the job's en
 record, which also holds the node, CPU model, frequency governor and memory. Reports give times
 scaled by the calibration beside the raw times; raw times are compared within one CPU model.
 
+The slurm action runs at one commit: slurm.commit when set, else the head of the latest
+successful CI run on dev (gh run list). A checkout with tracked local changes is refused; a
+clean one elsewhere is checked out (detached) at that commit. The sbatch file names the commit
+and each array task exits when the checkout is not at it or is dirty. Every run record carries
+git = {commit, dirty} of the job.
+
+Before any unit runs, a preflight imports the harness's in-process modules (numpy, sympy,
+qiskit; the extra .[benchmarks], installed by setup_rivals.sh harness) and, for each enabled
+tool with an installed environment, imports its PROBE modules in that environment; any failure
+stops the run with the list of problems.
+
 10.4 Memory
 
 Lean runs in a systemd scope of its own capped at memory_fraction of the total memory, outside
@@ -785,7 +796,10 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           fetched, not mapped
 
 Every rival is built by benchmarks/tools/setup_rivals.sh (pinned commits and versions); until
-then each instance is recorded unsupported with "not installed". The Coq toolchain and the
+then each instance is recorded unsupported with "not installed". A tool declaring DIMENSIONS
+(the qubit-only ones: pyzx, quizx, qcec, qiskit, tket, feynman, autoq_para, quantomatic: d = 2)
+draws its points only with d inside them; a unit whose d range misses them gets one unsupported
+unit record ("qubits only (d = 2)") and no runs. The Coq toolchain and the
 proof projects live under BENCH_COQ_HOME (default ~/.cache/archytaszx-bench/coq): Coq's dune
 build rejects paths with non-ASCII characters.
 

@@ -25,6 +25,8 @@ from benchmarks.tools import common, rival
 
 ENV = "qcec"
 PACKAGE = "mqt.qcec"
+PROBE = ("mqt.core.ir", "mqt.qcec")
+DIMENSIONS = (2,)
 
 
 def supports(inst: Any, point: Any) -> str | None:

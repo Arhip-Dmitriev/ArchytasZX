@@ -26,7 +26,13 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT = Path(__file__).resolve().parent / "config.toml"
-UNHASHED = (("platform", "jobs"), ("output", "results"), ("output", "plots"), ("tools", "enabled"))
+UNHASHED = (
+    ("platform", "jobs"),
+    ("output", "results"),
+    ("output", "plots"),
+    ("tools", "enabled"),
+    ("slurm", "commit"),
+)
 
 
 def _value(text: str) -> Any:

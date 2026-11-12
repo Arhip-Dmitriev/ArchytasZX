@@ -40,3 +40,40 @@ def adapter(name: str) -> Any:
     if name not in NAMES:
         raise KeyError(f"unknown tool {name!r}")
     return importlib.import_module(f"benchmarks.tools.{name}")
+
+
+HARNESS_IMPORTS = ("numpy", "sympy", "qiskit", "qiskit.qasm2", "qiskit.circuit.library")
+
+
+def preflight(names: list[str]) -> list[str]:
+    """The problems found importing the harness modules in-process and each enabled tool's
+    PROBE modules in its environment (an environment not installed is not a problem)."""
+    import subprocess
+
+    from benchmarks.tools import rival
+
+    problems = []
+    for mod in HARNESS_IMPORTS:
+        try:
+            importlib.import_module(mod)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"harness: import {mod}: {type(exc).__name__}: {exc}")
+    for name in names:
+        a = adapter(name)
+        env, probe = getattr(a, "ENV", None), getattr(a, "PROBE", ())
+        if not probe or env is None or not rival.python(env).exists():
+            continue
+        try:
+            r = subprocess.run(
+                [str(rival.python(env)), "-I", "-c", "import " + ", ".join(probe)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if r.returncode != 0:
+                last = (r.stderr.strip().splitlines() or ["exit " + str(r.returncode)])[-1]
+                problems.append(f"{name}: benchmarks/.venvs/{env}: {last}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            problems.append(f"{name}: benchmarks/.venvs/{env}: {type(exc).__name__}: {exc}")
+    return problems

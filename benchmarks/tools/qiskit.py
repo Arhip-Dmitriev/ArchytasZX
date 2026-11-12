@@ -28,6 +28,8 @@ from benchmarks.tools import common, rival
 
 ENV = "qiskit"
 PACKAGE = "qiskit"
+PROBE = ("qiskit.qasm2", "qiskit.quantum_info", "numpy")
+DIMENSIONS = (2,)
 MAX_STATE_QUBITS = 26
 MAX_MAP_QUBITS = 13
 

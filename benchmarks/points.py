@@ -55,9 +55,15 @@ class Axes:
         return (n is None or self.has_n(n)) and self.has_d(d) and self.differs(p)
 
 
-def axes(inst: Any, cfg: dict[str, Any], false: dict[str, Any] | None = None) -> Axes:
+def axes(
+    inst: Any,
+    cfg: dict[str, Any],
+    false: dict[str, Any] | None = None,
+    dims: tuple[int, ...] | None = None,
+) -> Axes:
     """The schedule ranges of ``inst`` under the ``points`` config; with the F record
-    ``false``, only points where its pair differs."""
+    ``false``, only points where its pair differs; with ``dims`` (a tool's dimensions), d
+    limited to the least and greatest of them."""
     from benchmarks.differs import differs
 
     pc = cfg["points"]
@@ -72,6 +78,8 @@ def axes(inst: Any, cfg: dict[str, Any], false: dict[str, Any] | None = None) ->
         d_hi = pc["d_max"] if dom.d_max is None else min(pc["d_max"], dom.d_max)
     else:
         d_lo = d_hi = int(inst.subject.dimension)
+    if dims:
+        d_lo, d_hi = max(d_lo, min(dims)), min(d_hi, max(dims))
     return Axes(n_lo, n_hi, d_lo, d_hi, dom.has_n, dom.has_d, lambda p: differs(false, p[0], p[1]))
 
 

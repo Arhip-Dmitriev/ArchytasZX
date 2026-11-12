@@ -27,6 +27,7 @@ from benchmarks import ir, subject
 from benchmarks.tools import common, rival
 
 ENV = "dizx"
+PROBE = ("dizx", "dizx.simplify")
 
 
 def supports(inst: Any, point: Any) -> str | None:

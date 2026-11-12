@@ -72,3 +72,4 @@ mem_per_cpu = "4G"
 time = "7-00:00:00"
 account = ""
 venv = "~/.venvs/personal_lab"        # the environment on the cluster
+commit = ""                           # the commit run; empty: dev's latest green one
