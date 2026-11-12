@@ -431,6 +431,9 @@ def double_with_origin(diagram: Diagram) -> Doubled:
     out.set_scalar(diagram.scalar * diagram.scalar.conjugate())
     out.set_parameters(dict(diagram.parameters))
     _copy_boxes(conjugate, out, (ids0, ids1), extra)
+    for box_id, box in list(out.bang_boxes.items()):
+        if box.is_node_scope:
+            out.set_bang_box_sheets(box_id, True)
     return Doubled(out, dict(b.origin))
 
 

@@ -434,6 +434,7 @@ class Diagram:
         node_scope: frozenset[NodeId] = frozenset(),
         port_scope: frozenset[PortRef] = frozenset(),
         parent: BangBoxId | None = None,
+        sheets: bool = False,
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -456,6 +457,7 @@ class Diagram:
             node_scope=frozenset(node_scope),
             port_scope=frozenset(port_scope),
             parent=parent,
+            sheets=sheets,
         )
         return box_id
 
@@ -478,6 +480,14 @@ class Diagram:
         if box_id not in self._bang_boxes:
             raise GraphGrammarError(f"no such bang box: {box_id!r}")
         self._bang_boxes[box_id] = self._bang_boxes[box_id].with_node_scope(frozenset(node_scope))
+
+    def set_bang_box_sheets(self, box_id: BangBoxId, sheets: bool) -> None:
+        """Replace a bang box's ``sheets`` flag, leaving every other field unchanged."""
+        from dataclasses import replace
+
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        self._bang_boxes[box_id] = replace(self._bang_boxes[box_id], sheets=bool(sheets))
 
     def set_bang_box_port_scope(self, box_id: BangBoxId, port_scope: frozenset[PortRef]) -> None:
         """Replace a bang box's ``port_scope`` field, leaving every other field unchanged.

@@ -80,7 +80,7 @@ from archytaszx.diagram.bangbox import (
     substitute_index_phases,
 )
 from archytaszx.diagram.generators import GeneratorError
-from archytaszx.diagram.graph import BangBoxId, Diagram, GraphError, PortRef
+from archytaszx.diagram.graph import Diagram, GraphError, PortRef
 from archytaszx.diagram.mixed import double, is_pure
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.egraph import EGraph, SaturationLimits, SaturationReport
@@ -640,41 +640,27 @@ class _OracleRun:
     refusals: tuple[str, ...] = ()
 
 
-def _box_boundary_shape(diagram: Diagram) -> tuple[object, ...]:
-    """Per boundary slot (outputs, then inputs): the kind, first-appearance rank and
-    multiplicity of the bang box owning it, or None."""
-    rank: dict[BangBoxId, int] = {}
-    shape: list[object] = []
-    for refs in (diagram.boundary_outputs, diagram.boundary_inputs):
-        for ref in refs:
-            owner = None
-            for box_id, box in sorted(diagram.bang_boxes.items()):
-                if ref.node_id in box.node_scope:
-                    owner = ("node", box_id)
-                elif ref in box.port_scope:
-                    owner = ("port", box_id)
-            if owner is None:
-                shape.append(None)
-                continue
-            kind, box_id = owner
-            rank.setdefault(box_id, len(rank))
-            shape.append((kind, rank[box_id], str(diagram.bang_boxes[box_id].multiplicity)))
-        shape.append("|")
-    return tuple(shape)
-
-
 def _doubled_order_withheld(left: Diagram, right: Diagram) -> str | None:
-    """Why the doubled pair cannot be compared box by box, or None: a node-scope box with
-    boundary slots doubles to one copy-major block over both sheets, so two sides whose
-    boundary box shapes differ would be compared under permuted orders."""
-    shape_l, shape_r = _box_boundary_shape(left), _box_boundary_shape(right)
-    node_boxed = any(isinstance(s, tuple) and s[0] == "node" for s in (*shape_l, *shape_r))
-    if not node_boxed or shape_l == shape_r:
-        return None
-    return (
-        "a node-scope bang box with boundary slots doubles to one copy-major block over both "
-        "sheets, and the two sides' boundary box shapes differ"
-    )
+    """Why two doubled diagrams cannot be compared box by box, or None: a node-scope box with
+    boundary slots that lacks the sheets flag, or whose slots do not split evenly between the
+    plain and conjugate halves of a boundary list."""
+    for diagram in (left, right):
+        for box in diagram.bang_boxes.values():
+            if not box.is_node_scope:
+                continue
+            for refs in (diagram.boundary_outputs, diagram.boundary_inputs):
+                half = len(refs) // 2
+                slots = [i for i, r in enumerate(refs) if r.node_id in box.node_scope]
+                if not slots:
+                    continue
+                plain = sum(1 for i in slots if i < half)
+                if not box.sheets or 2 * half != len(refs) or 2 * plain != len(slots):
+                    return (
+                        "a node-scope bang box with boundary slots has no plain/conjugate "
+                        "split, so expanding it after doubling would order its copies "
+                        "differently from doubling after expanding"
+                    )
+    return None
 
 
 def _oracle_stop(oracle: _OracleRun) -> str:
@@ -1536,7 +1522,8 @@ def _decide(
 ) -> Decision:
     """The ladder of :func:`decide_equal`, sampling and contracting under ``floors``."""
     if mixed or not (is_pure(left) and is_pure(right)):
-        withheld = _doubled_order_withheld(left, right)
+        doubled = (double(left), double(right))
+        withheld = _doubled_order_withheld(*doubled)
         if withheld is not None:
             family_l, family_r = _family(left), _family(right)
             candidates = (
@@ -1572,7 +1559,6 @@ def _decide(
                 samples_checked=checked,
                 stops=withheld_stops,
             )
-        doubled = (double(left), double(right))
         inner = _decide(
             *doubled,
             mixed=False,

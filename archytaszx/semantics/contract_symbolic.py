@@ -1241,14 +1241,24 @@ def contract_symbolic(
         return axis
 
     for refs in (diagram.boundary_outputs, diagram.boundary_inputs):
-        emitted: set[BangBoxId] = set()
-        for ref in refs:
+        emitted: set[tuple[BangBoxId, int]] = set()
+        half = len(refs) // 2
+
+        def part(owner: BangBoxId, position: int, half: int = half) -> int:
+            return int(diagram.bang_boxes[owner].sheets and position >= half)
+
+        for position, ref in enumerate(refs):
             owner = scope_of.get(ref.node_id)
             if owner is not None:
-                if owner not in emitted:
-                    emitted.add(owner)
+                key = (owner, part(owner, position))
+                if key not in emitted:
+                    emitted.add(key)
                     g = group(owner)
-                    run = [r for r in refs if scope_of.get(r.node_id) == owner]
+                    run = [
+                        r
+                        for i, r in enumerate(refs)
+                        if scope_of.get(r.node_id) == owner and part(owner, i) == key[1]
+                    ]
                     layout.append(ReplicatedBlock(g, tuple(template(g, r) for r in run)))
                 continue
             if ref in port_box:

@@ -97,12 +97,12 @@ decide_equal tries the following rungs in order and stops at the first that sett
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
-pair in Decision.doubled (MIXED.txt, section 5). Exception: when either side has a node-scope
-bang box owning boundary slots and the two sides' boundary box shapes (per slot: box kind,
-first-appearance rank, multiplicity) differ, the doubled ladder is withheld, since such a box
-doubles to one copy-major block over both sheets. Only the oracle runs, on the original pair
-(each sample expanded, then doubled): a mismatch is UNEQUAL by ORACLE_COUNTEREXAMPLE,
-otherwise UNKNOWN, reason "doubled comparison withheld: ...", stops (doubled, withheld).
+pair in Decision.doubled (MIXED.txt, section 5). Exception: when a node-scope bang box of a
+doubled side owns boundary slots but has no sheets flag, or its slots do not split evenly
+between the plain and conjugate halves of a boundary list, the doubled ladder is withheld.
+Only the oracle runs, on the original pair (each sample expanded, then doubled): a mismatch
+is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparison withheld:
+...", stops (doubled, withheld).
 
 2.2 The Decision
 

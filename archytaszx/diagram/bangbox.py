@@ -291,6 +291,9 @@ class BangBox:
     node_scope: frozenset[NodeId] = frozenset()
     port_scope: frozenset[PortRef] = frozenset()
     parent: BangBoxId | None = None
+    sheets: bool = False
+    """A node-scope box of a doubled diagram: its boundary slots in the first half of each
+    boundary list are the plain sheet's, those in the second half the conjugate sheet's."""
 
     def __post_init__(self) -> None:
         """Validate field types and that exactly one of the two scopes is non-empty."""
@@ -707,6 +710,7 @@ def _copy_subtree(
                 child.multiplicity,
                 node_scope=frozenset(id_map[n] for n in child.node_scope),
                 parent=parent,
+                sheets=child.sheets,
             )
         else:
             new_id = diagram.add_bang_box(
@@ -765,6 +769,24 @@ def _rescope_others(diagram: Diagram, removed: frozenset[NodeId], added: frozens
 
 
 def _splice_boundary_block(
+    refs: list[PortRef],
+    all_old_refs: list[PortRef],
+    id_maps: list[dict[NodeId, NodeId]],
+    sheets: bool = False,
+) -> list[PortRef]:
+    """With ``sheets``, one block per half of ``refs`` (plain, then conjugate), each at its
+    half's first old ref; otherwise :func:`_splice_one_block`."""
+    if not sheets:
+        return _splice_one_block(refs, all_old_refs, id_maps)
+    half = len(refs) // 2
+    old = set(all_old_refs)
+    first = [r for r in refs[:half] if r in old]
+    second = [r for r in refs[half:] if r in old]
+    out = _splice_one_block(refs, first, id_maps)
+    return _splice_one_block(out, second, id_maps)
+
+
+def _splice_one_block(
     refs: list[PortRef], all_old_refs: list[PortRef], id_maps: list[dict[NodeId, NodeId]]
 ) -> list[PortRef]:
     """Replace every ref in ``old_refs`` (in list order) with one contiguous, copy-major
@@ -811,10 +833,14 @@ def _gather_ancestors(diagram: Diagram, box: BangBox) -> None:
                 boundary_refs_in_scope(diagram, outer.node_scope), key=lambda r: r.sort_key()
             )
             diagram.set_boundary_inputs(
-                _splice_boundary_block(list(diagram.boundary_inputs), crossings, [identity])
+                _splice_boundary_block(
+                    list(diagram.boundary_inputs), crossings, [identity], outer.sheets
+                )
             )
             diagram.set_boundary_outputs(
-                _splice_boundary_block(list(diagram.boundary_outputs), crossings, [identity])
+                _splice_boundary_block(
+                    list(diagram.boundary_outputs), crossings, [identity], outer.sheets
+                )
             )
         ancestor = outer.parent
 
@@ -864,10 +890,14 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
             boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key()
         )
         diagram.set_boundary_inputs(
-            _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, [identity])
+            _splice_boundary_block(
+                list(diagram.boundary_inputs), sorted_crossings, [identity], box.sheets
+            )
         )
         diagram.set_boundary_outputs(
-            _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, [identity])
+            _splice_boundary_block(
+                list(diagram.boundary_outputs), sorted_crossings, [identity], box.sheets
+            )
         )
         _copy_subtree(diagram, box.id, identity, box.parent)
         _remove_subtree(diagram, box.id)
@@ -900,10 +930,10 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> None:
 
     sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     new_boundary_inputs = _splice_boundary_block(
-        list(diagram.boundary_inputs), sorted_crossings, id_maps
+        list(diagram.boundary_inputs), sorted_crossings, id_maps, box.sheets
     )
     new_boundary_outputs = _splice_boundary_block(
-        list(diagram.boundary_outputs), sorted_crossings, id_maps
+        list(diagram.boundary_outputs), sorted_crossings, id_maps, box.sheets
     )
 
     for id_map in id_maps:
@@ -1047,10 +1077,12 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> None:
     _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
     sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     diagram.set_boundary_inputs(
-        _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, id_maps)
+        _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, id_maps, box.sheets)
     )
     diagram.set_boundary_outputs(
-        _splice_boundary_block(list(diagram.boundary_outputs), sorted_crossings, id_maps)
+        _splice_boundary_block(
+            list(diagram.boundary_outputs), sorted_crossings, id_maps, box.sheets
+        )
     )
 
     _copy_subtree(diagram, box.id, id_map, box.parent)
@@ -1248,5 +1280,6 @@ def merge(
         box_1.multiplicity,
         node_scope=box_1.node_scope | box_2.node_scope,
         parent=box_1.parent,
+        sheets=box_1.sheets and box_2.sheets,
     )
     return working

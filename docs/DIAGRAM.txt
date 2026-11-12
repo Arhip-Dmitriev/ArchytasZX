@@ -146,7 +146,7 @@ bare_symbol_name, free_symbols, to_int, substitute and abstract, mirroring Dim.
 
 4.2 The two scopes
 
-    BangBox(id, multiplicity, node_scope, port_scope, parent)
+    BangBox(id, multiplicity, node_scope, port_scope, parent, sheets=False)
 
 Exactly one scope is non-empty.
 
@@ -193,7 +193,9 @@ count.
 4.4 Layout
 
 Instantiation lays out boundary slots copy-major: copy 0 of every slot in order, then copy 1,
-and so on. Every component of the engine (printer, scalable notation, contraction, the Lean
+and so on. A box with sheets=True (set by double, MIXED.txt) lays out one such block per half
+of each boundary list: its slots in the first half (the plain sheet), then those in the
+second half (the conjugate sheet). Every component of the engine (printer, scalable notation, contraction, the Lean
 export) follows this convention.
 
 

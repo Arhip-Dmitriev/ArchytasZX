@@ -79,7 +79,7 @@ def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
     while parent is not None and parent in diagram.bang_boxes and parent not in seen:
         seen.add(parent)
         ancestor = diagram.bang_boxes[parent]
-        chain.append(repr(ancestor.multiplicity))
+        chain.append(repr(ancestor.multiplicity) + ("|sheets" if ancestor.sheets else ""))
         parent = ancestor.parent
     return tuple(chain)
 
@@ -99,7 +99,10 @@ def _membership(diagram: Diagram) -> dict[NodeId, list[tuple[str, ...]]]:
     membership: dict[NodeId, list[tuple[str, ...]]] = {nid: [] for nid in diagram.nodes}
     for box_id in sorted(diagram.bang_boxes):
         box = diagram.bang_boxes[box_id]
-        static = (repr(box.multiplicity), *_box_chain(diagram, box))
+        static = (
+            repr(box.multiplicity) + ("|sheets" if box.sheets else ""),
+            *_box_chain(diagram, box),
+        )
         for nid in sorted(box.node_scope):
             if nid in membership:
                 membership[nid].append(("node", *static))
@@ -179,7 +182,7 @@ def _box_descriptors(diagram: Diagram) -> tuple[tuple[object, ...], ...]:
         descriptors.append(
             (
                 int(box_id),
-                repr(box.multiplicity),
+                repr(box.multiplicity) + ("|sheets" if box.sheets else ""),
                 _box_chain(diagram, box),
                 tuple(sorted(int(nid) for nid in box.node_scope)),
                 tuple(ref.sort_key() for ref in sorted(box.port_scope, key=PortRef.sort_key)),
@@ -750,7 +753,7 @@ def _box_scopes(diagram: Diagram) -> dict[BangBoxId, tuple[object, ...]]:
         ports = tuple(ref.sort_key() for ref in sorted(box.port_scope, key=PortRef.sort_key))
         parent = box.parent
         scopes[box_id] = (
-            repr(box.multiplicity),
+            repr(box.multiplicity) + ("|sheets" if box.sheets else ""),
             _box_chain(diagram, box),
             nodes,
             ports,

@@ -659,6 +659,7 @@ def replace_region(
                     PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
                 ),
                 parent=None if box.parent is None else box_map[box.parent],
+                sheets=box.sheets,
             )
 
     def refill(slots: list[PortRef], fresh: tuple[PortRef, ...]) -> list[PortRef]:

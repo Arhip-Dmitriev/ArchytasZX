@@ -151,7 +151,7 @@ Bang boxes:
   - A node-scope box meeting only the boundary, and a port-scope box on Z and X spiders, make
     the rank depend on the multiplicity: the tensor becomes variable-rank, with
     ReplicatedFactor groups (a factor taken once per copy), ReplicatedBlock runs of boundary
-    slots laid out copy-major, and SharedIndex sums.
+    slots laid out copy-major (a sheets box, one run per boundary half), and SharedIndex sums.
   - A node-scope box meeting no boundary slot, whose every wire to the rest ends at a Z or X
     spider outside every box and every port scope (one such box per spider), contributes
     F(s)^m: F(s) is one copy's contraction with each crossing leg read as the spider's leg at
@@ -211,7 +211,10 @@ factor is first normalised: the product c of its Mul arguments free of the group
 indices and of every shared index moves into the entry as c^m, m the multiplicity, and both
 are simplified. Groups agree when their multiplicities, marks and inner tensors agree and
 their factors are syntactically equal or their difference simplifies to zero, template
-indices aligned by position; the entries are then compared. Factors that differ leave the
+indices aligned by position; the entries are then compared. Before that, a group laid out in
+several top-level blocks is split into one group per block when its factor, after each
+template index a delta pins is substituted into the periodic rest, separates by block; groups
+are renumbered by first appearance in the layout. Factors that differ leave the
 result indeterminate. A difference the simplifier leaves nonzero is also equal when it
 vanishes after powers are written through exp, exponentials are split, and every complete set
 of residue deltas [x + r] (r = 0 .. m - 1, m concrete) with one coefficient is replaced by that

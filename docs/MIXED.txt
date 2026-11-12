@@ -60,8 +60,11 @@ it and names double().
      phase-free zero-leg Z over the leg dimension (the scalar d);
   4. boundary: D0 outputs, D1 outputs, D0 inputs, D1 inputs;
   5. scalar c * conj(c);
-  6. each node-scope bang box as one box over both copies, each port-scope box as one box per
-     copy, all with the original multiplicity symbol.
+  6. each node-scope bang box as one box over both copies, marked sheets=True, each port-scope
+     box as one box per copy, all with the original multiplicity symbol. A sheets box expands
+     to one copy-major block per half of each boundary list (its plain slots, then its
+     conjugate slots), so expanding after doubling gives the boundary order doubling after
+     expanding gives.
 
 With T = denote(double(D)) of axes (o, o', i, i'), D is the CPM
 Phi_D(rho)[o, o'] = sum_{i, i'} T[o, o', i, i'] rho[i, i']. A pure U gives rho -> U rho U^dagger;

@@ -63,7 +63,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -85,6 +85,7 @@ from archytaszx.diagram.bangbox import (
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS, ContractionResult, contract
 from archytaszx.semantics.contract_symbolic import (
+    LayoutSlot,
     ReplicatedBlock,
     ReplicatedFactor,
     SymbolicAxis,
@@ -486,6 +487,105 @@ def _group_ranges(t: SymbolicTensor, group: int) -> dict[str, Dim]:
     return out
 
 
+def _by_name(expr: sp.Expr, mapping: Mapping[str, sp.Expr]) -> sp.Expr:
+    """``expr`` with each free symbol whose name ``mapping`` holds replaced."""
+    return expr.xreplace(
+        {x: mapping[str(x.name)] for x in expr.free_symbols if str(x.name) in mapping}
+    )
+
+
+def _split_parts(
+    t: SymbolicTensor, group: ReplicatedFactor, positions: list[int]
+) -> list[sp.Expr] | None:
+    """One factor per block of a group laid out at ``positions``, or None when its factor,
+    after substituting each template index a delta pins, couples two blocks."""
+    from archytaszx.semantics.contract_symbolic import _periodic, _pins
+
+    assert t.layout is not None
+    block_of: dict[str, int] = {}
+    for k, position in enumerate(positions):
+        for axis in cast(ReplicatedBlock, t.layout[position]).axes:
+            if not isinstance(axis, SymbolicAxis):
+                return None
+            block_of[axis.index] = k
+    args = list(sp.Mul.make_args(group.factor.to_sympy()))
+    for i, arg in enumerate(args):
+        if not isinstance(arg, ModDelta):
+            continue
+        modulus = arg.args[1]
+        for symbol in sorted(arg.free_symbols, key=lambda x: str(x.name)):
+            if str(symbol.name) not in block_of:
+                continue
+            pins = [
+                v
+                for v in _pins(arg, symbol, modulus)
+                if not any(str(x.name) in block_of for x in v.free_symbols)
+            ]
+            others = args[:i] + args[i + 1 :]
+            if pins and all(_periodic(o, symbol, modulus) for o in others):
+                args = [a if j == i else a.xreplace({symbol: pins[0]}) for j, a in enumerate(args)]
+                break
+    per_block: list[list[sp.Expr]] = [[] for _ in positions]
+    for arg in args:
+        touched = {block_of[str(x.name)] for x in arg.free_symbols if str(x.name) in block_of}
+        if len(touched) > 1:
+            return None
+        per_block[min(touched) if touched else 0].append(arg)
+    return [sp.Mul(*part) for part in per_block]
+
+
+def _split_groups(t: SymbolicTensor, max_steps: int) -> SymbolicTensor:
+    """``t`` with each plain group laid out in several top-level blocks split into one group
+    per block when its factor separates by block (:func:`_split_parts`); groups are numbered by
+    first appearance in the layout, template indices renamed ``_t<g>_<k>`` to match."""
+    if not t.groups or t.layout is None:
+        return t
+    blocks: dict[int, list[int]] = {}
+    for position, slot in enumerate(t.layout):
+        if isinstance(slot, ReplicatedBlock):
+            blocks.setdefault(slot.group, []).append(position)
+    split: dict[int, list[sp.Expr]] = {}
+    for g, positions in blocks.items():
+        group = t.groups[g]
+        if len(positions) > 1 and group.marked is None and group.inner is None:
+            found = _split_parts(t, group, positions)
+            if found is not None:
+                split[g] = found
+    if not split:
+        return t
+    groups: list[ReplicatedFactor] = []
+    layout: list[LayoutSlot] = []
+    seen: dict[int, int] = {}
+    for position, slot in enumerate(t.layout):
+        if not isinstance(slot, ReplicatedBlock):
+            layout.append(slot)
+            continue
+        old = t.groups[slot.group]
+        if slot.group in split:
+            factor = split[slot.group][blocks[slot.group].index(position)]
+        elif slot.group in seen:
+            layout.append(ReplicatedBlock(seen[slot.group], slot.axes))
+            continue
+        else:
+            factor = old.factor.to_sympy()
+        g_new = len(groups)
+        if slot.group not in split:
+            seen[slot.group] = g_new
+        rename: dict[str, sp.Expr] = {}
+        axes: list[LayoutSlot] = []
+        for k, axis in enumerate(slot.axes):
+            if not isinstance(axis, SymbolicAxis):
+                return t
+            name = f"_t{g_new}_{k}"
+            rename[axis.index] = sp.Symbol(name, integer=True, nonnegative=True)
+            axes.append(SymbolicAxis(axis.port, axis.dim, name))
+        groups.append(
+            replace(old, factor=Scalar(_by_name(factor, rename)).simplify(max_steps=max_steps))
+        )
+        layout.append(ReplicatedBlock(g_new, tuple(axes)))
+    return replace(t, layout=tuple(layout), groups=tuple(groups))
+
+
 def _normalise_groups(t: SymbolicTensor, max_steps: int) -> SymbolicTensor:
     """``t`` with each plain group's index-free factor constant moved into the entry as its
     power by the multiplicity."""
@@ -569,8 +669,8 @@ def compare_symbolic(
                 "indeterminate: the variable-rank layouts or shared indices differ",
                 float("inf"),
             )
-        left = _normalise_groups(left, max_steps)
-        right = _normalise_groups(right, max_steps)
+        left = _normalise_groups(_split_groups(left, max_steps), max_steps)
+        right = _normalise_groups(_split_groups(right, max_steps), max_steps)
         if not _same_groups(left, right, max_steps):
             return ComparisonResult(
                 mode, False, "indeterminate: the replicated factors differ", float("inf")
