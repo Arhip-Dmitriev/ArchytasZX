@@ -228,6 +228,8 @@ class ComparisonResult:
     max_abs_deviation: float
     recovered_lambda: complex | None = None
     doubled: bool = False
+    difference: Scalar | None = None
+    """The nonzero entry difference of a symbolic comparison that found one."""
 
 
 def compare_tensors(
@@ -598,6 +600,7 @@ def compare_symbolic(
             False,
             f"indeterminate: the entries differ by {difference} under shared replicated factors",
             float("inf"),
+            difference=difference,
         )
     if difference.to_sympy().atoms(sp.Sum, ModDelta, ModGcd):
         return ComparisonResult(
@@ -607,7 +610,9 @@ def compare_symbolic(
             "index sum or divisibility atom, so no conclusion is drawn",
             float("inf"),
         )
-    return ComparisonResult(mode, False, f"entries differ by {difference}", float("inf"))
+    return ComparisonResult(
+        mode, False, f"entries differ by {difference}", float("inf"), difference=difference
+    )
 
 
 @dataclass(frozen=True, slots=True)

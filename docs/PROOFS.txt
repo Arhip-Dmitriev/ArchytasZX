@@ -72,6 +72,12 @@ decide_equal tries the following rungs in order and stops at the first that sett
   5. SYMBOLIC_CONTRACTION   Both diagrams are contracted with every symbol formal; equal
                             tensors are EQUAL. Otherwise SYMBOLIC_WITNESS: an entry at a sample
                             assignment and an index tuple where the two differ is UNEQUAL.
+                            When the comparison leaves a nonzero entry difference (also under
+                            identical replicated factors), the witness search also tries each
+                            sample with every dimension symbol raised to one above the
+                            difference's largest integer root (root_points), and the oracle
+                            evaluates those points too; an oracle mismatch there without a
+                            witness is UNEQUAL as ORACLE_COUNTEREXAMPLE.
   5b. PATH_SUM              When both diagrams translate to path sums (every dimension a
                             concrete power of two, generators Z, X, F, B, S; SEMANTICS.txt,
                             section 5.2): equal canonical forms are EQUAL; different canonical

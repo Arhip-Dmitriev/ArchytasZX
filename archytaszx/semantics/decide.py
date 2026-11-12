@@ -71,7 +71,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
 from archytaszx.algebra.phase import INDEX, PhaseError
-from archytaszx.algebra.scalar import ScalarError
+from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxError,
     boundary_arity,
@@ -867,6 +867,7 @@ class _SymbolicRun:
     reason: str
     tensors: tuple[SymbolicTensor, SymbolicTensor] | None = None
     floors_used: Mapping[str, int] | None = None
+    difference: Scalar | None = None
 
 
 def _merged_floors(
@@ -903,7 +904,62 @@ def _symbolic_match(
                 return _SymbolicRun(True, floored.reason, (tensor_l, tensor_r), used)
     except _SYMBOLIC_ERRORS as exc:
         return _SymbolicRun(False, f"symbolic contraction declined: {type(exc).__name__}: {exc}")
-    return _SymbolicRun(result.matched, result.reason, (tensor_l, tensor_r))
+    return _SymbolicRun(
+        result.matched, result.reason, (tensor_l, tensor_r), difference=result.difference
+    )
+
+
+def _dimension_names(*diagrams: Diagram) -> frozenset[str]:
+    """Every symbol in a leg dimension of ``diagrams``."""
+    names: set[str] = set()
+    for diagram in diagrams:
+        for node in diagram.nodes.values():
+            for leg in (*node.inputs, *node.outputs):
+                names |= leg.dim.free_symbols
+    return frozenset(names)
+
+
+def _integer_roots(expr: sp.Expr, symbol: sp.Symbol) -> list[int]:
+    """The integer roots in ``symbol`` of the factors of ``expr`` that are polynomials in
+    ``symbol`` alone."""
+    roots: list[int] = []
+    for factor in sp.Mul.make_args(sp.factor(expr)):
+        base = factor.base if isinstance(factor, sp.Pow) and factor.exp.is_positive else factor
+        if base.free_symbols != {symbol}:
+            continue
+        try:
+            poly = sp.Poly(base, symbol)
+        except sp.PolynomialError:
+            continue
+        roots += [int(r) for r in poly.ground_roots() if r.is_integer]
+    return roots
+
+
+def root_points(
+    difference: Scalar,
+    candidates: Sequence[Mapping[str, CheckAssignmentValue]],
+    dimensions: frozenset[str],
+) -> tuple[Mapping[str, CheckAssignmentValue], ...]:
+    """Each candidate with every dimension symbol of ``difference`` raised to the smallest value
+    above the integer roots of ``difference`` in it, when the candidate's value is not above."""
+    expr = difference.to_sympy()
+    raised: dict[str, int] = {}
+    for symbol in sorted(expr.free_symbols, key=lambda x: str(x.name)):
+        name = str(symbol.name)
+        if name in dimensions:
+            roots = _integer_roots(expr, symbol)
+            if roots:
+                raised[name] = max(roots) + 1
+    out: list[dict[str, CheckAssignmentValue]] = []
+    for candidate in candidates:
+        point = dict(candidate)
+        for name, low in raised.items():
+            value = point.get(name)
+            if isinstance(value, int) and value < low:
+                point[name] = low
+        if point != dict(candidate) and point not in out and point not in candidates:
+            out.append(point)
+    return tuple(MappingProxyType(point) for point in out)
 
 
 def _witness_assignments(
@@ -1548,13 +1604,34 @@ def _decide(
                 samples_checked=checked,
                 floors_used=symbolic.floors_used,
             )
+        extra: tuple[Mapping[str, CheckAssignmentValue], ...] = ()
+        if symbolic.difference is not None:
+            extra = root_points(
+                symbolic.difference, candidates, _dimension_names(family_l, family_r)
+            )
         witness = (
             None
             if symbolic.tensors is None
             else _symbolic_witness(
-                family_l, family_r, symbolic.tensors, candidates, tolerance, floors
+                family_l, family_r, symbolic.tensors, (*candidates, *extra), tolerance, floors
             )
         )
+        if extra:
+            cross = _run_oracle(
+                family_l, family_r, extra, max_samples, tolerance, max_elements, False
+            )
+            checked += len(cross.evaluated)
+            if witness is None and cross.mismatch is not None:
+                return finish(
+                    EqualityVerdict.UNEQUAL,
+                    DecisionMethod.ORACLE_COUNTEREXAMPLE,
+                    f"oracle mismatch at {dict(cross.mismatch)!r}: "
+                    f"{cross.comparison.reason if cross.comparison else ''}",
+                    assumptions=(),
+                    counterexample=cross.mismatch,
+                    comparison=cross.comparison,
+                    samples_checked=checked,
+                )
         if witness is not None:
             return finish(
                 EqualityVerdict.UNEQUAL,
