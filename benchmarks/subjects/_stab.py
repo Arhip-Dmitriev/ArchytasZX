@@ -20,11 +20,10 @@ per logical or X-stabilizer row, one X spider per qubit)."""
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
-from typing import Any
 
 from benchmarks import ir
 from benchmarks.ir import CX, CZ, MCX, MCZ, F, Init, X, Z, ZPhase
@@ -35,30 +34,66 @@ from benchmarks.subjects._spec import Dsl
 _LETTERS = {"I": (0, 0), "X": (1, 0), "Z": (0, 1), "Y": (1, 1)}
 
 
-@dataclass(frozen=True)
 class Pauli:
-    """i^p X^x Z^z, the X and Z bit vectors over the qubits."""
+    """i^p X^x Z^z on n qubits, stored as the X and Z supports (``xs``, ``zs``); ``x`` and
+    ``z`` are the dense bit vectors, built on demand."""
 
-    x: tuple[int, ...]
-    z: tuple[int, ...]
-    p: int = 0
+    __slots__ = ("_x", "_z", "n", "p", "xs", "zs")
+
+    def __init__(self, x: Sequence[int], z: Sequence[int], p: int = 0) -> None:
+        self.n = len(x)
+        self.xs = frozenset(j for j, v in enumerate(x) if v)
+        self.zs = frozenset(j for j, v in enumerate(z) if v)
+        self.p = p
+        self._x: tuple[int, ...] | None = None
+        self._z: tuple[int, ...] | None = None
+
+    @classmethod
+    def sparse(cls, n: int, xs: Iterable[int], zs: Iterable[int], p: int = 0) -> Pauli:
+        """The Pauli with X support ``xs`` and Z support ``zs`` on n qubits."""
+        out = cls.__new__(cls)
+        out.n, out.xs, out.zs, out.p = n, frozenset(xs), frozenset(zs), p
+        out._x = out._z = None
+        return out
 
     @property
-    def n(self) -> int:
-        """The number of qubits."""
-        return len(self.x)
+    def x(self) -> tuple[int, ...]:
+        """The dense X bit vector."""
+        if self._x is None:
+            self._x = tuple(1 if j in self.xs else 0 for j in range(self.n))
+        return self._x
+
+    @property
+    def z(self) -> tuple[int, ...]:
+        """The dense Z bit vector."""
+        if self._z is None:
+            self._z = tuple(1 if j in self.zs else 0 for j in range(self.n))
+        return self._z
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Pauli):
+            return NotImplemented
+        return (self.n, self.xs, self.zs, self.p) == (other.n, other.xs, other.zs, other.p)
+
+    def __hash__(self) -> int:
+        return hash((self.n, self.xs, self.zs, self.p))
+
+    def __repr__(self) -> str:
+        return f"Pauli(n={self.n}, xs={sorted(self.xs)}, zs={sorted(self.zs)}, p={self.p})"
 
     def support(self) -> list[int]:
         """The qubits acted on."""
-        return [j for j in range(self.n) if self.x[j] or self.z[j]]
+        return sorted(self.xs | self.zs)
 
     def letter(self, j: int) -> str:
         """The Pauli letter at qubit j."""
-        return {(0, 0): "I", (1, 0): "X", (0, 1): "Z", (1, 1): "Y"}[(self.x[j], self.z[j])]
+        return {(0, 0): "I", (1, 0): "X", (0, 1): "Z", (1, 1): "Y"}[
+            (int(j in self.xs), int(j in self.zs))
+        ]
 
     def sign(self) -> int:
         """The sign s of the Hermitian operator s (x) P_j, the letters P_j in {X, Y, Z}."""
-        ys = sum(1 for j in range(self.n) if self.x[j] and self.z[j])
+        ys = len(self.xs & self.zs)
         e = (self.p - ys) % 4
         if e not in (0, 2):
             raise ValueError("not a Hermitian Pauli operator")
@@ -66,11 +101,11 @@ class Pauli:
 
     def is_x_type(self) -> bool:
         """Whether the operator has no Z part."""
-        return not any(self.z)
+        return not self.zs
 
     def is_z_type(self) -> bool:
         """Whether the operator has no X part."""
-        return not any(self.x)
+        return not self.xs
 
     def __str__(self) -> str:
         return ("-" if self.sign() < 0 else "+") + "".join(self.letter(j) for j in range(self.n))
@@ -82,22 +117,20 @@ def pauli(text: str) -> Pauli:
     if text[0] in "+-":
         sign = 2 if text[0] == "-" else 0
         text = text[1:]
-    x = tuple(_LETTERS[ch][0] for ch in text)
-    z = tuple(_LETTERS[ch][1] for ch in text)
-    return Pauli(x, z, (sign + text.count("Y")) % 4)
+    xs = [j for j, ch in enumerate(text) if _LETTERS[ch][0]]
+    zs = [j for j, ch in enumerate(text) if _LETTERS[ch][1]]
+    return Pauli.sparse(len(text), xs, zs, (sign + text.count("Y")) % 4)
 
 
 def mul(a: Pauli, b: Pauli) -> Pauli:
     """The product a b."""
-    swap = sum(za * xb for za, xb in zip(a.z, b.x))
-    x = tuple(u ^ v for u, v in zip(a.x, b.x))
-    z = tuple(u ^ v for u, v in zip(a.z, b.z))
-    return Pauli(x, z, (a.p + b.p + 2 * swap) % 4)
+    swap = len(a.zs & b.xs)
+    return Pauli.sparse(a.n, a.xs ^ b.xs, a.zs ^ b.zs, (a.p + b.p + 2 * swap) % 4)
 
 
 def commute(a: Pauli, b: Pauli) -> bool:
     """Whether a and b commute."""
-    return sum(u * v + w * t for u, v, w, t in zip(a.x, b.z, a.z, b.x)) % 2 == 0
+    return (len(a.xs & b.zs) + len(a.zs & b.xs)) % 2 == 0
 
 
 @dataclass(frozen=True)
@@ -145,27 +178,32 @@ def standard_form(generators: Sequence[str]) -> Code:
             if not commute(a, b):
                 raise ValueError(f"generators {a} and {b} anticommute")
     order = list(range(n))
+    where = list(range(n))
 
     def pivot(start: int, part: str) -> tuple[int, int] | None:
         for i in range(start, m):
-            vec = rows[i].x if part == "x" else rows[i].z
-            for pos in range(start, n):
-                if vec[order[pos]]:
-                    return i, pos
+            vec = rows[i].xs if part == "x" else rows[i].zs
+            pos = min((where[q] for q in vec if where[q] >= start), default=None)
+            if pos is not None:
+                return i, pos
         return None
+
+    def swap(a: int, b: int) -> None:
+        order[a], order[b] = order[b], order[a]
+        where[order[a]], where[order[b]] = a, b
 
     def eliminate(s: int, part: str) -> None:
         q = order[s]
         for j in range(m):
-            vec = rows[j].x if part == "x" else rows[j].z
-            if j != s and vec[q]:
+            vec = rows[j].xs if part == "x" else rows[j].zs
+            if j != s and q in vec:
                 rows[j] = mul(rows[j], rows[s])
 
     r = 0
     while (hit := pivot(r, "x")) is not None:
         i, pos = hit
         rows[r], rows[i] = rows[i], rows[r]
-        order[r], order[pos] = order[pos], order[r]
+        swap(r, pos)
         eliminate(r, "x")
         r += 1
     for s in range(r, m):
@@ -174,7 +212,7 @@ def standard_form(generators: Sequence[str]) -> Code:
             raise ValueError("dependent generators")
         i, pos = hit
         rows[s], rows[i] = rows[i], rows[s]
-        order[s], order[pos] = order[pos], order[s]
+        swap(s, pos)
         eliminate(s, "z")
     first, mid, last = order[:r], order[r:m], order[m:]
     ref = [0] * n
@@ -182,54 +220,50 @@ def standard_form(generators: Sequence[str]) -> Code:
         if rows[r + a].sign() < 0:
             ref[q] = 1
     xbar, zbar = [], []
-    for j, c in enumerate(last):
-        x = [0] * n
-        z = [0] * n
-        x[c] = 1
-        for a, q in enumerate(mid):
-            x[q] = rows[r + a].z[c]
-        for i, f in enumerate(first):
-            v = rows[i].z[c]
-            for a, q in enumerate(mid):
-                v ^= rows[r + a].z[c] & rows[i].z[q]
-            z[f] = v
-        xbar.append(Pauli(tuple(x), tuple(z), 0))
-        z2 = [0] * n
-        z2[c] = 1
-        for i, f in enumerate(first):
-            z2[f] = rows[i].x[c]
-        zbar.append(Pauli(tuple([0] * n), tuple(z2), 0))
+    for c in last:
+        hits = [q for a, q in enumerate(mid) if c in rows[r + a].zs]
+        zs = [
+            f
+            for i, f in enumerate(first)
+            if (c in rows[i].zs) ^ (sum(1 for q in hits if q in rows[i].zs) % 2 == 1)
+        ]
+        xbar.append(Pauli.sparse(n, [c, *hits], zs, 0))
+        zbar.append(Pauli.sparse(n, (), [c, *(f for i, f in enumerate(first) if c in rows[i].xs)]))
     code = Code(n, tuple(rows), defining, tuple(order), r, tuple(ref), tuple(xbar), tuple(zbar))
     _verify(code)
     return code
 
 
-def _symplectic(a: Sequence[Pauli], b: Sequence[Pauli]) -> Any:
-    """The matrix of a_i . b_j symplectic products mod 2 (1 where a_i and b_j anticommute)."""
-    import numpy as np
-
-    n = len(a[0].x) if a else 0
-    ax = np.array([p.x for p in a], dtype=np.float32).reshape(len(a), n)
-    az = np.array([p.z for p in a], dtype=np.float32).reshape(len(a), n)
-    bx = np.array([p.x for p in b], dtype=np.float32).reshape(len(b), n)
-    bz = np.array([p.z for p in b], dtype=np.float32).reshape(len(b), n)
-    return ((ax @ bz.T + az @ bx.T).astype(np.int64)) % 2
+def _anticommuting(a: Sequence[Pauli], b: Sequence[Pauli]) -> list[set[int]]:
+    """For each a_i the indices j of the b_j it anticommutes with, through a qubit index of
+    b's supports."""
+    xmap: dict[int, list[int]] = {}
+    zmap: dict[int, list[int]] = {}
+    for j, p in enumerate(b):
+        for q in p.xs:
+            xmap.setdefault(q, []).append(j)
+        for q in p.zs:
+            zmap.setdefault(q, []).append(j)
+    out = []
+    for p in a:
+        odd: set[int] = set()
+        for q in p.xs:
+            odd.symmetric_difference_update(zmap.get(q, ()))
+        for q in p.zs:
+            odd.symmetric_difference_update(xmap.get(q, ()))
+        out.append(odd)
+    return out
 
 
 def _verify(code: Code) -> None:
     """Every generator commutes with every logical operator, and Xbar_i anticommutes with
     Zbar_j exactly when i == j."""
-    import numpy as np
-
     logicals = (*code.xbar, *code.zbar)
-    if code.gens and logicals:
-        bad = np.argwhere(_symplectic(code.gens, logicals))
-        if len(bad):
-            i, j = bad[0]
-            raise ValueError(f"logical {logicals[j]} does not commute with {code.gens[i]}")
-    if code.xbar and code.zbar:
-        m = _symplectic(code.xbar, code.zbar)
-        if not np.array_equal(m, np.eye(len(code.xbar), len(code.zbar), dtype=np.int64)):
+    for g, odd in zip(code.gens, _anticommuting(code.gens, logicals)):
+        if odd:
+            raise ValueError(f"logical {logicals[min(odd)]} does not commute with {g}")
+    for i, odd in enumerate(_anticommuting(code.xbar, code.zbar)):
+        if odd != {i}:
             raise ValueError("logical operators are not paired")
 
 
@@ -247,18 +281,18 @@ def encoder_gates(code: Code) -> tuple[list[ir.Gate], list[ir.Gate]]:
     inits = [Init(q[j], code.ref[j]) for j in range(code.n) if j not in carriers]
     gates: list[ir.Gate] = []
     for lo, c in zip(code.xbar, code.carriers):
-        gates += [CX(q[c], q[j]) for j in range(code.n) if lo.x[j] and j != c]
+        gates += [CX(q[c], q[j]) for j in sorted(lo.xs) if j != c]
     for i in range(code.r):
         g, f = code.gens[i], code.order[i]
         gates.append(F(q[f]))
         if g.p % 4:
             gates.append(ZPhase(q[f], {1: Fraction(g.p % 4, 4)}))
-        for j in range(code.n):
+        for j in g.support():
             if j == f:
                 continue
-            if g.z[j]:
+            if j in g.zs:
                 gates.append(CZ(q[f], q[j]))
-            if g.x[j]:
+            if j in g.xs:
                 gates.append(CX(q[f], q[j]))
     return inits, gates
 
@@ -275,8 +309,8 @@ def _inputs_and_copies(code: Code, b: Dsl, D: str) -> dict[int, list[str]]:
     by_carrier = sorted(range(code.k), key=lambda j: code.carriers[j])
     for j in by_carrier:
         lo = code.xbar[j]
-        supp = [t for t in range(code.n) if lo.x[t]]
-        phase = (lo.p + 2 * sum(lo.z[t] * code.ref[t] for t in range(code.n))) % 4
+        supp = sorted(lo.xs)
+        phase = (lo.p + 2 * sum(code.ref[t] for t in lo.zs)) % 4
         ph = f" phase{{1: {Fraction(phase, 4)}}}" if phase else ""
         s = b.node(f"Z(1 -> {len(supp)}, {D}){ph}")
         b.ins.append(f"{s}.in0")
@@ -292,7 +326,7 @@ def projector_spec(code: Code, c: SpecContext) -> str:
     b = Dsl()
     for i, lo in enumerate(code.xbar):
         for lo2 in code.xbar:
-            if sum(z * x for z, x in zip(lo.z, lo2.x)) % 2:
+            if len(lo.zs & lo2.xs) % 2:
                 raise ValueError("logical X operators with crossing Z parts")
     feeds = _inputs_and_copies(code, b, D)
     cur: dict[int, str] = {}
@@ -387,10 +421,10 @@ def syndrome_gates(code: Code, anc: Sequence[str]) -> list[ir.Gate]:
         out += [Init(a), F(a)]
         if g.p % 4:
             out.append(ZPhase(a, {1: Fraction(g.p % 4, 4)}))
-        for j in range(code.n):
-            if g.z[j]:
+        for j in g.support():
+            if j in g.zs:
                 out.append(CZ(a, q[j]))
-            if g.x[j]:
+            if j in g.xs:
                 out.append(CX(a, q[j]))
         out.append(F(a))
     return out

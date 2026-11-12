@@ -21,22 +21,20 @@ from benchmarks.subjects._qudit_codes import css_encoder, css_spec
 
 
 def _data(L):
-    """Stars, logical rows and carriers of the L x L torus."""
+    """Stars, logical rows (sparse {qudit: coefficient}) and carriers of the L x L torus."""
     n = 2 * L * L
     h = lambda r, c: 2 * ((r % L) * L + c % L)
     v = lambda r, c: 2 * ((r % L) * L + c % L) + 1
     stars = []
     for r in range(L):
         for c in range(L):
-            row = [0] * n
-            row[h(r, c)] += 1
-            row[h(r, c - 1)] -= 1
-            row[v(r, c)] += 1
-            row[v(r - 1, c)] -= 1
-            stars.append(row)
+            row: dict[int, int] = {}
+            for j, a in ((h(r, c), 1), (h(r, c - 1), -1), (v(r, c), 1), (v(r - 1, c), -1)):
+                row[j] = row.get(j, 0) + a
+            stars.append({j: a for j, a in row.items() if a})
     logs = [
-        [1 if j in {v(0, c) for c in range(L)} else 0 for j in range(n)],
-        [1 if j in {h(r, 0) for r in range(L)} else 0 for j in range(n)],
+        {v(0, c): 1 for c in range(L)},
+        {h(r, 0): 1 for r in range(L)},
     ]
     return n, stars[:-1], logs, [v(0, 0), h(0, 0)]
 
