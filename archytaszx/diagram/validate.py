@@ -1107,6 +1107,23 @@ def _check_bangbox_nesting(diagram: Diagram, issues: list[ValidationIssue]) -> N
             )
 
 
+_NODE_ISSUES: dict[int, tuple[Node, tuple[ValidationIssue, ...]]] = {}
+_NODE_ISSUES_LIMIT = 1 << 17
+
+
+def _node_issues(node: Node) -> tuple[ValidationIssue, ...]:
+    """:func:`_check_generator_policy`'s issues for ``node``, memoised per Node object."""
+    hit = _NODE_ISSUES.get(id(node))
+    if hit is not None and hit[0] is node:
+        return hit[1]
+    found: list[ValidationIssue] = []
+    _check_generator_policy(node, found)
+    if len(_NODE_ISSUES) >= _NODE_ISSUES_LIMIT:
+        _NODE_ISSUES.clear()
+    _NODE_ISSUES[id(node)] = (node, tuple(found))
+    return tuple(found)
+
+
 @_trace.traced("input.validate")
 def validate(diagram: Diagram) -> ValidationReport:
     """Run every well-formedness check against ``diagram`` and return the full report.
@@ -1118,7 +1135,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_wire_dimensions(diagram, issues)
     _check_port_usage(diagram, issues)
     for node in diagram.nodes.values():
-        _check_generator_policy(node, issues)
+        issues.extend(_node_issues(node))
     _check_bangbox_scopes(diagram, issues)
     _check_bangbox_crossings(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
