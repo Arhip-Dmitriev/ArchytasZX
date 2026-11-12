@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
+from archytaszx import trace as _trace
 from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics import kernel, lean_net, lean_sym
 from archytaszx.semantics.decide import Decision, DecisionMethod, dimension_floors
@@ -73,14 +74,17 @@ def pair_proof(
     if decision.method is DecisionMethod.PATH_SUM:
         return None, "a path_sum verdict has no proof export yet (lean_pathsum)"
     try:
-        return kernel.from_decision(decision, left, right), ""
+        with _trace.span("decide.proof.kernel"):
+            return kernel.from_decision(decision, left, right), ""
     except kernel.KernelError as exc:
         why_kernel = str(exc)
     try:
-        return kernel.symbolic(left, right, describe=describe), ""
+        with _trace.span("decide.proof.symbolic"):
+            return kernel.symbolic(left, right, describe=describe), ""
     except kernel.KernelError as exc:
         why_symbolic = str(exc)
-    outcome = prove(left, right)
+    with _trace.span("decide.proof.search"):
+        outcome = prove(left, right)
     if outcome.proved:
         return outcome, ""
     return None, f"kernel: {why_kernel}; normaliser: {why_symbolic}; search: {outcome.reason}"
