@@ -924,7 +924,7 @@ class TestReviewRegressions:
         left, right = phased_state(dim, j), z_state(dim)
         bad = {"j": sp.Rational(1, 3)}
         assert not compare(left, right, bad).matched
-        decision = decide_equal(left, right, samples=[bad], use_symbolic=False)
+        decision = decide_equal(left, right, samples=[bad], use_symbolic=False, use_path_sum=False)
         assert decision.verdict is EqualityVerdict.UNKNOWN, decision.reason
         assert decision.samples_checked == 0
         assert decision.counterexample is None

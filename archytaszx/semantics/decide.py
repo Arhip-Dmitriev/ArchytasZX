@@ -640,6 +640,8 @@ class _OracleRun:
     mismatch: Mapping[str, CheckAssignmentValue] | None
     comparison: ComparisonResult | None
     refusals: tuple[str, ...] = ()
+    deferred: tuple[Mapping[str, CheckAssignmentValue], ...] = ()
+    """Samples planning more than ``max_planned`` elements, kept unevaluated."""
 
 
 def _doubled_order_withheld(left: Diagram, right: Diagram) -> str | None:
@@ -755,6 +757,8 @@ def _oracle_compare(
 
 _SIZE_GROWTH = 16
 """How many times the largest evaluated sample's size a later oracle sample may plan."""
+_DEFERRED_SIZE = float(1 << 20)
+"""Rung 3 evaluates samples planning at most this many elements; larger ones are deferred."""
 
 
 def _planned_size(
@@ -788,25 +792,36 @@ def _run_oracle(
     tolerance: float,
     max_elements: int,
     fallback_point: bool = False,
+    max_planned: float = math.inf,
+    by_size: bool = False,
 ) -> _OracleRun:
-    """Compare ``left`` and ``right`` at each candidate, in increasing planned size, until
-    ``max_samples`` evaluate or one mismatches; a candidate the oracle refuses, that breaks an
-    assumption, or that plans more than 16 times the largest evaluated size is skipped, and
-    with ``fallback_point`` the smallest admissible point is queued after the first refusal."""
+    """Compare ``left`` and ``right`` at each candidate (in increasing planned size with
+    ``by_size``, else in the given order) until ``max_samples`` evaluate or one mismatches; a
+    candidate the oracle refuses, that breaks an assumption, or that plans more than both 16
+    times the largest evaluated size and 2^20 elements is skipped, and
+    with ``fallback_point`` the smallest admissible point is queued after the first refusal;
+    a candidate planning more than ``max_planned`` elements is deferred unevaluated."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
     seen = [dict(c) for c in candidates]
     fallback = _smallest_admissible(left, right, table) if fallback_point else None
-    sizes = [_planned_size(left, right, c) for c in candidates]
-    queue = [c for _, c in sorted(zip(sizes, candidates), key=lambda pair: pair[0])]
+    if by_size:
+        sizes = [_planned_size(left, right, c) for c in candidates]
+        queue = [c for _, c in sorted(zip(sizes, candidates), key=lambda pair: pair[0])]
+    else:
+        queue = list(candidates)
     largest = 0.0
+    deferred: list[Mapping[str, CheckAssignmentValue]] = []
     while queue:
         if len(evaluated) >= max_samples:
             break
         assignment = MappingProxyType(dict(queue.pop(0)))
         planned = _planned_size(left, right, assignment)
-        if evaluated and planned > _SIZE_GROWTH * largest:
+        if planned > max_planned:
+            deferred.append(assignment)
+            continue
+        if evaluated and planned > max(_SIZE_GROWTH * largest, _DEFERRED_SIZE):
             refusals.append(
                 f"{dict(assignment)!r}: larger than needed (planned {planned:g} elements, "
                 f"over {_SIZE_GROWTH} x the largest evaluated {largest:g})"
@@ -822,8 +837,10 @@ def _run_oracle(
         evaluated.append(assignment)
         largest = max(largest, planned)
         if mismatch is not None:
-            return _OracleRun(tuple(evaluated), assignment, mismatch, tuple(refusals))
-    return _OracleRun(tuple(evaluated), None, None, tuple(refusals))
+            return _OracleRun(
+                tuple(evaluated), assignment, mismatch, tuple(refusals), tuple(deferred)
+            )
+    return _OracleRun(tuple(evaluated), None, None, tuple(refusals), tuple(deferred))
 
 
 _ADMISSIBLE_SEARCH = 64
@@ -925,7 +942,14 @@ def refute_by_oracle(
     family_r = _family(right)
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r)
     run = _run_oracle(
-        family_l, family_r, candidates, max_samples, tolerance, max_elements, samples is None
+        family_l,
+        family_r,
+        candidates,
+        max_samples,
+        tolerance,
+        max_elements,
+        samples is None,
+        by_size=samples is None,
     )
     return OracleRefutation(run.evaluated, run.mismatch, run.comparison, run.refusals)
 
@@ -1600,6 +1624,7 @@ def _decide(
                 tolerance,
                 max_elements,
                 samples is None,
+                by_size=samples is None,
             )
             checked = len(oracle.evaluated)
             withheld_stops = (("doubled", "withheld"), ("oracle", _oracle_stop(oracle)))
@@ -1711,10 +1736,42 @@ def _decide(
 
     candidates = tuple(samples) if samples is not None else sample_grid(family_l, family_r, floors)
     oracle = _run_oracle(
-        family_l, family_r, candidates, max_samples, tolerance, max_elements, samples is None
+        family_l,
+        family_r,
+        candidates,
+        max_samples,
+        tolerance,
+        max_elements,
+        samples is None,
+        _DEFERRED_SIZE,
+        by_size=samples is None,
     )
     checked = len(oracle.evaluated)
     stops.append(("oracle", _oracle_stop(oracle)))
+
+    def deferred_check() -> Decision | None:
+        """The oracle on the deferred large samples: an UNEQUAL on a mismatch, else None."""
+        nonlocal checked
+        if not oracle.deferred:
+            return None
+        late = _run_oracle(
+            family_l, family_r, oracle.deferred, max_samples, tolerance, max_elements
+        )
+        checked += len(late.evaluated)
+        stops.append(("oracle_deferred", _oracle_stop(late)))
+        if late.mismatch is None:
+            return None
+        return finish(
+            EqualityVerdict.UNEQUAL,
+            DecisionMethod.ORACLE_COUNTEREXAMPLE,
+            f"oracle mismatch at {dict(late.mismatch)!r} (a deferred large sample): "
+            f"{late.comparison.reason if late.comparison else ''}",
+            assumptions=(),
+            counterexample=late.mismatch,
+            comparison=late.comparison,
+            samples_checked=checked,
+        )
+
     if oracle.mismatch is not None:
         return finish(
             EqualityVerdict.UNEQUAL,
@@ -1728,6 +1785,11 @@ def _decide(
         )
     sampled = oracle_summary(checked, oracle.refusals)
     if nf_equal:
+        if checked == 0:
+            late_decision = deferred_check()
+            if late_decision is not None:
+                return late_decision
+            sampled = oracle_summary(checked, oracle.refusals)
         conditional = (
             f", conditional on the assumed dimension equation(s) "
             f"{', '.join(c.equation for c in nf_assumptions)}"
@@ -1914,6 +1976,9 @@ def _decide(
                 stops[:] = [x for x in stops if not x[0].startswith("induction")]
                 stops.append(("induction", code))
             if verdict is EqualityVerdict.UNKNOWN:
+                late_decision = deferred_check()
+                if late_decision is not None:
+                    return late_decision
                 reason = "; ".join([*notes, f"induction: {reason}"])
             return finish(verdict, method, reason, samples_checked=checked, **evidence)  # type: ignore[arg-type]
     elif not use_induction:
@@ -1923,6 +1988,9 @@ def _decide(
     else:
         notes.append("induction depth exhausted")
 
+    late_decision = deferred_check()
+    if late_decision is not None:
+        return late_decision
     return finish(
         EqualityVerdict.UNKNOWN,
         DecisionMethod.NONE,
