@@ -63,7 +63,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -207,6 +207,8 @@ class Decision:
     induction_proof: Theorem | None = None
     stops: tuple[tuple[str, str], ...] = ()
     """One (rung, stop code) per rung tried, in ladder order."""
+    base_case: Decision | None = None
+    """The induction rung's base-case Decision, when the rung reached it."""
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -1820,6 +1822,7 @@ def _decide(
             notes.append(settled_ps.reason)
 
     live = free_mult_symbols(family_l) | free_mult_symbols(family_r)
+    induction_base: Decision | None = None
     if use_induction and max_depth > 0 and live:
         settled = _decide_by_induction(
             family_l,
@@ -1840,6 +1843,7 @@ def _decide(
         stops.extend(_induction_stops(settled if isinstance(settled, str) else settled[2]))
         if isinstance(settled, str):
             notes.append(f"induction: {settled}")
+            induction_base = getattr(settled, "base", None)
         else:
             verdict, method, reason, evidence = settled
             if verdict is not EqualityVerdict.UNKNOWN:
@@ -1861,7 +1865,19 @@ def _decide(
         DecisionMethod.NONE,
         "; ".join(notes),
         samples_checked=checked,
+        base_case=induction_base,
     )
+
+
+class _Unsettled(str):
+    """An induction rung's reason for not settling, with the base-case Decision it reached."""
+
+    base: Decision | None
+
+    def __new__(cls, text: str, base: Decision | None = None) -> Self:
+        out = super().__new__(cls, text)
+        out.base = base
+        return out
 
 
 @_trace.traced("decide.induction")
@@ -1936,10 +1952,17 @@ def _decide_by_induction(
                 EqualityVerdict.UNEQUAL,
                 DecisionMethod.ORACLE_COUNTEREXAMPLE,
                 f"base case {index}={base} refuted at {dict(lifted)!r}",
-                {"counterexample": lifted, "comparison": confirmed, "assumptions": ()},
+                {
+                    "counterexample": lifted,
+                    "comparison": confirmed,
+                    "assumptions": (),
+                    "base_case": base_decision,
+                },
             )
     if base_decision.verdict is not EqualityVerdict.EQUAL:
-        return f"base case {index}={base} not proved: {base_decision.reason}"
+        return _Unsettled(
+            f"base case {index}={base} not proved: {base_decision.reason}", base_decision
+        )
 
     witness = _base_witness(left, right, index, base, evaluated, tolerance, max_elements)
     reasons: list[str] = []
@@ -1975,6 +1998,7 @@ def _decide_by_induction(
                         "induction": result,
                         "induction_reversed": reversed_,
                         "assumptions": (),
+                        "base_case": base_decision,
                     },
                 )
         if not result.proved:
@@ -1990,7 +2014,11 @@ def _decide_by_induction(
                 EqualityVerdict.UNKNOWN,
                 DecisionMethod.NONE,
                 f"{proof}; proved for {index} >= {base} only, {index}=0 does not instantiate",
-                {"induction": result, "induction_reversed": reversed_},
+                {
+                    "induction": result,
+                    "induction_reversed": reversed_,
+                    "base_case": base_decision,
+                },
             )
         from archytaszx.semantics.induction_kernel import induction_theorem
 
@@ -2008,6 +2036,7 @@ def _decide_by_induction(
                 "induction_reversed": reversed_,
                 "assumptions": _induction_assumptions(base_decision, result),
                 "induction_proof": theorem,
+                "base_case": base_decision,
             },
         )
-    return "; reversed: ".join(reasons)
+    return _Unsettled("; reversed: ".join(reasons), base_decision)

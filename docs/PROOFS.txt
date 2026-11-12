@@ -124,6 +124,8 @@ is UNEQUAL by ORACLE_COUNTEREXAMPLE, otherwise UNKNOWN, reason "doubled comparis
     Decision.induction_proof  the kernel Theorem of an INDUCTION verdict whose step case was
                               settled by uniform rewrite or induction rewrite, else None
     Decision.witness          the differing entry behind a SYMBOLIC_WITNESS verdict
+    Decision.base_case        the induction rung's base-case Decision (its own verdict, method,
+                              reason and stops), when the rung reached the base case
     Decision.stops            one (rung, stop code) per rung tried, in ladder order:
                                 normal_form  agree, differ
                                 oracle       no_mismatch, refused, none_evaluated, mismatch
