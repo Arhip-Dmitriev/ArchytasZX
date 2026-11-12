@@ -186,7 +186,7 @@ def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> 
     def f(x: tuple[int, ...]) -> Fraction:
         return Fraction(1, 2) if all(v == 1 for v in x) else Fraction(0)
 
-    return _append(c, ir.PhaseFn(outs, f))
+    return _append(c, ir.PhaseFn(outs, f, support=((1,) * len(outs),)))
 
 
 def _gate_at(c: ir.Circuit, index: int, new: ir.Gate | None) -> ir.Circuit:

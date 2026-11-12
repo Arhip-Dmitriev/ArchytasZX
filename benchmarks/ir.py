@@ -131,10 +131,12 @@ class Swap:
 
 @dataclass(frozen=True)
 class PhaseFn:
-    """The diagonal gate |x> -> e^(2 pi i f(x)) |x> on several wires, f in turns."""
+    """The diagonal gate |x> -> e^(2 pi i f(x)) |x> on several wires, f in turns; ``support``
+    lists the only inputs where f may be nonzero (None: any input)."""
 
     qs: tuple[str, ...]
     f: Callable[[tuple[int, ...]], Any]
+    support: tuple[tuple[int, ...], ...] | None = None
 
 
 @dataclass(frozen=True)

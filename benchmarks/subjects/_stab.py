@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
+from typing import Any
 
 from benchmarks import ir
 from benchmarks.ir import CX, CZ, MCX, MCZ, F, Init, X, Z, ZPhase
@@ -203,15 +204,33 @@ def standard_form(generators: Sequence[str]) -> Code:
     return code
 
 
+def _symplectic(a: Sequence[Pauli], b: Sequence[Pauli]) -> Any:
+    """The matrix of a_i . b_j symplectic products mod 2 (1 where a_i and b_j anticommute)."""
+    import numpy as np
+
+    n = len(a[0].x) if a else 0
+    ax = np.array([p.x for p in a], dtype=np.float32).reshape(len(a), n)
+    az = np.array([p.z for p in a], dtype=np.float32).reshape(len(a), n)
+    bx = np.array([p.x for p in b], dtype=np.float32).reshape(len(b), n)
+    bz = np.array([p.z for p in b], dtype=np.float32).reshape(len(b), n)
+    return ((ax @ bz.T + az @ bx.T).astype(np.int64)) % 2
+
+
 def _verify(code: Code) -> None:
-    for g in code.gens:
-        for lo in (*code.xbar, *code.zbar):
-            if not commute(g, lo):
-                raise ValueError(f"logical {lo} does not commute with {g}")
-    for i, a in enumerate(code.xbar):
-        for j, b in enumerate(code.zbar):
-            if commute(a, b) != (i != j):
-                raise ValueError("logical operators are not paired")
+    """Every generator commutes with every logical operator, and Xbar_i anticommutes with
+    Zbar_j exactly when i == j."""
+    import numpy as np
+
+    logicals = (*code.xbar, *code.zbar)
+    if code.gens and logicals:
+        bad = np.argwhere(_symplectic(code.gens, logicals))
+        if len(bad):
+            i, j = bad[0]
+            raise ValueError(f"logical {logicals[j]} does not commute with {code.gens[i]}")
+    if code.xbar and code.zbar:
+        m = _symplectic(code.xbar, code.zbar)
+        if not np.array_equal(m, np.eye(len(code.xbar), len(code.zbar), dtype=np.int64)):
+            raise ValueError("logical operators are not paired")
 
 
 def wires(n: int) -> list[str]:

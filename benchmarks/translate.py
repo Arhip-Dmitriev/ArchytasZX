@@ -37,6 +37,7 @@ never touched gets an identity Z(1 -> 1).
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -65,25 +66,58 @@ class Context:
     def _subs(self) -> dict[sp.Symbol, int]:
         return {sp.Symbol(k): v for k, v in self.values.items() if k in self.literal}
 
+    def _key(self) -> tuple[tuple[str, int], ...]:
+        return tuple(sorted((k, v) for k, v in self.values.items() if k in self.literal))
+
     def dim_token(self, dim: Any) -> str:
         """The DSL token of a dimension expression."""
-        e = sp.sympify(dim)
-        if e.is_Integer:
-            return f"literal {int(e)}"
-        v = e.subs(self._subs())
-        if v.is_Integer:
-            return f"literal {int(v)}"
-        return _expr(v)
+        return _memo(_dim_token, self._key(), dim)
 
     def value(self, expr: Any) -> sp.Expr:
         """``expr`` with the literal symbols substituted."""
-        e = sp.sympify(expr).subs(self._subs())
-        return sp.nsimplify(e) if e.is_number else e
+        return _memo(_value, self._key(), expr)
 
     def concrete(self, expr: Any) -> int | None:
         """The integer value of ``expr`` once every literal symbol is substituted, or None."""
-        e = sp.sympify(expr).subs(self._subs())
-        return int(e) if e.is_Integer else None
+        return _memo(_concrete, self._key(), expr)
+
+
+def _subs_of(key: tuple[tuple[str, int], ...]) -> dict[sp.Symbol, int]:
+    return {sp.Symbol(k): v for k, v in key}
+
+
+def _dim_token(key: tuple[tuple[str, int], ...], dim: Any) -> str:
+    e = sp.sympify(dim)
+    if e.is_Integer:
+        return f"literal {int(e)}"
+    v = e.subs(_subs_of(key))
+    if v.is_Integer:
+        return f"literal {int(v)}"
+    return _expr(v)
+
+
+def _value(key: tuple[tuple[str, int], ...], expr: Any) -> sp.Expr:
+    e = sp.sympify(expr).subs(_subs_of(key))
+    return sp.nsimplify(e) if e.is_number else e
+
+
+def _concrete(key: tuple[tuple[str, int], ...], expr: Any) -> int | None:
+    e = sp.sympify(expr).subs(_subs_of(key))
+    return int(e) if e.is_Integer else None
+
+
+@functools.lru_cache(maxsize=65536)
+def _cached(fn: Callable[..., Any], key: tuple[tuple[str, int], ...], kind: type, expr: Any) -> Any:
+    return fn(key, expr)
+
+
+def _memo(fn: Callable[..., Any], key: tuple[tuple[str, int], ...], expr: Any) -> Any:
+    """``fn(key, expr)``, cached on (fn, key, type of expr, expr) when ``expr`` is hashable."""
+    try:
+        hash(expr)
+    except TypeError:
+        return fn(key, expr)
+    return _cached(fn, key, type(expr), expr)
 
 
 def _expr(e: Any) -> str:
@@ -129,6 +163,8 @@ def _scalar_text(e: Any) -> str:
 
 def _turns(value: Any) -> Fraction | None:
     """A concrete number of turns reduced into [0, 1), or None when symbolic."""
+    if isinstance(value, (int, Fraction)) and not isinstance(value, bool):
+        return Fraction(value) % 1
     e = sp.sympify(value)
     if e.is_Float:
         e = sp.nsimplify(e, rational=True)
@@ -237,8 +273,26 @@ def _digits(index: int, dims: list[int]) -> tuple[int, ...]:
     return tuple(reversed(out))
 
 
-def _phase_fn(b: _Builder, qs: tuple[str, ...], f: Callable[[tuple[int, ...]], Any]) -> None:
-    """The binder, phase-table, splitter group of :class:`ir.PhaseFn`."""
+def _ravel(x: tuple[int, ...], ds: list[int]) -> int:
+    """The joint index of digits ``x`` (first most significant) in dimensions ``ds``."""
+    index = 0
+    for v, dv in zip(x, ds):
+        index = index * dv + v
+    return index
+
+
+def _inside(x: tuple[int, ...], ds: list[int]) -> bool:
+    return len(x) == len(ds) and all(0 <= v < dv for v, dv in zip(x, ds))
+
+
+def _phase_fn(
+    b: _Builder,
+    qs: tuple[str, ...],
+    f: Callable[[tuple[int, ...]], Any],
+    support: tuple[tuple[int, ...], ...] | None = None,
+) -> None:
+    """The binder, phase-table, splitter group of :class:`ir.PhaseFn`; with ``support`` only
+    those inputs are evaluated."""
     if b.box_of(qs) is not None:
         raise Unsupported("a phase table on a register")
     dims = [b.ctx.concrete(b.c.dim(q)) for q in qs]
@@ -247,7 +301,11 @@ def _phase_fn(b: _Builder, qs: tuple[str, ...], f: Callable[[tuple[int, ...]], A
     ds = [int(v) for v in dims if v is not None]
     total = math.prod(ds)
     entries: dict[int, Fraction] = {}
-    for index, x in enumerate(product(*[range(v) for v in ds])):
+    if support is None:
+        points: Any = enumerate(product(*[range(v) for v in ds]))
+    else:
+        points = sorted((_ravel(x, ds), tuple(x)) for x in set(support) if _inside(x, ds))
+    for index, x in points:
         t = _turns(f(tuple(x)))
         if t is None:
             raise Unsupported("a phase table entry is not a rational number of turns")
@@ -366,7 +424,7 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
         b.factor(b.dval(g.c) ** sp.Rational(1, 2), mid)
         return
     if isinstance(g, ir.PhaseFn):
-        _phase_fn(b, g.qs, g.f)
+        _phase_fn(b, g.qs, g.f, g.support)
         return
     if isinstance(g, (ir.MCZ, ir.MCX)):
         dt = b.ctx.concrete(b.c.dim(g.t))
@@ -391,7 +449,7 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
         fn = g.f
 
         def h(x: tuple[int, ...], fn: Callable[..., int] = fn, dy: int = dy) -> Any:
-            return sp.Rational(fn(tuple(x[:-1])) * x[-1], dy)
+            return Fraction(int(fn(tuple(x[:-1]))) * x[-1], dy)
 
         _gate(b, ir.F(g.y, 1))
         _phase_fn(b, (*g.xs, g.y), h)
