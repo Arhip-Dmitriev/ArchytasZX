@@ -47,6 +47,7 @@ from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
     Scalar,
+    ScalarBudgetError,
     ScalarSubstituteValue,
     ScalarSymbolKey,
 )
@@ -1660,7 +1661,8 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     dimensions with boundary legs of dimension at most 2, read from its reduced path sum:
     constant, sqrt 2 power, a mod-2 delta per support constraint, a sum over each path variable
     left, the phase as one exponential and each amplitude atom ``a^F`` as
-    ``[F even] + a [F odd]``; None outside that class."""
+    ``[F even] + a [F odd]``; None outside that class or when the simplifier exceeds its
+    budget."""
     from archytaszx.algebra.pathsum import PathSum, PathSumUnsupported, reduce
     from archytaszx.semantics.pathsum_diagram import diagram_base, from_diagram
 
@@ -1710,7 +1712,10 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
         entry = entry * (even + _cyclo_expr(base) * (1 - even))
     for v in reversed(path):
         entry = sp.Sum(entry, (var[v], 0, 1))
-    return SymbolicTensor(axes, Scalar(entry).simplify(max_steps=max_steps))
+    try:
+        return SymbolicTensor(axes, Scalar(entry).simplify(max_steps=max_steps))
+    except ScalarBudgetError:
+        return None
 
 
 def _sum_out(
