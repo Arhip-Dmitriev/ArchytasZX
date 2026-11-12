@@ -358,8 +358,11 @@ FREE_RANGE = range(65)
 def free_axes(inst: Any, rec: dict[str, Any]) -> tuple[str, ...]:
     """The axes a run decides over beyond its own point: none for a rival; for ArchytasZX n
     unless it is fixed (an unrolled circuit or no size parameter) and d unless it is literal
-    (no general d, or a literal script)."""
+    (no general d, or a literal script); none when the script claims only its point
+    (generate's point_claim)."""
     if rec.get("tool") != "archytaszx":
+        return ()
+    if ((rec.get("stages") or {}).get("generate") or {}).get("point_claim"):
         return ()
     n_fixed = (
         rec.get("n") is None

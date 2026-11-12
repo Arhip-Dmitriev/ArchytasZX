@@ -129,8 +129,11 @@ subject.script builds, for one equation at one version,
     decide against @rhs [for CLAUSES]
 
 A concrete point binds the numerals as a user writing numbers does; the engine abstracts them
-on entry (ENGINE_COMMANDS.txt, section 3), so the claim decided is the family's, the bound
-values reported beside it. Literal dimensions and unrolled counts are instances.
+on entry (ENGINE_COMMANDS.txt, section 3), so a decide line without a clause decides the family.
+A concrete version's claim is its point, so its decide line carries the point clauses after any
+restriction clauses: d = V for a general d not written literally, n = V for a boxed count
+(subject._point_clauses; Script.point_claim, generate's point_claim). Literal dimensions and
+unrolled counts are instances already. The symbolic version keeps no point clause.
 
 3.5 The catalogue
 

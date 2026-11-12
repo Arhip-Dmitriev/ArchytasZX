@@ -46,7 +46,12 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         with trace.span("generate.script"):
             sc = subject.script(inst, nv, dv)
         holder["script"] = sc
-        return {"script_bytes": len(sc.text), "naive_nodes": sc.nodes, "literal": sc.literal}
+        return {
+            "script_bytes": len(sc.text),
+            "naive_nodes": sc.nodes,
+            "literal": sc.literal,
+            "point_claim": sc.point_claim,
+        }
 
     mark("generate")
     try:

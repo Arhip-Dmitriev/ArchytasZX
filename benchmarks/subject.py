@@ -207,11 +207,12 @@ def restrict_domain(dom: Domain, clause: str) -> Domain:
 @dataclass(frozen=True)
 class Script:
     """An engine script: the text, whether dimensions were written literally, the circuit's
-    naive node count."""
+    naive node count, and whether its decide line claims only the point (point clauses)."""
 
     text: str
     literal: bool
     nodes: int
+    point_claim: bool = False
 
 
 def spec_context(subject: Subject, nv: int | None, dv: int | None, literal_d: bool) -> SpecContext:
@@ -317,9 +318,24 @@ def script(inst: Instance, nv: int | None, dv: int | None, *, command: str = "de
         _indent("\n".join([*head, tr.body])),
         "",
     ]
-    clause = f" for {', '.join(inst.restriction)}" if inst.restriction else ""
+    point = _point_clauses(subject, eq, nv, dv, literal)
+    clauses = [*inst.restriction, *point]
+    clause = f" for {', '.join(clauses)}" if clauses else ""
     blocks.append(f"{command} against @rhs{clause}")
-    return Script("\n".join(blocks) + "\n", literal, tr.nodes)
+    return Script("\n".join(blocks) + "\n", literal, tr.nodes, bool(point))
+
+
+def _point_clauses(
+    subject: Subject, eq: Equation, nv: int | None, dv: int | None, literal_d: bool
+) -> list[str]:
+    """The clauses that restrict the decide line to a concrete point: d = dv for a symbolic d,
+    n = nv for a boxed circuit's count."""
+    out = []
+    if subject.general_d and not literal_d and dv is not None:
+        out.append(f"d = {dv}")
+    if eq.form == "boxed" and subject.size_parameter is not None and nv is not None:
+        out.append(f"n = {nv}")
+    return out
 
 
 def _load(path: Path) -> Subject:
