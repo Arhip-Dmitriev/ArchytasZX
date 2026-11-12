@@ -2,7 +2,7 @@ named @rev
 sum_{k2,j0i0,j0o0=0}^{d-1} d^{-1/2} w_{d}^{j0o0 j0i0} d^{-1/2} w_{d}^{k2 j0o0} w{3: 1/3, 4: 1/2}(k2) |k2><j0i0|
 loaded dsl input
 sum_{k0,j1o0,j2o0=0}^{d-1} w{1: 1/2, 2: 1/3}(k0) d^{-1/2} w_{d}^{j1o0 k0} d^{-1/2} w_{d}^{j2o0 j1o0} |j2o0><k0|
-decide: unknown by none: normal forms differ; no oracle sample evaluated; 4 sample(s) refused, first at {'d': 2}: PhaseDomainError: weight index 2 out of range for dim=2 (valid range is 1..1); saturation: no merge after 1 round(s) and 2 e-node(s), stopped by saturated; symbolic: indeterminate: the difference ModDelta(_i0 - 4, d)*ModDelta(_i1 + 4, d)/2 + 2*ModDelta(_i0 - 3, d)*ModDelta(_i1 + 3, d)/3 - ModDelta(_i0 + 1, d)*ModDelta(_i1 - 1, d)/2 - 2*ModDelta(_i0 + 2, d)*ModDelta(_i1 - 2, d)/3 still carries an unevaluated index sum or divisibility atom, so no conclusion is drawn; no multiplicity symbol to induct on
+decide: unknown by none: normal forms differ; no oracle mismatch in 1 sample(s); 4 sample(s) refused, first at {'d': 2}: PhaseDomainError: weight index 2 out of range for dim=2 (valid range is 1..1); saturation: no merge after 1 round(s) and 2 e-node(s), stopped by saturated; symbolic: indeterminate: the difference ModDelta(_i0 - 4, d)*ModDelta(_i1 + 4, d)/2 + 2*ModDelta(_i0 - 3, d)*ModDelta(_i1 + 3, d)/3 - ModDelta(_i0 + 1, d)*ModDelta(_i1 - 1, d)/2 - 2*ModDelta(_i0 + 2, d)*ModDelta(_i1 - 2, d)/3 still carries an unevaluated index sum or divisibility atom, so no conclusion is drawn; path_sum: not applicable (node 0 has a symbolic dimension d); no multiplicity symbol to induct on
 dirac outcome: left ?= right
   left:  sum_{k0,j1o0,j2o0=0}^{d-1} w{1: 1/2, 2: 1/3}(k0) d^{-1/2} w_{d}^{j1o0 k0} d^{-1/2} w_{d}^{j2o0 j1o0} |j2o0><k0|
   right: sum_{k2,j0i0,j0o0=0}^{d-1} d^{-1/2} w_{d}^{j0o0 j0i0} d^{-1/2} w_{d}^{k2 j0o0} w{3: 1/3, 4: 1/2}(k2) |k2><j0i0|
@@ -11,7 +11,7 @@ sum_{k0,j1o0,j2o0=0}^{d-1} w{1: 1/2, 2: 1/3}(k0) d^{-1/2} w_{d}^{j1o0 k0} d^{-1/
 furthest-simplified right (normal form, 0 steps, stop fixpoint):
 sum_{k2,j0i0,j0o0=0}^{d-1} d^{-1/2} w_{d}^{j0o0 j0i0} d^{-1/2} w_{d}^{k2 j0o0} w{3: 1/3, 4: 1/2}(k2) |k2><j0i0|
 bound: saturation stop saturated (limits 3 iterations, 128 e-nodes, 1024 applications)
-decide: equal for d = 5 by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal
+decide: equal (uncertified) for d = 5 by symbolic_contraction: symbolic contractions agree: entries are exactly equal with d formal; uncertified: no proof the kernel re-checks (kernel: a symbolic_contraction verdict carries no re-checkable proof; normaliser: no symbolic proof: the normal forms of the two networks differ; search: search exhausted after 1 layer(s): 2 state(s), 2 expanded, 0 application(s), 0 pruned, 0 failure(s))
 proof: none the kernel re-checks; the verdict rests on symbolic_contraction
 prove: proved for d = 5: proved exhaustively in 1 step(s), 1 forward and 0 backward; both halves replay and meet; no oracle mismatch in 1 sample(s)
 proof by search; certificate emits it

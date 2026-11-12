@@ -803,7 +803,8 @@ def _run_oracle(
     candidate the oracle refuses, that breaks an assumption, or that plans more than both 16
     times the largest evaluated size and 2^20 elements is skipped, and
     with ``fallback_point`` the smallest admissible point is queued after the first refusal;
-    a candidate planning more than ``max_planned`` elements is deferred unevaluated."""
+    a candidate planning more than ``max_planned`` elements is deferred unevaluated, and one
+    that does not instantiate goes to the oracle for its refusal."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
@@ -821,10 +822,14 @@ def _run_oracle(
             break
         assignment = MappingProxyType(dict(queue.pop(0)))
         planned = _planned_size(left, right, assignment)
-        if planned > max_planned:
+        if math.isfinite(planned) and planned > max_planned:
             deferred.append(assignment)
             continue
-        if evaluated and planned > max(_SIZE_GROWTH * largest, _DEFERRED_SIZE):
+        if (
+            evaluated
+            and math.isfinite(planned)
+            and planned > max(_SIZE_GROWTH * largest, _DEFERRED_SIZE)
+        ):
             refusals.append(
                 f"{dict(assignment)!r}: larger than needed (planned {planned:g} elements, "
                 f"over {_SIZE_GROWTH} x the largest evaluated {largest:g})"

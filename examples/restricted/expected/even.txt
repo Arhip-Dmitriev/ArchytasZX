@@ -11,9 +11,9 @@ kernel: theorem sum_{k0[i0]=0, i0=1..2*m}^{d-1} (x)_{i0=1}^{2*m}( |k0[i0]> ) = s
   10 inferences; rules: none
 lean: tensor-network semantics, every step proved
 lean: wrote even.lean
-decide: unequal for n = 2*m + 1 by oracle_counterexample: oracle mismatch at {'d': 3, 'n': 1}: max abs deviation 2.0 exceeds tolerance 1e-09
+decide: unequal for n = 2*m + 1 by oracle_counterexample: oracle mismatch at {'d': 1, 'n': 3}: max abs deviation 2.0 exceeds tolerance 1e-09
 dirac outcome: left != right
   left:  ((-1)^n) sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
   right: sum_{k0[i0]=0, i0=1..n}^{d-1} (x)_{i0=1}^{n}( |k0[i0]> )
 disproof: re-checkable; certificate lean
-counterexample: d = 3, n = 1: max abs deviation 2.0 exceeds tolerance 1e-09
+counterexample: d = 1, n = 3: max abs deviation 2.0 exceeds tolerance 1e-09
