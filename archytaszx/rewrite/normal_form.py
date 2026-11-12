@@ -40,7 +40,7 @@ from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
-from archytaszx.rewrite.cache import RewriteCache
+from archytaszx.rewrite.cache import IncrementalMatcher, RewriteCache, keyable
 from archytaszx.rewrite.engine import (
     DEFAULT_GUARD,
     RewriteResult,
@@ -52,6 +52,7 @@ from archytaszx.rewrite.engine import (
 )
 from archytaszx.rewrite.rule import (
     DimensionConstraint,
+    Pattern,
     RewriteGrammarError,
     Rule,
     assumed,
@@ -236,6 +237,12 @@ def _graph_view(diagram: Diagram) -> Diagram:
     return view
 
 
+def _incremental_cache(rules: Sequence[Rule]) -> RewriteCache:
+    """A rewrite cache whose incremental matcher tracks every keyable pattern of ``rules``."""
+    patterns = [r.pattern for r in rules if isinstance(r.pattern, Pattern) and keyable(r.pattern)]
+    return RewriteCache(incremental=IncrementalMatcher(patterns))
+
+
 def normal_form(
     diagram: Diagram,
     *,
@@ -262,6 +269,8 @@ def normal_form(
         rule_set = tuple(rules)
     source = diagram.copy()
     results: list[RewriteResult] = []
+    if cache is None:
+        cache = _incremental_cache(rule_set)
     outcome = apply_until_fixpoint(
         source.copy(), rule_set, guard=guard, cache=cache, on_result=results.append
     )

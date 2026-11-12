@@ -791,7 +791,7 @@ def _consumed_port_claim_conflict(
     Recomputed from ``diagram`` alone on every call.
     """
     other_wire_claims = sum(
-        1 for wire in diagram.wires if wire != consuming_wire and ref in (wire.a, wire.b)
+        1 for wire in diagram.wires if ref in (wire.a, wire.b) and wire != consuming_wire
     )
     on_boundary = ref in diagram.boundary_inputs or ref in diagram.boundary_outputs
     if not other_wire_claims and not on_boundary:
@@ -913,7 +913,7 @@ def resolve_fusion_match(
     other_wire_count = sum(
         1
         for other in all_wires
-        if other != wire and {other.a.node_id, other.b.node_id} == {a_id, b_id}
+        if {other.a.node_id, other.b.node_id} == {a_id, b_id} and other != wire
     )
 
     outcomes: list[SideConditionOutcome] = [

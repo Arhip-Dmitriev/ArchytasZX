@@ -503,13 +503,19 @@ class _State:
 
 
 def match_template(
-    diagram: Diagram, template: Template, anchor: NodeId, dim: Dim
+    diagram: Diagram,
+    template: Template,
+    anchor: NodeId,
+    dim: Dim,
+    partner: Mapping[PortRef, PortRef] | None = None,
+    boxed: frozenset[NodeId] | None = None,
 ) -> Iterator[_State]:
-    """Every complete assignment of ``template`` anchored at ``anchor`` (its first node)."""
+    """Every complete assignment of ``template`` anchored at ``anchor`` (its first node);
+    ``partner`` and ``boxed`` are the diagram's port partners and boxed nodes when known."""
     if not template.nodes:
         return
-    partner = _partner_map(diagram)
-    boxed = _boxed_nodes(diagram)
+    partner = _partner_map(diagram) if partner is None else partner
+    boxed = _boxed_nodes(diagram) if boxed is None else boxed
     first = template.nodes[0]
     by_key = {node.key: node for node in template.nodes}
     adjacency: dict[str, list[tuple[TPort, TPort]]] = {node.key: [] for node in template.nodes}
@@ -768,6 +774,8 @@ class TemplatePattern(Pattern):
             insertion = None
         if insertion is not None and not insertion.nodes:
             return self._insertions(host, diagram, insertion)
+        partner = _partner_map(diagram)
+        boxed = _boxed_nodes(diagram)
         for anchor in sorted(diagram.nodes, key=int):
             dim = _node_dim(diagram, anchor)
             host_dim = _node_dim(host, anchor)
@@ -783,7 +791,7 @@ class TemplatePattern(Pattern):
                     continue
                 if diagram.nodes[anchor].generator_type.name != template.nodes[0].gen.name:
                     continue
-                for state in match_template(diagram, template, anchor, dim):
+                for state in match_template(diagram, template, anchor, dim, partner, boxed):
                     match = self._to_match(diagram, template, state, dim, arities, host_dim)
                     if match is None:
                         continue

@@ -226,7 +226,9 @@ outcome.
     same_normal_form(a, b) -> bool
 
 normal_form runs apply_until_fixpoint over the normal-form rule set, NORMAL_FORM_RULE_NAMES in
-archytaszx.rewrite.engine, in that order:
+archytaszx.rewrite.engine, in that order. Without a cache it passes one whose
+IncrementalMatcher tracks every keyable pattern of the rule set, so each step re-matches only
+around the nodes the previous step touched. The rule order is:
 
     identity_removal, triangle_inverse_cancellation, w_identity, w_fusion,
     connective_inverse, connective_inverse_bind_first, connective_states,
