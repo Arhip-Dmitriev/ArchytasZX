@@ -27,7 +27,7 @@ import contextlib
 import itertools
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -592,11 +592,19 @@ class _Refuter:
         if math.prod(dims) > MAX_TERMS:
             raise NetUnsupported("a factor table is too large at the counterexample")
         out = []
+        terms = self.__dict__.get("_vec_terms", 0)
         for i in range(math.prod(dims)):
             tau, rest = {}, i
             for x, d in zip(scope, dims, strict=True):
                 tau[x], rest = rest % d, rest // d
-            out.append(entry(tau))
+            value = entry(tau)
+            terms += len(value)
+            if terms > MAX_TERMS:
+                raise NetUnsupported(
+                    f"the factor tables hold more than {MAX_TERMS} terms at the counterexample"
+                )
+            out.append(value)
+        self.__dict__["_vec_terms"] = terms
         return out
 
     def at(self, fac: tuple[tuple[int, ...], list[Vec]], tau: Mapping[int, int]) -> Vec:
@@ -612,6 +620,8 @@ class _Refuter:
 
         def leaf_of(n: LNode) -> Callable[[dict[int, int]], Vec]:
             return lambda tau: self.node(n, tau)
+
+        self.__dict__["_vec_terms"] = 0
 
         leaves = []
         for n in net.nodes:
@@ -1069,7 +1079,7 @@ class _Refuter:
             for slot, i in enumerate(order):
                 hinted[i] = self.hint[slot]
             first.append(tuple(hinted))
-        tried = itertools.chain(first, itertools.product(*ranges))
+        tried = itertools.chain(first, _odometer([len(r) for r in ranges]))
         for count, values in enumerate(tried):
             if count >= MAX_ASSIGNMENTS + len(first):
                 break
@@ -1281,6 +1291,25 @@ class _Refuter:
 
     def point_note(self) -> str:
         return ", ".join(f"{k} = {v}" for k, v in sorted(self.point.items())) or "no parameters"
+
+
+def _odometer(sizes: Sequence[int]) -> Iterator[tuple[int, ...]]:
+    """Every index tuple below ``sizes`` in :func:`itertools.product` order, without
+    materialising any axis."""
+    if any(size <= 0 for size in sizes):
+        return
+    current = [0] * len(sizes)
+    while True:
+        yield tuple(current)
+        position = len(sizes) - 1
+        while position >= 0:
+            current[position] += 1
+            if current[position] < sizes[position]:
+                break
+            current[position] = 0
+            position -= 1
+        if position < 0:
+            return
 
 
 def _add(v: Vec, key: Key, c: int, m: int) -> None:
