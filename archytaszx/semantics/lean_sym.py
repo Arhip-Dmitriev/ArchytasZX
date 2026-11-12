@@ -55,6 +55,8 @@ STm = tuple[CMon, tuple[tuple[int, DMon], ...], tuple[Fac, ...], tuple[Fac, ...]
 
 OFF = 1000000
 ROUNDS = 3
+FULL_TERMS = 4096
+"""The most terms :func:`sym_check` multiplies out in the unnormalised translation."""
 
 
 def _emod(a: int, b: int) -> int:
@@ -996,6 +998,19 @@ def ex_const(e: Sequence[STm]) -> bool:
     return all(not t[1] and not t[2] and not t[3] for t in e)
 
 
+def _full_terms(
+    dt: Callable[[int], DMon],
+    pt: Callable[[int], Sequence[tuple[int, CMon]]],
+    nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
+) -> int:
+    """The term count of ``tr_nodes_full`` on ``nodes``: the product of each node's count."""
+    total = 1
+    for i, node in enumerate(nodes):
+        terms = tr_node(dt, pt, OFF + i, *node)
+        total *= 0 if terms is None else len(terms)
+    return total
+
+
 def sym_check(
     fl: Sequence[int],
     dt: Callable[[int], DMon],
@@ -1015,6 +1030,8 @@ def sym_check(
     if not (ex_const(s0) and ex_const(s1)):
         return False
     for tr in (tr_net, tr_net_full):
+        if tr is tr_net_full and max(_full_terms(dt, pt, n[0]) for n in (n0, n1)) > FULL_TERMS:
+            continue
         e0 = tr(fl, dt, pt, labs, n0[0], n0[1])
         e1 = tr(fl, dt, pt, labs, n1[0], n1[1])
         if e0 is None or e1 is None:
