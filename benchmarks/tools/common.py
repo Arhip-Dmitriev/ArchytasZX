@@ -125,13 +125,6 @@ def _rename(g: ir.Gate, sub: dict[str, str]) -> ir.Gate:
 
 
 def concrete_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
-    """The instance's circuit at (n, d) with registers expanded and amounts evaluated, the
-    scalar (an F break's included) evaluated at n and d."""
-    from dataclasses import replace
-
-    import sympy as sp
-
+    """The instance's circuit at (n, d) with registers expanded and amounts evaluated."""
     c = subject.circuit_at(inst, n, d, expand=True)
-    vals = {sp.Symbol(k): v for k, v in (("n", n), ("d", d)) if v is not None}
-    c = replace(c, scalar=str(sp.sympify(c.scalar).subs(vals)))
     return expand(c, n if n is not None else 0)

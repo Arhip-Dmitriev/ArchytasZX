@@ -246,7 +246,8 @@ def circuit_at(
     inst: Instance, nv: int | None, dv: int | None, *, expand: bool = False
 ) -> ir.Circuit:
     """The instance's circuit at (nv, dv), the F break applied; ``expand`` makes register counts
-    and the scalar concrete in n first."""
+    and the scalar concrete in n before the break, then the break's registers and scalar
+    concrete in n and d."""
     subject, eq = inst.subject, inst.equation
     d_arg: Any = dv if dv is not None else ("d" if subject.general_d else int(subject.dimension))
     if not subject.general_d:
@@ -262,15 +263,24 @@ def circuit_at(
     if eq.form == "boxed" and subject.size_parameter is None:
         n_arg = None
     c = eq.circuit(n_arg, d_arg)
-    if expand and nv is not None:
-        import sympy as sp
-
-        regs = {q: int(sp.sympify(v).subs(sp.Symbol("n"), nv)) for q, v in c.registers.items()}
-        scalar = str(sp.sympify(c.scalar).subs(sp.Symbol("n"), nv))
-        c = replace(c, registers=regs, scalar=scalar)
+    concrete = expand and nv is not None
+    d_val = d_arg if isinstance(d_arg, int) else None
+    if concrete:
+        c = _concrete(c, nv, None)
     if inst.falsified is not None:
         c = inst.falsified.apply(c, inst, nv, dv)
+        if concrete:
+            c = _concrete(c, nv, d_val)
     return c
+
+
+def _concrete(c: ir.Circuit, nv: Any, dv: int | None) -> ir.Circuit:
+    """``c`` with register counts and the scalar evaluated at n = nv (and d = dv when given)."""
+    import sympy as sp
+
+    vals = {sp.Symbol("n"): nv, **({sp.Symbol("d"): dv} if dv is not None else {})}
+    regs = {q: int(sp.sympify(v).subs(vals)) for q, v in c.registers.items()}
+    return replace(c, registers=regs, scalar=str(sp.sympify(c.scalar).subs(vals)))
 
 
 def script(inst: Instance, nv: int | None, dv: int | None, *, command: str = "decide") -> Script:
