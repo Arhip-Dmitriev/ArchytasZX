@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations, islice
+from itertools import combinations, islice, product
 
 from archytaszx.algebra.pathsum import (
     SQRT2,
@@ -40,6 +40,7 @@ from archytaszx.algebra.pathsum import (
     canonical_qudit,
     constant,
     entry_enumerated,
+    entry_enumerated_qudit,
     reduce,
     reduce_qudit,
     residual_form,
@@ -516,8 +517,9 @@ def compare_path_sums(
     left: Diagram, right: Diagram, max_residual_paths: int | None = None
 ) -> PathSumComparison:
     """Reduce both path sums and compare their canonical forms; with ``max_residual_paths``, two
-    binary sums left with differing residual forms are evaluated exactly at boundary points by
-    :func:`_enumerate_residual`, which only finds an UNEQUAL; raises
+    sums left with path variables are evaluated exactly at boundary points by
+    :func:`_enumerate_residual` (binary) or :func:`_enumerate_residual_qudit` (Z_p), which only
+    find an UNEQUAL; raises
     :class:`PathSumUnsupported` when either diagram is outside the class."""
     base = diagram_base(left)
     if diagram_base(right) != base:
@@ -526,7 +528,7 @@ def compare_path_sums(
     if bits_l != bits_r:
         raise PathSumUnsupported("the boundaries carry different layouts")
     if base != 2:
-        return _compare_qudit(left, right, base, bits_l)
+        return _compare_qudit(left, right, base, bits_l, max_residual_paths)
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     assert isinstance(raw_l, PathSum) and isinstance(raw_r, PathSum)
     ps_l, ps_r = reduce(raw_l), reduce(raw_r)
@@ -614,20 +616,70 @@ def _enumerate_residual(
     )
 
 
-def _compare_qudit(left: Diagram, right: Diagram, p: int, bits: list[int]) -> PathSumComparison:
-    """compare_path_sums over Z_p: reduce, compare canonical forms, evaluate witness points."""
+def _enumerate_residual_qudit(
+    ps_l: QuditPathSum, ps_r: QuditPathSum, bits: list[int], max_paths: int, stuck: str
+) -> PathSumComparison:
+    """:func:`_enumerate_residual` over Z_p: each residual sum over its p^k assignments, at
+    boundary points in increasing Hamming weight (nonzero values 1..p-1), at most
+    ``_RESIDUAL_POINTS``."""
+    p = ps_l.p
+    k = max(len(ps_l.path), len(ps_r.path))
+    if k > max_paths:
+        return PathSumComparison(
+            "unknown",
+            f"{stuck}; path_sum.residual_enum refused: {k} path variables over "
+            f"max_residual_paths {max_paths}",
+        )
+    boundary = list(ps_l.boundary)
+    points = (
+        dict(zip(support, values, strict=True))
+        for weight in range(len(boundary) + 1)
+        for support in combinations(boundary, weight)
+        for values in product(range(1, p), repeat=weight)
+    )
+    order = list(islice(points, _RESIDUAL_POINTS))
+    for nonzero in order:
+        point = {v: nonzero.get(v, 0) for v in boundary}
+        a = entry_enumerated_qudit(ps_l, point, max_paths)
+        b = entry_enumerated_qudit(ps_r, point, max_paths)
+        if a is None or b is None:
+            continue
+        if a != b:
+            return PathSumComparison(
+                "unequal",
+                f"path sums over Z_{p} differ at a boundary point, the residual sums evaluated "
+                f"exactly (path_sum.residual_enum, {k} path variable(s) at most)",
+                index_tuple(bits, point, p),
+                a,
+                b,
+                residual_enum=True,
+            )
+    return PathSumComparison(
+        "unknown",
+        f"{stuck}; path_sum.residual_enum: equal at the {len(order)} boundary point(s) tried",
+    )
+
+
+def _compare_qudit(
+    left: Diagram, right: Diagram, p: int, bits: list[int], max_residual_paths: int | None = None
+) -> PathSumComparison:
+    """compare_path_sums over Z_p: reduce, compare canonical forms, evaluate witness points;
+    with ``max_residual_paths``, sums left with path variables go to
+    :func:`_enumerate_residual_qudit`."""
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     assert isinstance(raw_l, QuditPathSum) and isinstance(raw_r, QuditPathSum)
     ps_l, ps_r = reduce_qudit(raw_l), reduce_qudit(raw_r)
     canon_l, canon_r = canonical_qudit(ps_l), canonical_qudit(ps_r)
     if canon_l is None or canon_r is None:
         left_n, right_n = len(ps_l.path), len(ps_r.path)
-        return PathSumComparison(
-            "unknown",
+        stuck = (
             f"path_sum: {left_n} and {right_n} path variable(s) left after reduction over Z_{p}"
             if left_n or right_n
-            else f"path_sum: a support constraint over Z_{p} has no pivot",
+            else f"path_sum: a support constraint over Z_{p} has no pivot"
         )
+        if max_residual_paths is not None:
+            return _enumerate_residual_qudit(ps_l, ps_r, bits, max_residual_paths, stuck)
+        return PathSumComparison("unknown", stuck)
     if canon_l.same(canon_r):
         return PathSumComparison(
             "equal",

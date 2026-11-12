@@ -2297,6 +2297,40 @@ def witness_points_qudit(a: QuditCanon, b: QuditCanon) -> list[dict[int, int]]:
     return points
 
 
+def entry_enumerated_qudit(
+    ps: QuditPathSum, values: Mapping[int, int], max_paths: int
+) -> Cyclo | None:
+    """The entry at one boundary assignment: the boundary substituted and reduced, then the
+    sum over every assignment in Z_p of each path variable left (at most ``max_paths`` of
+    them) evaluated exactly; None when more remain."""
+    at = ps.copy()
+    at.phase = at.phase.assign(values)
+    at.constraints = [c.assign(values) for c in at.constraints]
+    at.atoms = [(a.assign(values), t) for a, t in at.atoms]
+    at.katoms = [(tuple(c.assign(values) for c in a), t) for a, t in at.katoms]
+    if any(set(c.terms) == {ONE_Q} for c in at.constraints):
+        return Cyclo.rational(0)
+    at = reduce_qudit(at)
+    if at.is_zero:
+        return Cyclo.rational(0)
+    path = sorted(at.path)
+    if len(path) > max_paths:
+        return None
+    p = at.p
+    total = Cyclo.rational(0)
+    for digits in product(range(p), repeat=len(path)):
+        point = dict(zip(path, digits, strict=True))
+        if any(c.value(point) for c in at.constraints):
+            continue
+        term = Cyclo.root(Fraction(at.phase.value(point), p))
+        for arg, table in at.atoms:
+            term = term * table[arg.value(point)]
+        for args, table in at.katoms:
+            term = term * table[sum(a.value(point) * p**j for j, a in enumerate(args))]
+        total = total + term
+    return at.const * total
+
+
 def entry_at_qudit(ps: QuditPathSum, values: Mapping[int, int]) -> Cyclo:
     """The entry at one boundary assignment: the boundary substituted, then reduced; raises
     :class:`PathSumUnsupported` when a path variable remains."""
@@ -2337,6 +2371,7 @@ __all__ = [
     "cyclotomic",
     "dft_table",
     "eliminate",
+    "entry_enumerated_qudit",
     "eliminate_qudit",
     "entry_at",
     "entry_at_qudit",

@@ -96,9 +96,10 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             left and the ladder goes on. use_path_sum=False turns it off. With
                             enumerate_residual=True (--tgateenum) a pair left with differing
                             residual forms is evaluated exactly: each entry's residual sum over
-                            its 2^k path assignments (k at most max_residual_paths, default 6,
-                            refused above it with the reason), at boundary points in increasing
-                            Hamming weight (at most 64); the first difference is UNEQUAL as
+                            its 2^k path assignments, or p^k over Z_p for an odd-prime sum (k at
+                            most max_residual_paths, default 6, refused above it with the
+                            reason), at boundary points in increasing Hamming weight (nonzero
+                            values 1..p-1 over Z_p; at most 64); the first difference is UNEQUAL as
                             SYMBOLIC_WITNESS, stop path_sum.residual_enum. It never gives EQUAL.
                             Off by default. An
                             EQUAL by path_sum carries no kernel proof of its own: the proof is
