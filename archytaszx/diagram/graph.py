@@ -136,10 +136,9 @@ class PortRef:
             raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
 
     def __hash__(self) -> int:
-        """Arithmetic over ``(node_id, direction, index)``, agreeing with the field equality."""
-        return ((int(self.node_id) << 1) | (self.direction is Direction.OUTPUT)) * 1000003 + (
-            self.index
-        )
+        """The hash of ``(node_id, direction is OUTPUT, index)``, agreeing with the field
+        equality."""
+        return hash((self.node_id, self.direction is Direction.OUTPUT, self.index))
 
     def __repr__(self) -> str:
         return (
