@@ -198,6 +198,17 @@ STORED_NODE_BUDGET = 1 << 17
 """The most nodes the e-nodes of one e-graph may hold together; past it saturation stops with
 ENODE_LIMIT."""
 
+STORED_WEIGHT_BUDGET = 1 << 22
+"""The most diagram weight (:func:`diagram_weight`) the e-nodes of one e-graph may hold, read
+as an e-node count from the largest root's weight; past it saturation stops with ENODE_LIMIT."""
+
+
+def diagram_weight(diagram: Diagram) -> int:
+    """The node count plus every stored phase entry of ``diagram``."""
+    return len(diagram.nodes) + sum(
+        len(node.phase.entries()) for node in diagram.nodes.values() if node.phase is not None
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class SaturationLimits:
@@ -394,6 +405,7 @@ class EGraph:
         """An empty e-graph."""
         self._reps: list[Diagram] = []
         self._stored = 0
+        self._enode_cap: int | None = None
         self._views: list[Diagram] = []
         self._parent: list[int] = []
         self._buckets: dict[str, list[int]] = {}
@@ -580,6 +592,8 @@ class EGraph:
             )
         bound = max((len(self._reps[r].nodes) for r in self._roots), default=0)
         bound += limits.node_margin
+        heaviest = max((diagram_weight(self._reps[r]) for r in self._roots), default=1)
+        self._enode_cap = max(2, STORED_WEIGHT_BUDGET // max(1, heaviest))
         counts = {"enodes": 0, "merges": 0, "applications": 0, "redundant": 0, "pruned": 0}
         failed: list[FailedApplication] = []
         iterations = 0
@@ -666,6 +680,7 @@ class EGraph:
         if found is None:
             if (
                 len(self._reps) >= limits.max_enodes
+                or (self._enode_cap is not None and len(self._reps) >= self._enode_cap)
                 or self._stored + len(result.diagram.nodes) > STORED_NODE_BUDGET
             ):
                 raise _Stop(SaturationStop.ENODE_LIMIT)
