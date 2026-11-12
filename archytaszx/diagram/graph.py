@@ -297,6 +297,7 @@ class Diagram:
         "_parameters",
         "_scalar",
         "_wires",
+        "_wires_view",
     )
 
     def __init__(self) -> None:
@@ -304,6 +305,7 @@ class Diagram:
         parameters, no bang boxes."""
         self._nodes: dict[NodeId, Node] = {}
         self._wires: set[Wire] = set()
+        self._wires_view: frozenset[Wire] | None = None
         self._boundary_inputs: list[PortRef] = []
         self._boundary_outputs: list[PortRef] = []
         self._scalar: Scalar = Scalar.one()
@@ -321,8 +323,11 @@ class Diagram:
 
     @property
     def wires(self) -> frozenset[Wire]:
-        """A read-only snapshot of every wire."""
-        return frozenset(self._wires)
+        """A read-only snapshot of every wire, kept until the wire set next changes."""
+        view = self._wires_view
+        if view is None:
+            view = self._wires_view = frozenset(self._wires)
+        return view
 
     @property
     def boundary_inputs(self) -> tuple[PortRef, ...]:
@@ -423,6 +428,7 @@ class Diagram:
         self._wires = {
             wire for wire in self._wires if wire.a.node_id != node_id and wire.b.node_id != node_id
         }
+        self._wires_view = None
         self._boundary_inputs = [ref for ref in self._boundary_inputs if ref.node_id != node_id]
         self._boundary_outputs = [ref for ref in self._boundary_outputs if ref.node_id != node_id]
 
@@ -533,6 +539,7 @@ class Diagram:
         ownership.
         """
         self._wires.add(Wire(a, b))
+        self._wires_view = None
 
     def remove_wire(self, a: PortRef, b: PortRef) -> None:
         """Remove the wire between two ports. Raises GraphGrammarError if it is absent."""
@@ -542,6 +549,7 @@ class Diagram:
         if wire not in self._wires:
             raise GraphGrammarError(f"no such wire: {wire!r}")
         self._wires.discard(wire)
+        self._wires_view = None
 
     # -- boundary mutation ------------------------------------------------------------
 
