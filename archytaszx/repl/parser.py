@@ -53,7 +53,7 @@ from typing import ParamSpec, TypeAlias, TypeVar
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx import trace as _trace
-from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError
+from archytaszx.algebra.dimension import Dim, DimensionDomainError, DimensionError, format_count
 from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import BangBoxError, Mult, abstract_port_count
@@ -660,7 +660,9 @@ def _power(base: sp.Expr, exponent: sp.Expr) -> sp.Expr:
     if bits:
         size = 1 + sum(abs(a.p) // a.q for a in exponent.atoms(sp.Rational))
         if bits * size > _MAX_POWER_BITS + _EXTRA_BITS.get():
-            raise ParseDomainError(f"power ({base})^({exponent}) is too large")
+            raise ParseDomainError(
+                f"power ({format_count(base)})^({format_count(exponent)}) is too large"
+            )
         if any(not a.is_Integer for a in exponent.atoms(sp.Rational)) and any(
             _bits(a) > _MAX_ROOT_BITS for a in base.atoms(sp.Rational)
         ):
@@ -2774,9 +2776,11 @@ def _parse_dim_token(token: str, literal: bool, abstraction: _Abstraction) -> Di
 
 def _literal_count(value: int, minimum: int = 0) -> int:
     if value < minimum:
-        raise ParseDomainError(f"leg count {value} is below {minimum}")
+        raise ParseDomainError(f"leg count {format_count(value)} is below {minimum}")
     if value > _MAX_KET_LEG_COUNT:
-        raise ParseDomainError(f"leg count {value} is above the bound of {_MAX_KET_LEG_COUNT}")
+        raise ParseDomainError(
+            f"leg count {format_count(value)} is above the bound of {_MAX_KET_LEG_COUNT}"
+        )
     return value
 
 

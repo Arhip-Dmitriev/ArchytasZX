@@ -41,7 +41,7 @@ from typing import TypeAlias, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey
+from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey, format_count
 from archytaszx.algebra.phase import INDEX
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
@@ -390,7 +390,8 @@ class SymbolicTensor:
             total *= extent
         if total > max_elements:
             raise SymbolicContractionDomainError(
-                f"dense form would hold {total} elements, over the {max_elements} cap"
+                f"dense form would hold {format_count(total)} elements, over the "
+                f"{format_count(max_elements)} cap"
             )
         symbols = [sp.Symbol(axis.index, integer=True, nonnegative=True) for axis in self.axes]
         expr = self.entry.to_sympy()

@@ -62,6 +62,7 @@ from typing import Any
 
 import numpy as np
 
+from archytaszx.algebra.dimension import format_count
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.diagram.validate import ValidationReport, validate
 from archytaszx.semantics.denote import denote, leg_dimensions
@@ -203,7 +204,8 @@ def _assign_labels(diagram: Diagram) -> dict[PortRef, int]:
 def _check_size(elements: int, *, max_elements: int, what: str) -> None:
     if elements > max_elements:
         raise ContractSizeError(
-            f"{what} would have {elements} elements, exceeding the cap of {max_elements}; "
+            f"{what} would have {format_count(elements)} elements, exceeding the cap of "
+            f"{format_count(max_elements)}; "
             "pass a larger max_elements to contract() if this is intentional"
         )
 

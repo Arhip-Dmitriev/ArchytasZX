@@ -44,6 +44,28 @@ from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+_EXACT_BITS = 50
+
+
+def format_count(value: object) -> str:
+    """``value`` as text: an integer above 2^50 as ``about 2^k``, an expression whose integer
+    atoms are that large with each such atom written so, anything else by ``str``."""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, sp.Integer)):
+        number = int(value)
+        bits = abs(number).bit_length()
+        if bits <= _EXACT_BITS:
+            return str(number)
+        return f"{'-' if number < 0 else ''}about 2^{bits - 1}"
+    if isinstance(value, sp.Basic):
+        big = [a for a in value.atoms(sp.Integer) if abs(int(a)).bit_length() > _EXACT_BITS]
+        if not big:
+            return str(value)
+        names = {a: sp.Symbol(format_count(a)) for a in big}
+        return str(value.xreplace(names))
+    return str(value)
+
 
 class DimensionError(Exception):
     """Base class for all errors raised by this module."""
