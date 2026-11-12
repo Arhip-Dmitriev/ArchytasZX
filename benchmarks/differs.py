@@ -183,8 +183,8 @@ def _table_equal(table: dict[tuple[Any, int], bool], n: int | None, d: int) -> b
 def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool | None:
     """True when the F pair of ``false`` is equal at ``(n, d)`` by its differs_at table, its
     kind's closed-form rule or the table's lines, False when it differs there, None when only
-    the F record's witness speaks (a witness that pairs a pure boundary with the same boundary doubled); False for an S equation and a
-    symbolic point (``d`` None)."""
+    the F record's witness speaks (a witness that pairs a pure boundary with the same boundary
+    doubled); False for an S equation and a symbolic point (``d`` None)."""
     if false is None or d is None:
         return False
     table = _table_of(false)
