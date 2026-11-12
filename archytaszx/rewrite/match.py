@@ -1332,12 +1332,26 @@ def _seed_meets_anchors(
     seeds: tuple[NodeId, ...],
     hops: int,
 ) -> bool:
-    """True when ``anchors`` is None, or meets the ``hops``-hop closure of ``seeds``."""
+    """True when ``anchors`` is None, or meets the ``hops``-hop closure of ``seeds``: whether
+    ``seeds`` meets the anchors' own ``hops``-hop closure, computed once per neighbour map."""
     if anchors is None:
         return True
     if hops == 0 or neighbours is None:
         return not anchors.isdisjoint(seeds)
-    return not anchors.isdisjoint(_within_hops(neighbours, seeds, hops))
+    held = _ANCHOR_CLOSURE.get((id(neighbours), hops))
+    if held is None or held[0] is not neighbours or held[1] is not anchors:
+        held = (neighbours, anchors, frozenset(_within_hops(neighbours, anchors, hops)))
+        _ANCHOR_CLOSURE.clear()
+        _ANCHOR_CLOSURE[(id(neighbours), hops)] = held
+    return not held[2].isdisjoint(seeds)
+
+
+_ANCHOR_CLOSURE: dict[
+    tuple[int, int],
+    tuple[Mapping[NodeId, set[NodeId]], frozenset[NodeId], frozenset[NodeId]],
+] = {}
+"""The last anchor closure :func:`_seed_meets_anchors` computed, keyed by neighbour map and
+hops."""
 
 
 def find_matches(
