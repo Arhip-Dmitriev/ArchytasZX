@@ -30,7 +30,13 @@ STAGE = "@@STAGE "
 RESULT = "@@RESULT "
 OOMKILL = "@@OOMKILL "
 _oom_start: int | None = None
-_prepare = {"on": False, "expired": False}
+_prepare: dict[str, Any] = {"on": False, "expired": False, "limit": 0.0, "used": 0.0, "t0": 0.0}
+PREPARE_TIMEOUT = {
+    "outcome": "harness_error",
+    "killed_in": "prepare",
+    "limit": "prepare_cpu",
+    "reason": "prepare: CPU limit",
+}
 
 
 class PrepareTimeout(Exception):
@@ -48,18 +54,40 @@ def _prepare_alarm(signum: int, frame: Any) -> None:
 
 def start_prepare(limit: float) -> None:
     """Arms a CPU timer of ``limit`` seconds over a rival's preparation."""
-    _prepare.update(on=True, expired=False)
+    import time
+
+    _prepare.update(on=True, expired=False, limit=limit, used=0.0, t0=time.process_time())
     signal.signal(signal.SIGPROF, _prepare_alarm)
     signal.setitimer(signal.ITIMER_PROF, limit)
 
 
 def end_prepare() -> None:
-    """Disarms the preparation timer; raises PrepareTimeout when it had expired."""
+    """Pauses the preparation timer, adding the CPU spent since it was armed to the budget used;
+    raises PrepareTimeout when it had expired."""
+    import time
+
     was = _prepare["on"]
     _prepare["on"] = False
     signal.setitimer(signal.ITIMER_PROF, 0)
+    if was:
+        _prepare["used"] += time.process_time() - _prepare["t0"]
     if was and _prepare["expired"]:
         raise PrepareTimeout()
+
+
+def resume_prepare() -> None:
+    """Re-arms a paused preparation timer with the budget left; raises PrepareTimeout when none
+    is left; nothing outside a rival's preparation."""
+    import time
+
+    if _prepare["on"] or _prepare["limit"] <= 0:
+        return
+    left = _prepare["limit"] - _prepare["used"]
+    if left <= 0:
+        _prepare["expired"] = True
+        raise PrepareTimeout()
+    _prepare.update(on=True, t0=time.process_time())
+    signal.setitimer(signal.ITIMER_PROF, left)
 
 
 def mark(stage: str) -> None:
@@ -155,14 +183,14 @@ def main() -> None:
         if rival:
             end_prepare()
     except PrepareTimeout:
-        out = {"outcome": "timeout", "killed_in": "prepare", "limit": "prepare_cpu"}
+        out = dict(PREPARE_TIMEOUT)
     except Exception as exc:  # noqa: BLE001
         out = failure(job["tool"], exc)
     finally:
-        _prepare["on"] = False
+        _prepare.update(on=False, limit=0.0)
         signal.setitimer(signal.ITIMER_PROF, 0)
-    if rival and _prepare["expired"] and out.get("outcome") != "timeout":
-        out = {"outcome": "timeout", "killed_in": "prepare", "limit": "prepare_cpu"}
+    if rival and _prepare["expired"]:
+        out = dict(PREPARE_TIMEOUT)
     print(RESULT + json.dumps(out, default=str), flush=True)
 
 

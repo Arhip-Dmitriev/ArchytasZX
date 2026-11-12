@@ -22,6 +22,7 @@ work and prints one JSON line with its CPU and wall seconds.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import os
@@ -30,6 +31,7 @@ import resource
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
@@ -346,14 +348,25 @@ def reference_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
     return ir.Circuit(wires, (ir.Unitary(wires, rows),), {}, {}, "1")
 
 
-def _mark_rival() -> None:
-    """Ends the preparation timer (worker.end_prepare) and announces the rival stage."""
-    from benchmarks.worker import end_prepare, mark
+def _rival_call(fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """``fn`` with the preparation timer paused (worker.end_prepare) and the rival stage
+    announced before it, and the timer resumed with the budget left after it."""
 
-    end_prepare()
-    mark("rival")
+    @functools.wraps(fn)
+    def call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        from benchmarks.worker import end_prepare, mark, resume_prepare
+
+        end_prepare()
+        mark("rival")
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            resume_prepare()
+
+    return call
 
 
+@_rival_call
 def run_driver(
     env: str, driver: str, payload: dict[str, Any], limit: float, wall_factor: float = 4.0
 ) -> dict[str, Any]:
@@ -366,7 +379,6 @@ def run_driver(
         cpu = max(1, int(limit))
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + 5))
 
-    _mark_rival()
     w0 = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -412,6 +424,7 @@ def lift_address_space() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
 
 
+@_rival_call
 def run_binary(
     cmd: list[str], limit: float, wall_factor: float = 4.0, lift_memory: bool = False
 ) -> dict[str, Any]:
@@ -424,7 +437,6 @@ def run_binary(
         if lift_memory:
             lift_address_space()
 
-    _mark_rival()
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     w0 = time.perf_counter()
     try:
