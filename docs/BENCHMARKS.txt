@@ -645,7 +645,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      limit.generate_cpu (the generate stage, the harness's translator, used up its
                      CPU limit or was killed by the stage timer, unless its open span is the
                      engine's own input.*; the engine reading the script is in decide and its
-                     timeout stays ArchytasZX's)
+                     timeout stays ArchytasZX's), kill.generate_oom (a memory kill whose open span
+                     is generate.script, the span around the translator, and not under input.*;
+                     a record without spans keeps its oom)
   invalid_point      a run with a verdict (ok to unknown) of an F equation whose pair is equal on
                      the run's region by benchmarks.differs.equal_at; cause pair_equal_at_point.
                      The region is the run's point for a rival; for ArchytasZX it also spans n
@@ -705,7 +707,11 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
   PyZX 0.10.8   built     d = 2, concrete n, pure circuits; maps: full_reduce of circuit .
                           spec^dagger to the identity (else unknown); states: |<s|c>|^2 =
                           <c|c><s|s> (unknown when an inner product keeps vertices after
-                          reduction); scalars not compared; specifications with W, triangle,
+                          reduction), as complex numbers (relative 1e-9) when every scalar's
+                          |log| is at most 600, else from the scalars' stored parts in log
+                          space (power2 exactly; log magnitudes within 1e-9, the phase of
+                          <c|c><s|s> within 1e-6 rad of 0; to_number never called beyond
+                          float range); scalars not compared otherwise; specifications with W, triangle,
                           binder, splitter or weighted spiders unsupported
   QuiZX 0.4.0   built     as PyZX, with full_simp
   QCEC 3.11.0   built     d = 2, concrete n; the circuit against the reference circuit (its own,

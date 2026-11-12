@@ -105,6 +105,8 @@ CAUSES: dict[str, str] = {
     "limit.stage_cpu": "a stage used up its CPU limit",
     "limit.generate_cpu": "ArchytasZX script generation (the harness's translator) used up its CPU "
     "limit (harness_error)",
+    "kill.generate_oom": "a memory kill while generating the ArchytasZX script outside the "
+    "engine's input spans (harness_error)",
     "limit.prepare_cpu": "a rival's preparation used up its CPU limit (harness_error)",
     "limit.rival_cpu": "the rival used up its CPU limit",
     "limit.rival_wall": "the rival used up its wall limit",
@@ -157,7 +159,7 @@ _RUNG_HEAD = re.compile(r"(?:doubled, \w+: )?([a-z_]+):")
 _DOUBLED = re.compile(r"doubled, \w+: ")
 _AFTER_INDUCTION = ("induction", "induction_reversed", "refutation", "reversed")
 _FRAME = re.compile(r'(?:File ")?([^"\n]*)", line \d+, in ([^\n]+)\n\s*([^\n]*)')
-DRIVER_OWN = ("number", "_build", "_identity", "add")
+DRIVER_OWN = ("number", "_build", "_identity", "add", "scalar_parts", "norm_identity")
 RIVAL_PACKAGES: dict[str, tuple[str, ...]] = {
     "pyzx": ("pyzx",),
     "quizx": ("quizx",),
@@ -252,6 +254,10 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
         if stage == "generate" and not _engine_input(rec.get("open_span")):
             return "harness_error", stage, "limit.generate_cpu"
         return "timeout", stage, "kill.stage_timer"
+    span = rec.get("open_span")
+    memory = kill in ("cgroup oom_kill", "SIGKILL") or rec.get("journal_oom_kill")
+    if (memory or code in (-9, 137)) and stage == "generate" and span and not _engine_input(span):
+        return "harness_error", stage, "kill.generate_oom"
     if kill == "cgroup oom_kill" or rec.get("journal_oom_kill"):
         return "oom", stage, "kill.cgroup_oom_kill"
     if kill == "SIGKILL" or code in (-9, 137):

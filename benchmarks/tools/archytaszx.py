@@ -41,7 +41,10 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     holder: dict[str, Any] = {}
 
     def gen() -> dict[str, Any]:
-        sc = subject.script(inst, nv, dv)
+        from archytaszx import trace
+
+        with trace.span("generate.script"):
+            sc = subject.script(inst, nv, dv)
         holder["script"] = sc
         return {"script_bytes": len(sc.text), "naive_nodes": sc.nodes, "literal": sc.literal}
 
