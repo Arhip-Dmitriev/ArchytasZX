@@ -1075,11 +1075,17 @@ def find_cut_region(
 
 
 def replace_cut_region(
-    diagram: Diagram, cut: CutRegion, hypothesis: Diagram, replacement: Diagram
+    diagram: Diagram,
+    cut: CutRegion,
+    hypothesis: Diagram,
+    replacement: Diagram,
+    *,
+    contiguous: bool = True,
 ) -> Diagram:
     """``diagram`` with ``cut``'s region swapped for ``replacement``: slot ``i`` of each of
     ``replacement``'s boundary lists takes slot ``i`` of ``cut``'s, a cut end's far port wired
-    to it, the scalar times ``replacement.scalar / hypothesis.scalar``."""
+    to it, the scalar times ``replacement.scalar / hypothesis.scalar``; ``contiguous=False``
+    accepts a ``diagram`` whose box slots are not contiguous."""
     if (len(replacement.boundary_inputs), len(replacement.boundary_outputs)) != (
         len(cut.inputs),
         len(cut.outputs),
@@ -1088,7 +1094,7 @@ def replace_cut_region(
     layout = boundary_layout(hypothesis)
     if layout is None or layout != boundary_layout(replacement):
         raise InductionDomainError("the replacement's boundary layout differs from the region's")
-    if boundary_layout(diagram) is None:
+    if contiguous and boundary_layout(diagram) is None:
         raise InductionDomainError("a box's boundary slots are not contiguous")
     working = diagram.copy()
     inside = [b for b, box in working.bang_boxes.items() if _box_footprint(box) & cut.region]

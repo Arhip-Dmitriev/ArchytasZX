@@ -25,6 +25,8 @@ rules below construct one:
 * :func:`contraction` -- ``a = b`` when their symbolic contractions agree, every symbol formal;
   :func:`local_contraction` -- the same for the parts of ``a`` and ``b`` off two regions that
   read as one diagram through cut wires in the same places;
+* :func:`congr` -- ``c = c'`` from ``a = b`` when a region of ``c`` reads as ``a`` through
+  its cut wires and ``c'`` has it replaced by ``b``;
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
 * :func:`induction` -- ``start = goal`` from a base theorem at index 0, a theorem exposing
   one side's peeled successor at ``k + 1`` as a context around that side at ``k``, and a
@@ -70,7 +72,7 @@ from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import free_mult_symbols
 from archytaszx.diagram.compare import isomorphic, isomorphism
 from archytaszx.diagram.generators import MIXED_ONLY
-from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import assumed
@@ -114,8 +116,8 @@ _TOKEN = object()
 
 @dataclass(frozen=True, eq=False)
 class Inference:
-    """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, symm, trans,
-    induction, subst or shift."""
+    """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, contraction,
+    congr, symm, trans, induction, subst or shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -410,6 +412,36 @@ def local_contraction(
     contraction(copy_a, copy_b, max_steps)
     data: dict[str, object] = {"region_a": region_a, "region_b": region_b}
     return Theorem(_TOKEN, a, b, Inference("contraction", data=data))
+
+
+@_trace.traced("kernel.congr")
+def congr(t: Theorem, context: Diagram, cut: CutRegion) -> Theorem:
+    """``context = context'`` where ``cut``'s region of ``context`` reads as ``t.lhs`` through
+    its cut wires and ``context'`` has it replaced by ``t.rhs``."""
+    from archytaszx.semantics.induction import _cut_wires
+
+    region = cut.region
+    if not region <= frozenset(context.nodes):
+        raise KernelError("congr: the region is not part of the context")
+    cuts = _cut_wires(context, region)
+    if dict(cut.cuts) != cuts:
+        raise KernelError("congr: the cut wires are not the region's")
+    held = [r for refs in (context.boundary_inputs, context.boundary_outputs) for r in refs]
+    for refs, direction in ((cut.inputs, Direction.INPUT), (cut.outputs, Direction.OUTPUT)):
+        wanted = [r for r in held if r.node_id in region and r.direction is direction]
+        wanted += [r for r in cuts if r.direction is direction]
+        if len(refs) != len(wanted) or set(refs) != set(wanted):
+            raise KernelError("congr: the region's boundary is not its slots and cut ends")
+    if t.lhs.scalar.is_zero:
+        raise KernelError("congr: the theorem's left side has scalar zero")
+    try:
+        if not isomorphic(_bare(_cut_extract(context, cut)), _bare(t.lhs)):
+            raise KernelError("congr: the region is not the theorem's left side")
+        plugged = replace_cut_region(context, cut, t.lhs, t.rhs, contiguous=False)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"congr raised {type(exc).__name__}: {exc}") from exc
+    data: dict[str, object] = {"cut": cut}
+    return Theorem(_TOKEN, context, plugged, Inference("congr", (t,), data=data), t.assumptions)
 
 
 @_trace.traced("kernel.symm")
@@ -1019,6 +1051,8 @@ class _Lean:
             return b if a == "rfl" else a if b == "rfl" else f"({a}).trans ({b})"
         if inf.kind == "subst":
             return self.subst(t)
+        if inf.kind == "congr":
+            return self.congr(t)
         if inf.kind == "shift":
             raise KernelError("a shift has no opaque export")
         return self.induction(t)
@@ -1052,6 +1086,26 @@ class _Lean:
         inst_l = self.axiom("inst", note, binders, self.call(prem.lhs, at), self.call(t.lhs))
         inst_r = self.axiom("inst", note, binders, self.call(prem.rhs, at), self.call(t.rhs))
         return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
+
+    def congr(self, t: Theorem) -> str:
+        """The premise under a context axiom, between plug axioms onto both sides."""
+        (prem,) = t.inference.premises
+        binders = [_var(v) for v in t.variables]
+        hole = self.fresh("hole")
+        arity = " → ".join(["Nat"] * len(binders) + ["Diagram", "Diagram"])
+        self.decls.append(f"/-- a context around a region -/\naxiom {hole} : {arity}")
+        ctx = f"({hole} {' '.join(binders)})" if binders else hole
+        plug_l = self.axiom(
+            "plug", "the region", binders, self.call(t.lhs), f"({ctx} {self.call(prem.lhs)})"
+        )
+        plug_r = self.axiom(
+            "plug",
+            "the region replaced",
+            binders,
+            self.call(t.rhs),
+            f"({ctx} {self.call(prem.rhs)})",
+        )
+        return f"({plug_l}).trans ((congrArg {ctx} {self.term(prem)}).trans ({plug_r}).symm)"
 
     def induction(self, t: Theorem, name: str | None = None) -> str:
         inf, data = t.inference, t.inference.data

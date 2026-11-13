@@ -111,7 +111,10 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             bounded by max_depth. A step case settled by uniform rewrite,
                             induction rewrite, symbolic contraction, chain_window or
                             tree_window gives the verdict a kernel theorem when its pieces
-                            check (Decision.induction_proof, section 6).
+                            check (Decision.induction_proof, section 6). When neither
+                            direction settles, the rung tries the carry left open after a
+                            chain (carry_open.open_carry, section 4.4): the open pair by this
+                            rung, then the closed pair by decide_equal without induction.
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -403,6 +406,27 @@ held_symbolic names the symbols the settling tier left universally quantified.
     find_cut_region, replace_cut_region, boundary_layout, CutRegion
     discharge_uniform_rewrite, discharge_induction_rewrite, discharge_peeled_hypothesis,
     discharge_symbolic_contraction, discharge_chain_window, discharge_oracle_window
+    chain_cores(hypothesis, a, b, index) the chain cores of all three as one open diagram and
+                                         two regions, each chain box at the hypothesis
+                                         multiplicity, else why not
+
+4.4 The carry left open: archytaszx.semantics.carry_open
+
+    open_carry(left, right, index) -> OpenCarry(left_open, right_open, cut, closed)
+    carry_tail(diagram, index) -> (link-out ends, tail nodes)
+
+The tail of left's chain box over index is every node off the box reached from its link-out
+ends, apart from those reached from its link-in ends; it must lie in no box and hold no
+boundary input. From each link-out end (sorted) a path U_i of F boxes and phase-free one-in
+one-out Z or X spiders runs into the tail's finite part M, which meets nothing else and holds
+every tail output slot. left_open (L') is left without the tail, its outputs left's outputs off
+the tail, then the link-out ends; cut is L' as a region of left. right must hold, at M's output
+slots, nodes S isomorphic to M through cut wires (find_cut_region), fed by wires only.
+right_open (R') is right without S, the far end of S's input i continued by F^((4 - p_i) mod
+4) (p_i the F count of U_i) and appended to its outputs. closed is left with L' replaced by R'
+(replace_cut_region with contiguous=False). left = closed holds when L' = R' (kernel.congr),
+and closed = right when M o U o U^-1 = M; the induction rung decides both, so a wrong R' only
+leaves the pair unsettled.
 
 
 5. CERTIFICATES: archytaszx.semantics.certificate
@@ -460,6 +484,11 @@ these functions construct a Theorem:
   rule(d, step)                      d = d' by re-applying one recorded step at a match the
                                      matcher rediscovers in d
   iso(a, b)                          a = b when their comparison views are isomorphic
+  congr(t, context, cut)             context = context' when cut's region of context (its
+                                     cut wires and its boundary slots and cut ends, each once)
+                                     reads as t.lhs and context' is replace_cut_region of it by
+                                     t.rhs; the opaque Lean export states the context as an
+                                     axiom with two plug axioms and congrArg
   symm(t)                            rhs = lhs
   trans(a, b)                        a.lhs = b.rhs when a.rhs and b.lhs are identical
   induction(start, goal, index, step_symbol, base, side, expose, region, step, cut=None,
@@ -541,6 +570,9 @@ The induction rung of decide_equal builds Decision.induction_proof itself
   symbolic contraction  an induction theorem over the chain's cut region, the tree's unfed
                         residual or a closed region, whichever the peeled successor admits; the
                         step by iso, else local_contraction, else contraction
+
+  carry left open       trans(congr(open-pair theorem, left, cut), from_decision of the closed
+                        pair), symm when the right side holds the chain
 
 An induction-rewrite step whose peeled copies have no derivation is the kernel's contraction of
 the replaced diagram and the other peeled successor.

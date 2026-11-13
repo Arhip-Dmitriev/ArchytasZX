@@ -2368,4 +2368,119 @@ def _decide_by_induction(
                 "base_case": base_decision,
             },
         )
-    return _Unsettled("; reversed: ".join(reasons), base_decision)
+    opened = _decide_carry_open(
+        left,
+        right,
+        index,
+        evaluated=evaluated,
+        rules=rules,
+        guard=guard,
+        max_samples=max_samples,
+        use_symbolic=use_symbolic,
+        max_depth=max_depth,
+        tolerance=tolerance,
+        max_elements=max_elements,
+        use_saturation=use_saturation,
+        saturation_limits=saturation_limits,
+    )
+    if not isinstance(opened, str):
+        return opened
+    return _Unsettled("; reversed: ".join(reasons) + f"; carry open: {opened}", base_decision)
+
+
+def _decide_carry_open(
+    left: Diagram,
+    right: Diagram,
+    index: str,
+    *,
+    evaluated: Sequence[Mapping[str, CheckAssignmentValue]],
+    rules: Sequence[Rule] | None,
+    guard: TerminationGuard,
+    max_samples: int,
+    use_symbolic: bool,
+    max_depth: int,
+    tolerance: float,
+    max_elements: int,
+    use_saturation: bool,
+    saturation_limits: SaturationLimits,
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL by induction on the pair with the carry left open after the chain
+    (:func:`~archytaszx.semantics.carry_open.open_carry`, either side holding the chain), the
+    open pair proved by this rung and the closed pair decided without induction; else why
+    not."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.carry_open import open_carry
+
+    reasons: list[str] = []
+    for flipped in (False, True):
+        first, second = (right, left) if flipped else (left, right)
+        try:
+            carry = open_carry(first, second, index)
+        except _INDUCTION_ERRORS as exc:
+            reasons.append(str(exc))
+            continue
+        with _trace.span("decide.induction.carry_open"):
+            inner = _decide_by_induction(
+                carry.left_open,
+                carry.right_open,
+                evaluated=evaluated,
+                samples=None,
+                rules=rules,
+                guard=guard,
+                max_samples=max_samples,
+                use_symbolic=use_symbolic,
+                max_depth=max_depth,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                use_saturation=use_saturation,
+                saturation_limits=saturation_limits,
+            )
+        if isinstance(inner, str) or inner[0] is not EqualityVerdict.EQUAL:
+            reasons.append("the open pair is not proved by induction")
+            continue
+        _verdict, _method, inner_reason, evidence = inner
+        token = _NESTED.set(True)
+        try:
+            closing = decide_equal(
+                carry.closed,
+                second,
+                rules=rules,
+                guard=guard,
+                use_induction=False,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                use_saturation=use_saturation,
+                saturation_limits=saturation_limits,
+            )
+        finally:
+            _NESTED.reset(token)
+        if closing.verdict is not EqualityVerdict.EQUAL:
+            reasons.append(f"the closed pair is {closing.verdict.value}")
+            continue
+        theorem: object = None
+        why = ""
+        proof = evidence.get("induction_proof")
+        if proof is None:
+            why = "the open pair has no kernel proof"
+        else:
+            try:
+                opened = kernel.congr(kernel.check(proof), first, carry.cut)
+                closed = kernel.from_decision(closing, opened.rhs, second)
+                theorem = kernel.trans(opened, closed)
+                if flipped:
+                    theorem = kernel.symm(theorem)
+            except kernel.KernelError as exc:
+                why = f"the kernel refused a piece: {exc}"
+        built = "kernel proof built" if theorem is not None else f"no kernel proof: {why}"
+        side = "right" if flipped else "left"
+        reason = (
+            f"carry left open after the {side} side's chain: {inner_reason}; the closed pair "
+            f"is equal by {closing.method.value}; {built}"
+        )
+        return (
+            EqualityVerdict.EQUAL,
+            DecisionMethod.INDUCTION,
+            reason,
+            {**evidence, "induction_proof": theorem},
+        )
+    return "; ".join(reasons)
