@@ -1297,6 +1297,26 @@ def _open_region(diagram: Diagram, region: frozenset[NodeId]) -> Diagram:
     return _copy_side(diagram, cut, diagram.scalar)[0]
 
 
+def chain_cores(
+    hypothesis: Diagram, a: Diagram, b: Diagram, index: str
+) -> tuple[Diagram, frozenset[NodeId], frozenset[NodeId]] | str:
+    """``hypothesis``'s chain core (:func:`_chain_core`) as an open diagram and the chain cores
+    of ``a`` and ``b``, each chain box's multiplicity ``hypothesis``'s; else why not."""
+    cores = [_chain_core(d, index) for d in (hypothesis, a, b)]
+    core, core_a, core_b = cores
+    if core is None or core_a is None or core_b is None:
+        return "no chain box with separate head and tail on both sides"
+    mults = [
+        d.bang_boxes[owner].multiplicity
+        for d in (hypothesis, a, b)
+        for owner in (_chain_owner(d, index),)
+        if owner is not None
+    ]
+    if any(m != mults[0] for m in mults[1:]):
+        return "the chain boxes have multiplicities " + ", ".join(str(m) for m in mults)
+    return _open_region(hypothesis, core), core_a, core_b
+
+
 def _close_by_chain_core(
     replaced: Diagram, target: Diagram, hypothesis: Diagram, index: str, max_steps: int
 ) -> tuple[bool, str]:
@@ -1305,15 +1325,12 @@ def _close_by_chain_core(
     and how, or why not."""
     from archytaszx.semantics import kernel
 
-    core = _chain_core(hypothesis, index)
-    core_a = _chain_core(replaced, index)
-    core_b = _chain_core(target, index)
-    if core is None or core_a is None or core_b is None:
-        return False, "chain core: no chain box with separate head and tail on both sides"
+    found = chain_cores(hypothesis, replaced, target, index)
+    if isinstance(found, str):
+        return False, f"chain core: {found}"
+    opened, core_a, core_b = found
     try:
-        kernel.local_contraction(
-            replaced, core_a, target, core_b, _open_region(hypothesis, core), max_steps=max_steps
-        )
+        kernel.local_contraction(replaced, core_a, target, core_b, opened, max_steps=max_steps)
     except (kernel.KernelError, InductionDomainError, ValidateError) as exc:
         return False, f"chain core: {exc}"
     return True, (

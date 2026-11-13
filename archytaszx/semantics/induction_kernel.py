@@ -354,15 +354,14 @@ def _step_theorem(
         except kernel.KernelError as exc:
             reasons.append(f"local: {exc}")
     if chain is not None:
-        from archytaszx.semantics.induction import _chain_core, _open_region
+        from archytaszx.semantics.induction import chain_cores
 
-        core = _chain_core(chain[0], chain[1])
-        core_a, core_b = _chain_core(replaced, chain[1]), _chain_core(target, chain[1])
-        if core is not None and core_a is not None and core_b is not None:
+        found = chain_cores(chain[0], replaced, target, chain[1])
+        if isinstance(found, str):
+            reasons.append(f"chain core: {found}")
+        else:
             try:
-                return kernel.local_contraction(
-                    replaced, core_a, target, core_b, _open_region(chain[0], core)
-                )
+                return kernel.local_contraction(replaced, found[1], target, found[2], found[0])
             except kernel.KernelError as exc:
                 reasons.append(f"chain core: {exc}")
     try:
