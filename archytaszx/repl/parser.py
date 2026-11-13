@@ -1086,6 +1086,10 @@ class _BoxDraft:
     cyclic: bool = False
     index: str | None = None
     copy_scalar: str | None = None
+    pair_of: BangBoxId | None = None
+    pair_index: str | None = None
+    left_ports: frozenset[PortRef] = frozenset()
+    right_ports: frozenset[PortRef] = frozenset()
 
 
 def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
@@ -1103,6 +1107,10 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             copy_scalar=None
             if draft.copy_scalar is None
             else _scalar_of(_parse_expr(draft.copy_scalar, "copy scalar"), {}),
+            pair_of=draft.pair_of,
+            pair_index=draft.pair_index,
+            left_ports=draft.left_ports,
+            right_ports=draft.right_ports,
         )
 
 
@@ -1137,6 +1145,8 @@ _LISTING_BOX_RE = re.compile(
     r"(?:\s+links:\s*(?P<links>.+?)(?:\s+(?P<cyclic>cyclic))?)?"
     r"(?:\s+index:\s*(?P<index>\w+))?"
     r"(?:\s+copy scalar:\s*(?P<copy>.+?))?"
+    r"(?:\s+pairs of:\s*!(?P<pairof>[0-9]+)\s+index:\s*(?P<pairindex>\w+)"
+    r"(?:\s+left:\s*(?P<left>.+?))?(?:\s+right:\s*(?P<right>.+?))?)?"
     r"(?:\s+parent:\s*!(?P<parent>[0-9]+)\s+\((?P<flag>missing|cycle)\))?"
 )
 _UNICODE_IDENTIFIER = r"[^\W\d]\w*"
@@ -1298,6 +1308,16 @@ def _listing_boxes(lines: Sequence[str]) -> tuple[dict[int, _BoxDraft], dict[int
             cyclic=match["cyclic"] is not None,
             index=match["index"],
             copy_scalar=match["copy"],
+            pair_of=None
+            if match["pairof"] is None
+            else BangBoxId(_numeral(match["pairof"], "box id")),
+            pair_index=match["pairindex"],
+            left_ports=frozenset(
+                _listing_ref(r) for r in (_split_top(match["left"]) if match["left"] else [])
+            ),
+            right_ports=frozenset(
+                _listing_ref(r) for r in (_split_top(match["right"]) if match["right"] else [])
+            ),
         )
     return drafts, depth
 
@@ -1440,6 +1460,11 @@ _DSL_REPEAT_RE = re.compile(
 _DSL_CHAIN_RE = re.compile(
     rf"chain\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<links>.+?)(?:\s+(?P<cyclic>cyclic))?"
 )
+_DSL_PAIRS_RE = re.compile(
+    rf"pairs\s+(?P<name>{_IDENTIFIER})\s+of\s+(?P<parent>{_IDENTIFIER})\s+index\s+"
+    rf"(?P<index>{_IDENTIFIER})\s*:\s*(?P<scope>.+)"
+)
+_DSL_SIDE_RE = re.compile(rf"(?P<side>left|right)\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<ports>.+)")
 _DSL_COPY_SCALAR_RE = re.compile(rf"copy\s+scalar\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<expr>.+)")
 _DEFAULT_DIM = "d"
 _WORD_THEN_WORD_RE = re.compile(rf"{_IDENTIFIER}\s+[A-Za-z_]")
@@ -1553,6 +1578,10 @@ class _DslBox:
     links: list[tuple[str, str]] = field(default_factory=list)
     cyclic: bool = False
     copy_scalar: str | None = None
+    pair_of: str | None = None
+    pair_index: str | None = None
+    left: list[str] = field(default_factory=list)
+    right: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1603,6 +1632,10 @@ class _Dsl:
             self.chain(text)
         elif keyword == "copy" and _DSL_COPY_SCALAR_RE.fullmatch(text):
             self.copy_scalar(text)
+        elif keyword == "pairs" and _DSL_PAIRS_RE.fullmatch(text):
+            self.pairs(text)
+        elif keyword in ("left", "right") and _DSL_SIDE_RE.fullmatch(text):
+            self.side(text)
         elif (
             len(_split_token(text, "->")) > 1 or len(_split_token(text, "--")) > 1
         ) and not _WORD_THEN_WORD_RE.match(text):
@@ -1820,6 +1853,32 @@ class _Dsl:
             box.links.append((ends[0].strip(), ends[1].strip()))
         box.cyclic = match["cyclic"] is not None
 
+    def pairs(self, text: str) -> None:
+        match = _DSL_PAIRS_RE.fullmatch(text)
+        assert match is not None
+        self.named_box(match["parent"], "pairs")
+        items: list[str] = []
+        for item in _split_top(match["scope"]):
+            items.extend(end for end, _ in self.chain_item(item))
+        box = _DslBox(
+            Mult(1),
+            "nodes",
+            ", ".join(items),
+            None,
+            pair_of=match["parent"],
+            pair_index=match["index"],
+        )
+        self.add_box(_name(match["name"], "box"), box)
+
+    def side(self, text: str) -> None:
+        match = _DSL_SIDE_RE.fullmatch(text)
+        assert match is not None
+        box = self.named_box(match["name"], match["side"])
+        if box.pair_of is None:
+            raise ParseGrammarError(f"{match['side']}: box {match['name']!r} is not a pair box")
+        ports = [item.strip() for item in _split_top(match["ports"])]
+        (box.left if match["side"] == "left" else box.right).extend(ports)
+
     def copy_scalar(self, text: str) -> None:
         match = _DSL_COPY_SCALAR_RE.fullmatch(text)
         assert match is not None
@@ -1957,6 +2016,10 @@ class _Dsl:
                     links=tuple((self.ref(a, named), self.ref(b, named)) for a, b in box.links),
                     cyclic=box.cyclic,
                     index=box.index,
+                    pair_of=None if box.pair_of is None else box_ids[box.pair_of],
+                    pair_index=box.pair_index,
+                    left_ports=frozenset(self.ref(r, named) for r in box.left),
+                    right_ports=frozenset(self.ref(r, named) for r in box.right),
                 )
             else:
                 if box.links or box.index is not None or box.copy_scalar is not None:
@@ -1970,6 +2033,11 @@ class _Dsl:
             *(box.multiplicity for box in self.boxes.values()),
             *(Mult.symbol(n) for n in sorted(self.declared_counts)),
             *(Mult.symbol(box.index) for box in self.boxes.values() if box.index is not None),
+            *(
+                Mult.symbol(box.pair_index)
+                for box in self.boxes.values()
+                if box.pair_index is not None
+            ),
         ]
         _set_phases(diagram, drafts, _role_table(dims, mults))
         if self.scalar is not None:

@@ -1414,6 +1414,13 @@ def render_graph(diagram: Diagram) -> str:
             line += f"  index: {box.index}"
         if box.copy_scalar is not None:
             line += f"  copy scalar: {_listing_expr(box.copy_scalar)}"
+        if box.pair_of is not None:
+            line += f"  pairs of: !{int(box.pair_of)} index: {box.pair_index}"
+            for label, side_ports in (("left", box.left_ports), ("right", box.right_ports)):
+                if side_ports:
+                    ordered = sorted(side_ports, key=_listing_ref_key)
+                    refs = ", ".join(_listing_ref(r) for r in ordered)
+                    line += f"  {label}: {refs}"
         if flag is not None:
             line += f"  parent: !{parent} ({flag})"
         lines.append(line)

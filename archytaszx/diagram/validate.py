@@ -927,8 +927,14 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
             continue
         fanned: dict[tuple[NodeId, Direction], int] = {}
         link_ports = {ref for link in box.links for ref in link}
+        paired = frozenset(
+            nid
+            for other in diagram.bang_boxes.values()
+            if other.pair_of == box_id
+            for nid in other.node_scope
+        )
         for inside, outside in outside_crossings(diagram, box.node_scope):
-            if inside in link_ports:
+            if inside in link_ports or outside.node_id in paired or box.pair_of is not None:
                 continue
             side = (outside.node_id, outside.direction)
             fanned[side] = fanned.get(side, 0) + 1
@@ -1000,8 +1006,14 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
                         "the scope nor a boundary slot"
                     )
         if box.index is not None:
+            paired = frozenset(
+                nid
+                for other in diagram.bang_boxes.values()
+                if other.pair_of == box_id
+                for nid in other.node_scope
+            )
             for node_id, node in sorted(diagram.nodes.items()):
-                if node_id in box.node_scope or node.phase is None:
+                if node_id in box.node_scope or node_id in paired or node.phase is None:
                     continue
                 if box.index in node.phase.free_symbols:
                     refuse(

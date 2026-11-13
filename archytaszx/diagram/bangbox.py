@@ -303,6 +303,15 @@ class BangBox:
     """The copy index symbol: ``m`` in copy m (m = 0 .. n - 1)."""
     copy_scalar: Scalar | None = None
     """A scalar ``c(index)`` multiplied in once per copy."""
+    pair_of: BangBoxId | None = None
+    """For a pair box: the indexed box whose ordered copy pairs ``(j, k)``, ``j < k``, it is
+    instantiated over."""
+    pair_index: str | None = None
+    """For a pair box: the symbol read as ``k``; the parent's index reads ``j``."""
+    left_ports: frozenset[PortRef] = frozenset()
+    """For a pair box: ports of the parent's scope resolved in copy ``j``."""
+    right_ports: frozenset[PortRef] = frozenset()
+    """For a pair box: ports of the parent's scope resolved in copy ``k``."""
 
     def __post_init__(self) -> None:
         """Validate field types, that exactly one of the two scopes is non-empty, and the
@@ -358,11 +367,29 @@ class BangBox:
             raise BangBoxGrammarError(
                 f"BangBox copy_scalar must be a Scalar, got {self.copy_scalar!r}"
             )
+        if self.pair_of is not None:
+            if not self.node_scope or self.links or self.pair_index is None:
+                raise BangBoxGrammarError(
+                    "a pair box is a node-scope box without links and with a pair index"
+                )
+            _check_symbol_name(self.pair_index)
+        elif self.pair_index is not None or self.left_ports or self.right_ports:
+            raise BangBoxGrammarError("pair index, left and right ports need a pair box")
+
+    @property
+    def is_pair(self) -> bool:
+        """True iff this box is a pair box."""
+        return self.pair_of is not None
 
     @property
     def is_extended(self) -> bool:
-        """True iff this box carries links, an index or a copy scalar."""
-        return bool(self.links) or self.index is not None or self.copy_scalar is not None
+        """True iff this box carries links, an index, a copy scalar or is a pair box."""
+        return (
+            bool(self.links)
+            or self.index is not None
+            or self.copy_scalar is not None
+            or self.pair_of is not None
+        )
 
     @property
     def is_node_scope(self) -> bool:
@@ -1040,6 +1067,8 @@ def _kill_one(diagram: Diagram, box: BangBox) -> None:
 
 def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
     box = diagram.bang_boxes[box_id]
+    if box.is_pair:
+        raise BangBoxGrammarError(f"pair box {box_id!r} is instantiated with its parent only")
     if box.is_extended:
         _instantiate_extended(diagram, box, k)
     elif box.is_node_scope:
@@ -1178,6 +1207,117 @@ def _scalar_at(scalar: Scalar, name: str, value: int | sp.Expr) -> Scalar:
     return Scalar(scalar.to_sympy().xreplace({symbols[0]: sp.sympify(value)}))
 
 
+@dataclass(frozen=True, slots=True)
+class _PairTemplate:
+    """A detached pair box: its nodes (copied out), internal wires, and its wires to the
+    parent's left and right ports as ``(template port, parent port, side)``."""
+
+    box: BangBox
+    nodes: tuple[tuple[NodeId, object, tuple[object, ...], tuple[object, ...], object], ...]
+    internal: tuple[tuple[PortRef, PortRef], ...]
+    attached: tuple[tuple[PortRef, PortRef, str], ...]
+
+
+def _pairs_of(diagram: Diagram, box_id: BangBoxId) -> list[BangBox]:
+    """The pair boxes over ``box_id``, by id."""
+    return [b for _, b in sorted(diagram.bang_boxes.items()) if b.pair_of == box_id]
+
+
+def _detach_pair(diagram: Diagram, pair: BangBox) -> _PairTemplate:
+    """Remove ``pair``'s nodes and box, recording them; each left or right port it met is left
+    unwired."""
+    scope = pair.node_scope
+    nodes = tuple(
+        (
+            nid,
+            diagram.nodes[nid].generator_type,
+            tuple(p.dim for p in diagram.nodes[nid].inputs),
+            tuple(p.dim for p in diagram.nodes[nid].outputs),
+            diagram.nodes[nid].phase,
+        )
+        for nid in sorted(scope)
+    )
+    internal = tuple((w.a, w.b) for w in sorted(internal_wires(diagram, scope), key=Wire.sort_key))
+    attached: list[tuple[PortRef, PortRef, str]] = []
+    for inside, outside in outside_crossings(diagram, scope):
+        if outside in pair.left_ports:
+            side = "left"
+        elif outside in pair.right_ports:
+            side = "right"
+        else:
+            raise BangBoxGrammarError(
+                f"pair box {pair.id!r} is wired to {outside!r}, not a left or right port"
+            )
+        attached.append((inside, outside, side))
+    if any(r.node_id in scope for r in (*diagram.boundary_inputs, *diagram.boundary_outputs)):
+        raise BangBoxGrammarError(f"pair box {pair.id!r} holds a boundary slot")
+    for nid in sorted(scope):
+        diagram.remove_node(nid)
+    diagram.remove_bang_box(pair.id)
+    return _PairTemplate(pair, nodes, internal, tuple(attached))
+
+
+def _place_pairs(
+    diagram: Diagram, parent: BangBox, template: _PairTemplate, id_maps: list[dict[NodeId, NodeId]]
+) -> None:
+    """One copy of ``template`` per pair of copies ``j < k`` of ``parent`` (``index`` := j,
+    ``pair_index`` := k), each left port of copy j and right port of copy k grown to one leg
+    per pair it meets."""
+    k_total = len(id_maps)
+    pairs = [(j, k) for j in range(k_total) for k in range(j + 1, k_total)]
+    legs: dict[tuple[PortRef, int], list[PortRef]] = {}
+    for parent_port in sorted({a[1] for a in template.attached}, key=PortRef.sort_key):
+        side = next(a[2] for a in template.attached if a[1] == parent_port)
+        for m, id_map in enumerate(id_maps):
+            count = sum(1 for j, k in pairs if (j if side == "left" else k) == m)
+            ref = _moved(parent_port, id_map)
+            new_node = _regrow_port(diagram, ref, count)
+            id_map[parent_port.node_id] = new_node
+            for key, grown in list(legs.items()):
+                if key[1] == m and grown and grown[0].node_id == ref.node_id:
+                    legs[key] = [
+                        moved
+                        for old in grown
+                        for moved in _remap_grown_port(
+                            old, ref.node_id, new_node, ref.direction, ref.index, count
+                        )
+                    ]
+            legs[(parent_port, m)] = [
+                PortRef(new_node, ref.direction, ref.index + i) for i in range(count)
+            ]
+    used: dict[tuple[PortRef, int], int] = {}
+    box = template.box
+    for j, k in pairs:
+        node_map: dict[NodeId, NodeId] = {}
+        for nid, generator, ins, outs, phase in template.nodes:
+            node_map[nid] = diagram.add_node(generator, list(ins), list(outs), phase=phase)  # type: ignore[arg-type]
+        for a, b in template.internal:
+            diagram.add_wire(_moved(a, node_map), _moved(b, node_map))
+        for inside, parent_port, side in template.attached:
+            key = (parent_port, j if side == "left" else k)
+            slot = used.get(key, 0)
+            used[key] = slot + 1
+            diagram.add_wire(_moved(inside, node_map), legs[key][slot])
+        for new_id in node_map.values():
+            phase = diagram.nodes[new_id].phase
+            if phase is None:
+                continue
+            subs: dict[str, int] = {}
+            if parent.index is not None and parent.index in phase.free_symbols:
+                subs[parent.index] = j
+            if box.pair_index is not None and box.pair_index in phase.free_symbols:
+                subs[box.pair_index] = k
+            if subs:
+                diagram.set_phase(new_id, phase.substitute(subs))  # type: ignore[arg-type]
+        if box.copy_scalar is not None:
+            factor = box.copy_scalar
+            if parent.index is not None:
+                factor = _scalar_at(factor, parent.index, j)
+            if box.pair_index is not None:
+                factor = _scalar_at(factor, box.pair_index, k)
+            diagram.multiply_scalar(factor)
+
+
 def _plain(diagram: Diagram, box: BangBox) -> BangBox:
     """``box`` stripped of its links, index and copy scalar in ``diagram``."""
     diagram.set_bang_box_extension(box.id, links=(), cyclic=False, index=None, copy_scalar=None)
@@ -1191,9 +1331,12 @@ def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> None:
     multiplied in."""
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
+    pairs = [_detach_pair(diagram, pair) for pair in _pairs_of(diagram, box.id)]
     before = set(diagram.bang_boxes)
     id_maps = _instantiate_node_scope(diagram, _plain(diagram, box), k)
     new_boxes = sorted(set(diagram.bang_boxes) - before)
+    for template in pairs:
+        _place_pairs(diagram, box, template, id_maps)
     for (p_ref, q_ref), (head, tail) in zip(box.links, ends, strict=True):
         if box.cyclic:
             for m in range(k):
@@ -1348,6 +1491,8 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail."""
     if box.cyclic:
         raise BangBoxGrammarError(f"cyclic chain box {box.id!r} has no peel_one")
+    if box.is_pair or _pairs_of(diagram, box.id):
+        raise BangBoxGrammarError(f"box {box.id!r} with pair boxes has no peel_one")
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
     before = set(diagram.bang_boxes)
@@ -1419,7 +1564,7 @@ def expand_concrete_boxes(diagram: Diagram) -> Diagram:
         targets = [
             box_id
             for box_id, box in sorted(working.bang_boxes.items())
-            if box.multiplicity.is_concrete
+            if box.multiplicity.is_concrete and not box.is_pair
         ]
         if not targets:
             return working

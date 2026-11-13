@@ -456,6 +456,10 @@ class Diagram:
         cyclic: bool = False,
         index: str | None = None,
         copy_scalar: Scalar | None = None,
+        pair_of: BangBoxId | None = None,
+        pair_index: str | None = None,
+        left_ports: frozenset[PortRef] = frozenset(),
+        right_ports: frozenset[PortRef] = frozenset(),
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -483,6 +487,10 @@ class Diagram:
             cyclic=cyclic,
             index=index,
             copy_scalar=copy_scalar,
+            pair_of=pair_of,
+            pair_index=pair_index,
+            left_ports=frozenset(left_ports),
+            right_ports=frozenset(right_ports),
         )
         return box_id
 
@@ -493,7 +501,17 @@ class Diagram:
 
         if box_id not in self._bang_boxes:
             raise GraphGrammarError(f"no such bang box: {box_id!r}")
-        allowed = {"node_scope", "links", "cyclic", "index", "copy_scalar"}
+        allowed = {
+            "node_scope",
+            "links",
+            "cyclic",
+            "index",
+            "copy_scalar",
+            "pair_of",
+            "pair_index",
+            "left_ports",
+            "right_ports",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise GraphGrammarError(f"set_bang_box_extension: unknown fields {sorted(unknown)!r}")

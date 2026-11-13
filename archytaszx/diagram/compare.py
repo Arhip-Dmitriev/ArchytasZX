@@ -119,8 +119,26 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
                 False,
                 f"bang box {box_id}: parent differs: {box_a.parent!r} vs {box_b.parent!r}",
             )
-        extension_a = (box_a.links, box_a.cyclic, box_a.index, box_a.copy_scalar)
-        extension_b = (box_b.links, box_b.cyclic, box_b.index, box_b.copy_scalar)
+        extension_a = (
+            box_a.links,
+            box_a.cyclic,
+            box_a.index,
+            box_a.copy_scalar,
+            box_a.pair_of,
+            box_a.pair_index,
+            sorted(box_a.left_ports, key=PortRef.sort_key),
+            sorted(box_a.right_ports, key=PortRef.sort_key),
+        )
+        extension_b = (
+            box_b.links,
+            box_b.cyclic,
+            box_b.index,
+            box_b.copy_scalar,
+            box_b.pair_of,
+            box_b.pair_index,
+            sorted(box_b.left_ports, key=PortRef.sort_key),
+            sorted(box_b.right_ports, key=PortRef.sort_key),
+        )
         if extension_a != extension_b:
             return StructuralComparison(
                 False,
@@ -167,6 +185,8 @@ def _box_tag(box: BangBox) -> str:
         tag += f"|index:{box.index}"
     if box.copy_scalar is not None:
         tag += f"|scalar:{box.copy_scalar}"
+    if box.pair_index is not None:
+        tag += f"|pairs:{box.pair_index}"
     return tag
 
 
@@ -332,6 +352,13 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
             tuple((label[r.node_id], r.direction.value, r.index) for r in link)
             for link in box.links
             if all(r.node_id in label for r in link)
+        ) + tuple(
+            sorted(
+                (side, label[r.node_id], r.direction.value, r.index)
+                for side, ports in (("left", box.left_ports), ("right", box.right_ports))
+                for r in ports
+                if r.node_id in label
+            )
         )
         descriptors.append(
             (

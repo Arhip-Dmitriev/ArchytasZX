@@ -174,12 +174,17 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     multiplicity read I = m.
   - copy_scalar c: the diagram scalar is multiplied by c(0) c(1) ... c(k-1) (c^k without an
     index).
+  - pair box (pair_of B, pair_index K, left_ports, right_ports): a node-scope box outside B,
+    wired only to ports of B's scope named left or right, instantiated with B: one copy per
+    pair of B's copies j < k, reading B's index as j and K as k, its wires to a left port met
+    in copy j and to a right port in copy k; each such port grows one leg per pair it meets,
+    in pair order. Its own multiplicity is 1 and it is never expanded alone.
 
 peel_one splits off the last copy (I = n - 1, wired between the rest's p ports and the tail);
-a cyclic chain refuses peel_one; copy_box and merge refuse these boxes. decide on diagrams
+a cyclic chain and a box with pair boxes refuse peel_one; copy_box and merge refuse these boxes. decide on diagrams
 that still hold such a box after expanding the concrete ones runs only the oracle and the
-structural comparison (no rewriting, saturation, symbolic contraction or induction). Pair
-boxes and the symbolic rungs of parts B and C are not implemented.
+structural comparison (no rewriting, saturation, symbolic contraction or induction); the
+symbolic rungs of parts B and C are not implemented.
 
 4.3 Operations
 
