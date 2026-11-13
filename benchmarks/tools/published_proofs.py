@@ -14,9 +14,9 @@
 """Published-proofs adapter, B1 only: for a subject with a published machine-checked proof, the
 proof files re-checked by their own checker (coqc with the project's _CoqProject load paths, in
 the opam root of setup_rivals.sh), timed, with their lines and bytes. The check runs once
-(CHECK_ONCE, K = 1): the symbolic run, or the stated point (:func:`stated`) of a subject without
-a symbolic version. The verdict is equal when some file is accepted; when none is, the outcome
-follows the files' failures (:func:`summary`)."""
+(CHECK_ONCE, K = 1): the symbolic run when the proofs cover all of it (:func:`symbolic_covered`),
+else the stated point (:func:`stated`). The verdict is equal when some file is accepted; when none
+is, the outcome follows the files' failures (:func:`summary`)."""
 
 from __future__ import annotations
 
@@ -62,12 +62,31 @@ PROOFS: dict[str, list[tuple[str, str]]] = {
 CHECK_ONCE = True
 STATED_N: dict[str, int] = {"repetition_code": 2}
 STATED_D = 2
+PROOF_DIMENSIONS: dict[str, tuple[int, ...]] = {subject: (STATED_D,) for subject in PROOFS}
+"""The dimensions d each subject's proofs state."""
+DIMENSIONS: tuple[int, ...] = tuple(sorted({d for ds in PROOF_DIMENSIONS.values() for d in ds}))
+
+
+def proof_dimensions(subject_id: str) -> tuple[int, ...]:
+    """The dimensions the subject's proofs state, (STATED_D,) when not declared."""
+    return PROOF_DIMENSIONS.get(subject_id, (STATED_D,))
 
 
 def stated(inst: Any, cfg: dict[str, Any]) -> points.Point | None:
-    """The proof's stated point: d = STATED_D, n from STATED_N (the proof's fixed size) or the
-    least domain n (a proof for every n)."""
-    return points.stated(inst, cfg, STATED_N.get(inst.subject.id), STATED_D)
+    """The proof's stated point: d the least of :func:`proof_dimensions`, n from STATED_N (the
+    proof's fixed size) or the least domain n (a proof for every n)."""
+    sid = inst.subject.id
+    return points.stated(inst, cfg, STATED_N.get(sid), min(proof_dimensions(sid)))
+
+
+def symbolic_covered(subject: Any) -> bool:
+    """Whether the proofs cover every point of the subject's symbolic run: d fixed at one of
+    :func:`proof_dimensions` and no fixed n in STATED_N."""
+    return (
+        not subject.general_d
+        and int(subject.dimension) in proof_dimensions(subject.id)
+        and subject.id not in STATED_N
+    )
 
 
 def summary(files: list[dict[str, Any]]) -> tuple[str, str, str | None]:

@@ -590,9 +590,14 @@ class UnitRun:
 
     def check_once(self, unit_key: str, adapter: Any, trace: bool) -> None:
         """The single check of a CHECK_ONCE tool, K = 1: the symbolic run when the instance has
-        one, else the adapter's stated point."""
+        one the adapter's ``symbolic_covered`` accepts, else the adapter's stated point."""
         p: points.Point | None = None
-        if self.cfg["points"]["symbolic"] and subject.has_symbolic(self.inst):
+        covered = getattr(adapter, "symbolic_covered", lambda _subject: True)
+        if (
+            self.cfg["points"]["symbolic"]
+            and subject.has_symbolic(self.inst)
+            and covered(self.inst.subject)
+        ):
             phase = "symbolic"
         else:
             p, phase = adapter.stated(self.inst, self.cfg), "stated"
@@ -617,6 +622,7 @@ class UnitRun:
             unit_key,
             {
                 "K": 1,
+                "check_phase": phase,
                 "successes": int(ok),
                 "failures": [] if ok or not outcomes.counted(rec) else row,
                 "skipped": [] if ok or outcomes.counted(rec) else row,
@@ -707,11 +713,12 @@ def units_of(cfg: dict[str, Any], false_records: list[dict[str, Any]]) -> list[t
 def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, Any]]) -> set[str]:
     """The unit keys of finished F units whose unit record predates the differs check and
     that ran a point where their pair is equal, and of a CHECK_ONCE tool's units with K other
-    than 1."""
+    than 1 or without a check_phase whose subject the adapter's ``symbolic_covered`` refuses."""
     from benchmarks import tools
     from benchmarks.differs import differs
 
     falses = {f"{r['equation']}!": r for r in false_records if r.get("kind") is not None}
+    subjects = {s.id: s for s in subject.catalogue()}
     out: set[str] = set()
     once: dict[str, bool] = {}
     for rec in done.values():
@@ -721,6 +728,12 @@ def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, A
         if rec.get("unit") and once.get(tool) and rec.get("K") != 1:
             out.add(rec["key"])
             continue
+        if rec.get("unit") and once.get(tool) and "check_phase" not in rec:
+            covered = getattr(tools.adapter(tool), "symbolic_covered", None)
+            subj = subjects.get(str(rec.get("subject")))
+            if covered is not None and subj is not None and not covered(subj):
+                out.add(rec["key"])
+                continue
         false = falses.get(rec.get("equation", ""))
         if rec.get("unit") or false is None or rec.get("d") is None:
             continue

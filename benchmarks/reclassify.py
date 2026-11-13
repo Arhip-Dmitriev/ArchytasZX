@@ -127,11 +127,25 @@ def _adapter(tool: str) -> Any:
 
 def units(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """``recs`` with the unit record of every CHECK_ONCE tool recomputed from its runs: K = 1,
-    one success when a run of the unit is ok."""
+    one success when a run of the unit is ok; a symbolic run counts only when the adapter's
+    ``symbolic_covered`` accepts the subject."""
+    from benchmarks import subject
+
+    subjects = {s.id: s for s in subject.catalogue()}
     ok: set[tuple[Any, ...]] = set()
     for r in recs:
-        if not r.get("unit") and "tool" in r and r.get("outcome") == "ok":
-            ok.add((r.get("config"), r.get("equation"), r.get("source"), r["tool"]))
+        if r.get("unit") or "tool" not in r or r.get("outcome") != "ok":
+            continue
+        covered = getattr(_adapter(str(r["tool"])), "symbolic_covered", None)
+        subj = subjects.get(str(r.get("subject")))
+        if (
+            r.get("phase") == "symbolic"
+            and covered is not None
+            and subj is not None
+            and not covered(subj)
+        ):
+            continue
+        ok.add((r.get("config"), r.get("equation"), r.get("source"), r["tool"]))
     out = []
     for r in recs:
         mod = _adapter(str(r.get("tool"))) if r.get("unit") else None
