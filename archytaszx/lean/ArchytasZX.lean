@@ -24,6 +24,7 @@ import ArchytasZX.Weights
 import ArchytasZX.Diagram
 import ArchytasZX.Expand
 import ArchytasZX.Bridge
+import ArchytasZX.ChainBox
 import ArchytasZX.Elim
 import ArchytasZX.Digits
 import ArchytasZX.ExpandFacts

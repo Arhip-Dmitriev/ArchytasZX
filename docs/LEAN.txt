@@ -197,6 +197,14 @@ first gathered into one block each. On every boxed diagram of examples/ and the 
 assignment of 0..3, the expansion was checked equal to the engine's instantiate_symbol up to
 renaming of nodes, boundary slots and leg positions fixed.
 
+A chain box is, in Lean, a DChain (ChainBox.lean): a DBox and its links (l.1, l.2), copy j's l.1
+meeting copy j + 1's l.2; the DBox itself has no link field. Each link port of the template is
+wired outside the box, a link port on the boundary through an identity node. expandChain D c k
+copies the box k times (copyNodes on the diagram without the link wires) and wires each link:
+l.2's outside partner to copy 0's l.2, copy j's l.1 to copy j + 1's l.2, copy k - 1's l.1 to l.1's
+outside partner, and at k = 0 the two partners to each other (checked by decide on a one-spider
+chain at k = 0 and 2). Nothing yet relates expandChain to chainNet (ChainInduct.lean).
+
 The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
 (its copy index along its node boxes, outermost first, then its port boxes) is placed by the
 key made of, for each node box of i up to the first whose least slot on i's side is i itself,
