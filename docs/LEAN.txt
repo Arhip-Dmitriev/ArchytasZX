@@ -436,13 +436,22 @@ a Bool side condition and a soundness theorem: perm (path reordered), elim (fact
 (a constraint pivotable at v becomes a row, v substituted out), gather (every constraint
 replaced by 1 + Prod (1 + c), fz_gather) and bcanon v (v determined on the support of the
 first constraint, B (A + B) = 0 checked by normF, becomes the row v + A + B and is substituted
-out; det_bits); run_sound composes a step list
-(constant times 2^twos), final_sound compares two path-free sums with equal rows and phase up to
-the constant term, given the constants' identity. export_proof(left, right, name) writes both
+out; det_bits). final_sound compares two path-free sums with equal rows and phase up to
+the constant term, given the constants' identity.
+
+ArchytasZX/PathSumRules.lean adds the steps omega and omegaConj (head linear coefficient M / 4
+or 3 M / 4, half coefficients elsewhere: factor sqrt 2 zeta_8 or sqrt 2 zeta_8^7, the quotient's
+lift added at 3 M / 4 or M / 4; omega_id), hhGen (quotient z A + B in the next variable z with
+(1 + A)(1 + B) = 0 checked by normF: z := B; hhgen_pick), rem (one-monomial quotient m: the
+terms without y divisible by m dropped) and hhNl (two half-coefficient variables, neither in the
+other's quotient: y' := y + y Q, factor 2), on the shared lemmas summand_pair (the y-sum as
+(1 + ex (y-part)) times the rest), one_add_half and summand_substD. Step lists live there:
+fac per step, run_sound (constant times facs). export_proof(left, right, name) writes both
 path sums as Data literals, each side's trace as a step list with the canonical pivots in
-eliminate's order, the constants' identity by lean_scalar, and
-main : val M cL sL sigma = val M cR sR sigma for every sigma. It raises for a trace step with no
-PathSumSem step and for qudit sums; when either side's constraints need boolean_eliminate, both
+eliminate's order, facL and facR (zeta_8 as om M ^ (M / 8), M a multiple of 8 when an omega
+step occurs), the constants' identity by lean_scalar, and
+main : PSem.val M cL sL sigma = PSem.val M cR sR sigma for every sigma. It raises for a dyadic
+or average step and for qudit sums; when either side's constraints need boolean_eliminate, both
 sides end in gather and bcanon steps at the Boolean pivots. G15 names what is missing.
 
 5. REFUTATIONS
@@ -768,12 +777,11 @@ generator in Lean; cpm_conj states its effect on any network whose entries are c
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
-G15 Path-sum proofs. PathSumSem has the [omega] identities at Q = 0 and 1 as powers of zeta_8
-(omega_e1F0, omega_e1F1, omega_e3F0, omega_e3F1, with om8_four) and the exact head split
-pn_yupd, but no [omega] step yet; it has no step for [HHgen], [Rem], [HHnl] or [Dyadic] and
-no qudit semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines
-traces using them (clifford_relation: omega; amm_tof_3, grover_marked/m01: rem). main is about
+G15 Path-sum proofs. PathSumRules has no step for [Dyadic] or [Average] and there are no qudit
+semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
+using them. main is about
 path sums: the link from a diagram's network value to val of its from_diagram Data (the
 translation lemmas of PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations,
 boundary identification) is not written, so a path_sum EQUAL stays EQUAL_UNCERTIFIED.
-PathSum.lean and PathSumSem.lean check (no sorry) and are in the ArchytasZX root import list.
+PathSum.lean, PathSumSem.lean and PathSumRules.lean check (no sorry) and are in the ArchytasZX
+root import list.

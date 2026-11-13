@@ -11,7 +11,7 @@ import ArchytasZX.Ball
 A path sum over Boolean variables `σ : ℕ → ZMod 2` is `Data`: path variables, phase terms
 `(monomial, k)` worth `k / M` turns, constraints and support rows (F_2 polynomials, sums of
 monomials). `val M c s σ` sums `summand` over the path variables. `elimS`, `hhPivotS`,
-`hhConsS`, `omegaS`, `omegaConjS` and `canonS` compute one rule step, and each `*_sound`
+`hhConsS`, `canonS`, `gatherS` and `bcanonS` compute one rule step, and each `*_sound`
 theorem says the value is unchanged under the step's syntactic side condition, a `Bool`
 checked by `decide`. No lemma enumerates the path variables.
 -/
@@ -1137,79 +1137,6 @@ theorem bcanon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ
         rw [hval]
         exact det_bits _ _ _ hg1 (by rw [← hval]; exact hzero)
       rw [if_neg hr, if_neg hl]
-
-/-! ## Step lists -/
-
-/-- One step of a replayed reduction. -/
-inductive Step where
-  | perm (l : List ℕ)
-  | elim
-  | hhCons
-  | hhPivot
-  | canon (v : ℕ)
-  | gather
-  | bcanon (v : ℕ)
-
-/-- A step's side condition. -/
-def stepOK (M : ℕ) : Step → Data → Bool
-  | .perm l, s => decide (s.path.Perm l)
-  | .elim, s => elimOK s
-  | .hhCons, s => hhConsOK M s
-  | .hhPivot, s => hhPivotOK M s
-  | .canon v, s => canonOK v s
-  | .gather, s => gatherOK s
-  | .bcanon v, s => bcanonOK v s
-
-/-- A step applied. -/
-def stepS (M : ℕ) : Step → Data → Data
-  | .perm l, s => permS l s
-  | .elim, s => elimS s
-  | .hhCons, s => hhConsS s
-  | .hhPivot, s => hhPivotS M s
-  | .canon v, s => canonS M v s
-  | .gather, s => gatherS s
-  | .bcanon v, s => bcanonS M v s
-
-/-- The power of 2 a step multiplies the constant by. -/
-def stepTwo : Step → ℕ
-  | .elim | .hhCons | .hhPivot => 1
-  | _ => 0
-
-/-- Every side condition along a step list. -/
-def runOK (M : ℕ) : List Step → Data → Bool
-  | [], _ => true
-  | st :: sts, s => stepOK M st s && runOK M sts (stepS M st s)
-
-/-- A step list applied. -/
-def run (M : ℕ) : List Step → Data → Data
-  | [], s => s
-  | st :: sts, s => run M sts (stepS M st s)
-
-/-- The power of 2 a step list multiplies the constant by. -/
-def twos : List Step → ℕ
-  | [] => 0
-  | st :: sts => stepTwo st + twos sts
-
-theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2)
-    (h : stepOK M st s = true) : val M c s σ = val M (2 ^ stepTwo st * c) (stepS M st s) σ := by
-  cases st with
-  | perm l => simpa [stepTwo, stepS] using perm_sound M c l s σ h
-  | elim => simpa [stepTwo, stepS] using elim_sound M c s σ h
-  | hhCons => simpa [stepTwo, stepS] using hhCons_sound M c s σ h
-  | hhPivot => simpa [stepTwo, stepS] using hhPivot_sound M c s σ h
-  | canon v => simpa [stepTwo, stepS] using canon_sound M hM c v s σ h
-  | gather => simpa [stepTwo, stepS] using gather_sound M c s σ h
-  | bcanon v => simpa [stepTwo, stepS] using bcanon_sound M hM c v s σ h
-
-theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
-    ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →
-      val M c s σ = val M (2 ^ twos sts * c) (run M sts s) σ
-  | [], s, c, σ, _ => by simp [twos, run]
-  | st :: sts, s, c, σ, h => by
-    simp only [runOK, Bool.and_eq_true] at h
-    rw [step_sound M hM st s c σ h.1, run_sound M hM sts _ _ σ h.2]
-    simp only [twos, run, pow_add]
-    ring_nf
 
 end PSem
 end ArchytasZX

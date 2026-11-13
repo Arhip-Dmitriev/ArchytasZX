@@ -14,7 +14,7 @@
 """Lean output for a path-sum EQUAL. export_pair writes each side's reduction trace as one
 rule-lemma instance per step (ArchytasZX/PathSum.lean) and the canonical forms' equality by rfl.
 export_proof writes the theorem that both sides' path sums have one value at every boundary
-assignment (ArchytasZX/PathSumSem.lean): each side's trace replayed as a step list checked by
+assignment (ArchytasZX/PathSumRules.lean): each side's trace replayed as a step list checked by
 ``decide``, the canonical pivots as canon steps, and the constants' identity by
 ``linear_combination``. Neither enumerates a sum.
 """
@@ -221,21 +221,37 @@ def _data_term(ps: PathSum, m: int) -> str:
     return f"{{ path := {sorted(ps.path)}, phase := [{phase}], cons := [{cons}], rows := [] }}"
 
 
+_HEAD_STEP = {
+    "elim": ".elim",
+    "hh_constraint": ".hhCons",
+    "omega": ".omega",
+    "omega_conj": ".omegaConj",
+}
+"""The PathSumRules step summing out a head variable, per rule."""
+
+_PAIR_STEP = {"hh_pivot": ".hhPivot", "hh_gen": ".hhGen", "hh_nl": ".hhNl"}
+"""The PathSumRules step reading the head two variables, per rule."""
+
+
 def _steps(raw: PathSum, ps: PathSum, order: Sequence[int], boolean: bool) -> list[str]:
     """The PSem.Step list replaying the trace of ``ps``, reduced from ``raw``, then the canon
     steps at ``order`` (gather and bcanon steps when ``boolean``)."""
     cur = sorted(raw.path)
     out: list[str] = []
     for step in ps.trace:
-        if step.rule in ("elim", "hh_constraint"):
-            cur.remove(step.var)
-            out += [f".perm {[step.var, *cur]}", ".elim" if step.rule == "elim" else ".hhCons"]
-        elif step.rule == "hh_pivot" and step.pivot is not None:
-            cur.remove(step.var)
-            cur.remove(step.pivot)
-            out += [f".perm {[step.var, step.pivot, *cur]}", ".hhPivot"]
+        y, z = step.var, step.pivot
+        if step.rule in _HEAD_STEP:
+            cur.remove(y)
+            out += [f".perm {[y, *cur]}", _HEAD_STEP[step.rule]]
+        elif step.rule == "rem":
+            cur = [y, *(v for v in cur if v != y)]
+            out += [f".perm {cur}", ".rem"]
+        elif step.rule in _PAIR_STEP and z is not None:
+            rest = [v for v in cur if v not in (y, z)]
+            out += [f".perm {[y, z, *rest]}", _PAIR_STEP[step.rule]]
+            cur = rest if step.rule == "hh_pivot" else [y, *rest]
         else:
-            raise PathSumUnsupported(f"the rule {step.rule} has no PathSumSem step")
+            raise PathSumUnsupported(f"the rule {step.rule} has no PathSumRules step")
     if boolean:
         return [*out, ".gather", *(f".bcanon {v}" for v in order)]
     return out + [f".canon {v}" for v in order]
@@ -251,6 +267,30 @@ def _const_model(c: Cyclo, k: int) -> sp.Expr:
     )
     root = Rt(2) ** k if k >= 0 else Inv(Rt(2)) ** (-k)
     return sp.expand(value * root)
+
+
+def _fac_model(steps: Sequence[str], m: int) -> sp.Expr:
+    """The product of the steps' PathSumRules factors, zeta_8 written as ``Om(m)^(m / 8)``."""
+    from archytaszx.semantics.lean_scalar import Om, Rt
+
+    out = sp.Integer(1)
+    for st in steps:
+        if st in (".elim", ".hhCons", ".hhPivot", ".hhNl"):
+            out *= 2
+        elif st == ".omega":
+            out *= Rt(2) * Om(m) ** (m // 8)
+        elif st == ".omegaConj":
+            out *= Rt(2) * Om(m) ** (7 * m // 8)
+    return out
+
+
+def _fac_lines(side: str, steps: Sequence[str], m: int, text: str) -> list[str]:
+    """The theorem that side ``side``'s step factors multiply to ``text``."""
+    lines = [f"theorem fac{side} : facs steps{side} = {text} := by"]
+    lines.append(f"  simp only [steps{side}, facs, fac]")
+    if m != 8 and any(st in (".omega", ".omegaConj") for st in steps):
+        lines.append(f"  rw [om_sub {m} 8 {m // 8} (by norm_num) (by norm_num)]")
+    return [*lines, "  ring", ""]
 
 
 def _const_turn(ps: PathSum, m: int, boolean: bool) -> int:
@@ -271,7 +311,7 @@ def _const_turn(ps: PathSum, m: int, boolean: bool) -> int:
 def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     """The Lean file proving that both diagrams' path sums agree at every boundary assignment;
     raises :class:`PathSumUnsupported` when they do not reduce to one canonical form or a
-    trace step has no PathSumSem step."""
+    trace step has no PathSumRules step."""
     from archytaszx.semantics.lean_scalar import Om, Scalars
 
     raw_l, raw_r = from_diagram(left), from_diagram(right)
@@ -287,6 +327,8 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     for ps in (raw_l, raw_r):
         for c in ps.phase.terms.values():
             m = math.lcm(m, c.denominator)
+    if any(st.rule in ("omega", "omega_conj") for st in (*red_l.trace, *red_r.trace)):
+        m = math.lcm(m, 8)
     from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
 
     boolean = any(eliminate(red.constraints, red.boundary) is None for red in (red_l, red_r))
@@ -301,8 +343,7 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         order = _elimination_order(red_l.constraints, red_l.boundary)
     steps_l = _steps(raw_l, red_l, order, boolean)
     steps_r = _steps(raw_r, red_r, order, boolean)
-    two_l = sum(1 for st in steps_l if st in (".elim", ".hhCons", ".hhPivot"))
-    two_r = sum(1 for st in steps_r if st in (".elim", ".hhCons", ".hhPivot"))
+    f_l, f_r = _fac_model(steps_l, m), _fac_model(steps_r, m)
     k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
     sc = Scalars(
         nat=lambda sym: str(sym),
@@ -310,12 +351,12 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         positive=lambda x: "(by norm_num)",
     )
     c_l, c_r = _const_model(raw_l.const, raw_l.sqrt2), _const_model(raw_r.const, raw_r.sqrt2)
-    lhs = sp.Integer(2) ** two_l * c_l * Om(m) ** k_l
-    rhs = sp.Integer(2) ** two_r * c_r * Om(m) ** k_r
+    lhs = f_l * c_l * Om(m) ** k_l
+    rhs = f_r * c_r * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
     ns = f"ArchytasZX.PathSumProof.{name}"
     lines = [
-        "import ArchytasZX.PathSumSem",
+        "import ArchytasZX.PathSumRules",
         "",
         "/-!",
         f"# Path-sum proof `{name}`",
@@ -333,20 +374,21 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         f"def stepsL : List Step := [{', '.join(steps_l)}]",
         f"def stepsR : List Step := [{', '.join(steps_r)}]",
         "",
-        f"theorem consts : (2 : ℂ) ^ {two_l} * {sc.text(c_l)} * om {m} ^ {k_l} =",
-        f"    (2 : ℂ) ^ {two_r} * {sc.text(c_r)} * om {m} ^ {k_r} := by",
+        *_fac_lines("L", steps_l, m, sc.text(f_l)),
+        *_fac_lines("R", steps_r, m, sc.text(f_r)),
+        f"theorem consts : ({sc.text(f_l)}) * {sc.text(c_l)} * om {m} ^ {k_l} =",
+        f"    ({sc.text(f_r)}) * {sc.text(c_r)} * om {m} ^ {k_r} := by",
         f"  have key : {sc.text(lhs)} = {sc.text(rhs)} :=",
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
         "theorem main (σ : ℕ → ZMod 2) :",
-        f"    val {m} {sc.text(c_l)} sL σ = val {m} {sc.text(c_r)} sR σ := by",
+        f"    PSem.val {m} {sc.text(c_l)} sL σ = PSem.val {m} {sc.text(c_r)} sR σ := by",
         f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ (by decide),",
         f"    run_sound {m} (by norm_num) stepsR sR _ σ (by decide)]",
         f"  apply final_sound {m} (by norm_num) _ _ _ _ σ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide)",
-        f"  rw [show twos stepsL = {two_l} from rfl, show twos stepsR = {two_r} from rfl]",
-        "  exact consts",
+        "  simpa only [facL, facR] using consts",
         "",
         f"end {ns}",
         "",
