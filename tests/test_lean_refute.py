@@ -83,6 +83,19 @@ def test_a_point_without_values_falls_back_to_a_sample_point() -> None:
     assert "refutation at d = 5" in export_refutation(left, right, {"d": 5})
 
 
+@pytest.mark.parametrize(
+    "scalar", ["n + 2", "(exp(2*pi*I*(n/4 + 1/8)) + exp(-2*pi*I*(n/4 + 1/8)))/2"]
+)
+def test_a_count_only_in_a_scalar_takes_the_instantiated_value(scalar: str) -> None:
+    left = parse_diagram(
+        "count n\nrepeat n as V: a = Z(1 -> 1, literal 2)\nchain V: a.out0 -> a.in0"
+    )
+    right = parse_diagram(f"count n\nf = Z(1 -> 1, literal 2)\nscalar {scalar}")
+    source = export_refutation(left, right, {"n": 1})
+    assert "the families instantiated at n = 1" in source
+    assert "refutation at n = " not in source
+
+
 def test_agreeing_diagrams_have_no_refutation() -> None:
     left = parse_diagram("a = Z(1 -> 1, d)")
     with pytest.raises(L.NetUnsupported, match="agree"):

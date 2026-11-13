@@ -240,6 +240,9 @@ def _instantiated_refutation(
                     for b in d.bang_boxes.values()
                 ):
                     d = instantiate_symbol(d, m, int(cand[m]))
+            left_over = {m: int(cand[m]) for m in mults if m in _carried_names(d)}
+            if left_over:
+                d = d.substitute(left_over)
             pair.append(expand_concrete_boxes(d))
         if pair[0].bang_boxes or pair[1].bang_boxes:
             continue
@@ -252,6 +255,17 @@ def _instantiated_refutation(
         at = ", ".join(f"{m} = {cand[m]}" for m in mults)
         return src.replace("/-\n", f"/-\n  the families instantiated at {at}\n", 1)
     raise first or NetUnsupported("no sample point instantiates both families")
+
+
+def _carried_names(diagram: Diagram) -> set[str]:
+    """The symbol names in ``diagram``'s scalar, phases and port dimensions."""
+    names = set(diagram.scalar.free_symbols)
+    for node in diagram.nodes.values():
+        for port in (*node.inputs, *node.outputs):
+            names |= port.dim.free_symbols
+        if node.phase is not None:
+            names |= node.phase.free_symbols
+    return names
 
 
 def _lean_name(raw: str) -> str:
