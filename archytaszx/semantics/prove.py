@@ -63,6 +63,8 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
 from archytaszx.algebra.dimension import DimensionError
 from archytaszx.algebra.phase import PhaseError
 from archytaszx.algebra.scalar import Scalar, ScalarError
@@ -269,7 +271,8 @@ def induction_hypothesis(diagram: Diagram, index: str, step_symbol: str) -> Diag
 
 def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagram | None:
     """``diagram`` at ``step_symbol + 1`` with one copy peeled off its one box carrying the
-    index, or None when no single box carries it."""
+    index, or None when no single box carries it; unpeeled when that box's multiplicity has
+    no positive constant term (``b^(k + 1)``) and it is no tree box."""
     value = Mult(step_symbol) + 1
     renamed = _with_scalar_index(rename_multiplicity(diagram, index, value), index, value)
     owners = [
@@ -279,6 +282,10 @@ def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagr
     ]
     if len(owners) != 1:
         return None
+    box = renamed.bang_boxes[owners[0]]
+    constant = sp.expand(box.multiplicity.to_sympy()).as_coeff_Add()[0]
+    if not box.is_tree and not (constant.is_Integer and constant >= 1):
+        return renamed
     return peel_one(renamed, owners[0]).diagram
 
 
