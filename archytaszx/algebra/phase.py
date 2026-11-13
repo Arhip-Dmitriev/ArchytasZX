@@ -666,6 +666,7 @@ class PhaseVector:
             return self
         dim_symbols = self._dim.free_symbols
         dim_mapping: dict[str | Dim, int | Dim] = {}
+        symbolic: dict[str, sp.Expr] = {}
         for key, value in mapping.items():
             name = key if isinstance(key, str) else Phase._phase_symbol_name(key)
             if name not in dim_symbols:
@@ -686,12 +687,18 @@ class PhaseVector:
                         f"got non-integral rational {value}"
                     )
                 dim_mapping[name] = int(value)
+            elif isinstance(value, sp.Expr) and value.free_symbols:
+                symbolic[name] = value
             else:
                 raise PhaseGrammarError(
-                    f"substitution value for dimension symbol {name!r} must be int or "
-                    f"sympy Rational, got {type(value).__name__}"
+                    f"substitution value for dimension symbol {name!r} must be int, "
+                    f"sympy Rational or a symbolic sympy expression, got {type(value).__name__}"
                 )
         new_dim = self._dim.substitute(dim_mapping) if dim_mapping else self._dim
+        if symbolic:
+            expr = new_dim.to_sympy()
+            subs = {s: symbolic[str(s)] for s in expr.free_symbols if str(s) in symbolic}
+            new_dim = Dim.from_sympy(expr.xreplace(subs))
         new_entries = {
             index: phase.substitute(mapping) if names & phase.free_symbols else phase
             for index, phase in self._entries.items()
