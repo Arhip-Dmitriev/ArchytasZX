@@ -28,6 +28,7 @@ from types import MappingProxyType
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim
+from archytaszx.algebra.phase import PhaseVector
 from archytaszx.algebra.scalar import Scalar, ScalarBudgetError
 from archytaszx.diagram.bangbox import (
     BangBox,
@@ -42,7 +43,7 @@ from archytaszx.diagram.bangbox import (
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
-from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+from archytaszx.diagram.generators import W_NODE, X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
@@ -1618,6 +1619,150 @@ def fed_replacement(
     return working
 
 
+def _exact_value(value: complex) -> sp.Expr:
+    """A closed form of ``value`` over the rationals, sqrt 2 and sqrt 3, per part."""
+    parts = [
+        sp.nsimplify(round(part, 12), [sp.sqrt(2), sp.sqrt(3)]) for part in (value.real, value.imag)
+    ]
+    return sp.nsimplify(parts[0] + sp.I * parts[1])
+
+
+def _w_with_weights(dim: Dim, legs: int, weights: Mapping[int, Scalar], scalar: Scalar) -> Diagram:
+    """``scalar`` times W(1 -> ``legs``) after a Z(1 -> 1) with ``weights``."""
+    out = Diagram()
+    phase = PhaseVector(dim, weights=weights) if weights else None
+    gate = out.add_node(Z_SPIDER, [dim], [dim], phase=phase)
+    w = out.add_node(W_NODE, [dim], [dim] * legs)
+    out.add_wire(PortRef(gate, Direction.OUTPUT, 0), PortRef(w, Direction.INPUT, 0))
+    out.set_boundary_inputs([PortRef(gate, Direction.INPUT, 0)])
+    out.set_boundary_outputs([PortRef(w, Direction.OUTPUT, i) for i in range(legs)])
+    out.set_scalar(scalar)
+    return out
+
+
+def _w_body(
+    diagram: Diagram, box: BangBox, inside: PortRef, outs: Sequence[PortRef]
+) -> tuple[Scalar, dict[int, Scalar]] | None:
+    """``(c, w)`` with the copy of ``box`` (input ``inside``, outputs ``outs``) exactly equal to
+    ``c`` W(1 -> len(outs)) after a Z(1 -> 1) with weights ``w``; None when it is not."""
+    from archytaszx.semantics.contract_numeric import contract
+
+    dim = _ref_dim(diagram, inside)
+    if not dim.is_concrete or any(_ref_dim(diagram, r) != dim for r in outs):
+        return None
+    body = _extract(diagram, box.node_scope)
+    id_map = dict(zip(sorted(box.node_scope), sorted(body.nodes), strict=True))
+    body.set_boundary_inputs([_moved_ref(inside, id_map)])
+    body.set_boundary_outputs([_moved_ref(r, id_map) for r in outs])
+    if _all_free_symbols(body):
+        return None
+    d = dim.to_int()
+    try:
+        have = contract(body).tensor.reshape(-1, d)
+        want = contract(_w_with_weights(dim, len(outs), {}, Scalar.one())).tensor.reshape(-1, d)
+    except (ContractError, DenoteError):
+        return None
+    ratios: list[sp.Expr] = []
+    for j in range(d):
+        row = int(abs(want[:, j]).argmax())
+        ratios.append(_exact_value(complex(have[row, j] / want[row, j])))
+    if ratios[0] == 0:
+        return None
+    weights = {j: Scalar(sp.simplify(ratios[j] / ratios[0])) for j in range(1, d)}
+    weights = {j: w for j, w in weights.items() if w != Scalar.one()}
+    candidate = _w_with_weights(dim, len(outs), weights, Scalar(ratios[0]))
+    try:
+        left, right = contract_symbolic_pair(body, candidate)
+    except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError):
+        return None
+    if not compare_symbolic(left, right).matched:
+        return None
+    return Scalar(ratios[0]), weights
+
+
+def w_fused(diagram: Diagram) -> Diagram:
+    """``diagram`` with a top-level node box, fed by one wire from the output ``q`` of a W node
+    and otherwise held by a contiguous run of boundary outputs, whose copy is ``c`` W(1 -> m)
+    after a Z with weights ``w`` (:func:`_w_body`), fused into the W node: the box removed,
+    ``q`` port-boxed ``M m`` times in the run's place, a Z with weights ``w`` before the W node
+    (the W node's only output then ``q``), the scalar times ``(c s)^M`` (``M`` the box's
+    multiplicity, ``s`` its copy scalar); InductionDomainError when there is no such box."""
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        scope = box.node_scope
+        if (
+            not scope
+            or box.parent is not None
+            or box.links
+            or box.is_tree
+            or box.feed is not None
+            or box.pair_of is not None
+            or any(o.parent == box_id or o.pair_of == box_id for o in diagram.bang_boxes.values())
+            or any(r.node_id in scope for r in diagram.boundary_inputs)
+        ):
+            continue
+        cuts = _cut_wires(diagram, scope)
+        if len(cuts) != 1:
+            continue
+        ((inside, far),) = cuts.items()
+        w_node = diagram.nodes[far.node_id]
+        if (
+            inside.direction is not Direction.INPUT
+            or w_node.generator_type is not W_NODE
+            or any(_box_footprint(b) & {far.node_id} for b in diagram.bang_boxes.values())
+        ):
+            continue
+        slots = [i for i, r in enumerate(diagram.boundary_outputs) if r.node_id in scope]
+        if not slots or slots != list(range(slots[0], slots[0] + len(slots))):
+            continue
+        outs = [diagram.boundary_outputs[i] for i in slots]
+        copy_scalar = sp.Integer(1) if box.copy_scalar is None else box.copy_scalar.to_sympy()
+        if box.index is not None and any(str(s) == box.index for s in copy_scalar.free_symbols):
+            continue
+        found = _w_body(diagram, box, inside, outs)
+        if found is None:
+            continue
+        factor, weights = found
+        if weights and w_node.num_outputs != 1:
+            continue
+        fused = diagram.copy()
+        fused.remove_bang_box(box_id)
+        for node_id in sorted(scope):
+            fused.remove_node(node_id)
+        if weights:
+            w_in = PortRef(far.node_id, Direction.INPUT, 0)
+            gate = fused.add_node(
+                Z_SPIDER,
+                [_ref_dim(diagram, w_in)],
+                [_ref_dim(diagram, w_in)],
+                phase=PhaseVector(_ref_dim(diagram, w_in), weights=weights),
+            )
+            source = _partner_of(diagram, w_in)
+            if source is None:
+                fused.set_boundary_inputs(
+                    [
+                        PortRef(gate, Direction.INPUT, 0) if r == w_in else r
+                        for r in fused.boundary_inputs
+                    ]
+                )
+            else:
+                fused.remove_wire(source, w_in)
+                fused.add_wire(source, PortRef(gate, Direction.INPUT, 0))
+            fused.add_wire(PortRef(gate, Direction.OUTPUT, 0), w_in)
+        count = box.multiplicity.to_sympy()
+        fused.add_bang_box(
+            Mult._from_expr(sp.powsimp(sp.expand(count * len(outs)))), port_scope=frozenset({far})
+        )
+        refs = list(diagram.boundary_outputs)
+        refs[slots[0] : slots[-1] + 1] = [far]
+        fused.set_boundary_outputs(refs)
+        fused.set_scalar(
+            Scalar(diagram.scalar.to_sympy() * (factor.to_sympy() * copy_scalar) ** count)
+        )
+        validate_or_raise(fused)
+        return fused
+    raise InductionDomainError("no box is a W fan on one W leg")
+
+
 def discharge_tree_window(
     obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
 ) -> TierOutcome:
@@ -1670,6 +1815,24 @@ def discharge_tree_window(
                     left_peeled=exposed,
                 )
             reasons.append(why)
+        try:
+            fused = w_fused(replaced)
+        except (BangBoxError, InductionDomainError, ValidateError) as exc:
+            reasons.append(f"W fusion: {exc}")
+            continue
+        for target in targets:
+            settled, why = _close_window(fused, target, max_steps)
+            if settled:
+                return TierOutcome(
+                    StepDischarge.TREE_WINDOW,
+                    True,
+                    "peeled the tree's leaf level; the rest is the hypothesis diagram, replaced "
+                    "by the other side's with the leaf level on its leaf run; the leaf copies are "
+                    "a weighted W fused into the W leg feeding them; "
+                    f"{why}",
+                    left_peeled=exposed,
+                )
+            reasons.append(f"W fusion: {why}")
     return TierOutcome(StepDischarge.TREE_WINDOW, False, "; ".join(reasons))
 
 
