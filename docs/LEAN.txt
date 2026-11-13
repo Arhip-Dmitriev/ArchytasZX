@@ -294,6 +294,19 @@ diagrams are the proved networks (plugged into one context for a local contracti
 reports "opaque diagrams, every step an axiom but N symbolic contraction(s) proved over
 networks"; the benchmark runner classes the file as opaque.
 
+A symbolic contraction step whose contracted diagrams carry a bang box or a free multiplicity
+is proved again by the induction rung of decide (base case decided, step case by its step
+ladder, other symbols held at a default sample) on that pair; when every box multiplicity
+reading the one free multiplicity n is n + c (c >= 1), on the pair at n = m - c, m fresh. The
+induction theorem is stated as a lemma fam<i> (its own contraction steps exported the same way,
+two levels deep at most), applied at m = n + c between two instantiation axioms
+
+    axiom inst<j> : ∀ (n : Nat), d<s> (n + c) = d<a> n
+
+and used as the step itself (or, for local_contraction, through net<i> from fam<i>). Boxed
+teleportation_chain and repeater_chain (doubled, symbolic d): the contraction axiom becomes an
+induction whose step is a box-free local contraction proved as C1.main.
+
 
 4.6 Mixed theorems
 
@@ -837,7 +850,11 @@ generator in Lean; cpm_conj states its effect on any network whose entries are c
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
-G15 Path-sum proofs. PathSumRules has no step for [Average] and there are no qudit
+G15 Path-sum proofs. ArchytasZX/PathSumAmp.lean states [Average] and the amplitude-carrying
+steps (AData: atoms (i, f) worth A i where f is 1, over held variables summed outside the
+inner sum; astep_sound and arun_sound for every PSem step, release_sound, adrop_sound,
+aconst_sound, average_sound, afinal_sound, valA_flat), but export_proof and export_net write no
+AData yet, so they still decline traces with [Average] or amplitude atoms. There are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. export_net covers Z, X, F, B and S on dimensions 2^k but not legless spiders,
 weighted spiders or a wire on two boundary ports; it raises for those and the path_sum EQUAL

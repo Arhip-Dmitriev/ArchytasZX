@@ -1052,6 +1052,62 @@ class _Lean:
         self.count = 0
         self.subs: list[str] = []
         self.imports: list[str] = []
+        self.depth = 0
+
+    def inducted(self, t: Theorem, x: Diagram, y: Diagram, binders: Sequence[str]) -> str | None:
+        """A contraction step over boxed diagrams through the induction theorem of
+        :func:`_contraction_induction`, stated as a lemma ``fam<i>`` over its pair: at a shift
+        ``m = n + c`` applied at ``n + c`` between instantiation axioms onto ``x`` and ``y``;
+        the term itself when ``x``, ``y`` are the step's sides, else the axiom ``net<i>`` from
+        a lemma ``fam<j> : x = y`` to the step; None at nesting depth :data:`INDUCTED_DEPTH`
+        or when there is no such theorem."""
+        if self.depth >= INDUCTED_DEPTH:
+            return None
+        found = _contraction_induction(x, y)
+        if found is None:
+            return None
+        proof, shift = found
+        self.depth += 1
+        try:
+            pb = [_var(v) for v in proof.variables]
+            body = self.term(proof)
+        finally:
+            self.depth -= 1
+        lemma = self.fresh("fam")
+        stmt = f"{self.call(proof.lhs)} = {self.call(proof.rhs)}"
+        head = f"∀ ({' '.join(pb)} : Nat), {stmt}" if pb else stmt
+        value = f"fun {' '.join(pb)} => {body}" if pb else body
+        self.decls.append(f"theorem {lemma} : {head} :=\n  {value}")
+        xb = [_var(v) for v in sorted(free_mult_symbols(x) | free_mult_symbols(y))]
+        if shift is None:
+            applied = f"({lemma} {' '.join(pb)})" if pb else lemma
+        else:
+            index, fresh, c = shift
+            at = {fresh: f"({_var(index)} + {c})"}
+            args = [at.get(v, _var(v)) for v in proof.variables]
+            note = f"instantiation at {fresh} = {index} + {c}"
+            inst_l = self.axiom("inst", note, xb, self.call(proof.lhs, at), self.call(x))
+            inst_r = self.axiom("inst", note, xb, self.call(proof.rhs, at), self.call(y))
+            applied = f"({inst_l}).symm.trans (({lemma} {' '.join(args)}).trans ({inst_r}))"
+        if "parts" not in t.inference.data:
+            return applied
+        if shift is not None:
+            lemma = self.fresh("fam")
+            stmt = f"{self.call(x)} = {self.call(y)}"
+            head = f"∀ ({' '.join(xb)} : Nat), {stmt}" if xb else stmt
+            value = f"fun {' '.join(xb)} => {applied}" if xb else applied
+            self.decls.append(f"theorem {lemma} : {head} :=\n  {value}")
+        name = self.fresh("net")
+        lhs, rhs = self.call(t.lhs), self.call(t.rhs)
+        quant = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
+        note = (
+            f"the diagrams are the parts off the two regions, plugged into one context, which "
+            f"{lemma} proves equal"
+        )
+        self.decls.append(
+            f"/-- {_comment(note)} -/\naxiom {name} : (type_of% @{lemma}) → {quant}{lhs} = {rhs}"
+        )
+        return f"({name} {lemma} {' '.join(binders)})" if binders else f"({name} {lemma})"
 
     def contraction(self, t: Theorem, binders: Sequence[str]) -> str | None:
         """A contraction step through a semantic proof of the two contracted diagrams (the
@@ -1060,7 +1116,7 @@ class _Lean:
         diagram pair has a semantic proof."""
         x, y = cast("tuple[Diagram, Diagram]", t.inference.data.get("parts", (t.lhs, t.rhs)))
         if x.bang_boxes or y.bang_boxes or free_mult_symbols(x) or free_mult_symbols(y):
-            return None
+            return self.inducted(t, x, y, binders)
         tag = f"C{len(self.subs) + 1}"
         source = _semantic_pair(x, y)
         if source is None:
@@ -1374,6 +1430,99 @@ def lean(
         ]
         tail = "end ArchytasZX"
     return "\n".join([*header, "", "\n\n".join(out.decls), "", tail, ""])
+
+
+INDUCTED_DEPTH = 2
+"""The deepest nesting of contraction steps re-proved by induction in one opaque export."""
+
+INDUCTED_SAMPLES = 4
+"""How many default samples :func:`_contraction_induction` tries as the induction witness."""
+
+
+def _contraction_induction(
+    x: Diagram, y: Diagram
+) -> tuple[Theorem, tuple[str, str, int] | None] | None:
+    """``x = y`` by :func:`_induction_rung` and no shift; when every box multiplicity reading
+    ``n`` is ``n + c`` (one integer ``c >= 1``), that rung's theorem over both sides at
+    ``n = m - c`` (``m`` fresh) and the shift ``(n, m, c)``; None when neither gives a
+    theorem."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, _all_symbols, apply_clause
+
+    shifted = _offset_index(x, y)
+    if shifted is None:
+        proof = _induction_rung(x, y)
+        return None if proof is None else (proof, None)
+    index, c = shifted
+    taken = _all_symbols(x, y)
+    fresh = next(f"m{i}" for i in range(len(taken) + 1) if f"m{i}" not in taken)
+    back = Clause(index, MULTIPLICITY, SHIFT, a=1, c=-c, fresh=fresh)
+    try:
+        xs, ys = apply_clause(x, back), apply_clause(y, back)
+    except Exception:  # noqa: BLE001
+        return None
+    if free_mult_symbols(xs) | free_mult_symbols(ys) != {fresh}:
+        return None
+    proof = _induction_rung(xs, ys)
+    return None if proof is None else (proof, (index, fresh, c))
+
+
+def _offset_index(x: Diagram, y: Diagram) -> tuple[str, int] | None:
+    """``(n, c)`` when ``n`` is the one free multiplicity of ``x`` and ``y`` and every box
+    multiplicity reading it is ``n + c`` for one integer ``c >= 1``; else None."""
+    names = free_mult_symbols(x) | free_mult_symbols(y)
+    if len(names) != 1:
+        return None
+    (index,) = names
+    offsets = set()
+    for d in (x, y):
+        for box in d.bang_boxes.values():
+            expr = box.multiplicity.to_sympy()
+            if index not in {str(s) for s in expr.free_symbols}:
+                continue
+            const, rest = sp.expand(expr).as_coeff_Add()
+            if str(rest) != index or not const.is_Integer:
+                return None
+            offsets.add(int(const))
+    if len(offsets) != 1:
+        return None
+    (c,) = offsets
+    return (index, c) if c >= 1 else None
+
+
+def _induction_rung(x: Diagram, y: Diagram) -> Theorem | None:
+    """``x = y`` by the induction rung of :func:`~archytaszx.semantics.decide.decide_equal`
+    (base case decided, step case by its step ladder, the kernel theorem built from both, the
+    other symbols held at the first of :data:`INDUCTED_SAMPLES` default samples the oracle
+    evaluates); None when the rung does not settle EQUAL with a kernel theorem of ``x = y``."""
+    from archytaszx.rewrite.engine import DEFAULT_GUARD
+    from archytaszx.semantics import decide as dec
+    from archytaszx.semantics.check import DEFAULT_TOLERANCE
+    from archytaszx.semantics.contract_numeric import DEFAULT_MAX_ELEMENTS
+
+    try:
+        settled = dec._decide_by_induction(
+            x,
+            y,
+            evaluated=dec.sample_grid(x, y)[:INDUCTED_SAMPLES],
+            samples=None,
+            rules=None,
+            guard=DEFAULT_GUARD,
+            max_samples=24,
+            use_symbolic=True,
+            max_depth=2,
+            tolerance=DEFAULT_TOLERANCE,
+            max_elements=DEFAULT_MAX_ELEMENTS,
+            use_saturation=True,
+            saturation_limits=dec.DECIDE_SATURATION_LIMITS,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(settled, str) or settled[0] is not dec.EqualityVerdict.EQUAL:
+        return None
+    proof = settled[3].get("induction_proof")
+    if not isinstance(proof, Theorem) or not (_same(proof.lhs, x) and _same(proof.rhs, y)):
+        return None
+    return proof
 
 
 OPAQUE_NS = "ArchytasZX.Opaque"
