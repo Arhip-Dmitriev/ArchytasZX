@@ -75,6 +75,16 @@ def test_induction_certificates_are_refused() -> None:
         K.check("proof")
 
 
+def test_contraction_checks_the_symbolic_contractions() -> None:
+    """Equal sides give a contraction theorem with an opaque axiom; unequal ones are refused."""
+    chained = K.check(_certificate())
+    theorem = K.contraction(chained.lhs, chained.rhs)
+    assert theorem.inference.kind == "contraction"
+    assert "axiom contraction1 :" in K.lean(theorem, semantic=False)
+    with pytest.raises(K.KernelError, match="contractions differ"):
+        K.contraction(chained.lhs, K.check(_two_sided()).lhs)
+
+
 def _declared(source: str) -> set[str]:
     return set(re.findall(r"^(?:axiom|theorem) (\w+)", source, re.MULTILINE))
 

@@ -300,8 +300,10 @@ completeness of the finite-dimensional ZX-calculus (arXiv:2405.10896), pure.
   - Symbolic multiplicities: a bang box of discards meeting the rest of the diagram at wires
     into Z or X spiders contracts symbolically on the doubled pair (SEMANTICS.txt, section 5):
     induct proves examples/mixed/born_ghz.azx and partial_trace_ghz.azx over n, the step by
-    symbolic contraction, with no re-checkable certificate. A box meeting other nodes at a
-    wire stays outside symbolic contraction. Removing such a box needs a sheet-level rule.
+    symbolic contraction, with no re-checkable certificate; decide's symbolic_contraction
+    verdict on them is a kernel theorem by the contraction inference (PROOFS.txt, section 6).
+    A box meeting other nodes at a wire stays outside symbolic contraction. Removing such a
+    box needs a sheet-level rule.
   - The qufinite injection rule of 6.5 is not registered.
   - Lean: the discard rules are proved as tensor identities (Mixed.lean); a NATIVE
     certificate exports through the Lean-proved normaliser of symbolic sums on the doubled

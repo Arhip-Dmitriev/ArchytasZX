@@ -73,7 +73,7 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         "phase_vs_weight",
         TD.phase_weight_pair,
         {},
-        EqualityVerdict.EQUAL_UNCERTIFIED,
+        EQUAL,
         DecisionMethod.SYMBOLIC_CONTRACTION,
     ),
     ("bialgebra_saturation", TD.bialgebra_pair, {}, EQUAL, DecisionMethod.SATURATION),
@@ -204,7 +204,7 @@ def concrete_pairs(d: int) -> dict[str, tuple[TD.Pair, EqualityVerdict, Decision
         "zero_phase_vector": (TD.zero_phase_pair(dim), EQUAL, NF),
         "phase_vs_weight": (
             TD.phase_weight_pair(dim),
-            EqualityVerdict.EQUAL_UNCERTIFIED,
+            EQUAL,
             DecisionMethod.SYMBOLIC_CONTRACTION,
         ),
         "self_loop": (

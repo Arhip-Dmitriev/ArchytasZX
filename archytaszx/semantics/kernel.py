@@ -22,6 +22,9 @@ rules below construct one:
 * :func:`rule` -- ``d = d'`` for one recorded rewrite step, re-applied by the engine at a
   match the matcher rediscovers in ``d``; a pure rule's step may consume no discard;
 * :func:`iso` -- ``a = b`` when their comparison views are isomorphic;
+* :func:`contraction` -- ``a = b`` when their symbolic contractions agree, every symbol formal;
+  :func:`local_contraction` -- the same for the parts of ``a`` and ``b`` off two regions that
+  read as one diagram through cut wires in the same places;
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
 * :func:`induction` -- ``start = goal`` from a base theorem at index 0, a theorem exposing
   one side's peeled successor at ``k + 1`` as a context around that side at ``k``, and a
@@ -38,7 +41,8 @@ rules below construct one:
 ``ArchytasZX`` library, each rule step an instance of a lemma proved there. Otherwise, or when
 that export does not cover the theorem, the source has no imports: an opaque ``Diagram``
 type, one constant per diagram (a function of its free multiplicities), one axiom per rule
-instance, isomorphism, instantiation at 0, peeling and context plug the kernel checked, and
+instance, isomorphism, algebraic meet, symbolic contraction, instantiation at 0, peeling and
+context plug the kernel checked, and
 the theorem as their composition by ``Eq.trans``, ``Eq.symm``, ``congrArg`` and ``induction``.
 
 :func:`symbolic` proves ``left = right`` for every value of the dimensions and phases by the
@@ -338,6 +342,73 @@ def algebraic(a: Diagram, b: Diagram, cert: numfield.FieldCertificate | None = N
     target.set_scalar(b.scalar)
     step = Theorem(_TOKEN, a, target, Inference("algebraic", data={"field": cert}))
     return trans(step, iso(target, b))
+
+
+@_trace.traced("kernel.contraction")
+def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
+    """``a = b`` when the symbolic contractions of both, every symbol formal, agree."""
+    from archytaszx.algebra.scalar import ScalarBudgetError
+    from archytaszx.semantics.check import compare_symbolic
+    from archytaszx.semantics.contract_symbolic import (
+        SymbolicContractionDomainError,
+        SymbolicContractionUnsupportedError,
+        contract_symbolic,
+    )
+
+    try:
+        left = contract_symbolic(a, max_steps=max_steps)
+        right = contract_symbolic(b, max_steps=max_steps)
+    except (
+        SymbolicContractionUnsupportedError,
+        SymbolicContractionDomainError,
+        ScalarBudgetError,
+    ) as exc:
+        raise KernelError(f"no symbolic contraction: {exc}") from exc
+    comparison = compare_symbolic(left, right)
+    if not comparison.matched:
+        raise KernelError(f"the symbolic contractions differ: {comparison.reason}")
+    return Theorem(_TOKEN, a, b, Inference("contraction"))
+
+
+def _plugged(d: Diagram, region: frozenset[NodeId], hypothesis: Diagram) -> tuple[Diagram, object]:
+    """The part of ``d`` off ``region`` with its cut ends open, ``region`` read as
+    ``hypothesis`` through cut wires; and where the region sits in ``d``'s boundary lists."""
+    from archytaszx.semantics.induction import _copy_side, find_cut_region
+
+    cut = find_cut_region(d, region, hypothesis)
+    if cut is None:
+        raise KernelError("the region is not the hypothesis diagram through cut wires")
+    copy, held = _copy_side(d, cut, d.scalar * hypothesis.scalar**-1)
+    place = {r: (0, i) for i, r in enumerate(cut.inputs)}
+    place.update({r: (1, i) for i, r in enumerate(cut.outputs)})
+    slots = tuple(
+        place[r] for refs in (d.boundary_inputs, d.boundary_outputs) for r in refs if r in place
+    )
+    return copy, (held, slots)
+
+
+@_trace.traced("kernel.contraction")
+def local_contraction(
+    a: Diagram,
+    region_a: frozenset[NodeId],
+    b: Diagram,
+    region_b: frozenset[NodeId],
+    hypothesis: Diagram,
+) -> Theorem:
+    """``a = b`` when ``region_a`` of ``a`` and ``region_b`` of ``b`` read as ``hypothesis``
+    through cut wires in the same places, and the rest of each, cut ends open, meet by
+    :func:`contraction`."""
+    from archytaszx.semantics.induction import _interface
+
+    copy_a, at_a = _plugged(a, region_a, hypothesis)
+    copy_b, at_b = _plugged(b, region_b, hypothesis)
+    if at_a != at_b:
+        raise KernelError("the regions sit in different places of the two diagrams")
+    if _interface(copy_a) != _interface(copy_b):
+        raise KernelError("the parts off the regions have different interfaces")
+    contraction(copy_a, copy_b)
+    data: dict[str, object] = {"region_a": region_a, "region_b": region_b}
+    return Theorem(_TOKEN, a, b, Inference("contraction", data=data))
 
 
 @_trace.traced("kernel.symm")
@@ -824,8 +895,8 @@ def refutation(decision: object, left: Diagram, right: Diagram) -> Refutation:
 
 @_trace.traced("proof.build")
 def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
-    """``left = right`` from a decision's normal-form or saturation certificates or its
-    induction theorem."""
+    """``left = right`` from a decision's normal-form or saturation certificates, its induction
+    theorem, or :func:`contraction` for a symbolic-contraction verdict."""
     from archytaszx.semantics.decide import Decision, DecisionMethod
 
     if not isinstance(decision, Decision):
@@ -851,6 +922,8 @@ def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
             else:
                 raise KernelError("a saturation edge does not continue the path")
         return trans(out, iso(out.rhs, right))
+    if decision.method is DecisionMethod.SYMBOLIC_CONTRACTION:
+        return contraction(left, right)
     raise KernelError(f"a {decision.method.value} verdict carries no re-checkable proof")
 
 
@@ -930,6 +1003,13 @@ class _Lean:
         if inf.kind == "iso":
             note = "isomorphic comparison views"
             return self.axiom("iso", note, binders, self.call(t.lhs), self.call(t.rhs))
+        if inf.kind in ("algebraic", "contraction"):
+            note = (
+                "equal values in a checked number field"
+                if inf.kind == "algebraic"
+                else "symbolic contractions agree, every symbol formal"
+            )
+            return self.axiom(inf.kind, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind == "symm":
             inner = self.term(inf.premises[0])
             return inner if inner == "rfl" else f"({inner}).symm"
@@ -1105,8 +1185,8 @@ def lean(
     header = [
         "/-",
         "  ArchytasZX proof export. Each axiom states one rewrite-rule instance, isomorphism,",
-        "  instantiation, peeling or context plug the ArchytasZX kernel checked; Lean checks",
-        "  how they compose.",
+        "  algebraic meet, symbolic contraction, instantiation, peeling or context plug the",
+        "  ArchytasZX kernel checked; Lean checks how they compose.",
         *notes,
         "-/",
         "",

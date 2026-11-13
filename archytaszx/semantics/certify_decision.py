@@ -56,7 +56,9 @@ def pair_proof(
     describe: Callable[[Diagram], str] | None = None,
 ) -> tuple[ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | None, str]:
     """A Lean-checkable proof of ``left = right`` from ``decision``: its own certificates, else
-    the normaliser of symbolic sums, else a search; None and the three reasons when all fail."""
+    the normaliser of symbolic sums, else a search; None and the three reasons when all fail. A
+    symbolic-contraction verdict tries the normaliser and the search before the kernel's
+    :func:`~archytaszx.semantics.kernel.contraction`."""
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         forward, backward = decision.certificates
         if forward.initial is left and backward.initial is right:
@@ -80,11 +82,14 @@ def pair_proof(
                 return kernel.Symbolic(left, right, export_net(left, right)), ""
         except (PathSumError, ScalarUnsupported) as exc:
             return None, f"path_sum network export: {exc}"
-    try:
-        with _trace.span("decide.proof.kernel"):
-            return kernel.from_decision(decision, left, right), ""
-    except kernel.KernelError as exc:
-        why_kernel = str(exc)
+    contracted = decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
+    why_kernel = ""
+    if not contracted:
+        try:
+            with _trace.span("decide.proof.kernel"):
+                return kernel.from_decision(decision, left, right), ""
+        except kernel.KernelError as exc:
+            why_kernel = str(exc)
     try:
         with _trace.span("decide.proof.symbolic"):
             return kernel.symbolic(left, right, describe=describe), ""
@@ -94,6 +99,12 @@ def pair_proof(
         outcome = prove(left, right)
     if outcome.proved:
         return outcome, ""
+    if contracted:
+        try:
+            with _trace.span("decide.proof.kernel"):
+                return kernel.from_decision(decision, left, right), ""
+        except kernel.KernelError as exc:
+            why_kernel = str(exc)
     return None, f"kernel: {why_kernel}; normaliser: {why_symbolic}; search: {outcome.reason}"
 
 

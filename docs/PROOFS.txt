@@ -109,9 +109,9 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             multiplicity index: EQUAL. Induction proves EQUAL only from base 0.
                             The step is tried left to right, then right to left; nesting is
                             bounded by max_depth. A step case settled by uniform rewrite,
-                            induction rewrite, chain_window or tree_window gives the verdict a
-                            kernel theorem when its pieces check (Decision.induction_proof,
-                            section 6); one settled by symbolic contraction gives none.
+                            induction rewrite, symbolic contraction, chain_window or
+                            tree_window gives the verdict a kernel theorem when its pieces
+                            check (Decision.induction_proof, section 6).
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -536,9 +536,22 @@ The induction rung of decide_equal builds Decision.induction_proof itself
   tree_window           peeled successor exposed (refl), its residual through cut wires
                         (chain) or without the fed box (tree) as the region; the step from the
                         replaced diagram to the other peeled successor by iso, else by their
-                        normal forms meeting; the start side tried first, then the goal side
-  symbolic contraction  none; the Lean side has no induction over multiplicities for a
-                        symbolic step
+                        normal forms meeting, else by local_contraction over the two regions,
+                        else by contraction; the start side tried first, then the goal side
+  symbolic contraction  an induction theorem over the chain's cut region, the tree's unfed
+                        residual or a closed region, whichever the peeled successor admits; the
+                        step by iso, else local_contraction, else contraction
+
+An induction-rewrite step whose peeled copies have no derivation is the kernel's contraction of
+the replaced diagram and the other peeled successor.
+
+The kernel inference contraction(a, b) re-runs contract_symbolic on both sides, every symbol
+formal, and requires compare_symbolic to match (Inference "contraction"); local_contraction(a,
+region_a, b, region_b, hypothesis) requires both regions to read as hypothesis through cut wires
+(find_cut_region) in the same boundary places and contracts only the parts off the regions,
+their cut ends open. from_decision reads a SYMBOLIC_CONTRACTION decision as contraction(left,
+right); Decision.proof tries the normaliser and the search before it. The opaque Lean export
+states each contraction as an axiom.
 
 When no theorem is built the verdict's proof comes from the later builders of Decision.proof
 (the normaliser, then search) as before.
@@ -554,7 +567,7 @@ From least to most independent of the engine:
   2. A replayed certificate: trusts the rule definitions and the matcher, but re-derives every
      step.
   3. A kernel theorem: trusts the kernel's inference rules and the rule implementations it
-     re-applies.
+     re-applies; a contraction inference also trusts contract_symbolic.
   4. A Lean proof over the tensor-network semantics: trusted are only Lean, Mathlib, the
      bundled library's definitions, and the translation of a diagram into a network. Every rule
      is a lemma proved in Lean; any step without one is an explicit axiom named unproved_*.
