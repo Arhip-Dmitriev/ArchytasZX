@@ -94,6 +94,7 @@ UNSUPPORTED: dict[str, str] = {
     "mixed_diagram": "a mixed diagram",
     "hadamard_arity": "a hadamard vertex of arity other than 2",
     "published_once": "published proofs are checked once, at their stated size",
+    "stated_outside": "the published proof's stated size lies outside the domain",
     "proof_file_missing": " proof file ",
     "not_installed": "not installed",
 }
@@ -343,7 +344,8 @@ def _rival(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str, str]:
         return oc, "rival", "rival.no_verdict", str(check.get("equivalence") or "")
     if status == "timeout":
         cause = check.get("limit") or ("wall" if "detail" not in check else "cpu")
-        return "timeout", "rival", f"limit.rival_{cause}", detail
+        code = "limit.stage_cpu" if cause == "stage_cpu" else f"limit.rival_{cause}"
+        return "timeout", "rival", code, detail
     if status == "oom":
         return "oom", "rival", "memory.rival", detail
     cause = _frame_cause(tool, detail)

@@ -16,7 +16,9 @@
 
 Reads every RAW_DIR/*.jsonl (never writes there), gives each run record the classifier's
 fields (F records from FALSE_SET for invalid_point), writes all records to OUT_JSONL and prints
-the outcome counts per tool before and after. ``--journal`` marks a worker that died with exit
+the outcome counts per tool before and after, then the units with K reached. An adapter's
+``rederive`` recomputes its logged result first; a CHECK_ONCE tool's units are recomputed from
+their runs (:func:`units`). ``--journal`` marks a worker that died with exit
 143 as ``journal_oom_kill`` when a systemd user-scope "Failed with result 'oom-kill'" journal
 entry lies from 10 s before to 2 s after its record's ``finished`` (the record predates the
 worker's own oom_kill report).
@@ -38,26 +40,31 @@ WINDOW = 10.0
 AFTER = 2.0
 
 
-def journal_oom_times() -> list[float]:
-    """Sorted times of every user-scope OOM-kill failure in the journal."""
-    out = subprocess.run(
-        [
-            "journalctl",
-            "--user",
-            "-o",
-            "short-unix",
-            "--no-pager",
-            "-g",
-            "Failed with result 'oom-kill'",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout
+def journal_oom_times(since: float | None = None, scope: str | None = None) -> list[float]:
+    """Sorted times of every user-scope OOM-kill failure in the journal (from ``since``, a Unix
+    time, and of scopes whose name contains ``scope``, when given); empty when journalctl is
+    missing."""
+    cmd = ["journalctl", "--user", "-o", "short-unix", "--no-pager"]
+    if since is not None:
+        cmd += ["--since", f"@{int(since)}"]
+    try:
+        out = subprocess.run(
+            [*cmd, "-g", "Failed with result 'oom-kill'"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
     times = []
     for ln in out.splitlines():
         head = ln.split(" ", 1)[0]
-        if ".scope:" in ln and head.replace(".", "", 1).isdigit():
+        if (
+            ".scope:" in ln
+            and head.replace(".", "", 1).isdigit()
+            and (scope is None or scope in ln)
+        ):
             times.append(float(head))
     return sorted(times)
 
@@ -66,6 +73,18 @@ def oom_near(times: list[float], t: float) -> bool:
     """Whether an OOM-kill time lies in [t - WINDOW, t + AFTER]."""
     i = bisect.bisect_left(times, t - WINDOW)
     return i < len(times) and times[i] <= t + AFTER
+
+
+def journal_oom(rec: dict[str, Any], times: list[float]) -> bool:
+    """Whether a worker that died with exit 143 and no kill source has an OOM-kill journal
+    entry near its ``finished`` (:func:`oom_near`)."""
+    return (
+        rec.get("exit") == 143
+        and rec.get("kill") in (None, "exit 143")
+        and rec.get("raw_outcome", rec.get("outcome")) == "error"
+        and "killed_in" in rec
+        and oom_near(times, float(rec.get("finished") or 0))
+    )
 
 
 def load(raw: Path) -> list[dict[str, Any]]:
@@ -90,16 +109,48 @@ def reclassify(
         base = {**r, "outcome": r.get("raw_outcome", r.get("outcome"))}
         for k in ("stage", "cause", "cause_message", "raw_outcome", "point_invalid"):
             base.pop(k, None)
-        if (
-            times is not None
-            and base.get("exit") == 143
-            and base.get("kill") is None
-            and base.get("outcome") == "error"
-            and oom_near(times, float(base.get("finished") or 0))
-        ):
+        if times is not None and journal_oom(base, times):
             base["journal_oom_kill"] = True
+        hook = getattr(_adapter(str(base["tool"])), "rederive", None)
+        if hook is not None:
+            base = hook(base)
         out.append(outcomes.reclassify_record(base, insts, falses))
+    return units(out)
+
+
+def _adapter(tool: str) -> Any:
+    """The adapter module of ``tool``, None for a name outside benchmarks.tools."""
+    from benchmarks import tools
+
+    return tools.adapter(tool) if tool in tools.NAMES else None
+
+
+def units(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``recs`` with the unit record of every CHECK_ONCE tool recomputed from its runs: K = 1,
+    one success when a run of the unit is ok."""
+    ok: set[tuple[Any, ...]] = set()
+    for r in recs:
+        if not r.get("unit") and "tool" in r and r.get("outcome") == "ok":
+            ok.add((r.get("config"), r.get("equation"), r.get("source"), r["tool"]))
+    out = []
+    for r in recs:
+        mod = _adapter(str(r.get("tool"))) if r.get("unit") else None
+        if mod is None or not getattr(mod, "CHECK_ONCE", False) or r.get("unsupported"):
+            out.append(r)
+            continue
+        hit = (r.get("config"), r.get("equation"), r.get("source"), r["tool"]) in ok
+        out.append({**r, "K": 1, "successes": int(hit)})
     return out
+
+
+def unit_counts(recs: list[dict[str, Any]]) -> dict[str, Counter[str]]:
+    """Per tool, the supported units with K reached and not reached."""
+    acc: dict[str, Counter[str]] = {}
+    for r in recs:
+        if r.get("unit") and not r.get("unsupported"):
+            hit = r.get("successes") == r.get("K")
+            acc.setdefault(r["tool"], Counter())["K_reached" if hit else "K_not_reached"] += 1
+    return acc
 
 
 def counts(recs: list[dict[str, Any]], field: str = "outcome") -> dict[str, Counter[str]]:
@@ -137,6 +188,11 @@ def main() -> None:
         b, n = before.get(tool, Counter()), after[tool]
         cells = [f"{k}={b[k]}->{n[k]}" for k in names if b[k] or n[k]]
         print(f"{tool}: " + ", ".join(cells))
+    ub, ua = unit_counts(recs), unit_counts(new)
+    for tool in sorted(ua):
+        b, n = ub.get(tool, Counter()), ua[tool]
+        cells = [f"{k}={b[k]}->{n[k]}" for k in ("K_reached", "K_not_reached")]
+        print(f"{tool} units: " + ", ".join(cells))
 
 
 if __name__ == "__main__":

@@ -13,9 +13,10 @@
 
 """Published-proofs adapter, B1 only: for a subject with a published machine-checked proof, the
 proof files re-checked by their own checker (coqc with the project's _CoqProject load paths, in
-the opam root of setup_rivals.sh), timed, with their lines and bytes. Proofs are at the size
-their authors state, so only the symbolic run is made. The verdict is equal when every file is
-accepted."""
+the opam root of setup_rivals.sh), timed, with their lines and bytes. The check runs once
+(CHECK_ONCE, K = 1): the symbolic run, or the stated point (:func:`stated`) of a subject without
+a symbolic version. The verdict is equal when some file is accepted; when none is, the outcome
+follows the files' failures (:func:`summary`)."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from benchmarks import points
 from benchmarks.tools import common, rival
 
 COQ_HOME = Path(
@@ -57,6 +59,49 @@ PROOFS: dict[str, list[tuple[str, str]]] = {
     "bell_state": [("VyZX", "src/Examples/Bell.v")],
     "qudit_swap": [("VyZX", "src/Examples/ThreeCNOTs.v")],
 }
+CHECK_ONCE = True
+STATED_N: dict[str, int] = {"repetition_code": 2}
+STATED_D = 2
+
+
+def stated(inst: Any, cfg: dict[str, Any]) -> points.Point | None:
+    """The proof's stated point: d = STATED_D, n from STATED_N (the proof's fixed size) or the
+    least domain n (a proof for every n)."""
+    return points.stated(inst, cfg, STATED_N.get(inst.subject.id), STATED_D)
+
+
+def summary(files: list[dict[str, Any]]) -> tuple[str, str, str | None]:
+    """(status, verdict, limit) of the files' checks: ok and equal when some file is accepted;
+    else timeout (limit stage_cpu) when every file timed out, oom when one ran out of memory,
+    error otherwise."""
+    if any(f.get("accepted", f.get("status") == "ok") for f in files):
+        return "ok", "equal", None
+    statuses = {f.get("status") for f in files}
+    if statuses == {"timeout"}:
+        return "timeout", "unknown", "stage_cpu"
+    if "oom" in statuses:
+        return "oom", "unknown", None
+    return "error", "unknown", None
+
+
+def rederive(rec: dict[str, Any]) -> dict[str, Any]:
+    """A logged run record with its check status, verdict and outcome recomputed from its
+    files by :func:`summary`; records without files unchanged."""
+    check = (rec.get("stages") or {}).get("check") or {}
+    if not check.get("files"):
+        return rec
+    status, verdict, lim = summary(check["files"])
+    check = {**check, "status": status}
+    if lim:
+        check["limit"] = lim
+    oc = common.verdict_outcome(bool(rec.get("truth")), status, verdict)
+    return {
+        **rec,
+        "stages": {**rec["stages"], "check": check},
+        "verdict": verdict,
+        "outcome": oc,
+        "wrong": oc == "wrong",
+    }
 
 
 SWITCH = {"CoqQ": "coqq", "SQIR-2023": "sqir23"}
@@ -103,10 +148,11 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     why = supports(inst, None)
     if why:
         return common.unsupported(why)
-    if job.get("point") is not None:
+    point = job.get("point")
+    if point is not None and tuple(point) != stated(inst, job["config"]):
         return common.unsupported("published proofs are checked once, at their stated size")
     limit = float(job["config"]["stages"]["timeout_seconds"])
-    files, cpu, wall, ok, detail = [], 0.0, 0.0, True, ""
+    files, cpu, wall, detail = [], 0.0, 0.0, ""
     path0 = os.environ.get("PATH", "")
     c0 = time.process_time()
     for project, rel in PROOFS[inst.subject.id]:
@@ -123,7 +169,6 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         cpu += res.get("cpu", 0.0)
         wall += res.get("wall", 0.0)
         accepted = res["status"] == "ok" and res.get("returncode") == 0
-        ok &= accepted
         if not accepted:
             detail = (res.get("detail") or res.get("stderr") or res.get("stdout", ""))[-300:]
         files.append(
@@ -134,18 +179,22 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
                 "bytes": len(text),
                 "cpu": res.get("cpu"),
                 "status": res["status"],
+                "accepted": accepted,
             }
         )
     prep = time.process_time() - c0 - cpu
+    status, verdict, lim = summary(files)
     res = {
-        "status": "ok",
-        "verdict": "equal" if ok else "unknown",
+        "status": status,
+        "verdict": verdict,
         "cpu": cpu,
         "wall": wall,
         "files": files,
         "proof_lines": sum(f["lines"] for f in files),
         "proof_bytes": sum(f["bytes"] for f in files),
     }
+    if lim:
+        res["limit"] = lim
     if detail:
         res["detail"] = detail
     return rival.finish(

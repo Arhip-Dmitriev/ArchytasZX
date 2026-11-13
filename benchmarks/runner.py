@@ -46,6 +46,7 @@ STAGE_MARK = "@@STAGE "
 RESULT_MARK = "@@RESULT "
 OOMKILL_MARK = "@@OOMKILL "
 SPANS_MARK = "@@SPANS "
+JOURNAL_WAIT = 3.0
 CALIBRATION = """@rhs =
     dim d
     count n
@@ -221,6 +222,22 @@ def killed_status(timer: bool, code: int, oom_rise: int) -> tuple[str, str]:
     return "error", f"exit {code}"
 
 
+def _journal_oom(pid: int, started: float) -> bool:
+    """Whether the journal shows an OOM-kill failure of the worker's scope (run-p<pid>-*)
+    since its start (``started``, a perf_counter time), polled for up to JOURNAL_WAIT
+    seconds."""
+    from benchmarks import reclassify
+
+    t0 = time.time() - (time.perf_counter() - started)
+    deadline = time.perf_counter() + JOURNAL_WAIT
+    while True:
+        if reclassify.journal_oom_times(since=t0 - 1, scope=f"run-p{pid}-"):
+            return True
+        if time.perf_counter() >= deadline:
+            return False
+        time.sleep(0.5)
+
+
 def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
     """One worker process on ``job``: its result, or the stage it was killed in."""
     st = ctx.cfg["stages"]
@@ -310,6 +327,9 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         result["process_wall"] = wall
         return result
     status, kill = killed_status(killed.is_set(), code, oom_rise)
+    term = code in (143, -signal.SIGTERM)
+    if status == "error" and term and ctx.cgroup and _journal_oom(proc.pid, w0):
+        status, kill = "oom", "cgroup oom_kill"
     out: dict[str, Any] = {
         "outcome": status,
         "killed_in": stage,
@@ -329,6 +349,15 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
 
 def _success(rec: dict[str, Any]) -> bool:
     return rec.get("outcome") == "ok"
+
+
+def _published_once(rec: dict[str, Any]) -> bool:
+    """Whether a logged run is a check-once tool's refusal of a point (re-run on resume)."""
+    return (
+        rec.get("outcome") == "unsupported"
+        and (rec.get("unsupported_code") or outcomes.unsupported_code(str(rec.get("detail") or "")))
+        == "published_once"
+    )
 
 
 def _main_cpu(rec: dict[str, Any]) -> float | None:
@@ -368,8 +397,8 @@ class UnitRun:
             repeat,
             trace,
         )
-        if k in self.ctx.done:
-            old = self.ctx.done[k]
+        old = self.ctx.done.get(k)
+        if old is not None and not _published_once(old):
             return old if "cause" in old else self.classify(old)
         if _stop.is_set():
             raise InterruptedError
@@ -452,7 +481,11 @@ class UnitRun:
         from benchmarks import tools
 
         trace = bool(self.cfg["trace"]["enabled"])
-        why = tools.adapter(tool).supports(self.inst, None)
+        adapter = tools.adapter(tool)
+        why = adapter.supports(self.inst, None)
+        if why is None and getattr(adapter, "CHECK_ONCE", False):
+            self.check_once(unit_key, adapter, trace)
+            return
         if why is not None:
             self._finish(
                 unit_key,
@@ -555,6 +588,42 @@ class UnitRun:
             },
         )
 
+    def check_once(self, unit_key: str, adapter: Any, trace: bool) -> None:
+        """The single check of a CHECK_ONCE tool, K = 1: the symbolic run when the instance has
+        one, else the adapter's stated point."""
+        p: points.Point | None = None
+        if self.cfg["points"]["symbolic"] and subject.has_symbolic(self.inst):
+            phase = "symbolic"
+        else:
+            p, phase = adapter.stated(self.inst, self.cfg), "stated"
+            if p is None:
+                why = "the published proof's stated size lies outside the domain"
+                self._finish(
+                    unit_key,
+                    {
+                        "K": 1,
+                        "unsupported": why,
+                        "unsupported_code": outcomes.unsupported_code(why),
+                        "successes": 0,
+                    },
+                )
+                return
+        rec = self.run(p, 0, trace, phase)
+        ok = _success(rec)
+        if ok:
+            self.repeats(p, rec, phase)
+        row = [{"point": p, "outcome": rec.get("outcome"), "phase": phase}]
+        self._finish(
+            unit_key,
+            {
+                "K": 1,
+                "successes": int(ok),
+                "failures": [] if ok or not outcomes.counted(rec) else row,
+                "skipped": [] if ok or outcomes.counted(rec) else row,
+                "region_exhausted": False,
+            },
+        )
+
     def _finish(self, unit_key: str, fields: dict[str, Any]) -> None:
         rec = {
             "key": unit_key,
@@ -637,12 +706,21 @@ def units_of(cfg: dict[str, Any], false_records: list[dict[str, Any]]) -> list[t
 
 def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, Any]]) -> set[str]:
     """The unit keys of finished F units whose unit record predates the differs check and
-    that ran a point where their pair is equal."""
+    that ran a point where their pair is equal, and of a CHECK_ONCE tool's units with K other
+    than 1."""
+    from benchmarks import tools
     from benchmarks.differs import differs
 
     falses = {f"{r['equation']}!": r for r in false_records if r.get("kind") is not None}
     out: set[str] = set()
+    once: dict[str, bool] = {}
     for rec in done.values():
+        tool = str(rec.get("tool"))
+        if rec.get("unit") and tool in tools.NAMES and tool not in once:
+            once[tool] = bool(getattr(tools.adapter(tool), "CHECK_ONCE", False))
+        if rec.get("unit") and once.get(tool) and rec.get("K") != 1:
+            out.add(rec["key"])
+            continue
         false = falses.get(rec.get("equation", ""))
         if rec.get("unit") or false is None or rec.get("d") is None:
             continue

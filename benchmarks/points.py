@@ -83,6 +83,21 @@ def axes(
     return Axes(n_lo, n_hi, d_lo, d_hi, dom.has_n, dom.has_d, lambda p: differs(false, p[0], p[1]))
 
 
+def stated(inst: Any, cfg: dict[str, Any], n: int | None, d: int) -> Point | None:
+    """The point of a published proof's stated size (n, d) in ``inst``'s domain: n dropped for a
+    subject without a size parameter, ``n`` None (a proof for every n) read as the least domain
+    n of the schedule's range; None when the point lies outside the domain."""
+    ax = axes(inst, cfg)
+    if ax.n_lo is None:
+        n = None
+    elif n is None:
+        n = _next_n(ax, ax.n_lo)
+        if n is None:
+            return None
+    p = (n, d)
+    return p if ax.contains(p) else None
+
+
 def seed(base: int, equation: str, tool: str) -> int:
     """The schedule seed derived from (base, equation, tool)."""
     h = hashlib.sha256(f"{base}|{equation}|{tool}".encode()).digest()

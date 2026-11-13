@@ -527,15 +527,24 @@ def false_records(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def classified(
     recs: list[dict[str, Any]], falses: dict[str, dict[str, Any]], catalogue: str
 ) -> list[dict[str, Any]]:
-    """Every run record given outcomes.classify's fields when it has none; unit records
-    unchanged."""
-    from benchmarks import outcomes
+    """Every run record given outcomes.classify's fields when it has none, and reclassified as
+    a memory kill when reclassify.journal_oom finds an OOM-kill journal entry for it; unit
+    records unchanged."""
+    from benchmarks import outcomes, reclassify
 
     insts = outcomes.instances(catalogue)
-    return [
-        r if r.get("unit") or "cause" in r else outcomes.reclassify_record(r, insts, falses)
-        for r in recs
-    ]
+    times = reclassify.journal_oom_times()
+    out = []
+    for r in recs:
+        if not r.get("unit") and times and reclassify.journal_oom(r, times):
+            base = {**r, "outcome": r.get("raw_outcome", r.get("outcome"))}
+            for k in ("stage", "cause", "cause_message", "raw_outcome"):
+                base.pop(k, None)
+            r = outcomes.reclassify_record({**base, "journal_oom_kill": True}, insts, falses)
+        elif not r.get("unit") and "cause" not in r:
+            r = outcomes.reclassify_record(r, insts, falses)
+        out.append(r)
+    return out
 
 
 def causes_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

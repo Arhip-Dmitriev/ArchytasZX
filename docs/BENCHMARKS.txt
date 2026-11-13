@@ -730,7 +730,13 @@ re-reads logged records without re-running them and writes them, classified afre
 (outside RAW_DIR, which it never writes), printing the outcome counts per tool before and after.
 --journal maps a worker that died with exit 143 to oom (kill.cgroup_oom_kill) when the user
 journal has a scope's "Failed with result 'oom-kill'" from 10 s before to 2 s after the record's
-finish time; records written before the worker reported its oom_kill rise need it.
+finish time; records written before the worker reported its oom_kill rise need it. aggregate
+applies the same journal test to every record, and the runner, when a worker in a scope ends
+with exit 143 and no kill source, waits up to 3 s for its own scope's (run-p<pid>-*) OOM-kill
+journal entry and records the kill as cgroup oom_kill. reclassify also recomputes an adapter's
+logged result through its rederive hook (published_proofs: the verdict from its files) and a
+CHECK_ONCE tool's units (K = 1, one success when a run of the unit is ok), and prints the units
+with K reached before and after.
 
 
 11. TOOLS
@@ -822,7 +828,12 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           state, teleportation, three-CNOT SWAP; CoqQ b169ea4 (Coq 8.18.0, mathcomp
                           2.2): example/coqq_paper/example.v for QFT, phase estimation, HHL, hidden
                           linear function, Grover. Timed, with proof lines and bytes. QBricks
-                          fetched, not mapped
+                          fetched, not mapped. Checked once (CHECK_ONCE, K = 1): the symbolic
+                          run, or for a subject without one the stated point (d = 2, n the
+                          proof's fixed size, the three-qubit code's n = 2, else the least domain
+                          n); every other point is unsupported (published_once). Equal when some
+                          file is accepted; when none is, timeout (limit.stage_cpu) if every
+                          file timed out, oom if one ran out of memory, else error
 
 Every rival is built by benchmarks/tools/setup_rivals.sh (pinned commits and versions); until
 then each instance is recorded unsupported with "not installed". A tool declaring DIMENSIONS
