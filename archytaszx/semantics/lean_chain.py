@@ -701,4 +701,142 @@ def _link_lines(
     return out
 
 
-__all__ = ["export_chain"]
+def export_tree(
+    bases: tuple[Diagram, Diagram],
+    copies: Sequence[tuple[Diagram, Diagram]],
+    leaf: int,
+    root: int,
+    kids: Sequence[int],
+    name: str = "main",
+) -> str:
+    """Lean 4 source proving two tree families equal after every number of copies
+    (ArchytasZX/TreeInduct.lean): ``bases`` the two networks before any copy, boundary position
+    ``leaf`` the first plug; ``copies`` one period of copy pairs, boundary position ``root`` the
+    copy's parent port and ``kids`` its child ports; copy ``n`` plugged in heap order (onto
+    child ``(n - 1) mod b`` of copy ``(n - 1) / b``), so depth ``k`` is ``(b^k - 1) / (b - 1)``
+    copies; each pair proved equal by its path sums and ``tree_equal`` for every count; raises
+    :class:`PathSumUnsupported` outside that class."""
+    names = ["baseEq", *("copyEq" for _ in copies)]
+    bodies, phases, qudit = _bodies([(bases[0], bases[1]), *copies], names)
+    base, cbodies = bodies[0], bodies[1:]
+    if qudit:
+        dims, labs = str(base.m), {}
+    else:
+        labs = {k: v for body in bodies for k, v in body.labs.items()}
+        ks = set(labs.values())
+        if len(ks) > 1:
+            raise PathSumUnsupported("the tree export needs one wire dimension")
+        dims = f"2 ^ {ks.pop() if ks else 1}"
+    first = copies[0][0]
+    n_copy = len(first.boundary_outputs) + len(first.boundary_inputs)
+    r = 0
+    target = {j: W + _FREE + j for j in range(n_copy)}
+    target[root] = r
+    pis = []
+    for body in cbodies:
+        tgt = dict(target)
+        internal = [x for x in body.labs if x >= n_copy]
+        for x in internal:
+            tgt[x] = W + x
+        pis.append(_relabel(set(range(n_copy)) | set(internal), tgt))
+    period = len(copies)
+    ns = f"ArchytasZX.TreeProof.{name}"
+    sem = "QSem" if qudit else "PSem"
+    lines = [
+        "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumDigits",
+        "import ArchytasZX.TreeInduct",
+        "",
+        "/-!",
+        f"# Tree families `{name}`",
+        "",
+        "Both sides' networks before any copy and one period of copies proved equal by path sums,",
+        "the copies relabelled onto the tree labels, and `tree_equal` for every number of copies",
+        "in heap order.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        f"open ArchytasZX ArchytasZX.{sem}",
+        "",
+        *(QNET_OPTIONS if qudit else NET_OPTIONS),
+        "",
+        *([f"instance : Fact (Nat.Prime {base.m}) := ⟨by norm_num⟩", ""] if qudit else []),
+        *net_env(phases, labs, dims, base.m),
+        "theorem hD : ∀ x y, labDim E x = labDim E y := fun _ _ => rfl",
+        "",
+        "namespace Base",
+        "",
+        *base.lines,
+        "end Base",
+        "",
+    ]
+    for j, body in enumerate(cbodies):
+        lines += [f"namespace Copy{j}", "", *body.lines, f"end Copy{j}", ""]
+    lines += [
+        f"def W : ℕ := {W}",
+        f"def r : ℕ := {r}",
+        f"def leaf0 : ℕ := {leaf}",
+        f"def kids : List ℕ := {[W + _FREE + j for j in kids]}",
+        "def p : ℕ → ℕ := heapPlug W leaf0 kids",
+        *(f"def πC{j} : List (ℕ × ℕ) := {pi}" for j, pi in enumerate(pis)),
+        "",
+        "def cOt : List Net := ["
+        + ", ".join(f"Copy{j}.NL.mapL (ren πC{j})" for j in range(period))
+        + "]",
+        "def cXt : List Net := ["
+        + ", ".join(f"Copy{j}.NR.mapL (ren πC{j})" for j in range(period))
+        + "]",
+        "noncomputable def aOt : List ℂ := [" + ", ".join(f"({b.s_l})" for b in cbodies) + "]",
+        "noncomputable def aXt : List ℂ := [" + ", ".join(f"({b.s_r})" for b in cbodies) + "]",
+        "",
+        "def cO (i : ℕ) : Net := perIdx cOt ⟨[], [], []⟩ i",
+        "def cX (i : ℕ) : Net := perIdx cXt ⟨[], [], []⟩ i",
+        "noncomputable def aO (i : ℕ) : ℂ := perIdx aOt 1 i",
+        "noncomputable def aX (i : ℕ) : ℂ := perIdx aXt 1 i",
+        "",
+    ]
+    for j, body in enumerate(cbodies):
+        lines += [
+            (
+                f"theorem copyEq{j} : Equal E ({body.s_l}) (Copy{j}.NL.mapL (ren πC{j})) "
+                f"({body.s_r}) (Copy{j}.NR.mapL (ren πC{j})) :="
+            ),
+            (
+                f"  Equal.mapL E _ (ren_injective πC{j} (by decide) (by decide)) "
+                f"(fun _ => hD _ _) Copy{j}.copyEq"
+            ),
+            "",
+        ]
+    lines += [
+        "theorem copyEq : ∀ i, Equal E (aO i) (cO i) (aX i) (cX i) := by",
+        "  intro i",
+        f"  have h := Nat.mod_lt i (show 0 < {period} by norm_num)",
+        "  simp only [aO, aX, cO, cX, perIdx, aOt, aXt, cOt, cXt, List.length_cons,",
+        "    List.length_nil]",
+        f"  generalize i % {period} = j at h ⊢",
+        "  interval_cases j",
+        *(f"  · exact copyEq{j}" for j in range(period)),
+        "",
+        "theorem hcO : ∀ i, tcopyOK W r (cO i) = true :=",
+        "  perIdx_all cOt _ (fun c => tcopyOK W r c = true) (by decide) (by decide)",
+        "theorem hcX : ∀ i, tcopyOK W r (cX i) = true :=",
+        "  perIdx_all cXt _ (fun c => tcopyOK W r c = true) (by decide) (by decide)",
+        "theorem hpO : PlugOK W p Base.NL cO :=",
+        "  heap_plugOK W r leaf0 kids Base.NL cOt _ (by decide) hcO (by decide)",
+        "theorem hpX : PlugOK W p Base.NR cX :=",
+        "  heap_plugOK W r leaf0 kids Base.NR cXt _ (by decide) hcX (by decide)",
+        "",
+        "/-- Both tree families agree after every number of copies. -/",
+        "theorem main : ∀ n, Equal E",
+        f"    (({base.s_l}) * ∏ i ∈ Finset.range n, aO i) (treeNet W r p Base.NL cO n)",
+        f"    (({base.s_r}) * ∏ i ∈ Finset.range n, aX i) (treeNet W r p Base.NR cX n) :=",
+        "  tree_equal E W r p _ _ _ _ hD (by decide) hcO (by decide) hcX hpO hpX _ _ _ _",
+        "    Base.baseEq copyEq",
+        "",
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = ["export_chain", "export_tree"]

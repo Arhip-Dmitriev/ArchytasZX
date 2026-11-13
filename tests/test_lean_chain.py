@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The chain-induction Lean export: chainNet families from a chain_window induction."""
+"""The chain-induction Lean export: chainNet families from a chain_window induction; tree
+families in heap order."""
 
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.decide import decide_equal
-from archytaszx.semantics.lean_chain import export_chain
+from archytaszx.semantics.lean_chain import export_chain, export_tree
 
 CIRCUIT = "\n".join(
     [
@@ -122,6 +123,21 @@ def test_a_theorem_without_a_chain_window_is_refused() -> None:
         export_chain(K.refl(wire))
 
 
+def _tree(d: int) -> str:
+    base = parse_dsl(f"r = Z(0 -> 1, literal {d})")
+    cop_o = parse_dsl(f"g = Z(1 -> 2, literal {d})")
+    cop_x = parse_dsl(
+        f"a = Z(1 -> 1, literal {d}); g = Z(1 -> 2, literal {d}); wire a.out0 -- g.in0"
+    )
+    return export_tree((base, base), [(cop_o, cop_x)], 0, 2, [0, 1], f"tree{d}")
+
+
+def test_a_binary_tree_plugs_its_copies_in_heap_order() -> None:
+    source = _tree(3)
+    assert "def p : ℕ → ℕ := heapPlug W leaf0 kids" in source
+    assert "tree_equal E W r p" in source
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
@@ -130,6 +146,13 @@ def _mathlib() -> bool:
 def test_lean_proves_the_cluster_chain(tmp_path: object) -> None:
     ok, output = L.check(export_chain(_theorem(), {"d": 2}, "cluster"), f"{tmp_path}/chain.lean")
     assert ok, output
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_proves_the_tree_families(tmp_path: object) -> None:
+    for d in (2, 3):
+        ok, output = L.check(_tree(d), f"{tmp_path}/tree{d}.lean")
+        assert ok, output
 
 
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
