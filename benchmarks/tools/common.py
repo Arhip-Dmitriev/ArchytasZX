@@ -69,40 +69,18 @@ def unsupported(reason: str) -> dict[str, Any]:
 
 
 def expand(c: ir.Circuit, n: int) -> ir.Circuit:
-    """c with every register replaced by its copies, gates on registers repeated per copy."""
+    """c with every register replaced by its copies, gates on registers repeated per copy; the
+    output order of ``c`` realised by trailing Swaps onto the input order."""
     import sympy as sp
-
-    copies: dict[str, list[str]] = {}
-    wires: list[str] = []
-    group: list[str] = []
-    gkey: str | None = None
 
     def count(q: str) -> int:
         return int(sp.sympify(c.count(q)).subs(sp.Symbol("n"), n))
 
-    def flush() -> None:
-        if group:
-            k = count(group[0])
-            for i in range(k):
-                for q in group:
-                    wires.append(f"{q}_{i}")
-            for q in group:
-                copies[q] = [f"{q}_{i}" for i in range(k)]
-            group.clear()
-
-    for q in c.wires:
-        key = str(c.count(q)) if c.count(q) is not None else None
-        if key is None:
-            flush()
-            gkey = None
-            wires.append(q)
-            copies[q] = [q]
-        else:
-            if gkey != key:
-                flush()
-                gkey = key
-            group.append(q)
-    flush()
+    copies: dict[str, list[str]] = {
+        q: [q] if c.count(q) is None else [f"{q}_{i}" for i in range(count(q))] for q in c.wires
+    }
+    wires = _layout(c, c.wires, copies)
+    outs = _layout(c, c.output_order(), copies)
     gates: list[ir.Gate] = []
     leaves: dict[str, list[str]] = {}
     alias: dict[str, str] = {}
@@ -165,10 +143,57 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
             gates.append(_rename(g, sub))
     dims = {e: c.dim(q) for q in c.wires for e in copies[q]}
     dims.update(tree_dims)
-    wires = [e for q in wires for e in leaves.get(q, [q])]
     moved = set(alias.values())
-    wires = [x for q in wires if q not in moved for x in (q, *([alias[q]] if q in alias else []))]
+
+    def placed(order: list[str]) -> list[str]:
+        order = [e for q in order for e in leaves.get(q, [q])]
+        return [
+            x for q in order if q not in moved for x in (q, *([alias[q]] if q in alias else []))
+        ]
+
+    wires, outs = placed(wires), placed(outs)
+    if outs != wires:
+        closed = {g.q for g in gates if isinstance(g, (ir.Post, ir.Discard))}
+        gates += _permute(
+            [w for w in wires if w not in closed], [w for w in outs if w not in closed], dims
+        )
     return ir.Circuit(tuple(wires), tuple(gates), {}, dims, c.scalar)
+
+
+def _layout(c: ir.Circuit, order: tuple[str, ...], copies: dict[str, list[str]]) -> list[str]:
+    """``order`` with each run of registers of one count expanded copy-major."""
+    out: list[str] = []
+    group: list[str] = []
+    gkey: str | None = None
+    for q in (*order, None):
+        key = str(c.count(q)) if q is not None and c.count(q) is not None else None
+        if group and key != gkey:
+            out += [copies[r][i] for i in range(len(copies[group[0]])) for r in group]
+            group = []
+        gkey = key
+        if q is not None and key is None:
+            out.append(q)
+        elif q is not None:
+            group.append(q)
+    return out
+
+
+def _permute(slots: list[str], want: list[str], dims: dict[str, Any]) -> list[ir.Gate]:
+    """Swaps after which slot ``slots[i]`` holds the value of wire ``want[i]``."""
+    at = {w: w for w in slots}
+    holder = {w: w for w in slots}
+    swaps: list[ir.Gate] = []
+    for slot, value in zip(slots, want, strict=True):
+        src = holder[value]
+        if src == slot:
+            continue
+        if str(dims[src]) != str(dims[slot]):
+            raise ValueError(f"output order moves {value} onto a wire of another dimension")
+        swaps.append(ir.Swap(slot, src))
+        moved = at[slot]
+        at[slot], at[src] = value, moved
+        holder[value], holder[moved] = slot, src
+    return swaps
 
 
 def _rename(g: ir.Gate, sub: dict[str, str]) -> ir.Gate:

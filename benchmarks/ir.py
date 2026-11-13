@@ -263,14 +263,27 @@ Gate = Union[  # noqa: UP007
 
 @dataclass(frozen=True)
 class Circuit:
-    """Wires in boundary order, registers with their counts, per-wire dimensions, gates and a
-    global scalar (an expression, 1 by default)."""
+    """Wires in input boundary order, registers with their counts, per-wire dimensions, gates, a
+    global scalar (an expression, 1 by default) and the output boundary order (``wires`` when
+    None)."""
 
     wires: tuple[str, ...]
     gates: tuple[Gate, ...]
     registers: Mapping[str, Count] = field(default_factory=dict)
     dims: Mapping[str, Any] = field(default_factory=dict)
     scalar: str = "1"
+    outputs: tuple[str, ...] | None = None
+
+    def output_order(self) -> tuple[str, ...]:
+        """The wires in output boundary order: ``outputs``, each wire it omits placed after the
+        wire before it in ``wires`` (first when none)."""
+        if self.outputs is None:
+            return self.wires
+        order = [q for q in self.outputs if q in self.wires]
+        for i, q in enumerate(self.wires):
+            if q not in order:
+                order.insert(order.index(self.wires[i - 1]) + 1 if i else 0, q)
+        return tuple(order)
 
     def dim(self, q: str) -> Any:
         """The dimension of wire ``q`` (``"d"`` by default)."""
@@ -336,14 +349,21 @@ def circuit(
     registers: Mapping[str, Count] | None = None,
     dims: Mapping[str, Any] | None = None,
     scalar: str = "1",
+    outputs: Sequence[str] | None = None,
 ) -> Circuit:
-    """A :class:`Circuit`, checking that every gate names declared wires."""
+    """A :class:`Circuit`, checking that every gate names declared wires and that ``outputs``
+    orders the wires."""
     known = set(wires)
     for g in gates:
         bad = [q for q in gate_wires(g) if q not in known]
         if bad:
             raise ValueError(f"{type(g).__name__} names undeclared wire(s) {bad}")
-    return Circuit(tuple(wires), tuple(gates), dict(registers or {}), dict(dims or {}), scalar)
+    if outputs is not None and sorted(outputs) != sorted(wires):
+        raise ValueError(f"outputs {list(outputs)} is not an order of the wires {list(wires)}")
+    outs = tuple(outputs) if outputs is not None else None
+    return Circuit(
+        tuple(wires), tuple(gates), dict(registers or {}), dict(dims or {}), scalar, outs
+    )
 
 
 def unrolled(name: str, n: int) -> list[str]:

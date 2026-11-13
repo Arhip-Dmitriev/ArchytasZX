@@ -762,7 +762,7 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
                 lines.append(f"copy scalar {box.name}: {_scalar_text(factor)}")
     lines += b.pair_lines
     ins = [b.inputs[q] for q in c.wires if q in b.inputs]
-    outs = [b.outputs[q] for q in c.wires if q in b.outputs]
+    outs = [b.outputs[q] for q in c.output_order() if q in b.outputs]
     if ins:
         lines.append("inputs " + ", ".join(ins))
     if outs:
@@ -775,13 +775,14 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
 
 
 def _check_layout(c: ir.Circuit) -> None:
-    """Registers of one count must be contiguous in the wire order."""
-    seen: list[str] = []
-    for q in c.wires:
-        key = str(c.count(q)) if c.count(q) is not None else None
-        if key is not None and seen and seen[-1] != key and key in seen:
-            raise ValueError(f"registers of count {key} are not contiguous")
-        if key is not None and (not seen or seen[-1] != key):
-            seen.append(key)
-        if key is None:
-            seen.append("")
+    """Registers of one count must be contiguous in the wire order and in the output order."""
+    for order in (c.wires, c.output_order()):
+        seen: list[str] = []
+        for q in order:
+            key = str(c.count(q)) if c.count(q) is not None else None
+            if key is not None and seen and seen[-1] != key and key in seen:
+                raise ValueError(f"registers of count {key} are not contiguous")
+            if key is not None and (not seen or seen[-1] != key):
+                seen.append(key)
+            if key is None:
+                seen.append("")

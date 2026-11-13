@@ -167,7 +167,7 @@ def _op_from(fn: Any, dims: list[int]) -> np.ndarray:
 
 def evaluate(c: ir.Circuit, n: int, d: int) -> np.ndarray:
     """The circuit at (n, d) (see the module docstring)."""
-    if any(isinstance(g, (ir.Chain, ir.Pairs, ir.Tree)) for g in c.gates):
+    if c.outputs is not None or any(isinstance(g, (ir.Chain, ir.Pairs, ir.Tree)) for g in c.gates):
         from benchmarks.tools.common import expand
 
         c = expand(c, n)
