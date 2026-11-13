@@ -91,6 +91,12 @@ def test_the_cluster_chain_exports_as_two_families() -> None:
     assert "chain_equal E W cut" in source
 
 
+def test_the_instance_at_a_checked_k_is_linked() -> None:
+    source = export_chain(_theorem(SCALED), {"d": 2}, "scaled", checks=(1, 2))
+    assert "namespace At1" in source and "namespace At2" in source
+    assert "theorem inst : Equal E (((2 : ℂ) * (rt 2))) DL (((2 : ℂ) * (rt 2))) DR :=" in source
+
+
 def test_the_qudit_cluster_chain_takes_the_qudit_networks() -> None:
     source = export_chain(_theorem(), {"d": 3}, "cluster3")
     assert "import ArchytasZX.PathSumQuditNet" in source
