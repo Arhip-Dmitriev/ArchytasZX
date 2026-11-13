@@ -52,11 +52,6 @@ def joinAll : List Frag → Frag
   | [] => Frag.unit
   | f :: fs => f.join (joinAll fs)
 
-theorem bsum_append (f : (ℕ → ZMod 2) → ℂ) :
-    ∀ (xs ys : List ℕ) (σ : ℕ → ZMod 2), bsum (xs ++ ys) f σ = bsum xs (bsum ys f) σ
-  | [], _, _ => rfl
-  | x :: xs, ys, σ => by simp only [List.cons_append, bsum, bsum_append f xs ys]
-
 theorem bsum_inv (g : (ℕ → ZMod 2) → ℂ) (y : ℕ) (b : ZMod 2)
     (hg : ∀ τ, g (Function.update τ y b) = g τ) :
     ∀ (zs : List ℕ) (τ : ℕ → ZMod 2), y ∉ zs →
@@ -64,16 +59,6 @@ theorem bsum_inv (g : (ℕ → ZMod 2) → ℂ) (y : ℕ) (b : ZMod 2)
   intro zs τ hy
   rw [bsum_out g y b zs τ hy]
   exact bsum_congr _ _ hg zs τ
-
-theorem bsum_mul_left (g f : (ℕ → ZMod 2) → ℂ) :
-    ∀ (ys : List ℕ), (∀ τ, ∀ y ∈ ys, ∀ b, g (Function.update τ y b) = g τ) →
-      ∀ σ, bsum ys (fun τ => g τ * f τ) σ = g σ * bsum ys f σ
-  | [], _, _ => rfl
-  | y :: ys, hg, σ => by
-    have hg' : ∀ τ, ∀ z ∈ ys, ∀ b, g (Function.update τ z b) = g τ :=
-      fun τ z hz b => hg τ z (List.mem_cons_of_mem _ hz) b
-    simp only [bsum, bsum_mul_left g f ys hg', hg σ y List.mem_cons_self]
-    ring
 
 theorem summand_join (M : ℕ) (a b : Frag) (τ : ℕ → ZMod 2) :
     summand M (a.join b).c ⟨(a.join b).path, (a.join b).phase, (a.join b).cons, []⟩ τ =

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.PathSumSem
 
 /-!
-# Path-sum steps [omega], [HHgen], [Rem], [HHnl], pin, norm and step lists
+# Path-sum steps [omega], [HHgen], [Rem], [HHnl], [Dyadic], pin, norm and step lists
 
 Each step reads the head path variables of a `Data`; `*OK` is its syntactic side condition, a
 `Bool` checked by `decide`, and `*_sound` says the value is unchanged up to the step's constant
@@ -720,6 +720,520 @@ theorem val_smul (M : ℕ) (a c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
   split_ifs <;> ring
 
 
+
+theorem bsum_append (f : (ℕ → ZMod 2) → ℂ) :
+    ∀ (xs ys : List ℕ) (σ : ℕ → ZMod 2), bsum (xs ++ ys) f σ = bsum xs (bsum ys f) σ
+  | [], _, _ => rfl
+  | x :: xs, ys, σ => by simp only [List.cons_append, bsum, bsum_append f xs ys]
+
+theorem bsum_mul_left (g f : (ℕ → ZMod 2) → ℂ) :
+    ∀ (ys : List ℕ), (∀ τ, ∀ y ∈ ys, ∀ b, g (Function.update τ y b) = g τ) →
+      ∀ σ, bsum ys (fun τ => g τ * f τ) σ = g σ * bsum ys f σ
+  | [], _, _ => rfl
+  | y :: ys, hg, σ => by
+    have hg' : ∀ τ, ∀ z ∈ ys, ∀ b, g (Function.update τ z b) = g τ :=
+      fun τ z hz b => hg τ z (List.mem_cons_of_mem _ hz) b
+    simp only [bsum, bsum_mul_left g f ys hg', hg σ y List.mem_cons_self]
+    ring
+
+/-! ## [Dyadic] -/
+
+/-- `P` with every coefficient negated modulo `N`. -/
+def negP (N : ℕ) (P : Poly) : Poly := P.map fun t => (t.1, N - t.2 % N)
+
+theorem pn_negP (τ : ℕ → ZMod 2) (N : ℕ) (hN : 0 < N) :
+    ∀ P : Poly, peq N (pn τ (negP N P)) (-(pn τ P))
+  | [] => peq_refl N 0
+  | t :: P => by
+    have ih := pn_negP τ N hN P
+    simp only [negP, List.map_cons] at ih ⊢
+    rw [pn_cons, pn_cons]
+    obtain ⟨n, hn⟩ := ih
+    have hlt : t.2 % N ≤ N := (Nat.mod_lt _ hN).le
+    have hd := Nat.mod_add_div t.2 N
+    refine ⟨n + zq (mz τ t.1) * (1 + (t.2 / N : ℕ)), ?_⟩
+    have hc : ((N - t.2 % N : ℕ) : ℤ) = (N : ℤ) - ((t.2 % N : ℕ) : ℤ) := by
+      push_cast [Nat.cast_sub hlt]; ring
+    have hd' : ((t.2 % N : ℕ) : ℤ) + (N : ℤ) * ((t.2 / N : ℕ) : ℤ) = (t.2 : ℤ) := by
+      exact_mod_cast hd
+    rw [hc, hn]
+    linear_combination (-(zq (mz τ t.1))) * hd'
+
+/-- The binary digits of `S` modulo `2^k` as F_2 polynomials, low digit first; none when a
+remainder is odd. -/
+def dyBits : ℕ → Poly → Option (List F2)
+  | 0, _ => some []
+  | k + 1, S =>
+    let b : F2 := (S.filter fun t => t.2 % 2 = 1).map (·.1)
+    let D := normP (2 ^ (k + 1)) (S ++ negP (2 ^ (k + 1)) (lift (2 ^ (k + 1)) b))
+    if D.all (fun t => t.2 % 2 = 0) then
+      (dyBits k (D.map fun t => (t.1, t.2 / 2))).map (b :: ·)
+    else none
+
+theorem pn_odd (τ : ℕ → ZMod 2) :
+    ∀ S : Poly, ((pn τ S : ℤ) : ZMod 2) = fz τ ((S.filter fun t => t.2 % 2 = 1).map (·.1))
+  | [] => by simp [pn, fz]
+  | t :: S => by
+    have ih := pn_odd τ S
+    rw [pn_cons]
+    push_cast
+    rw [ih]
+    have hz : ((zq (mz τ t.1) : ℤ) : ZMod 2) = mz τ t.1 := zq_cast _
+    by_cases h : t.2 % 2 = 1
+    · rw [List.filter_cons_of_pos (by simpa using h), List.map_cons, fz_cons, hz]
+      have : ((t.2 : ℕ) : ZMod 2) = 1 := by
+        rw [← ZMod.natCast_mod, h]
+        rfl
+      rw [this, one_mul]
+    · rw [List.filter_cons_of_neg (by simpa using h)]
+      have h0 : t.2 % 2 = 0 := by omega
+      have : ((t.2 : ℕ) : ZMod 2) = 0 := by
+        rw [← ZMod.natCast_mod, h0]
+        rfl
+      rw [this, zero_mul, zero_add]
+
+theorem pn_half_all (τ : ℕ → ZMod 2) :
+    ∀ D : Poly, D.all (fun t => t.2 % 2 = 0) = true →
+      pn τ D = 2 * pn τ (D.map fun t => (t.1, t.2 / 2))
+  | [] => fun _ => by simp [pn]
+  | t :: D => fun h => by
+    simp only [List.all_cons, Bool.and_eq_true, decide_eq_true_eq] at h
+    rw [List.map_cons, pn_cons, pn_cons, pn_half_all τ D h.2]
+    have := Nat.mod_add_div t.2 2
+    rw [h.1, zero_add] at this
+    have h' : (t.2 : ℤ) = 2 * ((t.2 / 2 : ℕ) : ℤ) := by exact_mod_cast this.symm
+    rw [h']
+    ring
+
+theorem zq_le (x : ZMod 2) : zq x = 0 ∨ zq x = 1 := by
+  rcases z2_cases x with rfl | rfl <;> decide
+
+theorem dy_bits (τ : ℕ → ZMod 2) :
+    ∀ (k : ℕ) (S : Poly) (bs : List F2), dyBits k S = some bs →
+      (((2 ^ k : ℕ) : ℤ) ∣ pn τ S ↔ ∀ b ∈ bs, fz τ b = 0)
+  | 0, S, bs, h => by
+    simp only [dyBits, Option.some.injEq] at h
+    subst h
+    simp
+  | k + 1, S, bs, h => by
+    simp only [dyBits] at h
+    set N := 2 ^ (k + 1) with hN
+    set b : F2 := (S.filter fun t => t.2 % 2 = 1).map (·.1) with hb
+    set D := normP N (S ++ negP N (lift N b)) with hD
+    split_ifs at h with hev
+    obtain ⟨bs', hbs', rfl⟩ := Option.map_eq_some_iff.1 h
+    have ih := dy_bits τ k _ bs' hbs'
+    have hN2 : 2 ≤ N := by
+      rw [hN, pow_succ]
+      have : 1 ≤ 2 ^ k := Nat.one_le_two_pow
+      omega
+    have hN0 : 0 < N := by omega
+    have hpe : peq N (pn τ D) (pn τ S - zq (fz τ b)) := by
+      refine peq_trans (pn_normP τ N _) ?_
+      rw [pn_append]
+      obtain ⟨n1, h1⟩ := pn_negP τ N hN0 (lift N b)
+      obtain ⟨n2, h2⟩ := pn_lift τ N hN2 b
+      refine ⟨n1 - n2, ?_⟩
+      rw [h1, h2]
+      ring
+    obtain ⟨n, hn⟩ := hpe
+    have hdiv := pn_half_all τ D hev
+    have hNk : ((N : ℕ) : ℤ) = 2 * ((2 ^ k : ℕ) : ℤ) := by
+      rw [hN, pow_succ]; push_cast; ring
+    have hodd : ((pn τ S : ℤ) : ZMod 2) = fz τ b := pn_odd τ S
+    simp only [List.forall_mem_cons]
+    rcases z2_cases (fz τ b) with hz | hz
+    · have hzq : zq (fz τ b) = 0 := by rw [hz]; decide
+      rw [hzq, sub_zero] at hn
+      rw [hz]
+      simp only [true_and]
+      rw [← ih]
+      constructor
+      · rintro ⟨q, hq⟩
+        refine ⟨q + n, ?_⟩
+        have hq' : pn τ S = 2 * ((2 ^ k : ℕ) : ℤ) * q := by rw [hq, ← hNk]
+        rw [hNk] at hn
+        linarith
+      · rintro ⟨q, hq⟩
+        refine ⟨q - n, ?_⟩
+        rw [hNk] at hn
+        show pn τ S = ((N : ℕ) : ℤ) * (q - n)
+        rw [hNk]
+        linarith
+    · have hzq : zq (fz τ b) = 1 := by rw [hz]; decide
+      constructor
+      · rintro ⟨q, hq⟩
+        exfalso
+        have h2 : ((pn τ S : ℤ) : ZMod 2) = 0 := by
+          rw [hq, hNk]; push_cast; rw [show (2 : ZMod 2) = 0 by decide]; ring
+        rw [hodd, hz] at h2
+        exact absurd h2 (by decide)
+      · rintro ⟨h0, _⟩
+        rw [hz] at h0
+        exact absurd h0 (by decide)
+
+/-- The product `Prod_a (1 + ex (w 2^a N / K))` over `k` digits, weights doubling from `w`. -/
+noncomputable def dyProd (N : ℤ) (K : ℕ) : ℕ → ℕ → ℂ
+  | 0, _ => 1
+  | k + 1, w => (1 + ex ((w : ℝ) * N / K)) * dyProd N K k (2 * w)
+
+theorem dyProd_double (N : ℤ) (K : ℕ) (hK : 0 < K) :
+    ∀ (k w : ℕ), dyProd N (2 * K) k (2 * w) = dyProd N K k w
+  | 0, _ => rfl
+  | k + 1, w => by
+    simp only [dyProd]
+    rw [dyProd_double N K hK k (2 * w)]
+    congr 2
+    have : (K : ℝ) ≠ 0 := by exact_mod_cast hK.ne'
+    push_cast
+    field_simp
+
+theorem dyProd_geom (N : ℤ) :
+    ∀ k : ℕ, dyProd N (2 ^ k) k 1 = if ((2 ^ k : ℕ) : ℤ) ∣ N then (2 ^ k : ℂ) else 0
+  | 0 => by simp [dyProd]
+  | k + 1 => by
+    simp only [dyProd]
+    rw [show 2 ^ (k + 1) = 2 * 2 ^ k by ring, show (2 * 1 : ℕ) = 2 * 1 from rfl,
+      dyProd_double N (2 ^ k) (by positivity) k 1, dyProd_geom N k]
+    by_cases hk : ((2 ^ k : ℕ) : ℤ) ∣ N
+    · obtain ⟨m, rfl⟩ := hk
+      rw [if_pos ⟨m, rfl⟩]
+      have e : ((1 : ℕ) : ℝ) * (((2 ^ k : ℕ) : ℤ) * m : ℤ) / ((2 * 2 ^ k : ℕ) : ℝ) =
+          (m : ℝ) / 2 := by
+        have : ((2 ^ k : ℕ) : ℝ) ≠ 0 := by positivity
+        push_cast
+        field_simp
+      rw [e, ex_halfN]
+      by_cases hm : (m : ZMod 2) = 0
+      · rw [if_pos hm]
+        have hm2 : (2 : ℤ) ∣ m := (ZMod.intCast_zmod_eq_zero_iff_dvd m 2).1 hm
+        obtain ⟨r, rfl⟩ := hm2
+        rw [if_pos ⟨r, by push_cast; ring⟩]
+        push_cast
+        ring
+      · rw [if_neg hm]
+        rw [if_neg]
+        · ring
+        rintro ⟨r, hr⟩
+        apply hm
+        have : (((2 ^ k : ℕ) : ℤ)) * m = ((2 ^ k : ℕ) : ℤ) * (2 * r) := by
+          rw [hr]; push_cast; ring
+        have hpos : ((2 ^ k : ℕ) : ℤ) ≠ 0 := by positivity
+        have := mul_left_cancel₀ hpos this
+        rw [this]
+        push_cast
+        rw [show (2 : ZMod 2) = 0 by decide, zero_mul]
+    · rw [if_neg hk, mul_zero, if_neg]
+      rintro ⟨r, hr⟩
+      apply hk
+      exact ⟨2 * r, by rw [hr]; push_cast; ring⟩
+
+
+/-- Whether a monomial reads a variable of `ds`. -/
+def hasAny (ds : List ℕ) (m : Mono) : Bool := m.any fun v => decide (v ∈ ds)
+
+/-- The terms `d_a S 2^a w / K` of the digits `ds`, in units of `1 / M`. -/
+def dyTerms (M K : ℕ) (S : Poly) : List ℕ → ℕ → Poly
+  | [], _ => []
+  | d :: ds, w => S.map (fun t => ([d] ++ t.1, (w * (M / K)) * t.2)) ++ dyTerms M K S ds (2 * w)
+
+/-- The terms `f_j b_j / 2` of the fresh variables, in units of `1 / M`. -/
+def dyNew (M : ℕ) : List ℕ → List F2 → Poly
+  | f :: fs, b :: bs =>
+    (b.map fun m => (m, 1)).map (fun t => ([f] ++ t.1, (M / 2) * t.2)) ++ dyNew M fs bs
+  | _, _ => []
+
+theorem pn_filter_split (τ : ℕ → ZMod 2) (p : Mono × ℕ → Bool) :
+    ∀ P : Poly, pn τ P = pn τ (P.filter fun t => !p t) + pn τ (P.filter p)
+  | [] => by simp [pn]
+  | t :: P => by
+    have ih := pn_filter_split τ p P
+    by_cases h : p t = true
+    · rw [List.filter_cons_of_neg (by simp [h]), List.filter_cons_of_pos h, pn_cons, pn_cons, ih]
+      ring
+    · rw [List.filter_cons_of_pos (by simpa using h), List.filter_cons_of_neg h, pn_cons, pn_cons,
+        ih]
+      ring
+
+theorem not_hasAny {ds : List ℕ} {m : Mono} (h : hasAny ds m = false) : ∀ d ∈ ds, d ∉ m := by
+  intro d hd hm
+  have : hasAny ds m = true := List.any_eq_true.2 ⟨d, hm, by simpa using hd⟩
+  rw [h] at this
+  exact absurd this (by decide)
+
+theorem pn_update_free (τ : ℕ → ZMod 2) (y : ℕ) (b : ZMod 2) (P : Poly)
+    (h : ∀ t ∈ P, y ∉ t.1) : pn (Function.update τ y b) P = pn τ P := pn_update_not τ y b P h
+
+theorem dyProd_succ (N : ℤ) (K k w : ℕ) :
+    dyProd N K (k + 1) w = (1 + ex ((w : ℝ) * N / K)) * dyProd N K k (2 * w) := rfl
+
+theorem bsum_dy (M K q : ℕ) (hM : 0 < M) (hK : 0 < K) (hq : M = K * q) (S : Poly) :
+    ∀ (ds : List ℕ) (w : ℕ), ds.Nodup → (∀ t ∈ S, ∀ d ∈ ds, d ∉ t.1) → ∀ τ : ℕ → ZMod 2,
+      bsum ds (fun τ' => ex ((pn τ' (dyTerms M K S ds w) : ℝ) / M)) τ =
+        dyProd (pn τ S) K ds.length w
+  | [], w, _, _, τ => by simp [bsum, dyTerms, pn, ex_zero, dyProd]
+  | d :: ds, w, hnd, hS, τ => by
+    obtain ⟨hd, hnd'⟩ := List.nodup_cons.1 hnd
+    have hS' : ∀ t ∈ S, ∀ e ∈ ds, e ∉ t.1 := fun t ht e he => hS t ht e (List.mem_cons_of_mem _ he)
+    have ih := bsum_dy M K q hM hK hq S ds (2 * w) hnd' hS'
+    have hSd : ∀ t ∈ S, d ∉ t.1 := fun t ht => hS t ht d List.mem_cons_self
+    have hM' : (M : ℝ) ≠ 0 := by exact_mod_cast hM.ne'
+    have hK' : (K : ℝ) ≠ 0 := by exact_mod_cast hK.ne'
+    have hdivq : M / K = q := by rw [hq, Nat.mul_div_cancel_left _ hK]
+    simp only [bsum, List.length_cons, dyProd_succ]
+    have split : ∀ b : ZMod 2,
+        bsum ds (fun τ' => ex ((pn τ' (dyTerms M K S (d :: ds) w) : ℝ) / M))
+          (Function.update τ d b) =
+        ex ((zq b : ℝ) * w * pn τ S / K) * dyProd (pn τ S) K ds.length (2 * w) := by
+      intro b
+      have hform : ∀ τ' : ℕ → ZMod 2,
+          ex ((pn τ' (dyTerms M K S (d :: ds) w) : ℝ) / M) =
+            ex ((zq (τ' d) : ℝ) * w * pn τ' S / K) *
+              ex ((pn τ' (dyTerms M K S ds (2 * w)) : ℝ) / M) := by
+        intro τ'
+        simp only [dyTerms]
+        rw [pn_append, pn_mapmul, ← ex_add]
+        congr 1
+        have hmz : zq (mz τ' [d]) = zq (τ' d) := by simp [mz]
+        rw [hmz, hdivq]
+        have hq' : (M : ℝ) = K * q := by rw [hq]; push_cast; ring
+        have hq0 : (q : ℝ) ≠ 0 := by
+          intro e
+          apply hM'
+          rw [hq', e, mul_zero]
+        push_cast
+        rw [hq']
+        field_simp
+      rw [bsum_congr _ _ hform]
+      have hg : ∀ τ', ∀ y ∈ ds, ∀ v,
+          (fun τ'' : ℕ → ZMod 2 => ex ((zq (τ'' d) : ℝ) * w * pn τ'' S / K))
+            (Function.update τ' y v) =
+          (fun τ'' : ℕ → ZMod 2 => ex ((zq (τ'' d) : ℝ) * w * pn τ'' S / K)) τ' := by
+        intro τ' y hy v
+        have hdy : d ≠ y := fun e => hd (e ▸ hy)
+        simp only [Function.update_of_ne hdy]
+        rw [pn_update_free τ' y v S (fun t ht => hS' t ht y hy)]
+      rw [bsum_mul_left _ _ ds hg, ih, Function.update_self,
+        pn_update_free τ d b S hSd]
+    rw [split 0, split 1, zq0, zq1]
+    push_cast
+    rw [zero_mul, zero_mul, zero_div, ex_zero]
+    ring
+
+theorem prod_ite (τ : ℕ → ZMod 2) :
+    ∀ bs : List F2, (bs.map fun b => if fz τ b = 0 then (2 : ℂ) else 0).prod =
+      if ∀ b ∈ bs, fz τ b = 0 then (2 : ℂ) ^ bs.length else 0
+  | [] => by simp
+  | b :: bs => by
+    rw [List.map_cons, List.prod_cons, prod_ite τ bs]
+    by_cases h : fz τ b = 0
+    · simp only [h, if_true, List.forall_mem_cons, true_and, List.length_cons]
+      split_ifs <;> ring
+    · simp [h]
+
+theorem bsum_new (M r : ℕ) (hM : 0 < M) (hr : M = 2 * r) :
+    ∀ (fs : List ℕ) (bs : List F2), fs.Nodup → fs.length = bs.length →
+      (∀ f ∈ fs, ∀ b ∈ bs, ∀ m ∈ b, f ∉ m) → ∀ τ : ℕ → ZMod 2,
+      bsum fs (fun τ' => ex ((pn τ' (dyNew M fs bs) : ℝ) / M)) τ =
+        (bs.map fun b => if fz τ b = 0 then (2 : ℂ) else 0).prod
+  | [], [], _, _, _, τ => by simp [bsum, dyNew, pn, ex_zero]
+  | [], _ :: _, _, h, _, _ => by simp at h
+  | _ :: _, [], _, h, _, _ => by simp at h
+  | f :: fs, b :: bs, hnd, hl, hfree, τ => by
+    obtain ⟨hf, hnd'⟩ := List.nodup_cons.1 hnd
+    have hl' : fs.length = bs.length := by simpa using hl
+    have hfree' : ∀ g ∈ fs, ∀ c ∈ bs, ∀ m ∈ c, g ∉ m := fun g hg c hc =>
+      hfree g (List.mem_cons_of_mem _ hg) c (List.mem_cons_of_mem _ hc)
+    have ih := bsum_new M r hM hr fs bs hnd' hl' hfree'
+    have hM' : (M : ℝ) ≠ 0 := by exact_mod_cast hM.ne'
+    have hr2 : M / 2 = r := by omega
+    set N : (ℕ → ZMod 2) → ℤ := fun τ' => pn τ' (b.map fun m => (m, 1)) with hN
+    have hNinv : ∀ τ', ∀ g ∈ f :: fs, ∀ v, N (Function.update τ' g v) = N τ' := by
+      intro τ' g hg v
+      simp only [hN]
+      apply pn_update_free
+      intro t ht
+      simp only [List.mem_map] at ht
+      obtain ⟨m, hm, rfl⟩ := ht
+      exact hfree g hg b List.mem_cons_self m hm
+    have hNb : ∀ τ', ((N τ' : ℤ) : ZMod 2) = fz τ' b := by
+      intro τ'
+      simp only [hN]
+      have : pn τ' (b.map fun m => (m, 1)) = (b.map fun m => zq (mz τ' m)).sum := by
+        simp [pn, List.map_map, Function.comp_def]
+      rw [this, zsum_mz]
+    have hform : ∀ τ' : ℕ → ZMod 2,
+        ex ((pn τ' (dyNew M (f :: fs) (b :: bs)) : ℝ) / M) =
+          ex ((zq (τ' f) : ℝ) * N τ' / 2) * ex ((pn τ' (dyNew M fs bs) : ℝ) / M) := by
+      intro τ'
+      simp only [dyNew]
+      rw [pn_append, pn_mapmul, ← ex_add]
+      congr 1
+      have hmz : zq (mz τ' [f]) = zq (τ' f) := by simp [mz]
+      rw [hmz, hr2]
+      have hr' : (M : ℝ) = 2 * r := by rw [hr]; push_cast; ring
+      have hr0 : (r : ℝ) ≠ 0 := by
+        intro e
+        apply hM'
+        rw [hr', e, mul_zero]
+      push_cast
+      rw [hr']
+      field_simp
+      rfl
+    simp only [bsum]
+    rw [bsum_congr _ _ hform, bsum_congr _ _ hform]
+    have hg : ∀ τ', ∀ y ∈ fs, ∀ v,
+        (fun τ'' : ℕ → ZMod 2 => ex ((zq (τ'' f) : ℝ) * N τ'' / 2)) (Function.update τ' y v) =
+          (fun τ'' : ℕ → ZMod 2 => ex ((zq (τ'' f) : ℝ) * N τ'' / 2)) τ' := by
+      intro τ' y hy v
+      have hfy : f ≠ y := fun e => hf (e ▸ hy)
+      simp only [Function.update_of_ne hfy]
+      rw [hNinv τ' y (List.mem_cons_of_mem _ hy) v]
+    rw [bsum_mul_left _ _ fs hg, bsum_mul_left _ _ fs hg, ih, ih, Function.update_self,
+      Function.update_self, hNinv τ f List.mem_cons_self, hNinv τ f List.mem_cons_self, zq0, zq1]
+    have hinv : ∀ v : ZMod 2,
+        (bs.map fun c => if fz (Function.update τ f v) c = 0 then (2 : ℂ) else 0) =
+          bs.map fun c => if fz τ c = 0 then (2 : ℂ) else 0 := by
+      intro v
+      apply List.map_congr_left
+      intro c hc
+      rw [fz_update_not τ f v c (fun m hm => hfree f List.mem_cons_self c
+        (List.mem_cons_of_mem _ hc) m hm)]
+    rw [hinv 0, hinv 1]
+    push_cast
+    rw [zero_mul, zero_div, ex_zero]
+    simp only [one_mul]
+    rw [ex_halfN, hNb, List.map_cons, List.prod_cons]
+    split_ifs <;> ring
+
+theorem dyBits_length : ∀ (k : ℕ) (S : Poly) (bs : List F2), dyBits k S = some bs →
+    bs.length = k
+  | 0, S, bs, h => by
+    simp only [dyBits, Option.some.injEq] at h
+    subst h
+    rfl
+  | k + 1, S, bs, h => by
+    simp only [dyBits] at h
+    split_ifs at h
+    obtain ⟨bs', hbs', rfl⟩ := Option.map_eq_some_iff.1 h
+    simp [dyBits_length k _ bs' hbs']
+
+/-- Whether the head `k = ds.length` path variables are digits `ds` with phase `Y S / 2^k`
+(Y = Sum_a 2^a d_a, `S` free of them, `2^k ∣ M`), in no constraint or row, the fresh variables
+`fs` in no phase term, constraint or row of `S`'s digits, and `S`'s binary digits exist. -/
+def dyadicOK (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Bool :=
+  match dyBits ds.length S with
+  | none => false
+  | some bs =>
+    decide (0 < M) && decide (M % (2 ^ ds.length) = 0) && decide (M % 2 = 0) &&
+      decide (s.path.take ds.length = ds) && decide s.path.Nodup &&
+      decide ((fs ++ s.path.drop ds.length).Nodup) && decide (fs.length = ds.length) &&
+      ds.all (fun d => !decide (d ∈ fvars (s.cons ++ s.rows))) &&
+      S.all (fun t => !hasAny ds t.1) &&
+      fs.all (fun f => !decide (f ∈ pvars s.phase) && !decide (f ∈ fvars (s.cons ++ s.rows)) &&
+        !decide (f ∈ fvars bs)) &&
+      decide (normP M (s.phase.filter fun t => hasAny ds t.1) =
+        normP M (dyTerms M (2 ^ ds.length) S ds 1))
+
+/-- The digits `ds` summed: their terms replaced by `f_j b_j / 2` over the fresh `fs`. -/
+def dyadicS (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Data :=
+  match dyBits ds.length S with
+  | none => s
+  | some bs =>
+    { path := fs ++ s.path.drop ds.length,
+      phase := s.phase.filter (fun t => !hasAny ds t.1) ++ dyNew M fs bs,
+      cons := s.cons, rows := s.rows }
+
+theorem fvars_mem {q : F2} {C : List F2} {m : Mono} {f : ℕ} (hq : q ∈ C) (hm : m ∈ q)
+    (hf : f ∈ m) : f ∈ fvars C :=
+  List.mem_flatMap.2 ⟨q, hq, List.mem_flatMap.2 ⟨m, hm, hf⟩⟩
+
+theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data)
+    (σ : ℕ → ZMod 2) (h : dyadicOK M ds S fs s = true) :
+    val M c s σ = val M c (dyadicS M ds S fs s) σ := by
+  unfold dyadicOK at h
+  unfold dyadicS
+  rcases hb : dyBits ds.length S with _ | bs
+  · simp [hb] at h
+  simp only [hb, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.not_eq_true',
+    decide_eq_false_iff_not] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hM, hKM⟩, hM2⟩, htake⟩, hnd⟩, hnd2⟩, hfl⟩, hdc⟩, hSd⟩, hfs⟩, hP⟩ := h
+  set k := ds.length with hk
+  set K := 2 ^ k with hK
+  set ys := s.path.drop k with hys
+  have hpath : s.path = ds ++ ys := by rw [← htake, List.take_append_drop]
+  have hK0 : 0 < K := by positivity
+  obtain ⟨q, hq⟩ : ∃ q, M = K * q := ⟨M / K, (Nat.mul_div_cancel' (Nat.dvd_of_mod_eq_zero hKM)).symm⟩
+  obtain ⟨r, hr⟩ : ∃ r, M = 2 * r := ⟨M / 2, by omega⟩
+  have hbl : bs.length = k := dyBits_length k S bs hb
+  have hdsnd : ds.Nodup := by rw [hpath] at hnd; exact (List.nodup_append.1 hnd).1
+  have hfsnd : fs.Nodup := (List.nodup_append.1 hnd2).1
+  have hSfree : ∀ t ∈ S, ∀ d ∈ ds, d ∉ t.1 := fun t ht => not_hasAny (by simpa using hSd t ht)
+  set R := s.phase.filter (fun t => !hasAny ds t.1) with hR
+  set Pd := s.phase.filter (fun t => hasAny ds t.1) with hPd
+  have hRfree : ∀ t ∈ R, ∀ d ∈ ds, d ∉ t.1 := by
+    intro t ht
+    simp only [hR, List.mem_filter, Bool.not_eq_true'] at ht
+    exact not_hasAny ht.2
+  -- the summand as the digits' factor times the rest
+  set G : (ℕ → ZMod 2) → ℂ := fun τ => if ∀ q ∈ s.cons ++ s.rows, fz τ q = 0 then
+    c * ex ((pn τ R : ℝ) / M) else 0 with hG
+  have hsplitL : ∀ τ, summand M c s τ = G τ * ex ((pn τ Pd : ℝ) / M) := by
+    intro τ
+    unfold summand
+    simp only [hG]
+    rw [pn_filter_split τ (fun t => hasAny ds t.1) s.phase]
+    split_ifs
+    · push_cast; rw [add_div, ex_add]; ring
+    · ring
+  have hsplitR : ∀ τ, summand M c ⟨fs ++ ys, R ++ dyNew M fs bs, s.cons, s.rows⟩ τ =
+      G τ * ex ((pn τ (dyNew M fs bs) : ℝ) / M) := by
+    intro τ
+    unfold summand
+    simp only [hG, pn_append]
+    split_ifs
+    · push_cast; rw [add_div, ex_add]; ring
+    · ring
+  have hGinv : ∀ (vs : List ℕ), (∀ v ∈ vs, v ∉ fvars (s.cons ++ s.rows)) →
+      (∀ t ∈ R, ∀ v ∈ vs, v ∉ t.1) → ∀ τ, ∀ y ∈ vs, ∀ b, G (Function.update τ y b) = G τ := by
+    intro vs hc hr τ y hy b
+    simp only [hG]
+    rw [pn_update_not τ y b R (fun t ht => hr t ht y hy)]
+    simp only [holds_update_not τ y b _ (hc y hy)]
+  have hGds := hGinv ds hdc hRfree
+  have hRfs : ∀ t ∈ R, ∀ f ∈ fs, f ∉ t.1 := by
+    intro t ht f hf hft
+    have hfp := (hfs f hf).1.1
+    apply hfp
+    simp only [hR, List.mem_filter] at ht
+    exact List.mem_flatMap.2 ⟨t, ht.1, hft⟩
+  have hGfs := hGinv fs (fun f hf => (hfs f hf).1.2) hRfs
+  have hpeq : ∀ τ, peq M (pn τ Pd) (pn τ (dyTerms M K S ds 1)) := by
+    intro τ
+    have h1 := pn_normP τ M Pd
+    have h2 := pn_normP τ M (dyTerms M K S ds 1)
+    rw [hP] at h1
+    obtain ⟨a1, ha1⟩ := h1
+    obtain ⟨b1, hb1⟩ := h2
+    exact ⟨b1 - a1, by linarith⟩
+  unfold val
+  dsimp only
+  rw [hpath, bsum_perm _ List.perm_append_comm σ, bsum_append,
+    bsum_perm _ List.perm_append_comm σ, bsum_append]
+  apply bsum_congr
+  intro τ
+  rw [bsum_congr _ _ hsplitL, bsum_mul_left _ _ ds hGds, bsum_congr _ _ hsplitR,
+    bsum_mul_left _ _ fs hGfs]
+  congr 1
+  have hL : bsum ds (fun τ' => ex ((pn τ' Pd : ℝ) / M)) τ =
+      bsum ds (fun τ' => ex ((pn τ' (dyTerms M K S ds 1) : ℝ) / M)) τ :=
+    bsum_congr _ _ (fun τ' => ex_peq hM (hpeq τ')) ds τ
+  rw [hL, bsum_dy M K q hM hK0 hq S ds 1 hdsnd hSfree τ, dyProd_geom,
+    bsum_new M r hM hr fs bs hfsnd (by rw [hfl, hbl]) (fun f hf b hb m hm hfm =>
+      (hfs f hf).2 (fvars_mem hb hm hfm)) τ, prod_ite, hbl]
+  simp only [dy_bits τ k S bs hb]
+
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -738,6 +1252,7 @@ inductive Step where
   | hhNl
   | pin (B : F2)
   | norm
+  | dyadic (ds : List ℕ) (S : Poly) (fs : List ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -755,6 +1270,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .hhNl, s => hhNlOK M s
   | .pin B, s => pinOK B s
   | .norm, _ => true
+  | .dyadic ds S fs, s => dyadicOK M ds S fs s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -772,13 +1288,14 @@ def stepS (M : ℕ) : Step → Data → Data
   | .hhNl, s => hhNlS M s
   | .pin B, s => pinS M B s
   | .norm, s => normS M s
+  | .dyadic ds S fs, s => dyadicS M ds S fs s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
   | .elim | .hhCons | .hhPivot | .hhNl => 2
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
-  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm => 1
+  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -812,6 +1329,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | hhNl => simpa [fac, stepS] using hhNl_sound M c s σ h
   | pin B => simpa [fac, stepS] using pin_sound M hM c B s σ h
   | norm => simpa [fac, stepS] using norm_sound M (by omega) c s σ
+  | dyadic ds S fs => simpa [fac, stepS] using dyadic_sound M c ds S fs s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →
