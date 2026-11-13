@@ -23,7 +23,7 @@ import pytest
 from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
-from archytaszx.semantics.lean_pathsum import export_qudit_net, export_qudit_proof
+from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net, export_qudit_proof
 
 _D = "literal 3"
 
@@ -68,6 +68,44 @@ PAIRS: dict[str, tuple[str, str]] = {
 def _export(name: str) -> str:
     left, right = PAIRS[name]
     return export_qudit_proof(parse_dsl(left), parse_dsl(right), name)
+
+
+QUBIT_NETS: dict[str, tuple[str, str]] = {
+    "legless": (
+        "a = Z(0 -> 0, literal 2) phase {1: 1/4}; b = Z(1 -> 1, literal 2)",
+        "b = Z(1 -> 1, literal 2); scalar 1 + I",
+    ),
+    "weighted": (
+        "a = Z(1 -> 1, literal 4) weight{1: I, 2: -1, 3: -I}",
+        "a = Z(1 -> 1, literal 4) phase {1: 1/4, 2: 1/2, 3: 3/4}",
+    ),
+    "eighths": (
+        (
+            "a = Z(1 -> 1, literal 2) phase {1: 1/8}; b = Z(1 -> 1, literal 2) phase {1: 1/8}; "
+            "wire a.out0 -- b.in0"
+        ),
+        "a = Z(1 -> 1, literal 2) phase {1: 1/4}",
+    ),
+}
+"""Qubit network pairs: a legless spider, a weighted spider, phase tables finer than the sum's."""
+
+
+def _qubit_net(name: str) -> str:
+    left, right = QUBIT_NETS[name]
+    return export_net(parse_dsl(left), parse_dsl(right), name)
+
+
+def test_a_legless_spider_takes_the_legless_x_fragment() -> None:
+    assert "(val_z_legless E σ _ rfl rfl rfl).trans" in _qubit_net("legless")
+
+
+def test_a_weighted_spider_scales_its_fragment() -> None:
+    source = _qubit_net("weighted")
+    assert "w_frag E σ" in source and "coef := Ψ" in source
+
+
+def test_the_phase_modulus_covers_every_table() -> None:
+    assert "/ ((8 : ℕ) : ℝ)" in _qubit_net("eighths")
 
 
 def _export_net(name: str) -> str:
@@ -143,4 +181,11 @@ def test_lean_rejects_a_tampered_qudit_export(tmp_path: object) -> None:
 @pytest.mark.parametrize("name", sorted(PAIRS))
 def test_lean_proves_a_qudit_network_pair(name: str, tmp_path: object) -> None:
     ok, output = L.check(_export_net(name), f"{tmp_path}/net_{name}.lean")
+    assert ok, output
+
+
+@needs_lean
+@pytest.mark.parametrize("name", sorted(QUBIT_NETS))
+def test_lean_proves_a_qubit_network_pair(name: str, tmp_path: object) -> None:
+    ok, output = L.check(_qubit_net(name), f"{tmp_path}/qnet_{name}.lean")
     assert ok, output

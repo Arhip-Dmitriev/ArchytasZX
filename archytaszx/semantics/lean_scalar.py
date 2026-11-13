@@ -411,6 +411,16 @@ class Scalars:
                 proof = self.nonzero(inner_atom)
                 relations.append((inner * s - 1, f"(mul_inv_cancel₀ {proof})"))
                 queue += [a for a in atoms if a not in before]
+        orders = sorted(int(a.args[0]) for a in atoms if isinstance(a, Om) and a.args[0].is_Integer)
+        for small in orders:
+            big = next((b for b in orders if b > small and b % small == 0), None)
+            if big is not None:
+                relations.append(
+                    (
+                        atoms[Om(sp.Integer(small))] - atoms[Om(sp.Integer(big))] ** (big // small),
+                        f"(om_sub {big} {small} {big // small} (by norm_num) (by norm_num))",
+                    )
+                )
         for root, base, other in ((2, 8, 7), (3, 12, 11)):
             if Rt(sp.Integer(root)) not in atoms:
                 continue

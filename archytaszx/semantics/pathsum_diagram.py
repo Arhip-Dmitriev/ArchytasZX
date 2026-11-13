@@ -250,7 +250,8 @@ def from_diagram(
     Z, X, F, B and S, a dimension that is symbolic or not a power of two or of one odd prime, a
     weighted or irrational phase, or a symbolic bang box. ``layout``, when given, receives the
     diagram read (``diagram``, concrete boxes expanded), each port's digit variables
-    (``digit``) and each X spider's fresh digits (``fresh``)."""
+    (``digit``), each X spider's fresh digits (``fresh``) and each legless Z spider's digits
+    (``zdigits``)."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
@@ -335,6 +336,11 @@ def from_diagram(
         layout["diagram"] = diagram
         layout["digit"] = {ref: [digit(ref, j) for j in range(k)] for ref, k in bits.items()}
         layout["fresh"] = fresh_of
+        layout["zdigits"] = {
+            nid: [var_of[uf.find(("z", nid, j))] for j in range(_phase_bits(nid, n, base))]
+            for nid, n in diagram.nodes.items()
+            if n.generator_type.name == Z_SPIDER.name and not _legs(nid, n)
+        }
     if base != 2:
         return _qudit_sum(diagram, base, bits, uf, var_of, boundary, path, same, fresh, digit)
     phase = PhasePoly()

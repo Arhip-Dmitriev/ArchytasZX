@@ -24,7 +24,7 @@ variables, then export_proof's steps. None enumerates a sum.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, cast
@@ -705,17 +705,24 @@ class _NetSide:
     sqrt2_inv: int
     steps: list[str]
     scalar: sp.Expr
+    weights: list[sp.Expr]
 
 
 def _net_side(
-    diagram: Diagram, m: int, phases: list[tuple[str, int]], label0: int
+    diagram: Diagram,
+    m: int,
+    phases: list[tuple[str, int]],
+    label0: int,
+    coefs: dict[int, str] | None = None,
 ) -> tuple[_NetSide, PathSum]:
     """The network of ``diagram`` over digit variables numbered as from_diagram's: boundary port
     i is label i with its boundary digits, a summed wire is label ``label0 + w``, its digit j
     the class's variable when that is a path variable not yet taken, else a variable from
     PIN_OFFSET; each Z spider's digit j is anchored at the leg through which a search from the
     class's variable first reaches it; the pin steps substitute the other summed digits deepest
-    first; ``phases`` collects the phase vectors' Lean bodies."""
+    first; ``phases`` collects the phase vectors' Lean bodies and ``coefs`` each weighted
+    spider's base coefficient by its phase index; a legless spider takes its own digits as X
+    does, a weighted one its turns over a common magnitude."""
     from archytaszx.algebra.pathsum import constant
     from archytaszx.diagram.generators import (
         DIM_BINDER,
@@ -725,7 +732,8 @@ def _net_side(
         Z_SPIDER,
     )
     from archytaszx.diagram.graph import Direction, NodeId, PortRef
-    from archytaszx.semantics.pathsum_diagram import _turns_table
+    from archytaszx.semantics.lean_scalar import Rt
+    from archytaszx.semantics.pathsum_diagram import _phase_bits, _turns_table, _weights
 
     lay: dict[str, Any] = {}
     raw = from_diagram(diagram, lay)
@@ -782,7 +790,7 @@ def _net_side(
         n_o, n_i = len(node.legs(Direction.OUTPUT)), len(node.legs(Direction.INPUT))
         outs[nid] = [label[PortRef(nid, Direction.OUTPUT, j)] for j in range(n_o)]
         ins[nid] = [label[PortRef(nid, Direction.INPUT, j)] for j in range(n_i)]
-        if not outs[nid] and not ins[nid]:
+        if not outs[nid] and not ins[nid] and names[node.generator_type.name] not in (".Z", ".X"):
             raise PathSumUnsupported(f"node {nid!r} has no legs")
     # hyperedges over digit variables: ("z", nid, j) sets and binder pairs
     edges: list[tuple[object, list[int]]] = []
@@ -790,7 +798,7 @@ def _net_side(
     for nid in sorted(d.nodes):
         kind = names[d.nodes[nid].generator_type.name]
         legs = outs[nid] + ins[nid]
-        if kind == ".Z":
+        if kind == ".Z" and legs:
             ks = {k_of[lab] for lab in legs}
             if len(ks) != 1:
                 raise PathSumUnsupported(f"node {nid!r} joins legs of different dimensions")
@@ -826,8 +834,10 @@ def _net_side(
         raise PathSumUnsupported("a digit constraint not reached from its class's variable")
     anchor = {key: owner[entry[e]][0] for e, (key, _vs) in enumerate(edges)}
     nodes, frags, proofs = [], [], []
+    weights: list[sp.Expr] = []
     k_inv = 0
     common = "E σ ownL labsL digL hown hσ _ rfl"
+    own_ys = {**lay["fresh"], **lay.get("zdigits", {})}
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
         kind = names[node.generator_type.name]
@@ -844,7 +854,7 @@ def _net_side(
                 f"(by decide) (by decide) rfl rfl rfl {m}"
             )
             continue
-        k = k_of[legs[0]]
+        k = k_of[legs[0]] if legs else _phase_bits(nid, node)
         if kind == ".F":
             nodes.append(f"⟨.F, {os_}, {is_}, {k}, 0⟩")
             frags.append(f"fFragD {m} {1 << k} {k} digL {os_[0]} {is_[0]}")
@@ -854,39 +864,62 @@ def _net_side(
             )
             k_inv += k
             continue
-        if node.phase is not None and node.phase.is_weighted:
-            raise PathSumUnsupported(f"node {nid!r} carries weights")
-        table = _turns_table(nid, node, 1 << k)
-        if kind == ".Z":
+        weighted = node.phase is not None and node.phase.is_weighted
+        if weighted:
+            table, zero, root2, mag, mag_k = _weights(nid, node, 1 << k)
+            if any(zero) or any(root2) or not legs:
+                raise PathSumUnsupported(f"node {nid!r} has weights of different magnitudes")
+        else:
+            table = _turns_table(nid, node, 1 << k)
+        legless = kind == ".Z" and not legs
+        if kind == ".Z" and legs:
             as_ = [anchor[("z", nid, j)] for j in range(k)]
             anchor_vars = [dig[a][j] for j, a in enumerate(as_)]
             poly, ts = _table_poly(anchor_vars, table, m)
         else:
-            ys = lay["fresh"][nid]
+            ys = own_ys[nid]
             poly, ts = _table_poly(ys, table, m)
         ph = 0
-        if any(ts):
+        if any(ts) or weighted:
             phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
             ph = len(phases)
         ts_text = f"({ts if ph else []} : List ℕ)"
-        nodes.append(f"⟨{kind}, {os_}, {is_}, {k}, {ph}⟩")
-        if kind == ".Z":
-            frags.append(f"zFragD digL {as_} {legs} {poly}")
-            proofs.append(
+        nodes.append(f"⟨{kind}{'W' if weighted else ''}, {os_}, {is_}, {k}, {ph}⟩")
+        if kind == ".Z" and legs:
+            frag = f"zFragD digL {as_} {legs} {poly}"
+            proof = (
                 f"z_frag_dig {common} {k} rfl (by decide) (by decide) {as_} rfl (by decide) "
                 f"{legs[0]} (by decide) {m} (by norm_num) {poly} {ts_text} (fun v => rfl) "
                 "(by decide) (by decide) (by decide)"
             )
         else:
-            frags.append(f"xFragD {m} {1 << k} {k} digL {poly} {ys} {os_} {is_}")
-            proofs.append(
+            frag = f"xFragD {m} {1 << k} {k} digL {poly} {ys} {os_} {is_}"
+            proof = (
                 f"x_frag_dig {common} {k} rfl (by decide) (by decide) {ys} rfl (by decide) "
                 f"(by decide) {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num) "
                 f"{poly} {ts_text} (fun v => rfl) (by decide) (by decide)"
             )
             k_inv += k * len(legs)
+        if legless:
+            proof = f"(val_z_legless E σ _ rfl rfl rfl).trans ({proof})"
+        if weighted:
+            w = sp.Rational(mag.numerator, mag.denominator) * Rt(2) ** mag_k
+            sc = _scalars()
+            c_text = sc.text(w)
+            if coefs is None:
+                raise PathSumUnsupported(f"node {nid!r} carries weights and no coefficient table")
+            coefs[ph] = c_text
+            weights.append(w)
+            lemma = "val_zw" if kind == ".Z" else "val_xw"
+            frag = f"({frag}).scale ({c_text})"
+            proof = (
+                f"w_frag E σ _ _ _ _ _ ({c_text}) ({lemma} E σ _ rfl ({c_text}) (fun v => rfl)) "
+                f"({proof})"
+            )
+        frags.append(frag)
+        proofs.append(proof)
     cur = [x for lab in summed for x in dig[lab]]
-    cur += [y for nid in sorted(d.nodes) for y in lay["fresh"].get(nid, [])]
+    cur += [y for nid in sorted(d.nodes) for y in own_ys.get(nid, [])]
     steps: list[str] = []
     for x in reversed(reached):
         if x < PIN_OFFSET:
@@ -913,8 +946,42 @@ def _net_side(
         k_inv,
         steps,
         _const_model(c, kc),
+        weights,
     )
     return side, raw
+
+
+def _table_modulus(diagram: Diagram) -> int:
+    """The least common denominator of the phase tables (in turns) of the Z and X spiders of
+    ``diagram`` on dimensions 2^k."""
+    from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+    from archytaszx.diagram.graph import Direction, PortRef
+    from archytaszx.semantics.pathsum_diagram import _bits, _phase_bits, _turns_table, _weights
+
+    out = 1
+    for nid in sorted(diagram.nodes):
+        node = diagram.nodes[nid]
+        if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name) or node.phase is None:
+            continue
+        if node.outputs or node.inputs:
+            ref = PortRef(nid, Direction.OUTPUT if node.outputs else Direction.INPUT, 0)
+            k = _bits(diagram, ref)
+        else:
+            k = _phase_bits(nid, node)
+        table = (
+            _weights(nid, node, 1 << k)[0]
+            if node.phase.is_weighted
+            else _turns_table(nid, node, 1 << k)
+        )
+        for t in table:
+            out = math.lcm(out, Fraction(t % 1).denominator)
+    return out
+
+
+def _weights_text(side: _NetSide) -> str:
+    """The product of a side's weighted spiders' base coefficients, each followed by ``*``."""
+    sc = _scalars()
+    return "".join(f"{sc.text(w)} * " for w in side.weights)
 
 
 def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
@@ -956,10 +1023,13 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         "  cover := by decide",
         "  sub := by decide",
         "",
-        f"theorem c{tag} : (joinAll (ps{tag}.map Prod.snd)).c = (rt 2)⁻¹ ^ {side.sqrt2_inv} := by",
+        (
+            f"theorem c{tag} : (joinAll (ps{tag}.map Prod.snd)).c = "
+            f"{_weights_text(side)}(rt 2)⁻¹ ^ {side.sqrt2_inv} := by"
+        ),
         (
             f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
-            "zFragD, xFragD, fFragD, bFrag, List.length_cons, List.length_nil]"
+            "zFragD, xFragD, fFragD, bFrag, Frag.scale, List.length_cons, List.length_nil]"
         ),
         "  ring",
         "",
@@ -979,7 +1049,12 @@ class NetBody:
 
 
 def net_body(
-    left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]], m_min: int = 1
+    left: Diagram,
+    right: Diagram,
+    name: str,
+    phases: list[tuple[str, int]],
+    m_min: int = 1,
+    coefs: dict[int, str] | None = None,
 ) -> NetBody:
     """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
     and S nodes on dimensions 2^k, their phase vectors appended to ``phases``, phases over a
@@ -992,9 +1067,10 @@ def net_body(
         raise PathSumUnsupported("the network export covers qubit path sums only")
     if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
+    m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
     red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, m_min)
-    side_l, _ = _net_side(left, m, phases, 1 << 16)
-    side_r, _ = _net_side(right, m, phases, 1 << 17)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
+    side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
         side_r.k_of[i] for i in range(side_r.boundary)
     ]:
@@ -1005,8 +1081,9 @@ def net_body(
     k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
     sc = _scalars()
     s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
-    lhs = f_l * side_l.scalar * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
-    rhs = f_r * side_r.scalar * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
+    w_l, w_r = sp.Mul(*side_l.weights), sp.Mul(*side_r.weights)
+    lhs = f_l * side_l.scalar * w_l * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
+    rhs = f_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
     bnd = list(range(side_l.bnd_vars))
     run_l = f"(run {m} stepsL (netDataD digL NL (psL.map Prod.snd)))"
@@ -1019,10 +1096,13 @@ def net_body(
         *_fac_lines("L", side_l.steps, m, sc.text(f_l)),
         *_fac_lines("R", side_r.steps, m, sc.text(f_r)),
         (
-            f"theorem consts : ({sc.text(f_l)}) * (({s_l}) * (rt 2)⁻¹ ^ {side_l.sqrt2_inv}) * "
-            f"om {m} ^ {k_l} ="
+            f"theorem consts : ({sc.text(f_l)}) * (({s_l}) * ({_weights_text(side_l)}"
+            f"(rt 2)⁻¹ ^ {side_l.sqrt2_inv})) * om {m} ^ {k_l} ="
         ),
-        f"    ({sc.text(f_r)}) * (({s_r}) * (rt 2)⁻¹ ^ {side_r.sqrt2_inv}) * om {m} ^ {k_r} := by",
+        (
+            f"    ({sc.text(f_r)}) * (({s_r}) * ({_weights_text(side_r)}"
+            f"(rt 2)⁻¹ ^ {side_r.sqrt2_inv})) * om {m} ^ {k_r} := by"
+        ),
         f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
@@ -1051,10 +1131,15 @@ def net_body(
 
 
 def net_env(
-    phases: Sequence[tuple[str, int]], labs: dict[int, int], dims: str, m: int
+    phases: Sequence[tuple[str, int]],
+    labs: dict[int, int],
+    dims: str,
+    m: int,
+    coefs: Mapping[int, str] | None = None,
 ) -> list[str]:
     """The shared environment ``E`` of network proofs: ``Δ k`` as ``dims``, the phase vectors,
-    phase index 0 the zero vector over ``m``, and each label's digit count."""
+    phase index 0 the zero vector over ``m``, each label's digit count, and at each index of
+    ``coefs`` the coefficient vector ``C ex (Φ i v)``, 1 elsewhere."""
     phi = [
         f"  | {i + 1} => fun v => {body} / (({m} : ℕ) : ℝ)" for i, (body, m) in enumerate(phases)
     ]
@@ -1069,7 +1154,18 @@ def net_env(
         "",
         f"def labs : List (ℕ × ℕ) := {sorted(labs.items())}",
         "",
-        "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs }",
+        *(
+            [
+                "/-- Coefficient vectors. -/",
+                "noncomputable def Ψ : ℕ → ℕ → ℂ",
+                *(f"  | {i} => fun v => {c} * ex (Φ {i} v)" for i, c in sorted(coefs.items())),
+                "  | _ => fun _ => 1",
+                "",
+                "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs, coef := Ψ }",
+            ]
+            if coefs
+            else ["noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs }"]
+        ),
         "",
     ]
 
@@ -1091,10 +1187,11 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
     do not reduce to one canonical form."""
     phases: list[tuple[str, int]] = []
-    body = net_body(left, right, name, phases)
+    coefs: dict[int, str] = {}
+    body = net_body(left, right, name, phases, coefs=coefs)
     ns = "ArchytasZX.PathSumNetProof"
     lines = [
-        "import ArchytasZX.PathSumDigits",
+        "import ArchytasZX.PathSumNetW",
         "",
         "/-!",
         f"# Path-sum proof `{name}` over the networks",
@@ -1110,7 +1207,7 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "",
         *NET_OPTIONS,
         "",
-        *net_env(phases, body.labs, "2 ^ k", body.m),
+        *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
         *body.lines,
         f"end {ns}",
         "",

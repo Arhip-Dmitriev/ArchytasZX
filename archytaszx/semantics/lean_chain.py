@@ -393,26 +393,29 @@ def _iso(
 
 def _bodies(
     pairs: Sequence[tuple[Diagram, Diagram]], names: Sequence[str]
-) -> tuple[list[NetBody], list[tuple[str, int]], bool]:
+) -> tuple[list[NetBody], list[tuple[str, int]], bool, dict[int, str]]:
     """The network proofs of ``pairs`` over one environment: qudit bodies on an odd prime, else
-    qubit-digit bodies over one phase modulus; whether they are qudit bodies."""
+    qubit-digit bodies over one phase modulus; whether they are qudit bodies, and the weighted
+    spiders' coefficients by phase index."""
     from archytaszx.algebra.pathsum import QuditPathSum
     from archytaszx.semantics.pathsum_diagram import from_diagram
 
     qudit = isinstance(from_diagram(pairs[0][0]), QuditPathSum)
     phases: list[tuple[str, int]] = []
+    coefs: dict[int, str] = {}
     if qudit:
-        return (
-            [qnet_body(a, b, n, phases) for (a, b), n in zip(pairs, names, strict=True)],
-            (phases),
-            True,
-        )
-    bodies = [net_body(a, b, n, phases) for (a, b), n in zip(pairs, names, strict=True)]
+        bodies = [qnet_body(a, b, n, phases) for (a, b), n in zip(pairs, names, strict=True)]
+        return bodies, phases, True, coefs
+    bodies = [
+        net_body(a, b, n, phases, coefs=coefs) for (a, b), n in zip(pairs, names, strict=True)
+    ]
     m = math.lcm(*(body.m for body in bodies))
     if any(body.m != m for body in bodies):
-        phases = []
-        bodies = [net_body(a, b, n, phases, m) for (a, b), n in zip(pairs, names, strict=True)]
-    return bodies, phases, False
+        phases, coefs = [], {}
+        bodies = [
+            net_body(a, b, n, phases, m, coefs) for (a, b), n in zip(pairs, names, strict=True)
+        ]
+    return bodies, phases, False, coefs
 
 
 def export_chain(
@@ -457,7 +460,7 @@ def export_chain(
         for j in range(period)
     ]
     names = ["baseEq", *("copyEq" for _ in range(period))]
-    bodies, phases, qudit = _bodies(pairs, names)
+    bodies, phases, qudit, coefs = _bodies(pairs, names)
     base, copies = bodies[0], bodies[1:]
     if qudit:
         dims = str(base.m)
@@ -489,7 +492,7 @@ def export_chain(
     ns = f"ArchytasZX.ChainProof.{name}"
     sem = "QSem" if qudit else "PSem"
     lines = [
-        "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumDigits",
+        "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumNetW",
         "import ArchytasZX.ChainInduct",
         "",
         "/-!",
@@ -507,7 +510,7 @@ def export_chain(
         *(QNET_OPTIONS if qudit else NET_OPTIONS),
         "",
         *([f"instance : Fact (Nat.Prime {base.m}) := ⟨by norm_num⟩", ""] if qudit else []),
-        *net_env(phases, labs, dims, base.m),
+        *net_env(phases, labs, dims, base.m, coefs),
         "theorem hD : ∀ x y, labDim E x = labDim E y := fun _ _ => rfl",
         "",
         "namespace Base",
@@ -717,7 +720,7 @@ def export_tree(
     copies; each pair proved equal by its path sums and ``tree_equal`` for every count; raises
     :class:`PathSumUnsupported` outside that class."""
     names = ["baseEq", *("copyEq" for _ in copies)]
-    bodies, phases, qudit = _bodies([(bases[0], bases[1]), *copies], names)
+    bodies, phases, qudit, coefs = _bodies([(bases[0], bases[1]), *copies], names)
     base, cbodies = bodies[0], bodies[1:]
     if qudit:
         dims, labs = str(base.m), {}
@@ -743,7 +746,7 @@ def export_tree(
     ns = f"ArchytasZX.TreeProof.{name}"
     sem = "QSem" if qudit else "PSem"
     lines = [
-        "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumDigits",
+        "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumNetW",
         "import ArchytasZX.TreeInduct",
         "",
         "/-!",
@@ -761,7 +764,7 @@ def export_tree(
         *(QNET_OPTIONS if qudit else NET_OPTIONS),
         "",
         *([f"instance : Fact (Nat.Prime {base.m}) := ⟨by norm_num⟩", ""] if qudit else []),
-        *net_env(phases, labs, dims, base.m),
+        *net_env(phases, labs, dims, base.m, coefs),
         "theorem hD : ∀ x y, labDim E x = labDim E y := fun _ _ => rfl",
         "",
         "namespace Base",
