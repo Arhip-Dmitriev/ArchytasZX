@@ -161,6 +161,26 @@ Boxes nest through parent. Instantiating a node-scope box at k >= 2 replicates e
 once per new copy, keeping the child's multiplicity symbol: the copies still denote one shared
 count.
 
+A node-scope box may also carry (CHAIN_BOX_SPEC part A):
+
+  - links ((p, q), ...): a chain. Open: in the stored n = 1 instance each q is wired outside
+    the scope or is a boundary slot (the head H), and so is each p (the tail E); the instance
+    at k is H - copy_0.q, copy_m.p - copy_(m+1).q, copy_(k-1).p - E, and at k = 0 H - E
+    (an identity Z spider 1 -> 1 when both are boundary slots). Cyclic (cyclic=True): each
+    p is wired to its own q; the instance is copy_m.p - copy_((m+1) mod k).q, and k = 0 is
+    empty. Link ports do not fan out; every other crossing and boundary slot is laid out as
+    for a plain box.
+  - index I: in copy m every phase of the copy's nodes, the copy scalar and each child's
+    multiplicity read I = m.
+  - copy_scalar c: the diagram scalar is multiplied by c(0) c(1) ... c(k-1) (c^k without an
+    index).
+
+peel_one splits off the last copy (I = n - 1, wired between the rest's p ports and the tail);
+a cyclic chain refuses peel_one; copy_box and merge refuse these boxes. decide on diagrams
+that still hold such a box after expanding the concrete ones runs only the oracle and the
+structural comparison (no rewriting, saturation, symbolic contraction or induction). Pair
+boxes and the symbolic rungs of parts B and C are not implemented.
+
 4.3 Operations
 
     abstract_port_count(diagram, ref, k, *, stem="n") -> (Diagram, BangBoxId, Mult)
@@ -231,7 +251,10 @@ is true when there is no hard failure.
     carry; PARAMETER_VALUE_OUT_OF_DOMAIN (hard).
   - Bang boxes: BANGBOX_SCOPE_UNKNOWN_NODE, BANGBOX_PORT_UNKNOWN, BANGBOX_PORT_NOT_BOUNDARY,
     BANGBOX_PORT_FIXED_ARITY, BANGBOX_CROSSING_FIXED_ARITY, BANGBOX_SCOPE_OVERLAP,
-    BANGBOX_UNKNOWN_PARENT, BANGBOX_PARENT_CYCLE, BANGBOX_NESTING_MISMATCH.
+    BANGBOX_UNKNOWN_PARENT, BANGBOX_PARENT_CYCLE, BANGBOX_NESTING_MISMATCH,
+    BANGBOX_LINK_INADMISSIBLE (a link of unequal dimensions or equal directions, an open link
+    port neither wired outside nor a boundary slot, a cyclic p not wired to its q),
+    BANGBOX_INDEX_OUT_OF_SCOPE (an index read by a node outside its box).
 
 Issues are reported in a deterministic order.
 

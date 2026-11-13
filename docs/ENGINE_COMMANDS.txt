@@ -375,6 +375,12 @@ Bang boxes:
                                            a step may be a whole chain
     repeat MULT: A.outI, ...               a port-scope box
     repeat MULT as NAME [in P]: ...        a named box, optionally nested in box P
+    repeat MULT as NAME index J: ...       a box whose copy m reads J = m (phases, copy
+                                           scalar, child multiplicities)
+    chain NAME: A.outI -> B.inJ [, ...] [cyclic]
+                                           links of box NAME: copy m's A.outI is wired to
+                                           copy m + 1's B.inJ (DIAGRAM.txt 4.2)
+    copy scalar NAME: EXPR                 a scalar multiplied in once per copy of box NAME
 
 Other statements:
 
@@ -385,7 +391,8 @@ Other statements:
     dim NAME [= INT], ...                  declares dimension symbols, optionally bound
     count NAME [= INT], ...                declares multiplicity symbols, optionally bound
     let NAME = INT, ...                    binds a symbol to a value
-    box NAME x MULT nodes A, ... [in P]    a node-scope bang box (the long form of repeat)
+    box NAME x MULT nodes A, ... [index J] [in P]
+                                           a node-scope bang box (the long form of repeat)
     box NAME x MULT ports A.outI, ... [in P]
                                            a port-scope bang box (the long form of repeat)
 

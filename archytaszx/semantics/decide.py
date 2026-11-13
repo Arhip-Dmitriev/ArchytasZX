@@ -75,6 +75,7 @@ from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxError,
     boundary_arity,
+    expand_concrete_boxes,
     free_mult_symbols,
     instantiate_symbol,
     substitute_index_phases,
@@ -1415,6 +1416,11 @@ def decide_equal(
         _USE_PATH_SUM.reset(token)
 
 
+def _extended(diagram: Diagram) -> bool:
+    """Whether ``diagram`` holds a chain, indexed or copy-scalar bang box."""
+    return any(box.is_extended for box in diagram.bang_boxes.values())
+
+
 def _decide_equal(
     left: Diagram,
     right: Diagram,
@@ -1466,6 +1472,11 @@ def _decide_equal(
         "saturation_limits": saturation_limits,
         "mixed": mixed,
     }
+    if _extended(left) or _extended(right):
+        left, right = expand_concrete_boxes(left), expand_concrete_boxes(right)
+        if _extended(left) or _extended(right):
+            options.update(rules=(), use_symbolic=False, use_induction=False, use_saturation=False)
+            prove_equal = False
     if restrict is not None:
         from archytaszx.semantics.restrict import parse_restriction, validate
 

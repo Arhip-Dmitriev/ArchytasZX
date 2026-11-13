@@ -642,6 +642,10 @@ class _TermBuilder:
 def dirac_term(diagram: Diagram) -> DiracTerm:
     """The structural index-sum form of ``diagram``, one bound index per spider."""
     checked = _require_diagram(diagram)
+    if any(box.is_extended for box in checked.bang_boxes.values()):
+        raise PrinterDomainError(
+            "diagram has no Dirac form: a chain, indexed or copy-scalar bang box"
+        )
     try:
         _require_valid(checked)
         return _TermBuilder(checked).build()
@@ -1403,6 +1407,13 @@ def render_graph(diagram: Diagram) -> str:
                 _listing_ref(r) for r in sorted(box.port_scope, key=_listing_ref_key)
             )
         line = f"{_LISTING_INDENT * (level + 1)}!{i}  x {_listing_expr(box.multiplicity)}  {scope}"
+        if box.links:
+            links = ", ".join(f"{_listing_ref(a)} -> {_listing_ref(b)}" for a, b in box.links)
+            line += f"  links: {links}" + ("  cyclic" if box.cyclic else "")
+        if box.index is not None:
+            line += f"  index: {box.index}"
+        if box.copy_scalar is not None:
+            line += f"  copy scalar: {_listing_expr(box.copy_scalar)}"
         if flag is not None:
             line += f"  parent: !{parent} ({flag})"
         lines.append(line)

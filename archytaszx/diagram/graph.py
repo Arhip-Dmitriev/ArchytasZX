@@ -452,6 +452,10 @@ class Diagram:
         port_scope: frozenset[PortRef] = frozenset(),
         parent: BangBoxId | None = None,
         sheets: bool = False,
+        links: tuple[tuple[PortRef, PortRef], ...] = (),
+        cyclic: bool = False,
+        index: str | None = None,
+        copy_scalar: Scalar | None = None,
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -475,8 +479,25 @@ class Diagram:
             port_scope=frozenset(port_scope),
             parent=parent,
             sheets=sheets,
+            links=tuple(links),
+            cyclic=cyclic,
+            index=index,
+            copy_scalar=copy_scalar,
         )
         return box_id
+
+    def set_bang_box_extension(self, box_id: BangBoxId, **fields: object) -> None:
+        """Replace the named fields of a bang box (``node_scope``, ``links``, ``cyclic``,
+        ``index``, ``copy_scalar``) at once."""
+        from dataclasses import replace
+
+        if box_id not in self._bang_boxes:
+            raise GraphGrammarError(f"no such bang box: {box_id!r}")
+        allowed = {"node_scope", "links", "cyclic", "index", "copy_scalar"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise GraphGrammarError(f"set_bang_box_extension: unknown fields {sorted(unknown)!r}")
+        self._bang_boxes[box_id] = replace(self._bang_boxes[box_id], **fields)  # type: ignore[arg-type]
 
     def remove_bang_box(self, box_id: BangBoxId) -> None:
         """Remove a bang box. Raises GraphGrammarError if ``box_id`` is not present.

@@ -119,6 +119,14 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
                 False,
                 f"bang box {box_id}: parent differs: {box_a.parent!r} vs {box_b.parent!r}",
             )
+        extension_a = (box_a.links, box_a.cyclic, box_a.index, box_a.copy_scalar)
+        extension_b = (box_b.links, box_b.cyclic, box_b.index, box_b.copy_scalar)
+        if extension_a != extension_b:
+            return StructuralComparison(
+                False,
+                f"bang box {box_id}: links, index or copy scalar differ: "
+                f"{extension_a!r} vs {extension_b!r}",
+            )
 
     if a.boundary_inputs != b.boundary_inputs:
         return StructuralComparison(
@@ -150,6 +158,18 @@ def _digest(payload: object) -> str:
     return hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()[:32]
 
 
+def _box_tag(box: BangBox) -> str:
+    """A box's multiplicity with its sheets, cyclic, index and copy-scalar marks."""
+    tag = repr(box.multiplicity) + ("|sheets" if box.sheets else "")
+    if box.links:
+        tag += "|cyclic" if box.cyclic else "|chain"
+    if box.index is not None:
+        tag += f"|index:{box.index}"
+    if box.copy_scalar is not None:
+        tag += f"|scalar:{box.copy_scalar}"
+    return tag
+
+
 def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
     """The multiplicity reprs of ``box``'s ancestors, outermost last, cut at the first repeat."""
     chain: list[str] = []
@@ -158,7 +178,7 @@ def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
     while parent is not None and parent in diagram.bang_boxes and parent not in seen:
         seen.add(parent)
         ancestor = diagram.bang_boxes[parent]
-        chain.append(repr(ancestor.multiplicity) + ("|sheets" if ancestor.sheets else ""))
+        chain.append(_box_tag(ancestor))
         parent = ancestor.parent
     return tuple(chain)
 
@@ -208,7 +228,7 @@ def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, 
     for box_id in sorted(diagram.bang_boxes):
         box = diagram.bang_boxes[box_id]
         static = (
-            repr(box.multiplicity) + ("|sheets" if box.sheets else ""),
+            _box_tag(box),
             *_box_chain(diagram, box),
         )
         for nid in sorted(box.node_scope):
@@ -308,9 +328,14 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
     descriptors: list[tuple[object, ...]] = []
     for box_id in sorted(diagram.bang_boxes):
         box = diagram.bang_boxes[box_id]
+        links = tuple(
+            tuple((label[r.node_id], r.direction.value, r.index) for r in link)
+            for link in box.links
+            if all(r.node_id in label for r in link)
+        )
         descriptors.append(
             (
-                repr(box.multiplicity) + ("|sheets" if box.sheets else ""),
+                _box_tag(box),
                 _box_chain(diagram, box),
                 tuple(sorted(label[nid] for nid in box.node_scope if nid in label)),
                 tuple(
@@ -320,6 +345,7 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
                         if ref.node_id in label
                     )
                 ),
+                *((links,) if links else ()),
             )
         )
     return tuple(sorted(descriptors, key=repr))

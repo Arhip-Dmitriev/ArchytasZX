@@ -323,6 +323,16 @@ def _remap_endpoint(
 
 
 @_trace.traced("rewrite.apply", lambda diagram, rule, match, **_: rule.name)
+def _refuse_link_ports(diagram: Diagram, rule: Rule, consumed: Sequence[NodeId]) -> None:
+    """Raise RewriteDomainError when a consumed node carries a chain-box link port."""
+    gone = frozenset(consumed)
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if any(ref.node_id in gone for link in box.links for ref in link):
+            raise RewriteDomainError(
+                f"rule {rule.name!r}: the match consumes a link port of chain box {box_id!r}"
+            )
+
+
 def apply(
     diagram: Diagram, rule: Rule, match: Match, *, input_report: ValidationReport | None = None
 ) -> RewriteResult:
@@ -337,7 +347,8 @@ def apply(
     failed one), step 4 (the builder's ``scalar_introduced`` disagrees with the rule's),
     step 5 (a wire or boundary entry names a consumed-node port absent from
     ``port_mapping``, raised inside :func:`_remap_endpoint`, so uncounted by the meta-test),
-    and step 8 (the result carries a hard-failure issue the input did not).
+    and step 8 (the result carries a hard-failure issue the input did not); after step 2,
+    inside :func:`_refuse_link_ports`, when the match consumes a chain-box link port.
 
     Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
     is not, by identity, the working diagram; the builder edited its wire set or either
@@ -355,6 +366,7 @@ def apply(
 
     working = diagram.copy()
     build_result = rule.builder(working, match)
+    _refuse_link_ports(diagram, rule, build_result.consumed_node_ids)
 
     if build_result.diagram is not working:
         raise RewriteGrammarError(

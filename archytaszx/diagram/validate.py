@@ -153,6 +153,8 @@ class IssueKind(enum.Enum):
     BANGBOX_UNKNOWN_PARENT = "bangbox_unknown_parent"
     BANGBOX_PARENT_CYCLE = "bangbox_parent_cycle"
     BANGBOX_NESTING_MISMATCH = "bangbox_nesting_mismatch"
+    BANGBOX_LINK_INADMISSIBLE = "bangbox_link_inadmissible"
+    BANGBOX_INDEX_OUT_OF_SCOPE = "bangbox_index_out_of_scope"
 
 
 @dataclass(frozen=True, slots=True)
@@ -924,7 +926,10 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
         if not box.node_scope <= diagram.nodes.keys():
             continue
         fanned: dict[tuple[NodeId, Direction], int] = {}
-        for _inside, outside in outside_crossings(diagram, box.node_scope):
+        link_ports = {ref for link in box.links for ref in link}
+        for inside, outside in outside_crossings(diagram, box.node_scope):
+            if inside in link_ports:
+                continue
             side = (outside.node_id, outside.direction)
             fanned[side] = fanned.get(side, 0) + 1
         for (node_id, direction), count in sorted(
@@ -949,6 +954,61 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
                         node_id=node_id,
                     )
                 )
+
+
+def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """Every chain link joins two resolvable ports of equal dimension and opposite direction;
+    an open chain's link ports are each wired outside the scope or a boundary slot, a cyclic
+    chain's ``p`` is wired to its ``q``; an index symbol is read only inside its box's scope."""
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a] = wire.b
+        partner[wire.b] = wire.a
+    boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+
+        def refuse(message: str, kind: IssueKind = IssueKind.BANGBOX_LINK_INADMISSIBLE) -> None:
+            issues.append(ValidationIssue(kind=kind, message=message, bang_box_id=box_id))  # noqa: B023
+
+        for p_ref, q_ref in box.links:
+            nodes = [diagram.nodes.get(r.node_id) for r in (p_ref, q_ref)]
+            if any(
+                node is None or r.index >= len(node.legs(r.direction))
+                for node, r in zip(nodes, (p_ref, q_ref), strict=True)
+            ):
+                refuse(f"chain box {box_id!r}: link {p_ref!r} -> {q_ref!r} names an unknown port")
+                continue
+            p_node, q_node = nodes
+            assert p_node is not None and q_node is not None
+            p_dim = p_node.legs(p_ref.direction)[p_ref.index].dim
+            q_dim = q_node.legs(q_ref.direction)[q_ref.index].dim
+            if p_dim != q_dim or p_ref.direction is q_ref.direction:
+                refuse(
+                    f"chain box {box_id!r}: link {p_ref!r} -> {q_ref!r} is not an admissible "
+                    "wire (dimensions or directions)"
+                )
+            if box.cyclic:
+                if partner.get(p_ref) != q_ref:
+                    refuse(f"cyclic chain box {box_id!r}: {p_ref!r} is not wired to {q_ref!r}")
+                continue
+            for ref in (p_ref, q_ref):
+                end = partner.get(ref)
+                inside = end is not None and end.node_id in box.node_scope
+                if (end is None and ref not in boundary) or inside:
+                    refuse(
+                        f"chain box {box_id!r}: link port {ref!r} is neither wired outside "
+                        "the scope nor a boundary slot"
+                    )
+        if box.index is not None:
+            for node_id, node in sorted(diagram.nodes.items()):
+                if node_id in box.node_scope or node.phase is None:
+                    continue
+                if box.index in node.phase.free_symbols:
+                    refuse(
+                        f"bang box {box_id!r}: index {box.index!r} is read by node {node_id!r} "
+                        "outside its scope",
+                        IssueKind.BANGBOX_INDEX_OUT_OF_SCOPE,
+                    )
 
 
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
@@ -1140,6 +1200,7 @@ def validate(diagram: Diagram) -> ValidationReport:
         issues.extend(_node_issues(node))
     _check_bangbox_scopes(diagram, issues)
     _check_bangbox_crossings(diagram, issues)
+    _check_bangbox_links(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)

@@ -1082,6 +1082,10 @@ class _BoxDraft:
     node_scope: frozenset[NodeId] = frozenset()
     port_scope: frozenset[PortRef] = frozenset()
     parent: BangBoxId | None = None
+    links: tuple[tuple[PortRef, PortRef], ...] = ()
+    cyclic: bool = False
+    index: str | None = None
+    copy_scalar: str | None = None
 
 
 def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
@@ -1093,6 +1097,12 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             node_scope=draft.node_scope,
             port_scope=draft.port_scope,
             parent=draft.parent,
+            links=draft.links,
+            cyclic=draft.cyclic,
+            index=draft.index,
+            copy_scalar=None
+            if draft.copy_scalar is None
+            else _scalar_of(_parse_expr(draft.copy_scalar, "copy scalar"), {}),
         )
 
 
@@ -1124,6 +1134,9 @@ _LISTING_NODE_RE = re.compile(
 )
 _LISTING_BOX_RE = re.compile(
     r"!(?P<id>[0-9]+)\s+x\s+(?P<mult>.+?)\s+(?:nodes:\s*(?P<nodes>.+?)|ports:\s*(?P<ports>.+?))"
+    r"(?:\s+links:\s*(?P<links>.+?)(?:\s+(?P<cyclic>cyclic))?)?"
+    r"(?:\s+index:\s*(?P<index>\w+))?"
+    r"(?:\s+copy scalar:\s*(?P<copy>.+?))?"
     r"(?:\s+parent:\s*!(?P<parent>[0-9]+)\s+\((?P<flag>missing|cycle)\))?"
 )
 _UNICODE_IDENTIFIER = r"[^\W\d]\w*"
@@ -1267,11 +1280,24 @@ def _listing_boxes(lines: Sequence[str]) -> tuple[dict[int, _BoxDraft], dict[int
         else:
             refs = [_listing_ref(item) for item in _split_top(match["ports"])]
             draft = _BoxDraft(mult, port_scope=frozenset(refs))
+        links: tuple[tuple[PortRef, PortRef], ...] = ()
+        if match["links"] is not None:
+            pairs = []
+            for item in _split_top(match["links"]):
+                ends = _split_token(item, "->")
+                if len(ends) != 2:
+                    raise ParseGrammarError(f"listing: {item!r} is not a link 'nA.outI -> nB.inJ'")
+                pairs.append((_listing_ref(ends[0]), _listing_ref(ends[1])))
+            links = tuple(pairs)
         drafts[box_id] = _BoxDraft(
             draft.multiplicity,
             draft.node_scope,
             draft.port_scope,
             None if parent is None else BangBoxId(parent),
+            links=links,
+            cyclic=match["cyclic"] is not None,
+            index=match["index"],
+            copy_scalar=match["copy"],
         )
     return drafts, depth
 
@@ -1408,8 +1434,13 @@ _DSL_ANON_RE = re.compile(
 )
 _DSL_REPEAT_RE = re.compile(
     rf"repeat\s+(?P<mult>.+?)(?:\s+as\s+(?P<name>{_IDENTIFIER}))?"
+    rf"(?:\s+index\s+(?P<index>{_IDENTIFIER}))?"
     rf"(?:\s+in\s+(?P<parent>{_IDENTIFIER}))?\s*:\s*(?P<scope>.+)"
 )
+_DSL_CHAIN_RE = re.compile(
+    rf"chain\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<links>.+?)(?:\s+(?P<cyclic>cyclic))?"
+)
+_DSL_COPY_SCALAR_RE = re.compile(rf"copy\s+scalar\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<expr>.+)")
 _DEFAULT_DIM = "d"
 _WORD_THEN_WORD_RE = re.compile(rf"{_IDENTIFIER}\s+[A-Za-z_]")
 _DSL_REF_RE = re.compile(rf"(?P<node>{_IDENTIFIER})\.(?P<side>out|in)(?P<index>[0-9]+)")
@@ -1420,7 +1451,8 @@ _DSL_PHASE_RE = re.compile(
 _DSL_EXPLICIT_RE = re.compile(r"in:\s*\[(?P<ins>[^\]]*)\]\s*,\s*out:\s*\[(?P<outs>[^\]]*)\]")
 _DSL_BOX_RE = re.compile(
     rf"box\s+(?P<name>{_IDENTIFIER})\s+x\s+(?P<mult>.+?)\s+(?P<kind>nodes|ports)\s+"
-    rf"(?P<scope>.+?)(?:\s+in\s+(?P<parent>{_IDENTIFIER}))?"
+    rf"(?P<scope>.+?)(?:\s+index\s+(?P<index>{_IDENTIFIER}))?"
+    rf"(?:\s+in\s+(?P<parent>{_IDENTIFIER}))?"
 )
 _DSL_BINDING_RE = re.compile(rf"(?P<name>{_UNICODE_IDENTIFIER})(?:\s*=\s*(?P<value>-?[0-9]+))?")
 _ONE_TO_ONE = frozenset({"F", "T", "Ti"})
@@ -1511,12 +1543,16 @@ def _node_names(match: re.Match[str]) -> list[str]:
     return [f"{match['name']}{i}" for i in _name_range(match["lo"], match["hi"])]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _DslBox:
     multiplicity: Mult
     kind: str
     scope: str
     parent: str | None
+    index: str | None = None
+    links: list[tuple[str, str]] = field(default_factory=list)
+    cyclic: bool = False
+    copy_scalar: str | None = None
 
 
 @dataclass
@@ -1563,6 +1599,10 @@ class _Dsl:
             self.box(text)
         elif keyword == "repeat":
             self.repeat(text)
+        elif keyword == "chain" and _DSL_CHAIN_RE.fullmatch(text):
+            self.chain(text)
+        elif keyword == "copy" and _DSL_COPY_SCALAR_RE.fullmatch(text):
+            self.copy_scalar(text)
         elif (
             len(_split_token(text, "->")) > 1 or len(_split_token(text, "--")) > 1
         ) and not _WORD_THEN_WORD_RE.match(text):
@@ -1754,9 +1794,39 @@ class _Dsl:
         if match is None:
             raise ParseGrammarError(f"{text!r} is not 'box NAME x MULT nodes|ports ... [in P]'")
         box = _DslBox(
-            self.multiplicity(match["mult"]), match["kind"], match["scope"], match["parent"]
+            self.multiplicity(match["mult"]),
+            match["kind"],
+            match["scope"],
+            match["parent"],
+            index=match["index"],
         )
         self.add_box(_name(match["name"], "box"), box)
+
+    def named_box(self, name: str, what: str) -> _DslBox:
+        if name not in self.boxes:
+            raise ParseGrammarError(
+                f"{what}: unknown box {name!r}" + _did_you_mean(name, self.boxes)
+            )
+        return self.boxes[name]
+
+    def chain(self, text: str) -> None:
+        match = _DSL_CHAIN_RE.fullmatch(text)
+        assert match is not None
+        box = self.named_box(match["name"], "chain")
+        for item in _split_top(match["links"]):
+            ends = _split_token(item, "->")
+            if len(ends) != 2 or not all(_DSL_REF_RE.fullmatch(e.strip()) for e in ends):
+                raise ParseGrammarError(f"{item!r} is not a chain link 'A.outI -> B.inJ'")
+            box.links.append((ends[0].strip(), ends[1].strip()))
+        box.cyclic = match["cyclic"] is not None
+
+    def copy_scalar(self, text: str) -> None:
+        match = _DSL_COPY_SCALAR_RE.fullmatch(text)
+        assert match is not None
+        box = self.named_box(match["name"], "copy scalar")
+        if box.copy_scalar is not None:
+            raise ParseGrammarError(f"box {match['name']!r} has two copy scalars")
+        box.copy_scalar = match["expr"]
 
     def repeat(self, text: str) -> None:
         match = _DSL_REPEAT_RE.fullmatch(text)
@@ -1779,7 +1849,13 @@ class _Dsl:
             raise ParseGrammarError(f"{text!r} mixes nodes and ports")
         kind = "ports" if all(ports) else "nodes"
         name = _name(match["name"], "box") if match["name"] else f"~{len(self.boxes)}"
-        box = _DslBox(self.multiplicity(match["mult"]), kind, ", ".join(items), match["parent"])
+        box = _DslBox(
+            self.multiplicity(match["mult"]),
+            kind,
+            ", ".join(items),
+            match["parent"],
+            index=match["index"],
+        )
         self.add_box(name, box)
 
     def ref(self, text: str, ids: Mapping[str, NodeId]) -> PortRef:
@@ -1874,8 +1950,17 @@ class _Dsl:
                         + _did_you_mean(unknown[0], named)
                     )
                 scope = frozenset(ids[item] for item in items)
-                diagram.add_bang_box(box.multiplicity, node_scope=scope, parent=parent)
+                diagram.add_bang_box(
+                    box.multiplicity,
+                    node_scope=scope,
+                    parent=parent,
+                    links=tuple((self.ref(a, named), self.ref(b, named)) for a, b in box.links),
+                    cyclic=box.cyclic,
+                    index=box.index,
+                )
             else:
+                if box.links or box.index is not None or box.copy_scalar is not None:
+                    raise ParseGrammarError("links, index and copy scalar need a node box")
                 ports = frozenset(self.ref(item, named) for item in items)
                 diagram.add_bang_box(box.multiplicity, port_scope=ports, parent=parent)
         dims = [*_draft_dims(drafts), *(Dim.symbol(n) for n in sorted(self.declared_dims))]
@@ -1884,11 +1969,18 @@ class _Dsl:
         mults = [
             *(box.multiplicity for box in self.boxes.values()),
             *(Mult.symbol(n) for n in sorted(self.declared_counts)),
+            *(Mult.symbol(box.index) for box in self.boxes.values() if box.index is not None),
         ]
         _set_phases(diagram, drafts, _role_table(dims, mults))
         if self.scalar is not None:
             table = _role_table(dims, mults, _phases(diagram))
             diagram.set_scalar(_diagram_scalar(diagram, self.scalar, table))
+        for box_id, box in zip(box_ids.values(), self.boxes.values(), strict=True):
+            if box.copy_scalar is not None:
+                table = _role_table(dims, mults, _phases(diagram))
+                diagram.set_bang_box_extension(
+                    box_id, copy_scalar=_diagram_scalar(diagram, box.copy_scalar, table)
+                )
         uncarried = sorted(set(self.bindings) - _carried(diagram))
         if uncarried:
             raise ParseDomainError(f"binding(s) {uncarried} name no symbol the diagram carries")
