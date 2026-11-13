@@ -200,14 +200,16 @@ class Chain:
     """A loop over ``count`` copies, copy ``m`` reading ``index`` as ``m`` in amounts and phase
     rules: ``body`` acts on copy ``m`` of each register of that count and on the single wires
     of ``carries``; after each copy every ``(carry, register)`` pair exchanges values, so the
-    register's copy keeps the carry's value and the carry goes on with the register's. With
-    ``reverse`` the copies run from ``count - 1`` down to 0."""
+    register's copy keeps the carry's value and the carry goes on with the register's; each
+    single wire of ``through`` goes on from copy to copy unchanged. With ``reverse`` the copies
+    run from ``count - 1`` down to 0."""
 
     count: Count
     body: tuple[Gate, ...]
     carries: tuple[tuple[str, str], ...] = ()
     index: str | None = None
     reverse: bool = False
+    through: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -310,7 +312,7 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         return (*g.xs, g.y)
     if isinstance(g, Chain):
         seen = [q for h in g.body for q in gate_wires(h)]
-        seen += [q for pair in g.carries for q in pair]
+        seen += [q for pair in g.carries for q in pair] + list(g.through)
         return tuple(dict.fromkeys(seen))
     if isinstance(g, Pairs):
         return (g.over,)

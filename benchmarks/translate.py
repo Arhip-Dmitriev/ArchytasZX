@@ -578,23 +578,26 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
         raise Unsupported("a chain over a register of another count")
     if any(not isinstance(b.cur[q], tuple) or q in b.chained for q in regs):
         raise Unsupported("a chain register used before its chain")
-    if any(b.c.count(carry) is not None for carry, _reg in g.carries):
+    singles = [carry for carry, _reg in g.carries] + list(g.through)
+    if any(b.c.count(q) is not None for q in singles):
         raise Unsupported("a chain carry that is a register")
     key = f"C{sum(1 for box in b.boxes.values() if box.name is not None)}"
     b.boxes[key] = _Box(count, name=key, index=g.index)
-    b.chain = _ChainScope(key, count, frozenset(carry for carry, _reg in g.carries))
-    for carry, _reg in g.carries:
-        b.cur[carry] = _Head(carry, b.cur[carry])
-        b.heads.pop(carry, None)
+    b.chain = _ChainScope(key, count, frozenset(singles))
+    for q in singles:
+        b.cur[q] = _Head(q, b.cur[q])
+        b.heads.pop(q, None)
     for h in g.body:
         _gate(b, h)
     links = []
+    if any(q in b.closed for q in g.through):
+        raise Unsupported("a chain's through wire that ends inside its chain")
     for carry, reg in g.carries:
         if reg in b.closed:
             raise Unsupported("a chain register that ends inside its chain")
-        for q in (carry, reg):
-            if q not in b.closed and isinstance(b.cur[q], (tuple, _Head)):
-                b.unary(q, f"Z(1 -> 1, {b.dim(q)})", key)
+    for q in [x for pair in g.carries for x in pair] + list(g.through):
+        if q not in b.closed and isinstance(b.cur[q], (tuple, _Head)):
+            b.unary(q, f"Z(1 -> 1, {b.dim(q)})", key)
     for carry, reg in g.carries:
         if carry in b.closed:
             b.closed.discard(carry)
@@ -602,7 +605,8 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
             b.close(reg)
         else:
             b.cur[carry], b.cur[reg] = b.cur[reg], b.cur[carry]
-        ends = (b.heads[carry], b.cur[carry]) if g.reverse else (b.cur[carry], b.heads[carry])
+    for q in singles:
+        ends = (b.heads[q], b.cur[q]) if g.reverse else (b.cur[q], b.heads[q])
         links.append(" -> ".join(map(str, ends)))
     if links:
         b.boxes[key].extra.append(f"chain {key}: " + ", ".join(links))
