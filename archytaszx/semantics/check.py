@@ -783,6 +783,8 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
         return True
     if not folded.free_symbols:
         return _cyclotomic_zero(folded)
+    if _grouped_zero(folded):
+        return True
     if len(folded.free_symbols) == 1 and not folded.atoms(ModDelta) and _uw_zero(folded):
         return True
     split = _case_index(folded, ranges or {})
@@ -795,6 +797,19 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
         _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size)
         for v in range(size)
     )
+
+
+def _grouped_zero(expr: sp.Expr) -> bool:
+    """Whether the terms of ``expr``, grouped by their symbol-dependent factor, have constant
+    coefficients each summing to zero (:func:`_cyclotomic_zero`)."""
+    symbols = tuple(expr.free_symbols)
+    groups: dict[sp.Expr, list[sp.Expr]] = {}
+    for term in sp.Add.make_args(expr):
+        coefficient, dependent = term.as_independent(*symbols, as_Add=False)
+        groups.setdefault(dependent, []).append(coefficient)
+    if len(groups) == len(sp.Add.make_args(expr)):
+        return False
+    return all(_cyclotomic_zero(sp.Add(*coefficients)) for coefficients in groups.values())
 
 
 def _cyclotomic_zero(expr: sp.Expr) -> bool:
