@@ -73,6 +73,7 @@ def script(cfg: dict[str, Any], sets: list[str], commit: str) -> str:
         raise ValueError("Zaratan jobs run on the scavenger partition only")
     extra = " ".join(f"--set {shlex.quote(s)}" for s in sets)
     account = f"#SBATCH --account={sc['account']}\n" if sc["account"] else ""
+    setup = f"source {shlex.quote(str(sc['setup']))}\n" if sc.get("setup") else ""
     return f"""#!/bin/bash
 #SBATCH --job-name=archytaszx-bench
 #SBATCH --partition=scavenger
@@ -89,7 +90,7 @@ set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 [ "$(git rev-parse HEAD)" = "{commit}" ] || {{ echo "checkout is not at {commit}" >&2; exit 1; }}
 [ -z "$(git status --porcelain --untracked-files=no)" ] || {{ echo "dirty checkout" >&2; exit 1; }}
-source {sc["venv"]}/bin/activate
+{setup}source {sc["venv"]}/bin/activate
 export PYTHONPATH="$SLURM_SUBMIT_DIR"
 python -m benchmarks run --profile cluster --shard ${{SLURM_ARRAY_TASK_ID}}/{int(sc["array"])} \\
     --set platform.jobs={int(sc["cpus_per_task"])} {extra}
