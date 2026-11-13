@@ -8,10 +8,10 @@ import ArchytasZX.Bundle
 # Chain families by induction on the copy count
 
 `chainNet W cut base copy k` is the network of a chain box at multiplicity `k`: `base` at
-`k = 0`, and at `k + 1` copy `k` (the copy shifted by `k W`) plugged onto the network at `k`
+`k = 0`, and at `k + 1` copy `k` (`copy k` shifted by `k W`) plugged onto the network at `k`
 through the labels `cut` shifted by `k W`, which become summed. `chain_equal` proves both
-families equal at every `k` from the base case and one equation between the two copies, as
-open networks.
+families equal at every `k` from the base case and the equation of each copy pair, the scalars
+multiplied over the copies; `perIdx` reads copy `i` from a table of period `|tab|`.
 -/
 
 namespace ArchytasZX
@@ -85,11 +85,11 @@ theorem labDim_two (E : Env) (hE : ∀ k, E.dimv k = 2 ^ max k 1)
 
 /-! ## The family -/
 
-/-- The network of a chain at `k` copies. -/
-def chainNet (W : ℕ) (cut : List ℕ) (base copy : Net) : ℕ → Net
+/-- The network of a chain at `k` copies, copy `i` at level `i`. -/
+def chainNet (W : ℕ) (cut : List ℕ) (base : Net) (copy : ℕ → Net) : ℕ → Net
   | 0 => base
   | k + 1 =>
-    let C := copy.mapL (· + k * W)
+    let C := (copy k).mapL (· + k * W)
     let cs := cut.map (· + k * W)
     ⟨C.nodes ++ (chainNet W cut base copy k).nodes,
       C.int ++ cs ++ (chainNet W cut base copy k).int,
@@ -106,6 +106,13 @@ def copyOK (W : ℕ) (cut : List ℕ) (copy : Net) : Bool :=
   (labelsOf copy.nodes ++ copy.int ++ copy.bnd).all
       (fun x => decide (x ∈ cut ∨ (W ≤ x ∧ x < 2 * W))) &&
     copy.int.all (fun x => decide (W ≤ x ∧ x ∉ cut.map (· + W)))
+
+/-- Entry `i mod |tab|` of a table. -/
+def perIdx {α : Type} (tab : List α) (d : α) (i : ℕ) : α := tab.getD (i % tab.length) d
+
+theorem perIdx_all {α : Type} (tab : List α) (d : α) (P : α → Prop) (hn : 0 < tab.length)
+    (h : ∀ j < tab.length, P (tab.getD j d)) : ∀ i, P (perIdx tab d i) :=
+  fun i => h _ (Nat.mod_lt _ hn)
 
 theorem mem_labels_mapL (f : ℕ → ℕ) (N : Net) (x : ℕ)
     (h : x ∈ labelsOf (N.mapL f).nodes ++ (N.mapL f).int ++ (N.mapL f).bnd) :
@@ -125,11 +132,11 @@ theorem mem_all_of_int {N : Net} {x : ℕ} (h : x ∈ N.int) :
 theorem mem_all_of_bnd {N : Net} {x : ℕ} (h : x ∈ N.bnd) :
     x ∈ labelsOf N.nodes ++ N.int ++ N.bnd := List.mem_append_right _ h
 
-theorem mem_chain_succ (W : ℕ) (cut : List ℕ) (base copy : Net) (k x : ℕ)
+theorem mem_chain_succ (W : ℕ) (cut : List ℕ) (base : Net) (copy : ℕ → Net) (k x : ℕ)
     (hx : x ∈ labelsOf (chainNet W cut base copy (k + 1)).nodes ++
       (chainNet W cut base copy (k + 1)).int ++ (chainNet W cut base copy (k + 1)).bnd) :
-    x ∈ labelsOf (copy.mapL (· + k * W)).nodes ++ (copy.mapL (· + k * W)).int ++
-        (copy.mapL (· + k * W)).bnd ∨ x ∈ cut.map (· + k * W) ∨
+    x ∈ labelsOf ((copy k).mapL (· + k * W)).nodes ++ ((copy k).mapL (· + k * W)).int ++
+        ((copy k).mapL (· + k * W)).bnd ∨ x ∈ cut.map (· + k * W) ∨
       x ∈ labelsOf (chainNet W cut base copy k).nodes ++ (chainNet W cut base copy k).int ++
         (chainNet W cut base copy k).bnd := by
   simp only [chainNet, labelsOf, List.flatMap_append, List.mem_append, List.mem_filter] at hx ⊢
@@ -137,14 +144,13 @@ theorem mem_chain_succ (W : ℕ) (cut : List ℕ) (base copy : Net) (k x : ℕ)
 
 /-- Every label of the network at `k` is below `k W + W`; no summed one is a cut label
 shifted by `k W`. -/
-theorem chain_bounds (W : ℕ) (cut : List ℕ) (base copy : Net) (hb : baseOK W cut base = true)
-    (hc : copyOK W cut copy = true) (k : ℕ) :
+theorem chain_bounds (W : ℕ) (cut : List ℕ) (base : Net) (copy : ℕ → Net)
+    (hb : baseOK W cut base = true) (hc : ∀ i, copyOK W cut (copy i) = true) (k : ℕ) :
     (∀ x ∈ labelsOf (chainNet W cut base copy k).nodes ++ (chainNet W cut base copy k).int ++
       (chainNet W cut base copy k).bnd, x < k * W + W) ∧
       ∀ x ∈ (chainNet W cut base copy k).int, ∀ c ∈ cut, x ≠ c + k * W := by
-  simp only [baseOK, copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hb hc
+  simp only [baseOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hb
   obtain ⟨⟨hbl, hcut⟩, hbi⟩ := hb
-  obtain ⟨hcl, hci⟩ := hc
   induction k with
   | zero =>
     refine ⟨fun x hx => by simpa using hbl x hx, fun x hx c hcm e => ?_⟩
@@ -152,11 +158,14 @@ theorem chain_bounds (W : ℕ) (cut : List ℕ) (base copy : Net) (hb : baseOK W
     exact hbi x hx (e ▸ hcm)
   | succ k ih =>
     obtain ⟨ih1, ih2⟩ := ih
+    have hck := hc k
+    simp only [copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hck
+    obtain ⟨hcl, hci⟩ := hck
     have hsucc : (k + 1) * W = k * W + W := by rw [Nat.succ_mul]
     refine ⟨fun x hx => ?_, fun x hx c hcm e => ?_⟩
     · rw [hsucc]
       rcases mem_chain_succ W cut base copy k x hx with h | h | h
-      · obtain ⟨y, hy, rfl⟩ := mem_labels_mapL (· + k * W) copy x h
+      · obtain ⟨y, hy, rfl⟩ := mem_labels_mapL (· + k * W) (copy k) x h
         rcases hcl y hy with h' | ⟨_, h'⟩
         · have := hcut y h'; omega
         · omega
@@ -167,7 +176,7 @@ theorem chain_bounds (W : ℕ) (cut : List ℕ) (base copy : Net) (hb : baseOK W
       have hcW := hcut c hcm
       simp only [chainNet, List.mem_append] at hx
       rcases hx with (hx | hx) | hx
-      · obtain ⟨y, hy, rfl⟩ := List.mem_map.1 (show x ∈ copy.int.map (· + k * W) from hx)
+      · obtain ⟨y, hy, rfl⟩ := List.mem_map.1 (show x ∈ (copy k).int.map (· + k * W) from hx)
         obtain ⟨_, hy2⟩ := hci y hy
         exact hy2 (List.mem_map.2 ⟨c, hcm, by omega⟩)
       · obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hx
@@ -209,65 +218,71 @@ theorem face_right (A : List ℕ) (cs : List ℕ) (iC B : List ℕ) :
   · exact Or.inl (List.mem_append_left _ hm)
   · exact Or.inr (List.mem_append_right _ (List.mem_filter.2 ⟨hx, by simpa using hm⟩))
 
-/-- Two chain families agree at every `k` from the base case and one copy equation. -/
-theorem chain_equal (E : Env) (W : ℕ) (cut : List ℕ) (bO cO bX cX : Net)
-    (hD : ∀ x y, labDim E x = labDim E y)
-    (hbO : baseOK W cut bO = true) (hcO : copyOK W cut cO = true)
-    (hbX : baseOK W cut bX = true) (hcX : copyOK W cut cX = true)
-    (s t a b : ℂ) (h0 : Equal E s bO t bX) (h1 : Equal E a cO b cX) :
-    ∀ k, Equal E (s * a ^ k) (chainNet W cut bO cO k) (t * b ^ k) (chainNet W cut bX cX k) := by
+/-- Two chain families agree at every `k` from the base case and the equation of each copy
+pair, copy `i` scaled by `a i` and `b i`. -/
+theorem chain_equal (E : Env) (W : ℕ) (cut : List ℕ) (bO : Net) (cO : ℕ → Net) (bX : Net)
+    (cX : ℕ → Net) (hD : ∀ x y, labDim E x = labDim E y)
+    (hbO : baseOK W cut bO = true) (hcO : ∀ i, copyOK W cut (cO i) = true)
+    (hbX : baseOK W cut bX = true) (hcX : ∀ i, copyOK W cut (cX i) = true)
+    (s t : ℂ) (a b : ℕ → ℂ) (h0 : Equal E s bO t bX) (h1 : ∀ i, Equal E (a i) (cO i) (b i) (cX i)) :
+    ∀ k, Equal E (s * ∏ i ∈ range k, a i) (chainNet W cut bO cO k)
+      (t * ∏ i ∈ range k, b i) (chainNet W cut bX cX k) := by
   intro k
   induction k with
   | zero => simpa [chainNet] using h0
   | succ k ih =>
     have bO' := chain_bounds W cut bO cO hbO hcO k
     have bX' := chain_bounds W cut bX cX hbX hcX k
-    simp only [copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hcO hcX
+    have hcOk := hcO k
+    have hcXk := hcX k
+    simp only [copyOK, Bool.and_eq_true, List.all_eq_true, decide_eq_true_eq] at hcOk hcXk
     have hinj : Function.Injective (· + k * W) := fun x y h => by simpa using h
-    have hcc : Equal E a (cO.mapL (· + k * W)) b (cX.mapL (· + k * W)) :=
-      Equal.mapL E _ hinj (fun x => hD _ _) h1
-    have A1 := plug E (cO.mapL (· + k * W)).nodes (chainNet W cut bO cO k).nodes
-      (chainNet W cut bX cX k).nodes ((cO.mapL (· + k * W)).int ++ cut.map (· + k * W))
+    have hcc : Equal E (a k) ((cO k).mapL (· + k * W)) (b k) ((cX k).mapL (· + k * W)) :=
+      Equal.mapL E _ hinj (fun x => hD _ _) (h1 k)
+    have A1 := plug E ((cO k).mapL (· + k * W)).nodes (chainNet W cut bO cO k).nodes
+      (chainNet W cut bX cX k).nodes (((cO k).mapL (· + k * W)).int ++ cut.map (· + k * W))
       (chainNet W cut bO cO k).int (chainNet W cut bX cX k).int
       ((chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-        (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W)))
+        ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W)))
       (chainNet W cut bO cO k).bnd _ _ (Equal.toLocal E _ _ ih)
-      (copy_off W k cut _ cO bO'.1 bO'.2 hcO.1) (copy_off W k cut _ cO bX'.1 bX'.2 hcO.1)
+      (copy_off W k cut _ (cO k) bO'.1 bO'.2 hcOk.1) (copy_off W k cut _ (cO k) bX'.1 bX'.2 hcOk.1)
       (face_left _ _ _ _)
-    have A2 := plug E (chainNet W cut bX cX k).nodes (cO.mapL (· + k * W)).nodes
-      (cX.mapL (· + k * W)).nodes (cut.map (· + k * W) ++ (chainNet W cut bX cX k).int)
-      (cO.mapL (· + k * W)).int (cX.mapL (· + k * W)).int
+    have A2 := plug E (chainNet W cut bX cX k).nodes ((cO k).mapL (· + k * W)).nodes
+      ((cX k).mapL (· + k * W)).nodes (cut.map (· + k * W) ++ (chainNet W cut bX cX k).int)
+      ((cO k).mapL (· + k * W)).int ((cX k).mapL (· + k * W)).int
       ((chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-        (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W)))
-      (cO.mapL (· + k * W)).bnd _ _ (Equal.toLocal E _ _ hcc)
-      (net_off W k cut _ cO bX'.1 hcO.2) (net_off W k cut _ cX bX'.1 hcX.2)
+        ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W)))
+      ((cO k).mapL (· + k * W)).bnd _ _ (Equal.toLocal E _ _ hcc)
+      (net_off W k cut _ (cO k) bX'.1 hcOk.2) (net_off W k cut _ (cX k) bX'.1 hcXk.2)
       (face_right _ _ _ _)
     have hn : ∀ (A B : List Node), (A ++ B).Perm (B ++ A) := fun A B => List.perm_append_comm
     have hi : ∀ (A B C : List ℕ), (A ++ B ++ C).Perm (C ++ A ++ B) := fun A B C =>
       List.perm_append_comm.trans (List.Perm.of_eq (List.append_assoc _ _ _).symm)
-    have A2' : Equal E a
-        ⟨(cO.mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
-          (cO.mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
+    have A2' : Equal E (a k)
+        ⟨((cO k).mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
+          ((cO k).mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
           (chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-            (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩ b
-        ⟨(cX.mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
-          (cX.mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
+            ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩ (b k)
+        ⟨((cX k).mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
+          ((cX k).mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
           (chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-            (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩ :=
-      (A2.reorderL E (A' := ⟨(cO.mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
-          (cO.mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
+            ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩ :=
+      (A2.reorderL E (A' := ⟨((cO k).mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
+          ((cO k).mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
           (chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-            (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩)
+            ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩)
         (hn _ _) (hi _ _ _) (List.Perm.refl _)).reorder E
-        (B' := ⟨(cX.mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
-          (cX.mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
+        (B' := ⟨((cX k).mapL (· + k * W)).nodes ++ (chainNet W cut bX cX k).nodes,
+          ((cX k).mapL (· + k * W)).int ++ cut.map (· + k * W) ++ (chainNet W cut bX cX k).int,
           (chainNet W cut bO cO k).bnd.filter (· ∉ cut.map (· + k * W)) ++
-            (cO.mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩)
+            ((cO k).mapL (· + k * W)).bnd.filter (· ∉ cut.map (· + k * W))⟩)
         (hn _ _) (hi _ _ _) (List.Perm.refl _)
     have hb := (ih.1.filter (fun x => decide (x ∉ cut.map (· + k * W)))).append
       (hcc.1.filter (fun x => decide (x ∉ cut.map (· + k * W))))
     have A3 := (A1.mul_trans A2').reorder E (B' := chainNet W cut bX cX (k + 1))
       (List.Perm.refl _) (List.Perm.refl _) hb
-    exact A3.congr_scalar (a' := s * a ^ (k + 1)) (b' := t * b ^ (k + 1)) (by ring) (by ring)
+    exact A3.congr_scalar (a' := s * ∏ i ∈ range (k + 1), a i)
+      (b' := t * ∏ i ∈ range (k + 1), b i)
+      (by rw [Finset.prod_range_succ]; ring) (by rw [Finset.prod_range_succ]; ring)
 
 end ArchytasZX
