@@ -322,18 +322,18 @@ def _const_turn(ps: PathSum, m: int, boolean: bool) -> int:
 
 
 def _plan(
-    raw_l: PathSum, raw_r: PathSum
+    raw_l: PathSum, raw_r: PathSum, m_min: int = 1
 ) -> tuple[PathSum, PathSum, list[int], bool, int, list[str], list[str]]:
     """Both reduced sums, the canonical pivots, whether Boolean elimination is needed, the
-    phase modulus M and each side's PSem.Step list; raises :class:`PathSumUnsupported` when the
-    sums do not reduce to one canonical form."""
+    phase modulus M (a multiple of ``m_min``) and each side's PSem.Step list; raises
+    :class:`PathSumUnsupported` when the sums do not reduce to one canonical form."""
     if raw_l.amps or raw_r.amps:
         raise PathSumUnsupported("export_proof has no amplitude atoms")
     red_l, red_r = reduce(raw_l), reduce(raw_r)
     can_l, can_r = canonical(red_l), canonical(red_r)
     if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
         raise PathSumUnsupported("the path sums do not reduce to one canonical form")
-    m = 4
+    m = math.lcm(4, m_min)
     for ps in (raw_l, raw_r):
         for c in ps.phase.terms.values():
             m = math.lcm(m, c.denominator)
@@ -656,6 +656,9 @@ def export_qudit_proof(left: Diagram, right: Diagram, name: str = "pair") -> str
 PIN_OFFSET = 1 << 20
 """The first digit variable of a summed wire that is pinned to another digit variable."""
 
+QPIN_OFFSET = 1 << 18
+"""The first label of a summed wire on Z_p whose class variable is taken."""
+
 
 def _poly_text(terms: Iterable[tuple[Iterable[int], int]]) -> str:
     """A PSem.Poly literal."""
@@ -975,11 +978,13 @@ class NetBody:
     m: int
 
 
-def net_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]]) -> NetBody:
+def net_body(
+    left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]], m_min: int = 1
+) -> NetBody:
     """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
-    and S nodes on dimensions 2^k, their phase vectors appended to ``phases`` (see
-    :func:`export_net`); raises :class:`PathSumUnsupported` outside that class or when the sums
-    do not reduce to one canonical form."""
+    and S nodes on dimensions 2^k, their phase vectors appended to ``phases``, phases over a
+    multiple of ``m_min`` (see :func:`export_net`); raises :class:`PathSumUnsupported` outside
+    that class or when the sums do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
     raw_l, raw_r = from_diagram(left), from_diagram(right)
@@ -987,7 +992,7 @@ def net_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, i
         raise PathSumUnsupported("the network export covers qubit path sums only")
     if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
-    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r)
+    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, m_min)
     side_l, _ = _net_side(left, m, phases, 1 << 16)
     side_r, _ = _net_side(right, m, phases, 1 << 17)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
@@ -1144,7 +1149,7 @@ class _QNetSide:
 def _qnet_side(diagram: Diagram, phases: list[tuple[str, int]], sc: Any) -> _QNetSide:
     """The network of ``diagram`` over Z_p, every label of dimension p: boundary port i is label
     i, a summed wire is labelled by its class's variable when that is a path variable not yet
-    taken, else by a label from PIN_OFFSET; each Z spider is anchored at the leg through which a
+    taken, else by a label from QPIN_OFFSET; each Z spider is anchored at the leg through which a
     search from the class's variable first reaches it; the pin steps set the other summed labels
     to their anchors deepest first, then the trace of the pinned sum's reduction follows."""
     from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
@@ -1173,7 +1178,7 @@ def _qnet_side(diagram: Diagram, phases: list[tuple[str, int]], sc: Any) -> _QNe
     nb = len(bnd)
     taken: set[int] = set()
     summed: list[int] = []
-    nxt = PIN_OFFSET
+    nxt = QPIN_OFFSET
     for wire in sorted(d.wires, key=lambda w: w.sort_key()):
         if wire.a in label or wire.b in label:
             raise PathSumUnsupported("a wire on a boundary port")
@@ -1281,7 +1286,7 @@ def _qnet_side(diagram: Diagram, phases: list[tuple[str, int]], sc: Any) -> _QNe
             inv_root += len(legs)
     steps: list[str] = []
     for x in reversed(reached):
-        if x < PIN_OFFSET:
+        if x < QPIN_OFFSET:
             continue
         a = parent[x]
         hit = next(
@@ -1352,18 +1357,13 @@ def _qnet_lines(tag: str, side: _QNetSide, p: int) -> list[str]:
     ]
 
 
-def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
-    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X
-    and F nodes on one odd prime dimension p (ArchytasZX/PathSumQuditNet.lean): each network's
-    value is its fragments' path sum over Z_p (QNetPS.eval_eq), pin steps set the summed labels
-    of one class to one variable, each side's reduction trace is replayed, the Gauss sums take
-    their Legendre form and the final comparison gives ``Equal``; raises
-    :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
-    canonical form, :class:`ScalarUnsupported` when the constants' identity has no proof."""
+def qnet_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]]) -> NetBody:
+    """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X and F
+    nodes on one odd prime dimension p, their phase vectors appended to ``phases`` (see
+    :func:`export_qudit_net`); ``labs`` is empty and ``m`` is p."""
     from archytaszx.algebra.pathsum import legendre
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
-    phases: list[tuple[str, int]] = []
     sc = _scalars()
     side_l = _qnet_side(left, phases, sc)
     side_r = _qnet_side(right, phases, sc)
@@ -1401,29 +1401,7 @@ def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     steps_all = (*side_l.steps, *side_r.steps)
     gauss = sorted({int(st.split()[1]) for st in steps_all if st.startswith(".gauss")})
     lg_vals = {k: legendre(k, p) if k % p else 0 for k in range(p)}
-    ns = "ArchytasZX.PathSumQuditNetProof"
     lines = [
-        "import ArchytasZX.PathSumQuditNet",
-        "",
-        "/-!",
-        f"# Qudit network proof `{name}` over Z_{p}",
-        "",
-        "Each network's value is its fragments' path sum over Z_p; pin steps set the summed labels",
-        "of one class to one variable, the reduction steps follow, and the final comparison gives",
-        "`Equal`.",
-        "-/",
-        "",
-        f"namespace {ns}",
-        "",
-        "open ArchytasZX ArchytasZX.QSem",
-        "",
-        *NET_OPTIONS,
-        "set_option linter.unreachableTactic false",
-        "set_option linter.unusedVariables false",
-        "",
-        f"instance : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
-        "",
-        *net_env(phases, {}, str(p), p),
         *_qnet_lines("L", side_l, p),
         *_qnet_lines("R", side_r, p),
         f"def stepsL : List QSem.Step := [{', '.join(side_l.steps)}]",
@@ -1475,6 +1453,52 @@ def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "  rw [facL, facR, cL, cR]",
         "  all_goals exact consts",
         "",
+    ]
+    labs = {x: 1 for side in (side_l, side_r) for x in (*range(side.boundary), *side.summed)}
+    return NetBody(lines, labs, s_l, s_r, p)
+
+
+QNET_OPTIONS = [
+    *NET_OPTIONS,
+    "set_option linter.unreachableTactic false",
+    "set_option linter.unusedVariables false",
+]
+"""The options of a qudit network proof file."""
+
+
+def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X
+    and F nodes on one odd prime dimension p (ArchytasZX/PathSumQuditNet.lean): each network's
+    value is its fragments' path sum over Z_p (QNetPS.eval_eq), pin steps set the summed labels
+    of one class to one variable, each side's reduction trace is replayed, the Gauss sums take
+    their Legendre form and the final comparison gives ``Equal``; raises
+    :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
+    canonical form, :class:`ScalarUnsupported` when the constants' identity has no proof."""
+    phases: list[tuple[str, int]] = []
+    body = qnet_body(left, right, name, phases)
+    p = body.m
+    ns = "ArchytasZX.PathSumQuditNetProof"
+    lines = [
+        "import ArchytasZX.PathSumQuditNet",
+        "",
+        "/-!",
+        f"# Qudit network proof `{name}` over Z_{p}",
+        "",
+        "Each network's value is its fragments' path sum over Z_p; pin steps set the summed labels",
+        "of one class to one variable, the reduction steps follow, and the final comparison gives",
+        "`Equal`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.QSem",
+        "",
+        *QNET_OPTIONS,
+        "",
+        f"instance : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
+        "",
+        *net_env(phases, {}, str(p), p),
+        *body.lines,
         f"end {ns}",
         "",
     ]
@@ -1482,6 +1506,8 @@ def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
 
 
 __all__ = [
+    "NET_OPTIONS",
+    "QNET_OPTIONS",
     "NetBody",
     "export_net",
     "export_pair",
@@ -1489,4 +1515,6 @@ __all__ = [
     "export_qudit_net",
     "export_qudit_proof",
     "net_body",
+    "net_env",
+    "qnet_body",
 ]

@@ -60,8 +60,26 @@ SPEC = "\n".join(_SPEC_LINES)
 """The path graph state as a chain of Z spiders joined by F edges."""
 
 
-def _theorem() -> object:
-    decision = decide_equal(parse_dsl(CIRCUIT), parse_dsl(SPEC))
+INDEXED = (
+    CIRCUIT.replace("g6 = F(d)", "g6 = F(d)\ng7 = Z(1 -> 1, d) phase {1: i/4}")
+    .replace("g6.out0 -- g5.in1", "g6.out0 -- g7.in0, g7.out0 -- g5.in1")
+    .replace(
+        "repeat n as C0: g2, g3, g4, g5, g6", "box C0 x n nodes g2, g3, g4, g5, g6, g7 index i"
+    ),
+    SPEC.replace(
+        "repeat n as V: v = Z(1 -> 2, d), f = F(d), w = Z(1 -> 1, d)",
+        "v = Z(1 -> 2, d)\nf = F(d)\nw = Z(1 -> 1, d) phase {1: i/4}\n"
+        "box V x n nodes v, f, w index i",
+    ),
+)
+"""The cluster chains with a phase i/4 on copy i of both sides."""
+
+SCALED = (CIRCUIT + "\ncopy scalar C0: 2", SPEC + "\ncopy scalar V: 2")
+"""The cluster chains with the copy scalar 2 on both sides."""
+
+
+def _theorem(pair: tuple[str, str] = (CIRCUIT, SPEC)) -> object:
+    decision = decide_equal(parse_dsl(pair[0]), parse_dsl(pair[1]))
     assert decision.induction_proof is not None
     return decision.induction_proof
 
@@ -71,6 +89,23 @@ def test_the_cluster_chain_exports_as_two_families() -> None:
     assert "theorem main : ∀ k, Equal E" in source
     assert "def cut : List ℕ := [0]" in source
     assert "chain_equal E W cut" in source
+
+
+def test_the_qudit_cluster_chain_takes_the_qudit_networks() -> None:
+    source = export_chain(_theorem(), {"d": 3}, "cluster3")
+    assert "import ArchytasZX.PathSumQuditNet" in source
+    assert "def Δ (k : ℕ) : ℕ := 3" in source
+
+
+def test_an_indexed_chain_keeps_one_period_of_copies() -> None:
+    source = export_chain(_theorem(INDEXED), {"d": 2}, "indexed")
+    assert "namespace Copy3" in source and "namespace Copy4" not in source
+    assert "generalize i % 4 = j at h ⊢" in source
+
+
+def test_a_copy_scalar_scales_each_copy() -> None:
+    source = export_chain(_theorem(SCALED), {"d": 2}, "scaled")
+    assert "noncomputable def aOt : List ℂ := [((2 : ℂ))]" in source
 
 
 def test_a_theorem_without_a_chain_window_is_refused() -> None:
@@ -88,4 +123,13 @@ def _mathlib() -> bool:
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
 def test_lean_proves_the_cluster_chain(tmp_path: object) -> None:
     ok, output = L.check(export_chain(_theorem(), {"d": 2}, "cluster"), f"{tmp_path}/chain.lean")
+    assert ok, output
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+@pytest.mark.parametrize(
+    ("pair", "d"), [((CIRCUIT, SPEC), 3), ((CIRCUIT, SPEC), 4), (INDEXED, 2), (SCALED, 2)]
+)
+def test_lean_proves_the_lifted_chains(pair: tuple[str, str], d: int, tmp_path: object) -> None:
+    ok, output = L.check(export_chain(_theorem(pair), {"d": d}, "lifted"), f"{tmp_path}/c.lean")
     assert ok, output
