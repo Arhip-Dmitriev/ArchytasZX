@@ -470,8 +470,21 @@ link-out values, exact, link dimensions concrete, no other open port, no copy in
 scalar included; contract_symbolic.chain_period) has T^p = c I for some p <= 8, both sides
 scale by a constant from n to n + P (P the least common multiple of the periods; a scalar s
 must satisfy s(n + P) = a s(n) for a constant a). When the two constants agree and the pairs
-at n = 0 .. P - 1 are equal (decided without induction), the pair is EQUAL; no kernel theorem
-is built, so the verdict is EQUAL_UNCERTIFIED.
+at n = 0 .. P - 1 are equal (decided without induction), the pair is EQUAL. The scaling test
+lives in archytaszx.semantics.periodic (chain_period, shift_ratio, scaling). The theorem is
+kernel.periodic(left, right, n, bases), bases[r] the theorem of the pair at n = r
+(from_decision, else kernel.contraction); the kernel re-runs the scaling test with P =
+len(bases) and checks each base's sides id for id against the sides at n = r. Inference kind
+periodic; it has no Lean export yet.
+
+In the tree window, a replaced diagram that does not close is tried again with W fusion
+(induction.w_fused): a top-level box fed by one wire from the output q of a W node, its other
+ports boundary outputs in one run, whose copy is exactly c W(1 -> m) after a Z(1 -> 1) with
+weights w (ratios read on the copy's tensor, then checked by symbolic contraction), is
+removed; q is port-boxed M m times in the run's place, the weighted Z goes before the W node
+(then its only output), and the scalar gains (c s)^M, M the box's multiplicity and s its copy
+scalar. W fusion and a weight on every leg equalling that weight on the input hold for W at
+every dimension. No kernel theorem covers this step.
 
 
 5. CERTIFICATES: archytaszx.semantics.certificate

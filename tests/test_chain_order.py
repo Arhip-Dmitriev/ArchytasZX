@@ -344,10 +344,26 @@ def _parity(scalar: str) -> str:
 
 def test_a_chain_with_a_scalar_power_of_its_transfer_is_decided_periodically() -> None:
     """X(pi) squares to the identity: both sides scale by 1 from n to n + 2 and agree at
-    n = 0, 1; a scalar that grows from n = 4 on, or the odd parity, is not proved."""
+    n = 0, 1, with a kernel theorem; a scalar that grows from n = 4 on, or the odd parity, is
+    not proved."""
     decision = decide_equal(parse_dsl(_FLIPS), parse_dsl(_parity("(1 + (-1)^n)/2")))
-    assert decision.verdict is EqualityVerdict.EQUAL_UNCERTIFIED, decision.reason
+    assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
     assert "periodic: each side scales by 1 from n to n + 2" in decision.reason
+    assert decision.induction_proof is not None
+    assert decision.induction_proof.inference.kind == "periodic"
     for scalar in ("(1 - (-1)^n)/2", "(1 + (-1)^n)/2 * 2^(n*(n - 1)*(n - 2))"):
         verdict = decide_equal(parse_dsl(_FLIPS), parse_dsl(_parity(scalar)), max_samples=0).verdict
         assert verdict not in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED)
+
+
+def test_the_periodic_kernel_rule_needs_a_full_period_of_bases() -> None:
+    """One base theorem does not cover the period 2 of X(pi), nor do the bases swapped."""
+    from archytaszx.semantics import kernel
+
+    left, right = parse_dsl(_FLIPS), parse_dsl(_parity("(1 + (-1)^n)/2"))
+    proof = decide_equal(left, right).induction_proof
+    assert proof is not None
+    bases = proof.inference.premises
+    for wrong in (bases[:1], bases[::-1]):
+        with pytest.raises(kernel.KernelError):
+            kernel.periodic(left, right, "n", wrong)

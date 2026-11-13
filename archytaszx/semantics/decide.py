@@ -74,7 +74,6 @@ from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxError,
-    Mult,
     boundary_arity,
     expand_concrete_boxes,
     free_mult_symbols,
@@ -2411,27 +2410,6 @@ def _decide_by_induction(
     )
 
 
-def _shift_ratio(diagram: Diagram, index: str, step: int) -> sp.Expr | str:
-    """The constant ``a`` with ``s(index + step) = a s(index)`` for ``diagram``'s scalar ``s``;
-    else why there is none."""
-    scalar = diagram.scalar.to_sympy()
-    symbol = next((s for s in scalar.free_symbols if str(s) == index), None)
-    if symbol is None:
-        return sp.Integer(1)
-    shifted = scalar.xreplace({symbol: symbol + step})
-    for point in range(6):
-        at = sp.simplify(scalar.xreplace({symbol: point}))
-        if at != 0:
-            ratio = sp.simplify(shifted.xreplace({symbol: point}) / at)
-            break
-    else:
-        return "the scalar vanishes at index 0 .. 5"
-    gap = sp.expand(shifted - ratio * scalar, power_exp=True, power_base=True)
-    if sp.simplify(gap) != 0:
-        return f"the scalar at {index} + {step} is not a constant times the scalar"
-    return ratio
-
-
 def _decide_periodic(
     left: Diagram,
     right: Diagram,
@@ -2445,53 +2423,27 @@ def _decide_periodic(
     saturation_limits: SaturationLimits,
 ) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
     """EQUAL when each side reads ``index`` only in its scalar and at most one chain box's
-    multiplicity, the transfer matrix of each such chain has a scalar power
-    (:func:`~archytaszx.semantics.contract_symbolic.chain_period`), both sides scale by one
-    constant from ``index`` to ``index + p`` (``p`` the periods' least common multiple), and the
-    pairs at ``index = 0 .. p - 1`` are equal; else why not."""
-    from archytaszx.semantics.contract_symbolic import chain_period
+    multiplicity, the transfer matrix of each such chain has a scalar power, both sides scale
+    by one constant from ``index`` to ``index + p`` (``p`` the periods' least common multiple,
+    :mod:`~archytaszx.semantics.periodic`), and the pairs at ``index = 0 .. p - 1`` are equal,
+    with a kernel theorem by :func:`~archytaszx.semantics.kernel.periodic` when each pair's
+    decision gives one; else why not."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.periodic import PeriodicError, chain_period, scaling
 
-    periods: list[tuple[int, sp.Expr] | None] = []
-    for side in (left, right):
-        owners = [b for b, box in side.bang_boxes.items() if index in box.multiplicity.free_symbols]
-        carried = any(
-            index in node.phase.free_symbols
-            for node in side.nodes.values()
-            if node.phase is not None
-        ) or any(
-            index in port.dim.free_symbols
-            for node in side.nodes.values()
-            for port in (*node.inputs, *node.outputs)
-        )
-        if carried or len(owners) > 1:
-            return f"{index} is read outside the scalar and one box"
-        if not owners:
-            periods.append(None)
-            continue
-        box = side.bang_boxes[owners[0]]
-        if box.multiplicity.to_sympy() != Mult.symbol(index).to_sympy() or box.parent is not None:
-            return "the box is not a top-level box of multiplicity the index"
-        if box.copy_scalar is not None and index in box.copy_scalar.free_symbols:
-            return "a copy scalar reads the index"
-        try:
-            periods.append(chain_period(side, owners[0]))
-        except _INDUCTION_ERRORS as exc:
-            return str(exc)
-    if all(p is None for p in periods):
-        return "neither side holds a chain over the index"
-    step = math.lcm(*(p[0] for p in periods if p is not None))
-    ratios: list[sp.Expr] = []
-    for side, found in zip((left, right), periods, strict=True):
-        ratio = _shift_ratio(side, index, step)
-        if isinstance(ratio, str):
-            return ratio
-        if found is not None:
-            ratio = ratio * found[1] ** (step // found[0])
-        ratios.append(ratio)
+    try:
+        periods = [chain_period(side, index) for side in (left, right)]
+        if all(p is None for p in periods):
+            return "neither side holds a chain over the index"
+        step = math.lcm(*(p[0] for p in periods if p is not None))
+        ratios = [scaling(side, index, step) for side in (left, right)]
+    except PeriodicError as exc:
+        return str(exc)
     if sp.simplify(ratios[0] - ratios[1]) != 0:
         return (
             f"the two sides scale by {ratios[0]} and {ratios[1]} from {index} to {index} + {step}"
         )
+    bases: list[tuple[Decision, tuple[Diagram, Diagram]]] = []
     token = _NESTED.set(True)
     try:
         for value in range(step):
@@ -2511,16 +2463,30 @@ def _decide_periodic(
             )
             if base.verdict is not EqualityVerdict.EQUAL:
                 return f"the pair at {index} = {value} is {base.verdict.value}"
+            bases.append((base, pair))
     except _DOMAIN_ERRORS as exc:
         return f"{type(exc).__name__}: {exc}"
     finally:
         _NESTED.reset(token)
+
+    def proved(base: Decision, pair: tuple[Diagram, Diagram]) -> Theorem:
+        try:
+            return kernel.from_decision(base, *pair)
+        except kernel.KernelError:
+            return kernel.contraction(*pair)
+
+    theorem: object = None
+    try:
+        theorem = kernel.periodic(left, right, index, [proved(b, p) for b, p in bases])
+        built = "kernel proof built"
+    except kernel.KernelError as exc:
+        built = f"no kernel proof: {exc}"
     reason = (
         f"periodic: each side scales by {ratios[0]} from {index} to {index} + {step} (a scalar "
         f"power of each chain's transfer matrix) and the pairs at {index} = 0 .. {step - 1} are "
-        "equal; no kernel proof"
+        f"equal; {built}"
     )
-    return EqualityVerdict.EQUAL, DecisionMethod.INDUCTION, reason, {}
+    return EqualityVerdict.EQUAL, DecisionMethod.INDUCTION, reason, {"induction_proof": theorem}
 
 
 def _decide_carry_open(

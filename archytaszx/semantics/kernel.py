@@ -32,7 +32,10 @@ rules below construct one:
   one side's peeled successor at ``k + 1`` as a context around that side at ``k``, and a
   theorem from that context around the other side at ``k`` to the other peeled successor;
   with an offset ``s``, over both sides reading their copy index as ``copy index + s`` for
-  every ``s``, the hypothesis at ``s + 1`` (inference kind ``induction_offset``).
+  every ``s``, the hypothesis at ``s + 1`` (inference kind ``induction_offset``);
+* :func:`periodic` -- ``start = goal`` from theorems at ``index = 0 .. p - 1`` when both sides
+  scale by one constant from ``index`` to ``index + p`` (the index read only in the scalar and
+  one chain whose copy transfer matrix has a scalar power).
 
 :func:`check` turns a step-sequence :class:`~archytaszx.semantics.certificate.Certificate`, a
 :class:`~archytaszx.semantics.prove.ProofCertificate` or an
@@ -570,6 +573,40 @@ def induction(
     return Theorem(
         _TOKEN, start, goal, Inference(kind, (base, expose, step), data=data), assumptions
     )
+
+
+@_trace.traced("kernel.periodic")
+def periodic(start: Diagram, goal: Diagram, index: str, bases: Sequence[Theorem]) -> Theorem:
+    """``start = goal`` for every value of ``index`` from ``bases[r]``, ``start = goal`` at
+    ``index = r`` for ``r < p = len(bases)``, when both sides scale by one constant from
+    ``index`` to ``index + p`` (:func:`~archytaszx.semantics.periodic.scaling`: ``index`` read
+    only in the scalar and the multiplicity of at most one top-level chain box whose copy
+    transfer matrix has a scalar power with period dividing ``p``)."""
+    from archytaszx.semantics.decide import _instantiate_index
+    from archytaszx.semantics.periodic import PeriodicError, scaling
+
+    live = free_mult_symbols(start) | free_mult_symbols(goal)
+    if index not in live or not bases:
+        raise KernelError(f"{index!r} is not a free multiplicity or there is no base theorem")
+    if any(b.domain for b in bases):
+        raise KernelError("a base theorem holds under a restriction")
+    step = len(bases)
+    try:
+        for value, base in enumerate(bases):
+            if not _same(base.lhs, _instantiate_index(start, index, value)):
+                raise KernelError(f"base {value} does not start at the start side at {value}")
+            if not _same(base.rhs, _instantiate_index(goal, index, value)):
+                raise KernelError(f"base {value} does not end at the goal side at {value}")
+        ratios = [scaling(side, index, step) for side in (start, goal)]
+    except PeriodicError as exc:
+        raise KernelError(f"periodic: {exc}") from exc
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"rebuilding a base raised {type(exc).__name__}: {exc}") from exc
+    if sp.simplify(ratios[0] - ratios[1]) != 0:
+        raise KernelError(f"periodic: the sides scale by {ratios[0]} and {ratios[1]}")
+    data: dict[str, object] = {"index": index, "step": step, "ratio": ratios[0]}
+    assumptions = _merge(*(b.assumptions for b in bases))
+    return Theorem(_TOKEN, start, goal, Inference("periodic", tuple(bases), data=data), assumptions)
 
 
 def _offset_shift(
