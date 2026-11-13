@@ -294,3 +294,22 @@ def test_lean_proves_the_tree_window_theorem(tmp_path: object) -> None:
         source = export_tree_theorem(_tree_window(), {"d": d}, f"ghz{d}")
         ok, output = L.check(source, f"{tmp_path}/ghz{d}.lean")
         assert ok, output
+
+
+def test_the_w_state_tree_splits_into_a_scaled_copy_and_a_weighted_w_fan() -> None:
+    """w_state's tree side keeps its copy scalar 2 on the copy; its W side's copy is W(1 -> 2)
+    after a Z with weight sqrt(2)/2 on 1, scalar 1."""
+    import sympy as sp  # type: ignore[import-untyped]
+
+    from archytaszx.semantics.lean_chain import _fan_side, _tree_side
+    from tests.test_tree_w_fusion import CIRCUIT as W_CIRCUIT
+    from tests.test_tree_w_fusion import SPEC as W_SPEC
+
+    _base, copy, leaf = _tree_side(parse_dsl(W_CIRCUIT), "n", {})
+    assert copy.scalar.to_sympy() == 2 and len(copy.nodes) == 17 and leaf == 0
+    _fbase, fan, fleaf = _fan_side(parse_dsl(W_SPEC), "n", {}, 2, copy)
+    kinds = sorted(n.generator_type.name for n in fan.nodes.values())
+    assert kinds == ["W", "Z"] and fleaf == 0 and fan.scalar.to_sympy() == 1
+    (z,) = (n for n in fan.nodes.values() if n.generator_type.name == "Z")
+    assert z.phase is not None
+    assert sp.simplify(z.phase.weight(1).to_sympy() - sp.sqrt(2) / 2) == 0

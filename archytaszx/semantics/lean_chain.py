@@ -42,6 +42,7 @@ from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]
 
+from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.pathsum import PathSumUnsupported, constant
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
@@ -1526,15 +1527,19 @@ def _tree_link(
 
 def _tree_side(d: Diagram, index: str, values: Mapping[str, int]) -> tuple[Diagram, Diagram, int]:
     """A tree-box diagram's network before any copy, its copy (boundary: the child ports, then
-    the parent port) and the plug's boundary position in the first."""
+    the parent port; scalar the box's copy scalar) and the plug's boundary position in the
+    first."""
     from archytaszx.semantics.check import instantiate
 
     boxes = list(d.bang_boxes.values())
     if len(boxes) != 1 or not boxes[0].is_tree or boxes[0].parent is not None:
         raise PathSumUnsupported("the tree side is not one top-level tree box")
     box = boxes[0]
-    if box.multiplicity.free_symbols != {index} or box.copy_scalar is not None:
-        raise PathSumUnsupported("the tree box has another multiplicity or a copy scalar")
+    if box.multiplicity.free_symbols != {index}:
+        raise PathSumUnsupported("the tree box has another multiplicity")
+    each = sp.Integer(1) if box.copy_scalar is None else box.copy_scalar.to_sympy()
+    if each.free_symbols:
+        raise PathSumUnsupported("the tree box's copy scalar is not a constant")
     if box.level is not None or box.position is not None or box.index is not None:
         raise PathSumUnsupported("the tree box reads an index")
     if box.tree_parent is None or box.tree_parent.direction is not Direction.INPUT:
@@ -1548,9 +1553,11 @@ def _tree_side(d: Diagram, index: str, values: Mapping[str, int]) -> tuple[Diagr
         raise PathSumUnsupported("the copy has boundary ports off its child ports")
     base = instantiate(d, {index: 0, **values})
     one = instantiate(d, {index: 1, **values})
-    if instantiate(d, {index: 2, **values}).scalar.to_sympy() != base.scalar.to_sympy():
-        raise PathSumUnsupported("the tree family's scalar depends on the depth")
+    two = instantiate(d, {index: 2, **values})
     copy_ids = frozenset(one.nodes) - frozenset(base.nodes)
+    count = (len(two.nodes) - len(base.nodes)) // max(len(copy_ids), 1)
+    if sp.simplify(two.scalar.to_sympy() - base.scalar.to_sympy() * each**count) != 0:
+        raise PathSumUnsupported("the tree family's scalar is not the copy scalars' product")
     plug = [
         w.b if w.a.node_id in copy_ids else w.a
         for w in one.wires
@@ -1573,43 +1580,88 @@ def _tree_side(d: Diagram, index: str, values: Mapping[str, int]) -> tuple[Diagr
     ):
         raise PathSumUnsupported("the copy's child ports are not its outputs")
     copy = _sub(one, copy_ids, kids, [root])
+    copy.set_scalar(Scalar(each))
     return base, copy, bnd.index(plug[0])
 
 
 def _fan_side(
-    d: Diagram, index: str, values: Mapping[str, int], b: int
+    d: Diagram, index: str, values: Mapping[str, int], b: int, tree_copy: Diagram
 ) -> tuple[Diagram, Diagram, int]:
     """A spider with one leg port-boxed ``b^index`` times as a tree: the spider with one copy of
     the leg, its copy a phase-free spider of the same kind with ``b`` output legs and one input
-    leg, and the leg's boundary position."""
-    from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
+    leg, and the leg's boundary position. For a W node with one output, port-boxed, after
+    unboxed nodes: the copy is ``tree_copy`` read as ``c`` W(1 -> b) after a Z with weights
+    (:func:`_w_fan_copy`)."""
+    from archytaszx.diagram.generators import W_NODE, X_SPIDER, Z_SPIDER
     from archytaszx.semantics.check import instantiate
 
     boxes = list(d.bang_boxes.values())
-    if len(d.nodes) != 1 or len(boxes) != 1 or boxes[0].node_scope or d.wires:
+    if len(boxes) != 1 or boxes[0].node_scope or len(boxes[0].port_scope) != 1:
         raise PathSumUnsupported("the other side is not one spider with one boxed leg")
     box = boxes[0]
+    (port,) = tuple(box.port_scope)
+    node = d.nodes[port.node_id]
+    is_w = node.generator_type.name == W_NODE.name
+    if not is_w and (len(d.nodes) != 1 or d.wires):
+        raise PathSumUnsupported("the other side is not one spider with one boxed leg")
     k = next((s for s in box.multiplicity.to_sympy().free_symbols if str(s) == index), None)
     if k is None or sp.simplify(box.multiplicity.to_sympy() - b**k) != 0:
         raise PathSumUnsupported(f"the boxed leg's multiplicity is not {b}^{index}")
-    ((_, node),) = d.nodes.items()
-    if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name):
-        raise PathSumUnsupported("the fanned node is not a Z or X spider")
-    if len(box.port_scope) != 1:
-        raise PathSumUnsupported("more than one boxed leg")
-    (port,) = tuple(box.port_scope)
+    if node.generator_type.name not in (Z_SPIDER.name, X_SPIDER.name, W_NODE.name):
+        raise PathSumUnsupported("the fanned node is not a Z or X spider or a W node")
+    if is_w and (node.num_outputs != 1 or node.num_inputs != 1):
+        raise PathSumUnsupported("the W node has more than one output or input")
     base = instantiate(d, {index: 0, **values})
-    ((bid, inst),) = base.nodes.items()
+    found = [
+        nid
+        for nid, n in base.nodes.items()
+        if n.generator_type.name == node.generator_type.name
+        and any(r.node_id == nid for r in base.boundary_outputs)
+    ]
+    if len(found) != 1:
+        raise PathSumUnsupported("the fanned node is not found at depth 0")
+    bid = found[0]
+    inst = base.nodes[bid]
     bnd = [*base.boundary_outputs, *base.boundary_inputs]
     legs = [i for i, r in enumerate(bnd) if r.direction is port.direction and r.node_id == bid]
     if port.direction is not Direction.OUTPUT or len(legs) != 1:
         raise PathSumUnsupported("the spider has outputs besides the boxed leg")
     dim = inst.outputs[0].dim
+    if is_w:
+        return base, _w_fan_copy(tree_copy, dim, b), legs[0]
     copy = Diagram()
     cid = copy.add_node(node.generator_type, [dim], [dim] * b)
     copy.set_boundary_outputs([PortRef(cid, Direction.OUTPUT, j) for j in range(b)])
     copy.set_boundary_inputs([PortRef(cid, Direction.INPUT, 0)])
     return base, copy, legs[0]
+
+
+def _w_fan_copy(tree_copy: Diagram, dim: Dim, b: int) -> Diagram:
+    """``c`` W(1 -> ``b``) after a Z with weights ``w`` (``w_0 = 1``), ``c`` and ``w`` read off
+    the contraction of ``tree_copy`` (one input, ``b`` outputs) at the inputs ``j`` with output
+    0 at ``j`` and the rest at 0, times its scalar."""
+    from archytaszx.semantics.contract_symbolic import _engine_index, contract_symbolic
+    from archytaszx.semantics.induction import _w_with_weights
+
+    if len(tree_copy.boundary_inputs) != 1 or len(tree_copy.boundary_outputs) != b:
+        raise PathSumUnsupported("the tree copy is not one input and b outputs")
+    if not dim.is_concrete:
+        raise PathSumUnsupported("the W leg's dimension is not a number")
+    tensor = contract_symbolic(tree_copy)
+    axes = [_engine_index(a.index) for a in tensor.axes]
+    entry = tensor.entry.to_sympy()
+    ratios = []
+    for j in range(dim.to_int()):
+        vals = [j if i == 0 else 0 for i in range(b)] + [j]
+        value = entry.xreplace(dict(zip(axes, vals, strict=True)))
+        ratios.append(sp.simplify(sp.expand_complex(value)))
+    if ratios[0] == 0:
+        raise PathSumUnsupported("the tree copy is zero on the all-zero entry")
+    weights = {
+        j: Scalar(sp.simplify(sp.expand_complex(r / ratios[0]))) for j, r in enumerate(ratios) if j
+    }
+    weights = {j: w for j, w in weights.items() if w != Scalar.one()}
+    return _w_with_weights(dim, b, weights, Scalar(ratios[0]))
 
 
 def export_tree_theorem(
@@ -1640,7 +1692,7 @@ def export_tree_theorem(
     t = trees[0]
     base_t, copy_t, leaf_t = _tree_side(sides[t], index, vals)
     b = len(copy_t.boundary_outputs) + len(copy_t.boundary_inputs) - 1
-    base_f, copy_f, leaf_f = _fan_side(sides[1 - t], index, vals, b)
+    base_f, copy_f, leaf_f = _fan_side(sides[1 - t], index, vals, b, copy_t)
     if leaf_t != leaf_f:
         raise PathSumUnsupported("the two sides plug at different boundary positions")
     pairs = [(base_t, base_f), (copy_t, copy_f)] if t == 0 else [(base_f, base_t), (copy_f, copy_t)]
