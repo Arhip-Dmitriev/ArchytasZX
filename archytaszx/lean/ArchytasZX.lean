@@ -62,6 +62,7 @@ import ArchytasZX.ChainInduct
 import ArchytasZX.ChainLink
 import ArchytasZX.ChainEvery
 import ArchytasZX.Periodic
+import ArchytasZX.PeriodicChain
 import ArchytasZX.ChainMixed
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign

@@ -475,7 +475,7 @@ lives in archytaszx.semantics.periodic (chain_period, shift_ratio, scaling). The
 kernel.periodic(left, right, n, bases), bases[r] the theorem of the pair at n = r
 (from_decision, else kernel.contraction); the kernel re-runs the scaling test with P =
 len(bases) and checks each base's sides id for id against the sides at n = r. Inference kind
-periodic; it has no Lean export yet.
+periodic; lean_periodic.export_periodic writes it to Lean (docs/LEAN.txt, PeriodicChain.lean).
 
 In the tree window, a replaced diagram that does not close is tried again with W fusion
 (induction.w_fused): a top-level box fed by one wire from the output q of a W node, its other

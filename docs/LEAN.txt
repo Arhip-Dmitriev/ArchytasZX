@@ -209,14 +209,34 @@ chain's expansion at k = 2 (toNet 10), its open-end identity dropped and its lab
 the chain scheme (Equal.rename, renameOK by decide), equal to chainNet 100 [5] base copy 2.
 ChainEvery.lean: expand_closed gives that chain's expandChain at every k + 1 in closed form
 (closedK k: the copies 3 + j in copy order wired output 0 to input 0 between the identities 0
-and 2, their second outputs on the boundary before the tail's output). No theorem yet relates
-expandChain's network (toNet) to chainNet at every k; toNet 10 labels wire j as 10 + j, which
-meets the boundary slots once k + 3 > 10, so an every-k statement takes an offset above k + 2.
+and 2, their second outputs on the boundary before the tail's output). net_closed gives its
+network at any wire offset o as netK o k; expand_chainNet gives, for every k and every offset
+o >= k + 3 (above the k + 3 boundary slots), that network relabelled by the injective fK o k
+equal to chainNet 100 [5] base copy (k + 1).
 Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
 p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
-at k relabelled by an injective f k shared by both sides), by strong induction. It is the frame
-of a kernel.periodic export; the step for a chain whose p copies contract to c times the
-identity is not proved yet, and no export writes periodic theorems.
+at k relabelled by an injective f k shared by both sides), by strong induction.
+PeriodicChain.lean: famNet W u tl cp hd bd k is a closed chain family, a fixed end tl on the
+link labels u, k copies of cp (copy j raised j levels of W by sh W j, labels below W kept) and
+the moving end hd raised k levels; the summed labels are tl's, u off bd, each copy's own and its
+links one level up, and hd's. fam_step: from blkNet W u cp hd p (p copies then hd, open on u
+and hd's boundary) equal to c times headNet u hd, the family at k + p is c times the family at
+k (the block raised k levels by Equal.mapL and plugged in place of the last p copies and hd;
+famOK by decide gives the label separations). fam_periodic: with the pairs at 0 .. p - 1 equal
+to a fixed network G, the family equals G at every k, the scalars perS tab A p k (table entry k
+mod p times A^(k / p)) and perS tab' (A c) p k, by Equal.periodic with the identity relabelling.
+lean_periodic.export_periodic writes a kernel.periodic theorem whose index is read by a chain on
+one side only: the head side of the chain as tl (nodes on neither side with it; a link whose head
+end is the boundary keeps that slot as its u label in bd), the box as cp, the tail side as hd;
+the pairs at 0 .. p - 1 and the pair (p copies then the tail side, scalar 1; the tail side,
+scalar c^(p / period) from chain_period) proved by path sums (net_body), relabelled onto the
+templates found by label search (phase indices of equal vectors first made one), A the scalar's
+shift_ratio; at each checked k both sides instantiated are linked and equal under their own
+scalars. Refused: a chain on both sides, a copy scalar, a box node wired outside off its links,
+a tail end on the boundary, the two ends meeting outside the box, qudits, weights, mixed wire
+dimensions, and a pair that vanishes at some n < p (net_body refuses zero sums: the X(pi) flips
+pair, zero at n = 1). Boxed qubitization_chebyshev (p = 2, A = 16, c = -1/16) and a chain of S
+spiders against i^n (p = 4) are Lean-checked at every n, with instances at n = 2, 3.
 
 The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
 (its copy index along its node boxes, outermost first, then its port boxes) is placed by the
