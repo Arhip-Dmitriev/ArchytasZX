@@ -15,7 +15,7 @@
 # Builds every rival tool at its pinned version under benchmarks/.venvs/ (or $BENCH_VENVS)
 # (docs/BENCHMARKS.txt, section 11), and the harness extra (.[benchmarks]) into the active
 # Python. Usage:
-# bash benchmarks/tools/setup_rivals.sh [harness|python|dizx|haskell|autoq|quantomatic|coq|all|fetch]
+# bash benchmarks/tools/setup_rivals.sh [harness|python|dizx|haskell|autoq|quantomatic|coq|all|fetch [TARGET...]]
 # fetch downloads every source, wheel, toolchain and dependency the build targets need and builds
 # nothing; with BENCH_OFFLINE=1 the build targets make no network calls (wheels from
 # $BENCH_WHEELS, ghcup --offline, sbt offline, opam from its download cache).
@@ -148,13 +148,14 @@ quantomatic() {  # Quantomatic at its pinned commit with the headless driver, sb
     mkdir -p "$q/src/main/scala/quanto/bench"
     cp "$(dirname "$0")/drivers/QuantoBench.scala" "$q/src/main/scala/quanto/bench/QuantoBench.scala"
     if [ "$FETCH" = 1 ]; then  # the build's dependencies, and the compiler interface by a one-file build
+        [ ! -f "$h/fetched" ] || return 0
         (cd "$q" && "${sbt[@]}" update)
         local w="$V/src/sbt-warm"
         mkdir -p "$w/project" "$w/src/main/scala"
         cp "$q/project/build.properties" "$w/project/build.properties"
         printf 'scalaVersion := "2.12.6"\n' > "$w/build.sbt"
         printf 'object Warm\n' > "$w/src/main/scala/Warm.scala"
-        (cd "$w" && "${sbt[@]}" compile)
+        (cd "$w" && "${sbt[@]}" compile) && touch "$h/fetched"
         return
     fi
     local off=()
@@ -237,6 +238,12 @@ case "${1:-all}" in
     quantomatic) quantomatic ;;
     coq) coq ;;
     all) harness; python_envs; dizx; haskell; autoq; quantomatic; coq ;;
-    fetch) FETCH=1; python_envs; dizx; haskell; autoq; quantomatic; coq ;;
+    fetch)
+        FETCH=1
+        shift
+        for t in "${@:-python dizx haskell autoq quantomatic coq}"; do
+            for u in $t; do case $u in python) python_envs ;; dizx|haskell|autoq|quantomatic|coq) "$u" ;;
+                *) echo "unknown fetch target $u" >&2; exit 2 ;; esac; done
+        done ;;
     *) echo "unknown target $1" >&2; exit 2 ;;
 esac
