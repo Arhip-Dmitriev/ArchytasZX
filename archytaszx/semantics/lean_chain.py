@@ -24,7 +24,9 @@ equal (``At{k}.inst``) from ``main k`` by ``Equal.mapL2`` and permutations check
 ``decide``, with the chain scalars proved equal to the instances'. An offset induction
 (induction_offset) takes its copies at ``k = 0`` and offset ``0 .. P - 1``, and ``main s k``
 gives level ``j`` of the chain at ``k`` the copy ``s + k - 1 - j``, for every ``s`` and ``k``;
-the instances are linked at ``s = 0``.
+the instances are linked at ``s = 0``. Over mixed qubit wire dimensions (_export_mixed) each
+body keeps its own labels' digit counts and ``main`` holds over ``lvEnv E W C B k``
+(ArchytasZX/ChainMixed.lean), without instance links.
 """
 
 from __future__ import annotations
@@ -57,6 +59,9 @@ W = 1 << 20
 
 _FREE = 1 << 19
 """The offset of a copy's own boundary labels within its level."""
+
+_BASE = 1 << 18
+"""The shift of the base labels in a chain over mixed wire dimensions."""
 
 
 @dataclass
@@ -503,16 +508,16 @@ def export_chain(
     names = ["baseEq", *("copyEq" for _ in range(period))]
     bodies, phases, qudit, coefs = _bodies(pairs, names)
     base, copies = bodies[0], bodies[1:]
+    mixed = False
     if qudit:
         dims = str(base.m)
         labs: dict[int, int] = {}
     else:
         labs = {k: v for body in bodies for k, v in body.labs.items()}
         ks = set(labs.values())
-        if len(ks) > 1:
-            raise PathSumUnsupported("the chain export needs one wire dimension")
-        dims = f"2 ^ {ks.pop() if ks else 1}"
-    cut = list(sp_o.base_cut)
+        mixed = len(ks) > 1
+        dims = "2 ^ k" if mixed else f"2 ^ {ks.pop() if ks else 1}"
+    cut = [c + (_BASE if mixed else 0) for c in sp_o.base_cut]
     n_copy = len(sp_o.copies[0].boundary_outputs) + len(sp_o.copies[0].boundary_inputs)
     target: dict[int, int] = {}
     for t, j in enumerate(sp_o.copy_in):
@@ -530,6 +535,8 @@ def export_chain(
         pis.append(_relabel(set(range(n_copy)) | set(internal), tgt))
     side = "start" if data["side"] is InductionSide.START else "goal"
     other = "goal" if side == "start" else "start"
+    if mixed:
+        return _export_mixed(name, side, other, bodies, phases, coefs, cut, pis, offset is not None)
     ns = f"ArchytasZX.ChainProof.{name}"
     sem = "QSem" if qudit else "PSem"
     lines = [
@@ -661,6 +668,168 @@ def export_chain(
         model,
         offset is not None,
     )
+    lines += [f"end {ns}", ""]
+    return "\n".join(lines)
+
+
+def _labels(net: NetT) -> set[int]:
+    """Every label of ``net``."""
+    return {x for nd in net[0] for x in (*nd[1], *nd[2])} | set(net[1]) | set(net[2])
+
+
+def _export_mixed(
+    name: str,
+    side: str,
+    other: str,
+    bodies: Sequence[NetBody],
+    phases: Sequence[tuple[str, int]],
+    coefs: Mapping[int, str],
+    cut: Sequence[int],
+    pis: Sequence[Sequence[tuple[int, int]]],
+    offset: bool,
+) -> str:
+    """:func:`export_chain`'s Lean source over mixed qubit wire dimensions
+    (ArchytasZX/ChainMixed.lean): each body proved under its own labels' digit counts, the
+    base networks shifted by ``_BASE``, the copies relabelled onto the chain labels, and
+    ``chain_equal_lv`` over ``lvEnv E W C B k`` (C the copy labels in ``[W, 2 W)``, B the base
+    labels) for every ``k``."""
+    base, copies = bodies[0], bodies[1:]
+    period = len(copies)
+    ns = f"ArchytasZX.ChainProof.{name}"
+    for body in bodies:
+        if any(x >= _BASE for x in body.labs):
+            raise PathSumUnsupported("a body label reaches the base shift")
+        for tag in ("L", "R"):
+            if not _labels(_parse_net(body.lines, tag)) <= set(body.labs):
+                raise PathSumUnsupported("a network label has no digit count")
+    b_labs = sorted((x + _BASE, d) for x, d in base.labs.items())
+    c_labs: dict[int, int] = {}
+    c_pis = []
+    for body, pi in zip(copies, pis, strict=True):
+        moved = sorted((_ren(pi, x), d) for x, d in body.labs.items())
+        c_pis.append(moved)
+        for x, d in moved:
+            if x >= W and c_labs.setdefault(x, d) != d:
+                raise PathSumUnsupported("the copies give one chain label two dimensions")
+    lines = [
+        "import ArchytasZX.PathSumNetW",
+        "import ArchytasZX.ChainMixed",
+        "",
+        "/-!",
+        f"# Chain induction `{name}` over mixed wire dimensions",
+        "",
+        f"The {side} side (peeled) and the {other} side as chain families: each network pair",
+        "proved equal by path sums under its own labels, the base shifted and the copies",
+        "relabelled onto the chain labels, and `chain_equal_lv` for every `k`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *NET_OPTIONS,
+        "",
+        *net_env(phases, {}, "2 ^ k", base.m, coefs),
+    ]
+    for tag, body in [("Base", base), *((f"Copy{j}", b) for j, b in enumerate(copies))]:
+        lines += [
+            f"namespace {tag}",
+            "",
+            f"def labsN : List (ℕ × ℕ) := {sorted(body.labs.items())}",
+            f"noncomputable def E : Env := {{ {ns}.E with labs := labsN }}",
+            "",
+            *body.lines,
+            f"end {tag}",
+            "",
+        ]
+    lines += [
+        f"def W : ℕ := {W}",
+        f"def OB : ℕ := {_BASE}",
+        f"def cut : List ℕ := {list(cut)}",
+        f"def C : List (ℕ × ℕ) := {sorted(c_labs.items())}",
+        f"def B : List (ℕ × ℕ) := {b_labs}",
+        *(f"def πC{j} : List (ℕ × ℕ) := {pi}" for j, pi in enumerate(pis)),
+        *(f"def Cπ{j} : List (ℕ × ℕ) := {m}" for j, m in enumerate(c_pis)),
+        "",
+        "def bO : Net := Base.NL.mapL (· + OB)",
+        "def bX : Net := Base.NR.mapL (· + OB)",
+        "def cOt : List Net := ["
+        + ", ".join(f"Copy{j}.NL.mapL (ren πC{j})" for j in range(period))
+        + "]",
+        "def cXt : List Net := ["
+        + ", ".join(f"Copy{j}.NR.mapL (ren πC{j})" for j in range(period))
+        + "]",
+        "noncomputable def aOt : List ℂ := [" + ", ".join(f"({b.s_l})" for b in copies) + "]",
+        "noncomputable def aXt : List ℂ := [" + ", ".join(f"({b.s_r})" for b in copies) + "]",
+        "",
+        "def cO (i : ℕ) : Net := perIdx cOt ⟨[], [], []⟩ i",
+        "def cX (i : ℕ) : Net := perIdx cXt ⟨[], [], []⟩ i",
+        "noncomputable def aO (i : ℕ) : ℂ := perIdx aOt 1 i",
+        "noncomputable def aX (i : ℕ) : ℂ := perIdx aXt 1 i",
+        "",
+        "theorem hC : ∀ p ∈ C, W ≤ p.1 ∧ p.1 < 2 * W := by decide",
+        "theorem hB : ∀ p ∈ B, p.1 < W := by decide",
+        "theorem hcut : ∀ x ∈ cut, x < W ∧",
+        "    labDim (lvEnv E W C B 1) (x + W) = labDim (lvEnv E W C B 1) x := by decide",
+        "",
+        f"theorem baseEq : Equal (lvEnv E W C B 1) ({base.s_l}) bO ({base.s_r}) bX :=",
+        "  ((Base.baseEq.relabs (B ++ Base.labsN) (by decide) (by decide)).mapL_on _ (· + OB)",
+        "    (fun x y h => by simpa using h) (by decide)).relabs (lvls W C 1 ++ B) (by decide)",
+        "    (by decide)",
+        "",
+    ]
+    for j, body in enumerate(copies):
+        lines += [
+            (
+                f"theorem copyEq{j} : Equal (lvEnv E W C B 1) ({body.s_l}) "
+                f"(Copy{j}.NL.mapL (ren πC{j})) ({body.s_r}) (Copy{j}.NR.mapL (ren πC{j})) :="
+            ),
+            f"  ((Copy{j}.copyEq.relabs (Cπ{j} ++ Copy{j}.labsN) (by decide) (by decide)).mapL_on",
+            f"    _ (ren πC{j}) (ren_injective πC{j} (by decide) (by decide)) (by decide)).relabs",
+            "    (lvls W C 1 ++ B) (by decide) (by decide)",
+            "",
+        ]
+    lines += [
+        "theorem copyEq : ∀ i, Equal (lvEnv E W C B 1) (aO i) (cO i) (aX i) (cX i) := by",
+        "  intro i",
+        f"  have h := Nat.mod_lt i (show 0 < {period} by norm_num)",
+        "  simp only [aO, aX, cO, cX, perIdx, aOt, aXt, cOt, cXt, List.length_cons,",
+        "    List.length_nil]",
+        f"  generalize i % {period} = j at h ⊢",
+        "  interval_cases j",
+        *(f"  · exact copyEq{j}" for j in range(period)),
+        "",
+        "theorem hcO : ∀ i, copyOK W cut (cO i) = true :=",
+        "  perIdx_all cOt _ (fun c => copyOK W cut c = true) (by decide) (by decide)",
+        "theorem hcX : ∀ i, copyOK W cut (cX i) = true :=",
+        "  perIdx_all cXt _ (fun c => copyOK W cut c = true) (by decide) (by decide)",
+        "",
+    ]
+    if not offset:
+        lines += [
+            f"/-- The {side} and {other} families agree at every `k`. -/",
+            "theorem main : ∀ k, Equal (lvEnv E W C B k)",
+            f"    (({base.s_l}) * ∏ i ∈ Finset.range k, aO i) (chainNet W cut bO cO k)",
+            f"    (({base.s_r}) * ∏ i ∈ Finset.range k, aX i) (chainNet W cut bX cX k) :=",
+            "  chain_equal_lv E W cut bO cO bX cX C B hC hB hcut (by decide) hcO (by decide) hcX",
+            "    _ _ _ _ baseEq copyEq",
+            "",
+        ]
+    else:
+        lines += [
+            f"/-- The {side} and {other} families agree at every `k` with copy index read",
+            "as `index + s` for every `s`: level `j` of `k` carries copy `s + k - 1 - j`. -/",
+            "theorem main : ∀ s k, Equal (lvEnv E W C B k)",
+            f"    (({base.s_l}) * ∏ i ∈ Finset.range k, aO (s + k - 1 - i))",
+            "    (chainNet W cut bO (fun j => cO (s + k - 1 - j)) k)",
+            f"    (({base.s_r}) * ∏ i ∈ Finset.range k, aX (s + k - 1 - i))",
+            "    (chainNet W cut bX (fun j => cX (s + k - 1 - j)) k) :=",
+            "  fun s k => chain_equal_lv E W cut bO (fun j => cO (s + k - 1 - j)) bX",
+            "    (fun j => cX (s + k - 1 - j)) C B hC hB hcut (by decide) (fun _ => hcO _)",
+            "    (by decide) (fun _ => hcX _) _ _ (fun j => aO (s + k - 1 - j))",
+            "    (fun j => aX (s + k - 1 - j)) baseEq (fun _ => copyEq _) k",
+            "",
+        ]
     lines += [f"end {ns}", ""]
     return "\n".join(lines)
 

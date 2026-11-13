@@ -194,6 +194,31 @@ def test_lean_proves_the_offset_chains(scalar: str | None, tmp_path: object) -> 
     assert ok, output
 
 
+MIXED = (
+    CIRCUIT.replace("g6 = F(d)", "g6 = F(d)\ng8 = Z(1 -> 1, literal 4)")
+    .replace("repeat n as C0: g2, g3, g4, g5, g6", "repeat n as C0: g2, g3, g4, g5, g6, g8")
+    .replace("outputs g4.out0, g5.out0", "outputs g4.out0, g8.out0, g5.out0\ninputs g8.in0"),
+    SPEC.replace("w = Z(1 -> 1, d)", "w = Z(1 -> 1, d), u = Z(1 -> 1, literal 4)").replace(
+        "outputs v.out0, w.out0", "outputs v.out0, u.out0, w.out0\ninputs u.in0"
+    ),
+)
+"""The cluster chains with a dimension-4 wire through each copy."""
+
+
+def test_a_mixed_dimension_chain_exports_over_level_labels() -> None:
+    source = export_chain(_theorem(MIXED), {"d": 2}, "mixed")
+    assert "import ArchytasZX.ChainMixed" in source
+    assert "theorem main : ∀ k, Equal (lvEnv E W C B k)" in source
+    assert "chain_equal_lv E W cut bO cO bX cX C B hC hB hcut" in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_proves_the_mixed_dimension_chain(tmp_path: object) -> None:
+    source = export_chain(_theorem(MIXED), {"d": 2}, "mixed")
+    ok, output = L.check(source, f"{tmp_path}/mixed.lean")
+    assert ok, output
+
+
 def _tree_window() -> object:
     from archytaszx.semantics import kernel as K
     from archytaszx.semantics.decide import decide_equal

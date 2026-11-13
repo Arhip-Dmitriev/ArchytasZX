@@ -56,5 +56,6 @@ import ArchytasZX.PathSumNetW
 import ArchytasZX.PathSumQudit
 import ArchytasZX.PathSumQuditNet
 import ArchytasZX.ChainInduct
+import ArchytasZX.ChainMixed
 import ArchytasZX.TreeInduct
 import ArchytasZX.GaussSign
