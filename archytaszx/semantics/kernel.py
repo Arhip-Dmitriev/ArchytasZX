@@ -929,11 +929,25 @@ def refutation(decision: object, left: Diagram, right: Diagram) -> Refutation:
 @_trace.traced("proof.build")
 def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
     """``left = right`` from a decision's normal-form or saturation certificates, its induction
-    theorem, or :func:`contraction` for a symbolic-contraction verdict."""
+    theorem, or :func:`contraction` for a symbolic-contraction verdict. A DOUBLED decision gives
+    the theorem over its doubled pair, read through its settling rung; ``left`` and ``right``
+    are that pair or the diagrams it doubles."""
+    from dataclasses import replace
+
+    from archytaszx.diagram.mixed import double
     from archytaszx.semantics.decide import Decision, DecisionMethod
 
     if not isinstance(decision, Decision):
         raise KernelError(f"cannot read a {type(decision).__name__}")
+    if decision.method is DecisionMethod.DOUBLED:
+        pair, inner = decision.doubled, decision.inner_method
+        if pair is None or inner is None or inner is DecisionMethod.DOUBLED:
+            raise KernelError("a doubled verdict without its doubled pair and settling rung")
+        if not (_same(left, pair[0]) and _same(right, pair[1])):
+            for given, held in ((left, pair[0]), (right, pair[1])):
+                if not (_same(double(given), held) or _same(given, held)):
+                    raise KernelError("the doubled pair is not the doubling of left and right")
+        return from_decision(replace(decision, method=inner, inner_method=None), *pair)
     if decision.method is DecisionMethod.INDUCTION and decision.induction_proof is not None:
         proved = check(decision.induction_proof)
         return trans(trans(iso(left, proved.lhs), proved), iso(proved.rhs, right))

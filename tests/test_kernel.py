@@ -85,6 +85,21 @@ def test_contraction_checks_the_symbolic_contractions() -> None:
         K.contraction(chained.lhs, K.check(_two_sided()).lhs)
 
 
+def test_a_doubled_decision_gives_the_doubled_theorem() -> None:
+    """A DOUBLED decision proves its doubled pair, from the originals or the pair itself."""
+    import archytaszx.diagram.mixed as M
+    from archytaszx.semantics.decide import DecisionMethod, decide_equal
+
+    left, right = M.compose(M.dephase(2), M.dephase(2)), M.dephase(2)
+    decision = decide_equal(left, right)
+    assert decision.method is DecisionMethod.DOUBLED and decision.doubled is not None
+    for pair in ((left, right), decision.doubled):
+        theorem = K.from_decision(decision, *pair)
+        assert theorem.lhs is decision.doubled[0] and theorem.rhs is decision.doubled[1]
+    with pytest.raises(K.KernelError, match="not the doubling"):
+        K.from_decision(decision, right, left)
+
+
 def _declared(source: str) -> set[str]:
     return set(re.findall(r"^(?:axiom|theorem) (\w+)", source, re.MULTILINE))
 
