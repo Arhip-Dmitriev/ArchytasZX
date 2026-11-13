@@ -24,7 +24,7 @@ from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.decide import decide_equal
-from archytaszx.semantics.lean_chain import export_chain, export_tree
+from archytaszx.semantics.lean_chain import export_chain, export_tree, export_tree_theorem
 
 CIRCUIT = "\n".join(
     [
@@ -162,3 +162,32 @@ def test_lean_proves_the_tree_families(tmp_path: object) -> None:
 def test_lean_proves_the_lifted_chains(pair: tuple[str, str], d: int, tmp_path: object) -> None:
     ok, output = L.check(export_chain(_theorem(pair), {"d": d}, "lifted"), f"{tmp_path}/c.lean")
     assert ok, output
+
+
+def _tree_window() -> object:
+    from archytaszx.semantics.decide import decide_equal
+    from tests.test_tree_window import SPEC as TSPEC
+    from tests.test_tree_window import TREE
+
+    proof = decide_equal(parse_dsl(TREE), parse_dsl(TSPEC), use_symbolic=False).proof
+    stack = [proof]
+    while stack:
+        t = stack.pop()
+        if t.inference.kind == "induction":
+            return t
+        stack += t.inference.premises
+    raise AssertionError("no induction")
+
+
+def test_the_tree_window_theorem_exports_as_tree_families() -> None:
+    source = export_tree_theorem(_tree_window(), {"d": 2}, "ghz")
+    assert "tree_equal E W r p" in source
+    assert "def kids : List ℕ := [1572864, 1572865]" in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_proves_the_tree_window_theorem(tmp_path: object) -> None:
+    for d in (2, 3):
+        source = export_tree_theorem(_tree_window(), {"d": d}, f"ghz{d}")
+        ok, output = L.check(source, f"{tmp_path}/ghz{d}.lean")
+        assert ok, output
