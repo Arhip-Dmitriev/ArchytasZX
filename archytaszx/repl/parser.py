@@ -1096,6 +1096,8 @@ class _BoxDraft:
     tree_parent: PortRef | None = None
     level: str | None = None
     position: str | None = None
+    feed: BangBoxId | None = None
+    feed_port: PortRef | None = None
 
 
 def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
@@ -1121,6 +1123,8 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             tree_parent=draft.tree_parent,
             level=draft.level,
             position=draft.position,
+            feed=draft.feed,
+            feed_port=draft.feed_port,
         )
 
 
@@ -1159,6 +1163,7 @@ _LISTING_BOX_RE = re.compile(
     r"(?:\s+copy scalar:\s*(?P<copy>.+?))?"
     r"(?:\s+pairs of:\s*!(?P<pairof>[0-9]+)\s+index:\s*(?P<pairindex>\w+)"
     r"(?:\s+left:\s*(?P<left>.+?))?(?:\s+right:\s*(?P<right>.+?))?)?"
+    r"(?:\s+feed:\s*!(?P<feed>[0-9]+)\s*->\s*(?P<feedport>\S+))?"
     r"(?:\s+parent:\s*!(?P<parent>[0-9]+)\s+\((?P<flag>missing|cycle)\))?"
 )
 _UNICODE_IDENTIFIER = r"[^\W\d]\w*"
@@ -1336,6 +1341,8 @@ def _listing_boxes(lines: Sequence[str]) -> tuple[dict[int, _BoxDraft], dict[int
             tree_parent=None if match["treeparent"] is None else _listing_ref(match["treeparent"]),
             level=match["level"],
             position=match["position"],
+            feed=None if match["feed"] is None else BangBoxId(_numeral(match["feed"], "box id")),
+            feed_port=None if match["feedport"] is None else _listing_ref(match["feedport"]),
         )
     return drafts, depth
 

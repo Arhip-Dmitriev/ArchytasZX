@@ -1427,6 +1427,8 @@ def render_graph(diagram: Diagram) -> str:
                     ordered = sorted(side_ports, key=_listing_ref_key)
                     refs = ", ".join(_listing_ref(r) for r in ordered)
                     line += f"  {label}: {refs}"
+        if box.feed is not None and box.feed_port is not None:
+            line += f"  feed: !{int(box.feed)} -> {_listing_ref(box.feed_port)}"
         if flag is not None:
             line += f"  parent: !{parent} ({flag})"
         lines.append(line)
