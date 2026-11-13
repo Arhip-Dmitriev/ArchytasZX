@@ -324,3 +324,30 @@ def test_a_fan_spider_is_split_off_the_peeled_copy() -> None:
     for left, right in broken:
         verdict = decide_equal(parse_dsl(left), parse_dsl(right), max_samples=0).verdict
         assert verdict is not EqualityVerdict.EQUAL
+
+
+_FLIPS = """count n
+a = X(0 -> 1, literal 2)
+repeat n as V: x = X(1 -> 1, literal 2) phase{1: 1/2}
+b = X(1 -> 0, literal 2)
+wire a.out0 -- x.in0, x.out0 -- b.in0
+chain V: x.out0 -> x.in0"""
+"""<0| X^n |0> by a chain of n X(pi) spiders."""
+
+
+def _parity(scalar: str) -> str:
+    return (
+        f"count n\na = X(0 -> 1, literal 2)\nb = X(1 -> 0, literal 2)\nwire a.out0 -- b.in0\n"
+        f"scalar {scalar}"
+    )
+
+
+def test_a_chain_with_a_scalar_power_of_its_transfer_is_decided_periodically() -> None:
+    """X(pi) squares to the identity: both sides scale by 1 from n to n + 2 and agree at
+    n = 0, 1; a scalar that grows from n = 4 on, or the odd parity, is not proved."""
+    decision = decide_equal(parse_dsl(_FLIPS), parse_dsl(_parity("(1 + (-1)^n)/2")))
+    assert decision.verdict is EqualityVerdict.EQUAL_UNCERTIFIED, decision.reason
+    assert "periodic: each side scales by 1 from n to n + 2" in decision.reason
+    for scalar in ("(1 - (-1)^n)/2", "(1 + (-1)^n)/2 * 2^(n*(n - 1)*(n - 2))"):
+        verdict = decide_equal(parse_dsl(_FLIPS), parse_dsl(_parity(scalar)), max_samples=0).verdict
+        assert verdict not in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED)

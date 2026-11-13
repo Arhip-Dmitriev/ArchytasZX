@@ -35,6 +35,8 @@ sub-terms by ``srepr``. No set is iterated unsorted and no ``sp.Dummy`` is const
 
 from __future__ import annotations
 
+import itertools
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias, cast
@@ -1468,6 +1470,69 @@ def _resolve_chains(diagram: Diagram, max_steps: int) -> Diagram:
                 )
         working = _spider_links(working, box_id)
     return working
+
+
+MAX_PERIOD = 8
+"""The largest power :func:`chain_period` tries."""
+
+MAX_TRANSFER_SIZE = 64
+"""The largest transfer matrix side :func:`chain_period` builds."""
+
+
+def chain_period(diagram: Diagram, box_id: BangBoxId, max_steps: int = 64) -> tuple[int, sp.Expr]:
+    """The least ``p <= MAX_PERIOD`` and the nonzero ``c`` with ``T^p = c I``, ``T`` the exact
+    matrix of one copy of chain box ``box_id`` (copy scalar included) from its link-in to its
+    link-out values; raise SymbolicContractionUnsupportedError when the copy has another open
+    port, an index, a symbol or a non-concrete link dimension, or no such ``p`` exists."""
+    box = diagram.bang_boxes[box_id]
+    if not box.links or box.cyclic or box.index is not None or box.is_tree:
+        raise SymbolicContractionUnsupportedError(f"chain box {box_id}: not a plain open chain")
+    if any(other.parent == box_id for other in diagram.bang_boxes.values()):
+        raise SymbolicContractionUnsupportedError(f"chain box {box_id} has a child box")
+    copy, ports = _open_copy(diagram, box_id)
+    outs = [p for p, _q in box.links]
+    ins = [q for _p, q in box.links]
+    if sorted(ports, key=PortRef.sort_key) != sorted([*outs, *ins], key=PortRef.sort_key):
+        raise SymbolicContractionUnsupportedError(
+            f"chain box {box_id}: a copy has an open port other than its links"
+        )
+    tensor = contract_symbolic(copy, max_steps=max_steps)
+    if tensor.is_variable_rank:
+        raise SymbolicContractionUnsupportedError(f"chain box {box_id}: a variable-rank copy")
+    axis_of = {ref: _engine_index(a.index) for ref, a in zip(ports, tensor.axes, strict=True)}
+    entry = tensor.entry.to_sympy()
+    if box.copy_scalar is not None:
+        entry = entry * box.copy_scalar.to_sympy()
+    if entry.free_symbols - set(axis_of.values()):
+        raise SymbolicContractionUnsupportedError(f"chain box {box_id}: a copy reads a symbol")
+    dims = [_port_dim(diagram, p).to_sympy() for p in outs]
+    if not all(d.is_Integer for d in dims) or math.prod(int(d) for d in dims) > MAX_TRANSFER_SIZE:
+        raise SymbolicContractionUnsupportedError(
+            f"chain box {box_id}: link dimensions not concrete or above {MAX_TRANSFER_SIZE}"
+        )
+    values = list(itertools.product(*(range(int(d)) for d in dims)))
+    size = len(values)
+    transfer = sp.Matrix(
+        size,
+        size,
+        lambda i, j: sp.simplify(
+            entry.xreplace(
+                {
+                    **{axis_of[p]: v for p, v in zip(outs, values[i], strict=True)},
+                    **{axis_of[q]: v for q, v in zip(ins, values[j], strict=True)},
+                }
+            )
+        ),
+    )
+    power = sp.eye(size)
+    for p in range(1, MAX_PERIOD + 1):
+        power = (power * transfer).applyfunc(sp.simplify)
+        c = power[0, 0]
+        if c != 0 and (power - c * sp.eye(size)).applyfunc(sp.simplify).is_zero_matrix:
+            return p, c
+    raise SymbolicContractionUnsupportedError(
+        f"chain box {box_id}: no power up to {MAX_PERIOD} of the transfer matrix is scalar"
+    )
 
 
 def _resolve_trees(diagram: Diagram, max_steps: int) -> Diagram:

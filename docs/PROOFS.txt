@@ -114,7 +114,9 @@ decide_equal tries the following rungs in order and stops at the first that sett
                             check (Decision.induction_proof, section 6). When neither
                             direction settles, the rung tries the carry left open after a
                             chain (carry_open.open_carry, section 4.4): the open pair by this
-                            rung, then the closed pair by decide_equal without induction.
+                            rung, then the closed pair by decide_equal without induction; then
+                            the chain ends cut on both sides (carry_open.open_chain_ends,
+                            section 4.4); then the periodic test (section 4.5).
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -441,6 +443,35 @@ right_open (R') is right without S, the far end of S's input i continued by F^((
 (replace_cut_region with contiguous=False). left = closed holds when L' = R' (kernel.congr),
 and closed = right when M o U o U^-1 = M; the induction rung decides both, so a wrong R' only
 leaves the pair unsettled.
+
+    open_chain_ends(left, right, index, which) -> OpenEnds(left_open, right_open, context, cut,
+                                                           closed)
+
+On each side the wires from the link ends of the chain box over index to nodes off the box
+are cut (which: both ends, the link-out ends, or the link-in ends, tried in that order), both
+ends of each appended to the boundary list of their direction, link by link. context is left
+with a phaseless Z(1 -> 1) on each cut wire; cut reads left_open as context without those
+spiders; closed is context with that region replaced by right_open. The rung proves the open
+pair by induction and decides left = context and closed = right without induction; the
+theorem is trans(from_decision(left = context), congr(open-pair theorem, context, cut),
+from_decision(closed = right)).
+
+In the chain window, a peeled successor whose residual is not the hypothesis is tried again
+with a fan spider split: a spider of the peeled copy wired to a boxed node off the copy and
+holding a boundary slot becomes a hub (its phase, its legs off the copy but the slot, the
+slot's place wired to a leaf) and a phaseless leaf (the slot and the legs into the copy); the
+kernel induction exposes the split by the reversed spider fusion of hub and leaf.
+
+4.5 Periodic chains: decide._decide_periodic
+
+When each side reads the index only in its scalar and in the multiplicity of at most one
+top-level chain box, and each such chain's one-copy transfer matrix T (link-in values to
+link-out values, exact, link dimensions concrete, no other open port, no copy index, copy
+scalar included; contract_symbolic.chain_period) has T^p = c I for some p <= 8, both sides
+scale by a constant from n to n + P (P the least common multiple of the periods; a scalar s
+must satisfy s(n + P) = a s(n) for a constant a). When the two constants agree and the pairs
+at n = 0 .. P - 1 are equal (decided without induction), the pair is EQUAL; no kernel theorem
+is built, so the verdict is EQUAL_UNCERTIFIED.
 
 
 5. CERTIFICATES: archytaszx.semantics.certificate
