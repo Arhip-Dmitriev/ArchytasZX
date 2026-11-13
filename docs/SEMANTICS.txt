@@ -193,6 +193,11 @@ Bang boxes:
     link ports, head end and tail end meet one phaseless Z spider per link. A cyclic one needs
     a multiplicity known to be at least 1. Any other chain raises "the transfer tensor is
     neither carry-copy nor neighbour"; induction (PROOFS.txt, CHAIN_WINDOW) covers the rest.
+  - A top-level plain node-scope box whose one crossing meets a Z spider outside every box, its
+    other open ports boundary slots facing that leg's way, is folded when its copy tensor is
+    prod_i delta(p_i - q) times a constant c (q the crossing, p_1 .. p_b the slots): the leg
+    port-boxed b m times in the box's boundary block, the scalar times (c s)^m for multiplicity
+    m and copy scalar s. A fed box raises.
   - An indexed box contracts as a plain one with its index left symbolic in the copy's entry;
     the group factor reads the index as _j<g> (ReplicatedFactor.index), copy m taking m. A
     closed or crossing indexed box, and a copy scalar, contribute prod_{m=0}^{n-1} f(m) in

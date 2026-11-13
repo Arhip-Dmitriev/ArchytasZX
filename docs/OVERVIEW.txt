@@ -138,7 +138,8 @@ hypotheses.
   - Chain, indexed, pair and tree boxes (DIAGRAM.txt 4.2) express nearest-neighbour ladders,
     copy-dependent phases, all-pairs gates and b-ary trees. Symbolic contraction reads only
     carry-copy chains and trees, indexed boxes and pair boxes on boundary-pinned Z spiders;
-    other chains go through induction (chain_window); trees have no induction step. Verdicts
+    other chains go through induction (chain_window), trees through induction on their depth
+    (tree_window). Verdicts
     on these boxes are certified only by Python kernel theorems or reported uncertified: the
     Lean network export refuses them.
   - The path-sum rung covers diagrams whose every dimension is a concrete power of two and

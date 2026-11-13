@@ -357,6 +357,7 @@ ladder, in order, until one settles:
                         symbolic contraction
   SYMBOLIC_CONTRACTION  contract both successors with every symbol formal     PROVED_INDUCTION
   CHAIN_WINDOW          on a chain box (below)                                PROVED_INDUCTION
+  TREE_WINDOW           on a tree box, over its depth (below)                 PROVED_INDUCTION
   ORACLE_WINDOW         compare by the oracle at every multiplicity in a      SCHEMA_CHECKED
                         window of width values
 
@@ -373,6 +374,15 @@ the other side's hypothesis diagram, slot for slot, and the result is compared w
 successor, peeled or not. replace_region and replace_cut_region refuse a replacement whose
 boundary layout (per slot: the multiplicities replicating it and where each box's run starts)
 differs from the hypothesis's.
+
+TREE_WINDOW peels the leaf level off a successor whose step index is carried by one tree box
+(DIAGRAM.txt 4.2, fed box). Without the fed box, the tree's child ports back in its boundary
+block (unfed), the rest must be isomorphic to that side's hypothesis diagram. fed_replacement
+takes the other hypothesis diagram, finds its leaf run at the same slot counts before and after
+the run, and grafts the fed box on: a single leg port-boxed b^k times loses its port box and is
+wired to the fed box's feed port (one leg per copy), a tree box's child run of the same
+branching and depth feeds it. The result is compared with the other successor, peeled or not,
+structurally or by symbolic contraction.
 
 PROVED_UNIFORM and PROVED_INDUCTION are proofs for every value of the index. SCHEMA_CHECKED is
 a finite check and is reported as such, never as a proof. REFUTED carries the counterexample

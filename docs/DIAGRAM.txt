@@ -190,9 +190,18 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     order; the copy scalar is taken once per copy. A child port's boundary slot counts b^k / b
     slots in boundary_arity, a link port and a tree's parent port one.
 
+  - fed box (feed T, feed_port q'): a top-level node-scope box of multiplicity b^k fed by the
+    top-level tree box T of depth k: T's j-th leaf (leaf-major; at k = 0 the head) is wired to
+    copy j's q', and T's child ports are neither wired nor boundary slots. It is instantiated
+    with T only; copy j reads its index as j.
+
 peel_one splits off the last copy (I = n - 1, wired between the rest's p ports and the tail);
-a cyclic chain, a tree box and a box with pair boxes refuse peel_one; copy_box and merge
-refuse these
+on a tree box of depth k + 1 it splits off the leaf level: a fed box of multiplicity b^k over
+one copy of the scope, its child ports in the leaf run's place, the level read as k + 1 and the
+position as the fed box's own (fresh) index; the tree keeps depth k. A tree box with a parent
+or child box, a copy index read in a phase or the copy scalar, a crossing other than its parent
+port or boundary slots other than its tree ports refuses it. A cyclic chain, a fed box and a
+box with pair boxes refuse peel_one; copy_box and merge refuse these
 boxes, and to_scalable and the Lean network export refuse every diagram holding one.
 
 A rewrite inside a chain box moves each consumed link port to the port the rule's port
