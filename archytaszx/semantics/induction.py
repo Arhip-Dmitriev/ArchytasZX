@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
@@ -39,8 +40,10 @@ from archytaszx.diagram.bangbox import (
     add_box_image,
     fed_box,
     free_mult_symbols,
+    index_owners,
     index_symbols,
     peel_one,
+    peel_owners,
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
@@ -802,8 +805,11 @@ def replace_region(
     return working
 
 
-def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Diagram) -> bool:
-    """Whether ``peeled`` minus its peeled copy is ``expected``, field for field."""
+def _residual_is(
+    peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Diagram, index: str = ""
+) -> bool:
+    """Whether ``peeled`` minus its peeled copy is ``expected``, field for field, no box carrying
+    ``index`` a chain."""
     kept = frozenset(peeled.nodes) - copy_node_ids
     if kept != frozenset(expected.nodes):
         return False
@@ -827,7 +833,8 @@ def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Di
         other = expected.bang_boxes[box_id]
         if box.multiplicity != other.multiplicity or box.parent != other.parent:
             return False
-        if box.links or _extension(box) != _extension(other):
+        owns = not index or index in box.multiplicity.free_symbols
+        if (box.links and owns) or _extension(box) != _extension(other):
             return False
         if sorted(box.node_scope) != sorted(other.node_scope):
             return False
@@ -839,16 +846,9 @@ def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Di
 
 
 def _peel_step_index(diagram: Diagram, index: str) -> tuple[Diagram, frozenset[NodeId]] | None:
-    """Peel one copy off the single box whose multiplicity carries ``index``."""
-    owners = [
-        box_id
-        for box_id, box in sorted(diagram.bang_boxes.items())
-        if index in box.multiplicity.free_symbols
-    ]
-    if len(owners) != 1:
-        return None
+    """Peel one copy off every box whose multiplicity carries ``index`` (:func:`peel_owners`)."""
     try:
-        result = peel_one(diagram, owners[0])
+        result = peel_owners(diagram, index)
     except BangBoxError:
         return None
     if not result.separable or not result.copy_node_ids:
@@ -931,13 +931,13 @@ def discharge_peeled_hypothesis(
     left_peeled, left_copy = left
     right_peeled, right_copy = right
 
-    if not _residual_is(left_peeled, left_copy, obligation.left_at_k):
+    if not _residual_is(left_peeled, left_copy, obligation.left_at_k, index):
         return TierOutcome(
             StepDischarge.INDUCTION_REWRITE,
             False,
             "the left successor's peeled residual is not the left hypothesis diagram",
         )
-    if not _residual_is(right_peeled, right_copy, obligation.right_at_k):
+    if not _residual_is(right_peeled, right_copy, obligation.right_at_k, index):
         return TierOutcome(
             StepDischarge.INDUCTION_REWRITE,
             False,
@@ -986,16 +986,32 @@ def discharge_peeled_hypothesis(
             right_peeled=right_peeled,
             right_copy=right_copy,
         )
+    lemma = TierOutcome(
+        StepDischarge.INDUCTION_REWRITE,
+        True,
+        "peeled one copy off each successor; the residuals are the hypothesis diagrams and "
+        "the peeled copies are equal by a nested decision (lemma)",
+        left_peeled=left_peeled,
+        left_copy=left_copy,
+        right_peeled=right_peeled,
+        right_copy=right_copy,
+    )
     try:
         contracted_left, contracted_right = contract_symbolic_pair(
             left_extra, right_extra, max_steps=max_steps
         )
-    except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
-        return TierOutcome(StepDischarge.INDUCTION_REWRITE, False, str(exc), ())
-    except ScalarBudgetError as exc:
+    except (
+        SymbolicContractionUnsupportedError,
+        SymbolicContractionDomainError,
+        ScalarBudgetError,
+    ) as exc:
+        if lemma_decision(left_extra, right_extra) is not None:
+            return lemma
         return TierOutcome(StepDischarge.INDUCTION_REWRITE, False, str(exc), ())
 
     comparison = compare_symbolic(contracted_left, contracted_right)
+    if not comparison.matched and lemma_decision(left_extra, right_extra) is not None:
+        return lemma
     if comparison.matched:
         return TierOutcome(
             StepDischarge.INDUCTION_REWRITE,
@@ -1314,6 +1330,11 @@ def _chain_owner(diagram: Diagram, index: str) -> BangBoxId | None:
     return owners[0]
 
 
+def _chain_owned(diagram: Diagram, index: str) -> bool:
+    """Whether a box of :func:`index_owners` is a chain box."""
+    return any(diagram.bang_boxes[b].links for b in index_owners(diagram, index))
+
+
 def discharge_chain_window(
     obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
 ) -> TierOutcome:
@@ -1393,7 +1414,7 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
         ),
     )
     for own_successor, own_k, other_k, other_successor in sides:
-        if _chain_owner(own_successor, index) is None:
+        if not _chain_owned(own_successor, index):
             reasons.append("no chain box carries the step index")
             continue
         peeled = _peel_step_index(own_successor, index)
@@ -1416,16 +1437,10 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
             reasons.append(str(exc))
             continue
         targets = [other_successor]
-        owners = [
-            b
-            for b, box in other_successor.bang_boxes.items()
-            if index in box.multiplicity.free_symbols
-        ]
-        if len(owners) == 1:
-            try:
-                targets.insert(0, peel_one(other_successor, owners[0]).diagram)
-            except BangBoxError:
-                pass
+        try:
+            targets.insert(0, peel_owners(other_successor, index).diagram)
+        except BangBoxError:
+            pass
         for target in targets:
             settled, why = _close_window(replaced, target, max_steps)
             if not settled:
@@ -1896,7 +1911,7 @@ def _exposed_chain(
 ) -> tuple[Diagram, CutRegion] | None:
     """The successor with its chain box's last copy peeled, and the residual read as
     ``hypothesis`` through its cut wires; None when either fails."""
-    if _chain_owner(successor, index) is None:
+    if not _chain_owned(successor, index):
         return None
     peeled = _peel_step_index(successor, index)
     if peeled is None:
@@ -1955,12 +1970,55 @@ def _compare_chain_copies(obligation: InductionObligation, max_steps: int) -> tu
     if _interface(left_copy) != _interface(right_copy):
         return False, "the peeled chain copies have different interfaces"
     settled, why = _close_window(left_copy, right_copy, max_steps)
+    if not settled and lemma_decision(left_copy, right_copy) is not None:
+        settled, why = True, "they are equal by a nested decision (lemma)"
     if settled:
         return True, (
             "peeled the last copy off both chains; the residuals are the hypothesis diagrams in "
             f"the same places and the copies agree: {why}"
         )
     return False, f"the peeled chain copies differ: {why}"
+
+
+_LEMMA_DEPTH: ContextVar[int] = ContextVar("induction_lemma_depth", default=0)
+_MAX_LEMMA_DEPTH = 2
+
+
+def lemma_decision(left: Diagram, right: Diagram) -> object | None:
+    """The EQUAL decision of ``left`` against ``right``, both carrying a live bang box, by
+    :func:`~archytaszx.semantics.decide.decide_equal` with no oracle sample, at most
+    ``_MAX_LEMMA_DEPTH`` such decisions deep; else None."""
+    if not (free_mult_symbols(left) and free_mult_symbols(right)):
+        return None
+    depth = _LEMMA_DEPTH.get()
+    if depth >= _MAX_LEMMA_DEPTH:
+        return None
+    from archytaszx.semantics.decide import DecideError, EqualityVerdict, decide_equal
+
+    token = _LEMMA_DEPTH.set(depth + 1)
+    try:
+        decision = decide_equal(left, right, samples=[])
+    except (DecideError, InductionError, BangBoxError, ValidateError):
+        return None
+    finally:
+        _LEMMA_DEPTH.reset(token)
+    return decision if decision.verdict is EqualityVerdict.EQUAL else None
+
+
+def rest_cut(exposed: Diagram, cut: CutRegion) -> CutRegion:
+    """The part of ``exposed`` off ``cut``'s region as a cut region, its lists ordered as
+    :func:`_copy_side` orders the open diagram's."""
+    rest = frozenset(exposed.nodes) - cut.region
+    place = {r: (0, i) for i, r in enumerate(cut.inputs)}
+    place.update({r: (1, i) for i, r in enumerate(cut.outputs)})
+    ends = sorted(cut.cuts.items(), key=lambda item: place[item[0]])
+    inputs = [r for r in exposed.boundary_inputs if r.node_id in rest]
+    outputs = [r for r in exposed.boundary_outputs if r.node_id in rest]
+    for _inside, far in ends:
+        (inputs if far.direction is Direction.INPUT else outputs).append(far)
+    return CutRegion(
+        rest, tuple(inputs), tuple(outputs), MappingProxyType(_cut_wires(exposed, rest))
+    )
 
 
 def _close_window(replaced: Diagram, target: Diagram, max_steps: int) -> tuple[bool, str]:

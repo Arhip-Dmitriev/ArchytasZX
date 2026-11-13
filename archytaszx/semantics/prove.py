@@ -72,9 +72,11 @@ from archytaszx.diagram.bangbox import (
     BangBoxError,
     Mult,
     free_mult_symbols,
+    index_owners,
     instantiate_symbol,
     offset_index,
     peel_one,
+    peel_owners,
     peels_first,
     substitute_index_phases,
 )
@@ -274,43 +276,55 @@ def induction_hypothesis(diagram: Diagram, index: str, step_symbol: str) -> Diag
 
 def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagram | None:
     """``diagram`` at ``step_symbol + 1`` with one copy peeled off its one box carrying the
-    index, or None when no single box carries it; unpeeled when that box's multiplicity has
-    no positive constant term (``b^(k + 1)``) and it is no tree box."""
+    index, unpeeled when that box's multiplicity has no positive constant term (``b^(k + 1)``)
+    and it is no tree box; with several such boxes (:func:`index_owners`), none nested in
+    another and each with a positive constant term, one copy peeled off each
+    (:func:`peel_owners`); else None."""
     value = Mult(step_symbol) + 1
     renamed = _with_scalar_index(rename_multiplicity(diagram, index, value), index, value)
-    owners = [
-        box_id
-        for box_id, box in sorted(renamed.bang_boxes.items())
-        if step_symbol in box.multiplicity.free_symbols
-    ]
-    if len(owners) != 1:
+    owners = index_owners(renamed, step_symbol)
+    if not owners:
         return None
-    box = renamed.bang_boxes[owners[0]]
-    constant = sp.expand(box.multiplicity.to_sympy()).as_coeff_Add()[0]
-    if not box.is_tree and not (constant.is_Integer and constant >= 1):
-        return renamed
-    return peel_one(renamed, owners[0]).diagram
+    peelable = []
+    for owner in owners:
+        box = renamed.bang_boxes[owner]
+        constant = sp.expand(box.multiplicity.to_sympy()).as_coeff_Add()[0]
+        peelable.append(box.is_tree or (constant.is_Integer and constant >= 1))
+    if len(owners) == 1:
+        return peel_one(renamed, owners[0]).diagram if peelable[0] else renamed
+    if not all(peelable):
+        return None
+    try:
+        return peel_owners(renamed, step_symbol).diagram
+    except BangBoxError:
+        return None
 
 
 def peels_shifted(diagram: Diagram, index: str) -> bool:
-    """Whether the one box carrying ``index`` peels its first copy and reads a copy index."""
-    owners = [b for b in diagram.bang_boxes.values() if index in b.multiplicity.free_symbols]
-    return len(owners) == 1 and owners[0].index is not None and peels_first(owners[0])
+    """Whether a box of :func:`index_owners` peels its first copy and reads a copy index."""
+    boxes = [diagram.bang_boxes[b] for b in index_owners(diagram, index)]
+    if len(boxes) == 1:
+        return boxes[0].index is not None and peels_first(boxes[0])
+    return any(box.index is not None and peels_first(box) for box in boxes)
 
 
 def induction_offset(diagram: Diagram, index: str, by: sp.Expr) -> Diagram:
     """``diagram`` with the one box carrying ``index`` reading its copy index as
-    ``copy index + by``; ``diagram`` itself when that box reads none."""
-    owners = [
-        box_id
-        for box_id, box in sorted(diagram.bang_boxes.items())
-        if index in box.multiplicity.free_symbols
-    ]
-    if len(owners) != 1:
-        raise InductionError(f"no single box carries {index!r}")
-    if diagram.bang_boxes[owners[0]].index is None:
-        return diagram
-    return offset_index(diagram, owners[0], by)
+    ``copy index + by``, ``diagram`` itself when that box reads none; with several boxes
+    (:func:`index_owners`), each that peels its first copy and reads an index so shifted."""
+    owners = index_owners(diagram, index)
+    if not owners:
+        raise InductionError(f"no box carries {index!r}")
+    if len(owners) == 1:
+        if diagram.bang_boxes[owners[0]].index is None:
+            return diagram
+        return offset_index(diagram, owners[0], by)
+    out = diagram
+    for owner in owners:
+        box = diagram.bang_boxes[owner]
+        if box.index is not None and peels_first(box):
+            out = offset_index(out, owner, by)
+    return out
 
 
 def offset_symbol(*diagrams: Diagram) -> sp.Symbol:

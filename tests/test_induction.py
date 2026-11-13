@@ -861,3 +861,149 @@ class TestSymbolicDimensionBase:
             induction.build_obligation(
                 parse_dsl(_CLUSTER_CIRCUIT), parse_dsl(_CLUSTER_SPEC), base_proved=True
             )
+
+
+def _twice(text: str, names: tuple[str, ...], boundary: str) -> str:
+    """``text`` beside a copy of its body with every name in ``names`` primed, one boundary."""
+    import re
+
+    lines = text.splitlines()
+    head = [ln for ln in lines if ln.startswith(("dim ", "count "))]
+    body = [ln for ln in lines if not ln.startswith(("dim ", "count ", "outputs", "scalar"))]
+    pattern = re.compile(r"\b(" + "|".join(names) + r")\b")
+    primed = [pattern.sub(lambda m: m.group(1) + "p", ln) for ln in body]
+    return "\n".join([*head, *body, *primed, boundary, "scalar d^(-1)"])
+
+
+_TWO_SPEC = _twice(
+    _CLUSTER_SPEC, ("h", "v", "f", "w", "V"), "outputs v.out0, w.out0, vp.out0, wp.out0"
+)
+_TWO_CIRCUIT = _twice(
+    _CLUSTER_CIRCUIT,
+    ("g0", "g1", "g2", "g3", "g4", "g5", "g6", "C0"),
+    "outputs g4.out0, g5.out0, g4p.out0, g5p.out0",
+)
+
+
+class TestJointPeel:
+    """An index carried by several boxes peels them together (75.1)."""
+
+    @staticmethod
+    def _decide(spec: str) -> object:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics.decide import decide_equal
+
+        return decide_equal(parse_dsl(_TWO_CIRCUIT), parse_dsl(spec), samples=[])
+
+    def test_two_chain_cluster_states_are_proved_with_a_kernel_theorem(self) -> None:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics import kernel
+        from archytaszx.semantics.decide import DecisionMethod, EqualityVerdict
+
+        decision = self._decide(_TWO_SPEC)
+        assert decision.verdict is EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+        assert decision.method is DecisionMethod.INDUCTION  # type: ignore[attr-defined]
+        theorem = kernel.from_decision(decision, parse_dsl(_TWO_CIRCUIT), parse_dsl(_TWO_SPEC))
+        assert isinstance(theorem, kernel.Theorem)
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ("fp = F(d), wp", "fp = Z(1 -> 1, d), wp"),
+            ("wp = Z(1 -> 1, d)", "wp = Z(1 -> 1, d) phase{k: k/d}"),
+            ("vp.out0, wp.out0", "wp.out0, vp.out0"),
+        ],
+    )
+    def test_a_broken_second_chain_is_not_proved(self, old: str, new: str) -> None:
+        from archytaszx.semantics.decide import EqualityVerdict
+
+        assert old in _TWO_SPEC
+        decision = self._decide(_TWO_SPEC.replace(old, new))
+        assert decision.verdict is not EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+
+    def test_the_joint_peel_matches_instantiation(self) -> None:
+        from archytaszx.diagram.bangbox import peel_owners
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics.check import compare
+
+        diagram = induction.rename_multiplicity(parse_dsl(_TWO_SPEC), "n", Mult("s") + 1)
+        peeled = peel_owners(diagram, "s")
+        assert len(peeled.copy_node_ids) == 6
+        for s in (0, 1, 2):
+            at = {"s": s, "d": 3}
+            assert compare(
+                instantiate_symbol(peeled.diagram, "s", s), instantiate_symbol(diagram, "s", s), at
+            ).matched
+
+    def test_nested_owners_have_no_joint_peel(self) -> None:
+        from archytaszx.diagram.bangbox import peel_owners
+        from archytaszx.repl.parser import parse_dsl
+
+        nested = "dim d\ncount n\na = Z(1 -> 1, d)\nb = Z(1 -> 1, d)\nwire a.out0 -- b.in0\n"
+        nested += "repeat n as A: a, b\nrepeat n as B in A: b\ninputs a.in0\noutputs b.out0"
+        with pytest.raises(BangBoxGrammarError, match="no joint peel"):
+            peel_owners(parse_dsl(nested), "n")
+
+
+def _rows(text: str, nodes: str, chain_box: str, scalar: str) -> str:
+    """The chain cluster state ``text`` repeated over ``a`` rows, its chain box ``chain_box``
+    counting ``b`` inside each row."""
+    out: list[str] = ["dim d", "count a", "count b"]
+    for line in text.splitlines()[2:]:
+        if line.startswith("scalar"):
+            continue
+        if line.startswith(f"repeat n as {chain_box}"):
+            out.append(f"repeat a as A: {nodes}")
+            line = line.replace(f"repeat n as {chain_box}", f"repeat b as {chain_box} in A")
+        out.append(line)
+    return "\n".join([*out, scalar])
+
+
+_ROWS_SPEC = _rows(
+    _CLUSTER_SPEC.replace(
+        "repeat n as V: v = Z(1 -> 2, d), f = F(d), w = Z(1 -> 1, d)",
+        "v = Z(1 -> 2, d)\nf = F(d)\nw = Z(1 -> 1, d)\nrepeat n as V: v, f, w",
+    ),
+    "h, v, f, w",
+    "V",
+    "scalar d^(-a/2)",
+)
+_ROWS_CIRCUIT = _rows(_CLUSTER_CIRCUIT, "g0, g1, g2, g3, g4, g5, g6", "C0", "scalar d^(-a/2)")
+
+
+class TestLemmaTier:
+    """A step whose peeled copies need their own induction closes by a nested decision (75.2)."""
+
+    @staticmethod
+    def _decide(spec: str) -> object:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics.decide import decide_equal
+
+        return decide_equal(parse_dsl(_ROWS_CIRCUIT), parse_dsl(spec), samples=[])
+
+    def test_rows_of_chain_cluster_states_are_proved_with_a_kernel_theorem(self) -> None:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics import kernel
+        from archytaszx.semantics.decide import DecisionMethod, EqualityVerdict
+
+        decision = self._decide(_ROWS_SPEC)
+        assert decision.verdict is EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+        assert decision.method is DecisionMethod.INDUCTION  # type: ignore[attr-defined]
+        assert "lemma" in decision.induction.reason  # type: ignore[attr-defined]
+        theorem = kernel.from_decision(decision, parse_dsl(_ROWS_CIRCUIT), parse_dsl(_ROWS_SPEC))
+        assert isinstance(theorem, kernel.Theorem)
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ("f = F(d)", "f = Z(1 -> 1, d)"),
+            ("w = Z(1 -> 1, d)", "w = Z(1 -> 1, d) phase{k: k/d}"),
+            ("outputs v.out0, w.out0", "outputs w.out0, v.out0"),
+        ],
+    )
+    def test_a_broken_row_is_not_proved(self, old: str, new: str) -> None:
+        from archytaszx.semantics.decide import EqualityVerdict
+
+        assert old in _ROWS_SPEC
+        decision = self._decide(_ROWS_SPEC.replace(old, new))
+        assert decision.verdict is not EqualityVerdict.EQUAL  # type: ignore[attr-defined]

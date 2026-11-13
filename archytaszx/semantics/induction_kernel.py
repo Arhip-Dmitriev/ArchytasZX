@@ -27,12 +27,15 @@ normal forms, or symbolic contraction of the parts off the regions
 (:func:`~archytaszx.semantics.kernel.contraction`). One settled by symbolic contraction gives
 an induction theorem over a chain's cut region, a tree's unfed residual or a closed region, the
 step by isomorphism or by symbolic contraction. A peeled step whose copies have no rewrite
-derivation falls back to symbolic contraction of the replaced diagram.
+derivation falls back to symbolic contraction of the replaced diagram, then to
+:func:`~archytaszx.semantics.kernel.congr` of a nested decision's theorem equating the parts
+off the regions (:func:`~archytaszx.semantics.induction.lemma_decision`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -45,16 +48,20 @@ from archytaszx.rewrite.rules_library import SPIDER_FUSION, lookup_rule
 from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import compare_structure
 from archytaszx.semantics.induction import (
+    CutRegion,
     InductionDomainError,
     InductionResult,
     StepDischarge,
     TierOutcome,
+    _copy_side,
     _extract,
     _fan_split,
     fed_replacement,
     find_cut_region,
+    lemma_decision,
     replace_cut_region,
     replace_region,
+    rest_cut,
     unfed,
 )
 from archytaszx.semantics.prove import (
@@ -208,7 +215,16 @@ def _peeled(
         try:
             contracted = kernel.contraction(replaced, right_peeled)
         except kernel.KernelError as inner:
-            raise NoInductionTheorem(f"{exc}; {inner}") from exc
+            closed = CutRegion(
+                tier.left_copy,
+                tuple(r for r in replaced.boundary_inputs if r.node_id in tier.left_copy),
+                tuple(r for r in replaced.boundary_outputs if r.node_id in tier.left_copy),
+                MappingProxyType({}),
+            )
+            try:
+                contracted = _lemma_congr(replaced, closed, left_copy, right_copy, right_peeled)
+            except (NoInductionTheorem, kernel.KernelError) as last:
+                raise NoInductionTheorem(f"{exc}; {inner}; lemma: {last}") from exc
         step = kernel.trans(contracted, kernel.iso(right_peeled, other_peeled))
     else:
         there = kernel.chain(
@@ -417,6 +433,10 @@ def _step_theorem(
             return kernel.local_contraction(replaced, local[0], target, local[1], local[2])
         except kernel.KernelError as exc:
             reasons.append(f"local: {exc}")
+        try:
+            return _local_lemma(replaced, target, local)
+        except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
+            reasons.append(f"lemma: {exc}")
     if chain is not None:
         from archytaszx.semantics.induction import chain_cores
 
@@ -433,6 +453,37 @@ def _step_theorem(
     except kernel.KernelError as exc:
         reasons.append(str(exc))
     raise NoInductionTheorem("; ".join(reasons))
+
+
+def _lemma_congr(
+    context: Diagram, cut: CutRegion, part: Diagram, other_part: Diagram, target: Diagram
+) -> kernel.Theorem:
+    """``context = target`` by :func:`~archytaszx.semantics.kernel.congr` of the theorem
+    ``part = other_part`` (from :func:`~archytaszx.semantics.induction.lemma_decision`) at
+    ``cut``, then an isomorphism."""
+    decision = lemma_decision(part, other_part)
+    if decision is None:
+        raise NoInductionTheorem("no nested decision proves the parts equal")
+    lemma = kernel.from_decision(decision, part, other_part)
+    plugged = kernel.congr(lemma, context, cut)
+    return kernel.trans(plugged, kernel.iso(plugged.rhs, target))
+
+
+def _local_lemma(
+    replaced: Diagram,
+    target: Diagram,
+    local: tuple[frozenset[NodeId], frozenset[NodeId], Diagram],
+) -> kernel.Theorem:
+    """``replaced = target`` when the regions of ``local`` read as its hypothesis through cut
+    wires and the parts off them, cut ends open, are equal by :func:`_lemma_congr`."""
+    hypothesis = local[2]
+    pairs = ((replaced, local[0]), (target, local[1]))
+    cuts = [find_cut_region(d, region, hypothesis) for d, region in pairs]
+    if cuts[0] is None or cuts[1] is None:
+        raise NoInductionTheorem("a region is not the hypothesis through cut wires")
+    part, _ = _copy_side(replaced, cuts[0], replaced.scalar * hypothesis.scalar**-1)
+    other_part, _ = _copy_side(target, cuts[1], target.scalar * hypothesis.scalar**-1)
+    return _lemma_congr(replaced, rest_cut(replaced, cuts[0]), part, other_part, target)
 
 
 def _local_derivation(

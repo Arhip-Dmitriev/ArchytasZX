@@ -2531,6 +2531,41 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
     return PeelResult(working, copy_node_ids, separable)
 
 
+def index_owners(diagram: Diagram, name: str) -> tuple[BangBoxId, ...]:
+    """The boxes whose multiplicity carries ``name``, by id; with more than one, the pair boxes
+    of another such box are left out."""
+    owners = [
+        b for b, box in sorted(diagram.bang_boxes.items()) if name in box.multiplicity.free_symbols
+    ]
+    if len(owners) < 2:
+        return tuple(owners)
+    return tuple(b for b in owners if diagram.bang_boxes[b].pair_of not in owners)
+
+
+def peel_owners(diagram: Diagram, name: str) -> PeelResult:
+    """:func:`peel_one` on every box of :func:`index_owners` in id order, the copies joined;
+    raises when there is none or one of them lies inside another."""
+    owners = index_owners(diagram, name)
+    if not owners:
+        raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
+    if len(owners) == 1:
+        return peel_one(diagram, owners[0])
+    for box_id in owners:
+        above = diagram.bang_boxes[box_id].parent
+        while above is not None:
+            if above in owners:
+                raise BangBoxGrammarError(
+                    f"box {box_id!r} lies inside box {above!r}; no joint peel"
+                )
+            above = diagram.bang_boxes[above].parent
+    working, copies, separable = diagram, frozenset[NodeId](), True
+    for box_id in owners:
+        result = peel_one(working, box_id)
+        working, copies = result.diagram, copies | result.copy_node_ids
+        separable = separable and result.separable
+    return PeelResult(working, copies, separable)
+
+
 def expand_concrete_boxes(diagram: Diagram) -> Diagram:
     """Expand every bang box whose multiplicity is already a concrete number.
 
