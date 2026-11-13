@@ -181,10 +181,18 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     in pair order. Its own multiplicity is 1 and it is never expanded alone.
 
 peel_one splits off the last copy (I = n - 1, wired between the rest's p ports and the tail);
-a cyclic chain and a box with pair boxes refuse peel_one; copy_box and merge refuse these boxes. decide on diagrams
-that still hold such a box after expanding the concrete ones runs only the oracle and the
-structural comparison (no rewriting, saturation, symbolic contraction or induction); the
-symbolic rungs of parts B and C are not implemented.
+a cyclic chain and a box with pair boxes refuse peel_one; copy_box and merge refuse these
+boxes, and to_scalable and the Lean network export refuse every diagram holding one.
+
+A rewrite inside a chain box moves each consumed link port to the port the rule's port
+mapping gives it, which must lie in the box's scope; a rewrite is refused when it consumes the
+far end of a link wire, a node of a pair box, a left or right port, or introduces a scalar
+reading the index of a box it rewrites in. Symbolic contraction reads a carry-copy chain (one
+copy's tensor, link ports open, has the factor delta(p - q) for every link) as a plain box
+whose link ports and head and tail ends meet one phaseless Z spider per link (a cyclic one
+only when its multiplicity is at least 1), and refuses any other chain, indexed and pair
+boxes; a copy scalar without an index contributes c^n. Induction over a chain box's
+multiplicity has the chain_window step tier (PROOFS.txt).
 
 4.3 Operations
 

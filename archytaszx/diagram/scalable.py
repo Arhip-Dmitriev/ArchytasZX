@@ -756,6 +756,8 @@ def to_scalable(diagram: Diagram) -> ScalableDiagram:
     ]
     if blocking:
         raise ScalableGrammarError("cannot translate: " + "; ".join(blocking))
+    if any(box.is_extended for box in diagram.bang_boxes.values()):
+        raise ScalableGrammarError("cannot translate a chain, indexed, pair or copy-scalar box")
     boxes = diagram.bang_boxes
     scales: list[Scale] = []
     for box_id in sorted(boxes):

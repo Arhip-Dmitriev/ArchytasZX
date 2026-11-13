@@ -984,6 +984,9 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
             ):
                 refuse(f"chain box {box_id!r}: link {p_ref!r} -> {q_ref!r} names an unknown port")
                 continue
+            if not {p_ref.node_id, q_ref.node_id} <= box.node_scope:
+                refuse(f"chain box {box_id!r}: link {p_ref!r} -> {q_ref!r} leaves the scope")
+                continue
             p_node, q_node = nodes
             assert p_node is not None and q_node is not None
             p_dim = p_node.legs(p_ref.direction)[p_ref.index].dim

@@ -42,7 +42,7 @@ from typing import TypeAlias, cast
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim, DimSubstituteValue, DimSymbolKey, format_count
-from archytaszx.algebra.phase import INDEX
+from archytaszx.algebra.phase import INDEX, PhaseVector
 from archytaszx.algebra.scalar import (
     DEFAULT_MAX_SIMPLIFY_STEPS,
     ModDelta,
@@ -1140,6 +1140,10 @@ def _scope_subdiagram(
                 PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
             )
     box_map: dict[BangBoxId, BangBoxId | None] = {exclude: None}
+
+    def moved(r: PortRef) -> PortRef:
+        return PortRef(id_map[r.node_id], r.direction, r.index)
+
     pending = True
     while pending:
         pending = False
@@ -1147,13 +1151,21 @@ def _scope_subdiagram(
             box = diagram.bang_boxes[box_id]
             if box_id in box_map or box.parent not in box_map:
                 continue
+            if box.pair_of is not None and box_map.get(box.pair_of) is None:
+                continue
             box_map[box_id] = extracted.add_bang_box(
                 box.multiplicity,
                 node_scope=frozenset(id_map[n] for n in box.node_scope),
-                port_scope=frozenset(
-                    PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
-                ),
+                port_scope=frozenset(moved(r) for r in box.port_scope),
                 parent=box_map[box.parent],
+                links=tuple((moved(p), moved(q)) for p, q in box.links),
+                cyclic=box.cyclic,
+                index=box.index,
+                copy_scalar=box.copy_scalar,
+                pair_of=None if box.pair_of is None else box_map[box.pair_of],
+                pair_index=box.pair_index,
+                left_ports=frozenset(moved(r) for r in box.left_ports),
+                right_ports=frozenset(moved(r) for r in box.right_ports),
             )
             pending = True
     extracted.set_boundary_outputs(
@@ -1164,6 +1176,142 @@ def _scope_subdiagram(
     )
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
+
+
+def _partner_or_slot(diagram: Diagram, ref: PortRef) -> PortRef | None:
+    """The port wired to ``ref``, or None when ``ref`` is a boundary slot."""
+    for wire in diagram.wires:
+        if wire.a == ref:
+            return wire.b
+        if wire.b == ref:
+            return wire.a
+    return None
+
+
+def _open_copy(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, list[PortRef]]:
+    """One copy of a chain box's scope with every link port, crossing and boundary slot
+    open: outputs then inputs, each by port order; the list of open ports in axis order."""
+    box = diagram.bang_boxes[box_id]
+    working = diagram.copy()
+    for p_ref, q_ref in box.links:
+        for ref in (p_ref, q_ref):
+            partner = _partner_or_slot(working, ref)
+            if partner is not None:
+                working.remove_wire(ref, partner)
+    scope = box.node_scope
+    inside = {
+        ref
+        for wire in working.wires
+        if wire.a.node_id in scope and wire.b.node_id in scope
+        for ref in (wire.a, wire.b)
+    }
+    open_ports = sorted(
+        (
+            PortRef(node_id, direction, i)
+            for node_id in scope
+            for direction in (Direction.OUTPUT, Direction.INPUT)
+            for i in range(len(working.nodes[node_id].legs(direction)))
+            if PortRef(node_id, direction, i) not in inside
+        ),
+        key=lambda r: (r.direction is Direction.INPUT, r.sort_key()),
+    )
+    outputs = [r for r in open_ports if r.direction is Direction.OUTPUT]
+    inputs = [r for r in open_ports if r.direction is Direction.INPUT]
+    return _scope_subdiagram(working, scope, box_id, outputs, inputs), [*outputs, *inputs]
+
+
+def _carries_copy(entry: sp.Expr, p: sp.Symbol, q: sp.Symbol, dim: Dim, max_steps: int) -> bool:
+    """Whether ``entry`` is ``delta(p - q)`` times ``entry`` at ``p = q``."""
+    modulus = dim.to_sympy()
+    for arg in sp.Mul.make_args(entry):
+        if isinstance(arg, ModDelta) and sp.simplify(arg.args[1] - modulus) == 0:
+            gap = sp.expand(arg.args[0])
+            if sp.expand(gap - (p - q)) == 0 or sp.expand(gap + (p - q)) == 0:
+                return True
+    folded = entry.xreplace({p: q}) * ModDelta(p - q, modulus)
+    return Scalar(entry - folded).simplify(max_steps=max_steps).is_zero
+
+
+def _resolve_chains(diagram: Diagram, max_steps: int) -> Diagram:
+    """``diagram`` with each top-level carry-copy chain box replaced by a plain box whose
+    link ports meet one phaseless Z spider per link, the spider also taking the head and tail
+    ends; raise on any other chain box."""
+    working = diagram
+    for box_id in sorted(diagram.bang_boxes):
+        box = working.bang_boxes[box_id]
+        if not box.links or box.parent is not None:
+            continue
+        if box.cyclic:
+            constant = sp.expand(box.multiplicity.to_sympy()).as_coeff_Add()[0]
+            if not (constant.is_Integer and constant >= 1):
+                raise SymbolicContractionUnsupportedError(
+                    f"cyclic chain box {box_id}: multiplicity {box.multiplicity} may be 0"
+                )
+        copy, ports = _open_copy(working, box_id)
+        tensor = contract_symbolic(copy, max_steps=max_steps)
+        if tensor.is_variable_rank:
+            raise SymbolicContractionUnsupportedError(
+                f"chain box {box_id}: one copy holds a variable-rank part"
+            )
+        axis_of = {ref: _engine_index(a.index) for ref, a in zip(ports, tensor.axes, strict=True)}
+        entry = tensor.entry.to_sympy()
+        for p_ref, q_ref in box.links:
+            if not _carries_copy(
+                entry, axis_of[p_ref], axis_of[q_ref], _port_dim(working, p_ref), max_steps
+            ):
+                raise SymbolicContractionUnsupportedError(
+                    f"chain box {box_id}: the transfer tensor is neither carry-copy nor neighbour"
+                )
+        working = _spider_links(working, box_id)
+    return working
+
+
+def _flip(direction: Direction) -> Direction:
+    """The other direction."""
+    return Direction.INPUT if direction is Direction.OUTPUT else Direction.OUTPUT
+
+
+def _spider_links(diagram: Diagram, box_id: BangBoxId) -> Diagram:
+    """``diagram`` with box ``box_id``'s links dropped, each link's ``p``, ``q``, head and tail
+    ends wired to one new phaseless Z spider."""
+    working = diagram.copy()
+    box = working.bang_boxes[box_id]
+    for p_ref, q_ref in box.links:
+        dim = _port_dim(working, p_ref)
+        ends: list[tuple[Direction, PortRef, str | None]] = []
+        for ref in (p_ref, q_ref):
+            partner = _partner_or_slot(working, ref)
+            if partner is not None:
+                working.remove_wire(ref, partner)
+            ends.append((_flip(ref.direction), ref, None))
+            if box.cyclic:
+                continue
+            if partner is not None:
+                ends.append((_flip(partner.direction), partner, None))
+            elif ref in working.boundary_inputs:
+                ends.append((Direction.INPUT, ref, "in"))
+            else:
+                ends.append((Direction.OUTPUT, ref, "out"))
+        ins = [e for e in ends if e[0] is Direction.INPUT]
+        outs = [e for e in ends if e[0] is Direction.OUTPUT]
+        spider = working.add_node(
+            Z_SPIDER, [dim] * len(ins), [dim] * len(outs), phase=PhaseVector(dim)
+        )
+        for direction, group in ((Direction.INPUT, ins), (Direction.OUTPUT, outs)):
+            for i, (_d, ref, slot) in enumerate(group):
+                leg = PortRef(spider, direction, i)
+                if slot == "in":
+                    working.set_boundary_inputs(
+                        [leg if r == ref else r for r in working.boundary_inputs]
+                    )
+                elif slot == "out":
+                    working.set_boundary_outputs(
+                        [leg if r == ref else r for r in working.boundary_outputs]
+                    )
+                else:
+                    working.add_wire(leg, ref)
+    working.set_bang_box_extension(box_id, links=(), cyclic=False)
+    return working
 
 
 @dataclass(frozen=True, slots=True)
@@ -1335,9 +1483,20 @@ def contract_symbolic(
         reduced = _path_sum_tensor(diagram, max_steps)
         if reduced is not None:
             return reduced
+    if any(box.links for box in diagram.bang_boxes.values()):
+        diagram = _resolve_chains(diagram, max_steps)
+    box_factor: sp.Expr = sp.Integer(1)
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.index is not None or box.pair_of is not None or box.links:
+            raise SymbolicContractionUnsupportedError(
+                f"bang box {box_id} is an indexed, pair or nested chain box"
+            )
+        if box.copy_scalar is not None and box.parent is None:
+            box_factor = box_factor * sp.Pow(
+                box.copy_scalar.to_sympy(), box.multiplicity.to_sympy()
+            )
     plan = _plan_boxes(diagram)
 
-    box_factor: sp.Expr = sp.Integer(1)
     working = diagram.copy()
     for box_id in plan.closed:
         box = diagram.bang_boxes[box_id]

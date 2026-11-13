@@ -1474,9 +1474,6 @@ def _decide_equal(
     }
     if _extended(left) or _extended(right):
         left, right = expand_concrete_boxes(left), expand_concrete_boxes(right)
-        if _extended(left) or _extended(right):
-            options.update(rules=(), use_symbolic=False, use_induction=False, use_saturation=False)
-            prove_equal = False
     if restrict is not None:
         from archytaszx.semantics.restrict import parse_restriction, validate
 

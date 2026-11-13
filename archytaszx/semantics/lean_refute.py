@@ -73,6 +73,8 @@ def export_refutation(
     ``index``, a boundary value per slot, is the first assignment tried at ``point``."""
     from archytaszx.semantics.decide import sample_grid
 
+    if any(box.is_extended for d in (left, right) for box in d.bang_boxes.values()):
+        return _instantiated_refutation(left, right, point, name, describe)
     if _interfaces_differ(left, right) and (
         left.bang_boxes
         or right.bang_boxes

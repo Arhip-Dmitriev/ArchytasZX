@@ -1878,7 +1878,7 @@ def _liftable_box(
     if box_id is None:
         return None
     box = diagram.bang_boxes[box_id]
-    if box.node_scope != frozenset((node_id,)):
+    if box.node_scope != frozenset((node_id,)) or box.is_extended:
         return None
     if any(other.parent == box_id for other in diagram.bang_boxes.values()):
         return None

@@ -322,17 +322,60 @@ def _remap_endpoint(
     return port_mapping[ref]
 
 
-@_trace.traced("rewrite.apply", lambda diagram, rule, match, **_: rule.name)
-def _refuse_link_ports(diagram: Diagram, rule: Rule, consumed: Sequence[NodeId]) -> None:
-    """Raise RewriteDomainError when a consumed node carries a chain-box link port."""
+def _follow_links(
+    working: Diagram,
+    rule: Rule,
+    consumed: Sequence[NodeId],
+    port_mapping: Mapping[PortRef, PortRef],
+    scalar: Scalar,
+) -> None:
+    """Send each chain-box link port on a consumed node through ``port_mapping`` onto a port in
+    the box's scope; raise RewriteDomainError when one has no such image, when a consumed node
+    lies in a pair box, carries a left or right port or is the far end of a link wire, or when
+    the introduced scalar reads the index of a box holding a consumed node."""
     gone = frozenset(consumed)
-    for box_id, box in sorted(diagram.bang_boxes.items()):
-        if any(ref.node_id in gone for link in box.links for ref in link):
+    partner: dict[PortRef, PortRef] = {}
+    for wire in working.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    for box_id, box in sorted(working.bang_boxes.items()):
+        touched = bool(box.node_scope & gone)
+        if box.is_pair and touched:
+            raise RewriteDomainError(f"rule {rule.name!r}: the match lies in pair box {box_id!r}")
+        if any(ref.node_id in gone for ref in (*box.left_ports, *box.right_ports)):
             raise RewriteDomainError(
-                f"rule {rule.name!r}: the match consumes a link port of chain box {box_id!r}"
+                f"rule {rule.name!r}: the match consumes a left or right port of pair box "
+                f"{box_id!r}"
             )
+        if touched and box.index is not None and box.index in scalar.free_symbols:
+            raise RewriteDomainError(
+                f"rule {rule.name!r}: the introduced scalar reads the index of box {box_id!r}"
+            )
+        for link in box.links:
+            for ref in link:
+                far = partner.get(ref)
+                if far is not None and far.node_id not in box.node_scope and far.node_id in gone:
+                    raise RewriteDomainError(
+                        f"rule {rule.name!r}: the match consumes the far end of a link wire of "
+                        f"chain box {box_id!r}"
+                    )
+        if not any(ref.node_id in gone for link in box.links for ref in link):
+            continue
+        links: list[tuple[PortRef, PortRef]] = []
+        for link in box.links:
+            moved: list[PortRef] = []
+            for ref in link:
+                image = port_mapping.get(ref, ref) if ref.node_id in gone else ref
+                if image.node_id in gone or image.node_id not in box.node_scope:
+                    raise RewriteDomainError(
+                        f"rule {rule.name!r}: the match consumes link port {ref!r} of chain "
+                        f"box {box_id!r} and keeps no port of the scope in its place"
+                    )
+                moved.append(image)
+            links.append((moved[0], moved[1]))
+        working.set_bang_box_extension(box_id, links=tuple(links))
 
 
+@_trace.traced("rewrite.apply", lambda diagram, rule, match, **_: rule.name)
 def apply(
     diagram: Diagram, rule: Rule, match: Match, *, input_report: ValidationReport | None = None
 ) -> RewriteResult:
@@ -365,7 +408,13 @@ def apply(
 
     working = diagram.copy()
     build_result = rule.builder(working, match)
-    _refuse_link_ports(diagram, rule, build_result.consumed_node_ids)
+    _follow_links(
+        working,
+        rule,
+        build_result.consumed_node_ids,
+        build_result.port_mapping,
+        build_result.scalar_introduced,
+    )
 
     if build_result.diagram is not working:
         raise RewriteGrammarError(

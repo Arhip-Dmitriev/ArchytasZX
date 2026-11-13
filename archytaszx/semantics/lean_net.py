@@ -631,6 +631,8 @@ class _Export:
 
     def node_chain(self, d: Diagram) -> dict[NodeId, tuple[tuple[int, ...], Chain]]:
         """Each boxed node's node boxes outermost first, with their multiplicity indices."""
+        if any(box.is_extended for box in d.bang_boxes.values()):
+            raise NetUnsupported("a chain, indexed, pair or copy-scalar bang box")
         boxes = {bid: box for bid, box in d.bang_boxes.items() if box.node_scope}
 
         def depth(bid: BangBoxId) -> int:

@@ -351,10 +351,6 @@ class BangBox:
                 if ref in seen:
                     raise BangBoxGrammarError(f"BangBox port {ref!r} is in more than one link")
                 seen.add(ref)
-                if ref.node_id not in self.node_scope:
-                    raise BangBoxGrammarError(
-                        f"BangBox link port {ref!r} is not in the box's node scope"
-                    )
         if self.cyclic and not self.links:
             raise BangBoxGrammarError("a cyclic BangBox needs at least one link")
         if (self.links or self.index is not None or self.copy_scalar is not None) and not (
@@ -817,6 +813,31 @@ def _copy_subtree(
                 parent=parent,
             )
         _copy_subtree(diagram, child.id, id_map, new_id)
+
+
+def add_box_image(
+    target: Diagram,
+    box: BangBox,
+    id_map: Mapping[NodeId, NodeId],
+    parent: BangBoxId | None,
+    pair_of: BangBoxId | None = None,
+) -> BangBoxId:
+    """Add ``box`` to ``target`` over its nodes' images under ``id_map``, every field kept."""
+    return target.add_bang_box(
+        box.multiplicity,
+        node_scope=frozenset(id_map[n] for n in box.node_scope),
+        port_scope=frozenset(_moved(r, id_map) for r in box.port_scope),
+        parent=parent,
+        sheets=box.sheets,
+        links=tuple((_moved(a, id_map), _moved(b, id_map)) for a, b in box.links),
+        cyclic=box.cyclic,
+        index=box.index,
+        copy_scalar=box.copy_scalar,
+        pair_of=pair_of,
+        pair_index=box.pair_index,
+        left_ports=frozenset(_moved(r, id_map) for r in box.left_ports),
+        right_ports=frozenset(_moved(r, id_map) for r in box.right_ports),
+    )
 
 
 def _moved(ref: PortRef, id_map: Mapping[NodeId, NodeId]) -> PortRef:

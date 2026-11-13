@@ -31,12 +31,13 @@ from archytaszx.diagram.bangbox import (
     BangBox,
     BangBoxError,
     Mult,
+    add_box_image,
     free_mult_symbols,
     peel_one,
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
-from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId, PortRef
+from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
 from archytaszx.rewrite.rule import Match, RewriteDomainError, Rule
@@ -101,6 +102,7 @@ class StepDischarge(enum.Enum):
     INDUCTION_REWRITE = "induction_rewrite"
     ORACLE_WINDOW = "oracle_window"
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
+    CHAIN_WINDOW = "chain_window"
 
 
 DEFAULT_WINDOW_WIDTH = 4
@@ -110,6 +112,7 @@ DEFAULT_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.UNIFORM_REWRITE,
     StepDischarge.INDUCTION_REWRITE,
     StepDischarge.SYMBOLIC_CONTRACTION,
+    StepDischarge.CHAIN_WINDOW,
     StepDischarge.ORACLE_WINDOW,
 )
 
@@ -193,6 +196,7 @@ class InductionResult:
             StepDischarge.UNIFORM_REWRITE,
             StepDischarge.INDUCTION_REWRITE,
             StepDischarge.SYMBOLIC_CONTRACTION,
+            StepDischarge.CHAIN_WINDOW,
         )
         if self.discharge in symbolic_tiers:
             return self.obligation.held_symbolic
@@ -383,6 +387,7 @@ _VERDICT: dict[StepDischarge, Verdict] = {
     StepDischarge.UNIFORM_REWRITE: Verdict.PROVED_UNIFORM,
     StepDischarge.INDUCTION_REWRITE: Verdict.PROVED_INDUCTION,
     StepDischarge.SYMBOLIC_CONTRACTION: Verdict.PROVED_INDUCTION,
+    StepDischarge.CHAIN_WINDOW: Verdict.PROVED_INDUCTION,
     StepDischarge.ORACLE_WINDOW: Verdict.SCHEMA_CHECKED,
 }
 
@@ -422,7 +427,23 @@ def _same_bang_boxes(a: Diagram, b: Diagram) -> bool:
             box_b.port_scope, key=_port_scope_key
         ):
             return False
+        if _extension(box_a) != _extension(box_b):
+            return False
     return True
+
+
+def _extension(box: BangBox) -> tuple[object, ...]:
+    """A box's chain, index, copy-scalar and pair fields."""
+    return (
+        box.links,
+        box.cyclic,
+        box.index,
+        box.copy_scalar,
+        box.pair_of,
+        box.pair_index,
+        sorted(box.left_ports, key=_port_scope_key),
+        sorted(box.right_ports, key=_port_scope_key),
+    )
 
 
 DEFAULT_RULES: tuple[Rule, ...] = (SPIDER_FUSION,)
@@ -532,18 +553,22 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool 
             if _box_footprint(box) <= node_ids
         ]
         inside_ids = {box_id for box_id, _ in inside}
+        for _box_id, box in inside:
+            if box.pair_of is not None and box.pair_of not in inside_ids:
+                raise InductionDomainError("a pair box lies inside a region its parent leaves")
         while len(box_map) < len(inside):
             for box_id, box in inside:
                 parent = box.parent if box.parent in inside_ids else None
                 if box_id in box_map or (parent is not None and parent not in box_map):
                     continue
-                box_map[box_id] = extracted.add_bang_box(
-                    box.multiplicity,
-                    node_scope=frozenset(id_map[n] for n in box.node_scope),
-                    port_scope=frozenset(
-                        PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
-                    ),
-                    parent=None if parent is None else box_map[parent],
+                if box.pair_of is not None and box.pair_of not in box_map:
+                    continue
+                box_map[box_id] = add_box_image(
+                    extracted,
+                    box,
+                    id_map,
+                    None if parent is None else box_map[parent],
+                    None if box.pair_of is None else box_map[box.pair_of],
                 )
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
@@ -621,6 +646,11 @@ def replace_region(
         ref.node_id in region for ref in diagram.boundary_outputs
     ):
         raise InductionDomainError("the replacement's interface does not fit the region's slots")
+    layout = boundary_layout(hypothesis)
+    if layout is None or layout != boundary_layout(replacement):
+        raise InductionDomainError("the replacement's boundary layout differs from the region's")
+    if boundary_layout(diagram) is None:
+        raise InductionDomainError("a box's boundary slots are not contiguous")
     working = diagram.copy()
     inputs = list(working.boundary_inputs)
     outputs = list(working.boundary_outputs)
@@ -652,14 +682,14 @@ def replace_region(
         for box_id, box in pending:
             if box_id in box_map or (box.parent is not None and box.parent not in box_map):
                 continue
-            box_map[box_id] = working.add_bang_box(
-                box.multiplicity,
-                node_scope=frozenset(id_map[n] for n in box.node_scope),
-                port_scope=frozenset(
-                    PortRef(id_map[r.node_id], r.direction, r.index) for r in box.port_scope
-                ),
-                parent=None if box.parent is None else box_map[box.parent],
-                sheets=box.sheets,
+            if box.pair_of is not None and box.pair_of not in box_map:
+                continue
+            box_map[box_id] = add_box_image(
+                working,
+                box,
+                id_map,
+                None if box.parent is None else box_map[box.parent],
+                None if box.pair_of is None else box_map[box.pair_of],
             )
 
     def refill(slots: list[PortRef], fresh: tuple[PortRef, ...]) -> list[PortRef]:
@@ -696,6 +726,8 @@ def _residual_is(peeled: Diagram, copy_node_ids: frozenset[NodeId], expected: Di
     for box_id, box in peeled_boxes.items():
         other = expected.bang_boxes[box_id]
         if box.multiplicity != other.multiplicity or box.parent != other.parent:
+            return False
+        if box.links or _extension(box) != _extension(other):
             return False
         if sorted(box.node_scope) != sorted(other.node_scope):
             return False
@@ -883,6 +915,371 @@ def discharge_peeled_hypothesis(
     )
 
 
+_MAX_CUT_PLACEMENTS = 2000
+
+
+def _slot_owners(diagram: Diagram, ref: PortRef) -> tuple[BangBoxId, ...]:
+    """The boxes replicating boundary slot ``ref``, outermost first: the node-scope boxes over
+    its node (a chain box not when ``ref`` is one of its link ports), then the port-scope boxes
+    holding it."""
+    owners: list[BangBoxId] = []
+    for box_id, box in diagram.bang_boxes.items():
+        in_copy = ref.node_id in box.node_scope and not any(ref in link for link in box.links)
+        if in_copy or ref in box.port_scope:
+            owners.append(box_id)
+    return tuple(sorted(owners, key=lambda b: (_box_depth(diagram, b), b)))
+
+
+def _box_depth(diagram: Diagram, box_id: BangBoxId) -> int:
+    """How many boxes enclose ``box_id``."""
+    depth, parent = 0, diagram.bang_boxes[box_id].parent
+    while parent is not None:
+        depth, parent = depth + 1, diagram.bang_boxes[parent].parent
+    return depth
+
+
+def boundary_layout(diagram: Diagram) -> tuple[tuple[object, ...], ...] | None:
+    """Per boundary list, each slot's replicating multiplicities and, per enclosing box, whether
+    the slot opens a new run of that box; None when some box's slots in one list are not
+    contiguous."""
+    out: list[tuple[object, ...]] = []
+    for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
+        rows: list[object] = []
+        closed: set[BangBoxId] = set()
+        previous: tuple[BangBoxId, ...] = ()
+        for ref in refs:
+            owners = _slot_owners(diagram, ref)
+            for box_id in previous:
+                if box_id not in owners:
+                    closed.add(box_id)
+            if any(box_id in closed for box_id in owners):
+                return None
+            mults = tuple(diagram.bang_boxes[b].multiplicity for b in owners)
+            opens = tuple(b not in previous for b in owners)
+            rows.append((mults, opens, _ref_dim(diagram, ref)))
+            previous = owners
+        out.append(tuple(rows))
+    return tuple(out)
+
+
+@dataclass(frozen=True, slots=True)
+class CutRegion:
+    """A region of a diagram read as an open diagram: its boundary lists, each slot either one
+    of the diagram's boundary slots on the region or the region's end of a cut wire."""
+
+    region: frozenset[NodeId]
+    inputs: tuple[PortRef, ...]
+    outputs: tuple[PortRef, ...]
+    cuts: Mapping[PortRef, PortRef]
+
+
+def _cut_wires(diagram: Diagram, region: frozenset[NodeId]) -> dict[PortRef, PortRef]:
+    """Each wire leaving ``region``, as its region end to its far end."""
+    out: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        if (wire.a.node_id in region) != (wire.b.node_id in region):
+            inside, far = (wire.a, wire.b) if wire.a.node_id in region else (wire.b, wire.a)
+            out[inside] = far
+    return out
+
+
+def _cut_extract(diagram: Diagram, cut: CutRegion) -> Diagram:
+    """The region of ``cut`` as a diagram with ``cut``'s boundary lists, scalar one."""
+    extracted = _extract(diagram, cut.region, with_boxes=True)
+    order = sorted(cut.region)
+    id_map = {old: NodeId(new) for old, new in zip(order, sorted(extracted.nodes), strict=True)}
+    extracted.set_boundary_inputs([_moved_ref(r, id_map) for r in cut.inputs])
+    extracted.set_boundary_outputs([_moved_ref(r, id_map) for r in cut.outputs])
+    return extracted
+
+
+def _moved_ref(ref: PortRef, id_map: Mapping[NodeId, NodeId]) -> PortRef:
+    """``ref`` on its node's image."""
+    return PortRef(id_map[ref.node_id], ref.direction, ref.index)
+
+
+def find_cut_region(
+    diagram: Diagram, region: frozenset[NodeId], hypothesis: Diagram
+) -> CutRegion | None:
+    """A placement of ``region``'s cut wires among its boundary slots under which the region
+    is isomorphic to ``hypothesis`` up to scalar: each cut end takes the place of a slot of
+    ``diagram`` held off the region, or follows the region's slots, per direction; or None."""
+    from itertools import permutations
+
+    cuts = _cut_wires(diagram, region)
+    target = _bare(hypothesis)
+    lists = (list(diagram.boundary_inputs), list(diagram.boundary_outputs))
+    wanted = (len(hypothesis.boundary_inputs), len(hypothesis.boundary_outputs))
+    per_list: list[list[tuple[PortRef, ...]]] = []
+    for side, (refs, want) in enumerate(zip(lists, wanted, strict=True)):
+        direction = (Direction.INPUT, Direction.OUTPUT)[side]
+        own = [cut for cut in sorted(cuts, key=PortRef.sort_key) if cut.direction is direction]
+        kept = [i for i, r in enumerate(refs) if r.node_id in region]
+        if len(kept) + len(own) != want:
+            return None
+        holes = [i for i, r in enumerate(refs) if r.node_id not in region]
+        spots = [*holes, *(len(refs) + j for j in range(len(own)))]
+        options: list[tuple[PortRef, ...]] = []
+        for chosen in permutations(spots, len(own)):
+            placed = dict(zip(chosen, own, strict=True))
+            options.append(
+                tuple(placed[i] if i in placed else refs[i] for i in sorted({*kept, *chosen}))
+            )
+            if len(options) > _MAX_CUT_PLACEMENTS:
+                return None
+        per_list.append(options)
+    for inputs in per_list[0]:
+        for outputs in per_list[1]:
+            cut = CutRegion(region, inputs, outputs, MappingProxyType(cuts))
+            if isomorphic(_bare(_cut_extract(diagram, cut)), target):
+                return cut
+    return None
+
+
+def replace_cut_region(
+    diagram: Diagram, cut: CutRegion, hypothesis: Diagram, replacement: Diagram
+) -> Diagram:
+    """``diagram`` with ``cut``'s region swapped for ``replacement``: slot ``i`` of each of
+    ``replacement``'s boundary lists takes slot ``i`` of ``cut``'s, a cut end's far port wired
+    to it, the scalar times ``replacement.scalar / hypothesis.scalar``."""
+    if (len(replacement.boundary_inputs), len(replacement.boundary_outputs)) != (
+        len(cut.inputs),
+        len(cut.outputs),
+    ):
+        raise InductionDomainError("the replacement's interface does not fit the cut region")
+    layout = boundary_layout(hypothesis)
+    if layout is None or layout != boundary_layout(replacement):
+        raise InductionDomainError("the replacement's boundary layout differs from the region's")
+    if boundary_layout(diagram) is None:
+        raise InductionDomainError("a box's boundary slots are not contiguous")
+    working = diagram.copy()
+    inside = [b for b, box in working.bang_boxes.items() if _box_footprint(box) & cut.region]
+    for box_id in inside:
+        if not _box_footprint(working.bang_boxes[box_id]) <= cut.region:
+            raise InductionDomainError(f"bang box {box_id!r} straddles the replaced region")
+    for box_id in sorted(inside, reverse=True):
+        working.remove_bang_box(box_id)
+    slot_of: dict[PortRef, PortRef] = {}
+    fresh = _graft(working, replacement)
+    for mine, theirs in (
+        (cut.inputs, replacement.boundary_inputs),
+        (cut.outputs, replacement.boundary_outputs),
+    ):
+        for ref, other in zip(mine, theirs, strict=True):
+            slot_of[ref] = _moved_ref(other, fresh)
+    inputs = [slot_of.get(r, r) for r in working.boundary_inputs]
+    outputs = [slot_of.get(r, r) for r in working.boundary_outputs]
+    for node_id in sorted(cut.region):
+        working.remove_node(node_id)
+    for inside_end, far in sorted(cut.cuts.items(), key=lambda item: item[0].sort_key()):
+        working.add_wire(slot_of[inside_end], far)
+    working.set_boundary_inputs(inputs)
+    working.set_boundary_outputs(outputs)
+    working.multiply_scalar(replacement.scalar * hypothesis.scalar**-1)
+    return working
+
+
+def _graft(working: Diagram, replacement: Diagram) -> dict[NodeId, NodeId]:
+    """Add ``replacement``'s nodes, wires and boxes to ``working``; its node map."""
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(replacement.nodes):
+        node = replacement.nodes[old_id]
+        id_map[old_id] = working.add_node(
+            node.generator_type,
+            [port.dim for port in node.inputs],
+            [port.dim for port in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(replacement.wires, key=lambda w: w.sort_key()):
+        working.add_wire(_moved_ref(wire.a, id_map), _moved_ref(wire.b, id_map))
+    box_map: dict[BangBoxId, BangBoxId] = {}
+    pending = sorted(replacement.bang_boxes.items())
+    while len(box_map) < len(pending):
+        for box_id, box in pending:
+            if box_id in box_map or (box.parent is not None and box.parent not in box_map):
+                continue
+            if box.pair_of is not None and box.pair_of not in box_map:
+                continue
+            box_map[box_id] = add_box_image(
+                working,
+                box,
+                id_map,
+                None if box.parent is None else box_map[box.parent],
+                None if box.pair_of is None else box_map[box.pair_of],
+            )
+    return id_map
+
+
+def _chain_owner(diagram: Diagram, index: str) -> BangBoxId | None:
+    """The single box whose multiplicity carries ``index`` when it is a chain box."""
+    owners = [b for b, box in diagram.bang_boxes.items() if index in box.multiplicity.free_symbols]
+    if len(owners) != 1 or not diagram.bang_boxes[owners[0]].links:
+        return None
+    return owners[0]
+
+
+def discharge_chain_window(
+    obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
+) -> TierOutcome:
+    """Settle the step case on a chain box: peel the last copy off one successor, read the
+    residual as that side's hypothesis diagram through its cut wires, replace it by the other
+    side's hypothesis diagram, and compare the result with the other successor (peeled or
+    not) structurally or by symbolic contraction."""
+    index = obligation.step_symbol
+    reasons: list[str] = []
+    paired = _compare_chain_copies(obligation, max_steps)
+    if paired[0]:
+        return TierOutcome(StepDischarge.CHAIN_WINDOW, True, paired[1])
+    reasons.append(paired[1])
+    sides = (
+        (
+            obligation.left_at_successor,
+            obligation.left_at_k,
+            obligation.right_at_k,
+            obligation.right_at_successor,
+        ),
+        (
+            obligation.right_at_successor,
+            obligation.right_at_k,
+            obligation.left_at_k,
+            obligation.left_at_successor,
+        ),
+    )
+    for own_successor, own_k, other_k, other_successor in sides:
+        if _chain_owner(own_successor, index) is None:
+            reasons.append("no chain box carries the step index")
+            continue
+        peeled = _peel_step_index(own_successor, index)
+        if peeled is None:
+            reasons.append("the chain box does not peel")
+            continue
+        exposed, copy = peeled
+        cut = find_cut_region(exposed, frozenset(exposed.nodes) - copy, own_k)
+        if cut is None:
+            reasons.append("the residual is not the hypothesis diagram through its cut wires")
+            continue
+        try:
+            replaced = replace_cut_region(exposed, cut, own_k, other_k)
+        except InductionDomainError as exc:
+            reasons.append(str(exc))
+            continue
+        targets = [other_successor]
+        owners = [
+            b
+            for b, box in other_successor.bang_boxes.items()
+            if index in box.multiplicity.free_symbols
+        ]
+        if len(owners) == 1:
+            try:
+                targets.insert(0, peel_one(other_successor, owners[0]).diagram)
+            except BangBoxError:
+                pass
+        for target in targets:
+            settled, why = _close_window(replaced, target, max_steps)
+            if settled:
+                return TierOutcome(
+                    StepDischarge.CHAIN_WINDOW,
+                    True,
+                    "peeled the last chain copy; the residual is the hypothesis diagram through "
+                    f"its cut wires, replaced by the other side's; {why}",
+                )
+            reasons.append(why)
+    return TierOutcome(StepDischarge.CHAIN_WINDOW, False, "; ".join(reasons))
+
+
+def _exposed_chain(
+    successor: Diagram, hypothesis: Diagram, index: str
+) -> tuple[Diagram, CutRegion] | None:
+    """The successor with its chain box's last copy peeled, and the residual read as
+    ``hypothesis`` through its cut wires; None when either fails."""
+    if _chain_owner(successor, index) is None:
+        return None
+    peeled = _peel_step_index(successor, index)
+    if peeled is None:
+        return None
+    exposed, copy = peeled
+    cut = find_cut_region(exposed, frozenset(exposed.nodes) - copy, hypothesis)
+    if cut is None or boundary_layout(exposed) is None:
+        return None
+    return exposed, cut
+
+
+def _copy_side(exposed: Diagram, cut: CutRegion, scalar: Scalar) -> tuple[Diagram, object]:
+    """The part of ``exposed`` off ``cut``'s region as an open diagram (its own boundary slots
+    in order, then each cut wire's far end by the place of its region end in ``cut``'s lists),
+    scalar ``scalar``; and the positions the region holds in ``exposed``'s lists."""
+    rest = frozenset(exposed.nodes) - cut.region
+    place = {r: (0, i) for i, r in enumerate(cut.inputs)}
+    place.update({r: (1, i) for i, r in enumerate(cut.outputs)})
+    ends = sorted(cut.cuts.items(), key=lambda item: place[item[0]])
+    extracted = _extract(exposed, rest, with_boxes=True)
+    id_map = {old: new for old, new in zip(sorted(rest), sorted(extracted.nodes), strict=True)}
+    inputs = [_moved_ref(r, id_map) for r in exposed.boundary_inputs if r.node_id in rest]
+    outputs = [_moved_ref(r, id_map) for r in exposed.boundary_outputs if r.node_id in rest]
+    for _inside, far in ends:
+        (inputs if far.direction is Direction.INPUT else outputs).append(_moved_ref(far, id_map))
+    extracted.set_boundary_inputs(inputs)
+    extracted.set_boundary_outputs(outputs)
+    extracted.set_scalar(scalar)
+    held = (
+        tuple(i for i, r in enumerate(exposed.boundary_inputs) if r.node_id in cut.region),
+        tuple(i for i, r in enumerate(exposed.boundary_outputs) if r.node_id in cut.region),
+        tuple(place[inside] for inside, _far in ends),
+        tuple(far.direction for _inside, far in ends),
+    )
+    return extracted, held
+
+
+def _compare_chain_copies(obligation: InductionObligation, max_steps: int) -> tuple[bool, str]:
+    """Whether both successors are chains whose residuals are their hypothesis diagrams in the
+    same places and whose peeled copies, with their cut ends open, agree."""
+    index = obligation.step_symbol
+    left = _exposed_chain(obligation.left_at_successor, obligation.left_at_k, index)
+    right = _exposed_chain(obligation.right_at_successor, obligation.right_at_k, index)
+    if left is None or right is None:
+        return False, "the two successors are not both peelable chains over their hypotheses"
+    if boundary_layout(obligation.left_at_k) != boundary_layout(obligation.right_at_k):
+        return False, "the two hypothesis diagrams lay out their boundaries differently"
+    left_copy, left_held = _copy_side(
+        left[0], left[1], left[0].scalar * obligation.left_at_k.scalar**-1
+    )
+    right_copy, right_held = _copy_side(
+        right[0], right[1], right[0].scalar * obligation.right_at_k.scalar**-1
+    )
+    if left_held != right_held:
+        return False, "the residuals sit in different boundary places on the two sides"
+    if _interface(left_copy) != _interface(right_copy):
+        return False, "the peeled chain copies have different interfaces"
+    settled, why = _close_window(left_copy, right_copy, max_steps)
+    if settled:
+        return True, (
+            "peeled the last copy off both chains; the residuals are the hypothesis diagrams in "
+            f"the same places and the copies agree: {why}"
+        )
+    return False, f"the peeled chain copies differ: {why}"
+
+
+def _close_window(replaced: Diagram, target: Diagram, max_steps: int) -> tuple[bool, str]:
+    """Whether ``replaced`` equals ``target``, structurally or by symbolic contraction; and how,
+    or why not."""
+    if compare_structure(replaced, target).identical and _same_bang_boxes(replaced, target):
+        return True, "the result is the other successor"
+    linked = any(box.links for d in (replaced, target) for box in d.bang_boxes.values())
+    if isomorphic(replaced, target, symmetric_legs=not linked):
+        return True, "the result is isomorphic to the other successor"
+    try:
+        left = contract_symbolic(replaced, max_steps=max_steps)
+        right = contract_symbolic(target, max_steps=max_steps)
+    except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
+        return False, f"symbolic contraction: {exc}"
+    except ScalarBudgetError as exc:
+        return False, f"symbolic contraction: {exc}"
+    comparison = compare_symbolic(left, right)
+    if comparison.matched:
+        return True, "the result and the other successor agree under symbolic contraction"
+    return False, f"symbolic contraction: {comparison.reason}"
+
+
 def discharge_induction_rewrite(
     obligation: InductionObligation,
     *,
@@ -1004,6 +1401,7 @@ _DISPATCH: dict[StepDischarge, Callable[..., TierOutcome]] = {
     StepDischarge.INDUCTION_REWRITE: discharge_induction_rewrite,
     StepDischarge.ORACLE_WINDOW: discharge_oracle_window,
     StepDischarge.SYMBOLIC_CONTRACTION: discharge_symbolic_contraction,
+    StepDischarge.CHAIN_WINDOW: discharge_chain_window,
 }
 
 
