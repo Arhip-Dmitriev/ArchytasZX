@@ -42,7 +42,7 @@ import numpy as np
 from benchmarks import ir, stages, subject
 from benchmarks.tools import common
 
-VENVS = Path(__file__).resolve().parent.parent / ".venvs"
+VENVS = Path(os.environ.get("BENCH_VENVS") or Path(__file__).resolve().parent.parent / ".venvs")
 DRIVERS = Path(__file__).resolve().parent / "drivers"
 DENSE_CAP = 1 << 24
 MAX_AXES = 64

@@ -67,6 +67,14 @@ def coqc(project: str = "SQIR") -> Path:
     return COQ_HOME / "opam" / SWITCH.get(project, "bench") / "bin" / "coqc"
 
 
+def installed() -> str | None:
+    """None when every project's coqc and source tree are in place, else the reason."""
+    for p in sorted({p for files in PROOFS.values() for p, _ in files}):
+        if not (coqc(p).exists() and (SRC / p).is_dir()):
+            return f"{p} not installed: run benchmarks/tools/setup_rivals.sh coq"
+    return None
+
+
 def supports(inst: Any, point: Any) -> str | None:
     """Subjects in PROOFS, S equations only, coqc installed."""
     if inst.subject.id not in PROOFS:

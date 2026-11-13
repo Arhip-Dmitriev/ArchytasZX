@@ -43,10 +43,18 @@ NAMES = {
 }
 
 
-def supports(inst: Any, point: Any) -> str | None:
-    """Equations with a reference circuit at d = 2, feynver built."""
+def installed() -> str | None:
+    """None when feynver is built, else the reason."""
     if not rival.binary(ENV, "feynver").exists():
         return "not installed: run benchmarks/tools/setup_rivals.sh haskell"
+    return None
+
+
+def supports(inst: Any, point: Any) -> str | None:
+    """Equations with a reference circuit at d = 2, feynver built."""
+    why = installed()
+    if why:
+        return why
     if inst.equation.reference is None:
         return "no gate-level reference circuit for this equation"
     if not (inst.subject.general_d or int(inst.subject.dimension) == 2):

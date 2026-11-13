@@ -46,8 +46,9 @@ HARNESS_IMPORTS = ("numpy", "sympy", "qiskit", "qiskit.qasm2", "qiskit.circuit.l
 
 
 def preflight(names: list[str]) -> list[str]:
-    """The problems found importing the harness modules in-process and each enabled tool's
-    PROBE modules in its environment (an environment not installed is not a problem)."""
+    """The problems found importing the harness modules in-process, each enabled tool not
+    installed (its installed(), else its ENV's interpreter), and each enabled tool's PROBE
+    modules failing to import in its environment."""
     import subprocess
 
     from benchmarks.tools import rival
@@ -61,7 +62,12 @@ def preflight(names: list[str]) -> list[str]:
     for name in names:
         a = adapter(name)
         env, probe = getattr(a, "ENV", None), getattr(a, "PROBE", ())
-        if not probe or env is None or not rival.python(env).exists():
+        check = getattr(a, "installed", None)
+        why = check() if check else (rival.installed(env) if env else None)
+        if why:
+            problems.append(f"{name}: {why}")
+            continue
+        if not probe or env is None:
             continue
         try:
             r = subprocess.run(

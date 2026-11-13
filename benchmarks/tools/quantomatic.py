@@ -52,10 +52,19 @@ def java() -> str:
     return str(p) if p.exists() else "java"
 
 
+def installed() -> str | None:
+    """None when the jar, the rule set and JDK 8 are in place, else the reason."""
+    jdk = rival.VENVS / "jdk8" / "bin" / "java"
+    if not (jar().exists() and rules().exists() and jdk.exists()):
+        return "not installed: run benchmarks/tools/setup_rivals.sh quantomatic"
+    return None
+
+
 def supports(inst: Any, point: Any) -> str | None:
     """Qubit-capable subjects, the jar built."""
-    if not jar().exists():
-        return "not installed: run benchmarks/tools/setup_rivals.sh quantomatic"
+    why = installed()
+    if why:
+        return why
     if not (inst.subject.general_d or int(inst.subject.dimension) == 2):
         return "qubits only"
     return None

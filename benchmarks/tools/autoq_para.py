@@ -36,10 +36,18 @@ DIMENSIONS = (2,)
 BASIS = ["x", "z", "h", "s", "sdg", "t", "tdg", "cx", "cz", "ccx", "swap"]
 
 
-def supports(inst: Any, point: Any) -> str | None:
-    """Qubit subjects, autoq built."""
+def installed() -> str | None:
+    """None when autoq is built, else the reason."""
     if not rival.binary(ENV, "autoq").exists():
         return "not installed: run benchmarks/tools/setup_rivals.sh autoq"
+    return None
+
+
+def supports(inst: Any, point: Any) -> str | None:
+    """Qubit subjects, autoq built."""
+    why = installed()
+    if why:
+        return why
     if not (inst.subject.general_d or int(inst.subject.dimension) == 2):
         return "qubits only"
     return None
