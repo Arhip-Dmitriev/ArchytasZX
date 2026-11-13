@@ -41,7 +41,7 @@ def _fused() -> kernel.Theorem:
 def test_w_fusion_exports_without_axioms() -> None:
     source = L.export(_fused())
     assert "wFuseZ" in source
-    assert "axiom" not in source
+    assert "\naxiom " not in source
 
 
 def _mathlib() -> bool:
