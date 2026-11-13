@@ -16,7 +16,8 @@ every leg equal to an anchor leg's digit `j`, the phase table interpolated over 
 digits (checked by `tableOK`). `b_frag` and `s_frag` give the binder and splitter as digit
 constraints, `f_frag_dig` and `x_frag_dig` give F and X on `2^k` with the digit products
 `prodTerms` (`ex_prod_digits`: `ex (o j / 2^k)` from the terms with `a + b < k`), and `NetPSD`,
-`NetPSD.eval_eq` and `equal_psd` give a network's value as its fragments' path sum over digits.
+`NetPSD.eval_eq`, `equal_psd` and `equal_psd2` (one owner table per side, the final sums compared
+by `val_agree` on the boundary digits) give a network's value as its fragments' path sum over digits.
 -/
 
 namespace ArchytasZX
@@ -843,6 +844,68 @@ theorem equal_psd {E : Env} {N₁ N₂ : Net} {M : ℕ} {own : Own} {labs : List
   have hσ₂ : InRange E N₂.bnd σ := hb ▸ hσ
   rw [h₁.eval_eq σ hσ, h₂.eval_eq σ hσ₂, ← hb]
   exact hv _
+
+
+/-- Whether every variable of the phase, constraints and rows of `s` is in `vs`. -/
+def varsIn (vs : List ℕ) (s : Data) : Bool :=
+  (pvars s.phase ++ fvars (s.cons ++ s.rows)).all fun x => decide (x ∈ vs)
+
+theorem mz_agree (τ τ' : ℕ → ZMod 2) (m : Mono) (h : ∀ x ∈ m, τ x = τ' x) : mz τ m = mz τ' m := by
+  unfold mz
+  congr 1
+  exact List.map_congr_left h
+
+theorem fz_agree (τ τ' : ℕ → ZMod 2) (q : F2) (h : ∀ m ∈ q, ∀ x ∈ m, τ x = τ' x) :
+    fz τ q = fz τ' q := by
+  unfold fz
+  congr 1
+  exact List.map_congr_left fun m hm => mz_agree τ τ' m (h m hm)
+
+/-- A path-free sum over variables in `vs`, at two assignments agreeing on `vs`. -/
+theorem val_agree (M : ℕ) (c : ℂ) (s : Data) (vs : List ℕ) (τ τ' : ℕ → ZMod 2)
+    (hp : s.path = []) (hv : varsIn vs s = true) (h : ∀ x ∈ vs, τ x = τ' x) :
+    val M c s τ = val M c s τ' := by
+  unfold val
+  rw [hp]
+  simp only [bsum]
+  have hall := List.all_eq_true.1 hv
+  have hx : ∀ x ∈ pvars s.phase ++ fvars (s.cons ++ s.rows), τ x = τ' x := fun x hx =>
+    h x (by simpa using hall x hx)
+  unfold summand
+  have hpn : pn τ s.phase = pn τ' s.phase := by
+    apply pn_congr
+    intro t ht x hxt
+    exact hx x (List.mem_append_left _ (List.mem_flatMap.2 ⟨t, ht, hxt⟩))
+  have hcond : (∀ q ∈ s.cons ++ s.rows, fz τ q = 0) ↔ (∀ q ∈ s.cons ++ s.rows, fz τ' q = 0) := by
+    have hq : ∀ q ∈ s.cons ++ s.rows, fz τ q = fz τ' q := fun q hq =>
+      fz_agree τ τ' q fun m hm x hxm => hx x (List.mem_append_right _
+        (List.mem_flatMap.2 ⟨q, hq, List.mem_flatMap.2 ⟨m, hm, hxm⟩⟩))
+    exact ⟨fun H q h' => (hq q h') ▸ H q h', fun H q h' => (hq q h').symm ▸ H q h'⟩
+  rw [hpn, if_congr hcond rfl rfl]
+
+theorem dbits_agree (own₁ own₂ : Own) (σ : ℕ → ℕ) (vs : List ℕ)
+    (h : vs.all (fun x => decide (List.lookup x own₁ = List.lookup x own₂)) = true) :
+    ∀ x ∈ vs, dbits own₁ σ x = dbits own₂ σ x := by
+  intro x hx
+  have := List.all_eq_true.1 h x hx
+  simp only [decide_eq_true_eq] at this
+  unfold dbits
+  rw [this]
+
+/-- `equal_psd` with an owner table, labels and digits per side. -/
+theorem equal_psd2 {E : Env} {N₁ N₂ : Net} {M : ℕ} {own₁ own₂ : Own} {labs₁ labs₂ : List ℕ}
+    {dig₁ dig₂ : ℕ → List ℕ} {ps₁ ps₂ : List (Node × Frag)} (s₁ s₂ : ℂ)
+    (h₁ : NetPSD E N₁ M own₁ labs₁ dig₁ ps₁) (h₂ : NetPSD E N₂ M own₂ labs₂ dig₂ ps₂)
+    (hb : N₁.bnd = N₂.bnd)
+    (hv : ∀ σ, s₁ * val M (joinAll (ps₁.map Prod.snd)).c (netDataD dig₁ N₁ (ps₁.map Prod.snd))
+        (dbits own₁ (clamp N₁.bnd σ)) =
+      s₂ * val M (joinAll (ps₂.map Prod.snd)).c (netDataD dig₂ N₂ (ps₂.map Prod.snd))
+        (dbits own₂ (clamp N₂.bnd σ))) :
+    Equal E s₁ N₁ s₂ N₂ := by
+  refine ⟨hb ▸ List.Perm.refl _, fun σ hσ => ?_⟩
+  have hσ₂ : InRange E N₂.bnd σ := hb ▸ hσ
+  rw [h₁.eval_eq σ hσ, h₂.eval_eq σ hσ₂]
+  exact hv σ
 
 end PSem
 end ArchytasZX
