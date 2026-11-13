@@ -225,6 +225,7 @@ class _Builder:
         self.chain: _ChainScope | None = None
         self.heads: dict[str, str] = {}
         self.chained: set[str] = set()
+        self.after: dict[str, str] = {}
         self.pair_lines: list[str] = []
 
     def dim(self, q: str) -> str:
@@ -245,8 +246,15 @@ class _Builder:
             if counts - {self.chain.count}:
                 raise Unsupported("a gate in a chain on a register of another count")
             return self.chain.key if any(self.boxed(q) for q in qs) else None
-        if any(q in self.chained for q in qs):
+        if any(q in self.chained and q not in self.after for q in qs):
             raise Unsupported("a chain register used outside its chain")
+        keys = {self.after[q] for q in qs if q in self.after}
+        if keys:
+            if len(keys) > 1 or any(
+                self.c.count(q) is not None and q not in self.after for q in qs
+            ):
+                raise Unsupported("a gate after a chain on registers of another box")
+            return keys.pop()
         return counts.pop() if counts else None
 
     def box_count(self, box: str) -> sp.Expr:
@@ -599,6 +607,7 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
         b.boxes[key].extra.append(f"chain {key}: " + ", ".join(links))
     b.chain = None
     b.chained |= set(regs)
+    b.after.update({q: key for q in regs if q not in b.closed})
 
 
 def _pairs(b: _Builder, g: ir.Pairs) -> None:
