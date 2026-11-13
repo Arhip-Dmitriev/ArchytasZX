@@ -454,6 +454,17 @@ main : PSem.val M cL sL sigma = PSem.val M cR sR sigma for every sigma. It raise
 or average step and for qudit sums; when either side's constraints need boolean_eliminate, both
 sides end in gather and bcanon steps at the Boolean pivots. G15 names what is missing.
 
+ArchytasZX/PathSumNet.lean links networks to path sums at dimension 2. A Frag is one
+generator's path sum (path variables, phase, constraints, constant) and fval its value;
+fval_join and fval_joinAll multiply fragments whose path variables are disjoint (Disj),
+sumOver_bsum turns sumOver over labels of dimension 2 into bsum over bits sigma, and
+eval_frags gives eval E N sigma = val M c (summed labels ++ fragment paths, joined phase and
+constraints) at bits sigma when each node's val equals its fragment's fval. The fragments:
+z_frag (zFrag: l0 + l = 0 per other leg, phase t0 + (t1 - t0) l0, from E.phase = t / M),
+x_frag (xFrag: a fresh variable y, phase t0 + (t1 - t0) y + Sum_l y l / 2, constant
+sqrt 2 ^ (-legs); fou2_ex, fou2_conj, prod_ex) and f_frag (fFrag: phase o i / 2, constant
+1 / sqrt 2).
+
 5. REFUTATIONS
 --------------
 
@@ -779,9 +790,11 @@ discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported
 
 G15 Path-sum proofs. PathSumRules has no step for [Dyadic] or [Average] and there are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
-using them. main is about
+using them. PathSumNet covers Z, X and F at dimension 2 but not B, S or legs of 2^k digits,
+and export_proof does not yet write the network, its fragments and the step from the
+fragments' Data (one variable per label) to from_diagram's merged variables. main is about
 path sums: the link from a diagram's network value to val of its from_diagram Data (the
 translation lemmas of PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations,
 boundary identification) is not written, so a path_sum EQUAL stays EQUAL_UNCERTIFIED.
-PathSum.lean, PathSumSem.lean and PathSumRules.lean check (no sorry) and are in the ArchytasZX
-root import list.
+PathSum.lean, PathSumSem.lean, PathSumRules.lean and PathSumNet.lean check (no sorry) and are
+in the ArchytasZX root import list.

@@ -50,3 +50,4 @@ import ArchytasZX.NumField
 import ArchytasZX.PathSum
 import ArchytasZX.PathSumSem
 import ArchytasZX.PathSumRules
+import ArchytasZX.PathSumNet
