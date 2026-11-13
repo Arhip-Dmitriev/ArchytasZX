@@ -370,13 +370,18 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
         and issue.port_ref is not None
     }
     boundary_set = set(boundary_counts)
+    fed_ports: set[PortRef] = set()
+    for box in diagram.bang_boxes.values():
+        tree = diagram.bang_boxes.get(box.feed) if box.feed is not None else None
+        if tree is not None and box.feed_port is not None:
+            fed_ports |= {box.feed_port, *tree.tree}
     for node_id, node in diagram.nodes.items():
         if node_id in broken_node_ids:
             continue
         for direction in (Direction.INPUT, Direction.OUTPUT):
             for index in range(len(node.legs(direction))):
                 ref = PortRef(node_id, direction, index)
-                if ref in wired_set or ref in boundary_set:
+                if ref in wired_set or ref in boundary_set or ref in fed_ports:
                     continue
                 issues.append(
                     ValidationIssue(
@@ -929,6 +934,8 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
         link_ports = {ref for link in box.links for ref in link} | set(box.tree)
         if box.tree_parent is not None:
             link_ports.add(box.tree_parent)
+        if box.feed_port is not None:
+            link_ports.add(box.feed_port)
         paired = frozenset(
             nid
             for other in diagram.bang_boxes.values()
@@ -1012,6 +1019,8 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
                     )
         if box.tree_parent is not None:
             _check_tree(diagram, box, partner, boundary, refuse)
+        if box.feed is not None:
+            _check_feed(diagram, box, partner, boundary, refuse)
         for name in (box.index, box.level, box.position):
             if name is None:
                 continue
@@ -1062,12 +1071,64 @@ def _check_tree(
         end is not None and end.node_id in box.node_scope
     ):
         refuse(f"tree box {box.id!r}: its parent port is neither wired outside nor a slot")
+    if any(other.feed == box.id for other in diagram.bang_boxes.values()):
+        if any(r in boundary or r in partner for r in box.tree):
+            refuse(f"tree box {box.id!r}: it feeds a box, yet a child port is wired or a slot")
+        return
     for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
         if box.tree[0] in refs:
             first = refs.index(box.tree[0])
             if list(refs[first : first + len(box.tree)]) == list(box.tree):
                 return
     refuse(f"tree box {box.id!r}: its child ports are not one run of boundary slots in order")
+
+
+def _check_feed(
+    diagram: Diagram,
+    box: BangBox,
+    partner: dict[PortRef, PortRef],
+    boundary: set[PortRef],
+    refuse: Callable[[str], None],
+) -> None:
+    """A fed box is top-level, fed by a top-level tree box no other box shares, with
+    multiplicity b^k at the tree's depth k; its feed port is an unwired port of its scope
+    facing the tree's parent port's way, at the tree ports' dimension."""
+    import sympy as sp
+
+    assert box.feed_port is not None
+    tree = diagram.bang_boxes.get(box.feed) if box.feed is not None else None
+    if tree is None or not tree.tree or tree.tree_parent is None:
+        refuse(f"fed box {box.id!r}: box {box.feed!r} is not a tree box")
+        return
+    if box.parent is not None or tree.parent is not None:
+        refuse(f"fed box {box.id!r}: it or its tree box is nested")
+    if sum(1 for other in diagram.bang_boxes.values() if other.feed == tree.id) != 1:
+        refuse(f"fed box {box.id!r}: tree box {tree.id!r} feeds more than one box")
+    want = sp.Integer(len(tree.tree)) ** tree.multiplicity.to_sympy()
+    if sp.simplify(box.multiplicity.to_sympy() - want) != 0:
+        refuse(f"fed box {box.id!r}: multiplicity {box.multiplicity} is not {want}")
+    ref = box.feed_port
+    node = diagram.nodes.get(ref.node_id)
+    if (
+        node is None
+        or ref.node_id not in box.node_scope
+        or ref.index >= len(node.legs(ref.direction))
+    ):
+        refuse(f"fed box {box.id!r}: feed port {ref!r} is not a port of its scope")
+        return
+    if ref in partner or ref in boundary:
+        refuse(f"fed box {box.id!r}: feed port {ref!r} is wired or a slot")
+    parent_node = diagram.nodes.get(tree.tree_parent.node_id)
+    if parent_node is None or tree.tree_parent.index >= len(
+        parent_node.legs(tree.tree_parent.direction)
+    ):
+        return
+    parent_dim = parent_node.legs(tree.tree_parent.direction)[tree.tree_parent.index].dim
+    if (
+        ref.direction is not tree.tree_parent.direction
+        or node.legs(ref.direction)[ref.index].dim != parent_dim
+    ):
+        refuse(f"fed box {box.id!r}: feed port {ref!r} differs from the tree's parent port")
 
 
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:

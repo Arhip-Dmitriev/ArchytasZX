@@ -464,6 +464,8 @@ class Diagram:
         tree_parent: PortRef | None = None,
         level: str | None = None,
         position: str | None = None,
+        feed: BangBoxId | None = None,
+        feed_port: PortRef | None = None,
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -499,6 +501,8 @@ class Diagram:
             tree_parent=tree_parent,
             level=level,
             position=position,
+            feed=feed,
+            feed_port=feed_port,
         )
         return box_id
 
@@ -523,6 +527,8 @@ class Diagram:
             "tree_parent",
             "level",
             "position",
+            "feed",
+            "feed_port",
         }
         unknown = set(fields) - allowed
         if unknown:

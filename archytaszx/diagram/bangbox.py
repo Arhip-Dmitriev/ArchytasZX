@@ -52,7 +52,7 @@ from types import MappingProxyType
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
-from archytaszx.algebra.phase import Phase, PhaseVector
+from archytaszx.algebra.phase import PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.generators import PhaseSchema
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef, Wire
@@ -323,6 +323,11 @@ class BangBox:
     """For a tree box: the depth index ``L`` (1 .. k)."""
     position: str | None = None
     """For a tree box: the position index ``P`` (0 .. b^(L-1) - 1)."""
+    feed: BangBoxId | None = None
+    """For a node-scope box fed by a tree box: that tree box, whose j-th leaf slot (leaf-major)
+    is wired to copy j's ``feed_port``; the tree's child ports are then no boundary slots."""
+    feed_port: PortRef | None = None
+    """For a fed box: the copy's port its leaf slot is wired to."""
 
     def __post_init__(self) -> None:
         """Validate field types, that exactly one of the two scopes is non-empty, and the
@@ -395,6 +400,20 @@ class BangBox:
         for name in (self.level, self.position):
             if name is not None:
                 _check_symbol_name(name)
+        if (self.feed is None) != (self.feed_port is None):
+            raise BangBoxGrammarError("a fed box needs both its tree box and its feed port")
+        if self.feed is not None:
+            if not self.node_scope or self.links or self.pair_of is not None or self.tree:
+                raise BangBoxGrammarError(
+                    "a fed box is a node-scope box without links, pairs or tree ports"
+                )
+            if not isinstance(self.feed_port, PortRef):
+                raise BangBoxGrammarError(f"a feed port must be a PortRef, got {self.feed_port!r}")
+
+    @property
+    def is_fed(self) -> bool:
+        """True iff a tree box's leaves feed this box's copies."""
+        return self.feed is not None
 
     @property
     def is_pair(self) -> bool:
@@ -415,6 +434,7 @@ class BangBox:
             or self.copy_scalar is not None
             or self.pair_of is not None
             or bool(self.tree)
+            or self.feed is not None
         )
 
     @property
@@ -874,8 +894,12 @@ def add_box_image(
     id_map: Mapping[NodeId, NodeId],
     parent: BangBoxId | None,
     pair_of: BangBoxId | None = None,
+    feed: BangBoxId | None = None,
 ) -> BangBoxId:
-    """Add ``box`` to ``target`` over its nodes' images under ``id_map``, every field kept."""
+    """Add ``box`` to ``target`` over its nodes' images under ``id_map``, every field kept,
+    ``parent``, ``pair_of`` and ``feed`` naming boxes of ``target``."""
+    if box.feed is not None and feed is None:
+        raise BangBoxGrammarError(f"fed box {box.id!r} is copied without its tree box")
     return target.add_bang_box(
         box.multiplicity,
         node_scope=frozenset(id_map[n] for n in box.node_scope),
@@ -894,7 +918,17 @@ def add_box_image(
         tree_parent=None if box.tree_parent is None else _moved(box.tree_parent, id_map),
         level=box.level,
         position=box.position,
+        feed=None if box.feed is None else feed,
+        feed_port=None if box.feed_port is None else _moved(box.feed_port, id_map),
     )
+
+
+def fed_box(diagram: Diagram, tree_id: BangBoxId) -> BangBox | None:
+    """The box tree box ``tree_id``'s leaves feed, or None."""
+    for box in diagram.bang_boxes.values():
+        if box.feed == tree_id:
+            return box
+    return None
 
 
 def _moved(ref: PortRef, id_map: Mapping[NodeId, NodeId]) -> PortRef:
@@ -1191,14 +1225,17 @@ def _instantiate_tree(diagram: Diagram, box: BangBox, k: int) -> None:
     """Instantiate a tree box at depth ``k``: copies c(L, P) for L = 1 .. k, P < b^(L-1), the
     head into c(1, 0)'s parent port, c(L, P)'s i-th child port into c(L + 1, b P + i)'s parent
     port, the leaves' child ports as the b^k slots of the stored child ports' run, leaf-major;
-    at ``k == 0`` the head alone in that run."""
+    at ``k == 0`` the head alone in that run. With a fed box, the leaves are wired to its
+    b^k copies' feed ports instead."""
     assert box.tree_parent is not None
     b = len(box.tree)
     temps: list[NodeId] = []
     head = _detach(diagram, box.tree_parent, temps)
-    outputs, before, after = _tree_leaf_block(diagram, box)
-    setter = diagram.set_boundary_outputs if outputs else diagram.set_boundary_inputs
-    setter([*before, *after])
+    fed = fed_box(diagram, box.id)
+    if fed is None:
+        outputs, before, after = _tree_leaf_block(diagram, box)
+        setter = diagram.set_boundary_outputs if outputs else diagram.set_boundary_inputs
+        setter([*before, *after])
     coords = [(level, pos) for level in range(1, k + 1) for pos in range(b ** (level - 1))]
     where = {coord: i for i, coord in enumerate(coords)}
     diagram.set_bang_box_extension(
@@ -1223,7 +1260,10 @@ def _instantiate_tree(diagram: Diagram, box: BangBox, k: int) -> None:
             for pos in range(b ** (k - 1))
             for p_ref in box.tree
         ]
-    setter([*before, *leaves, *after])
+    if fed is None:
+        setter([*before, *leaves, *after])
+    else:
+        _feed_leaves(diagram, fed, leaves)
     for (level, pos), i in where.items():
         values = {
             name: value
@@ -1234,7 +1274,25 @@ def _instantiate_tree(diagram: Diagram, box: BangBox, k: int) -> None:
     _drop_identities(diagram, temps)
 
 
+def _feed_leaves(diagram: Diagram, fed: BangBox, leaves: list[PortRef]) -> None:
+    """Instantiate ``fed`` at one copy per leaf, leaf j wired to copy j's feed port, copy j
+    reading its index as j."""
+    assert fed.feed_port is not None
+    diagram.set_bang_box_extension(fed.id, feed=None, feed_port=None)
+    before = set(diagram.bang_boxes)
+    id_maps = _instantiate_node_scope(
+        diagram, _plain(diagram, diagram.bang_boxes[fed.id]), len(leaves)
+    )
+    new_boxes = sorted(set(diagram.bang_boxes) - before)
+    for leaf, id_map in zip(leaves, id_maps, strict=True):
+        diagram.add_wire(leaf, _moved(fed.feed_port, id_map))
+    for m, id_map in enumerate(id_maps):
+        _index_copy(diagram, fed, id_map, m, new_boxes)
+
+
 def _kill_one(diagram: Diagram, box: BangBox) -> None:
+    if box.is_fed:
+        raise BangBoxGrammarError(f"fed box {box.id!r} is instantiated with its tree box only")
     if box.is_tree:
         _instantiate_tree(diagram, box, 0)
     elif box.is_extended:
@@ -1249,6 +1307,8 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
     box = diagram.bang_boxes[box_id]
     if box.is_pair:
         raise BangBoxGrammarError(f"pair box {box_id!r} is instantiated with its parent only")
+    if box.is_fed:
+        raise BangBoxGrammarError(f"fed box {box_id!r} is instantiated with its tree box only")
     if box.is_tree:
         _instantiate_tree(diagram, box, k)
     elif box.is_extended:
@@ -1355,7 +1415,7 @@ def _index_copy(
     and the copy scalar at that value multiplied into the diagram scalar."""
     nodes = frozenset(id_map.values())
     if box.index is not None:
-        sub = value if isinstance(value, int) else Phase(value)
+        sub = value if isinstance(value, int) else sp.sympify(value)
         for node_id in sorted(nodes):
             phase = diagram.nodes[node_id].phase
             if phase is not None and box.index in phase.free_symbols:
@@ -1546,9 +1606,8 @@ _MAX_INSTANTIATE_ROUNDS = 10_000
 
 def substitute_index_phases(diagram: Diagram, name: str, value: int | Mult) -> Diagram:
     """``diagram`` with ``name`` replaced by ``value`` in every node phase vector."""
-    from archytaszx.algebra.phase import Phase
 
-    sub: int | Phase = value if isinstance(value, int) else Phase(value.to_sympy())
+    sub: int | sp.Expr = value if isinstance(value, int) else value.to_sympy()
     working = diagram.copy()
     for node_id, node in sorted(diagram.nodes.items()):
         if node.phase is not None and name in node.phase.free_symbols:
@@ -1577,12 +1636,16 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
     if not any(name in box.multiplicity.free_symbols for box in working.bang_boxes.values()):
         raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
     for _round in range(_MAX_INSTANTIATE_ROUNDS):
-        targets = [
+        carrying = [
             box_id
             for box_id, box in sorted(working.bang_boxes.items())
             if name in box.multiplicity.free_symbols
         ]
+        targets = [b for b in carrying if not working.bang_boxes[b].is_fed]
         if not targets:
+            for box_id in carrying:
+                substituted = working.bang_boxes[box_id].multiplicity.substitute({name: value})
+                working.set_bang_box_multiplicity(box_id, substituted)
             break
         box_id = targets[0]
         substituted = working.bang_boxes[box_id].multiplicity.substitute({name: value})
@@ -1697,6 +1760,107 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     _drop_identities(diagram, temps)
 
 
+def _symbol_in(
+    diagram: Diagram, nodes: Iterable[NodeId], scalar: Scalar | None, name: str
+) -> sp.Symbol | None:
+    """The sympy symbol named ``name`` in the phases of ``nodes`` or in ``scalar``."""
+    for node_id in sorted(nodes):
+        phase = diagram.nodes[node_id].phase
+        if phase is None or name not in phase.free_symbols:
+            continue
+        parts = [
+            *phase.entries().values(),
+            *([phase.stored_rule] if phase.stored_rule is not None else []),
+        ]
+        for part in parts:
+            for sym in part.to_sympy_turns().free_symbols:
+                if str(sym) == name:
+                    return sym
+    if scalar is not None:
+        for sym in scalar.to_sympy().free_symbols:
+            if str(sym) == name:
+                return sym
+    return None
+
+
+def _peel_tree(diagram: Diagram, box: BangBox, last: Mult) -> None:
+    """Peel the leaf level off a tree box of depth ``last + 1``: one copy of the scope in a new
+    box of multiplicity b^last fed by the tree's b^last leaves, its child ports in the leaf
+    run's place, the level read as ``last + 1`` and the position as the new box's index."""
+    assert box.tree_parent is not None
+    if box.parent is not None or _children_of(diagram, box.id):
+        raise BangBoxGrammarError(f"tree box {box.id!r} with a parent or child box has no peel")
+    if fed_box(diagram, box.id) is not None:
+        raise BangBoxGrammarError(f"tree box {box.id!r} already feeds a box")
+    scope = box.node_scope
+    if box.index is not None and any(
+        (p := diagram.nodes[n].phase) is not None and box.index in p.free_symbols for n in scope
+    ):
+        raise BangBoxGrammarError(f"tree box {box.id!r} reads its copy index; it has no peel")
+    if (
+        box.index is not None
+        and box.copy_scalar is not None
+        and box.index in box.copy_scalar.free_symbols
+    ):
+        raise BangBoxGrammarError(f"tree box {box.id!r} reads its copy index; it has no peel")
+    for inside, _outside in outside_crossings(diagram, scope):
+        if inside != box.tree_parent:
+            raise BangBoxGrammarError(f"tree box {box.id!r} meets the rest past its parent port")
+    if boundary_refs_in_scope(diagram, scope) - {*box.tree, box.tree_parent}:
+        raise BangBoxGrammarError(f"tree box {box.id!r} holds boundary slots of its own")
+    outputs, before, after = _tree_leaf_block(diagram, box)
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(scope):
+        node = diagram.nodes[old_id]
+        id_map[old_id] = diagram.add_node(
+            node.generator_type,
+            [p.dim for p in node.inputs],
+            [p.dim for p in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(internal_wires(diagram, scope), key=Wire.sort_key):
+        diagram.add_wire(_moved(wire.a, id_map), _moved(wire.b, id_map))
+    block = [_moved(p, id_map) for p in box.tree]
+    (diagram.set_boundary_outputs if outputs else diagram.set_boundary_inputs)(
+        [*before, *block, *after]
+    )
+    depth = (last + 1).to_sympy()
+    fresh: str | None = None
+    position_sym: sp.Symbol | None = None
+    if box.position is not None:
+        position_sym = _symbol_in(diagram, scope, box.copy_scalar, box.position)
+        if position_sym is not None:
+            taken = _existing_symbol_names(diagram) | set(index_symbols(diagram))
+            fresh = _fresh_name(box.position, taken)
+    new_sym = None if position_sym is None else sp.Symbol(fresh, **position_sym.assumptions0)
+    for new_id in sorted(id_map.values()):
+        phase = diagram.nodes[new_id].phase
+        if phase is None:
+            continue
+        subs: dict[str, int | sp.Expr] = {}
+        if box.level is not None and box.level in phase.free_symbols:
+            subs[box.level] = depth
+        if new_sym is not None and box.position is not None and box.position in phase.free_symbols:
+            subs[box.position] = new_sym
+        if subs:
+            diagram.set_phase(new_id, phase.substitute(subs))  # type: ignore[arg-type]
+    copy_scalar = box.copy_scalar
+    if copy_scalar is not None:
+        if box.level is not None:
+            copy_scalar = _scalar_at(copy_scalar, box.level, depth)
+        if new_sym is not None and box.position is not None:
+            copy_scalar = _scalar_at(copy_scalar, box.position, new_sym)
+    b = len(box.tree)
+    diagram.add_bang_box(
+        Mult._from_expr(sp.Integer(b) ** last.to_sympy()),
+        node_scope=frozenset(id_map.values()),
+        index=fresh,
+        copy_scalar=copy_scalar,
+        feed=box.id,
+        feed_port=_moved(box.tree_parent, id_map),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PeelResult:
     """The outcome of :func:`peel_one`: the split diagram and the copy it split off.
@@ -1724,7 +1888,11 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
         raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
     predecessor = _predecessor(box.multiplicity)
     before = frozenset(working.nodes)
-    if box.is_extended:
+    if box.is_fed:
+        raise BangBoxGrammarError(f"fed box {box_id!r} has no peel_one")
+    if box.is_tree:
+        _peel_tree(working, box, predecessor)
+    elif box.is_extended:
         _peel_extended(working, box, predecessor.to_sympy())
     elif box.is_node_scope:
         _peel_node_scope(working, box)
@@ -1747,7 +1915,7 @@ def expand_concrete_boxes(diagram: Diagram) -> Diagram:
         targets = [
             box_id
             for box_id, box in sorted(working.bang_boxes.items())
-            if box.multiplicity.is_concrete and not box.is_pair
+            if box.multiplicity.is_concrete and not box.is_pair and not box.is_fed
         ]
         if not targets:
             return working

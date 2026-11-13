@@ -79,7 +79,7 @@ class PhaseGrammarError(PhaseError):
 
 
 PhaseSymbolKey = Union[str, "Phase"]
-PhaseSubstituteValue = Union[int, "sp.Rational", "Phase"]
+PhaseSubstituteValue = Union[int, "sp.Rational", "sp.Expr", "Phase"]
 
 
 def _check_symbol_name(name: str) -> None:
@@ -240,7 +240,8 @@ class Phase:
         """Return a new Phase with symbols replaced by concrete values.
 
         Keys may be symbol names (str) or bare-symbol Phases; values may be an int, a
-        sympy Rational, or a concrete Phase (interpreted as its turns value). The mapping
+        sympy Rational, a sympy expression (substituted as is, not reduced mod 1), or a
+        concrete Phase (interpreted as its turns value). The mapping
         need not be total: symbols not mentioned are left symbolic. This Phase is never
         mutated; a new Phase is always returned. Note that mapping keys here are phase
         symbol names, distinct from dimension symbol names -- a Phase built via
@@ -265,10 +266,12 @@ class Phase:
                 subs_dict[by_name[name]] = value
             elif isinstance(value, Phase):
                 subs_dict[by_name[name]] = value._turns
+            elif isinstance(value, sp.Expr):
+                subs_dict[by_name[name]] = value
             else:
                 raise PhaseGrammarError(
-                    f"substitution value for {name!r} must be int, sympy Rational, or Phase, "
-                    f"got {type(value).__name__}"
+                    f"substitution value for {name!r} must be int, sympy Rational, sympy "
+                    f"expression or Phase, got {type(value).__name__}"
                 )
         return Phase(self._turns.subs(subs_dict))
 
@@ -797,6 +800,8 @@ def _scalar_mapping(
         name = key if isinstance(key, str) else Phase._phase_symbol_name(key)
         if isinstance(value, Phase):
             out[name] = Scalar(value.to_sympy_turns())
+        elif isinstance(value, sp.Expr) and not isinstance(value, sp.Rational):
+            out[name] = Scalar(value)
         elif not isinstance(value, bool):
             out[name] = value
     return out
