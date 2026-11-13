@@ -26,7 +26,8 @@ equal (``At{k}.inst``) from ``main k`` by ``Equal.mapL2`` and permutations check
 gives level ``j`` of the chain at ``k`` the copy ``s + k - 1 - j``, for every ``s`` and ``k``;
 the instances are linked at ``s = 0``. Over mixed qubit wire dimensions (_export_mixed) each
 body keeps its own labels' digit counts and ``main`` holds over ``lvEnv E W C B k``
-(ArchytasZX/ChainMixed.lean), without instance links.
+(ArchytasZX/ChainMixed.lean), the instances linked under ``EK``, their labels' digit counts
+before ``lvEnv E W C B k``'s.
 """
 
 from __future__ import annotations
@@ -306,11 +307,15 @@ def _chain_net(
 
 
 def _instance_net(
-    diagram: Diagram, phases: Sequence[tuple[str, int]], qudit: bool, m: int
+    diagram: Diagram,
+    phases: Sequence[tuple[str, int]],
+    qudit: bool,
+    m: int,
+    wire_base: int | None = None,
 ) -> tuple[list[tuple[str, tuple[int, ...], tuple[int, ...], int, str | None]], list[int], int]:
     """The nodes of ``diagram`` (kind, output and input labels, dimension index, phase vector
-    body or None), boundary port i labelled i and wire w labelled by the boundary size plus w,
-    its summed labels and its boundary size."""
+    body or None), boundary port i labelled i and wire w labelled by ``wire_base`` (the
+    boundary size when None) plus w, its summed labels and its boundary size."""
     from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
     from archytaszx.semantics.pathsum_diagram import _bits, _turns_table, diagram_base
 
@@ -322,8 +327,9 @@ def _instance_net(
     label = {ref: i for i, ref in enumerate(bnd)}
     summed = []
     for w, wire in enumerate(sorted(diagram.wires, key=lambda w: w.sort_key())):
-        label[wire.a] = label[wire.b] = len(bnd) + w
-        summed.append(len(bnd) + w)
+        first = len(bnd) if wire_base is None else wire_base
+        label[wire.a] = label[wire.b] = first + w
+        summed.append(first + w)
     out = []
     for nid in sorted(diagram.nodes):
         node = diagram.nodes[nid]
@@ -535,8 +541,39 @@ def export_chain(
         pis.append(_relabel(set(range(n_copy)) | set(internal), tgt))
     side = "start" if data["side"] is InductionSide.START else "goal"
     other = "goal" if side == "start" else "start"
+    sc = _scalars()
+
+    def model(diagram: Diagram) -> sp.Expr:
+        if qudit:
+            out = sc.model(diagram.scalar.to_sympy())
+            if sc.opaques:
+                raise PathSumUnsupported(f"the scalar {diagram.scalar} has no exact Lean form")
+            return out
+        return _const_model(*constant(diagram.scalar.to_sympy()))
+
+    def links() -> list[str]:
+        models = tuple((model(sp_.base), [model(c) for c in sp_.copies]) for sp_ in (sp_o, sp_x))
+        return _link_lines(
+            cut,
+            bodies,
+            pis,
+            phases,
+            qudit,
+            base.m,
+            families,
+            step,
+            vals,
+            checks,
+            models,
+            model,
+            offset is not None,
+            mixed,
+        )
+
     if mixed:
-        return _export_mixed(name, side, other, bodies, phases, coefs, cut, pis, offset is not None)
+        return _export_mixed(
+            name, side, other, bodies, phases, coefs, cut, pis, offset is not None, links()
+        )
     ns = f"ArchytasZX.ChainProof.{name}"
     sem = "QSem" if qudit else "PSem"
     lines = [
@@ -642,33 +679,7 @@ def export_chain(
             "    Base.baseEq (fun _ => copyEq _) k",
             "",
         ]
-    sc = _scalars()
-
-    def model(diagram: Diagram) -> sp.Expr:
-        if qudit:
-            out = sc.model(diagram.scalar.to_sympy())
-            if sc.opaques:
-                raise PathSumUnsupported(f"the scalar {diagram.scalar} has no exact Lean form")
-            return out
-        return _const_model(*constant(diagram.scalar.to_sympy()))
-
-    models = tuple((model(sp_.base), [model(c) for c in sp_.copies]) for sp_ in (sp_o, sp_x))
-    lines += _link_lines(
-        cut,
-        bodies,
-        pis,
-        phases,
-        qudit,
-        base.m,
-        families,
-        step,
-        vals,
-        checks,
-        models,
-        model,
-        offset is not None,
-    )
-    lines += [f"end {ns}", ""]
+    lines += [*links(), f"end {ns}", ""]
     return "\n".join(lines)
 
 
@@ -687,12 +698,13 @@ def _export_mixed(
     cut: Sequence[int],
     pis: Sequence[Sequence[tuple[int, int]]],
     offset: bool,
+    links: Sequence[str],
 ) -> str:
     """:func:`export_chain`'s Lean source over mixed qubit wire dimensions
     (ArchytasZX/ChainMixed.lean): each body proved under its own labels' digit counts, the
-    base networks shifted by ``_BASE``, the copies relabelled onto the chain labels, and
+    base networks shifted by ``_BASE``, the copies relabelled onto the chain labels,
     ``chain_equal_lv`` over ``lvEnv E W C B k`` (C the copy labels in ``[W, 2 W)``, B the base
-    labels) for every ``k``."""
+    labels) for every ``k``, then ``links``."""
     base, copies = bodies[0], bodies[1:]
     period = len(copies)
     ns = f"ArchytasZX.ChainProof.{name}"
@@ -830,7 +842,7 @@ def _export_mixed(
             "    (fun j => aX (s + k - 1 - j)) baseEq (fun _ => copyEq _) k",
             "",
         ]
-    lines += [f"end {ns}", ""]
+    lines += [*links, f"end {ns}", ""]
     return "\n".join(lines)
 
 
@@ -848,12 +860,15 @@ def _link_lines(
     models: tuple[tuple[sp.Expr, list[sp.Expr]], ...],
     model: Callable[[Diagram], sp.Expr],
     offset: bool = False,
+    mixed: bool = False,
 ) -> list[str]:
     """For each ``k`` of ``checks``: both sides' instances at ``k`` as networks DL, DR, the
     relabellings of the chain networks onto them, their node, summed and boundary permutations
     by ``decide``, instK (the two instances equal under the chain scalars), each side's chain
     scalar at ``k`` equal to its instance's (scalL, scalR) and inst (the two instances equal
-    under their own scalars); with ``offset``, the chain networks at offset 0."""
+    under their own scalars); with ``offset``, the chain networks at offset 0; with ``mixed``,
+    the base shifted by ``_BASE``, DR's wires labelled from ``1 << 17`` and both instances
+    over ``EK`` (their labels' digit counts, then ``lvEnv E W C B k``'s)."""
     from archytaszx.semantics.check import instantiate
 
     sc = _scalars()
@@ -867,12 +882,16 @@ def _link_lines(
     for k in checks:
         texts: list[tuple[str, list[tuple[int, int]], str]] = []
         scal: list[tuple[str, str, str, sp.Expr]] = []
+        digits: dict[int, int] = {}
         for (tag, fam), (m_base, m_copies) in zip(
             zip(("L", "R"), families, strict=True), models, strict=True
         ):
+            base_net = _parse_net(base.lines, tag)
+            if mixed:
+                base_net = _map_net(base_net, functools.partial(int.__add__, _BASE))
             chain = _chain_net(
                 cut,
-                _parse_net(base.lines, tag),
+                base_net,
                 [
                     _map_net(_parse_net(body.lines, tag), functools.partial(_ren, pi))
                     for body, pi in zip(copies, pis, strict=True)
@@ -881,7 +900,12 @@ def _link_lines(
                 offset,
             )
             inst_d = instantiate(fam, {step: k, **values})
-            inst, summed, nb = _instance_net(inst_d, phases, qudit, m)
+            wire_base = 1 << 17 if mixed and tag == "R" else None
+            inst, summed, nb = _instance_net(inst_d, phases, qudit, m, wire_base)
+            for _kd, o, i, d, _b in inst:
+                for x in (*o, *i):
+                    if digits.setdefault(x, d) != d:
+                        raise PathSumUnsupported("an instance label has two dimensions")
             lhs = m_base * sp.Mul(*(m_copies[i % len(m_copies)] for i in range(k)))
             rhs = model(inst_d)
             scal.append((tag, sc.text(rhs), sc.prove(lhs, rhs), lhs))
@@ -906,9 +930,10 @@ def _link_lines(
             return f"{a} (0 + {k} - 1 - i)" if offset else f"{a} i"
 
         main_k = f"main 0 {k}" if offset else f"main {k}"
+        bases = ("bO", "bX") if mixed else ("Base.NL", "Base.NR")
         for tag, fam_net in (
-            ("L", f"Base.NL {family_of('cO')}"),
-            ("R", f"Base.NR {family_of('cX')}"),
+            ("L", f"{bases[0]} {family_of('cO')}"),
+            ("R", f"{bases[1]} {family_of('cX')}"),
         ):
             chain_k = f"(chainNet W cut {fam_net} {k}).mapL (ren π{tag})"
             out += [
@@ -917,17 +942,36 @@ def _link_lines(
                 "  decide",
                 "",
             ]
+        env = "EK" if mixed else "E"
+        if mixed:
+            out += [
+                f"def instLabs : List (ℕ × ℕ) := {sorted(digits.items())}",
+                f"noncomputable def EK : Env := {{ E with labs := instLabs ++ lvls W C {k} ++ B }}",
+                "",
+            ]
+            mapped = [
+                f"  have m := ({main_k}).relabs (instLabs ++ lvls W C {k} ++ B) (by decide)",
+                "    (by decide)",
+                "  have h := Equal.mapL2_on EK (ren πL) (ren πR)",
+                "    (ren_injective πL (by decide) (by decide))",
+                "    (ren_injective πR (by decide) (by decide)) (by decide) (by decide)",
+                "    m (by decide) (by decide)",
+            ]
+        else:
+            mapped = [
+                "  have h := Equal.mapL2 E (ren πL) (ren πR)",
+                "    (ren_injective πL (by decide) (by decide))",
+                "    (ren_injective πR (by decide) (by decide)) (fun _ => hD _ _)",
+                f"    (fun _ => hD _ _) ({main_k}) (by decide) (by decide)",
+            ]
         out += [
             f"/-- Both sides instantiated at `k = {k}` are equal. -/",
-            "theorem instK : Equal E",
+            f"theorem instK : Equal {env}",
             f"    (({base.s_l}) * ∏ i ∈ Finset.range {k}, {arg('aO')}) DL",
             f"    (({base.s_r}) * ∏ i ∈ Finset.range {k}, {arg('aX')}) DR := by",
-            "  have h := Equal.mapL2 E (ren πL) (ren πR)",
-            "    (ren_injective πL (by decide) (by decide))",
-            "    (ren_injective πR (by decide) (by decide)) (fun _ => hD _ _) (fun _ => hD _ _)",
-            f"    ({main_k}) (by decide) (by decide)",
-            "  exact (h.reorderL E linkL.1 linkL.2.1 linkL.2.2).reorder E linkR.1 linkR.2.1",
-            "    linkR.2.2",
+            *mapped,
+            f"  exact (h.reorderL {env} linkL.1 linkL.2.1 linkL.2.2).reorder {env} linkR.1",
+            "    linkR.2.1 linkR.2.2",
             "",
         ]
         for (tag, rhs_text, proof, lhs), (a_tab, b_text) in zip(
@@ -949,7 +993,7 @@ def _link_lines(
             ]
         out += [
             f"/-- Both sides instantiated at `k = {k}` are equal, under their own scalars. -/",
-            f"theorem inst : Equal E ({scal[0][1]}) DL ({scal[1][1]}) DR :=",
+            f"theorem inst : Equal {env} ({scal[0][1]}) DL ({scal[1][1]}) DR :=",
             "  instK.congr_scalar scalL scalR",
             "",
             f"end At{k}",

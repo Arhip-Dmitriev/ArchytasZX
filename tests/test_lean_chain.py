@@ -210,6 +210,7 @@ def test_a_mixed_dimension_chain_exports_over_level_labels() -> None:
     assert "import ArchytasZX.ChainMixed" in source
     assert "theorem main : ∀ k, Equal (lvEnv E W C B k)" in source
     assert "chain_equal_lv E W cut bO cO bX cX C B hC hB hcut" in source
+    assert "noncomputable def EK : Env := { E with labs := instLabs ++ lvls W C 2 ++ B }" in source
 
 
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
