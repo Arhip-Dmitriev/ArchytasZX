@@ -21,24 +21,36 @@ from benchmarks.subjects._common import *
 from benchmarks.subjects._gates import cry
 
 
-def _circuit(m, d):
-    """The splitting tree over m levels."""
+def _split(a, b):
+    """Controlled Ry(pi/2) from a onto b, then CX(b, a)."""
+    return [*cry(a, b, Fraction(1, 4)), CX(b, a)]
+
+
+def _unrolled(m, d):
+    """The splitting tree over m levels, qubits in leaf-major order (each holder followed by its
+    partner)."""
     n = 2**m
     q = unrolled("q", n)
     gates = [Init(x) for x in q] + [X(q[0])]
+    leaves = [0]
     for level in range(m):
         for i in range(2**level):
-            j = i + 2**level
-            gates += cry(q[i], q[j], Fraction(1, 4)) + [CX(q[j], q[i])]
-    return circuit(q, gates)
+            gates += _split(q[i], q[i + 2**level])
+        leaves = [x for i in leaves for x in (i, i + 2**level)]
+    return circuit([q[i] for i in leaves], gates)
+
+
+def _circuit(m, d):
+    """|1> on q, then a binary tree of depth m whose copy splits its excitation with a fresh r."""
+    body = (Init("r"), *_split("q", "r"))
+    return circuit(["q"], [Init("q"), X("q"), Tree(m, body, "q", ("q", "r"))])
 
 
 def _spec(c):
-    """W(1 -> n) on |1>, normalised."""
-    m = c.nv
+    """W(1 -> 2^m) on |1>, normalised."""
     return (
-        f"x = X(0 -> 1, {c.D}) phase{{1: 1/2}}\nw = W(1 -> {2**m}, {c.D})\nwire x.out0 -- w.in0\n"
-        f"scalar 2^(-{m + 1}/2)"
+        f"x = X(0 -> 1, {c.D}) phase{{1: 1/2}}\nw = W(1 -> 1, {c.D})\nwire x.out0 -- w.in0\n"
+        f"repeat 2^{c.N}: w.out0\nscalar 2^(-({c.N} + 1)/2)"
     )
 
 
@@ -50,5 +62,5 @@ SUBJECT = Subject(
     size_parameter="tree levels (2^m qubits)",
     dimension=2,
     domain=Domain(n_min=0, n_max=3, d_min=2, d_max=2),
-    equations=(Equation("main", _circuit, _spec, form="unrolled"),),
+    equations=(Equation("main", _circuit, _spec, form="boxed"),),
 )
