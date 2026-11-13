@@ -665,7 +665,7 @@ def apply(
 
     # Sorted, not the raw frozenset: working.wires' hash is PYTHONHASHSEED-dependent, and
     # which of several offending wires this loop raises on is order-dependent.
-    for wire in sorted(working.wires, key=lambda w: w.sort_key()):
+    for wire in working.sorted_wires():
         if wire in consumed_wire_set:
             working.remove_wire(wire.a, wire.b)
             continue

@@ -301,6 +301,7 @@ class Diagram:
         "_parameters",
         "_scalar",
         "_wires",
+        "_wires_order",
         "_wires_view",
     )
 
@@ -310,6 +311,7 @@ class Diagram:
         self._nodes: dict[NodeId, Node] = {}
         self._wires: set[Wire] = set()
         self._wires_view: frozenset[Wire] | None = None
+        self._wires_order: tuple[Wire, ...] | None = None
         self._boundary_inputs: list[PortRef] = []
         self._boundary_outputs: list[PortRef] = []
         self._scalar: Scalar = Scalar.one()
@@ -332,6 +334,21 @@ class Diagram:
         if view is None:
             view = self._wires_view = frozenset(self._wires)
         return view
+
+    def sorted_wires(self) -> tuple[Wire, ...]:
+        """Every wire in :meth:`Wire.sort_key` order, kept until the wire set next changes."""
+        order = getattr(self, "_wires_order", None)
+        if order is None:
+            order = self._wires_order = tuple(sorted(self._wires, key=Wire.sort_key))
+        return order
+
+    def __getstate__(self) -> tuple[None, dict[str, object]]:
+        """The set slots without the sorted-wire cache."""
+        return None, {
+            name: getattr(self, name)
+            for name in Diagram.__slots__
+            if name != "_wires_order" and hasattr(self, name)
+        }
 
     @property
     def boundary_inputs(self) -> tuple[PortRef, ...]:
@@ -433,6 +450,7 @@ class Diagram:
             wire for wire in self._wires if wire.a.node_id != node_id and wire.b.node_id != node_id
         }
         self._wires_view = None
+        self._wires_order = None
         self._boundary_inputs = [ref for ref in self._boundary_inputs if ref.node_id != node_id]
         self._boundary_outputs = [ref for ref in self._boundary_outputs if ref.node_id != node_id]
 
@@ -625,6 +643,7 @@ class Diagram:
         """
         self._wires.add(Wire(a, b))
         self._wires_view = None
+        self._wires_order = None
 
     def remove_wire(self, a: PortRef, b: PortRef) -> None:
         """Remove the wire between two ports. Raises GraphGrammarError if it is absent."""
@@ -635,6 +654,7 @@ class Diagram:
             raise GraphGrammarError(f"no such wire: {wire!r}")
         self._wires.discard(wire)
         self._wires_view = None
+        self._wires_order = None
 
     # -- boundary mutation ------------------------------------------------------------
 
@@ -802,6 +822,8 @@ class Diagram:
         clone = Diagram()
         clone._nodes = dict(self._nodes)
         clone._wires = set(self._wires)
+        clone._wires_view = self._wires_view
+        clone._wires_order = getattr(self, "_wires_order", None)
         clone._boundary_inputs = list(self._boundary_inputs)
         clone._boundary_outputs = list(self._boundary_outputs)
         clone._scalar = self._scalar

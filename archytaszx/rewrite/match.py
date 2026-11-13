@@ -1372,7 +1372,7 @@ def find_matches(
     # Sorted, not the raw frozenset: Wire's hash folds in Direction's member-name hash, which
     # is PYTHONHASHSEED-dependent, and the pass below raises on the first offending wire.
     # Snapshotted once, since Diagram.wires rebuilds on every access.
-    wires = tuple(sorted(diagram.wires, key=lambda w: w.sort_key()))
+    wires = tuple(diagram.sorted_wires())
 
     for wire in wires:
         _validate_wire_endpoint(diagram, wire, wire.a)
@@ -1707,7 +1707,7 @@ def find_cap_matches(
     boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
 
     matches: list[CapMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for state_ref, effect_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -2214,7 +2214,7 @@ def find_triangle_matches(
     by_port = _wire_by_port(diagram)
     neighbours = _neighbour_ids(diagram) if anchors is not None else None
     matches: list[TriangleMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, neighbours, (wire.a.node_id, wire.b.node_id), 1):
             continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -2383,7 +2383,7 @@ def find_state_copy_matches(
     conditions = STATE_COPY_SWAPPED_SIDE_CONDITIONS if swapped else STATE_COPY_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[StateCopyMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for state_ref, spider_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -2739,7 +2739,7 @@ def find_bialgebra_matches(
     conditions = BIALGEBRA_SWAPPED_SIDE_CONDITIONS if swapped else BIALGEBRA_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[BialgebraMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for x_ref, z_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -2869,7 +2869,7 @@ def find_fourier_state_matches(
     conditions = FOURIER_STATE_SWAPPED_SIDE_CONDITIONS if swapped else FOURIER_STATE_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[FourierStateMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for spider_ref, fourier_ref in ((wire.a, wire.b), (wire.b, wire.a)):

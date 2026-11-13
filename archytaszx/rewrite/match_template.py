@@ -876,7 +876,7 @@ class TemplatePattern(Pattern):
         boxed = _boxed_nodes(diagram)
         if template.bare:
             ((first, second),) = template.bare
-            for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+            for wire in diagram.sorted_wires():
                 if wire.a.node_id in boxed or wire.b.node_id in boxed:
                     continue
                 node = diagram.nodes[wire.a.node_id]

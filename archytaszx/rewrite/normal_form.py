@@ -191,7 +191,7 @@ def _canonical_legs(diagram: Diagram) -> Diagram:
     def moved(ref: PortRef) -> PortRef:
         return PortRef(new_id[ref.node_id], ref.direction, new_index[ref])
 
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         view.add_wire(moved(wire.a), moved(wire.b))
     view.set_boundary_inputs([moved(ref) for ref in diagram.boundary_inputs])
     view.set_boundary_outputs([moved(ref) for ref in diagram.boundary_outputs])

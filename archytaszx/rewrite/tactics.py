@@ -52,6 +52,7 @@ from dataclasses import dataclass, replace
 
 from archytaszx.diagram.compare import canonical_key, isomorphic
 from archytaszx.diagram.graph import Diagram, NodeId
+from archytaszx.diagram.validate import ValidationReport, validate
 from archytaszx.rewrite.cache import CacheError, RewriteCache
 from archytaszx.rewrite.egraph import APPLICATION_ERRORS, saturation_rules
 from archytaszx.rewrite.engine import (
@@ -63,7 +64,12 @@ from archytaszx.rewrite.engine import (
     apply_until_fixpoint,
     normal_form_rules,
 )
-from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
+from archytaszx.rewrite.normal_form import (
+    comparison_view,
+    view_form,
+    view_key,
+    views_isomorphic,
+)
 from archytaszx.rewrite.rule import Match, RewriteError, RewriteGrammarError, Rule
 from archytaszx.rewrite.rules_library import lookup_rule
 
@@ -140,6 +146,9 @@ class TacticFailure:
                 )
 
 
+_REPORT_LIMIT = 4096
+
+
 class TacticContext:
     """Mutable state shared by one tactic run: cache, application budget and failures."""
 
@@ -157,6 +166,24 @@ class TacticContext:
         )
         self.applications = 0
         self.failures: list[TacticFailure] = []
+        self._reports: dict[int, tuple[Diagram, ValidationReport]] = {}
+
+    def report(self, diagram: Diagram) -> ValidationReport:
+        """``validate(diagram)``, kept per diagram object."""
+        hit = self._reports.get(id(diagram))
+        if hit is not None and hit[0] is diagram:
+            return hit[1]
+        report = validate(diagram)
+        self.keep_report(diagram, report)
+        return report
+
+    def keep_report(self, diagram: Diagram, report: ValidationReport | None) -> None:
+        """Record ``report`` as ``validate(diagram)``."""
+        if report is None:
+            return
+        if len(self._reports) >= _REPORT_LIMIT:
+            self._reports.clear()
+        self._reports[id(diagram)] = (diagram, report)
 
     def charge(self) -> None:
         """Count one application, raising :class:`BudgetExhausted` when none is left."""
@@ -286,11 +313,12 @@ class _Rule(Tactic):
                 continue
             context.charge()
             try:
-                result = apply(diagram, self._rule, match)
+                result = apply(diagram, self._rule, match, input_report=context.report(diagram))
             except APPLICATION_ERRORS as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 context.failures.append(TacticFailure(self._rule.name, message))
                 continue
+            context.keep_report(result.diagram, result.report)
             yield TacticOutcome(result.diagram, (result,))
 
 
@@ -805,20 +833,34 @@ class _Search:
         self.ctx = ctx
         self.states: list[_State] = []
         self.buckets: dict[str, list[int]] = {}
+        self.profiles: list[tuple[object, ...] | None] = []
+        self._found: tuple[Diagram, tuple[object, ...] | None] | None = None
         self.expanded = 0
         self.pruned = 0
 
     def find(self, view: Diagram) -> tuple[str, int | None]:
-        """``view``'s key and the state whose view is isomorphic to it, if any."""
-        key = view_key(view)
+        """``view``'s key and the state whose view is isomorphic to it, if any: equal
+        :func:`view_form` profiles when both have one, else :func:`views_isomorphic`."""
+        key, profile = view_form(view)
+        self._found = (view, profile)
         for index in self.buckets.get(key, ()):
-            if views_isomorphic(view, self.states[index].view):
+            other = self.profiles[index]
+            if profile is not None and other is not None:
+                if profile == other:
+                    return key, index
+            elif views_isomorphic(view, self.states[index].view):
                 return key, index
         return key, None
 
     def insert(self, state: _State, key: str) -> int:
         """Store ``state`` under ``key`` and return its id."""
+        found = self._found
+        if found is not None and found[0] is state.view:
+            profile = found[1]
+        else:
+            profile = view_form(state.view)[1]
         self.states.append(state)
+        self.profiles.append(profile)
         self.buckets.setdefault(key, []).append(len(self.states) - 1)
         return len(self.states) - 1
 

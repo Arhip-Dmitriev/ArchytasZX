@@ -39,7 +39,7 @@ import numpy as np
 
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.compare import canonical_key
-from archytaszx.diagram.graph import BangBoxId, Diagram, Node, NodeId, PortRef, Wire
+from archytaszx.diagram.graph import BangBoxId, Diagram, Node, NodeId, PortRef
 from archytaszx.rewrite.rule import Match, Pattern
 
 
@@ -120,7 +120,7 @@ def _incidence(diagram: Diagram) -> dict[NodeId, list[tuple[str, int, int, str, 
     incidence: dict[NodeId, list[tuple[str, int, int, str, int]]] = {
         nid: [] for nid in diagram.nodes
     }
-    for wire in sorted(diagram.wires, key=Wire.sort_key):
+    for wire in diagram.sorted_wires():
         for near, far in ((wire.a, wire.b), (wire.b, wire.a)):
             if near.node_id in incidence:
                 incidence[near.node_id].append(
@@ -285,7 +285,7 @@ def fingerprint(diagram: Diagram) -> DiagramFingerprint:
         boundary_key,
         boxes_key,
         tuple((int(nid), entries[nid]) for nid in sorted(entries)),
-        tuple(wire.sort_key() for wire in sorted(diagram.wires, key=Wire.sort_key)),
+        tuple(wire.sort_key() for wire in diagram.sorted_wires()),
     )
     return DiagramFingerprint(
         nodes=MappingProxyType(entries),

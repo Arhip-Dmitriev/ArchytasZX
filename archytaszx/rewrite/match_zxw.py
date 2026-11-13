@@ -145,7 +145,7 @@ def find_w_fusion_matches(
     """Every W output wired into another W's input, by (first, second) node id."""
     claims, boundary = _port_claims(diagram)
     matches: list[WFusionMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -389,7 +389,7 @@ def find_fed_state_matches(
     conditions = TRIANGLE_STATE_SIDE_CONDITIONS if triangle else W_COPY_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
     matches: list[FedStateMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for state_ref, target_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -498,7 +498,7 @@ def find_triangle_effect_matches(
     """Every T whose output feeds a phaseless X effect, by triangle id."""
     claims, boundary = _port_claims(diagram)
     matches: list[TriangleEffectMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -954,7 +954,7 @@ def find_wz_bialgebra_matches(
     """Every phaseless Z_{n->1}, n >= 2, wired into a W_{1->m}, m >= 2, by (Z, W) id."""
     claims, boundary = _port_claims(diagram)
     matches: list[WZBialgebraMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
@@ -1081,7 +1081,7 @@ def find_w_effect_matches(
     least_outputs = 1 if zero else 2
     claims, boundary = _port_claims(diagram)
     matches: list[WEffectMatch] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):

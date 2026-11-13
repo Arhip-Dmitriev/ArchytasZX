@@ -77,8 +77,8 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
                 False, f"node {nid}: phase differs: {left_phase} vs {right_phase}"
             )
 
-    wires_a = sorted(a.wires, key=Wire.sort_key)
-    wires_b = sorted(b.wires, key=Wire.sort_key)
+    wires_a = a.sorted_wires()
+    wires_b = b.sorted_wires()
     if wires_a != wires_b:
         wire_only_a = sorted(a.wires - b.wires, key=Wire.sort_key)
         wire_only_b = sorted(b.wires - a.wires, key=Wire.sort_key)
@@ -335,21 +335,27 @@ def _incidence(
 ) -> dict[NodeId, list[tuple[str, int, NodeId, str, int]]]:
     """Each node's wire ends, as ``(own direction, own index, other node, other direction,
     other index)``."""
-    incidence: dict[NodeId, list[tuple[str, int, NodeId, str, int]]] = {
-        nid: [] for nid in diagram.nodes
-    }
-    for wire in sorted(diagram.wires, key=Wire.sort_key):
-        for near, far in ((wire.a, wire.b), (wire.b, wire.a)):
-            if near.node_id in incidence:
-                incidence[near.node_id].append(
-                    (
-                        _dir(diagram, near, symmetric),
-                        _leg(diagram, near, symmetric),
-                        far.node_id,
-                        _dir(diagram, far, symmetric),
-                        _leg(diagram, far, symmetric),
-                    )
-                )
+    nodes = diagram.nodes
+    incidence: dict[NodeId, list[tuple[str, int, NodeId, str, int]]] = {nid: [] for nid in nodes}
+    flex: set[NodeId] = set()
+    sym: set[NodeId] = set()
+    if symmetric:
+        for nid, node in nodes.items():
+            name = node.generator_type.name
+            if name in _FLEXSYMMETRIC_GENERATORS:
+                flex.add(nid)
+            if name in _SYMMETRIC_GENERATORS:
+                sym.add(nid)
+    for wire in diagram.sorted_wires():
+        a, b = wire.a, wire.b
+        a_dir = "*" if a.node_id in flex else a.direction.value
+        a_leg = -1 if a.node_id in sym else a.index
+        b_dir = "*" if b.node_id in flex else b.direction.value
+        b_leg = -1 if b.node_id in sym else b.index
+        if a.node_id in incidence:
+            incidence[a.node_id].append((a_dir, a_leg, b.node_id, b_dir, b_leg))
+        if b.node_id in incidence:
+            incidence[b.node_id].append((b_dir, b_leg, a.node_id, a_dir, a_leg))
     return incidence
 
 
@@ -443,9 +449,17 @@ def _profile(
     diagram: Diagram, label: dict[NodeId, str], symmetric: bool = False
 ) -> tuple[object, ...]:
     """The whole diagram rewritten in terms of ``label`` instead of node ids."""
+    names = {nid: node.generator_type.name for nid, node in diagram.nodes.items()}
+    flex = symmetric and any(n in _FLEXSYMMETRIC_GENERATORS for n in names.values())
+    sym = symmetric and any(n in _SYMMETRIC_GENERATORS for n in names.values())
 
     def end(ref: PortRef) -> tuple[str, str, int]:
-        return (label[ref.node_id], _dir(diagram, ref, symmetric), _leg(diagram, ref, symmetric))
+        name = names.get(ref.node_id)
+        return (
+            label[ref.node_id],
+            "*" if flex and name in _FLEXSYMMETRIC_GENERATORS else ref.direction.value,
+            -1 if sym and name in _SYMMETRIC_GENERATORS else ref.index,
+        )
 
     wires = sorted(
         tuple(sorted((end(wire.a), end(wire.b))))

@@ -233,7 +233,7 @@ def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> N
     # hash folds in Direction's member-name hash, so iterating it directly would append
     # issues in a PYTHONHASHSEED-dependent order, breaking the "first in validate order"
     # selection archytaszx.rewrite.engine relies on.
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         port_a = _resolve(diagram, wire.a, issues)
         port_b = _resolve(diagram, wire.b, issues)
         if port_a is None or port_b is None:
@@ -302,11 +302,12 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     # insertion order into wired_counts below process-dependent, and with it the order
     # PORT_WIRED_TWICE issues are appended in.
     wired_refs: list[PortRef] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         wired_refs.append(wire.a)
         wired_refs.append(wire.b)
     wired_counts = Counter(wired_refs)
-    for ref, count in sorted(wired_counts.items(), key=lambda item: item[0].sort_key()):
+    twice = [(ref, count) for ref, count in wired_counts.items() if count > 1]
+    for ref, count in sorted(twice, key=lambda item: item[0].sort_key()):
         if count > 1:
             issues.append(
                 ValidationIssue(
@@ -375,14 +376,20 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
         tree = diagram.bang_boxes.get(box.feed) if box.feed is not None else None
         if tree is not None and box.feed_port is not None:
             fed_ports |= {box.feed_port, *tree.tree}
+    used = {
+        (ref.node_id, ref.direction is Direction.OUTPUT, ref.index)
+        for refs in (wired_set, boundary_set, fed_ports)
+        for ref in refs
+    }
     for node_id, node in diagram.nodes.items():
         if node_id in broken_node_ids:
             continue
         for direction in (Direction.INPUT, Direction.OUTPUT):
+            output = direction is Direction.OUTPUT
             for index in range(len(node.legs(direction))):
-                ref = PortRef(node_id, direction, index)
-                if ref in wired_set or ref in boundary_set or ref in fed_ports:
+                if (node_id, output, index) in used:
                     continue
+                ref = PortRef(node_id, direction, index)
                 issues.append(
                     ValidationIssue(
                         kind=IssueKind.PORT_UNUSED,
@@ -445,29 +452,60 @@ def _symbol_roles(diagram: Diagram) -> dict[str, dict[str, sp.Symbol]]:
     :func:`_check_symbol_role_collisions` and :func:`_check_parameter_environment`.
     """
     roles: dict[str, dict[str, sp.Symbol]] = {}
-
-    def _note(expr: sp.Expr) -> None:
-        for symbol in expr.free_symbols:
-            role = _classify_symbol_role(symbol)
-            if role is None:
-                continue
-            roles.setdefault(str(symbol.name), {}).setdefault(role, symbol)
-
+    symbols: set[sp.Symbol] = set()
     for node in diagram.nodes.values():
-        for port in (*node.inputs, *node.outputs):
-            _note(port.dim.to_sympy())
-        if node.phase is not None:
-            _note(node.phase.dim.to_sympy())
-            for entry in node.phase.entries().values():
-                turns = entry.to_sympy_turns()
-                if not turns.is_Rational:
-                    _note(turns)
-            if node.phase.rule is not None:
-                _note(node.phase.rule.to_sympy_turns().xreplace({INDEX: sp.Integer(1)}))
-    _note(diagram.scalar.to_sympy())
+        symbols |= _node_symbols(node)
+    symbols |= diagram.scalar.to_sympy().free_symbols
     for box in diagram.bang_boxes.values():
-        _note(box.multiplicity.to_sympy())
+        symbols |= box.multiplicity.to_sympy().free_symbols
+    for symbol in sorted(symbols, key=sp.default_sort_key):
+        role = _symbol_role(symbol)
+        if role is None:
+            continue
+        roles.setdefault(str(symbol.name), {}).setdefault(role, symbol)
     return roles
+
+
+_NODE_SYMBOLS: dict[int, tuple[Node, frozenset[sp.Symbol]]] = {}
+_ROLES: dict[sp.Symbol, str | None] = {}
+_CACHE_LIMIT = 1 << 17
+
+
+def _node_symbols(node: Node) -> frozenset[sp.Symbol]:
+    """The free symbols of ``node``'s port dimensions, phase dimension, irrational phase
+    entries and phase rule (index at 1), memoised per Node object."""
+    hit = _NODE_SYMBOLS.get(id(node))
+    if hit is not None and hit[0] is node:
+        return hit[1]
+    found: set[sp.Symbol] = set()
+    for port in (*node.inputs, *node.outputs):
+        found |= port.dim.to_sympy().free_symbols
+    if node.phase is not None:
+        found |= node.phase.dim.to_sympy().free_symbols
+        for entry in node.phase.entries().values():
+            turns = entry.to_sympy_turns()
+            if not turns.is_Rational:
+                found |= turns.free_symbols
+        if node.phase.rule is not None:
+            rule = node.phase.rule.to_sympy_turns().xreplace({INDEX: sp.Integer(1)})
+            found |= rule.free_symbols
+    if len(_NODE_SYMBOLS) >= _CACHE_LIMIT:
+        _NODE_SYMBOLS.clear()
+    out = frozenset(found)
+    _NODE_SYMBOLS[id(node)] = (node, out)
+    return out
+
+
+def _symbol_role(symbol: sp.Symbol) -> str | None:
+    """:func:`_classify_symbol_role`, memoised per symbol."""
+    try:
+        return _ROLES[symbol]
+    except KeyError:
+        pass
+    if len(_ROLES) >= _CACHE_LIMIT:
+        _ROLES.clear()
+    role = _ROLES[symbol] = _classify_symbol_role(symbol)
+    return role
 
 
 _ROLE_MINIMUM: Mapping[str, int | None] = MappingProxyType(
@@ -477,11 +515,15 @@ _ROLE_MINIMUM: Mapping[str, int | None] = MappingProxyType(
 role that bounds it nowhere."""
 
 
-def _check_parameter_environment(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+def _check_parameter_environment(
+    diagram: Diagram,
+    issues: list[ValidationIssue],
+    roles: dict[str, dict[str, sp.Symbol]] | None = None,
+) -> None:
     # A same-named symbol of two roles is already SYMBOL_ROLE_COLLISION, and there is no one
     # domain to check the value against, so such a name is skipped here rather than reported
     # twice under two different kinds.
-    roles = _symbol_roles(diagram)
+    roles = _symbol_roles(diagram) if roles is None else roles
     for name, value in sorted(diagram.parameters.items()):
         by_role = roles.get(name)
         if not by_role:
@@ -513,13 +555,19 @@ def _check_parameter_environment(diagram: Diagram, issues: list[ValidationIssue]
             )
 
 
-def _check_symbol_role_collisions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+def _check_symbol_role_collisions(
+    diagram: Diagram,
+    issues: list[ValidationIssue],
+    roles: dict[str, dict[str, sp.Symbol]] | None = None,
+) -> None:
     # A same-named symbol of two different roles is two distinct sympy Symbol objects, so a
     # by-name substitution (every substitute() here is) silently rewrites both. All six
     # unordered cross-role pairs over {dimension, exponent, phase, scalar} are genuine
     # collisions, since the four roles accept different substitution domains: positive
     # integers, nonnegative integers, reals mod one turn, and arbitrary complex.
-    for name, by_role in sorted(_symbol_roles(diagram).items()):
+    if roles is None:
+        roles = _symbol_roles(diagram)
+    for name, by_role in sorted(roles.items()):
         if len(by_role) > 1:
             issues.append(
                 ValidationIssue(
@@ -781,7 +829,7 @@ def _gather_dimension_constraints(diagram: Diagram) -> list[tuple[Dim, Dim]]:
     """Every dimension equality the diagram asserts: wire endpoints (by ``Wire.sort_key``),
     then each node's policy and phase equalities (by node id)."""
     constraints: list[tuple[Dim, Dim]] = []
-    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+    for wire in diagram.sorted_wires():
         node_a = diagram.nodes.get(wire.a.node_id)
         node_b = diagram.nodes.get(wire.b.node_id)
         if node_a is None or node_b is None:
@@ -1390,8 +1438,9 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_bangbox_links(diagram, issues)
     _check_bangbox_alignment(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
-    _check_symbol_role_collisions(diagram, issues)
-    _check_parameter_environment(diagram, issues)
+    roles = _symbol_roles(diagram)
+    _check_symbol_role_collisions(diagram, issues, roles)
+    _check_parameter_environment(diagram, issues, roles)
     _check_dimension_consistency(diagram, issues)
     return ValidationReport(tuple(issues))
 
