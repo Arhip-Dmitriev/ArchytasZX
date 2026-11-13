@@ -15,9 +15,9 @@
 the atoms' cyclotomic bases as the coefficient vector ``A``; ``AmpRun`` follows a reduction
 trace of a path sum with atoms and writes the ``AStep`` list replaying it: inner steps on the
 path of variables no atom reads, [Average] (plain and through a half phase) on held variables,
-pins along a constraint, folds of atoms on 0 and 1, [Quarter] on inner variables, releases
-of held variables no atom reads, and after the canonical pivots the atoms' substitution,
-normalisation, merging and complementary pairs."""
+pins along a constraint, folds of atoms on 0 and 1, [Quarter] and [Turn] on inner variables,
+releases of held variables no atom reads, and after the canonical pivots the atoms'
+substitution, normalisation, merging and complementary pairs."""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ class AmpRun:
     reqs: list[Req] = field(default_factory=list)
     facs: list[sp.Expr] = field(default_factory=list)
     omega: bool = False
-    qreqs: list[int] = field(default_factory=list)
+    qreqs: list[tuple[int, int]] = field(default_factory=list)
 
     def avars(self) -> set[int]:
         """The variables the atoms read."""
@@ -247,9 +247,28 @@ class AmpRun:
         self.cur = rest
         j = self.coefs.index(QUARTER_BASE)
         self.steps.append(f".quarter {f2_text(b0)} {f2_text(b1)} {j}")
-        self.qreqs.append(j)
+        self.qreqs.append((self.coefs.m // 4, j))
         self.facs.append(sp.Integer(2))
         self.atoms = [*self.atoms, (j, b0)]
+
+    def turn(self, y: int, bs: Sequence[F2Poly]) -> None:
+        """[Turn] on the inner path variable ``y`` with the digits ``bs``: one atom
+        ``((1 + zeta^s) / 2)^[bs = s]`` appended per ``s`` of turn_values."""
+        from archytaszx.algebra.pathsum import turn_base, turn_indicator, turn_values
+
+        k = len(bs)
+        if self.coefs.m % (1 << k):
+            raise PathSumUnsupported(f"[Turn] by 2^{k} over zeta_{self.coefs.m}")
+        rest = [v for v in self.cur if v != y]
+        self.inner([f".perm {[y, *rest]}"])
+        self.cur = rest
+        pairs = [(s, self.coefs.index(turn_base(s, k))) for s in turn_values(k)]
+        digits = "[" + ", ".join(f2_text(b) for b in bs) + "]"
+        listed = "[" + ", ".join(f"({s}, {j})" for s, j in pairs) + "]"
+        self.steps.append(f".turn {digits} {listed}")
+        self.qreqs += [(s * (self.coefs.m >> k), j) for s, j in pairs]
+        self.facs.append(sp.Integer(2))
+        self.atoms = [*self.atoms, *((j, turn_indicator(bs, s)) for s, j in pairs)]
 
     def pin(self, y: int, value: F2Poly) -> None:
         """[Pin] of ``y`` along its constraint ``y + value``: when an atom reads ``y``, the
@@ -349,6 +368,9 @@ def reduce_run(run: AmpRun, trace: Sequence[Step]) -> None:
             b0, b1 = step.values
             run.quarter(step.var, b0, b1)
             run.fold(set(run.cur) | set(run.held))
+        elif step.rule == "turn":
+            run.turn(step.var, step.values)
+            run.fold(set(run.cur) | set(run.held))
         else:
             run.trace(step)
         run.release()
@@ -396,27 +418,29 @@ def reqs_lines(tag: str, reqs: Sequence[Req], coefs: Coefs, sc: object, steps: s
 
 
 def qreqs_lines(tag: str, run: AmpRun, sc: object, steps: str) -> list[str]:
-    """The theorem that every [Quarter] coefficient of a step list is ``(1 + i) / 2``."""
+    """The theorem that every pair ``(e, j)`` a [Quarter] or [Turn] step of a step list assumes
+    has ``2 * A j = 1 + om m ^ e``."""
     from archytaszx.semantics.lean_scalar import Om
 
     prove = sc.prove  # type: ignore[attr-defined]
     text = sc.text  # type: ignore[attr-defined]
     m = run.coefs.m
-    js = list(run.qreqs)
+    pairs = list(run.qreqs)
+    listed = "[" + ", ".join(f"({e}, {j})" for e, j in pairs) + "]"
     head = [
-        f"theorem qreqs{tag} : ∀ j ∈ aqreqs {steps}, 2 * A j = 1 + om {m} ^ ({m} / 4) := by",
-        f"  have e : aqreqs {steps} = {js} := by decide",
+        f"theorem qreqs{tag} : ∀ p ∈ aqreqs {m} {steps}, 2 * A p.2 = 1 + om {m} ^ p.1 := by",
+        f"  have e : aqreqs {m} {steps} = {listed} := by decide",
         "  rw [e]",
-        "  intro j hj",
+        "  intro p hp",
     ]
-    if not js:
-        return [*head, "  simp at hj", ""]
+    if not pairs:
+        return [*head, "  simp at hp", ""]
     lines: list[str] = []
-    for j in sorted(set(js)):
+    for e, j in sorted(set(pairs)):
         lhs = sp.expand(2 * run.coefs.model(j))
-        rhs = sp.expand(1 + Om(m) ** (m // 4))
+        rhs = sp.expand(1 + Om(m) ** e)
         lines += [
-            f"theorem qreq{tag}{j} : 2 * A {j} = 1 + om {m} ^ ({m} / 4) := by",
+            f"theorem qreq{tag}{j}e{e} : 2 * A {j} = 1 + om {m} ^ {e} := by",
             f"  have key : ({text(lhs)} : ℂ) = {text(rhs)} :=",
             *("    " + ln for ln in prove(lhs, rhs).splitlines()),
             "  simp only [A]",
@@ -425,9 +449,9 @@ def qreqs_lines(tag: str, run: AmpRun, sc: object, steps: str) -> list[str]:
             "",
         ]
     cases = []
-    for j in js:
-        cases += ["  rcases List.mem_cons.1 hj with rfl | hj", f"  · exact qreq{tag}{j}"]
-    return [*lines, *head, *cases, "  simp at hj", ""]
+    for e, j in pairs:
+        cases += ["  rcases List.mem_cons.1 hp with rfl | hp", f"  · exact qreq{tag}{j}e{e}"]
+    return [*lines, *head, *cases, "  simp at hp", ""]
 
 
 def afac_lines(tag: str, run: AmpRun, sc: object) -> tuple[list[str], sp.Expr]:

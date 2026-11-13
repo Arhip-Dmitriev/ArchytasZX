@@ -15,7 +15,9 @@ inner sum, `release_sound` moves a held variable no atom reads into the inner pa
 drops atoms on the zero polynomial, `aconst_sound` moves an atom on the polynomial 1 into the
 constant, `average_sound` is [Average], `averageH_sound` is [Average] through a half phase,
 `quarter_sound` sums a path variable with quarter coefficients into the atom `((1 + i) / 2)^B0`,
-`acomp_sound` moves two atoms of one index on complementary polynomials into the constant and
+`acomp_sound` moves two atoms of one index on complementary polynomials into the constant,
+`turn_sound` sums a path variable with coefficients `S / 2^k` into one atom per value of `S`
+other than `0` and `2^(k - 1)`, with the constraint `S ≠ 2^(k - 1)`, and
 `afinal_sound` compares two reduced sums with the
 same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
 -/
@@ -924,6 +926,307 @@ theorem acomp_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (j : ℕ) (t : AData) 
   · rw [if_pos rfl, if_neg n1]; ring
   · exact absurd hs (by decide)
 
+/-! ## [Turn] -/
+
+/-- `B` when the bit is set, else `1 + B`. -/
+def tBit (b : Bool) (B : F2) : F2 := if b then B else [] :: B
+
+/-- The indicator that the digits `Bs`, low digit first, spell `s`. -/
+def tInd : List F2 → ℕ → F2
+  | [], _ => [[]]
+  | B :: Bs, s => f2mul (tBit (s % 2 == 1) B) (tInd Bs (s / 2))
+
+/-- The number the digits' values spell, low digit first. -/
+def dnum (τ : ℕ → ZMod 2) : List F2 → ℕ
+  | [] => 0
+  | B :: Bs => (fz τ B).val + 2 * dnum τ Bs
+
+/-- `w 2^i` times the lift of the digit `B_i`, summed over the digits. -/
+def tLift (M : ℕ) : ℕ → List F2 → Poly
+  | _, [] => []
+  | w, B :: Bs => (lift M B).map (fun u => ([] ++ u.1, w * u.2)) ++ tLift M (2 * w) Bs
+
+/-- The numbers in `[1, 2^k)` other than `2^(k - 1)`. -/
+def tList (k : ℕ) : List ℕ := (List.range (2 ^ k)).filter fun s => s != 0 && s != 2 ^ (k - 1)
+
+/-- The atoms `(j, [the digits spell s])` of the pairs `(s, j)`. -/
+def tAtoms (Bs : List F2) (ats : List (ℕ × ℕ)) : Atoms :=
+  ats.map fun p => (p.2, normF (tInd Bs p.1))
+
+theorem fz_tBit (τ : ℕ → ZMod 2) (b : Bool) (B : F2) :
+    fz τ (tBit b B) = if b then fz τ B else 1 + fz τ B := by
+  cases b <;> simp [tBit, fz_cons, mz]
+
+theorem dnum_lt (τ : ℕ → ZMod 2) : ∀ Bs : List F2, dnum τ Bs < 2 ^ Bs.length
+  | [] => by simp [dnum]
+  | B :: Bs => by
+    have ih := dnum_lt τ Bs
+    have hv : (fz τ B).val < 2 := ZMod.val_lt _
+    simp only [dnum, List.length_cons, pow_succ]
+    omega
+
+theorem dnum_update_not (τ : ℕ → ZMod 2) (x : ℕ) (b : ZMod 2) :
+    ∀ Bs : List F2, (∀ B ∈ Bs, ∀ m ∈ B, x ∉ m) → dnum (Function.update τ x b) Bs = dnum τ Bs
+  | [] => fun _ => rfl
+  | B :: Bs => fun h => by
+    simp only [dnum]
+    rw [fz_update_not τ x b B (h B List.mem_cons_self),
+      dnum_update_not τ x b Bs (fun B' hB => h B' (List.mem_cons_of_mem _ hB))]
+
+set_option linter.unusedSimpArgs false in
+set_option linter.unusedTactic false in
+theorem fz_tInd (τ : ℕ → ZMod 2) :
+    ∀ (Bs : List F2) (s : ℕ), s < 2 ^ Bs.length →
+      fz τ (tInd Bs s) = if dnum τ Bs = s then 1 else 0
+  | [], s => fun hs => by
+    have : s = 0 := by simpa using hs
+    subst this
+    simp [tInd, dnum, fz, mz]
+  | B :: Bs, s => fun hs => by
+    have hs2 : s / 2 < 2 ^ Bs.length := by
+      simp only [List.length_cons, pow_succ] at hs
+      omega
+    simp only [tInd, dnum]
+    rw [fz_f2mul, fz_tBit, fz_tInd τ Bs (s / 2) hs2]
+    have v0 : (0 : ZMod 2).val = 0 := rfl
+    have v1 : (1 : ZMod 2).val = 1 := rfl
+    have n1 : (1 + 1 : ZMod 2) = 0 := by decide
+    rcases z2_cases (fz τ B) with h | h <;> simp only [h, v0, v1, n1] <;>
+      by_cases hb : s % 2 = 1 <;> by_cases hd : dnum τ Bs = s / 2 <;>
+      simp only [hb, hd, beq_self_eq_true, if_true, if_false, zero_mul, one_mul, mul_one,
+        mul_zero, add_zero, zero_add] <;>
+      first
+        | rfl
+        | (rw [if_pos (by omega)])
+        | (rw [if_neg (by omega)])
+        | (simp only [show (s % 2 == 1) = false by simp [hb], Bool.false_eq_true, if_false,
+            one_mul, zero_mul]; first | rw [if_pos (by omega)] | rw [if_neg (by omega)])
+
+theorem zq_val (x : ZMod 2) : zq x = (x.val : ℤ) := by
+  rcases z2_cases x with rfl | rfl <;> decide
+
+theorem pn_tLift (τ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
+    ∀ (Bs : List F2) (w : ℕ), peq M (pn τ (tLift M w Bs)) ((w : ℤ) * dnum τ Bs)
+  | [], w => ⟨0, by simp [tLift, pn, dnum]⟩
+  | B :: Bs, w => by
+    obtain ⟨n1, e1⟩ := pn_lift τ M hM B
+    obtain ⟨n2, e2⟩ := pn_tLift τ M hM Bs (2 * w)
+    simp only [tLift, dnum]
+    have hm1 : zq (mz τ []) = 1 := by simp [mz]; decide
+    rw [pn_append, pn_mapmul, hm1, e1, e2, zq_val]
+    refine ⟨w * n1 + n2, ?_⟩
+    push_cast
+    ring
+
+theorem tList_nodup (k : ℕ) : (tList k).Nodup :=
+  (List.nodup_range).filter _
+
+theorem mem_tList (k s : ℕ) : s ∈ tList k ↔ s < 2 ^ k ∧ s ≠ 0 ∧ s ≠ 2 ^ (k - 1) := by
+  simp [tList, List.mem_filter, List.mem_range]
+
+theorem prod_miss (A : ℕ → ℂ) (N : ℕ) :
+    ∀ ats : List (ℕ × ℕ), N ∉ ats.map (·.1) →
+      (ats.map fun p => if N = p.1 then A p.2 else 1).prod = 1
+  | [], _ => rfl
+  | q :: ats, h => by
+    simp only [List.map_cons, List.mem_cons, not_or] at h
+    rw [List.map_cons, List.prod_cons, if_neg h.1, prod_miss A N ats h.2, one_mul]
+
+theorem prod_hit (A : ℕ → ℂ) (N : ℕ) :
+    ∀ ats : List (ℕ × ℕ), (ats.map (·.1)).Nodup → ∀ p ∈ ats, p.1 = N →
+      (ats.map fun p => if N = p.1 then A p.2 else 1).prod = A p.2
+  | [], _, p, hp, _ => by simp at hp
+  | q :: ats, hn, p, hp, hN => by
+    rw [List.map_cons, List.nodup_cons] at hn
+    rw [List.map_cons, List.prod_cons]
+    rcases List.mem_cons.1 hp with rfl | hp'
+    · rw [if_pos hN.symm, prod_miss A N ats (hN ▸ hn.1), mul_one]
+    · have hq : N ≠ q.1 := by
+        rintro rfl
+        exact hn.1 (List.mem_map.2 ⟨p, hp', hN⟩)
+      rw [if_neg hq, prod_hit A N ats hn.2 p hp' hN, one_mul]
+
+/-- The sum over a bit `y` of `ex (y N / 2^k)` as atoms on the values of `N`. -/
+theorem turn_pt (k : ℕ) (hk : 1 ≤ k) (A : ℕ → ℂ) (ats : List (ℕ × ℕ)) (N : ℕ) (hN : N < 2 ^ k)
+    (hl : ats.map (·.1) = tList k)
+    (hA : ∀ p ∈ ats, 2 * A p.2 = 1 + ex ((p.1 : ℝ) / 2 ^ k)) :
+    1 + ex ((N : ℝ) / 2 ^ k) =
+      2 * (ats.map fun p => if N = p.1 then A p.2 else 1).prod *
+        (if N = 2 ^ (k - 1) then 0 else 1) := by
+  have hnd : (ats.map (·.1)).Nodup := hl ▸ tList_nodup k
+  have hpos : 1 ≤ 2 ^ (k - 1) := Nat.one_le_two_pow
+  by_cases h0 : N = 0
+  · subst h0
+    have hm : (0 : ℕ) ∉ ats.map (·.1) := by
+      rw [hl, mem_tList]; omega
+    rw [prod_miss A 0 ats hm, if_neg (by omega)]
+    simp [ex_zero]
+    norm_num
+  by_cases hh : N = 2 ^ (k - 1)
+  · rw [if_pos hh, mul_zero]
+    have e : ((N : ℕ) : ℝ) / 2 ^ k = 1 / 2 := by
+      rw [hh]
+      obtain ⟨j, rfl⟩ : ∃ j, k = j + 1 := ⟨k - 1, by omega⟩
+      simp only [Nat.add_sub_cancel]
+      push_cast
+      rw [pow_succ]
+      field_simp
+    rw [e, Sym.ex_half]
+    ring
+  · rw [if_neg hh, mul_one]
+    have hm : N ∈ ats.map (·.1) := by
+      rw [hl, mem_tList]; exact ⟨hN, h0, hh⟩
+    obtain ⟨p, hp, hpN⟩ := List.mem_map.1 hm
+    rw [prod_hit A N ats hnd p hp hpN, hA p hp, hpN]
+
+theorem aval_tAtoms (A : ℕ → ℂ) (τ : ℕ → ZMod 2) (Bs : List F2) :
+    ∀ ats : List (ℕ × ℕ), (∀ p ∈ ats, p.1 < 2 ^ Bs.length) →
+      aval A (tAtoms Bs ats) τ = (ats.map fun p => if dnum τ Bs = p.1 then A p.2 else 1).prod
+  | [], _ => rfl
+  | p :: ats, h => by
+    simp only [tAtoms, List.map_cons] at *
+    rw [aval_cons, List.prod_cons]
+    have ih := aval_tAtoms A τ Bs ats (fun q hq => h q (List.mem_cons_of_mem _ hq))
+    simp only [tAtoms] at ih
+    rw [ih, fz_normF, fz_tInd τ Bs p.1 (h p List.mem_cons_self)]
+    by_cases hd : dnum τ Bs = p.1
+    · rw [if_pos hd, if_pos hd, if_neg (by decide)]
+    · rw [if_neg hd, if_neg hd, if_pos rfl]
+
+/-- Whether the head path variable `y` is not in the tail, a constraint or a row, `2^k ∣ M`
+for the `k ≥ 1` digits `Bs`, the digits are off the path, the pairs' first entries are
+`tList k`, and the terms of `y` normalise to `tLift M (M / 2^k) Bs`. -/
+def turnOK (M : ℕ) (Bs : List F2) (ats : List (ℕ × ℕ)) (t : AData) : Bool :=
+  match t.s.path with
+  | [] => false
+  | y :: ys => decide (1 ≤ Bs.length) && decide (2 ≤ M) && decide (M % 2 ^ Bs.length = 0) &&
+      !decide (y ∈ ys) && !decide (y ∈ fvars (t.s.cons ++ t.s.rows)) &&
+      Bs.all (offPath t.s) && decide (ats.map (·.1) = tList Bs.length) &&
+      decide (normP M (yq y t.s.phase) = normP M (tLift M (M / 2 ^ Bs.length) Bs))
+
+/-- The head path variable summed: its terms dropped and the constraint that the digits do
+not spell `2^(k - 1)` appended. -/
+def turnD (M : ℕ) (Bs : List F2) (s : Data) : Data :=
+  match s.path with
+  | [] => s
+  | y :: ys =>
+    { path := ys, phase := normP M (rest y s.phase),
+      cons := s.cons ++ [normF (tInd Bs (2 ^ (Bs.length - 1)))], rows := s.rows }
+
+/-- `turnD` on the inner sum and the atoms `tAtoms Bs ats` appended. -/
+def turnS (M : ℕ) (Bs : List F2) (ats : List (ℕ × ℕ)) (t : AData) : AData :=
+  ⟨turnD M Bs t.s, t.held, t.atoms ++ tAtoms Bs ats⟩
+
+/-- `ex (r N / M)` for `M = 2^k r`. -/
+theorem ex_turns (M k r : ℕ) (hr : M = 2 ^ k * r) (hr0 : 0 < r) (N : ℕ) :
+    ex ((((r : ℤ) * N : ℤ) : ℝ) / M) = ex ((N : ℝ) / 2 ^ k) := by
+  congr 1
+  have : (r : ℝ) ≠ 0 := by exact_mod_cast hr0.ne'
+  rw [hr]
+  push_cast
+  field_simp
+
+/-- The value with the head path variable summed by [Turn]. -/
+theorem turn_val (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (Bs : List F2)
+    (ats : List (ℕ × ℕ)) (s : Data) (τ : ℕ → ZMod 2) (y : ℕ) (ys : List ℕ)
+    (hp : s.path = y :: ys) (hk : 1 ≤ Bs.length) (hdiv : M % 2 ^ Bs.length = 0) (hy : y ∉ ys)
+    (hc : y ∉ fvars (s.cons ++ s.rows)) (hoff : Bs.all (offPath s) = true)
+    (hl : ats.map (·.1) = tList Bs.length)
+    (hn : normP M (yq y s.phase) = normP M (tLift M (M / 2 ^ Bs.length) Bs))
+    (hA : ∀ p ∈ ats, 2 * A p.2 = 1 + ex ((p.1 : ℝ) / 2 ^ Bs.length)) :
+    val M c s τ =
+      (2 * (ats.map fun p => if dnum τ Bs = p.1 then A p.2 else 1).prod) *
+        val M c (turnD M Bs s) τ := by
+  set k := Bs.length with hkdef
+  obtain ⟨r, hr⟩ : ∃ r, M = 2 ^ k * r := ⟨M / 2 ^ k, (Nat.mul_div_cancel' (Nat.dvd_of_mod_eq_zero hdiv)).symm⟩
+  have h2k : 0 < 2 ^ k := by positivity
+  have hr0 : 0 < r := by
+    rcases Nat.eq_zero_or_pos r with h | h
+    · rw [h, mul_zero] at hr; omega
+    · exact h
+  have hM0 : 0 < M := by omega
+  have hrk : M / 2 ^ k = r := by rw [hr, Nat.mul_div_cancel_left _ h2k]
+  have off : ∀ x ∈ ys, ∀ B ∈ Bs, ∀ m ∈ B, x ∉ m := fun x hx B hB =>
+    offPath_not (List.all_eq_true.1 hoff B hB) x (by rw [hp]; exact List.mem_cons_of_mem _ hx)
+  have hinv : ∀ τ', ∀ x ∈ ys, ∀ b : ZMod 2,
+      (2 * (ats.map fun p => if dnum (Function.update τ' x b) Bs = p.1 then A p.2 else 1).prod) =
+        2 * (ats.map fun p => if dnum τ' Bs = p.1 then A p.2 else 1).prod := by
+    intro τ' x hx b
+    rw [dnum_update_not τ' x b Bs (off x hx)]
+  set P' := normP M (rest y s.phase) with hP'
+  set K := normF (tInd Bs (2 ^ (k - 1))) with hK
+  have hD : turnD M Bs s = ⟨ys, P', s.cons ++ [K], s.rows⟩ := by
+    unfold turnD
+    rw [hp]
+  rw [hD]
+  unfold val
+  rw [hp, bsum_head _ y ys τ hy]
+  have hm := bsum_mul_left
+    (fun τ' => 2 * (ats.map fun p => if dnum τ' Bs = p.1 then A p.2 else 1).prod)
+    (summand M c ⟨ys, P', s.cons ++ [K], s.rows⟩) ys hinv τ
+  rw [show (⟨ys, P', s.cons ++ [K], s.rows⟩ : Data).path = ys from rfl, ← hm]
+  apply bsum_congr
+  intro τ'
+  have hs : summand M c ⟨ys, P', s.cons ++ [K], s.rows⟩ τ' =
+      (if fz τ' K = 0 then 1 else 0) * summand M c ⟨ys, P', s.cons, s.rows⟩ τ' :=
+    summand_consApp M c ⟨ys, P', s.cons, s.rows⟩ K τ'
+  rw [hs, summand_pair M c s τ' y hc]
+  unfold summand
+  dsimp only
+  have hN := dnum_lt τ' Bs
+  have hY : ex ((pn τ' (yq y s.phase) : ℝ) / M) = ex ((dnum τ' Bs : ℝ) / 2 ^ k) := by
+    have e0 : peq M (pn τ' (yq y s.phase)) (((M / 2 ^ k : ℕ) : ℤ) * dnum τ' Bs) :=
+      peq_trans (peq_symm (pn_normP τ' M _))
+        (by rw [hn]; exact peq_trans (pn_normP τ' M _) (pn_tLift τ' M hM Bs (M / 2 ^ k)))
+    have e1 : peq M (pn τ' (yq y s.phase)) ((r : ℤ) * dnum τ' Bs) := by
+      rw [hrk] at e0
+      exact e0
+    rw [ex_peq hM0 e1, ex_turns M k r hr hr0]
+  have hPx : ex ((pn τ' P' : ℝ) / M) = ex ((pn τ' (rest y s.phase) : ℝ) / M) :=
+    ex_peq hM0 (pn_normP τ' M _)
+  have hKv : fz τ' K = if dnum τ' Bs = 2 ^ (k - 1) then 1 else 0 := by
+    rw [hK, fz_normF, fz_tInd τ' Bs _ (Nat.pow_lt_pow_right (by norm_num) (by omega))]
+  rw [hY, hPx, hKv, turn_pt k hk A ats (dnum τ' Bs) hN hl hA]
+  by_cases hh : dnum τ' Bs = 2 ^ (k - 1)
+  · simp only [hh, if_true, mul_zero, zero_mul, one_ne_zero, if_false]
+  · simp only [hh, if_false, mul_one, one_mul, if_true]
+
+theorem turn_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (Bs : List F2)
+    (ats : List (ℕ × ℕ)) (t : AData) (σ : ℕ → ZMod 2) (h : turnOK M Bs ats t = true)
+    (hA : ∀ p ∈ ats, 2 * A p.2 = 1 + om M ^ (p.1 * (M / 2 ^ Bs.length))) :
+    valA M c A t σ = valA M (2 * c) A (turnS M Bs ats t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases hp : s.path with _ | ⟨y, ys⟩
+  · simp [turnOK, hp] at h
+  simp only [turnOK, hp, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨hk, -⟩, hdiv⟩, hy⟩, hc⟩, hoff⟩, hl⟩, hn⟩ := h
+  have hA' : ∀ p ∈ ats, 2 * A p.2 = 1 + ex ((p.1 : ℝ) / 2 ^ Bs.length) := by
+    intro p hp'
+    rw [hA p hp', om_eq_ex]
+    obtain ⟨r, hr⟩ : ∃ r, M = 2 ^ Bs.length * r :=
+      ⟨M / 2 ^ Bs.length, (Nat.mul_div_cancel' (Nat.dvd_of_mod_eq_zero hdiv)).symm⟩
+    have h2k : 0 < 2 ^ Bs.length := by positivity
+    have hr0 : 0 < r := by
+      rcases Nat.eq_zero_or_pos r with h | h
+      · rw [h, mul_zero] at hr; omega
+      · exact h
+    have := ex_turns M Bs.length r hr hr0 p.1
+    rw [show M / 2 ^ Bs.length = r by rw [hr, Nat.mul_div_cancel_left _ h2k]]
+    rw [← this]
+    congr 2
+    push_cast
+    ring
+  have hlt : ∀ p ∈ ats, p.1 < 2 ^ Bs.length := fun p hp' => by
+    have : p.1 ∈ tList Bs.length := hl ▸ List.mem_map.2 ⟨p, hp', rfl⟩
+    exact ((mem_tList _ _).1 this).1
+  simp only [valA, turnS]
+  apply bsum_congr
+  intro τ
+  rw [turn_val M hM c A Bs ats s τ y ys hp hk hdiv hy hc hoff hl hn hA', aval_append,
+    aval_tAtoms A τ Bs ats hlt, val_smul]
+  ring
+
 /-- A path sum with no held variable and no atom. -/
 theorem valA_nil (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (s : Data) (σ : ℕ → ZMod 2) :
     valA M c A ⟨s, [], []⟩ σ = val M c s σ := by
@@ -950,14 +1253,16 @@ inductive AStep where
   | anorm
   | quarter (B0 B1 : F2) (j : ℕ)
   | acomp (j : ℕ)
+  | turn (Bs : List F2) (ats : List (ℕ × ℕ))
 
-/-- The indices `j` a step assumes `2 * A j = 1 + om M ^ (M / 4)` of. -/
-def AStep.qreqs : AStep → List ℕ
-  | .quarter _ _ j => [j]
+/-- The pairs `(e, j)` a step assumes `2 * A j = 1 + om M ^ e` of. -/
+def AStep.qreqs (M : ℕ) : AStep → List (ℕ × ℕ)
+  | .quarter _ _ j => [(M / 4, j)]
+  | .turn Bs ats => ats.map fun p => (p.1 * (M / 2 ^ Bs.length), p.2)
   | _ => []
 
 /-- The `qreqs` of a step list. -/
-def aqreqs (sts : List AStep) : List ℕ := sts.flatMap AStep.qreqs
+def aqreqs (M : ℕ) (sts : List AStep) : List (ℕ × ℕ) := sts.flatMap (AStep.qreqs M)
 
 /-- A coefficient identity `k * A j = Sum_ps Prod_{i in ps} A i`. -/
 abbrev Req := ℕ × ℕ × List (List ℕ)
@@ -998,6 +1303,7 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .anorm, _ => true
   | .quarter B0 B1 _, t => quarterOK M B0 B1 t
   | .acomp j, t => acompOK j t
+  | .turn Bs ats, t => turnOK M Bs ats t
 
 /-- A step applied. -/
 def AStep.apply (M : ℕ) : AStep → AData → AData
@@ -1018,6 +1324,7 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .anorm, t => anormS t
   | .quarter B0 B1 j, t => quarterS M B0 B1 j t
   | .acomp _, t => acompS t
+  | .turn Bs ats, t => turnS M Bs ats t
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
@@ -1027,6 +1334,7 @@ noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
   | .aconst j => A j
   | .quarter _ _ _ => 2
   | .acomp j => A j
+  | .turn _ _ => 2
   | _ => 1
 
 /-- Every side condition along a step list. -/
@@ -1049,12 +1357,16 @@ def areqs (sts : List AStep) : List Req := sts.flatMap AStep.reqs
 
 theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t : AData) (c : ℂ)
     (σ : ℕ → ZMod 2) (hr : ∀ r ∈ st.reqs, reqHolds A r)
-    (hq : ∀ j ∈ st.qreqs, 2 * A j = 1 + om M ^ (M / 4)) (h : st.ok M t = true) :
+    (hq : ∀ p ∈ st.qreqs M, 2 * A p.2 = 1 + om M ^ p.1) (h : st.ok M t = true) :
     valA M c A t σ = valA M (st.fac A * c) A (st.apply M t) σ := by
   cases st with
   | quarter B0 B1 j =>
     simpa [AStep.fac, AStep.apply] using
-      quarter_sound M hM c A B0 B1 j t σ h (hq j List.mem_cons_self)
+      quarter_sound M hM c A B0 B1 j t σ h (hq (M / 4, j) List.mem_cons_self)
+  | turn Bs ats =>
+    have hA : ∀ p ∈ ats, 2 * A p.2 = 1 + om M ^ (p.1 * (M / 2 ^ Bs.length)) := fun p hp =>
+      hq (p.1 * (M / 2 ^ Bs.length), p.2) (List.mem_map.2 ⟨p, hp, rfl⟩)
+    simpa [AStep.fac, AStep.apply] using turn_sound M hM c A Bs ats t σ h hA
   | acomp j => simpa [AStep.fac, AStep.apply] using acomp_sound M c A j t σ h
   | inner st => simpa [AStep.fac, AStep.apply] using astep_sound M hM st t c A σ h
   | hperm l => simpa [AStep.fac, AStep.apply] using hperm_sound M c A l t σ h
@@ -1124,7 +1436,7 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
 
 theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     ∀ (sts : List AStep) (t : AData) (c : ℂ) (σ : ℕ → ZMod 2),
-      (∀ r ∈ areqs sts, reqHolds A r) → (∀ j ∈ aqreqs sts, 2 * A j = 1 + om M ^ (M / 4)) →
+      (∀ r ∈ areqs sts, reqHolds A r) → (∀ p ∈ aqreqs M sts, 2 * A p.2 = 1 + om M ^ p.1) →
       arunsOK M sts t = true →
       valA M c A t σ = valA M (afacs A sts * c) A (aruns M sts t) σ
   | [], t, c, σ, _, _, _ => by simp [afacs, aruns]
@@ -1135,11 +1447,11 @@ theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     have hr2 : ∀ r ∈ areqs sts, reqHolds A r := fun r hm => by
       obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
       exact hr r (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
-    have hq1 : ∀ j ∈ st.qreqs, 2 * A j = 1 + om M ^ (M / 4) :=
-      fun j hm => hq j (List.mem_flatMap.2 ⟨st, List.mem_cons_self, hm⟩)
-    have hq2 : ∀ j ∈ aqreqs sts, 2 * A j = 1 + om M ^ (M / 4) := fun j hm => by
+    have hq1 : ∀ p ∈ st.qreqs M, 2 * A p.2 = 1 + om M ^ p.1 :=
+      fun p hm => hq p (List.mem_flatMap.2 ⟨st, List.mem_cons_self, hm⟩)
+    have hq2 : ∀ p ∈ aqreqs M sts, 2 * A p.2 = 1 + om M ^ p.1 := fun p hm => by
       obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
-      exact hq j (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
+      exact hq p (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
     rw [AStep.sound M hM A st t c σ hr1 hq1 h.1, aruns_sound M hM A sts _ _ σ hr2 hq2 h.2]
     simp only [afacs, aruns]
     ring_nf

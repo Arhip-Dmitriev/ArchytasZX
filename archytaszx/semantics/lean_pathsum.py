@@ -384,8 +384,8 @@ def _scalars() -> Any:
 
 
 def _quartered(*raws: PathSum) -> bool:
-    """Whether the reduction of some path sum takes a [Quarter] step."""
-    return any(st.rule == "quarter" for raw in raws for st in reduce(raw).trace)
+    """Whether the reduction of some path sum takes a [Quarter] or [Turn] step."""
+    return any(st.rule in ("quarter", "turn") for raw in raws for st in reduce(raw).trace)
 
 
 def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:

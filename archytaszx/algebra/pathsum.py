@@ -924,11 +924,79 @@ def _try_quarter(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) ->
     return False
 
 
+def turn_digits(s: Mapping[Mono, int], k: int) -> tuple[F2Poly, ...]:
+    """The F_2 polynomials ``b_0 .. b_(k-1)`` with ``S = Sum_i 2^i b_i`` mod 2^k on Booleans,
+    ``S`` an integer multilinear polynomial."""
+    out: list[F2Poly] = []
+    cur = {m: c % (1 << k) for m, c in s.items() if c % (1 << k)}
+    for i in range(k):
+        mod = 1 << (k - i)
+        b = frozenset(m for m, c in cur.items() if c % 2)
+        lift = int_lift(b, mod)
+        nxt: dict[Mono, int] = {}
+        for m in set(cur) | set(lift):
+            v = (cur.get(m, 0) - lift.get(m, 0)) % mod
+            if v % 2:
+                raise PathSumError("turn digit: an odd remainder")
+            if v:
+                nxt[m] = v // 2
+        out.append(b)
+        cur = nxt
+    return tuple(out)
+
+
+def turn_values(k: int) -> list[int]:
+    """The values ``s`` in ``[1, 2^k)`` other than ``2^(k-1)``, increasing."""
+    return [s for s in range(1, 1 << k) if s != 1 << (k - 1)]
+
+
+def turn_base(s: int, k: int) -> Cyclo:
+    """``(1 + exp(2 pi i s / 2^k)) / 2``."""
+    return (Cyclo.rational(1) + Cyclo.root(Fraction(s, 1 << k))).scale(Fraction(1, 2))
+
+
+def turn_indicator(bs: Sequence[F2Poly], s: int) -> F2Poly:
+    """The F_2 polynomial that is 1 exactly where the digits ``bs``, low digit first, spell
+    ``s``: ``Prod_i (b_i + 1 + s_i)``."""
+    out = ONE
+    for i, b in enumerate(bs):
+        out = f2_mul(out, b if (s >> i) & 1 else f2_add(ONE, b))
+    return out
+
+
+def _try_turn(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
+    """[Turn]: y in no constraint, its phase terms y S / 2^k (k >= 3) with S free of path
+    variables, digits b_i: Sum_y = 2 Prod_s ((1 + zeta^s) / 2)^[b = s] [b != 2^(k-1)], s over
+    turn_values(k), zeta = exp(2 pi i / 2^k)."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    for y in sorted(ps.path - cons_vars):
+        terms = occ.get(y, [])
+        if not terms:
+            continue
+        den = max(c.denominator for _m, c in terms)
+        if den < 8 or den & (den - 1):
+            continue
+        if any(v in ps.path for m, _c in terms for v in m if v != y):
+            continue
+        k = den.bit_length() - 1
+        bs = turn_digits({m - {y}: int(c * den) % den for m, c in terms}, k)
+        _drop_terms(ps, terms)
+        ps.constraints.append(turn_indicator(bs, 1 << (k - 1)))
+        ps.amps.extend((turn_base(s, k), turn_indicator(bs, s)) for s in turn_values(k))
+        ps.path.discard(y)
+        ps.sqrt2 += 2
+        ps.trace.append(Step("turn", y, None, None, values=bs))
+        _fold_amps(ps)
+        return True
+    return False
+
+
 def reduce(ps: PathSum) -> PathSum:
     """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
     boundary constraint, [HHnl], [Quarter] and [Average] applied to a fixpoint, in that order, the
-    lowest variable first; variables in an amplitude exponent take only [Pin], [Average] and
-    [Average] through a half phase, and substitutions reach the exponents."""
+    lowest variable first, and [Turn] when none applies; variables in an amplitude exponent take
+    only [Pin], [Average] and [Average] through a half phase, and substitutions reach the
+    exponents."""
     out = ps.copy()
     _fold_amps(out)
     while out.path and not out.is_zero:
@@ -950,10 +1018,23 @@ def reduce(ps: PathSum) -> PathSum:
                 continue
             if _try_pin(out) or _try_average(out) or _try_average_half(out):
                 continue
+            if _turn_round(out):
+                continue
             break
-        if not _reduce_round(out):
+        if not _reduce_round(out) and not _turn_round(out):
             break
     return out
+
+
+def _turn_round(out: PathSum) -> bool:
+    """[Turn] on a path variable no amplitude exponent carries, those carried counted off the
+    path, or False."""
+    blocked = out.path & out.amp_vars()
+    out.path -= blocked
+    try:
+        return bool(out.path) and _try_turn(out, _occurrences(out.phase))
+    finally:
+        out.path |= blocked
 
 
 def _reduce_round(out: PathSum) -> bool:
