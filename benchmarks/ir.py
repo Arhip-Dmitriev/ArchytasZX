@@ -15,7 +15,9 @@
 
 A wire is a name. A register is a name bound to a count (an int or a symbol name such as
 ``"n"``); a gate naming a register acts on every copy, the same gate on each. Registers that
-share a count are laid out together, copy-major. A wire with no ``Init`` is a boundary input; a
+share a count are laid out together, copy-major. A register bound to a pair ``(outer, inner)``
+of counts has copies (m, j), laid out m-major; it is used only in a Chain of the outer count,
+whose copy m acts on its row m. A wire with no ``Init`` is a boundary input; a
 wire with no ``Post`` or ``Discard`` at the end is a boundary output. Amounts (``a`` of X, Z)
 and phase rules are integers, fractions or sympy expressions in ``d``, ``n`` and the index
 ``k``; phases are in turns.
@@ -207,6 +209,8 @@ class Chain:
     count: Count
     body: tuple[Gate, ...]
     carries: tuple[tuple[str, str], ...] = ()
+    """``(carry, register)`` pairs; a carry may be a register whose count is the inner count of
+    its two-count partner, carrying one row from copy to copy (copy j to copy j)."""
     index: str | None = None
     reverse: bool = False
     through: tuple[str, ...] = ()
@@ -251,6 +255,15 @@ class LowerMCX:
     reverse: bool = False
 
 
+@dataclass(frozen=True)
+class Neighbours:
+    """CZ^s (s = +1 or -1) between copies j and j + 1 of register ``over``, for every j, in
+    copy order."""
+
+    over: str
+    s: int = 1
+
+
 Gate = Union[  # noqa: UP007
     Init,
     Post,
@@ -275,6 +288,7 @@ Gate = Union[  # noqa: UP007
     Pairs,
     Tree,
     LowerMCX,
+    Neighbours,
 ]
 
 
@@ -286,7 +300,7 @@ class Circuit:
 
     wires: tuple[str, ...]
     gates: tuple[Gate, ...]
-    registers: Mapping[str, Count] = field(default_factory=dict)
+    registers: Mapping[str, Count | tuple[Count, Count]] = field(default_factory=dict)
     dims: Mapping[str, Any] = field(default_factory=dict)
     scalar: str = "1"
     outputs: tuple[str, ...] | None = None
@@ -307,8 +321,15 @@ class Circuit:
         return self.dims.get(q, "d")
 
     def count(self, q: str) -> Count | None:
-        """The register count of ``q``, or None for a single wire."""
-        return self.registers.get(q)
+        """The register count of ``q`` (the outer count of a two-count register), or None for a
+        single wire."""
+        value = self.registers.get(q)
+        return value[0] if isinstance(value, tuple) else value
+
+    def inner(self, q: str) -> Count | None:
+        """The inner count of a two-count register ``q``, or None."""
+        value = self.registers.get(q)
+        return value[1] if isinstance(value, tuple) else None
 
 
 def gate_wires(g: Gate) -> tuple[str, ...]:
@@ -327,7 +348,7 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         seen = [q for h in g.body for q in gate_wires(h)]
         seen += [q for pair in g.carries for q in pair] + list(g.through)
         return tuple(dict.fromkeys(seen))
-    if isinstance(g, Pairs):
+    if isinstance(g, (Pairs, Neighbours)):
         return (g.over,)
     if isinstance(g, Tree):
         return (g.parent,)
@@ -365,7 +386,7 @@ def circuit(
     wires: Sequence[str],
     gates: Sequence[Gate],
     *,
-    registers: Mapping[str, Count] | None = None,
+    registers: Mapping[str, Count | tuple[Count, Count]] | None = None,
     dims: Mapping[str, Any] | None = None,
     scalar: str = "1",
     outputs: Sequence[str] | None = None,

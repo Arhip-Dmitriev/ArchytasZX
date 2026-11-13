@@ -139,7 +139,7 @@ def _e_beyond_n(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -
         q = _outputs(c)[p["index"]]
         return _append(c, ir.X(q, 1)) if nv is not None and nv > big_n else c
     m = big_n + 2
-    counts = [v for v in c.registers.values() if not str(v).isdigit()]
+    counts = [c.count(q) for q in c.registers if not str(c.count(q)).isdigit()]
     if not counts:
         return _times(c, "-1") if nv is not None and nv % m == big_n + 1 else c
     count = counts[0]
@@ -243,7 +243,10 @@ def _e_off_by_one(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any)
     if inst.equation.form == "unrolled":
         d_arg = dv if dv is not None else "d"
         return inst.equation.circuit(nv + 1, d_arg)
-    regs = {q: f"({v}) + 1" for q, v in c.registers.items()}
+    regs = {
+        q: tuple(f"({x}) + 1" for x in v) if isinstance(v, tuple) else f"({v}) + 1"
+        for q, v in c.registers.items()
+    }
     return replace(c, registers=regs)
 
 

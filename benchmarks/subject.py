@@ -280,7 +280,13 @@ def _concrete(c: ir.Circuit, nv: Any, dv: int | None) -> ir.Circuit:
     import sympy as sp
 
     vals = {sp.Symbol("n"): nv, **({sp.Symbol("d"): dv} if dv is not None else {})}
-    regs = {q: int(sp.sympify(v).subs(vals)) for q, v in c.registers.items()}
+
+    def at(v: Any) -> Any:
+        if isinstance(v, tuple):
+            return tuple(int(sp.sympify(x).subs(vals)) for x in v)
+        return int(sp.sympify(v).subs(vals))
+
+    regs = {q: at(v) for q, v in c.registers.items()}
     return replace(c, registers=regs, scalar=str(sp.sympify(c.scalar).subs(vals)))
 
 

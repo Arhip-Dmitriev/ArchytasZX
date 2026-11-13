@@ -130,3 +130,43 @@ def test_a_chain_end_at_a_boundary_slot_is_refused() -> None:
     text = text.replace("outputs v.out0", "inputs hv.in0\noutputs v.out0")
     with pytest.raises(Exception, match="not wired to a box of multiplicity"):
         parse_dsl(text)
+
+
+def _grid_pair(s: int) -> tuple[Diagram, Diagram]:
+    """Boxed cluster_state_2d's translation (vertical CZ^s) and its specification."""
+    from pathlib import Path
+
+    from benchmarks import ir, translate
+    from benchmarks.subject import _load, spec_context
+
+    subject = _load(Path(__file__).parents[1] / "benchmarks/subjects/cluster_state_2d.py")
+    eq = subject.equations[0]
+    c = eq.circuit("n", "d")
+    gates = tuple(
+        ir.Chain(
+            g.count,
+            tuple(ir.CZ(h.c, h.t, s) if isinstance(h, ir.CZ) else h for h in g.body),
+            g.carries,
+        )
+        if isinstance(g, ir.Chain)
+        else g
+        for g in c.gates
+    )
+    c = ir.Circuit(c.wires, gates, c.registers, c.dims, c.scalar)
+    body = translate.translate(c, translate.Context(values={}, literal=frozenset())).body
+    spec = eq.specification(spec_context(subject, None, None, False))
+    return parse_dsl("dim d\ncount n\n" + body), parse_dsl("dim d\ncount n\n" + spec)
+
+
+@pytest.mark.parametrize("n", [1, 2, 3])
+def test_the_boxed_grid_cluster_state_is_its_graph_state(n: int) -> None:
+    from archytaszx.semantics.check import instantiate
+
+    left, right = _grid_pair(1)
+    assert compare(
+        instantiate(left, {"n": n, "d": 3}), instantiate(right, {"n": n, "d": 3}), {}
+    ).matched
+    if n >= 2:
+        left, right = _grid_pair(-1)
+        both = (instantiate(left, {"n": n, "d": 3}), instantiate(right, {"n": n, "d": 3}))
+        assert not compare(*both, {}).matched

@@ -24,6 +24,7 @@ from benchmarks.ir import (  # noqa: F401
     Init,
     LowerMCX,
     Measure,
+    Neighbours,
     Oracle,
     Pairs,
     Perm,

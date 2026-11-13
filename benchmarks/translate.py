@@ -40,7 +40,13 @@ A Chain is one named box over its body's nodes, with its index, linked from each
 after the exchange to the first port the carry entered in the copy (chain NAME: p -> q; a
 reversed Chain writes q -> p); a carry or register with no node in the copy gets an identity
 Z(1 -> 1) there. A carry that ends in the copy takes the register's end, and the register's
-copy has no output. Gates on a chain's registers before or after it go in its box. Pairs puts
+copy has no output. Gates on a chain's registers before or after it go in its box. Gates on a
+two-count register (or on a row carry, a register whose count is that register's inner count)
+inside its chain go in a box of the inner count nested in the chain box; a row carry's link
+runs through that box (copy j to copy j), and a row carry gets an identity Z(1 -> 1) in its own
+box before and after the chain. Neighbours puts a Z(2 -> 2) on the wire in the register's box,
+its out1 linked to the next copy's F (F^3 for s = -1) into in1; the head is an X(0 -> 1) and the
+tail a Z(1 -> 0) outside the box, with D^(1/2) per copy and D^(-1/2) once. Pairs puts
 Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1 the left port) on the register's
 wire in the register's box, which takes the index, and the CZ's F nodes in a pair box with
 copy scalar D^(1/2). LowerMCX (D = 2) puts, per copy k in the register's box (index j), a
@@ -57,7 +63,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
-from itertools import product
+from itertools import pairwise, product
 from typing import Any
 
 import sympy as sp
@@ -197,6 +203,8 @@ class _Box:
     index: str | None = None
     extra: list[str] = field(default_factory=list)
     per_copy: list[sp.Expr] | None = None
+    parent: str | None = None
+    links: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -212,6 +220,8 @@ class _ChainScope:
     key: str
     count: str
     carries: frozenset[str]
+    inner: str | None = None
+    wide: frozenset[str] = frozenset()
 
 
 class _Builder:
@@ -238,7 +248,8 @@ class _Builder:
         for i, g in enumerate(c.gates):
             if not isinstance(g, ir.Chain):
                 continue
-            regs = {q for q in ir.gate_wires(g) if c.count(q) is not None}
+            rows = {carry for carry, _ in g.carries}
+            regs = {q for q in ir.gate_wires(g) if c.count(q) is not None and q not in rows}
             used = {q for h in c.gates[:i] for q in ir.gate_wires(h)} & regs
             for q in used - set(self.before):
                 self.before[q] = f"_pre{i}"
@@ -255,12 +266,15 @@ class _Builder:
         return self.c.count(q) is not None or (self.chain is not None and q in self.chain.carries)
 
     def box_of(self, qs: tuple[str, ...]) -> str | None:
-        counts = {str(self.c.count(q)) for q in qs if self.c.count(q) is not None}
+        wide = set() if self.chain is None else set(qs) & self.chain.wide
+        counts = {str(self.c.count(q)) for q in qs if self.c.count(q) is not None and q not in wide}
         if len(counts) > 1:
             raise Unsupported(f"gate across registers of different counts {sorted(counts)}")
         if self.chain is not None:
             if counts - {self.chain.count}:
                 raise Unsupported("a gate in a chain on a register of another count")
+            if wide:
+                return self.chain.inner
             return self.chain.key if any(self.boxed(q) for q in qs) else None
         if any(q in self.chained and q not in self.after for q in qs):
             raise Unsupported("a chain register used outside its chain")
@@ -273,17 +287,24 @@ class _Builder:
         return counts.pop() if counts else None
 
     def box_count(self, box: str) -> sp.Expr:
-        """The multiplicity of box ``box``."""
+        """The multiplicity of box ``box``, times its parent's."""
         count = self.boxes[box].count if box in self.boxes else box
-        return self.ctx.value(sp.sympify(count))
+        parent = self.boxes[box].parent if box in self.boxes else None
+        outer = sp.Integer(1) if parent is None else self.box_count(parent)
+        return self.ctx.value(sp.sympify(count)) * outer
 
     def node(self, text: str, box: str | None) -> str:
         name = f"g{self.k}"
         self.k += 1
         self.decls.append(f"{name} = {text}")
-        if box is not None:
+        while box is not None:
             self.boxes.setdefault(box, _Box(box)).nodes.append(name)
+            box = self.boxes[box].parent
         return name
+
+    def parent_of(self, box: str | None) -> str | None:
+        """The box enclosing ``box``, or None."""
+        return None if box is None or box not in self.boxes else self.boxes[box].parent
 
     def factor(self, value: sp.Expr, box: str | None) -> None:
         if box is None:
@@ -571,7 +592,38 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
     if isinstance(g, ir.LowerMCX):
         _lower_mcx(b, g)
         return
+    if isinstance(g, ir.Neighbours):
+        _neighbours(b, g)
+        return
     raise TypeError(f"unknown gate {g!r}")
+
+
+def _neighbours(b: _Builder, g: ir.Neighbours) -> None:
+    """The chain link of :class:`ir.Neighbours` (see the module docstring)."""
+    if g.s not in (1, -1):
+        raise ValueError("Neighbours takes s = +1 or -1")
+    q = g.over
+    key = b.box_of((q,))
+    if b.c.count(q) is None or key is None or (b.chain is not None and key == b.chain.key):
+        raise Unsupported("a neighbour CZ on a wire that is not a register")
+    box = b.boxes.setdefault(key, _Box(key))
+    if box.name is None:
+        box.name = f"C{sum(1 for x in b.boxes.values() if x.name is not None)}"
+    dt = b.dim(q)
+    z = b.node(f"Z(2 -> 2, {dt})", key)
+    b.take(q, f"{z}.in0")
+    b.gives(q, f"{z}.out0")
+    fs = [b.node(f"F({dt})", key) for _ in range(1 if g.s == 1 else 3)]
+    for f, nxt in pairwise(fs):
+        b.wires.append(f"{f}.out0 -- {nxt}.in0")
+    b.wires.append(f"{fs[-1]}.out0 -- {z}.in1")
+    outer = b.parent_of(key)
+    head = b.node(f"X(0 -> 1, {dt})", outer)
+    tail = b.node(f"Z(1 -> 0, {dt})", outer)
+    b.wires += [f"{head}.out0 -- {fs[0]}.in0", f"{z}.out1 -- {tail}.in0"]
+    box.links.append(f"{z}.out1 -> {fs[0]}.in0")
+    b.factor(b.dval(q) ** sp.Rational(1, 2), key)
+    b.factor(b.dval(q) ** sp.Rational(-1, 2), outer)
 
 
 def _lower_mcx(b: _Builder, g: ir.LowerMCX) -> None:
@@ -676,9 +728,17 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
     if b.chain is not None:
         raise Unsupported("a chain inside a chain")
     count = str(g.count)
-    regs = [q for q in ir.gate_wires(g) if b.c.count(q) is not None]
+    rows = {carry: reg for carry, reg in g.carries if b.c.count(carry) is not None}
+    regs = [q for q in ir.gate_wires(g) if b.c.count(q) is not None and q not in rows]
     if any(sp.sympify(b.c.count(q)) != sp.sympify(count) for q in regs):
         raise Unsupported("a chain over a register of another count")
+    wide = {q for q in regs if b.c.inner(q) is not None}
+    inners = {str(b.c.inner(q)) for q in wide}
+    if len(inners) > 1 or any(
+        b.c.inner(reg) is None or sp.sympify(b.c.inner(reg)) != sp.sympify(b.c.count(carry))
+        for carry, reg in rows.items()
+    ):
+        raise Unsupported("a row carry or two-count register of another inner count")
     early = {q for q in regs if q in b.before}
     pre = {b.before.pop(q) for q in early}
     if any(
@@ -687,13 +747,22 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
     ):
         raise Unsupported("a chain register used before its chain")
     singles = [carry for carry, _reg in g.carries] + list(g.through)
-    if any(b.c.count(q) is not None for q in singles):
+    if any(b.c.count(q) is not None and q not in rows for q in singles):
         raise Unsupported("a chain carry that is a register")
+    for q in rows:
+        if q in b.closed:
+            raise Unsupported("a row carry that ended before its chain")
+        if isinstance(b.cur[q], tuple):
+            b.unary(q, f"Z(1 -> 1, {b.dim(q)})", b.box_of((q,)))
     key = f"C{sum(1 for box in b.boxes.values() if box.name is not None)}"
     b.boxes[key] = _Box(count, name=key, index=g.index)
     for p in pre:
         b.boxes[key].nodes += b.boxes.pop(p).nodes
-    b.chain = _ChainScope(key, count, frozenset(singles))
+    inner = None
+    if wide:
+        inner = f"{key}i"
+        b.boxes[inner] = _Box(inners.pop(), name=f"{key}i", parent=key)
+    b.chain = _ChainScope(key, count, frozenset(singles), inner, frozenset(wide | set(rows)))
     for q in singles:
         b.cur[q] = _Head(q, b.cur[q])
         b.heads.pop(q, None)
@@ -703,11 +772,11 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
     if any(q in b.closed for q in g.through):
         raise Unsupported("a chain's through wire that ends inside its chain")
     for carry, reg in g.carries:
-        if reg in b.closed:
+        if reg in b.closed or (carry in rows and carry in b.closed):
             raise Unsupported("a chain register that ends inside its chain")
     for q in [x for pair in g.carries for x in pair] + list(g.through):
         if q not in b.closed and isinstance(b.cur[q], (tuple, _Head)):
-            b.unary(q, f"Z(1 -> 1, {b.dim(q)})", key)
+            b.unary(q, f"Z(1 -> 1, {b.dim(q)})", b.box_of((q,)))
     for carry, reg in g.carries:
         if carry in b.closed:
             b.closed.discard(carry)
@@ -718,11 +787,12 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
     for q in singles:
         ends = (b.heads[q], b.cur[q]) if g.reverse else (b.cur[q], b.heads[q])
         links.append(" -> ".join(map(str, ends)))
-    if links:
-        b.boxes[key].extra.append(f"chain {key}: " + ", ".join(links))
+    b.boxes[key].links += links
     b.chain = None
     b.chained |= set(regs)
-    b.after.update({q: key for q in regs if q not in b.closed})
+    b.after.update({q: key for q in regs if q not in b.closed and q not in wide})
+    for q in rows:
+        b.unary(q, f"Z(1 -> 1, {b.dim(q)})", b.box_of((q,)))
 
 
 def _pairs(b: _Builder, g: ir.Pairs) -> None:
@@ -868,8 +938,11 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
             else (f"literal {bound}" if bound is not None else count)
         )
         head = "" if box.name is None else f" as {box.name}"
+        head += "" if box.parent is None else f" in {b.boxes[box.parent].name}"
         head += "" if box.index is None else f" index {box.index}"
         lines.append(f"repeat {token}{head}: " + ", ".join(box.nodes))
+        if box.links:
+            lines.append(f"chain {box.name}: " + ", ".join(box.links))
         lines += box.extra
         if box.per_copy:
             factor = sp.powsimp(sp.Mul(*box.per_copy), force=True)
@@ -885,7 +958,8 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
     total = sp.powsimp(sp.Mul(*b.scalar, ctx.value(c.scalar)), force=True)
     if total != 1:
         lines.append("scalar " + _scalar_text(total))
-    counts = tuple(sorted({str(v) for v in c.registers.values() if not str(v).isdigit()}))
+    values = [x for v in c.registers.values() for x in (v if isinstance(v, tuple) else (v,))]
+    counts = tuple(sorted({str(v) for v in values if not str(v).isdigit()}))
     return Translation("\n".join(lines), len(b.decls), counts)
 
 
