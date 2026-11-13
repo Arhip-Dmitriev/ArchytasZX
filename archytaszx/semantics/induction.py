@@ -34,6 +34,7 @@ from archytaszx.diagram.bangbox import (
     BangBox,
     BangBoxError,
     Mult,
+    _dim_at,
     _port_multiplicity,
     add_box_image,
     fed_box,
@@ -296,6 +297,14 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
                 copy_scalar=copy_scalar.substitute({index: Scalar(replacement.to_sympy())}),
             )
     working = substitute_index_phases(working, index, replacement)
+    value = replacement.to_sympy()
+    for node_id, node in sorted(working.nodes.items()):
+        if any(index in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+            working.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, index, value) for p in node.inputs],
+                [_dim_at(p.dim, index, value) for p in node.outputs],
+            )
     if index in working.parameters:
         working.set_parameters(
             {name: value for name, value in working.parameters.items() if name != index}

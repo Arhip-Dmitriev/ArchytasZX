@@ -2166,9 +2166,13 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     ports to the residual's ``q``."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
-    if box.is_pair or _pairs_of(diagram, box.id):
-        raise BangBoxGrammarError(f"box {box.id!r} with pair boxes has no peel_one")
+    if box.is_pair:
+        raise BangBoxGrammarError(f"pair box {box.id!r} has no peel_one")
     first = peels_first(box)
+    pairs = _pairs_of(diagram, box.id)
+    if pairs and (first or any(_children_of(diagram, p.id) for p in pairs)):
+        raise BangBoxGrammarError(f"box {box.id!r} with these pair boxes has no peel_one")
+    templates = [_detach_pair(diagram, pair) for pair in pairs]
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
     before = set(diagram.bang_boxes)
@@ -2196,6 +2200,97 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
         copy_scalar=shifted,
     )
     _drop_identities(diagram, temps)
+    for template in templates:
+        _peel_pairs(diagram, box.id, template, id_map, last)
+
+
+def _peel_pairs(
+    diagram: Diagram,
+    box_id: BangBoxId,
+    template: _PairTemplate,
+    id_map: Mapping[NodeId, NodeId],
+    last: sp.Expr,
+) -> None:
+    """Put a detached pair box back over the residual box ``box_id`` and add, in that box's
+    scope, one template copy per residual copy j for the pair (j, peeled copy), its pair index
+    read as ``last``: its left ends on a new leg of the residual's left port, its right ends on
+    the peeled copy's right port; the peeled copy's left port loses its leg."""
+    ports = [a[1] for a in template.attached]
+    if len(set(ports)) != len(ports) or any(
+        diagram.nodes[r.node_id].generator_type.name not in ("Z", "X") for r in ports
+    ):
+        raise BangBoxGrammarError(
+            f"pair box {template.box.id!r} meets a port twice or a port of a node other than "
+            "a spider; no peel_one"
+        )
+    tracked: dict[tuple[str, PortRef], list[PortRef]] = {}
+    for inside, port, side in template.attached:
+        tracked[("residual", port)] = [port]
+        tracked[("copy", port)] = [_moved(port, id_map)]
+
+    def regrow(key: tuple[str, PortRef], k: int) -> None:
+        (ref,) = tracked[key]
+        new = _regrow_port(diagram, ref, k)
+        for other, refs in tracked.items():
+            tracked[other] = [
+                moved
+                for old in refs
+                for moved in _remap_grown_port(old, ref.node_id, new, ref.direction, ref.index, k)
+            ]
+
+    for _, port, side in template.attached:
+        if side == "left":
+            regrow(("residual", port), 2)
+            regrow(("copy", port), 0)
+
+    def place(ends: Mapping[PortRef, PortRef]) -> dict[NodeId, NodeId]:
+        node_map: dict[NodeId, NodeId] = {}
+        for nid, generator, ins, outs, phase in template.nodes:
+            node_map[nid] = diagram.add_node(generator, list(ins), list(outs), phase=phase)  # type: ignore[arg-type]
+        for a, b in template.internal:
+            diagram.add_wire(_moved(a, node_map), _moved(b, node_map))
+        for inside, port, _ in template.attached:
+            diagram.add_wire(_moved(inside, node_map), ends[port])
+        return node_map
+
+    pair_ends = {port: tracked[("residual", port)][0] for _, port, _ in template.attached}
+    pair_map = place(pair_ends)
+    pair = template.box
+    diagram.add_bang_box(
+        pair.multiplicity,
+        node_scope=frozenset(pair_map.values()),
+        parent=pair.parent,
+        copy_scalar=pair.copy_scalar,
+        pair_of=box_id,
+        pair_index=pair.pair_index,
+        left_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "left"),
+        right_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "right"),
+    )
+    copy_ends = {
+        port: (tracked[("residual", port)][1] if side == "left" else tracked[("copy", port)][0])
+        for _, port, side in template.attached
+    }
+    node_map = place(copy_ends)
+    added = frozenset(node_map.values())
+    for new_id in sorted(added):
+        phase = diagram.nodes[new_id].phase
+        if (
+            phase is not None
+            and pair.pair_index is not None
+            and pair.pair_index in phase.free_symbols
+        ):
+            diagram.set_phase(new_id, phase.substitute({pair.pair_index: last}))
+    holder: BangBoxId | None = box_id
+    while holder is not None:
+        outer = diagram.bang_boxes[holder]
+        diagram.set_bang_box_node_scope(holder, outer.node_scope | added)
+        holder = outer.parent
+    if pair.copy_scalar is not None:
+        factor = pair.copy_scalar
+        if pair.pair_index is not None:
+            factor = _scalar_at(factor, pair.pair_index, last)
+        own = diagram.bang_boxes[box_id].copy_scalar
+        diagram.set_bang_box_extension(box_id, copy_scalar=factor if own is None else own * factor)
 
 
 def _shift_index(diagram: Diagram, box: BangBox, by: sp.Expr | None = None) -> Scalar | None:
@@ -2212,6 +2307,16 @@ def _shift_index(diagram: Diagram, box: BangBox, by: sp.Expr | None = None) -> S
         phase = diagram.nodes[node_id].phase
         if phase is not None and name in phase.free_symbols:
             diagram.set_phase(node_id, phase.substitute({name: sym + step}))
+        node = diagram.nodes[node_id]
+        dims = [p.dim for p in (*node.inputs, *node.outputs)]
+        found = [x for d in dims for x in d.to_sympy().free_symbols if str(x) == name]
+        if found:
+            shifted = found[0] + step
+            diagram.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, name, shifted) for p in node.inputs],
+                [_dim_at(p.dim, name, shifted) for p in node.outputs],
+            )
     for child_id, child in sorted(diagram.bang_boxes.items()):
         if child_id == box.id:
             continue
@@ -2395,7 +2500,13 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
         _peel_port_scope(working, box)
     working.set_bang_box_multiplicity(box_id, predecessor)
     separable = box.is_node_scope
-    copy_node_ids = frozenset(working.nodes) - before if separable else frozenset()
+    boxed = frozenset(
+        n
+        for b in working.bang_boxes.values()
+        if b.id == box_id or b.pair_of == box_id
+        for n in b.node_scope
+    )
+    copy_node_ids = frozenset(working.nodes) - before - boxed if separable else frozenset()
     return PeelResult(working, copy_node_ids, separable)
 
 
