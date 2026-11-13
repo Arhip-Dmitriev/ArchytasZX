@@ -212,6 +212,11 @@ ChainEvery.lean: expand_closed gives that chain's expandChain at every k + 1 in 
 and 2, their second outputs on the boundary before the tail's output). No theorem yet relates
 expandChain's network (toNet) to chainNet at every k; toNet 10 labels wire j as 10 + j, which
 meets the boundary slots once k + 3 > 10, so an every-k statement takes an offset above k + 2.
+Periodic.lean: Equal.periodic gives two families equal at every index from the pairs at 0 ..
+p - 1 and each side's step from k to k + p (its network at k + p equal to a times its network
+at k relabelled by an injective f k shared by both sides), by strong induction. It is the frame
+of a kernel.periodic export; the step for a chain whose p copies contract to c times the
+identity is not proved yet, and no export writes periodic theorems.
 
 The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
 (its copy index along its node boxes, outermost first, then its port boxes) is placed by the
