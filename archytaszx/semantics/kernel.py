@@ -377,6 +377,21 @@ def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
     return Theorem(_TOKEN, a, b, Inference("contraction"))
 
 
+@_trace.traced("kernel.w_fusion")
+def w_fusion(d: Diagram) -> Theorem:
+    """``d = d'`` for ``d'`` the :func:`~archytaszx.semantics.induction.w_fused` image of ``d``:
+    a top-level box fed by one output leg of a W node, its copy re-checked by exact symbolic
+    contraction to be ``c`` W(1 -> m) after a Z with weights ``w`` (``w_0 = 1``), fused into
+    that leg (W associativity; the weighted Z moved before the W node, its only output)."""
+    from archytaszx.semantics.induction import w_fused
+
+    try:
+        after = w_fused(d)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"w_fusion raised {type(exc).__name__}: {exc}") from exc
+    return Theorem(_TOKEN, d, after, Inference("w_fusion"))
+
+
 def _plugged(d: Diagram, region: frozenset[NodeId], hypothesis: Diagram) -> tuple[Diagram, object]:
     """The part of ``d`` off ``region`` with its cut ends open, ``region`` read as
     ``hypothesis`` through cut wires; and where the region sits in ``d``'s boundary lists."""

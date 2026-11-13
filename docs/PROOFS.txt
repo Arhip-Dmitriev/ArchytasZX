@@ -484,7 +484,10 @@ weights w (ratios read on the copy's tensor, then checked by symbolic contractio
 removed; q is port-boxed M m times in the run's place, the weighted Z goes before the W node
 (then its only output), and the scalar gains (c s)^M, M the box's multiplicity and s its copy
 scalar. W fusion and a weight on every leg equalling that weight on the input hold for W at
-every dimension. No kernel theorem covers this step.
+every dimension. The kernel rule w_fusion(d) proves d = w_fused(d), re-running w_fused (its
+copy check by exact symbolic contraction included); the tree-window induction theorem takes
+its step as w_fusion of the replaced diagram, then the usual step from the fused diagram to the
+other peeled successor. Inference kind w_fusion; it has no Lean export yet.
 
 
 5. CERTIFICATES: archytaszx.semantics.certificate

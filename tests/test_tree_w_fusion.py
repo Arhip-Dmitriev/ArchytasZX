@@ -17,6 +17,7 @@ W node fed |1>."""
 from __future__ import annotations
 
 from archytaszx.repl.parser import parse_dsl
+from archytaszx.semantics import kernel
 from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
 CIRCUIT = """count n
@@ -60,12 +61,22 @@ scalar 2^(-(n + 1)/2)"""
 """w_state's spec: W(1 -> 2^n) on |1>, normalised."""
 
 
+def _kinds(t: kernel.Theorem) -> set[str]:
+    """Every inference kind in ``t``'s proof tree."""
+    out = {t.inference.kind}
+    for premise in t.inference.premises:
+        out |= _kinds(premise)
+    return out
+
+
 def test_leaf_copies_fuse_into_the_w_leg() -> None:
     """Each leaf copy is W(1 -> 2) after a weight on |1>, fused into the W node's boxed leg;
     a phase in the copy or a changed copy scalar is not proved."""
     decision = decide_equal(parse_dsl(CIRCUIT), parse_dsl(SPEC))
-    assert decision.verdict in (EqualityVerdict.EQUAL, EqualityVerdict.EQUAL_UNCERTIFIED)
+    assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
     assert "step case proved by tree_window" in decision.reason, decision.reason
+    assert isinstance(decision.induction_proof, kernel.Theorem)
+    assert _kinds(decision.induction_proof) >= {"induction", "w_fusion"}
     broken = (
         CIRCUIT.replace(
             "g14 = Z(1 -> 1, literal 2) phase{1: 1/8}", "g14 = Z(1 -> 1, literal 2) phase{1: 3/8}"

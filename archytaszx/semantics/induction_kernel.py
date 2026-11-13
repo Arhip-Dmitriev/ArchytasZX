@@ -326,9 +326,19 @@ def _windowed(
                     other_k,
                 )
             chain = (other_k, k) if window == "cut" else None
-            step = _step_theorem(
-                replaced, other_peeled, rules, contract=contract, local=local, chain=chain
-            )
+            try:
+                step = _step_theorem(
+                    replaced, other_peeled, rules, contract=contract, local=local, chain=chain
+                )
+            except NoInductionTheorem as exc:
+                if tree_id is None:
+                    raise
+                try:
+                    fused = kernel.w_fusion(replaced)
+                except kernel.KernelError as inner:
+                    raise NoInductionTheorem(f"{exc}; W fusion: {inner}") from exc
+                closing = _step_theorem(fused.rhs, other_peeled, rules, contract=contract)
+                step = kernel.trans(fused, closing)
             return kernel.induction(
                 start,
                 goal,
