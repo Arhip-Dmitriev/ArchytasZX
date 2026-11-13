@@ -265,14 +265,14 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
 
 def _steps(raw: PathSum, ps: PathSum, order: Sequence[int], boolean: bool) -> list[str]:
     """The PSem.Step list replaying the trace of ``ps``, reduced from ``raw``, then the canon
-    steps at ``order`` (gather and bcanon steps when ``boolean``)."""
+    steps at ``order`` (gather, bcanon and pdrop steps when ``boolean``)."""
     cur = sorted(raw.path)
     out: list[str] = []
     for step in ps.trace:
         texts, cur = trace_step(step, cur)
         out += texts
     if boolean:
-        return [*out, ".gather", *(f".bcanon {v}" for v in order)]
+        return [*out, ".gather", *(f".bcanon {v}" for v in order), ".pdrop"]
     return out + [f".canon {v}" for v in order]
 
 
@@ -383,6 +383,11 @@ def _scalars() -> Any:
     )
 
 
+def _quartered(*raws: PathSum) -> bool:
+    """Whether the reduction of some path sum takes a [Quarter] step."""
+    return any(st.rule == "quarter" for raw in raws for st in reduce(raw).trace)
+
+
 def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     """The Lean file proving that both diagrams' path sums agree at every boundary assignment;
     raises :class:`PathSumUnsupported` when they do not reduce to one canonical form or a
@@ -392,7 +397,7 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("export_proof covers qubit path sums only")
-    if raw_l.amps or raw_r.amps:
+    if raw_l.amps or raw_r.amps or _quartered(raw_l, raw_r):
         return _export_amp_proof(raw_l, raw_r, name)
     red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, support=True)
     support = _leftover(red_l)
@@ -478,7 +483,7 @@ class AmpPlan:
 def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
     """The runs of two path sums with atoms (each an initial AmpRun on its raw sum, the steps
     already written kept), reduced, with canon steps at the elimination pivots and the atoms
-    substituted, normalised and merged (gather and bcanon steps when a side needs Boolean
+    substituted, normalised and merged (gather, bcanon and pdrop steps when a side needs Boolean
     elimination); raises :class:`PathSumUnsupported` when the sums do not reduce to one
     canonical form, their Boolean eliminations differ, or they end on different atoms."""
     from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
@@ -498,7 +503,7 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         order = [v for v, _r in rows_l]
         if g_l != g_r or order != [v for v, _r in rows_r]:
             raise PathSumUnsupported("the Boolean eliminations differ")
-        canon_steps = [".gather", *(f".bcanon {v}" for v in order)]
+        canon_steps = [".gather", *(f".bcanon {v}" for v in order), ".pdrop"]
     else:
         order = _elimination_order(red_l.constraints, red_l.boundary)
         canon_steps = [f".canon {v}" for v in order]
@@ -536,6 +541,7 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         afac_lines,
         atoms_text,
         initial,
+        qreqs_lines,
         reqs_lines,
     )
     from archytaszx.semantics.lean_scalar import Om
@@ -593,6 +599,8 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         *fr_lines,
         *reqs_lines("L", run_l.reqs, coefs, sc, "stepsL"),
         *reqs_lines("R", run_r.reqs, coefs, sc, "stepsR"),
+        *qreqs_lines("L", run_l, sc, "stepsL"),
+        *qreqs_lines("R", run_r, sc, "stepsR"),
         f"theorem consts : ({sc.text(f_l)}) * {sc.text(c_l)} * om {m} ^ {k_l} =",
         f"    ({sc.text(f_r)}) * {sc.text(c_r)} * om {m} ^ {k_r} := by",
         f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
@@ -602,8 +610,8 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         "/-- Both path sums with atoms agree at every boundary assignment. -/",
         "theorem main (σ : ℕ → ZMod 2) :",
         f"    valA {m} {sc.text(c_l)} A tL σ = valA {m} {sc.text(c_r)} A tR σ := by",
-        f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL (by decide),",
-        f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR (by decide)]",
+        f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL qreqsL (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR qreqsR (by decide)]",
         f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ σ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
         "  simpa only [facL, facR] using consts",
@@ -1663,7 +1671,7 @@ def net_amp_body(
 ) -> tuple[NetBody, Any]:
     """The lines proving ``Equal E sL NL sR NR`` for two networks with amplitude atoms (see
     :func:`export_net`), and the atoms' coefficients (a lean_amp.Coefs)."""
-    from archytaszx.semantics.lean_amp import Coefs, afac_lines, reqs_lines
+    from archytaszx.semantics.lean_amp import Coefs, afac_lines, qreqs_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
     raw_l, raw_r = from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True)
@@ -1704,6 +1712,8 @@ def net_amp_body(
         *fr_lines,
         *reqs_lines("L", run_l.reqs, amp, sc, "stepsL"),
         *reqs_lines("R", run_r.reqs, amp, sc, "stepsR"),
+        *qreqs_lines("L", run_l, sc, "stepsL"),
+        *qreqs_lines("R", run_r, sc, "stepsR"),
         (
             f"theorem consts : ({sc.text(f_l)}) * (({s_l}) * ({_weights_text(side_l)}"
             f"(rt 2)⁻¹ ^ {side_l.sqrt2_inv})) * om {m} ^ {k_l} ="
@@ -1721,8 +1731,8 @@ def net_amp_body(
         "  apply equal_psda2 _ _ netL netR rfl",
         "  intro σ",
         "  rw [cL, cR, ← valA_smul, ← valA_smul,",
-        f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL (by decide),",
-        f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL qreqsL (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR qreqsR (by decide),",
         f"    valA_agree {m} _ A (aruns {m} stepsL {t_l}) {bnd} _ _ (by decide) (by decide)",
         f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
         f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
@@ -1742,6 +1752,106 @@ NET_OPTIONS = [
 """The options of a network proof file."""
 
 
+def net_quarter_body(
+    left: Diagram,
+    right: Diagram,
+    name: str,
+    phases: list[tuple[str, int]],
+    coefs: dict[int, str],
+    m_min: int = 1,
+) -> tuple[NetBody, Any]:
+    """The lines proving ``Equal E sL NL sR NR`` for two networks without atoms whose
+    reductions take [Quarter] steps (see :func:`export_net`): each side's pin steps on its
+    network's sum, then its reduction replayed with atoms from no held variable and no atom; and
+    the atoms' coefficients (a lean_amp.Coefs)."""
+    from archytaszx.semantics.lean_amp import AmpRun, Coefs, afac_lines, qreqs_lines, reqs_lines
+    from archytaszx.semantics.lean_scalar import Inv, Om, Rt
+
+    raw_l, raw_r = from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True)
+    if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
+        raise PathSumUnsupported("the network export covers qubit path sums only")
+    if raw_l.boundary != raw_r.boundary:
+        raise PathSumUnsupported("the boundaries differ")
+    m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
+    m = amp_modulus((raw_l, raw_r), m_min)
+    amp = Coefs(m)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
+    side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
+    if [side_l.k_of[i] for i in range(side_l.boundary)] != [
+        side_r.k_of[i] for i in range(side_r.boundary)
+    ]:
+        raise PathSumUnsupported("the boundary ports carry different dimensions")
+    run_l = AmpRun(amp, sorted(raw_l.path), [], [])
+    run_r = AmpRun(amp, sorted(raw_r.path), [], [])
+    plan, _red_l, _red_r = amp_plan(((raw_l, run_l), (raw_r, run_r)))
+    k_l, k_r = plan.turns
+    sc = _scalars()
+    p_l, p_r = _fac_model(side_l.steps, m), _fac_model(side_r.steps, m)
+    fl_lines, f_l = afac_lines("AL", run_l, sc)
+    fr_lines, f_r = afac_lines("AR", run_r, sc)
+    s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
+    w_l, w_r = sp.Mul(*side_l.weights), sp.Mul(*side_r.weights)
+    lhs = f_l * p_l * side_l.scalar * w_l * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
+    rhs = f_r * p_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
+    proof = sc.prove(lhs, rhs)
+    bnd = list(range(side_l.bnd_vars))
+    t_l = f"⟨run {m} stepsL (netDataD digL NL (psL.map Prod.snd)), [], []⟩"
+    t_r = f"⟨run {m} stepsR (netDataD digR NR (psR.map Prod.snd)), [], []⟩"
+    lines = [
+        *_net_lines("L", side_l, m),
+        *_net_lines("R", side_r, m),
+        f"def stepsL : List Step := [{', '.join(side_l.steps)}]",
+        f"def stepsR : List Step := [{', '.join(side_r.steps)}]",
+        f"def stepsAL : List AStep := [{', '.join(run_l.steps)}]",
+        f"def stepsAR : List AStep := [{', '.join(run_r.steps)}]",
+        "",
+        *_fac_lines("L", side_l.steps, m, sc.text(p_l)),
+        *_fac_lines("R", side_r.steps, m, sc.text(p_r)),
+        *fl_lines,
+        *fr_lines,
+        *reqs_lines("AL", run_l.reqs, amp, sc, "stepsAL"),
+        *reqs_lines("AR", run_r.reqs, amp, sc, "stepsAR"),
+        *qreqs_lines("AL", run_l, sc, "stepsAL"),
+        *qreqs_lines("AR", run_r, sc, "stepsAR"),
+        (
+            f"theorem consts : ({sc.text(f_l)}) * (({sc.text(p_l)}) * (({s_l}) * "
+            f"({_weights_text(side_l)}(rt 2)⁻¹ ^ {side_l.sqrt2_inv}))) * om {m} ^ {k_l} ="
+        ),
+        (
+            f"    ({sc.text(f_r)}) * (({sc.text(p_r)}) * (({s_r}) * "
+            f"({_weights_text(side_r)}(rt 2)⁻¹ ^ {side_r.sqrt2_inv}))) * om {m} ^ {k_r} := by"
+        ),
+        f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        "/-- The two networks are equal. -/",
+        f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
+        "  apply equal_psd2 _ _ netL netR rfl",
+        "  intro σ",
+        "  rw [cL, cR, ← val_smul, ← val_smul,",
+        (
+            f"    run_sound {m} (by norm_num) stepsL (netDataD digL NL (psL.map Prod.snd)) _ _ "
+            "(by decide),"
+        ),
+        (
+            f"    run_sound {m} (by norm_num) stepsR (netDataD digR NR (psR.map Prod.snd)) _ _ "
+            "(by decide),"
+        ),
+        f"    ← valA_nil {m} _ A, ← valA_nil {m} _ A,",
+        f"    aruns_sound {m} (by norm_num) A stepsAL {t_l} _ _ reqsAL qreqsAL (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsAR {t_r} _ _ reqsAR qreqsAR (by decide),",
+        f"    valA_agree {m} _ A (aruns {m} stepsAL {t_l}) {bnd} _ _ (by decide) (by decide)",
+        f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
+        "    (by decide) (by decide) (by decide) (by decide)",
+        "  rw [facL, facR, facAL, facAR]",
+        "  exact consts",
+        "",
+    ]
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m), amp
+
+
 def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
     F, B and S nodes on dimensions 2^k and W nodes on dimension 2: each network's value is its
@@ -1755,6 +1865,9 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     raws = (from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True))
     if any(isinstance(r, PathSum) and r.amps for r in raws):
         return _export_amp_net(left, right, name)
+    pss = [r for r in raws if isinstance(r, PathSum)]
+    if len(pss) == 2 and _quartered(*pss):
+        return _export_quarter_net(left, right, name)
     body = net_body(left, right, name, phases, coefs=coefs)
     support = any("finalS_sound" in ln for ln in body.lines)
     ns = "ArchytasZX.PathSumNetProof"
@@ -1779,6 +1892,41 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
         *body.lines,
         f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _export_quarter_net(left: Diagram, right: Diagram, name: str) -> str:
+    """:func:`export_net` for networks without atoms whose reductions take [Quarter] steps
+    (ArchytasZX/PathSumNetAmp.lean)."""
+    phases: list[tuple[str, int]] = []
+    coefs: dict[int, str] = {}
+    body, amp = net_quarter_body(left, right, name, phases, coefs)
+    sc = _scalars()
+    support = any("afinalS_perm" in ln for ln in body.lines)
+    lines = [
+        "import ArchytasZX.PathSumNetAmp",
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}` over the networks through [Quarter]",
+        "",
+        "Each network's value is its fragments' path sum; pin steps substitute the summed digits",
+        "of one class into one variable, the reduction steps follow with amplitude atoms from",
+        "[Quarter], and the final comparison gives `Equal`.",
+        "-/",
+        "",
+        "namespace ArchytasZX.PathSumNetProof",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *NET_OPTIONS,
+        "",
+        *amp.lean_def(sc),
+        *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
+        *body.lines,
+        "end ArchytasZX.PathSumNetProof",
         "",
     ]
     return "\n".join(lines)

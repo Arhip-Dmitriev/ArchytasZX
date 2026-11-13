@@ -15,9 +15,9 @@
 the atoms' cyclotomic bases as the coefficient vector ``A``; ``AmpRun`` follows a reduction
 trace of a path sum with atoms and writes the ``AStep`` list replaying it: inner steps on the
 path of variables no atom reads, [Average] (plain and through a half phase) on held variables,
-pins along a constraint, folds of atoms on 0 and 1, releases
+pins along a constraint, folds of atoms on 0 and 1, [Quarter] on inner variables, releases
 of held variables no atom reads, and after the canonical pivots the atoms' substitution,
-normalisation and merging."""
+normalisation, merging and complementary pairs."""
 
 from __future__ import annotations
 
@@ -106,6 +106,7 @@ class AmpRun:
     reqs: list[Req] = field(default_factory=list)
     facs: list[sp.Expr] = field(default_factory=list)
     omega: bool = False
+    qreqs: list[int] = field(default_factory=list)
 
     def avars(self) -> set[int]:
         """The variables the atoms read."""
@@ -234,6 +235,22 @@ class AmpRun:
             (j1, q),
         ]
 
+    def quarter(self, y: int, b0: F2Poly, b1: F2Poly) -> None:
+        """[Quarter] on the inner path variable ``y`` with the digits ``b0``, ``b1``: the atom
+        ``((1 + i) / 2)^b0`` appended."""
+        from archytaszx.algebra.pathsum import QUARTER_BASE
+
+        if self.coefs.m % 4:
+            raise PathSumUnsupported(f"[Quarter] over zeta_{self.coefs.m}")
+        rest = [v for v in self.cur if v != y]
+        self.inner([f".perm {[y, *rest]}"])
+        self.cur = rest
+        j = self.coefs.index(QUARTER_BASE)
+        self.steps.append(f".quarter {f2_text(b0)} {f2_text(b1)} {j}")
+        self.qreqs.append(j)
+        self.facs.append(sp.Integer(2))
+        self.atoms = [*self.atoms, (j, b0)]
+
     def pin(self, y: int, value: F2Poly) -> None:
         """[Pin] of ``y`` along its constraint ``y + value``: when an atom reads ``y``, the
         path variables of ``value`` held and ``y`` substituted in the atoms first."""
@@ -279,6 +296,30 @@ class AmpRun:
             self.reqs.append((1, j, ((first[0], second[0]),)))
             self.atoms = [(j, first[1]), *self.atoms[2:]]
             self.fold(set(), True)
+        self.complement()
+
+    def complement(self) -> None:
+        """Two atoms of one index on polynomials adding to 1 moved into the constant, until
+        none is left."""
+        while True:
+            pair = next(
+                (
+                    (a, b)
+                    for i, a in enumerate(self.atoms)
+                    for b in self.atoms[i + 1 :]
+                    if a[0] == b[0] and a[1] ^ b[1] == ONE
+                ),
+                None,
+            )
+            if pair is None:
+                return
+            first, second = pair
+            self._pick(second)
+            self._pick(first)
+            j = first[0]
+            self.steps.append(f".acomp {j}")
+            self.facs.append(self.coefs.model(j))
+            self.atoms = self.atoms[2:]
 
     def final_key(self) -> list[tuple[int, F2Poly]]:
         """The final atoms as a sorted multiset."""
@@ -303,6 +344,10 @@ def reduce_run(run: AmpRun, trace: Sequence[Step]) -> None:
                 run.pin(step.var, step.value)
             else:
                 run.average_half(step.var, step.value)
+            run.fold(set(run.cur) | set(run.held))
+        elif step.rule == "quarter":
+            b0, b1 = step.values
+            run.quarter(step.var, b0, b1)
             run.fold(set(run.cur) | set(run.held))
         else:
             run.trace(step)
@@ -350,6 +395,41 @@ def reqs_lines(tag: str, reqs: Sequence[Req], coefs: Coefs, sc: object, steps: s
     return [*lines, ""]
 
 
+def qreqs_lines(tag: str, run: AmpRun, sc: object, steps: str) -> list[str]:
+    """The theorem that every [Quarter] coefficient of a step list is ``(1 + i) / 2``."""
+    from archytaszx.semantics.lean_scalar import Om
+
+    prove = sc.prove  # type: ignore[attr-defined]
+    text = sc.text  # type: ignore[attr-defined]
+    m = run.coefs.m
+    js = list(run.qreqs)
+    head = [
+        f"theorem qreqs{tag} : ∀ j ∈ aqreqs {steps}, 2 * A j = 1 + om {m} ^ ({m} / 4) := by",
+        f"  have e : aqreqs {steps} = {js} := by decide",
+        "  rw [e]",
+        "  intro j hj",
+    ]
+    if not js:
+        return [*head, "  simp at hj", ""]
+    lines: list[str] = []
+    for j in sorted(set(js)):
+        lhs = sp.expand(2 * run.coefs.model(j))
+        rhs = sp.expand(1 + Om(m) ** (m // 4))
+        lines += [
+            f"theorem qreq{tag}{j} : 2 * A {j} = 1 + om {m} ^ ({m} / 4) := by",
+            f"  have key : ({text(lhs)} : ℂ) = {text(rhs)} :=",
+            *("    " + ln for ln in prove(lhs, rhs).splitlines()),
+            "  simp only [A]",
+            "  all_goals norm_num",
+            "  all_goals linear_combination key",
+            "",
+        ]
+    cases = []
+    for j in js:
+        cases += ["  rcases List.mem_cons.1 hj with rfl | hj", f"  · exact qreq{tag}{j}"]
+    return [*lines, *head, *cases, "  simp at hj", ""]
+
+
 def afac_lines(tag: str, run: AmpRun, sc: object) -> tuple[list[str], sp.Expr]:
     """The theorem that a run's step factors multiply to their model, and the model."""
     text = sc.text  # type: ignore[attr-defined]
@@ -388,6 +468,7 @@ __all__ = [
     "atoms_text",
     "f2_text",
     "initial",
+    "qreqs_lines",
     "reduce_run",
     "reqs_lines",
 ]

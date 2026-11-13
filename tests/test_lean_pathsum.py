@@ -387,7 +387,7 @@ def _boolean_atoms() -> str:
 
 def test_atoms_take_a_boolean_elimination() -> None:
     source = _boolean_atoms()
-    assert ".inner (.gather), .inner (.bcanon 0), .asub 0" in source
+    assert ".inner (.gather), .inner (.bcanon 0), .inner (.pdrop), .asub 0" in source
 
 
 @needs_lean

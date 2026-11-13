@@ -881,11 +881,54 @@ def _try_average_half(ps: PathSum) -> bool:
     return False
 
 
+QUARTER_BASE = (Cyclo.rational(1) + Cyclo.root(Fraction(1, 4))).scale(Fraction(1, 2))
+"""(1 + i) / 2, the atom base of [Quarter]."""
+
+
+def quarter_digits(s: Mapping[Mono, int]) -> tuple[F2Poly, F2Poly]:
+    """The F_2 polynomials ``b0``, ``b1`` with ``S = b0 + 2 b1`` mod 4 on Booleans, ``S`` an
+    integer multilinear polynomial."""
+    b0 = frozenset(m for m, c in s.items() if c % 2)
+    lift = int_lift(b0, 4)
+    b1: set[Mono] = set()
+    for m in set(s) | set(lift):
+        v = (s.get(m, 0) - lift.get(m, 0)) % 4
+        if v % 2:
+            raise PathSumError("quarter digit: an odd remainder")
+        if v == 2:
+            b1.add(m)
+    return b0, frozenset(b1)
+
+
+def _try_quarter(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
+    """[Quarter]: y in no constraint, its phase terms y S / 4 with S free of path variables, S =
+    b0 + 2 b1 mod 4: Sum_y = 2 ((1 + i) / 2)^b0 i^(3 b0 b1) [(1 + b0) b1 = 0]."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    for y in sorted(ps.path - cons_vars):
+        terms = occ.get(y, [])
+        if not terms or any(4 % c.denominator for _m, c in terms):
+            continue
+        if any(v in ps.path for m, _c in terms for v in m if v != y):
+            continue
+        b0, b1 = quarter_digits({m - {y}: int(c * 4) % 4 for m, c in terms})
+        _drop_terms(ps, terms)
+        for mono, coeff in _lift_terms(sorted(f2_mul(b0, b1), key=_mono_key), Fraction(3, 4)):
+            ps.phase.add(mono, coeff)
+        ps.constraints.append(f2_mul(f2_add(ONE, b0), b1))
+        ps.amps.append((QUARTER_BASE, b0))
+        ps.path.discard(y)
+        ps.sqrt2 += 2
+        ps.trace.append(Step("quarter", y, None, None, values=(b0, b1)))
+        _fold_amps(ps)
+        return True
+    return False
+
+
 def reduce(ps: PathSum) -> PathSum:
     """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
-    boundary constraint, [HHnl] and [Average] applied to a fixpoint, in that order, the lowest
-    variable first; variables in an amplitude exponent take only [Pin], [Average] and [Average]
-    through a half phase, and substitutions reach the exponents."""
+    boundary constraint, [HHnl], [Quarter] and [Average] applied to a fixpoint, in that order, the
+    lowest variable first; variables in an amplitude exponent take only [Pin], [Average] and
+    [Average] through a half phase, and substitutions reach the exponents."""
     out = ps.copy()
     _fold_amps(out)
     while out.path and not out.is_zero:
@@ -927,6 +970,7 @@ def _reduce_round(out: PathSum) -> bool:
         or _try_rem(out, occ)
         or _try_hh_constraint(out, occ)
         or _try_hh_nl(out, occ)
+        or _try_quarter(out, occ)
     )
 
 
@@ -1119,7 +1163,8 @@ def _zero_canon(boundary: tuple[int, ...]) -> Canon:
 
 def canonical(ps: PathSum) -> Canon | None:
     """The canonical form of a reduced path sum; None when a path variable remains. Constraints
-    without a degree-one pivot go through boolean_eliminate."""
+    without a degree-one pivot go through boolean_eliminate; atoms of one base on complementary
+    exponents go into the constant, and phase monomials zero on the support are dropped."""
     if ps.is_zero:
         return _zero_canon(ps.boundary)
     if ps.path:
@@ -1160,6 +1205,14 @@ def canonical(ps: PathSum) -> Canon | None:
                 phase.add(mono, coeff)
             continue
         merged[f] = merged[f] * a if f in merged else a
+    for f in sorted(merged, key=lambda p: sorted(_mono_key(m) for m in p)):
+        g = f2_add(ONE, f)
+        if f in merged and g in merged and merged[f] == merged[g]:
+            const = const * merged.pop(f)
+            del merged[g]
+    if support != ONE:
+        for mono in [m for m in phase.terms if m and not f2_mul(frozenset({m}), support)]:
+            del phase.terms[mono]
     c0 = phase.terms.pop(EMPTY, Fraction(0))
     if c0:
         const = const * Cyclo.root(c0)

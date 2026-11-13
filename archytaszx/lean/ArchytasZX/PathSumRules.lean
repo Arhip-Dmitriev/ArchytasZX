@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.PathSumSem
 
 /-!
-# Path-sum steps [omega], [HHgen], [Rem], [HHnl], [Dyadic], pin, norm and step lists
+# Path-sum steps [omega], [HHgen], [Rem], [HHnl], [Dyadic], pin, norm, phase drop and step lists
 
 Each step reads the head path variables of a `Data`; `*OK` is its syntactic side condition, a
 `Bool` checked by `decide`, and `*_sound` says the value is unchanged up to the step's constant
@@ -1234,6 +1234,36 @@ theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List �
   simp only [dy_bits τ k S bs hb]
 
 
+/-! ## Phase terms off the constraints -/
+
+/-- Whether `m (1 + q) = 0` for some constraint `q`. -/
+def dropT (C : List F2) (m : Mono) : Bool :=
+  C.any fun q => decide (normF (f2mul [m] ([] :: q)) = [])
+
+/-- The phase terms whose monomial is 0 where some constraint holds dropped. -/
+def pdropS (s : Data) : Data := { s with phase := s.phase.filter fun t => !dropT s.cons t.1 }
+
+theorem pdrop_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
+    val M c s σ = val M c (pdropS s) σ := by
+  unfold val pdropS
+  apply bsum_congr
+  intro τ
+  unfold summand
+  dsimp only
+  split_ifs with hC
+  · rw [pn_filter_zero τ _ s.phase]
+    intro t _ ht
+    simp only [Bool.not_eq_false', dropT, List.any_eq_true, decide_eq_true_eq] at ht
+    obtain ⟨q, hq, e⟩ := ht
+    have h0 : fz τ q = 0 := hC q (List.mem_append_left _ hq)
+    have e2 : fz τ [t.1] * (mz τ [] + fz τ q) = 0 := by
+      rw [← fz_cons, ← fz_f2mul, ← fz_normF, e]
+      rfl
+    rw [h0, show mz τ [] = 1 by simp [mz], add_zero, mul_one, fz_cons,
+      show fz τ ([] : F2) = 0 from rfl, add_zero] at e2
+    exact e2
+  · rfl
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -1253,6 +1283,7 @@ inductive Step where
   | pin (B : F2)
   | norm
   | dyadic (ds : List ℕ) (S : Poly) (fs : List ℕ)
+  | pdrop
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1271,6 +1302,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .pin B, s => pinOK B s
   | .norm, _ => true
   | .dyadic ds S fs, s => dyadicOK M ds S fs s
+  | .pdrop, _ => true
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1289,13 +1321,15 @@ def stepS (M : ℕ) : Step → Data → Data
   | .pin B, s => pinS M B s
   | .norm, s => normS M s
   | .dyadic ds S fs, s => dyadicS M ds S fs s
+  | .pdrop, s => pdropS s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
   | .elim | .hhCons | .hhPivot | .hhNl => 2
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
-  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _ => 1
+  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
+    | .pdrop => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -1330,6 +1364,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | pin B => simpa [fac, stepS] using pin_sound M hM c B s σ h
   | norm => simpa [fac, stepS] using norm_sound M (by omega) c s σ
   | dyadic ds S fs => simpa [fac, stepS] using dyadic_sound M c ds S fs s σ h
+  | pdrop => simpa [fac, stepS] using pdrop_sound M c s σ
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →

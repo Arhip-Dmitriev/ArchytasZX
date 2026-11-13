@@ -13,7 +13,9 @@ summed outside the inner sum: `valA M c A t σ` is the sum over `held` of the at
 `aval` times `val M c t.s`. `astep_sound` and `arun_sound` carry every `PSem` step list to the
 inner sum, `release_sound` moves a held variable no atom reads into the inner path, `adrop_sound`
 drops atoms on the zero polynomial, `aconst_sound` moves an atom on the polynomial 1 into the
-constant, `average_sound` is [Average], `averageH_sound` is [Average] through a half phase and
+constant, `average_sound` is [Average], `averageH_sound` is [Average] through a half phase,
+`quarter_sound` sums a path variable with quarter coefficients into the atom `((1 + i) / 2)^B0`,
+`acomp_sound` moves two atoms of one index on complementary polynomials into the constant and
 `afinal_sound` compares two reduced sums with the
 same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
 -/
@@ -701,6 +703,232 @@ theorem averageH_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (y j0 j1 : ℕ) (t 
     linear_combination (aval A (List.filter (fun a => !reads z a) as) τ *
       val M c { s with phase := rest z s.phase } τ) * h1.symm
 
+/-! ## [Quarter] -/
+
+/-- `M / 4` times the lift of `B0` plus `M / 2` times the lift of `B1`. -/
+def qLift (M : ℕ) (B0 B1 : F2) : Poly :=
+  (lift M B0).map (fun u => ([] ++ u.1, (M / 4) * u.2)) ++
+    (lift M B1).map (fun u => ([] ++ u.1, (M / 2) * u.2))
+
+/-- Whether the head path variable `y` is not in the tail, a constraint or a row, `4 ∣ M`, `B0`
+and `B1` are off the path, and the terms of `y` normalise to `qLift M B0 B1`. -/
+def quarterOK (M : ℕ) (B0 B1 : F2) (t : AData) : Bool :=
+  match t.s.path with
+  | [] => false
+  | y :: ys => decide (0 < M) && decide (M % 4 = 0) && !decide (y ∈ ys) &&
+      !decide (y ∈ fvars (t.s.cons ++ t.s.rows)) && offPath t.s B0 && offPath t.s B1 &&
+      decide (normP M (yq y t.s.phase) = normP M (qLift M B0 B1))
+
+/-- The head path variable summed: the phase gains `3 M / 4` times the lift of `B0 B1` and the
+constraint `(1 + B0) B1` is appended. -/
+def quarterD (M : ℕ) (B0 B1 : F2) (s : Data) : Data :=
+  match s.path with
+  | [] => s
+  | y :: ys =>
+    { path := ys,
+      phase := normP M (rest y s.phase ++ (lift M (f2mul B0 B1)).map
+        fun u => ([] ++ u.1, (3 * (M / 4)) * u.2)),
+      cons := s.cons ++ [normF (f2mul ([] :: B0) B1)], rows := s.rows }
+
+/-- `quarterD` on the inner sum and the atom `(j, B0)` appended. -/
+def quarterS (M : ℕ) (B0 B1 : F2) (j : ℕ) (t : AData) : AData :=
+  ⟨quarterD M B0 B1 t.s, t.held, t.atoms ++ [(j, B0)]⟩
+
+theorem peq_symm {M : ℕ} {a b : ℤ} (h : peq M a b) : peq M b a := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨-n, by rw [hn]; ring⟩
+
+theorem ex_quarter_sq : ex (1 / 4) * ex (1 / 4) = -1 := by
+  rw [← ex_add, show (1 / 4 + 1 / 4 : ℝ) = 1 / 2 by norm_num, Sym.ex_half]
+
+/-- `ex (r N / M)` for `M = 4 r`. -/
+theorem ex_quarters (M r : ℕ) (hr : M = 4 * r) (hr0 : 0 < r) (N : ℤ) :
+    ex ((((r : ℤ) * N : ℤ) : ℝ) / M) = ex ((N : ℝ) / 4) := by
+  congr 1
+  have : (r : ℝ) ≠ 0 := by exact_mod_cast hr0.ne'
+  rw [hr]
+  push_cast
+  field_simp
+
+theorem om_quarter (M r : ℕ) (hr : M = 4 * r) (hr0 : 0 < r) : om M ^ (M / 4) = ex (1 / 4) := by
+  have h4 : M / 4 = r := by omega
+  rw [h4, om_eq_ex]
+  have := ex_quarters M r hr hr0 1
+  simpa using this
+
+theorem pn_qLift (τ : ℕ → ZMod 2) (M r : ℕ) (hM : 2 ≤ M) (hr : M = 4 * r) (B0 B1 : F2) :
+    peq M (pn τ (qLift M B0 B1)) ((r : ℤ) * (zq (fz τ B0) + 2 * zq (fz τ B1))) := by
+  have h4 : M / 4 = r := by omega
+  have h2 : M / 2 = 2 * r := by omega
+  unfold qLift
+  rw [pn_append, pn_mapmul, pn_mapmul, h4, h2]
+  have hm1 : zq (mz τ []) = 1 := by simp [mz]; decide
+  rw [hm1]
+  obtain ⟨n0, e0⟩ := pn_lift τ M hM B0
+  obtain ⟨n1, e1⟩ := pn_lift τ M hM B1
+  refine ⟨r * n0 + 2 * r * n1, ?_⟩
+  rw [e0, e1]
+  push_cast
+  ring
+
+/-- The sum over a bit `y` of `ex (y (b0 + 2 b1) / 4)`. -/
+theorem quarter_pt (a c e : ℂ) (b0 b1 : ZMod 2) (ha : 2 * a = 1 + ex (1 / 4)) (P : Prop)
+    [Decidable P] :
+    (1 + ex (((zq b0 + 2 * zq b1 : ℤ) : ℝ) / 4)) * (if P then c * e else 0) =
+      2 * (if b0 = 0 then 1 else a) * ((if (1 + b0) * b1 = 0 then 1 else 0) *
+        (if P then c * (e * ex (((3 * zq (b0 * b1) : ℤ) : ℝ) / 4)) else 0)) := by
+  have hI := ex_quarter_sq
+  have h3 : ex (3 / 4) = -ex (1 / 4) := by
+    rw [show (3 / 4 : ℝ) = 1 / 4 + 1 / 2 by norm_num, ex_add, Sym.ex_half]; ring
+  have n1 : (1 : ZMod 2) ≠ 0 := by decide
+  by_cases hP : P
+  · rw [if_pos hP, if_pos hP]
+    rcases z2_cases b0 with rfl | rfl <;> rcases z2_cases b1 with rfl | rfl
+    · have hx : ex (((zq (0 : ZMod 2) + 2 * zq (0 : ZMod 2) : ℤ) : ℝ) / 4) = 1 := by
+        rw [zq0]; norm_num [ex_zero]
+      have hy : ex (((3 * zq ((0 : ZMod 2) * 0) : ℤ) : ℝ) / 4) = 1 := by
+        rw [mul_zero, zq0]; norm_num [ex_zero]
+      rw [hx, hy, if_pos rfl, if_pos (show (1 + (0 : ZMod 2)) * 0 = 0 by decide)]
+      ring
+    · have hx : ex (((zq (0 : ZMod 2) + 2 * zq (1 : ZMod 2) : ℤ) : ℝ) / 4) = -1 := by
+        rw [zq0, zq1]; norm_num; exact Sym.ex_half
+      rw [hx, if_neg (show (1 + (0 : ZMod 2)) * 1 ≠ 0 by decide)]
+      ring
+    · have hx : ex (((zq (1 : ZMod 2) + 2 * zq (0 : ZMod 2) : ℤ) : ℝ) / 4) = ex (1 / 4) := by
+        rw [zq0, zq1]; norm_num
+      have hy : ex (((3 * zq ((1 : ZMod 2) * 0) : ℤ) : ℝ) / 4) = 1 := by
+        rw [mul_zero, zq0]; norm_num [ex_zero]
+      rw [hx, hy, if_neg n1, if_pos (show (1 + (1 : ZMod 2)) * 0 = 0 by decide)]
+      linear_combination (c * e) * ha.symm
+    · have hx : ex (((zq (1 : ZMod 2) + 2 * zq (1 : ZMod 2) : ℤ) : ℝ) / 4) = -ex (1 / 4) := by
+        rw [zq1]; norm_num; exact h3
+      have hy : ex (((3 * zq ((1 : ZMod 2) * 1) : ℤ) : ℝ) / 4) = -ex (1 / 4) := by
+        rw [mul_one, zq1]; norm_num; exact h3
+      rw [hx, hy, if_neg n1, if_pos (show (1 + (1 : ZMod 2)) * 1 = 0 by decide)]
+      linear_combination (c * e * ex (1 / 4)) * ha + c * e * hI
+  · rw [if_neg hP, if_neg hP]
+    ring
+
+/-- The value with the head path variable summed by [Quarter]. -/
+theorem quarter_val (M : ℕ) (hM : 2 ≤ M) (c a : ℂ) (B0 B1 : F2) (s : Data) (τ : ℕ → ZMod 2)
+    (y : ℕ) (ys : List ℕ) (hp : s.path = y :: ys) (h4 : M % 4 = 0) (hy : y ∉ ys)
+    (hc : y ∉ fvars (s.cons ++ s.rows)) (h0 : offPath s B0 = true) (h1 : offPath s B1 = true)
+    (hn : normP M (yq y s.phase) = normP M (qLift M B0 B1)) (ha : 2 * a = 1 + ex (1 / 4)) :
+    val M c s τ = (2 * (if fz τ B0 = 0 then 1 else a)) * val M c (quarterD M B0 B1 s) τ := by
+  obtain ⟨r, hr⟩ : ∃ r, M = 4 * r := ⟨M / 4, by omega⟩
+  have hr0 : 0 < r := by omega
+  have hM0 : 0 < M := by omega
+  have h4r : M / 4 = r := by omega
+  have off0 : ∀ x ∈ ys, ∀ m ∈ B0, x ∉ m := fun x hx =>
+    offPath_not h0 x (by rw [hp]; exact List.mem_cons_of_mem _ hx)
+  have hinv : ∀ τ', ∀ x ∈ ys, ∀ b : ZMod 2,
+      (2 * (if fz (Function.update τ' x b) B0 = 0 then 1 else a)) =
+        2 * (if fz τ' B0 = 0 then 1 else a) := by
+    intro τ' x hx b
+    rw [fz_update_not τ' x b B0 (off0 x hx)]
+  set P' := normP M (rest y s.phase ++ (lift M (f2mul B0 B1)).map
+    fun u => ([] ++ u.1, (3 * (M / 4)) * u.2)) with hP'
+  set K := normF (f2mul ([] :: B0) B1) with hK
+  have hD : quarterD M B0 B1 s = ⟨ys, P', s.cons ++ [K], s.rows⟩ := by
+    unfold quarterD
+    rw [hp]
+  rw [hD]
+  unfold val
+  rw [hp, bsum_head _ y ys τ hy]
+  have hm := bsum_mul_left (fun τ' => 2 * (if fz τ' B0 = 0 then 1 else a))
+    (summand M c ⟨ys, P', s.cons ++ [K], s.rows⟩) ys hinv τ
+  rw [show (⟨ys, P', s.cons ++ [K], s.rows⟩ : Data).path = ys from rfl, ← hm]
+  apply bsum_congr
+  intro τ'
+  have hs : summand M c ⟨ys, P', s.cons ++ [K], s.rows⟩ τ' =
+      (if fz τ' K = 0 then 1 else 0) * summand M c ⟨ys, P', s.cons, s.rows⟩ τ' :=
+    summand_consApp M c ⟨ys, P', s.cons, s.rows⟩ K τ'
+  rw [hs, summand_pair M c s τ' y hc]
+  unfold summand
+  dsimp only
+  have hY : ex ((pn τ' (yq y s.phase) : ℝ) / M) =
+      ex (((zq (fz τ' B0) + 2 * zq (fz τ' B1) : ℤ) : ℝ) / 4) := by
+    have e1 : peq M (pn τ' (yq y s.phase)) ((r : ℤ) * (zq (fz τ' B0) + 2 * zq (fz τ' B1))) :=
+      peq_trans (peq_symm (pn_normP τ' M _))
+        (by rw [hn]; exact peq_trans (pn_normP τ' M _) (pn_qLift τ' M r hM hr B0 B1))
+    rw [ex_peq hM0 e1, ex_quarters M r hr hr0]
+  have hPx : ex ((pn τ' P' : ℝ) / M) = ex ((pn τ' (rest y s.phase) : ℝ) / M) *
+      ex (((3 * zq (fz τ' B0 * fz τ' B1) : ℤ) : ℝ) / 4) := by
+    have e2 : peq M (pn τ' P')
+        (pn τ' (rest y s.phase) + (r : ℤ) * (3 * zq (fz τ' B0 * fz τ' B1))) := by
+      refine peq_trans (pn_normP τ' M _) ?_
+      rw [pn_append, pn_mapmul, h4r]
+      have hm1 : zq (mz τ' []) = 1 := by simp [mz]; decide
+      rw [hm1]
+      obtain ⟨n, hn'⟩ := pn_lift τ' M hM (f2mul B0 B1)
+      rw [fz_f2mul] at hn'
+      refine ⟨3 * r * n, ?_⟩
+      rw [hn']
+      push_cast
+      ring
+    rw [ex_peq hM0 e2, Int.cast_add, add_div, ex_add, ex_quarters M r hr hr0]
+  have hKv : fz τ' K = (1 + fz τ' B0) * fz τ' B1 := by
+    rw [hK, fz_normF, fz_f2mul, fz_cons, show mz τ' [] = 1 by simp [mz]]
+  rw [hY, hPx, hKv]
+  exact quarter_pt a c _ (fz τ' B0) (fz τ' B1) ha _
+
+theorem quarter_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (B0 B1 : F2) (j : ℕ) (t : AData)
+    (σ : ℕ → ZMod 2) (h : quarterOK M B0 B1 t = true) (hA : 2 * A j = 1 + om M ^ (M / 4)) :
+    valA M c A t σ = valA M (2 * c) A (quarterS M B0 B1 j t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases hp : s.path with _ | ⟨y, ys⟩
+  · simp [quarterOK, hp] at h
+  simp only [quarterOK, hp, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨_, h4⟩, hy⟩, hc⟩, h0⟩, h1⟩, hn⟩ := h
+  obtain ⟨r, hr⟩ : ∃ r, M = 4 * r := ⟨M / 4, by omega⟩
+  have ha : 2 * A j = 1 + ex (1 / 4) := by rw [hA, om_quarter M r hr (by omega)]
+  simp only [valA, quarterS]
+  apply bsum_congr
+  intro τ
+  rw [quarter_val M hM c (A j) B0 B1 s τ y ys hp h4 hy hc h0 h1 hn ha, aval_append, aval_cons,
+    aval_nil, val_smul]
+  ring
+
+/-! ## Complementary atoms -/
+
+/-- Whether the head two atoms have the index `j` and polynomials adding to 1. -/
+def acompOK (j : ℕ) (t : AData) : Bool :=
+  match t.atoms with
+  | a :: b :: _ => decide (a.1 = j) && decide (b.1 = j) && decide (normF (a.2 ++ b.2) = [[]])
+  | _ => false
+
+/-- The head two atoms dropped. -/
+def acompS (t : AData) : AData := { t with atoms := t.atoms.drop 2 }
+
+theorem acomp_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (j : ℕ) (t : AData) (σ : ℕ → ZMod 2)
+    (h : acompOK j t = true) : valA M c A t σ = valA M (A j * c) A (acompS t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases as with _ | ⟨a, _ | ⟨b, as⟩⟩
+  · simp [acompOK] at h
+  · simp [acompOK] at h
+  simp only [acompOK, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨ha, hb⟩, hab⟩ := h
+  simp only [valA, acompS, List.drop_succ_cons, List.drop_zero]
+  apply bsum_congr
+  intro τ
+  have hs : fz τ a.2 + fz τ b.2 = 1 := by
+    rw [← fz_append, ← fz_normF, hab]
+    simp [fz, mz]
+  rw [aval_cons, aval_cons, ha, hb, val_smul]
+  have n1 : (1 : ZMod 2) ≠ 0 := by decide
+  rcases z2_cases (fz τ a.2) with e | e <;> rcases z2_cases (fz τ b.2) with e' | e' <;>
+    rw [e, e'] at hs ⊢
+  · exact absurd hs (by decide)
+  · rw [if_pos rfl, if_neg n1]; ring
+  · rw [if_pos rfl, if_neg n1]; ring
+  · exact absurd hs (by decide)
+
+/-- A path sum with no held variable and no atom. -/
+theorem valA_nil (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (s : Data) (σ : ℕ → ZMod 2) :
+    valA M c A ⟨s, [], []⟩ σ = val M c s σ := by
+  simp [valA, bsum, aval_nil]
+
 /-! ## Step lists -/
 
 /-- A step on a path sum with atoms. -/
@@ -720,6 +948,16 @@ inductive AStep where
   | amerge (j j1 j2 : ℕ)
   | apick (i : ℕ)
   | anorm
+  | quarter (B0 B1 : F2) (j : ℕ)
+  | acomp (j : ℕ)
+
+/-- The indices `j` a step assumes `2 * A j = 1 + om M ^ (M / 4)` of. -/
+def AStep.qreqs : AStep → List ℕ
+  | .quarter _ _ j => [j]
+  | _ => []
+
+/-- The `qreqs` of a step list. -/
+def aqreqs (sts : List AStep) : List ℕ := sts.flatMap AStep.qreqs
 
 /-- A coefficient identity `k * A j = Sum_ps Prod_{i in ps} A i`. -/
 abbrev Req := ℕ × ℕ × List (List ℕ)
@@ -758,6 +996,8 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .amerge _ j1 j2, t => amergeOK j1 j2 t
   | .apick i, t => decide (i < t.atoms.length)
   | .anorm, _ => true
+  | .quarter B0 B1 _, t => quarterOK M B0 B1 t
+  | .acomp j, t => acompOK j t
 
 /-- A step applied. -/
 def AStep.apply (M : ℕ) : AStep → AData → AData
@@ -776,6 +1016,8 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .amerge j _ _, t => amergeS j t
   | .apick i, t => apickS i t
   | .anorm, t => anormS t
+  | .quarter B0 B1 j, t => quarterS M B0 B1 j t
+  | .acomp _, t => acompS t
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
@@ -783,6 +1025,8 @@ noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
   | .average _ _ _ _ _ => 2
   | .averageH _ _ _ _ _ _ => 2
   | .aconst j => A j
+  | .quarter _ _ _ => 2
+  | .acomp j => A j
   | _ => 1
 
 /-- Every side condition along a step list. -/
@@ -804,9 +1048,14 @@ noncomputable def afacs (A : ℕ → ℂ) : List AStep → ℂ
 def areqs (sts : List AStep) : List Req := sts.flatMap AStep.reqs
 
 theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t : AData) (c : ℂ)
-    (σ : ℕ → ZMod 2) (hr : ∀ r ∈ st.reqs, reqHolds A r) (h : st.ok M t = true) :
+    (σ : ℕ → ZMod 2) (hr : ∀ r ∈ st.reqs, reqHolds A r)
+    (hq : ∀ j ∈ st.qreqs, 2 * A j = 1 + om M ^ (M / 4)) (h : st.ok M t = true) :
     valA M c A t σ = valA M (st.fac A * c) A (st.apply M t) σ := by
   cases st with
+  | quarter B0 B1 j =>
+    simpa [AStep.fac, AStep.apply] using
+      quarter_sound M hM c A B0 B1 j t σ h (hq j List.mem_cons_self)
+  | acomp j => simpa [AStep.fac, AStep.apply] using acomp_sound M c A j t σ h
   | inner st => simpa [AStep.fac, AStep.apply] using astep_sound M hM st t c A σ h
   | hperm l => simpa [AStep.fac, AStep.apply] using hperm_sound M c A l t σ h
   | release => simpa [AStep.fac, AStep.apply] using release_sound M c A t σ h
@@ -875,17 +1124,23 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
 
 theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     ∀ (sts : List AStep) (t : AData) (c : ℂ) (σ : ℕ → ZMod 2),
-      (∀ r ∈ areqs sts, reqHolds A r) → arunsOK M sts t = true →
+      (∀ r ∈ areqs sts, reqHolds A r) → (∀ j ∈ aqreqs sts, 2 * A j = 1 + om M ^ (M / 4)) →
+      arunsOK M sts t = true →
       valA M c A t σ = valA M (afacs A sts * c) A (aruns M sts t) σ
-  | [], t, c, σ, _, _ => by simp [afacs, aruns]
-  | st :: sts, t, c, σ, hr, h => by
+  | [], t, c, σ, _, _, _ => by simp [afacs, aruns]
+  | st :: sts, t, c, σ, hr, hq, h => by
     simp only [arunsOK, Bool.and_eq_true] at h
     have hr1 : ∀ r ∈ st.reqs, reqHolds A r :=
       fun r hm => hr r (List.mem_flatMap.2 ⟨st, List.mem_cons_self, hm⟩)
     have hr2 : ∀ r ∈ areqs sts, reqHolds A r := fun r hm => by
       obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
       exact hr r (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
-    rw [AStep.sound M hM A st t c σ hr1 h.1, aruns_sound M hM A sts _ _ σ hr2 h.2]
+    have hq1 : ∀ j ∈ st.qreqs, 2 * A j = 1 + om M ^ (M / 4) :=
+      fun j hm => hq j (List.mem_flatMap.2 ⟨st, List.mem_cons_self, hm⟩)
+    have hq2 : ∀ j ∈ aqreqs sts, 2 * A j = 1 + om M ^ (M / 4) := fun j hm => by
+      obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
+      exact hq j (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
+    rw [AStep.sound M hM A st t c σ hr1 hq1 h.1, aruns_sound M hM A sts _ _ σ hr2 hq2 h.2]
     simp only [afacs, aruns]
     ring_nf
 
