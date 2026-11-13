@@ -137,7 +137,7 @@ TABLE: list[tuple[str, Builder, dict[str, object], EqualityVerdict, DecisionMeth
         "self_loop_path_sum",
         lambda: concrete_pairs(2)["self_loop"][0],
         {"use_symbolic": False},
-        EqualityVerdict.EQUAL_UNCERTIFIED,
+        EqualityVerdict.EQUAL,
         DecisionMethod.PATH_SUM,
     ),
 ]
