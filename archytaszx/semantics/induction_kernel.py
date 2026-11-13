@@ -19,8 +19,10 @@ gives a :func:`~archytaszx.semantics.kernel.induction` theorem: the base case fr
 decision's certificates (else a :func:`~archytaszx.semantics.prove.prove` search), the
 tier's peeled successor as the exposed diagram, its residual as the hypothesis region, and a
 step from a rewrite derivation between the two peeled copies (normal forms meeting, else a
-search) re-applied inside the successors. A step case settled by symbolic contraction gives
-none.
+search) re-applied inside the successors. One settled by chain_window or tree_window gives an
+induction theorem over the chain successor's cut region or the tree successor's unfed residual,
+the step from the replaced diagram to the other peeled successor by isomorphism or meeting
+normal forms. A step case settled by symbolic contraction gives none.
 """
 
 from __future__ import annotations
@@ -35,11 +37,16 @@ from archytaszx.rewrite.rules_library import lookup_rule
 from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import compare_structure
 from archytaszx.semantics.induction import (
+    InductionDomainError,
     InductionResult,
     StepDischarge,
     TierOutcome,
     _extract,
+    fed_replacement,
+    find_cut_region,
+    replace_cut_region,
     replace_region,
+    unfed,
 )
 from archytaszx.semantics.prove import (
     InductionSide,
@@ -73,6 +80,9 @@ def induction_theorem(
         elif tier.discharge is StepDischarge.INDUCTION_REWRITE:
             base = _base(first, second, result.index, base_pair, base_decision, reversed_)
             theorem = _peeled(first, second, result, tier, base, rules)
+        elif tier.discharge in (StepDischarge.CHAIN_WINDOW, StepDischarge.TREE_WINDOW):
+            base = _base(first, second, result.index, base_pair, base_decision, reversed_)
+            theorem = _windowed(first, second, result, tier.discharge, base, rules)
         else:
             raise NoInductionTheorem(
                 f"the step case was settled by {tier.discharge.value}, which records no "
@@ -189,6 +199,82 @@ def _peeled(
         ),
     )
     return kernel.induction(start, goal, index, k, base, InductionSide.START, expose, region, step)
+
+
+def _windowed(
+    start: Diagram,
+    goal: Diagram,
+    result: InductionResult,
+    discharge: StepDischarge,
+    base: kernel.Theorem,
+    rules: Sequence[Rule] | None,
+) -> kernel.Theorem:
+    """``start = goal`` by the kernel's induction rule over a chain's cut region or a tree's
+    unfed residual, the step from the replaced diagram to the other peeled successor by an
+    isomorphism or by normal forms meeting; each side's successor tried as the exposed one."""
+    index, k = result.index, result.obligation.step_symbol
+    reasons: list[str] = []
+    for side in (InductionSide.START, InductionSide.GOAL):
+        own, other = (start, goal) if side is InductionSide.START else (goal, start)
+        try:
+            peeled = induction_successor(own, index, k)
+            other_peeled = induction_successor(other, index, k)
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"{side.value}: peeling raised {type(exc).__name__}: {exc}")
+            continue
+        if peeled is None or other_peeled is None:
+            reasons.append(f"{side.value}: a successor has no single box to peel")
+            continue
+        own_k = induction_hypothesis(own, index, k)
+        other_k = induction_hypothesis(other, index, k)
+        try:
+            if discharge is StepDischarge.CHAIN_WINDOW:
+                copy = frozenset(peeled.nodes) - frozenset(own_k.nodes)
+                region = frozenset(peeled.nodes) - copy
+                cut = find_cut_region(peeled, region, own_k)
+                if cut is None:
+                    raise NoInductionTheorem("the residual is not the hypothesis through cut wires")
+                replaced = replace_cut_region(peeled, cut, own_k, other_k)
+                tree_id = None
+            else:
+                fed = [box for box in peeled.bang_boxes.values() if box.feed is not None]
+                if len(fed) != 1 or fed[0].feed is None:
+                    raise NoInductionTheorem("the peeled successor holds no single fed box")
+                tree_id = fed[0].feed
+                cut = None
+                region = frozenset(unfed(peeled, tree_id).nodes)
+                replaced = fed_replacement(peeled, tree_id, own_k, other_k)
+            step = _step_theorem(replaced, other_peeled, rules)
+            return kernel.induction(
+                start,
+                goal,
+                index,
+                k,
+                base,
+                side,
+                kernel.refl(peeled),
+                region,
+                step,
+                cut=cut,
+                tree=tree_id,
+            )
+        except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
+            reasons.append(f"{side.value}: {exc}")
+    raise NoInductionTheorem("; ".join(reasons))
+
+
+def _step_theorem(
+    replaced: Diagram, target: Diagram, rules: Sequence[Rule] | None
+) -> kernel.Theorem:
+    """``replaced = target`` by an isomorphism, else by their normal forms meeting."""
+    try:
+        return kernel.iso(replaced, target)
+    except kernel.KernelError:
+        pass
+    forward, backward = copy_derivation(replaced, target, rules)
+    there = kernel.chain(replaced, forward)
+    back = kernel.chain(target, backward)
+    return kernel.trans(there, kernel.trans(kernel.iso(there.rhs, back.rhs), kernel.symm(back)))
 
 
 def _ids(original: frozenset[NodeId], extracted: Diagram) -> dict[NodeId, NodeId]:

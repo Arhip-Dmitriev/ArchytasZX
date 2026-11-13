@@ -66,7 +66,7 @@ from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import free_mult_symbols
 from archytaszx.diagram.compare import isomorphic, isomorphism
 from archytaszx.diagram.generators import MIXED_ONLY
-from archytaszx.diagram.graph import Diagram, NodeId
+from archytaszx.diagram.graph import BangBoxId, Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep
 from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
 from archytaszx.rewrite.rule import assumed
@@ -77,7 +77,16 @@ from archytaszx.semantics.certificate import (
     _replay_one,
     compare_structure,
 )
-from archytaszx.semantics.induction import _bare, _extract, replace_region
+from archytaszx.semantics.induction import (
+    CutRegion,
+    _bare,
+    _cut_extract,
+    _extract,
+    fed_replacement,
+    replace_cut_region,
+    replace_region,
+    unfed,
+)
 from archytaszx.semantics.lean_scalar import ScalarUnsupported
 from archytaszx.semantics.prove import (
     _INDUCTION_ERRORS,
@@ -369,8 +378,13 @@ def induction(
     expose: Theorem,
     region: frozenset[NodeId],
     step: Theorem,
+    *,
+    cut: CutRegion | None = None,
+    tree: BangBoxId | None = None,
 ) -> Theorem:
-    """``start = goal`` for every value of ``index`` (see the module docstring)."""
+    """``start = goal`` for every value of ``index`` (see the module docstring); with ``cut``
+    the region meets the rest at cut wires (a chain), with ``tree`` (a tree box id) it is the
+    exposed diagram without the box that tree feeds."""
     live = free_mult_symbols(start) | free_mult_symbols(goal)
     if index not in live or step_symbol in live:
         raise KernelError(f"{index!r} is not a free multiplicity or {step_symbol!r} is not fresh")
@@ -389,13 +403,27 @@ def induction(
             raise KernelError("the exposing theorem does not start at the peeled successor")
         exposed = expose.rhs
         hypothesis = induction_hypothesis(own, index, k)
-        if not region <= frozenset(exposed.nodes) or _crosses(exposed, region):
-            raise KernelError("the hypothesis region is not a closed part of the exposed diagram")
-        if not isomorphic(_bare(_extract(exposed, region, with_boxes=True)), _bare(hypothesis)):
-            raise KernelError("the hypothesis region is not the hypothesis diagram")
-        replaced = replace_region(
-            exposed, region, hypothesis, induction_hypothesis(other, index, k)
-        )
+        other_k = induction_hypothesis(other, index, k)
+        if cut is not None:
+            if cut.region != region or not region <= frozenset(exposed.nodes):
+                raise KernelError("the cut region is not the hypothesis region")
+            if not isomorphic(_bare(_cut_extract(exposed, cut)), _bare(hypothesis)):
+                raise KernelError("the cut region is not the hypothesis diagram")
+            replaced = replace_cut_region(exposed, cut, hypothesis, other_k)
+        elif tree is not None:
+            tree_id = tree
+            rest = unfed(exposed, tree_id)
+            if region != frozenset(rest.nodes) or not isomorphic(rest, hypothesis):
+                raise KernelError("the unfed exposed diagram is not the hypothesis diagram")
+            replaced = fed_replacement(exposed, tree_id, hypothesis, other_k)
+        else:
+            if not region <= frozenset(exposed.nodes) or _crosses(exposed, region):
+                raise KernelError(
+                    "the hypothesis region is not a closed part of the exposed diagram"
+                )
+            if not isomorphic(_bare(_extract(exposed, region, with_boxes=True)), _bare(hypothesis)):
+                raise KernelError("the hypothesis region is not the hypothesis diagram")
+            replaced = replace_region(exposed, region, hypothesis, other_k)
         if not (_same(step.lhs, replaced) and _same(step.rhs, other_peeled)):
             raise KernelError("the step theorem does not run from the replaced to the other side")
     except _INDUCTION_ERRORS as exc:
@@ -411,6 +439,7 @@ def induction(
         "replaced": replaced,
         "region": region,
         "exposed": exposed,
+        "window": "cut" if cut is not None else "tree" if tree is not None else "region",
     }
     assumptions = _merge(base.assumptions, expose.assumptions, step.assumptions)
     return Theorem(
