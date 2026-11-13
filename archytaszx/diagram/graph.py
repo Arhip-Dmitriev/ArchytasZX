@@ -756,9 +756,10 @@ class Diagram:
         clone._parameters = {
             name: value for name, value in self._parameters.items() if name not in mapping
         }
-        # Bang boxes (Phase 7) carry a Mult, never a Dim/Phase/Scalar, so this mapping
-        # never touches them; they cross to the clone unchanged, same as the wire set.
-        clone._bang_boxes = dict(self._bang_boxes)
+        clone._bang_boxes = {
+            box_id: _box_scalar_substituted(box, scalar_mapping)
+            for box_id, box in self._bang_boxes.items()
+        }
         clone._next_bang_box_id = self._next_bang_box_id
         return clone
 
@@ -783,3 +784,19 @@ class Diagram:
         clone._bang_boxes = dict(self._bang_boxes)
         clone._next_bang_box_id = self._next_bang_box_id
         return clone
+
+
+def _box_scalar_substituted(box: BangBox, mapping: Mapping[str, ScalarSubstituteValue]) -> BangBox:
+    """``box`` with ``mapping`` substituted into its copy scalar, the box's own copy, level and
+    position indices left free."""
+    scalar = box.copy_scalar
+    if scalar is None:
+        return box
+    own = {box.index, box.level, box.position}
+    used = {k: v for k, v in mapping.items() if k in scalar.free_symbols and k not in own}
+    if not used:
+        return box
+    from dataclasses import replace
+
+    typed = cast(Mapping[ScalarSymbolKey, ScalarSubstituteValue], used)
+    return replace(box, copy_scalar=scalar.substitute(typed))

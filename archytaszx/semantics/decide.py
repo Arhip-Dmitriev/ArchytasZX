@@ -322,6 +322,9 @@ def _free_symbols(diagram: Diagram) -> tuple[frozenset[str], frozenset[str], fro
     mults = set(free_mult_symbols(diagram))
     dims: set[str] = set()
     others: set[str] = set(diagram.scalar.free_symbols)
+    for box in diagram.bang_boxes.values():
+        if box.copy_scalar is not None:
+            others |= box.copy_scalar.free_symbols
     for node in diagram.nodes.values():
         for port in (*node.outputs, *node.inputs):
             dims |= port.dim.free_symbols
@@ -338,7 +341,10 @@ def _symbol_table(*diagrams: Diagram) -> dict[str, frozenset[sp.Symbol]]:
     exprs: list[sp.Expr] = []
     for diagram in diagrams:
         exprs.append(diagram.scalar.to_sympy())
-        exprs.extend(box.multiplicity.to_sympy() for box in diagram.bang_boxes.values())
+        for box in diagram.bang_boxes.values():
+            exprs.append(box.multiplicity.to_sympy())
+            if box.copy_scalar is not None:
+                exprs.append(box.copy_scalar.to_sympy())
         for node in diagram.nodes.values():
             exprs.extend(port.dim.to_sympy() for port in (*node.outputs, *node.inputs))
             if node.phase is not None:

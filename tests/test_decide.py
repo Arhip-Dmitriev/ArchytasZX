@@ -1439,3 +1439,37 @@ class TestDimensionFloors:
         assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
         assert decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
         assert "given d >= 2" in decision.reason
+
+
+class TestCopyScalarDimension:
+    """A declared dimension in a copy scalar is substituted with the restriction's value."""
+
+    BODY = (
+        "dim d = 2\ncount n = 2\nz = Z(1 -> 2, d)\n"
+        "repeat n as V: e = Z(1 -> 1, d), a = X(0 -> 1, d)\n"
+        "wire z.out0 -- e.in0\noutputs e.out0, a.out0, z.out1\n"
+    )
+
+    def _pair(self, copy: str) -> tuple[Diagram, Diagram]:
+        from archytaszx.repl.parser import parse_dsl
+
+        outer = parse_dsl(self.BODY + "scalar d^(-n/2)")
+        return outer, parse_dsl(self.BODY + f"copy scalar V: {copy}")
+
+    def test_substitute_reaches_the_copy_scalar(self) -> None:
+        _, inner = self._pair("d^(-1/2)")
+        (box,) = inner.substitute({"d": 2}).bang_boxes.values()
+        assert box.copy_scalar is not None and not box.copy_scalar.free_symbols
+
+    @pytest.mark.parametrize("clause", ["d = 2, n = 2", "d = 2"])
+    def test_restricted_pair_stays_equal(self, clause: str) -> None:
+        outer, inner = self._pair("d^(-1/2)")
+        decision = decide_equal(outer, inner, restrict=clause, family_first=False)
+        assert not decision.claims_unequal, decision.reason
+        if clause == "d = 2, n = 2":
+            assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+
+    def test_a_wrong_copy_scalar_stays_unequal(self) -> None:
+        outer, wrong = self._pair("d^(-1)")
+        decision = decide_equal(outer, wrong, restrict="d = 2, n = 2", family_first=False)
+        assert decision.claims_unequal, decision.reason
