@@ -381,6 +381,14 @@ successor, peeled or not. replace_region and replace_cut_region refuse a replace
 boundary layout (per slot: the multiplicities replicating it and where each box's run starts)
 differs from the hypothesis's.
 
+When that fails and a successor's chain peels its first copy and reads an index, the window
+is run again on offset_obligation: for a fresh natural s, both successors read their copy
+index as index + s and both hypothesis diagrams as index + s + 1, so the peeled residual is
+the hypothesis at s + 1. The claim inducted on is the pair at every s (P(n, s)); s = 0 is the
+pair. The kernel rule induction(..., offset=s) checks s fresh and both sides at index 0
+unchanged by s, rebuilds the successors and hypotheses so shifted, and records inference
+kind induction_offset, which has no opaque Lean export.
+
 TREE_WINDOW peels the leaf level off a successor whose step index is carried by one tree box
 (DIAGRAM.txt 4.2, fed box). Without the fed box, the tree's child ports back in its boundary
 block (unfed), the rest must be isomorphic to that side's hypothesis diagram. fed_replacement

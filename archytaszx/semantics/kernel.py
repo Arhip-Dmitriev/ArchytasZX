@@ -30,7 +30,9 @@ rules below construct one:
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
 * :func:`induction` -- ``start = goal`` from a base theorem at index 0, a theorem exposing
   one side's peeled successor at ``k + 1`` as a context around that side at ``k``, and a
-  theorem from that context around the other side at ``k`` to the other peeled successor.
+  theorem from that context around the other side at ``k`` to the other peeled successor;
+  with an offset ``s``, over both sides reading their copy index as ``copy index + s`` for
+  every ``s``, the hypothesis at ``s + 1`` (inference kind ``induction_offset``).
 
 :func:`check` turns a step-sequence :class:`~archytaszx.semantics.certificate.Certificate`, a
 :class:`~archytaszx.semantics.prove.ProofCertificate` or an
@@ -117,7 +119,7 @@ _TOKEN = object()
 @dataclass(frozen=True, eq=False)
 class Inference:
     """The rule that built a theorem: ``kind`` is refl, rule, iso, algebraic, contraction,
-    congr, symm, trans, induction, subst or shift."""
+    congr, symm, trans, induction, induction_offset, subst or shift."""
 
     kind: str
     premises: tuple[Theorem, ...] = ()
@@ -490,10 +492,14 @@ def induction(
     *,
     cut: CutRegion | None = None,
     tree: BangBoxId | None = None,
+    offset: str | None = None,
 ) -> Theorem:
     """``start = goal`` for every value of ``index`` (see the module docstring); with ``cut``
     the region meets the rest at cut wires (a chain), with ``tree`` (a tree box id) it is the
-    exposed diagram without the box that tree feeds."""
+    exposed diagram without the box that tree feeds. With ``offset`` (a fresh symbol ``s``)
+    the claim inducted on is both sides with the box carrying ``index`` reading its copy index
+    as ``copy index + s``, for every ``s``: at 0 both sides must not depend on ``s``, the
+    successors read ``+ s`` and the hypothesis diagrams ``+ s + 1``."""
     live = free_mult_symbols(start) | free_mult_symbols(goal)
     if index not in live or step_symbol in live:
         raise KernelError(f"{index!r} is not a free multiplicity or {step_symbol!r} is not fresh")
@@ -504,8 +510,12 @@ def induction(
         if not _same(base.rhs, induction_base(goal, index)):
             raise KernelError("the base theorem does not end at the goal side at 0")
         own, other = (start, goal) if side is InductionSide.START else (goal, start)
-        peeled = induction_successor(own, index, k)
-        other_peeled = induction_successor(other, index, k)
+        shift = _offset_shift(start, goal, index, k, offset)
+        own_s, other_s = own, other
+        if shift is not None:
+            own_s, other_s = shift(own, index, 0), shift(other, index, 0)
+        peeled = induction_successor(own_s, index, k)
+        other_peeled = induction_successor(other_s, index, k)
         if peeled is None or other_peeled is None:
             raise KernelError("a successor has no single box to peel")
         if not _same(expose.lhs, peeled):
@@ -513,6 +523,8 @@ def induction(
         exposed = expose.rhs
         hypothesis = induction_hypothesis(own, index, k)
         other_k = induction_hypothesis(other, index, k)
+        if shift is not None:
+            hypothesis, other_k = shift(hypothesis, k, 1), shift(other_k, k, 1)
         if cut is not None:
             if cut.region != region or not region <= frozenset(exposed.nodes):
                 raise KernelError("the cut region is not the hypothesis region")
@@ -544,16 +556,47 @@ def induction(
         "peeled": peeled,
         "other_peeled": other_peeled,
         "own_k": hypothesis,
-        "other_k": induction_hypothesis(other, index, k),
+        "other_k": other_k,
         "replaced": replaced,
         "region": region,
         "exposed": exposed,
         "window": "cut" if cut is not None else "tree" if tree is not None else "region",
     }
+    kind = "induction"
+    if offset is not None:
+        data["offset"] = offset
+        kind = "induction_offset"
     assumptions = _merge(base.assumptions, expose.assumptions, step.assumptions)
     return Theorem(
-        _TOKEN, start, goal, Inference("induction", (base, expose, step), data=data), assumptions
+        _TOKEN, start, goal, Inference(kind, (base, expose, step), data=data), assumptions
     )
+
+
+def _offset_shift(
+    start: Diagram, goal: Diagram, index: str, step_symbol: str, offset: str | None
+) -> Callable[[Diagram, str, int], Diagram] | None:
+    """None without ``offset``; else, once ``offset`` is checked fresh and both sides at
+    ``index = 0`` are unchanged by it, a function taking a diagram, the multiplicity its box
+    carries and ``c`` to that diagram reading ``copy index + offset + c``."""
+    from archytaszx.semantics.induction import _all_free_symbols
+    from archytaszx.semantics.prove import induction_offset
+
+    if offset is None:
+        return None
+    names = _all_free_symbols(start) | _all_free_symbols(goal) | {index, step_symbol}
+    names |= {b.index for d in (start, goal) for b in d.bang_boxes.values() if b.index}
+    if offset in names:
+        raise KernelError(f"the offset {offset!r} is not fresh")
+    sym = sp.Symbol(offset, integer=True, nonnegative=True)
+    for d in (start, goal):
+        at_zero = induction_base(induction_offset(d, index, sym), index)
+        if not _same(at_zero, induction_base(d, index)):
+            raise KernelError("a side at 0 depends on the offset")
+
+    def shifted(d: Diagram, carried: str, c: int) -> Diagram:
+        return induction_offset(d, carried, sym + c)
+
+    return shifted
 
 
 @_trace.traced("kernel.subst")
@@ -1112,6 +1155,8 @@ class _Lean:
             return self.congr(t)
         if inf.kind == "shift":
             raise KernelError("a shift has no opaque export")
+        if inf.kind != "induction":
+            raise KernelError(f"an {inf.kind} inference has no opaque export")
         return self.induction(t)
 
     def subst(self, t: Theorem) -> str:

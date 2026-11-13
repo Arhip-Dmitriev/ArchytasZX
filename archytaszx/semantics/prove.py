@@ -73,7 +73,9 @@ from archytaszx.diagram.bangbox import (
     Mult,
     free_mult_symbols,
     instantiate_symbol,
+    offset_index,
     peel_one,
+    peels_first,
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
@@ -119,6 +121,7 @@ from archytaszx.semantics.decide import (
 )
 from archytaszx.semantics.induction import (
     InductionError,
+    _all_free_symbols,
     _bare,
     _extract,
     find_hypothesis_region,
@@ -287,6 +290,42 @@ def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagr
     if not box.is_tree and not (constant.is_Integer and constant >= 1):
         return renamed
     return peel_one(renamed, owners[0]).diagram
+
+
+def peels_shifted(diagram: Diagram, index: str) -> bool:
+    """Whether the one box carrying ``index`` peels its first copy and reads a copy index."""
+    owners = [b for b in diagram.bang_boxes.values() if index in b.multiplicity.free_symbols]
+    return len(owners) == 1 and owners[0].index is not None and peels_first(owners[0])
+
+
+def induction_offset(diagram: Diagram, index: str, by: sp.Expr) -> Diagram:
+    """``diagram`` with the one box carrying ``index`` reading its copy index as
+    ``copy index + by``; ``diagram`` itself when that box reads none."""
+    owners = [
+        box_id
+        for box_id, box in sorted(diagram.bang_boxes.items())
+        if index in box.multiplicity.free_symbols
+    ]
+    if len(owners) != 1:
+        raise InductionError(f"no single box carries {index!r}")
+    if diagram.bang_boxes[owners[0]].index is None:
+        return diagram
+    return offset_index(diagram, owners[0], by)
+
+
+def offset_symbol(*diagrams: Diagram) -> sp.Symbol:
+    """A natural-number symbol named in none of ``diagrams``."""
+    taken: set[str] = set()
+    for d in diagrams:
+        taken |= _all_free_symbols(d)
+        for box in d.bang_boxes.values():
+            if box.index is not None:
+                taken.add(box.index)
+    name, suffix = "s", 0
+    while name in taken:
+        suffix += 1
+        name = f"s{suffix}"
+    return sp.Symbol(name, integer=True, nonnegative=True)
 
 
 def _step_symbol(start: Diagram, goal: Diagram, index: str) -> str:

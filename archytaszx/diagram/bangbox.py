@@ -1781,10 +1781,11 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     _drop_identities(diagram, temps)
 
 
-def _shift_index(diagram: Diagram, box: BangBox) -> Scalar | None:
-    """Read ``box.index`` as ``index + 1`` in the scope's phases and in the multiplicities and
-    copy scalars of the boxes inside it; ``box``'s copy scalar so read."""
+def _shift_index(diagram: Diagram, box: BangBox, by: sp.Expr | None = None) -> Scalar | None:
+    """Read ``box.index`` as ``index + by`` (``by`` one when None) in the scope's phases and in
+    the multiplicities and copy scalars of the boxes inside it; ``box``'s copy scalar so read."""
     assert box.index is not None
+    step = sp.Integer(1) if by is None else sp.sympify(by)
     name = box.index
     scope = box.node_scope
     sym = _symbol_in(diagram, scope, box.copy_scalar, name)
@@ -1793,7 +1794,7 @@ def _shift_index(diagram: Diagram, box: BangBox) -> Scalar | None:
     for node_id in sorted(scope):
         phase = diagram.nodes[node_id].phase
         if phase is not None and name in phase.free_symbols:
-            diagram.set_phase(node_id, phase.substitute({name: sym + 1}))
+            diagram.set_phase(node_id, phase.substitute({name: sym + step}))
     for child_id, child in sorted(diagram.bang_boxes.items()):
         if child_id == box.id:
             continue
@@ -1801,15 +1802,32 @@ def _shift_index(diagram: Diagram, box: BangBox) -> Scalar | None:
         if not covered <= scope:
             continue
         if name in child.multiplicity.free_symbols:
-            mult = child.multiplicity.to_sympy().subs(_mult_symbol(name), _mult_symbol(name) + 1)
+            if not step.is_Integer:
+                raise BangBoxGrammarError(
+                    f"box {child_id!r} reads index {name!r} in its multiplicity; no offset {step}"
+                )
+            mult = child.multiplicity.to_sympy().subs(_mult_symbol(name), _mult_symbol(name) + step)
             diagram.set_bang_box_multiplicity(child_id, Mult._from_expr(sp.expand(mult)))
         if child.copy_scalar is not None and name in child.copy_scalar.free_symbols:
             diagram.set_bang_box_extension(
-                child_id, copy_scalar=_scalar_at(child.copy_scalar, name, sym + 1)
+                child_id, copy_scalar=_scalar_at(child.copy_scalar, name, sym + step)
             )
     if box.copy_scalar is None or name not in box.copy_scalar.free_symbols:
         return box.copy_scalar
-    return _scalar_at(box.copy_scalar, name, sym + 1)
+    return _scalar_at(box.copy_scalar, name, sym + step)
+
+
+def offset_index(diagram: Diagram, box_id: BangBoxId, by: sp.Expr) -> Diagram:
+    """A copy of ``diagram`` whose box ``box_id`` reads its index as ``index + by``."""
+    working = diagram.copy()
+    box = working.bang_boxes.get(box_id)
+    if box is None or box.index is None:
+        raise BangBoxGrammarError(f"box {box_id!r} reads no copy index")
+    shifted = _shift_index(working, box, by)
+    working.set_bang_box_extension(
+        box_id, links=box.links, cyclic=box.cyclic, index=box.index, copy_scalar=shifted
+    )
+    return working
 
 
 def _symbol_in(

@@ -1168,12 +1168,63 @@ def discharge_chain_window(
     """Settle the step case on a chain box: peel the last copy off one successor, read the
     residual as that side's hypothesis diagram through its cut wires, replace it by the other
     side's hypothesis diagram, and compare the result with the other successor (peeled or
-    not) structurally or by symbolic contraction."""
+    not) structurally or by symbolic contraction. A chain that peels its first copy and reads
+    an index is tried again on :func:`offset_obligation`."""
+    settled, why = _chain_window(obligation, max_steps)
+    if settled:
+        return TierOutcome(StepDischarge.CHAIN_WINDOW, True, why)
+    offset = offset_obligation(obligation)
+    if offset is not None:
+        shifted, symbol = offset
+        settled, inner = _chain_window(shifted, max_steps)
+        if settled:
+            return TierOutcome(
+                StepDischarge.CHAIN_WINDOW,
+                True,
+                f"successors reading index + {symbol}, hypotheses index + {symbol} + 1 for "
+                f"every {symbol}: {inner}",
+            )
+        why = f"{why}; offset {symbol}: {inner}"
+    return TierOutcome(StepDischarge.CHAIN_WINDOW, False, why)
+
+
+def offset_obligation(obligation: InductionObligation) -> tuple[InductionObligation, str] | None:
+    """``obligation`` with both successors reading their copy index as ``index + s`` and both
+    hypothesis diagrams as ``index + s + 1``, for a fresh ``s``; None unless a successor's box
+    peels its first copy and reads an index."""
+    from archytaszx.semantics.prove import induction_offset, offset_symbol, peels_shifted
+
+    k = obligation.step_symbol
+    pair = (obligation.left_at_successor, obligation.right_at_successor)
+    if not any(peels_shifted(d, k) for d in pair):
+        return None
+    sym = offset_symbol(
+        obligation.left_at_successor,
+        obligation.right_at_successor,
+        obligation.left_at_k,
+        obligation.right_at_k,
+    )
+    try:
+        shifted = replace(
+            obligation,
+            left_at_successor=induction_offset(obligation.left_at_successor, k, sym),
+            right_at_successor=induction_offset(obligation.right_at_successor, k, sym),
+            left_at_k=induction_offset(obligation.left_at_k, k, sym + 1),
+            right_at_k=induction_offset(obligation.right_at_k, k, sym + 1),
+        )
+    except (BangBoxError, InductionError):
+        return None
+    return shifted, str(sym)
+
+
+def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool, str]:
+    """Whether :func:`discharge_chain_window`'s peel-and-replace settles ``obligation``; and
+    how, or why not."""
     index = obligation.step_symbol
     reasons: list[str] = []
     paired = _compare_chain_copies(obligation, max_steps)
     if paired[0]:
-        return TierOutcome(StepDischarge.CHAIN_WINDOW, True, paired[1])
+        return True, paired[1]
     reasons.append(paired[1])
     sides = (
         (
@@ -1224,14 +1275,12 @@ def discharge_chain_window(
                 reasons.append(why)
                 settled, why = _close_by_chain_core(replaced, target, other_k, index, max_steps)
             if settled:
-                return TierOutcome(
-                    StepDischarge.CHAIN_WINDOW,
-                    True,
+                return True, (
                     "peeled the last chain copy; the residual is the hypothesis diagram through "
-                    f"its cut wires, replaced by the other side's; {why}",
+                    f"its cut wires, replaced by the other side's; {why}"
                 )
             reasons.append(why)
-    return TierOutcome(StepDischarge.CHAIN_WINDOW, False, "; ".join(reasons))
+    return False, "; ".join(reasons)
 
 
 def _chain_core(diagram: Diagram, index: str) -> frozenset[NodeId] | None:

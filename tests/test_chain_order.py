@@ -16,11 +16,17 @@ tail give the one-place shift of the unrolled ladder."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
 
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+
+if TYPE_CHECKING:
+    from archytaszx.diagram.graph import NodeId
+    from archytaszx.semantics.prove import InductionSide
 
 _SWAPS = (
     "dim d\ncount n\ng0 = Z(1 -> 1, d)\ng1 = Z(1 -> 1, d)\nrepeat n as C0: g0, g1\n"
@@ -141,6 +147,54 @@ def test_a_reversed_indexed_chain_shifts_its_residual_index() -> None:
     broken = spec.replace("phase {1: i/4}", "phase {1: (i + 1)/4}")
     verdict = decide_equal(parse_dsl(circuit), parse_dsl(broken)).verdict
     assert verdict is EqualityVerdict.UNEQUAL
+
+
+def test_a_reversed_indexed_chain_is_proved_with_an_index_offset() -> None:
+    """Equal with a kernel induction over ``index + s``; its pieces refused without the offset
+    or with an offset that is not fresh; phase, copy scalar and order variants not proved."""
+    from archytaszx.semantics import kernel as K
+
+    from .test_lean_chain import INDEXED
+
+    circuit, spec = _reversed_indexed()
+    theorems: list[K.Theorem] = []
+    for a, b in (
+        (circuit, spec),
+        (circuit + "\ncopy scalar C0: 2^i", spec + "\ncopy scalar V: 2^i"),
+    ):
+        decision = decide_equal(parse_dsl(a), parse_dsl(b))
+        assert decision.verdict is EqualityVerdict.EQUAL
+        assert isinstance(decision.induction_proof, K.Theorem)
+        theorems.append(decision.induction_proof)
+        assert theorems[-1].inference.kind == "induction_offset"
+    theorem = theorems[0]
+    data = theorem.inference.data
+    base, expose, step = theorem.inference.premises
+    for offset in (None, "i"):
+        with pytest.raises(K.KernelError):
+            K.induction(
+                theorem.lhs,
+                theorem.rhs,
+                "n",
+                str(data["step"]),
+                base,
+                cast("InductionSide", data["side"]),
+                expose,
+                cast("frozenset[NodeId]", data["region"]),
+                step,
+                offset=offset,
+            )
+    with pytest.raises(K.KernelError):
+        K.lean(theorem, semantic=False)
+    broken = (
+        (circuit, spec.replace("phase {1: i/4}", "phase {1: (i + 1)/4}")),
+        (circuit, spec.replace("phase {1: i/4}", "phase {1: i/2}")),
+        (circuit + "\ncopy scalar C0: 2^i", spec + "\ncopy scalar V: 2^(i + 1)"),
+        (circuit, INDEXED[1]),
+    )
+    for a, b in broken:
+        verdict = decide_equal(parse_dsl(a), parse_dsl(b)).verdict
+        assert verdict is not EqualityVerdict.EQUAL
 
 
 def test_a_reversed_chain_is_proved_by_induction() -> None:

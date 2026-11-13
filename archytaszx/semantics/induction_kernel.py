@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
 from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep, apply
 from archytaszx.rewrite.normal_form import normal_form
@@ -57,7 +59,10 @@ from archytaszx.semantics.prove import (
     InductionSide,
     induction_base,
     induction_hypothesis,
+    induction_offset,
     induction_successor,
+    offset_symbol,
+    peels_shifted,
     prove,
 )
 
@@ -252,22 +257,37 @@ def _windowed(
     """``start = goal`` by the kernel's induction rule over a chain's cut region (``window``
     cut), a tree's unfed residual (tree) or a closed region (region), the step from the
     replaced diagram to the other peeled successor by :func:`_step_theorem`; each side's
-    successor tried as the exposed one."""
+    successor tried as the exposed one, then, for a box that peels its first copy and reads an
+    index, both again with an index offset (:func:`~archytaszx.semantics.kernel.induction`)."""
     index, k = result.index, result.obligation.step_symbol
     reasons: list[str] = []
-    for side in (InductionSide.START, InductionSide.GOAL):
+    offsets: list[sp.Symbol | None] = [None]
+    if peels_shifted(start, index) or peels_shifted(goal, index):
+        obligation = result.obligation
+        offsets.append(
+            offset_symbol(start, goal, obligation.left_at_successor, obligation.right_at_successor)
+        )
+    for sym, side in [(o, s) for o in offsets for s in (InductionSide.START, InductionSide.GOAL)]:
         own, other = (start, goal) if side is InductionSide.START else (goal, start)
+        label = side.value if sym is None else f"{side.value}, offset {sym}"
         try:
-            peeled = induction_successor(own, index, k)
-            other_peeled = induction_successor(other, index, k)
+            own_s, other_s = own, other
+            if sym is not None:
+                own_s = induction_offset(own, index, sym)
+                other_s = induction_offset(other, index, sym)
+            peeled = induction_successor(own_s, index, k)
+            other_peeled = induction_successor(other_s, index, k)
         except Exception as exc:  # noqa: BLE001
-            reasons.append(f"{side.value}: peeling raised {type(exc).__name__}: {exc}")
+            reasons.append(f"{label}: peeling raised {type(exc).__name__}: {exc}")
             continue
         if peeled is None or other_peeled is None:
-            reasons.append(f"{side.value}: a successor has no single box to peel")
+            reasons.append(f"{label}: a successor has no single box to peel")
             continue
         own_k = induction_hypothesis(own, index, k)
         other_k = induction_hypothesis(other, index, k)
+        if sym is not None:
+            own_k = induction_offset(own_k, k, sym + 1)
+            other_k = induction_offset(other_k, k, sym + 1)
         try:
             tree_id = None
             cut = None
@@ -312,9 +332,10 @@ def _windowed(
                 step,
                 cut=cut,
                 tree=tree_id,
+                offset=None if sym is None else str(sym),
             )
         except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
-            reasons.append(f"{side.value}: {exc}")
+            reasons.append(f"{label}: {exc}")
     raise NoInductionTheorem("; ".join(reasons))
 
 
