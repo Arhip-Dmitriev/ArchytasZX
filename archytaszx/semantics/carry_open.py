@@ -208,3 +208,103 @@ def _footprint_hits(diagram: Diagram, nodes: frozenset[NodeId]) -> list[bool]:
         bool(box.node_scope & nodes) or any(r.node_id in nodes for r in box.port_scope)
         for box in diagram.bang_boxes.values()
     ]
+
+
+CHAIN_END_CUTS: tuple[str, ...] = ("both", "out", "in")
+"""Which link ends :func:`open_chain_ends` cuts, in the order tried: both, link-out, link-in."""
+
+
+def _chain_end_wires(diagram: Diagram, index: str, which: str) -> list[tuple[PortRef, PortRef]]:
+    """(box end, far end) of each wire from a link end of the chain box over ``index`` to a node
+    off the box, link by link, the link-out end first; ``which`` keeps both ends, ``out`` or
+    ``in``."""
+    owner = _chain_owner(diagram, index)
+    if owner is None:
+        raise InductionDomainError("no chain box carries the index")
+    box = diagram.bang_boxes[owner]
+    picked: list[PortRef] = []
+    for p_ref, q_ref in box.links:
+        picked += [r for r, side in ((p_ref, "out"), (q_ref, "in")) if which in ("both", side)]
+    out: list[tuple[PortRef, PortRef]] = []
+    for end in picked:
+        far = _partner_of(diagram, end)
+        if far is not None and far.node_id not in box.node_scope:
+            out.append((end, far))
+    if not out:
+        raise InductionDomainError("no link end of the chain is wired off the box")
+    return out
+
+
+def _opened(diagram: Diagram, wires: Sequence[tuple[PortRef, PortRef]]) -> Diagram:
+    """``diagram`` without ``wires``, both ends of each appended to the boundary list of its
+    direction in order."""
+    out = diagram.copy()
+    inputs, outputs = list(diagram.boundary_inputs), list(diagram.boundary_outputs)
+    for end, far in wires:
+        out.remove_wire(end, far)
+        for ref in (end, far):
+            (inputs if ref.direction is Direction.INPUT else outputs).append(ref)
+    out.set_boundary_inputs(inputs)
+    out.set_boundary_outputs(outputs)
+    return out
+
+
+def _with_identities(
+    diagram: Diagram, wires: Sequence[tuple[PortRef, PortRef]]
+) -> tuple[Diagram, CutRegion]:
+    """``diagram`` with a phase-free one-in one-out Z spider on each of ``wires``, and the
+    region of every other node read as :func:`_opened` through the spiders' wires."""
+    working = diagram.copy()
+    added: list[NodeId] = []
+    ends: list[PortRef] = []
+    for end, far in wires:
+        source, sink = (end, far) if end.direction is Direction.OUTPUT else (far, end)
+        dim = _ref_dim(diagram, end)
+        node = working.add_node(Z_SPIDER, [dim], [dim])
+        working.remove_wire(end, far)
+        working.add_wire(source, PortRef(node, Direction.INPUT, 0))
+        working.add_wire(PortRef(node, Direction.OUTPUT, 0), sink)
+        added.append(node)
+        ends += [end, far]
+    region = frozenset(working.nodes) - frozenset(added)
+    cut = CutRegion(
+        region,
+        (*diagram.boundary_inputs, *(r for r in ends if r.direction is Direction.INPUT)),
+        (*diagram.boundary_outputs, *(r for r in ends if r.direction is Direction.OUTPUT)),
+        MappingProxyType(_cut_wires(working, region)),
+    )
+    return working, cut
+
+
+@dataclass(frozen=True)
+class OpenEnds:
+    """``left_open`` and ``right_open`` (both sides with their chain-end wires cut, the ends
+    appended to their boundaries), ``context`` (``left`` with an identity spider on each cut
+    wire), ``cut`` (``left_open`` as a region of ``context``) and ``closed`` (``context`` with
+    that region replaced by ``right_open``)."""
+
+    left_open: Diagram
+    right_open: Diagram
+    context: Diagram
+    cut: CutRegion
+    closed: Diagram
+
+
+def open_chain_ends(left: Diagram, right: Diagram, index: str, which: str) -> OpenEnds:
+    """Both sides with the wires from the link ends ``which`` (:data:`CHAIN_END_CUTS`) of their
+    chain box over ``index`` to nodes off the box cut; InductionDomainError when a side has no
+    such chain or the cut ends differ in count, direction or dimension."""
+    left_wires = _chain_end_wires(left, index, which)
+    right_wires = _chain_end_wires(right, index, which)
+    if len(left_wires) != len(right_wires):
+        raise InductionDomainError("the two chains have different numbers of cut link ends")
+    for (le, lf), (re, rf) in zip(left_wires, right_wires, strict=True):
+        if (le.direction, lf.direction) != (re.direction, rf.direction) or _ref_dim(
+            left, le
+        ) != _ref_dim(right, re):
+            raise InductionDomainError("the cut link ends differ in direction or dimension")
+    left_open = _opened(left, left_wires)
+    right_open = _opened(right, right_wires)
+    context, cut = _with_identities(left, left_wires)
+    closed = replace_cut_region(context, cut, left_open, right_open, contiguous=False)
+    return OpenEnds(left_open, right_open, context, cut, closed)

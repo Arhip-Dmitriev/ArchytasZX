@@ -2415,7 +2415,7 @@ def _decide_carry_open(
     open pair proved by this rung and the closed pair decided without induction; else why
     not."""
     from archytaszx.semantics import kernel
-    from archytaszx.semantics.carry_open import open_carry
+    from archytaszx.semantics.carry_open import CHAIN_END_CUTS, open_carry
 
     reasons: list[str] = []
     for flipped in (False, True):
@@ -2489,4 +2489,117 @@ def _decide_carry_open(
             reason,
             {**evidence, "induction_proof": theorem},
         )
+    for which in CHAIN_END_CUTS:
+        cut_open = _decide_open_ends(
+            left,
+            right,
+            index,
+            which,
+            evaluated=evaluated,
+            rules=rules,
+            guard=guard,
+            max_samples=max_samples,
+            use_symbolic=use_symbolic,
+            max_depth=max_depth,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
+        )
+        if not isinstance(cut_open, str):
+            return cut_open
+        reasons.append(f"chain ends ({which}): {cut_open}")
     return "; ".join(reasons)
+
+
+def _decide_open_ends(
+    left: Diagram,
+    right: Diagram,
+    index: str,
+    which: str,
+    *,
+    evaluated: Sequence[Mapping[str, CheckAssignmentValue]],
+    rules: Sequence[Rule] | None,
+    guard: TerminationGuard,
+    max_samples: int,
+    use_symbolic: bool,
+    max_depth: int,
+    tolerance: float,
+    max_elements: int,
+    use_saturation: bool,
+    saturation_limits: SaturationLimits,
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL by induction on the pair with the wires from the link ends ``which`` of both chains
+    over ``index`` cut (:func:`~archytaszx.semantics.carry_open.open_chain_ends`), the context
+    and closed pairs decided without induction; else why not."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.carry_open import open_chain_ends
+
+    try:
+        ends = open_chain_ends(left, right, index, which)
+    except _INDUCTION_ERRORS as exc:
+        return str(exc)
+    with _trace.span("decide.induction.open_ends"):
+        inner = _decide_by_induction(
+            ends.left_open,
+            ends.right_open,
+            evaluated=evaluated,
+            samples=None,
+            rules=rules,
+            guard=guard,
+            max_samples=max_samples,
+            use_symbolic=use_symbolic,
+            max_depth=max_depth,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
+        )
+    if isinstance(inner, str) or inner[0] is not EqualityVerdict.EQUAL:
+        return "the open pair is not proved by induction"
+    _verdict, _method, inner_reason, evidence = inner
+    token = _NESTED.set(True)
+    try:
+        sides = [
+            decide_equal(
+                a,
+                b,
+                rules=rules,
+                guard=guard,
+                use_induction=False,
+                tolerance=tolerance,
+                max_elements=max_elements,
+                use_saturation=use_saturation,
+                saturation_limits=saturation_limits,
+            )
+            for a, b in ((left, ends.context), (ends.closed, right))
+        ]
+    finally:
+        _NESTED.reset(token)
+    for name, side in zip(("context", "closed"), sides, strict=True):
+        if side.verdict is not EqualityVerdict.EQUAL:
+            return f"the {name} pair is {side.verdict.value}"
+    theorem: object = None
+    why = ""
+    proof = evidence.get("induction_proof")
+    if proof is None:
+        why = "the open pair has no kernel proof"
+    else:
+        try:
+            lead = kernel.from_decision(sides[0], left, ends.context)
+            opened = kernel.congr(kernel.check(proof), ends.context, ends.cut)
+            closed = kernel.from_decision(sides[1], opened.rhs, right)
+            theorem = kernel.trans(kernel.trans(lead, opened), closed)
+        except kernel.KernelError as exc:
+            why = f"the kernel refused a piece: {exc}"
+    built = "kernel proof built" if theorem is not None else f"no kernel proof: {why}"
+    reason = (
+        f"chain ends ({which}) cut on both sides: {inner_reason}; the context and closed pairs "
+        f"are equal by {sides[0].method.value} and {sides[1].method.value}; {built}"
+    )
+    return (
+        EqualityVerdict.EQUAL,
+        DecisionMethod.INDUCTION,
+        reason,
+        {**evidence, "induction_proof": theorem},
+    )
