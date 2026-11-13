@@ -17,25 +17,30 @@ one place down."""
 from benchmarks.subjects._common import *
 
 
-def _circuit(n, d):
+def _unrolled(n, d):
     """SWAP(q_i, q_(i+1)) for i = 0 .. n - 1."""
     q = unrolled("q", n + 1)
     return circuit(q, [Swap(q[i], q[i + 1]) for i in range(n)])
 
 
+def _circuit(n, d):
+    """Per copy SWAP(c, r), c carried on to r: q_0 is c, q_(m+1) copy m of r; the outputs list
+    r before c."""
+    gates = [Chain(n, (Swap("c", "r"),), carries=(("c", "r"),))]
+    return circuit(["c", "r"], gates, registers={"r": n}, outputs=["r", "c"])
+
+
 def _spec(c):
-    """Identity wires, input i to output i - 1 (cyclically)."""
-    m = c.nv + 1
-    lines = [f"w{i} = Z(1 -> 1, {c.D})" for i in range(m)]
-    lines.append("inputs " + ", ".join(f"w{i}.in0" for i in range(m)))
-    lines.append("outputs " + ", ".join(f"w{(i + 1) % m}.out0" for i in range(m)))
-    return "\n".join(lines)
-
-
-def _reference(n, d):
-    """The same permutation as SWAPs from the far end."""
-    q = unrolled("q", n + 1)
-    return circuit(q, [Swap(q[i], q[i + 1]) for i in range(n)])
+    """Identity wires, input i to output i - 1 (cyclically): the head wire's output after the
+    box's."""
+    return "\n".join(
+        [
+            f"h = Z(1 -> 1, {c.D})",
+            f"repeat {c.N} as V: w = Z(1 -> 1, {c.D})",
+            "inputs h.in0, w.in0",
+            "outputs w.out0, h.out0",
+        ]
+    )
 
 
 SUBJECT = Subject(
@@ -46,5 +51,5 @@ SUBJECT = Subject(
     size_parameter="wires after the first",
     dimension="general",
     domain=Domain(n_min=0, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled", reference=_reference),),
+    equations=(Equation("main", _circuit, _spec, form="boxed", reference=_unrolled),),
 )
