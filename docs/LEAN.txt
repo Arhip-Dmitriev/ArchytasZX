@@ -72,6 +72,8 @@ between two scaled networks under one environment: the same tensor, scalars incl
   Bialgebra    the bialgebra law
   Hopf         the Hopf law
   WRules       W and triangle rules
+  WAssoc       W associativity over M groups of outputs at every M (sumW over the group
+               values, wTerm the weighted W nodes on the groups; wAssoc, wAssoc_nil)
   WZ           the Z-into-W bialgebra
   Connective   binder and splitter rules
   Bundle       families: a bundle label of base dimension d carries a value below d^k, read
