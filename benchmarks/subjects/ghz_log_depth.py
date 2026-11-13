@@ -18,14 +18,16 @@ from benchmarks.subjects._common import *
 
 
 def _unrolled(m, d):
-    """The doubling tree."""
+    """The doubling tree, qudits in leaf-major order (each holder followed by its partner)."""
     n = 2**m
     q = unrolled("q", n)
     gates = [Init(x) for x in q] + [F(q[0])]
+    leaves = [0]
     for level in range(m):
         for i in range(2**level):
             gates.append(CX(q[i], q[i + 2**level]))
-    return circuit(q, gates)
+        leaves = [x for i in leaves for x in (i, i + 2**level)]
+    return circuit([q[i] for i in leaves], gates)
 
 
 def _circuit(m, d):
