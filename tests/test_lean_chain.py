@@ -165,11 +165,13 @@ def test_lean_proves_the_lifted_chains(pair: tuple[str, str], d: int, tmp_path: 
 
 
 def _tree_window() -> object:
+    from archytaszx.semantics import kernel as K
     from archytaszx.semantics.decide import decide_equal
     from tests.test_tree_window import SPEC as TSPEC
     from tests.test_tree_window import TREE
 
     proof = decide_equal(parse_dsl(TREE), parse_dsl(TSPEC), use_symbolic=False).proof
+    assert isinstance(proof, K.Theorem)
     stack = [proof]
     while stack:
         t = stack.pop()
