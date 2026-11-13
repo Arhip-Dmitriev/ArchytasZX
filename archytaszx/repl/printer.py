@@ -887,7 +887,7 @@ def _at_least_two(value: sp.Expr) -> bool:
 def _phase_label(phase: PhaseVector) -> str:
     parts = [f"{k}: {_plain(p.to_sympy_turns())}" for k, p in sorted(phase.entries().items())]
     if phase.rule is not None:
-        parts.append(f"k: {_plain(rule_turns(phase))}")
+        parts.append(f"{rule_name(phase)}: {_plain(rule_turns(phase))}")
     if phase.is_weighted:
         parts.append(f"weight{{{_weight_label(phase)}}}")
     return ", ".join(parts)
@@ -897,20 +897,32 @@ def _weight_label(phase: PhaseVector) -> str:
     """``1: x, k: rule`` for the weights of ``phase``."""
     parts = [f"{k}: {_plain(w.to_sympy())}" for k, w in sorted(phase.weights().items())]
     if phase.weight_rule is not None:
-        parts.append(f"k: {_plain(rule_weight(phase))}")
+        parts.append(f"{rule_name(phase)}: {_plain(rule_weight(phase))}")
     return ", ".join(parts)
 
 
+def rule_name(phase: PhaseVector) -> str:
+    """The first of ``k``, ``k1``, ``k2``, ... not free in ``phase``."""
+    taken = phase.free_symbols
+    name, suffix = "k", 0
+    while name in taken:
+        suffix += 1
+        name = f"k{suffix}"
+    return name
+
+
 def rule_weight(phase: PhaseVector) -> sp.Expr:
-    """The weight rule of ``phase`` written in the index symbol ``k``."""
+    """The weight rule of ``phase`` written in the index symbol :func:`rule_name`."""
     assert phase.weight_rule is not None
-    return phase.weight_rule.to_sympy().xreplace({INDEX: sp.Symbol("k", integer=True)})
+    index = sp.Symbol(rule_name(phase), integer=True)
+    return phase.weight_rule.to_sympy().xreplace({INDEX: index})
 
 
 def rule_turns(phase: PhaseVector) -> sp.Expr:
-    """The rule of ``phase`` written in the index symbol ``k``."""
+    """The rule of ``phase`` written in the index symbol :func:`rule_name`."""
     assert phase.rule is not None
-    return phase.rule.to_sympy_turns().xreplace({INDEX: sp.Symbol("k", integer=True)})
+    index = sp.Symbol(rule_name(phase), integer=True)
+    return phase.rule.to_sympy_turns().xreplace({INDEX: index})
 
 
 def _z_name(m: sp.Expr, n: sp.Expr, phase: PhaseVector | None) -> str:
@@ -1172,7 +1184,7 @@ def _listing_phase(phase: PhaseVector | None) -> str:
         for index, p in sorted(phase.entries().items())
     ]
     if phase.rule is not None:
-        parts.append(f"k: {_listing_expr(sp.sstr(rule_turns(phase)))}")
+        parts.append(f"{rule_name(phase)}: {_listing_expr(sp.sstr(rule_turns(phase)))}")
     entries = ", ".join(parts)
     text = f"  phase[{_listing_expr(phase.dim)}]: {{{entries}}} turns"
     if not phase.is_weighted:
@@ -1182,7 +1194,7 @@ def _listing_phase(phase: PhaseVector | None) -> str:
         for index, w in sorted(phase.weights().items())
     ]
     if phase.weight_rule is not None:
-        weights.append(f"k: {_listing_expr(sp.sstr(rule_weight(phase)))}")
+        weights.append(f"{rule_name(phase)}: {_listing_expr(sp.sstr(rule_weight(phase)))}")
     return f"{text} weight: {{{', '.join(weights)}}}"
 
 

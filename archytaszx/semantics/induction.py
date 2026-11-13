@@ -214,7 +214,8 @@ class InductionResult:
 
 
 def _all_free_symbols(diagram: Diagram) -> frozenset[str]:
-    """Every free symbol (dimension, phase, scalar, or bang-box multiplicity) in ``diagram``."""
+    """Every free symbol (dimension, phase, scalar, copy scalar, or bang-box multiplicity) in
+    ``diagram``."""
     symbols: set[str] = set(diagram.scalar.free_symbols)
     for node in diagram.nodes.values():
         for port in (*node.outputs, *node.inputs):
@@ -222,6 +223,9 @@ def _all_free_symbols(diagram: Diagram) -> frozenset[str]:
         if node.phase is not None:
             symbols |= node.phase.free_symbols
     symbols |= free_mult_symbols(diagram)
+    for box in diagram.bang_boxes.values():
+        if box.copy_scalar is not None:
+            symbols |= box.copy_scalar.free_symbols
     return frozenset(symbols - index_symbols(diagram))
 
 
@@ -282,6 +286,13 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
         working.set_bang_box_multiplicity(box_id, renamed)
     if index in working.scalar.free_symbols:
         working.set_scalar(working.scalar.substitute({index: Scalar(replacement.to_sympy())}))
+    for box_id, box in sorted(working.bang_boxes.items()):
+        copy_scalar = box.copy_scalar
+        if copy_scalar is not None and index in copy_scalar.free_symbols:
+            working.set_bang_box_extension(
+                box_id,
+                copy_scalar=copy_scalar.substitute({index: Scalar(replacement.to_sympy())}),
+            )
     working = substitute_index_phases(working, index, replacement)
     if index in working.parameters:
         working.set_parameters(

@@ -348,6 +348,9 @@ dimension is the first symbol declared by dim, or d when there is none. PHASE is
     phase{...} weight{...}                 both: the coefficient at index k is
                                            weight_k * e^(2 pi i phase_k)
 
+Any name in place of k names the rule's index (phase{j: j/d}). The graph listing writes the rule
+over k, or over the first of k1, k2, ... not free in the vector.
+
 A spider with weights is the Z box of [P1] (COMPLETENESS.txt, section 2): weight{1: 0, 2: 0}
 at d = 3 is the Z box (0, 0), the projector onto |0>. In the graph listing a weighted node
 reads "phase[D]: {I: EXPR} turns weight: {I: EXPR}".

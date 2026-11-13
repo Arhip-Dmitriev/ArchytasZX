@@ -269,6 +269,25 @@ class TestObligationConstruction:
         rename_multiplicity(pre, "m", Mult("k"))
         assert compare_structure(pre, before).identical
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "dim d\ncount n\na = Z(0 -> 1, d) phase{k: n*k/d}\nrepeat n as C: a",
+            "dim d\ncount n\na = Z(0 -> 1, d)\nrepeat n as C: a\ncopy scalar C: d^(n/2)",
+        ],
+    )
+    def test_a_renamed_diagram_round_trips_through_the_listing(self, source: str) -> None:
+        """A phase rule and a copy scalar over the index survive renaming it to k and k + 1."""
+        from archytaszx.repl.parser import parse_dsl, parse_listing
+        from archytaszx.repl.printer import render_graph
+
+        diagram = parse_dsl(source)
+        for replacement in (Mult("k"), Mult("k") + 1):
+            renamed = rename_multiplicity(diagram, "n", replacement)
+            assert "n" not in induction._all_free_symbols(renamed)
+            back = parse_listing(render_graph(renamed))
+            assert compare_structure(renamed, back).identical
+
     def test_the_successor_diagram_carries_a_non_bare_multiplicity(self) -> None:
         pre, _post = _build_boxed_fusion_family()
         successor = successor_diagram(pre, "m")

@@ -981,11 +981,12 @@ def _phase_vector_parts(
         index, colon, expr = item.partition(":")
         if not colon:
             raise ParseGrammarError(f"phase entry {item!r} is not 'INDEX: EXPR'")
-        if index.strip() == "k":
+        name = index.strip()
+        if name.isidentifier():
             if rule is not None:
-                raise ParseGrammarError("the phase rule k appears twice")
-            turns = _phase_of(_parse_expr(expr, "phase"), {**table, "k": INDEX})
-            rule = Phase(turns.to_sympy_turns().xreplace({sp.Symbol("k", real=True): INDEX}))
+                raise ParseGrammarError("the phase rule appears twice")
+            turns = _phase_of(_parse_expr(expr, "phase"), {**table, name: INDEX})
+            rule = Phase(turns.to_sympy_turns().xreplace({sp.Symbol(name, real=True): INDEX}))
             continue
         i = _int_token(index, "phase index")
         if i in entries:
@@ -1006,10 +1007,11 @@ def _weight_vector_parts(
         index, colon, expr = item.partition(":")
         if not colon:
             raise ParseGrammarError(f"weight entry {item!r} is not 'INDEX: EXPR'")
-        if index.strip() == "k":
+        name = index.strip()
+        if name.isidentifier():
             if rule is not None:
-                raise ParseGrammarError("the weight rule k appears twice")
-            rule = _scalar_of(_parse_expr(expr, "weight"), {**table, "k": INDEX})
+                raise ParseGrammarError("the weight rule appears twice")
+            rule = _scalar_of(_parse_expr(expr, "weight"), {**table, name: INDEX})
             continue
         i = _int_token(index, "weight index")
         if i in entries:
@@ -1112,9 +1114,6 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             links=draft.links,
             cyclic=draft.cyclic,
             index=draft.index,
-            copy_scalar=None
-            if draft.copy_scalar is None
-            else _scalar_of(_parse_expr(draft.copy_scalar, "copy scalar"), {}),
             pair_of=draft.pair_of,
             pair_index=draft.pair_index,
             left_ports=draft.left_ports,
@@ -1438,6 +1437,21 @@ def parse_listing(source: str) -> Diagram:
     _set_phases(diagram, drafts, _role_table(_draft_dims(drafts), box_mults, seeds=seeds))
     table = _role_table(_draft_dims(drafts), box_mults, _phases(diagram), seeds)
     diagram.set_scalar(_diagram_scalar(diagram, scalar_text, table))
+    box_symbols = [
+        Mult.symbol(name)
+        for box in boxes.values()
+        for name in (box.index, box.pair_index, box.level, box.position)
+        if name is not None
+    ]
+    copy_table = _role_table(
+        _draft_dims(drafts), [*box_mults, *box_symbols], _phases(diagram), seeds
+    )
+    for box_id, box in sorted(boxes.items()):
+        if box.copy_scalar is not None:
+            diagram.set_bang_box_extension(
+                BangBoxId(box_id),
+                copy_scalar=_scalar_of(_parse_expr(box.copy_scalar, "copy scalar"), copy_table),
+            )
     return _finish(diagram)
 
 
