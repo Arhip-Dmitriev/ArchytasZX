@@ -140,13 +140,14 @@ def _refuse_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(induction, "compare", refusing)
 
 
-def _build_non_bare_multiplicity_diagram() -> Diagram:
-    """One phased Z spider node-scope boxed under the non-bare multiplicity ``m + 1``."""
+def _build_non_bare_multiplicity_diagram(offset: bool = False) -> Diagram:
+    """One phased Z spider node-scope boxed under the multiplicity ``2 m`` (``m + 1`` with
+    ``offset``)."""
     d = Dim("d")
     diagram = Diagram()
     node = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[d], phase=PhaseVector(d, {}))
     diagram.set_boundary_outputs([PortRef(node, Direction.OUTPUT, 0)])
-    diagram.add_bang_box(Mult("m") + 1, node_scope=frozenset({node}))
+    diagram.add_bang_box(Mult("m") + 1 if offset else Mult("m") * 2, node_scope=frozenset({node}))
     return diagram
 
 
@@ -200,8 +201,12 @@ class TestErrorTaxonomy:
 
     def test_a_non_bare_multiplicity_symbol_is_rejected(self) -> None:
         diagram = _build_non_bare_multiplicity_diagram()
-        with pytest.raises(InductionDomainError, match="bare multiplicity symbol"):
+        with pytest.raises(InductionDomainError, match="n \\+ c"):
             rename_multiplicity(diagram, "m", Mult("k"))
+
+    def test_an_offset_multiplicity_is_renamed(self) -> None:
+        renamed = rename_multiplicity(_build_non_bare_multiplicity_diagram(True), "m", Mult("k"))
+        assert [b.multiplicity for b in renamed.bang_boxes.values()] == [Mult("k") + 1]
 
     def test_an_unbound_free_symbol_is_rejected_before_the_oracle_sees_it(self) -> None:
         pre, post = _build_boxed_fusion_family()
