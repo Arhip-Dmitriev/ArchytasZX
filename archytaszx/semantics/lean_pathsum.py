@@ -884,9 +884,10 @@ def _net_side(
     first; ``phases`` collects the phase vectors' Lean bodies and ``coefs`` each weighted
     spider's base coefficient by its phase index; a legless spider takes its own digits as X
     does, a weighted one its turns over a common magnitude. With ``amp`` (a lean_amp.Coefs), a
-    weighted Z spider with legs whose weights are 0 or sqrt(2) times the magnitude takes atoms
-    on its anchor digits and its coefficient index table by phase index in ``tabs``; the side
-    then keeps its pins, held digits and fragment paths and no steps."""
+    weighted spider whose weights are 0 or sqrt(2) times the magnitude takes atoms on its anchor
+    digits (Z with legs) or its own digits (X, legless Z) and its coefficient index table by
+    phase index in ``tabs``; the side then holds every summed digit and fragment path variable
+    and keeps its pins and no steps."""
     from archytaszx.algebra.pathsum import constant
     from archytaszx.diagram.generators import (
         DIM_BINDER,
@@ -1018,6 +1019,10 @@ def _net_side(
                 f"{lemma} {common} {p} {q} rfl rfl {whole} {a} {b} rfl rfl (by decide) "
                 f"(by decide) (by decide) rfl rfl rfl {m}"
             )
+            side_atoms.append([])
+            if amp is not None:
+                nil = f"atoms_nil A {m} _ _ ({proofs[-1]})"
+                proofs[-1] = f"fvalA_of {m} A _ _ _ (by decide) ({nil})"
             continue
         k = k_of[legs[0]] if legs else _phase_bits(nid, node)
         if kind == ".F":
@@ -1027,6 +1032,10 @@ def _net_side(
                 f"f_frag_dig {common} {k} rfl {os_[0]} {is_[0]} rfl rfl (by decide) (by decide) "
                 f"rfl rfl {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num)"
             )
+            side_atoms.append([])
+            if amp is not None:
+                nil = f"atoms_nil A {m} _ _ ({proofs[-1]})"
+                proofs[-1] = f"fvalA_of {m} A _ _ _ (by decide) ({nil})"
             k_inv += k
             continue
         weighted = node.phase is not None and node.phase.is_weighted
@@ -1034,7 +1043,7 @@ def _net_side(
         root2: list[int] = []
         if weighted:
             table, zero, root2, mag, mag_k = _weights(nid, node, 1 << k)
-            if (any(zero) or any(root2)) and (amp is None or kind != ".Z") or not legs:
+            if (any(zero) or any(root2)) and amp is None:
                 raise PathSumUnsupported(f"node {nid!r} has weights of different magnitudes")
         else:
             table = _turns_table(nid, node, 1 << k)
@@ -1045,6 +1054,7 @@ def _net_side(
             poly, ts = _table_poly(anchor_vars, table, m)
         else:
             ys = own_ys[nid]
+            anchor_vars = ys
             poly, ts = _table_poly(ys, table, m)
         ph = 0
         if any(ts) or weighted:
@@ -1095,11 +1105,22 @@ def _net_side(
                     raise PathSumUnsupported(f"node {nid!r} carries atoms and no index table")
                 tabs[ph] = str(tbl)
                 frag = f"({frag}).scale ({c_text})"
-                proof = (
-                    f"za_frag E σ ownL labsL digL hown hσ _ rfl {k} rfl (by decide) (by decide) "
-                    f"{as_} rfl (by decide) {legs[0]} (by decide) (by decide) {m} _ ({c_text}) "
-                    f"A {tbl} {atoms_text(node_atoms)} (fun v => rfl) (by decide) ({proof})"
-                )
+                if kind == ".Z" and legs:
+                    proof = (
+                        f"za_frag E σ ownL labsL digL hown hσ _ rfl {k} rfl (by decide) "
+                        f"(by decide) {as_} rfl (by decide) {legs[0]} (by decide) (by decide) "
+                        f"{m} _ ({c_text}) A {tbl} {atoms_text(node_atoms)} (fun v => rfl) "
+                        f"(by decide) ({proof})"
+                    )
+                else:
+                    proof = (
+                        f"xa_frag {common} {k} rfl (by decide) (by decide) {ys} rfl (by decide) "
+                        f"(by decide) {m} {1 << k} {m >> k} (by norm_num) (by norm_num) "
+                        f"(by norm_num) {poly} {ts_text} (fun v => rfl) (by decide) (by decide) "
+                        f"({c_text}) A {tbl} {atoms_text(node_atoms)} (fun v => rfl) (by decide)"
+                    )
+                    if legless:
+                        proof = f"(val_zw_legless E σ _ rfl rfl rfl).trans ({proof})"
             else:
                 frag = f"({frag}).scale ({c_text})"
                 proof = (
@@ -1108,6 +1129,8 @@ def _net_side(
                 )
         if amp is not None and not node_atoms:
             proof = f"atoms_nil A {m} _ _ ({proof})"
+        if amp is not None and (kind == ".Z" and legs or not node_atoms):
+            proof = f"fvalA_of {m} A _ _ _ (by decide) ({proof})"
         frags.append(frag)
         proofs.append(proof)
         side_atoms.append(node_atoms)
@@ -1116,7 +1139,7 @@ def _net_side(
     if amp is not None:
         from archytaszx.semantics.lean_amp import atoms_text
 
-        held0 = [x for lab in summed for x in dig[lab]]
+        held0 = list(cur)
         pins = [(x, parent[x]) for x in reversed(reached) if x >= PIN_OFFSET]
         pinned = {x for x, _p in pins}
         if sorted(x for x in cur if x not in pinned) != sorted(raw.path):
@@ -1141,7 +1164,7 @@ def _net_side(
             side_atoms,
             pins,
             held0,
-            cur[len(held0) :],
+            [],
         )
         return side, raw
     steps: list[str] = []

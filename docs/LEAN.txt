@@ -550,13 +550,21 @@ asub at the pivots the atoms read, anorm and merges), the identities, the consta
 and main : valA M cL A tL sigma = valA M cR A tR sigma. ArchytasZX/PathSumNetAmp.lean: za_frag
 gives a weighted Z spider whose coefficient at v is C ex (phase v) times the product of A over
 tbl[v] as its unweighted fragment scaled by C times atoms on its anchor digits (atabOK checks
-tbl against the atoms at every v by decide); NetPSDA.eval_eq gives a network's value as valA of
-netDataA (the summed digits held, the fragments' paths as the path, every node's atoms), and
+tbl against the atoms at every v by decide); fvalA M A f as is a fragment's sum with the atoms
+read inside it (fvalA_of for atoms off its path, fvalA_joinAll for fragments pairwise DisjA:
+Disj and no path variable read by the other's atoms); xa_frag gives a weighted X spider (a
+legless weighted Z spider through val_zw_legless) as its unweighted fragment scaled by C with
+atoms on its fresh digits ys (x_term_dig: one term of the X sum as the fragment's summand at the
+digits of j on ys); NetPSDA (node entries as fvalA) and NetPSDA.eval_eq give a network's value as
+valA of netDataA (the summed digits and the fragments' paths held, every node's atoms), and
 equal_psda2, valA_smul and valA_agree give Equal. export_net, when a side's path sum has atoms,
-writes Psi with the index tables, the pins with asubB for a pinned digit an atom reads (its
-parent held first when on the path), then export_proof's AStep list. Checked: [Average] with
-an hh_pivot before it, a zero weight made a constraint, weights 1 and sqrt 2 with a phase,
-merged atoms, and a pinned anchor whose parent is held.
+writes Psi with the index tables, releases the held variables no atom reads, the pins with
+asubB for a pinned digit an atom reads (its parent held first when on the path), then
+export_proof's AStep list. from_diagram reads a weighted X spider's weights on its fresh digits
+as a weighted Z spider's on its anchor digits. Checked: [Average] with an hh_pivot before it, a
+zero weight made a constraint, weights 1 and sqrt 2 with a phase, merged atoms, a pinned anchor
+whose parent is held, atoms on a weighted X spider and on legless weighted Z and X spiders, and
+an F node beside atoms.
 
 5. REFUTATIONS
 --------------
@@ -887,11 +895,10 @@ discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported
 
 G15 Path-sum proofs. export_proof and export_net write AData for amplitude atoms (Amplitude atoms, section 4),
 but decline atoms whose reduction needs boolean_eliminate, an atom not on (1 + y) g or y g at
-an [Average], weighted X spiders and weighted legless spiders with weights of different
-magnitudes, and pairs whose reduced sums end on different atoms (a unit-root atom that the
+an [Average], and pairs whose reduced sums end on different atoms (a unit-root atom that the
 canonical form folds into the phase on one side only). There are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
-using them. export_net covers Z, X, F, B and S on dimensions 2^k but not legless spiders,
-weighted spiders or a wire on two boundary ports; it raises for those and the path_sum EQUAL
+using them. export_net covers Z, X, F, B and S on dimensions 2^k (legless and weighted
+spiders included) but not a wire on two boundary ports; it raises for that and the path_sum EQUAL
 stays EQUAL_UNCERTIFIED. PathSum.lean, PathSumSem.lean, PathSumRules.lean, PathSumNet.lean and
 PathSumDigits.lean check (no sorry) and are in the ArchytasZX root import list.

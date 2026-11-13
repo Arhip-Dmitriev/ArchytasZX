@@ -251,9 +251,28 @@ AMP_PAIRS: dict[str, tuple[str, str]] = {
         ),
         "scalar 1 + sqrt(2)",
     ),
+    "x_root2": (
+        f"a = X(0 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = X(1 -> 0, {_Q}); wire a.out0 -- b.in0",
+        "scalar 1 + sqrt(2)",
+    ),
+    "x_zero": (
+        f"a = X(0 -> 1, {_Q}) weight{{1: 0}}; b = X(1 -> 0, {_Q}); wire a.out0 -- b.in0",
+        "scalar 1",
+    ),
+    "x_legless": (f"a = X(0 -> 0, {_Q}) weight{{1: sqrt(2)}}", "scalar 1 + sqrt(2)"),
+    "z_legless": (f"a = Z(0 -> 0, {_Q}) weight{{1: sqrt(2)}}", "scalar 1 + sqrt(2)"),
+    "z_legless_zero": (f"a = Z(0 -> 0, {_Q}) weight{{1: 0}}", "scalar 1"),
+    "fourier": (
+        (
+            f"a = Z(0 -> 1, {_Q}) weight{{1: sqrt(2)}}; f = F(1 -> 1, {_Q}); "
+            f"c = X(1 -> 0, {_Q}); wire a.out0 -- f.in0; wire f.out0 -- c.in0"
+        ),
+        "scalar 1 + sqrt(2)",
+    ),
 }
 """Pairs with amplitude atoms: an [Average] after an hh_pivot, a zero weight, weights 1 and
-sqrt 2 with a phase, a pinned anchor whose parent is held."""
+sqrt 2 with a phase, a pinned anchor whose parent is held, atoms on a weighted X spider's and a
+legless weighted spider's own digits, an F node beside atoms."""
 
 
 def _amp(name: str, net: bool) -> str:
@@ -269,6 +288,41 @@ def test_an_average_trace_becomes_an_average_step() -> None:
 def test_a_pinned_atom_digit_holds_its_parent() -> None:
     source = _amp("held_parent", True)
     assert ".hold" in source and ".asubB " in source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        f"a = X(1 -> 1, {_Q}) weight{{1: sqrt(2)}}",
+        f"a = X(1 -> 2, {_Q}) weight{{1: -sqrt(2)/2}}",
+        f"a = X(2 -> 1, {_Q}) weight{{1: 0}}",
+        f"a = X(0 -> 0, {_Q}) weight{{1: sqrt(2)}}",
+        "a = X(1 -> 1, literal 4) weight{1: sqrt(2), 2: 0, 3: -1}",
+    ],
+)
+def test_a_weighted_x_path_sum_is_its_tensor(source: str) -> None:
+    import itertools
+
+    import numpy as np
+
+    from archytaszx.algebra.pathsum import PathSum, entry_enumerated
+    from archytaszx.semantics.contract_numeric import contract
+    from archytaszx.semantics.pathsum_diagram import from_diagram
+
+    diagram = parse_dsl(source)
+    ps = from_diagram(diagram)
+    assert isinstance(ps, PathSum)
+    tensor = np.asarray(contract(diagram).tensor)
+    for bits in itertools.product((0, 1), repeat=len(ps.boundary)):
+        entry = entry_enumerated(ps, dict(zip(ps.boundary, bits, strict=True)), 1 << 12)
+        assert entry is not None
+        index, pos = [], 0
+        for dim in tensor.shape:
+            k = dim.bit_length() - 1
+            index.append(sum(bits[pos + j] << j for j in range(k)))
+            pos += k
+        want = complex(tensor[tuple(index)]) if tensor.ndim else complex(tensor)
+        assert abs(entry.to_complex() - want) < 1e-9
 
 
 def test_unequal_atoms_are_refused() -> None:

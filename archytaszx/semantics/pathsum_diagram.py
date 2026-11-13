@@ -247,11 +247,11 @@ def from_diagram(
 ) -> PathSum | QuditPathSum:
     """The path sum of ``diagram`` (a :class:`QuditPathSum` at an odd prime base); raises
     :class:`PathSumUnsupported` naming the first node outside the class: a generator other than
-    Z, X, F, B and S, a dimension that is symbolic or not a power of two or of one odd prime, a
-    weighted or irrational phase, or a symbolic bang box. ``layout``, when given, receives the
-    diagram read (``diagram``, concrete boxes expanded), each port's digit variables
-    (``digit``), each X spider's fresh digits (``fresh``) and each legless Z spider's digits
-    (``zdigits``)."""
+    Z, X, F, B and S, a dimension that is symbolic or not a power of two or of one odd prime, an
+    irrational phase, weights outside ``_weights``, or a symbolic bang box. ``layout``, when
+    given, receives the diagram read (``diagram``, concrete boxes expanded), each port's digit
+    variables (``digit``), each X spider's fresh digits (``fresh``) and each legless Z spider's
+    digits (``zdigits``)."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
@@ -371,8 +371,17 @@ def from_diagram(
                 for a in range(k):
                     for b in range(k - a):
                         phase.add((ys[a], digit(ref, b)), Fraction(sign * (1 << (a + b)), 1 << k))
-            _interpolate(phase, ys, _turns_table(node_id, node, 1 << k))
             s2 -= k * len(legs)
+            if node.phase is None or not node.phase.is_weighted:
+                _interpolate(phase, ys, _turns_table(node_id, node, 1 << k))
+                continue
+            turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
+            _interpolate(phase, ys, turns)
+            c, s2 = c.scale(mag), s2 + mag_k
+            if any(zero):
+                amps.append((Cyclo.rational(0), _f2_indicator(ys, zero)))
+            if any(root2):
+                amps.append((SQRT2, _f2_indicator(ys, root2)))
         elif name == FOURIER_BOX.name:
             out, inp = PortRef(node_id, Direction.OUTPUT, 0), PortRef(node_id, Direction.INPUT, 0)
             k = bits[out]
