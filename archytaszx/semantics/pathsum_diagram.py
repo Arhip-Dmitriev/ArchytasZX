@@ -41,6 +41,8 @@ from archytaszx.algebra.pathsum import (
     constant,
     entry_enumerated,
     entry_enumerated_qudit,
+    f2_add,
+    f2_substitute,
     reduce,
     reduce_qudit,
     residual_form,
@@ -54,6 +56,7 @@ from archytaszx.diagram.generators import (
     DIM_BINDER,
     DIM_SPLITTER,
     FOURIER_BOX,
+    W_NODE,
     X_SPIDER,
     Z_SPIDER,
 )
@@ -243,7 +246,7 @@ def port_bits(diagram: Diagram, base: int = 2) -> list[int]:
 
 
 def from_diagram(
-    diagram: Diagram, layout: dict[str, object] | None = None
+    diagram: Diagram, layout: dict[str, object] | None = None, w_nodes: bool = False
 ) -> PathSum | QuditPathSum:
     """The path sum of ``diagram`` (a :class:`QuditPathSum` at an odd prime base); raises
     :class:`PathSumUnsupported` naming the first node outside the class: a generator other than
@@ -251,12 +254,17 @@ def from_diagram(
     irrational phase, weights outside ``_weights``, or a symbolic bang box. ``layout``, when
     given, receives the diagram read (``diagram``, concrete boxes expanded), each port's digit
     variables (``digit``), each X spider's fresh digits (``fresh``) and each legless Z spider's
-    digits (``zdigits``)."""
+    digits (``zdigits``). With ``w_nodes``, a W node on dimension 2 adds the constraints: its
+    input digit plus its output digits is 0, and each two output digits' product is 0 (on
+    boundary variables only); the first is pinned at its least path variable when it has one,
+    each pin listed in ``wpins`` of ``layout``."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
             raise PathSumUnsupported("a bang box with a symbolic multiplicity")
     allowed = {Z_SPIDER.name, X_SPIDER.name, FOURIER_BOX.name, DIM_BINDER.name, DIM_SPLITTER.name}
+    if w_nodes:
+        allowed.add(W_NODE.name)
     for node_id in sorted(diagram.nodes):
         name = diagram.nodes[node_id].generator_type.name
         if name not in allowed:
@@ -342,9 +350,12 @@ def from_diagram(
             if n.generator_type.name == Z_SPIDER.name and not _legs(nid, n)
         }
     if base != 2:
+        if any(n.generator_type.name == W_NODE.name for n in diagram.nodes.values()):
+            raise PathSumUnsupported(f"a W node on dimensions {base}^k")
         return _qudit_sum(diagram, base, bits, uf, var_of, boundary, path, same, fresh, digit)
     phase = PhasePoly()
     amps: list[tuple[Cyclo, F2Poly]] = []
+    w_cons: list[tuple[F2Poly, list[F2Poly]]] = []
     c, s2 = constant(diagram.scalar.to_sympy())
     for node_id in sorted(diagram.nodes):
         node = diagram.nodes[node_id]
@@ -389,6 +400,38 @@ def from_diagram(
                 for b in range(k - a):
                     phase.add((digit(out, a), digit(inp, b)), Fraction(1 << (a + b), 1 << k))
             s2 -= k
+        elif name == W_NODE.name:
+            refs = [ref for ref, _sign in legs]
+            if any(bits[ref] != 1 for ref in refs):
+                raise PathSumUnsupported(f"node {node_id!r} is a W on dimension 2^k, k != 1")
+            outs = [digit(ref, 0) for ref in refs if ref.direction is Direction.OUTPUT]
+            total: F2Poly = frozenset()
+            for x in [digit(PortRef(node_id, Direction.INPUT, 0), 0), *outs]:
+                total = f2_add(total, frozenset({frozenset({x})}))
+            w_cons.append(
+                (total, [frozenset({frozenset({a, b})}) for a, b in combinations(outs, 2)])
+            )
+    pins: list[tuple[int, F2Poly]] = []
+    for total, pairs in w_cons:
+        for v, value in pins:
+            total = f2_substitute(total, v, value)
+        free = sorted(x for m in total if len(m) == 1 for x in m if x in path)
+        if free:
+            v = free[0]
+            value = f2_add(total, frozenset({frozenset({v})}))
+            phase.substitute(v, value)
+            constraints = [f2_substitute(con, v, value) for con in constraints]
+            amps = [(amp, f2_substitute(f, v, value)) for amp, f in amps]
+            path.discard(v)
+            pins.append((v, value))
+        elif total:
+            constraints.append(total)
+        for pair in pairs:
+            if any(x in path for m in pair for x in m):
+                raise PathSumUnsupported("a W node's two outputs on path variables")
+            constraints.append(pair)
+    if layout is not None:
+        layout["wpins"] = pins
     return PathSum(tuple(boundary), path, phase, c, s2, constraints, [], amps)
 
 

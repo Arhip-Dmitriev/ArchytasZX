@@ -927,6 +927,7 @@ def _net_side(
         DIM_BINDER,
         DIM_SPLITTER,
         FOURIER_BOX,
+        W_NODE,
         X_SPIDER,
         Z_SPIDER,
     )
@@ -935,7 +936,7 @@ def _net_side(
     from archytaszx.semantics.pathsum_diagram import _phase_bits, _turns_table, _weights
 
     lay: dict[str, Any] = {}
-    raw = from_diagram(diagram, lay)
+    raw = from_diagram(diagram, lay, w_nodes=True)
     if not isinstance(raw, PathSum):
         raise PathSumUnsupported("the network export covers qubit path sums only")
     d: Diagram = lay["diagram"]
@@ -946,6 +947,7 @@ def _net_side(
         FOURIER_BOX.name: ".F",
         DIM_BINDER.name: ".B",
         DIM_SPLITTER.name: ".S",
+        W_NODE.name: ".W",
     }
     bnd = [*d.boundary_outputs, *d.boundary_inputs]
     label: dict[PortRef, int] = {}
@@ -1053,6 +1055,17 @@ def _net_side(
                 f"{lemma} {common} {p} {q} rfl rfl {whole} {a} {b} rfl rfl (by decide) "
                 f"(by decide) (by decide) rfl rfl rfl {m}"
             )
+            side_atoms.append([])
+            if amp is not None:
+                nil = f"atoms_nil A {m} _ _ ({proofs[-1]})"
+                proofs[-1] = f"fvalA_of {m} A _ _ _ (by decide) ({nil})"
+            continue
+        if kind == ".W":
+            if any(k_of[lab] != 1 for lab in legs):
+                raise PathSumUnsupported(f"node {nid!r} is a W on dimension 2^k, k != 1")
+            nodes.append(f"⟨.W, {os_}, {is_}, 1, 0⟩")
+            frags.append(f"wFrag digL {os_} {is_[0]}")
+            proofs.append(f"wnode_frag {common} rfl {is_[0]} rfl (by decide) {m}")
             side_atoms.append([])
             if amp is not None:
                 nil = f"atoms_nil A {m} _ _ ({proofs[-1]})"
@@ -1173,6 +1186,8 @@ def _net_side(
     if amp is not None:
         from archytaszx.semantics.lean_amp import atoms_text
 
+        if lay["wpins"]:
+            raise PathSumUnsupported("a W node pin in a network with atoms")
         held0 = list(cur)
         pins = [(x, parent[x]) for x in reversed(reached) if x >= PIN_OFFSET]
         pinned = {x for x, _p in pins}
@@ -1208,6 +1223,10 @@ def _net_side(
         cur.remove(x)
         steps += [f".perm {[x, *cur]}", f".pin [[{parent[x]}]]"]
     steps.append(".norm")
+    for x, value in lay["wpins"]:
+        cur.remove(x)
+        monos = ", ".join(str(sorted(mono)) for mono in sorted(value, key=sorted))
+        steps += [f".perm {[x, *cur]}", f".pin [{monos}]"]
     if sorted(cur) != sorted(raw.path):
         raise PathSumUnsupported("the pinned network keeps other path variables")
     if cur:
@@ -1310,7 +1329,7 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         ),
         (
             f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
-            "zFragD, xFragD, fFragD, bFrag, Frag.scale, List.length_cons, List.length_nil]"
+            "zFragD, xFragD, fFragD, bFrag, wFrag, Frag.scale, List.length_cons, List.length_nil]"
         ),
         "  ring",
         "",
@@ -1344,7 +1363,7 @@ def _zero_plan(left: Diagram, right: Diagram, m_min: int) -> _ZeroPlan | None:
     m = math.lcm(4, m_min)
     steps: list[list[str] | None] = []
     for d in (left, right):
-        raw = from_diagram(d)
+        raw = from_diagram(d, w_nodes=True)
         if not isinstance(raw, PathSum) or raw.amps:
             return None
         for c in raw.phase.terms.values():
@@ -1412,13 +1431,13 @@ def net_body(
     coefs: dict[int, str] | None = None,
 ) -> NetBody:
     """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
-    and S nodes on dimensions 2^k, their phase vectors appended to ``phases``, phases over a
-    multiple of ``m_min`` (see :func:`export_net`), each side zero by its scalar or by a
-    constraint 1 = 0 included; raises :class:`PathSumUnsupported` outside that class or when
-    the sums do not reduce to one canonical form."""
+    and S nodes on dimensions 2^k and W nodes on dimension 2, their phase vectors appended to
+    ``phases``, phases over a multiple of ``m_min`` (see :func:`export_net`), each side zero by
+    its scalar or by a constraint 1 = 0 included; raises :class:`PathSumUnsupported` outside
+    that class or when the sums do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
-    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    raw_l, raw_r = from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("the network export covers qubit path sums only")
     if raw_l.boundary != raw_r.boundary:
@@ -1593,7 +1612,7 @@ def _anet_lines(tag: str, side: _NetSide, m: int) -> list[str]:
         ),
         (
             f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
-            "zFragD, xFragD, fFragD, bFrag, Frag.scale, List.length_cons, List.length_nil]"
+            "zFragD, xFragD, fFragD, bFrag, wFrag, Frag.scale, List.length_cons, List.length_nil]"
         ),
         "  ring",
         "",
@@ -1642,7 +1661,7 @@ def net_amp_body(
     from archytaszx.semantics.lean_amp import Coefs, afac_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
-    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    raw_l, raw_r = from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("the network export covers qubit path sums only")
     if raw_l.boundary != raw_r.boundary:
@@ -1720,14 +1739,15 @@ NET_OPTIONS = [
 
 def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
-    F, B and S nodes on dimensions 2^k: each network's value is its fragments' path sum over
-    digit variables (NetPSD.eval_eq), whose pin steps reach from_diagram's variables, then each
+    F, B and S nodes on dimensions 2^k and W nodes on dimension 2: each network's value is its
+    fragments' path sum over digit variables (NetPSD.eval_eq), whose pin steps reach
+    from_diagram's variables (a W node's sum constraint pinned at a path variable), then each
     side's reduction steps, the two final sums matched on the boundary digits (val_agree) and
     the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
     do not reduce to one canonical form."""
     phases: list[tuple[str, int]] = []
     coefs: dict[int, str] = {}
-    raws = (from_diagram(left), from_diagram(right))
+    raws = (from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True))
     if any(isinstance(r, PathSum) and r.amps for r in raws):
         return _export_amp_net(left, right, name)
     body = net_body(left, right, name, phases, coefs=coefs)

@@ -574,6 +574,16 @@ from_diagram's path and the reduction steps of export_proof, and main : Equal E 
 equal_psd2, run_sound, val_agree and final_sound. Checked end to end: Z fusion, F F, X fusion,
 hh_pivot, omega, omega_conj and rem on qubits, and through binders on dimensions 4 and 8 an
 hh_gen, hh_constraint trace and an hh_nl, hh_gen, hh_gen, rem, hh_constraint trace. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
+W nodes on dimension 2 (PathSumW.lean): wFrag dig os i has no path variable and the constraints
+digit of i plus the digits of os = 0 and, for each two outputs a, b (pairsOf), a b = 0;
+wnode_frag gives the W node's entry as that fragment on one-digit labels, from tW_bits (on
+values below 2, tW 2 vs i is 1 exactly when i plus the count of ones of vs is even and that
+count is at most 1). from_diagram(w_nodes=True) adds the same constraints and pins the first
+one at its least path variable (layout wpins); the network side writes .perm, .pin B for each
+such pin after the digit pins and norm. A pair constraint on a path variable and W on 2^k, k > 1,
+raise. The w_state instances (test_tree_w_fusion CIRCUIT, SPEC) at n = 0, 1 are Lean-checked;
+at n = 2 the circuit side keeps two path variables (cubic quarter-turn phases from the CRy
+gates) and the export raises.
 
 Amplitude atoms. ArchytasZX/PathSumAmp.lean: AData is a path sum (Data) with held variables,
 summed outside the inner sum, and atoms (i, f) worth A i where the F_2 polynomial f is 1;
@@ -951,6 +961,6 @@ sides, an atom not on (1 + y) g or y g at an [Average], and pairs whose reduced 
 canonical form folds into the phase on one side only). There are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. export_net covers Z, X, F, B and S on dimensions 2^k (legless and weighted
-spiders included) but not a wire on two boundary ports; it raises for that and the path_sum EQUAL
+spiders included) and W on dimension 2 but not a wire on two boundary ports; it raises for that and the path_sum EQUAL
 stays EQUAL_UNCERTIFIED. PathSum.lean, PathSumSem.lean, PathSumRules.lean, PathSumNet.lean and
 PathSumDigits.lean check (no sorry) and are in the ArchytasZX root import list.

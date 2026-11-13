@@ -54,6 +54,7 @@ import ArchytasZX.PathSumRules
 import ArchytasZX.PathSumAmp
 import ArchytasZX.PathSumNet
 import ArchytasZX.PathSumDigits
+import ArchytasZX.PathSumW
 import ArchytasZX.PathSumNetW
 import ArchytasZX.PathSumNetAmp
 import ArchytasZX.PathSumSupport
