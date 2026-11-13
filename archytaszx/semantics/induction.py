@@ -143,6 +143,7 @@ class InductionObligation:
     right_at_successor: Diagram
     witness: Mapping[str, CheckAssignmentValue] = MappingProxyType({})
     held_symbolic: frozenset[str] = frozenset()
+    base_proved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,21 +392,26 @@ def build_obligation(
     mode: EqualityMode = EqualityMode.EXACT,
     tolerance: float = DEFAULT_TOLERANCE,
     max_elements: int = DEFAULT_MAX_ELEMENTS,
+    base_proved: bool = False,
 ) -> InductionObligation:
-    """Construct and validate the base, hypothesis and successor diagrams for one index."""
+    """Construct and validate the base, hypothesis and successor diagrams for one index;
+    ``base_proved`` builds the base diagrams with only the index instantiated, symbols the
+    witness leaves out held formal, and no numeric check at the base."""
     idx = choose_index(left, right, index=index)
     held = (free_mult_symbols(left) | free_mult_symbols(right)) - {idx}
     required = (_all_free_symbols(left) | _all_free_symbols(right)) - {idx} - held
     supplied = set(witness)
     missing = required - supplied
-    if missing:
+    if missing and not base_proved:
         raise InductionGrammarError(
             f"induction over {idx!r} leaves symbol(s) uninstantiated: {sorted(missing)}; "
             "name them in the witness to hold them at a value"
         )
     if base is not None and (isinstance(base, bool) or base not in (0, 1)):
         raise InductionDomainError(f"base index must be 0 or 1, got {base!r}")
-    if base is not None:
+    if base_proved and base is None:
+        raise InductionGrammarError("a proved base needs its base value")
+    if base is not None and not base_proved:
         try:
             compare(
                 left,
@@ -430,14 +436,15 @@ def build_obligation(
         index=idx,
         base_value=base,
         step_symbol=step,
-        left_at_base=instantiate(left, {**witness, idx: base}),
-        right_at_base=instantiate(right, {**witness, idx: base}),
+        left_at_base=_at_base(left, idx, base, witness, base_proved),
+        right_at_base=_at_base(right, idx, base, witness, base_proved),
         left_at_k=hypothesis_diagram(left, idx, step_symbol=step),
         right_at_k=hypothesis_diagram(right, idx, step_symbol=step),
         left_at_successor=successor_diagram(left, idx, step_symbol=step),
         right_at_successor=successor_diagram(right, idx, step_symbol=step),
         witness=MappingProxyType(dict(witness)),
         held_symbolic=required | held,
+        base_proved=base_proved,
     )
     for diagram in (
         obligation.left_at_base,
@@ -449,6 +456,22 @@ def build_obligation(
     ):
         validate_or_raise(diagram)
     return obligation
+
+
+def _at_base(
+    diagram: Diagram,
+    index: str,
+    value: int,
+    witness: Mapping[str, CheckAssignmentValue],
+    index_only: bool,
+) -> Diagram:
+    """``diagram`` at ``index = value``: with only the index set when ``index_only``, else
+    with every symbol per ``witness``."""
+    if not index_only:
+        return instantiate(diagram, {**witness, index: value})
+    from archytaszx.semantics.decide import _instantiate_index
+
+    return _instantiate_index(diagram, index, value)
 
 
 _VERDICT: dict[StepDischarge, Verdict] = {
@@ -2128,9 +2151,9 @@ def _concrete_child(
 ) -> tuple[Derivation | None, str]:
     """The step-sequence derivation over the hypothesis pair instantiated at ``value``, or None
     and the rewrite's reason."""
-    binding = {**dict(obligation.witness), obligation.step_symbol: value}
-    left = instantiate(obligation.left_at_k, binding)
-    right = instantiate(obligation.right_at_k, binding)
+    k = obligation.step_symbol
+    left = _at_base(obligation.left_at_k, k, value, obligation.witness, obligation.base_proved)
+    right = _at_base(obligation.right_at_k, k, value, obligation.witness, obligation.base_proved)
     rules_in_use = rules if rules is not None else DEFAULT_RULES
     reached, steps, reason = _rewrite_to(left, right, rules_in_use, max_steps, None)
     if not reached:
@@ -2195,14 +2218,18 @@ def prove_by_induction(
     max_elements: int = DEFAULT_MAX_ELEMENTS,
     restrict: object | None = None,
     family_first: bool = True,
+    base_proved: bool = False,
 ) -> InductionResult:
     """Discharge an equality over one multiplicity index by running the base case then each
     discharge tier in ladder order until one settles; under ``restrict``, the family first,
     kept when proved or refuted in range, otherwise the restricted pair inducted over the fresh
     symbol of the index's clause from 0; ``family_first=False`` inducts the restricted pair
-    only."""
+    only. ``base_proved`` (no ``restrict``) takes the base case at ``base`` as proved by the
+    caller and holds formal every symbol ``witness`` leaves out."""
     if not isinstance(family_first, bool):
         raise InductionGrammarError(f"family_first must be a bool, got {family_first!r}")
+    if base_proved and restrict is not None:
+        raise InductionGrammarError("a proved base is not taken under a restriction")
     if restrict is not None:
         options = {
             "base": base,
@@ -2229,11 +2256,14 @@ def prove_by_induction(
         mode=mode,
         tolerance=tolerance,
         max_elements=max_elements,
+        base_proved=base_proved,
     )
-    base_comparison = discharge_base(
-        obligation, mode=mode, tolerance=tolerance, max_elements=max_elements
+    base_comparison = (
+        None
+        if base_proved
+        else discharge_base(obligation, mode=mode, tolerance=tolerance, max_elements=max_elements)
     )
-    if not base_comparison.matched:
+    if base_comparison is not None and not base_comparison.matched:
         return InductionResult(
             verdict=Verdict.REFUTED,
             index=obligation.index,

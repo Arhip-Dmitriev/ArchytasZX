@@ -795,3 +795,69 @@ class TestStepCaseRefusesUnsoundReductions:
         right = self._boxed_pair(boxed_first=True)
         result = self._verdict(left, right)
         assert result.verdict is induction.Verdict.PROVED_INDUCTION
+
+
+_CLUSTER_SPEC = """dim d
+count n
+h = Z(0 -> 1, d)
+repeat n as V: v = Z(1 -> 2, d), f = F(d), w = Z(1 -> 1, d)
+wire h.out0 -- v.in0, v.out1 -- f.in0, f.out0 -- w.in0
+chain V: w.out0 -> v.in0
+outputs v.out0, w.out0
+scalar d^(-1/2)"""
+
+_CLUSTER_CIRCUIT = """dim d
+count n
+g0 = X(0 -> 1, d)
+g1 = F(d)
+g2 = X(0 -> 1, d)
+g3 = F(d)
+g4 = Z(1 -> 2, d)
+g5 = Z(2 -> 1, d)
+g6 = F(d)
+wire g0.out0 -- g1.in0, g2.out0 -- g3.in0, g1.out0 -- g4.in0, g3.out0 -- g5.in0
+wire g4.out1 -- g6.in0, g6.out0 -- g5.in1
+repeat n as C0: g2, g3, g4, g5, g6
+chain C0: g5.out0 -> g4.in0
+outputs g4.out0, g5.out0
+scalar 1/sqrt(d)"""
+
+
+class TestSymbolicDimensionBase:
+    """Induction with the oracle off keeps ``d`` formal at the base (74.3)."""
+
+    @staticmethod
+    def _decide(circuit: str, spec: str) -> object:
+        from archytaszx.repl.parser import parse_dsl
+        from archytaszx.semantics.decide import decide_equal
+
+        return decide_equal(parse_dsl(circuit), parse_dsl(spec), samples=[])
+
+    def test_the_chain_cluster_state_is_proved_with_d_formal(self) -> None:
+        from archytaszx.semantics.decide import DecisionMethod, EqualityVerdict
+
+        decision = self._decide(_CLUSTER_CIRCUIT, _CLUSTER_SPEC)
+        assert decision.verdict is EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+        assert decision.method is DecisionMethod.INDUCTION  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ("f = F(d), w", "f = Z(1 -> 1, d), w"),
+            ("w = Z(1 -> 1, d)", "w = Z(1 -> 1, d) phase{k: k/d}"),
+            ("outputs v.out0, w.out0", "outputs w.out0, v.out0"),
+        ],
+    )
+    def test_a_broken_spec_is_not_proved(self, old: str, new: str) -> None:
+        from archytaszx.semantics.decide import EqualityVerdict
+
+        decision = self._decide(_CLUSTER_CIRCUIT, _CLUSTER_SPEC.replace(old, new))
+        assert decision.verdict is not EqualityVerdict.EQUAL  # type: ignore[attr-defined]
+
+    def test_a_proved_base_needs_its_value(self) -> None:
+        from archytaszx.repl.parser import parse_dsl
+
+        with pytest.raises(induction.InductionGrammarError):
+            induction.build_obligation(
+                parse_dsl(_CLUSTER_CIRCUIT), parse_dsl(_CLUSTER_SPEC), base_proved=True
+            )

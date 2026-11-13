@@ -2324,6 +2324,7 @@ def _decide_by_induction(
                     rules=rules,
                     tolerance=tolerance,
                     max_elements=max_elements,
+                    base_proved=not witness,
                 )
         except _INDUCTION_ERRORS as exc:
             reasons.append(f"step case declined: {type(exc).__name__}: {exc}")
