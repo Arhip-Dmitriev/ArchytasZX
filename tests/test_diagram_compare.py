@@ -149,6 +149,30 @@ class TestCanonicalKey:
         assert canonical_key(a) == canonical_key(b)
         assert isomorphic(a, b)
 
+    def test_bang_box_groups_are_part_of_comparison_and_key(self) -> None:
+        def boxed(grouped: bool) -> Diagram:
+            diagram = Diagram()
+            first = diagram.add_node(Z_SPIDER, input_dims=[], output_dims=[DIM])
+            second = diagram.add_node(X_SPIDER, input_dims=[], output_dims=[DIM])
+            diagram.set_boundary_outputs(
+                [PortRef(first, Direction.OUTPUT, 0), PortRef(second, Direction.OUTPUT, 0)]
+            )
+            diagram.add_bang_box(
+                Mult.concrete(2),
+                node_scope=frozenset([first, second]),
+                groups=(frozenset([first]),) if grouped else (),
+            )
+            return diagram
+
+        a, b = boxed(False), boxed(True)
+        outcome = compare_structure(a, b)
+        assert not outcome.identical
+        assert "groups" in outcome.reason
+        assert canonical_key(a) != canonical_key(b)
+        assert not isomorphic(a, b)
+        assert compare_structure(b, boxed(True)).identical
+        assert canonical_key(b) == canonical_key(boxed(True))
+
     def test_a_non_diagram_is_rejected(self) -> None:
         import pytest
 

@@ -502,7 +502,7 @@ def _same_bang_boxes(a: Diagram, b: Diagram) -> bool:
 
 
 def _extension(box: BangBox) -> tuple[object, ...]:
-    """A box's chain, index, copy-scalar and pair fields."""
+    """A box's chain, index, copy-scalar, pair, tree, feed, align and group fields."""
     return (
         box.links,
         box.cyclic,
@@ -516,6 +516,10 @@ def _extension(box: BangBox) -> tuple[object, ...]:
         box.tree_parent,
         box.level,
         box.position,
+        box.feed,
+        box.feed_port,
+        box.align,
+        tuple(tuple(sorted(g)) for g in box.groups),
     )
 
 

@@ -135,6 +135,7 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_a.feed,
             box_a.feed_port,
             box_a.align,
+            tuple(tuple(sorted(g)) for g in box_a.groups),
         )
         extension_b = (
             box_b.links,
@@ -152,11 +153,12 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_b.feed,
             box_b.feed_port,
             box_b.align,
+            tuple(tuple(sorted(g)) for g in box_b.groups),
         )
         if extension_a != extension_b:
             return StructuralComparison(
                 False,
-                f"bang box {box_id}: links, index or copy scalar differ: "
+                f"bang box {box_id}: links, index, copy scalar or groups differ: "
                 f"{extension_a!r} vs {extension_b!r}",
             )
 
@@ -191,7 +193,7 @@ def _digest(payload: object) -> str:
 
 
 def _box_tag(box: BangBox) -> str:
-    """A box's multiplicity with its sheets, cyclic, index and copy-scalar marks."""
+    """A box's multiplicity with its sheets, cyclic, index, copy-scalar and group marks."""
     tag = repr(box.multiplicity) + ("|sheets" if box.sheets else "")
     if box.links:
         tag += "|cyclic" if box.cyclic else "|chain"
@@ -207,6 +209,8 @@ def _box_tag(box: BangBox) -> str:
         tag += "|fed"
     if box.align is not None:
         tag += "|aligned"
+    if box.groups:
+        tag += f"|groups:{len(box.groups)}"
     return tag
 
 
@@ -415,6 +419,7 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
             )
             + _feed_descriptor(diagram, box, label)
             + _align_descriptor(diagram, box, label)
+            + tuple(("group", tuple(sorted(label[n] for n in g if n in label))) for g in box.groups)
         )
         descriptors.append(
             (
