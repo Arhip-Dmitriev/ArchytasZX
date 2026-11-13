@@ -206,8 +206,12 @@ outside partner, and at k = 0 the two partners to each other (checked by decide 
 chain at k = 0 and 2). ChainLink.lean: Equal.dropIdentity removes an identity node from a
 summed label a to a boundary label b, a read as b in the rest; expand_two_chainNet gives that
 chain's expansion at k = 2 (toNet 10), its open-end identity dropped and its labels renamed onto
-the chain scheme (Equal.rename, renameOK by decide), equal to chainNet 100 [5] base copy 2. No
-theorem yet relates expandChain to chainNet at every k.
+the chain scheme (Equal.rename, renameOK by decide), equal to chainNet 100 [5] base copy 2.
+ChainEvery.lean: expand_closed gives that chain's expandChain at every k + 1 in closed form
+(closedK k: the copies 3 + j in copy order wired output 0 to input 0 between the identities 0
+and 2, their second outputs on the boundary before the tail's output). No theorem yet relates
+expandChain's network (toNet) to chainNet at every k; toNet 10 labels wire j as 10 + j, which
+meets the boundary slots once k + 3 > 10, so an every-k statement takes an offset above k + 2.
 
 The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
 (its copy index along its node boxes, outermost first, then its port boxes) is placed by the
