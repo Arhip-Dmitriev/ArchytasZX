@@ -25,13 +25,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar, ScalarBudgetError
 from archytaszx.diagram.bangbox import (
     BangBox,
     BangBoxError,
     Mult,
+    _port_multiplicity,
     add_box_image,
+    fed_box,
     free_mult_symbols,
     index_symbols,
     peel_one,
@@ -104,6 +108,7 @@ class StepDischarge(enum.Enum):
     ORACLE_WINDOW = "oracle_window"
     SYMBOLIC_CONTRACTION = "symbolic_contraction"
     CHAIN_WINDOW = "chain_window"
+    TREE_WINDOW = "tree_window"
 
 
 DEFAULT_WINDOW_WIDTH = 4
@@ -114,6 +119,7 @@ DEFAULT_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.INDUCTION_REWRITE,
     StepDischarge.SYMBOLIC_CONTRACTION,
     StepDischarge.CHAIN_WINDOW,
+    StepDischarge.TREE_WINDOW,
     StepDischarge.ORACLE_WINDOW,
 )
 
@@ -255,11 +261,20 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
     for box_id, box in sorted(working.bang_boxes.items()):
         if index not in box.multiplicity.free_symbols:
             continue
-        if not (box.multiplicity.is_bare_symbol and box.multiplicity.bare_symbol_name() == index):
-            raise InductionDomainError(
-                f"induction requires a bare multiplicity symbol, got {box.multiplicity!r}"
+        if box.multiplicity.is_bare_symbol and box.multiplicity.bare_symbol_name() == index:
+            working.set_bang_box_multiplicity(box_id, replacement)
+            continue
+        expr = box.multiplicity.to_sympy()
+        symbol = next(s for s in expr.free_symbols if str(s) == index)
+        try:
+            renamed = Mult._from_expr(
+                sp.powsimp(sp.expand(expr.xreplace({symbol: replacement.to_sympy()})), force=True)
             )
-        working.set_bang_box_multiplicity(box_id, replacement)
+        except BangBoxError as exc:
+            raise InductionDomainError(
+                f"multiplicity {box.multiplicity!r} does not take {index} = {replacement}: {exc}"
+            ) from exc
+        working.set_bang_box_multiplicity(box_id, renamed)
     if index in working.scalar.free_symbols:
         working.set_scalar(working.scalar.substitute({index: Scalar(replacement.to_sympy())}))
     working = substitute_index_phases(working, index, replacement)
@@ -389,6 +404,7 @@ _VERDICT: dict[StepDischarge, Verdict] = {
     StepDischarge.INDUCTION_REWRITE: Verdict.PROVED_INDUCTION,
     StepDischarge.SYMBOLIC_CONTRACTION: Verdict.PROVED_INDUCTION,
     StepDischarge.CHAIN_WINDOW: Verdict.PROVED_INDUCTION,
+    StepDischarge.TREE_WINDOW: Verdict.PROVED_INDUCTION,
     StepDischarge.ORACLE_WINDOW: Verdict.SCHEMA_CHECKED,
 }
 
@@ -1192,6 +1208,190 @@ def discharge_chain_window(
     return TierOutcome(StepDischarge.CHAIN_WINDOW, False, "; ".join(reasons))
 
 
+def _tree_owner(diagram: Diagram, index: str) -> BangBoxId | None:
+    """The single box whose multiplicity carries ``index`` when it is a tree box."""
+    owners = [b for b, box in diagram.bang_boxes.items() if index in box.multiplicity.free_symbols]
+    if len(owners) != 1 or not diagram.bang_boxes[owners[0]].is_tree:
+        return None
+    return owners[0]
+
+
+def _slot_counts(diagram: Diagram, refs: Sequence[PortRef]) -> list[object] | None:
+    """The expanded slot count of each boundary ref, or None when one does not resolve."""
+    out: list[object] = []
+    for ref in refs:
+        count = _port_multiplicity(diagram, ref)
+        if count is None:
+            return None
+        out.append(sp.expand(count))
+    return out
+
+
+def unfed(exposed: Diagram, tree_id: BangBoxId) -> Diagram:
+    """``exposed`` without the box tree ``tree_id`` feeds, the tree's child ports in that box's
+    boundary block."""
+    tree = exposed.bang_boxes[tree_id]
+    fed = fed_box(exposed, tree_id)
+    if fed is None:
+        raise InductionDomainError(f"tree box {tree_id!r} feeds no box")
+    working = exposed.copy()
+    for refs, setter in (
+        (list(working.boundary_outputs), working.set_boundary_outputs),
+        (list(working.boundary_inputs), working.set_boundary_inputs),
+    ):
+        block = [i for i, r in enumerate(refs) if r.node_id in fed.node_scope]
+        if not block:
+            continue
+        if block != list(range(block[0], block[0] + len(tree.tree))):
+            raise InductionDomainError("the fed box's boundary slots are not its leaf block")
+        refs[block[0] : block[0] + len(tree.tree)] = list(tree.tree)
+        setter(refs)
+    working.remove_bang_box(fed.id)
+    for node_id in sorted(fed.node_scope):
+        working.remove_node(node_id)
+    return working
+
+
+def fed_replacement(
+    exposed: Diagram, tree_id: BangBoxId, own_k: Diagram, other_k: Diagram
+) -> Diagram:
+    """``other_k`` with the box tree ``tree_id`` feeds in ``exposed`` grafted on: the leaf run
+    of ``own_k`` read at the same slot counts in ``other_k``, as one leg port-boxed b^k times
+    (the leg fanned into the box) or a tree box's child run (the box fed by that tree)."""
+    tree = exposed.bang_boxes[tree_id]
+    fed = fed_box(exposed, tree_id)
+    if fed is None or fed.feed_port is None:
+        raise InductionDomainError(f"tree box {tree_id!r} feeds no box")
+    b = len(tree.tree)
+    residual = unfed(exposed, tree_id)
+    if not isomorphic(residual, own_k):
+        raise InductionDomainError("the residual is not the hypothesis diagram")
+    outputs = tree.tree[0].direction is Direction.OUTPUT
+    own = list(residual.boundary_outputs if outputs else residual.boundary_inputs)
+    other = list(other_k.boundary_outputs if outputs else other_k.boundary_inputs)
+    s = own.index(tree.tree[0])
+    width = len(other) - len(own) + b
+    own_counts = _slot_counts(residual, own)
+    other_counts = _slot_counts(other_k, other)
+    if own_counts is None or other_counts is None or width < 1:
+        raise InductionDomainError("the boundary slot counts do not resolve")
+    if own_counts[:s] != other_counts[:s] or own_counts[s + b :] != other_counts[s + width :]:
+        raise InductionDomainError("the two hypothesis diagrams place the leaf run differently")
+    middle = other[s : s + width]
+    working = other_k.copy()
+    id_map: dict[NodeId, NodeId] = {}
+    for old_id in sorted(fed.node_scope):
+        node = exposed.nodes[old_id]
+        id_map[old_id] = working.add_node(
+            node.generator_type,
+            [p.dim for p in node.inputs],
+            [p.dim for p in node.outputs],
+            phase=node.phase,
+        )
+    for wire in sorted(exposed.wires, key=lambda w: w.sort_key()):
+        if wire.a.node_id in fed.node_scope and wire.b.node_id in fed.node_scope:
+            working.add_wire(_moved_ref(wire.a, id_map), _moved_ref(wire.b, id_map))
+    own_list = list(exposed.boundary_outputs if outputs else exposed.boundary_inputs)
+    block = [_moved_ref(r, id_map) for r in own_list if r.node_id in fed.node_scope]
+    leaves = sp.Integer(b) ** tree.multiplicity.to_sympy()
+    feed: BangBoxId | None = None
+    port_box = [
+        box_id
+        for box_id, box in working.bang_boxes.items()
+        if len(middle) == 1 and box.port_scope == frozenset(middle)
+    ]
+    trees = [
+        box_id
+        for box_id, box in working.bang_boxes.items()
+        if box.is_tree and list(box.tree) == middle and fed_box(working, box_id) is None
+    ]
+    if (
+        port_box
+        and sp.expand(working.bang_boxes[port_box[0]].multiplicity.to_sympy() - leaves) == 0
+    ):
+        box = working.bang_boxes[port_box[0]]
+        if box.parent is not None or any(o.parent == box.id for o in working.bang_boxes.values()):
+            raise InductionDomainError("the leaf leg's port box is nested")
+        working.remove_bang_box(box.id)
+        working.add_wire(middle[0], _moved_ref(fed.feed_port, id_map))
+    elif (
+        trees
+        and len(working.bang_boxes[trees[0]].tree) == b
+        and (working.bang_boxes[trees[0]].multiplicity == tree.multiplicity)
+    ):
+        feed = trees[0]
+    else:
+        raise InductionDomainError(
+            "the other hypothesis diagram's leaf run is neither one leg port-boxed b^k times "
+            "nor a tree box's child run"
+        )
+    refs = [*other[:s], *block, *other[s + width :]]
+    (working.set_boundary_outputs if outputs else working.set_boundary_inputs)(refs)
+    image = add_box_image(working, replace(fed, feed=None, feed_port=None), id_map, None)
+    if feed is not None:
+        working.set_bang_box_extension(
+            image, feed=feed, feed_port=_moved_ref(fed.feed_port, id_map)
+        )
+    working.multiply_scalar(exposed.scalar * residual.scalar**-1)
+    validate_or_raise(working)
+    return working
+
+
+def discharge_tree_window(
+    obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
+) -> TierOutcome:
+    """Settle the step case on a tree box over its depth: peel the leaf level off one
+    successor, read the rest as that side's hypothesis diagram, replace it by the other side's
+    with the leaf level grafted on its leaf run, and compare the result with the other successor
+    (peeled or not) structurally or by symbolic contraction."""
+    index = obligation.step_symbol
+    reasons: list[str] = []
+    sides = (
+        (
+            obligation.left_at_successor,
+            obligation.left_at_k,
+            obligation.right_at_k,
+            obligation.right_at_successor,
+        ),
+        (
+            obligation.right_at_successor,
+            obligation.right_at_k,
+            obligation.left_at_k,
+            obligation.left_at_successor,
+        ),
+    )
+    for own_successor, own_k, other_k, other_successor in sides:
+        owner = _tree_owner(own_successor, index)
+        if owner is None:
+            reasons.append("no tree box carries the step index")
+            continue
+        try:
+            exposed = peel_one(own_successor, owner).diagram
+            replaced = fed_replacement(exposed, owner, own_k, other_k)
+        except (BangBoxError, InductionDomainError, ValidateError) as exc:
+            reasons.append(str(exc))
+            continue
+        targets = [other_successor]
+        other_owner = _tree_owner(other_successor, index)
+        if other_owner is not None:
+            try:
+                targets.insert(0, peel_one(other_successor, other_owner).diagram)
+            except BangBoxError:
+                pass
+        for target in targets:
+            settled, why = _close_window(replaced, target, max_steps)
+            if settled:
+                return TierOutcome(
+                    StepDischarge.TREE_WINDOW,
+                    True,
+                    "peeled the tree's leaf level; the rest is the hypothesis diagram, replaced "
+                    f"by the other side's with the leaf level on its leaf run; {why}",
+                    left_peeled=exposed,
+                )
+            reasons.append(why)
+    return TierOutcome(StepDischarge.TREE_WINDOW, False, "; ".join(reasons))
+
+
 def _exposed_chain(
     successor: Diagram, hypothesis: Diagram, index: str
 ) -> tuple[Diagram, CutRegion] | None:
@@ -1407,6 +1607,7 @@ _DISPATCH: dict[StepDischarge, Callable[..., TierOutcome]] = {
     StepDischarge.ORACLE_WINDOW: discharge_oracle_window,
     StepDischarge.SYMBOLIC_CONTRACTION: discharge_symbolic_contraction,
     StepDischarge.CHAIN_WINDOW: discharge_chain_window,
+    StepDischarge.TREE_WINDOW: discharge_tree_window,
 }
 
 
