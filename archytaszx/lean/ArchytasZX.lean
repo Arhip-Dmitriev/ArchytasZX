@@ -47,3 +47,5 @@ import ArchytasZX.OrderK
 import ArchytasZX.FamK
 import ArchytasZX.Mixed
 import ArchytasZX.NumField
+import ArchytasZX.PathSum
+import ArchytasZX.PathSumSem

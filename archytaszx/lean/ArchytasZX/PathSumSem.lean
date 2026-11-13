@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.PathSum
+import ArchytasZX.Ball
 
 /-!
 # Path-sum values and step soundness
@@ -19,6 +20,7 @@ namespace ArchytasZX
 namespace PSem
 
 open Complex
+open ArchytasZX.Sym (ex_half)
 
 /-- A monomial: a list of variables. -/
 abbrev Mono := List ℕ
@@ -295,10 +297,10 @@ theorem pn_ins (σ : ℕ → ZMod 2) (M : ℕ) (t : Mono × ℕ) :
     split_ifs with h1 h2
     · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ t.1))
       rw [h2] at hn
-      refine ⟨-n, ?_⟩
+      refine ⟨n, ?_⟩
       rw [pn_cons, h1]
       push_cast at hn
-      linarith
+      linear_combination hn
     · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ t.1))
       refine ⟨n, ?_⟩
       rw [pn_cons, pn_cons, h1]
@@ -336,7 +338,7 @@ theorem pn_normP (σ : ℕ → ZMod 2) (M : ℕ) (P : Poly) : peq M (pn σ (norm
 /-- An F_2 polynomial with sorted monomials, equal pairs cancelled, sorted. -/
 def normF (Q : F2) : F2 :=
   (Q.foldr (fun m acc => let k := mnorm m; if k ∈ acc then acc.erase k else k :: acc) []
-    ).insertionSort mle
+    ).insertionSort fun a b => mle a b
 
 theorem fz_perm (σ : ℕ → ZMod 2) {P Q : F2} (h : P.Perm Q) : fz σ P = fz σ Q :=
   (h.map _).sum_eq
@@ -400,11 +402,11 @@ theorem bsum_perm (f : (ℕ → ZMod 2) → ℂ) {l l' : List ℕ} (h : l.Perm l
     by_cases hxy : x = y
     · subst hxy
       simp only [Function.update_idem]
-      ring
-    · rw [Function.update_comm hxy (0 : ZMod 2) (0 : ZMod 2),
-        Function.update_comm hxy (0 : ZMod 2) (1 : ZMod 2),
-        Function.update_comm hxy (1 : ZMod 2) (0 : ZMod 2),
-        Function.update_comm hxy (1 : ZMod 2) (1 : ZMod 2)]
+    · have hyx : y ≠ x := Ne.symm hxy
+      rw [Function.update_comm hyx (0 : ZMod 2) (0 : ZMod 2) σ,
+        Function.update_comm hyx (0 : ZMod 2) (1 : ZMod 2) σ,
+        Function.update_comm hyx (1 : ZMod 2) (0 : ZMod 2) σ,
+        Function.update_comm hyx (1 : ZMod 2) (1 : ZMod 2) σ]
       ring
   | trans _ _ ih1 ih2 => intro σ; rw [ih1, ih2]
 
@@ -518,7 +520,7 @@ def halfOK (M y : ℕ) (P : Poly) : Bool := (yTerms y P).all fun t => decide (2 
 
 theorem zsum_cast : ∀ L : List (ZMod 2), (((L.map zq).sum : ℤ) : ZMod 2) = L.sum
   | [] => by simp
-  | x :: L => by simp only [List.map_cons, List.sum_cons]; push_cast; rw [zq_cast, zsum_cast L]
+  | x :: L => by rw [List.map_cons, List.sum_cons, Int.cast_add, zq_cast, zsum_cast L, List.sum_cons]
 
 theorem pn_half (M : ℕ) (hM : 0 < M) (τ : ℕ → ZMod 2) (y : ℕ) (b : ZMod 2) :
     ∀ P : Poly, halfOK M y P = true →
@@ -545,6 +547,11 @@ theorem pn_half (M : ℕ) (hM : 0 < M) (τ : ℕ → ZMod 2) (y : ℕ) (b : ZMod
       have hMt : (M : ℝ) = 2 * (t.2 : ℝ) := by exact_mod_cast h2.symm
       push_cast
       rw [add_div, ih, hMt]
+      have ht : (t.2 : ℝ) ≠ 0 := by
+        intro e
+        apply hM'
+        rw [hMt, e, mul_zero]
+      simp only [Int.cast_list_sum, List.map_map]
       field_simp
       ring
     · have hP : halfOK M y P = true := by
@@ -555,6 +562,7 @@ theorem pn_half (M : ℕ) (hM : 0 < M) (τ : ℕ → ZMod 2) (y : ℕ) (b : ZMod
       rw [hq, hr, pn_cons, pn_cons, mz_update_not τ y b t.1 hy]
       push_cast
       rw [add_div, ih, add_div]
+      simp only [Int.cast_list_sum, List.map_map]
       ring
 
 theorem ex_halfN (N : ℤ) : ex ((N : ℝ) / 2) = if (N : ZMod 2) = 0 then 1 else -1 := by
@@ -596,7 +604,10 @@ def hhConsOK (M : ℕ) (s : Data) : Bool :=
 def hhConsS (s : Data) : Data :=
   match s.path with
   | [] => s
-  | y :: ys => { path := ys, phase := rest y s.phase, cons := quot y s.phase :: s.cons,
+  | y :: ys =>
+    { path := ys
+      phase := rest y s.phase
+      cons := quot y s.phase :: s.cons
       rows := s.rows }
 
 theorem hhCons_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (h : hhConsOK M s = true) :
@@ -621,18 +632,17 @@ theorem hhCons_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (h : h
         ((quot y s.phase).map (mz τ)).map zq by simp [List.map_map]]
       rw [zsum_cast]
       rfl
-    split_ifs with hC hC'
-    · rw [pair_half, ← hQ]
-      simp only [hC'.1, if_true]
-    · rw [pair_half]
-      have : ¬ (((((quot y s.phase).map fun m => zq (mz τ m)).sum : ℤ) : ZMod 2) = 0) := by
-        rw [hQ]
-        intro e
-        exact hC' ⟨e, hC⟩
-      rw [if_neg this]
+    by_cases hC : ∀ q ∈ s.cons ++ s.rows, fz τ q = 0
+    · simp only [if_pos hC]
+      rw [pair_half, hQ]
+      by_cases hz : fz τ (quot y s.phase) = 0
+      · rw [if_pos hz, if_pos (And.intro hz hC)]
+        ring
+      · rw [if_neg hz, if_neg (fun h => hz h.1)]
+        ring
+    · simp only [if_neg hC]
+      rw [if_neg (fun h => hC h.2)]
       ring
-    · exact absurd hC'.2 hC
-    · ring
 
 /-! ## [HH] on a path pivot -/
 
@@ -675,9 +685,10 @@ theorem hhPivot_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2)
     set B := Q.erase [z] with hBdef
     simp only [hhPivotS, hp]
     have hyzs : y ∉ z :: ys := by
-      rintro (h | h)
-      · exact hyz rfl
-      · exact hy h
+      intro hm
+      rcases List.mem_cons.1 hm with e | e
+      · exact hyz e
+      · exact hy e
     rw [bsum_head _ y (z :: ys) σ hyzs, bsum_head _ z ys σ hz]
     apply bsum_congr
     intro τ
@@ -710,12 +721,13 @@ theorem hhPivot_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2)
       rw [pn_half M hM0 (Function.update τ z w) y 0 s.phase hh,
         pn_half M hM0 (Function.update τ z w) y 1 s.phase hh]
       show _ = _ * (if _ then _ else _)
-      split_ifs with hC
-      · rw [pair_half, hQcast]
-      · simp
+      by_cases hC : ∀ q ∈ s.cons ++ s.rows, fz (Function.update τ z w) q = 0
+      · simp only [if_pos hC]
+        rw [pair_half, hQcast]
+      · simp only [if_neg hC]
+        simp
     rw [hstep 0, hstep 1, pick]
-    show 2 * G (fz τ B) = 2 * summand M c _ τ
-    congr 1
+    show 2 * G (fz τ B) = summand M (2 * c) _ τ
     unfold summand
     simp only [G]
     have hcons : (∀ q ∈ (s.cons.map fun q => normF (substF z B q)) ++
@@ -729,13 +741,15 @@ theorem hhPivot_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2)
       · rintro H q (⟨q', hq', rfl⟩ | ⟨q', hq', rfl⟩)
         · rw [fz_normF, fz_substF]; exact H q' (Or.inl hq')
         · rw [fz_normF, fz_substF]; exact H q' (Or.inr hq')
+    simp only [← hQdef, ← hBdef]
     simp only [hcons]
     split_ifs
-    · congr 1
+    · rw [← mul_assoc]
+      congr 1
       symm
       apply ex_peq hM0
       exact peq_trans (pn_normP τ M _) (pn_substP τ M z hM B _)
-    · rfl
+    · ring
 
 /-! ## Canonical-form pivot -/
 
@@ -778,7 +792,7 @@ theorem canon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ 
   set B := q.erase [v]
   have hqv : fz τ q = τ v + fz τ B := by
     rw [fz_perm _ (List.perm_cons_erase hvq), fz_cons]
-    simp [mz]
+    simp [mz, B]
   have hperm := List.perm_cons_erase hiq
   unfold summand
   by_cases h0 : fz τ q = 0
@@ -793,8 +807,8 @@ theorem canon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ 
       simp only [List.mem_append, List.mem_map, List.mem_singleton]
       constructor
       · rintro H r (hr | hr)
-        · rcases (hperm.mem_iff.1 hr) with rfl | hr'
-          · exact h0
+        · rcases List.mem_cons.1 (hperm.mem_iff.1 hr) with e | hr'
+          · rw [e]; exact h0
           · have := H _ (Or.inl ⟨r, hr', rfl⟩)
             rwa [hsub] at this
         · have := H _ (Or.inr (Or.inl ⟨r, hr, rfl⟩))
@@ -806,6 +820,7 @@ theorem canon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ 
     simp only [hcond]
     split_ifs
     · congr 1
+      symm
       apply ex_peq hM0
       have := peq_trans (pn_normP τ M _) (pn_substP τ M v hM B s.phase)
       rwa [hτ] at this
@@ -997,7 +1012,6 @@ theorem gather_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (_h : 
       · exact hg.1 (H _ (Or.inl rfl)) q hq
       · exact H q (Or.inr hq)
   simp only [hiff]
-  rfl
 
 /-- The monomials of `g` with `v`, `v` removed, and those without `v`. -/
 def splitAt (v : ℕ) (g : F2) : F2 × F2 :=
@@ -1099,6 +1113,7 @@ theorem bcanon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ
       simp only [hcond]
       split_ifs
       · congr 1
+        symm
         apply ex_peq hM0
         have := peq_trans (pn_normP τ M _) (pn_substP τ M v hM val s.phase)
         rwa [hτ] at this

@@ -776,5 +776,4 @@ traces using them (clifford_relation: omega; amm_tof_3, grover_marked/m01: rem).
 path sums: the link from a diagram's network value to val of its from_diagram Data (the
 translation lemmas of PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations,
 boundary identification) is not written, so a path_sum EQUAL stays EQUAL_UNCERTIFIED.
-PathSum.lean and PathSumSem.lean are not in the ArchytasZX root import list until they are
-checked.
+PathSum.lean and PathSumSem.lean check (no sorry) and are in the ArchytasZX root import list.
