@@ -75,13 +75,18 @@ def pair_proof(
             )
     if decision.method is DecisionMethod.PATH_SUM:
         from archytaszx.algebra.pathsum import PathSumError
-        from archytaszx.semantics.lean_pathsum import export_net
+        from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
 
         try:
             with _trace.span("decide.proof.path_sum"):
                 return kernel.Symbolic(left, right, export_net(left, right)), ""
         except (PathSumError, ScalarUnsupported) as exc:
-            return None, f"path_sum network export: {exc}"
+            why_net = f"path_sum network export: {exc}"
+        try:
+            with _trace.span("decide.proof.path_sum_qudit"):
+                return kernel.Symbolic(left, right, export_qudit_net(left, right)), ""
+        except (PathSumError, ScalarUnsupported) as exc:
+            return None, f"{why_net}; qudit network export: {exc}"
     contracted = decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
     why_kernel = ""
     if not contracted:

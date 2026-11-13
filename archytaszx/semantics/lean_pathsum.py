@@ -1113,4 +1113,380 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     return "\n".join(lines)
 
 
-__all__ = ["NetBody", "export_net", "export_pair", "export_proof", "export_qudit_proof", "net_body"]
+def _qpoly(q: ModPoly) -> str:
+    """A QSem.Poly literal."""
+    return "[" + ", ".join(f"({[tuple(t) for t in m]}, {c})" for m, c in q.key()) + "]"
+
+
+def _qvar(p: int, v: int) -> ModPoly:
+    """The variable ``v`` over F_p."""
+    return ModPoly(p, {((v, 1),): 1})
+
+
+@dataclass
+class _QNetSide:
+    """One diagram's network over Z_p: nodes, fragments, fragment proofs, summed labels, the
+    number of boundary labels, the power of ``1 / sqrt p`` in its fragments, its steps, the
+    reduced path sum after the pins, and its scalar."""
+
+    nodes: list[str]
+    frags: list[str]
+    proofs: list[str]
+    summed: list[int]
+    boundary: int
+    inv_root: int
+    steps: list[str]
+    red: QuditPathSum
+    order: list[int]
+    scalar: sp.Expr
+
+
+def _qnet_side(diagram: Diagram, phases: list[tuple[str, int]], sc: Any) -> _QNetSide:
+    """The network of ``diagram`` over Z_p, every label of dimension p: boundary port i is label
+    i, a summed wire is labelled by its class's variable when that is a path variable not yet
+    taken, else by a label from PIN_OFFSET; each Z spider is anchored at the leg through which a
+    search from the class's variable first reaches it; the pin steps set the other summed labels
+    to their anchors deepest first, then the trace of the pinned sum's reduction follows."""
+    from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+    from archytaszx.diagram.graph import Direction, NodeId, PortRef
+    from archytaszx.semantics.pathsum_diagram import _qudit_table, _turns_table
+
+    lay: dict[str, Any] = {}
+    raw = from_diagram(diagram, lay)
+    if not isinstance(raw, QuditPathSum):
+        raise PathSumUnsupported("the qudit network export covers odd prime path sums only")
+    if raw.atoms or raw.katoms:
+        raise PathSumUnsupported("the qudit network export has no atoms")
+    p = raw.p
+    d: Diagram = lay["diagram"]
+    digit: dict[PortRef, list[int]] = lay["digit"]
+    names = {Z_SPIDER.name: ".Z", X_SPIDER.name: ".X", FOURIER_BOX.name: ".F"}
+    bnd = [*d.boundary_outputs, *d.boundary_inputs]
+    label: dict[PortRef, int] = {}
+    cls: dict[int, int] = {}
+    for ref, ds in digit.items():
+        if len(ds) != 1:
+            raise PathSumUnsupported(f"a leg of dimension {p}^{len(ds)}")
+    for i, ref in enumerate(bnd):
+        label[ref] = i
+        cls[i] = digit[ref][0]
+    nb = len(bnd)
+    taken: set[int] = set()
+    summed: list[int] = []
+    nxt = PIN_OFFSET
+    for wire in sorted(d.wires, key=lambda w: w.sort_key()):
+        if wire.a in label or wire.b in label:
+            raise PathSumUnsupported("a wire on a boundary port")
+        cv = digit[wire.a][0]
+        if cv >= nb and cv not in taken:
+            x = cv
+            taken.add(cv)
+        else:
+            x, nxt = nxt, nxt + 1
+        cls[x] = cv
+        label[wire.a] = label[wire.b] = x
+        summed.append(x)
+    outs: dict[NodeId, list[int]] = {}
+    ins: dict[NodeId, list[int]] = {}
+    for nid in sorted(d.nodes):
+        node = d.nodes[nid]
+        if node.generator_type.name not in names:
+            raise PathSumUnsupported(f"node {nid!r} is a {node.generator_type.name}")
+        if node.phase is not None and node.phase.is_weighted:
+            raise PathSumUnsupported(f"node {nid!r} carries weights")
+        n_o, n_i = len(node.legs(Direction.OUTPUT)), len(node.legs(Direction.INPUT))
+        outs[nid] = [label[PortRef(nid, Direction.OUTPUT, j)] for j in range(n_o)]
+        ins[nid] = [label[PortRef(nid, Direction.INPUT, j)] for j in range(n_i)]
+        if not outs[nid] and not ins[nid]:
+            raise PathSumUnsupported(f"node {nid!r} has no legs")
+    zs = [nid for nid in sorted(d.nodes) if names[d.nodes[nid].generator_type.name] == ".Z"]
+    on: dict[int, list[NodeId]] = {}
+    for nid in zs:
+        for x in outs[nid] + ins[nid]:
+            on.setdefault(x, []).append(nid)
+    entry: dict[NodeId, int] = {}
+    parent: dict[int, int] = {}
+    reached: list[int] = []
+    for root in sorted(x for x, c in cls.items() if x == c):
+        seen, queue = {root}, [root]
+        while queue:
+            x = queue.pop(0)
+            for nid in on.get(x, []):
+                if nid in entry:
+                    continue
+                entry[nid] = x
+                for y in outs[nid] + ins[nid]:
+                    if y not in seen:
+                        seen.add(y)
+                        parent[y] = x
+                        reached.append(y)
+                        queue.append(y)
+    if len(entry) != len(zs):
+        raise PathSumUnsupported("a Z spider not reached from its class's variable")
+    xs = [nid for nid in sorted(d.nodes) if names[d.nodes[nid].generator_type.name] == ".X"]
+    fresh = dict(zip(xs, sorted(raw.path)[len(raw.path) - len(xs) :], strict=True))
+    nodes, frags, proofs = [], [], []
+    phase = ModPoly(p)
+    cons: list[ModPoly] = []
+    path = list(summed)
+    inv_root = 0
+    for nid in sorted(d.nodes):
+        node = d.nodes[nid]
+        kind = names[node.generator_type.name]
+        os_, is_ = outs[nid], ins[nid]
+        legs = os_ + is_
+        if kind == ".F":
+            if os_[0] == is_[0]:
+                raise PathSumUnsupported(f"node {nid!r} is an F on a self-loop")
+            nodes.append(f"⟨.F, {os_}, {is_}, 0, 0⟩")
+            frags.append(f"fFragQ {p} {os_[0]} {is_[0]}")
+            proofs.append(f"f_frag_q (p := {p}) E σ _ rfl rfl {os_[0]} {is_[0]} rfl rfl")
+            phase = phase + _qvar(p, os_[0]) * _qvar(p, is_[0])
+            inv_root += 1
+            continue
+        var = entry[nid] if kind == ".Z" else fresh[nid]
+        table = _qudit_table(nid, node, [var], p)
+        ts = []
+        for t in _turns_table(nid, node, p):
+            v = (t % 1) * p
+            if v.denominator != 1:
+                raise PathSumUnsupported(f"node {nid!r} has a phase {t} off the 1/{p} grid")
+            ts.append(int(v))
+        ph = 0
+        if any(ts):
+            phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", p))
+            ph = len(phases)
+        ts_text = f"({ts if ph else []} : List ℕ)"
+        nodes.append(f"⟨{kind}, {os_}, {is_}, 0, {ph}⟩")
+        poly = _qpoly(table)
+        phase = phase + table
+        if kind == ".Z":
+            frags.append(f"zFragQ {p} {var} {legs} {poly}")
+            proofs.append(
+                f"z_frag_q (p := {p}) E σ hσ _ rfl rfl {var} (by decide) {poly} {ts_text} "
+                "(fun v => rfl) (by decide)"
+            )
+            cons += [_qvar(p, var) + _qvar(p, leg).scale(-1) for leg in legs]
+        else:
+            frags.append(f"xFragQ {p} {var} {poly} {os_} {is_}")
+            proofs.append(
+                f"x_frag_q (p := {p}) E σ hσ _ rfl rfl {var} (by decide) {poly} {ts_text} "
+                "(fun v => rfl) (by decide)"
+            )
+            for leg in os_:
+                phase = phase + _qvar(p, var) * _qvar(p, leg)
+            for leg in is_:
+                phase = phase + (_qvar(p, var) * _qvar(p, leg)).scale(-1)
+            path.append(var)
+            inv_root += len(legs)
+    steps: list[str] = []
+    for x in reversed(reached):
+        if x < PIN_OFFSET:
+            continue
+        a = parent[x]
+        hit = next(
+            (
+                q
+                for q in cons
+                if (c := q.terms.get(((x, 1),), 0))
+                and x not in (q + ModPoly(p, {((x, 1),): -c % p})).variables()
+                and (q + ModPoly(p, {((x, 1),): -c % p})).scale(-pow(c, -1, p)).terms
+                == {((a, 1),): 1}
+            ),
+            None,
+        )
+        if hit is None:
+            raise PathSumUnsupported(f"no constraint sets the label {x} to {a}")
+        cons.remove(hit)
+        path.remove(x)
+        steps += [f".perm {[x, *path]}", f".pin {a}"]
+        value = _qvar(p, a)
+        phase = phase.substitute(x, value)
+        cons = [q.substitute(x, value) for q in cons]
+    steps.append(".norm")
+    if sorted(path) != sorted(raw.path):
+        raise PathSumUnsupported("the pinned network keeps other path variables")
+    sim = QuditPathSum(p, raw.boundary, set(path), phase, raw.const, [q for q in cons if q.terms])
+    red = reduce_qudit(sim)
+    order = _qudit_order(red.constraints, red.boundary)
+    steps += _qudit_steps(sim, red, order)
+    scalar = sc.model(d.scalar.to_sympy())
+    if sc.opaques:
+        raise PathSumUnsupported(f"the scalar {d.scalar} has no exact Lean form")
+    return _QNetSide(nodes, frags, proofs, summed, nb, inv_root, steps, red, order, scalar)
+
+
+def _qnet_lines(tag: str, side: _QNetSide, p: int) -> list[str]:
+    """The network, its fragments and its QNetPS facts of one side."""
+    pairs = ", ".join(f"({n}, {f})" for n, f in zip(side.nodes, side.frags, strict=True))
+    cases = " | ".join("rfl" for _ in side.nodes)
+    return [
+        (
+            f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
+            f"{list(range(side.boundary))}⟩"
+        ),
+        "",
+        f"noncomputable def ps{tag} : List (Node × QFrag) := [{pairs}]",
+        "",
+        f"theorem net{tag} : QNetPS E N{tag} {p} ps{tag} where",
+        "  nodes := rfl",
+        "  node := by",
+        "    intro q hq σ hσ",
+        f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hq",
+        f"    rcases hq with {cases}",
+        *(f"    · exact {pr}" for pr in side.proofs),
+        "  disj := by decide",
+        "  dims := by decide",
+        "  cover := by decide",
+        "",
+        (
+            f"theorem c{tag} : (qjoinAll (ps{tag}.map Prod.snd)).c = "
+            f"(rt {p})⁻¹ ^ {side.inv_root} := by"
+        ),
+        (
+            f"  simp only [ps{tag}, List.map_cons, List.map_nil, qjoinAll, QFrag.join, QFrag.unit, "
+            "zFragQ, xFragQ, fFragQ, List.length_cons, List.length_nil]"
+        ),
+        "  ring",
+        "",
+    ]
+
+
+def export_qudit_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X
+    and F nodes on one odd prime dimension p (ArchytasZX/PathSumQuditNet.lean): each network's
+    value is its fragments' path sum over Z_p (QNetPS.eval_eq), pin steps set the summed labels
+    of one class to one variable, each side's reduction trace is replayed, the Gauss sums take
+    their Legendre form and the final comparison gives ``Equal``; raises
+    :class:`PathSumUnsupported` outside that class or when the sums do not reduce to one
+    canonical form, :class:`ScalarUnsupported` when the constants' identity has no proof."""
+    from archytaszx.algebra.pathsum import legendre
+    from archytaszx.semantics.lean_scalar import Inv, Om, Rt
+
+    phases: list[tuple[str, int]] = []
+    sc = _scalars()
+    side_l = _qnet_side(left, phases, sc)
+    side_r = _qnet_side(right, phases, sc)
+    p = side_l.red.p
+    if side_r.red.p != p or side_l.red.boundary != side_r.red.boundary:
+        raise PathSumUnsupported("the two path sums have different bases or boundaries")
+    can_l, can_r = canonical_qudit(side_l.red), canonical_qudit(side_r.red)
+    if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
+        raise PathSumUnsupported("the qudit path sums do not reduce to one canonical form")
+    if side_l.order != side_r.order:
+        raise PathSumUnsupported("the qudit elimination orders differ")
+    k_l = _qudit_const_turn(side_l.red, side_l.order)
+    k_r = _qudit_const_turn(side_r.red, side_r.order)
+    n = 12 if p == 3 else p
+    sub = f"rw [om_sub {n} {p} {n // p} (by norm_num) (by norm_num)]" if n != p else "skip"
+
+    def fac(steps: Sequence[str]) -> tuple[str, sp.Expr]:
+        texts, model = [], sp.Integer(1)
+        for st in steps:
+            if st in (".elim", ".hhCons", ".hhPivot"):
+                texts.append(f"({p} : ℂ)")
+                model *= p
+            elif st.startswith(".gauss "):
+                a = int(st.split()[1])
+                texts.append(f"qg {p} {a}")
+                model *= _legendre_model(a, p, n)
+        return (" * ".join(texts) or "1"), model
+
+    (ft_l, fm_l), (ft_r, fm_r) = fac(side_l.steps), fac(side_r.steps)
+    s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
+    root = Inv(Rt(sp.Integer(p)))
+    lhs = fm_l * side_l.scalar * root**side_l.inv_root * Om(n) ** (k_l * n // p)
+    rhs = fm_r * side_r.scalar * root**side_r.inv_root * Om(n) ** (k_r * n // p)
+    proof = sc.prove(lhs, rhs)
+    steps_all = (*side_l.steps, *side_r.steps)
+    gauss = sorted({int(st.split()[1]) for st in steps_all if st.startswith(".gauss")})
+    lg_vals = {k: legendre(k, p) if k % p else 0 for k in range(p)}
+    ns = "ArchytasZX.PathSumQuditNetProof"
+    lines = [
+        "import ArchytasZX.PathSumQuditNet",
+        "",
+        "/-!",
+        f"# Qudit network proof `{name}` over Z_{p}",
+        "",
+        "Each network's value is its fragments' path sum over Z_p; pin steps set the summed labels",
+        "of one class to one variable, the reduction steps follow, and the final comparison gives",
+        "`Equal`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.QSem",
+        "",
+        *NET_OPTIONS,
+        "set_option linter.unreachableTactic false",
+        "set_option linter.unusedVariables false",
+        "",
+        f"instance : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
+        "",
+        *net_env(phases, {}, str(p), p),
+        *_qnet_lines("L", side_l, p),
+        *_qnet_lines("R", side_r, p),
+        f"def stepsL : List QSem.Step := [{', '.join(side_l.steps)}]",
+        f"def stepsR : List QSem.Step := [{', '.join(side_r.steps)}]",
+        "",
+        *(f"theorem lg{k} : lg {p} {k} = {v} := by decide" for k, v in sorted(lg_vals.items())),
+        "",
+    ]
+    for a in gauss:
+        lines += [
+            f"theorem qg{a} : qg {p} {a} = {sc.text(_legendre_model(a, p, n))} := by",
+            f"  rw [qg_legendre (by norm_num) {a} (by decide)]",
+            "  simp only [Finset.sum_range_succ, Finset.sum_range_zero, "
+            + ", ".join(f"lg{k}" for k in sorted(lg_vals))
+            + "]",
+            f"  {sub}",
+            "  push_cast",
+            "  ring",
+            "",
+        ]
+    for side, text in (("L", ft_l), ("R", ft_r)):
+        lines += [
+            f"theorem fac{side} : QSem.facs {p} steps{side} = {text} := by",
+            f"  simp only [steps{side}, QSem.facs, QSem.fac]",
+            "  push_cast",
+            "  ring",
+            "",
+        ]
+    lines += [
+        (
+            f"theorem consts : ({ft_l}) * (({s_l}) * (rt {p})⁻¹ ^ {side_l.inv_root}) * "
+            f"om {p} ^ {k_l} ="
+        ),
+        f"    ({ft_r}) * (({s_r}) * (rt {p})⁻¹ ^ {side_r.inv_root}) * om {p} ^ {k_r} := by",
+        f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        *(f"  all_goals rw [qg{a}]" for a in gauss),
+        f"  all_goals {sub}",
+        "  all_goals linear_combination key",
+        "",
+        "/-- The two networks are equal. -/",
+        f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
+        "  apply equal_qps _ _ netL netR rfl",
+        "  intro τ",
+        "  rw [← QSem.val_smul, ← QSem.val_smul,",
+        "    QSem.run_sound stepsL (qnetData NL (psL.map Prod.snd)) _ τ (by decide),",
+        "    QSem.run_sound stepsR (qnetData NR (psR.map Prod.snd)) _ τ (by decide)]",
+        f"  apply QSem.final_sound _ _ _ _ τ {k_l} {k_r} (by decide) (by decide) (by decide)",
+        "  rw [facL, facR, cL, cR]",
+        "  all_goals exact consts",
+        "",
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = [
+    "NetBody",
+    "export_net",
+    "export_pair",
+    "export_proof",
+    "export_qudit_net",
+    "export_qudit_proof",
+    "net_body",
+]

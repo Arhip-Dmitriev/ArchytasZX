@@ -11,7 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The qudit path-sum Lean export over Z_p: step lists, Gauss sums in Legendre form, Lean."""
+"""The qudit path-sum Lean export over Z_p: step lists, Gauss sums in Legendre form, the network
+export with its pin steps, Lean."""
 
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import pytest
 from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
-from archytaszx.semantics.lean_pathsum import export_qudit_proof
+from archytaszx.semantics.lean_pathsum import export_qudit_net, export_qudit_proof
 
 _D = "literal 3"
 
@@ -67,6 +68,23 @@ PAIRS: dict[str, tuple[str, str]] = {
 def _export(name: str) -> str:
     left, right = PAIRS[name]
     return export_qudit_proof(parse_dsl(left), parse_dsl(right), name)
+
+
+def _export_net(name: str) -> str:
+    left, right = PAIRS[name]
+    return export_qudit_net(parse_dsl(left), parse_dsl(right), name)
+
+
+def test_a_qudit_network_pins_its_summed_labels() -> None:
+    source = _export_net("gauss")
+    assert ".pin " in source and "theorem gauss : Equal E" in source
+    assert "f_frag_q (p := 3)" in source and "z_frag_q (p := 3)" in source
+
+
+def test_unequal_qudit_networks_are_refused() -> None:
+    left, _ = PAIRS["gauss"]
+    with pytest.raises(PathSumUnsupported):
+        export_qudit_net(parse_dsl(left), parse_dsl(f"a = Z(1 -> 1, {_D})"))
 
 
 def test_a_gauss_step_is_replayed_with_its_legendre_form() -> None:
@@ -119,3 +137,10 @@ def test_lean_rejects_a_tampered_qudit_export(tmp_path: object) -> None:
     assert marker in source
     ok, _ = L.check(source.replace(marker, "([(0, 2)], 1)"), f"{tmp_path}/tampered.lean")
     assert not ok
+
+
+@needs_lean
+@pytest.mark.parametrize("name", sorted(PAIRS))
+def test_lean_proves_a_qudit_network_pair(name: str, tmp_path: object) -> None:
+    ok, output = L.check(_export_net(name), f"{tmp_path}/net_{name}.lean")
+    assert ok, output

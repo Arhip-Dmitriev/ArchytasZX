@@ -425,6 +425,28 @@ class Scalars:
                             f"(rt_sub{root} {m} {q} (by norm_num) (by norm_num))",
                         )
                     )
+        if II in atoms:
+            for atom in list(atoms):
+                if isinstance(atom, Om) and atom.args[0].is_Integer and atom.args[0] % 4 == 0:
+                    m = int(atom.args[0])
+                    relations.append(
+                        (
+                            atoms[II] - atoms[atom] ** (m // 4),
+                            f"(I_sub {m} {m // 4} (by norm_num) (by norm_num))",
+                        )
+                    )
+        if Rt(sp.Integer(5)) in atoms:
+            for atom in list(atoms):
+                if isinstance(atom, Om) and atom.args[0].is_Integer and atom.args[0] % 5 == 0:
+                    m = int(atom.args[0])
+                    q = m // 5
+                    s = atoms[atom]
+                    relations.append(
+                        (
+                            atoms[Rt(sp.Integer(5))] - 1 - 2 * s**q - 2 * s ** (4 * q),
+                            f"(rt_sub5 {m} {q} (by norm_num) (by norm_num))",
+                        )
+                    )
         for atom in list(atoms):
             if atom.is_Pow and atom.args[1].free_symbols and isinstance(atom.args[0], Inv):
                 inner = atom.args[0].args[0]
