@@ -252,8 +252,8 @@ def _substituted(
 
 
 def instance(entry: Lemma, value: sp.Expr) -> object:
-    """The kernel theorem of ``entry`` at ``value``, by symbolic contraction of both sides, else
-    by a decision with no oracle sample."""
+    """The kernel theorem of ``entry`` at ``value``, by substitution into its proved theorem, by
+    symbolic contraction or path sums of both sides, else by a decision with no oracle sample."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
@@ -265,6 +265,10 @@ def instance(entry: Lemma, value: sp.Expr) -> object:
     try:
         return kernel.contraction(left, right)
     except kernel.KernelError as exc:
+        try:
+            return kernel.path_sum(left, right)
+        except kernel.KernelError:
+            pass
         decision = decide_equal(left, right, samples=[])
         if decision.verdict is not EqualityVerdict.EQUAL:
             raise LemmaError(f"lemma {entry.name} at {value}: {exc}") from exc

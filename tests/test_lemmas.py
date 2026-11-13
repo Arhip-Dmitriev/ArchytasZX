@@ -100,3 +100,21 @@ def test_a_broken_and_register_right_side_is_not_proved(old: str, new: str) -> N
     left = parse_dsl(L._AND_LEFT)
     right = parse_dsl(L._AND_RIGHT.replace(old, new))
     assert decide_equal(left, right, samples=[]).verdict is not EqualityVerdict.EQUAL
+
+
+def test_an_instance_at_a_value_contraction_misses_is_a_path_sum_theorem() -> None:
+    import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+    left, right = L.sides(L.CARRY_SHIFT, sp.Integer(3))
+    with pytest.raises(kernel.KernelError):
+        kernel.contraction(left, right)
+    theorem = L.instance(L.CARRY_SHIFT, sp.Integer(3))
+    assert isinstance(theorem, kernel.Theorem)
+    assert theorem.inference.kind == "path_sum"
+    decision = decide_equal(left, right, samples=[])
+    assert kernel.from_decision(decision, left, right).inference.kind == "path_sum"
+    assert "net1 : (type_of% @ArchytasZX.PathSumNetProof.C1.main)" in kernel.lean(theorem, "p3")
+    broken = right.copy()
+    broken.set_scalar(Scalar.one())
+    with pytest.raises(kernel.KernelError):
+        kernel.path_sum(left, broken)

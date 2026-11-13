@@ -25,6 +25,8 @@ rules below construct one:
 * :func:`contraction` -- ``a = b`` when their symbolic contractions agree, every symbol formal;
   :func:`local_contraction` -- the same for the parts of ``a`` and ``b`` off two regions that
   read as one diagram through cut wires in the same places;
+* :func:`path_sum` -- ``a = b`` when their path sums reduce to one form; exported through the
+  path-sum network proof of :mod:`archytaszx.semantics.lean_pathsum` when it covers the pair;
 * :func:`congr` -- ``c = c'`` from ``a = b`` when a region of ``c`` reads as ``a`` through
   its cut wires and ``c'`` has it replaced by ``b``;
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
@@ -375,6 +377,22 @@ def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
     if not comparison.matched:
         raise KernelError(f"the symbolic contractions differ: {comparison.reason}")
     return Theorem(_TOKEN, a, b, Inference("contraction"))
+
+
+@_trace.traced("kernel.path_sum")
+def path_sum(a: Diagram, b: Diagram) -> Theorem:
+    """``a = b`` when :func:`~archytaszx.semantics.pathsum_diagram.compare_path_sums` reduces
+    their path sums to one form."""
+    from archytaszx.algebra.pathsum import PathSumError
+    from archytaszx.semantics.pathsum_diagram import compare_path_sums
+
+    try:
+        found = compare_path_sums(a, b)
+    except PathSumError as exc:
+        raise KernelError(f"no path sum: {exc}") from exc
+    if found.status != "equal":
+        raise KernelError(f"the path sums are not equal: {found.reason}")
+    return Theorem(_TOKEN, a, b, Inference("path_sum"))
 
 
 @_trace.traced("kernel.w_fusion")
@@ -1077,6 +1095,8 @@ def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
         return trans(out, iso(out.rhs, right))
     if decision.method is DecisionMethod.SYMBOLIC_CONTRACTION:
         return contraction(left, right)
+    if decision.method is DecisionMethod.PATH_SUM:
+        return path_sum(left, right)
     raise KernelError(f"a {decision.method.value} verdict carries no re-checkable proof")
 
 
@@ -1275,6 +1295,12 @@ class _Lean:
             proved = self.contraction(t, binders)
             if proved is not None:
                 return proved
+        if inf.kind == "path_sum":
+            proved = self.networks(t.lhs, t.rhs, t.lhs, t.rhs, binders, False)
+            if proved is not None:
+                return proved
+            note = "path sums reduce to one form"
+            return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind in ("algebraic", "contraction"):
             note = (
                 "equal values in a checked number field"
