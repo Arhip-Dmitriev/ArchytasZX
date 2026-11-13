@@ -138,7 +138,7 @@ autoq() {  # AutoQ 2.0 at its pinned commit (AutoQ-Para has no public release); 
         fi
         export LIBRARY_PATH="$V/antlr4/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
     fi
-    (cd "$V/src/AutoQ" && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${z3[@]+"${z3[@]}"} \
+    (cd "$V/src/AutoQ" && rm -rf build && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${z3[@]+"${z3[@]}"} \
         && cmake --build build -j "$(nproc)" --target autoq \
         && mkdir -p "$V/autoq/bin" && cp build/cli/autoq "$V/autoq/bin/autoq")
 }
