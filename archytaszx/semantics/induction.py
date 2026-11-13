@@ -266,6 +266,11 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
             continue
         expr = box.multiplicity.to_sympy()
         symbol = next(s for s in expr.free_symbols if str(s) == index)
+        if not (expr.is_Pow and expr.base.is_Integer and expr.exp == symbol):
+            raise InductionDomainError(
+                "induction requires a bare multiplicity symbol or a power b^n of one, got "
+                f"{box.multiplicity!r}"
+            )
         try:
             renamed = Mult._from_expr(
                 sp.powsimp(sp.expand(expr.xreplace({symbol: replacement.to_sympy()})), force=True)
