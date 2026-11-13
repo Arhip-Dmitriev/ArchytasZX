@@ -65,6 +65,43 @@ def test_copies_first_is_the_cyclic_shift() -> None:
     assert decide_equal(parse_dsl(SHIFT), parse_dsl(IDENTITY)).verdict is EqualityVerdict.UNEQUAL
 
 
+def _reversed() -> tuple[str, str]:
+    from .test_lean_chain import CIRCUIT, SPEC
+
+    return (
+        CIRCUIT.replace("chain C0: g5.out0 -> g4.in0", "chain C0: g4.in0 -> g5.out0"),
+        SPEC.replace("chain V: w.out0 -> v.in0", "chain V: v.in0 -> w.out0"),
+    )
+
+
+def test_a_reversed_chain_peels_its_first_copy() -> None:
+    """Links from an input to an output run copy m + 1 into copy m; the successor peeled at
+    copy 0, instantiated at k, is the chain at k + 1."""
+    from archytaszx.diagram.bangbox import instantiate_symbol, peels_first
+    from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
+    from archytaszx.semantics.prove import induction_successor
+
+    for text in _reversed():
+        d = parse_dsl(text)
+        assert all(peels_first(box) for box in d.bang_boxes.values())
+        succ = induction_successor(d, "n", "k")
+        assert succ is not None
+        for k in (0, 1, 2):
+            at = instantiate_symbol(succ, "k", k)
+            whole = instantiate_symbol(d, "n", k + 1)
+            assert views_isomorphic(comparison_view(at), comparison_view(whole))
+
+
+def test_a_reversed_chain_is_proved_by_induction() -> None:
+    circuit, spec = _reversed()
+    decision = decide_equal(parse_dsl(circuit), parse_dsl(spec))
+    assert decision.verdict is EqualityVerdict.EQUAL and decision.induction_proof is not None
+    broken = spec.replace("f = F(d)", "f = F(d), e = F(d)").replace(
+        "f.out0 -- w.in0", "f.out0 -- e.in0, e.out0 -- w.in0"
+    )
+    assert decide_equal(parse_dsl(circuit), parse_dsl(broken)).verdict is EqualityVerdict.UNEQUAL
+
+
 @pytest.mark.parametrize("n", [1, 2, 3])
 def test_copies_first_matches_the_unrolled_shift(n: int) -> None:
     unrolled = parse_dsl(_unrolled_shift(n))

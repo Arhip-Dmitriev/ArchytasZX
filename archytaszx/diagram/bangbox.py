@@ -1688,8 +1688,9 @@ def _peel_port_scope(diagram: Diagram, box: BangBox) -> None:
     diagram.set_bang_box_port_scope(box.id, frozenset({grown[0]}))
 
 
-def _peel_node_scope(diagram: Diagram, box: BangBox) -> dict[NodeId, NodeId]:
-    """Add one concrete copy of the scope, after the box's own boundary block; its node map."""
+def _peel_node_scope(diagram: Diagram, box: BangBox, first: bool = False) -> dict[NodeId, NodeId]:
+    """Add one concrete copy of the scope, after the box's own boundary block (before it with
+    ``first``); its node map."""
     scope = box.node_scope
     internal = internal_wires(diagram, scope)
 
@@ -1710,7 +1711,7 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> dict[NodeId, NodeId]:
         )
 
     identity = {old_id: old_id for old_id in scope}
-    id_maps = [identity, id_map]
+    id_maps = [id_map, identity] if first else [identity, id_map]
     _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
     sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     diagram.set_boundary_inputs(
@@ -1732,24 +1733,44 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> dict[NodeId, NodeId]:
     return id_map
 
 
+def peels_first(box: BangBox) -> bool:
+    """Whether :func:`peel_one` takes the first copy of ``box``: a chain whose every link runs
+    from an input ``p`` to an output ``q``."""
+    return bool(box.links) and all(
+        p.direction is Direction.INPUT and q.direction is Direction.OUTPUT for p, q in box.links
+    )
+
+
 def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
-    box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail."""
+    box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail.
+    A chain that :func:`peels_first` loses its first copy instead (index 0, no index read):
+    the copy's ``q`` ports wired to the head and its ``p`` ports to the residual's ``q``."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair or _pairs_of(diagram, box.id):
         raise BangBoxGrammarError(f"box {box.id!r} with pair boxes has no peel_one")
+    first = peels_first(box)
+    if first and box.index is not None:
+        raise BangBoxGrammarError(
+            f"chain box {box.id!r} peels its first copy and reads an index; it has no peel_one"
+        )
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
     before = set(diagram.bang_boxes)
-    id_map = _peel_node_scope(diagram, _plain(diagram, box))
+    id_map = _peel_node_scope(diagram, _plain(diagram, box), first)
     new_boxes = sorted(set(diagram.bang_boxes) - before)
     for (p_ref, q_ref), (head, tail) in zip(box.links, ends, strict=True):
         assert head is not None and tail is not None
-        diagram.add_wire(head, q_ref)
-        diagram.add_wire(p_ref, _moved(q_ref, id_map))
-        diagram.add_wire(_moved(p_ref, id_map), tail)
-    _index_copy(diagram, box, id_map, last, new_boxes)
+        if first:
+            diagram.add_wire(head, _moved(q_ref, id_map))
+            diagram.add_wire(_moved(p_ref, id_map), q_ref)
+            diagram.add_wire(p_ref, tail)
+        else:
+            diagram.add_wire(head, q_ref)
+            diagram.add_wire(p_ref, _moved(q_ref, id_map))
+            diagram.add_wire(_moved(p_ref, id_map), tail)
+    _index_copy(diagram, box, id_map, 0 if first else last, new_boxes)
     diagram.set_bang_box_extension(
         box.id,
         links=box.links,
