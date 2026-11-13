@@ -34,6 +34,7 @@ import sympy as sp  # type: ignore[import-untyped]
 from archytaszx.algebra.pathsum import (
     Canon,
     Cyclo,
+    ModPoly,
     PathSum,
     PathSumUnsupported,
     PhasePoly,
@@ -420,6 +421,233 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         "  simpa only [facL, facR] using consts",
         "",
         f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+_Q_HEAD = {"q_elim": ".elim", "q_hh_constraint": ".hhCons"}
+"""The PathSumQudit step summing out a head variable, per rule."""
+
+
+def _qdata_term(ps: QuditPathSum) -> str:
+    """A qudit path sum as a QSem.Data literal."""
+
+    def poly(q: ModPoly) -> str:
+        return "[" + ", ".join(f"({[tuple(t) for t in m]}, {c})" for m, c in q.key()) + "]"
+
+    cons = ", ".join(poly(q) for q in ps.constraints)
+    return (
+        f"{{ path := {sorted(ps.path)}, phase := {poly(ps.phase)}, cons := [{cons}], rows := [] }}"
+    )
+
+
+def _qudit_order(constraints: Sequence[ModPoly], boundary: Sequence[int]) -> list[int]:
+    """The pivots of pathsum.eliminate_qudit in the order it takes them."""
+    from archytaszx.algebra.pathsum import _q_linear_pivot
+
+    work = [c for c in constraints if c.terms]
+    order: list[int] = []
+    progress = True
+    while work and progress:
+        progress = False
+        for v in sorted(set(boundary) - set(order)):
+            hit = next(
+                ((c, f[1]) for c in work if (f := _q_linear_pivot(c, {v}, -1)) is not None),
+                None,
+            )
+            if hit is None:
+                continue
+            c, a = hit
+            work.remove(c)
+            value = (c + ModPoly(c.p, {((v, 1),): -a % c.p})).scale(-pow(a, -1, c.p))
+            work = [w.substitute(v, value) for w in work]
+            work = [w for w in work if w.terms]
+            order.append(v)
+            progress = True
+    return order
+
+
+def _qudit_steps(raw: QuditPathSum, red: QuditPathSum, order: Sequence[int]) -> list[str]:
+    """The QSem.Step list replaying the trace of ``red``, reduced from ``raw``, then the canon
+    steps at ``order`` and a final normalisation."""
+    cur = sorted(raw.path)
+    out: list[str] = []
+    for step in red.trace:
+        y, z = step.var, step.pivot
+        if step.rule in _Q_HEAD or step.rule == "q_gauss":
+            cur.remove(y)
+            out.append(f".perm {[y, *cur]}")
+            out.append(f".gauss {z}" if step.rule == "q_gauss" else _Q_HEAD[step.rule])
+        elif step.rule == "q_hh_pivot" and z is not None:
+            cur = [v for v in cur if v not in (y, z)]
+            out += [f".perm {[y, z, *cur]}", ".hhPivot"]
+        else:
+            raise PathSumUnsupported(f"the rule {step.rule} has no PathSumQudit step")
+    return [*out, *(f".canon {v}" for v in order), ".norm"]
+
+
+def _qudit_const_turn(red: QuditPathSum, order: Sequence[int]) -> int:
+    """The constant phase term of the canonical form of a reduced qudit sum."""
+    from archytaszx.algebra.pathsum import eliminate_qudit
+
+    rows = cast(list[tuple[int, ModPoly]], eliminate_qudit(red.constraints, red.boundary) or [])
+    if [v for v, _r in rows] != sorted(order):
+        raise PathSumUnsupported("the qudit elimination pivots differ")
+    phase = red.phase.copy()
+    for pivot, rest in rows:
+        phase = phase.substitute(pivot, rest)
+    return phase.terms.get((), 0) % red.p
+
+
+def _cyclo_model(c: Cyclo, n: int) -> sp.Expr:
+    """``c`` over ``Om(n)``, n a multiple of c's order."""
+    from archytaszx.semantics.lean_scalar import Om
+
+    return sum(
+        (
+            sp.Rational(v.numerator, v.denominator) * Om(n) ** (e * n // c.n)
+            for e, v in sorted(c.c.items())
+        ),
+        sp.Integer(0),
+    )
+
+
+def _legendre_model(a: int, p: int, n: int) -> sp.Expr:
+    """``G(a)`` in its Legendre form over ``Om(n)``."""
+    from archytaszx.algebra.pathsum import legendre
+    from archytaszx.semantics.lean_scalar import Om
+
+    return legendre(a, p) * sum(
+        (legendre(k, p) * Om(n) ** (k * n // p) for k in range(1, p)), sp.Integer(0)
+    )
+
+
+def export_qudit_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
+    """The Lean file proving that two diagrams' qudit path sums over Z_p, p an odd prime, agree
+    at every boundary assignment (ArchytasZX/PathSumQudit.lean): each side's trace replayed as
+    a step list checked by ``decide``, [Gauss] factors in their Legendre form, the canonical
+    pivots as canon steps and the constants' identity by ``linear_combination``; raises
+    :class:`PathSumUnsupported` when they do not reduce to one canonical form or a trace step
+    has no PathSumQudit step."""
+    from archytaszx.algebra.pathsum import legendre
+    from archytaszx.semantics.lean_scalar import Om
+
+    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    if not isinstance(raw_l, QuditPathSum) or not isinstance(raw_r, QuditPathSum):
+        raise PathSumUnsupported("export_qudit_proof covers odd prime path sums only")
+    if raw_l.p != raw_r.p or raw_l.boundary != raw_r.boundary:
+        raise PathSumUnsupported("the two path sums have different bases or boundaries")
+    if any(ps.atoms or ps.katoms for ps in (raw_l, raw_r)):
+        raise PathSumUnsupported("export_qudit_proof has no atoms")
+    p = raw_l.p
+    red_l, red_r = reduce_qudit(raw_l), reduce_qudit(raw_r)
+    can_l, can_r = canonical_qudit(red_l), canonical_qudit(red_r)
+    if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
+        raise PathSumUnsupported("the qudit path sums do not reduce to one canonical form")
+    order = _qudit_order(red_l.constraints, red_l.boundary)
+    if order != _qudit_order(red_r.constraints, red_r.boundary):
+        raise PathSumUnsupported("the qudit elimination orders differ")
+    steps_l = _qudit_steps(raw_l, red_l, order)
+    steps_r = _qudit_steps(raw_r, red_r, order)
+    k_l, k_r = _qudit_const_turn(red_l, order), _qudit_const_turn(red_r, order)
+    n = math.lcm(p, raw_l.const.n, raw_r.const.n)
+    sc = _scalars()
+
+    def fac(steps: Sequence[str]) -> tuple[str, sp.Expr]:
+        texts, model = [], sp.Integer(1)
+        for st in steps:
+            if st in (".elim", ".hhCons", ".hhPivot"):
+                texts.append(f"({p} : ℂ)")
+                model *= p
+            elif st.startswith(".gauss "):
+                a = int(st.split()[1])
+                texts.append(f"qg {p} {a}")
+                model *= _legendre_model(a, p, n)
+        return (" * ".join(texts) or "1"), model
+
+    (ft_l, fm_l), (ft_r, fm_r) = fac(steps_l), fac(steps_r)
+    c_l, c_r = _cyclo_model(raw_l.const, n), _cyclo_model(raw_r.const, n)
+    lhs = fm_l * c_l * Om(n) ** (k_l * n // p)
+    rhs = fm_r * c_r * Om(n) ** (k_r * n // p)
+    proof = sc.prove(lhs, rhs)
+    gauss = sorted({int(st.split()[1]) for st in (*steps_l, *steps_r) if st.startswith(".gauss")})
+    lg_vals = {k: legendre(k, p) if k % p else 0 for k in range(p)}
+    for a in gauss:
+        lg_vals[a] = legendre(a, p)
+    sub = f"rw [om_sub {n} {p} {n // p} (by norm_num) (by norm_num)]" if n != p else "skip"
+    lines = [
+        "import ArchytasZX.PathSumQudit",
+        "",
+        "/-!",
+        f"# Qudit path-sum proof `{name}` over Z_{p}",
+        "",
+        "Both path sums, each side's steps replayed and checked by `decide`, the Gauss sums in",
+        "their Legendre form, the constants' identity, and the value equality at every boundary",
+        "assignment.",
+        "-/",
+        "",
+        f"namespace ArchytasZX.PathSumQuditProof.{name}",
+        "",
+        "open ArchytasZX ArchytasZX.QSem",
+        "",
+        "set_option maxRecDepth 100000",
+        "set_option maxHeartbeats 4000000",
+        "set_option linter.unusedTactic false",
+        "set_option linter.unusedSimpArgs false",
+        "set_option linter.unreachableTactic false",
+        "",
+        f"instance : Fact (Nat.Prime {p}) := ⟨by norm_num⟩",
+        "",
+        f"def sL : QSem.Data := {_qdata_term(raw_l)}",
+        f"def sR : QSem.Data := {_qdata_term(raw_r)}",
+        f"def stepsL : List QSem.Step := [{', '.join(steps_l)}]",
+        f"def stepsR : List QSem.Step := [{', '.join(steps_r)}]",
+        "",
+        *(f"theorem lg{k} : lg {p} {k} = {v} := by decide" for k, v in sorted(lg_vals.items())),
+        "",
+    ]
+    for a in gauss:
+        value = sc.text(_legendre_model(a, p, n))
+        lines += [
+            f"theorem qg{a} : qg {p} {a} = {value} := by",
+            f"  rw [qg_legendre (by norm_num) {a} (by decide)]",
+            "  simp only [Finset.sum_range_succ, Finset.sum_range_zero, "
+            + ", ".join(f"lg{k}" for k in sorted(lg_vals))
+            + "]",
+            f"  {sub}",
+            "  push_cast",
+            "  ring",
+            "",
+        ]
+    for side, steps, text in (("L", steps_l, ft_l), ("R", steps_r, ft_r)):
+        lines += [
+            f"theorem fac{side} : QSem.facs {p} steps{side} = {text} := by",
+            f"  simp only [steps{side}, QSem.facs, QSem.fac]",
+            "  push_cast",
+            "  ring",
+            "",
+        ]
+    lines += [
+        f"theorem consts : ({ft_l}) * ({sc.text(c_l)}) * om {p} ^ {k_l} =",
+        f"    ({ft_r}) * ({sc.text(c_r)}) * om {p} ^ {k_r} := by",
+        *(f"  rw [qg{a}]" for a in gauss),
+        f"  {sub}",
+        f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        "/-- The two path sums agree at every boundary assignment. -/",
+        f"theorem main (σ : ℕ → ZMod {p}) :",
+        f"    QSem.val {p} ({sc.text(c_l)}) sL σ = QSem.val {p} ({sc.text(c_r)}) sR σ := by",
+        (
+            "  rw [QSem.run_sound stepsL sL _ σ (by decide), "
+            "QSem.run_sound stepsR sR _ σ (by decide)]"
+        ),
+        f"  apply QSem.final_sound _ _ _ _ σ {k_l} {k_r} (by decide) (by decide) (by decide)",
+        "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
+        "",
+        f"end ArchytasZX.PathSumQuditProof.{name}",
         "",
     ]
     return "\n".join(lines)
@@ -842,4 +1070,4 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     return "\n".join(lines)
 
 
-__all__ = ["export_net", "export_pair", "export_proof"]
+__all__ = ["export_net", "export_pair", "export_proof", "export_qudit_proof"]
