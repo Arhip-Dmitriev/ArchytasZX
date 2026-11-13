@@ -17,7 +17,7 @@ holding the value copies it by CX to a fresh partner; equals the Z spider with 2
 from benchmarks.subjects._common import *
 
 
-def _circuit(m, d):
+def _unrolled(m, d):
     """The doubling tree."""
     n = 2**m
     q = unrolled("q", n)
@@ -28,9 +28,15 @@ def _circuit(m, d):
     return circuit(q, gates)
 
 
+def _circuit(m, d):
+    """F on q, then a binary tree of depth m whose copy copies its value by CX to a fresh r."""
+    body = (Init("r"), CX("q", "r"))
+    return circuit(["q"], [Init("q"), F("q"), Tree(m, body, "q", ("q", "r"))])
+
+
 def _spec(c):
     """Z(0 -> 2^m)."""
-    return f"z = Z(0 -> {2**c.nv}, {c.D})\nscalar {c.d}^(-1/2)"
+    return f"z = Z(0 -> 1, {c.D})\nrepeat 2^{c.N}: z.out0\nscalar {c.d}^(-1/2)"
 
 
 SUBJECT = Subject(
@@ -41,5 +47,5 @@ SUBJECT = Subject(
     size_parameter="tree levels (2^m qudits)",
     dimension="general",
     domain=Domain(n_min=0, n_max=3, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled"),),
+    equations=(Equation("main", _circuit, _spec, form="boxed"),),
 )

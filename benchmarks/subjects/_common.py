@@ -29,6 +29,7 @@ from benchmarks.ir import (  # noqa: F401
     PhaseFn,
     Post,
     Swap,
+    Tree,
     X,
     XPhase,
     Z,

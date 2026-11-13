@@ -220,17 +220,14 @@ def _instantiated_refutation(
     describe: Callable[[Diagram], str] | None,
 ) -> str:
     """The refutation of the two families instantiated at a point's multiplicities."""
-    from archytaszx.diagram.bangbox import instantiate_symbol
+    from archytaszx.diagram.bangbox import (
+        expand_concrete_boxes,
+        free_mult_symbols,
+        instantiate_symbol,
+    )
     from archytaszx.semantics.decide import sample_grid
 
-    mults = sorted(
-        {
-            str(s)
-            for d in (left, right)
-            for box in d.bang_boxes.values()
-            for s in box.multiplicity.free_symbols
-        }
-    )
+    mults = sorted(free_mult_symbols(left) | free_mult_symbols(right))
     first: NetUnsupported | None = None
     for cand in [dict(point)] + _by_size(sample_grid(left, right))[:MAX_POINTS]:
         if any(m not in cand for m in mults):
@@ -243,7 +240,7 @@ def _instantiated_refutation(
                     for b in d.bang_boxes.values()
                 ):
                     d = instantiate_symbol(d, m, int(cand[m]))
-            pair.append(d)
+            pair.append(expand_concrete_boxes(d))
         if pair[0].bang_boxes or pair[1].bang_boxes:
             continue
         rest = {k: v for k, v in cand.items() if k not in mults}

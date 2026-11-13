@@ -209,6 +209,21 @@ class Chain:
 
 
 @dataclass(frozen=True)
+class Tree:
+    """A tree of depth ``count``: copy c(L, P) (L = 1 .. count, P < b^(L-1)) runs ``body`` on
+    its parent value as wire ``parent`` and on fresh local wires; the final values of the
+    ``children`` wires (b of them) feed c(L + 1, b P + i), and the leaves' ``children`` take
+    ``parent``'s place in the boundary, leaf-major. ``level`` and ``position`` read L and P."""
+
+    count: Count
+    body: tuple[Gate, ...]
+    parent: str
+    children: tuple[str, ...]
+    level: str | None = None
+    position: str | None = None
+
+
+@dataclass(frozen=True)
 class Pairs:
     """For every pair of copies ``j < k`` of register ``over``, ``body`` on the wires ``"left"``
     (copy j) and ``"right"`` (copy k), ``index`` reading j and ``pair_index`` reading k, at
@@ -242,6 +257,7 @@ Gate = Union[  # noqa: UP007
     Prepare,
     Chain,
     Pairs,
+    Tree,
 ]
 
 
@@ -283,6 +299,8 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         return tuple(dict.fromkeys(seen))
     if isinstance(g, Pairs):
         return (g.over,)
+    if isinstance(g, Tree):
+        return (g.parent,)
     return (g.q,)
 
 

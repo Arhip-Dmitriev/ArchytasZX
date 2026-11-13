@@ -188,6 +188,7 @@ class _Box:
     name: str | None = None
     index: str | None = None
     extra: list[str] = field(default_factory=list)
+    per_copy: list[sp.Expr] | None = None
 
 
 @dataclass(frozen=True)
@@ -264,7 +265,11 @@ class _Builder:
         if box is None:
             self.scalar.append(value)
         else:
-            self.scalar.append(value ** self.box_count(box))
+            per_copy = self.boxes[box].per_copy if box in self.boxes else None
+            if per_copy is not None:
+                per_copy.append(value)
+            else:
+                self.scalar.append(value ** self.box_count(box))
 
     def take(self, q: str, port: str) -> None:
         """Wires the current end of ``q`` into ``port``."""
@@ -512,7 +517,46 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
     if isinstance(g, ir.Pairs):
         _pairs(b, g)
         return
+    if isinstance(g, ir.Tree):
+        _tree(b, g)
+        return
     raise TypeError(f"unknown gate {g!r}")
+
+
+def _tree(b: _Builder, g: ir.Tree) -> None:
+    """The tree box of :class:`ir.Tree` (see the module docstring)."""
+    if b.chain is not None or b.c.count(g.parent) is not None or g.parent in b.chained:
+        raise Unsupported("a tree inside a loop or on a register")
+    local = sorted({w for h in g.body for w in ir.gate_wires(h)} - {g.parent})
+    if any(w in b.cur for w in local):
+        raise Unsupported("a tree body names a circuit wire other than its parent")
+    key = f"C{sum(1 for box in b.boxes.values() if box.name is not None)}"
+    b.boxes[key] = _Box(str(g.count), name=key, per_copy=[])
+    b.chain = _ChainScope(key, str(g.count), frozenset({g.parent, *local}))
+    for w in local:
+        b.cur[w] = ("local", w)
+    b.cur[g.parent] = _Head(g.parent, b.cur[g.parent])
+    b.heads.pop(g.parent, None)
+    for h in g.body:
+        _gate(b, h)
+    for w in (g.parent, *g.children):
+        if w in b.closed:
+            raise Unsupported("a tree child or parent that ends inside the tree")
+        if isinstance(b.cur[w], (tuple, _Head)):
+            b.unary(w, f"Z(1 -> 1, {b.dim(g.parent)})", key)
+    if set(local) - set(g.children) - b.closed:
+        raise Unsupported("a tree's local wire neither ends nor is a child")
+    children = [str(b.cur[w]) for w in g.children]
+    line = f"tree {key}: {b.heads[g.parent]} <- " + ", ".join(children)
+    line += "" if g.level is None else f" level {g.level}"
+    line += "" if g.position is None else f" position {g.position}"
+    b.boxes[key].extra.append(line)
+    b.chain = None
+    for w in local:
+        del b.cur[w]
+        b.closed.discard(w)
+    b.cur[g.parent] = ", ".join(children)
+    b.chained.add(g.parent)
 
 
 def _chain(b: _Builder, g: ir.Chain) -> None:
@@ -697,6 +741,10 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
         head += "" if box.index is None else f" index {box.index}"
         lines.append(f"repeat {token}{head}: " + ", ".join(box.nodes))
         lines += box.extra
+        if box.per_copy:
+            factor = sp.powsimp(sp.Mul(*box.per_copy), force=True)
+            if factor != 1:
+                lines.append(f"copy scalar {box.name}: {_scalar_text(factor)}")
     lines += b.pair_lines
     ins = [b.inputs[q] for q in c.wires if q in b.inputs]
     outs = [b.outputs[q] for q in c.wires if q in b.outputs]

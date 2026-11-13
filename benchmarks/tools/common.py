@@ -104,6 +104,8 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
             group.append(q)
     flush()
     gates: list[ir.Gate] = []
+    leaves: dict[str, list[str]] = {}
+    tree_dims: dict[str, Any] = {}
     for g in c.gates:
         if isinstance(g, ir.Chain):
             for m in range(int(sp.sympify(g.count).subs(sp.Symbol("n"), n))):
@@ -112,6 +114,26 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
                     sub = {q: copies[q][m] for q in ir.gate_wires(h) if c.count(q) is not None}
                     gates.append(_rename(ir.at_index(h, values), sub))
                 gates.extend(ir.Swap(carry, copies[reg][m]) for carry, reg in g.carries)
+            continue
+        if isinstance(g, ir.Tree):
+            depth = int(sp.sympify(g.count).subs(sp.Symbol("n"), n))
+            width = len(g.children)
+            feed = {(1, 0): g.parent}
+            local = {w for h in g.body for w in ir.gate_wires(h)} - {g.parent}
+            for level in range(1, depth + 1):
+                for pos in range(width ** (level - 1)):
+                    sub = {g.parent: feed[(level, pos)]}
+                    sub.update({w: f"{g.parent}_{w}_{level}_{pos}" for w in local})
+                    for w in local:
+                        tree_dims[sub[w]] = c.dim(g.parent)
+                    values = {
+                        k: v for k, v in ((g.level, level), (g.position, pos)) if k is not None
+                    }
+                    for h in g.body:
+                        gates.append(_rename(ir.at_index(h, values), sub))
+                    for j, w in enumerate(g.children):
+                        feed[(level + 1, width * pos + j)] = sub[w]
+            leaves[g.parent] = [feed[(depth + 1, pos)] for pos in range(width**depth)]
             continue
         if isinstance(g, ir.Pairs):
             own = copies[g.over]
@@ -131,6 +153,8 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
             sub = {q: (copies[q][i] if c.count(q) is not None else q) for q in qs}
             gates.append(_rename(g, sub))
     dims = {e: c.dim(q) for q in c.wires for e in copies[q]}
+    dims.update(tree_dims)
+    wires = [e for q in wires for e in leaves.get(q, [q])]
     return ir.Circuit(tuple(wires), tuple(gates), {}, dims, c.scalar)
 
 

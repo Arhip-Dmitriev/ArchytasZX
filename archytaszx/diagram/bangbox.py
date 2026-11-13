@@ -536,11 +536,12 @@ def abstract_subgraph_count(
 
 
 def free_mult_symbols(diagram: Diagram) -> frozenset[str]:
-    """Every free symbol appearing in any live bang box's multiplicity expression."""
+    """Every free symbol appearing in any live bang box's multiplicity expression, the boxes'
+    copy, pair, level and position indices excepted."""
     symbols: set[str] = set()
     for box in diagram.bang_boxes.values():
         symbols |= box.multiplicity.free_symbols
-    return frozenset(symbols)
+    return frozenset(symbols - index_symbols(diagram))
 
 
 def _port_multiplicity(diagram: Diagram, ref: PortRef) -> sp.Expr | None:
