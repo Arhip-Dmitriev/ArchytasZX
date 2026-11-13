@@ -117,11 +117,31 @@ def test_a_shifted_grid_differs() -> None:
     assert not compare(_at(GRID, ("n", "l"), 2, 2), parse_dsl(_grid(2, 2, 1)), {"d": 2}).matched
 
 
-def test_the_row_chain_has_no_peel() -> None:
+def test_the_column_chain_has_no_peel() -> None:
     diagram = parse_dsl(GRID)
-    row = next(box for box in diagram.bang_boxes.values() if box.parent is None and box.links)
+    column = next(box for box in diagram.bang_boxes.values() if box.parent is not None)
     with pytest.raises(BangBoxGrammarError, match="through a child box"):
-        peel_one(diagram, row.id)
+        peel_one(diagram, column.id)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(("k", "l"), [(0, 1), (1, 2), (2, 2), (1, 3)])
+def test_the_row_chain_peels_through_its_child(reverse: bool, k: int, l: int) -> None:
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    text = (
+        GRID.replace("chain R: v.out2 -> hv.in0", "chain R: hv.in0 -> v.out2") if reverse else GRID
+    )
+    diagram = rename_multiplicity(parse_dsl(text), "n", Mult("s") + 1)
+    row = next(box for box in diagram.bang_boxes.values() if box.parent is None and box.links)
+    peeled = peel_one(diagram, row.id).diagram
+    at = {"s": k, "l": l, "d": 2}
+    expected = instantiate_symbol(instantiate_symbol(diagram, "s", k), "l", l)
+    result = compare(instantiate_symbol(instantiate_symbol(peeled, "s", k), "l", l), expected, at)
+    assert result.matched, result.reason
+    if not reverse:
+        assert compare(expected, parse_dsl(_grid(k + 1, l)), at).matched
 
 
 def test_a_chain_end_at_a_boundary_slot_is_refused() -> None:

@@ -2158,12 +2158,29 @@ def peels_first(box: BangBox) -> bool:
     )
 
 
-def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
+def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
+    """:func:`_peel_extended` on an open chain whose links run through its child box: the
+    peeled copy's child box is then merged with the boxes the chain's end it now meets was
+    wired to (the tail's, or the head's when the chain :func:`peels_first`)."""
+    child = zip_child(diagram, box)
+    assert child is not None
+    if box.cyclic:
+        raise BangBoxGrammarError(f"cyclic chain {box.id!r} has no peel_one")
+    first = peels_first(box)
+    ends = [p for p, _ in box.links] if not first else [q for _, q in box.links]
+    holders = [b for ref, _, b in _zip_ends(diagram, box, child) if ref in ends]
+    id_map = _peel_extended(diagram, box, last)
+    image = frozenset(id_map[n] for n in child.node_scope)
+    copy = next(b for b, other in diagram.bang_boxes.items() if other.node_scope == image)
+    _merge_zipped(diagram, [*holders, copy] if first else [copy, *holders])
+
+
+def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> dict[NodeId, NodeId]:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail.
     A chain that :func:`peels_first` loses its first copy instead (index 0, the residual
     reading its index as ``index + 1``): the copy's ``q`` ports wired to the head and its ``p``
-    ports to the residual's ``q``."""
+    ports to the residual's ``q``. Returns the copy's node map."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair:
@@ -2202,6 +2219,7 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     _drop_identities(diagram, temps)
     for template in templates:
         _peel_pairs(diagram, box.id, template, id_map, last)
+    return id_map
 
 
 def _peel_pairs(
@@ -2478,10 +2496,11 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
     box = working.bang_boxes.get(box_id)
     if box is None:
         raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
+    zipped = box.is_node_scope and bool(box.links) and zip_child(working, box) is not None
     if box.is_node_scope and (
         _zip_chain(working, box_id) is not None
-        or (box.links and zip_child(working, box))
         or (box.parent is not None and zip_child(working, working.bang_boxes[box.parent]))
+        or (zipped and (box.parent is not None or _pairs_of(working, box_id)))
     ):
         raise BangBoxGrammarError(f"box {box_id!r} with links through a child box has no peel_one")
     if box.is_node_scope and len(aligned_members(working, box_id)) > 1:
@@ -2492,6 +2511,8 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
         raise BangBoxGrammarError(f"fed box {box_id!r} has no peel_one")
     if box.is_tree:
         _peel_tree(working, box, predecessor)
+    elif zipped:
+        _peel_zipped(working, box, predecessor.to_sympy())
     elif box.is_extended:
         _peel_extended(working, box, predecessor.to_sympy())
     elif box.is_node_scope:
