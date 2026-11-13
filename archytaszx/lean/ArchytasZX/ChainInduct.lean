@@ -39,6 +39,31 @@ theorem Equal.mapL (E : Env) (f : ℕ → ℕ) (hf : Function.Injective f)
   have := hσ (f l) (by simp only [Net.mapL, List.mem_map]; exact ⟨l, hl, rfl⟩)
   simpa [Function.comp, hd] using this
 
+/-- `Equal.mapL` with one renaming per side, the two agreeing on the boundary labels. -/
+theorem Equal.mapL2 (E : Env) (f g : ℕ → ℕ) (hf : Function.Injective f)
+    (hg : Function.Injective g) (hdf : ∀ x, labDim E (f x) = labDim E x)
+    (hdg : ∀ x, labDim E (g x) = labDim E x) {s s' : ℂ} {A B : Net} (h : Equal E s A s' B)
+    (hfg : ∀ x ∈ A.bnd, f x = g x) (hcB : ∀ l ∈ labelsOf B.nodes, l ∈ B.int ∨ l ∈ B.bnd) :
+    Equal E s (A.mapL f) s' (B.mapL g) := by
+  have hmap : A.bnd.map f = A.bnd.map g := List.map_congr_left hfg
+  refine ⟨?_, fun σ hσ => ?_⟩
+  · simp only [Net.mapL]
+    rw [hmap]
+    exact h.1.map g
+  rw [eval_mapL E f hf hdf, eval_mapL E g hg hdg]
+  have hσA : InRange E A.bnd (σ ∘ f) := fun l hl => by
+    have := hσ (f l) (by simp only [Net.mapL, List.mem_map]; exact ⟨l, hl, rfl⟩)
+    simpa [Function.comp, hdf] using this
+  rw [h.2 _ hσA]
+  congr 1
+  unfold eval
+  apply sumOver_ext (labDim E) B.int (labelsOf B.nodes) _ (prodVal_reads E B.nodes)
+  intro x hx hn
+  rcases hcB x hx with hi | hb
+  · exact absurd hi hn
+  · simp only [Function.comp]
+    rw [hfg x (h.1.mem_iff.2 hb)]
+
 theorem labelsOf_rename (f : ℕ → ℕ) (ns : List Node) :
     labelsOf (ns.map (Node.rename f)) = (labelsOf ns).map f := by
   simp [labelsOf, Node.labels, Node.rename, List.map_flatMap, List.flatMap_map]
