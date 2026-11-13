@@ -181,7 +181,7 @@ def test_an_offset_induction_exports_over_every_offset() -> None:
     source = export_chain(theorem, {"d": 2}, "reversed", checks=(1, 2))
     assert "theorem main : ∀ s k, Equal E" in source
     assert "(chainNet W cut Base.NL (fun j => cO (s + k - 1 - j)) k)" in source
-    assert "    (main 0 2) (by decide) (by decide)" in source
+    assert "    (fun _ => hD _ _) (main 0 2) (by decide) (by decide)" in source
     with pytest.raises(PathSumUnsupported):
         export_chain(_theorem(_reversed_pair("2^i")), {"d": 2}, "growing")
 
