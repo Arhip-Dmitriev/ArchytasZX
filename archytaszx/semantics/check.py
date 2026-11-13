@@ -127,7 +127,7 @@ class CheckGrammarError(CheckError):
 
 
 def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
-    """Every free symbol (dimension, phase, scalar, or bang-box multiplicity, Phase 7)
+    """Every free symbol (dimension, phase, scalar, copy scalar, or bang-box multiplicity, Phase 7)
     appearing anywhere in ``diagram``."""
     symbols: set[str] = set(diagram.scalar.free_symbols)
     for node in diagram.nodes.values():
@@ -135,6 +135,9 @@ def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
             symbols |= port.dim.free_symbols
         if node.phase is not None:
             symbols |= node.phase.free_symbols
+    for box in diagram.bang_boxes.values():
+        if box.copy_scalar is not None:
+            symbols |= box.copy_scalar.free_symbols
     symbols |= free_mult_symbols(diagram)
     return frozenset(symbols - index_symbols(diagram))
 

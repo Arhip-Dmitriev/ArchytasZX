@@ -237,8 +237,21 @@ def test_a_growing_copy_scalar_exports_over_mixed_dimensions() -> None:
     assert "theorem main : ∀ k, Equal (lvEnv E W C B k)" in source
 
 
+MIXED_GROWING_REVERSED = (
+    MIXED_GROWING[0].replace("chain C0: g5.out0 -> g4.in0", "chain C0: g4.in0 -> g5.out0"),
+    MIXED_GROWING[1].replace("chain V: w.out0 -> v.in0", "chain V: v.in0 -> w.out0"),
+)
+"""The mixed-dimension cluster chains with copy scalar 2^i, reversed (an offset induction)."""
+
+
+def test_a_reversed_growing_chain_exports_over_mixed_dimensions() -> None:
+    source = export_chain(_theorem(MIXED_GROWING_REVERSED), {"d": 2}, "rmg", checks=(1, 2))
+    assert "noncomputable def aO (i : ℕ) : ℂ := ((2 : ℂ)) ^ (i / 1) * perIdx aOt 1 i" in source
+    assert "theorem main : ∀ s k, Equal (lvEnv E W C B k)" in source
+
+
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
-@pytest.mark.parametrize("pair", [MIXED, MIXED_GROWING])
+@pytest.mark.parametrize("pair", [MIXED, MIXED_GROWING, MIXED_GROWING_REVERSED])
 def test_lean_proves_the_mixed_dimension_chain(pair: tuple[str, str], tmp_path: object) -> None:
     source = export_chain(_theorem(pair), {"d": 2}, "mixed")
     ok, output = L.check(source, f"{tmp_path}/mixed.lean")
