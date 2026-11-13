@@ -60,6 +60,7 @@ input and output boundaries and the engine to assert it, feeding Phase 6.
 from __future__ import annotations
 
 import enum
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -747,8 +748,9 @@ _MAX_CASES = 4096
 def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int = 1) -> bool:
     """Whether ``expr`` is zero once powers are written through exp, exponentials split and
     reduced mod one turn, every complete set of residue deltas mod a concrete modulus with one
-    coefficient is replaced by that coefficient, and, failing that, in each case of an index
-    whose concrete range equals the modulus of a delta it appears in alone."""
+    coefficient is replaced by that coefficient, or, over one symbol, by :func:`_uw_zero`, and,
+    failing that, in each case of an index whose concrete range equals the modulus of a delta it
+    appears in alone."""
     if expr.atoms(sp.Sum):
         return False
     expr = _square_moduli(_constant_bases(expr))
@@ -758,6 +760,8 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
         return True
     if not folded.free_symbols:
         return _cyclotomic_zero(folded)
+    if len(folded.free_symbols) == 1 and not folded.atoms(ModDelta) and _uw_zero(folded):
+        return True
     split = _case_index(folded, ranges or {})
     if split is None:
         return False
@@ -814,17 +818,214 @@ def _square_moduli(expr: sp.Expr) -> sp.Expr:
                 continue
             x = f.base
             bound = _lower_bound(x)
-            if bound is None or not _is_real(x) or not bool(bound >= 0):
+            if (bound is None or not _is_real(x) or not bool(bound >= 0)) and not (
+                _real_nonnegative_uw(x)
+            ):
                 continue
             rest = list(factors)
             rest.pop(i)
             rest.remove(partner)
             return sp.Mul(x, *rest)
-        return term
+        return _fold_product(factors)
 
     if not expr.atoms(sp.conjugate):
         return expr
     return sp.Add(*(fold(t) for t in sp.Add.make_args(sp.expand(expr, power_exp=False))))
+
+
+def _nonnegative_real(x: sp.Expr) -> bool:
+    """Whether ``x`` is real and at least 0 by :func:`_lower_bound` or
+    :func:`_real_nonnegative_uw`."""
+    bound = _lower_bound(x)
+    if bound is not None and _is_real(x) and bool(bound >= 0):
+        return True
+    return _real_nonnegative_uw(x)
+
+
+def _differ_at_samples(a: sp.Expr, b: sp.Expr) -> bool:
+    """Whether ``a`` and ``b`` evaluate apart at one of a few integer points of their free
+    symbols (30 digits, relative gap above 1e-20); False when an evaluation fails."""
+    symbols = sorted(a.free_symbols | b.free_symbols, key=lambda s: str(s))
+    for value in (1, 2, 3, 5):
+        point = {s: sp.Integer(value + i) for i, s in enumerate(symbols)}
+        try:
+            x, y = sp.N(a.xreplace(point), 30), sp.N(b.xreplace(point), 30)
+            gap, size = abs(complex(sp.N(x - y, 30))), abs(complex(x)) + abs(complex(y))
+        except (TypeError, ValueError, ZeroDivisionError):
+            return False
+        if gap > 1e-20 * (1 + size):
+            return True
+    return False
+
+
+def _fold_product(factors: list[sp.Expr]) -> sp.Expr:
+    """The product of ``factors`` with ``sqrt(Z) * conj(sqrt(X1)) * ... * conj(sqrt(Xk))``
+    replaced by ``Z`` when ``Z == X1 * ... * Xk`` and every ``Xi`` is real and at least 0."""
+    partners = [
+        g
+        for g in factors
+        if isinstance(g, sp.conjugate)
+        and isinstance(g.args[0], sp.Pow)
+        and g.args[0].exp == sp.Rational(1, 2)
+    ]
+    if len(partners) < 2:
+        return sp.Mul(*factors)
+    bases = [g.args[0].base for g in partners]
+    for i, f in enumerate(factors):
+        if not (isinstance(f, sp.Pow) and f.exp == sp.Rational(1, 2)):
+            continue
+        product = sp.Mul(*bases)
+        if _differ_at_samples(f.base, product):
+            continue
+        if not _uw_zero(f.base - product) and sp.cancel(sp.together(f.base - product)) != 0:
+            continue
+        if not all(_nonnegative_real(b) for b in bases):
+            continue
+        rest = [g for j, g in enumerate(factors) if j != i and g not in partners]
+        return sp.Mul(f.base, *rest)
+    return sp.Mul(*factors)
+
+
+def _uw_form(x: sp.Expr) -> tuple[sp.Expr, sp.Symbol, sp.Symbol, int] | None:
+    """``x`` over one nonnegative integer symbol ``n`` as a rational function of
+    ``U = b^(n/qu)`` and ``W = exp(i pi n/qw)``, with ``2*qw``, when every ``n``-dependence is
+    such a power or exponential; None otherwise."""
+    symbols = x.free_symbols
+    if len(symbols) != 1:
+        return None
+    (n,) = symbols
+    if not (n.is_integer and n.is_nonnegative):
+        return None
+    exps: dict[sp.Expr, sp.Rational] = {}
+    pows: dict[sp.Expr, sp.Rational] = {}
+    base: sp.Expr | None = None
+    for atom in x.atoms(sp.exp, sp.Pow):
+        if n not in atom.free_symbols:
+            continue
+        if isinstance(atom, sp.exp):
+            c = sp.cancel(atom.args[0] / (sp.I * sp.pi * n))
+            if c.is_Rational:
+                exps[atom] = sp.Rational(c)
+                continue
+            r, log = sp.cancel(atom.args[0] / n).as_coeff_Mul()
+            if not (r.is_Rational and isinstance(log, sp.log) and log.args[0].is_Integer):
+                return None
+            b = log.args[0]
+        else:
+            if n not in atom.exp.free_symbols:
+                continue
+            b, r = atom.base, sp.cancel(atom.exp / n)
+        if not (b.is_Integer and b > 1) or not r.is_Rational:
+            return None
+        if base is not None and b != base:
+            return None
+        base = b
+        pows[atom] = sp.Rational(r)
+    qw = math.lcm(*(int(c.q) for c in exps.values())) if exps else 1
+    qu = math.lcm(*(int(r.q) for r in pows.values())) if pows else 1
+    u = sp.Symbol("_U", positive=True)
+    w = sp.Symbol("_W", real=True)
+    mapping = {a: w ** int(c * qw) for a, c in exps.items()}
+    mapping.update({a: u ** int(r * qu) for a, r in pows.items()})
+    form = x.xreplace(mapping)
+    if n in form.free_symbols:
+        return None
+    return form, u, w, 2 * qw
+
+
+def _uw_zero(x: sp.Expr) -> bool:
+    """Whether ``x``, read by :func:`_uw_form` as a rational function of ``U`` and ``W``, has a
+    numerator vanishing mod ``W^period - 1``."""
+    found = _uw_form(x)
+    if found is None:
+        return False
+    form, _u, w, period = found
+    try:
+        numerator, _denominator = sp.fraction(sp.together(form))
+        reduced = _laurent_mod(sp.expand(numerator), w, period)
+    except (sp.PolynomialError, NotImplementedError, TypeError, ValueError):
+        return False
+    return reduced is not None and reduced.is_zero
+
+
+def _laurent_mod(expr: sp.Expr, w: sp.Symbol, period: int) -> sp.Poly | None:
+    """``expr``, a Laurent polynomial in ``w``, reduced mod ``w^period - 1`` as a polynomial in
+    ``w``; None when it is not one."""
+    expr = sp.expand(expr)
+    low = min(int(t.as_powers_dict().get(w, 0)) for t in sp.Add.make_args(expr))
+    shift = period * ((-low + period - 1) // period) if low < 0 else 0
+    try:
+        poly = sp.Poly(sp.expand(expr * w**shift), w)
+    except sp.PolynomialError:
+        return None
+    return sp.Poly(sp.rem(poly.as_expr(), w**period - 1, w), w)
+
+
+def _real_nonnegative_uw(x: sp.Expr) -> bool:
+    """Whether ``x``, read by :func:`_uw_form` as ``P/Q`` in ``U >= 1`` and ``|W| = 1`` with
+    ``W^period = 1``, equals its conjugate and has ``P conj(Q)`` bounded below by zero: its top
+    ``U`` coefficient's real constant less the other moduli, against every lower coefficient's
+    modulus sum, with no root of that bound above ``U = 1``."""
+    found = _uw_form(x)
+    if found is None:
+        return False
+    form, u, w, period = found
+    try:
+        r = sp.cancel(sp.together(form))
+        p, q = sp.fraction(r)
+        conj_q = sp.conjugate(q).xreplace({w: 1 / w})
+        conj_r = sp.conjugate(r).xreplace({w: 1 / w})
+        num, _den = sp.fraction(sp.together(r - conj_r))
+        reduced = _laurent_mod(num, w, period)
+        if reduced is None or not reduced.is_zero:
+            return False
+        product = _laurent_mod(sp.expand(p * conj_q), w, period)
+        if product is None:
+            return False
+        by_u: dict[int, list[sp.Expr]] = {}
+        for (j,), coefficient in product.terms():
+            for (k,), c in sp.Poly(coefficient, u).terms():
+                by_u.setdefault(k, []).append((j, c))
+        if not by_u:
+            return True
+        top = max(by_u)
+        lead = sum((sp.re(c) for j, c in by_u[top] if j == 0), sp.Integer(0)) - sum(
+            (sp.Abs(c) for j, c in by_u[top] if j != 0), sp.Integer(0)
+        )
+        bound = lead * u**top - sum(
+            (sp.Abs(c) * u**k for k in by_u if k != top for _j, c in by_u[k]), sp.Integer(0)
+        )
+        bound = sp.nsimplify(sp.expand(bound))
+        if (
+            bound.free_symbols <= {u}
+            and not sp.simplify(bound.subs(u, 1)) < 0
+            and sp.solveset(bound < 0, u, sp.Interval(1, sp.oo)) is sp.S.EmptySet
+        ):
+            return True
+        return _shifted_nonnegative(sp.expand(p * conj_q), u, w, period)
+    except (sp.PolynomialError, NotImplementedError, TypeError, ValueError):
+        return False
+
+
+def _shifted_nonnegative(product: sp.Expr, u: sp.Symbol, w: sp.Symbol, period: int) -> bool:
+    """Whether ``product`` is at least 0 for every ``U >= 1`` at each ``W = exp(2 pi i r/period)``:
+    every coefficient of its polynomial in ``t = U - 1`` real and at least 0."""
+    for r in range(period):
+        value = sp.exp(2 * sp.pi * sp.I * sp.Rational(r, period))
+        at = sp.expand(product.xreplace({w: value}).xreplace({u: u + 1}))
+        try:
+            coefficients = sp.Poly(at, u).all_coeffs()
+        except sp.PolynomialError:
+            return False
+        for c in coefficients:
+            v = complex(sp.N(c, 50))
+            if abs(v.imag) > 1e-30 and sp.simplify(sp.im(sp.expand_complex(c))) != 0:
+                return False
+            if v.real < -1e-30:
+                return False
+            if v.real < 1e-30 and sp.simplify(sp.expand_complex(c)) != 0:
+                return False
+    return True
 
 
 def _is_real(x: sp.Expr) -> bool:

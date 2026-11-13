@@ -244,6 +244,13 @@ a delta mod m reads alone, or else of the first by name of the indices of concre
 delta mod m reads among others (ModDelta(_i0 + _i3, 2) splits on _i0), at most 4096 cases in
 all. A constant left in a case is zero when
 it reads exactly as a cyclotomic number times a power of sqrt 2 that is zero (pathsum.constant).
+An expression in one nonnegative integer symbol n is zero when, read as a rational function of
+U = b^(n/q) (b^(c n) and exp(c n log b) alike) and W = exp(i pi n/q'), its numerator vanishes
+mod W^(2q') - 1. sqrt(Z) conj(sqrt(X1)) ... conj(sqrt(Xk)) folds to Z when Z = X1 ... Xk (a
+numeric test at four integer points first, then that rational-function test or cancellation)
+and each Xi is real and at least 0; nonnegativity holds by a lower bound, by the top-U bound of
+P conj(Q) for Xi = P/Q, or when at every W = exp(2 pi i r/(2q')) every coefficient of
+P conj(Q) as a polynomial in t = U - 1 is real and at least 0.
 dimension_floors supplies least values of dimension symbols (for example d >= 3).
 
 find_entry_witness looks for one assignment and one index tuple at which the two entries
