@@ -586,6 +586,9 @@ such pin after the digit pins and norm. A pair constraint on a path variable and
 raise. The w_state instances (test_tree_w_fusion CIRCUIT, SPEC) at n = 0, 1 are Lean-checked;
 at n = 2 the circuit side keeps two path variables (cubic quarter-turn phases from the CRy
 gates) and the export raises.
+A Boolean elimination leaving the same support on both sides (PathSumSupport.lean) ends in
+finalS_sound (no atoms) or afinalS_perm (atoms), in export_proof, export_net and net_body; the
+CCZ loop of seven T gadgets against its conjugate (support 1 + a b) is Lean-checked by both.
 
 Amplitude atoms. ArchytasZX/PathSumAmp.lean: AData is a path sum (Data) with held variables,
 summed outside the inner sum, and atoms (i, f) worth A i where the F_2 polynomial f is 1;

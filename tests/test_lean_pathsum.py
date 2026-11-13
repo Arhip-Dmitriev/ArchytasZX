@@ -440,7 +440,9 @@ def _support(weight: bool, net: bool) -> str:
     return export(left, right, "support")
 
 
-@pytest.mark.parametrize(("weight", "net"), [(True, False), (True, True), (False, False)])
+@pytest.mark.parametrize(
+    ("weight", "net"), [(True, False), (True, True), (False, False), (False, True)]
+)
 def test_a_leftover_support_takes_the_support_final(weight: bool, net: bool) -> None:
     source = _support(weight, net)
     assert "import ArchytasZX.PathSumSupport" in source
@@ -448,7 +450,9 @@ def test_a_leftover_support_takes_the_support_final(weight: bool, net: bool) -> 
 
 
 @needs_lean
-@pytest.mark.parametrize(("weight", "net"), [(True, False), (True, True), (False, False)])
+@pytest.mark.parametrize(
+    ("weight", "net"), [(True, False), (True, True), (False, False), (False, True)]
+)
 def test_lean_proves_a_pair_with_a_leftover_support(
     weight: bool, net: bool, tmp_path: object
 ) -> None:

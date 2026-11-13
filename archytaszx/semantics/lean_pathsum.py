@@ -1444,7 +1444,9 @@ def net_body(
         raise PathSumUnsupported("the boundaries differ")
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
     try:
-        red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, m_min)
+        red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(
+            raw_l, raw_r, m_min, support=True
+        )
     except PathSumUnsupported:
         zero = _zero_plan(left, right, m_min)
         if zero is None:
@@ -1503,7 +1505,10 @@ def net_body(
         ),
         f"    val_agree {m} _ {run_l} {bnd} _ _ (by decide) (by decide)",
         f"      (dbits_agree ownL ownR _ {bnd} (by decide))]",
-        f"  apply final_sound {m} (by norm_num) _ _ _ _ _ {k_l} {k_r} (by decide) (by decide)",
+        (
+            f"  apply {'finalS_sound' if _leftover(red_l) else 'final_sound'} {m} (by norm_num) "
+            f"_ _ _ _ _ {k_l} {k_r} (by decide) (by decide)"
+        ),
         "    (by decide)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
@@ -1751,9 +1756,11 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     if any(isinstance(r, PathSum) and r.amps for r in raws):
         return _export_amp_net(left, right, name)
     body = net_body(left, right, name, phases, coefs=coefs)
+    support = any("finalS_sound" in ln for ln in body.lines)
     ns = "ArchytasZX.PathSumNetProof"
     lines = [
         "import ArchytasZX.PathSumNetW",
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
         "",
         "/-!",
         f"# Path-sum proof `{name}` over the networks",
