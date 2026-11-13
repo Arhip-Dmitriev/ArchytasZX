@@ -971,6 +971,16 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
                 )
 
 
+def _next_copy_dim(dim: Dim, index: str | None) -> Dim | None:
+    """``dim`` read in the next copy: the copy index ``index`` replaced by ``index + 1``; None
+    when ``dim`` does not read it."""
+    if index is None or index not in dim.free_symbols:
+        return None
+    expr = dim.to_sympy()
+    symbol = next(s for s in expr.free_symbols if str(s) == index)
+    return Dim.from_sympy(expr.xreplace({symbol: symbol + 1}))
+
+
 def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     """Every chain link joins two resolvable ports of equal dimension and opposite direction;
     an open chain's link ports are each wired outside the scope or a boundary slot, a cyclic
@@ -1000,7 +1010,9 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
             assert p_node is not None and q_node is not None
             p_dim = p_node.legs(p_ref.direction)[p_ref.index].dim
             q_dim = q_node.legs(q_ref.direction)[q_ref.index].dim
-            if p_dim != q_dim or p_ref.direction is q_ref.direction:
+            if (
+                p_dim != q_dim and _next_copy_dim(q_dim, box.index) != p_dim
+            ) or p_ref.direction is q_ref.direction:
                 refuse(
                     f"chain box {box_id!r}: link {p_ref!r} -> {q_ref!r} is not an admissible "
                     "wire (dimensions or directions)"

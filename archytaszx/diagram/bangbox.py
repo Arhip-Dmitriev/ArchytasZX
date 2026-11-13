@@ -52,6 +52,7 @@ from types import MappingProxyType
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.generators import PhaseSchema
@@ -1420,6 +1421,13 @@ def _index_copy(
             phase = diagram.nodes[node_id].phase
             if phase is not None and box.index in phase.free_symbols:
                 diagram.set_phase(node_id, phase.substitute({box.index: sub}))
+            node = diagram.nodes[node_id]
+            if any(box.index in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+                diagram.set_port_dims(
+                    node_id,
+                    [_dim_at(p.dim, box.index, sub) for p in node.inputs],
+                    [_dim_at(p.dim, box.index, sub) for p in node.outputs],
+                )
         for child_id in new_boxes:
             child = diagram.bang_boxes.get(child_id)
             if child is None:
@@ -1439,6 +1447,14 @@ def _index_copy(
         if box.index is not None:
             factor = _scalar_at(factor, box.index, value)
         diagram.multiply_scalar(factor)
+
+
+def _dim_at(dim: Dim, name: str, value: int | sp.Expr) -> Dim:
+    """``dim`` with the symbol ``name`` replaced by ``value``."""
+    symbols = [x for x in dim.to_sympy().free_symbols if str(x) == name]
+    if not symbols:
+        return dim
+    return Dim.from_sympy(dim.to_sympy().xreplace({symbols[0]: value}))
 
 
 def _scalar_at(scalar: Scalar, name: str, value: int | sp.Expr) -> Scalar:

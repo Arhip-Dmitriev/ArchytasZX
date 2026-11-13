@@ -442,6 +442,22 @@ class Diagram:
             raise GraphGrammarError(f"no such node: {node_id!r}")
         self._nodes[node_id] = self._nodes[node_id].with_phase(phase)
 
+    def set_port_dims(self, node_id: NodeId, inputs: Sequence[Dim], outputs: Sequence[Dim]) -> None:
+        """Replace a node's port dimensions, port counts unchanged. Raises GraphGrammarError
+        if node_id is absent or a count differs."""
+        if node_id not in self._nodes:
+            raise GraphGrammarError(f"no such node: {node_id!r}")
+        node = self._nodes[node_id]
+        if len(inputs) != node.num_inputs or len(outputs) != node.num_outputs:
+            raise GraphGrammarError("set_port_dims keeps the port counts")
+        self._nodes[node_id] = Node(
+            id=node.id,
+            generator_type=node.generator_type,
+            inputs=tuple(Port(d) for d in inputs),
+            outputs=tuple(Port(d) for d in outputs),
+            phase=node.phase,
+        )
+
     # -- bang box mutation (Phase 7) --------------------------------------------------
 
     def add_bang_box(
