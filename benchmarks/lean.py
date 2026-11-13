@@ -19,7 +19,8 @@ before every declaration and ``#print axioms`` of the final theorem appended. Th
 reports ``lean_status`` (accepted, rejected, timeout, oom), CPU and wall seconds, peak memory,
 file bytes and lines, ``decl_ms`` (profiler milliseconds per declaration), ``axiom_class``
 (clean: only propext, Classical.choice and Quot.sound; unproved: some ``unproved_*`` axiom;
-opaque: no ``import ArchytasZX``; other: any other axiom; else the ``lean_status``) and
+opaque: no ``import ArchytasZX`` or opaque diagrams; other: any other axiom; else the
+``lean_status``) and
 ``statement_level`` (source, diagram, network, opaque).
 """
 
@@ -200,9 +201,14 @@ def statement(source: str) -> str:
     return source[starts[-1] :].split(":=", 1)[0]
 
 
+def _opaque(source: str) -> bool:
+    """Whether the final theorem is over opaque diagrams."""
+    return "import ArchytasZX" not in source or "namespace ArchytasZX.Opaque" in source
+
+
 def statement_level(source: str) -> str:
     """source, diagram, network or opaque (see the module docstring)."""
-    if "import ArchytasZX" not in source:
+    if _opaque(source):
         return "opaque"
     text = statement(source)
     if '"' in text or re.search(r"\b(elab\w*|parse\w*|Src\w*|src\w*|source\w*)\b", text):
@@ -214,7 +220,7 @@ def statement_level(source: str) -> str:
 
 def classify(axioms: list[str] | None, source: str) -> str:
     """The axiom class of the final theorem's axioms (see the module docstring)."""
-    if "import ArchytasZX" not in source:
+    if _opaque(source):
         return "opaque"
     if axioms is None:
         return "unknown"

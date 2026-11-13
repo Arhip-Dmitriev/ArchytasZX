@@ -1621,6 +1621,14 @@ def _kernel(session: Session, action: str, path: str) -> Outcome:
             blocks.append(
                 Text("lean: tensor-network semantics, the normal form computed by the Lean kernel")
             )
+        elif f"namespace {kernel.OPAQUE_NS}" in source:
+            proved = source.count("\naxiom net")
+            blocks.append(
+                Text(
+                    "lean: opaque diagrams, every step an axiom but "
+                    f"{_count(proved, 'symbolic contraction')} proved over networks"
+                )
+            )
         elif "import ArchytasZX" in source:
             unproved = source.count("\naxiom unproved_")
             note = f"{unproved} unproved step(s)" if unproved else "every step proved"

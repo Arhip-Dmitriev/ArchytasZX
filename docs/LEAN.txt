@@ -280,6 +280,20 @@ per rule instance, isomorphism, instantiation, peeling and context the kernel ch
 theorem as their composition. This export records the structure of the proof but does not
 re-prove its steps; the shell reports it as "opaque diagrams, every step an axiom".
 
+A symbolic contraction step is the exception when its two contracted diagrams (the whole sides,
+or for local_contraction the parts off the two regions, cut ends open) have no bang box and no
+free multiplicity and one of the normaliser of symbolic sums (4.3), the qubit path-sum network
+proof or the odd-prime one proves them equal. That proof is included in the file as
+namespace <N>.C<i> (its theorem C<i>.main, tactic macros local), the file imports ArchytasZX,
+the opaque part moves to the namespace ArchytasZX.Opaque, and the step is
+
+    axiom net<i> : (type_of% @<N>.C<i>.main) → ∀ ..., d<a> ... = d<b> ...
+
+applied to C<i>.main: the contraction itself is proved; the axiom states only that the step's
+diagrams are the proved networks (plugged into one context for a local contraction). The shell
+reports "opaque diagrams, every step an axiom but N symbolic contraction(s) proved over
+networks"; the benchmark runner classes the file as opaque.
+
 
 4.6 Mixed theorems
 

@@ -410,7 +410,12 @@ def local_contraction(
     if _interface(copy_a) != _interface(copy_b):
         raise KernelError("the parts off the regions have different interfaces")
     contraction(copy_a, copy_b, max_steps)
-    data: dict[str, object] = {"region_a": region_a, "region_b": region_b}
+    data: dict[str, object] = {
+        "region_a": region_a,
+        "region_b": region_b,
+        "hypothesis": hypothesis,
+        "parts": (copy_a, copy_b),
+    }
     return Theorem(_TOKEN, a, b, Inference("contraction", data=data))
 
 
@@ -995,12 +1000,46 @@ def _comment(text: str) -> str:
 class _Lean:
     """Accumulates declarations while proof terms are built."""
 
-    def __init__(self, describe: Callable[[Diagram], str]) -> None:
+    def __init__(self, describe: Callable[[Diagram], str], semantic: bool = False) -> None:
         self.describe = describe
+        self.semantic = semantic
         self.decls: list[str] = []
         self.diagrams: list[tuple[Diagram, str, tuple[str, ...]]] = []
         self.stated: dict[str, str] = {}
         self.count = 0
+        self.subs: list[str] = []
+        self.imports: list[str] = []
+
+    def contraction(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """A contraction step through a semantic proof of the two contracted diagrams (the
+        parts off the regions for a local contraction): a sub-proof ``C<i>.main`` over their
+        networks and the axiom ``net<i>`` from its statement to the step; None when neither
+        diagram pair has a semantic proof."""
+        x, y = cast("tuple[Diagram, Diagram]", t.inference.data.get("parts", (t.lhs, t.rhs)))
+        if x.bang_boxes or y.bang_boxes or free_mult_symbols(x) or free_mult_symbols(y):
+            return None
+        tag = f"C{len(self.subs) + 1}"
+        source = _semantic_pair(x, y)
+        if source is None:
+            return None
+        body, imports, ns = _nest(source, tag)
+        self.subs.append(body)
+        self.imports += [i for i in imports if i not in self.imports]
+        lhs, rhs = self.call(t.lhs), self.call(t.rhs)
+        head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
+        local = "parts" in t.inference.data
+        note = (
+            "the diagrams are the parts off the two regions, plugged into one context, whose "
+            f"networks {ns}.main proves equal"
+            if local
+            else f"the diagrams' networks are those {ns}.main proves equal"
+        )
+        name = self.fresh("net")
+        self.decls.append(
+            f"/-- {_comment(note)} -/\naxiom {name} : (type_of% @{ns}.main) → {head}{lhs} = {rhs}"
+        )
+        applied = f"{name} @{ns}.main"
+        return f"({applied} {' '.join(binders)})" if binders else f"({applied})"
 
     def fresh(self, stem: str) -> str:
         self.count += 1
@@ -1050,6 +1089,10 @@ class _Lean:
         if inf.kind == "iso":
             note = "isomorphic comparison views"
             return self.axiom("iso", note, binders, self.call(t.lhs), self.call(t.rhs))
+        if inf.kind == "contraction" and self.semantic:
+            proved = self.contraction(t, binders)
+            if proved is not None:
+                return proved
         if inf.kind in ("algebraic", "contraction"):
             note = (
                 "equal values in a checked number field"
@@ -1237,7 +1280,7 @@ def lean(
             pass
         if source is not None:
             return source
-    out = _Lean(describe or _summary)
+    out = _Lean(describe or _summary, semantic)
     if theorem.inference.kind == "induction":
         out.induction(theorem, name)
     else:
@@ -1251,19 +1294,85 @@ def lean(
             head = stmt
         out.decls.append(f"theorem {name} : {head} :=\n  {body}")
     notes = [f"  assumes {a}" for a in theorem.assumptions]
-    header = [
-        "/-",
-        "  ArchytasZX proof export. Each axiom states one rewrite-rule instance, isomorphism,",
-        "  algebraic meet, symbolic contraction, instantiation, peeling or context plug the",
-        "  ArchytasZX kernel checked; Lean checks how they compose.",
-        *notes,
-        "-/",
-        "",
-        "namespace ArchytasZX",
-        "",
-        "axiom Diagram : Type",
-    ]
-    return "\n".join([*header, "", "\n\n".join(out.decls), "", "end ArchytasZX", ""])
+    if out.subs:
+        header = [
+            "/-",
+            "  ArchytasZX proof export. Each axiom states one rewrite-rule instance, isomorphism,",
+            "  algebraic meet, instantiation, peeling or context plug the ArchytasZX kernel",
+            "  checked; each symbolic contraction is a theorem C<i>.main over the networks of the",
+            "  two contracted diagrams, carried to the step by the axiom net<i> (the diagrams'",
+            "  translation into those networks); Lean checks how they compose.",
+            *notes,
+            "-/",
+            "",
+            *out.imports,
+            "",
+            "\n\n".join(out.subs),
+            "",
+            f"namespace {OPAQUE_NS}",
+            "",
+            "axiom Diagram : Type",
+        ]
+        tail = f"end {OPAQUE_NS}"
+    else:
+        header = [
+            "/-",
+            "  ArchytasZX proof export. Each axiom states one rewrite-rule instance, isomorphism,",
+            "  algebraic meet, symbolic contraction, instantiation, peeling or context plug the",
+            "  ArchytasZX kernel checked; Lean checks how they compose.",
+            *notes,
+            "-/",
+            "",
+            "namespace ArchytasZX",
+            "",
+            "axiom Diagram : Type",
+        ]
+        tail = "end ArchytasZX"
+    return "\n".join([*header, "", "\n\n".join(out.decls), "", tail, ""])
+
+
+OPAQUE_NS = "ArchytasZX.Opaque"
+"""The namespace of the opaque diagrams in an export that imports the Lean library."""
+
+
+def _semantic_pair(x: Diagram, y: Diagram) -> str | None:
+    """Lean source whose theorem ``main`` proves ``x`` and ``y`` equal over their networks: the
+    normaliser of symbolic sums, else the qubit or odd-prime path-sum network proof; None when
+    none applies."""
+    from archytaszx.algebra.pathsum import PathSumError
+    from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
+
+    builders: tuple[Callable[[], str], ...] = (
+        lambda: lean_sym.export_symbolic(x, y, "main"),
+        lambda: export_net(x, y),
+        lambda: export_qudit_net(x, y),
+    )
+    for build in builders:
+        try:
+            return build()
+        except (lean_net.NetUnsupported, ScalarUnsupported, PathSumError):
+            continue
+    return None
+
+
+def _nest(source: str, tag: str) -> tuple[str, list[str], str]:
+    """``source`` without its imports, its namespace ``N`` renamed ``N.tag`` and its tactic
+    macros local; the imports and the new namespace."""
+    lines = source.splitlines()
+    imports = [ln for ln in lines if ln.startswith("import ")]
+    ns = next(ln.split()[1] for ln in lines if ln.startswith("namespace "))
+    body: list[str] = []
+    for ln in lines:
+        if ln.startswith("import "):
+            continue
+        if ln == f"namespace {ns}":
+            ln = f"namespace {ns}.{tag}"
+        elif ln == f"end {ns}":
+            ln = f"end {ns}.{tag}"
+        elif ln.startswith('macro "'):
+            ln = "local " + ln
+        body.append(ln)
+    return "\n".join(body).strip(), imports, f"{ns}.{tag}"
 
 
 def _lean_restricted(
