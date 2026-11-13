@@ -217,6 +217,13 @@ def test_the_tree_window_theorem_exports_as_tree_families() -> None:
     assert "def kids : List ℕ := [1572864, 1572865]" in source
 
 
+def test_the_tree_families_are_linked_to_the_instances_by_fusion() -> None:
+    source = export_tree_theorem(_tree_window(), {"d": 2}, "ghz", checks=(1, 2))
+    assert "namespace At1" in source and "namespace At2" in source
+    assert "theorem linkR : ((treeNet W r p Base.NR cX 3).mapL (ren πR)).nodes.Perm" in source
+    assert "  (instK.congr_scalar scalL scalR).trans Fuse.fuseEq" in source
+
+
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
 def test_lean_proves_the_tree_window_theorem(tmp_path: object) -> None:
     for d in (2, 3):

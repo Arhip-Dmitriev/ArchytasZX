@@ -344,15 +344,16 @@ def _iso(
     chain: NetT,
     inst: list[tuple[str, tuple[int, ...], tuple[int, ...], int, str | None]],
     body_of: Callable[[int], str | None],
+    seed: Mapping[int, int] | None = None,
 ) -> tuple[dict[int, int], list[int]]:
-    """A label map from ``chain`` onto the instance and the chain node matched to each instance
-    node, nodes matched by kind, dimension, phase vector and legs in order; raises
-    :class:`PathSumUnsupported` when there is none."""
+    """A label map from ``chain`` onto the instance, extending ``seed``, and the chain node
+    matched to each instance node, nodes matched by kind, dimension, phase vector and legs in
+    order; raises :class:`PathSumUnsupported` when there is none."""
     nodes = chain[0]
     if len(nodes) != len(inst):
         raise PathSumUnsupported("the chain and the instance have different node counts")
-    fwd: dict[int, int] = {}
-    back: dict[int, int] = {}
+    fwd: dict[int, int] = dict(seed or {})
+    back: dict[int, int] = {b: a for a, b in fwd.items()}
     used = [False] * len(nodes)
     match: list[int] = []
 
@@ -695,7 +696,7 @@ def _link_lines(
 
     out: list[str] = []
     for k in checks:
-        texts = []
+        texts: list[tuple[str, list[tuple[int, int]], str]] = []
         scal: list[tuple[str, str, str, sp.Expr]] = []
         for (tag, fam), (m_base, m_copies) in zip(
             zip(("L", "R"), families, strict=True), models, strict=True
@@ -788,6 +789,188 @@ def _link_lines(
     return out
 
 
+def _tree_net(r: int, p: Callable[[int], int], base: NetT, copies: Sequence[NetT], n: int) -> NetT:
+    """Lean's ``treeNet W r p base (perIdx copies) n``."""
+    net = base
+    for t in range(n):
+
+        def plug_map(x: int, t: int = t) -> int:
+            y = x + t * W
+            return p(t) if y == r + t * W else r + t * W if y == p(t) else y
+
+        c_nodes, c_int, c_bnd = _map_net(copies[t % len(copies)], plug_map)
+        net = (
+            c_nodes + net[0],
+            c_int + [p(t)] + net[1],
+            [x for x in net[2] if x != p(t)] + [x for x in c_bnd if x != p(t)],
+        )
+    return net
+
+
+def _heap_plug(leaf: int, kids: Sequence[int]) -> Callable[[int], int]:
+    """Lean's ``heapPlug W leaf kids``."""
+
+    def p(t: int) -> int:
+        return leaf if t == 0 else kids[(t - 1) % len(kids)] + (t - 1) // len(kids) * W
+
+    return p
+
+
+def _grow_tree(
+    base: Diagram, copies: Sequence[Diagram], leaf: int, root: int, kids: Sequence[int], n: int
+) -> Diagram:
+    """``base`` with ``n`` copies plugged in heap order: copy 0's boundary port ``root`` wired to
+    the base's boundary port ``leaf``, copy ``t + 1``'s to child ``kids[t mod b]`` of copy
+    ``t / b``; the boundary the unplugged ports in order (outputs, then inputs), the scalar the
+    product."""
+    out = base.copy()
+    bnd = [*base.boundary_outputs, *base.boundary_inputs]
+    plugged: set[PortRef] = set()
+    placed: list[list[PortRef]] = []
+    open_child: list[PortRef] = []
+    scalar = base.scalar.to_sympy()
+    for t in range(n):
+        piece = copies[t % len(copies)]
+        id_map: dict[NodeId, NodeId] = {}
+        for nid in sorted(piece.nodes):
+            node = piece.nodes[nid]
+            id_map[nid] = out.add_node(
+                node.generator_type,
+                [q.dim for q in node.inputs],
+                [q.dim for q in node.outputs],
+                phase=node.phase,
+            )
+        for wire in sorted(piece.wires, key=lambda w: w.sort_key()):
+            out.add_wire(_moved(wire.a, id_map), _moved(wire.b, id_map))
+        p_bnd = [_moved(q, id_map) for q in (*piece.boundary_outputs, *piece.boundary_inputs)]
+        target = bnd[leaf] if t == 0 else placed[(t - 1) // len(kids)][(t - 1) % len(kids)]
+        out.add_wire(target, p_bnd[root])
+        plugged |= {target, p_bnd[root]}
+        placed.append([p_bnd[j] for j in kids])
+        open_child += [q for j, q in enumerate(p_bnd) if j != root]
+        scalar *= piece.scalar.to_sympy()
+    ports = [q for q in (*bnd, *open_child) if q not in plugged]
+    out.set_boundary_outputs([q for q in ports if q.direction is Direction.OUTPUT])
+    out.set_boundary_inputs([q for q in ports if q.direction is Direction.INPUT])
+    out.set_scalar(Scalar(scalar))
+    return out
+
+
+def _reorder(diagram: Diagram, order: Sequence[int]) -> Diagram:
+    """``diagram`` with boundary position ``i`` moved to ``order[i]``; raises
+    :class:`PathSumUnsupported` when an output would land among the inputs or back."""
+    outs = list(diagram.boundary_outputs)
+    bnd = [*outs, *diagram.boundary_inputs]
+    new: list[PortRef | None] = [None] * len(bnd)
+    for i, j in enumerate(order):
+        new[j] = bnd[i]
+    if any(
+        (ref is None) or ((j < len(outs)) != (ref.direction is Direction.OUTPUT))
+        for j, ref in enumerate(new)
+    ):
+        raise PathSumUnsupported("the fused tree's boundary does not match the instance's")
+    out = diagram.copy()
+    refs = cast("list[PortRef]", new)
+    out.set_boundary_outputs(refs[: len(outs)])
+    out.set_boundary_inputs(refs[len(outs) :])
+    return out
+
+
+def _tree_pis(
+    cbodies: Sequence[NetBody], copies: Sequence[tuple[Diagram, Diagram]], root: int
+) -> list[list[tuple[int, int]]]:
+    """Each copy body's relabelling onto the tree labels: its root port to 0, boundary port
+    ``j`` to ``W + _FREE + j``, internal label ``x`` to ``W + x``."""
+    first = copies[0][0]
+    n_copy = len(first.boundary_outputs) + len(first.boundary_inputs)
+    target = {j: W + _FREE + j for j in range(n_copy)}
+    target[root] = 0
+    pis = []
+    for body in cbodies:
+        tgt = dict(target)
+        internal = [x for x in body.labs if x >= n_copy]
+        for x in internal:
+            tgt[x] = W + x
+        pis.append(_relabel(set(range(n_copy)) | set(internal), tgt))
+    return pis
+
+
+def _tree_nets(
+    bodies: Sequence[NetBody],
+    copies: Sequence[tuple[Diagram, Diagram]],
+    leaf: int,
+    root: int,
+    kids: Sequence[int],
+    n: int,
+) -> dict[str, NetT]:
+    """Both families' ``treeNet`` after ``n`` copies, by tag L, R."""
+    base, cbodies = bodies[0], bodies[1 : 1 + len(copies)]
+    pis = _tree_pis(cbodies, copies, root)
+    p = _heap_plug(leaf, [W + _FREE + j for j in kids])
+    return {
+        tag: _tree_net(
+            0,
+            p,
+            _parse_net(base.lines, tag),
+            [
+                _map_net(_parse_net(b.lines, tag), functools.partial(_ren, pi))
+                for b, pi in zip(cbodies, pis, strict=True)
+            ],
+            n,
+        )
+        for tag in ("L", "R")
+    }
+
+
+def _tree_count(b: int, depth: int) -> int:
+    """The copies of a tree of branching ``b`` and depth ``depth``."""
+    return sum(b**j for j in range(depth))
+
+
+def _fused_tree(
+    bodies: Sequence[NetBody],
+    phases: Sequence[tuple[str, int]],
+    qudit: bool,
+    bases: tuple[Diagram, Diagram],
+    copies: Sequence[tuple[Diagram, Diagram]],
+    leaf: int,
+    root: int,
+    kids: Sequence[int],
+    chk: TreeCheck,
+) -> Diagram:
+    """The fan side's base with its copies grown to ``chk.depth``, its boundary ordered as the
+    tree side's instance orders the family's boundary labels."""
+
+    def body_of(ph: int) -> str | None:
+        return phases[ph - 1][0] if ph else None
+
+    n = _tree_count(len(kids), chk.depth)
+    nets = _tree_nets(bodies, copies, leaf, root, kids, n)
+    tree_tag = "L" if chk.fan == "R" else "R"
+    tree_inst = chk.left if tree_tag == "L" else chk.right
+    inst, _summed, nb = _instance_net(tree_inst, phases, qudit, bodies[0].m)
+    fwd_t, _ = _iso(nets[tree_tag], inst, body_of)
+    side = 0 if chk.fan == "L" else 1
+    grown = _grow_tree(bases[side], [c[side] for c in copies], leaf, root, kids, n)
+    g_inst, _gs, g_nb = _instance_net(grown, phases, qudit, bodies[0].m)
+    fwd_g, _ = _iso(nets[chk.fan], g_inst, body_of)
+    if g_nb != nb or sorted(fwd_t[x] for x in nets[tree_tag][2]) != list(range(nb)):
+        raise PathSumUnsupported("the tree family's boundary is not the instance's")
+    back_g = {fwd_g[x]: x for x in nets[chk.fan][2]}
+    return _reorder(grown, [fwd_t[back_g[q]] for q in range(nb)])
+
+
+@dataclass
+class TreeCheck:
+    """A tree family pair linked at ``depth``: both sides instantiated there, ``fan`` (L or R)
+    the side whose instance is the fused tree, the other's being the tree itself."""
+
+    depth: int
+    left: Diagram
+    right: Diagram
+    fan: str
+
+
 def export_tree(
     bases: tuple[Diagram, Diagram],
     copies: Sequence[tuple[Diagram, Diagram]],
@@ -795,17 +978,32 @@ def export_tree(
     root: int,
     kids: Sequence[int],
     name: str = "main",
+    checks: Sequence[TreeCheck] = (),
 ) -> str:
     """Lean 4 source proving two tree families equal after every number of copies
     (ArchytasZX/TreeInduct.lean): ``bases`` the two networks before any copy, boundary position
     ``leaf`` the first plug; ``copies`` one period of copy pairs, boundary position ``root`` the
     copy's parent port and ``kids`` its child ports; copy ``n`` plugged in heap order (onto
     child ``(n - 1) mod b`` of copy ``(n - 1) / b``), so depth ``k`` is ``(b^k - 1) / (b - 1)``
-    copies; each pair proved equal by its path sums and ``tree_equal`` for every count; raises
+    copies; each pair proved equal by its path sums and ``tree_equal`` for every count. At each
+    of ``checks``, ``At{k}.inst`` proves the two instances equal: the tree side's instance a
+    relabelling and permutation of its family at depth ``k``, the fan side's family relabelled
+    onto the grown tree, which equals the fan instance by its path sums (fusion); raises
     :class:`PathSumUnsupported` outside that class."""
     names = ["baseEq", *("copyEq" for _ in copies)]
-    bodies, phases, qudit, coefs = _bodies([(bases[0], bases[1]), *copies], names)
+    pairs = [(bases[0], bases[1]), *copies]
+    bodies, phases, qudit, coefs = _bodies(pairs, names)
     base, cbodies = bodies[0], bodies[1:]
+    grown = [
+        (chk, _fused_tree(bodies, phases, qudit, bases, copies, leaf, root, kids, chk))
+        for chk in checks
+    ]
+    if grown:
+        pairs += [(g, chk.right if chk.fan == "R" else chk.left) for chk, g in grown]
+        names += ["fuseEq" for _ in grown]
+        bodies, phases, qudit, coefs = _bodies(pairs, names)
+        base, cbodies = bodies[0], bodies[1 : 1 + len(copies)]
+    fusions = bodies[1 + len(copies) :]
     if qudit:
         dims, labs = str(base.m), {}
     else:
@@ -814,18 +1012,8 @@ def export_tree(
         if len(ks) > 1:
             raise PathSumUnsupported("the tree export needs one wire dimension")
         dims = f"2 ^ {ks.pop() if ks else 1}"
-    first = copies[0][0]
-    n_copy = len(first.boundary_outputs) + len(first.boundary_inputs)
     r = 0
-    target = {j: W + _FREE + j for j in range(n_copy)}
-    target[root] = r
-    pis = []
-    for body in cbodies:
-        tgt = dict(target)
-        internal = [x for x in body.labs if x >= n_copy]
-        for x in internal:
-            tgt[x] = W + x
-        pis.append(_relabel(set(range(n_copy)) | set(internal), tgt))
+    pis = _tree_pis(cbodies, copies, root)
     period = len(copies)
     ns = f"ArchytasZX.TreeProof.{name}"
     sem = "QSem" if qudit else "PSem"
@@ -920,10 +1108,144 @@ def export_tree(
         "  tree_equal E W r p _ _ _ _ hD (by decide) hcO (by decide) hcX hpO hpX _ _ _ _",
         "    Base.baseEq copyEq",
         "",
-        f"end {ns}",
+    ]
+    for (chk, grown_d), fusion in zip(grown, fusions, strict=True):
+        lines += _tree_link(
+            chk, grown_d, fusion, bodies, bases, copies, phases, qudit, leaf, root, kids
+        )
+    lines += [f"end {ns}", ""]
+    return "\n".join(lines)
+
+
+def _scalar_model(qudit: bool) -> Callable[[Diagram], sp.Expr]:
+    """A diagram's scalar as a Lean scalar model."""
+    sc = _scalars()
+
+    def model(diagram: Diagram) -> sp.Expr:
+        if qudit:
+            out = sc.model(diagram.scalar.to_sympy())
+            if sc.opaques:
+                raise PathSumUnsupported(f"the scalar {diagram.scalar} has no exact Lean form")
+            return out
+        return _const_model(*constant(diagram.scalar.to_sympy()))
+
+    return model
+
+
+def _tree_link(
+    chk: TreeCheck,
+    grown: Diagram,
+    fusion: NetBody,
+    bodies: Sequence[NetBody],
+    bases: tuple[Diagram, Diagram],
+    copies: Sequence[tuple[Diagram, Diagram]],
+    phases: Sequence[tuple[str, int]],
+    qudit: bool,
+    leaf: int,
+    root: int,
+    kids: Sequence[int],
+) -> list[str]:
+    """``At{depth}``: the tree side's instance D, the fusion body (the grown fan tree NL equal
+    to the fan instance NR), each family at depth relabelled onto D or NL with its node, summed
+    and boundary permutations by ``decide``, instK (D and NL under the family scalars), the
+    family scalars equal to D's and the grown tree's, and inst (the two instances equal under
+    their own scalars)."""
+    sc = _scalars()
+    model = _scalar_model(qudit)
+    base = bodies[0]
+
+    def body_of(ph: int) -> str | None:
+        return phases[ph - 1][0] if ph else None
+
+    n = _tree_count(len(kids), chk.depth)
+    nets = _tree_nets(bodies, copies, leaf, root, kids, n)
+    tree_tag = "L" if chk.fan == "R" else "R"
+    tree_inst = chk.left if tree_tag == "L" else chk.right
+    inst, summed, nb = _instance_net(tree_inst, phases, qudit, base.m)
+    fwd_t, match_t = _iso(nets[tree_tag], inst, body_of)
+    g_nodes, _g_int, g_bnd = _parse_net(fusion.lines, "L")
+    if g_bnd != list(range(nb)):
+        raise PathSumUnsupported("the grown tree's boundary is not in order")
+    g_inst = [(kd, o, i, d, body_of(ph)) for kd, o, i, d, ph in g_nodes]
+    seed = {x: fwd_t[x] for x in nets[chk.fan][2]}
+    fwd_g, _ = _iso(nets[chk.fan], g_inst, body_of, seed)
+    k = chk.depth
+    out = [f"namespace At{k}", "", "namespace Fuse", "", *fusion.lines, "end Fuse", ""]
+    chain = nets[tree_tag]
+    labels = {x for nd in chain[0] for x in (*nd[1], *nd[2])} | set(chain[1]) | set(chain[2])
+    nodes = [
+        f"⟨{kd}, {list(o)}, {list(i)}, {d}, {chain[0][j][4]}⟩"
+        for (kd, o, i, d, _b), j in zip(inst, match_t, strict=True)
+    ]
+    fan_net = nets[chk.fan]
+    fan_labels = (
+        {x for nd in fan_net[0] for x in (*nd[1], *nd[2])} | set(fan_net[1]) | set(fan_net[2])
+    )
+    pi = {tree_tag: _relabel(labels, fwd_t), chk.fan: _relabel(fan_labels, fwd_g)}
+    target = {tree_tag: "D", chk.fan: "Fuse.NL"}
+    out += [
+        f"def π{tree_tag} : List (ℕ × ℕ) := {pi[tree_tag]}",
+        f"def D : Net := ⟨[{', '.join(nodes)}], {summed}, {list(range(nb))}⟩",
+        f"def π{chk.fan} : List (ℕ × ℕ) := {pi[chk.fan]}",
         "",
     ]
-    return "\n".join(lines)
+    for tag, fam_net in (("L", "Base.NL cO"), ("R", "Base.NR cX")):
+        tree_k = f"(treeNet W r p {fam_net} {n}).mapL (ren π{tag})"
+        out += [
+            f"theorem link{tag} : ({tree_k}).nodes.Perm {target[tag]}.nodes ∧",
+            f"    ({tree_k}).int.Perm {target[tag]}.int ∧",
+            f"    ({tree_k}).bnd.Perm {target[tag]}.bnd := by",
+            "  decide",
+            "",
+        ]
+    out += [
+        f"/-- The two families at depth {k} ({n} copies) on the instance and the grown tree. -/",
+        f"theorem instK : Equal E (({base.s_l}) * ∏ i ∈ Finset.range {n}, aO i) {target['L']}",
+        f"    (({base.s_r}) * ∏ i ∈ Finset.range {n}, aX i) {target['R']} := by",
+        "  have h := Equal.mapL2 E (ren πL) (ren πR)",
+        "    (ren_injective πL (by decide) (by decide))",
+        "    (ren_injective πR (by decide) (by decide)) (fun _ => hD _ _) (fun _ => hD _ _)",
+        f"    (main {n}) (by decide) (by decide)",
+        "  exact (h.reorderL E linkL.1 linkL.2.1 linkL.2.2).reorder E linkR.1 linkR.2.1",
+        "    linkR.2.2",
+        "",
+    ]
+    side = {"L": 0, "R": 1}
+    rhs_of = {tree_tag: sc.text(model(tree_inst)), chk.fan: fusion.s_l}
+    rhs_model = {tree_tag: model(tree_inst), chk.fan: model(grown)}
+    for tag, a_tab, b_text in (("L", "aO", base.s_l), ("R", "aX", base.s_r)):
+        lhs_m = model(bases[side[tag]]) * sp.Mul(
+            *(model(copies[t % len(copies)][side[tag]]) for t in range(n))
+        )
+        proof = sc.prove(lhs_m, rhs_model[tag])
+        out += [
+            f"theorem scal{tag} : ({b_text}) * ∏ i ∈ Finset.range {n}, {a_tab} i =",
+            f"    {rhs_of[tag]} := by",
+            (
+                f"  simp only [Finset.prod_range_succ, Finset.prod_range_zero, {a_tab}, "
+                f"perIdx, {a_tab}t, List.length_cons, List.length_nil, Nat.reduceAdd, "
+                "Nat.reduceMod, List.getD_cons_zero, List.getD_cons_succ, one_mul]"
+            ),
+            f"  have key : ({sc.text(lhs_m)} : ℂ) = {sc.text(rhs_model[tag])} :=",
+            *("    " + ln for ln in proof.splitlines()),
+            "  all_goals linear_combination key",
+            "",
+        ]
+    s_t, s_f = sc.text(model(tree_inst)), fusion.s_r
+    linked = "instK.congr_scalar scalL scalR"
+    if chk.fan == "R":
+        stmt, proof_text = f"({s_t}) D ({s_f}) Fuse.NR", f"({linked}).trans Fuse.fuseEq"
+    else:
+        stmt, proof_text = f"({s_f}) Fuse.NR ({s_t}) D", f"Fuse.fuseEq.symm.trans ({linked})"
+    out += [
+        f"/-- Both sides instantiated at depth {k} are equal, under their own scalars. -/",
+        f"theorem inst : Equal E {stmt} :=",
+        f"  {proof_text}",
+        "",
+        f"end At{k}",
+        "",
+    ]
+    return out
 
 
 def _tree_side(d: Diagram, index: str, values: Mapping[str, int]) -> tuple[Diagram, Diagram, int]:
@@ -1015,13 +1337,18 @@ def _fan_side(
 
 
 def export_tree_theorem(
-    theorem: object, values: Mapping[str, int] | None = None, name: str = "main"
+    theorem: object,
+    values: Mapping[str, int] | None = None,
+    name: str = "main",
+    checks: Sequence[int] = (2,),
 ) -> str:
     """:func:`export_tree` for a kernel induction through a tree window whose one side is a
     tree box and whose other side is one Z or X spider with a leg port-boxed ``b^n`` times
     (``b`` the tree's branching): the tree side split into its network before any copy and its
     copy, the other side into the spider with one leg and a phase-free fan spider with ``b``
-    legs out; raises :class:`PathSumUnsupported` outside that class."""
+    legs out, both sides instantiated at each depth of ``checks`` and linked; raises
+    :class:`PathSumUnsupported` outside that class."""
+    from archytaszx.semantics.check import instantiate
     from archytaszx.semantics.kernel import Theorem
 
     assert isinstance(theorem, Theorem)
@@ -1041,7 +1368,16 @@ def export_tree_theorem(
     if leaf_t != leaf_f:
         raise PathSumUnsupported("the two sides plug at different boundary positions")
     pairs = [(base_t, base_f), (copy_t, copy_f)] if t == 0 else [(base_f, base_t), (copy_f, copy_t)]
-    return export_tree(pairs[0], [pairs[1]], leaf_t, b, list(range(b)), name)
+    links = [
+        TreeCheck(
+            k,
+            instantiate(theorem.lhs, {index: k, **vals}),
+            instantiate(theorem.rhs, {index: k, **vals}),
+            "R" if t == 0 else "L",
+        )
+        for k in checks
+    ]
+    return export_tree(pairs[0], [pairs[1]], leaf_t, b, list(range(b)), name, links)
 
 
 __all__ = ["export_chain", "export_tree", "export_tree_theorem"]
