@@ -35,12 +35,12 @@ wire puts the single wire's spider outside the box, where it takes one leg per c
 never touched gets an identity Z(1 -> 1).
 
 A Chain is one named box over its body's nodes, with its index, linked from each carry's end
-after the exchange to the first port the carry entered in the copy (chain NAME: p -> q); a
-carry or register with no node in the copy gets an identity Z(1 -> 1) there. A carry that ends
-in the copy takes the register's end, and the register's copy has no output. Pairs puts
-Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1 the left port) on the register's
-wire in the register's box, which takes the index, and the CZ's F nodes in a pair box with
-copy scalar D^(1/2).
+after the exchange to the first port the carry entered in the copy (chain NAME: p -> q; a
+reversed Chain writes q -> p); a carry or register with no node in the copy gets an identity
+Z(1 -> 1) there. A carry that ends in the copy takes the register's end, and the register's
+copy has no output. Pairs puts Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1
+the left port) on the register's wire in the register's box, which takes the index, and the
+CZ's F nodes in a pair box with copy scalar D^(1/2).
 """
 
 from __future__ import annotations
@@ -602,7 +602,8 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
             b.close(reg)
         else:
             b.cur[carry], b.cur[reg] = b.cur[reg], b.cur[carry]
-        links.append(f"{b.cur[carry]} -> {b.heads[carry]}")
+        ends = (b.heads[carry], b.cur[carry]) if g.reverse else (b.cur[carry], b.heads[carry])
+        links.append(" -> ".join(map(str, ends)))
     if links:
         b.boxes[key].extra.append(f"chain {key}: " + ", ".join(links))
     b.chain = None

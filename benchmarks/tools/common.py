@@ -87,7 +87,8 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
     tree_dims: dict[str, Any] = {}
     for g in c.gates:
         if isinstance(g, ir.Chain):
-            for m in range(int(sp.sympify(g.count).subs(sp.Symbol("n"), n))):
+            span = range(int(sp.sympify(g.count).subs(sp.Symbol("n"), n)))
+            for m in reversed(span) if g.reverse else span:
                 values = {g.index: m} if g.index is not None else {}
                 ended: set[str] = set()
                 for h in g.body:

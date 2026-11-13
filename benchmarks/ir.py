@@ -200,12 +200,14 @@ class Chain:
     """A loop over ``count`` copies, copy ``m`` reading ``index`` as ``m`` in amounts and phase
     rules: ``body`` acts on copy ``m`` of each register of that count and on the single wires
     of ``carries``; after each copy every ``(carry, register)`` pair exchanges values, so the
-    register's copy keeps the carry's value and the carry goes on with the register's."""
+    register's copy keeps the carry's value and the carry goes on with the register's. With
+    ``reverse`` the copies run from ``count - 1`` down to 0."""
 
     count: Count
     body: tuple[Gate, ...]
     carries: tuple[tuple[str, str], ...] = ()
     index: str | None = None
+    reverse: bool = False
 
 
 @dataclass(frozen=True)
