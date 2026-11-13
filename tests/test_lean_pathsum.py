@@ -23,7 +23,12 @@ import pytest
 from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
-from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net, export_qudit_proof
+from archytaszx.semantics.lean_pathsum import (
+    export_net,
+    export_proof,
+    export_qudit_net,
+    export_qudit_proof,
+)
 from archytaszx.semantics.lean_scalar import ScalarUnsupported
 
 _D = "literal 3"
@@ -216,3 +221,74 @@ def test_lean_proves_a_qudit_network_pair(name: str, tmp_path: object) -> None:
 def test_lean_proves_a_qubit_network_pair(name: str, tmp_path: object) -> None:
     ok, output = L.check(_qubit_net(name), f"{tmp_path}/qnet_{name}.lean")
     assert ok, output
+
+
+_Q = "literal 2"
+
+AMP_PAIRS: dict[str, tuple[str, str]] = {
+    "average": (
+        (
+            f"a = Z(0 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = X(1 -> 1, {_Q}); c = Z(1 -> 0, {_Q}); "
+            "wire a.out0 -- b.in0; wire b.out0 -- c.in0"
+        ),
+        "scalar 1 + sqrt(2)",
+    ),
+    "zero": (
+        f"a = Z(1 -> 1, {_Q}) weight{{1: 0}}",
+        f"a = X(0 -> 1, {_Q}); b = X(1 -> 0, {_Q}); scalar 1/2",
+    ),
+    "magnitudes": (
+        (
+            f"a = Z(1 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = Z(1 -> 1, {_Q}) phase {{1: 1/2}}; "
+            "wire a.out0 -- b.in0"
+        ),
+        f"a = Z(1 -> 1, {_Q}) weight{{1: -sqrt(2)}}",
+    ),
+    "held_parent": (
+        (
+            f"a = Z(0 -> 1, {_Q}); c = Z(1 -> 1, {_Q}); b = Z(1 -> 1, {_Q}) weight{{1: sqrt(2)}}; "
+            f"d = Z(1 -> 0, {_Q}); wire a.out0 -- c.in0; wire c.out0 -- b.in0; wire b.out0 -- d.in0"
+        ),
+        "scalar 1 + sqrt(2)",
+    ),
+}
+"""Pairs with amplitude atoms: an [Average] after an hh_pivot, a zero weight, weights 1 and
+sqrt 2 with a phase, a pinned anchor whose parent is held."""
+
+
+def _amp(name: str, net: bool) -> str:
+    left, right = AMP_PAIRS[name]
+    return (export_net if net else export_proof)(parse_dsl(left), parse_dsl(right), name)
+
+
+def test_an_average_trace_becomes_an_average_step() -> None:
+    assert ".average 0 [[]] 1 [] [0]" in _amp("average", False)
+    assert "NetPSDA E NL" in _amp("average", True)
+
+
+def test_a_pinned_atom_digit_holds_its_parent() -> None:
+    source = _amp("held_parent", True)
+    assert ".hold" in source and ".asubB " in source
+
+
+def test_unequal_atoms_are_refused() -> None:
+    left, _ = AMP_PAIRS["magnitudes"]
+    with pytest.raises(PathSumUnsupported):
+        export_net(parse_dsl(left), parse_dsl(f"a = Z(1 -> 1, {_Q}) weight{{1: sqrt(2)}}"))
+
+
+@needs_lean
+@pytest.mark.parametrize("name", sorted(AMP_PAIRS))
+@pytest.mark.parametrize("net", [False, True])
+def test_lean_proves_a_pair_with_atoms(name: str, net: bool, tmp_path: object) -> None:
+    ok, output = L.check(_amp(name, net), f"{tmp_path}/amp_{name}_{net}.lean")
+    assert ok, output
+
+
+@needs_lean
+def test_lean_rejects_a_tampered_atom_table(tmp_path: object) -> None:
+    source = _amp("held_parent", True)
+    marker = "(([[], [0]] : List (List ℕ))"
+    assert marker in source
+    ok, _ = L.check(source.replace(marker, "(([[], []] : List (List ℕ))"), f"{tmp_path}/t.lean")
+    assert not ok

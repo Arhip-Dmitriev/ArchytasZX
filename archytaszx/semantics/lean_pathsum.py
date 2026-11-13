@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, cast
 
@@ -238,33 +238,38 @@ _PAIR_STEP = {"hh_pivot": ".hhPivot", "hh_gen": ".hhGen", "hh_nl": ".hhNl"}
 """The PathSumRules step reading the head two variables, per rule."""
 
 
+def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
+    """The PSem.Step texts replaying one trace step on the path ``cur``, and the path after."""
+    y, z = step.var, step.pivot
+    if step.rule in _HEAD_STEP:
+        rest = [v for v in cur if v != y]
+        return [f".perm {[y, *rest]}", _HEAD_STEP[step.rule]], rest
+    if step.rule == "rem":
+        cur = [y, *(v for v in cur if v != y)]
+        return [f".perm {cur}", ".rem"], cur
+    if step.rule == "dyadic":
+        rest = [v for v in cur if v not in step.group]
+        poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)
+        return [
+            f".perm {[*step.group, *rest]}",
+            f".dyadic {list(step.group)} [{poly}] {list(step.fresh)}",
+        ], [*step.fresh, *rest]
+    if step.rule in _PAIR_STEP and z is not None:
+        rest = [v for v in cur if v not in (y, z)]
+        return [f".perm {[y, z, *rest]}", _PAIR_STEP[step.rule]], (
+            rest if step.rule == "hh_pivot" else [y, *rest]
+        )
+    raise PathSumUnsupported(f"the rule {step.rule} has no PathSumRules step")
+
+
 def _steps(raw: PathSum, ps: PathSum, order: Sequence[int], boolean: bool) -> list[str]:
     """The PSem.Step list replaying the trace of ``ps``, reduced from ``raw``, then the canon
     steps at ``order`` (gather and bcanon steps when ``boolean``)."""
     cur = sorted(raw.path)
     out: list[str] = []
     for step in ps.trace:
-        y, z = step.var, step.pivot
-        if step.rule in _HEAD_STEP:
-            cur.remove(y)
-            out += [f".perm {[y, *cur]}", _HEAD_STEP[step.rule]]
-        elif step.rule == "rem":
-            cur = [y, *(v for v in cur if v != y)]
-            out += [f".perm {cur}", ".rem"]
-        elif step.rule == "dyadic":
-            rest = [v for v in cur if v not in step.group]
-            poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)
-            out += [
-                f".perm {[*step.group, *rest]}",
-                f".dyadic {list(step.group)} [{poly}] {list(step.fresh)}",
-            ]
-            cur = [*step.fresh, *rest]
-        elif step.rule in _PAIR_STEP and z is not None:
-            rest = [v for v in cur if v not in (y, z)]
-            out += [f".perm {[y, z, *rest]}", _PAIR_STEP[step.rule]]
-            cur = rest if step.rule == "hh_pivot" else [y, *rest]
-        else:
-            raise PathSumUnsupported(f"the rule {step.rule} has no PathSumRules step")
+        texts, cur = trace_step(step, cur)
+        out += texts
     if boolean:
         return [*out, ".gather", *(f".bcanon {v}" for v in order)]
     return out + [f".canon {v}" for v in order]
@@ -376,6 +381,8 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("export_proof covers qubit path sums only")
+    if raw_l.amps or raw_r.amps:
+        return _export_amp_proof(raw_l, raw_r, name)
     red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r)
     f_l, f_r = _fac_model(steps_l, m), _fac_model(steps_r, m)
     k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
@@ -418,6 +425,153 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         f"    run_sound {m} (by norm_num) stepsR sR _ σ (by decide)]",
         f"  apply final_sound {m} (by norm_num) _ _ _ _ σ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide)",
+        "  simpa only [facL, facR] using consts",
+        "",
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _data_text(ps: PathSum, m: int, path: Sequence[int]) -> str:
+    """A path sum with the path ``path`` as a PSem.Data literal."""
+    rest = _data_term(ps, m).split(", phase := ", 1)[1]
+    return f"{{ path := {list(path)}, phase := {rest}"
+
+
+@dataclass
+class AmpPlan:
+    """Both sides' runs with atoms, their initial inner paths, held variables and atoms, the
+    phase modulus and the constant turns of the reduced sums."""
+
+    coefs: Any
+    runs: tuple[Any, Any]
+    starts: tuple[tuple[list[int], list[int], list[Any]], tuple[list[int], list[int], list[Any]]]
+    m: int
+    turns: tuple[int, int]
+
+
+def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
+    """The runs of two path sums with atoms (each an initial AmpRun on its raw sum, the steps
+    already written kept), reduced, with canon steps at the elimination pivots and the atoms
+    substituted, normalised and merged; raises :class:`PathSumUnsupported` when the sums do not
+    reduce to one canonical form, need Boolean elimination or end on different atoms."""
+    from archytaszx.algebra.pathsum import eliminate
+
+    (raw_l, run_l), (raw_r, run_r) = sides
+    red_l, red_r = reduce(raw_l), reduce(raw_r)
+    can_l, can_r = canonical(red_l), canonical(red_r)
+    if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
+        raise PathSumUnsupported("the path sums do not reduce to one canonical form")
+    rows_l = eliminate(red_l.constraints, red_l.boundary)
+    rows_r = eliminate(red_r.constraints, red_r.boundary)
+    if rows_l is None or rows_r is None:
+        raise PathSumUnsupported("amplitude atoms with a Boolean elimination")
+    order = _elimination_order(red_l.constraints, red_l.boundary)
+    starts = []
+    for run, red, rows in ((run_l, red_l, rows_l), (run_r, red_r, rows_r)):
+        starts.append((list(run.cur), list(run.held), list(run.atoms)))
+        from archytaszx.semantics.lean_amp import reduce_run
+
+        reduce_run(run, red.trace)
+        run.inner([f".canon {v}" for v in order])
+        run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
+    if run_l.final_key() != run_r.final_key():
+        raise PathSumUnsupported("the reduced sums carry different amplitude atoms")
+    m = run_l.coefs.m
+    turns = (_const_turn(red_l, m, False), _const_turn(red_r, m, False))
+    plan = AmpPlan(run_l.coefs, (run_l, run_r), (starts[0], starts[1]), m, turns)
+    return plan, red_l, red_r
+
+
+def amp_modulus(raws: Iterable[PathSum], m_min: int = 1) -> int:
+    """The phase modulus of path sums with atoms: a multiple of 8, of ``m_min`` and of every
+    phase denominator."""
+    m = math.lcm(8, m_min)
+    for ps in raws:
+        for c in ps.phase.terms.values():
+            m = math.lcm(m, c.denominator)
+    return m
+
+
+def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
+    """:func:`export_proof` for path sums with amplitude atoms (ArchytasZX/PathSumAmp.lean):
+    each side's AStep list replayed and checked by ``decide``, the coefficient identities of its
+    [Average], zero, unit and merge steps, and the constants' identity."""
+    from archytaszx.semantics.lean_amp import (
+        Coefs,
+        afac_lines,
+        atoms_text,
+        initial,
+        reqs_lines,
+    )
+    from archytaszx.semantics.lean_scalar import Om
+
+    m = amp_modulus((raw_l, raw_r))
+    coefs = Coefs(m)
+    plan, _red_l, _red_r = amp_plan(
+        (
+            (raw_l, initial(coefs, raw_l.path, raw_l.amps)),
+            (raw_r, initial(coefs, raw_r.path, raw_r.amps)),
+        )
+    )
+    sc = _scalars()
+    run_l, run_r = plan.runs
+    k_l, k_r = plan.turns
+    fl_lines, f_l = afac_lines("L", run_l, sc)
+    fr_lines, f_r = afac_lines("R", run_r, sc)
+    c_l, c_r = _const_model(raw_l.const, raw_l.sqrt2), _const_model(raw_r.const, raw_r.sqrt2)
+    lhs = f_l * c_l * Om(m) ** k_l
+    rhs = f_r * c_r * Om(m) ** k_r
+    proof = sc.prove(lhs, rhs)
+    ns = f"ArchytasZX.PathSumProof.{name}"
+    data = []
+    for tag, raw, (cur, held, atoms), run in (
+        ("L", raw_l, plan.starts[0], run_l),
+        ("R", raw_r, plan.starts[1], run_r),
+    ):
+        data += [
+            f"def s{tag} : Data := {_data_text(raw, m, cur)}",
+            f"def t{tag} : AData := ⟨s{tag}, {held}, {atoms_text(atoms)}⟩",
+            f"def steps{tag} : List AStep := [{', '.join(run.steps)}]",
+            "",
+        ]
+    lines = [
+        "import ArchytasZX.PathSumAmp",
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}` with amplitude atoms",
+        "",
+        "Both path sums with their atoms, each side's steps replayed and checked by `decide`, the",
+        "coefficient identities, the constants' identity, and the value equality at every",
+        "boundary assignment.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *NET_OPTIONS,
+        "",
+        *coefs.lean_def(sc),
+        *data,
+        *fl_lines,
+        *fr_lines,
+        *reqs_lines("L", run_l.reqs, coefs, sc, "stepsL"),
+        *reqs_lines("R", run_r.reqs, coefs, sc, "stepsR"),
+        f"theorem consts : ({sc.text(f_l)}) * {sc.text(c_l)} * om {m} ^ {k_l} =",
+        f"    ({sc.text(f_r)}) * {sc.text(c_r)} * om {m} ^ {k_r} := by",
+        f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        "/-- Both path sums with atoms agree at every boundary assignment. -/",
+        "theorem main (σ : ℕ → ZMod 2) :",
+        f"    valA {m} {sc.text(c_l)} A tL σ = valA {m} {sc.text(c_r)} A tR σ := by",
+        f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR (by decide)]",
+        f"  apply afinal_perm {m} (by norm_num) _ _ A _ _ σ {k_l} {k_r} (by decide) (by decide)",
+        "    (by decide) (by decide) (by decide) (by decide)",
         "  simpa only [facL, facR] using consts",
         "",
         f"end {ns}",
@@ -706,6 +860,11 @@ class _NetSide:
     steps: list[str]
     scalar: sp.Expr
     weights: list[sp.Expr]
+    atoms: list[str] = field(default_factory=list)
+    node_atoms: list[Any] = field(default_factory=list)
+    pins: list[tuple[int, int]] = field(default_factory=list)
+    held0: list[int] = field(default_factory=list)
+    cur0: list[int] = field(default_factory=list)
 
 
 def _net_side(
@@ -714,6 +873,8 @@ def _net_side(
     phases: list[tuple[str, int]],
     label0: int,
     coefs: dict[int, str] | None = None,
+    amp: Any = None,
+    tabs: dict[int, str] | None = None,
 ) -> tuple[_NetSide, PathSum]:
     """The network of ``diagram`` over digit variables numbered as from_diagram's: boundary port
     i is label i with its boundary digits, a summed wire is label ``label0 + w``, its digit j
@@ -722,7 +883,10 @@ def _net_side(
     class's variable first reaches it; the pin steps substitute the other summed digits deepest
     first; ``phases`` collects the phase vectors' Lean bodies and ``coefs`` each weighted
     spider's base coefficient by its phase index; a legless spider takes its own digits as X
-    does, a weighted one its turns over a common magnitude."""
+    does, a weighted one its turns over a common magnitude. With ``amp`` (a lean_amp.Coefs), a
+    weighted Z spider with legs whose weights are 0 or sqrt(2) times the magnitude takes atoms
+    on its anchor digits and its coefficient index table by phase index in ``tabs``; the side
+    then keeps its pins, held digits and fragment paths and no steps."""
     from archytaszx.algebra.pathsum import constant
     from archytaszx.diagram.generators import (
         DIM_BINDER,
@@ -834,6 +998,7 @@ def _net_side(
         raise PathSumUnsupported("a digit constraint not reached from its class's variable")
     anchor = {key: owner[entry[e]][0] for e, (key, _vs) in enumerate(edges)}
     nodes, frags, proofs = [], [], []
+    side_atoms: list[list[Any]] = []
     weights: list[sp.Expr] = []
     k_inv = 0
     common = "E σ ownL labsL digL hown hσ _ rfl"
@@ -865,9 +1030,11 @@ def _net_side(
             k_inv += k
             continue
         weighted = node.phase is not None and node.phase.is_weighted
+        zero: list[int] = []
+        root2: list[int] = []
         if weighted:
             table, zero, root2, mag, mag_k = _weights(nid, node, 1 << k)
-            if any(zero) or any(root2) or not legs:
+            if (any(zero) or any(root2)) and (amp is None or kind != ".Z") or not legs:
                 raise PathSumUnsupported(f"node {nid!r} has weights of different magnitudes")
         else:
             table = _turns_table(nid, node, 1 << k)
@@ -902,6 +1069,7 @@ def _net_side(
             k_inv += k * len(legs)
         if legless:
             proof = f"(val_z_legless E σ _ rfl rfl rfl).trans ({proof})"
+        node_atoms: list[Any] = []
         if weighted:
             w = sp.Rational(mag.numerator, mag.denominator) * Rt(2) ** mag_k
             sc = _scalars()
@@ -911,15 +1079,71 @@ def _net_side(
             coefs[ph] = c_text
             weights.append(w)
             lemma = "val_zw" if kind == ".Z" else "val_xw"
-            frag = f"({frag}).scale ({c_text})"
-            proof = (
-                f"w_frag E σ _ _ _ _ _ ({c_text}) ({lemma} E σ _ rfl ({c_text}) (fun v => rfl)) "
-                f"({proof})"
-            )
+            if any(zero) or any(root2):
+                from archytaszx.algebra.pathsum import SQRT2, Cyclo
+                from archytaszx.semantics.lean_amp import atoms_text
+                from archytaszx.semantics.pathsum_diagram import _f2_indicator
+
+                inds = [(Cyclo.rational(0), zero), (SQRT2, root2)]
+                inds = [(c, t) for c, t in inds if any(t)]
+                node_atoms = [(amp.index(c), _f2_indicator(anchor_vars, t)) for c, t in inds]
+                tbl = [
+                    [j for (j, _f), (_c, t) in zip(node_atoms, inds, strict=True) if t[v]]
+                    for v in range(1 << k)
+                ]
+                if tabs is None:
+                    raise PathSumUnsupported(f"node {nid!r} carries atoms and no index table")
+                tabs[ph] = str(tbl)
+                frag = f"({frag}).scale ({c_text})"
+                proof = (
+                    f"za_frag E σ ownL labsL digL hown hσ _ rfl {k} rfl (by decide) (by decide) "
+                    f"{as_} rfl (by decide) {legs[0]} (by decide) (by decide) {m} _ ({c_text}) "
+                    f"A {tbl} {atoms_text(node_atoms)} (fun v => rfl) (by decide) ({proof})"
+                )
+            else:
+                frag = f"({frag}).scale ({c_text})"
+                proof = (
+                    f"w_frag E σ _ _ _ _ _ ({c_text}) ({lemma} E σ _ rfl ({c_text}) "
+                    f"(fun v => rfl)) ({proof})"
+                )
+        if amp is not None and not node_atoms:
+            proof = f"atoms_nil A {m} _ _ ({proof})"
         frags.append(frag)
         proofs.append(proof)
+        side_atoms.append(node_atoms)
     cur = [x for lab in summed for x in dig[lab]]
     cur += [y for nid in sorted(d.nodes) for y in own_ys.get(nid, [])]
+    if amp is not None:
+        from archytaszx.semantics.lean_amp import atoms_text
+
+        held0 = [x for lab in summed for x in dig[lab]]
+        pins = [(x, parent[x]) for x in reversed(reached) if x >= PIN_OFFSET]
+        pinned = {x for x, _p in pins}
+        if sorted(x for x in cur if x not in pinned) != sorted(raw.path):
+            raise PathSumUnsupported("the pinned network keeps other path variables")
+        c, kc = constant(d.scalar.to_sympy())
+        side = _NetSide(
+            raw,
+            nodes,
+            frags,
+            proofs,
+            summed,
+            sorted(dig),
+            dig,
+            k_of,
+            len(bnd),
+            nb_vars,
+            k_inv,
+            [],
+            _const_model(c, kc),
+            weights,
+            [atoms_text(a) for a in side_atoms],
+            side_atoms,
+            pins,
+            held0,
+            cur[len(held0) :],
+        )
+        return side, raw
     steps: list[str] = []
     for x in reversed(reached):
         if x < PIN_OFFSET:
@@ -1136,10 +1360,13 @@ def net_env(
     dims: str,
     m: int,
     coefs: Mapping[int, str] | None = None,
+    tabs: Mapping[int, str] | None = None,
 ) -> list[str]:
     """The shared environment ``E`` of network proofs: ``Δ k`` as ``dims``, the phase vectors,
     phase index 0 the zero vector over ``m``, each label's digit count, and at each index of
-    ``coefs`` the coefficient vector ``C ex (Φ i v)``, 1 elsewhere."""
+    ``coefs`` the coefficient vector ``C ex (Φ i v)``, times the product of ``A`` over the
+    indices ``tabs[i][v]`` at an index of ``tabs``, 1 elsewhere."""
+    tabs = tabs or {}
     phi = [
         f"  | {i + 1} => fun v => {body} / (({m} : ℕ) : ℝ)" for i, (body, m) in enumerate(phases)
     ]
@@ -1158,7 +1385,15 @@ def net_env(
             [
                 "/-- Coefficient vectors. -/",
                 "noncomputable def Ψ : ℕ → ℕ → ℂ",
-                *(f"  | {i} => fun v => {c} * ex (Φ {i} v)" for i, c in sorted(coefs.items())),
+                *(
+                    f"  | {i} => fun v => {c} * ex (Φ {i} v)"
+                    + (
+                        f" * ((({tabs[i]} : List (List ℕ)).getD v []).map A).prod"
+                        if i in tabs
+                        else ""
+                    )
+                    for i, c in sorted(coefs.items())
+                ),
                 "  | _ => fun _ => 1",
                 "",
                 "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs, coef := Ψ }",
@@ -1168,6 +1403,172 @@ def net_env(
         ),
         "",
     ]
+
+
+def _anet_lines(tag: str, side: _NetSide, m: int) -> list[str]:
+    """The digit tables, the network, its fragments with atoms and the NetPSDA facts of one
+    side."""
+    triples = ", ".join(
+        f"({n}, {f}, {a})" for n, f, a in zip(side.nodes, side.frags, side.atoms, strict=True)
+    )
+    cases = " | ".join("rfl" for _ in side.nodes)
+    own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
+    dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
+    proofs = [
+        p.replace("ownL", f"own{tag}").replace("labsL", f"labs{tag}").replace("digL", f"dig{tag}")
+        for p in side.proofs
+    ]
+    return [
+        f"def own{tag} : Own := {own}",
+        f"def labs{tag} : List ℕ := {side.labels}",
+        f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
+        "",
+        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide",
+        "",
+        (
+            f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
+            f"{list(range(side.boundary))}⟩"
+        ),
+        "",
+        (
+            f"noncomputable def ps{tag} : List (Node × Frag × Atoms) := "
+            f"[{triples.replace('digL', f'dig{tag}')}]"
+        ),
+        "",
+        f"theorem net{tag} : NetPSDA E N{tag} {m} A own{tag} labs{tag} dig{tag} ps{tag} where",
+        f"  ownok := own{tag}OK",
+        "  nodes := rfl",
+        "  node := by",
+        "    intro p hp σ hσ",
+        f"    have hown := own{tag}OK",
+        f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hp",
+        *([f"    rcases hp with {cases}"] if proofs else []),
+        *(f"    · exact {pr}" for pr in proofs),
+        "  disj := by decide",
+        "  dims := by decide",
+        "  cover := by decide",
+        "  sub := by decide",
+        "",
+        (
+            f"theorem c{tag} : (joinAll (ps{tag}.map (·.2.1))).c = "
+            f"{_weights_text(side)}(rt 2)⁻¹ ^ {side.sqrt2_inv} := by"
+        ),
+        (
+            f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
+            "zFragD, xFragD, fFragD, bFrag, Frag.scale, List.length_cons, List.length_nil]"
+        ),
+        "  ring",
+        "",
+    ]
+
+
+def _net_run(side: _NetSide, coefs: Any) -> Any:
+    """The AmpRun of a network side from its held digits, fragment paths and atoms through its
+    pins: a pinned digit an atom reads is substituted in the atoms along its pin constraint,
+    its parent held first when on the path."""
+    from archytaszx.semantics.lean_amp import AmpRun
+
+    atoms = [a for node in side.node_atoms for a in node]
+    run = AmpRun(coefs, list(side.cur0), list(side.held0), atoms)
+    run.release()
+    for x, p in side.pins:
+        if x in run.avars():
+            if p in run.cur:
+                rest = [v for v in run.cur if v != p]
+                run.inner([f".perm {[p, *rest]}"])
+                run.steps.append(".hold")
+                run.cur, run.held = rest, [p, *run.held]
+            run.steps.append(f".asubB {x} [[{p}]]")
+            run.atoms = [
+                (j, frozenset((m - {x}) | {p} if x in m else m for m in f)) for j, f in run.atoms
+            ]
+            run.release()
+        rest = [v for v in run.cur if v != x]
+        run.inner([f".perm {[x, *rest]}", f".pin [[{p}]]"])
+        run.cur = rest
+    run.inner([".norm"])
+    return run
+
+
+def net_amp_body(
+    left: Diagram,
+    right: Diagram,
+    name: str,
+    phases: list[tuple[str, int]],
+    coefs: dict[int, str],
+    tabs: dict[int, str],
+    m_min: int = 1,
+) -> tuple[NetBody, Any]:
+    """The lines proving ``Equal E sL NL sR NR`` for two networks with amplitude atoms (see
+    :func:`export_net`), and the atoms' coefficients (a lean_amp.Coefs)."""
+    from archytaszx.semantics.lean_amp import Coefs, afac_lines, reqs_lines
+    from archytaszx.semantics.lean_scalar import Inv, Om, Rt
+
+    raw_l, raw_r = from_diagram(left), from_diagram(right)
+    if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
+        raise PathSumUnsupported("the network export covers qubit path sums only")
+    if raw_l.boundary != raw_r.boundary:
+        raise PathSumUnsupported("the boundaries differ")
+    m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
+    m = amp_modulus((raw_l, raw_r), m_min)
+    amp = Coefs(m)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, amp, tabs)
+    side_r, _ = _net_side(right, m, phases, 1 << 17, coefs, amp, tabs)
+    if [side_l.k_of[i] for i in range(side_l.boundary)] != [
+        side_r.k_of[i] for i in range(side_r.boundary)
+    ]:
+        raise PathSumUnsupported("the boundary ports carry different dimensions")
+    run_l, run_r = _net_run(side_l, amp), _net_run(side_r, amp)
+    plan, _red_l, _red_r = amp_plan(((raw_l, run_l), (raw_r, run_r)))
+    k_l, k_r = plan.turns
+    sc = _scalars()
+    fl_lines, f_l = afac_lines("L", run_l, sc)
+    fr_lines, f_r = afac_lines("R", run_r, sc)
+    s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
+    w_l, w_r = sp.Mul(*side_l.weights), sp.Mul(*side_r.weights)
+    lhs = f_l * side_l.scalar * w_l * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
+    rhs = f_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
+    proof = sc.prove(lhs, rhs)
+    bnd = list(range(side_l.bnd_vars))
+    t_l = "(netDataA digL NL (psL.map (·.2.1)) (psL.map (·.2.2)))"
+    t_r = "(netDataA digR NR (psR.map (·.2.1)) (psR.map (·.2.2)))"
+    lines = [
+        *_anet_lines("L", side_l, m),
+        *_anet_lines("R", side_r, m),
+        f"def stepsL : List AStep := [{', '.join(run_l.steps)}]",
+        f"def stepsR : List AStep := [{', '.join(run_r.steps)}]",
+        "",
+        *fl_lines,
+        *fr_lines,
+        *reqs_lines("L", run_l.reqs, amp, sc, "stepsL"),
+        *reqs_lines("R", run_r.reqs, amp, sc, "stepsR"),
+        (
+            f"theorem consts : ({sc.text(f_l)}) * (({s_l}) * ({_weights_text(side_l)}"
+            f"(rt 2)⁻¹ ^ {side_l.sqrt2_inv})) * om {m} ^ {k_l} ="
+        ),
+        (
+            f"    ({sc.text(f_r)}) * (({s_r}) * ({_weights_text(side_r)}"
+            f"(rt 2)⁻¹ ^ {side_r.sqrt2_inv})) * om {m} ^ {k_r} := by"
+        ),
+        f"  have key : ({sc.text(lhs)} : ℂ) = {sc.text(rhs)} :=",
+        *("    " + ln for ln in proof.splitlines()),
+        "  linear_combination key",
+        "",
+        "/-- The two networks are equal. -/",
+        f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
+        "  apply equal_psda2 _ _ netL netR rfl",
+        "  intro σ",
+        "  rw [cL, cR, ← valA_smul, ← valA_smul,",
+        f"    aruns_sound {m} (by norm_num) A stepsL {t_l} _ _ reqsL (by decide),",
+        f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR (by decide),",
+        f"    valA_agree {m} _ A (aruns {m} stepsL {t_l}) {bnd} _ _ (by decide) (by decide)",
+        f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
+        f"  apply afinal_perm {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
+        "    (by decide) (by decide) (by decide) (by decide)",
+        "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
+        "",
+    ]
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m), amp
 
 
 NET_OPTIONS = [
@@ -1188,6 +1589,9 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     do not reduce to one canonical form."""
     phases: list[tuple[str, int]] = []
     coefs: dict[int, str] = {}
+    raws = (from_diagram(left), from_diagram(right))
+    if any(isinstance(r, PathSum) and r.amps for r in raws):
+        return _export_amp_net(left, right, name)
     body = net_body(left, right, name, phases, coefs=coefs)
     ns = "ArchytasZX.PathSumNetProof"
     lines = [
@@ -1208,6 +1612,41 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         *NET_OPTIONS,
         "",
         *net_env(phases, body.labs, "2 ^ k", body.m, coefs),
+        *body.lines,
+        f"end {ns}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _export_amp_net(left: Diagram, right: Diagram, name: str) -> str:
+    """:func:`export_net` for networks whose path sums carry amplitude atoms
+    (ArchytasZX/PathSumNetAmp.lean)."""
+    phases: list[tuple[str, int]] = []
+    coefs: dict[int, str] = {}
+    tabs: dict[int, str] = {}
+    body, amp = net_amp_body(left, right, name, phases, coefs, tabs)
+    ns = "ArchytasZX.PathSumNetProof"
+    sc = _scalars()
+    lines = [
+        "import ArchytasZX.PathSumNetAmp",
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}` over the networks with amplitude atoms",
+        "",
+        "Each network's value is its fragments' path sum with the summed digits held and the",
+        "weighted spiders' atoms; pin steps, atom substitutions, [Average] and the reduction",
+        "steps follow, and the final comparison gives `Equal`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *NET_OPTIONS,
+        "",
+        *amp.lean_def(sc),
+        *net_env(phases, body.labs, "2 ^ k", body.m, coefs, tabs),
         *body.lines,
         f"end {ns}",
         "",

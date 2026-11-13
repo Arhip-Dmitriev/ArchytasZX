@@ -523,6 +523,33 @@ equal_psd2, run_sound, val_agree and final_sound. Checked end to end: Z fusion, 
 hh_pivot, omega, omega_conj and rem on qubits, and through binders on dimensions 4 and 8 an
 hh_gen, hh_constraint trace and an hh_nl, hh_gen, hh_gen, rem, hh_constraint trace. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
 
+Amplitude atoms. ArchytasZX/PathSumAmp.lean: AData is a path sum (Data) with held variables,
+summed outside the inner sum, and atoms (i, f) worth A i where the F_2 polynomial f is 1;
+valA M c A t sigma is the sum over held of the atoms' product times val. AStep lists replay a
+reduction: inner (a PSem step on the inner sum), hperm, release (a held variable no atom reads
+to the path), hold (the reverse), asub v and asubB v B (an atom's v set along a constraint or row
+[v] + B whose variables are off the path), average y g j as bs ([Average]: the atoms reading y
+normalise to (1 + y) g or y g, 2 A j = Prod_as A + Prod_bs A, factor 2), azero j (A j = 0: the
+atom's polynomial, off the path, made a constraint), aconst j (an atom on 1: factor A j), aone j
+(A j = 1: dropped), adrop, amerge j j1 j2 (two atoms on one polynomial, A j = A j1 A j2), apick
+i and anorm. arunsOK is checked by decide; the coefficient identities a step list assumes
+(areqs, reqHolds) are proved per identity; aruns_sound gives valA t = valA (afacs A sts * c)
+(aruns t), and afinal_perm compares two reduced sums with no held variable and atoms equal up to
+order. export_proof, for path sums with atoms, writes A (each base an index, equal bases one
+index), tL and tR (the path variables an atom reads held), each side's AStep list (lean_amp:
+folds, releases after every step, [Average] at the trace's average steps, the canonical pivots,
+asub at the pivots the atoms read, anorm and merges), the identities, the constants' identity
+and main : valA M cL A tL sigma = valA M cR A tR sigma. ArchytasZX/PathSumNetAmp.lean: za_frag
+gives a weighted Z spider whose coefficient at v is C ex (phase v) times the product of A over
+tbl[v] as its unweighted fragment scaled by C times atoms on its anchor digits (atabOK checks
+tbl against the atoms at every v by decide); NetPSDA.eval_eq gives a network's value as valA of
+netDataA (the summed digits held, the fragments' paths as the path, every node's atoms), and
+equal_psda2, valA_smul and valA_agree give Equal. export_net, when a side's path sum has atoms,
+writes Psi with the index tables, the pins with asubB for a pinned digit an atom reads (its
+parent held first when on the path), then export_proof's AStep list. Checked: [Average] with
+an hh_pivot before it, a zero weight made a constraint, weights 1 and sqrt 2 with a phase,
+merged atoms, and a pinned anchor whose parent is held.
+
 5. REFUTATIONS
 --------------
 
@@ -850,11 +877,11 @@ generator in Lean; cpm_conj states its effect on any network whose entries are c
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
-G15 Path-sum proofs. ArchytasZX/PathSumAmp.lean states [Average] and the amplitude-carrying
-steps (AData: atoms (i, f) worth A i where f is 1, over held variables summed outside the
-inner sum; astep_sound and arun_sound for every PSem step, release_sound, adrop_sound,
-aconst_sound, average_sound, afinal_sound, valA_flat), but export_proof and export_net write no
-AData yet, so they still decline traces with [Average] or amplitude atoms. There are no qudit
+G15 Path-sum proofs. export_proof and export_net write AData for amplitude atoms (Amplitude atoms, section 4),
+but decline atoms whose reduction needs boolean_eliminate, an atom not on (1 + y) g or y g at
+an [Average], weighted X spiders and weighted legless spiders with weights of different
+magnitudes, and pairs whose reduced sums end on different atoms (a unit-root atom that the
+canonical form folds into the phase on one side only). There are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. export_net covers Z, X, F, B and S on dimensions 2^k but not legless spiders,
 weighted spiders or a wire on two boundary ports; it raises for those and the path_sum EQUAL
