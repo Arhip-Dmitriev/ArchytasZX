@@ -82,7 +82,7 @@ haskell() {  # Feynman (feynver) at its pinned commit, GHC 9.4.8 and cabal 3.12.
     export BOOTSTRAP_HASKELL_GHC_VERSION=9.4.8 BOOTSTRAP_HASKELL_CABAL_VERSION=3.12.1.0
     export BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 BOOTSTRAP_HASKELL_ADJUST_BASHRC=0
     local g="$V/haskell/.ghcup/bin/ghcup" off=()
-    [ "$OFFLINE" = 1 ] && off=(--offline)
+    [ "$OFFLINE" = 1 ] && off=(--offline --cache)
     export PATH="$V/haskell/.ghcup/bin:$PATH"
     if [ "$FETCH" = 1 ]; then
         if [ ! -x "$g" ]; then
@@ -106,12 +106,25 @@ autoq() {  # AutoQ 2.0 at its pinned commit (AutoQ-Para has no public release); 
            # system or CMAKE_PREFIX_PATH, the ANTLR4 C++ runtime 4.13.2 from the system or built
            # static under $V/antlr4
     clone https://github.com/fmlab-iis/AutoQ AutoQ 3d92eb355a8850ab19dd3e7d7f620f138deda955
-    local a="$V/src/antlr4-4.13.2"
+    local a="$V/src/antlr4-4.13.2" zw="$V/src/z3wheel" oldc=0
     if [ ! -d /usr/include/antlr4-runtime ] && [ ! -d "$a" ]; then
         need_net "$a" && curl -sSfL https://github.com/antlr/antlr4/archive/refs/tags/4.13.2.tar.gz \
             | tar xz -C "$V/src"
     fi
+    # the bundled libz3.so.4.12 needs glibc 2.34; older hosts use the z3-solver 4.12.5.0 wheel's libz3
+    [ "$(printf '%s\n' "$(ldd --version | sed -n '1s/.* //p')" 2.34 | sort -V | head -1)" = 2.34 ] || oldc=1
+    if [ "$oldc" = 1 ] && [ "$FETCH" = 1 ] && ! ls "$zw"/z3_solver-4.12.5.0-*.whl >/dev/null 2>&1; then
+        ${BENCH_PIP:-python3 -m pip} download -q --only-binary=:all: --no-deps -d "$zw" z3-solver==4.12.5.0
+    fi
     [ "$FETCH" = 0 ] || return 0
+    local z3=()
+    if [ "$oldc" = 1 ]; then
+        if [ ! -d "$V/z3/z3/lib" ]; then
+            ls "$zw"/z3_solver-4.12.5.0-*.whl >/dev/null 2>&1 || { need_net z3-solver; return 1; }
+            mkdir -p "$V/z3" && python3 -m zipfile -e "$(ls "$zw"/z3_solver-4.12.5.0-*.whl | head -1)" "$V/z3"
+        fi
+        z3=(-DUSE_SYSTEM_Z3=ON -DCMAKE_LIBRARY_PATH="$V/z3/z3/lib")
+    fi
     if [ ! -d /usr/include/boost ] && [ -z "${CMAKE_PREFIX_PATH:-}" ]; then
         echo "AutoQ needs boost: on Arch sudo pacman -S --needed boost; on a cluster module load boost" >&2
         return 1
@@ -125,7 +138,8 @@ autoq() {  # AutoQ 2.0 at its pinned commit (AutoQ-Para has no public release); 
         fi
         export LIBRARY_PATH="$V/antlr4/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
     fi
-    (cd "$V/src/AutoQ" && make \
+    (cd "$V/src/AutoQ" && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${z3[@]+"${z3[@]}"} \
+        && cmake --build build -j "$(nproc)" --target autoq \
         && mkdir -p "$V/autoq/bin" && cp build/cli/autoq "$V/autoq/bin/autoq")
 }
 
