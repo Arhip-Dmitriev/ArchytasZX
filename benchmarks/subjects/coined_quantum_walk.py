@@ -13,52 +13,73 @@
 
 """Coined quantum walk on the cycle of 2^n sites, one step: the Hadamard coin, then the shift x
 + 1 when the coin is 1 and x - 1 when it is 0, each a multi-controlled incrementer; equals F on
-the coin followed by the conditional shift x -> x + 2 coin - 1 on the bound position register."""
+the coin followed by the conditional shift x -> x + 2 coin - 1 on the bound position register.
+The position register is listed low bit first."""
 
 from benchmarks.subjects._common import *
-from benchmarks.subjects._spec import Dsl, bind, split
 
 
 def _inc(x, coin, value):
-    """Increment of x controlled on coin = value: MCX from the top bit down."""
+    """Increment of x (x[0] the top bit) controlled on coin = value: MCX from the top bit down."""
     n = len(x)
     return [MCX((coin, *x[i + 1 :]), x[i], (value,) + (1,) * (n - 1 - i)) for i in range(n)]
 
 
-def _circuit(n, d):
-    """Coin, controlled increment, controlled decrement."""
+def _reference(n, d):
+    """Coin, controlled increment, controlled decrement, the position listed low bit first."""
     x = unrolled("x", n)
     gates = [F("coin"), *_inc(x, "coin", 1), *reversed(_inc(x, "coin", 0))]
-    return circuit(["coin", *x], gates)
+    return circuit(["coin", *reversed(x)], gates)
+
+
+def _circuit(n, d):
+    """Coin, then on the register x (copy m the bit of value 2^m) the increment controlled on
+    coin = 1 (top copy down) and the decrement controlled on coin = 0 (bottom copy up)."""
+    gates = [
+        F("coin"),
+        LowerMCX("x", ("coin",), (1,)),
+        LowerMCX("x", ("coin",), (0,), reverse=True),
+    ]
+    return circuit(["coin", "x"], gates, registers={"x": n}, dims={"coin": 2, "x": 2})
 
 
 def _spec(c):
-    """F on the coin; x bound, shifted by -1, the copied coin added at bit value 2, split."""
-    n = c.nv
-    N = 2**n
-    b = Dsl()
-    f = b.node(f"F({c.D})")
-    b.ins.append(f"{f}.in0")
-    ins, port = bind(b, n, 2)
-    b.ins += ins
-    dec = b.node(f"X(1 -> 1, literal {N}) phase{{k: k/{N}}}")
-    b.wire(port, f"{dec}.in0")
-    port, coin = f"{dec}.out0", f"{f}.out0"
-    if n >= 2:
-        z = b.node(f"Z(1 -> 2, {c.D})")
-        b.wire(coin, f"{z}.in0")
-        coin = f"{z}.out0"
-        bits, two_c = bind(b, n, 2)
-        for i, p in enumerate(bits):
-            leg = f"{z}.out1" if i == n - 2 else f"{b.node(f'X(0 -> 1, {c.D})')}.out0"
-            b.wire(leg, p)
-        add = b.node(f"X(2 -> 1, literal {N})")
-        b.wire(port, f"{add}.in0")
-        b.wire(two_c, f"{add}.in1")
-        port = f"{add}.out0"
-        b.scalar.append(f"2^(-{n - 1}/2) * {N}^(1/2)")
-    b.outs += [coin, *split(b, port, n, 2)]
-    return b.text()
+    """F on the coin; x bound copy by copy (binder chain V), shifted by -1, the coin added twice
+    as |c> in a 2^n register (c, then n - 1 zero bits by binder chains R and Q), split back
+    (splitter chain U)."""
+    N = c.N
+    return "\n".join(
+        [
+            "h = Z(0 -> 1, literal 1)",
+            "b = B(literal 2, literal 2^m)",
+            f"f = F({c.D})",
+            f"dec = X(1 -> 1, literal 2^{N}) phase{{k: k/2^{N}}}",
+            f"z = Z(1 -> 3, {c.D})",
+            "r = B(literal 2, literal 2^(m + 1))",
+            f"zr = X(0 -> 1, {c.D})",
+            "s = B(literal 2, literal 2^(m + 1))",
+            f"zs = X(0 -> 1, {c.D})",
+            f"a1 = X(2 -> 1, literal 2^{N})",
+            f"a2 = X(2 -> 1, literal 2^{N})",
+            "t = S(literal 2, literal 2^m)",
+            "e = Z(1 -> 0, literal 1)",
+            "wire h.out0 -- b.in1, b.out0 -- dec.in0, dec.out0 -- a1.in0, a1.out0 -- a2.in0",
+            "wire a2.out0 -- t.in0, t.out1 -- e.in0, f.out0 -- z.in0, z.out1 -- r.in1",
+            "wire zr.out0 -- r.in0, r.out0 -- a1.in1, z.out2 -- s.in1, zs.out0 -- s.in0",
+            "wire s.out0 -- a2.in1",
+            f"repeat {N} as V index m: b",
+            "chain V: b.out0 -> b.in1",
+            f"repeat {N} - 1 as R index m: r, zr",
+            "chain R: r.out0 -> r.in1",
+            f"repeat {N} - 1 as Q index m: s, zs",
+            "chain Q: s.out0 -> s.in1",
+            f"repeat {N} as U index m: t",
+            "chain U: t.in0 -> t.out1",
+            "inputs f.in0, b.in0",
+            "outputs z.out0, t.out0",
+            "scalar 2",
+        ]
+    )
 
 
 SUBJECT = Subject(
@@ -69,5 +90,5 @@ SUBJECT = Subject(
     size_parameter="position bits",
     dimension=2,
     domain=Domain(n_min=1, d_min=2, d_max=2),
-    equations=(Equation("main", _circuit, _spec, form="unrolled"),),
+    equations=(Equation("main", _circuit, _spec, form="boxed", reference=_reference),),
 )
