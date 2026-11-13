@@ -1858,15 +1858,35 @@ def _node_boxes(diagram: Diagram, node_id: NodeId) -> frozenset[BangBoxId]:
 
 
 def _splice_keeps_copies(
-    diagram: Diagram, node_id: NodeId, far: tuple[NodeId | None, NodeId | None]
+    diagram: Diagram,
+    node_id: NodeId,
+    far: tuple[NodeId | None, NodeId | None],
+    far_ports: tuple[PortRef | None, PortRef | None] | None = None,
 ) -> bool:
     """True iff removing ``node_id`` keeps every copy of its legs paired: no neighbour sits in a
-    deeper node-scope box, and some wired neighbour shares the node's boxes."""
+    deeper node-scope box, and some wired neighbour shares the node's boxes; a neighbour met at
+    a link port of a chain box counts as outside that box."""
     mine = _node_boxes(diagram, node_id)
-    sides = [_node_boxes(diagram, other) for other in far if other is not None]
+    ports = far_ports if far_ports is not None else (None, None)
+    if _linking_boxes(diagram, ports[0]) & _linking_boxes(diagram, ports[1]):
+        return False
+    sides = [
+        _node_boxes(diagram, other) - _linking_boxes(diagram, port)
+        for other, port in zip(far, ports, strict=True)
+        if other is not None
+    ]
     if any(not (s <= mine) for s in sides):
         return False
     return not mine or any(s == mine for s in sides)
+
+
+def _linking_boxes(diagram: Diagram, port: PortRef | None) -> frozenset[BangBoxId]:
+    """The chain boxes that have ``port`` as a link port."""
+    if port is None:
+        return frozenset()
+    return frozenset(
+        b.id for b in diagram.bang_boxes.values() if any(port in link for link in b.links)
+    )
 
 
 def _liftable_box(
@@ -2072,13 +2092,15 @@ def find_identity_matches(
         )
         if lifted is None and _exhausts_a_node_scope_box(diagram, (node_id,)):
             continue
+        far_ports = tuple(
+            None if w is None else _far_end(w, ref)
+            for ref, w in ((port_in, wire_in), (port_out, wire_out))
+        )
         if lifted is None and not _splice_keeps_copies(
             diagram,
             node_id,
-            tuple(  # type: ignore[arg-type]
-                None if w is None else _far_end(w, ref).node_id
-                for ref, w in ((port_in, wire_in), (port_out, wire_out))
-            ),
+            tuple(None if p is None else p.node_id for p in far_ports),  # type: ignore[arg-type]
+            far_ports,  # type: ignore[arg-type]
         ):
             continue
         matches.append(

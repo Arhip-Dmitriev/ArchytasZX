@@ -206,8 +206,11 @@ boxes, and to_scalable and the Lean network export refuse every diagram holding 
 
 A rewrite inside a chain box moves each consumed link port to the port the rule's port
 mapping gives it, which must lie in the box's scope; a rewrite is refused when it consumes the
-far end of a link wire, a node of a pair or tree box, a tree's head, a left or right port,
-removes an extended box, or introduces a scalar reading the index of a box it rewrites in.
+far end of a link wire (except an identity removal or a spider fusion touching no node of that
+box that leaves the link port wired to a node off the box), a node of a pair or tree box, a tree's head, a
+left or right port, removes an extended box, or introduces a scalar reading the index of a
+box it rewrites in. An identity spider off a chain box met at a link port counts as sharing
+the box's copies (one wire per instance), unless both its legs meet link ports of one box.
 Symbolic contraction reads a carry-copy tree (one copy's tensor is prod_i delta(p_i - q)
 times a constant c free of q, L, P and the index, with no other open port) as a phaseless Z
 spider from the head whose one leaf leg is port-boxed b^k times, times c^((b^k - 1)/(b - 1)).

@@ -71,7 +71,7 @@ from __future__ import annotations
 
 import enum
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeVar
@@ -322,6 +322,10 @@ def _remap_endpoint(
     return port_mapping[ref]
 
 
+_FAR_END_RULES = frozenset({"identity_removal", "spider_fusion"})
+"""The rules that may consume the far end of a link wire, off the link's box."""
+
+
 def _follow_links(
     diagram: Diagram,
     working: Diagram,
@@ -332,8 +336,9 @@ def _follow_links(
 ) -> None:
     """Send each chain-box link port on a consumed node through ``port_mapping`` onto a port in
     the box's scope; raise RewriteDomainError when one has no such image, when a consumed node
-    lies in a pair box, carries a left or right port or is the far end of a link wire, or when
-    the introduced scalar reads the index of a box holding a consumed node; boxes as in
+    lies in a pair box, carries a left or right port or is the far end of a link wire (by a
+    rule of :data:`_FAR_END_RULES` consuming no node of that box excepted), or when the
+    introduced scalar reads the index of a box holding a consumed node; boxes as in
     ``diagram``, links rewritten in ``working``."""
     gone = frozenset(consumed)
     partner: dict[PortRef, PortRef] = {}
@@ -368,7 +373,12 @@ def _follow_links(
         for link in box.links:
             for ref in link:
                 far = partner.get(ref)
-                if far is not None and far.node_id not in box.node_scope and far.node_id in gone:
+                if (
+                    (touched or rule.name not in _FAR_END_RULES)
+                    and far is not None
+                    and far.node_id not in box.node_scope
+                    and far.node_id in gone
+                ):
                     raise RewriteDomainError(
                         f"rule {rule.name!r}: the match consumes the far end of a link wire of "
                         f"chain box {box_id!r}"
@@ -388,6 +398,33 @@ def _follow_links(
                 moved.append(image)
             links.append((moved[0], moved[1]))
         working.set_bang_box_extension(box_id, links=tuple(links))
+
+
+def _check_far_link_ends(
+    diagram: Diagram, working: Diagram, rule: Rule, consumed: Iterable[NodeId]
+) -> None:
+    """Raise RewriteDomainError when a link port whose far end the rewrite consumed is, in
+    ``working``, unwired or wired to a node of its own box."""
+    gone = frozenset(consumed)
+    before: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        before[wire.a], before[wire.b] = wire.b, wire.a
+    after: dict[PortRef, PortRef] = {}
+    for wire in working.wires:
+        after[wire.a], after[wire.b] = wire.b, wire.a
+    for box_id, box in sorted(working.bang_boxes.items()):
+        for link in box.links:
+            for ref in link:
+                far = before.get(ref)
+                if far is None or far.node_id not in gone:
+                    continue
+                now = after.get(ref)
+                if now is None or now.node_id in box.node_scope:
+                    raise RewriteDomainError(
+                        f"rule {rule.name!r}: the match consumes the far end of a link wire of "
+                        f"chain box {box_id!r} and leaves link port {ref!r} without a node off "
+                        "the box"
+                    )
 
 
 @_trace.traced("rewrite.apply", lambda diagram, rule, match, **_: rule.name)
@@ -697,6 +734,7 @@ def apply(
 
     for node_id in build_result.consumed_node_ids:
         working.remove_node(node_id)
+    _check_far_link_ends(diagram, working, rule, consumed_node_ids)
 
     working.multiply_scalar(build_result.scalar_introduced)
 
