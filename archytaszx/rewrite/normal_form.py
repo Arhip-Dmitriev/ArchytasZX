@@ -229,6 +229,16 @@ def views_isomorphic(a: Diagram, b: Diagram) -> bool:
     return isomorphic(a, b, symmetric_legs=True)
 
 
+def fused_isomorphic(a: Diagram, b: Diagram) -> bool:
+    """Whether ``a`` and ``b`` have isomorphic comparison views once each is reduced by spider
+    fusion and identity removal."""
+    from archytaszx.rewrite.rules_library import IDENTITY_REMOVAL, SPIDER_FUSION
+
+    rules = (SPIDER_FUSION, IDENTITY_REMOVAL)
+    fused = [normal_form(d, rules=rules).diagram for d in (a, b)]
+    return views_isomorphic(comparison_view(fused[0]), comparison_view(fused[1]))
+
+
 def _graph_view(diagram: Diagram) -> Diagram:
     """A copy of ``diagram`` with an empty parameter environment and scalar one."""
     view = diagram.copy()

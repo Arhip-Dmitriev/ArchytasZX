@@ -214,3 +214,22 @@ def concrete_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:
     """The instance's circuit at (n, d) with registers expanded and amounts evaluated."""
     c = subject.circuit_at(inst, n, d, expand=True)
     return expand(c, n if n is not None else 0)
+
+
+def matches_unrolled(inst: Any, unrolled: ir.Circuit, n: int, d: int) -> bool:
+    """Whether the instance's boxed translation instantiated at (n, d) and the translation of
+    ``unrolled`` are isomorphic once spider fusion and identity removal reduce both."""
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.rewrite.normal_form import fused_isomorphic
+    from archytaszx.semantics.check import instantiate
+    from benchmarks import translate
+
+    def body(c: ir.Circuit, values: dict[str, int]) -> str:
+        ctx = translate.Context(values=values, literal=frozenset())
+        return translate.translate(c, ctx).body
+
+    boxed = parse_dsl(
+        f"dim d = {d}\ncount n = {n}\n" + body(subject.circuit_at(inst, n, d), {"n": n, "d": d})
+    )
+    flat = parse_dsl(f"dim d = {d}\n" + body(unrolled, {"d": d}))
+    return fused_isomorphic(instantiate(boxed, {"n": n}), instantiate(flat, {}))

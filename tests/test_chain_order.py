@@ -207,6 +207,21 @@ def test_a_reversed_chain_is_proved_by_induction() -> None:
     assert decide_equal(parse_dsl(circuit), parse_dsl(broken)).verdict is EqualityVerdict.UNEQUAL
 
 
+@pytest.mark.parametrize("n", [2, 3])
+def test_the_boxed_shift_is_isomorphic_to_the_unrolled_one_after_fusion(n: int) -> None:
+    """The SWAP chain's identity spiders keep it from the unrolled shift's isomorphism class
+    until fusion and identity removal reduce both."""
+    from archytaszx.rewrite.normal_form import comparison_view, fused_isomorphic, views_isomorphic
+    from archytaszx.semantics.check import instantiate
+
+    boxed = instantiate(parse_dsl(SHIFT.replace("dim d", "dim d = 2")), {"n": n})
+    unrolled = instantiate(parse_dsl(_unrolled_shift(n).replace("dim d", "dim d = 2")), {})
+    assert not views_isomorphic(comparison_view(boxed), comparison_view(unrolled))
+    assert fused_isomorphic(boxed, unrolled)
+    carry_first = instantiate(parse_dsl(CARRY_FIRST.replace("dim d", "dim d = 2")), {"n": n})
+    assert not fused_isomorphic(carry_first, unrolled)
+
+
 @pytest.mark.parametrize("n", [1, 2, 3])
 def test_copies_first_matches_the_unrolled_shift(n: int) -> None:
     unrolled = parse_dsl(_unrolled_shift(n))
