@@ -1308,16 +1308,39 @@ def _gauss_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Lim
     return None
 
 
+_REDUCED: dict[tuple[object, ...], tuple[sp.Expr, bool]] = {}
+"""Results of :func:`_reduce_term` keyed by (term, limits, ranges in order)."""
+
+_REDUCED_CAP = 1 << 12
+"""The most entries :data:`_REDUCED` holds; a full table is emptied before the next entry."""
+
+
 def _reduce_term(
     term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
 ) -> tuple[sp.Expr, bool]:
-    """``Sum(term, *limits)`` with every closable index closed, and whether any was."""
+    """``Sum(term, *limits)`` with every closable index closed, and whether any was; memoised
+    in :data:`_REDUCED`."""
+    key = (term, tuple(limits), tuple(ranges.items()))
+    hit = _REDUCED.get(key)
+    if hit is None:
+        hit = _reduce_term_once(term, limits, ranges)
+        if len(_REDUCED) >= _REDUCED_CAP:
+            _REDUCED.clear()
+        _REDUCED[key] = hit
+    return hit
+
+
+def _reduce_term_once(
+    term: sp.Expr, limits: list[_Limit], ranges: Mapping[sp.Symbol, sp.Expr]
+) -> tuple[sp.Expr, bool]:
+    """:func:`_reduce_term` without the table."""
     if not limits:
         return term, False
-    unused = [limit for limit in limits if limit[0] not in term.free_symbols]
+    free = term.free_symbols
+    unused = [limit for limit in limits if limit[0] not in free]
     if unused:
         size = sp.Mul(*(sp.expand(upper + 1) for _var, _lower, upper in unused))
-        used = [limit for limit in limits if limit[0] in term.free_symbols]
+        used = [limit for limit in limits if limit[0] in free]
         step: tuple[sp.Expr, list[_Limit]] | None = (term * size, used)
     else:
         step = _delta_step(term, limits, ranges) or _character_step(term, limits)
