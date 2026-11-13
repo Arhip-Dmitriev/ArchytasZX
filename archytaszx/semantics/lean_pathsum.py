@@ -704,7 +704,9 @@ class _NetSide:
     scalar: sp.Expr
 
 
-def _net_side(diagram: Diagram, m: int, phases: list[str], label0: int) -> tuple[_NetSide, PathSum]:
+def _net_side(
+    diagram: Diagram, m: int, phases: list[tuple[str, int]], label0: int
+) -> tuple[_NetSide, PathSum]:
     """The network of ``diagram`` over digit variables numbered as from_diagram's: boundary port
     i is label i with its boundary digits, a summed wire is label ``label0 + w``, its digit j
     the class's variable when that is a path variable not yet taken, else a variable from
@@ -861,7 +863,7 @@ def _net_side(diagram: Diagram, m: int, phases: list[str], label0: int) -> tuple
             poly, ts = _table_poly(ys, table, m)
         ph = 0
         if any(ts):
-            phases.append(f"(({ts} : List ℕ).getD v 0 : ℕ)")
+            phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
             ph = len(phases)
         ts_text = f"({ts if ph else []} : List ℕ)"
         nodes.append(f"⟨{kind}, {os_}, {is_}, {k}, {ph}⟩")
@@ -961,12 +963,22 @@ def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
     ]
 
 
-def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
-    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
-    F, B and S nodes on dimensions 2^k: each network's value is its fragments' path sum over
-    digit variables (NetPSD.eval_eq), whose pin steps reach from_diagram's variables, then each
-    side's reduction steps, the two final sums matched on the boundary digits (val_agree) and
-    the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
+@dataclass
+class NetBody:
+    """One network proof's Lean lines (over the shared ``E``), its labels' digit counts and the
+    two diagrams' scalars as Lean terms."""
+
+    lines: list[str]
+    labs: dict[int, int]
+    s_l: str
+    s_r: str
+    m: int
+
+
+def net_body(left: Diagram, right: Diagram, name: str, phases: list[tuple[str, int]]) -> NetBody:
+    """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
+    and S nodes on dimensions 2^k, their phase vectors appended to ``phases`` (see
+    :func:`export_net`); raises :class:`PathSumUnsupported` outside that class or when the sums
     do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
@@ -976,7 +988,6 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
     red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r)
-    phases: list[str] = []
     side_l, _ = _net_side(left, m, phases, 1 << 16)
     side_r, _ = _net_side(right, m, phases, 1 << 17)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
@@ -992,43 +1003,9 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     lhs = f_l * side_l.scalar * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
     rhs = f_r * side_r.scalar * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
-    labs = sorted({**side_l.k_of, **side_r.k_of}.items())
-    phi = [f"  | {i + 1} => fun v => {body} / (({m} : ℕ) : ℝ)" for i, body in enumerate(phases)]
     bnd = list(range(side_l.bnd_vars))
-    ns = "ArchytasZX.PathSumNetProof"
     run_l = f"(run {m} stepsL (netDataD digL NL (psL.map Prod.snd)))"
     lines = [
-        "import ArchytasZX.PathSumDigits",
-        "",
-        "/-!",
-        f"# Path-sum proof `{name}` over the networks",
-        "",
-        "Each network's value is its fragments' path sum over digit variables; pin steps",
-        "substitute the summed digits of one class into one variable, the reduction steps",
-        "follow, and the final comparison gives `Equal`.",
-        "-/",
-        "",
-        f"namespace {ns}",
-        "",
-        "open ArchytasZX ArchytasZX.PSem",
-        "",
-        "set_option maxRecDepth 100000",
-        "set_option maxHeartbeats 4000000",
-        "set_option linter.unusedSimpArgs false",
-        "set_option linter.unusedTactic false",
-        "",
-        "/-- Dimension values: index k is 2^k. -/",
-        "def Δ (k : ℕ) : ℕ := 2 ^ k",
-        "",
-        "/-- Phase vectors in turns. -/",
-        "noncomputable def Φ : ℕ → ℕ → ℝ",
-        *phi,
-        f"  | _ => fun v => ((([] : List ℕ).getD v 0 : ℕ) : ℝ) / (({m} : ℕ) : ℝ)",
-        "",
-        f"def labs : List (ℕ × ℕ) := {labs}",
-        "",
-        "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs }",
-        "",
         *_net_lines("L", side_l, m),
         *_net_lines("R", side_r, m),
         f"def stepsL : List Step := [{', '.join(side_l.steps)}]",
@@ -1064,10 +1041,76 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "    (by decide)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
+    ]
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m)
+
+
+def net_env(
+    phases: Sequence[tuple[str, int]], labs: dict[int, int], dims: str, m: int
+) -> list[str]:
+    """The shared environment ``E`` of network proofs: ``Δ k`` as ``dims``, the phase vectors,
+    phase index 0 the zero vector over ``m``, and each label's digit count."""
+    phi = [
+        f"  | {i + 1} => fun v => {body} / (({m} : ℕ) : ℝ)" for i, (body, m) in enumerate(phases)
+    ]
+    return [
+        "/-- Dimension values by digit count. -/",
+        f"def Δ (k : ℕ) : ℕ := {dims}",
+        "",
+        "/-- Phase vectors in turns. -/",
+        "noncomputable def Φ : ℕ → ℕ → ℝ",
+        *phi,
+        f"  | _ => fun v => ((([] : List ℕ).getD v 0 : ℕ) : ℝ) / (({m} : ℕ) : ℝ)",
+        "",
+        f"def labs : List (ℕ × ℕ) := {sorted(labs.items())}",
+        "",
+        "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs }",
+        "",
+    ]
+
+
+NET_OPTIONS = [
+    "set_option maxRecDepth 100000",
+    "set_option maxHeartbeats 4000000",
+    "set_option linter.unusedSimpArgs false",
+    "set_option linter.unusedTactic false",
+]
+"""The options of a network proof file."""
+
+
+def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
+    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
+    F, B and S nodes on dimensions 2^k: each network's value is its fragments' path sum over
+    digit variables (NetPSD.eval_eq), whose pin steps reach from_diagram's variables, then each
+    side's reduction steps, the two final sums matched on the boundary digits (val_agree) and
+    the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
+    do not reduce to one canonical form."""
+    phases: list[tuple[str, int]] = []
+    body = net_body(left, right, name, phases)
+    ns = "ArchytasZX.PathSumNetProof"
+    lines = [
+        "import ArchytasZX.PathSumDigits",
+        "",
+        "/-!",
+        f"# Path-sum proof `{name}` over the networks",
+        "",
+        "Each network's value is its fragments' path sum over digit variables; pin steps",
+        "substitute the summed digits of one class into one variable, the reduction steps",
+        "follow, and the final comparison gives `Equal`.",
+        "-/",
+        "",
+        f"namespace {ns}",
+        "",
+        "open ArchytasZX ArchytasZX.PSem",
+        "",
+        *NET_OPTIONS,
+        "",
+        *net_env(phases, body.labs, "2 ^ k", body.m),
+        *body.lines,
         f"end {ns}",
         "",
     ]
     return "\n".join(lines)
 
 
-__all__ = ["export_net", "export_pair", "export_proof", "export_qudit_proof"]
+__all__ = ["NetBody", "export_net", "export_pair", "export_proof", "export_qudit_proof", "net_body"]
