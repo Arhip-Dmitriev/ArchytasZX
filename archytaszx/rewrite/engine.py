@@ -347,8 +347,7 @@ def apply(
     failed one), step 4 (the builder's ``scalar_introduced`` disagrees with the rule's),
     step 5 (a wire or boundary entry names a consumed-node port absent from
     ``port_mapping``, raised inside :func:`_remap_endpoint`, so uncounted by the meta-test),
-    and step 8 (the result carries a hard-failure issue the input did not); after step 2,
-    inside :func:`_refuse_link_ports`, when the match consumes a chain-box link port.
+    and step 8 (the result carries a hard-failure issue the input did not).
 
     Raises :class:`~archytaszx.rewrite.rule.RewriteGrammarError` at step 3 (``BuildResult.diagram``
     is not, by identity, the working diagram; the builder edited its wire set or either
