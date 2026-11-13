@@ -135,6 +135,12 @@ hypotheses.
   - Symbolic contraction refuses a bang box wired to a W, F, triangle or connective node
     outside it, two boxes meeting one spider, and a port box over two W nodes. A node-scope box
     meeting the boundary and outside Z or X spiders contracts (SEMANTICS.txt).
+  - Chain, indexed, pair and tree boxes (DIAGRAM.txt 4.2) express nearest-neighbour ladders,
+    copy-dependent phases, all-pairs gates and b-ary trees. Symbolic contraction reads only
+    carry-copy chains and trees, indexed boxes and pair boxes on boundary-pinned Z spiders;
+    other chains go through induction (chain_window); trees have no induction step. Verdicts
+    on these boxes are certified only by Python kernel theorems or reported uncertified: the
+    Lean network export refuses them.
   - The path-sum rung covers diagrams whose every dimension is a concrete power of two and
     whose every generator is Z, X, F, B or S; its EQUAL verdicts are uncertified until the
     path-sum Lean export exists, and a sum with path variables left after reduction (T
