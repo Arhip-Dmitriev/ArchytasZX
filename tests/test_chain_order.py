@@ -92,6 +92,57 @@ def test_a_reversed_chain_peels_its_first_copy() -> None:
             assert views_isomorphic(comparison_view(at), comparison_view(whole))
 
 
+def _reversed_indexed() -> tuple[str, str]:
+    from .test_lean_chain import INDEXED
+
+    return (
+        INDEXED[0].replace("chain C0: g5.out0 -> g4.in0", "chain C0: g4.in0 -> g5.out0"),
+        INDEXED[1].replace("chain V: w.out0 -> v.in0", "chain V: v.in0 -> w.out0"),
+    )
+
+
+def _unrolled_reversed_spec(n: int) -> str:
+    """The reversed indexed spec at n: copy m's w with phase m/4, copy m + 1's w into copy m."""
+    lines = ["dim d = 2", "h = Z(0 -> 1, d)"]
+    for m in range(n):
+        lines += [
+            f"v{m} = Z(1 -> 2, d)",
+            f"f{m} = F(d)",
+            f"w{m} = Z(1 -> 1, d) phase {{1: {m}/4}}",
+            f"wire v{m}.out1 -- f{m}.in0, f{m}.out0 -- w{m}.in0",
+        ]
+        if m < n - 1:
+            lines.append(f"wire v{m}.in0 -- w{m + 1}.out0")
+    if n:
+        lines.append(f"wire h.out0 -- v{n - 1}.in0")
+    outs = [f"v{m}.out0" for m in range(n)] + (["w0.out0"] if n else ["h.out0"])
+    lines += ["outputs " + ", ".join(outs), "scalar 1/sqrt(d)"]
+    return "\n".join(lines)
+
+
+def test_a_reversed_indexed_chain_shifts_its_residual_index() -> None:
+    """The first copy reads index 0 and the residual index + 1; at k = 0 .. 3 the peeled
+    successor is the chain at k + 1, and the chain matches its unrolled form."""
+    from archytaszx.diagram.bangbox import instantiate_symbol
+    from archytaszx.rewrite.normal_form import comparison_view, views_isomorphic
+    from archytaszx.semantics.prove import induction_successor
+
+    circuit, spec = _reversed_indexed()
+    for text in (circuit, spec, circuit + "\ncopy scalar C0: 2^i"):
+        d = parse_dsl(text)
+        succ = induction_successor(d, "n", "k")
+        assert succ is not None
+        for k in range(4):
+            at = instantiate_symbol(succ, "k", k)
+            whole = instantiate_symbol(d, "n", k + 1)
+            assert views_isomorphic(comparison_view(at), comparison_view(whole))
+    for n in range(4):
+        assert compare(parse_dsl(spec), parse_dsl(_unrolled_reversed_spec(n)), {"n": n}).matched
+    broken = spec.replace("phase {1: i/4}", "phase {1: (i + 1)/4}")
+    verdict = decide_equal(parse_dsl(circuit), parse_dsl(broken)).verdict
+    assert verdict is EqualityVerdict.UNEQUAL
+
+
 def test_a_reversed_chain_is_proved_by_induction() -> None:
     circuit, spec = _reversed()
     decision = decide_equal(parse_dsl(circuit), parse_dsl(spec))

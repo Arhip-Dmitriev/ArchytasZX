@@ -1744,17 +1744,14 @@ def peels_first(box: BangBox) -> bool:
 def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail.
-    A chain that :func:`peels_first` loses its first copy instead (index 0, no index read):
-    the copy's ``q`` ports wired to the head and its ``p`` ports to the residual's ``q``."""
+    A chain that :func:`peels_first` loses its first copy instead (index 0, the residual
+    reading its index as ``index + 1``): the copy's ``q`` ports wired to the head and its ``p``
+    ports to the residual's ``q``."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair or _pairs_of(diagram, box.id):
         raise BangBoxGrammarError(f"box {box.id!r} with pair boxes has no peel_one")
     first = peels_first(box)
-    if first and box.index is not None:
-        raise BangBoxGrammarError(
-            f"chain box {box.id!r} peels its first copy and reads an index; it has no peel_one"
-        )
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
     before = set(diagram.bang_boxes)
@@ -1771,14 +1768,48 @@ def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
             diagram.add_wire(p_ref, _moved(q_ref, id_map))
             diagram.add_wire(_moved(p_ref, id_map), tail)
     _index_copy(diagram, box, id_map, 0 if first else last, new_boxes)
+    shifted = box.copy_scalar
+    if first and box.index is not None:
+        shifted = _shift_index(diagram, box)
     diagram.set_bang_box_extension(
         box.id,
         links=box.links,
         cyclic=box.cyclic,
         index=box.index,
-        copy_scalar=box.copy_scalar,
+        copy_scalar=shifted,
     )
     _drop_identities(diagram, temps)
+
+
+def _shift_index(diagram: Diagram, box: BangBox) -> Scalar | None:
+    """Read ``box.index`` as ``index + 1`` in the scope's phases and in the multiplicities and
+    copy scalars of the boxes inside it; ``box``'s copy scalar so read."""
+    assert box.index is not None
+    name = box.index
+    scope = box.node_scope
+    sym = _symbol_in(diagram, scope, box.copy_scalar, name)
+    if sym is None:
+        sym = sp.Symbol(name, integer=True, nonnegative=True)
+    for node_id in sorted(scope):
+        phase = diagram.nodes[node_id].phase
+        if phase is not None and name in phase.free_symbols:
+            diagram.set_phase(node_id, phase.substitute({name: sym + 1}))
+    for child_id, child in sorted(diagram.bang_boxes.items()):
+        if child_id == box.id:
+            continue
+        covered = child.node_scope or frozenset(r.node_id for r in child.port_scope)
+        if not covered <= scope:
+            continue
+        if name in child.multiplicity.free_symbols:
+            mult = child.multiplicity.to_sympy().subs(_mult_symbol(name), _mult_symbol(name) + 1)
+            diagram.set_bang_box_multiplicity(child_id, Mult._from_expr(sp.expand(mult)))
+        if child.copy_scalar is not None and name in child.copy_scalar.free_symbols:
+            diagram.set_bang_box_extension(
+                child_id, copy_scalar=_scalar_at(child.copy_scalar, name, sym + 1)
+            )
+    if box.copy_scalar is None or name not in box.copy_scalar.free_symbols:
+        return box.copy_scalar
+    return _scalar_at(box.copy_scalar, name, sym + 1)
 
 
 def _symbol_in(

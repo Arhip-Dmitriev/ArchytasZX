@@ -368,7 +368,8 @@ ladder, in order, until one settles:
 
 CHAIN_WINDOW peels the last copy off a successor whose step index is carried by one chain
 box; a chain whose every link runs from an input p to an output q (copy m + 1 feeding copy m)
-loses its first copy instead, laid out before the box's boundary block (no copy index). The
+loses its first copy instead, laid out before the box's boundary block, the copy reading its
+index as 0 and the residual as index + 1 (so an indexed residual is not the hypothesis). The
 residual is joined to the copy by cut wires; find_cut_region places each cut end
 among the residual's boundary slots so that the residual is isomorphic to that side's
 hypothesis diagram. When both sides are chains read this way, with the residuals in the same
