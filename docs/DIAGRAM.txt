@@ -140,7 +140,7 @@ every boundary entry addresses a port of some node.
     class Mult(value: int | str | Mult)
 
 A multiplicity is a non-negative integer, possibly symbolic, built from integers, symbols,
-sums and products. It is deliberately not a Dim: a multiplicity admits 0 and sums, a dimension
+sums, products and powers b^m of a positive integer b. It is deliberately not a Dim: a multiplicity admits 0 and sums, a dimension
 does not. Mult offers concrete, symbol, to_sympy, is_concrete, is_bare_symbol,
 bare_symbol_name, free_symbols, to_int, substitute and abstract, mirroring Dim.
 
@@ -179,15 +179,30 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     pair of B's copies j < k, reading B's index as j and K as k, its wires to a left port met
     in copy j and to a right port in copy k; each such port grows one leg per pair it meets,
     in pair order. Its own multiplicity is 1 and it is never expanded alone.
+  - tree (tree_parent q, tree (p_1, ..., p_b), level L, position P; REMAINING_BUGS_SPEC 19.4):
+    the multiplicity k is the depth. q is wired outside the scope or a boundary slot (the
+    head); p_1 .. p_b are one run of boundary slots in that order. The instance at k has
+    copies c(L, P) for L = 1 .. k, P = 0 .. b^(L-1) - 1, reading L and P (and an index as the
+    copy number in level order): the head into c(1, 0).q, c(L, P).p_i into
+    c(L + 1, b P + i - 1).q, and the leaves' p_i in the run's place as b^k slots, leaf-major
+    (c(k, 0).p_1 .. p_b, c(k, 1).p_1, ...). At k = 0 the run is one slot, the head itself (the
+    identity wire). Other boundary slots of the scope are laid out copy by copy in level
+    order; the copy scalar is taken once per copy. A child port's boundary slot counts b^k / b
+    slots in boundary_arity, a link port and a tree's parent port one.
 
 peel_one splits off the last copy (I = n - 1, wired between the rest's p ports and the tail);
-a cyclic chain and a box with pair boxes refuse peel_one; copy_box and merge refuse these
+a cyclic chain, a tree box and a box with pair boxes refuse peel_one; copy_box and merge
+refuse these
 boxes, and to_scalable and the Lean network export refuse every diagram holding one.
 
 A rewrite inside a chain box moves each consumed link port to the port the rule's port
 mapping gives it, which must lie in the box's scope; a rewrite is refused when it consumes the
-far end of a link wire, a node of a pair box, a left or right port, or introduces a scalar
-reading the index of a box it rewrites in. Symbolic contraction reads a carry-copy chain (one
+far end of a link wire, a node of a pair or tree box, a tree's head, a left or right port,
+removes an extended box, or introduces a scalar reading the index of a box it rewrites in.
+Symbolic contraction reads a carry-copy tree (one copy's tensor is prod_i delta(p_i - q)
+times a constant c free of q, L, P and the index, with no other open port) as a phaseless Z
+spider from the head whose one leaf leg is port-boxed b^k times, times c^((b^k - 1)/(b - 1)).
+Symbolic contraction reads a carry-copy chain (one
 copy's tensor, link ports open, has the factor delta(p - q) for every link) as a plain box
 whose link ports and head and tail ends meet one phaseless Z spider per link (a cyclic one
 only when its multiplicity is at least 1), and refuses any other chain. An indexed box keeps

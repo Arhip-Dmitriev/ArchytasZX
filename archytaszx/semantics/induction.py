@@ -444,6 +444,10 @@ def _extension(box: BangBox) -> tuple[object, ...]:
         box.pair_index,
         sorted(box.left_ports, key=_port_scope_key),
         sorted(box.right_ports, key=_port_scope_key),
+        box.tree,
+        box.tree_parent,
+        box.level,
+        box.position,
     )
 
 

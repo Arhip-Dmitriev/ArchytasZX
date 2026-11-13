@@ -73,7 +73,7 @@ from __future__ import annotations
 import enum
 import itertools
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
@@ -926,7 +926,9 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
         if not box.node_scope <= diagram.nodes.keys():
             continue
         fanned: dict[tuple[NodeId, Direction], int] = {}
-        link_ports = {ref for link in box.links for ref in link}
+        link_ports = {ref for link in box.links for ref in link} | set(box.tree)
+        if box.tree_parent is not None:
+            link_ports.add(box.tree_parent)
         paired = frozenset(
             nid
             for other in diagram.bang_boxes.values()
@@ -1008,7 +1010,11 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
                         f"chain box {box_id!r}: link port {ref!r} is neither wired outside "
                         "the scope nor a boundary slot"
                     )
-        if box.index is not None:
+        if box.tree_parent is not None:
+            _check_tree(diagram, box, partner, boundary, refuse)
+        for name in (box.index, box.level, box.position):
+            if name is None:
+                continue
             paired = frozenset(
                 nid
                 for other in diagram.bang_boxes.values()
@@ -1018,12 +1024,50 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
             for node_id, node in sorted(diagram.nodes.items()):
                 if node_id in box.node_scope or node_id in paired or node.phase is None:
                     continue
-                if box.index in node.phase.free_symbols:
+                if name in node.phase.free_symbols:
                     refuse(
-                        f"bang box {box_id!r}: index {box.index!r} is read by node {node_id!r} "
+                        f"bang box {box_id!r}: index {name!r} is read by node {node_id!r} "
                         "outside its scope",
                         IssueKind.BANGBOX_INDEX_OUT_OF_SCOPE,
                     )
+
+
+def _check_tree(
+    diagram: Diagram,
+    box: BangBox,
+    partner: dict[PortRef, PortRef],
+    boundary: set[PortRef],
+    refuse: Callable[[str], None],
+) -> None:
+    """A tree box's ports lie in its scope and join one dimension; its parent port is wired
+    outside the scope or a boundary slot; its child ports are one run of boundary slots in
+    order."""
+    assert box.tree_parent is not None
+    ports = (box.tree_parent, *box.tree)
+    dims = set()
+    for ref in ports:
+        node = diagram.nodes.get(ref.node_id)
+        if (
+            node is None
+            or ref.node_id not in box.node_scope
+            or ref.index >= len(node.legs(ref.direction))
+        ):
+            refuse(f"tree box {box.id!r}: port {ref!r} is not a port of its scope")
+            return
+        dims.add(node.legs(ref.direction)[ref.index].dim)
+    if len(dims) != 1 or any(r.direction is box.tree_parent.direction for r in box.tree):
+        refuse(f"tree box {box.id!r}: its ports differ in dimension or face one way")
+    end = partner.get(box.tree_parent)
+    if (end is None and box.tree_parent not in boundary) or (
+        end is not None and end.node_id in box.node_scope
+    ):
+        refuse(f"tree box {box.id!r}: its parent port is neither wired outside nor a slot")
+    for refs in (diagram.boundary_inputs, diagram.boundary_outputs):
+        if box.tree[0] in refs:
+            first = refs.index(box.tree[0])
+            if list(refs[first : first + len(box.tree)]) == list(box.tree):
+                return
+    refuse(f"tree box {box.id!r}: its child ports are not one run of boundary slots in order")
 
 
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:

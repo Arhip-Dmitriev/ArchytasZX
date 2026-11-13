@@ -323,6 +323,7 @@ def _remap_endpoint(
 
 
 def _follow_links(
+    diagram: Diagram,
     working: Diagram,
     rule: Rule,
     consumed: Sequence[NodeId],
@@ -332,15 +333,29 @@ def _follow_links(
     """Send each chain-box link port on a consumed node through ``port_mapping`` onto a port in
     the box's scope; raise RewriteDomainError when one has no such image, when a consumed node
     lies in a pair box, carries a left or right port or is the far end of a link wire, or when
-    the introduced scalar reads the index of a box holding a consumed node."""
+    the introduced scalar reads the index of a box holding a consumed node; boxes as in
+    ``diagram``, links rewritten in ``working``."""
     gone = frozenset(consumed)
     partner: dict[PortRef, PortRef] = {}
-    for wire in working.wires:
+    for wire in diagram.wires:
         partner[wire.a], partner[wire.b] = wire.b, wire.a
-    for box_id, box in sorted(working.bang_boxes.items()):
+    for box_id, box in sorted(diagram.bang_boxes.items()):
         touched = bool(box.node_scope & gone)
-        if box.is_pair and touched:
-            raise RewriteDomainError(f"rule {rule.name!r}: the match lies in pair box {box_id!r}")
+        after = working.bang_boxes.get(box_id)
+        if after is None and box.is_extended:
+            raise RewriteDomainError(
+                f"rule {rule.name!r}: the match removes extended box {box_id!r}"
+            )
+        if (box.is_pair or box.is_tree) and touched:
+            raise RewriteDomainError(
+                f"rule {rule.name!r}: the match lies in pair or tree box {box_id!r}"
+            )
+        if box.tree_parent is not None:
+            far = partner.get(box.tree_parent)
+            if far is not None and far.node_id in gone:
+                raise RewriteDomainError(
+                    f"rule {rule.name!r}: the match consumes the head of tree box {box_id!r}"
+                )
         if any(ref.node_id in gone for ref in (*box.left_ports, *box.right_ports)):
             raise RewriteDomainError(
                 f"rule {rule.name!r}: the match consumes a left or right port of pair box "
@@ -358,14 +373,14 @@ def _follow_links(
                         f"rule {rule.name!r}: the match consumes the far end of a link wire of "
                         f"chain box {box_id!r}"
                     )
-        if not any(ref.node_id in gone for link in box.links for ref in link):
+        if after is None or not any(ref.node_id in gone for link in box.links for ref in link):
             continue
         links: list[tuple[PortRef, PortRef]] = []
         for link in box.links:
             moved: list[PortRef] = []
             for ref in link:
                 image = port_mapping.get(ref, ref) if ref.node_id in gone else ref
-                if image.node_id in gone or image.node_id not in box.node_scope:
+                if image.node_id in gone or image.node_id not in after.node_scope:
                     raise RewriteDomainError(
                         f"rule {rule.name!r}: the match consumes link port {ref!r} of chain "
                         f"box {box_id!r} and keeps no port of the scope in its place"
@@ -409,6 +424,7 @@ def apply(
     working = diagram.copy()
     build_result = rule.builder(working, match)
     _follow_links(
+        diagram,
         working,
         rule,
         build_result.consumed_node_ids,

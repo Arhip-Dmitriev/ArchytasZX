@@ -1410,6 +1410,12 @@ def render_graph(diagram: Diagram) -> str:
         if box.links:
             links = ", ".join(f"{_listing_ref(a)} -> {_listing_ref(b)}" for a, b in box.links)
             line += f"  links: {links}" + ("  cyclic" if box.cyclic else "")
+        if box.tree_parent is not None:
+            children = ", ".join(_listing_ref(r) for r in box.tree)
+            line += f"  tree: {_listing_ref(box.tree_parent)} <- {children}"
+            for label, name in (("level", box.level), ("position", box.position)):
+                if name is not None:
+                    line += f"  {label}: {name}"
         if box.index is not None:
             line += f"  index: {box.index}"
         if box.copy_scalar is not None:

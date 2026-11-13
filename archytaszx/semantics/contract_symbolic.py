@@ -1180,6 +1180,10 @@ def _scope_subdiagram(
                 pair_index=box.pair_index,
                 left_ports=frozenset(moved(r) for r in box.left_ports),
                 right_ports=frozenset(moved(r) for r in box.right_ports),
+                tree=tuple(moved(r) for r in box.tree),
+                tree_parent=None if box.tree_parent is None else moved(box.tree_parent),
+                level=box.level,
+                position=box.position,
             )
             pending = True
     extracted.set_boundary_outputs(
@@ -1465,6 +1469,83 @@ def _resolve_chains(diagram: Diagram, max_steps: int) -> Diagram:
     return working
 
 
+def _resolve_trees(diagram: Diagram, max_steps: int) -> Diagram:
+    """``diagram`` with each top-level carry-copy tree box (one copy's tensor is
+    prod_i delta(p_i - q) times a constant c, no other open port) replaced by a phaseless Z
+    spider from the head end whose one leaf leg is port-boxed b^k times, the diagram scalar
+    times c^((b^k - 1)/(b - 1)); raise on any other tree box."""
+    working = diagram
+    for box_id in sorted(diagram.bang_boxes):
+        box = working.bang_boxes[box_id]
+        if not box.is_tree or box.parent is not None:
+            continue
+        assert box.tree_parent is not None
+        copy, ports = _open_copy(working, box_id)
+        if set(ports) != {box.tree_parent, *box.tree}:
+            raise SymbolicContractionUnsupportedError(
+                f"tree box {box_id}: a copy meets more than its tree ports"
+            )
+        tensor = contract_symbolic(copy, max_steps=max_steps)
+        if tensor.is_variable_rank:
+            raise SymbolicContractionUnsupportedError(f"tree box {box_id}: a variable-rank copy")
+        axis_of = {ref: _engine_index(a.index) for ref, a in zip(ports, tensor.axes, strict=True)}
+        q = axis_of[box.tree_parent]
+        dim = _port_dim(working, box.tree_parent)
+        entry = tensor.entry.to_sympy()
+        folded = entry.xreplace({axis_of[p]: q for p in box.tree})
+        product = sp.Mul(*(ModDelta(axis_of[p] - q, dim.to_sympy()) for p in box.tree))
+        constant = Scalar(folded).simplify(max_steps=max_steps).to_sympy()
+        names = {str(x) for x in constant.free_symbols}
+        if (
+            not Scalar(entry - product * folded).simplify(max_steps=max_steps).is_zero
+            or q in constant.free_symbols
+            or names & {box.level, box.position, box.index}
+        ):
+            raise SymbolicContractionUnsupportedError(
+                f"tree box {box_id}: the copy is not a carry-copy with a constant factor"
+            )
+        working = _spider_tree(working, box_id, constant)
+    return working
+
+
+def _spider_tree(diagram: Diagram, box_id: BangBoxId, constant: sp.Expr) -> Diagram:
+    """``diagram`` with tree box ``box_id`` and its scope replaced by a phaseless Z spider from
+    the head end, its leaf leg in the leaf run's place port-boxed b^k times."""
+    working = diagram.copy()
+    box = working.bang_boxes[box_id]
+    assert box.tree_parent is not None
+    b = len(box.tree)
+    dim = _port_dim(working, box.tree_parent)
+    head = _partner_or_slot(working, box.tree_parent)
+    leaf_out = box.tree[0].direction is Direction.OUTPUT
+    spider = working.add_node(Z_SPIDER, [dim], [dim], phase=PhaseVector(dim))
+    near = PortRef(spider, Direction.INPUT if leaf_out else Direction.OUTPUT, 0)
+    leaf = PortRef(spider, Direction.OUTPUT if leaf_out else Direction.INPUT, 0)
+    refs = list(working.boundary_outputs if leaf_out else working.boundary_inputs)
+    first = refs.index(box.tree[0])
+    refs[first : first + b] = [leaf]
+    (working.set_boundary_outputs if leaf_out else working.set_boundary_inputs)(refs)
+    if head is not None:
+        working.remove_wire(box.tree_parent, head)
+        working.add_wire(head, near)
+    else:
+        others = list(working.boundary_inputs if leaf_out else working.boundary_outputs)
+        others = [near if r == box.tree_parent else r for r in others]
+        (working.set_boundary_inputs if leaf_out else working.set_boundary_outputs)(others)
+    k = box.multiplicity.to_sympy()
+    for child_id, child in sorted(working.bang_boxes.items()):
+        if child.parent == box_id:
+            raise SymbolicContractionUnsupportedError(f"tree box {box_id} holds a child box")
+    for node_id in sorted(box.node_scope):
+        working.remove_node(node_id)
+    working.remove_bang_box(box_id)
+    leaves = sp.Integer(b) ** k
+    working.add_bang_box(Mult._from_expr(leaves), port_scope=frozenset({leaf}))
+    copies = k if b == 1 else (leaves - 1) / (b - 1)
+    working.multiply_scalar(Scalar(sp.Pow(constant, copies)))
+    return working
+
+
 def _flip(direction: Direction) -> Direction:
     """The other direction."""
     return Direction.INPUT if direction is Direction.OUTPUT else Direction.OUTPUT
@@ -1684,12 +1765,14 @@ def contract_symbolic(
             return reduced
     if any(box.links for box in diagram.bang_boxes.values()):
         diagram = _resolve_chains(diagram, max_steps)
+    if any(box.is_tree for box in diagram.bang_boxes.values()):
+        diagram = _resolve_trees(diagram, max_steps)
     pair_boxes: dict[BangBoxId, list[_Pair]] = {}
     if any(box.pair_of is not None for box in diagram.bang_boxes.values()):
         diagram, pair_boxes = _detach_pairs(diagram, max_steps)
     box_factor: sp.Expr = sp.Integer(1)
     for box_id, box in sorted(diagram.bang_boxes.items()):
-        if box.pair_of is not None or box.links:
+        if box.pair_of is not None or box.links or box.is_tree:
             raise SymbolicContractionUnsupportedError(
                 f"bang box {box_id} is a pair or nested chain box"
             )

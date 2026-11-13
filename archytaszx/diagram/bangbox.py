@@ -109,10 +109,13 @@ def _check_mult_domain(expr: sp.Expr) -> None:
         for arg in expr.args:
             _check_mult_domain(arg)
         return
+    if expr.is_Pow and expr.base.is_Integer and int(expr.base) >= 1:
+        _check_mult_domain(expr.exp)
+        return
     raise BangBoxGrammarError(
         f"expression {expr} is outside the multiplicity grammar "
-        "(only concrete non-negative integers, symbols, sums with integer offsets, and products "
-        "are allowed)"
+        "(only concrete non-negative integers, symbols, sums with integer offsets, products "
+        "and powers of a positive integer are allowed)"
     )
 
 
@@ -312,6 +315,14 @@ class BangBox:
     """For a pair box: ports of the parent's scope resolved in copy ``j``."""
     right_ports: frozenset[PortRef] = frozenset()
     """For a pair box: ports of the parent's scope resolved in copy ``k``."""
+    tree: tuple[PortRef, ...] = ()
+    """For a tree box: the child ports ``p_1 .. p_b`` of one copy (branching ``b``)."""
+    tree_parent: PortRef | None = None
+    """For a tree box: the copy's parent port ``q``."""
+    level: str | None = None
+    """For a tree box: the depth index ``L`` (1 .. k)."""
+    position: str | None = None
+    """For a tree box: the position index ``P`` (0 .. b^(L-1) - 1)."""
 
     def __post_init__(self) -> None:
         """Validate field types, that exactly one of the two scopes is non-empty, and the
@@ -371,6 +382,19 @@ class BangBox:
             _check_symbol_name(self.pair_index)
         elif self.pair_index is not None or self.left_ports or self.right_ports:
             raise BangBoxGrammarError("pair index, left and right ports need a pair box")
+        if self.tree or self.tree_parent is not None:
+            if not self.node_scope or self.links or self.pair_of is not None:
+                raise BangBoxGrammarError("a tree box is a node-scope box without links or pairs")
+            if self.tree_parent is None or not self.tree:
+                raise BangBoxGrammarError("a tree box needs a parent port and child ports")
+            ports = (self.tree_parent, *self.tree)
+            if not all(isinstance(r, PortRef) for r in ports) or len(set(ports)) != len(ports):
+                raise BangBoxGrammarError("tree box ports must be distinct PortRefs")
+        elif self.level is not None or self.position is not None:
+            raise BangBoxGrammarError("level and position indices need a tree box")
+        for name in (self.level, self.position):
+            if name is not None:
+                _check_symbol_name(name)
 
     @property
     def is_pair(self) -> bool:
@@ -378,13 +402,19 @@ class BangBox:
         return self.pair_of is not None
 
     @property
+    def is_tree(self) -> bool:
+        """True iff this box is a tree box."""
+        return bool(self.tree)
+
+    @property
     def is_extended(self) -> bool:
-        """True iff this box carries links, an index, a copy scalar or is a pair box."""
+        """True iff this box carries links, an index, a copy scalar or is a pair or tree box."""
         return (
             bool(self.links)
             or self.index is not None
             or self.copy_scalar is not None
             or self.pair_of is not None
+            or bool(self.tree)
         )
 
     @property
@@ -544,8 +574,22 @@ def _port_multiplicity(diagram: Diagram, ref: PortRef) -> sp.Expr | None:
         seen_port_scope = seen_port_scope or not boxes[box_id].is_node_scope
     product = sp.Integer(1)
     for box_id in deepest:
-        product = product * boxes[box_id].multiplicity.to_sympy()
+        product = product * _slot_count(boxes[box_id], ref)
     return product
+
+
+def _slot_count(box: BangBox, ref: PortRef) -> sp.Expr:
+    """How many slots ``box`` makes of boundary slot ``ref``: one for a chain link port and a
+    tree's parent port, b^k / b for a tree's child port, the copy count otherwise."""
+    count = box.multiplicity.to_sympy()
+    if any(ref in link for link in box.links) or ref == box.tree_parent:
+        return sp.Integer(1)
+    if not box.tree:
+        return count
+    b = len(box.tree)
+    if ref in box.tree:
+        return sp.Integer(b) ** count / b
+    return count if b == 1 else (sp.Integer(b) ** count - 1) / (b - 1)
 
 
 def boundary_arity(diagram: Diagram) -> tuple[sp.Expr, sp.Expr] | None:
@@ -817,8 +861,9 @@ def _copy_subtree(
 
 def index_symbols(diagram: Diagram) -> frozenset[str]:
     """The copy and pair index symbols of ``diagram``'s bang boxes."""
-    names = {box.index for box in diagram.bang_boxes.values() if box.index is not None}
-    names |= {box.pair_index for box in diagram.bang_boxes.values() if box.pair_index is not None}
+    names: set[str] = set()
+    for box in diagram.bang_boxes.values():
+        names |= {x for x in (box.index, box.pair_index, box.level, box.position) if x is not None}
     return frozenset(names)
 
 
@@ -844,6 +889,10 @@ def add_box_image(
         pair_index=box.pair_index,
         left_ports=frozenset(_moved(r, id_map) for r in box.left_ports),
         right_ports=frozenset(_moved(r, id_map) for r in box.right_ports),
+        tree=tuple(_moved(r, id_map) for r in box.tree),
+        tree_parent=None if box.tree_parent is None else _moved(box.tree_parent, id_map),
+        level=box.level,
+        position=box.position,
     )
 
 
@@ -1084,8 +1133,110 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
     return id_maps
 
 
+def _tree_leaf_block(diagram: Diagram, box: BangBox) -> tuple[bool, list[PortRef], list[PortRef]]:
+    """Whether a tree box's child ports are boundary outputs, and the boundary list before and
+    after their contiguous run; raise when they are not one run in ``tree`` order."""
+    for outputs, refs in (
+        (True, list(diagram.boundary_outputs)),
+        (False, list(diagram.boundary_inputs)),
+    ):
+        if box.tree[0] not in refs:
+            continue
+        first = refs.index(box.tree[0])
+        if refs[first : first + len(box.tree)] != list(box.tree):
+            break
+        return outputs, refs[:first], refs[first + len(box.tree) :]
+    raise BangBoxGrammarError(
+        f"tree box {box.id!r}: its child ports are not one run of boundary slots in order"
+    )
+
+
+def _tree_copy(
+    diagram: Diagram,
+    box: BangBox,
+    id_map: Mapping[NodeId, NodeId],
+    values: Mapping[str, int],
+    new_boxes: Iterable[BangBoxId],
+) -> None:
+    """Copy ``id_map``'s nodes and child boxes with each index of ``values`` set, and the copy
+    scalar at those values multiplied into the diagram scalar."""
+    nodes = frozenset(id_map.values())
+    for node_id in sorted(nodes):
+        phase = diagram.nodes[node_id].phase
+        hit = {k: v for k, v in values.items() if phase is not None and k in phase.free_symbols}
+        if phase is not None and hit:
+            diagram.set_phase(node_id, phase.substitute(hit))  # type: ignore[arg-type]
+    for child_id in new_boxes:
+        child = diagram.bang_boxes.get(child_id)
+        if child is None:
+            continue
+        covered = child.node_scope or frozenset(r.node_id for r in child.port_scope)
+        if not covered <= nodes:
+            continue
+        mult = child.multiplicity.to_sympy()
+        for name, value in values.items():
+            if name in child.multiplicity.free_symbols:
+                mult = mult.subs(_mult_symbol(name), value)
+        if mult != child.multiplicity.to_sympy():
+            diagram.set_bang_box_multiplicity(child_id, Mult._from_expr(sp.expand(mult)))
+    if box.copy_scalar is not None:
+        factor = box.copy_scalar
+        for name, value in values.items():
+            factor = _scalar_at(factor, name, value)
+        diagram.multiply_scalar(factor)
+
+
+def _instantiate_tree(diagram: Diagram, box: BangBox, k: int) -> None:
+    """Instantiate a tree box at depth ``k``: copies c(L, P) for L = 1 .. k, P < b^(L-1), the
+    head into c(1, 0)'s parent port, c(L, P)'s i-th child port into c(L + 1, b P + i)'s parent
+    port, the leaves' child ports as the b^k slots of the stored child ports' run, leaf-major;
+    at ``k == 0`` the head alone in that run."""
+    assert box.tree_parent is not None
+    b = len(box.tree)
+    temps: list[NodeId] = []
+    head = _detach(diagram, box.tree_parent, temps)
+    outputs, before, after = _tree_leaf_block(diagram, box)
+    setter = diagram.set_boundary_outputs if outputs else diagram.set_boundary_inputs
+    setter([*before, *after])
+    coords = [(level, pos) for level in range(1, k + 1) for pos in range(b ** (level - 1))]
+    where = {coord: i for i, coord in enumerate(coords)}
+    diagram.set_bang_box_extension(
+        box.id, tree=(), tree_parent=None, level=None, position=None, index=None, copy_scalar=None
+    )
+    plain = diagram.bang_boxes[box.id]
+    known = set(diagram.bang_boxes)
+    id_maps = _instantiate_node_scope(diagram, plain, len(coords))
+    new_boxes = sorted(set(diagram.bang_boxes) - known)
+    if k == 0:
+        leaves = [head]
+    else:
+        diagram.add_wire(head, _moved(box.tree_parent, id_maps[0]))
+        for (level, pos), i in where.items():
+            if level == k:
+                continue
+            for j, p_ref in enumerate(box.tree):
+                child = id_maps[where[(level + 1, b * pos + j)]]
+                diagram.add_wire(_moved(p_ref, id_maps[i]), _moved(box.tree_parent, child))
+        leaves = [
+            _moved(p_ref, id_maps[where[(k, pos)]])
+            for pos in range(b ** (k - 1))
+            for p_ref in box.tree
+        ]
+    setter([*before, *leaves, *after])
+    for (level, pos), i in where.items():
+        values = {
+            name: value
+            for name, value in ((box.level, level), (box.position, pos), (box.index, i))
+            if name is not None
+        }
+        _tree_copy(diagram, box, id_maps[i], values, new_boxes)
+    _drop_identities(diagram, temps)
+
+
 def _kill_one(diagram: Diagram, box: BangBox) -> None:
-    if box.is_extended:
+    if box.is_tree:
+        _instantiate_tree(diagram, box, 0)
+    elif box.is_extended:
         _instantiate_extended(diagram, box, 0)
     elif box.is_node_scope:
         _instantiate_node_scope(diagram, box, 0)
@@ -1097,7 +1248,9 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
     box = diagram.bang_boxes[box_id]
     if box.is_pair:
         raise BangBoxGrammarError(f"pair box {box_id!r} is instantiated with its parent only")
-    if box.is_extended:
+    if box.is_tree:
+        _instantiate_tree(diagram, box, k)
+    elif box.is_extended:
         _instantiate_extended(diagram, box, k)
     elif box.is_node_scope:
         _instantiate_node_scope(diagram, box, k)
@@ -1518,8 +1671,8 @@ def _peel_node_scope(diagram: Diagram, box: BangBox) -> dict[NodeId, NodeId]:
 def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail."""
-    if box.cyclic:
-        raise BangBoxGrammarError(f"cyclic chain box {box.id!r} has no peel_one")
+    if box.cyclic or box.is_tree:
+        raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair or _pairs_of(diagram, box.id):
         raise BangBoxGrammarError(f"box {box.id!r} with pair boxes has no peel_one")
     temps: list[NodeId] = []

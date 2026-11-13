@@ -128,6 +128,10 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_a.pair_index,
             sorted(box_a.left_ports, key=PortRef.sort_key),
             sorted(box_a.right_ports, key=PortRef.sort_key),
+            box_a.tree,
+            box_a.tree_parent,
+            box_a.level,
+            box_a.position,
         )
         extension_b = (
             box_b.links,
@@ -138,6 +142,10 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_b.pair_index,
             sorted(box_b.left_ports, key=PortRef.sort_key),
             sorted(box_b.right_ports, key=PortRef.sort_key),
+            box_b.tree,
+            box_b.tree_parent,
+            box_b.level,
+            box_b.position,
         )
         if extension_a != extension_b:
             return StructuralComparison(
@@ -187,6 +195,8 @@ def _box_tag(box: BangBox) -> str:
         tag += f"|scalar:{box.copy_scalar}"
     if box.pair_index is not None:
         tag += f"|pairs:{box.pair_index}"
+    if box.tree:
+        tag += f"|tree:{len(box.tree)}:{box.level}:{box.position}"
     return tag
 
 
@@ -348,15 +358,25 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
     descriptors: list[tuple[object, ...]] = []
     for box_id in sorted(diagram.bang_boxes):
         box = diagram.bang_boxes[box_id]
-        links = tuple(
-            tuple((label[r.node_id], r.direction.value, r.index) for r in link)
-            for link in box.links
-            if all(r.node_id in label for r in link)
-        ) + tuple(
-            sorted(
-                (side, label[r.node_id], r.direction.value, r.index)
-                for side, ports in (("left", box.left_ports), ("right", box.right_ports))
-                for r in ports
+        links = (
+            tuple(
+                tuple((label[r.node_id], r.direction.value, r.index) for r in link)
+                for link in box.links
+                if all(r.node_id in label for r in link)
+            )
+            + tuple(
+                sorted(
+                    (side, label[r.node_id], r.direction.value, r.index)
+                    for side, ports in (("left", box.left_ports), ("right", box.right_ports))
+                    for r in ports
+                    if r.node_id in label
+                )
+            )
+            + tuple(
+                (f"tree{i}", label[r.node_id], r.direction.value, r.index)
+                for i, r in enumerate(
+                    (*((box.tree_parent,) if box.tree_parent is not None else ()), *box.tree)
+                )
                 if r.node_id in label
             )
         )

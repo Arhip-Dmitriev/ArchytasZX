@@ -826,6 +826,8 @@ def _mult_expr(node: _Expr) -> sp.Expr:
         return _bounded(sp.Add(*(_mult_expr(term) for _, term in node.terms)))
     if isinstance(node, _Prod) and not any(divided for divided, _ in node.factors):
         return _product([_mult_expr(factor) for _, factor in node.factors])
+    if isinstance(node, _Pow) and isinstance(node.base, _Num) and node.base.value >= 1:
+        return _power(sp.Integer(node.base.value), _mult_expr(node.exponent))
     raise _shape_error(node, "multiplicity")
 
 
@@ -1090,6 +1092,10 @@ class _BoxDraft:
     pair_index: str | None = None
     left_ports: frozenset[PortRef] = frozenset()
     right_ports: frozenset[PortRef] = frozenset()
+    tree: tuple[PortRef, ...] = ()
+    tree_parent: PortRef | None = None
+    level: str | None = None
+    position: str | None = None
 
 
 def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
@@ -1111,6 +1117,10 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             pair_index=draft.pair_index,
             left_ports=draft.left_ports,
             right_ports=draft.right_ports,
+            tree=draft.tree,
+            tree_parent=draft.tree_parent,
+            level=draft.level,
+            position=draft.position,
         )
 
 
@@ -1143,6 +1153,8 @@ _LISTING_NODE_RE = re.compile(
 _LISTING_BOX_RE = re.compile(
     r"!(?P<id>[0-9]+)\s+x\s+(?P<mult>.+?)\s+(?:nodes:\s*(?P<nodes>.+?)|ports:\s*(?P<ports>.+?))"
     r"(?:\s+links:\s*(?P<links>.+?)(?:\s+(?P<cyclic>cyclic))?)?"
+    r"(?:\s+tree:\s*(?P<treeparent>\S+)\s*<-\s*(?P<tree>.+?)"
+    r"(?:\s+level:\s*(?P<level>\w+))?(?:\s+position:\s*(?P<position>\w+))?)?"
     r"(?:\s+index:\s*(?P<index>\w+))?"
     r"(?:\s+copy scalar:\s*(?P<copy>.+?))?"
     r"(?:\s+pairs of:\s*!(?P<pairof>[0-9]+)\s+index:\s*(?P<pairindex>\w+)"
@@ -1318,6 +1330,12 @@ def _listing_boxes(lines: Sequence[str]) -> tuple[dict[int, _BoxDraft], dict[int
             right_ports=frozenset(
                 _listing_ref(r) for r in (_split_top(match["right"]) if match["right"] else [])
             ),
+            tree=tuple(
+                _listing_ref(r) for r in (_split_top(match["tree"]) if match["tree"] else [])
+            ),
+            tree_parent=None if match["treeparent"] is None else _listing_ref(match["treeparent"]),
+            level=match["level"],
+            position=match["position"],
         )
     return drafts, depth
 
@@ -1464,6 +1482,10 @@ _DSL_PAIRS_RE = re.compile(
     rf"pairs\s+(?P<name>{_IDENTIFIER})\s+of\s+(?P<parent>{_IDENTIFIER})\s+index\s+"
     rf"(?P<index>{_IDENTIFIER})\s*:\s*(?P<scope>.+)"
 )
+_DSL_TREE_RE = re.compile(
+    rf"tree\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<parent>\S+)\s*<-\s*(?P<children>.+?)"
+    rf"(?:\s+level\s+(?P<level>{_IDENTIFIER}))?(?:\s+position\s+(?P<position>{_IDENTIFIER}))?"
+)
 _DSL_SIDE_RE = re.compile(rf"(?P<side>left|right)\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<ports>.+)")
 _DSL_COPY_SCALAR_RE = re.compile(rf"copy\s+scalar\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<expr>.+)")
 _DEFAULT_DIM = "d"
@@ -1582,6 +1604,10 @@ class _DslBox:
     pair_index: str | None = None
     left: list[str] = field(default_factory=list)
     right: list[str] = field(default_factory=list)
+    tree: list[str] = field(default_factory=list)
+    tree_parent: str | None = None
+    level: str | None = None
+    position: str | None = None
 
 
 @dataclass
@@ -1634,6 +1660,8 @@ class _Dsl:
             self.copy_scalar(text)
         elif keyword == "pairs" and _DSL_PAIRS_RE.fullmatch(text):
             self.pairs(text)
+        elif keyword == "tree" and _DSL_TREE_RE.fullmatch(text):
+            self.tree(text)
         elif keyword in ("left", "right") and _DSL_SIDE_RE.fullmatch(text):
             self.side(text)
         elif (
@@ -1870,6 +1898,19 @@ class _Dsl:
         )
         self.add_box(_name(match["name"], "box"), box)
 
+    def tree(self, text: str) -> None:
+        match = _DSL_TREE_RE.fullmatch(text)
+        assert match is not None
+        box = self.named_box(match["name"], "tree")
+        if box.tree_parent is not None:
+            raise ParseGrammarError(f"box {match['name']!r} has two tree statements")
+        children = [item.strip() for item in _split_top(match["children"])]
+        for end in (match["parent"], *children):
+            if not _DSL_REF_RE.fullmatch(end):
+                raise ParseGrammarError(f"{end!r} is not a tree port 'A.inJ' or 'B.outI'")
+        box.tree_parent, box.tree = match["parent"], children
+        box.level, box.position = match["level"], match["position"]
+
     def side(self, text: str) -> None:
         match = _DSL_SIDE_RE.fullmatch(text)
         assert match is not None
@@ -2020,6 +2061,12 @@ class _Dsl:
                     pair_index=box.pair_index,
                     left_ports=frozenset(self.ref(r, named) for r in box.left),
                     right_ports=frozenset(self.ref(r, named) for r in box.right),
+                    tree=tuple(self.ref(r, named) for r in box.tree),
+                    tree_parent=(
+                        None if box.tree_parent is None else self.ref(box.tree_parent, named)
+                    ),
+                    level=box.level,
+                    position=box.position,
                 )
             else:
                 if box.links or box.index is not None or box.copy_scalar is not None:
@@ -2037,6 +2084,12 @@ class _Dsl:
                 Mult.symbol(box.pair_index)
                 for box in self.boxes.values()
                 if box.pair_index is not None
+            ),
+            *(
+                Mult.symbol(name)
+                for box in self.boxes.values()
+                for name in (box.level, box.position)
+                if name is not None
             ),
         ]
         _set_phases(diagram, drafts, _role_table(dims, mults))

@@ -385,6 +385,9 @@ Bang boxes:
                                            of B's copies j < k (B's index j, K = k)
     left NAME: A.outI, ...                 ports of B's scope pair box NAME meets in copy j
     right NAME: A.inJ, ...                 ports of B's scope pair box NAME meets in copy k
+    tree NAME: A.inJ <- B.outI, C.outK [level L] [position P]
+                                           box NAME is a tree of depth MULT: parent port
+                                           first, then the child ports (DIAGRAM.txt 4.2)
 
 Other statements:
 

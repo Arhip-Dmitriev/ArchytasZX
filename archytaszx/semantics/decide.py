@@ -493,6 +493,14 @@ def _instantiate_at(diagram: Diagram, point: Mapping[str, int]) -> Diagram:
     return diagram
 
 
+def _degree_bound(expr: sp.Expr, symbol: sp.Symbol) -> int:
+    """``expr``'s degree in ``symbol``, or 3 when it is not a polynomial in it."""
+    try:
+        return int(sp.degree(expr, symbol))
+    except sp.PolynomialError:
+        return 3
+
+
 def _arity_witness(
     left: Diagram,
     right: Diagram,
@@ -504,7 +512,7 @@ def _arity_witness(
     difference is nonzero and both sides instantiate to the substituted arities, or None."""
     difference = sp.expand(counts[0] - counts[1])
     names = sorted(counts[0].free_symbols | counts[1].free_symbols, key=lambda symbol: symbol.name)
-    ranges = [range(int(sp.degree(difference, symbol)) + 1) for symbol in names]
+    ranges = [range(_degree_bound(difference, symbol) + 1) for symbol in names]
     for values in itertools.product(*ranges):
         point = {symbol.name: value for symbol, value in zip(names, values, strict=True)}
         mapping = dict(zip(names, values, strict=True))
@@ -568,7 +576,10 @@ def _interface_reason(left: Diagram, right: Diagram) -> str | None:
 
 def _symbolic_interface_reason(left: Diagram, right: Diagram) -> str | None:
     """Why the symbolic rung cannot trust a match: a boundary input/output count or
-    per-position dimension that differs; None when none applies."""
+    per-position dimension that differs; None when none applies or a side holds a tree box,
+    whose stored leaf slots stand for b^k slots."""
+    if any(box.is_tree for d in (left, right) for box in d.bang_boxes.values()):
+        return None
     for label, refs_l, refs_r in (
         ("input", left.boundary_inputs, right.boundary_inputs),
         ("output", left.boundary_outputs, right.boundary_outputs),

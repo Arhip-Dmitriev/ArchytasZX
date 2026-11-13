@@ -460,6 +460,10 @@ class Diagram:
         pair_index: str | None = None,
         left_ports: frozenset[PortRef] = frozenset(),
         right_ports: frozenset[PortRef] = frozenset(),
+        tree: tuple[PortRef, ...] = (),
+        tree_parent: PortRef | None = None,
+        level: str | None = None,
+        position: str | None = None,
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -491,6 +495,10 @@ class Diagram:
             pair_index=pair_index,
             left_ports=frozenset(left_ports),
             right_ports=frozenset(right_ports),
+            tree=tuple(tree),
+            tree_parent=tree_parent,
+            level=level,
+            position=position,
         )
         return box_id
 
@@ -511,6 +519,10 @@ class Diagram:
             "pair_index",
             "left_ports",
             "right_ports",
+            "tree",
+            "tree_parent",
+            "level",
+            "position",
         }
         unknown = set(fields) - allowed
         if unknown:
