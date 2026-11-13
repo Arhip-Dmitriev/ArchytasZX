@@ -346,9 +346,9 @@ def _follow_links(
             raise RewriteDomainError(
                 f"rule {rule.name!r}: the match removes extended box {box_id!r}"
             )
-        if (box.is_pair or box.is_tree) and touched:
+        if (box.is_pair or box.is_tree or box.is_fed) and touched:
             raise RewriteDomainError(
-                f"rule {rule.name!r}: the match lies in pair or tree box {box_id!r}"
+                f"rule {rule.name!r}: the match lies in pair, tree or fed box {box_id!r}"
             )
         if box.tree_parent is not None:
             far = partner.get(box.tree_parent)

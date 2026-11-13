@@ -132,6 +132,8 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_a.tree_parent,
             box_a.level,
             box_a.position,
+            box_a.feed,
+            box_a.feed_port,
         )
         extension_b = (
             box_b.links,
@@ -146,6 +148,8 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_b.tree_parent,
             box_b.level,
             box_b.position,
+            box_b.feed,
+            box_b.feed_port,
         )
         if extension_a != extension_b:
             return StructuralComparison(
@@ -197,7 +201,23 @@ def _box_tag(box: BangBox) -> str:
         tag += f"|pairs:{box.pair_index}"
     if box.tree:
         tag += f"|tree:{len(box.tree)}:{box.level}:{box.position}"
+    if box.feed is not None:
+        tag += "|fed"
     return tag
+
+
+def _feed_descriptor(
+    diagram: Diagram, box: BangBox, label: dict[NodeId, str]
+) -> tuple[tuple[object, ...], ...]:
+    """A fed box's feed port and its tree's scope in terms of ``label``."""
+    if box.feed_port is None or box.feed not in diagram.bang_boxes:
+        return ()
+    ref = box.feed_port
+    tree = diagram.bang_boxes[box.feed]
+    scope = tuple(sorted(label[n] for n in tree.node_scope if n in label))
+    if ref.node_id not in label:
+        return (("feed", scope),)
+    return (("feed", label[ref.node_id], ref.direction.value, ref.index, scope),)
 
 
 def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
@@ -379,6 +399,7 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
                 )
                 if r.node_id in label
             )
+            + _feed_descriptor(diagram, box, label)
         )
         descriptors.append(
             (

@@ -57,6 +57,7 @@ from archytaszx.diagram.bangbox import (
     boundary_refs_in_scope,
     crossing_wires,
     expand_concrete_boxes,
+    outside_crossings,
     scope_is_closed,
 )
 from archytaszx.diagram.generators import (
@@ -1508,6 +1509,107 @@ def _resolve_trees(diagram: Diagram, max_steps: int) -> Diagram:
     return working
 
 
+def _fan_candidate(diagram: Diagram, box: BangBox) -> tuple[PortRef, PortRef] | None:
+    """The ``(inside, outside)`` crossing of a top-level plain node-scope box without children
+    whose one crossing meets a Z spider outside every box, its other open ports boundary slots
+    facing that spider leg's way; None otherwise."""
+    if (
+        not box.is_node_scope
+        or box.parent is not None
+        or box.links
+        or box.pair_of is not None
+        or box.tree
+        or box.feed is not None
+        or box.index is not None
+        or any(
+            other.parent == box.id or other.pair_of == box.id
+            for other in diagram.bang_boxes.values()
+        )
+    ):
+        return None
+    crossings = outside_crossings(diagram, box.node_scope)
+    if len(crossings) != 1:
+        return None
+    inside, outside = crossings[0]
+    spider = diagram.nodes[outside.node_id]
+    if spider.generator_type is not Z_SPIDER:
+        return None
+    if any(
+        outside.node_id in other.node_scope or outside in other.port_scope
+        for other in diagram.bang_boxes.values()
+    ):
+        return None
+    slots = boundary_refs_in_scope(diagram, box.node_scope)
+    if not slots or any(r.direction is not outside.direction for r in slots):
+        return None
+    return inside, outside
+
+
+def _resolve_fans(diagram: Diagram, max_steps: int) -> Diagram:
+    """``diagram`` with each box fanned into a Z spider whose copy is a carry-copy (one copy's
+    tensor is prod_i delta(p_i - q) times a constant c, q its crossing, the p_i its b boundary
+    slots) replaced by that spider's leg port-boxed b m times in the box's boundary block, the
+    scalar times (c s)^m for multiplicity m and copy scalar s."""
+    working = diagram
+    for box_id in sorted(diagram.bang_boxes):
+        box = working.bang_boxes.get(box_id)
+        if box is None:
+            continue
+        found = _fan_candidate(working, box)
+        if found is None:
+            continue
+        inside, outside = found
+        copy, ports = _open_copy(working, box_id)
+        slots = boundary_refs_in_scope(working, box.node_scope)
+        if set(ports) != {inside, *slots}:
+            continue
+        try:
+            tensor = contract_symbolic(copy, max_steps=max_steps)
+        except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError):
+            continue
+        if tensor.is_variable_rank:
+            continue
+        axis_of = {ref: _engine_index(a.index) for ref, a in zip(ports, tensor.axes, strict=True)}
+        q = axis_of[inside]
+        dim = _port_dim(working, inside)
+        entry = tensor.entry.to_sympy()
+        folded = entry.xreplace({axis_of[p]: q for p in slots})
+        product = sp.Mul(*(ModDelta(axis_of[p] - q, dim.to_sympy()) for p in slots))
+        constant = Scalar(folded).simplify(max_steps=max_steps).to_sympy()
+        if (
+            not Scalar(entry - product * folded).simplify(max_steps=max_steps).is_zero
+            or q in constant.free_symbols
+        ):
+            continue
+        working = working.copy()
+        refs = list(
+            working.boundary_outputs
+            if outside.direction is Direction.OUTPUT
+            else working.boundary_inputs
+        )
+        first = min(refs.index(r) for r in slots)
+        kept = [r for r in refs[:first] if r not in slots]
+        rest = [r for r in refs[first:] if r not in slots]
+        working.remove_wire(inside, outside)
+        for node_id in sorted(box.node_scope):
+            working.remove_node(node_id)
+        working.remove_bang_box(box_id)
+        setter = (
+            working.set_boundary_outputs
+            if outside.direction is Direction.OUTPUT
+            else working.set_boundary_inputs
+        )
+        setter([*kept, outside, *rest])
+        m = box.multiplicity.to_sympy()
+        working.add_bang_box(
+            Mult._from_expr(sp.powsimp(sp.expand(len(slots) * m), force=True)),
+            port_scope=frozenset({outside}),
+        )
+        factor = constant if box.copy_scalar is None else constant * box.copy_scalar.to_sympy()
+        working.multiply_scalar(Scalar(sp.Pow(factor, m)))
+    return working
+
+
 def _spider_tree(diagram: Diagram, box_id: BangBoxId, constant: sp.Expr) -> Diagram:
     """``diagram`` with tree box ``box_id`` and its scope replaced by a phaseless Z spider from
     the head end, its leaf leg in the leaf run's place port-boxed b^k times."""
@@ -1765,8 +1867,12 @@ def contract_symbolic(
             return reduced
     if any(box.links for box in diagram.bang_boxes.values()):
         diagram = _resolve_chains(diagram, max_steps)
+    if any(box.is_fed for box in diagram.bang_boxes.values()):
+        raise SymbolicContractionUnsupportedError("a tree box feeds a box")
     if any(box.is_tree for box in diagram.bang_boxes.values()):
         diagram = _resolve_trees(diagram, max_steps)
+    if any(_fan_candidate(diagram, box) is not None for box in diagram.bang_boxes.values()):
+        diagram = _resolve_fans(diagram, max_steps)
     pair_boxes: dict[BangBoxId, list[_Pair]] = {}
     if any(box.pair_of is not None for box in diagram.bang_boxes.values()):
         diagram, pair_boxes = _detach_pairs(diagram, max_steps)

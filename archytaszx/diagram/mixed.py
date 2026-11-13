@@ -377,8 +377,8 @@ def _copy_boxes(
     port_ids: dict[BangBoxId, dict[int, BangBoxId]] = {}
     for box in order:
         parent = None if box.parent is None else new_id.get(box.parent)
-        if box.is_pair or box.is_tree:
-            raise MixedDomainError(f"bang box {box.id!r}: a pair or tree box has no doubling")
+        if box.is_pair or box.is_tree or box.is_fed:
+            raise MixedDomainError(f"bang box {box.id!r}: a pair, tree or fed box has no doubling")
         if box.is_node_scope:
             scope: set[NodeId] = set()
             for m in maps:
