@@ -32,6 +32,7 @@ from typing import Any, cast
 import sympy as sp  # type: ignore[import-untyped]
 
 from archytaszx.algebra.pathsum import (
+    ONE,
     Canon,
     Cyclo,
     ModPoly,
@@ -454,9 +455,12 @@ class AmpPlan:
 def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
     """The runs of two path sums with atoms (each an initial AmpRun on its raw sum, the steps
     already written kept), reduced, with canon steps at the elimination pivots and the atoms
-    substituted, normalised and merged; raises :class:`PathSumUnsupported` when the sums do not
-    reduce to one canonical form, need Boolean elimination or end on different atoms."""
-    from archytaszx.algebra.pathsum import eliminate
+    substituted, normalised and merged (gather and bcanon steps when a side needs Boolean
+    elimination); raises :class:`PathSumUnsupported` when the sums do not reduce to one
+    canonical form, their Boolean eliminations differ or leave a support, or they end on
+    different atoms."""
+    from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
+    from archytaszx.semantics.lean_amp import reduce_run
 
     (raw_l, run_l), (raw_r, run_r) = sides
     red_l, red_r = reduce(raw_l), reduce(raw_r)
@@ -465,21 +469,27 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         raise PathSumUnsupported("the path sums do not reduce to one canonical form")
     rows_l = eliminate(red_l.constraints, red_l.boundary)
     rows_r = eliminate(red_r.constraints, red_r.boundary)
-    if rows_l is None or rows_r is None:
-        raise PathSumUnsupported("amplitude atoms with a Boolean elimination")
-    order = _elimination_order(red_l.constraints, red_l.boundary)
+    boolean = rows_l is None or rows_r is None
+    if boolean:
+        rows_l, g_l = boolean_eliminate(red_l.constraints, red_l.boundary)
+        rows_r, g_r = boolean_eliminate(red_r.constraints, red_r.boundary)
+        order = [v for v, _r in rows_l]
+        if g_l != ONE or g_r != ONE or order != [v for v, _r in rows_r]:
+            raise PathSumUnsupported("the Boolean eliminations differ or leave a support")
+        canon_steps = [".gather", *(f".bcanon {v}" for v in order)]
+    else:
+        order = _elimination_order(red_l.constraints, red_l.boundary)
+        canon_steps = [f".canon {v}" for v in order]
     starts = []
     for run, red, rows in ((run_l, red_l, rows_l), (run_r, red_r, rows_r)):
         starts.append((list(run.cur), list(run.held), list(run.atoms)))
-        from archytaszx.semantics.lean_amp import reduce_run
-
         reduce_run(run, red.trace)
-        run.inner([f".canon {v}" for v in order])
+        run.inner(canon_steps)
         run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
     if run_l.final_key() != run_r.final_key():
         raise PathSumUnsupported("the reduced sums carry different amplitude atoms")
     m = run_l.coefs.m
-    turns = (_const_turn(red_l, m, False), _const_turn(red_r, m, False))
+    turns = (_const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean))
     plan = AmpPlan(run_l.coefs, (run_l, run_r), (starts[0], starts[1]), m, turns)
     return plan, red_l, red_r
 

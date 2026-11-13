@@ -563,7 +563,8 @@ order. export_proof, for path sums with atoms, writes A (each base an index, equ
 index), tL and tR (the path variables an atom reads held), each side's AStep list (lean_amp:
 folds, releases after every step, [Average] at the trace's average steps, averageH at its
 average_half steps, at a pin step norm, asubB when an atom reads the pinned variable (the path
-variables of its value held first) and the inner pin, the canonical pivots,
+variables of its value held first) and the inner pin, the canonical pivots (gather and bcanon
+steps when a side's constraints need boolean_eliminate, its support 1),
 asub at the pivots the atoms read, anorm and merges), the identities, the constants' identity
 and main : valA M cL A tL sigma = valA M cR A tR sigma. ArchytasZX/PathSumNetAmp.lean: za_frag
 gives a weighted Z spider whose coefficient at v is C ex (phase v) times the product of A over
@@ -913,8 +914,8 @@ for want of a composition operation on Diagram, nor the tensor identities of dis
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
 G15 Path-sum proofs. export_proof and export_net write AData for amplitude atoms (Amplitude atoms, section 4),
-but decline atoms whose reduction needs boolean_eliminate, an atom not on (1 + y) g or y g at
-an [Average], and pairs whose reduced sums end on different atoms (a unit-root atom that the
+but decline atoms beside a Boolean elimination that leaves a support or differs between the
+sides, an atom not on (1 + y) g or y g at an [Average], and pairs whose reduced sums end on different atoms (a unit-root atom that the
 canonical form folds into the phase on one side only). There are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. export_net covers Z, X, F, B and S on dimensions 2^k (legless and weighted

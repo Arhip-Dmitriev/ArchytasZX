@@ -365,6 +365,37 @@ def test_lean_proves_a_pair_with_atoms(name: str, net: bool, tmp_path: object) -
     assert ok, output
 
 
+def _boolean_atoms() -> str:
+    """Constraints a (1 + b) = 0 and b (1 + a) = 0 beside an atom sqrt(2)^a, against a + b = 0
+    beside sqrt(2)^b, exported with atoms."""
+    from fractions import Fraction
+
+    from archytaszx.algebra.pathsum import SQRT2, Cyclo, PathSum, PhasePoly
+    from archytaszx.semantics.lean_pathsum import _export_amp_proof
+
+    def ps(path: set[int], terms: list[tuple[int, ...]], atom: int, sqrt2: int) -> PathSum:
+        phase = PhasePoly()
+        for mono in terms:
+            phase.add(mono, Fraction(1, 2))
+        amps = [(SQRT2, frozenset({frozenset({atom})}))]
+        return PathSum((0, 1), path, phase, Cyclo.rational(1), sqrt2, [], [], amps)
+
+    left = ps({2, 3}, [(2, 0), (2, 0, 1), (3, 1), (3, 0, 1)], 0, 0)
+    right = ps({2}, [(2, 0), (2, 1)], 1, 2)
+    return _export_amp_proof(left, right, "boolean_atoms")
+
+
+def test_atoms_take_a_boolean_elimination() -> None:
+    source = _boolean_atoms()
+    assert ".inner (.gather), .inner (.bcanon 0), .asub 0" in source
+
+
+@needs_lean
+def test_lean_proves_atoms_through_a_boolean_elimination(tmp_path: object) -> None:
+    ok, output = L.check(_boolean_atoms(), f"{tmp_path}/boolean_atoms.lean")
+    assert ok, output
+
+
 @needs_lean
 def test_lean_rejects_a_tampered_atom_table(tmp_path: object) -> None:
     source = _amp("held_parent", True)
