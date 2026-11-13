@@ -346,18 +346,18 @@ def algebraic(a: Diagram, b: Diagram, cert: numfield.FieldCertificate | None = N
 
 @_trace.traced("kernel.contraction")
 def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
-    """``a = b`` when the symbolic contractions of both, every symbol formal, agree."""
+    """``a = b`` when the symbolic contractions of both (both doubled when either has a
+    discard), every symbol formal, agree."""
     from archytaszx.algebra.scalar import ScalarBudgetError
     from archytaszx.semantics.check import compare_symbolic
     from archytaszx.semantics.contract_symbolic import (
         SymbolicContractionDomainError,
         SymbolicContractionUnsupportedError,
-        contract_symbolic,
+        contract_symbolic_pair,
     )
 
     try:
-        left = contract_symbolic(a, max_steps=max_steps)
-        right = contract_symbolic(b, max_steps=max_steps)
+        left, right = contract_symbolic_pair(a, b, max_steps=max_steps)
     except (
         SymbolicContractionUnsupportedError,
         SymbolicContractionDomainError,

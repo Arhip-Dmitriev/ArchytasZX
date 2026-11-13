@@ -1859,6 +1859,12 @@ def contract_symbolic(
     report = validate(diagram)
     if report.errors:
         raise SymbolicContractionValidationError(report)
+    from archytaszx.diagram.mixed import is_pure  # local: mixed imports bangbox
+
+    if not is_pure(diagram):
+        raise SymbolicContractionUnsupportedError(
+            "the diagram has a discard; contract the doubled diagram (contract_symbolic_pair)"
+        )
 
     diagram = expand_concrete_boxes(diagram)
     if not diagram.bang_boxes:
@@ -2462,3 +2468,18 @@ def contract_mixed_symbolic(
     from archytaszx.diagram.mixed import double  # local: mixed imports bangbox
 
     return contract_symbolic(double(diagram), max_steps=max_steps)
+
+
+def contract_symbolic_pair(
+    left: Diagram, right: Diagram, *, max_steps: int = DEFAULT_MAX_SIMPLIFY_STEPS
+) -> tuple[SymbolicTensor, SymbolicTensor]:
+    """The symbolic contractions of ``left`` and ``right``, of both doubled diagrams when either
+    has a discard."""
+    from archytaszx.diagram.mixed import double, is_pure  # local: mixed imports bangbox
+
+    if not (is_pure(left) and is_pure(right)):
+        left, right = double(left), double(right)
+    return (
+        contract_symbolic(left, max_steps=max_steps),
+        contract_symbolic(right, max_steps=max_steps),
+    )

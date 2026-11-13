@@ -73,7 +73,7 @@ from archytaszx.semantics.contract_numeric import (
 from archytaszx.semantics.contract_symbolic import (
     SymbolicContractionDomainError,
     SymbolicContractionUnsupportedError,
-    contract_symbolic,
+    contract_symbolic_pair,
 )
 from archytaszx.semantics.denote import DenoteError
 
@@ -924,8 +924,9 @@ def discharge_peeled_hypothesis(
             right_copy=right_copy,
         )
     try:
-        contracted_left = contract_symbolic(left_extra, max_steps=max_steps)
-        contracted_right = contract_symbolic(right_extra, max_steps=max_steps)
+        contracted_left, contracted_right = contract_symbolic_pair(
+            left_extra, right_extra, max_steps=max_steps
+        )
     except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
         return TierOutcome(StepDischarge.INDUCTION_REWRITE, False, str(exc), ())
     except ScalarBudgetError as exc:
@@ -1489,8 +1490,7 @@ def _close_window(replaced: Diagram, target: Diagram, max_steps: int) -> tuple[b
     if isomorphic(replaced, target, symmetric_legs=not linked):
         return True, "the result is isomorphic to the other successor"
     try:
-        left = contract_symbolic(replaced, max_steps=max_steps)
-        right = contract_symbolic(target, max_steps=max_steps)
+        left, right = contract_symbolic_pair(replaced, target, max_steps=max_steps)
     except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
         return False, f"symbolic contraction: {exc}"
     except ScalarBudgetError as exc:
@@ -1590,15 +1590,17 @@ def discharge_oracle_window(
 def discharge_symbolic_contraction(
     obligation: InductionObligation, *, max_steps: int = DEFAULT_MAX_STEPS
 ) -> TierOutcome:
-    """Settle the step case by contracting both successor diagrams with every symbol kept formal.
+    """Settle the step case by contracting both successor diagrams (both doubled when either has
+    a discard) with every symbol kept formal.
 
     A shape the symbolic contractor does not cover, or a budget it exhausts, returns an
     unsettled outcome rather than raising, so the ladder falls through to the tier below.
     A malformed obligation still propagates: no lower tier can rescue it.
     """
     try:
-        left = contract_symbolic(obligation.left_at_successor, max_steps=max_steps)
-        right = contract_symbolic(obligation.right_at_successor, max_steps=max_steps)
+        left, right = contract_symbolic_pair(
+            obligation.left_at_successor, obligation.right_at_successor, max_steps=max_steps
+        )
     except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError) as exc:
         return TierOutcome(StepDischarge.SYMBOLIC_CONTRACTION, False, str(exc), ())
     except ScalarBudgetError as exc:
