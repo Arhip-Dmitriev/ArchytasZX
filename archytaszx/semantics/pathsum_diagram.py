@@ -242,11 +242,15 @@ def port_bits(diagram: Diagram, base: int = 2) -> list[int]:
     ]
 
 
-def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
+def from_diagram(
+    diagram: Diagram, layout: dict[str, object] | None = None
+) -> PathSum | QuditPathSum:
     """The path sum of ``diagram`` (a :class:`QuditPathSum` at an odd prime base); raises
     :class:`PathSumUnsupported` naming the first node outside the class: a generator other than
     Z, X, F, B and S, a dimension that is symbolic or not a power of two or of one odd prime, a
-    weighted or irrational phase, or a symbolic bang box."""
+    weighted or irrational phase, or a symbolic bang box. ``layout``, when given, receives the
+    diagram read (``diagram``, concrete boxes expanded), each port's digit variables
+    (``digit``) and each X spider's fresh digits (``fresh``)."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
@@ -326,6 +330,11 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
     def digit(ref: PortRef, j: int) -> int:
         return var_of[uf.find(("p", ref.sort_key(), j))]
 
+    fresh_of: dict[NodeId, list[int]] = {}
+    if layout is not None:
+        layout["diagram"] = diagram
+        layout["digit"] = {ref: [digit(ref, j) for j in range(k)] for ref, k in bits.items()}
+        layout["fresh"] = fresh_of
     if base != 2:
         return _qudit_sum(diagram, base, bits, uf, var_of, boundary, path, same, fresh, digit)
     phase = PhasePoly()
@@ -351,6 +360,7 @@ def from_diagram(diagram: Diagram) -> PathSum | QuditPathSum:
         elif name == X_SPIDER.name:
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             ys = [fresh() for _ in range(k)]
+            fresh_of[node_id] = ys
             for ref, sign in legs:
                 for a in range(k):
                     for b in range(k - a):

@@ -40,6 +40,10 @@ def Frag.join (a b : Frag) : Frag :=
 def Disj (a b : Frag) : Prop :=
   ∀ y ∈ a.path, y ∉ b.path ∧ y ∉ pvars b.phase ∧ y ∉ fvars b.cons
 
+instance (a b : Frag) : Decidable (Disj a b) := by
+  unfold Disj
+  infer_instance
+
 /-- The empty fragment. -/
 def Frag.unit : Frag := ⟨[], [], [], 1⟩
 
@@ -438,6 +442,119 @@ theorem x_frag (E : Env) (σ : ℕ → ℕ) (hσ : ∀ l, σ l < 2) (n : Node) (
     ring
   rw [e0, e1, ex_int, ex_add, ex_add, ex_add, ex_add]
   ring
+
+/-! ## Networks -/
+
+theorem tZ_congr (d : ℕ) (φ : ℕ → ℝ) (a b : List ℕ) (h : ∀ x, x ∈ a ↔ x ∈ b) :
+    tZ d φ a = tZ d φ b := by
+  unfold tZ
+  apply Finset.sum_congr rfl
+  intro k _
+  have : (∀ v ∈ a, v = k) ↔ (∀ v ∈ b, v = k) :=
+    ⟨fun H v hv => H v ((h v).2 hv), fun H v hv => H v ((h v).1 hv)⟩
+  simp only [this]
+
+/-- The Z spider's fragment on the legs `ls` around the leg `l0`: `l0 + l = 0` per leg and the
+phase `t0 + (t1 - t0) l0`, in units of `1 / M`. -/
+def zFragAt (M t0 t1 l0 : ℕ) (ls : List ℕ) : Frag :=
+  ⟨[], [([], t0), ([l0], t1 + (M - t0))], ls.map fun l => [[l0], [l]], 1⟩
+
+theorem z_frag_at (E : Env) (σ : ℕ → ℕ) (hσ : ∀ l, σ l < 2) (n : Node) (hk : n.kind = .Z)
+    (hd : E.dimv n.dim = 2) (M t0 t1 : ℕ) (hM : 0 < M) (ht : t0 ≤ M)
+    (h0 : E.phase n.ph 0 = (t0 : ℝ) / M) (h1 : E.phase n.ph 1 = (t1 : ℝ) / M) (l0 : ℕ)
+    (hl : l0 ∈ n.outs ++ n.ins) :
+    ArchytasZX.val E σ n = fval M (zFragAt M t0 t1 l0 (n.outs ++ n.ins)) (bits σ) := by
+  have hv : ArchytasZX.val E σ n = tZ 2 (E.phase n.ph) ((n.outs ++ n.ins).map σ) := by
+    unfold ArchytasZX.val
+    rw [hk]
+    simp only [hd, List.map_append]
+  have hc0 : tZ 2 (E.phase n.ph) ((n.outs ++ n.ins).map σ) =
+      tZ 2 (E.phase n.ph) (σ l0 :: (n.outs ++ n.ins).map σ) := by
+    apply tZ_congr
+    intro x
+    simp only [List.mem_cons]
+    constructor
+    · exact Or.inr
+    · rintro (rfl | hx)
+      · exact List.mem_map.2 ⟨l0, hl, rfl⟩
+      · exact hx
+  rw [hv, hc0, tZ_bits _ _ _ (hσ l0)]
+  unfold fval val zFragAt
+  simp only [bsum, summand, List.append_nil, List.forall_mem_map]
+  have hc : ∀ l, fz (bits σ) [[l0], [l]] = 0 ↔ σ l = σ l0 := by
+    intro l
+    have e : fz (bits σ) [[l0], [l]] = (σ l0 : ZMod 2) + (σ l : ZMod 2) := by
+      simp [fz, mz, bits]
+    rw [e, bits_eq _ _ (hσ l0) (hσ l)]
+  simp only [hc]
+  have hp : pn (bits σ) [([], t0), ([l0], t1 + (M - t0))] =
+      (t0 : ℤ) + ((t1 + (M - t0) : ℕ) : ℤ) * (σ l0 : ℤ) := by
+    simp [pn, mz, bits, zq_bit _ (hσ l0), zq1]
+  rw [hp]
+  split_ifs
+  · rw [one_mul]
+    rcases bit_cases (σ l0) (hσ l0) with e | e
+    · rw [e, h0]; push_cast; simp
+    · rw [e, h1]
+      have : (((t0 : ℤ) + ((t1 + (M - t0) : ℕ) : ℤ) * ((1 : ℕ) : ℤ) : ℤ) : ℝ) / M =
+          (t1 : ℝ) / M + ((1 : ℤ) : ℝ) := by
+        rw [Nat.cast_add, Nat.cast_sub ht]
+        push_cast
+        field_simp
+        ring
+      rw [this, ex_int]
+  · rfl
+
+/-- The network's path sum over its fragments: the summed labels then the fragments' paths. -/
+def netData (N : Net) (fs : List Frag) : Data :=
+  ⟨N.int ++ (joinAll fs).path, (joinAll fs).phase, (joinAll fs).cons, []⟩
+
+/-- `σ` on the labels `bnd`, `0` elsewhere. -/
+def clamp (bnd : List ℕ) (σ : ℕ → ℕ) : ℕ → ℕ := fun l => if l ∈ bnd then σ l else 0
+
+/-- The nodes of `N` are the first components of `ps`, each node's entry is its fragment's value
+at labels of dimension 2, the fragments' paths are disjoint, and every label is summed or on the
+boundary, of dimension 2. -/
+structure NetPS (E : Env) (N : Net) (M : ℕ) (ps : List (Node × Frag)) : Prop where
+  nodes : N.nodes = ps.map Prod.fst
+  node : ∀ p ∈ ps, ∀ σ, (∀ l, σ l < 2) → ArchytasZX.val E σ p.1 = fval M p.2 (bits σ)
+  disj : (ps.map Prod.snd).Pairwise fun a b => Disj a b ∧ Disj b a
+  int : ∀ l ∈ N.int, labDim E l = 2
+  bnd : ∀ l ∈ N.bnd, labDim E l = 2
+  cover : ∀ l ∈ labelsOf N.nodes, l ∈ N.int ∨ l ∈ N.bnd
+
+theorem NetPS.eval_eq {E : Env} {N : Net} {M : ℕ} {ps : List (Node × Frag)} (h : NetPS E N M ps)
+    (σ : ℕ → ℕ) (hσ : InRange E N.bnd σ) :
+    eval E N σ = val M (joinAll (ps.map Prod.snd)).c (netData N (ps.map Prod.snd))
+      (bits (clamp N.bnd σ)) := by
+  have he : eval E N σ = eval E N (clamp N.bnd σ) := by
+    unfold eval
+    apply sumOver_ext (labDim E) N.int (labelsOf N.nodes) _ (prodVal_reads E N.nodes)
+    intro x hx hn
+    rcases h.cover x hx with hi | hb
+    · exact absurd hi hn
+    · simp [clamp, hb]
+  have hc : ∀ l, clamp N.bnd σ l < 2 := by
+    intro l
+    unfold clamp
+    split_ifs with hl
+    · have := hσ l hl
+      rwa [h.bnd l hl] at this
+    · omega
+  rw [he, eval_frags E N M ps h.nodes h.node h.disj h.int _ hc]
+  rfl
+
+/-- Two networks with one boundary whose fragments' path sums, scaled by `s₁` and `s₂`, agree
+at every Boolean assignment. -/
+theorem equal_ps {E : Env} {N₁ N₂ : Net} {M : ℕ} {ps₁ ps₂ : List (Node × Frag)} (s₁ s₂ : ℂ)
+    (h₁ : NetPS E N₁ M ps₁) (h₂ : NetPS E N₂ M ps₂) (hb : N₁.bnd = N₂.bnd)
+    (hv : ∀ τ, s₁ * val M (joinAll (ps₁.map Prod.snd)).c (netData N₁ (ps₁.map Prod.snd)) τ =
+      s₂ * val M (joinAll (ps₂.map Prod.snd)).c (netData N₂ (ps₂.map Prod.snd)) τ) :
+    Equal E s₁ N₁ s₂ N₂ := by
+  refine ⟨hb ▸ List.Perm.refl _, fun σ hσ => ?_⟩
+  have hσ₂ : InRange E N₂.bnd σ := hb ▸ hσ
+  rw [h₁.eval_eq σ hσ, h₂.eval_eq σ hσ₂, ← hb]
+  exact hv _
 
 end PSem
 end ArchytasZX

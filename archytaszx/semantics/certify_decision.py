@@ -72,7 +72,14 @@ def pair_proof(
                 "",
             )
     if decision.method is DecisionMethod.PATH_SUM:
-        return None, "a path_sum verdict has no proof export yet (lean_pathsum)"
+        from archytaszx.algebra.pathsum import PathSumError
+        from archytaszx.semantics.lean_pathsum import export_net
+
+        try:
+            with _trace.span("decide.proof.path_sum"):
+                return kernel.Symbolic(left, right, export_net(left, right)), ""
+        except (PathSumError, ScalarUnsupported) as exc:
+            return None, f"path_sum network export: {exc}"
     try:
         with _trace.span("decide.proof.kernel"):
             return kernel.from_decision(decision, left, right), ""

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0.
 import ArchytasZX.PathSumSem
 
 /-!
-# Path-sum steps [omega], [HHgen], [Rem], [HHnl] and step lists
+# Path-sum steps [omega], [HHgen], [Rem], [HHnl], pin, norm and step lists
 
 Each step reads the head path variables of a `Data`; `*OK` is its syntactic side condition, a
 `Bool` checked by `decide`, and `*_sound` says the value is unchanged up to the step's constant
@@ -586,6 +586,140 @@ theorem hhNl_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (h : hhN
     rcases z2_cases (fz τ Q) with e1 | e1 <;> rcases z2_cases (fz τ Q') with e2 | e2 <;>
       simp [e1, e2, h10, h11] <;> ring
 
+/-! ## [pin] and normalisation -/
+
+/-- Whether `q` is `[v]` plus `B`, `B` free of `v`. -/
+def pinAt (v : ℕ) (B : F2) (q : F2) : Bool := pivotable v q && decide (q.erase [v] = B)
+
+/-- Whether the head variable `v` is not in the tail and some constraint is `[v] + B`. -/
+def pinOK (B : F2) (s : Data) : Bool :=
+  match s.path with
+  | [] => false
+  | v :: ys => !decide (v ∈ ys) && (s.cons.find? (pinAt v B)).isSome
+
+/-- The head variable `v` set to `B` throughout and dropped, its constraint removed. -/
+def pinS (M : ℕ) (B : F2) (s : Data) : Data :=
+  match s.path with
+  | [] => s
+  | v :: ys =>
+    match s.cons.find? (pinAt v B) with
+    | none => s
+    | some q =>
+      { path := ys, phase := normP M (substP M v B s.phase),
+        cons := (s.cons.erase q).map fun r => normF (substF v B r),
+        rows := s.rows.map fun r => normF (substF v B r) }
+
+theorem pin_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (B : F2) (s : Data) (σ : ℕ → ZMod 2)
+    (h : pinOK B s = true) : val M c s σ = val M c (pinS M B s) σ := by
+  unfold val
+  rcases hp : s.path with _ | ⟨v, ys⟩
+  · simp [pinOK, hp] at h
+  · simp only [pinOK, hp, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+      Option.isSome_iff_exists] at h
+    obtain ⟨hv, ⟨q, hq⟩⟩ := h
+    have hiq : q ∈ s.cons := List.mem_of_find?_eq_some hq
+    have hpq : pinAt v B q = true := List.find?_some hq
+    simp only [pinAt, pivotable, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+      decide_eq_true_eq] at hpq
+    obtain ⟨⟨hvq, hvB⟩, hB⟩ := hpq
+    subst hB
+    have hM0 : 0 < M := by omega
+    simp only [pinS, hp, hq]
+    rw [bsum_head _ v ys σ hv]
+    apply bsum_congr
+    intro τ
+    set B := q.erase [v] with hBdef
+    have hBv : ∀ m ∈ B, v ∉ m := by
+      intro m hm hvm
+      exact hvB (List.mem_flatMap.2 ⟨m, hm, hvm⟩)
+    have hfB : ∀ w : ZMod 2, fz (Function.update τ v w) B = fz τ B :=
+      fun w => fz_update_not τ v w B hBv
+    have hqv : ∀ w : ZMod 2, fz (Function.update τ v w) q = w + fz τ B := by
+      intro w
+      rw [fz_perm _ (List.perm_cons_erase hvq), fz_cons, ← hBdef, hfB]
+      simp [mz, Function.update_self]
+    have hperm := List.perm_cons_erase hiq
+    have key : ∀ w : ZMod 2, summand M c s (Function.update τ v w) =
+        if w = fz τ B then summand M c
+          { path := ys, phase := normP M (substP M v B s.phase),
+            cons := (s.cons.erase q).map fun r => normF (substF v B r),
+            rows := s.rows.map fun r => normF (substF v B r) } τ else 0 := by
+      intro w
+      unfold summand
+      by_cases hw : w = fz τ B
+      · rw [if_pos hw]
+        subst hw
+        have hsub : ∀ r, fz τ (normF (substF v B r)) = fz (Function.update τ v (fz τ B)) r := by
+          intro r
+          rw [fz_normF, fz_substF]
+        have hcond : (∀ r ∈ (s.cons.erase q).map (fun r => normF (substF v B r)) ++
+            s.rows.map (fun r => normF (substF v B r)), fz τ r = 0) ↔
+            (∀ r ∈ s.cons ++ s.rows, fz (Function.update τ v (fz τ B)) r = 0) := by
+          simp only [List.mem_append, List.mem_map]
+          constructor
+          · rintro H r (hr | hr)
+            · rcases List.mem_cons.1 (hperm.mem_iff.1 hr) with e | hr'
+              · rw [e, hqv]; exact z2_add_self _
+              · have := H _ (Or.inl ⟨r, hr', rfl⟩)
+                rwa [hsub] at this
+            · have := H _ (Or.inr ⟨r, hr, rfl⟩)
+              rwa [hsub] at this
+          · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩)
+            · rw [hsub]; exact H r' (Or.inl (List.mem_of_mem_erase hr'))
+            · rw [hsub]; exact H r' (Or.inr hr')
+        simp only [hcond]
+        split_ifs
+        · congr 1
+          exact (ex_peq hM0 (peq_trans (pn_normP τ M _) (pn_substP τ M v hM B s.phase))).symm
+        · rfl
+      · rw [if_neg hw]
+        have hne : ¬ (∀ r ∈ s.cons ++ s.rows, fz (Function.update τ v w) r = 0) := by
+          intro H
+          apply hw
+          have := H q (List.mem_append_left _ hiq)
+          rw [hqv] at this
+          exact z2_eq_of_add _ _ this
+        rw [if_neg hne]
+    rw [key 0, key 1]
+    rcases z2_cases (fz τ B) with e | e <;> rw [e] <;> simp
+
+/-- The phase and every constraint and row normalised. -/
+def normS (M : ℕ) (s : Data) : Data :=
+  { path := s.path, phase := normP M s.phase, cons := s.cons.map normF, rows := s.rows.map normF }
+
+theorem norm_sound (M : ℕ) (hM : 0 < M) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
+    val M c s σ = val M c (normS M s) σ := by
+  unfold val normS
+  apply bsum_congr
+  intro τ
+  unfold summand
+  dsimp only
+  have hcond : (∀ r ∈ s.cons.map normF ++ s.rows.map normF, fz τ r = 0) ↔
+      (∀ r ∈ s.cons ++ s.rows, fz τ r = 0) := by
+    simp only [List.mem_append, List.mem_map]
+    constructor
+    · rintro H r (hr | hr)
+      · have := H _ (Or.inl ⟨r, hr, rfl⟩); rwa [fz_normF] at this
+      · have := H _ (Or.inr ⟨r, hr, rfl⟩); rwa [fz_normF] at this
+    · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩)
+      · rw [fz_normF]; exact H r' (Or.inl hr')
+      · rw [fz_normF]; exact H r' (Or.inr hr')
+  simp only [hcond]
+  split_ifs
+  · congr 1
+    exact (ex_peq hM (pn_normP τ M s.phase)).symm
+  · rfl
+
+theorem val_smul (M : ℕ) (a c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
+    val M (a * c) s σ = a * val M c s σ := by
+  unfold val
+  rw [← bsum_smul]
+  apply bsum_congr
+  intro τ
+  unfold summand
+  split_ifs <;> ring
+
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -602,6 +736,8 @@ inductive Step where
   | hhGen
   | rem
   | hhNl
+  | pin (B : F2)
+  | norm
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -617,6 +753,8 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .hhGen, s => hhGenOK M s
   | .rem, s => remOK M s
   | .hhNl, s => hhNlOK M s
+  | .pin B, s => pinOK B s
+  | .norm, _ => true
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -632,13 +770,15 @@ def stepS (M : ℕ) : Step → Data → Data
   | .hhGen, s => hhGenS M s
   | .rem, s => remS s
   | .hhNl, s => hhNlS M s
+  | .pin B, s => pinS M B s
+  | .norm, s => normS M s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
   | .elim | .hhCons | .hhPivot | .hhNl => 2
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
-  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem => 1
+  | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -670,6 +810,8 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | hhGen => simpa [fac, stepS] using hhGen_sound M c s σ h
   | rem => simpa [fac, stepS] using rem_sound M c s σ h
   | hhNl => simpa [fac, stepS] using hhNl_sound M c s σ h
+  | pin B => simpa [fac, stepS] using pin_sound M hM c B s σ h
+  | norm => simpa [fac, stepS] using norm_sound M (by omega) c s σ
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →

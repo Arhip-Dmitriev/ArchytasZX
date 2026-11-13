@@ -463,7 +463,21 @@ constraints) at bits sigma when each node's val equals its fragment's fval. The 
 z_frag (zFrag: l0 + l = 0 per other leg, phase t0 + (t1 - t0) l0, from E.phase = t / M),
 x_frag (xFrag: a fresh variable y, phase t0 + (t1 - t0) y + Sum_l y l / 2, constant
 sqrt 2 ^ (-legs); fou2_ex, fou2_conj, prod_ex) and f_frag (fFrag: phase o i / 2, constant
-1 / sqrt 2).
+1 / sqrt 2). z_frag_at anchors the Z fragment at any leg l0 (zFragAt: l0 + l = 0 for every
+leg, phase on l0). NetPS E N M ps bundles the facts eval_frags needs plus every label summed or
+on the boundary; NetPS.eval_eq gives eval E N sigma = val of netData N fs (the summed labels then
+the fragments' paths) at the bits of sigma clamped to the boundary, and equal_ps turns
+s1 * val L tau = s2 * val R tau for every tau into Equal E s1 N1 s2 N2. PathSumRules adds the
+steps pin B (the head variable v with a constraint [v] + B, B free of v: v := B throughout,
+the constraint dropped, factor 1; pin_sound) and norm (phase, constraints and rows normalised;
+norm_sound), and val_smul. lean_pathsum.export_net(left, right) writes the networks of two
+qubit diagrams of Z, X and F nodes, labelled from from_diagram's numbering (boundary port i is
+label i, a summed wire is its class's variable when that is a path variable not yet taken,
+else a label from PIN_OFFSET; each Z fragment anchored at the label through which a search from
+its class's variable first reaches it), their fragments with NetPS proofs, the pin steps
+(deepest first, each pinned label to its search parent), norm, a perm to from_diagram's path
+and the reduction steps of export_proof, and main : Equal E sL NL sR NR by equal_ps, run_sound
+and final_sound. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
 
 5. REFUTATIONS
 --------------
@@ -791,10 +805,7 @@ discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported
 G15 Path-sum proofs. PathSumRules has no step for [Dyadic] or [Average] and there are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. PathSumNet covers Z, X and F at dimension 2 but not B, S or legs of 2^k digits,
-and export_proof does not yet write the network, its fragments and the step from the
-fragments' Data (one variable per label) to from_diagram's merged variables. main is about
-path sums: the link from a diagram's network value to val of its from_diagram Data (the
-translation lemmas of PATH_SUM_SPEC A.4: Z table interpolation, the X, F, B and S translations,
-boundary identification) is not written, so a path_sum EQUAL stays EQUAL_UNCERTIFIED.
+nor legless spiders, weighted spiders or a wire on two boundary ports; export_net raises for
+those and the path_sum EQUAL stays EQUAL_UNCERTIFIED.
 PathSum.lean, PathSumSem.lean, PathSumRules.lean and PathSumNet.lean check (no sorry) and are
 in the ArchytasZX root import list.
