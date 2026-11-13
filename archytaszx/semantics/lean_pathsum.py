@@ -1305,6 +1305,80 @@ class NetBody:
     m: int
 
 
+@dataclass
+class _ZeroPlan:
+    """The phase modulus of a pair of zero diagrams and, per side, its trace steps to a
+    constraint 1 = 0, or None for a side whose scalar is zero."""
+
+    m: int
+    steps: tuple[list[str] | None, list[str] | None]
+
+
+def _zero_plan(left: Diagram, right: Diagram, m_min: int) -> _ZeroPlan | None:
+    """The zero plan of two diagrams each with scalar zero or a network reducing to a
+    constraint 1 = 0; None otherwise."""
+    m = math.lcm(4, m_min)
+    steps: list[list[str] | None] = []
+    for d in (left, right):
+        raw = from_diagram(d)
+        if not isinstance(raw, PathSum) or raw.amps:
+            return None
+        for c in raw.phase.terms.values():
+            m = math.lcm(m, c.denominator)
+        if sp.simplify(d.scalar.to_sympy()) == 0:
+            steps.append(None)
+            continue
+        red = reduce(raw)
+        if ONE not in red.constraints:
+            return None
+        if any(st.rule in ("omega", "omega_conj") for st in red.trace):
+            m = math.lcm(m, 8)
+        steps.append([*_steps(raw, red, [], False), ".norm"])
+    return _ZeroPlan(m, (steps[0], steps[1]))
+
+
+def _zero_body(
+    left: Diagram,
+    right: Diagram,
+    name: str,
+    phases: list[tuple[str, int]],
+    coefs: dict[int, str] | None,
+    plan: _ZeroPlan,
+) -> NetBody:
+    """:func:`net_body` for a zero plan: each network side run to a constraint 1 = 0 and
+    ``val_of_zeroOK``, each other side times its zero scalar."""
+    m = plan.m
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
+    side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
+    if [side_l.k_of[i] for i in range(side_l.boundary)] != [
+        side_r.k_of[i] for i in range(side_r.boundary)
+    ]:
+        raise PathSumUnsupported("the boundary ports carry different dimensions")
+    sc = _scalars()
+    s_l, s_r = sc.text(side_l.scalar), sc.text(side_r.scalar)
+    lines = [*_net_lines("L", side_l, m), *_net_lines("R", side_r, m)]
+    rws: list[str] = []
+    for tag, side, steps in (("L", side_l, plan.steps[0]), ("R", side_r, plan.steps[1])):
+        if steps is None:
+            continue
+        lines += [f"def steps{tag} : List Step := [{', '.join([*side.steps, *steps])}]", ""]
+        data = f"(netDataD dig{tag} N{tag} (ps{tag}.map Prod.snd))"
+        rws += [
+            f"run_sound {m} (by norm_num) steps{tag} {data} _ _ (by decide)",
+            f"PSem.val_of_zeroOK {m} _ (run {m} steps{tag} {data}) _ (by decide)",
+        ]
+    lines += [
+        "/-- The two networks are equal (both zero). -/",
+        f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
+        "  apply equal_psd2 _ _ netL netR rfl",
+        "  intro σ",
+        *([f"  rw [{',\n    '.join(rws)}]"] if rws else []),
+        "  simp",
+        "",
+    ]
+    return NetBody(lines, {**side_l.k_of, **side_r.k_of}, s_l, s_r, m)
+
+
 def net_body(
     left: Diagram,
     right: Diagram,
@@ -1315,8 +1389,9 @@ def net_body(
 ) -> NetBody:
     """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
     and S nodes on dimensions 2^k, their phase vectors appended to ``phases``, phases over a
-    multiple of ``m_min`` (see :func:`export_net`); raises :class:`PathSumUnsupported` outside
-    that class or when the sums do not reduce to one canonical form."""
+    multiple of ``m_min`` (see :func:`export_net`), each side zero by its scalar or by a
+    constraint 1 = 0 included; raises :class:`PathSumUnsupported` outside that class or when
+    the sums do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
     raw_l, raw_r = from_diagram(left), from_diagram(right)
@@ -1325,7 +1400,13 @@ def net_body(
     if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
-    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, m_min)
+    try:
+        red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, m_min)
+    except PathSumUnsupported:
+        zero = _zero_plan(left, right, m_min)
+        if zero is None:
+            raise
+        return _zero_body(left, right, name, phases, coefs, zero)
     side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [

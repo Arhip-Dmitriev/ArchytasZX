@@ -41,6 +41,21 @@ wire a.out0 -- b.in0
 scalar I^n"""
 """i^n <1|+>."""
 
+FLIPS = """count n
+a = X(0 -> 1, literal 2)
+repeat n as V: x = X(1 -> 1, literal 2) phase{1: 1/2}
+b = X(1 -> 0, literal 2)
+wire a.out0 -- x.in0, x.out0 -- b.in0
+chain V: x.out0 -> x.in0"""
+"""<0| X^n |0> by a chain of n X(pi) spiders."""
+
+PARITY = """count n
+a = X(0 -> 1, literal 2)
+b = X(1 -> 0, literal 2)
+wire a.out0 -- b.in0
+scalar (1 + (-1)^n)/2"""
+"""<0|0> times the parity of n."""
+
 
 def _theorem(left: str, right: str) -> K.Theorem:
     decision = decide_equal(parse_dsl(left), parse_dsl(right), max_samples=0)
@@ -57,6 +72,14 @@ def test_the_s_chain_export_states_the_family_at_every_index() -> None:
     assert "namespace At3" in source
 
 
+def test_a_pair_zero_at_one_index_is_exported() -> None:
+    """The flips pair at n = 1: the chain side reaches a constraint 1 = 0, the other side has
+    scalar zero."""
+    source = export_periodic(_theorem(FLIPS, PARITY), name="flips", checks=(2, 3))
+    assert "theorem baseEq : Equal E (1) NL ((0 : ℂ)) NR := by" in source
+    assert "PSem.val_of_zeroOK 4 _ (run 4 stepsL" in source
+
+
 def test_a_theorem_of_another_kind_is_refused() -> None:
     wire = parse_dsl("a = Z(1 -> 1, literal 2)\ninputs a.in0\noutputs a.out0")
     with pytest.raises(PathSumUnsupported):
@@ -71,4 +94,11 @@ def _mathlib() -> bool:
 def test_lean_proves_the_s_chain_family(tmp_path: object) -> None:
     source = export_periodic(_theorem(S_CHAIN, PHASED), name="s_chain", checks=(2, 3))
     ok, output = L.check(source, f"{tmp_path}/s_chain.lean")
+    assert ok, output
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_proves_the_flips_family(tmp_path: object) -> None:
+    source = export_periodic(_theorem(FLIPS, PARITY), name="flips", checks=(2, 3))
+    ok, output = L.check(source, f"{tmp_path}/flips.lean")
     assert ok, output

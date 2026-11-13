@@ -233,10 +233,13 @@ scalar c^(p / period) from chain_period) proved by path sums (net_body), relabel
 templates found by label search (phase indices of equal vectors first made one), A the scalar's
 shift_ratio; at each checked k both sides instantiated are linked and equal under their own
 scalars. Refused: a chain on both sides, a copy scalar, a box node wired outside off its links,
-a tail end on the boundary, the two ends meeting outside the box, qudits, weights, mixed wire
-dimensions, and a pair that vanishes at some n < p (net_body refuses zero sums: the X(pi) flips
-pair, zero at n = 1). Boxed qubitization_chebyshev (p = 2, A = 16, c = -1/16) and a chain of S
-spiders against i^n (p = 4) are Lean-checked at every n, with instances at n = 2, 3.
+a tail end on the boundary, the two ends meeting outside the box, qudits, weights and mixed wire
+dimensions. A pair whose sides are both zero is proved by net_body side by side: a side with
+scalar zero by zero_mul, a network side by its trace steps to a constraint 1 = 0 then .norm and
+PSem.val_of_zeroOK (PathSumNetW.lean: a sum with the constraint [[]] is zero). Boxed
+qubitization_chebyshev (p = 2, A = 16, c = -1/16), a chain of S spiders against i^n (p = 4) and
+the X(pi) flips chain against (1 + (-1)^n)/2 <0|0> (p = 2, its pair at n = 1 zero) are
+Lean-checked at every n, with instances at n = 2, 3.
 
 The engine's boundary order after expansion has a closed form, the key order: slot i's copy t
 (its copy index along its node boxes, outermost first, then its port boxes) is placed by the

@@ -63,5 +63,28 @@ theorem w_frag (E : Env) (σ : ℕ → ℕ) (n n' : Node) (M : ℕ) (f : Frag) (
     (hf : ArchytasZX.val E σ n' = fval M f τ) : ArchytasZX.val E σ n = fval M (f.scale C) τ := by
   rw [hw, hf, fval_scale]
 
+/-- Whether a constraint of the sum is the constant 1. -/
+def zeroOK (s : Data) : Bool := s.cons.any (· = [[]])
+
+theorem bsum_zero : ∀ (ys : List ℕ) (σ : ℕ → ZMod 2), bsum ys (fun _ => (0 : ℂ)) σ = 0
+  | [], _ => rfl
+  | _ :: ys, σ => by simp only [bsum, bsum_zero ys, add_zero]
+
+/-- A sum with the constraint 1 = 0 is zero. -/
+theorem val_of_zeroOK (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) (h : zeroOK s = true) :
+    val M c s σ = 0 := by
+  obtain ⟨q, hq, hq1⟩ := List.any_eq_true.1 h
+  have hq1' : q = [[]] := of_decide_eq_true hq1
+  subst hq1'
+  have hs : ∀ τ, summand M c s τ = 0 := by
+    intro τ
+    unfold summand
+    split_ifs with H
+    · have h1 := H [[]] (List.mem_append_left _ hq)
+      simp [fz, mz] at h1
+    · rfl
+  unfold val
+  rw [bsum_congr _ _ hs, bsum_zero]
+
 end PSem
 end ArchytasZX
