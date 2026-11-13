@@ -136,9 +136,9 @@ def _entry(raw: Any, pure: Any, outs: list[int], ins: list[int], mixed: bool = F
     arity = max((len(n.inputs) + len(n.outputs) for n in pure.nodes.values()), default=0)
     lo, li = breaks._boundary_dims(pure)
     if math.prod(lo) * math.prod(li) <= breaks.DENSE_LIMIT:
-        from archytaszx.semantics import check
+        from archytaszx.semantics import contract_numeric
 
-        t = np.asarray(check.contract(pure).tensor)
+        t = np.asarray(contract_numeric.contract(pure).tensor)
         return complex(t[tuple(outs) + tuple(ins)]) if t.ndim else complex(t)
     if arity <= 12:
         return breaks.plugged(pure, tuple(outs), tuple(ins))
@@ -162,7 +162,7 @@ def _slice_check(fi: Any, tag: str, ew: dict[str, Any]) -> list[str]:
 
 
 def _slice_one(fi: Any, tag: str, ew: dict[str, Any], n: Any, d: int) -> list[str]:
-    from archytaszx.semantics import check
+    from archytaszx.semantics import contract_numeric
     from benchmarks import breaks, subject
 
     out: list[str] = []
@@ -172,8 +172,8 @@ def _slice_one(fi: Any, tag: str, ew: dict[str, Any], n: Any, d: int) -> list[st
         if not left.is_pure() or not right.is_pure():
             return out
         lo, li = breaks._boundary_dims(pl)
-        a = np.asarray(check.contract(pl).tensor).reshape([*lo, *li])
-        b = np.asarray(check.contract(pr).tensor).reshape([*lo, *li])
+        a = np.asarray(contract_numeric.contract(pl).tensor).reshape([*lo, *li])
+        b = np.asarray(contract_numeric.contract(pr).tensor).reshape([*lo, *li])
         if "input_zero" in ew:
             c = subject.circuit_at(fi, n, d)
             ins = [q for q in breaks._inputs(c)]
@@ -272,7 +272,7 @@ def test_quanto_rules() -> list[str]:
     the oracle, !-boxes at 0 and 1 copies, alpha and beta at 1/3 and 1/7 (units of pi)."""
     from fractions import Fraction
 
-    from archytaszx.semantics import check
+    from archytaszx.semantics import check, contract_numeric
     from benchmarks import stages
     from benchmarks.tools import quantomatic, rival
 
@@ -290,7 +290,7 @@ def test_quanto_rules() -> list[str]:
                 for side in ("lhs", "rhs"):
                     body, order = quantomatic.rule_side_dsl(rule[side], keep, env)
                     if all(ln.startswith("scalar") for ln in body.splitlines()):
-                        import sympy as sp
+                        import sympy as sp  # type: ignore[import-untyped]
 
                         expr = " * ".join(ln[len("scalar ") :] for ln in body.splitlines()) or "1"
                         tens.append(np.array([complex(sp.N(sp.sympify(expr)))]))
@@ -302,7 +302,9 @@ def test_quanto_rules() -> list[str]:
                     if not out.ok:
                         raise RuntimeError(stages.text_of(out)[:160])
                     t = np.asarray(
-                        check.contract(check.instantiate(run_.session.current, {})).tensor
+                        contract_numeric.contract(
+                            check.instantiate(run_.session.current, {})
+                        ).tensor
                     )
                     perm = [order.index(w) for w in sorted(order)]
                     tens.append(np.transpose(t, perm).reshape(-1) if perm else t.reshape(-1))
@@ -381,7 +383,7 @@ class _FakeRun:
 
     def execute(self) -> dict[str, Any]:
         recs: list[dict[str, Any]] = []
-        self.unit._finish = lambda key, fields: recs.append(fields)  # type: ignore[method-assign]
+        self.unit._finish = lambda unit_key, fields: recs.append(fields)  # type: ignore[method-assign]
         self.unit.execute()
         return recs[0]
 

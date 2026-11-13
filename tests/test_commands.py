@@ -63,9 +63,15 @@ from archytaszx.semantics.certificate import (
 )
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.decide import decide_equal, sample_grid
+from archytaszx.semantics.induction import InductionResult
 from archytaszx.semantics.interop import RoundTripReport, SheetCheck
 from archytaszx.semantics.lean_net import check, lean_project
-from archytaszx.semantics.prove import InductionProof, ProofCertificate, ProofCheck
+from archytaszx.semantics.prove import (
+    InductionProof,
+    ProofCertificate,
+    ProofCheck,
+    ProofOutcome,
+)
 
 from .helpers import build_ghz_with_copy
 from .test_lean_sym import BUILT
@@ -812,7 +818,7 @@ class TestProve:
         lines = texts(outcome)
         assert lines[0].startswith("prove: proved: ")
         assert lines[1] == "proof by search; certificate emits it"
-        assert s.last_proof is not None and s.last_proof.proved
+        assert isinstance(s.last_proof, ProofOutcome | InductionResult) and s.last_proof.proved
         assert not outcome.changed
 
     def test_refuted(self) -> None:

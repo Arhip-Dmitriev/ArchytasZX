@@ -40,7 +40,7 @@ from archytaszx.semantics.prove import ProofOutcome, ProofStatus, check_proof, p
 
 from . import test_decide as TD
 from . import test_phase8_oracle as T8
-from .test_normal_form import _chain, _single_spider
+from .test_normal_form import _chain, _deferred_fusion_diagram, _single_spider
 from .test_phase14_oracle import (
     bialgebra_4,
     bialgebra_5,
@@ -167,8 +167,8 @@ PROVED: dict[str, Callable[[], Pair]] = {
     "boxed_fusion": T8._build_boxed_fusion_family,
     "two_index_fusion": T8._build_two_index_fusion_family,
     "deferred_fusion": lambda: (
-        TD.deferred_fusion_diagram(),
-        rewritten(TD.deferred_fusion_diagram(), "spider_fusion"),
+        _deferred_fusion_diagram(),
+        rewritten(_deferred_fusion_diagram(), "spider_fusion"),
     ),
     "mixed_dimensions": lambda: (
         mixed_dimensions(fused=False),

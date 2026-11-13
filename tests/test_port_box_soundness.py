@@ -194,10 +194,10 @@ def _random_boxed(rng: random.Random) -> Diagram | None:
         ]
 
     for _ in range(rng.randint(0, 4)):
-        outs = [p for p in free() if p.direction is Direction.OUTPUT]
-        ins = [p for p in free() if p.direction is Direction.INPUT]
-        if outs and ins:
-            a, b = rng.choice(outs), rng.choice(ins)
+        out_ports = [p for p in free() if p.direction is Direction.OUTPUT]
+        in_ports = [p for p in free() if p.direction is Direction.INPUT]
+        if out_ports and in_ports:
+            a, b = rng.choice(out_ports), rng.choice(in_ports)
             if a.node_id != b.node_id:
                 d.add_wire(a, b)
     ports = free()

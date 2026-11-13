@@ -20,6 +20,7 @@ import itertools
 import math
 import os
 import random
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
 
@@ -185,7 +186,7 @@ def _integer_phase(phased: bool) -> Diagram:
     return g
 
 
-BUILT = {
+BUILT: dict[str, Callable[[], tuple[Diagram, Diagram]]] = {
     "nested_boxes": lambda: (_boxed(False, "nested"), _boxed(True, "nested")),
     "two_multiplicities": lambda: (_boxed(False, "two"), _boxed(True, "two")),
     "nested_one_symbol": lambda: (_boxed(False, "same"), _boxed(True, "same")),
@@ -193,7 +194,10 @@ BUILT = {
     "integer_phase": lambda: (_integer_phase(True), _integer_phase(False)),
     "w_port_box": lambda: (_w_port(True), _w_port(False)),
     "scalar_power": lambda: (_scaled_family(True), _scaled_family(False)),
-    "shared_opaque": lambda: tuple(_with_pi(parse_diagram(t)) for t in PAIRS["phase_fusion"]),
+    "shared_opaque": lambda: (
+        _with_pi(parse_diagram(PAIRS["phase_fusion"][0])),
+        _with_pi(parse_diagram(PAIRS["phase_fusion"][1])),
+    ),
     "opaque_ratio": lambda: (
         _with_pi(_with_two(parse_diagram(PAIRS["phase_fusion"][0]))),
         _with_two(_with_pi(parse_diagram(PAIRS["phase_fusion"][1]))),
@@ -202,9 +206,10 @@ BUILT = {
 }
 
 
-def _pair(name: str):  # type: ignore[no-untyped-def]
+def _pair(name: str) -> tuple[Diagram, Diagram]:
     if name in PAIRS:
-        return tuple(parse_diagram(t) for t in PAIRS[name])
+        left, right = PAIRS[name]
+        return parse_diagram(left), parse_diagram(right)
     if name in BUILT:
         return BUILT[name]()
     return PROVED[name]()
@@ -378,7 +383,7 @@ def test_the_translation_is_the_tensor() -> None:
     for lnet, scalar in ((ex.a.net, ex.s0), (ex.b.net, ex.s1)):
         nodes, internal, _ = ex.net(lnet)
         e = S.tr_net(ex.fl, ex.dtf, ex.ptf, dict(ex.out.labs), nodes, internal)
-        assert e is not None
+        assert e is not None and scalar is not None
         values = [_ex_value(S.ex_mul(scalar, e), [3], {0: v}) for v in range(3)]
         if lnet is ex.a.net:
             first = values

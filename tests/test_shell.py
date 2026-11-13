@@ -24,11 +24,17 @@ import pytest
 
 from archytaszx.repl import commands as C
 from archytaszx.repl import shell as S
+from archytaszx.repl import terminal as T
 from archytaszx.repl.printer import NotationMode
 from archytaszx.repl.shell import Shell, main
 
 EXAMPLE = "sum_{k=0}^{3-1} |k>^{30}; copy"
 REPO = Path(__file__).resolve().parent.parent
+
+
+def mode_of(shell: Shell) -> NotationMode:
+    """The shell's current notation mode."""
+    return shell.mode
 
 
 def listing(text: str) -> bool:
@@ -117,11 +123,11 @@ class TestRunLine:
         shell = Shell()
         assert shell.run_line("dirac") == "mode: dirac"
         assert shell.run_line("zx") == "mode: zx"
-        assert shell.mode is NotationMode.ZX
+        assert mode_of(shell) is NotationMode.ZX
         assert shell.run_line("BOTH") == "mode: both"
-        assert shell.mode is NotationMode.BOTH
+        assert mode_of(shell) is NotationMode.BOTH
         assert shell.run_line("Dirac") == "mode: dirac"
-        assert shell.mode is NotationMode.DIRAC
+        assert mode_of(shell) is NotationMode.DIRAC
         assert shell.errors == 0
 
     def test_mode_bad_value(self) -> None:
@@ -180,8 +186,10 @@ class TestRunLine:
     def test_errors_counter(self) -> None:
         shell = Shell()
         shell.run_line("apply spider_fusion")
+        assert shell.last_outcome is not None
         assert shell.errors == 1 and not shell.last_outcome.ok
         shell.run_line(EXAMPLE)
+        assert shell.last_outcome is not None
         assert shell.errors == 1 and shell.last_outcome.ok
         shell.run_line("zx wrong")
         shell.run_line("check d=x")
@@ -191,6 +199,7 @@ class TestRunLine:
         shell = Shell()
         shell.run_line(EXAMPLE)
         shell.run_line("check against sum_{k=0}^{d-1} |k>^{n} |k, k, k>")
+        assert shell.last_outcome is not None
         assert shell.errors == 1 and shell.last_outcome.command == "check"
 
     def test_non_str_line(self) -> None:
@@ -515,7 +524,7 @@ class TestPrompt:
 
 class TestConfig:
     def test_show_set_and_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
+        monkeypatch.setattr(T, "CONFIG", T.Config())
         shell = Shell()
         assert shell.run_line(":config").startswith(
             "size = 1\ncolor = auto\nformat = auto\npublication = false\nfile: "
@@ -531,21 +540,21 @@ class TestConfig:
         assert shell.errors == 3
 
     def test_publication_toggle(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
+        monkeypatch.setattr(T, "CONFIG", T.Config())
         shell = Shell()
         assert shell.run_line("publication") == "publication: on"
-        assert S.T.CONFIG.publication
+        assert T.CONFIG.publication
         assert shell.run_line(":publication") == "publication: off"
 
     def test_save_and_load(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(S.T, "CONFIG", S.T.Config())
+        monkeypatch.setattr(T, "CONFIG", T.Config())
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         shell = Shell()
         shell.run_line(":config size 2")
         assert shell.run_line(":config save") == f"saved {tmp_path}/archytaszx/config.toml"
         shell.run_line(":config format pdf")
         shell.run_line(":config save")
-        loaded = S.T.load_config()
+        loaded = T.load_config()
         assert loaded.size == 2.0 and loaded.color == "auto"
         assert loaded.format == "pdf" and not loaded.publication
 
@@ -553,8 +562,8 @@ class TestConfig:
         path = tmp_path / "config.toml"
         path.write_text("size = -1\n", encoding="utf-8")
         with pytest.raises(ValueError):
-            S.T.load_config(str(path))
-        assert S.T.load_config(str(tmp_path / "none.toml")) == S.T.Config()
+            T.load_config(str(path))
+        assert T.load_config(str(tmp_path / "none.toml")) == T.Config()
 
 
 def test_indented_lines_continue_the_command_above() -> None:

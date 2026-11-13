@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -71,7 +72,7 @@ from archytaszx.semantics.prove import (
 )
 
 from . import test_decide as TD
-from .test_normal_form import _chain, _single_spider
+from .test_normal_form import _chain, _deferred_fusion_diagram, _single_spider
 from .test_rules_library_phase11 import identity_chain, inp, out
 from .test_tactics import _two_spiders
 
@@ -90,7 +91,7 @@ def _fused_d() -> Diagram:
 
 def _deferred_pair() -> tuple[Diagram, Diagram]:
     """A fusion whose application records a ``DEFERRED`` constraint, and its result."""
-    start = TD.deferred_fusion_diagram()
+    start = _deferred_fusion_diagram()
     match = SPIDER_FUSION.pattern.find_matches(start)[0]
     return start, apply(start, SPIDER_FUSION, match).diagram
 
@@ -550,7 +551,7 @@ class TestValidation:
             children=(certificate.forward.derivation, certificate.forward.derivation),
             induction=InductionClaim("m", 0),
         )
-        bad: list[Mapping[str, object]] = [
+        bad: list[Mapping[str, Any]] = [
             {"start": None},
             {"goal": 1},
             {"forward": certificate.forward.derivation},

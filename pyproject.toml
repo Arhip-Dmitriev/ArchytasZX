@@ -130,5 +130,9 @@ python_version = "3.12"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["qiskit", "qiskit.*", "dizx", "dizx.*"]
+module = ["qiskit", "qiskit.*", "dizx", "dizx.*", "scipy", "scipy.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["benchmarks", "benchmarks.*"]
+follow_imports = "silent"

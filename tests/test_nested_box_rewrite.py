@@ -36,6 +36,7 @@ from archytaszx.diagram.generators import (
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import validate
 from archytaszx.rewrite.engine import apply
+from archytaszx.rewrite.match import IdentityMatch
 from archytaszx.rewrite.rules_library import RULES
 from archytaszx.semantics.check import compare
 
@@ -183,4 +184,4 @@ def test_identity_removal_skips_a_spider_fed_from_a_deeper_box() -> None:
     outer = g.add_bang_box(Mult("k"), node_scope=frozenset({a, b, c}))
     g.add_bang_box(Mult("j"), node_scope=frozenset({a}), parent=outer)
     matches = RULES["identity_removal"].pattern.find_matches(g)
-    assert all(m.node_id != b for m in matches)
+    assert all(isinstance(m, IdentityMatch) and m.node_id != b for m in matches)

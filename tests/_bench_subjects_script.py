@@ -27,7 +27,7 @@ import argparse
 import fnmatch
 import sys
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -52,11 +52,11 @@ def small_points(inst: Any) -> list[tuple[int | None, int]]:
 
 def engine_tensor(diagram: Any) -> np.ndarray:
     """The oracle's tensor of a concrete diagram: pure axes (outs, ins), or the CPM."""
-    from archytaszx.semantics import check, denote
+    from archytaszx.semantics import check, contract_numeric, denote
 
     inst = check.instantiate(diagram, {})
     if inst.is_pure():
-        return np.asarray(check.contract(inst).tensor)
+        return np.asarray(contract_numeric.contract(inst).tensor)
     return np.asarray(denote.denote_mixed(inst))
 
 
@@ -79,7 +79,9 @@ def _too_large(c: Any, diagram: Any, d: int) -> bool:
         legs *= 2
     env = sum(1 for g in c.gates if isinstance(g, (ir.Measure, ir.Discard)))
     wires = len(c.wires)
-    return max(d, 2) ** legs > DENSE_CAP or max(d, 2) ** (2 * (wires + env)) > DENSE_CAP * DENSE_CAP
+    return bool(
+        max(d, 2) ** legs > DENSE_CAP or max(d, 2) ** (2 * (wires + env)) > DENSE_CAP * DENSE_CAP
+    )
 
 
 def check_point(job: tuple[str, int, int | None, int]) -> list[str]:
@@ -114,7 +116,7 @@ def check_point(job: tuple[str, int, int | None, int]) -> list[str]:
         if inst.equation.reference is not None and right.is_pure():
             from benchmarks.tools import common
 
-            refc = common.expand(inst.equation.reference(n, d), n or 0)
+            refc = common.expand(inst.equation.reference(cast(int, n), d), n or 0)
             ref_t = bench_reference.evaluate(refc, n if n is not None else 0, d)
             spec_t = engine_tensor(right)
             if ref_t.size != spec_t.size or not np.allclose(

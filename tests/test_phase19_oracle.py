@@ -86,6 +86,9 @@ class Record:
     outcome: C.Outcome | None
 
 
+Worked = dict[NotationMode, tuple[Shell, list[Record]]]
+
+
 def run_session(mode: NotationMode, script: str) -> tuple[Shell, list[Record]]:
     """A fresh shell in ``mode`` and one record per executed logical line."""
     shell = Shell(listing=True, mode=mode)
@@ -93,6 +96,12 @@ def run_session(mode: NotationMode, script: str) -> tuple[Shell, list[Record]]:
     for line, output in shell.iter_script(script):
         records.append(Record(line, output, shell.last_outcome))
     return shell, records
+
+
+def got(diagram: Diagram | None) -> Diagram:
+    """``diagram``, asserted present."""
+    assert diagram is not None
+    return diagram
 
 
 def lines_of(text: str) -> list[str]:
@@ -145,7 +154,7 @@ def record(records: list[Record], line: str, occurrence: int = 0) -> Record:
 
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 class TestWorkedExample:
-    def test_every_line_runs_and_succeeds(self, worked, mode) -> None:
+    def test_every_line_runs_and_succeeds(self, worked: Worked, mode: NotationMode) -> None:
         shell, records = worked[mode]
         assert records[0].line == EXAMPLE
         assert len(records) == 16
@@ -155,39 +164,42 @@ class TestWorkedExample:
             assert "Traceback" not in r.output
         assert shell.errors == 0
 
-    def test_load_reads_the_example(self, worked, mode) -> None:
+    def test_load_reads_the_example(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
-        start = record(records, EXAMPLE).outcome.detail
+        outcome = record(records, EXAMPLE).outcome
+        assert outcome is not None
+        start = outcome.detail
         assert isinstance(start, Diagram)
         assert len(start.nodes) == 2 and len(start.wires) == 1
         assert dict(start.parameters) == {"d": 3, "n": 29}
 
-    def test_match_lists_the_fusion_site(self, worked, mode) -> None:
+    def test_match_lists_the_fusion_site(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
         assert record(records, "match spider_fusion").output == "#0 spider_fusion at n0, n1"
 
-    def test_fusion_gives_ghz(self, worked, mode) -> None:
+    def test_fusion_gives_ghz(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
         out = record(records, "apply spider_fusion").output
         assert "step: spider_fusion (consumed n0, n1, new n2, scalar 1)" in out
         assert "GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>" in out
 
-    def test_checks_find_no_mismatch(self, worked, mode) -> None:
+    def test_checks_find_no_mismatch(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
         assert record(records, "check").output.startswith("check: no mismatch in ")
         assert record(records, "check").output.endswith("over d, n")
         assert record(records, "check d=2 n=1").output == "check: no mismatch in 1 sample over d, n"
 
-    def test_induct_proves_for_all_n(self, worked, mode) -> None:
+    def test_induct_proves_for_all_n(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
         r = record(records, "induct")
         assert r.output.startswith("induct: proved")
         assert " over n from 0 " in r.output
-        result = r.outcome.detail.payload
+        assert r.outcome is not None
+        result = getattr(r.outcome.detail, "payload", None)
         assert isinstance(result, InductionResult) and result.proved
         assert result.index == "n"
 
-    def test_certificate_emits_and_verifies(self, worked, mode) -> None:
+    def test_certificate_emits_and_verifies(self, worked: Worked, mode: NotationMode) -> None:
         _, records = worked[mode]
         assert record(records, "certificate").output.startswith(
             "certificate: numeric_oracle, step_sequence, 1 step"
@@ -195,18 +207,19 @@ class TestWorkedExample:
         verify = record(records, "certificate verify").output
         assert "verify: verified at " in verify
 
-    def test_prove_and_proof_certificate_verify(self, worked, mode) -> None:
+    def test_prove_and_proof_certificate_verify(self, worked: Worked, mode: NotationMode) -> None:
         shell, records = worked[mode]
         assert record(records, "prove").output.startswith("prove: proved")
         emitted = record(records, "certificate emit proof")
         assert emitted.output.startswith("certificate: proof, 1 step")
+        assert emitted.outcome is not None
         assert isinstance(emitted.outcome.detail, ProofCertificate)
         assert "verify: verified" in record(records, "certificate verify", 1).output
         assert isinstance(shell.session.certificate, ProofCertificate)
 
-    def test_final_state_is_ghz(self, worked, mode) -> None:
+    def test_final_state_is_ghz(self, worked: Worked, mode: NotationMode) -> None:
         shell, records = worked[mode]
-        current = shell.session.current
+        current = got(shell.session.current)
         assert len(current.nodes) == 1 and not current.wires
         (node,) = current.nodes.values()
         assert node.generator_type is Z_SPIDER
@@ -215,49 +228,59 @@ class TestWorkedExample:
         assert "GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>" in record(records, "show", 1).output
 
     @pytest.mark.parametrize("assignment", SMALL, ids=str)
-    def test_final_state_oracle_equals_start(self, worked, mode, assignment) -> None:
+    def test_final_state_oracle_equals_start(
+        self, worked: Worked, mode: NotationMode, assignment: dict[str, int]
+    ) -> None:
         shell, _ = worked[mode]
-        result = compare(shell.session.start, shell.session.current, assignment)
+        result = compare(got(shell.session.start), got(shell.session.current), assignment)
         assert result.matched, result.reason
 
     @pytest.mark.parametrize("assignment", SMALL, ids=str)
-    def test_final_state_oracle_equals_hand_built_ghz(self, worked, mode, assignment) -> None:
+    def test_final_state_oracle_equals_hand_built_ghz(
+        self, worked: Worked, mode: NotationMode, assignment: dict[str, int]
+    ) -> None:
         shell, _ = worked[mode]
-        result = compare(shell.session.current, hand_ghz(), assignment)
+        result = compare(got(shell.session.current), hand_ghz(), assignment)
         assert result.matched, result.reason
 
-    def test_hand_built_ghz_differs_from_a_wrong_target(self, worked, mode) -> None:
+    def test_hand_built_ghz_differs_from_a_wrong_target(
+        self, worked: Worked, mode: NotationMode
+    ) -> None:
         shell, _ = worked[mode]
         unequal = C.Session()
         C.run(unequal, UNEQUAL)
-        assert not compare(shell.session.current, unequal.current, {"d": 2, "n": 1}).matched
+        assert not compare(
+            got(shell.session.current), got(unequal.current), {"d": 2, "n": 1}
+        ).matched
 
 
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 class TestDslWorkedExample:
-    def test_every_line_succeeds(self, dsl_worked, mode) -> None:
+    def test_every_line_succeeds(self, dsl_worked: Worked, mode: NotationMode) -> None:
         shell, records = dsl_worked[mode]
         for r in records:
             assert r.outcome is not None and r.outcome.ok, (r.line, r.output)
         assert shell.errors == 0
 
-    def test_dsl_load_is_the_hand_built_graph(self, dsl_worked, mode) -> None:
+    def test_dsl_load_is_the_hand_built_graph(self, dsl_worked: Worked, mode: NotationMode) -> None:
         shell, _ = dsl_worked[mode]
         start = shell.session.start
         want = build_ghz_with_copy(D)[0]
-        assert render_graph(start) == render_graph(want)
+        assert render_graph(got(start)) == render_graph(want)
 
-    def test_final_state(self, dsl_worked, mode) -> None:
+    def test_final_state(self, dsl_worked: Worked, mode: NotationMode) -> None:
         shell, records = dsl_worked[mode]
-        current = shell.session.current
+        current = got(shell.session.current)
         assert recognize(current) == "GHZ_{3}"
         assert "verify: verified" in record(records, "certificate verify d=2").output
         assert "verify: verified at " in record(records, "certificate verify").output
         for d in (2, 3, 4):
-            assert compare(shell.session.start, current, {"d": d}).matched
+            assert compare(got(shell.session.start), current, {"d": d}).matched
             assert compare(current, hand_ghz3(), {"d": d}).matched
 
-    def test_induct_without_a_bang_box_is_a_clean_error(self, dsl_worked, mode) -> None:
+    def test_induct_without_a_bang_box_is_a_clean_error(
+        self, dsl_worked: Worked, mode: NotationMode
+    ) -> None:
         shell, _ = dsl_worked[mode]
         probe = Shell(listing=True, mode=mode, session=C.Session())
         probe.run_line(f"load {GHZ_DSL}")
@@ -276,7 +299,7 @@ def test_worked_example_runs_interactively() -> None:
     assert "verify: verified" in text
     assert text.count("GHZ_{n+2}") >= 2
     assert shell.done and shell.errors == 0
-    assert recognize(shell.session.current) == "GHZ_{n+2}"
+    assert recognize(got(shell.session.current)) == "GHZ_{n+2}"
     assert shell.history[-1] == "quit"
 
 
@@ -318,8 +341,8 @@ def test_malformed_input_gives_a_clean_error(mode: NotationMode, line: str) -> N
     shell.run_script([EXAMPLE, "apply spider_fusion"])
     session = shell.session
     before = (
-        render_graph(session.current),
-        render_graph(session.start),
+        render_graph(got(session.current)),
+        render_graph(got(session.start)),
         len(session.results),
         len(session.undo_stack),
         dict(session.names),
@@ -332,8 +355,8 @@ def test_malformed_input_gives_a_clean_error(mode: NotationMode, line: str) -> N
     assert shell.last_outcome is not None and not shell.last_outcome.ok
     assert isinstance(session.last_detail, C.ErrorDetail)
     after = (
-        render_graph(session.current),
-        render_graph(session.start),
+        render_graph(got(session.current)),
+        render_graph(got(session.start)),
         len(session.results),
         len(session.undo_stack),
         dict(session.names),
@@ -357,21 +380,21 @@ def test_errors_before_any_load_are_clean() -> None:
 
 
 class TestModeIndependence:
-    def test_same_lines_in_both_modes(self, worked) -> None:
+    def test_same_lines_in_both_modes(self, worked: Worked) -> None:
         a = [r.line for r in worked[NotationMode.DIRAC][1]]
         b = [r.line for r in worked[NotationMode.BOTH][1]]
         assert a == b
 
-    def test_final_session_state_identical(self, worked) -> None:
+    def test_final_session_state_identical(self, worked: Worked) -> None:
         sa, sb = worked[NotationMode.DIRAC][0].session, worked[NotationMode.BOTH][0].session
-        assert render_graph(sa.current) == render_graph(sb.current)
-        assert render_graph(sa.start) == render_graph(sb.start)
+        assert render_graph(got(sa.current)) == render_graph(got(sb.current))
+        assert render_graph(got(sa.start)) == render_graph(got(sb.start))
         assert [r.step for r in sa.results] == [r.step for r in sb.results]
         assert type(sa.certificate) is type(sb.certificate)
         assert C.detail_text(sa.certificate) == C.detail_text(sb.certificate)
         assert len(sa.undo_stack) == len(sb.undo_stack)
 
-    def test_engine_outcomes_identical(self, worked) -> None:
+    def test_engine_outcomes_identical(self, worked: Worked) -> None:
         ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.BOTH][1]
         for a, b in zip(ra, rb, strict=True):
             assert a.outcome is not None and b.outcome is not None
@@ -384,7 +407,7 @@ class TestModeIndependence:
                 assert C.format_outcome(a.outcome, mode) == C.format_outcome(b.outcome, mode)
             assert C.detail_text(a.outcome.detail) == C.detail_text(b.outcome.detail)
 
-    def test_outputs_differ_only_in_rendering(self, worked) -> None:
+    def test_outputs_differ_only_in_rendering(self, worked: Worked) -> None:
         ra, rb = worked[NotationMode.DIRAC][1], worked[NotationMode.BOTH][1]
         for a, b in zip(ra, rb, strict=True):
             if a.line == "detail":
@@ -395,7 +418,7 @@ class TestModeIndependence:
             if a.output != b.output:
                 assert listing_lines(b.output), a.line
 
-    def test_dirac_text_appears_in_both_modes(self, worked) -> None:
+    def test_dirac_text_appears_in_both_modes(self, worked: Worked) -> None:
         for mode in MODES:
             out = record(worked[mode][1], "apply spider_fusion").output
             assert "GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>" in out
@@ -446,19 +469,19 @@ def zx_commands() -> dict[NotationMode, tuple[Shell, list[Record]]]:
 
 
 class TestZxCommandsInDiracMode:
-    def test_all_succeed(self, zx_commands) -> None:
+    def test_all_succeed(self, zx_commands: Worked) -> None:
         for mode in MODES:
             for r in zx_commands[mode][1]:
                 assert r.outcome is not None and r.outcome.ok, (mode, r.line, r.output)
 
     @pytest.mark.parametrize("index", range(len(ZX_COMMANDS)))
-    def test_dirac_mode_emits_dirac_only(self, zx_commands, index) -> None:
+    def test_dirac_mode_emits_dirac_only(self, zx_commands: Worked, index: int) -> None:
         r = zx_commands[NotationMode.DIRAC][1][index]
         assert not listing_lines(r.output), r.output
         assert re.search(r"sum_|GHZ_|Z_\{", r.output), r.output
 
     @pytest.mark.parametrize("index", range(len(ZX_COMMANDS)))
-    def test_zx_mode_adds_the_listing(self, zx_commands, index) -> None:
+    def test_zx_mode_adds_the_listing(self, zx_commands: Worked, index: int) -> None:
         r = zx_commands[NotationMode.BOTH][1][index]
         assert re.search(r"sum_|GHZ_|Z_\{", r.output), r.output
         if r.line.startswith("certificate"):
@@ -518,15 +541,19 @@ def details() -> dict[NotationMode, dict[str, str]]:
 
 @pytest.mark.parametrize("label", sorted(DETAIL_LINES))
 class TestDetailPayloads:
-    def test_identical_in_both_modes(self, details, label) -> None:
+    def test_identical_in_both_modes(
+        self, details: dict[NotationMode, dict[str, str]], label: str
+    ) -> None:
         assert details[NotationMode.DIRAC][label] == details[NotationMode.BOTH][label]
 
-    def test_side_by_side_listing_and_dirac(self, details, label) -> None:
+    def test_side_by_side_listing_and_dirac(
+        self, details: dict[NotationMode, dict[str, str]], label: str
+    ) -> None:
         text = details[NotationMode.DIRAC][label]
         assert listing_lines(text), text
         assert side_by_side(text), text
 
-    def test_detail_headers(self, details, label) -> None:
+    def test_detail_headers(self, details: dict[NotationMode, dict[str, str]], label: str) -> None:
         text = details[NotationMode.DIRAC][label]
         head = {
             "error": "error in apply: apply nosuchrule",
@@ -561,11 +588,13 @@ def counterexample(text: str) -> dict[str, int]:
 @pytest.mark.parametrize("mode", MODES, ids=lambda m: m.value)
 class TestFailureReports:
     @pytest.mark.parametrize("command", ["decide", "check", "prove"])
-    def test_unequal_target_reports_dirac_and_counterexample(self, mode, command) -> None:
+    def test_unequal_target_reports_dirac_and_counterexample(
+        self, mode: NotationMode, command: str
+    ) -> None:
         shell = Shell(listing=True, mode=mode)
         shell.run_script([EXAMPLE, "apply spider_fusion"])
         out = shell.run_line(f"{command} against {UNEQUAL}")
-        assert not shell.last_outcome.ok
+        assert shell.last_outcome is not None and not shell.last_outcome.ok
         lines = out.splitlines()
         assert "dirac outcome: left != right" in lines
         assert "  left:  GHZ_{n+2} = sum_{k=0}^{d-1} |k>^{n} |k, k>" in lines
@@ -578,10 +607,10 @@ class TestFailureReports:
             assert not [ln for ln in lines if ln.startswith("counterexample: ")]
             assert any("count n + 2 != n + 3, differing at n = 0" in ln for ln in lines)
             point = {"n": 0, "d": 2}
-        assert not compare(shell.session.current, target.current, point).matched
-        assert recognize(shell.session.current) == "GHZ_{n+2}"
+        assert not compare(got(shell.session.current), got(target.current), point).matched
+        assert recognize(got(shell.session.current)) == "GHZ_{n+2}"
 
-    def test_value_counterexample_is_an_oracle_mismatch(self, mode) -> None:
+    def test_value_counterexample_is_an_oracle_mismatch(self, mode: NotationMode) -> None:
         shell = Shell(listing=True, mode=mode)
         shell.run_line("Z_{0->3}[d]")
         for command in ("check", "decide"):
@@ -590,10 +619,10 @@ class TestFailureReports:
             point = counterexample(out)
             target = C.Session()
             C.run(target, "X_{0->3}[d]")
-            result = compare(shell.session.current, target.current, point)
+            result = compare(got(shell.session.current), got(target.current), point)
             assert not result.matched and result.max_abs_deviation > 0.5
 
-    def test_induct_refutation_has_a_counterexample(self, mode) -> None:
+    def test_induct_refutation_has_a_counterexample(self, mode: NotationMode) -> None:
         shell = Shell(listing=True, mode=mode)
         shell.run_script([EXAMPLE, "apply spider_fusion"])
         out = shell.run_line("induct against sum_{k=0}^{d-1} |k>^{n} |k>")
@@ -601,7 +630,9 @@ class TestFailureReports:
         assert "dirac outcome: left != right" in out
         assert "counterexample: n = 0 with d = 3" in out
 
-    def test_unknown_decide_shows_simplified_state_and_bound(self, mode, monkeypatch) -> None:
+    def test_unknown_decide_shows_simplified_state_and_bound(
+        self, mode: NotationMode, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         patched = functools.partial(
             decide_equal, samples=[], use_symbolic=False, use_induction=False
         )
@@ -617,7 +648,9 @@ class TestFailureReports:
         assert "counterexample" not in out
         assert bool(listing_lines(out)) is (mode is NotationMode.BOTH)
 
-    def test_not_found_prove_shows_simplified_state_and_bound(self, mode, monkeypatch) -> None:
+    def test_not_found_prove_shows_simplified_state_and_bound(
+        self, mode: NotationMode, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setattr(C, "prove", functools.partial(prove, refute=False, moves=()))
         shell = Shell(listing=True, mode=mode)
         shell.run_line(EXAMPLE)

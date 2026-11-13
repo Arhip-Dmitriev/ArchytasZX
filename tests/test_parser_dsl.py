@@ -1318,7 +1318,8 @@ FRIENDLY = [
 
 @pytest.mark.parametrize(("long", "short"), FRIENDLY)
 def test_friendly_forms_match_the_long_forms(long: str, short: str) -> None:
-    assert PR.parse(short).form is PR.InputForm.DSL
+    parsed = PR.parse(short)
+    assert isinstance(parsed, PR.ParsedDiagram) and parsed.form is PR.InputForm.DSL
     assert compare_structure(PR.parse_dsl(long), PR.parse_dsl(short)).identical
 
 

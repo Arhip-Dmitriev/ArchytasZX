@@ -33,7 +33,7 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
     GeneratorType,
 )
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import validate
 from archytaszx.rewrite.engine import apply
 from archytaszx.rewrite.normal_form import normal_form
@@ -66,11 +66,11 @@ MIXED = ({"s": 2, "t": 3}, {"s": 3, "t": 2}, {"s": 2, "t": 2})
 
 
 def out(node: int, index: int) -> PortRef:
-    return PortRef(node, Direction.OUTPUT, index)
+    return PortRef(NodeId(node), Direction.OUTPUT, index)
 
 
 def inp(node: int, index: int) -> PortRef:
-    return PortRef(node, Direction.INPUT, index)
+    return PortRef(NodeId(node), Direction.INPUT, index)
 
 
 def w_into_w(first: int = 3, position: int = 1, second: int = 2) -> Diagram:

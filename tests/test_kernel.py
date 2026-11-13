@@ -162,17 +162,18 @@ def test_lean_accepts_the_opaque_induction(tmp_path: object) -> None:
     source = K.lean(K.check(prove(*boxed_state_copy()).induction), semantic=False)
     assert "axiom Diagram : Type" in source
     path = f"{tmp_path}/induction.lean"
+    lean = _lean()
+    assert lean is not None
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(source)
-    done = subprocess.run([_lean(), path], capture_output=True, text=True, timeout=300, check=False)  # type: ignore[list-item]
+    done = subprocess.run([lean, path], capture_output=True, text=True, timeout=300, check=False)
     assert done.returncode == 0, done.stdout + done.stderr
     bad = source.replace("ih).trans", "ih.symm).trans")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(bad)
     assert (
-        subprocess.run([_lean(), path], capture_output=True, timeout=300, check=False).returncode
-        != 0
-    )  # type: ignore[list-item]
+        subprocess.run([lean, path], capture_output=True, timeout=300, check=False).returncode != 0
+    )
 
 
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")

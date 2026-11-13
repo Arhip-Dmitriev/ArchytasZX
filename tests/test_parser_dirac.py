@@ -116,7 +116,7 @@ def ok(source: str) -> Diagram:
 def assert_oracle(a: Diagram, b: Diagram, envs: Iterable[Mapping[str, object]]) -> None:
     """``a`` and ``b`` are exactly equal at every env."""
     for env in envs:
-        result = compare(a, b, env)  # type: ignore[arg-type]
+        result = compare(a, b, env)
         assert result.matched, (env, result.reason)
 
 
@@ -354,6 +354,7 @@ def test_phase_factor() -> None:
     source = "sum_{k=0}^{d-1} e^{2 pi i (theta [k=1] + 1/3 [k=2])} |k, k><k|"
     d = ok(source)
     (node,) = d.nodes.values()
+    assert node.phase is not None
     entries = node.phase.entries()
     assert set(entries) == {1, 2}
     assert {str(s) for s in entries[1].to_sympy_turns().free_symbols} == {"theta"}
@@ -365,6 +366,7 @@ def test_phase_factor() -> None:
 def test_phase_terms_on_one_value_sum() -> None:
     d = ok("sum_{k=0}^{d-1} e^{2 pi i ((1/3) [k=1] + (1/6) [k=1])} |k>")
     (node,) = d.nodes.values()
+    assert node.phase is not None
     assert node.phase.entries()[1].to_sympy_turns() == sp.Rational(1, 2)
 
 
@@ -372,6 +374,7 @@ def test_phase_on_legless_index() -> None:
     d = ok("sum_{k,j=0}^{d-1} e^{2 pi i (1/3 [j=1])} |k>")
     legless = d.nodes[NodeId(1)]
     assert (legless.num_inputs, legless.num_outputs) == (0, 0)
+    assert legless.phase is not None
     assert legless.phase.entries()[1].to_sympy_turns() == sp.Rational(1, 3)
 
 
@@ -581,11 +584,13 @@ def test_triangle_inverse_composes_to_identity() -> None:
 def test_z_and_x_phase_entries() -> None:
     d = ok("Z_{1->1}(1: theta, 2: 1/3)[d]")
     (node,) = d.nodes.values()
+    assert node.phase is not None
     assert set(node.phase.entries()) == {1, 2}
     assert node.phase.entries()[2].to_sympy_turns() == sp.Rational(1, 3)
     x = ok("X_{1->1}(1: 1/2)[d]")
     (node,) = x.nodes.values()
     assert node.generator_type.name == "X"
+    assert node.phase is not None
     assert node.phase.entries()[1].to_sympy_turns() == sp.Rational(1, 2)
 
 

@@ -19,7 +19,7 @@ import os
 from collections.abc import Callable
 
 import pytest
-import sympy as sp
+import sympy as sp  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import Phase, PhaseVector
@@ -29,6 +29,7 @@ from archytaszx.diagram.generators import (
     W_NODE,
     X_SPIDER,
     Z_SPIDER,
+    GeneratorType,
 )
 from archytaszx.diagram.graph import Diagram, Direction, PortRef
 from archytaszx.rewrite.engine import apply
@@ -174,17 +175,17 @@ def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
 
-def _fusion_with_phases(dim: Dim, generator: object) -> Diagram:
+def _fusion_with_phases(dim: Dim, generator: GeneratorType) -> Diagram:
     diagram = Diagram()
     concrete = dim.is_concrete
     first = PhaseVector(dim, {1: Phase.symbol("alpha")}) if concrete else None
     second = PhaseVector(dim, {1: Phase.symbol("beta"), 2: Phase.turns(sp.Rational(3, 4))})
-    a = diagram.add_node(generator, [dim], [dim, dim], phase=first)  # type: ignore[arg-type]
+    a = diagram.add_node(generator, [dim], [dim, dim], phase=first)
     b = diagram.add_node(
         generator,
         [dim],
         [dim],
-        phase=second if concrete else None,  # type: ignore[arg-type]
+        phase=second if concrete else None,
     )
     diagram.add_wire(PortRef(a, Direction.OUTPUT, 1), PortRef(b, Direction.INPUT, 0))
     diagram.set_boundary_inputs([PortRef(a, Direction.INPUT, 0)])
@@ -289,7 +290,7 @@ def test_nested_multiplicities_export_without_axioms() -> None:
     assert "fusionZG" in source and "ksOf [k2, m]" in source
 
 
-def _port_family(generator: object, leg: int) -> K.Theorem:
+def _port_family(generator: GeneratorType, leg: int) -> K.Theorem:
     from archytaszx.diagram.bangbox import abstract_port_count
     from archytaszx.semantics.prove import prove
 
@@ -355,7 +356,9 @@ BOXED = [
 
 
 @pytest.mark.parametrize(("generator", "leg"), [(Z_SPIDER, -1), (X_SPIDER, -1), (X_SPIDER, 0)])
-def test_fusion_with_a_port_bundle_exports_without_axioms(generator: object, leg: int) -> None:
+def test_fusion_with_a_port_bundle_exports_without_axioms(
+    generator: GeneratorType, leg: int
+) -> None:
     assert "\naxiom " not in L.export(_port_family(generator, leg))
 
 
@@ -394,7 +397,7 @@ def test_lean_proves_each_rule(name: str, tmp_path: object) -> None:
     ("dim", "generator"),
     [(Dim.concrete(3), Z_SPIDER), (Dim.concrete(3), X_SPIDER), (Dim.symbol("d"), X_SPIDER)],
 )
-def test_lean_proves_symbolic_fusion(dim: Dim, generator: object, tmp_path: object) -> None:
+def test_lean_proves_symbolic_fusion(dim: Dim, generator: GeneratorType, tmp_path: object) -> None:
     source = L.export(_one_step("spider_fusion", _fusion_with_phases(dim, generator)))
     ok, output = L.check(source, f"{tmp_path}/fusion.lean")
     assert ok, output

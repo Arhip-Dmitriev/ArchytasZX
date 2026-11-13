@@ -19,6 +19,8 @@ from __future__ import annotations
 import cmath
 import itertools
 import math
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
@@ -460,7 +462,8 @@ class TestBangBoxesInSymbolicContraction:
         assert tensor.is_variable_rank and tensor.rank == 0
         assert [group.multiplicity for group in tensor.groups] == [Mult.symbol("m")]
         assert tensor.groups[0].factor == Scalar.one()
-        assert tensor.substitute({"m": 3, "d": 2}).to_dense().shape == (2, 2, 2)
+        dense = tensor.substitute({"m": 3, "d": 2}).to_dense()
+        assert isinstance(dense, np.ndarray) and dense.shape == (2, 2, 2)
 
 
 def _zx_loops(dim: Dim, count: int, legs: int = 1) -> Diagram:
@@ -620,7 +623,12 @@ class TestClosedFormsAtLargeDimension:
             ),
         ],
     )
-    def test_a_stuck_delta_closes_by_residue_cases(self, label: str, build, direct) -> None:
+    def test_a_stuck_delta_closes_by_residue_cases(
+        self,
+        label: str,
+        build: Callable[..., Any],
+        direct: Callable[[int], complex],
+    ) -> None:
         k, v = sp.symbols("_k0 _k1", integer=True, nonnegative=True)
         closed = Scalar(build(D.to_sympy(), k, v)).simplify()
         assert not closed.to_sympy().atoms(sp.Sum), label

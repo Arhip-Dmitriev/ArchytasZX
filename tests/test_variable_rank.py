@@ -27,7 +27,7 @@ from archytaszx.algebra.phase import Phase, PhaseVector
 from archytaszx.algebra.scalar import Scalar
 from archytaszx.diagram.bangbox import Mult, free_mult_symbols
 from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER
-from archytaszx.diagram.graph import Diagram, Direction, PortRef
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.repl.parser import parse_dirac_source
 from archytaszx.semantics.check import compare_symbolic, score
 from archytaszx.semantics.contract_symbolic import (
@@ -42,11 +42,11 @@ DENSE_CAP = 2000
 
 
 def out(node: int, index: int) -> PortRef:
-    return PortRef(node, Direction.OUTPUT, index)
+    return PortRef(NodeId(node), Direction.OUTPUT, index)
 
 
 def inp(node: int, index: int) -> PortRef:
-    return PortRef(node, Direction.INPUT, index)
+    return PortRef(NodeId(node), Direction.INPUT, index)
 
 
 def third() -> PhaseVector:
