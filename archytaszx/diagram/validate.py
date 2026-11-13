@@ -89,7 +89,7 @@ from archytaszx.algebra.dimension import (
     unify_all,
 )
 from archytaszx.algebra.phase import INDEX
-from archytaszx.diagram.bangbox import BangBox, outside_crossings
+from archytaszx.diagram.bangbox import BangBox, outside_crossings, zip_wires
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
     BangBoxId,
@@ -926,7 +926,9 @@ def _check_bangbox_scopes(diagram: Diagram, issues: list[ValidationIssue]) -> No
 
 
 def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) -> None:
-    """Every node outside a node-scope box wired into it must admit any leg count on that side."""
+    """Every node outside a node-scope box wired into it must admit any leg count on that side,
+    wires between a chain's link child box and its end boxes excepted."""
+    zipped, _ = zip_wires(diagram)
     for box_id, box in sorted(diagram.bang_boxes.items()):
         if not box.node_scope <= diagram.nodes.keys():
             continue
@@ -943,7 +945,12 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
             for nid in other.node_scope
         )
         for inside, outside in outside_crossings(diagram, box.node_scope):
-            if inside in link_ports or outside.node_id in paired or box.pair_of is not None:
+            if (
+                inside in link_ports
+                or outside.node_id in paired
+                or box.pair_of is not None
+                or Wire(inside, outside) in zipped
+            ):
                 continue
             side = (outside.node_id, outside.direction)
             fanned[side] = fanned.get(side, 0) + 1
@@ -990,6 +997,8 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
         partner[wire.a] = wire.b
         partner[wire.b] = wire.a
     boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
+    for problem in zip_wires(diagram)[1]:
+        issues.append(ValidationIssue(kind=IssueKind.BANGBOX_LINK_INADMISSIBLE, message=problem))
     for box_id, box in sorted(diagram.bang_boxes.items()):
 
         def refuse(message: str, kind: IssueKind = IssueKind.BANGBOX_LINK_INADMISSIBLE) -> None:

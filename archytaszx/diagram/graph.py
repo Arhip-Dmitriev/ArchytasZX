@@ -482,6 +482,7 @@ class Diagram:
         position: str | None = None,
         feed: BangBoxId | None = None,
         feed_port: PortRef | None = None,
+        groups: tuple[frozenset[NodeId], ...] = (),
     ) -> BangBoxId:
         """Allocate a fresh BangBoxId and add a bang box over exactly one of the two scopes.
 
@@ -519,12 +520,14 @@ class Diagram:
             position=position,
             feed=feed,
             feed_port=feed_port,
+            groups=tuple(groups),
         )
         return box_id
 
     def set_bang_box_extension(self, box_id: BangBoxId, **fields: object) -> None:
         """Replace the named fields of a bang box (``node_scope``, ``links``, ``cyclic``,
-        ``index``, ``copy_scalar``) at once."""
+        ``index``, ``copy_scalar``, ``groups``, ``parent`` and the pair and tree fields) at
+        once."""
         from dataclasses import replace
 
         if box_id not in self._bang_boxes:
@@ -545,6 +548,8 @@ class Diagram:
             "position",
             "feed",
             "feed_port",
+            "groups",
+            "parent",
         }
         unknown = set(fields) - allowed
         if unknown:

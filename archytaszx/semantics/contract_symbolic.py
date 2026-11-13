@@ -61,6 +61,7 @@ from archytaszx.diagram.bangbox import (
     expand_concrete_boxes,
     outside_crossings,
     scope_is_closed,
+    zip_child,
 )
 from archytaszx.diagram.generators import (
     DIM_BINDER,
@@ -1447,6 +1448,10 @@ def _resolve_chains(diagram: Diagram, max_steps: int) -> Diagram:
         box = working.bang_boxes[box_id]
         if not box.links or box.parent is not None:
             continue
+        if zip_child(working, box) is not None:
+            raise SymbolicContractionUnsupportedError(
+                f"chain box {box_id}: its links run through a child box"
+            )
         if box.cyclic:
             constant = sp.expand(box.multiplicity.to_sympy()).as_coeff_Add()[0]
             if not (constant.is_Integer and constant >= 1):

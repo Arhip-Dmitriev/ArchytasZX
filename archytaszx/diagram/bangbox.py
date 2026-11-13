@@ -329,6 +329,10 @@ class BangBox:
     is wired to copy j's ``feed_port``; the tree's child ports are then no boundary slots."""
     feed_port: PortRef | None = None
     """For a fed box: the copy's port its leaf slot is wired to."""
+    groups: tuple[frozenset[NodeId], ...] = ()
+    """Disjoint node sets of the scope whose boundary slots are laid out as separate blocks,
+    each at its first slot (the scope's other nodes forming one more block); empty for one
+    block over the whole scope."""
 
     def __post_init__(self) -> None:
         """Validate field types, that exactly one of the two scopes is non-empty, and the
@@ -410,6 +414,10 @@ class BangBox:
                 )
             if not isinstance(self.feed_port, PortRef):
                 raise BangBoxGrammarError(f"a feed port must be a PortRef, got {self.feed_port!r}")
+        if self.groups:
+            grouped = [n for group in self.groups for n in group]
+            if len(set(grouped)) != len(grouped) or not set(grouped) <= self.node_scope:
+                raise BangBoxGrammarError("box groups must be disjoint node sets of its scope")
 
     @property
     def is_fed(self) -> bool:
@@ -787,6 +795,14 @@ def _regrow_port(
                     other_id,
                     frozenset(new_node_id if n == ref.node_id else n for n in other.node_scope),
                 )
+            if other.groups:
+                diagram.set_bang_box_extension(
+                    other_id,
+                    groups=tuple(
+                        frozenset(new_node_id if n == ref.node_id else n for n in g)
+                        for g in other.groups
+                    ),
+                )
         if any(p.node_id == ref.node_id for p in other.port_scope):
             new_port_scope = frozenset(
                 new_ref
@@ -869,6 +885,7 @@ def _copy_subtree(
                 cyclic=child.cyclic,
                 index=child.index,
                 copy_scalar=child.copy_scalar,
+                groups=tuple(frozenset(id_map[n] for n in g) for g in child.groups),
             )
         else:
             new_id = diagram.add_bang_box(
@@ -921,6 +938,7 @@ def add_box_image(
         position=box.position,
         feed=None if box.feed is None else feed,
         feed_port=None if box.feed_port is None else _moved(box.feed_port, id_map),
+        groups=tuple(frozenset(id_map[n] for n in g) for g in box.groups),
     )
 
 
@@ -969,18 +987,57 @@ def _fan_out(
         ]
 
 
-def _rescope_others(diagram: Diagram, removed: frozenset[NodeId], added: frozenset[NodeId]) -> None:
-    """Replace ``removed`` by ``added`` in every live node scope; drop emptied boxes."""
+def _rescope_others(
+    diagram: Diagram,
+    removed: frozenset[NodeId],
+    added: frozenset[NodeId],
+    id_maps: list[dict[NodeId, NodeId]] | None = None,
+    parent: BangBoxId | None = None,
+) -> None:
+    """Replace ``removed`` by ``added`` in every live node scope and group; drop emptied boxes.
+    A link of box ``parent`` with both ports in ``removed`` becomes one link per copy of
+    ``id_maps`` (none when ``added`` is empty)."""
     for other_id, other in sorted(diagram.bang_boxes.items()):
         if other_id not in diagram.bang_boxes or not (other.node_scope & removed):
             continue
-        if any(r.node_id in removed for link in other.links for r in link):
-            raise BangBoxGrammarError(
-                f"chain box {other_id!r}: a link port lies in a replicated child box"
+        links = other.links
+        if any(r.node_id in removed for link in links for r in link):
+            if (
+                other_id != parent
+                or any((p.node_id in removed) != (q.node_id in removed) for p, q in links)
+                or (added and id_maps is None)
+            ):
+                raise BangBoxGrammarError(
+                    f"chain box {other_id!r}: a link port lies in a replicated child box"
+                )
+            maps = id_maps if added and id_maps is not None else []
+            links = tuple(
+                new
+                for p, q in links
+                for new in (
+                    [(_moved(p, m), _moved(q, m)) for m in maps]
+                    if p.node_id in removed
+                    else [(p, q)]
+                )
             )
+        groups = tuple(
+            (g - removed)
+            | (
+                frozenset(m[n] for n in g & removed for m in id_maps)
+                if id_maps is not None
+                else (added if g & removed else frozenset())
+            )
+            for g in other.groups
+        )
         new_scope = (other.node_scope - removed) | added
         if new_scope:
             diagram.set_bang_box_node_scope(other_id, new_scope)
+            diagram.set_bang_box_extension(
+                other_id,
+                links=links,
+                cyclic=other.cyclic and bool(links),
+                groups=tuple(g for g in groups if g),
+            )
         else:
             _remove_subtree(diagram, other_id)
             diagram.remove_bang_box(other_id)
@@ -1002,6 +1059,23 @@ def _splice_boundary_block(
     second = [r for r in refs[half:] if r in old]
     out = _splice_one_block(refs, first, id_maps)
     return _splice_one_block(out, second, id_maps)
+
+
+def _splice_box(
+    refs: list[PortRef],
+    crossings: list[PortRef],
+    id_maps: list[dict[NodeId, NodeId]],
+    box: BangBox,
+) -> list[PortRef]:
+    """:func:`_splice_boundary_block` once per group of ``box`` and once for its other nodes."""
+    if not box.groups:
+        return _splice_boundary_block(refs, crossings, id_maps, box.sheets)
+    grouped = frozenset(n for g in box.groups for n in g)
+    parts = [[r for r in crossings if r.node_id in g] for g in box.groups]
+    parts.append([r for r in crossings if r.node_id not in grouped])
+    for part in parts:
+        refs = _splice_boundary_block(refs, part, id_maps, box.sheets)
+    return refs
 
 
 def _splice_one_block(
@@ -1051,14 +1125,10 @@ def _gather_ancestors(diagram: Diagram, box: BangBox) -> None:
                 boundary_refs_in_scope(diagram, outer.node_scope), key=lambda r: r.sort_key()
             )
             diagram.set_boundary_inputs(
-                _splice_boundary_block(
-                    list(diagram.boundary_inputs), crossings, [identity], outer.sheets
-                )
+                _splice_box(list(diagram.boundary_inputs), crossings, [identity], outer)
             )
             diagram.set_boundary_outputs(
-                _splice_boundary_block(
-                    list(diagram.boundary_outputs), crossings, [identity], outer.sheets
-                )
+                _splice_box(list(diagram.boundary_outputs), crossings, [identity], outer)
             )
         ancestor = outer.parent
 
@@ -1097,7 +1167,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
         for node_id in scope:
             diagram.remove_node(node_id)
         diagram.remove_bang_box(box.id)
-        _rescope_others(diagram, scope, frozenset())
+        _rescope_others(diagram, scope, frozenset(), None, box.parent)
         return []
 
     if k == 1:
@@ -1109,14 +1179,10 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
             boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key()
         )
         diagram.set_boundary_inputs(
-            _splice_boundary_block(
-                list(diagram.boundary_inputs), sorted_crossings, [identity], box.sheets
-            )
+            _splice_box(list(diagram.boundary_inputs), sorted_crossings, [identity], box)
         )
         diagram.set_boundary_outputs(
-            _splice_boundary_block(
-                list(diagram.boundary_outputs), sorted_crossings, [identity], box.sheets
-            )
+            _splice_box(list(diagram.boundary_outputs), sorted_crossings, [identity], box)
         )
         _copy_subtree(diagram, box.id, identity, box.parent)
         _remove_subtree(diagram, box.id)
@@ -1148,11 +1214,9 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
     _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
 
     sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
-    new_boundary_inputs = _splice_boundary_block(
-        list(diagram.boundary_inputs), sorted_crossings, id_maps, box.sheets
-    )
-    new_boundary_outputs = _splice_boundary_block(
-        list(diagram.boundary_outputs), sorted_crossings, id_maps, box.sheets
+    new_boundary_inputs = _splice_box(list(diagram.boundary_inputs), sorted_crossings, id_maps, box)
+    new_boundary_outputs = _splice_box(
+        list(diagram.boundary_outputs), sorted_crossings, id_maps, box
     )
 
     for id_map in id_maps:
@@ -1160,7 +1224,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
     _remove_subtree(diagram, box.id)
     diagram.remove_bang_box(box.id)
     copies = frozenset(new_id for id_map in id_maps for new_id in id_map.values())
-    _rescope_others(diagram, scope, copies)
+    _rescope_others(diagram, scope, copies, id_maps, box.parent)
 
     for node_id in scope:
         diagram.remove_node(node_id)
@@ -1310,7 +1374,10 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
         raise BangBoxGrammarError(f"pair box {box_id!r} is instantiated with its parent only")
     if box.is_fed:
         raise BangBoxGrammarError(f"fed box {box_id!r} is instantiated with its tree box only")
-    if box.is_tree:
+    chain = _zip_chain(diagram, box_id) if box.is_node_scope else None
+    if chain is not None:
+        _expand_zipped(diagram, chain, k)
+    elif box.is_tree:
         _instantiate_tree(diagram, box, k)
     elif box.is_extended:
         _instantiate_extended(diagram, box, k)
@@ -1583,11 +1650,166 @@ def _plain(diagram: Diagram, box: BangBox) -> BangBox:
     return diagram.bang_boxes[box.id]
 
 
-def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> None:
+def _innermost(diagram: Diagram, node_id: NodeId) -> BangBox | None:
+    """The innermost node-scope box holding ``node_id``, or None."""
+    holders = [b for b in diagram.bang_boxes.values() if node_id in b.node_scope]
+    for box in holders:
+        if not any(other.parent == box.id for other in holders):
+            return box
+    return None
+
+
+def zip_child(diagram: Diagram, box: BangBox) -> BangBox | None:
+    """The child box of chain ``box`` holding the link ports that lie in a child, or None;
+    raise when such ports lie in two children, below a child, or at one end of a link only."""
+    found: BangBox | None = None
+    for p_ref, q_ref in box.links:
+        holders = [_innermost(diagram, r.node_id) for r in (p_ref, q_ref)]
+        inside = [h is not None and h.id != box.id for h in holders]
+        if not any(inside):
+            continue
+        child = holders[0]
+        if not all(inside) or child is None or holders[1] is None or child.id != holders[1].id:
+            raise BangBoxGrammarError(
+                f"chain box {box.id!r}: link {p_ref!r} -> {q_ref!r} does not lie in one box"
+            )
+        if child.parent != box.id or (found is not None and found.id != child.id):
+            raise BangBoxGrammarError(
+                f"chain box {box.id!r}: its links run through a box other than one child"
+            )
+        found = child
+    return found
+
+
+def _zip_ends(
+    diagram: Diagram, box: BangBox, child: BangBox
+) -> list[tuple[PortRef, PortRef, BangBoxId]]:
+    """Per open link port of ``box`` in ``child``: the port, its partner outside ``box`` and
+    the partner's box, which holds the copies the child's copies are wired to one to one."""
+    if box.cyclic:
+        return []
+    found: list[tuple[PortRef, PortRef, BangBoxId]] = []
+    for p_ref, q_ref in box.links:
+        if p_ref.node_id not in child.node_scope:
+            continue
+        for ref in (q_ref, p_ref):
+            partner = _partner(diagram, ref)
+            holder = None if partner is None else _innermost(diagram, partner.node_id)
+            if (
+                partner is None
+                or holder is None
+                or holder.multiplicity != child.multiplicity
+                or holder.parent != box.parent
+                or holder.is_pair
+                or holder.is_tree
+                or holder.is_fed
+                or _pairs_of(diagram, holder.id)
+            ):
+                raise BangBoxGrammarError(
+                    f"chain box {box.id!r}: link port {ref!r} in child box {child.id!r} is not "
+                    f"wired to a box of multiplicity {child.multiplicity} beside the chain"
+                )
+            found.append((ref, partner, holder.id))
+    return found
+
+
+def _index_symbol(diagram: Diagram, box: BangBox, name: str) -> sp.Symbol:
+    """The sympy symbol ``name`` as ``box``'s nodes or copy scalar read it."""
+    found = _symbol_in(diagram, box.node_scope, box.copy_scalar, name)
+    return sp.Symbol(name, integer=True, nonnegative=True) if found is None else found
+
+
+def _rename_index(diagram: Diagram, box: BangBox, name: str) -> Scalar | None:
+    """Read ``box``'s index as ``name`` in its nodes' phases and dimensions; its copy scalar so
+    read."""
+    assert box.index is not None
+    old = box.index
+    sym = _index_symbol(diagram, box, name)
+    for child in _descendants_of(diagram, box.id):
+        if old in child.multiplicity.free_symbols or (
+            child.copy_scalar is not None and old in child.copy_scalar.free_symbols
+        ):
+            raise BangBoxGrammarError(f"box {child.id!r} reads index {old!r} of a merged box")
+    for node_id in sorted(box.node_scope):
+        node = diagram.nodes[node_id]
+        if node.phase is not None and old in node.phase.free_symbols:
+            diagram.set_phase(node_id, node.phase.substitute({old: sym}))
+        node = diagram.nodes[node_id]
+        if any(old in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+            diagram.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, old, sym) for p in node.inputs],
+                [_dim_at(p.dim, old, sym) for p in node.outputs],
+            )
+    if box.copy_scalar is None:
+        return None
+    return _scalar_at(box.copy_scalar, old, sym)
+
+
+def _merge_zipped(diagram: Diagram, box_ids: list[BangBoxId]) -> None:
+    """Merge the boxes ``box_ids`` (one multiplicity, one parent) into the first: one scope, each
+    box's nodes a group of their own, links joined, indices read as one, copy scalars
+    multiplied, children moved under it."""
+    ids = list(dict.fromkeys(box_ids))
+    if len(ids) < 2:
+        return
+    boxes = [diagram.bang_boxes[i] for i in ids]
+    first = boxes[0]
+    for other in boxes[1:]:
+        if (
+            other.multiplicity != first.multiplicity
+            or other.parent != first.parent
+            or other.sheets != first.sheets
+        ):
+            raise BangBoxGrammarError(
+                f"boxes {ids!r} wired copy to copy differ in multiplicity, parent or sheets"
+            )
+    if any(
+        b.is_pair or b.is_tree or b.is_fed or _pairs_of(diagram, b.id) or b.feed is not None
+        for b in boxes
+    ) or any(b.feed in ids for b in diagram.bang_boxes.values()):
+        raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy hold pair or tree boxes")
+    if len({b.cyclic for b in boxes if b.links}) > 1:
+        raise BangBoxGrammarError(f"boxes {ids!r} mix cyclic and open chains")
+    index = next((b.index for b in boxes if b.index is not None), None)
+    scalar: Scalar | None = None
+    groups: list[frozenset[NodeId]] = []
+    for b in boxes:
+        factor = b.copy_scalar
+        if b.index is not None and index is not None and b.index != index:
+            factor = _rename_index(diagram, b, index)
+        if factor is not None:
+            scalar = factor if scalar is None else scalar * factor
+        grouped = frozenset(n for g in b.groups for n in g)
+        groups += [*b.groups, *([b.node_scope - grouped] if b.node_scope - grouped else [])]
+    scope = frozenset(n for b in boxes for n in b.node_scope)
+    links = tuple(link for b in boxes for link in b.links)
+    cyclic = any(b.cyclic for b in boxes)
+    for b in boxes[1:]:
+        identity = {n: n for n in b.node_scope}
+        _copy_subtree(diagram, b.id, identity, first.id)
+        _remove_subtree(diagram, b.id)
+        diagram.remove_bang_box(b.id)
+    diagram.set_bang_box_node_scope(first.id, scope)
+    diagram.set_bang_box_extension(
+        first.id,
+        links=links,
+        cyclic=cyclic,
+        index=index,
+        copy_scalar=scalar,
+        groups=tuple(groups),
+    )
+
+
+def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> list[dict[NodeId, NodeId]]:
     """Instantiate a chain, indexed or copy-scalar box at ``k``: plain copies, each link wired
     copy to copy (head to the first copy and last copy to tail, or around for a cyclic chain;
     head to tail at ``k == 0``), the index set to the copy number, the copy scalars
-    multiplied in."""
+    multiplied in; the node map of each copy. With links through a child box, the child's
+    copies and the boxes the chain's ends are wired to are then merged into one box, one group
+    per merged box."""
+    child = zip_child(diagram, box)
+    zipped = [] if child is None else _zip_ends(diagram, box, child)
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
     pairs = [_detach_pair(diagram, pair) for pair in _pairs_of(diagram, box.id)]
@@ -1612,6 +1834,75 @@ def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> None:
     for m, id_map in enumerate(id_maps):
         _index_copy(diagram, box, id_map, m, new_boxes)
     _drop_identities(diagram, temps)
+    if child is not None:
+        heads = [b for ref, _, b in zipped if any(ref == q for _, q in box.links)]
+        tails = [b for ref, _, b in zipped if any(ref == p for p, _ in box.links)]
+        copies: list[BangBoxId] = []
+        for id_map in id_maps:
+            image = frozenset(id_map[n] for n in child.node_scope)
+            copies += [b for b in new_boxes if diagram.bang_boxes[b].node_scope == image]
+        _merge_zipped(diagram, [*heads, *copies, *tails])
+    return id_maps
+
+
+def zip_wires(diagram: Diagram) -> tuple[frozenset[Wire], tuple[str, ...]]:
+    """The wires joining a chain's link child box to the boxes its open ends are wired to, and a
+    message per chain whose links through a child box are malformed."""
+    wires: set[Wire] = set()
+    problems: list[str] = []
+    for _, box in sorted(diagram.bang_boxes.items()):
+        if not box.links or not box.node_scope <= diagram.nodes.keys():
+            continue
+        try:
+            child = zip_child(diagram, box)
+            if child is not None:
+                wires |= {Wire(ref, partner) for ref, partner, _ in _zip_ends(diagram, box, child)}
+        except BangBoxGrammarError as exc:
+            problems.append(str(exc))
+    return frozenset(wires), tuple(problems)
+
+
+def _zip_members(diagram: Diagram, chain: BangBox) -> list[BangBoxId]:
+    """``chain``'s link child box, then the boxes its open ends are wired to."""
+    child = zip_child(diagram, chain)
+    assert child is not None
+    return list(dict.fromkeys([child.id, *(b for _, _, b in _zip_ends(diagram, chain, child))]))
+
+
+def _expand_zipped(diagram: Diagram, chain: BangBox, k: int) -> None:
+    """Instantiate ``chain``'s link child box and the boxes its open ends are wired to at ``k``
+    together, copy j of the child wired to copy j of each."""
+    child = zip_child(diagram, chain)
+    assert child is not None
+    zipped = _zip_ends(diagram, chain, child)
+    members = _zip_members(diagram, chain)
+    if any(diagram.bang_boxes[m].multiplicity != Mult(k) for m in members):
+        raise BangBoxGrammarError(f"boxes {members!r} wired copy to copy differ in count")
+    for ref, partner, _ in zipped:
+        diagram.remove_wire(ref, partner)
+    maps: dict[BangBoxId, list[dict[NodeId, NodeId]]] = {}
+    for member in members:
+        box = diagram.bang_boxes[member]
+        if box.is_extended:
+            maps[member] = _instantiate_extended(diagram, box, k)
+        else:
+            maps[member] = _instantiate_node_scope(diagram, box, k)
+    for ref, partner, holder in zipped:
+        for j in range(k):
+            diagram.add_wire(_moved(ref, maps[child.id][j]), _moved(partner, maps[holder][j]))
+
+
+def _zip_chain(diagram: Diagram, box_id: BangBoxId) -> BangBox | None:
+    """The open chain box whose link child or end box is ``box_id``, or None."""
+    for chain in diagram.bang_boxes.values():
+        if not chain.links or chain.cyclic:
+            continue
+        child = zip_child(diagram, chain)
+        if child is None:
+            continue
+        if box_id == child.id or any(b == box_id for _, _, b in _zip_ends(diagram, chain, child)):
+            return chain
+    return None
 
 
 # -- public entry points -----------------------------------------------------------------
@@ -1665,6 +1956,10 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
             break
         box_id = targets[0]
         substituted = working.bang_boxes[box_id].multiplicity.substitute({name: value})
+        chain = _zip_chain(working, box_id) if substituted.is_concrete else None
+        for member in [] if chain is None else _zip_members(working, chain):
+            mult = working.bang_boxes[member].multiplicity.substitute({name: value})
+            working.set_bang_box_multiplicity(member, mult)
         working.set_bang_box_multiplicity(box_id, substituted)
         if substituted.is_concrete:
             _instantiate_one(working, box_id, substituted.to_int())
@@ -1731,12 +2026,10 @@ def _peel_node_scope(diagram: Diagram, box: BangBox, first: bool = False) -> dic
     _fan_out(diagram, outside_crossings(diagram, scope), id_maps)
     sorted_crossings = sorted(boundary_refs_in_scope(diagram, scope), key=lambda r: r.sort_key())
     diagram.set_boundary_inputs(
-        _splice_boundary_block(list(diagram.boundary_inputs), sorted_crossings, id_maps, box.sheets)
+        _splice_box(list(diagram.boundary_inputs), sorted_crossings, id_maps, box)
     )
     diagram.set_boundary_outputs(
-        _splice_boundary_block(
-            list(diagram.boundary_outputs), sorted_crossings, id_maps, box.sheets
-        )
+        _splice_box(list(diagram.boundary_outputs), sorted_crossings, id_maps, box)
     )
 
     _copy_subtree(diagram, box.id, id_map, box.parent)
@@ -1972,6 +2265,12 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
     box = working.bang_boxes.get(box_id)
     if box is None:
         raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
+    if box.is_node_scope and (
+        _zip_chain(working, box_id) is not None
+        or (box.links and zip_child(working, box))
+        or (box.parent is not None and zip_child(working, working.bang_boxes[box.parent]))
+    ):
+        raise BangBoxGrammarError(f"box {box_id!r} with links through a child box has no peel_one")
     predecessor = _predecessor(box.multiplicity)
     before = frozenset(working.nodes)
     if box.is_fed:

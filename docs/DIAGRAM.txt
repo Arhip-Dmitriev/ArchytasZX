@@ -170,6 +170,16 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     p is wired to its own q; the instance is copy_m.p - copy_((m+1) mod k).q, and k = 0 is
     empty. Link ports do not fan out; every other crossing and boundary slot is laid out as
     for a plain box.
+    Links through a child box (REMAINING_BUGS_SPEC 72.6): both ports of a link may lie in
+    one child box C (their innermost box, a direct child of the chain). Copy j of C in chain
+    copy m is then linked to copy j of C in copy m + 1. An open chain's ends at such ports
+    are wired to nodes of node-scope boxes beside the chain (same parent, C's multiplicity),
+    whose copy j meets copy j of C; a boundary slot there is refused. Expanding the chain
+    first merges its copies of C and those end boxes into one box whose groups (BangBox.groups,
+    one per merged box) each lay out their boundary slots as one block, so the result does
+    not depend on which count is instantiated first; expanding C first gives the chain one
+    link per copy of C, C and the end boxes expanded together. Such boxes refuse peel_one and
+    symbolic contraction.
   - index I: in copy m every phase of the copy's nodes, the copy scalar and each child's
     multiplicity read I = m.
   - copy_scalar c: the diagram scalar is multiplied by c(0) c(1) ... c(k-1) (c^k without an
