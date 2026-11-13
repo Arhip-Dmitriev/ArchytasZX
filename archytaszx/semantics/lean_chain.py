@@ -15,19 +15,20 @@
 the two families as ``chainNet`` networks (ArchytasZX/ChainInduct.lean): each side's network at
 ``k = 0`` read off the exposed successor instantiated at ``k = 0``, its copy ``i`` read off the
 exposed successor at ``k = i`` with the scalar ratio of the families at ``i + 1`` and ``i``, one
-period of copies kept as a table, the base pair and each copy pair proved equal by their path
-sums (lean_pathsum.net_body on dimension 2^K, lean_pathsum.qnet_body on an odd prime), the copy
-pairs relabelled onto the chain's label scheme, and ``chain_equal`` giving both families equal
-at every ``k``. At each checked ``k`` the networks of both sides instantiated at ``k`` are
-written out, matched to the chain networks at ``k`` by a label map found by search, and proved
-equal (``At{k}.inst``) from ``main k`` by ``Equal.mapL2`` and permutations checked by
-``decide``, with the chain scalars proved equal to the instances'. An offset induction
-(induction_offset) takes its copies at ``k = 0`` and offset ``0 .. P - 1``, and ``main s k``
-gives level ``j`` of the chain at ``k`` the copy ``s + k - 1 - j``, for every ``s`` and ``k``;
-the instances are linked at ``s = 0``. Over mixed qubit wire dimensions (_export_mixed) each
-body keeps its own labels' digit counts and ``main`` holds over ``lvEnv E W C B k``
-(ArchytasZX/ChainMixed.lean), the instances linked under ``EK``, their labels' digit counts
-before ``lvEnv E W C B k``'s.
+period of copies kept as a table (copy scalars growing by a fixed ratio per period read as the
+table entry times the ratio to the power ``i div P``), the base pair and each copy pair proved
+equal by their path sums (lean_pathsum.net_body on dimension 2^K, lean_pathsum.qnet_body on an
+odd prime), the copy pairs relabelled onto the chain's label scheme, and ``chain_equal`` giving
+both families equal at every ``k``. At each checked ``k`` the networks of both sides
+instantiated at ``k`` are written out, matched to the chain networks at ``k`` by a label map
+found by search, and proved equal (``At{k}.inst``) from ``main k`` by ``Equal.mapL2`` and
+permutations checked by ``decide``, with the chain scalars proved equal to the instances'. An
+offset induction (induction_offset) takes its copies at ``k = 0`` and offset ``0 .. P - 1``, and
+``main s k`` gives level ``j`` of the chain at ``k`` the copy ``s + k - 1 - j``, for every ``s``
+and ``k``; the instances are linked at ``s = 0``. Over mixed qubit wire dimensions
+(_export_mixed) each body keeps its own labels' digit counts and ``main`` holds over
+``lvEnv E W C B k`` (ArchytasZX/ChainMixed.lean), the instances linked under ``EK``, their
+labels' digit counts before ``lvEnv E W C B k``'s.
 """
 
 from __future__ import annotations
@@ -64,18 +65,23 @@ _FREE = 1 << 19
 _BASE = 1 << 18
 """The shift of the base labels in a chain over mixed wire dimensions."""
 
+_ONE = sp.Integer(1)
+"""The ratio of copy scalars that repeat."""
+
 
 @dataclass
 class _Split:
     """One side at ``k = 0`` as an open diagram, its copies at ``k = 0 .. P - 1`` (period P),
-    the cut ports' boundary positions in the base and in each copy and the copies' link-out
-    positions (the link-in ports of a copy meeting the rest at its link-out ports)."""
+    the cut ports' boundary positions in the base and in each copy, the copies' link-out
+    positions (the link-in ports of a copy meeting the rest at its link-out ports) and the
+    ratio of copy ``i + P``'s scalar to copy ``i``'s."""
 
     base: Diagram
     copies: list[Diagram]
     base_cut: list[int]
     copy_in: list[int]
     copy_out: list[int]
+    ratio: sp.Expr = _ONE
 
 
 def _sub(
@@ -106,8 +112,9 @@ def _moved(ref: PortRef, id_map: Mapping[NodeId, NodeId]) -> PortRef:
     return PortRef(id_map[ref.node_id], ref.direction, ref.index)
 
 
-def _key(diagram: Diagram) -> tuple[object, ...]:
-    """The nodes, phases, wires, boundary and scalar of ``diagram`` as a comparable value."""
+def _key(diagram: Diagram, scalar: bool = True) -> tuple[object, ...]:
+    """The nodes, phases, wires, boundary and (with ``scalar``) scalar of ``diagram`` as a
+    comparable value."""
     nodes = tuple(
         (
             nid,
@@ -120,7 +127,7 @@ def _key(diagram: Diagram) -> tuple[object, ...]:
     )
     wires = tuple(sorted(w.sort_key() for w in diagram.wires))
     bnd = (tuple(diagram.boundary_outputs), tuple(diagram.boundary_inputs))
-    return nodes, wires, bnd, str(diagram.scalar.to_sympy())
+    return nodes, wires, bnd, str(diagram.scalar.to_sympy()) if scalar else None
 
 
 MAX_PERIOD = 64
@@ -199,15 +206,19 @@ def _split(
         return copy, [*c_outs, *c_ins]
 
     first, c_bnd = copy_at(0)
-    keys = [_key(first)]
+    keys = [_key(first, False)]
     copies = [first]
     period = 0
-    for j in range(1, 2 * MAX_PERIOD + 1):
+
+    def more(j: int) -> None:
         cj, bj = copy_at(j)
         if bj != c_bnd:
             raise PathSumUnsupported(f"the copy at k = {j} has another boundary")
-        keys.append(_key(cj))
+        keys.append(_key(cj, False))
         copies.append(cj)
+
+    for j in range(1, 2 * MAX_PERIOD + 1):
+        more(j)
         half = (j + 1) // 2
         if (j + 1) % 2 == 0 and keys[:half] == keys[half:]:
             period = next(
@@ -218,9 +229,19 @@ def _split(
             break
     if not period:
         raise PathSumUnsupported(f"the copies have no period up to {MAX_PERIOD}")
+    while len(copies) < 3 * period + 1:
+        more(len(copies))
+    ss = [c.scalar.to_sympy() for c in copies]
+    ratio = sp.Integer(1)
+    if any(sp.simplify(ss[t] - ss[t % period]) != 0 for t in range(len(ss))):
+        if ss[0] == 0:
+            raise PathSumUnsupported("the first copy has scalar zero")
+        ratio = sp.nsimplify(sp.simplify(ss[period] / ss[0]))
+        if any(sp.simplify(ss[t + period] - ratio * ss[t]) != 0 for t in range(len(ss) - period)):
+            raise PathSumUnsupported("the copy scalars are neither periodic nor geometric")
     if offset is not None:
         moved, m_bnd = copy_at(0, {step: 1, offset: 0, **values})
-        if m_bnd != c_bnd or _key(moved) != keys[0]:
+        if m_bnd != c_bnd or _key(moved) != _key(copies[0]):
             raise PathSumUnsupported("the offset copy depends on k")
     b_bnd = [*b_outs, *b_ins]
     if any(p not in c_bnd for p in p_ports):
@@ -231,6 +252,7 @@ def _split(
         [b_bnd.index(r) for r in far],
         [c_bnd.index(q) for q in q_ports],
         [c_bnd.index(p) for p in p_ports],
+        ratio,
     )
 
 
@@ -507,10 +529,11 @@ def export_chain(
     if (sp_o.base_cut, sp_o.copy_in, sp_o.copy_out) != (sp_x.base_cut, sp_x.copy_in, sp_x.copy_out):
         raise PathSumUnsupported("the two sides' cut and link positions differ")
     period = math.lcm(len(sp_o.copies), len(sp_x.copies))
-    pairs = [(sp_o.base, sp_x.base)] + [
-        (sp_o.copies[j % len(sp_o.copies)], sp_x.copies[j % len(sp_x.copies)])
-        for j in range(period)
-    ]
+    ratio = sp.nsimplify(sp_o.ratio ** (period // len(sp_o.copies)))
+    if sp.simplify(ratio - sp_x.ratio ** (period // len(sp_x.copies))) != 0:
+        raise PathSumUnsupported("the two sides' copy scalars grow at different rates")
+    cols = tuple([_scaled(s_, j) for j in range(period)] for s_ in (sp_o, sp_x))
+    pairs = [(sp_o.base, sp_x.base), *zip(cols[0], cols[1], strict=True)]
     names = ["baseEq", *("copyEq" for _ in range(period))]
     bodies, phases, qudit, coefs = _bodies(pairs, names)
     base, copies = bodies[0], bodies[1:]
@@ -523,6 +546,8 @@ def export_chain(
         ks = set(labs.values())
         mixed = len(ks) > 1
         dims = "2 ^ k" if mixed else f"2 ^ {ks.pop() if ks else 1}"
+    if mixed and ratio != 1:
+        raise PathSumUnsupported("a growing copy scalar over mixed wire dimensions")
     cut = [c + (_BASE if mixed else 0) for c in sp_o.base_cut]
     n_copy = len(sp_o.copies[0].boundary_outputs) + len(sp_o.copies[0].boundary_inputs)
     target: dict[int, int] = {}
@@ -551,8 +576,16 @@ def export_chain(
             return out
         return _const_model(*constant(diagram.scalar.to_sympy()))
 
+    one = Diagram()
+    one.set_scalar(Scalar(ratio))
+    r_model = model(one) if ratio != 1 else sp.Integer(1)
+    grow = f"({sc.text(r_model)}) ^ (i / {period}) * " if ratio != 1 else ""
+
     def links() -> list[str]:
-        models = tuple((model(sp_.base), [model(c) for c in sp_.copies]) for sp_ in (sp_o, sp_x))
+        models = tuple(
+            (model(sp_.base), [model(c) for c in col])
+            for sp_, col in zip((sp_o, sp_x), cols, strict=True)
+        )
         return _link_lines(
             cut,
             bodies,
@@ -568,6 +601,7 @@ def export_chain(
             model,
             offset is not None,
             mixed,
+            r_model,
         )
 
     if mixed:
@@ -622,10 +656,17 @@ def export_chain(
         "",
         "def cO (i : ℕ) : Net := perIdx cOt ⟨[], [], []⟩ i",
         "def cX (i : ℕ) : Net := perIdx cXt ⟨[], [], []⟩ i",
-        "noncomputable def aO (i : ℕ) : ℂ := perIdx aOt 1 i",
-        "noncomputable def aX (i : ℕ) : ℂ := perIdx aXt 1 i",
+        f"noncomputable def aO (i : ℕ) : ℂ := {grow}perIdx aOt 1 i",
+        f"noncomputable def aX (i : ℕ) : ℂ := {grow}perIdx aXt 1 i",
         "",
     ]
+    if grow:
+        lines += [
+            "theorem copyS (c : ℂ) {a b : ℂ} {X Y : Net} (h : Equal E a X b Y) :",
+            "    Equal E (c * a) X (c * b) Y :=",
+            "  ⟨h.1, fun σ hσ => by rw [mul_assoc, h.2 σ hσ, ← mul_assoc]⟩",
+            "",
+        ]
     for j, body in enumerate(copies):
         lines += [
             (
@@ -646,7 +687,7 @@ def export_chain(
         "    List.length_nil]",
         f"  generalize i % {period} = j at h ⊢",
         "  interval_cases j",
-        *(f"  · exact copyEq{j}" for j in range(period)),
+        *(f"  · exact {'copyS _ ' if grow else ''}copyEq{j}" for j in range(period)),
         "",
         "theorem hcO : ∀ i, copyOK W cut (cO i) = true :=",
         "  perIdx_all cOt _ (fun c => copyOK W cut c = true) (by decide) (by decide)",
@@ -681,6 +722,18 @@ def export_chain(
         ]
     lines += [*links(), f"end {ns}", ""]
     return "\n".join(lines)
+
+
+def _scaled(split: _Split, j: int) -> Diagram:
+    """Copy ``j`` of ``split``: copy ``j mod P`` with its scalar times the ratio to the power
+    ``j div P``."""
+    p = len(split.copies)
+    copy = split.copies[j % p]
+    if j < p or split.ratio == 1:
+        return copy
+    out = copy.copy()
+    out.set_scalar(Scalar(sp.nsimplify(copy.scalar.to_sympy() * split.ratio ** (j // p))))
+    return out
 
 
 def _labels(net: NetT) -> set[int]:
@@ -861,6 +914,7 @@ def _link_lines(
     model: Callable[[Diagram], sp.Expr],
     offset: bool = False,
     mixed: bool = False,
+    ratio: sp.Expr = _ONE,
 ) -> list[str]:
     """For each ``k`` of ``checks``: both sides' instances at ``k`` as networks DL, DR, the
     relabellings of the chain networks onto them, their node, summed and boundary permutations
@@ -906,7 +960,9 @@ def _link_lines(
                 for x in (*o, *i):
                     if digits.setdefault(x, d) != d:
                         raise PathSumUnsupported("an instance label has two dimensions")
-            lhs = m_base * sp.Mul(*(m_copies[i % len(m_copies)] for i in range(k)))
+            lhs = m_base * sp.Mul(
+                *(m_copies[i % len(m_copies)] * ratio ** (i // len(m_copies)) for i in range(k))
+            )
             rhs = model(inst_d)
             scal.append((tag, sc.text(rhs), sc.prove(lhs, rhs), lhs))
             fwd, match = _iso(chain, inst, body_of)
@@ -984,7 +1040,8 @@ def _link_lines(
                     f"  simp only [Finset.prod_range_succ, Finset.prod_range_zero, {a_tab}, "
                     f"perIdx, {a_tab}t, List.length_cons, List.length_nil, Nat.reduceAdd, "
                     "Nat.reduceMod, List.getD_cons_zero, List.getD_cons_succ, one_mul"
-                    + (", Nat.reduceSub, zero_add]" if offset else "]")
+                    + (", Nat.reduceSub, zero_add" if offset else "")
+                    + (", Nat.reduceDiv]" if ratio != 1 else "]")
                 ),
                 f"  have key : ({sc.text(lhs)} : ℂ) = {rhs_text} :=",
                 *("    " + ln for ln in proof.splitlines()),

@@ -182,12 +182,13 @@ def test_an_offset_induction_exports_over_every_offset() -> None:
     assert "theorem main : ∀ s k, Equal E" in source
     assert "(chainNet W cut Base.NL (fun j => cO (s + k - 1 - j)) k)" in source
     assert "    (fun _ => hD _ _) (main 0 2) (by decide) (by decide)" in source
-    with pytest.raises(PathSumUnsupported):
-        export_chain(_theorem(_reversed_pair("2^i")), {"d": 2}, "growing")
+    growing = export_chain(_theorem(_reversed_pair("2^i")), {"d": 2}, "growing", checks=(1, 2))
+    assert "noncomputable def aO (i : ℕ) : ℂ := ((16 : ℂ)) ^ (i / 4) * perIdx aOt 1 i" in growing
+    assert "  · exact copyS _ copyEq3" in growing
 
 
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
-@pytest.mark.parametrize("scalar", [None, "2"])
+@pytest.mark.parametrize("scalar", [None, "2", "2^i"])
 def test_lean_proves_the_offset_chains(scalar: str | None, tmp_path: object) -> None:
     source = export_chain(_theorem(_reversed_pair(scalar)), {"d": 2}, "offset", checks=(1, 2))
     ok, output = L.check(source, f"{tmp_path}/offset.lean")
