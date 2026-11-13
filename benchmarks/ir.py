@@ -256,6 +256,17 @@ class LowerMCX:
 
 
 @dataclass(frozen=True)
+class IndexedMCX:
+    """For each value v = 0 .. 2^n - 1 of register ``over`` (n copies, dimension 2, copy j the bit
+    of value 2^j), in order, the flip of the single wire ``t`` controlled on ``over`` = v and on
+    copy v of register ``cells`` (2^n copies, dimension 2) at 1."""
+
+    over: str
+    cells: str
+    t: str
+
+
+@dataclass(frozen=True)
 class Neighbours:
     """CZ^s (s = +1 or -1) between copies j and j + 1 of register ``over``, for every j, in
     copy order."""
@@ -288,6 +299,7 @@ Gate = Union[  # noqa: UP007
     Pairs,
     Tree,
     LowerMCX,
+    IndexedMCX,
     Neighbours,
 ]
 
@@ -354,6 +366,8 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         return (g.parent,)
     if isinstance(g, LowerMCX):
         return (*g.controls, g.over)
+    if isinstance(g, IndexedMCX):
+        return (g.over, g.cells, g.t)
     return (g.q,)
 
 

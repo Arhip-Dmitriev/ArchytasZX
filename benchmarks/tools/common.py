@@ -175,6 +175,12 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
         if isinstance(g, ir.Neighbours):
             gates += neighbours(g, copies[g.over])
             continue
+        if isinstance(g, ir.IndexedMCX):
+            bits, cells = copies[g.over], copies[g.cells]
+            for v, cell in enumerate(cells):
+                values = (*((v >> j) & 1 for j in range(len(bits))), 1)
+                gates.append(ir.MCX((*bits, cell), g.t, values))
+            continue
         if isinstance(g, ir.LowerMCX):
             own = copies[g.over]
             order = range(len(own)) if g.reverse else reversed(range(len(own)))

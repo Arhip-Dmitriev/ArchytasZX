@@ -53,7 +53,12 @@ copy scalar D^(1/2). LowerMCX (D = 2) puts, per copy k in the register's box (in
 Z(1 -> 2) fan on the wire (before the target, after it with ``reverse``), the target X(2 -> 1)
 (scalar 2^(1/2) per copy) fed by Ti after a Z AND spider, and one T per single control into
 the AND (through X(pi) for value 0); a pair box (index m) holds one T from copy j's fan leg to
-copy k's AND, so the AND reads T|0> + prod x |1> = T|prod x>.
+copy k's AND, so the AND reads T|0> + prod x |1> = T|prod x>. IndexedMCX (D = 2) puts, per
+value copy v in the cells' box (index v), a fan Z(1 -> 2) on the cell, |v> as X(0 -> 1, 2^n)
+split by a chain S(2, 2^j) in a box of n copies (index j) nested in it and aligned to the address
+box, whose copy j feeds X(2 -> 1) of bit j and the address fan leg through X(pi) and T into a Z
+AND spider with the cell's T, then Ti into one target X(2 -> 1) on t (scalar 2^(-n/2) 2^(1/2)
+per value copy, 2^(1/2) per bit copy).
 """
 
 from __future__ import annotations
@@ -467,6 +472,9 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
     if isinstance(g, ir.Chain):
         _chain(b, g)
         return
+    if isinstance(g, ir.IndexedMCX):
+        _indexed_mcx(b, g)
+        return
     box = b.box_of(qs)
     if isinstance(g, ir.Init):
         d = b.dval(g.q)
@@ -596,6 +604,78 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
         _neighbours(b, g)
         return
     raise TypeError(f"unknown gate {g!r}")
+
+
+def _named(b: _Builder, key: str) -> _Box:
+    """Box ``key``, named when it has no name yet."""
+    box = b.boxes.setdefault(key, _Box(key))
+    if box.name is None:
+        box.name = f"C{sum(1 for x in b.boxes.values() if x.name is not None)}"
+    return box
+
+
+def _indexed_mcx(b: _Builder, g: ir.IndexedMCX) -> None:
+    """The value box of :class:`ir.IndexedMCX` (see the module docstring)."""
+    if b.chain is not None or any(q in b.chained for q in (g.over, g.cells)):
+        raise Unsupported("an indexed MCX inside a loop or on a chain register")
+    count = b.c.count(g.over)
+    if count is None or b.c.count(g.cells) is None or b.c.count(g.t) is not None:
+        raise Unsupported("an indexed MCX needs two registers and a single target wire")
+    if sp.simplify(sp.sympify(b.c.count(g.cells)) - 2 ** sp.sympify(count)) != 0:
+        raise Unsupported("an indexed MCX needs 2^n cells for n address copies")
+    if any(b.ctx.concrete(b.c.dim(w)) != 2 for w in (g.over, g.cells, g.t)):
+        raise Unsupported("an indexed MCX needs dimension 2")
+    dt = "literal 2"
+    n = _expr(b.ctx.value(sp.sympify(count)))
+    address = _named(b, str(count))
+    key = str(b.c.count(g.cells))
+    value = _named(b, key)
+    if value.index not in (None, "v"):
+        raise Unsupported("an indexed MCX on a cell box reading another index")
+    value.index = "v"
+    bits = f"_bits{len(b.boxes)}"
+    b.boxes[bits] = _Box(count, parent=key, index="j")
+    inner = _named(b, bits)
+    inner.extra.append(f"align {inner.name} with {address.name}")
+
+    def fan(q: str, box: str) -> str:
+        z = b.node(f"Z(1 -> 2, {dt})", box)
+        b.take(q, f"{z}.in0")
+        b.gives(q, f"{z}.out0")
+        return f"{z}.out1"
+
+    control = fan(g.over, str(count))
+    cell = fan(g.cells, key)
+    state = b.node(f"X(0 -> 1, literal 2^{n}) phase{{k: -v*k/2^{n}}}", key)
+    split = b.node("S(literal 2, literal 2^j)", bits)
+    end = b.node("Z(1 -> 0, literal 1)", key)
+    inner.links.append(f"{split}.in0 -> {split}.out1")
+    b.wires += [f"{state}.out0 -- {split}.in0", f"{split}.out1 -- {end}.in0"]
+    b.factor(sp.Integer(2) ** (-sp.sympify(n) / 2), key)
+    xor = b.node(f"X(2 -> 1, {dt})", bits)
+    flip = b.node(f"X(1 -> 1, {dt}) phase{{1: 1/2}}", bits)
+    bit_t = b.node(f"T({dt})", bits)
+    conj = b.node(f"Z(2 -> 1, {dt})", key)
+    b.wires += [
+        f"{control} -- {xor}.in0",
+        f"{split}.out0 -- {xor}.in1",
+        f"{xor}.out0 -- {flip}.in0",
+        f"{flip}.out0 -- {bit_t}.in0",
+        f"{bit_t}.out0 -- {conj}.in1",
+    ]
+    b.factor(sp.sqrt(2), bits)
+    cell_t = b.node(f"T({dt})", key)
+    inverse = b.node(f"Ti({dt})", key)
+    target = b.node(f"X(2 -> 1, {dt})", None)
+    b.take(g.t, f"{target}.in0")
+    b.gives(g.t, f"{target}.out0")
+    b.wires += [
+        f"{cell} -- {cell_t}.in0",
+        f"{cell_t}.out0 -- {conj}.in0",
+        f"{conj}.out0 -- {inverse}.in0",
+        f"{inverse}.out0 -- {target}.in1",
+    ]
+    b.factor(sp.sqrt(2), key)
 
 
 def _neighbours(b: _Builder, g: ir.Neighbours) -> None:
@@ -935,11 +1015,11 @@ def translate(c: ir.Circuit, ctx: Context) -> Translation:
         token = (
             f"literal {count}"
             if count.isdigit()
-            else (f"literal {bound}" if bound is not None else count)
+            else (f"literal {bound}" if bound is not None else _expr(count))
         )
         head = "" if box.name is None else f" as {box.name}"
-        head += "" if box.parent is None else f" in {b.boxes[box.parent].name}"
         head += "" if box.index is None else f" index {box.index}"
+        head += "" if box.parent is None else f" in {b.boxes[box.parent].name}"
         lines.append(f"repeat {token}{head}: " + ", ".join(box.nodes))
         if box.links:
             lines.append(f"chain {box.name}: " + ", ".join(box.links))

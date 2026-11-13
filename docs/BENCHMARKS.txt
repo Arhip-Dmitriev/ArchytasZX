@@ -133,7 +133,13 @@ row carry linked copy j to copy j (DIAGRAM.txt 4.2) and given an identity Z(1 ->
 box before and after the chain. Neighbours(over, s) is CZ^s between copies j and j + 1 of a
 register: a Z(2 -> 2) on the wire, out1 linked to the next copy's F (F^3 for s = -1) into in1,
 the head X(0 -> 1) and the tail Z(1 -> 0) outside the box, D^(1/2) per copy and D^(-1/2)
-once. A Tree is one named tree box (tree NAME:
+once. IndexedMCX(over, cells, t) (D = 2, cells a register of 2^n copies for the n of over) puts
+in the box of cells (index v) a fan Z(1 -> 2) on the cell, the state |v> as X(0 -> 1, 2^n), a
+splitter chain S(2, 2^j) in a box of n copies (index j) nested in it and aligned to the box of
+over (align, DIAGRAM.txt 4.2), whose copy j holds X(2 -> 1) of bit j of v and the fan leg of
+copy j of over, X(pi) and T into a Z AND spider beside the T of the cell, then Ti into one
+target X(2 -> 1) on t outside the boxes; scalar 2^(-n/2) 2^(1/2) per value copy and 2^(1/2)
+per bit copy. A Tree is one named tree box (tree NAME:
 q <- p_1, ..., p_b) over its body's nodes, q the first port the parent entered in the copy and
 p_i the children wires' ends, its scalar factors as the box's copy scalar; the parent wire's
 output is the run of p_i, and no gate follows on it. Phase

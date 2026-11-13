@@ -21,6 +21,7 @@ from benchmarks.ir import (  # noqa: F401
     Chain,
     Discard,
     F,
+    IndexedMCX,
     Init,
     LowerMCX,
     Measure,
