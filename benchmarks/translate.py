@@ -31,8 +31,10 @@ Gate encodings (``D`` the wire dimension; scalars as written into the ``scalar``
               D^(-1/2) (concrete dimensions only)
 
 A register's nodes go in one node-scope box per count; a gate between a register and a single
-wire puts the single wire's spider outside the box, where it takes one leg per copy. A wire
-never touched gets an identity Z(1 -> 1).
+wire puts the single wire's spider outside the box, where it takes one leg per copy. A phase
+table in a box takes each single wire through a Z(1 -> 2) outside the box, its out1 into the
+copy's binder and the copy's splitter end into a Z(1 -> 0). A wire never touched gets an
+identity Z(1 -> 1).
 
 A Chain is one named box over its body's nodes, with its index, linked from each carry's end
 after the exchange to the first port the carry entered in the copy (chain NAME: p -> q; a
@@ -360,10 +362,31 @@ def _phase_fn(
     f: Callable[[tuple[int, ...]], Any],
     support: tuple[tuple[int, ...], ...] | None = None,
 ) -> None:
-    """The binder, phase-table, splitter group of :class:`ir.PhaseFn`; with ``support`` only
-    those inputs are evaluated."""
-    if b.box_of(qs) is not None:
-        raise Unsupported("a phase table on a register")
+    """The binder, phase-table, splitter group of :class:`ir.PhaseFn`, in the box of its wires;
+    with ``support`` only those inputs are evaluated."""
+    box = b.box_of(qs)
+    fanned: dict[str, str] = {}
+    if box is not None:
+        for q in qs:
+            if not b.boxed(q):
+                z = b.node(f"Z(1 -> 2, {b.dim(q)})", None)
+                b.take(q, f"{z}.in0")
+                b.gives(q, f"{z}.out0")
+                fanned[q] = f"{z}.out1"
+
+    def take(q: str, port: str) -> None:
+        if q in fanned:
+            b.wires.append(f"{fanned[q]} -- {port}")
+        else:
+            b.take(q, port)
+
+    def gives(q: str, port: str) -> None:
+        if q in fanned:
+            end = b.node(f"Z(1 -> 0, {b.dim(q)})", box)
+            b.wires.append(f"{port} -- {end}.in0")
+        else:
+            b.gives(q, port)
+
     dims = [b.ctx.concrete(b.c.dim(q)) for q in qs]
     if any(v is None for v in dims):
         raise Unsupported("a phase table needs literal concrete dimensions")
@@ -384,34 +407,34 @@ def _phase_fn(
     if t0:
         shifted = {i: (entries.get(i, Fraction(0)) - t0) % 1 for i in range(1, total)}
         entries = {i: t for i, t in shifted.items() if t}
-        b.factor(sp.exp(2 * sp.pi * sp.I * sp.Rational(t0.numerator, t0.denominator)), None)
+        b.factor(sp.exp(2 * sp.pi * sp.I * sp.Rational(t0.numerator, t0.denominator)), box)
     body = ", ".join(f"{i}: {t}" for i, t in entries.items())
     phase = f" phase{{{body}}}" if body else ""
     if len(qs) == 1:
-        b.unary(qs[0], f"Z(1 -> 1, literal {total}){phase}", None)
+        b.unary(qs[0], f"Z(1 -> 1, literal {total}){phase}", box)
         return
     acc = ds[0]
     prev = qs[0]
     binders: list[tuple[str, int, int]] = []
     for q, dv in zip(qs[1:], ds[1:]):
-        name = b.node(f"B(literal {acc}, literal {dv})", None)
+        name = b.node(f"B(literal {acc}, literal {dv})", box)
         if prev is not None:
-            b.take(prev, f"{name}.in0")
+            take(prev, f"{name}.in0")
         else:
             b.wires.append(f"{binders[-1][0]}.out0 -- {name}.in0")
-        b.take(q, f"{name}.in1")
+        take(q, f"{name}.in1")
         binders.append((name, acc, dv))
         acc *= dv
         prev = None
-    z = b.node(f"Z(1 -> 1, literal {total}){phase}", None)
+    z = b.node(f"Z(1 -> 1, literal {total}){phase}", box)
     b.wires.append(f"{binders[-1][0]}.out0 -- {z}.in0")
     port = f"{z}.out0"
     for (_, acc_k, dv), q in zip(reversed(binders), reversed(qs[1:])):
-        s = b.node(f"S(literal {acc_k}, literal {dv})", None)
+        s = b.node(f"S(literal {acc_k}, literal {dv})", box)
         b.wires.append(f"{port} -- {s}.in0")
-        b.gives(q, f"{s}.out1")
+        gives(q, f"{s}.out1")
         port = f"{s}.out0"
-    b.gives(qs[0], port)
+    gives(qs[0], port)
 
 
 def _gate(b: _Builder, g: ir.Gate) -> None:
