@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -119,7 +120,75 @@ CARRY_SHIFT = Lemma(
     build=_carry_sides,
 )
 
-LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT,)
+_AND_LEFT = """
+count p
+c = Z(1 -> 2, literal 2)
+t = T(literal 2)
+z = Z(1 -> 1, literal 2)
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+wire c.out1 -- t.in0, t.out0 -- z.in0, c.out0 -- b.in0, h.out0 -- b.in1
+repeat p as V index m: c, t, b
+chain V: b.out0 -> b.in1
+inputs c.in0
+outputs b.out0, z.out0
+"""
+
+_AND_RIGHT = """
+count p
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+zt = Z(0 -> 1, literal 2)
+bb = B(literal 2, literal 2^p)
+u = X(1 -> 1, literal 2^(p + 1)) phase{k: -k/2^(p + 1)}
+g = Z(1 -> 1, literal 2^(p + 1)) weight{k: -1}
+v = X(1 -> 1, literal 2^(p + 1)) phase{k: k/2^(p + 1)}
+ss = S(literal 2, literal 2^p)
+f = F(literal 2)
+tr = T(literal 2)
+wire h.out0 -- b.in1, b.out0 -- bb.in1, zt.out0 -- bb.in0, bb.out0 -- u.in0, u.out0 -- g.in0
+wire g.out0 -- v.in0, v.out0 -- ss.in0, ss.out0 -- f.in0, f.out0 -- tr.in0
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+inputs b.in0
+outputs ss.out1, tr.out0
+scalar -1/sqrt(2)
+"""
+
+
+def _and_sides(p: sp.Expr) -> tuple[Diagram, Diagram]:
+    """Left: p bits, each copied into a triangle gathered by one Z spider (the AND wire), and
+    bound by a B chain into a 2^p register. Right: the bits bound into the register, then
+    (|0> + [register all ones] |1>) on the AND wire: the register bound under |+>, shifted by
+    one over 2^(p + 1), sign -1 off index 0, shifted back, split, F then T on the top wire,
+    scalar -1/sqrt(2)."""
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    out: list[Diagram] = []
+    for text in (_AND_LEFT, _AND_RIGHT):
+        diagram = parse_dsl(text)
+        value = sp.sympify(p).xreplace(
+            {s: Mult.symbol(s.name).to_sympy() for s in sp.sympify(p).free_symbols}
+        )
+        if value != Mult.symbol("p").to_sympy():
+            diagram = rename_multiplicity(diagram, "p", Mult._from_expr(value))
+        out.append(diagram)
+    return out[0], out[1]
+
+
+AND_REGISTER = Lemma(
+    name="and_register",
+    symbol="p",
+    statement=(
+        "p bits copied into triangles gathered by one Z spider give |0> + AND |1>, which is "
+        "|0> + [register all ones] |1> on the bits bound into a 2^p register"
+    ),
+    build=_and_sides,
+)
+
+LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT, AND_REGISTER)
 
 
 def lemma(name: str) -> Lemma:
@@ -154,14 +223,45 @@ def proved(entry: Lemma) -> object:
     return _PROVED[entry.name]
 
 
+def _substituted(
+    entry: Lemma, theorem: object, value: sp.Expr, left: Diagram, right: Diagram
+) -> object | None:
+    """``left = right`` by :func:`~archytaszx.semantics.kernel.subst` of ``theorem`` at
+    ``symbol = s + c`` (``value`` one symbol plus an integer, the symbol a box multiplicity of
+    ``theorem``) between isomorphisms; else None."""
+    from archytaszx.diagram.bangbox import free_mult_symbols
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import DecideGrammarError
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, Clause
+
+    t = cast("kernel.Theorem", theorem)
+    symbols = sorted(value.free_symbols, key=lambda s: str(s.name))
+    if len(symbols) != 1 or entry.symbol not in free_mult_symbols(t.lhs):
+        return None
+    offset = sp.expand(value - symbols[0])
+    if not offset.is_Integer or int(offset) < 0:
+        return None
+    clause = Clause(entry.symbol, MULTIPLICITY, SHIFT, a=1, c=int(offset), fresh=symbols[0].name)
+    try:
+        moved = kernel.subst(t, clause)
+        return kernel.trans(
+            kernel.iso(left, moved.lhs), kernel.trans(moved, kernel.iso(moved.rhs, right))
+        )
+    except (kernel.KernelError, DecideGrammarError):
+        return None
+
+
 def instance(entry: Lemma, value: sp.Expr) -> object:
     """The kernel theorem of ``entry`` at ``value``, by symbolic contraction of both sides, else
     by a decision with no oracle sample."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
-    proved(entry)
+    theorem = proved(entry)
     left, right = sides(entry, value)
+    shifted = _substituted(entry, theorem, sp.sympify(value), left, right)
+    if shifted is not None:
+        return shifted
     try:
         return kernel.contraction(left, right)
     except kernel.KernelError as exc:

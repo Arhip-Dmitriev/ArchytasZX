@@ -271,11 +271,25 @@ def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
     return cast(sp.Expr, sp.expand(total))
 
 
+def _reduce_symbolic_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
+    """``expr`` with each term ``q * modulus`` (``q`` a rational number) moved to
+    ``(q mod 1) * modulus``."""
+    out: list[sp.Expr] = []
+    for term in sp.Add.make_args(expr):
+        ratio = sp.cancel(term / modulus)
+        if ratio.is_Rational and not ratio.is_Integer:
+            term = sp.expand((ratio - sp.floor(ratio)) * modulus)
+        out.append(cast(sp.Expr, term))
+    return cast(sp.Expr, sp.expand(sp.Add(*out)))
+
+
 def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
     """The representative of ``+-expr`` (reduced when ``modulus`` is concrete) a ModDelta keeps."""
     candidates = [sp.expand(expr), sp.expand(-expr)]
     if modulus.is_Integer:
         candidates = [_reduce_mod(candidate, int(modulus)) for candidate in candidates]
+    else:
+        candidates = [_reduce_symbolic_mod(candidate, modulus) for candidate in candidates]
     preferred = [c for c in candidates if not c.could_extract_minus_sign()] or candidates
     return cast(sp.Expr, min(preferred, key=sp.default_sort_key))
 
@@ -842,6 +856,8 @@ def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr
     None."""
     form = _linear_form(expr)
     if form is None:
+        form = _linear_over(expr, ranges)
+    if form is None:
         return None
     least = greatest = sp.expand(expr - sum((c * v for v, c in form.items()), sp.Integer(0)))
     for var, coefficient in form.items():
@@ -853,6 +869,25 @@ def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr
         else:
             least += coefficient * (size - 1)
     return sp.expand(least), sp.expand(greatest)
+
+
+def _linear_over(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> dict[sp.Symbol, int] | None:
+    """The integer coefficient of each index of ``ranges`` in ``expr``, the rest an integer free
+    of them; else None."""
+    indices = sorted(expr.free_symbols & set(ranges), key=lambda symbol: str(symbol.name))
+    if not indices:
+        return None
+    form: dict[sp.Symbol, int] = {}
+    rest = sp.expand(expr)
+    for var in indices:
+        coefficient = sp.expand(rest).coeff(var, 1)
+        if not coefficient.is_Integer:
+            return None
+        form[var] = int(coefficient)
+        rest = sp.expand(rest - coefficient * var)
+    if rest.free_symbols & set(ranges) or rest.is_integer is not True:
+        return None
+    return form
 
 
 def _extreme(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr], top: bool) -> sp.Expr | None:
@@ -1070,6 +1105,11 @@ def _delta_step(
             sign = _unit_sign(sp.Integer(coefficient), modulus)
             if not _divides(modulus, size):
                 wrapped = _wrap_pin(weight, var, coefficient, rest, modulus, size)
+                if wrapped is None and sign is not None:
+                    known = {**ranges, **{v: sp.expand(u + 1) for v, _l, u in limits if v != var}}
+                    wrapped = _window_pin(
+                        weight, var, sp.expand(-sign * rest), size, modulus, known
+                    )
                 if wrapped is not None:
                     return wrapped, _without(limits, index)
                 continue
@@ -1131,6 +1171,39 @@ def _wrap_pin(
     return cast(sp.Expr, pinned * ModDelta(sp.expand(coefficient * value + rest), modulus))
 
 
+def _window_pin(
+    weight: sp.Expr,
+    var: sp.Symbol,
+    value: sp.Expr,
+    size: sp.Expr,
+    modulus: sp.Expr,
+    ranges: Mapping[sp.Symbol, sp.Expr],
+) -> sp.Expr | None:
+    """``Sum_{var < size} [var == value mod M] * weight`` for ``size <= M`` when the ranges hold
+    ``value`` inside one window: ``[0, size)`` gives ``weight`` at ``value``, ``[-M, size - M)``
+    gives it at ``value + M``, ``[size - M, 0)`` or ``[size, M)`` gives zero; else None."""
+    if sp.expand(modulus - size).is_nonnegative is not True:
+        return None
+    bounds = _bounds(value, ranges)
+    if bounds is None:
+        return None
+    least, greatest = bounds
+
+    def inside(lo: sp.Expr, hi: sp.Expr) -> bool:
+        return (
+            sp.expand(least - lo).is_nonnegative is True
+            and sp.expand(hi - 1 - greatest).is_nonnegative is True
+        )
+
+    if inside(sp.Integer(0), size):
+        return cast(sp.Expr, weight.xreplace({var: value}))
+    if inside(sp.expand(-modulus), sp.expand(size - modulus)):
+        return cast(sp.Expr, weight.xreplace({var: sp.expand(value + modulus)}))
+    if inside(sp.expand(size - modulus), sp.Integer(0)) or inside(size, modulus):
+        return sp.Integer(0)
+    return None
+
+
 def _corner_pin(
     weight: sp.Expr,
     var: sp.Symbol,
@@ -1149,6 +1222,8 @@ def _corner_pin(
         top, shift = True, -size
     else:
         return None
+    if not value.free_symbols:
+        return cast(sp.Expr, weight.xreplace({var: sp.expand(value + shift)}))
     corner = _extreme(value, ranges, top)
     if corner is None:
         return None

@@ -429,7 +429,12 @@ def local_contraction(
         raise KernelError("the regions sit in different places of the two diagrams")
     if _interface(copy_a) != _interface(copy_b):
         raise KernelError("the parts off the regions have different interfaces")
-    contraction(copy_a, copy_b, max_steps)
+    try:
+        contraction(copy_a, copy_b, max_steps)
+    except KernelError as exc:
+        if "step budget" not in str(exc):
+            raise
+        contraction(copy_a, copy_b, 4 * max_steps)
     data: dict[str, object] = {
         "region_a": region_a,
         "region_b": region_b,

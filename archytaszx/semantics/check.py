@@ -776,6 +776,15 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     appears in alone."""
     if expr.atoms(sp.Sum):
         return False
+    single = {
+        s: sp.Integer(0)
+        for s in expr.free_symbols
+        if (dim := (ranges or {}).get(str(s.name))) is not None
+        and dim.is_concrete
+        and dim.to_int() == 1
+    }
+    if single:
+        expr = sp.expand(expr.xreplace(single))
     expr = _square_moduli(_constant_bases(expr))
     folded = _fold_residues(_reduce_exponents(sp.expand(expr.rewrite(sp.exp), power_exp=True)))
     folded = sp.expand(folded)
@@ -1145,6 +1154,15 @@ def _case_index(expr: sp.Expr, ranges: Mapping[str, Dim]) -> tuple[sp.Symbol, in
     if shared:
         _name, symbol, size = min(shared, key=lambda item: item[0])
         return symbol, size
+    for delta in deltas:
+        for symbol in sorted(delta.args[0].free_symbols, key=lambda s: str(s.name)):
+            dim = ranges.get(str(symbol.name))
+            if (
+                dim is not None
+                and dim.is_concrete
+                and sp.expand(delta.args[0]).coeff(symbol).free_symbols
+            ):
+                return symbol, dim.to_int()
     return None
 
 

@@ -76,3 +76,27 @@ def test_the_lemma_rewrites_its_left_side_inside_a_diagram() -> None:
 def test_a_shift_by_minus_one_is_not_rewritten() -> None:
     broken = parse_dsl(_CONTEXT.replace("phase{j: -j/2^(k + 1)}", "phase{j: j/2^(k + 1)}"))
     assert L.rewrite(broken, L.CARRY_SHIFT) is None
+
+
+def test_the_and_register_lemma_is_proved_by_induction() -> None:
+    theorem = L.proved(L.AND_REGISTER)
+    assert isinstance(theorem, kernel.Theorem)
+    assert theorem.inference.kind == "trans"
+    left, right = L.sides(L.AND_REGISTER)
+    for p in (1, 2, 3):
+        assert compare(left, right, {"p": p}).matched
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("phase{k: k/2^(p + 1)}", "phase{k: -k/2^(p + 1)}"),
+        ("tr = T(", "tr = Ti("),
+        ("scalar -1/sqrt(2)", "scalar 1/sqrt(2)"),
+        ("weight{k: -1}", "weight{k: I}"),
+    ],
+)
+def test_a_broken_and_register_right_side_is_not_proved(old: str, new: str) -> None:
+    left = parse_dsl(L._AND_LEFT)
+    right = parse_dsl(L._AND_RIGHT.replace(old, new))
+    assert decide_equal(left, right, samples=[]).verdict is not EqualityVerdict.EQUAL

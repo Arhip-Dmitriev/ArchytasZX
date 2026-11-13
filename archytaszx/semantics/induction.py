@@ -247,8 +247,9 @@ def _fresh_symbol_name(stem: str, avoid: frozenset[str]) -> str:
 
 
 def _fresh_step_symbol(left: Diagram, right: Diagram, index: str, step_symbol: str) -> str:
-    """``step_symbol`` itself, or a freshening of it against both diagrams' free symbols."""
-    avoid = (_all_free_symbols(left) | _all_free_symbols(right)) - {index}
+    """``step_symbol`` itself, or a freshening of it against both diagrams' free symbols and
+    ``index``."""
+    avoid = _all_free_symbols(left) | _all_free_symbols(right) | {index}
     return _fresh_symbol_name(step_symbol, avoid)
 
 
@@ -1055,6 +1056,25 @@ def _box_depth(diagram: Diagram, box_id: BangBoxId) -> int:
     return depth
 
 
+def _end_dim(diagram: Diagram, ref: PortRef) -> Dim:
+    """The dimension of boundary slot ``ref``; on an open link end of an indexed chain, read at
+    the copy holding it (the last copy for a link's ``p`` port, the first for its ``q`` port)."""
+    dim = _ref_dim(diagram, ref)
+    for box in diagram.bang_boxes.values():
+        if box.index is None or box.cyclic:
+            continue
+        for p_ref, q_ref in box.links:
+            if ref not in (p_ref, q_ref):
+                continue
+            expr = dim.to_sympy()
+            symbol = next((s for s in expr.free_symbols if s.name == box.index), None)
+            if symbol is None:
+                return dim
+            at = sp.expand(box.multiplicity.to_sympy() - 1) if ref == p_ref else sp.Integer(0)
+            return Dim.from_sympy(sp.expand(expr.xreplace({symbol: at})))
+    return dim
+
+
 def boundary_layout(diagram: Diagram) -> tuple[tuple[object, ...], ...] | None:
     """Per boundary list, each slot's replicating multiplicities and, per enclosing box, whether
     the slot opens a new run of that box; None when some box's slots in one list are not
@@ -1073,7 +1093,7 @@ def boundary_layout(diagram: Diagram) -> tuple[tuple[object, ...], ...] | None:
                 return None
             mults = tuple(diagram.bang_boxes[b].multiplicity for b in owners)
             opens = tuple(b not in previous for b in owners)
-            rows.append((mults, opens, _ref_dim(diagram, ref)))
+            rows.append((mults, opens, _end_dim(diagram, ref)))
             previous = owners
         out.append(tuple(rows))
     return tuple(out)
@@ -1248,6 +1268,37 @@ def _fan_split(
     for v in sorted(copy):
         node = diagram.nodes[v]
         if node.generator_type not in (Z_SPIDER, X_SPIDER):
+            continue
+        legs = [
+            PortRef(v, direction, i)
+            for direction in (Direction.INPUT, Direction.OUTPUT)
+            for i in range(len(node.legs(direction)))
+        ]
+        far = {leg: partner.get(leg) for leg in legs}
+        inward = [leg for leg, f in far.items() if f is not None and f.node_id in copy]
+        if not inward or not any(
+            f is not None and f.node_id not in copy and f.node_id in boxed for f in far.values()
+        ):
+            continue
+        for slot in (leg for leg in legs if leg in slots):
+            yield _split_spider(diagram, v, slot, inward, copy)
+    yield from _gather_split(diagram, copy, boxed, partner, slots)
+
+
+def _gather_split(
+    diagram: Diagram,
+    copy: frozenset[NodeId],
+    boxed: frozenset[NodeId],
+    partner: Mapping[PortRef, PortRef],
+    slots: Sequence[PortRef],
+) -> Iterator[tuple[Diagram, frozenset[NodeId]]]:
+    """Per unboxed spider off ``copy`` wired to ``copy`` and to a boxed node off it, and per
+    boundary slot it holds: ``diagram`` with the spider split into a hub off the copy (its phase
+    and its legs off the copy, the slot's place wired to the leaf) and a phaseless leaf in the
+    copy (the slot and the legs into ``copy``)."""
+    for v in sorted(diagram.nodes):
+        node = diagram.nodes[v]
+        if v in copy or v in boxed or node.generator_type not in (Z_SPIDER, X_SPIDER):
             continue
         legs = [
             PortRef(v, direction, i)
