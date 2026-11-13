@@ -17,17 +17,27 @@ between F and F^3; returns |s>."""
 from benchmarks.subjects._common import *
 
 
-def _circuit(n, d):
+def _unrolled(n, d):
     """F, Z^(i) on qudit i, F^3."""
     x = unrolled("x", n)
     gates = [g for i, q in enumerate(x) for g in (Init(q), F(q), Z(q, i), F(q, 3))]
     return circuit(x, gates)
 
 
+def _circuit(n, d):
+    """Per copy j of the register: F, Z^j, F^3."""
+    body = (Init("x"), F("x"), Z("x", "j"), F("x", 3))
+    return circuit(["x"], [Chain(n, body, index="j")], registers={"x": n})
+
+
 def _spec(c):
-    """|s_0, ..., s_(n-1)>."""
-    lines = [f"s{i} = X(0 -> 1, {c.D}) phase{{k: -{i}*k/{c.d}}}" for i in range(c.nv)]
-    return "\n".join([*lines, f"scalar {c.d}^(-{c.nv}/2)"])
+    """|s_0, ..., s_(n-1)>, copy j the X state |j>."""
+    return "\n".join(
+        [
+            f"repeat {c.N} index j: s = X(0 -> 1, {c.D}) phase{{k: -j*k/{c.d}}}",
+            f"scalar {c.d}^(-{c.n}/2)",
+        ]
+    )
 
 
 def _reference(n, d):
@@ -44,5 +54,5 @@ SUBJECT = Subject(
     size_parameter="register qudits",
     dimension="general",
     domain=Domain(n_min=1, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled", reference=_reference),),
+    equations=(Equation("main", _circuit, _spec, form="boxed", reference=_reference),),
 )

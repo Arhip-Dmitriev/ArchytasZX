@@ -195,6 +195,31 @@ class Prepare:
     vector: tuple[tuple[float, float], ...]
 
 
+@dataclass(frozen=True)
+class Chain:
+    """A loop over ``count`` copies, copy ``m`` reading ``index`` as ``m`` in amounts and phase
+    rules: ``body`` acts on copy ``m`` of each register of that count and on the single wires
+    of ``carries``; after each copy every ``(carry, register)`` pair exchanges values, so the
+    register's copy keeps the carry's value and the carry goes on with the register's."""
+
+    count: Count
+    body: tuple[Gate, ...]
+    carries: tuple[tuple[str, str], ...] = ()
+    index: str | None = None
+
+
+@dataclass(frozen=True)
+class Pairs:
+    """For every pair of copies ``j < k`` of register ``over``, ``body`` on the wires ``"left"``
+    (copy j) and ``"right"`` (copy k), ``index`` reading j and ``pair_index`` reading k, at
+    this point of both copies' wires. The translator takes one CZ body."""
+
+    over: str
+    body: tuple[Gate, ...]
+    index: str = "j"
+    pair_index: str = "m"
+
+
 Gate = Union[  # noqa: UP007
     Init,
     Post,
@@ -215,6 +240,8 @@ Gate = Union[  # noqa: UP007
     Oracle,
     Unitary,
     Prepare,
+    Chain,
+    Pairs,
 ]
 
 
@@ -250,7 +277,38 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         return (*g.cs, g.t)
     if isinstance(g, Oracle):
         return (*g.xs, g.y)
+    if isinstance(g, Chain):
+        seen = [q for h in g.body for q in gate_wires(h)]
+        seen += [q for pair in g.carries for q in pair]
+        return tuple(dict.fromkeys(seen))
+    if isinstance(g, Pairs):
+        return (g.over,)
     return (g.q,)
+
+
+def at_index(g: Gate, values: Mapping[str, int]) -> Gate:
+    """``g`` with each index symbol of ``values`` replaced by its value in amounts, phase
+    entries and phase rules."""
+    from dataclasses import replace as _replace
+
+    import sympy as sp
+
+    subs = {sp.Symbol(k): v for k, v in values.items()}
+
+    def at(v: Any) -> Any:
+        if isinstance(v, (int, bool)) or v is None:
+            return v
+        e = sp.sympify(v)
+        return e.subs(subs) if e.free_symbols & set(subs) else v
+
+    if isinstance(g, (X, Z)):
+        return _replace(g, a=at(g.a))
+    if isinstance(g, (ZPhase, XPhase)):
+        rule = None if g.rule is None else str(at(g.rule))
+        return _replace(g, entries={i: at(v) for i, v in g.entries.items()}, rule=rule)
+    if isinstance(g, Chain):
+        return _replace(g, body=tuple(at_index(h, values) for h in g.body))
+    return g
 
 
 def circuit(

@@ -68,20 +68,28 @@ class Edit:
         return spec
 
 
+def _flat(c: ir.Circuit) -> list[ir.Gate]:
+    """The gates of ``c`` with each chain's body in its place."""
+    out: list[ir.Gate] = []
+    for g in c.gates:
+        out.extend(g.body if isinstance(g, ir.Chain) else (g,))
+    return out
+
+
 def _outputs(c: ir.Circuit) -> list[str]:
     """Wires still open at the end."""
-    closed = {g.q for g in c.gates if isinstance(g, (ir.Post, ir.Discard))}
+    closed = {g.q for g in _flat(c) if isinstance(g, (ir.Post, ir.Discard))}
     return [q for q in c.wires if q not in closed]
 
 
 def _inputs(c: ir.Circuit) -> list[str]:
     """Wires without an Init."""
-    init = {g.q for g in c.gates if isinstance(g, ir.Init)}
+    init = {g.q for g in _flat(c) if isinstance(g, ir.Init)}
     return [q for q in c.wires if q not in init]
 
 
 def _measured(c: ir.Circuit) -> set[str]:
-    return {g.q for g in c.gates if isinstance(g, ir.Measure)}
+    return {g.q for g in _flat(c) if isinstance(g, ir.Measure)}
 
 
 def _role_lists(c: ir.Circuit) -> dict[str, list[str]]:

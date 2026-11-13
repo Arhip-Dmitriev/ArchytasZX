@@ -105,6 +105,23 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
     flush()
     gates: list[ir.Gate] = []
     for g in c.gates:
+        if isinstance(g, ir.Chain):
+            for m in range(int(sp.sympify(g.count).subs(sp.Symbol("n"), n))):
+                values = {g.index: m} if g.index is not None else {}
+                for h in g.body:
+                    sub = {q: copies[q][m] for q in ir.gate_wires(h) if c.count(q) is not None}
+                    gates.append(_rename(ir.at_index(h, values), sub))
+                gates.extend(ir.Swap(carry, copies[reg][m]) for carry, reg in g.carries)
+            continue
+        if isinstance(g, ir.Pairs):
+            own = copies[g.over]
+            for j in range(len(own)):
+                for k in range(j + 1, len(own)):
+                    values = {g.index: j, g.pair_index: k}
+                    for h in g.body:
+                        sub = {"left": own[j], "right": own[k]}
+                        gates.append(_rename(ir.at_index(h, values), sub))
+            continue
         qs = ir.gate_wires(g)
         reg = [q for q in qs if c.count(q) is not None]
         if not reg:

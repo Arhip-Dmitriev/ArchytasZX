@@ -911,10 +911,17 @@ def _first_applicable(
     or, for a pattern ``incremental`` covers, through that mapping; without one it calls
     ``rule.pattern.find_matches`` directly.
     """
+    extended = any(box.is_extended for box in diagram.bang_boxes.values())
     for rule in rules:
         matches = _rule_matches(diagram, rule, cache, fingerprint, incremental)
-        if matches:
+        if matches and not extended:
             return rule, matches[0]
+        for match in matches:
+            try:
+                apply(diagram, rule, match)
+            except RewriteDomainError:
+                continue
+            return rule, match
     return None
 
 

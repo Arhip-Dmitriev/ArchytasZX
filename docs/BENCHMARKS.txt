@@ -84,7 +84,12 @@ acts on every copy. Gates: Init, Post, Discard, Measure; X^a (|k> -> |k+a>), Z^a
 only inputs where it may be nonzero, so the translator evaluates just those); MCX and MCZ (controls on given
 values); Perm (a permutation of the joint basis); Oracle (|x, y> -> |x, y + f(x)>). A
 classically controlled correction is a CX or CZ from a measured wire. Amounts and rules are
-sympy expressions in d, n and k.
+sympy expressions in d, n and k. Two loop gates: Chain(count, body, carries, index) runs body
+once per copy m of the registers of that count (index read as m), and after each copy every
+(carry, register) pair exchanges values, so the register's copy keeps the carry's value and the
+single carry wire goes on with the register's; Pairs(over, body, index, pair_index) runs body
+on the wires "left" (copy j) and "right" (copy k) of register over for every j < k.
+tools/common.expand unrolls both at a concrete count, and the dense reference evaluates that.
 
 3.3 The naive translator
 
@@ -110,7 +115,13 @@ dimension):
                 Z(1 -> 0) on x, F on t
 
 A register's gates go in one node-scope box per count; a gate between a register and a single
-wire leaves the single wire's spider outside the box, where it takes one leg per copy. Phase
+wire leaves the single wire's spider outside the box, where it takes one leg per copy. A Chain
+is one named chain box (repeat COUNT as NAME [index I]) over its body's nodes, linked from each
+carry's end after the exchange to the first port the carry entered in the copy (chain NAME:
+p -> q); a carry or register with no node in the copy gets an identity Z(1 -> 1). Pairs puts
+Z(2 -> 1) (in1 the right port) then Z(1 -> 2) (out1 the left port) on the register's wire in
+the register's box, which takes the index, and the CZ's F nodes in a pair box with copy scalar
+D^(1/2). A chain's registers are used only inside it. Phase
 tables, multi-controlled gates, oracles and permutations need literal concrete dimensions; the
 symbolic version of such an equation is unsupported and recorded as such.
 

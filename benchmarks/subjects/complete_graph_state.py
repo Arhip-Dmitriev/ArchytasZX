@@ -45,14 +45,31 @@ def _edges(m):
     return [(a, b) for a in range(m) for b in range(a + 1, m)]
 
 
-def _circuit(n, d):
+def _unrolled(n, d):
     """CZ on every pair."""
     return _graph_circuit(_edges(n + 1), n + 1)
 
 
+def _circuit(n, d):
+    """|+> on each of n + 1 copies, CZ on every pair of copies."""
+    gates = [Init("q"), F("q"), Pairs("q", (CZ("left", "right"),))]
+    return circuit(["q"], gates, registers={"q": f"{n} + 1"})
+
+
 def _spec(c):
-    """The complete graph."""
-    return _graph_spec(c, _edges(c.nv + 1), c.nv + 1)
+    """The complete graph: a Z spider per copy, an F edge per pair of copies."""
+    return "\n".join(
+        [
+            f"repeat {c.N} + 1 as V index j: v = Z(0 -> 3, {c.D})",
+            f"pairs P of V index m: f = F({c.D})",
+            "left P: v.out1",
+            "right P: v.out2",
+            "wire v.out1 -- f.in0, f.out0 -- v.out2",
+            "outputs v.out0",
+            f"copy scalar P: {c.d}^(1/2)",
+            f"copy scalar V: {c.d}^(-1/2)",
+        ]
+    )
 
 
 SUBJECT = Subject(
@@ -63,5 +80,5 @@ SUBJECT = Subject(
     size_parameter="qudits after the first",
     dimension="general",
     domain=Domain(n_min=0, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled"),),
+    equations=(Equation("main", _circuit, _spec, form="boxed"),),
 )

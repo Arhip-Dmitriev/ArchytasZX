@@ -280,6 +280,7 @@ _STEP_LADDER: tuple[StepDischarge, ...] = (
     StepDischarge.UNIFORM_REWRITE,
     StepDischarge.INDUCTION_REWRITE,
     StepDischarge.SYMBOLIC_CONTRACTION,
+    StepDischarge.CHAIN_WINDOW,
 )
 _DOMAIN_ERRORS: tuple[type[Exception], ...] = (
     BangBoxError,
