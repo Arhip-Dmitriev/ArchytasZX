@@ -21,7 +21,10 @@ pairs relabelled onto the chain's label scheme, and ``chain_equal`` giving both 
 at every ``k``. At each checked ``k`` the networks of both sides instantiated at ``k`` are
 written out, matched to the chain networks at ``k`` by a label map found by search, and proved
 equal (``At{k}.inst``) from ``main k`` by ``Equal.mapL2`` and permutations checked by
-``decide``, with the chain scalars proved equal to the instances'.
+``decide``, with the chain scalars proved equal to the instances'. An offset induction
+(induction_offset) takes its copies at ``k = 0`` and offset ``0 .. P - 1``, and ``main s k``
+gives level ``j`` of the chain at ``k`` the copy ``s + k - 1 - j``, for every ``s`` and ``k``;
+the instances are linked at ``s = 0``.
 """
 
 from __future__ import annotations
@@ -60,7 +63,7 @@ _FREE = 1 << 19
 class _Split:
     """One side at ``k = 0`` as an open diagram, its copies at ``k = 0 .. P - 1`` (period P),
     the cut ports' boundary positions in the base and in each copy and the copies' link-out
-    positions."""
+    positions (the link-in ports of a copy meeting the rest at its link-out ports)."""
 
     base: Diagram
     copies: list[Diagram]
@@ -124,9 +127,11 @@ def _split(
     copy_ids: frozenset[NodeId],
     values: Mapping[str, int],
     step: str,
+    offset: str | None = None,
 ) -> _Split:
     """The exposed successor at ``k = 0`` split into the side at ``k = 0`` and the copy, and
-    the copies at ``k = 0 .. P - 1``, P the least period of the copies; raises
+    the copies at ``k = 0 .. P - 1`` (with ``offset``, at ``k = 0`` and offset ``0 .. P - 1``),
+    P the least period of the copies; raises
     :class:`PathSumUnsupported` when the copy meets the rest off its link-in ports or has no
     period up to :data:`MAX_PERIOD`."""
 
@@ -141,7 +146,13 @@ def _split(
     scope_map = dict(zip(sorted(box.node_scope), sorted(copy_ids), strict=True))
     q_ports = [_moved(q, scope_map) for _p, q in box.links]
     p_ports = [_moved(p, scope_map) for p, _q in box.links]
-    x0 = instantiate(exposed, {step: 0, **values})
+
+    def at(j: int) -> dict[str, int]:
+        if offset is None:
+            return {step: j, **values}
+        return {step: 0, offset: j, **values}
+
+    x0 = instantiate(exposed, at(0))
     if not copy_ids <= frozenset(x0.nodes):
         raise PathSumUnsupported("the copy does not survive instantiation at k = 0")
     base_ids = frozenset(x0.nodes) - copy_ids
@@ -151,18 +162,23 @@ def _split(
         if a_in != b_in:
             inside, end = (wire.a, wire.b) if a_in else (wire.b, wire.a)
             cut[inside] = end
-    if sorted(cut, key=PortRef.sort_key) != sorted(q_ports, key=PortRef.sort_key):
-        raise PathSumUnsupported("the copy meets the rest off its link-in ports")
+    met = sorted(cut, key=PortRef.sort_key)
+    if met == sorted(p_ports, key=PortRef.sort_key) and met != sorted(
+        q_ports, key=PortRef.sort_key
+    ):
+        q_ports, p_ports = p_ports, q_ports
+    if met != sorted(q_ports, key=PortRef.sort_key):
+        raise PathSumUnsupported("the copy meets the rest off its link ports")
     far = [cut[q] for q in q_ports]
     b_outs = [r for r in x0.boundary_outputs if r.node_id in base_ids]
     b_ins = [r for r in x0.boundary_inputs if r.node_id in base_ids]
     b_outs += [r for r in far if r.direction is Direction.OUTPUT]
     b_ins += [r for r in far if r.direction is Direction.INPUT]
     base = _sub(x0, base_ids, b_outs, b_ins)
-    base.set_scalar(instantiate(family, {step: 0, **values}).scalar)
+    base.set_scalar(instantiate(family, at(0)).scalar)
 
-    def copy_at(j: int) -> tuple[Diagram, list[PortRef]]:
-        xj = instantiate(exposed, {step: j, **values})
+    def copy_at(j: int, env: dict[str, int] | None = None) -> tuple[Diagram, list[PortRef]]:
+        xj = instantiate(exposed, at(j) if env is None else env)
         if not copy_ids <= frozenset(xj.nodes):
             raise PathSumUnsupported(f"the copy does not survive instantiation at k = {j}")
         c_outs = [r for r in xj.boundary_outputs if r.node_id in copy_ids]
@@ -170,7 +186,7 @@ def _split(
         c_outs += [q for q in q_ports if q.direction is Direction.OUTPUT]
         c_ins += [q for q in q_ports if q.direction is Direction.INPUT]
         copy = _sub(xj, copy_ids, c_outs, c_ins)
-        here = instantiate(family, {step: j, **values}).scalar.to_sympy()
+        here = instantiate(family, at(j) if env is None else env).scalar.to_sympy()
         if here == 0:
             raise PathSumUnsupported(f"the family at k = {j} has scalar zero")
         copy.set_scalar(Scalar(sp.nsimplify(sp.simplify(xj.scalar.to_sympy() / here))))
@@ -196,6 +212,10 @@ def _split(
             break
     if not period:
         raise PathSumUnsupported(f"the copies have no period up to {MAX_PERIOD}")
+    if offset is not None:
+        moved, m_bnd = copy_at(0, {step: 1, offset: 0, **values})
+        if m_bnd != c_bnd or _key(moved) != keys[0]:
+            raise PathSumUnsupported("the offset copy depends on k")
     b_bnd = [*b_outs, *b_ins]
     if any(p not in c_bnd for p in p_ports):
         raise PathSumUnsupported("a link-out port is not on the boundary")
@@ -260,12 +280,16 @@ def _map_net(net: NetT, f: Callable[[int], int]) -> NetT:
     )
 
 
-def _chain_net(cut: Sequence[int], base: NetT, copies: Sequence[NetT], k: int) -> NetT:
-    """Lean's ``chainNet W cut base (perIdx copies) k``."""
+def _chain_net(
+    cut: Sequence[int], base: NetT, copies: Sequence[NetT], k: int, offset: bool = False
+) -> NetT:
+    """Lean's ``chainNet W cut base (perIdx copies) k``; with ``offset``, level ``j`` taking
+    copy ``k - 1 - j``."""
     net = base
     for level in range(k):
         c_nodes, c_int, c_bnd = _map_net(
-            copies[level % len(copies)], functools.partial(int.__add__, level * W)
+            copies[(k - 1 - level if offset else level) % len(copies)],
+            functools.partial(int.__add__, level * W),
         )
         cs = [c + level * W for c in cut]
         net = (
@@ -432,26 +456,42 @@ def export_chain(
     from archytaszx.diagram.bangbox import Mult
     from archytaszx.semantics.induction import _peel_step_index, rename_multiplicity
     from archytaszx.semantics.kernel import Theorem
-    from archytaszx.semantics.prove import InductionSide
+    from archytaszx.semantics.prove import InductionSide, induction_hypothesis, induction_offset
 
     assert isinstance(theorem, Theorem)
     inf = theorem.inference
-    if inf.kind != "induction" or inf.data.get("window") != "cut":
+    if inf.kind not in ("induction", "induction_offset") or inf.data.get("window") != "cut":
         raise PathSumUnsupported("not an induction settled through a chain cut region")
     data = inf.data
     step = str(data["step"])
+    offset = cast("str | None", data.get("offset"))
     vals = dict(values or {})
     exposed = cast(Diagram, data["exposed"])
     own_k, other_k = cast(Diagram, data["own_k"]), cast(Diagram, data["other_k"])
     region = cast("frozenset[NodeId]", data["region"])
     copy_own = frozenset(exposed.nodes) - region
-    succ_x = rename_multiplicity(other_k, step, Mult(step) + 1)
+    own_d, other_d = (
+        (theorem.lhs, theorem.rhs)
+        if data["side"] is InductionSide.START
+        else (theorem.rhs, theorem.lhs)
+    )
+    index = str(data["index"])
+    families = (own_k, other_k)
+    other_s = other_k
+    if offset is not None:
+        sym = sp.Symbol(offset, integer=True, nonnegative=True)
+        families = (
+            induction_hypothesis(own_d, index, step),
+            induction_hypothesis(other_d, index, step),
+        )
+        other_s = induction_offset(families[1], step, sym)
+    succ_x = rename_multiplicity(other_s, step, Mult(step) + 1)
     peeled = _peel_step_index(succ_x, step)
     if peeled is None:
         raise PathSumUnsupported("the other side's chain box does not peel")
     exposed_x, copy_oth = peeled
-    sp_o = _split(exposed, own_k, copy_own, vals, step)
-    sp_x = _split(exposed_x, other_k, copy_oth, vals, step)
+    sp_o = _split(exposed, own_k, copy_own, vals, step, offset)
+    sp_x = _split(exposed_x, other_k, copy_oth, vals, step, offset)
     if (sp_o.base_cut, sp_o.copy_in, sp_o.copy_out) != (sp_x.base_cut, sp_x.copy_in, sp_x.copy_out):
         raise PathSumUnsupported("the two sides' cut and link positions differ")
     period = math.lcm(len(sp_o.copies), len(sp_x.copies))
@@ -568,14 +608,32 @@ def export_chain(
         "theorem hcX : ∀ i, copyOK W cut (cX i) = true :=",
         "  perIdx_all cXt _ (fun c => copyOK W cut c = true) (by decide) (by decide)",
         "",
-        f"/-- The {side} and {other} families agree at every `k`. -/",
-        "theorem main : ∀ k, Equal E",
-        f"    (({base.s_l}) * ∏ i ∈ Finset.range k, aO i) (chainNet W cut Base.NL cO k)",
-        f"    (({base.s_r}) * ∏ i ∈ Finset.range k, aX i) (chainNet W cut Base.NR cX k) :=",
-        "  chain_equal E W cut _ _ _ _ hD (by decide) hcO (by decide) hcX _ _ _ _",
-        "    Base.baseEq copyEq",
-        "",
     ]
+    if offset is None:
+        lines += [
+            f"/-- The {side} and {other} families agree at every `k`. -/",
+            "theorem main : ∀ k, Equal E",
+            f"    (({base.s_l}) * ∏ i ∈ Finset.range k, aO i) (chainNet W cut Base.NL cO k)",
+            f"    (({base.s_r}) * ∏ i ∈ Finset.range k, aX i) (chainNet W cut Base.NR cX k) :=",
+            "  chain_equal E W cut _ _ _ _ hD (by decide) hcO (by decide) hcX _ _ _ _",
+            "    Base.baseEq copyEq",
+            "",
+        ]
+    else:
+        lines += [
+            f"/-- The {side} and {other} families agree at every `k` with copy index read",
+            "as `index + s` for every `s`: level `j` of `k` carries copy `s + k - 1 - j`. -/",
+            "theorem main : ∀ s k, Equal E",
+            f"    (({base.s_l}) * ∏ i ∈ Finset.range k, aO (s + k - 1 - i))",
+            "    (chainNet W cut Base.NL (fun j => cO (s + k - 1 - j)) k)",
+            f"    (({base.s_r}) * ∏ i ∈ Finset.range k, aX (s + k - 1 - i))",
+            "    (chainNet W cut Base.NR (fun j => cX (s + k - 1 - j)) k) :=",
+            "  fun s k => chain_equal E W cut _ (fun j => cO (s + k - 1 - j)) _",
+            "    (fun j => cX (s + k - 1 - j)) hD (by decide) (fun _ => hcO _) (by decide)",
+            "    (fun _ => hcX _) _ _ (fun j => aO (s + k - 1 - j)) (fun j => aX (s + k - 1 - j))",
+            "    Base.baseEq (fun _ => copyEq _) k",
+            "",
+        ]
     sc = _scalars()
 
     def model(diagram: Diagram) -> sp.Expr:
@@ -588,7 +646,19 @@ def export_chain(
 
     models = tuple((model(sp_.base), [model(c) for c in sp_.copies]) for sp_ in (sp_o, sp_x))
     lines += _link_lines(
-        cut, bodies, pis, phases, qudit, base.m, (own_k, other_k), step, vals, checks, models, model
+        cut,
+        bodies,
+        pis,
+        phases,
+        qudit,
+        base.m,
+        families,
+        step,
+        vals,
+        checks,
+        models,
+        model,
+        offset is not None,
     )
     lines += [f"end {ns}", ""]
     return "\n".join(lines)
@@ -607,12 +677,13 @@ def _link_lines(
     checks: Sequence[int],
     models: tuple[tuple[sp.Expr, list[sp.Expr]], ...],
     model: Callable[[Diagram], sp.Expr],
+    offset: bool = False,
 ) -> list[str]:
     """For each ``k`` of ``checks``: both sides' instances at ``k`` as networks DL, DR, the
     relabellings of the chain networks onto them, their node, summed and boundary permutations
     by ``decide``, instK (the two instances equal under the chain scalars), each side's chain
     scalar at ``k`` equal to its instance's (scalL, scalR) and inst (the two instances equal
-    under their own scalars)."""
+    under their own scalars); with ``offset``, the chain networks at offset 0."""
     from archytaszx.semantics.check import instantiate
 
     sc = _scalars()
@@ -637,6 +708,7 @@ def _link_lines(
                     for body, pi in zip(copies, pis, strict=True)
                 ],
                 k,
+                offset,
             )
             inst_d = instantiate(fam, {step: k, **values})
             inst, summed, nb = _instance_net(inst_d, phases, qudit, m)
@@ -656,7 +728,18 @@ def _link_lines(
         out += [f"namespace At{k}", ""]
         for tag, pi, net in texts:
             out += [f"def π{tag} : List (ℕ × ℕ) := {pi}", f"def D{tag} : Net := {net}", ""]
-        for tag, fam_net in (("L", "Base.NL cO"), ("R", "Base.NR cX")):
+
+        def family_of(c: str, k: int = k) -> str:
+            return f"(fun j => {c} (0 + {k} - 1 - j))" if offset else c
+
+        def arg(a: str, k: int = k) -> str:
+            return f"{a} (0 + {k} - 1 - i)" if offset else f"{a} i"
+
+        main_k = f"main 0 {k}" if offset else f"main {k}"
+        for tag, fam_net in (
+            ("L", f"Base.NL {family_of('cO')}"),
+            ("R", f"Base.NR {family_of('cX')}"),
+        ):
             chain_k = f"(chainNet W cut {fam_net} {k}).mapL (ren π{tag})"
             out += [
                 f"theorem link{tag} : ({chain_k}).nodes.Perm D{tag}.nodes ∧",
@@ -667,12 +750,12 @@ def _link_lines(
         out += [
             f"/-- Both sides instantiated at `k = {k}` are equal. -/",
             "theorem instK : Equal E",
-            f"    (({base.s_l}) * ∏ i ∈ Finset.range {k}, aO i) DL",
-            f"    (({base.s_r}) * ∏ i ∈ Finset.range {k}, aX i) DR := by",
+            f"    (({base.s_l}) * ∏ i ∈ Finset.range {k}, {arg('aO')}) DL",
+            f"    (({base.s_r}) * ∏ i ∈ Finset.range {k}, {arg('aX')}) DR := by",
             "  have h := Equal.mapL2 E (ren πL) (ren πR)",
             "    (ren_injective πL (by decide) (by decide))",
             "    (ren_injective πR (by decide) (by decide)) (fun _ => hD _ _) (fun _ => hD _ _)",
-            f"    (main {k}) (by decide) (by decide)",
+            f"    ({main_k}) (by decide) (by decide)",
             "  exact (h.reorderL E linkL.1 linkL.2.1 linkL.2.2).reorder E linkR.1 linkR.2.1",
             "    linkR.2.2",
             "",
@@ -681,12 +764,13 @@ def _link_lines(
             scal, (("aO", base.s_l), ("aX", base.s_r)), strict=True
         ):
             out += [
-                f"theorem scal{tag} : ({b_text}) * ∏ i ∈ Finset.range {k}, {a_tab} i =",
+                f"theorem scal{tag} : ({b_text}) * ∏ i ∈ Finset.range {k}, {arg(a_tab)} =",
                 f"    {rhs_text} := by",
                 (
                     f"  simp only [Finset.prod_range_succ, Finset.prod_range_zero, {a_tab}, "
                     f"perIdx, {a_tab}t, List.length_cons, List.length_nil, Nat.reduceAdd, "
-                    "Nat.reduceMod, List.getD_cons_zero, List.getD_cons_succ, one_mul]"
+                    "Nat.reduceMod, List.getD_cons_zero, List.getD_cons_succ, one_mul"
+                    + (", Nat.reduceSub, zero_add]" if offset else "]")
                 ),
                 f"  have key : ({sc.text(lhs)} : ℂ) = {rhs_text} :=",
                 *("    " + ln for ln in proof.splitlines()),

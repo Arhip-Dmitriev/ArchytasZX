@@ -164,6 +164,36 @@ def test_lean_proves_the_lifted_chains(pair: tuple[str, str], d: int, tmp_path: 
     assert ok, output
 
 
+def _reversed_pair(scalar: str | None = None) -> tuple[str, str]:
+    from tests.test_chain_order import _reversed_indexed
+
+    circuit, spec = _reversed_indexed()
+    if scalar is None:
+        return circuit, spec
+    return circuit + f"\ncopy scalar C0: {scalar}", spec + f"\ncopy scalar V: {scalar}"
+
+
+def test_an_offset_induction_exports_over_every_offset() -> None:
+    from archytaszx.semantics.kernel import Theorem
+
+    theorem = _theorem(_reversed_pair())
+    assert isinstance(theorem, Theorem) and theorem.inference.kind == "induction_offset"
+    source = export_chain(theorem, {"d": 2}, "reversed", checks=(1, 2))
+    assert "theorem main : ∀ s k, Equal E" in source
+    assert "(chainNet W cut Base.NL (fun j => cO (s + k - 1 - j)) k)" in source
+    assert "    (main 0 2) (by decide) (by decide)" in source
+    with pytest.raises(PathSumUnsupported):
+        export_chain(_theorem(_reversed_pair("2^i")), {"d": 2}, "growing")
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+@pytest.mark.parametrize("scalar", [None, "2"])
+def test_lean_proves_the_offset_chains(scalar: str | None, tmp_path: object) -> None:
+    source = export_chain(_theorem(_reversed_pair(scalar)), {"d": 2}, "offset", checks=(1, 2))
+    ok, output = L.check(source, f"{tmp_path}/offset.lean")
+    assert ok, output
+
+
 def _tree_window() -> object:
     from archytaszx.semantics import kernel as K
     from archytaszx.semantics.decide import decide_equal
