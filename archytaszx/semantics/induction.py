@@ -1619,14 +1619,6 @@ def fed_replacement(
     return working
 
 
-def _exact_value(value: complex) -> sp.Expr:
-    """A closed form of ``value`` over the rationals, sqrt 2 and sqrt 3, per part."""
-    parts = [
-        sp.nsimplify(round(part, 12), [sp.sqrt(2), sp.sqrt(3)]) for part in (value.real, value.imag)
-    ]
-    return sp.nsimplify(parts[0] + sp.I * parts[1])
-
-
 def _w_with_weights(dim: Dim, legs: int, weights: Mapping[int, Scalar], scalar: Scalar) -> Diagram:
     """``scalar`` times W(1 -> ``legs``) after a Z(1 -> 1) with ``weights``."""
     out = Diagram()
@@ -1645,7 +1637,7 @@ def _w_body(
 ) -> tuple[Scalar, dict[int, Scalar]] | None:
     """``(c, w)`` with the copy of ``box`` (input ``inside``, outputs ``outs``) exactly equal to
     ``c`` W(1 -> len(outs)) after a Z(1 -> 1) with weights ``w``; None when it is not."""
-    from archytaszx.semantics.contract_numeric import contract
+    from archytaszx.semantics.contract_symbolic import _engine_index, contract_symbolic
 
     dim = _ref_dim(diagram, inside)
     if not dim.is_concrete or any(_ref_dim(diagram, r) != dim for r in outs):
@@ -1656,19 +1648,21 @@ def _w_body(
     body.set_boundary_outputs([_moved_ref(r, id_map) for r in outs])
     if _all_free_symbols(body):
         return None
-    d = dim.to_int()
     try:
-        have = contract(body).tensor.reshape(-1, d)
-        want = contract(_w_with_weights(dim, len(outs), {}, Scalar.one())).tensor.reshape(-1, d)
-    except (ContractError, DenoteError):
+        tensor = contract_symbolic(body)
+    except (SymbolicContractionUnsupportedError, SymbolicContractionDomainError):
         return None
+    if tensor.is_variable_rank:
+        return None
+    axes = [_engine_index(a.index) for a in tensor.axes]
+    entry = tensor.entry.to_sympy()
     ratios: list[sp.Expr] = []
-    for j in range(d):
-        row = int(abs(want[:, j]).argmax())
-        ratios.append(_exact_value(complex(have[row, j] / want[row, j])))
+    for j in range(dim.to_int()):
+        values = [j if i == 0 else 0 for i in range(len(outs))] + [j]
+        ratios.append(sp.simplify(entry.xreplace(dict(zip(axes, values, strict=True)))))
     if ratios[0] == 0:
         return None
-    weights = {j: Scalar(sp.simplify(ratios[j] / ratios[0])) for j in range(1, d)}
+    weights = {j: Scalar(sp.simplify(ratios[j] / ratios[0])) for j in range(1, len(ratios))}
     weights = {j: w for j, w in weights.items() if w != Scalar.one()}
     candidate = _w_with_weights(dim, len(outs), weights, Scalar(ratios[0]))
     try:
