@@ -333,6 +333,69 @@ class Scalars:
             return "Complex.I_ne_zero"
         return self.nonzero(expr)
 
+    def _gauss_relation(
+        self,
+        p: int,
+        m: int,
+        atoms: dict[sp.Expr, sp.Symbol],
+        poly: Callable[[sp.Expr], sp.Expr],
+    ) -> tuple[sp.Expr, str] | None:
+        """``Σ_k (k/p) om m ^ (k m/p) = I^h (-1)^g √p`` (``gauss_rt``, h = (p-1)/2) as a relation
+        over the atoms, ``I^h`` written as ``(-1)^(h/2)`` for even ``h``, else through the atom
+        ``I`` or ``I = om m' ^ (m'/4)``; None when ``h`` is odd and neither atom is present."""
+        from archytaszx.algebra.pathsum import legendre
+
+        h = (p - 1) // 2
+        q = m // p
+        g = sum(1 for j in range(h) if p < 2 * (2 * j + 1))
+        lgs = [legendre(k, p) if k % p else 0 for k in range(p)]
+        steps: list[str] = []
+        if h % 2 == 0:
+            i_h: sp.Expr = sp.Integer(-1) ** (h // 2)
+            steps.append(
+                f"rw [show Complex.I ^ {h} = (-1) ^ {h // 2} by rw [show {h} = 2 * {h // 2} by "
+                "norm_num, pow_mul, Complex.I_sq]] at g"
+            )
+        elif II in atoms:
+            i_h = II**h
+        else:
+            four = next(
+                (
+                    int(a.args[0])
+                    for a in atoms
+                    if isinstance(a, Om) and a.args[0].is_Integer and int(a.args[0]) % 4 == 0
+                ),
+                None,
+            )
+            if four is None:
+                return None
+            i_h = Om(sp.Integer(four)) ** (four // 4 * h)
+            steps.append(
+                f"rw [I_sub {four} {four // 4} (by norm_num) (by norm_num), ← pow_mul] at g"
+            )
+        lhs = sp.Add(*(c * Om(sp.Integer(m)) ** (k * q) for k, c in enumerate(lgs) if c))
+        rhs = i_h * sp.Integer(-1) ** g * Rt(sp.Integer(p))
+        n = h * p + 2 * p
+        lg_rw = ", ".join(f"show QSem.lg {p} {k} = {c} from by decide" for k, c in enumerate(lgs))
+        tactic = "; ".join(
+            [
+                (
+                    f"have g := gauss_rt {p} {n} (by norm_num) (by norm_num) (by decide +kernel) "
+                    "(by decide +kernel)"
+                ),
+                f"rw [om_sub {m} {p} {q} (by norm_num) (by norm_num)] at g",
+                (
+                    f"simp only [Finset.sum_range_succ, Finset.sum_range_zero, {lg_rw}, "
+                    f"show gneg {p} = {g} from by decide] at g"
+                ),
+                *steps,
+                "push_cast at g",
+                "linear_combination g",
+            ]
+        )
+        statement = f"{self.text(lhs)} = {self.text(rhs)}"
+        return poly(lhs) - poly(rhs), f"({statement} := (by {tactic}))"
+
     def prove(self, lhs: sp.Expr, rhs: sp.Expr) -> str:
         """A Lean tactic proving ``lhs = rhs`` written by :meth:`text`."""
         relations: list[tuple[sp.Expr, str]] = []
@@ -457,6 +520,20 @@ class Scalars:
                             f"(rt_sub5 {m} {q} (by norm_num) (by norm_num))",
                         )
                     )
+        for atom in list(atoms):
+            if not (isinstance(atom, Rt) and atom.args[0].is_Integer):
+                continue
+            p = int(atom.args[0])
+            if p in (2, 3, 5) or not sp.isprime(p):
+                continue
+            for om_atom in list(atoms):
+                if not (isinstance(om_atom, Om) and om_atom.args[0].is_Integer):
+                    continue
+                m = int(om_atom.args[0])
+                if m % p == 0:
+                    found = self._gauss_relation(p, m, atoms, poly)
+                    if found is not None:
+                        relations.append(found)
         for atom in list(atoms):
             if atom.is_Pow and atom.args[1].free_symbols and isinstance(atom.args[0], Inv):
                 inner = atom.args[0].args[0]

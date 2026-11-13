@@ -802,7 +802,11 @@ G10 Normaliser exports on phased diagrams: a closing identity between roots of u
 different forms (1 - I + om 6 against 1 - ex(1/4) + ex(1/6)) that the final ring tactic does
 not identify; a symCheck whose decide does not reduce in the kernel for 8 nodes. The scalar
 prover of rule builders relates sqrt 2 and sqrt 3 to roots of unity of order divisible by 8 and
-12 (rt_sub2, rt_sub3); other square roots of naturals stay independent of the roots of unity.
+12 (rt_sub2, rt_sub3), sqrt 5 to those of order divisible by 5 (rt_sub5), and sqrt p for every
+other odd prime p to those of order divisible by p through the quadratic Gauss sum with its sign
+(GaussSign.lean: gauss_sign, gauss_rt; I^h written as (-1)^(h/2) for even h = (p-1)/2, else
+through I or a root of unity of order divisible by 4); other square roots of naturals stay
+independent of the roots of unity.
 
 G11 Exports without a diagram statement: a network whose wire labels are not consecutive keeps
 its statement over networks only (no input producing one is known). A box-free derivation whose

@@ -24,6 +24,7 @@ from archytaszx.algebra.pathsum import PathSumUnsupported
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net, export_qudit_proof
+from archytaszx.semantics.lean_scalar import ScalarUnsupported
 
 _D = "literal 3"
 
@@ -62,6 +63,24 @@ PAIRS: dict[str, tuple[str, str]] = {
         f"a = Z(0 -> 1, literal 5) phase {{1: 2/5, 2: 3/5, 3: 3/5, 4: 2/5}}; {_CUP5}",
         f"a = Z(0 -> 1, literal 5); {_CUP5}; scalar -sqrt(5)/5",
     ),
+}
+
+
+def _gauss_pair(p: int, a: int, scalar: str) -> tuple[str, str]:
+    """``Σ_k ζ_p^(a k^2)`` as a quadratic phase state on a cup, against the cup times ``scalar``."""
+    phases = ", ".join(f"{k}: {(a * k * k) % p}/{p}" for k in range(1, p))
+    cup = f"b = Z(1 -> 0, literal {p}); wire a.out0 -- b.in0"
+    return (
+        f"a = Z(0 -> 1, literal {p}) phase {{{phases}}}; {cup}",
+        f"a = Z(0 -> 1, literal {p}); {cup}; scalar {scalar}",
+    )
+
+
+PAIRS |= {
+    "g7": _gauss_pair(7, 1, "I*sqrt(7)/7"),
+    "g7a3": _gauss_pair(7, 3, "-I*sqrt(7)/7"),
+    "g13": _gauss_pair(13, 1, "sqrt(13)/13"),
+    "g13a2": _gauss_pair(13, 2, "-sqrt(13)/13"),
 }
 
 
@@ -140,6 +159,14 @@ def test_pivots_and_constraints_become_steps() -> None:
 def test_a_non_residue_gauss_sum_takes_its_sign() -> None:
     source = _export("g5a2")
     assert ".gauss 2" in source and "theorem lg2 : lg 5 2 = -1 := by decide" in source
+
+
+def test_a_square_root_of_p_takes_the_gauss_sign() -> None:
+    assert "gauss_rt 7 " in _export_net("g7") and "gauss_rt 13 " in _export_net("g13")
+    left, _ = PAIRS["g7"]
+    _, wrong = _gauss_pair(7, 1, "-I*sqrt(7)/7")
+    with pytest.raises((PathSumUnsupported, ScalarUnsupported)):
+        export_qudit_net(parse_dsl(left), parse_dsl(wrong))
 
 
 def test_unequal_qudit_sums_are_refused() -> None:

@@ -577,7 +577,7 @@ def export_qudit_proof(left: Diagram, right: Diagram, name: str = "pair") -> str
         lg_vals[a] = legendre(a, p)
     sub = f"rw [om_sub {n} {p} {n // p} (by norm_num) (by norm_num)]" if n != p else "skip"
     lines = [
-        "import ArchytasZX.PathSumQudit",
+        "import ArchytasZX.GaussSign",
         "",
         "/-!",
         f"# Qudit path-sum proof `{name}` over Z_{p}",
