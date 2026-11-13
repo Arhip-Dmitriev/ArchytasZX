@@ -15,8 +15,7 @@
 unchanged."""
 
 from benchmarks.subjects._common import *
-from benchmarks.subjects.cluster_state import _circuit as _cluster
-from benchmarks.subjects.cluster_state import _spec as _cluster_spec
+from benchmarks.subjects.cluster_state import _unrolled as _cluster
 
 
 def _circuit(n, d):
@@ -27,8 +26,18 @@ def _circuit(n, d):
 
 
 def _spec(c):
-    """The cluster state."""
-    return _cluster_spec(c)
+    """The cluster state: Z spider per vertex, F on each edge, d^(-(n+1)/2) d^(n/2)."""
+    n = c.nv
+    lines = []
+    for i in range(n + 1):
+        legs = 1 + (i > 0) + (i < n)
+        lines.append(f"v{i} = Z(0 -> {legs}, {c.D})")
+    for i in range(n):
+        lines.append(f"f{i} = F({c.D})")
+        lines.append(f"wire v{i}.out{1 if i == 0 else 2} -- f{i}.in0, f{i}.out0 -- v{i + 1}.out1")
+    lines.append("outputs " + ", ".join(f"v{i}.out0" for i in range(n + 1)))
+    lines.append(f"scalar {c.d}^(-1/2)")
+    return "\n".join(lines)
 
 
 def _reference(n, d):
