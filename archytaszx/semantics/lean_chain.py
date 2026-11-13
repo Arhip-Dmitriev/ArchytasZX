@@ -546,8 +546,6 @@ def export_chain(
         ks = set(labs.values())
         mixed = len(ks) > 1
         dims = "2 ^ k" if mixed else f"2 ^ {ks.pop() if ks else 1}"
-    if mixed and ratio != 1:
-        raise PathSumUnsupported("a growing copy scalar over mixed wire dimensions")
     cut = [c + (_BASE if mixed else 0) for c in sp_o.base_cut]
     n_copy = len(sp_o.copies[0].boundary_outputs) + len(sp_o.copies[0].boundary_inputs)
     target: dict[int, int] = {}
@@ -606,7 +604,7 @@ def export_chain(
 
     if mixed:
         return _export_mixed(
-            name, side, other, bodies, phases, coefs, cut, pis, offset is not None, links()
+            name, side, other, bodies, phases, coefs, cut, pis, offset is not None, links(), grow
         )
     ns = f"ArchytasZX.ChainProof.{name}"
     sem = "QSem" if qudit else "PSem"
@@ -752,12 +750,13 @@ def _export_mixed(
     pis: Sequence[Sequence[tuple[int, int]]],
     offset: bool,
     links: Sequence[str],
+    grow: str = "",
 ) -> str:
     """:func:`export_chain`'s Lean source over mixed qubit wire dimensions
     (ArchytasZX/ChainMixed.lean): each body proved under its own labels' digit counts, the
     base networks shifted by ``_BASE``, the copies relabelled onto the chain labels,
     ``chain_equal_lv`` over ``lvEnv E W C B k`` (C the copy labels in ``[W, 2 W)``, B the base
-    labels) for every ``k``, then ``links``."""
+    labels) for every ``k``, then ``links``; ``grow`` prefixes ``aO i`` and ``aX i``."""
     base, copies = bodies[0], bodies[1:]
     period = len(copies)
     ns = f"ArchytasZX.ChainProof.{name}"
@@ -829,8 +828,8 @@ def _export_mixed(
         "",
         "def cO (i : ℕ) : Net := perIdx cOt ⟨[], [], []⟩ i",
         "def cX (i : ℕ) : Net := perIdx cXt ⟨[], [], []⟩ i",
-        "noncomputable def aO (i : ℕ) : ℂ := perIdx aOt 1 i",
-        "noncomputable def aX (i : ℕ) : ℂ := perIdx aXt 1 i",
+        f"noncomputable def aO (i : ℕ) : ℂ := {grow}perIdx aOt 1 i",
+        f"noncomputable def aX (i : ℕ) : ℂ := {grow}perIdx aXt 1 i",
         "",
         "theorem hC : ∀ p ∈ C, W ≤ p.1 ∧ p.1 < 2 * W := by decide",
         "theorem hB : ∀ p ∈ B, p.1 < W := by decide",
@@ -843,6 +842,13 @@ def _export_mixed(
         "    (by decide)",
         "",
     ]
+    if grow:
+        lines += [
+            "theorem copyS (c : ℂ) {F : Env} {a b : ℂ} {X Y : Net} (h : Equal F a X b Y) :",
+            "    Equal F (c * a) X (c * b) Y :=",
+            "  ⟨h.1, fun σ hσ => by rw [mul_assoc, h.2 σ hσ, ← mul_assoc]⟩",
+            "",
+        ]
     for j, body in enumerate(copies):
         lines += [
             (
@@ -862,7 +868,7 @@ def _export_mixed(
         "    List.length_nil]",
         f"  generalize i % {period} = j at h ⊢",
         "  interval_cases j",
-        *(f"  · exact copyEq{j}" for j in range(period)),
+        *(f"  · exact {'copyS _ ' if grow else ''}copyEq{j}" for j in range(period)),
         "",
         "theorem hcO : ∀ i, copyOK W cut (cO i) = true :=",
         "  perIdx_all cOt _ (fun c => copyOK W cut c = true) (by decide) (by decide)",

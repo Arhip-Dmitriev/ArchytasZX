@@ -214,9 +214,33 @@ def test_a_mixed_dimension_chain_exports_over_level_labels() -> None:
     assert "noncomputable def EK : Env := { E with labs := instLabs ++ lvls W C 2 ++ B }" in source
 
 
+MIXED_GROWING = (
+    MIXED[0].replace(
+        "repeat n as C0: g2, g3, g4, g5, g6, g8",
+        "box C0 x n nodes g2, g3, g4, g5, g6, g8 index i",
+    )
+    + "\ncopy scalar C0: 2^i",
+    MIXED[1].replace(
+        "repeat n as V: v = Z(1 -> 2, d), f = F(d), w = Z(1 -> 1, d), u = Z(1 -> 1, literal 4)",
+        "v = Z(1 -> 2, d)\nf = F(d)\nw = Z(1 -> 1, d)\nu = Z(1 -> 1, literal 4)\n"
+        "box V x n nodes v, f, w, u index i",
+    )
+    + "\ncopy scalar V: 2^i",
+)
+"""The mixed-dimension cluster chains with copy scalar 2^i on both sides."""
+
+
+def test_a_growing_copy_scalar_exports_over_mixed_dimensions() -> None:
+    source = export_chain(_theorem(MIXED_GROWING), {"d": 2}, "mixedgrow", checks=(1, 2))
+    assert "noncomputable def aO (i : ℕ) : ℂ := ((2 : ℂ)) ^ (i / 1) * perIdx aOt 1 i" in source
+    assert "  · exact copyS _ copyEq0" in source
+    assert "theorem main : ∀ k, Equal (lvEnv E W C B k)" in source
+
+
 @pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
-def test_lean_proves_the_mixed_dimension_chain(tmp_path: object) -> None:
-    source = export_chain(_theorem(MIXED), {"d": 2}, "mixed")
+@pytest.mark.parametrize("pair", [MIXED, MIXED_GROWING])
+def test_lean_proves_the_mixed_dimension_chain(pair: tuple[str, str], tmp_path: object) -> None:
+    source = export_chain(_theorem(pair), {"d": 2}, "mixed")
     ok, output = L.check(source, f"{tmp_path}/mixed.lean")
     assert ok, output
 
