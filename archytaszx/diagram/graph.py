@@ -653,6 +653,8 @@ class Diagram:
         """Multiply the scalar accumulator by ``factor`` in place (Scalar itself is immutable)."""
         if not isinstance(factor, Scalar):
             raise GraphGrammarError(f"multiply_scalar requires a Scalar, got {factor!r}")
+        if factor.is_one:
+            return
         self._scalar = self._scalar * factor
 
     def set_scalar(self, scalar: Scalar) -> None:

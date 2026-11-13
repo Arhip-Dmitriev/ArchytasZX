@@ -58,7 +58,7 @@ from archytaszx.algebra.scalar import ScalarError
 from archytaszx.diagram.bangbox import BangBoxError
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, GraphError
-from archytaszx.diagram.validate import ValidateError
+from archytaszx.diagram.validate import ValidateError, ValidationReport, validate
 from archytaszx.rewrite.cache import CacheError, RewriteCache
 from archytaszx.rewrite.engine import RewriteResult, apply
 from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
@@ -644,6 +644,7 @@ class EGraph:
     ) -> None:
         """Apply every rule at every passing match of e-node ``index`` and insert the results."""
         rep = self._reps[index]
+        report: ValidationReport | None = None
         for rule in rules:
             for match in self._matches(rule, rep, cache):
                 if not match.all_side_conditions_passed:
@@ -654,7 +655,9 @@ class EGraph:
                     raise _Stop(SaturationStop.APPLICATION_LIMIT)
                 counts["applications"] += 1
                 try:
-                    result = apply(rep, rule, match)
+                    if report is None:
+                        report = validate(rep)
+                    result = apply(rep, rule, match, input_report=report)
                 except APPLICATION_ERRORS as exc:
                     message = f"{type(exc).__name__}: {exc}"
                     failed.append(FailedApplication(ENodeId(index), rule.name, message))

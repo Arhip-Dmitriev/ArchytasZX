@@ -110,12 +110,28 @@ def _require_diagram(what: str, value: object) -> Diagram:
     return value
 
 
+_SIMPLIFIED: dict[object, Scalar] = {}
+"""Memo of :func:`_simplified` by the scalar's sympy expression."""
+
+_SIMPLIFIED_CAP = 4096
+"""The most entries :data:`_SIMPLIFIED` keeps before it is cleared."""
+
+
 def _simplified(scalar: Scalar) -> Scalar:
-    """``scalar.simplify()``, or ``scalar`` unchanged when simplification raises."""
+    """``scalar.simplify()``, or ``scalar`` unchanged when simplification raises; memoised by
+    the scalar's expression."""
+    key = scalar.to_sympy()
+    found = _SIMPLIFIED.get(key)
+    if found is not None:
+        return found
     try:
-        return scalar.simplify()
+        out = scalar.simplify()
     except ScalarError:
-        return scalar
+        out = scalar
+    if len(_SIMPLIFIED) >= _SIMPLIFIED_CAP:
+        _SIMPLIFIED.clear()
+    _SIMPLIFIED[key] = out
+    return out
 
 
 def _leg_key(diagram: Diagram, ref: PortRef, partner: PortRef | None) -> tuple[object, ...]:
