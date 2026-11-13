@@ -261,6 +261,25 @@ def choose_index(left: Diagram, right: Diagram, *, index: str | None = None) -> 
     return min(live)
 
 
+def _offset(expr: sp.Expr, symbol: sp.Symbol) -> int | None:
+    """``c`` when ``expr`` is ``symbol + c`` for an integer ``c``, else None."""
+    rest = sp.expand(expr - symbol)
+    return int(rest) if rest.is_Integer else None
+
+
+def _least_offset(left: Diagram, right: Diagram, index: str) -> int:
+    """The least ``c`` over the multiplicities ``index + c`` of both diagrams' boxes (0 when
+    none)."""
+    found = [0]
+    for diagram in (left, right):
+        for box in diagram.bang_boxes.values():
+            expr = box.multiplicity.to_sympy()
+            for symbol in expr.free_symbols:
+                if str(symbol) == index and (c := _offset(expr, symbol)) is not None:
+                    found.append(c)
+    return min(found)
+
+
 def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diagram:
     """Replace every live bang box's multiplicity ``index`` with ``replacement``, together, and
     ``index`` in the scalar and node phases, dropping any parameter binding for ``index``."""
@@ -273,9 +292,11 @@ def rename_multiplicity(diagram: Diagram, index: str, replacement: Mult) -> Diag
             continue
         expr = box.multiplicity.to_sympy()
         symbol = next(s for s in expr.free_symbols if str(s) == index)
-        if not (expr.is_Pow and expr.base.is_Integer and expr.exp == symbol):
+        if _offset(expr, symbol) is None and not (
+            expr.is_Pow and expr.base.is_Integer and expr.exp == symbol
+        ):
             raise InductionDomainError(
-                "induction requires a bare multiplicity symbol or a power b^n of one, got "
+                "induction requires a multiplicity n + c (c an integer) or a power b^n, got "
                 f"{box.multiplicity!r}"
             )
         try:
@@ -399,6 +420,10 @@ def build_obligation(
     if base is None:
         base = choose_base_value(
             left, right, idx, witness, mode=mode, tolerance=tolerance, max_elements=max_elements
+        )
+    if base + _least_offset(left, right, idx) < 0:
+        raise InductionDomainError(
+            f"a box of multiplicity {idx} + c is negative at the base {idx} = {base}"
         )
     step = _fresh_step_symbol(left, right, idx, step_symbol)
     obligation = InductionObligation(
