@@ -227,3 +227,100 @@ def test_copies_first_matches_the_unrolled_shift(n: int) -> None:
     unrolled = parse_dsl(_unrolled_shift(n))
     assert compare(parse_dsl(SHIFT), unrolled, {"n": n, "d": 2}).matched
     assert not compare(parse_dsl(CARRY_FIRST), unrolled, {"n": n, "d": 2}).matched
+
+
+_STABILIZER_SPEC = """dim d
+count n
+h = Z(0 -> 1, d)
+repeat n as V: v = Z(1 -> 2, d), f = F(d), w = Z(1 -> 1, d)
+t = Z(1 -> 2, d)
+g = F(d)
+a = Z(0 -> 2, d)
+wire h.out0 -- v.in0, v.out1 -- f.in0, f.out0 -- w.in0, w.out0 -- t.in0, t.out1 -- g.in0
+wire g.out0 -- a.out1
+chain V: v.in0 -> w.out0
+outputs a.out0, t.out0, v.out0
+scalar d^(-1/2)"""
+"""cluster_stabilizer's spec: the reversed path chain with vertex 0 joined to the tail."""
+
+_STABILIZER_CIRCUIT = """dim d
+count n
+g0 = X(0 -> 1, d); g1 = F(d); g2 = X(0 -> 1, d); g3 = F(d); g4 = Z(1 -> 2, d)
+g5 = Z(2 -> 1, d); g6 = F(d); g7 = X(0 -> 1, d); g8 = F(d); g9 = Z(1 -> 2, d)
+g10 = Z(2 -> 1, d); g11 = F(d); g12 = X(1 -> 1, d) phase{k: -k/d}; g13 = Z(1 -> 1, d) phase{k: k/d}
+wire g0.out0 -- g1.in0, g2.out0 -- g3.in0, g3.out0 -- g4.in0, g1.out0 -- g5.in0
+wire g4.out1 -- g6.in0, g6.out0 -- g5.in1, g7.out0 -- g8.in0, g8.out0 -- g9.in0
+wire g4.out0 -- g10.in0, g9.out1 -- g11.in0, g11.out0 -- g10.in1, g9.out0 -- g12.in0
+wire g10.out0 -- g13.in0
+repeat n as C0: g2, g3, g4, g5, g6
+chain C0: g5.in0 -> g4.out0
+outputs g12.out0, g13.out0, g5.out0
+scalar 1/sqrt(d)"""
+"""cluster_stabilizer's translated circuit: the CZ path from the far end, X and Z on the tail."""
+
+
+def test_chains_with_head_and_tail_are_proved_with_their_ends_cut() -> None:
+    """Both chain-end wires cut on each side: the open pair by chain-window induction, the
+    context and closed pairs by normal form; a phase on either side is not proved."""
+    decision = decide_equal(parse_dsl(_STABILIZER_CIRCUIT), parse_dsl(_STABILIZER_SPEC))
+    assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+    assert "chain ends (both) cut on both sides" in decision.reason
+    assert decision.induction_proof is not None
+    broken = (
+        (
+            _STABILIZER_CIRCUIT,
+            _STABILIZER_SPEC.replace("w = Z(1 -> 1, d)", "w = Z(1 -> 1, d) phase{1: 1/3}"),
+        ),
+        (
+            _STABILIZER_CIRCUIT.replace("g9 = Z(1 -> 2, d)", "g9 = Z(1 -> 2, d) phase{1: 1/3}"),
+            _STABILIZER_SPEC,
+        ),
+    )
+    for left, right in broken:
+        verdict = decide_equal(parse_dsl(left), parse_dsl(right), max_samples=0).verdict
+        assert verdict is not EqualityVerdict.EQUAL
+
+
+_SYNDROME_SPEC = """dim d
+count n
+z = Z(1 -> 2, d)
+repeat n as V: e = Z(1 -> 1, d), a = X(0 -> 1, d)
+wire z.out0 -- e.in0
+outputs e.out0, a.out0, z.out1
+scalar d^(-n/2)"""
+"""repetition_code/syndrome's spec: the copy spider fanned into the box beside zero ancillas."""
+
+_SYNDROME_CIRCUIT = """dim d
+count n
+g0 = X(0 -> 1, d); g1 = Z(1 -> 2, d); g2 = X(2 -> 1, d); g3 = X(0 -> 1, d); g4 = Z(1 -> 2, d)
+g5 = X(2 -> 1, d); g6 = Z(1 -> 2, d); g7 = X(2 -> 1, d); g8 = F(d); g9 = F(d)
+wire g0.out0 -- g2.in0, g1.out1 -- g2.in1, g1.out0 -- g4.in0, g3.out0 -- g5.in0
+wire g4.out1 -- g5.in1, g2.out0 -- g6.in0, g5.out0 -- g7.in0, g6.out1 -- g8.in0
+wire g8.out0 -- g9.in0, g9.out0 -- g7.in1
+repeat n as C0: g0, g2, g3, g4, g5, g6, g7, g8, g9
+chain C0: g6.out0 -> g4.in0
+inputs g1.in0
+outputs g4.out0, g7.out0, g6.out0
+scalar d^(n/2)"""
+"""repetition_code/syndrome's translated circuit: the CX fan from q, then the ancilla chain."""
+
+
+def test_a_fan_spider_is_split_off_the_peeled_copy() -> None:
+    """The peeled copy's leg of the fan spider is split off with its boundary slot, so the
+    residual is the hypothesis; a phase on the fan spider or on a copy is not proved."""
+    decision = decide_equal(parse_dsl(_SYNDROME_CIRCUIT), parse_dsl(_SYNDROME_SPEC))
+    assert decision.verdict is EqualityVerdict.EQUAL, decision.reason
+    assert decision.induction_proof is not None
+    broken = (
+        (
+            _SYNDROME_CIRCUIT,
+            _SYNDROME_SPEC.replace("e = Z(1 -> 1, d)", "e = Z(1 -> 1, d) phase{1: 1/3}"),
+        ),
+        (
+            _SYNDROME_CIRCUIT.replace("g1 = Z(1 -> 2, d)", "g1 = Z(1 -> 2, d) phase{1: 1/3}"),
+            _SYNDROME_SPEC,
+        ),
+    )
+    for left, right in broken:
+        verdict = decide_equal(parse_dsl(left), parse_dsl(right), max_samples=0).verdict
+        assert verdict is not EqualityVerdict.EQUAL

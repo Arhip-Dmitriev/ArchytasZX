@@ -21,7 +21,7 @@ window, or a symbolic contraction) until one settles or all decline.
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
@@ -42,6 +42,7 @@ from archytaszx.diagram.bangbox import (
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
+from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import BangBoxId, Diagram, Direction, NodeId, PortRef
 from archytaszx.diagram.validate import ValidateError, validate_or_raise
 from archytaszx.rewrite.engine import RewriteStep, apply
@@ -1154,6 +1155,95 @@ def _graft(working: Diagram, replacement: Diagram) -> dict[NodeId, NodeId]:
     return id_map
 
 
+def _fan_split(
+    diagram: Diagram, copy: frozenset[NodeId]
+) -> Iterator[tuple[Diagram, frozenset[NodeId]]]:
+    """Per spider of ``copy`` wired to a boxed node off ``copy``, and per boundary slot it holds:
+    ``diagram`` with the spider split into a hub off the copy (its phase and other legs, the
+    slot's place wired to the leaf) and a phaseless leaf (the slot and the legs into ``copy``),
+    and the copy with the leaf in the spider's place."""
+    boxed = frozenset(n for box in diagram.bang_boxes.values() for n in box.node_scope)
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    slots = [*diagram.boundary_inputs, *diagram.boundary_outputs]
+    for v in sorted(copy):
+        node = diagram.nodes[v]
+        if node.generator_type not in (Z_SPIDER, X_SPIDER):
+            continue
+        legs = [
+            PortRef(v, direction, i)
+            for direction in (Direction.INPUT, Direction.OUTPUT)
+            for i in range(len(node.legs(direction)))
+        ]
+        far = {leg: partner.get(leg) for leg in legs}
+        inward = [leg for leg, f in far.items() if f is not None and f.node_id in copy]
+        if not inward or not any(
+            f is not None and f.node_id not in copy and f.node_id in boxed for f in far.values()
+        ):
+            continue
+        for slot in (leg for leg in legs if leg in slots):
+            yield _split_spider(diagram, v, slot, inward, copy)
+
+
+def _split_spider(
+    diagram: Diagram, v: NodeId, slot: PortRef, inward: Sequence[PortRef], copy: frozenset[NodeId]
+) -> tuple[Diagram, frozenset[NodeId]]:
+    """:func:`_fan_split`'s split of ``v`` at ``slot``."""
+    node = diagram.nodes[v]
+    working = diagram.copy()
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    moved = frozenset(inward)
+    dims = {d: [p.dim for p in node.legs(d)] for d in (Direction.INPUT, Direction.OUTPUT)}
+    keep = {
+        d: [i for i in range(len(dims[d])) if PortRef(v, d, i) not in moved]
+        for d in (Direction.INPUT, Direction.OUTPUT)
+    }
+    hub = working.add_node(
+        node.generator_type,
+        [dims[Direction.INPUT][i] for i in keep[Direction.INPUT]],
+        [dims[Direction.OUTPUT][i] for i in keep[Direction.OUTPUT]],
+        phase=node.phase,
+    )
+    hub_of = {PortRef(v, d, i): PortRef(hub, d, j) for d in keep for j, i in enumerate(keep[d])}
+    away = slot.direction
+    toward = Direction.OUTPUT if away is Direction.INPUT else Direction.INPUT
+    leaf_legs: dict[Direction, list[PortRef | None]] = {away: [slot], toward: [None]}
+    for leg in inward:
+        leaf_legs[leg.direction].append(leg)
+    slot_dim = dims[away][slot.index]
+    leaf = working.add_node(
+        node.generator_type,
+        [slot_dim if r is None else dims[r.direction][r.index] for r in leaf_legs[Direction.INPUT]],
+        [
+            slot_dim if r is None else dims[r.direction][r.index]
+            for r in leaf_legs[Direction.OUTPUT]
+        ],
+    )
+    leaf_of = {r: PortRef(leaf, d, j) for d in leaf_legs for j, r in enumerate(leaf_legs[d]) if r}
+    connector = PortRef(leaf, toward, 0)
+    new_of = {**hub_of, **leaf_of}
+    for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+        if v in (wire.a.node_id, wire.b.node_id):
+            working.remove_wire(wire.a, wire.b)
+    done: set[PortRef] = set()
+    for leg, far in sorted(partner.items(), key=lambda item: item[0].sort_key()):
+        if leg.node_id != v or leg in done:
+            continue
+        done.add(leg)
+        other = new_of[far] if far.node_id == v else far
+        if far.node_id == v:
+            done.add(far)
+        working.add_wire(new_of[leg], other)
+    working.add_wire(connector, hub_of[slot])
+    working.set_boundary_inputs([new_of.get(r, r) for r in diagram.boundary_inputs])
+    working.set_boundary_outputs([new_of.get(r, r) for r in diagram.boundary_outputs])
+    working.remove_node(v)
+    return working, (copy - {v}) | {leaf}
+
+
 def _chain_owner(diagram: Diagram, index: str) -> BangBoxId | None:
     """The single box whose multiplicity carries ``index`` when it is a chain box."""
     owners = [b for b, box in diagram.bang_boxes.items() if index in box.multiplicity.free_symbols]
@@ -1250,6 +1340,11 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
             continue
         exposed, copy = peeled
         cut = find_cut_region(exposed, frozenset(exposed.nodes) - copy, own_k)
+        for split, split_copy in () if cut is not None else _fan_split(exposed, copy):
+            cut = find_cut_region(split, frozenset(split.nodes) - split_copy, own_k)
+            if cut is not None:
+                exposed = split
+                break
         if cut is None:
             reasons.append("the residual is not the hypothesis diagram through its cut wires")
             continue

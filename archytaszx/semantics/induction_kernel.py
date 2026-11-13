@@ -38,9 +38,10 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.diagram.graph import Diagram, NodeId
 from archytaszx.rewrite.engine import RewriteStep, apply
+from archytaszx.rewrite.match import FusionMatch
 from archytaszx.rewrite.normal_form import normal_form
 from archytaszx.rewrite.rule import RewriteError, Rule
-from archytaszx.rewrite.rules_library import lookup_rule
+from archytaszx.rewrite.rules_library import SPIDER_FUSION, lookup_rule
 from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import compare_structure
 from archytaszx.semantics.induction import (
@@ -49,6 +50,7 @@ from archytaszx.semantics.induction import (
     StepDischarge,
     TierOutcome,
     _extract,
+    _fan_split,
     fed_replacement,
     find_cut_region,
     replace_cut_region,
@@ -291,13 +293,20 @@ def _windowed(
         try:
             tree_id = None
             cut = None
+            expose = kernel.refl(peeled)
             if window == "cut":
                 copy = frozenset(peeled.nodes) - frozenset(own_k.nodes)
                 region = frozenset(peeled.nodes) - copy
                 cut = find_cut_region(peeled, region, own_k)
+                for split, split_copy in () if cut is not None else _fan_split(peeled, copy):
+                    cut = find_cut_region(split, frozenset(split.nodes) - split_copy, own_k)
+                    if cut is not None:
+                        expose = _split_theorem(peeled, split, copy, split_copy)
+                        region = cut.region
+                        break
                 if cut is None:
                     raise NoInductionTheorem("the residual is not the hypothesis through cut wires")
-                replaced = replace_cut_region(peeled, cut, own_k, other_k)
+                replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
             elif window == "region":
                 region = frozenset(peeled.nodes) & frozenset(own_k.nodes)
                 replaced = replace_region(peeled, region, own_k, other_k)
@@ -310,7 +319,7 @@ def _windowed(
                 replaced = fed_replacement(peeled, tree_id, own_k, other_k)
             local = None
             if tree_id is None:
-                rest = frozenset(peeled.nodes) - region
+                rest = frozenset(expose.rhs.nodes) - region
                 local = (
                     frozenset(replaced.nodes) - rest,
                     frozenset(other_peeled.nodes) & frozenset(other_k.nodes),
@@ -327,7 +336,7 @@ def _windowed(
                 k,
                 base,
                 side,
-                kernel.refl(peeled),
+                expose,
                 region,
                 step,
                 cut=cut,
@@ -337,6 +346,21 @@ def _windowed(
         except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
             reasons.append(f"{label}: {exc}")
     raise NoInductionTheorem("; ".join(reasons))
+
+
+def _split_theorem(
+    peeled: Diagram, split: Diagram, copy: frozenset[NodeId], split_copy: frozenset[NodeId]
+) -> kernel.Theorem:
+    """``peeled = split`` for a :func:`~archytaszx.semantics.induction._fan_split` result: the
+    fusion of its two halves, reversed."""
+    (leaf,) = split_copy - copy
+    (hub,) = frozenset(split.nodes) - frozenset(peeled.nodes) - {leaf}
+    for match in SPIDER_FUSION.pattern.find_matches(split):
+        if not isinstance(match, FusionMatch) or {match.a_id, match.b_id} != {hub, leaf}:
+            continue
+        fused = kernel.rule(split, apply(split, SPIDER_FUSION, match).step)
+        return kernel.symm(kernel.trans(fused, kernel.iso(fused.rhs, peeled)))
+    raise NoInductionTheorem("the split spider does not fuse back")
 
 
 def _step_theorem(
