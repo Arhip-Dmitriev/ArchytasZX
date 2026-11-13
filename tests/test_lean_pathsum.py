@@ -269,10 +269,36 @@ AMP_PAIRS: dict[str, tuple[str, str]] = {
         ),
         "scalar 1 + sqrt(2)",
     ),
+    "x_into_z": (
+        f"a = X(0 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = Z(1 -> 0, {_Q}); wire a.out0 -- b.in0",
+        "scalar sqrt(2)",
+    ),
+    "x_open": (
+        f"a = X(0 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = Z(1 -> 1, {_Q}); wire a.out0 -- b.in0",
+        f"a = X(0 -> 1, {_Q}) weight{{1: sqrt(2)}}",
+    ),
+    "x_square": (
+        (
+            f"a = X(1 -> 1, {_Q}) weight{{1: sqrt(2)}}; b = X(1 -> 1, {_Q}) weight{{1: sqrt(2)}}; "
+            "wire a.out0 -- b.in0"
+        ),
+        (
+            f"a = X(1 -> 1, {_Q}) weight{{1: -sqrt(2)}}; "
+            f"b = X(1 -> 1, {_Q}) weight{{1: -sqrt(2)}}; wire a.out0 -- b.in0"
+        ),
+    ),
 }
 """Pairs with amplitude atoms: an [Average] after an hh_pivot, a zero weight, weights 1 and
 sqrt 2 with a phase, a pinned anchor whose parent is held, atoms on a weighted X spider's and a
-legless weighted spider's own digits, an F node beside atoms."""
+legless weighted spider's own digits, an F node beside atoms, a weighted X state into a Z effect
+(pin), a weighted X state on an open leg and two fused weighted X spiders ([Average] through a
+half phase)."""
+
+
+def test_weighted_x_legs_reduce_through_pin_and_half_average() -> None:
+    assert ".asubB 1 []" in _amp("x_into_z", False)
+    assert ".averageH " in _amp("x_open", False)
+    assert ".averageH " in _amp("x_square", True)
 
 
 def _amp(name: str, net: bool) -> str:

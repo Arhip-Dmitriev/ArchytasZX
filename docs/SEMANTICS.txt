@@ -319,9 +319,14 @@ a base magnitude R or times R sqrt(2), R a rational times a power of sqrt(2): it
 interpolated as a table, the constant gains R, and the zero indicator Z and the sqrt(2)
 indicator M (F_2 polynomials, Moebius mod 2) become amplitude atoms 0^Z and sqrt(2)^M. A
 PathSum's amplitude atoms a^F (a cyclotomic, F an F_2 polynomial) multiply the summand by a
-when F is 1. Variables in an exponent take only [Average] (Amy, arXiv 2306.16369, rule (A)):
-y in no phase term or constraint, its atoms alpha^(f (1 + y)) and beta^(f y) with f free of y,
-is dropped with factor 2 and the atom ((alpha + beta) / 2)^f; substitutions reach the
+when F is 1. Variables in an exponent take only [Pin], [Average] and [Average] through a half
+phase. [Pin]: a path variable y in a constraint y + B, B free of y, is set to B throughout and
+the constraint dropped. [Average] (Amy, arXiv 2306.16369, rule (A)): y in no phase term or
+constraint, its atoms alpha^(f (1 + y)) and beta^(f y) with f free of y, is dropped with factor
+2 and the atom ((alpha + beta) / 2)^f. [Average] through a half phase: y in no constraint, its
+phase terms y Q / 2 with Q free of path variables, its atoms alpha^(1 + y) and beta^y, is
+dropped with factor 2 and the atoms ((alpha + beta) / 2)^(1 + Q) and ((alpha - beta) / 2)^Q
+(a weighted X spider's fresh digit on an open leg or into a Z spider); substitutions reach the
 exponents; an atom with exponent 1 folds into the constant and 0^F with F free of path
 variables becomes the constraint [F = 0] ([Zero]). The canonical form substitutes the rows
 into the exponents, writes root-of-unity atoms as phase, merges equal exponents and compares

@@ -13,7 +13,8 @@ summed outside the inner sum: `valA M c A t σ` is the sum over `held` of the at
 `aval` times `val M c t.s`. `astep_sound` and `arun_sound` carry every `PSem` step list to the
 inner sum, `release_sound` moves a held variable no atom reads into the inner path, `adrop_sound`
 drops atoms on the zero polynomial, `aconst_sound` moves an atom on the polynomial 1 into the
-constant, `average_sound` is [Average] and `afinal_sound` compares two reduced sums with the
+constant, `average_sound` is [Average], `averageH_sound` is [Average] through a half phase and
+`afinal_sound` compares two reduced sums with the
 same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
 -/
 
@@ -600,6 +601,106 @@ theorem hperm_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (l : List ℕ) (t : AD
   unfold valA hpermS
   exact bsum_perm _ (of_decide_eq_true h) σ
 
+/-! ## [Average] through a half phase -/
+
+/-- A held variable's half phase `y Q / 2`, `Q` off the path, as a sign outside the inner sum. -/
+theorem val_half_held (M : ℕ) (hM : 0 < M) (c : ℂ) (s : Data) (y : ℕ) (τ : ℕ → ZMod 2)
+    (b : ZMod 2) (hy : y ∉ s.path) (hc : y ∉ fvars (s.cons ++ s.rows))
+    (hh : halfOK M y s.phase = true) (ho : offPath s (quot y s.phase) = true) :
+    val M c s (Function.update τ y b) =
+      (if b * fz τ (quot y s.phase) = 0 then 1 else -1) *
+        val M c { s with phase := rest y s.phase } τ := by
+  unfold val
+  dsimp only
+  rw [bsum_out _ y b s.path τ hy,
+    ← bsum_mul_left (fun τ' => if b * fz τ' (quot y s.phase) = 0 then (1 : ℂ) else -1) _ s.path
+      (fun τ' x hx w => by rw [fz_update_not τ' x w _ (offPath_not ho x hx)]) τ]
+  apply bsum_congr
+  intro τ'
+  unfold summand
+  dsimp only
+  simp only [holds_update_not τ' y b _ hc]
+  have hQ : ((((quot y s.phase).map fun m => zq (mz τ' m)).sum : ℤ) : ZMod 2) =
+      fz τ' (quot y s.phase) := by
+    rw [show ((quot y s.phase).map fun m => zq (mz τ' m)) =
+      ((quot y s.phase).map (mz τ')).map zq by simp [List.map_map]]
+    rw [zsum_cast]
+    rfl
+  split_ifs with hC h1 h1
+  · rw [pn_half M hM τ' y b s.phase hh, ex_add]
+    rcases z2_cases b with rfl | rfl
+    · have : zq (0 : ZMod 2) = 0 := by decide
+      rw [this]
+      simp [ex_zero]
+    · have : zq (1 : ZMod 2) = 1 := by decide
+      rw [this, one_mul] at *
+      rw [Int.cast_one, one_mul, ex_halfN, hQ, if_pos h1]
+      ring
+  · rw [pn_half M hM τ' y b s.phase hh, ex_add]
+    rcases z2_cases b with rfl | rfl
+    · simp at h1
+    · have : zq (1 : ZMod 2) = 1 := by decide
+      rw [one_mul] at h1
+      rw [this, Int.cast_one, one_mul, ex_halfN, hQ, if_neg h1]
+      ring
+  · ring
+  · ring
+
+/-- Whether `y` is the head held variable, absent from the rest of `held`, the path, the
+constraints and the rows, its phase terms of coefficient `M / 2` with a quotient off the path,
+and every atom reading it normalises to `1 + y` or `y`. -/
+def averageHOK (M y : ℕ) (t : AData) : Bool :=
+  decide (0 < M) && decide (t.held.head? = some y) && !decide (y ∈ t.held.tail) &&
+    !decide (y ∈ t.s.path) && !decide (y ∈ fvars (t.s.cons ++ t.s.rows)) &&
+    halfOK M y t.s.phase && offPath t.s (quot y t.s.phase) &&
+    (t.atoms.filter (reads y)).all fun a =>
+      isAlpha y [[]] a || decide (normF a.2 = normF (onlyY y [[]]))
+
+/-- The held variable `y` summed through its half phase `y Q / 2`: its phase terms dropped and
+the atoms reading it replaced by `(j0, 1 + Q)` and `(j1, Q)`. -/
+def averageHS (y j0 j1 : ℕ) (t : AData) : AData :=
+  ⟨{ t.s with phase := rest y t.s.phase }, t.held.tail,
+    t.atoms.filter (fun a => !reads y a) ++
+      [(j0, normF ([] :: quot y t.s.phase)), (j1, normF (quot y t.s.phase))]⟩
+
+theorem averageH_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (y j0 j1 : ℕ) (t : AData)
+    (σ : ℕ → ZMod 2) (h : averageHOK M y t = true)
+    (h0 : 2 * A j0 = alphaY A y [[]] t.atoms + betaY A y [[]] t.atoms)
+    (h1 : 2 * A j1 = alphaY A y [[]] t.atoms - betaY A y [[]] t.atoms) :
+    valA M c A t σ = valA M (2 * c) A (averageHS y j0 j1 t) σ := by
+  rcases t with ⟨s, held, as⟩
+  simp only [averageHOK, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨hM, hhd⟩, htl⟩, hpath⟩, hcons⟩, hh⟩, ho⟩, hall⟩ := h
+  rcases held with _ | ⟨z, hs⟩
+  · simp at hhd
+  simp only [List.head?_cons, Option.some.injEq] at hhd
+  subst hhd
+  simp only [List.tail_cons] at htl
+  have hg : ∀ m ∈ ([[]] : F2), z ∉ m := by simp
+  simp only [valA, averageHS, List.tail_cons]
+  rw [bsum_head _ z hs σ htl]
+  apply bsum_congr
+  intro τ
+  obtain ⟨e0, e1⟩ := aval_reads A z [[]] τ hg as hall
+  have hrest : ∀ b : ZMod 2, aval A (as.filter fun a => !reads z a) (Function.update τ z b) =
+      aval A (as.filter fun a => !reads z a) τ :=
+    fun b => aval_update_not A τ z b _ (avars_not_reads z as)
+  have hone : fz τ [[]] = 1 := by simp [fz, mz]
+  have hm : mz τ [] = 1 := by simp [mz]
+  rw [aval_split A z (Function.update τ z 0) as, aval_split A z (Function.update τ z 1) as,
+    e0, e1, hrest, hrest, val_half_held M hM c s z τ 0 hpath hcons hh ho,
+    val_half_held M hM c s z τ 1 hpath hcons hh ho, aval_append, aval_cons, aval_cons, aval_nil,
+    val_smul, fz_normF, fz_normF, hone, fz_cons, hm]
+  simp only [one_ne_zero, ↓reduceIte, zero_mul, one_mul]
+  rcases z2_cases (fz τ (quot z s.phase)) with e | e
+  · simp only [e, add_zero, one_ne_zero, ↓reduceIte, mul_one, one_mul]
+    linear_combination (aval A (List.filter (fun a => !reads z a) as) τ *
+      val M c { s with phase := rest z s.phase } τ) * h0.symm
+  · simp only [e, z2_one_add_one, one_ne_zero, ↓reduceIte, one_mul]
+    linear_combination (aval A (List.filter (fun a => !reads z a) as) τ *
+      val M c { s with phase := rest z s.phase } τ) * h1.symm
+
 /-! ## Step lists -/
 
 /-- A step on a path sum with atoms. -/
@@ -611,6 +712,7 @@ inductive AStep where
   | asub (v : ℕ)
   | asubB (v : ℕ) (B : F2)
   | average (y : ℕ) (g : F2) (j : ℕ) (as bs : List ℕ)
+  | averageH (y j0 j1 jn : ℕ) (as bs : List ℕ)
   | azero (j : ℕ)
   | aconst (j : ℕ)
   | aone (j : ℕ)
@@ -629,6 +731,7 @@ def reqHolds (A : ℕ → ℂ) (r : Req) : Prop :=
 /-- The coefficient identities a step assumes. -/
 def AStep.reqs : AStep → List Req
   | .average _ _ j as bs => [(2, j, [as, bs])]
+  | .averageH _ j0 j1 jn as bs => [(2, j0, [as, bs]), (2, j1, [as, bs ++ [jn]]), (0, jn, [[], [jn]])]
   | .azero j => [(1, j, [])]
   | .aone j => [(1, j, [[]])]
   | .amerge j j1 j2 => [(1, j, [[j1, j2]])]
@@ -645,6 +748,9 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .average y g _ as bs, t => averageOK y g t &&
       decide (((t.atoms.filter (reads y)).filter (isAlpha y g)).map (·.1) = as) &&
       decide (((t.atoms.filter (reads y)).filter (fun a => !isAlpha y g a)).map (·.1) = bs)
+  | .averageH y _ _ _ as bs, t => averageHOK M y t &&
+      decide (((t.atoms.filter (reads y)).filter (isAlpha y [[]])).map (·.1) = as) &&
+      decide (((t.atoms.filter (reads y)).filter (fun a => !isAlpha y [[]] a)).map (·.1) = bs)
   | .azero j, t => azeroOK j t
   | .aconst j, t => aconstOK t && decide (aconstIdx t = j)
   | .aone j, t => aheadOK j t
@@ -662,6 +768,7 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .asub v, t => asubS v t
   | .asubB v B, t => asubBS v B t
   | .average y g j _ _, t => averageS y g j t
+  | .averageH y j0 j1 _ _ _, t => averageHS y j0 j1 t
   | .azero _, t => azeroS t
   | .aconst _, t => aconstS t
   | .aone _, t => aconstS t
@@ -674,6 +781,7 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
   | .inner st => PSem.fac st
   | .average _ _ _ _ _ => 2
+  | .averageH _ _ _ _ _ _ => 2
   | .aconst j => A j
   | _ => 1
 
@@ -717,6 +825,31 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
       push_cast at hreq
       exact hreq
     simpa [AStep.fac, AStep.apply] using average_sound M c A y g j t σ h1 hA
+  | averageH y j0 j1 jn as bs =>
+    simp only [AStep.ok, Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨h1, h2⟩, h3⟩ := h
+    have r0 := hr _ List.mem_cons_self
+    have r1 := hr _ (List.mem_cons_of_mem _ List.mem_cons_self)
+    have r2 := hr _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
+    simp only [reqHolds, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
+      List.map_append, List.prod_append, List.prod_cons, List.prod_nil, add_zero] at r0 r1 r2
+    push_cast at r0 r1 r2
+    have hn : A jn = -1 := by linear_combination -r2
+    have hα : (as.map A).prod = alphaY A y [[]] t.atoms := by
+      unfold alphaY
+      rw [← h2, List.map_map]
+      rfl
+    have hβ : (bs.map A).prod = betaY A y [[]] t.atoms := by
+      unfold betaY
+      rw [← h3, List.map_map]
+      rfl
+    have hA0 : 2 * A j0 = alphaY A y [[]] t.atoms + betaY A y [[]] t.atoms := by
+      rw [← hα, ← hβ]
+      exact r0
+    have hA1 : 2 * A j1 = alphaY A y [[]] t.atoms - betaY A y [[]] t.atoms := by
+      rw [← hα, ← hβ, r1, hn]
+      ring
+    simpa [AStep.fac, AStep.apply] using averageH_sound M c A y j0 j1 t σ h1 hA0 hA1
   | azero j =>
     have hreq := hr _ List.mem_cons_self
     simp only [reqHolds, List.map_nil, List.sum_nil, Nat.cast_one, one_mul] at hreq

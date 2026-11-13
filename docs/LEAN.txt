@@ -549,7 +549,11 @@ valA M c A t sigma is the sum over held of the atoms' product times val. AStep l
 reduction: inner (a PSem step on the inner sum), hperm, release (a held variable no atom reads
 to the path), hold (the reverse), asub v and asubB v B (an atom's v set along a constraint or row
 [v] + B whose variables are off the path), average y g j as bs ([Average]: the atoms reading y
-normalise to (1 + y) g or y g, 2 A j = Prod_as A + Prod_bs A, factor 2), azero j (A j = 0: the
+normalise to (1 + y) g or y g, 2 A j = Prod_as A + Prod_bs A, factor 2), averageH y j0 j1 jn
+as bs ([Average] through a half phase: y's phase terms of coefficient M / 2 with a quotient Q off
+the path, its atoms on 1 + y or y, replaced by (j0, 1 + Q) and (j1, Q); 2 A j0 = Prod_as A +
+Prod_bs A, 2 A j1 = Prod_as A + Prod_bs A * A jn, 0 = 1 + A jn; val_half_held moves the sign
+outside the inner sum; factor 2), azero j (A j = 0: the
 atom's polynomial, off the path, made a constraint), aconst j (an atom on 1: factor A j), aone j
 (A j = 1: dropped), adrop, amerge j j1 j2 (two atoms on one polynomial, A j = A j1 A j2), apick
 i and anorm. arunsOK is checked by decide; the coefficient identities a step list assumes
@@ -557,7 +561,9 @@ i and anorm. arunsOK is checked by decide; the coefficient identities a step lis
 (aruns t), and afinal_perm compares two reduced sums with no held variable and atoms equal up to
 order. export_proof, for path sums with atoms, writes A (each base an index, equal bases one
 index), tL and tR (the path variables an atom reads held), each side's AStep list (lean_amp:
-folds, releases after every step, [Average] at the trace's average steps, the canonical pivots,
+folds, releases after every step, [Average] at the trace's average steps, averageH at its
+average_half steps, at a pin step norm, asubB when an atom reads the pinned variable (the path
+variables of its value held first) and the inner pin, the canonical pivots,
 asub at the pivots the atoms read, anorm and merges), the identities, the constants' identity
 and main : valA M cL A tL sigma = valA M cR A tR sigma. ArchytasZX/PathSumNetAmp.lean: za_frag
 gives a weighted Z spider whose coefficient at v is C ex (phase v) times the product of A over
@@ -575,8 +581,9 @@ asubB for a pinned digit an atom reads (its parent held first when on the path),
 export_proof's AStep list. from_diagram reads a weighted X spider's weights on its fresh digits
 as a weighted Z spider's on its anchor digits. Checked: [Average] with an hh_pivot before it, a
 zero weight made a constraint, weights 1 and sqrt 2 with a phase, merged atoms, a pinned anchor
-whose parent is held, atoms on a weighted X spider and on legless weighted Z and X spiders, and
-an F node beside atoms.
+whose parent is held, atoms on a weighted X spider and on legless weighted Z and X spiders, an
+F node beside atoms, a weighted X state into a Z effect (pin), a weighted X state on an open
+leg and two fused weighted X spiders (averageH).
 
 5. REFUTATIONS
 --------------

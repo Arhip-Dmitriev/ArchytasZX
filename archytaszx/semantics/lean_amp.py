@@ -14,7 +14,8 @@
 """Amplitude atoms in the Lean path-sum export (ArchytasZX/PathSumAmp.lean). ``Coefs`` numbers
 the atoms' cyclotomic bases as the coefficient vector ``A``; ``AmpRun`` follows a reduction
 trace of a path sum with atoms and writes the ``AStep`` list replaying it: inner steps on the
-path of variables no atom reads, [Average] on held variables, folds of atoms on 0 and 1, releases
+path of variables no atom reads, [Average] (plain and through a half phase) on held variables,
+pins along a constraint, folds of atoms on 0 and 1, releases
 of held variables no atom reads, and after the canonical pivots the atoms' substitution,
 normalisation and merging."""
 
@@ -201,6 +202,55 @@ class AmpRun:
         self.held = self.held[1:]
         self.atoms = [a for a in self.atoms if not any(y in m for m in a[1])] + [(new, guard)]
 
+    def average_half(self, y: int, q: F2Poly) -> None:
+        """[Average] through the half phase ``y q / 2`` on the held variable ``y``."""
+        one_y = frozenset({frozenset(), frozenset({y})})
+        only_y = frozenset({frozenset({y})})
+        reading = [a for a in self.atoms if any(y in m for m in a[1])]
+        if any(f not in (one_y, only_y) for _j, f in reading):
+            raise PathSumUnsupported(f"an atom on {y} is not on 1 + y or y")
+        alpha = [j for j, f in reading if f == one_y]
+        beta = [j for j, f in reading if f != one_y]
+        a, b = Cyclo.rational(1), Cyclo.rational(1)
+        for j in alpha:
+            a = a * self.coefs.values[j]
+        for j in beta:
+            b = b * self.coefs.values[j]
+        j0 = self.coefs.index((a + b).scale(Fraction(1, 2)))
+        j1 = self.coefs.index((a - b).scale(Fraction(1, 2)))
+        jn = self.coefs.index(Cyclo.rational(-1))
+        self._hfront(y)
+        self.inner([".norm"])
+        self.steps.append(f".averageH {y} {j0} {j1} {jn} {alpha} {beta}")
+        self.reqs += [
+            (2, j0, (tuple(alpha), tuple(beta))),
+            (2, j1, (tuple(alpha), (*beta, jn))),
+            (0, jn, ((), (jn,))),
+        ]
+        self.facs.append(sp.Integer(2))
+        self.held = self.held[1:]
+        self.atoms = [atom for atom in self.atoms if not any(y in m for m in atom[1])] + [
+            (j0, frozenset(q ^ {frozenset()})),
+            (j1, q),
+        ]
+
+    def pin(self, y: int, value: F2Poly) -> None:
+        """[Pin] of ``y`` along its constraint ``y + value``: when an atom reads ``y``, the
+        path variables of ``value`` held and ``y`` substituted in the atoms first."""
+        self.inner([".norm"])
+        if y in self.avars():
+            for v in sorted({v for m in value for v in m} & set(self.cur)):
+                rest = [x for x in self.cur if x != v]
+                self.inner([f".perm {[v, *rest]}"])
+                self.steps.append(".hold")
+                self.cur, self.held = rest, [v, *self.held]
+            self.steps.append(f".asubB {y} {f2_text(value)}")
+            self.atoms = [(j, f2_substitute(f, y, value)) for j, f in self.atoms]
+            self.release()
+        rest = [x for x in self.cur if x != y]
+        self.inner([f".perm {[y, *rest]}", f".pin {f2_text(value)}"])
+        self.cur = rest
+
     def substitute(self, rows: Sequence[tuple[int, F2Poly]]) -> None:
         """The atoms' pivots set by the rows, then every atom normalised and atoms on one
         polynomial merged."""
@@ -245,6 +295,14 @@ def reduce_run(run: AmpRun, trace: Sequence[Step]) -> None:
             if step.value is None:
                 raise PathSumUnsupported("an [Average] step without its guard")
             run.average(step.var, step.value)
+            run.fold(set(run.cur) | set(run.held))
+        elif step.rule in ("average_half", "pin"):
+            if step.value is None:
+                raise PathSumUnsupported(f"a [{step.rule}] step without its polynomial")
+            if step.rule == "pin":
+                run.pin(step.var, step.value)
+            else:
+                run.average_half(step.var, step.value)
             run.fold(set(run.cur) | set(run.held))
         else:
             run.trace(step)

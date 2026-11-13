@@ -826,11 +826,66 @@ def _try_average(ps: PathSum) -> bool:
     return False
 
 
+def _try_pin(ps: PathSum) -> bool:
+    """[Pin]: a path variable y in a constraint ``y + B``, B free of y: y := B throughout, the
+    constraint dropped."""
+    for y in sorted(ps.path):
+        single = frozenset({y})
+        for c in ps.constraints:
+            if single not in c or any(y in m for m in c if m != single):
+                continue
+            value = frozenset(c - {single})
+            ps.constraints.remove(c)
+            ps.phase.substitute(y, value)
+            ps.constraints = [f2_substitute(q, y, value) for q in ps.constraints]
+            ps.amps = [(a, f2_substitute(f, y, value)) for a, f in ps.amps]
+            ps.path.discard(y)
+            ps.trace.append(Step("pin", y, None, value))
+            _fold_amps(ps)
+            return True
+    return False
+
+
+def _try_average_half(ps: PathSum) -> bool:
+    """[Average] through a half phase: y in no constraint, its phase terms y Q / 2 with Q free
+    of path variables, its atoms alpha^(1 + y) and beta^y: Sum_y = 2 ((alpha + beta) /
+    2)^(1 + Q) ((alpha - beta) / 2)^Q."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    occ = _occurrences(ps.phase)
+    for y in sorted(ps.path & ps.amp_vars() - cons_vars):
+        q = _hh_quotient(y, occ.get(y, []))
+        if not q or any(v in ps.path for m in q for v in m):
+            continue
+        alpha, beta = Cyclo.rational(1), Cyclo.rational(1)
+        hit = []
+        for i, (a, f) in enumerate(ps.amps):
+            if not any(y in m for m in f):
+                continue
+            if f == frozenset({EMPTY, frozenset({y})}):
+                alpha = alpha * a
+            elif f == frozenset({frozenset({y})}):
+                beta = beta * a
+            else:
+                break
+            hit.append(i)
+        else:
+            _drop_terms(ps, occ[y])
+            ps.amps = [t for i, t in enumerate(ps.amps) if i not in hit]
+            ps.amps.append(((alpha + beta).scale(Fraction(1, 2)), f2_add(ONE, q)))
+            ps.amps.append(((alpha - beta).scale(Fraction(1, 2)), q))
+            ps.path.discard(y)
+            ps.sqrt2 += 2
+            ps.trace.append(Step("average_half", y, None, q))
+            _fold_amps(ps)
+            return True
+    return False
+
+
 def reduce(ps: PathSum) -> PathSum:
     """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
     boundary constraint, [HHnl] and [Average] applied to a fixpoint, in that order, the lowest
-    variable first; variables in an amplitude exponent take only [Average], and substitutions
-    reach the exponents."""
+    variable first; variables in an amplitude exponent take only [Pin], [Average] and [Average]
+    through a half phase, and substitutions reach the exponents."""
     out = ps.copy()
     _fold_amps(out)
     while out.path and not out.is_zero:
@@ -850,7 +905,7 @@ def reduce(ps: PathSum) -> PathSum:
                         ]
                 _fold_amps(out)
                 continue
-            if _try_average(out):
+            if _try_pin(out) or _try_average(out) or _try_average_half(out):
                 continue
             break
         if not _reduce_round(out):
