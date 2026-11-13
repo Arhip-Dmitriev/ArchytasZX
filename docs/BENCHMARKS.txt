@@ -350,6 +350,8 @@ open legs.
 ----------------
 
 Implementation: benchmarks/breaks.py; generated into results/false_set.json
+(runner.false_set: shard 0 generates it under a lock on results/false_set.lock, through a
+per-task temporary file; every other shard waits until the file holds the config's set).
 
 Every S equation gets one false partner: one break applied to its circuit IR (the specification
 is never edited, so every tool sees the same pair). The kind is picked per equation by the

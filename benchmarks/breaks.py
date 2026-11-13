@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import random
 import signal
 import time
@@ -1067,22 +1068,33 @@ def generate(cfg: dict[str, Any], path: Path, jobs: int) -> list[dict[str, Any]]
     from concurrent.futures import ProcessPoolExecutor
 
     key = fingerprint(cfg)
-    if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("fingerprint") == key:
-            return data["records"]
+    found = load(cfg, path)
+    if found is not None:
+        return found
     eqs = [i.id for i in subject.instances(_selected(cfg))]
     work = [(k, e, cfg) for k, e in enumerate(eqs)]
     with ProcessPoolExecutor(max(1, jobs)) as pool:
         records = list(pool.map(generate_one, work, chunksize=1))
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    task = os.environ.get("SLURM_ARRAY_TASK_ID", "local")
+    tmp = path.with_name(f"{path.stem}.{task}.{os.getpid()}.tmp")
     tmp.write_text(
         json.dumps({"fingerprint": key, "records": records}, indent=1, default=str),
         encoding="utf-8",
     )
     tmp.replace(path)
     return records
+
+
+def load(cfg: dict[str, Any], path: Path) -> list[dict[str, Any]] | None:
+    """The F records of ``path`` when it holds this config's set, else None."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    return data["records"] if data.get("fingerprint") == fingerprint(cfg) else None
 
 
 def fingerprint(cfg: dict[str, Any]) -> str:

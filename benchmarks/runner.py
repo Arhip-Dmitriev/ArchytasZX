@@ -729,6 +729,33 @@ def stale_units(done: dict[str, dict[str, Any]], false_records: list[dict[str, A
     return {k for k in out if k in done and not done[k].get("differs_checked")}
 
 
+FALSE_SET_POLL = 30.0
+
+
+def false_set(
+    cfg: dict[str, Any], results: Path, jobs: int, shard: tuple[int, int]
+) -> list[dict[str, Any]]:
+    """The F records of results/false_set.json: shard 0 generates them under an exclusive lock
+    on false_set.lock when the file does not hold this config's set; every other shard waits,
+    polling every FALSE_SET_POLL seconds, until it does."""
+    import fcntl
+
+    path = results / "false_set.json"
+    if shard[0] == 0:
+        with (results / "false_set.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return breaks.generate(cfg, path, jobs)
+    waited = 0.0
+    while True:
+        records = breaks.load(cfg, path)
+        if records is not None:
+            return records
+        if waited % 600 == 0:
+            print(f"benchmarks: shard {shard[0]} waits for {path}", flush=True)
+        time.sleep(FALSE_SET_POLL)
+        waited += FALSE_SET_POLL
+
+
 def run(
     cfg: dict[str, Any], shard: tuple[int, int] = (0, 1), only: list[str] | None = None
 ) -> None:
@@ -758,11 +785,7 @@ def run(
     task = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
     tag = f"{socket.gethostname().split('.')[0]}-{job}-{task}-{int(time.time())}"
     (envdir / f"{tag}.json").write_text(json.dumps(env, indent=1, default=str))
-    false_records = (
-        breaks.generate(cfg, results / "false_set.json", jobs)
-        if cfg["false_set"]["enabled"]
-        else []
-    )
+    false_records = false_set(cfg, results, jobs, shard) if cfg["false_set"]["enabled"] else []
     ctx = Context(
         cfg,
         cfg_hash,
