@@ -210,7 +210,7 @@ def _feed_descriptor(
     diagram: Diagram, box: BangBox, label: dict[NodeId, str]
 ) -> tuple[tuple[object, ...], ...]:
     """A fed box's feed port and its tree's scope in terms of ``label``."""
-    if box.feed_port is None or box.feed not in diagram.bang_boxes:
+    if box.feed_port is None or box.feed is None or box.feed not in diagram.bang_boxes:
         return ()
     ref = box.feed_port
     tree = diagram.bang_boxes[box.feed]
