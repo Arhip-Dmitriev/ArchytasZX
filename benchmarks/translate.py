@@ -38,9 +38,10 @@ A Chain is one named box over its body's nodes, with its index, linked from each
 after the exchange to the first port the carry entered in the copy (chain NAME: p -> q; a
 reversed Chain writes q -> p); a carry or register with no node in the copy gets an identity
 Z(1 -> 1) there. A carry that ends in the copy takes the register's end, and the register's
-copy has no output. Pairs puts Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1
-the left port) on the register's wire in the register's box, which takes the index, and the
-CZ's F nodes in a pair box with copy scalar D^(1/2).
+copy has no output. Gates on a chain's registers before or after it go in its box. Pairs puts
+Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1 the left port) on the register's
+wire in the register's box, which takes the index, and the CZ's F nodes in a pair box with
+copy scalar D^(1/2).
 """
 
 from __future__ import annotations
@@ -226,7 +227,16 @@ class _Builder:
         self.heads: dict[str, str] = {}
         self.chained: set[str] = set()
         self.after: dict[str, str] = {}
+        self.before: dict[str, str] = {}
         self.pair_lines: list[str] = []
+        for i, g in enumerate(c.gates):
+            if not isinstance(g, ir.Chain):
+                continue
+            regs = {q for q in ir.gate_wires(g) if c.count(q) is not None}
+            used = {q for h in c.gates[:i] for q in ir.gate_wires(h)} & regs
+            for q in used - set(self.before):
+                self.before[q] = f"_pre{i}"
+                self.boxes.setdefault(f"_pre{i}", _Box(g.count))
 
     def dim(self, q: str) -> str:
         return self.ctx.dim_token(self.c.dim(q))
@@ -248,13 +258,12 @@ class _Builder:
             return self.chain.key if any(self.boxed(q) for q in qs) else None
         if any(q in self.chained and q not in self.after for q in qs):
             raise Unsupported("a chain register used outside its chain")
-        keys = {self.after[q] for q in qs if q in self.after}
-        if keys:
-            if len(keys) > 1 or any(
-                self.c.count(q) is not None and q not in self.after for q in qs
-            ):
-                raise Unsupported("a gate after a chain on registers of another box")
-            return keys.pop()
+        for side, text in ((self.after, "after"), (self.before, "before")):
+            keys = {side[q] for q in qs if q in side}
+            if keys:
+                if len(keys) > 1 or any(self.c.count(q) is not None and q not in side for q in qs):
+                    raise Unsupported(f"a gate {text} a chain on registers of another box")
+                return keys.pop()
         return counts.pop() if counts else None
 
     def box_count(self, box: str) -> sp.Expr:
@@ -407,6 +416,9 @@ def _phase_fn(
 
 def _gate(b: _Builder, g: ir.Gate) -> None:
     qs = ir.gate_wires(g)
+    if isinstance(g, ir.Chain):
+        _chain(b, g)
+        return
     box = b.box_of(qs)
     if isinstance(g, ir.Init):
         d = b.dval(g.q)
@@ -576,13 +588,20 @@ def _chain(b: _Builder, g: ir.Chain) -> None:
     regs = [q for q in ir.gate_wires(g) if b.c.count(q) is not None]
     if any(sp.sympify(b.c.count(q)) != sp.sympify(count) for q in regs):
         raise Unsupported("a chain over a register of another count")
-    if any(not isinstance(b.cur[q], tuple) or q in b.chained for q in regs):
+    early = {q for q in regs if q in b.before}
+    pre = {b.before.pop(q) for q in early}
+    if any(
+        (not isinstance(b.cur[q], tuple) and q not in early) or q in b.chained or q in b.closed
+        for q in regs
+    ):
         raise Unsupported("a chain register used before its chain")
     singles = [carry for carry, _reg in g.carries] + list(g.through)
     if any(b.c.count(q) is not None for q in singles):
         raise Unsupported("a chain carry that is a register")
     key = f"C{sum(1 for box in b.boxes.values() if box.name is not None)}"
     b.boxes[key] = _Box(count, name=key, index=g.index)
+    for p in pre:
+        b.boxes[key].nodes += b.boxes.pop(p).nodes
     b.chain = _ChainScope(key, count, frozenset(singles))
     for q in singles:
         b.cur[q] = _Head(q, b.cur[q])
