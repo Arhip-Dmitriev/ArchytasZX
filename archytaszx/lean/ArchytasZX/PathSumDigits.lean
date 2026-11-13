@@ -13,7 +13,10 @@ each digit variable with its label and index (`ownOK`), and `dbits own σ` reads
 variables from label values. `sumOver_dbits` turns the network's sum over such labels into a
 sum over their digits, and `z_frag_dig` gives a Z spider on `2^k` as a fragment: digit `j` of
 every leg equal to an anchor leg's digit `j`, the phase table interpolated over the anchor
-digits (checked by `tableOK`).
+digits (checked by `tableOK`). `b_frag` and `s_frag` give the binder and splitter as digit
+constraints, `f_frag_dig` and `x_frag_dig` give F and X on `2^k` with the digit products
+`prodTerms` (`ex_prod_digits`: `ex (o j / 2^k)` from the terms with `a + b < k`), and `NetPSD`,
+`NetPSD.eval_eq` and `equal_psd` give a network's value as its fragments' path sum over digits.
 -/
 
 namespace ArchytasZX
@@ -378,6 +381,468 @@ theorem z_frag_dig (E : Env) (σ : ℕ → ℕ) (own : Own) (labs : List ℕ) (d
       | exact (ex_peq hM ⟨q, by linarith⟩).symm
       | exact (ex_peq hM ⟨-q, by linarith⟩).symm
   · rfl
+
+
+theorem digit_hi (q j a b : ℕ) (hb : b < 2 ^ q) : digit 2 (q + j) (b + 2 ^ q * a) = digit 2 j a := by
+  unfold digit
+  rw [pow_add, ← Nat.div_div_eq_div_mul, Nat.add_mul_div_left _ _ (by positivity),
+    Nat.div_eq_of_lt hb, zero_add]
+
+/-- The binder's or splitter's fragment: the whole label's digits equal the low part's digits
+then the high part's. -/
+def bFrag (dig : ℕ → List ℕ) (k a b : ℕ) : Frag := ⟨[], [], eqCons (dig k) (dig b ++ dig a), 1⟩
+
+theorem b_cond (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ) (hown : ownOK own labs dig = true)
+    (σ : ℕ → ℕ) (p q k a b : ℕ) (hk : k ∈ labs) (ha : a ∈ labs) (hb : b ∈ labs)
+    (hka : (dig k).length = q + p) (hla : (dig a).length = p) (hlb : (dig b).length = q)
+    (hσk : σ k < 2 ^ (q + p)) (hσa : σ a < 2 ^ p) (hσb : σ b < 2 ^ q) :
+    (∀ c ∈ eqCons (dig k) (dig b ++ dig a), fz (dbits own σ) c = 0) ↔ σ k = σ a * 2 ^ q + σ b := by
+  rw [mem_eqCons_iff _ _ _ (by rw [hka, List.length_append, hla, hlb])]
+  have hw : σ a * 2 ^ q + σ b < 2 ^ (q + p) := by
+    rw [pow_add]
+    have : σ a * 2 ^ q + σ b < (σ a + 1) * 2 ^ q := by nlinarith
+    calc σ a * 2 ^ q + σ b < (σ a + 1) * 2 ^ q := this
+      _ ≤ 2 ^ p * 2 ^ q := Nat.mul_le_mul_right _ hσa
+      _ = 2 ^ q * 2 ^ p := by ring
+  have hdig : ∀ i (hi : i < q + p),
+      ((digit 2 i (σ k) : ℕ) : ZMod 2) = dbits own σ ((dig b ++ dig a)[i]'(by
+        rw [List.length_append, hla, hlb]; exact hi)) ↔
+      digit 2 i (σ k) = digit 2 i (σ a * 2 ^ q + σ b) := by
+    intro i hi
+    have hrhs : dbits own σ ((dig b ++ dig a)[i]'(by rw [List.length_append, hla, hlb]; exact hi)) =
+        ((digit 2 i (σ a * 2 ^ q + σ b) : ℕ) : ZMod 2) := by
+      by_cases hiq : i < q
+      · rw [List.getElem_append_left (by rw [hlb]; exact hiq), dbits_get hown σ hb]
+        rw [show σ a * 2 ^ q + σ b = σ b + 2 ^ q * σ a by ring,
+          digit_low 2 q i (σ b) (σ a) (by norm_num) hiq hσb]
+      · have hj : i - q < (dig a).length := by rw [hla]; omega
+        rw [List.getElem_append_right (by rw [hlb]; omega)]
+        simp only [hlb]
+        rw [dbits_get hown σ ha hj]
+        rw [show σ a * 2 ^ q + σ b = σ b + 2 ^ q * σ a by ring,
+          show i = q + (i - q) by omega, digit_hi q (i - q) (σ a) (σ b) hσb]
+        simp
+    rw [hrhs]
+    have e1 := digit_lt 2 i (σ k) (by norm_num)
+    have e2 := digit_lt 2 i (σ a * 2 ^ q + σ b) (by norm_num)
+    rcases bit_cases _ e1 with x | x <;> rcases bit_cases _ e2 with y | y <;> rw [x, y] <;> decide
+  constructor
+  · intro H
+    apply eq_of_digits (q + p) _ _ hσk hw
+    intro i hi
+    have := H i (by rw [hka]; exact hi)
+    rw [dbits_get hown σ hk] at this
+    exact (hdig i hi).1 this
+  · intro H i hi
+    have hi' : i < q + p := by rw [← hka]; exact hi
+    rw [dbits_get hown σ hk]
+    exact (hdig i hi').2 (by rw [H])
+
+theorem b_frag (E : Env) (σ : ℕ → ℕ) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (hown : ownOK own labs dig = true) (hσ : ∀ l ∈ labs, σ l < 2 ^ (dig l).length)
+    (n : Node) (hkind : n.kind = .B) (p q : ℕ) (hd : E.dimv n.dim = 2 ^ p)
+    (ht : E.dimv n.ph = 2 ^ q) (k a b : ℕ) (ho : n.outs = [k]) (hi : n.ins = [a, b])
+    (hk : k ∈ labs) (ha : a ∈ labs) (hb : b ∈ labs)
+    (hka : (dig k).length = q + p) (hla : (dig a).length = p) (hlb : (dig b).length = q)
+    (M : ℕ) : ArchytasZX.val E σ n = fval M (bFrag dig k a b) (dbits own σ) := by
+  have hσk : σ k < 2 ^ (q + p) := hka ▸ hσ k hk
+  have hσa : σ a < 2 ^ p := hla ▸ hσ a ha
+  have hσb : σ b < 2 ^ q := hlb ▸ hσ b hb
+  have hv : ArchytasZX.val E σ n = tB (2 ^ p) (2 ^ q) (σ k) (σ a) (σ b) := by
+    unfold ArchytasZX.val
+    rw [hkind, ho, hi]
+    simp only [hd, ht, List.map_cons, List.map_nil]
+  rw [hv]
+  unfold fval val bFrag tB
+  simp only [bsum, summand, List.append_nil, pn_nil, Int.cast_zero, zero_div, ex_zero, mul_one]
+  rw [if_congr (b_cond own labs dig hown σ p q k a b hk ha hb hka hla hlb hσk hσa hσb) rfl rfl]
+  simp [hσa, hσb]
+
+theorem s_frag (E : Env) (σ : ℕ → ℕ) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (hown : ownOK own labs dig = true) (hσ : ∀ l ∈ labs, σ l < 2 ^ (dig l).length)
+    (n : Node) (hkind : n.kind = .S) (p q : ℕ) (hd : E.dimv n.dim = 2 ^ p)
+    (ht : E.dimv n.ph = 2 ^ q) (k a b : ℕ) (ho : n.outs = [a, b]) (hi : n.ins = [k])
+    (hk : k ∈ labs) (ha : a ∈ labs) (hb : b ∈ labs)
+    (hka : (dig k).length = q + p) (hla : (dig a).length = p) (hlb : (dig b).length = q)
+    (M : ℕ) : ArchytasZX.val E σ n = fval M (bFrag dig k a b) (dbits own σ) := by
+  have hσk : σ k < 2 ^ (q + p) := hka ▸ hσ k hk
+  have hσa : σ a < 2 ^ p := hla ▸ hσ a ha
+  have hσb : σ b < 2 ^ q := hlb ▸ hσ b hb
+  have hv : ArchytasZX.val E σ n = tB (2 ^ p) (2 ^ q) (σ k) (σ a) (σ b) := by
+    unfold ArchytasZX.val
+    rw [hkind, ho, hi]
+    simp only [hd, ht, List.map_cons, List.map_nil]
+  rw [hv]
+  unfold fval val bFrag tB
+  simp only [bsum, summand, List.append_nil, pn_nil, Int.cast_zero, zero_div, ex_zero, mul_one]
+  rw [if_congr (b_cond own labs dig hown σ p q k a b hk ha hb hka hla hlb hσk hσa hσb) rfl rfl]
+  simp [hσa, hσb]
+
+theorem val_digits : ∀ (k v : ℕ), v < 2 ^ k →
+    (v : ℤ) = ∑ a ∈ range k, (2 : ℤ) ^ a * (digit 2 a v : ℤ)
+  | 0, v, hv => by simp at hv; simp [hv]
+  | k + 1, v, hv => by
+    rw [Finset.sum_range_succ']
+    have ih := val_digits k (v / 2) (by rw [pow_succ] at hv; omega)
+    have hs : ∀ a, digit 2 (a + 1) v = digit 2 a (v / 2) := by
+      intro a; unfold digit; rw [pow_succ', ← Nat.div_div_eq_div_mul]
+    simp only [hs, pow_succ]
+    have h0 : digit 2 0 v = v % 2 := by simp [digit]
+    rw [h0]
+    have : ∑ a ∈ range k, (2 : ℤ) ^ a * 2 * (digit 2 a (v / 2) : ℤ) =
+        2 * ∑ a ∈ range k, (2 : ℤ) ^ a * (digit 2 a (v / 2) : ℤ) := by
+      rw [Finset.mul_sum]; refine Finset.sum_congr rfl fun a _ => by ring
+    rw [this, ← ih]
+    have := Nat.mod_add_div v 2
+    simp only [pow_zero, one_mul]
+    omega
+
+/-- The terms `2^(a+b) x_a y_b / 2^k` with `a + b < k`, in units of `1 / M`. -/
+def prodTerms (M K : ℕ) (xs ys : List ℕ) : Poly :=
+  (List.range xs.length).flatMap fun a => (List.range (xs.length - a)).map fun b =>
+    ([xs.getD a 0, ys.getD b 0], 2 ^ (a + b) * (M / K))
+
+theorem pn_flatMap (τ : ℕ → ZMod 2) {α : Type} (f : α → Poly) :
+    ∀ L : List α, pn τ (L.flatMap f) = (L.map fun x => pn τ (f x)).sum
+  | [] => rfl
+  | x :: L => by rw [List.flatMap_cons, pn_append, pn_flatMap τ f L]; simp
+
+theorem list_sum_range {β : Type} [AddCommMonoid β] (f : ℕ → β) :
+    ∀ n, ((List.range n).map f).sum = ∑ i ∈ range n, f i
+  | 0 => by simp
+  | n + 1 => by rw [List.range_succ, List.map_append, List.sum_append, list_sum_range f n,
+      Finset.sum_range_succ]; simp
+
+theorem pn_prodTerms (τ : ℕ → ZMod 2) (M K : ℕ) (xs ys : List ℕ) :
+    pn τ (prodTerms M K xs ys) = ∑ a ∈ range xs.length, ∑ b ∈ range (xs.length - a),
+      ((2 ^ (a + b) * (M / K) : ℕ) : ℤ) * (zq (τ (xs.getD a 0)) * zq (τ (ys.getD b 0))) := by
+  unfold prodTerms
+  rw [pn_flatMap, list_sum_range]
+  refine Finset.sum_congr rfl fun a _ => ?_
+  rw [← list_sum_range]
+  simp only [pn, List.map_map, Function.comp_def]
+  congr 1
+  apply List.map_congr_left
+  intro b _
+  simp [mz, zq_mul]
+
+theorem zq_digit (i v : ℕ) : zq ((digit 2 i v : ℕ) : ZMod 2) = (digit 2 i v : ℤ) := by
+  have := digit_lt 2 i v (by norm_num)
+  rcases bit_cases _ this with e | e <;> rw [e] <;> decide
+
+/-- `ex (o j / 2^k)` as the terms of `prodTerms` at the digits of `o` and `j`. -/
+theorem ex_prod_digits (M K q k : ℕ) (hK : K = 2 ^ k) (hq : M = K * q) (hM : 0 < M)
+    (xs ys : List ℕ) (hx : xs.length = k) (hy : ys.length = k) (τ : ℕ → ZMod 2) (o j : ℕ)
+    (ho : o < 2 ^ k) (hj : j < 2 ^ k)
+    (hxo : ∀ a < k, τ (xs.getD a 0) = ((digit 2 a o : ℕ) : ZMod 2))
+    (hyj : ∀ b < k, τ (ys.getD b 0) = ((digit 2 b j : ℕ) : ZMod 2)) :
+    ex ((pn τ (prodTerms M K xs ys) : ℝ) / M) = ex (((o * j : ℕ) : ℝ) / K) := by
+  have hK0 : 0 < K := by rw [hK]; positivity
+  have hMK : M / K = q := by rw [hq, Nat.mul_div_cancel_left _ hK0]
+  rw [pn_prodTerms, hx, hMK]
+  set low : ℤ := ∑ a ∈ range k, ∑ b ∈ range (k - a),
+    (2 : ℤ) ^ (a + b) * ((digit 2 a o : ℤ) * (digit 2 b j : ℤ)) with hlow
+  have hpn : ∑ a ∈ range k, ∑ b ∈ range (k - a),
+      ((2 ^ (a + b) * q : ℕ) : ℤ) * (zq (τ (xs.getD a 0)) * zq (τ (ys.getD b 0))) =
+      q * low := by
+    rw [hlow, Finset.mul_sum]
+    refine Finset.sum_congr rfl fun a ha => ?_
+    rw [Finset.mul_sum]
+    refine Finset.sum_congr rfl fun b hb => ?_
+    have ha' : a < k := Finset.mem_range.1 ha
+    have hb' : b < k := by have := Finset.mem_range.1 hb; omega
+    rw [hxo a ha', hyj b hb', zq_digit, zq_digit]
+    push_cast
+    ring
+  rw [hpn]
+  -- o j = low + K R
+  obtain ⟨R, hR⟩ : ∃ R : ℤ, ((o * j : ℕ) : ℤ) = low + K * R := by
+    have eo := val_digits k o ho
+    have ej := val_digits k j hj
+    refine ⟨∑ a ∈ range k, ∑ b ∈ Ico (k - a) k,
+      (2 : ℤ) ^ (a + b - k) * ((digit 2 a o : ℤ) * (digit 2 b j : ℤ)), ?_⟩
+    push_cast
+    rw [eo, ej, Finset.sum_mul_sum, hlow, Finset.mul_sum, ← Finset.sum_add_distrib]
+    refine Finset.sum_congr rfl fun a ha => ?_
+    have ha' : a < k := Finset.mem_range.1 ha
+    rw [← Finset.sum_range_add_sum_Ico _ (show k - a ≤ k by omega), Finset.mul_sum]
+    congr 1
+    · refine Finset.sum_congr rfl fun b _ => by ring
+    · refine Finset.sum_congr rfl fun b hb => ?_
+      have hb' := Finset.mem_Ico.1 hb
+      rw [hK]
+      have : (2 : ℤ) ^ a * (digit 2 a o : ℤ) * ((2 : ℤ) ^ b * (digit 2 b j : ℤ)) =
+          (2 : ℤ) ^ (a + b) * ((digit 2 a o : ℤ) * (digit 2 b j : ℤ)) := by ring
+      rw [this, show a + b = k + (a + b - k) by omega, pow_add, Nat.add_sub_cancel_left]
+      push_cast
+      ring_nf
+  have hK' : (K : ℝ) ≠ 0 := by exact_mod_cast hK0.ne'
+  have hq0 : (q : ℝ) ≠ 0 := by
+    intro e
+    have : (M : ℝ) = 0 := by rw [hq]; push_cast; rw [e, mul_zero]
+    exact absurd this (by exact_mod_cast hM.ne')
+  have e1 : ((q * low : ℤ) : ℝ) / M = (low : ℝ) / K := by
+    rw [hq]; push_cast; field_simp
+  have e2 : (((o * j : ℕ) : ℝ)) / K = (low : ℝ) / K + ((R : ℤ) : ℝ) := by
+    have : (((o * j : ℕ) : ℝ)) = (((o * j : ℕ) : ℤ) : ℝ) := by push_cast; rfl
+    rw [this, hR]
+    push_cast
+    field_simp
+  rw [e1, e2, ex_int]
+
+
+/-- F on `2^k`: the phase `o i / 2^k` over the digits, constant `sqrt 2 ^ (-k)`. -/
+noncomputable def fFragD (M K k : ℕ) (dig : ℕ → List ℕ) (o i : ℕ) : Frag :=
+  ⟨[], prodTerms M K (dig o) (dig i), [], (rt 2)⁻¹ ^ k⟩
+
+theorem f_frag_dig (E : Env) (σ : ℕ → ℕ) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (hown : ownOK own labs dig = true) (hσ : ∀ l ∈ labs, σ l < 2 ^ (dig l).length)
+    (n : Node) (hkind : n.kind = .F) (k : ℕ) (hd : E.dimv n.dim = 2 ^ k) (o i : ℕ)
+    (ho : n.outs = [o]) (hi : n.ins = [i]) (hol : o ∈ labs) (hil : i ∈ labs)
+    (hlo : (dig o).length = k) (hli : (dig i).length = k) (M K q : ℕ) (hK : K = 2 ^ k)
+    (hq : M = K * q) (hM : 0 < M) :
+    ArchytasZX.val E σ n = fval M (fFragD M K k dig o i) (dbits own σ) := by
+  have hσo : σ o < 2 ^ k := hlo ▸ hσ o hol
+  have hσi : σ i < 2 ^ k := hli ▸ hσ i hil
+  have hv : ArchytasZX.val E σ n = fou (2 ^ k) (σ o) (σ i) := by
+    unfold ArchytasZX.val
+    rw [hkind, ho, hi]
+    simp only [hd, List.map_cons, List.map_nil]
+  rw [hv]
+  unfold fval val fFragD
+  simp only [bsum, summand, List.append_nil, List.not_mem_nil, IsEmpty.forall_iff,
+    forall_const, if_true]
+  rw [ex_prod_digits M K q k hK hq hM (dig o) (dig i) hlo hli _ (σ o) (σ i) hσo hσi
+    (fun a ha => by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by rw [hlo]; exact ha),
+        Option.getD_some, dbits_get hown σ hol])
+    (fun b hb => by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by rw [hli]; exact hb),
+        Option.getD_some, dbits_get hown σ hil])]
+  unfold fou
+  rw [om_eq_ex, hK]
+  have hr : ((Real.sqrt ((2 ^ k : ℕ) : ℝ) : ℝ) : ℂ) = rt 2 ^ k := by
+    rw [← ArchytasZX.Sym.rt_pow]
+  rw [hr, div_eq_mul_inv, inv_pow, mul_comm]
+
+
+theorem ex_conj (θ : ℝ) : (starRingEnd ℂ) (ex θ) = ex (-θ) := by
+  unfold ex
+  rw [← Complex.exp_conj]
+  congr 1
+  simp only [map_mul, Complex.conj_ofReal, Complex.conj_I, map_ofNat]
+  push_cast
+  ring
+
+theorem ex_neg_of (a b : ℝ) (h : ex a = ex b) : ex (-a) = ex (-b) := by
+  have ha : ex (-a) * ex a = 1 := by rw [← ex_add]; simp [ex_zero]
+  have hb : ex (-b) * ex b = 1 := by rw [← ex_add]; simp [ex_zero]
+  have hne : ex b ≠ 0 := Complex.exp_ne_zero _
+  rw [h] at ha
+  exact mul_right_cancel₀ hne (ha.trans hb.symm)
+
+/-- X on `2^k` with the fresh digit variables `ys`: the phase table `P` over `ys`, `y o / 2^k`
+per output and `-y i / 2^k` per input over the digits, constant `sqrt 2 ^ (-k legs)`. -/
+noncomputable def xFragD (M K k : ℕ) (dig : ℕ → List ℕ) (P : Poly) (ys os is : List ℕ) : Frag :=
+  ⟨ys, P ++ (os.flatMap fun o => prodTerms M K (dig o) ys) ++
+    (is.flatMap fun i => negP M (prodTerms M K (dig i) ys)), [],
+    (rt 2)⁻¹ ^ (k * (os.length + is.length))⟩
+
+theorem x_frag_dig (E : Env) (σ : ℕ → ℕ) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (hown : ownOK own labs dig = true) (hσ : ∀ l ∈ labs, σ l < 2 ^ (dig l).length)
+    (n : Node) (hkind : n.kind = .X) (k : ℕ) (hd : E.dimv n.dim = 2 ^ k)
+    (hlabs : ∀ l ∈ n.outs ++ n.ins, l ∈ labs) (hlen : lensOK dig k (n.outs ++ n.ins) = true)
+    (ys : List ℕ) (hys : ys.length = k) (hnd : ys.Nodup)
+    (hfresh : ys.all (fun y => (List.lookup y own).isNone) = true)
+    (M K q : ℕ) (hK : K = 2 ^ k) (hq : M = K * q) (hM : 0 < M) (P : Poly) (ts : List ℕ)
+    (hph : ∀ v, E.phase n.ph v = ((ts.getD v 0 : ℕ) : ℝ) / M)
+    (htab : tableOK M ys P ts = true)
+    (hPv : P.all (fun t => t.1.all fun x => decide (x ∈ ys)) = true) :
+    ArchytasZX.val E σ n = fval M (xFragD M K k dig P ys n.outs n.ins) (dbits own σ) := by
+  subst hK
+  have hrt : ((Real.sqrt ((2 ^ k : ℕ) : ℝ) : ℝ) : ℂ) = rt 2 ^ k := by
+    rw [← ArchytasZX.Sym.rt_pow]
+  have hlen' : ∀ l ∈ n.outs ++ n.ins, (dig l).length = k := by
+    intro l hl
+    simpa [lensOK] using (List.all_eq_true.1 hlen) l hl
+  have hσk : ∀ l ∈ n.outs ++ n.ins, σ l < 2 ^ k := fun l hl =>
+    (hlen' l hl) ▸ hσ l (hlabs l hl)
+  have hnone : ∀ y ∈ ys, List.lookup y own = none := by
+    intro y hy
+    simpa using (List.all_eq_true.1 hfresh) y hy
+  have hdisj : ∀ l ∈ n.outs ++ n.ins, ∀ x ∈ dig l, x ∉ ys := by
+    intro l hl x hx hxy
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+    have := ownOK_get hown (hlabs l hl) hi
+    rw [hnone _ hxy] at this
+    exact absurd this (by simp)
+  have hv : ArchytasZX.val E σ n = tX (2 ^ k) (E.phase n.ph) (n.outs.map σ) (n.ins.map σ) := by
+    unfold ArchytasZX.val
+    rw [hkind]
+    simp only [hd]
+  rw [hv]
+  unfold fval val xFragD
+  dsimp only
+  rw [← sum_setBits _ ys (dbits own σ), hys]
+  unfold tX
+  refine Finset.sum_congr rfl fun j hj => ?_
+  have hj' : j < 2 ^ k := Finset.mem_range.1 hj
+  set τ := setBits ys j (dbits own σ) with hτ
+  -- digits under τ
+  have hleg : ∀ l ∈ n.outs ++ n.ins, ∀ a < k, τ ((dig l).getD a 0) = ((digit 2 a (σ l) : ℕ) : ZMod 2) := by
+    intro l hl a ha
+    have hal : a < (dig l).length := by rw [hlen' l hl]; exact ha
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hal, Option.getD_some, hτ,
+      setBits_not _ _ _ _ (hdisj l hl _ (List.getElem_mem hal)), dbits_get hown σ (hlabs l hl)]
+  have hyj : ∀ b < k, τ (ys.getD b 0) = ((digit 2 b j : ℕ) : ZMod 2) := by
+    intro b hb
+    have hbl : b < ys.length := by rw [hys]; exact hb
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hbl, Option.getD_some, hτ]
+    have := setBits_idx ys j (dbits own σ) hnd b hbl
+    simpa using this
+  have hG : ∀ o ∈ n.outs, fou (2 ^ k) (σ o) j =
+      (rt 2)⁻¹ ^ k * ex ((pn τ (prodTerms M (2 ^ k) (dig o) ys) : ℝ) / M) := by
+    intro o ho
+    have hol : o ∈ n.outs ++ n.ins := List.mem_append_left _ ho
+    rw [ex_prod_digits M _ q k rfl hq hM (dig o) ys (hlen' o hol) hys τ (σ o) j (hσk o hol) hj'
+      (hleg o hol) hyj]
+    unfold fou
+    rw [om_eq_ex, hrt, div_eq_mul_inv, inv_pow, mul_comm]
+  have hG' : ∀ i ∈ n.ins, (starRingEnd ℂ) (fou (2 ^ k) (σ i) j) =
+      (rt 2)⁻¹ ^ k * ex ((pn τ (negP M (prodTerms M (2 ^ k) (dig i) ys)) : ℝ) / M) := by
+    intro i hi
+    have hil : i ∈ n.outs ++ n.ins := List.mem_append_right _ hi
+    have e := ex_prod_digits M _ q k rfl hq hM (dig i) ys (hlen' i hil) hys τ (σ i) j
+      (hσk i hil) hj' (hleg i hil) hyj
+    have en : ex ((pn τ (negP M (prodTerms M (2 ^ k) (dig i) ys)) : ℝ) / M) =
+        ex (-((pn τ (prodTerms M (2 ^ k) (dig i) ys) : ℝ) / M)) := by
+      rw [ex_peq hM (pn_negP τ M hM _)]
+      push_cast
+      ring_nf
+    rw [en, ex_neg_of _ _ e]
+    unfold fou
+    rw [om_eq_ex, map_div₀, ex_conj, Complex.conj_ofReal, hrt, div_eq_mul_inv, inv_pow, mul_comm]
+  -- the summand
+  simp only [summand, List.append_nil, List.not_mem_nil, IsEmpty.forall_iff, forall_const,
+    if_true, pn_append, pn_flatMap]
+  have hPj : ex ((pn τ P : ℝ) / M) = ex (E.phase n.ph j) := by
+    rw [hph]
+    have hpn : pn τ P = pn (setBits ys j fun _ => 0) P := by
+      apply pn_congr
+      intro t ht x hx
+      have hxy : x ∈ ys := by
+        have := List.all_eq_true.1 hPv t ht
+        simpa using List.all_eq_true.1 this x hx
+      obtain ⟨b, hb, rfl⟩ := List.getElem_of_mem hxy
+      rw [hτ, show ys[b] = ys.get ⟨b, hb⟩ from rfl, setBits_idx ys j _ hnd b hb,
+        setBits_idx ys j _ hnd b hb]
+    have := List.all_eq_true.1 htab j (List.mem_range.2 (by rw [hys]; exact hj'))
+    simp only [decide_eq_true_eq] at this
+    obtain ⟨r, hr⟩ := Int.dvd_of_emod_eq_zero this
+    rw [hpn]
+    have e : (((ts.getD j 0 : ℕ) : ℝ)) = (((ts.getD j 0 : ℕ) : ℤ) : ℝ) := by push_cast; rfl
+    rw [e]
+    first
+      | exact ex_peq hM ⟨r, by linarith⟩
+      | exact ex_peq hM ⟨-r, by linarith⟩
+  have hO : ((n.outs.map σ).map fun o => fou (2 ^ k) o j).prod =
+      ((rt 2)⁻¹ ^ k) ^ n.outs.length *
+        ex ((((n.outs.map fun o => pn τ (prodTerms M (2 ^ k) (dig o) ys)).sum : ℤ) : ℝ) / M) := by
+    rw [List.map_map, ← prod_ex]
+    congr 1
+    apply List.map_congr_left
+    intro o ho
+    simpa using hG o ho
+  have hI : ((n.ins.map σ).map fun i => (starRingEnd ℂ) (fou (2 ^ k) i j)).prod =
+      ((rt 2)⁻¹ ^ k) ^ n.ins.length *
+        ex ((((n.ins.map fun i => pn τ (negP M (prodTerms M (2 ^ k) (dig i) ys))).sum : ℤ) : ℝ) /
+          M) := by
+    rw [List.map_map, ← prod_ex]
+    congr 1
+    apply List.map_congr_left
+    intro i hi
+    simpa using hG' i hi
+  rw [hO, hI]
+  push_cast
+  rw [add_div, add_div, ex_add, ex_add, hPj]
+  ring
+
+
+/-! ## Networks over digit variables -/
+
+/-- The network's path sum over digits: the summed labels' digits then the fragments' paths. -/
+def netDataD (dig : ℕ → List ℕ) (N : Net) (fs : List Frag) : Data :=
+  ⟨N.int.flatMap dig ++ (joinAll fs).path, (joinAll fs).phase, (joinAll fs).cons, []⟩
+
+/-- `NetPS` over digit variables: the owner table, each node's entry as its fragment's value at
+the digits of in-range label values, disjoint fragment paths, every label of dimension
+`2 ^ |dig l|`, and every label summed or on the boundary. -/
+structure NetPSD (E : Env) (N : Net) (M : ℕ) (own : Own) (labs : List ℕ) (dig : ℕ → List ℕ)
+    (ps : List (Node × Frag)) : Prop where
+  ownok : ownOK own labs dig = true
+  nodes : N.nodes = ps.map Prod.fst
+  node : ∀ p ∈ ps, ∀ σ, (∀ l ∈ labs, σ l < 2 ^ (dig l).length) →
+    ArchytasZX.val E σ p.1 = fval M p.2 (dbits own σ)
+  disj : (ps.map Prod.snd).Pairwise fun a b => Disj a b ∧ Disj b a
+  dims : ∀ l ∈ labs, labDim E l = 2 ^ (dig l).length
+  cover : ∀ l ∈ labelsOf N.nodes, l ∈ N.int ∨ l ∈ N.bnd
+  sub : ∀ l ∈ N.int ++ N.bnd, l ∈ labs
+
+theorem NetPSD.eval_eq {E : Env} {N : Net} {M : ℕ} {own : Own} {labs : List ℕ}
+    {dig : ℕ → List ℕ} {ps : List (Node × Frag)} (h : NetPSD E N M own labs dig ps)
+    (σ : ℕ → ℕ) (hσ : InRange E N.bnd σ) :
+    eval E N σ = val M (joinAll (ps.map Prod.snd)).c (netDataD dig N (ps.map Prod.snd))
+      (dbits own (clamp N.bnd σ)) := by
+  have he : eval E N σ = eval E N (clamp N.bnd σ) := by
+    unfold eval
+    apply sumOver_ext (labDim E) N.int (labelsOf N.nodes) _ (prodVal_reads E N.nodes)
+    intro x hx hn
+    rcases h.cover x hx with hi | hb
+    · exact absurd hi hn
+    · simp [clamp, hb]
+  rw [he]
+  unfold eval
+  have hint : ∀ l ∈ N.int, l ∈ labs := fun l hl => h.sub l (List.mem_append_left _ hl)
+  set F := joinAll (ps.map Prod.snd) with hF
+  have hcongr : sumOver (labDim E) N.int (prodVal E N.nodes) (clamp N.bnd σ) =
+      sumOver (labDim E) N.int (fun σ' => fval M F (dbits own σ')) (clamp N.bnd σ) := by
+    apply sumOver_congr
+    intro τ hτ hr
+    have hrange : ∀ l ∈ labs, τ l < 2 ^ (dig l).length := by
+      intro l hl
+      by_cases hli : l ∈ N.int
+      · have := hr l hli
+        rwa [h.dims l hl] at this
+      · rw [hτ l hli]
+        unfold clamp
+        split_ifs with hlb
+        · have := hσ l hlb
+          rwa [h.dims l hl] at this
+        · positivity
+    rw [hF, fval_joinAll M _ _ h.disj, prodVal, h.nodes, List.map_map, List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro p hp
+    exact h.node p hp τ hrange
+  rw [hcongr, sumOver_dbits (labDim E) h.ownok (fval M F) N.int hint
+    (fun l hl => h.dims l (hint l hl))]
+  unfold fval val netDataD
+  rw [bsum_append]
+  rfl
+
+/-- Two networks with one boundary whose digit path sums, scaled by `s₁` and `s₂`, agree at
+every Boolean assignment. -/
+theorem equal_psd {E : Env} {N₁ N₂ : Net} {M : ℕ} {own : Own} {labs : List ℕ}
+    {dig : ℕ → List ℕ} {ps₁ ps₂ : List (Node × Frag)} (s₁ s₂ : ℂ)
+    (h₁ : NetPSD E N₁ M own labs dig ps₁) (h₂ : NetPSD E N₂ M own labs dig ps₂)
+    (hb : N₁.bnd = N₂.bnd)
+    (hv : ∀ τ, s₁ * val M (joinAll (ps₁.map Prod.snd)).c (netDataD dig N₁ (ps₁.map Prod.snd)) τ =
+      s₂ * val M (joinAll (ps₂.map Prod.snd)).c (netDataD dig N₂ (ps₂.map Prod.snd)) τ) :
+    Equal E s₁ N₁ s₂ N₂ := by
+  refine ⟨hb ▸ List.Perm.refl _, fun σ hσ => ?_⟩
+  have hσ₂ : InRange E N₂.bnd σ := hb ▸ hσ
+  rw [h₁.eval_eq σ hσ, h₂.eval_eq σ hσ₂, ← hb]
+  exact hv _
 
 end PSem
 end ArchytasZX
