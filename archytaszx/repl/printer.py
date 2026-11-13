@@ -1441,6 +1441,8 @@ def render_graph(diagram: Diagram) -> str:
                     line += f"  {label}: {refs}"
         if box.feed is not None and box.feed_port is not None:
             line += f"  feed: !{int(box.feed)} -> {_listing_ref(box.feed_port)}"
+        if box.align is not None:
+            line += f"  align: !{int(box.align)}"
         if flag is not None:
             line += f"  parent: !{parent} ({flag})"
         lines.append(line)

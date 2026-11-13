@@ -134,6 +134,7 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_a.position,
             box_a.feed,
             box_a.feed_port,
+            box_a.align,
         )
         extension_b = (
             box_b.links,
@@ -150,6 +151,7 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
             box_b.position,
             box_b.feed,
             box_b.feed_port,
+            box_b.align,
         )
         if extension_a != extension_b:
             return StructuralComparison(
@@ -203,6 +205,8 @@ def _box_tag(box: BangBox) -> str:
         tag += f"|tree:{len(box.tree)}:{box.level}:{box.position}"
     if box.feed is not None:
         tag += "|fed"
+    if box.align is not None:
+        tag += "|aligned"
     return tag
 
 
@@ -218,6 +222,16 @@ def _feed_descriptor(
     if ref.node_id not in label:
         return (("feed", scope),)
     return (("feed", label[ref.node_id], ref.direction.value, ref.index, scope),)
+
+
+def _align_descriptor(
+    diagram: Diagram, box: BangBox, label: dict[NodeId, str]
+) -> tuple[tuple[object, ...], ...]:
+    """An aligned box's partner scope in terms of ``label``."""
+    if box.align is None or box.align not in diagram.bang_boxes:
+        return ()
+    target = diagram.bang_boxes[box.align]
+    return (("align", tuple(sorted(label[n] for n in target.node_scope if n in label))),)
 
 
 def _box_chain(diagram: Diagram, box: BangBox) -> tuple[str, ...]:
@@ -400,6 +414,7 @@ def _box_descriptors(diagram: Diagram, label: dict[NodeId, str]) -> tuple[tuple[
                 if r.node_id in label
             )
             + _feed_descriptor(diagram, box, label)
+            + _align_descriptor(diagram, box, label)
         )
         descriptors.append(
             (

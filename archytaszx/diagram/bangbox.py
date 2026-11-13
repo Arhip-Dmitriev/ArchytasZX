@@ -333,6 +333,9 @@ class BangBox:
     """Disjoint node sets of the scope whose boundary slots are laid out as separate blocks,
     each at its first slot (the scope's other nodes forming one more block); empty for one
     block over the whole scope."""
+    align: BangBoxId | None = None
+    """A node-scope box of the same multiplicity whose copy j is wired to this box's copy j on
+    every wire between the two scopes (copy-aligned wiring)."""
 
     def __post_init__(self) -> None:
         """Validate field types, that exactly one of the two scopes is non-empty, and the
@@ -418,6 +421,17 @@ class BangBox:
             grouped = [n for group in self.groups for n in group]
             if len(set(grouped)) != len(grouped) or not set(grouped) <= self.node_scope:
                 raise BangBoxGrammarError("box groups must be disjoint node sets of its scope")
+        if self.align is not None and (
+            not self.node_scope
+            or self.align == self.id
+            or self.pair_of is not None
+            or self.tree
+            or self.feed is not None
+        ):
+            raise BangBoxGrammarError(
+                "an aligned box is a node-scope box, not a pair, tree or fed box, aligned to "
+                "another box"
+            )
 
     @property
     def is_fed(self) -> bool:
@@ -873,7 +887,24 @@ def _descendants_of(diagram: Diagram, box_id: BangBoxId) -> tuple[BangBox, ...]:
 def _copy_subtree(
     diagram: Diagram, box_id: BangBoxId, id_map: Mapping[NodeId, NodeId], parent: BangBoxId | None
 ) -> None:
-    """Add a remapped copy of every child of ``box_id`` (recursively) under ``parent``."""
+    """Add a remapped copy of every child of ``box_id`` (recursively) under ``parent``; a copied
+    box aligned to a box of the copied subtree is aligned to that box's copy."""
+    made: dict[BangBoxId, BangBoxId] = {}
+    _copy_children(diagram, box_id, id_map, parent, made)
+    for new_id in made.values():
+        target = diagram.bang_boxes[new_id].align
+        if target is not None and target in made:
+            diagram.set_bang_box_extension(new_id, align=made[target])
+
+
+def _copy_children(
+    diagram: Diagram,
+    box_id: BangBoxId,
+    id_map: Mapping[NodeId, NodeId],
+    parent: BangBoxId | None,
+    made: dict[BangBoxId, BangBoxId],
+) -> None:
+    """:func:`_copy_subtree` without the alignment fix, each copy recorded in ``made``."""
     for child in _children_of(diagram, box_id):
         if child.is_node_scope:
             new_id = diagram.add_bang_box(
@@ -886,6 +917,7 @@ def _copy_subtree(
                 index=child.index,
                 copy_scalar=child.copy_scalar,
                 groups=tuple(frozenset(id_map[n] for n in g) for g in child.groups),
+                align=child.align,
             )
         else:
             new_id = diagram.add_bang_box(
@@ -895,7 +927,8 @@ def _copy_subtree(
                 ),
                 parent=parent,
             )
-        _copy_subtree(diagram, child.id, id_map, new_id)
+        made[child.id] = new_id
+        _copy_children(diagram, child.id, id_map, new_id, made)
 
 
 def index_symbols(diagram: Diagram) -> frozenset[str]:
@@ -918,6 +951,8 @@ def add_box_image(
     ``parent``, ``pair_of`` and ``feed`` naming boxes of ``target``."""
     if box.feed is not None and feed is None:
         raise BangBoxGrammarError(f"fed box {box.id!r} is copied without its tree box")
+    if box.align is not None:
+        raise BangBoxGrammarError(f"aligned box {box.id!r} is copied without its partner")
     return target.add_bang_box(
         box.multiplicity,
         node_scope=frozenset(id_map[n] for n in box.node_scope),
@@ -1355,7 +1390,68 @@ def _feed_leaves(diagram: Diagram, fed: BangBox, leaves: list[PortRef]) -> None:
         _index_copy(diagram, fed, id_map, m, new_boxes)
 
 
+def aligned_members(diagram: Diagram, box_id: BangBoxId) -> list[BangBoxId]:
+    """The alignment group of ``box_id``: the box it is aligned to (itself when none), then every
+    live box aligned to that one, by id; one box when it takes part in no alignment."""
+    box = diagram.bang_boxes[box_id]
+    root = box.align if box.align is not None else box_id
+    partners = sorted(b for b, other in diagram.bang_boxes.items() if other.align == root)
+    return [root, *partners] if root in diagram.bang_boxes else [box_id]
+
+
+def aligned_wires(diagram: Diagram) -> frozenset[Wire]:
+    """Every wire between the scopes of two boxes of one alignment group."""
+    found: set[Wire] = set()
+    roots = {box.align for box in diagram.bang_boxes.values() if box.align is not None}
+    for root in sorted(r for r in roots if r in diagram.bang_boxes):
+        found |= {w for w, _, _ in _member_wires(diagram, aligned_members(diagram, root))}
+    return frozenset(found)
+
+
+def _member_wires(
+    diagram: Diagram, members: list[BangBoxId]
+) -> list[tuple[Wire, BangBoxId, BangBoxId]]:
+    """Each wire between the scopes of two of ``members``, with the members of its two ends."""
+    owner: dict[NodeId, BangBoxId] = {}
+    for member in members:
+        for node_id in diagram.bang_boxes[member].node_scope:
+            owner[node_id] = member
+    found = []
+    for wire in sorted(diagram.wires, key=Wire.sort_key):
+        a, b = owner.get(wire.a.node_id), owner.get(wire.b.node_id)
+        if a is not None and b is not None and a != b:
+            found.append((wire, a, b))
+    return found
+
+
+def _expand_aligned(diagram: Diagram, members: list[BangBoxId], k: int) -> None:
+    """Instantiate the boxes ``members`` at ``k`` together, each wire between two of their
+    scopes replaced by one wire per copy j between the two copies j."""
+    if any(diagram.bang_boxes[m].multiplicity != Mult(k) for m in members):
+        raise BangBoxGrammarError(f"aligned boxes {members!r} differ in count")
+    wires = _member_wires(diagram, members)
+    for wire, _, _ in wires:
+        diagram.remove_wire(wire.a, wire.b)
+    maps: dict[BangBoxId, list[dict[NodeId, NodeId]]] = {}
+    for member in members:
+        diagram.set_bang_box_extension(member, align=None)
+        box = diagram.bang_boxes[member]
+        if box.is_extended:
+            maps[member] = _instantiate_extended(diagram, box, k)
+        else:
+            maps[member] = _instantiate_node_scope(diagram, box, k)
+    for wire, a, b in wires:
+        for j in range(k):
+            diagram.add_wire(_moved(wire.a, maps[a][j]), _moved(wire.b, maps[b][j]))
+
+
 def _kill_one(diagram: Diagram, box: BangBox) -> None:
+    if box.is_node_scope and len(aligned_members(diagram, box.id)) > 1:
+        members = aligned_members(diagram, box.id)
+        for member in members:
+            diagram.set_bang_box_multiplicity(member, Mult(0))
+        _expand_aligned(diagram, members, 0)
+        return
     if box.is_fed:
         raise BangBoxGrammarError(f"fed box {box.id!r} is instantiated with its tree box only")
     if box.is_tree:
@@ -1374,8 +1470,13 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
         raise BangBoxGrammarError(f"pair box {box_id!r} is instantiated with its parent only")
     if box.is_fed:
         raise BangBoxGrammarError(f"fed box {box_id!r} is instantiated with its tree box only")
+    members = aligned_members(diagram, box_id) if box.is_node_scope else [box_id]
     chain = _zip_chain(diagram, box_id) if box.is_node_scope else None
-    if chain is not None:
+    if len(members) > 1:
+        if any(_zip_chain(diagram, m) is not None for m in members):
+            raise BangBoxGrammarError(f"aligned boxes {members!r} take part in a zipped chain")
+        _expand_aligned(diagram, members, k)
+    elif chain is not None:
         _expand_zipped(diagram, chain, k)
     elif box.is_tree:
         _instantiate_tree(diagram, box, k)
@@ -1769,6 +1870,8 @@ def _merge_zipped(diagram: Diagram, box_ids: list[BangBoxId]) -> None:
         for b in boxes
     ) or any(b.feed in ids for b in diagram.bang_boxes.values()):
         raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy hold pair or tree boxes")
+    if any(len(aligned_members(diagram, b.id)) > 1 for b in boxes):
+        raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy are aligned boxes")
     if len({b.cyclic for b in boxes if b.links}) > 1:
         raise BangBoxGrammarError(f"boxes {ids!r} mix cyclic and open chains")
     index = next((b.index for b in boxes if b.index is not None), None)
@@ -1957,7 +2060,12 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
         box_id = targets[0]
         substituted = working.bang_boxes[box_id].multiplicity.substitute({name: value})
         chain = _zip_chain(working, box_id) if substituted.is_concrete else None
-        for member in [] if chain is None else _zip_members(working, chain):
+        partners = (
+            aligned_members(working, box_id)
+            if substituted.is_concrete and working.bang_boxes[box_id].is_node_scope
+            else []
+        )
+        for member in [*([] if chain is None else _zip_members(working, chain)), *partners]:
             mult = working.bang_boxes[member].multiplicity.substitute({name: value})
             working.set_bang_box_multiplicity(member, mult)
         working.set_bang_box_multiplicity(box_id, substituted)
@@ -2271,6 +2379,8 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
         or (box.parent is not None and zip_child(working, working.bang_boxes[box.parent]))
     ):
         raise BangBoxGrammarError(f"box {box_id!r} with links through a child box has no peel_one")
+    if box.is_node_scope and len(aligned_members(working, box_id)) > 1:
+        raise BangBoxGrammarError(f"aligned box {box_id!r} has no peel_one")
     predecessor = _predecessor(box.multiplicity)
     before = frozenset(working.nodes)
     if box.is_fed:
@@ -2351,6 +2461,8 @@ def copy_box(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, BangBoxId]:
         raise BangBoxGrammarError("copy_box only supports a node-scope bang box")
     if box.is_extended:
         raise BangBoxGrammarError(f"copy_box does not support chain or indexed box {box_id!r}")
+    if len(aligned_members(working, box_id)) > 1:
+        raise BangBoxGrammarError(f"copy_box does not support aligned box {box_id!r}")
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(box.node_scope):
         node = working.nodes[old_id]
@@ -2421,6 +2533,10 @@ def merge(
     if box_1.is_extended or box_2.is_extended:
         raise BangBoxGrammarError(
             f"merge does not support chain or indexed boxes ({box_id_1!r}, {box_id_2!r})"
+        )
+    if any(len(aligned_members(working, b)) > 1 for b in (box_id_1, box_id_2)):
+        raise BangBoxGrammarError(
+            f"merge does not support aligned boxes ({box_id_1!r}, {box_id_2!r})"
         )
     if box_1.parent != box_2.parent:
         raise BangBoxGrammarError(

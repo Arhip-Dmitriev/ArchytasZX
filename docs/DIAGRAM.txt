@@ -180,6 +180,14 @@ A node-scope box may also carry (CHAIN_BOX_SPEC part A):
     not depend on which count is instantiated first; expanding C first gives the chain one
     link per copy of C, C and the end boxes expanded together. Such boxes refuse peel_one and
     symbolic contraction.
+  - align B (REMAINING_BUGS_SPEC 73.2): copy-aligned wiring to node-scope box B of the same
+    multiplicity, B aligned to no box, neither box inside the other, and every box holding B
+    holding this one. Every wire between the two scopes joins copy j of one to copy j of the
+    other: B and every box aligned to it are instantiated together at one count, those wires
+    put back once per copy. A wire leaving a box V still fans out over V's copies: a wire from
+    B to an aligned child of V joins copy j of B to copy j of the child in every copy of V,
+    whichever count is instantiated first. Aligned boxes refuse peel_one, merge, copy_box and
+    the chain zip; copying a subtree that holds both boxes aligns the copies.
   - index I: in copy m every phase of the copy's nodes, the copy scalar and each child's
     multiplicity read I = m.
   - copy_scalar c: the diagram scalar is multiplied by c(0) c(1) ... c(k-1) (c^k without an

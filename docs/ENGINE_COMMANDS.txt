@@ -391,6 +391,8 @@ Bang boxes:
     tree NAME: A.inJ <- B.outI, C.outK [level L] [position P]
                                            box NAME is a tree of depth MULT: parent port
                                            first, then the child ports (DIAGRAM.txt 4.2)
+    align NAME with B                      copy j of box NAME is wired to copy j of box B
+                                           on every wire between them (DIAGRAM.txt 4.2)
 
 Other statements:
 

@@ -1105,6 +1105,7 @@ class _BoxDraft:
     position: str | None = None
     feed: BangBoxId | None = None
     feed_port: PortRef | None = None
+    align: BangBoxId | None = None
 
 
 def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
@@ -1129,6 +1130,7 @@ def _place_boxes(diagram: Diagram, drafts: Mapping[int, _BoxDraft]) -> None:
             position=draft.position,
             feed=draft.feed,
             feed_port=draft.feed_port,
+            align=draft.align,
         )
 
 
@@ -1168,6 +1170,7 @@ _LISTING_BOX_RE = re.compile(
     r"(?:\s+pairs of:\s*!(?P<pairof>[0-9]+)\s+index:\s*(?P<pairindex>\w+)"
     r"(?:\s+left:\s*(?P<left>.+?))?(?:\s+right:\s*(?P<right>.+?))?)?"
     r"(?:\s+feed:\s*!(?P<feed>[0-9]+)\s*->\s*(?P<feedport>\S+))?"
+    r"(?:\s+align:\s*!(?P<align>[0-9]+))?"
     r"(?:\s+parent:\s*!(?P<parent>[0-9]+)\s+\((?P<flag>missing|cycle)\))?"
 )
 _UNICODE_IDENTIFIER = r"[^\W\d]\w*"
@@ -1347,6 +1350,7 @@ def _listing_boxes(lines: Sequence[str]) -> tuple[dict[int, _BoxDraft], dict[int
             position=match["position"],
             feed=None if match["feed"] is None else BangBoxId(_numeral(match["feed"], "box id")),
             feed_port=None if match["feedport"] is None else _listing_ref(match["feedport"]),
+            align=None if match["align"] is None else BangBoxId(_numeral(match["align"], "box id")),
         )
     return drafts, depth
 
@@ -1512,6 +1516,7 @@ _DSL_TREE_RE = re.compile(
     rf"tree\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<parent>\S+)\s*<-\s*(?P<children>.+?)"
     rf"(?:\s+level\s+(?P<level>{_IDENTIFIER}))?(?:\s+position\s+(?P<position>{_IDENTIFIER}))?"
 )
+_DSL_ALIGN_RE = re.compile(rf"align\s+(?P<name>{_IDENTIFIER})\s+with\s+(?P<target>{_IDENTIFIER})")
 _DSL_SIDE_RE = re.compile(rf"(?P<side>left|right)\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<ports>.+)")
 _DSL_COPY_SCALAR_RE = re.compile(rf"copy\s+scalar\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<expr>.+)")
 _DEFAULT_DIM = "d"
@@ -1634,6 +1639,7 @@ class _DslBox:
     tree_parent: str | None = None
     level: str | None = None
     position: str | None = None
+    align: str | None = None
 
 
 @dataclass
@@ -1690,6 +1696,8 @@ class _Dsl:
             self.tree(text)
         elif keyword in ("left", "right") and _DSL_SIDE_RE.fullmatch(text):
             self.side(text)
+        elif keyword == "align" and _DSL_ALIGN_RE.fullmatch(text):
+            self.align(text)
         elif (
             len(_split_token(text, "->")) > 1 or len(_split_token(text, "--")) > 1
         ) and not _WORD_THEN_WORD_RE.match(text):
@@ -1946,6 +1954,15 @@ class _Dsl:
         ports = [item.strip() for item in _split_top(match["ports"])]
         (box.left if match["side"] == "left" else box.right).extend(ports)
 
+    def align(self, text: str) -> None:
+        match = _DSL_ALIGN_RE.fullmatch(text)
+        assert match is not None
+        box = self.named_box(match["name"], "align")
+        self.named_box(match["target"], "align")
+        if box.align is not None:
+            raise ParseGrammarError(f"box {match['name']!r} is aligned twice")
+        box.align = match["target"]
+
     def copy_scalar(self, text: str) -> None:
         match = _DSL_COPY_SCALAR_RE.fullmatch(text)
         assert match is not None
@@ -2093,10 +2110,16 @@ class _Dsl:
                     ),
                     level=box.level,
                     position=box.position,
+                    align=None if box.align is None else box_ids[box.align],
                 )
             else:
-                if box.links or box.index is not None or box.copy_scalar is not None:
-                    raise ParseGrammarError("links, index and copy scalar need a node box")
+                if (
+                    box.links
+                    or box.index is not None
+                    or box.copy_scalar is not None
+                    or box.align is not None
+                ):
+                    raise ParseGrammarError("links, index, copy scalar and align need a node box")
                 ports = frozenset(self.ref(item, named) for item in items)
                 diagram.add_bang_box(box.multiplicity, port_scope=ports, parent=parent)
         dims = [*_draft_dims(drafts), *(Dim.symbol(n) for n in sorted(self.declared_dims))]

@@ -89,7 +89,7 @@ from archytaszx.algebra.dimension import (
     unify_all,
 )
 from archytaszx.algebra.phase import INDEX
-from archytaszx.diagram.bangbox import BangBox, outside_crossings, zip_wires
+from archytaszx.diagram.bangbox import BangBox, aligned_members, outside_crossings, zip_wires
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
     BangBoxId,
@@ -944,10 +944,17 @@ def _check_bangbox_crossings(diagram: Diagram, issues: list[ValidationIssue]) ->
             if other.pair_of == box_id
             for nid in other.node_scope
         )
+        aligned = frozenset(
+            nid
+            for other in aligned_members(diagram, box_id)
+            if other != box_id and other in diagram.bang_boxes
+            for nid in diagram.bang_boxes[other].node_scope
+        )
         for inside, outside in outside_crossings(diagram, box.node_scope):
             if (
                 inside in link_ports
                 or outside.node_id in paired
+                or outside.node_id in aligned
                 or box.pair_of is not None
                 or Wire(inside, outside) in zipped
             ):
@@ -1152,6 +1159,45 @@ def _check_feed(
         refuse(f"fed box {box.id!r}: feed port {ref!r} differs from the tree's parent port")
 
 
+def _ancestors(diagram: Diagram, box_id: BangBoxId) -> list[BangBoxId]:
+    """The boxes enclosing ``box_id``, innermost first, cut at an unknown or repeated parent."""
+    found: list[BangBoxId] = []
+    parent = diagram.bang_boxes[box_id].parent
+    while parent is not None and parent in diagram.bang_boxes and parent not in found:
+        found.append(parent)
+        parent = diagram.bang_boxes[parent].parent
+    return found
+
+
+def _check_bangbox_alignment(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+    """An aligned box names a live node-scope box that is aligned to no box, has the same
+    multiplicity, is neither its ancestor nor its descendant, and whose every ancestor is one
+    of the aligned box's."""
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.align is None:
+            continue
+        target = diagram.bang_boxes.get(box.align)
+        problem = None
+        if target is None or not target.is_node_scope:
+            problem = f"is aligned to {box.align!r}, which is no node-scope box"
+        elif target.align is not None:
+            problem = f"is aligned to {box.align!r}, which is itself aligned"
+        elif target.multiplicity != box.multiplicity:
+            problem = f"is aligned to {box.align!r} of another multiplicity"
+        elif box.align in _ancestors(diagram, box_id) or box_id in _ancestors(diagram, box.align):
+            problem = f"is aligned to its own ancestor or descendant {box.align!r}"
+        elif not set(_ancestors(diagram, box.align)) <= set(_ancestors(diagram, box_id)):
+            problem = f"is aligned to {box.align!r}, which lies in a box this one is outside"
+        if problem is not None:
+            issues.append(
+                ValidationIssue(
+                    kind=IssueKind.BANGBOX_LINK_INADMISSIBLE,
+                    message=f"bang box {box_id!r} {problem}",
+                    bang_box_id=box_id,
+                )
+            )
+
+
 def _broken_bangbox_ids(issues: list[ValidationIssue]) -> frozenset[BangBoxId]:
     return frozenset(
         issue.bang_box_id
@@ -1342,6 +1388,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     _check_bangbox_scopes(diagram, issues)
     _check_bangbox_crossings(diagram, issues)
     _check_bangbox_links(diagram, issues)
+    _check_bangbox_alignment(diagram, issues)
     _check_bangbox_nesting(diagram, issues)
     _check_symbol_role_collisions(diagram, issues)
     _check_parameter_environment(diagram, issues)
