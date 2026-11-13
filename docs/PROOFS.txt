@@ -108,10 +108,10 @@ decide_equal tries the following rungs in order and stops at the first that sett
   6. INDUCTION              A base case decided recursively plus a step case proved on one
                             multiplicity index: EQUAL. Induction proves EQUAL only from base 0.
                             The step is tried left to right, then right to left; nesting is
-                            bounded by max_depth. A step case settled by uniform rewrite or
-                            induction rewrite gives the verdict a kernel theorem
-                            (Decision.induction_proof, section 6); one settled by symbolic
-                            contraction gives none.
+                            bounded by max_depth. A step case settled by uniform rewrite,
+                            induction rewrite, chain_window or tree_window gives the verdict a
+                            kernel theorem when its pieces check (Decision.induction_proof,
+                            section 6); one settled by symbolic contraction gives none.
 
 When either side has a discard, or mixed=True, the ladder runs unchanged on the two doubled
 diagrams and the method is DOUBLED, the settling rung in Decision.inner_method and the doubled
@@ -462,12 +462,16 @@ these functions construct a Theorem:
   iso(a, b)                          a = b when their comparison views are isomorphic
   symm(t)                            rhs = lhs
   trans(a, b)                        a.lhs = b.rhs when a.rhs and b.lhs are identical
-  induction(start, goal, index, step_symbol, base, side, expose, region, step)
+  induction(start, goal, index, step_symbol, base, side, expose, region, step, cut=None,
+            tree=None)
                                      start = goal for every value of index, from a base
                                      theorem at 0, a theorem exposing one side's peeled
                                      successor at k + 1 as a context around that side at k,
                                      and a theorem from that context around the other side at
-                                     k to the other peeled successor
+                                     k to the other peeled successor; the region is closed, or
+                                     with cut read through its cut wires (replace_cut_region),
+                                     or with tree (a tree box id) the exposed diagram without
+                                     the box that tree feeds (unfed, fed_replacement)
   subst(t, clause, lhs=None, rhs=None)
                                      lhs' = rhs' from t and one clause n = v, n = a*m + c
                                      (m fresh for t) or d = v: both sides recomputed from t's
@@ -528,6 +532,11 @@ The induction rung of decide_equal builds Decision.induction_proof itself
                         region; the step from a derivation between the two peeled copies
                         (their normal forms meeting by iso, else a prove() search) re-applied
                         inside both successors
+  chain_window,         an induction theorem: the base as for induction rewrite; one side's
+  tree_window           peeled successor exposed (refl), its residual through cut wires
+                        (chain) or without the fed box (tree) as the region; the step from the
+                        replaced diagram to the other peeled successor by iso, else by their
+                        normal forms meeting; the start side tried first, then the goal side
   symbolic contraction  none; the Lean side has no induction over multiplicities for a
                         symbolic step
 
