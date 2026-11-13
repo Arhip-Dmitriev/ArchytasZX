@@ -487,8 +487,8 @@ def f2_assign(p: F2Poly, values: Mapping[int, int]) -> F2Poly:
 @dataclass(frozen=True)
 class Step:
     """One rule application of a reduction: its rule, variable, pivot and substitution; a
-    dyadic step also lists its digit group, fresh variables and digit polynomials, a qudit
-    step its F_p polynomial."""
+    dyadic step also lists its digit group, fresh variables, digit polynomials and its S (each
+    monomial's coefficient mod 2^k), a qudit step its F_p polynomial."""
 
     rule: str
     var: int
@@ -682,6 +682,7 @@ def _try_dyadic(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> 
         if found is None:
             continue
         digits, s, k = found
+        poly = tuple(sorted((tuple((v, 1) for v in sorted(m)), c) for m, c in s.items() if c))
         bits: list[F2Poly] = []
         for j in range(k):
             mod = 1 << (k - j)
@@ -706,7 +707,7 @@ def _try_dyadic(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> 
             ps.path.add(f)
             for m in b:
                 ps.phase.add(m | {f}, half)
-        ps.trace.append(Step("dyadic", y, None, None, tuple(digits), fresh, tuple(bits)))
+        ps.trace.append(Step("dyadic", y, None, None, tuple(digits), fresh, tuple(bits), poly))
         return True
     return False
 

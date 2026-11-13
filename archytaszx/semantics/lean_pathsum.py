@@ -249,6 +249,14 @@ def _steps(raw: PathSum, ps: PathSum, order: Sequence[int], boolean: bool) -> li
         elif step.rule == "rem":
             cur = [y, *(v for v in cur if v != y)]
             out += [f".perm {cur}", ".rem"]
+        elif step.rule == "dyadic":
+            rest = [v for v in cur if v not in step.group]
+            poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)
+            out += [
+                f".perm {[*step.group, *rest]}",
+                f".dyadic {list(step.group)} [{poly}] {list(step.fresh)}",
+            ]
+            cur = [*step.fresh, *rest]
         elif step.rule in _PAIR_STEP and z is not None:
             rest = [v for v in cur if v not in (y, z)]
             out += [f".perm {[y, z, *rest]}", _PAIR_STEP[step.rule]]

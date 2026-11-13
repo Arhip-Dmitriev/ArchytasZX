@@ -450,8 +450,13 @@ fac per step, run_sound (constant times facs). export_proof(left, right, name) w
 path sums as Data literals, each side's trace as a step list with the canonical pivots in
 eliminate's order, facL and facR (zeta_8 as om M ^ (M / 8), M a multiple of 8 when an omega
 step occurs), the constants' identity by lean_scalar, and
-main : PSem.val M cL sL sigma = PSem.val M cR sR sigma for every sigma. It raises for a dyadic
-or average step and for qudit sums; when either side's constraints need boolean_eliminate, both
+main : PSem.val M cL sL sigma = PSem.val M cR sR sigma for every sigma. The step dyadic ds S fs
+replays [Dyadic]: the head digits ds whose terms normalise to dyTerms (d_a S 2^a / 2^k, S free of
+the digits, 2^k dividing M) are replaced by the fresh fs with terms f_j b_j / 2, b_j the binary
+digits of S computed by dyBits (each remainder S - lift b halved, refused when odd); dyadic_sound
+rests on dy_bits (2^k divides S iff every b_j vanishes) and dyProd_geom
+(Prod_a (1 + ex (2^a N / 2^k)) = 2^k [2^k | N]); reduce records S in the step's poly. It raises for
+an average step and for qudit sums; when either side's constraints need boolean_eliminate, both
 sides end in gather and bcanon steps at the Boolean pivots. G15 names what is missing.
 
 ArchytasZX/PathSumNet.lean links networks to path sums at dimension 2. A Frag is one
@@ -802,7 +807,7 @@ generator in Lean; cpm_conj states its effect on any network whose entries are c
 for want of a composition operation on Diagram, nor the tensor identities of discard_cx,
 discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported step by step.
 
-G15 Path-sum proofs. PathSumRules has no step for [Dyadic] or [Average] and there are no qudit
+G15 Path-sum proofs. PathSumRules has no step for [Average] and there are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
 using them. PathSumNet covers Z, X and F at dimension 2 but not B, S or legs of 2^k digits,
 nor legless spiders, weighted spiders or a wire on two boundary ports; export_net raises for
