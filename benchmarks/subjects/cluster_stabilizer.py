@@ -11,38 +11,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stabilizer of the linear cluster state: X on vertex 0 and Z on its neighbour leave the state
-unchanged."""
+"""Stabilizer of the linear cluster state on n + 2 qudits: X on vertex 0 and Z on its neighbour
+leave the state unchanged."""
 
 from benchmarks.subjects._common import *
-from benchmarks.subjects.cluster_state import _unrolled as _cluster
+
+
+def _unrolled(n, d):
+    """|+>^(n+2), CZ(q_i, q_(i+1)) from the far end (i = n down to 0), then X(q_0) Z(q_1)."""
+    q = unrolled("q", n + 2)
+    gates = [g for x in q for g in (Init(x), F(x))]
+    gates += [CZ(q[i], q[i + 1]) for i in reversed(range(n + 1))]
+    return circuit(q, [*gates, X(q[0]), Z(q[1])])
 
 
 def _circuit(n, d):
-    """The cluster state, then X(q_0) Z(q_1)."""
-    c = _cluster(n, d)
-    extra = [X("q0")] + ([Z("q1")] if n >= 1 else [])
-    return circuit(c.wires, [*c.gates, *extra])
+    """|+> on q (vertex n + 1), then a reversed chain: copy m (m = n - 1 down to 0) |+> on r
+    (vertex m + 1) and CZ(r, q), q carried on to r; |+> on a (vertex 0), CZ(a, q), X(a) and Z(q)
+    after it."""
+    body = (Init("r"), F("r"), CZ("r", "q"))
+    gates = [Init("q"), F("q"), Chain(n, body, carries=(("q", "r"),), reverse=True)]
+    gates += [Init("a"), F("a"), CZ("a", "q"), X("a"), Z("q")]
+    return circuit(["a", "q", "r"], gates, registers={"r": n})
 
 
 def _spec(c):
-    """The cluster state: Z spider per vertex, F on each edge, d^(-(n+1)/2) d^(n/2)."""
-    n = c.nv
-    lines = []
-    for i in range(n + 1):
-        legs = 1 + (i > 0) + (i < n)
-        lines.append(f"v{i} = Z(0 -> {legs}, {c.D})")
-    for i in range(n):
-        lines.append(f"f{i} = F({c.D})")
-        lines.append(f"wire v{i}.out{1 if i == 0 else 2} -- f{i}.in0, f{i}.out0 -- v{i + 1}.out1")
-    lines.append("outputs " + ", ".join(f"v{i}.out0" for i in range(n + 1)))
-    lines.append(f"scalar {c.d}^(-1/2)")
-    return "\n".join(lines)
-
-
-def _reference(n, d):
-    """The cluster state circuit."""
-    return _cluster(n, d)
+    """The cluster state: the path graph as a reversed chain of Z spiders joined by F edges from
+    vertex n + 1 (head h) down to vertex 1 (the tail), vertex 0's spider a joined to it."""
+    D = c.D
+    return "\n".join(
+        [
+            f"h = Z(0 -> 1, {D})",
+            f"repeat {c.N} as V: v = Z(1 -> 2, {D}), f = F({D}), w = Z(1 -> 1, {D})",
+            f"t = Z(1 -> 2, {D})",
+            f"g = F({D})",
+            f"a = Z(0 -> 2, {D})",
+            "wire h.out0 -- v.in0, v.out1 -- f.in0, f.out0 -- w.in0, w.out0 -- t.in0, "
+            + "t.out1 -- g.in0, g.out0 -- a.out1",
+            "chain V: v.in0 -> w.out0",
+            "outputs a.out0, t.out0, v.out0",
+            f"scalar {c.d}^(-1/2)",
+        ]
+    )
 
 
 SUBJECT = Subject(
@@ -50,8 +60,8 @@ SUBJECT = Subject(
     name="Cluster state stabilizer",
     category="circuit",
     source="raussendorf2001one",
-    size_parameter="qudits after the first",
+    size_parameter="qudits after the first two",
     dimension="general",
-    domain=Domain(n_min=1, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled", reference=_reference),),
+    domain=Domain(n_min=0, d_min=1),
+    equations=(Equation("main", _circuit, _spec, form="boxed", reference=_unrolled),),
 )
