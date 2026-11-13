@@ -373,7 +373,8 @@ def _step_theorem(
     chain: tuple[Diagram, str] | None = None,
 ) -> kernel.Theorem:
     """``replaced = target`` by an isomorphism; else, unless ``contract``, by a rewrite
-    derivation (:func:`copy_derivation`); else by
+    derivation (:func:`copy_derivation`, between the parts off the two regions of ``local``
+    when given, :func:`_local_derivation`); else by
     :func:`~archytaszx.semantics.kernel.local_contraction` over ``local`` (the two regions and
     the diagram they read as), else over the chain core of ``chain`` (a hypothesis diagram and
     the step symbol), else by :func:`~archytaszx.semantics.kernel.contraction`."""
@@ -382,7 +383,15 @@ def _step_theorem(
     except kernel.KernelError:
         pass
     reasons: list[str] = []
-    if not contract:
+    if not contract and local is not None:
+        try:
+            there, back = _local_derivation(replaced, target, local, rules)
+            return kernel.trans(
+                there, kernel.trans(kernel.iso(there.rhs, back.rhs), kernel.symm(back))
+            )
+        except (NoInductionTheorem, kernel.KernelError) as exc:
+            reasons.append(f"local derivation: {exc}")
+    elif not contract:
         try:
             forward, backward = copy_derivation(replaced, target, rules)
         except NoInductionTheorem as exc:
@@ -414,6 +423,24 @@ def _step_theorem(
     except kernel.KernelError as exc:
         reasons.append(str(exc))
     raise NoInductionTheorem("; ".join(reasons))
+
+
+def _local_derivation(
+    replaced: Diagram,
+    target: Diagram,
+    local: tuple[frozenset[NodeId], frozenset[NodeId], Diagram],
+    rules: Sequence[Rule] | None,
+) -> tuple[kernel.Theorem, kernel.Theorem]:
+    """Rewrite chains from ``replaced`` and ``target``: a :func:`copy_derivation` between their
+    parts off the regions of ``local`` (cut ends open), transported back onto each."""
+    parts: list[tuple[frozenset[NodeId], Diagram]] = []
+    for d, region in ((replaced, local[0]), (target, local[1])):
+        part, _held = kernel._plugged(d, region, local[2])
+        parts.append((frozenset(d.nodes) - region, part))
+    forward, backward = copy_derivation(parts[0][1], parts[1][1], rules)
+    there = kernel.chain(replaced, transport(replaced, forward, _ids(parts[0][0], parts[0][1])))
+    back = kernel.chain(target, transport(target, backward, _ids(parts[1][0], parts[1][1])))
+    return there, back
 
 
 def _ids(original: frozenset[NodeId], extracted: Diagram) -> dict[NodeId, NodeId]:
