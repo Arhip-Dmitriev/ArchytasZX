@@ -74,6 +74,11 @@ between two scaled networks under one environment: the same tensor, scalars incl
   WRules       W and triangle rules
   WAssoc       W associativity over M groups of outputs at every M (sumW over the group
                values, wTerm the weighted W nodes on the groups; wAssoc, wAssoc_nil)
+  WFuse        the kernel's w_fusion step on bundled networks at every M: a W leg bundled
+               along m into Bun m copies whose entry is w x times W(x -> ys) equals the
+               weighted Z spider w before the W node on the ys bundled along m (wFuseB, by
+               sum_digs and wAssoc_nil); wFuseZ for Z or weighted Z copies with one output,
+               used by lean_net for a w_fusion inference
   WZ           the Z-into-W bialgebra
   Connective   binder and splitter rules
   Bundle       families: a bundle label of base dimension d carries a value below d^k, read

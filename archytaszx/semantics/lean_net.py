@@ -1424,7 +1424,88 @@ class _Export:
             return self.rule(t)
         if inf.kind == "induction" and self.family:
             return self.nested_induction(t)
+        if inf.kind == "w_fusion":
+            return self.w_fuse(t)
         raise NetUnsupported(f"a {inf.kind} inference has no network proof")
+
+    def w_fuse(self, t: object) -> Proof:
+        """A ``w_fusion`` step on the bundled networks: the W node whose one output bundles
+        along ``m`` into copies of a Z or weighted Z spider becomes the weighted Z spider of the
+        goal before the W node, by ``wFuseZ`` in its context (``region_lines``)."""
+        from archytaszx.semantics.kernel import Theorem
+
+        assert isinstance(t, Theorem)
+        a, b = self.labelled(t.lhs, self.slots), self.labelled(t.rhs, self.slots)
+        if sp.simplify(t.lhs.scalar.to_sympy() - t.rhs.scalar.to_sympy()) != 0:
+            raise NetUnsupported("the fused copies carry a scalar")
+        net = a.net
+        found = None
+        for i, wn in enumerate(net.nodes):
+            if _head(wn.kind) != "WB" or len(wn.outs) != 1 or len(wn.ins) != 1:
+                continue
+            if len(wn.kind[1]) != 1 or len(wn.kind[1][0]) != 1:
+                continue
+            m, tl = wn.kind[1][0][0], wn.outs[0]
+            users = [j for j, n in enumerate(net.nodes) if j != i and tl in n.labels()]
+            if tl not in net.summed or len(users) != 1:
+                continue
+            c = net.nodes[users[0]]
+            if (
+                c.kind in (("Bun", m, "Z"), ("Bun", m, "ZW"))
+                and c.ins == (tl,)
+                and len(c.outs) == 1
+                and c.dim == wn.dim
+            ):
+                found = (i, users[0], m)
+                break
+        if found is None:
+            raise NetUnsupported("no W leg fans into copies of one Z spider")
+        i, j, m = found
+        wn, c = net.nodes[i], net.nodes[j]
+        dz, tl, a_in, y = wn.dim, wn.outs[0], wn.ins[0], c.outs[0]
+        bz = self.labs[tl]
+        _need(self.labs[y] == bz and self.chain(bz) == (m,), "the copies' legs bundle elsewhere")
+        _need(self.labs[a_in] == dz, "the W input is bundled")
+        zs = [k for k, n in enumerate(b.net.nodes) if n.kind == "ZW" and n.ins and n.outs]
+        ws = [
+            k
+            for k, n in enumerate(b.net.nodes)
+            if n.kind == ("WB", ((m,),)) and n.outs == (y,) and len(n.ins) == 1
+        ]
+        _need(len(ws) == 1, "the goal has no W node on the copies' leg")
+        bw = b.net.nodes[ws[0]]
+        zk = [k for k in zs if b.net.nodes[k].outs == bw.ins]
+        _need(len(zk) == 1 and b.net.nodes[zk[0]].dim == dz, "the goal has no weighted Z")
+        z = b.net.nodes[zk[0]]
+        ap = self.label(dz)
+        r_nodes = (LNode("ZW", (ap,), (a_in,), dz, z.ph), LNode(bw.kind, (y,), (ap,), dz, bw.ph))
+        ctx = _Ctx(self, t.lhs, t.rhs, cast(RewriteStep, None), a, {}, [])
+        base = LNode(c.kind[2], (y,), (tl,), dz, c.ph)
+        hc = _coef_hyp(ctx, base, [r_nodes[0]]).replace(
+            f"simp only [{self.unfold}, Δ] at hk",
+            f"replace hk : k < {self.fam_text()}.dims {dz} := hk\n"
+            f"    simp only [{self.unfold}, Δ] at hk",
+        )
+        w0 = _coef_case(ctx, ONE, ONE, _coef_rewrites(ctx, [r_nodes[0]], [0]))
+        lemma = (
+            f"wFuseZ {self.env} {_klean(c.kind[2])} (by simp) {dz} {m} {bz} {wn.ph} {c.ph} "
+            f"{z.ph} {bw.ph} {tl} {a_in} {ap} {y} (by pos) "
+            f"(Fam.env_dimv_of _ _ _ _ _ rfl rfl ⟨rfl, rfl⟩) {_chks(3)} "
+            f"(by decide) (by decide) (by decide) (by decide) {hc} (by simp only [zc]; {w0})"
+        )
+        lines = self.region_lines(
+            a,
+            b,
+            [a.order[i], a.order[j]],
+            (wn, c),
+            r_nodes,
+            [b.order[zk[0]], b.order[ws[0]]],
+            (tl,),
+            (ap,),
+            ONE,
+            lemma,
+        )
+        return self.theorem(a, b, ONE, lines)
 
     def nested_induction(self, t: object) -> Proof:
         """An induction inside a proof, as its own theorem applied at the current values."""
