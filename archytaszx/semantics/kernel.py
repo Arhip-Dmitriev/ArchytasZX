@@ -394,6 +394,7 @@ def local_contraction(
     b: Diagram,
     region_b: frozenset[NodeId],
     hypothesis: Diagram,
+    max_steps: int = 64,
 ) -> Theorem:
     """``a = b`` when ``region_a`` of ``a`` and ``region_b`` of ``b`` read as ``hypothesis``
     through cut wires in the same places, and the rest of each, cut ends open, meet by
@@ -406,7 +407,7 @@ def local_contraction(
         raise KernelError("the regions sit in different places of the two diagrams")
     if _interface(copy_a) != _interface(copy_b):
         raise KernelError("the parts off the regions have different interfaces")
-    contraction(copy_a, copy_b)
+    contraction(copy_a, copy_b, max_steps)
     data: dict[str, object] = {"region_a": region_a, "region_b": region_b}
     return Theorem(_TOKEN, a, b, Inference("contraction", data=data))
 

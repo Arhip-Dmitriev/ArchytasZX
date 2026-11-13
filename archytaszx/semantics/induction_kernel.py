@@ -296,7 +296,10 @@ def _windowed(
                     frozenset(other_peeled.nodes) & frozenset(other_k.nodes),
                     other_k,
                 )
-            step = _step_theorem(replaced, other_peeled, rules, contract=contract, local=local)
+            chain = (other_k, k) if window == "cut" else None
+            step = _step_theorem(
+                replaced, other_peeled, rules, contract=contract, local=local, chain=chain
+            )
             return kernel.induction(
                 start,
                 goal,
@@ -322,11 +325,13 @@ def _step_theorem(
     *,
     contract: bool = False,
     local: tuple[frozenset[NodeId], frozenset[NodeId], Diagram] | None = None,
+    chain: tuple[Diagram, str] | None = None,
 ) -> kernel.Theorem:
     """``replaced = target`` by an isomorphism; else, unless ``contract``, by a rewrite
     derivation (:func:`copy_derivation`); else by
     :func:`~archytaszx.semantics.kernel.local_contraction` over ``local`` (the two regions and
-    the diagram they read as), else by :func:`~archytaszx.semantics.kernel.contraction`."""
+    the diagram they read as), else over the chain core of ``chain`` (a hypothesis diagram and
+    the step symbol), else by :func:`~archytaszx.semantics.kernel.contraction`."""
     try:
         return kernel.iso(replaced, target)
     except kernel.KernelError:
@@ -348,6 +353,18 @@ def _step_theorem(
             return kernel.local_contraction(replaced, local[0], target, local[1], local[2])
         except kernel.KernelError as exc:
             reasons.append(f"local: {exc}")
+    if chain is not None:
+        from archytaszx.semantics.induction import _chain_core, _open_region
+
+        core = _chain_core(chain[0], chain[1])
+        core_a, core_b = _chain_core(replaced, chain[1]), _chain_core(target, chain[1])
+        if core is not None and core_a is not None and core_b is not None:
+            try:
+                return kernel.local_contraction(
+                    replaced, core_a, target, core_b, _open_region(chain[0], core)
+                )
+            except kernel.KernelError as exc:
+                reasons.append(f"chain core: {exc}")
     try:
         return kernel.contraction(replaced, target)
     except kernel.KernelError as exc:

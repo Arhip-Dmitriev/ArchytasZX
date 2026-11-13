@@ -1214,6 +1214,9 @@ def discharge_chain_window(
                 pass
         for target in targets:
             settled, why = _close_window(replaced, target, max_steps)
+            if not settled:
+                reasons.append(why)
+                settled, why = _close_by_chain_core(replaced, target, other_k, index, max_steps)
             if settled:
                 return TierOutcome(
                     StepDischarge.CHAIN_WINDOW,
@@ -1223,6 +1226,100 @@ def discharge_chain_window(
                 )
             reasons.append(why)
     return TierOutcome(StepDischarge.CHAIN_WINDOW, False, "; ".join(reasons))
+
+
+def _chain_core(diagram: Diagram, index: str) -> frozenset[NodeId] | None:
+    """The scope of the chain box carrying ``index`` with every node off it reached from a
+    link-in end without passing a box node; None when there is no such box or those nodes
+    also reach a link-out end."""
+    owner = _chain_owner(diagram, index)
+    if owner is None:
+        return None
+    box = diagram.bang_boxes[owner]
+    scope = box.node_scope
+    neighbours: dict[NodeId, set[NodeId]] = {n: set() for n in diagram.nodes}
+    for wire in diagram.wires:
+        neighbours[wire.a.node_id].add(wire.b.node_id)
+        neighbours[wire.b.node_id].add(wire.a.node_id)
+
+    def reached(ends: Sequence[PortRef]) -> set[NodeId]:
+        seen: set[NodeId] = set()
+        todo = [
+            far.node_id
+            for end in ends
+            for far in (_partner_of(diagram, end),)
+            if far is not None and far.node_id not in scope
+        ]
+        while todo:
+            node_id = todo.pop()
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            todo += [n for n in neighbours[node_id] if n not in scope and n not in seen]
+        return seen
+
+    head = reached([q_ref for _p, q_ref in box.links])
+    tail = reached([p_ref for p_ref, _q in box.links])
+    if head & tail:
+        return None
+    return frozenset(scope | head)
+
+
+def _partner_of(diagram: Diagram, ref: PortRef) -> PortRef | None:
+    """The port wired to ``ref``, or None."""
+    for wire in diagram.wires:
+        if wire.a == ref:
+            return wire.b
+        if wire.b == ref:
+            return wire.a
+    return None
+
+
+def _open_region(diagram: Diagram, region: frozenset[NodeId]) -> Diagram:
+    """``region`` of ``diagram`` as an open diagram: its boundary slots, then its ends of cut
+    wires by port order; scalar ``diagram``'s."""
+    rest = frozenset(diagram.nodes) - region
+    cuts = _cut_wires(diagram, rest)
+    far_ends = sorted(cuts.values(), key=PortRef.sort_key)
+    others = {far: inside for inside, far in cuts.items()}
+    cut = CutRegion(
+        rest,
+        tuple(
+            [r for r in diagram.boundary_inputs if r.node_id in rest]
+            + [others[f] for f in far_ends if f.direction is Direction.INPUT]
+        ),
+        tuple(
+            [r for r in diagram.boundary_outputs if r.node_id in rest]
+            + [others[f] for f in far_ends if f.direction is Direction.OUTPUT]
+        ),
+        MappingProxyType(cuts),
+    )
+    return _copy_side(diagram, cut, diagram.scalar)[0]
+
+
+def _close_by_chain_core(
+    replaced: Diagram, target: Diagram, hypothesis: Diagram, index: str, max_steps: int
+) -> tuple[bool, str]:
+    """Whether ``replaced`` and ``target`` hold ``hypothesis``'s chain core (:func:`_chain_core`)
+    through cut wires in the same places, the parts off it agreeing with their cut ends open;
+    and how, or why not."""
+    from archytaszx.semantics import kernel
+
+    core = _chain_core(hypothesis, index)
+    core_a = _chain_core(replaced, index)
+    core_b = _chain_core(target, index)
+    if core is None or core_a is None or core_b is None:
+        return False, "chain core: no chain box with separate head and tail on both sides"
+    try:
+        kernel.local_contraction(
+            replaced, core_a, target, core_b, _open_region(hypothesis, core), max_steps=max_steps
+        )
+    except (kernel.KernelError, InductionDomainError, ValidateError) as exc:
+        return False, f"chain core: {exc}"
+    return True, (
+        "both hold the other side's chain core (box and head) in the same places and the parts "
+        "off it agree under symbolic contraction"
+    )
 
 
 def _tree_owner(diagram: Diagram, index: str) -> BangBoxId | None:
