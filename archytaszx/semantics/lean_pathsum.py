@@ -327,12 +327,23 @@ def _const_turn(ps: PathSum, m: int, boolean: bool) -> int:
     return int(phase.terms.get(frozenset(), Fraction(0)) * m) % m
 
 
+def _leftover(red: PathSum) -> bool:
+    """Whether the Boolean elimination of a reduced sum leaves a support other than 1."""
+    from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
+
+    if eliminate(red.constraints, red.boundary) is not None:
+        return False
+    return boolean_eliminate(red.constraints, red.boundary)[1] != ONE
+
+
 def _plan(
-    raw_l: PathSum, raw_r: PathSum, m_min: int = 1
+    raw_l: PathSum, raw_r: PathSum, m_min: int = 1, support: bool = False
 ) -> tuple[PathSum, PathSum, list[int], bool, int, list[str], list[str]]:
     """Both reduced sums, the canonical pivots, whether Boolean elimination is needed, the
     phase modulus M (a multiple of ``m_min``) and each side's PSem.Step list; raises
-    :class:`PathSumUnsupported` when the sums do not reduce to one canonical form."""
+    :class:`PathSumUnsupported` when the sums do not reduce to one canonical form, or their
+    Boolean eliminations differ or leave a support other than 1 (a support shared by both
+    sides allowed when ``support``)."""
     if raw_l.amps or raw_r.amps:
         raise PathSumUnsupported("export_proof has no amplitude atoms")
     red_l, red_r = reduce(raw_l), reduce(raw_r)
@@ -352,8 +363,7 @@ def _plan(
         rows_l, g_l = boolean_eliminate(red_l.constraints, red_l.boundary)
         rows_r, g_r = boolean_eliminate(red_r.constraints, red_r.boundary)
         order = [v for v, _r in rows_l]
-        one: frozenset[frozenset[int]] = frozenset({frozenset()})
-        if g_l != one or g_r != one or order != [v for v, _r in rows_r]:
+        if g_l != g_r or (g_l != ONE and not support) or order != [v for v, _r in rows_r]:
             raise PathSumUnsupported("the Boolean eliminations differ or leave a support")
     else:
         order = _elimination_order(red_l.constraints, red_l.boundary)
@@ -384,7 +394,8 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         raise PathSumUnsupported("export_proof covers qubit path sums only")
     if raw_l.amps or raw_r.amps:
         return _export_amp_proof(raw_l, raw_r, name)
-    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r)
+    red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r, support=True)
+    support = _leftover(red_l)
     f_l, f_r = _fac_model(steps_l, m), _fac_model(steps_r, m)
     k_l, k_r = _const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean)
     sc = _scalars()
@@ -395,6 +406,7 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     ns = f"ArchytasZX.PathSumProof.{name}"
     lines = [
         "import ArchytasZX.PathSumRules",
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
         "",
         "/-!",
         f"# Path-sum proof `{name}`",
@@ -407,6 +419,7 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         "",
         "open ArchytasZX ArchytasZX.PSem",
         "",
+        *(["set_option maxRecDepth 100000", ""] if support else []),
         f"def sL : Data := {_data_term(raw_l, m)}",
         f"def sR : Data := {_data_term(raw_r, m)}",
         f"def stepsL : List Step := [{', '.join(steps_l)}]",
@@ -424,7 +437,10 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         f"    PSem.val {m} {sc.text(c_l)} sL σ = PSem.val {m} {sc.text(c_r)} sR σ := by",
         f"  rw [run_sound {m} (by norm_num) stepsL sL _ σ (by decide),",
         f"    run_sound {m} (by norm_num) stepsR sR _ σ (by decide)]",
-        f"  apply final_sound {m} (by norm_num) _ _ _ _ σ {k_l} {k_r} (by decide) (by decide)",
+        (
+            f"  apply {'finalS_sound' if support else 'final_sound'} {m} (by norm_num) _ _ _ _ σ "
+            f"{k_l} {k_r} (by decide) (by decide)"
+        ),
         "    (by decide)",
         "  simpa only [facL, facR] using consts",
         "",
@@ -443,13 +459,20 @@ def _data_text(ps: PathSum, m: int, path: Sequence[int]) -> str:
 @dataclass
 class AmpPlan:
     """Both sides' runs with atoms, their initial inner paths, held variables and atoms, the
-    phase modulus and the constant turns of the reduced sums."""
+    phase modulus, the constant turns of the reduced sums and whether a support other than 1
+    is left."""
 
     coefs: Any
     runs: tuple[Any, Any]
     starts: tuple[tuple[list[int], list[int], list[Any]], tuple[list[int], list[int], list[Any]]]
     m: int
     turns: tuple[int, int]
+    support: bool = False
+
+    @property
+    def final(self) -> str:
+        """The PathSumAmp or PathSumSupport theorem comparing the final sums."""
+        return "afinalS_perm" if self.support else "afinal_perm"
 
 
 def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
@@ -457,8 +480,7 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
     already written kept), reduced, with canon steps at the elimination pivots and the atoms
     substituted, normalised and merged (gather and bcanon steps when a side needs Boolean
     elimination); raises :class:`PathSumUnsupported` when the sums do not reduce to one
-    canonical form, their Boolean eliminations differ or leave a support, or they end on
-    different atoms."""
+    canonical form, their Boolean eliminations differ, or they end on different atoms."""
     from archytaszx.algebra.pathsum import boolean_eliminate, eliminate
     from archytaszx.semantics.lean_amp import reduce_run
 
@@ -474,8 +496,8 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         rows_l, g_l = boolean_eliminate(red_l.constraints, red_l.boundary)
         rows_r, g_r = boolean_eliminate(red_r.constraints, red_r.boundary)
         order = [v for v, _r in rows_l]
-        if g_l != ONE or g_r != ONE or order != [v for v, _r in rows_r]:
-            raise PathSumUnsupported("the Boolean eliminations differ or leave a support")
+        if g_l != g_r or order != [v for v, _r in rows_r]:
+            raise PathSumUnsupported("the Boolean eliminations differ")
         canon_steps = [".gather", *(f".bcanon {v}" for v in order)]
     else:
         order = _elimination_order(red_l.constraints, red_l.boundary)
@@ -490,7 +512,8 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         raise PathSumUnsupported("the reduced sums carry different amplitude atoms")
     m = run_l.coefs.m
     turns = (_const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean))
-    plan = AmpPlan(run_l.coefs, (run_l, run_r), (starts[0], starts[1]), m, turns)
+    support = boolean and g_l != ONE
+    plan = AmpPlan(run_l.coefs, (run_l, run_r), (starts[0], starts[1]), m, turns, support)
     return plan, red_l, red_r
 
 
@@ -548,6 +571,7 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         ]
     lines = [
         "import ArchytasZX.PathSumAmp",
+        *(["import ArchytasZX.PathSumSupport"] if plan.support else []),
         "",
         "/-!",
         f"# Path-sum proof `{name}` with amplitude atoms",
@@ -580,7 +604,7 @@ def _export_amp_proof(raw_l: PathSum, raw_r: PathSum, name: str) -> str:
         f"    valA {m} {sc.text(c_l)} A tL σ = valA {m} {sc.text(c_r)} A tR σ := by",
         f"  rw [aruns_sound {m} (by norm_num) A stepsL tL _ σ reqsL (by decide),",
         f"    aruns_sound {m} (by norm_num) A stepsR tR _ σ reqsR (by decide)]",
-        f"  apply afinal_perm {m} (by norm_num) _ _ A _ _ σ {k_l} {k_r} (by decide) (by decide)",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ σ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
         "  simpa only [facL, facR] using consts",
         "",
@@ -1677,7 +1701,7 @@ def net_amp_body(
         f"    aruns_sound {m} (by norm_num) A stepsR {t_r} _ _ reqsR (by decide),",
         f"    valA_agree {m} _ A (aruns {m} stepsL {t_l}) {bnd} _ _ (by decide) (by decide)",
         f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
-        f"  apply afinal_perm {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
+        f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",
@@ -1742,8 +1766,10 @@ def _export_amp_net(left: Diagram, right: Diagram, name: str) -> str:
     body, amp = net_amp_body(left, right, name, phases, coefs, tabs)
     ns = "ArchytasZX.PathSumNetProof"
     sc = _scalars()
+    support = any("afinalS_perm" in ln for ln in body.lines)
     lines = [
         "import ArchytasZX.PathSumNetAmp",
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
         "",
         "/-!",
         f"# Path-sum proof `{name}` over the networks with amplitude atoms",

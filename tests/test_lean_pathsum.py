@@ -403,3 +403,63 @@ def test_lean_rejects_a_tampered_atom_table(tmp_path: object) -> None:
     assert marker in source
     ok, _ = L.check(source.replace(marker, "(([[], []] : List (List ℕ))"), f"{tmp_path}/t.lean")
     assert not ok
+
+
+def _ccz_loop(conj: bool, weight: bool) -> str:
+    """CCZ on a, b, c from seven T gadgets (conjugate phases when ``conj``), c a closed loop,
+    with a sqrt(2) weighted Z spider on the input of a when ``weight``."""
+    from itertools import combinations
+
+    sets = [s for k in (1, 2, 3) for s in combinations("abc", k)]
+    legs = {q: sum(q in s for s in sets) for q in "abc"}
+    lines = [
+        f"za = Z(1 -> {1 + legs['a']}, {_Q})",
+        f"zb = Z(1 -> {1 + legs['b']}, {_Q})",
+        f"zc = Z(0 -> {legs['c']}, {_Q})",
+    ]
+    port = {"a": 1, "b": 1, "c": 0}
+    for i, s in enumerate(sets):
+        turn = "1/8" if (len(s) % 2 == 1) != conj else "7/8"
+        lines += [
+            f"g{i} = X({len(s)} -> 1, {_Q})",
+            f"p{i} = Z(1 -> 0, {_Q}) phase {{1: {turn}}}",
+            f"wire g{i}.out0 -- p{i}.in0",
+        ]
+        for j, q in enumerate(s):
+            lines.append(f"wire z{q}.out{port[q]} -- g{i}.in{j}")
+            port[q] += 1
+    if weight:
+        lines += [f"w = Z(1 -> 1, {_Q}) weight{{1: sqrt(2)}}", "wire w.out0 -- za.in0"]
+    return "; ".join(lines)
+
+
+def _support(weight: bool, net: bool) -> str:
+    """The CCZ loop pair (Boolean elimination with the leftover support 1 + a b), exported."""
+    export = export_net if net else export_proof
+    left, right = parse_dsl(_ccz_loop(False, weight)), parse_dsl(_ccz_loop(True, weight))
+    return export(left, right, "support")
+
+
+@pytest.mark.parametrize(("weight", "net"), [(True, False), (True, True), (False, False)])
+def test_a_leftover_support_takes_the_support_final(weight: bool, net: bool) -> None:
+    source = _support(weight, net)
+    assert "import ArchytasZX.PathSumSupport" in source
+    assert ("afinalS_perm" if weight else "finalS_sound") in source
+
+
+@needs_lean
+@pytest.mark.parametrize(("weight", "net"), [(True, False), (True, True), (False, False)])
+def test_lean_proves_a_pair_with_a_leftover_support(
+    weight: bool, net: bool, tmp_path: object
+) -> None:
+    ok, output = L.check(_support(weight, net), f"{tmp_path}/support.lean")
+    assert ok, output
+
+
+@needs_lean
+@pytest.mark.parametrize("weight", [True, False])
+def test_lean_rejects_a_tampered_support_pair(weight: bool, tmp_path: object) -> None:
+    source = _support(weight, False)
+    assert "([4], 7)" in source
+    ok, _ = L.check(source.replace("([4], 7)", "([4], 1)", 1), f"{tmp_path}/t.lean")
+    assert not ok
