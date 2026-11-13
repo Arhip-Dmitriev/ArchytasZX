@@ -77,6 +77,7 @@ from archytaszx.diagram.bangbox import (
     boundary_arity,
     expand_concrete_boxes,
     free_mult_symbols,
+    index_symbols,
     instantiate_symbol,
     substitute_index_phases,
 )
@@ -326,7 +327,7 @@ def _free_symbols(diagram: Diagram) -> tuple[frozenset[str], frozenset[str], fro
             dims |= node.phase.dim.free_symbols
             others |= node.phase.free_symbols
     dims -= mults
-    others -= mults | dims
+    others -= mults | dims | index_symbols(diagram)
     return frozenset(dims), frozenset(mults), frozenset(others)
 
 

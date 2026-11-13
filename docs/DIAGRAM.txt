@@ -190,9 +190,16 @@ far end of a link wire, a node of a pair box, a left or right port, or introduce
 reading the index of a box it rewrites in. Symbolic contraction reads a carry-copy chain (one
 copy's tensor, link ports open, has the factor delta(p - q) for every link) as a plain box
 whose link ports and head and tail ends meet one phaseless Z spider per link (a cyclic one
-only when its multiplicity is at least 1), and refuses any other chain, indexed and pair
-boxes; a copy scalar without an index contributes c^n. Induction over a chain box's
-multiplicity has the chain_window step tier (PROOFS.txt).
+only when its multiplicity is at least 1), and refuses any other chain. An indexed box keeps
+its index in its group's factor (ReplicatedFactor.index, renamed _j<g>); a closed or crossing
+indexed box, and a copy scalar, contribute the closed form of prod_{m=0}^{n-1} c(m)
+(constants to the n-th power, exponentials and powers of constant bases through a closed sum of
+their exponents), refused when there is none. A pair box over a box meeting only the boundary,
+attached to Z spiders whose value the copy's entry pins by a delta to its boundary indices,
+becomes its parent group's pair factor (ReplicatedFactor.pairs over copy j's template indices
+_t<g>_<i>, copy k's _u<g>_<i> and the indices _j<g>, _k<g>). Index symbols are not free
+symbols: the oracle never samples them. Induction over a chain box's multiplicity has the
+chain_window step tier (PROOFS.txt).
 
 4.3 Operations
 

@@ -815,6 +815,13 @@ def _copy_subtree(
         _copy_subtree(diagram, child.id, id_map, new_id)
 
 
+def index_symbols(diagram: Diagram) -> frozenset[str]:
+    """The copy and pair index symbols of ``diagram``'s bang boxes."""
+    names = {box.index for box in diagram.bang_boxes.values() if box.index is not None}
+    names |= {box.pair_index for box in diagram.bang_boxes.values() if box.pair_index is not None}
+    return frozenset(names)
+
+
 def add_box_image(
     target: Diagram,
     box: BangBox,
@@ -1287,7 +1294,8 @@ def _place_pairs(
     k_total = len(id_maps)
     pairs = [(j, k) for j in range(k_total) for k in range(j + 1, k_total)]
     legs: dict[tuple[PortRef, int], list[PortRef]] = {}
-    for parent_port in sorted({a[1] for a in template.attached}, key=PortRef.sort_key):
+    ports = {a[1] for a in template.attached}
+    for parent_port in sorted(ports, key=lambda r: (r.node_id, r.direction.value, -r.index)):
         side = next(a[2] for a in template.attached if a[1] == parent_port)
         for m, id_map in enumerate(id_maps):
             count = sum(1 for j, k in pairs if (j if side == "left" else k) == m)

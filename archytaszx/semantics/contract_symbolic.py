@@ -52,6 +52,7 @@ from archytaszx.algebra.scalar import (
     ScalarSymbolKey,
 )
 from archytaszx.diagram.bangbox import (
+    BangBox,
     Mult,
     boundary_refs_in_scope,
     crossing_wires,
@@ -127,13 +128,19 @@ class ReplicatedFactor:
 
     With ``marked``, an entry term carrying the group's mark symbol ``_m<g>`` takes
     ``Sum_p marked(p) prod_{q != p} factor(q)`` in place of the product. With ``inner``, each
-    copy is a copy of that self-contained variable-rank tensor and ``factor`` is unused.
+    copy is a copy of that self-contained variable-rank tensor and ``factor`` is unused. With
+    ``index``, copy ``m`` (``m = 0 .. multiplicity - 1``) reads that symbol as ``m``. With
+    ``pairs``, every pair of copies ``j < k`` also contributes ``pairs`` with copy ``j``'s
+    template indices as ``_t<g>_<i>``, copy ``k``'s as ``_u<g>_<i>``, ``_j<g> = j`` and
+    ``_k<g> = k``.
     """
 
     multiplicity: Mult
     factor: Scalar
     marked: Scalar | None = None
     inner: SymbolicTensor | None = None
+    index: str | None = None
+    pairs: Scalar | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +253,8 @@ class SymbolicTensor:
                     group.factor.substitute(scalar_mapping),
                     None if group.marked is None else group.marked.substitute(scalar_mapping),
                     None if group.inner is None else group.inner._substituted(mapping),
+                    group.index,
+                    None if group.pairs is None else group.pairs.substitute(scalar_mapping),
                 )
                 for group in self.groups
             ),
@@ -298,8 +307,11 @@ class SymbolicTensor:
         for g, (group, copies) in enumerate(zip(self.groups, copy_names, strict=True)):
             inner = flat_inner[g]
             factor = group.factor.to_sympy() if inner is None else inner.entry.to_sympy()
-            per_copy = [_rename(factor, {**fixed_names, **names}) for names in copies]
-            product = sp.Mul(*per_copy)
+            at = _copy_numbers(group.index, len(copies))
+            per_copy = [
+                _rename(factor, {**fixed_names, **names, **at[c]}) for c, names in enumerate(copies)
+            ]
+            product = sp.Mul(*per_copy, *_pair_terms(group, g, copies, fixed_names))
             mark = _mark_symbol(g)
             if group.marked is None or mark not in expr.free_symbols:
                 expr = expr * product
@@ -307,7 +319,7 @@ class SymbolicTensor:
             marked = group.marked.to_sympy()
             chosen = sp.Add(
                 *(
-                    _rename(marked, {**fixed_names, **copies[p]})
+                    _rename(marked, {**fixed_names, **copies[p], **at[p]})
                     * sp.Mul(*(per_copy[:p] + per_copy[p + 1 :]))
                     for p in range(len(copies))
                 )
@@ -333,6 +345,8 @@ class SymbolicTensor:
                     group.factor.simplify(max_steps=max_steps),
                     None if group.marked is None else group.marked.simplify(max_steps=max_steps),
                     None if group.inner is None else group.inner.simplify(max_steps=max_steps),
+                    group.index,
+                    None if group.pairs is None else group.pairs.simplify(max_steps=max_steps),
                 )
                 for group in self.groups
             ),
@@ -1178,6 +1192,191 @@ def _scope_subdiagram(
     return extracted
 
 
+def _pair_terms(
+    group: ReplicatedFactor,
+    g: int,
+    copies: Sequence[Mapping[str, sp.Symbol]],
+    fixed: Mapping[str, sp.Symbol],
+) -> list[sp.Expr]:
+    """``group``'s pair factor at every pair of copies ``j < k``."""
+    if group.pairs is None:
+        return []
+    pair = group.pairs.to_sympy()
+    terms: list[sp.Expr] = []
+    for k in range(len(copies)):
+        for j in range(k):
+            names: dict[str, sp.Expr] = {**fixed, **copies[j]}
+            names.update(
+                {f"_u{name[2:]}": v for name, v in copies[k].items() if name.startswith("_t")}
+            )
+            names.update({f"_j{g}": sp.Integer(j), f"_k{g}": sp.Integer(k)})
+            terms.append(_rename(pair, names))
+    return terms
+
+
+def _detach_pairs(diagram: Diagram, max_steps: int) -> tuple[Diagram, dict[BangBoxId, list[_Pair]]]:
+    """``diagram`` without its pair boxes, each left as its tensor over the parent's ports it
+    met, by parent."""
+    working = diagram.copy()
+    found: dict[BangBoxId, list[_Pair]] = {}
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        if box.pair_of is None:
+            continue
+        parent = diagram.bang_boxes[box.pair_of]
+        if parent.parent is not None or parent.index is None or box.pair_index is None:
+            raise SymbolicContractionUnsupportedError(f"pair box {box_id}: a nested parent")
+        if any(b.parent == box_id for b in diagram.bang_boxes.values()):
+            raise SymbolicContractionUnsupportedError(f"pair box {box_id} holds a child box")
+        attached: list[tuple[PortRef, PortRef, str]] = []
+        for wire in sorted(crossing_wires(diagram, box.node_scope), key=Wire.sort_key):
+            inside = _inside_end(diagram, box.node_scope, wire)
+            outside = _outside_end(diagram, box.node_scope, wire)
+            side = "left" if outside in box.left_ports else "right"
+            if outside not in box.left_ports and outside not in box.right_ports:
+                raise SymbolicContractionUnsupportedError(
+                    f"pair box {box_id} meets a port that is neither left nor right"
+                )
+            node = diagram.nodes[outside.node_id]
+            if node.generator_type.name != Z_SPIDER.name:
+                raise SymbolicContractionUnsupportedError(
+                    f"pair box {box_id} meets node {outside.node_id}, not a Z spider"
+                )
+            attached.append((inside, outside, side))
+        outs = [a[0] for a in attached if a[0].direction is Direction.OUTPUT]
+        ins = [a[0] for a in attached if a[0].direction is Direction.INPUT]
+        sub = _scope_subdiagram(diagram, box.node_scope, box_id, outs, ins)
+        tensor = contract_symbolic(sub, max_steps=max_steps)
+        if tensor.is_variable_rank:
+            raise SymbolicContractionUnsupportedError(f"pair box {box_id}: a variable-rank part")
+        axis_of = {
+            ref: _engine_index(a.index) for ref, a in zip([*outs, *ins], tensor.axes, strict=True)
+        }
+        entry = tensor.entry.to_sympy()
+        if box.copy_scalar is not None:
+            entry = entry * box.copy_scalar.to_sympy()
+        legs = tuple((axis_of[inside], outside, side) for inside, outside, side in attached)
+        found.setdefault(box.pair_of, []).append(_Pair(entry, legs, parent.index, box.pair_index))
+        for node_id in sorted(box.node_scope):
+            working.remove_node(node_id)
+        working.remove_bang_box(box_id)
+    return working, found
+
+
+@dataclass(frozen=True, slots=True)
+class _Pair:
+    """A detached pair box: its tensor, each leg's axis symbol with the parent port and side
+    it met, and the parent's and its own index names."""
+
+    entry: sp.Expr
+    legs: tuple[tuple[sp.Symbol, PortRef, str], ...]
+    index: str
+    pair_index: str
+
+
+def _pair_factor(pairs: Sequence[_Pair], pinned: Mapping[PortRef, sp.Expr], g: int) -> sp.Expr:
+    """The product of ``pairs``' tensors with each leg at its parent port's pinned value, copy
+    ``j``'s template indices on a left leg and copy ``k``'s (``_u<g>_<i>``) on a right one,
+    the indices renamed ``_j<g>`` and ``_k<g>``."""
+    out: sp.Expr = sp.Integer(1)
+    for pair in pairs:
+        values: dict[sp.Symbol, sp.Expr] = {}
+        for symbol, ref, side in pair.legs:
+            value = pinned[ref]
+            if side == "right":
+                value = _rename(
+                    value,
+                    {
+                        str(x): _engine_index(f"_u{str(x)[2:]}")
+                        for x in value.free_symbols
+                        if str(x).startswith(f"_t{g}_")
+                    },
+                )
+            values[symbol] = value
+        entry = pair.entry.xreplace(values)
+        out = out * _rename(
+            entry,
+            {pair.index: _engine_index(f"_j{g}"), pair.pair_index: _engine_index(f"_k{g}")},
+        )
+    return out
+
+
+def _hidden_pins(
+    entry: sp.Expr, hidden: Mapping[PortRef, sp.Symbol], dims: Mapping[PortRef, Dim], max_steps: int
+) -> tuple[sp.Expr, dict[PortRef, sp.Expr]]:
+    """``entry`` with each hidden leg replaced by the value a delta factor pins it to, free of
+    every hidden leg, and those values; raise when one is not pinned."""
+    values: dict[PortRef, sp.Expr] = {}
+    others = set(hidden.values())
+    for ref, symbol in hidden.items():
+        modulus = dims[ref].to_sympy()
+        for value in _pins(entry, symbol, modulus):
+            if value.free_symbols & others:
+                continue
+            folded = entry.xreplace({symbol: value})
+            if (
+                Scalar(entry - ModDelta(symbol - value, modulus) * folded)
+                .simplify(max_steps=max_steps)
+                .is_zero
+            ):
+                entry, values[ref] = folded, value
+                break
+        else:
+            raise SymbolicContractionUnsupportedError(
+                f"the spider at {ref} that a pair box meets is not pinned by the boundary"
+            )
+    return entry, values
+
+
+def _copy_numbers(index: str | None, count: int) -> list[dict[str, sp.Expr]]:
+    """Per copy, the index symbol's value: ``{index: m}`` for copy ``m``, or nothing."""
+    if index is None:
+        return [{} for _ in range(count)]
+    return [{index: sp.Integer(m)} for m in range(count)]
+
+
+_COPY = sp.Symbol("_copy", integer=True, nonnegative=True)
+
+
+def _index_power(expr: sp.Expr, box: BangBox) -> sp.Expr:
+    """``expr`` over the copies of ``box``: ``expr^n``, or with an index ``I`` read by ``expr``
+    the closed form of ``prod_{m=0}^{n-1} expr(I = m)``; raise when it has none."""
+    count = box.multiplicity.to_sympy()
+    named = [x for x in expr.free_symbols if box.index is not None and str(x) == box.index]
+    if not named:
+        return sp.Pow(expr, count)
+    product = _closed_product(expr.xreplace({named[0]: _COPY}), count)
+    if product is None:
+        raise SymbolicContractionUnsupportedError(
+            f"bang box {box.id}: the product over copies of {expr} has no closed form"
+        )
+    return product
+
+
+def _closed_product(expr: sp.Expr, count: sp.Expr) -> sp.Expr | None:
+    """``prod_{_copy=0}^{count-1} expr`` in closed form: constant factors to the power
+    ``count``, exponentials and powers of constant bases through a closed sum of their
+    exponents, anything else through sympy's product; None when one stays unevaluated."""
+    out: sp.Expr = sp.Integer(1)
+    for factor in sp.Mul.make_args(sp.powsimp(sp.expand_power_base(expr, force=True))):
+        if _COPY not in factor.free_symbols:
+            out = out * sp.Pow(factor, count)
+            continue
+        base, exponent = (
+            (sp.E, factor.args[0]) if isinstance(factor, sp.exp) else factor.as_base_exp()
+        )
+        if _COPY not in base.free_symbols:
+            total = sp.summation(exponent, (_COPY, 0, count - 1))
+            if total.has(sp.Sum):
+                return None
+            out = out * sp.Pow(base, sp.expand(total))
+            continue
+        product = sp.product(factor, (_COPY, 0, count - 1))
+        if product.has(sp.Product):
+            return None
+        out = out * product
+    return out
+
+
 def _partner_or_slot(diagram: Diagram, ref: PortRef) -> PortRef | None:
     """The port wired to ``ref``, or None when ``ref`` is a boundary slot."""
     for wire in diagram.wires:
@@ -1485,17 +1684,30 @@ def contract_symbolic(
             return reduced
     if any(box.links for box in diagram.bang_boxes.values()):
         diagram = _resolve_chains(diagram, max_steps)
+    pair_boxes: dict[BangBoxId, list[_Pair]] = {}
+    if any(box.pair_of is not None for box in diagram.bang_boxes.values()):
+        diagram, pair_boxes = _detach_pairs(diagram, max_steps)
     box_factor: sp.Expr = sp.Integer(1)
     for box_id, box in sorted(diagram.bang_boxes.items()):
-        if box.index is not None or box.pair_of is not None or box.links:
+        if box.pair_of is not None or box.links:
             raise SymbolicContractionUnsupportedError(
-                f"bang box {box_id} is an indexed, pair or nested chain box"
+                f"bang box {box_id} is a pair or nested chain box"
+            )
+        if box.index is not None and any(
+            box.index in child.multiplicity.free_symbols
+            for child in diagram.bang_boxes.values()
+            if child.parent == box_id and not child.is_node_scope
+        ):
+            raise SymbolicContractionUnsupportedError(
+                f"bang box {box_id}: a port-scope child's multiplicity reads its index"
             )
         if box.copy_scalar is not None and box.parent is None:
-            box_factor = box_factor * sp.Pow(
-                box.copy_scalar.to_sympy(), box.multiplicity.to_sympy()
-            )
+            box_factor = box_factor * _index_power(box.copy_scalar.to_sympy(), box)
     plan = _plan_boxes(diagram)
+    if set(pair_boxes) - set(plan.replicated):
+        raise SymbolicContractionUnsupportedError(
+            "a box with pair boxes does not meet only the boundary"
+        )
 
     working = diagram.copy()
     for box_id in plan.closed:
@@ -1503,7 +1715,7 @@ def contract_symbolic(
         inner = contract_symbolic(
             _scope_subdiagram(diagram, box.node_scope, box_id), max_steps=max_steps
         )
-        box_factor = box_factor * sp.Pow(inner.entry.to_sympy(), box.multiplicity.to_sympy())
+        box_factor = box_factor * _index_power(inner.entry.to_sympy(), box)
         _drop_scope(working, box.node_scope)
 
     crossing_leg: dict[PortRef, BangBoxId] = {}
@@ -1606,6 +1818,7 @@ def contract_symbolic(
 
     factors: list[sp.Expr] = [sp.Integer(1) for _ in group_boxes]
     inner_of: dict[int, SymbolicTensor] = {}
+    pair_of: dict[int, sp.Expr] = {}
     for box_id in plan.replicated:
         box = diagram.bang_boxes[box_id]
         g = group(box_id)
@@ -1613,16 +1826,42 @@ def contract_symbolic(
             factors.append(sp.Integer(1))
         run_out = [a.port for a in templates[g] if a.port.direction is Direction.OUTPUT]
         run_in = [a.port for a in templates[g] if a.port.direction is Direction.INPUT]
+        met = sorted(
+            {leg[1] for pair in pair_boxes.get(box_id, ()) for leg in pair.legs},
+            key=PortRef.sort_key,
+        )
+        hidden_out = [r for r in met if r.direction is Direction.OUTPUT]
+        hidden_in = [r for r in met if r.direction is Direction.INPUT]
         inner = contract_symbolic(
-            _scope_subdiagram(diagram, box.node_scope, box_id, run_out, run_in),
+            _scope_subdiagram(
+                diagram, box.node_scope, box_id, [*run_out, *hidden_out], [*run_in, *hidden_in]
+            ),
             max_steps=max_steps,
         )
         if inner.is_variable_rank:
+            if met:
+                raise SymbolicContractionUnsupportedError(
+                    f"bang box {box_id}: pair boxes over a variable-rank copy"
+                )
             inner_of[g] = inner
             _drop_scope(working, box.node_scope)
             continue
-        names = {axis.index: _engine_index(t.index) for axis, t in zip(inner.axes, templates[g])}
+        template_of = {t.port: _engine_index(t.index) for t in templates[g]}
+        names: dict[str, sp.Expr] = {}
+        hidden: dict[PortRef, sp.Symbol] = {}
+        axis_refs = [*run_out, *hidden_out, *run_in, *hidden_in]
+        for ref, axis in zip(axis_refs, inner.axes, strict=True):
+            if ref in template_of:
+                names[axis.index] = template_of[ref]
+            else:
+                hidden[ref] = _engine_index(f"_h{len(hidden)}")
+                names[axis.index] = hidden[ref]
         factors[g] = _rename(inner.entry.to_sympy(), names)
+        if met:
+            factors[g], pinned = _hidden_pins(
+                factors[g], hidden, {r: _port_dim(diagram, r) for r in met}, max_steps
+            )
+            pair_of[g] = _pair_factor(pair_boxes[box_id], pinned, g)
         _drop_scope(working, box.node_scope)
     bridged_leg: dict[PortRef, int] = {}
     bridged_sums: dict[int, list[tuple[sp.Symbol, Dim]]] = {}
@@ -1759,7 +1998,7 @@ def contract_symbolic(
         for ref, symbol in reversed(list(legs.items())):
             copy = sp.Sum(copy, (symbol, 0, _port_dim(diagram, ref).to_sympy() - 1))
         copy = Scalar(copy).simplify(max_steps=max_steps).to_sympy()
-        parts.append(sp.Pow(copy, diagram.bang_boxes[box_id].multiplicity.to_sympy()))
+        parts.append(_index_power(copy, diagram.bang_boxes[box_id]))
     closed = _sum_out(
         head,
         parts,
@@ -1791,7 +2030,8 @@ def contract_symbolic(
         summed = sp.Sum(closed.to_sympy(), (symbol, 0, index.dim.to_sympy() - 1))
         closed = Scalar(summed).simplify(max_steps=max_steps)
         kept.remove(index)
-    if kept and all(m is None for m in marked):
+    indexed = any(diagram.bang_boxes[b].index is not None for b in group_boxes)
+    if kept and all(m is None for m in marked) and not indexed:
         split = _split_pinned_terms(
             closed,
             kept,
@@ -1823,19 +2063,36 @@ def contract_symbolic(
             ),
         )
 
+    groups: list[ReplicatedFactor] = []
+    for g, (box_id, factor) in enumerate(zip(group_boxes, factors, strict=True)):
+        box = diagram.bang_boxes[box_id]
+        mark = marked[g]
+        copy_index: str | None = None
+        if box.index is not None:
+            if g in inner_of:
+                raise SymbolicContractionUnsupportedError(
+                    f"bang box {box_id}: an indexed box holding a variable-rank part"
+                )
+            copy_index = f"_j{g}"
+            to_index = {box.index: _engine_index(copy_index)}
+            factor = _rename(factor, to_index)
+            mark = None if mark is None else _rename(mark, to_index)
+        pair_factor = pair_of.get(g)
+        groups.append(
+            ReplicatedFactor(
+                box.multiplicity,
+                Scalar(factor).simplify(max_steps=max_steps),
+                None if mark is None else Scalar(mark).simplify(max_steps=max_steps),
+                inner_of.get(g),
+                copy_index,
+                None if pair_factor is None else Scalar(pair_factor).simplify(max_steps=max_steps),
+            )
+        )
     return SymbolicTensor(
         tuple(fixed_axes),
         closed,
         tuple(nested(slot) for slot in layout),
-        tuple(
-            ReplicatedFactor(
-                diagram.bang_boxes[box_id].multiplicity,
-                Scalar(factor).simplify(max_steps=max_steps),
-                None if marked[g] is None else Scalar(marked[g]).simplify(max_steps=max_steps),
-                inner_of.get(g),
-            )
-            for g, (box_id, factor) in enumerate(zip(group_boxes, factors, strict=True))
-        ),
+        tuple(groups),
         tuple(kept),
     )
 

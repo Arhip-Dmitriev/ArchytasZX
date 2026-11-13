@@ -82,6 +82,7 @@ from archytaszx.diagram.bangbox import (
     BangBoxDomainError,
     expand_concrete_boxes,
     free_mult_symbols,
+    index_symbols,
     instantiate_symbol,
 )
 from archytaszx.diagram.graph import Diagram
@@ -135,7 +136,7 @@ def _diagram_free_symbols(diagram: Diagram) -> frozenset[str]:
         if node.phase is not None:
             symbols |= node.phase.free_symbols
     symbols |= free_mult_symbols(diagram)
-    return frozenset(symbols)
+    return frozenset(symbols - index_symbols(diagram))
 
 
 def _expand_bang_boxes(diagram: Diagram, resolved: Mapping[str, CheckAssignmentValue]) -> Diagram:
@@ -558,7 +559,8 @@ def _split_groups(t: SymbolicTensor, max_steps: int) -> SymbolicTensor:
     split: dict[int, list[sp.Expr]] = {}
     for g, positions in blocks.items():
         group = t.groups[g]
-        if len(positions) > 1 and group.marked is None and group.inner is None:
+        plain = group.marked is None and group.inner is None and group.pairs is None
+        if len(positions) > 1 and plain:
             found = _split_parts(t, group, positions)
             if found is not None:
                 split[g] = found
@@ -618,11 +620,19 @@ def _normalise_groups(t: SymbolicTensor, max_steps: int) -> SymbolicTensor:
             symbols = {str(symbol.name) for symbol in arg.free_symbols}
             bound = symbols & names or any(name.startswith(prefix) for name in symbols)
             (rest if bound else constant).append(arg)
-        if not constant:
+        product: sp.Expr | None = sp.Mul(*constant) ** group.multiplicity.to_sympy()
+        if group.index is not None and constant:
+            from archytaszx.semantics.contract_symbolic import _COPY, _closed_product
+
+            at = {x: _COPY for x in sp.Mul(*constant).free_symbols if str(x) == group.index}
+            product = _closed_product(sp.Mul(*constant).xreplace(at), group.multiplicity.to_sympy())
+            if product is None:
+                rest, constant = rest + constant, []
+        if not constant or product is None:
             groups.append(group)
             continue
         moved = True
-        entry = entry * sp.Mul(*constant) ** group.multiplicity.to_sympy()
+        entry = entry * product
         factor = Scalar(sp.Mul(*rest)).simplify(max_steps=max_steps)
         groups.append(replace(group, factor=factor))
     if not moved:
@@ -637,8 +647,18 @@ def _same_groups(left: SymbolicTensor, right: SymbolicTensor, max_steps: int) ->
     if len(left.groups) != len(right.groups):
         return False
     for g, (a, b) in enumerate(zip(left.groups, right.groups, strict=True)):
-        if (a.multiplicity, a.marked, a.inner) != (b.multiplicity, b.marked, b.inner):
+        if (a.multiplicity, a.marked, a.inner, a.index) != (
+            b.multiplicity,
+            b.marked,
+            b.inner,
+            b.index,
+        ):
             return False
+        if a.pairs != b.pairs:
+            if a.pairs is None or b.pairs is None:
+                return False
+            if not (a.pairs - b.pairs).simplify(max_steps=max_steps).is_zero:
+                return False
         if a.factor == b.factor:
             continue
         if a.marked is not None or a.inner is not None:

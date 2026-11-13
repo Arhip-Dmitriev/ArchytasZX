@@ -186,6 +186,26 @@ Bang boxes:
     denoted [out = in] exp(2 pi i (a x y + b x + c y)) over the binder's inputs (x, y); a
     splitter S(d1, d2) that such a table feeds is denoted [out0 = x][out1 = y]. Any entry that
     does not match leaves the table denoted entry by entry.
+  - A chain box (DIAGRAM.txt 4.2) is contracted one copy at a time with its link ports open
+    (q then p, outputs before inputs). When that tensor is delta(p_j - q_j) times itself at
+    p_j = q_j for every link j (carry-copy: syntactically, or by the difference simplifying to
+    zero), every carry equals the head's value, and the chain is read as a plain box whose
+    link ports, head end and tail end meet one phaseless Z spider per link. A cyclic one needs
+    a multiplicity known to be at least 1. Any other chain raises "the transfer tensor is
+    neither carry-copy nor neighbour"; induction (PROOFS.txt, CHAIN_WINDOW) covers the rest.
+  - An indexed box contracts as a plain one with its index left symbolic in the copy's entry;
+    the group factor reads the index as _j<g> (ReplicatedFactor.index), copy m taking m. A
+    closed or crossing indexed box, and a copy scalar, contribute prod_{m=0}^{n-1} f(m) in
+    closed form: a factor free of m to the power n, an exponential or a power of a base free
+    of m through sum_m of its exponent (sympy summation, exact), any other through sympy's
+    product; one left unevaluated raises.
+  - A pair box over an indexed box meeting only the boundary, wired only to Z spiders of the
+    parent's scope, is contracted alone with its attached legs open. The parent's copy is
+    contracted with those spiders' extra legs open; each must be pinned by a delta of the
+    copy's entry to a value v in its boundary indices (entry = [h = v] entry(h = v)), which
+    replaces it. The pair box's tensor at the left legs' v (copy j: _t<g>_<i>) and the right
+    legs' v (copy k: _u<g>_<i>), the indices read as _j<g> and _k<g>, is the group's pair
+    factor (ReplicatedFactor.pairs), taken once per pair j < k.
   - A box wired to any other node outside it, two node-scope boxes meeting one spider, a port
     box over two W nodes, and other shapes not listed raise
     SymbolicContractionUnsupportedError.
@@ -228,8 +248,10 @@ difference still carries an index sum the simplifier could not decide. An indete
 has matched=False and a reason beginning "indeterminate"; it does not mean unequal. Variable-
 rank tensors are compared only when their layouts and shared indices agree. Each replicated
 factor is first normalised: the product c of its Mul arguments free of the group's template
-indices and of every shared index moves into the entry as c^m, m the multiplicity, and both
-are simplified. Groups agree when their multiplicities, marks and inner tensors agree and
+indices and of every shared index moves into the entry as c^m, m the multiplicity (for an
+indexed group, the closed form of prod_m c(m), or nothing moves when there is none), and both
+are simplified. Groups agree when their multiplicities, marks, inner tensors, indices and pair
+factors (syntactically or by a vanishing difference) agree and
 their factors are syntactically equal or their difference simplifies to zero, template
 indices aligned by position; the entries are then compared. Before that, a group laid out in
 several top-level blocks is split into one group per block when its factor, after each

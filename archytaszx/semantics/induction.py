@@ -33,6 +33,7 @@ from archytaszx.diagram.bangbox import (
     Mult,
     add_box_image,
     free_mult_symbols,
+    index_symbols,
     peel_one,
     substitute_index_phases,
 )
@@ -215,7 +216,7 @@ def _all_free_symbols(diagram: Diagram) -> frozenset[str]:
         if node.phase is not None:
             symbols |= node.phase.free_symbols
     symbols |= free_mult_symbols(diagram)
-    return frozenset(symbols)
+    return frozenset(symbols - index_symbols(diagram))
 
 
 def _fresh_symbol_name(stem: str, avoid: frozenset[str]) -> str:
