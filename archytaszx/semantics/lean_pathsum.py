@@ -24,7 +24,7 @@ variables, then export_proof's steps. None enumerates a sum.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, cast
@@ -36,6 +36,7 @@ from archytaszx.algebra.pathsum import (
     Cyclo,
     PathSum,
     PathSumUnsupported,
+    PhasePoly,
     QuditCanon,
     QuditPathSum,
     Step,
@@ -425,32 +426,71 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
 
 
 PIN_OFFSET = 1 << 20
-"""The first label of a summed wire that is pinned to another label."""
+"""The first digit variable of a summed wire that is pinned to another digit variable."""
+
+
+def _poly_text(terms: Iterable[tuple[Iterable[int], int]]) -> str:
+    """A PSem.Poly literal."""
+    return "[" + ", ".join(f"({sorted(m)}, {c})" for m, c in terms) + "]"
+
+
+def _table_poly(digits: list[int], table: list[Fraction], m: int) -> tuple[str, list[int]]:
+    """The interpolation of ``table`` over ``digits`` as a Poly in units of 1 / m, and the table
+    in units of 1 / m; raises when an entry is off the 1 / m grid."""
+    from archytaszx.semantics.pathsum_diagram import _interpolate
+
+    ts = []
+    for t in table:
+        v = (t % 1) * m
+        if v.denominator != 1:
+            raise PathSumUnsupported(f"a phase {t} off the 1/{m} grid")
+        ts.append(int(v))
+    poly = PhasePoly()
+    _interpolate(poly, digits, table)
+    terms = []
+    for mono, c in sorted(poly.terms.items(), key=lambda t: (len(t[0]), sorted(t[0]))):
+        v = (c % 1) * m
+        if v.denominator != 1:
+            raise PathSumUnsupported(f"a phase coefficient {c} off the 1/{m} grid")
+        if int(v):
+            terms.append((sorted(mono), int(v)))
+    return _poly_text(terms), ts
 
 
 @dataclass
 class _NetSide:
-    """One diagram's network, its fragments and its steps from the network's path sum."""
+    """One diagram's network over digit variables, its fragments and its steps."""
 
     raw: PathSum
     nodes: list[str]
     frags: list[str]
     proofs: list[str]
     summed: list[int]
+    labels: list[int]
+    dig: dict[int, list[int]]
+    k_of: dict[int, int]
     boundary: int
+    bnd_vars: int
     sqrt2_inv: int
     steps: list[str]
     scalar: sp.Expr
 
 
-def _net_side(diagram: Diagram, m: int, phases: list[Fraction]) -> tuple[_NetSide, PathSum]:
-    """The network of ``diagram`` labelled from from_diagram's numbering: boundary port i is
-    label i, a summed wire is its class's variable when that is a path variable not yet taken,
-    else a label from PIN_OFFSET; each Z spider's fragment is anchored at the label through
-    which a search from its class's variable first reaches it; the pin steps substitute the
-    other summed labels deepest first; ``phases`` collects the phase vectors' values."""
+def _net_side(diagram: Diagram, m: int, phases: list[str], label0: int) -> tuple[_NetSide, PathSum]:
+    """The network of ``diagram`` over digit variables numbered as from_diagram's: boundary port
+    i is label i with its boundary digits, a summed wire is label ``label0 + w``, its digit j
+    the class's variable when that is a path variable not yet taken, else a variable from
+    PIN_OFFSET; each Z spider's digit j is anchored at the leg through which a search from the
+    class's variable first reaches it; the pin steps substitute the other summed digits deepest
+    first; ``phases`` collects the phase vectors' Lean bodies."""
     from archytaszx.algebra.pathsum import constant
-    from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
+    from archytaszx.diagram.generators import (
+        DIM_BINDER,
+        DIM_SPLITTER,
+        FOURIER_BOX,
+        X_SPIDER,
+        Z_SPIDER,
+    )
     from archytaszx.diagram.graph import Direction, NodeId, PortRef
     from archytaszx.semantics.pathsum_diagram import _turns_table
 
@@ -460,28 +500,46 @@ def _net_side(diagram: Diagram, m: int, phases: list[Fraction]) -> tuple[_NetSid
         raise PathSumUnsupported("the network export covers qubit path sums only")
     d: Diagram = lay["diagram"]
     digit: dict[PortRef, list[int]] = lay["digit"]
-    if any(len(v) != 1 for v in digit.values()):
-        raise PathSumUnsupported("the network export covers legs of dimension 2 only")
-    names = {Z_SPIDER.name: ".Z", X_SPIDER.name: ".X", FOURIER_BOX.name: ".F"}
+    names = {
+        Z_SPIDER.name: ".Z",
+        X_SPIDER.name: ".X",
+        FOURIER_BOX.name: ".F",
+        DIM_BINDER.name: ".B",
+        DIM_SPLITTER.name: ".S",
+    }
     bnd = [*d.boundary_outputs, *d.boundary_inputs]
-    label: dict[PortRef, int] = {ref: i for i, ref in enumerate(bnd)}
-    cls: dict[int, int] = {i: digit[ref][0] for i, ref in enumerate(bnd)}
+    label: dict[PortRef, int] = {}
+    dig: dict[int, list[int]] = {}
+    cls: dict[int, int] = {}
+    v = 0
+    for i, ref in enumerate(bnd):
+        label[ref] = i
+        dig[i] = list(range(v, v + len(digit[ref])))
+        for j, x in enumerate(dig[i]):
+            cls[x] = digit[ref][j]
+        v += len(digit[ref])
+    nb_vars = v
     taken: set[int] = set()
     summed: list[int] = []
     nxt = PIN_OFFSET
-    for wire in sorted(d.wires, key=lambda w: w.sort_key()):
+    for w, wire in enumerate(sorted(d.wires, key=lambda w: w.sort_key())):
         if wire.a in label or wire.b in label:
             raise PathSumUnsupported("a wire on a boundary port")
-        cv = digit[wire.a][0]
-        if cv >= len(bnd) and cv not in taken:
-            lab = cv
-            taken.add(cv)
-        else:
-            lab, nxt = nxt, nxt + 1
+        lab = label0 + w
+        ds = []
+        for cv in digit[wire.a]:
+            if cv >= nb_vars and cv not in taken:
+                x = cv
+                taken.add(cv)
+            else:
+                x, nxt = nxt, nxt + 1
+            ds.append(x)
+            cls[x] = cv
         label[wire.a] = label[wire.b] = lab
-        cls[lab] = cv
+        dig[lab] = ds
         summed.append(lab)
-    legs: dict[NodeId, list[int]] = {}
+    owner = {x: (lab, j) for lab, ds in dig.items() for j, x in enumerate(ds)}
+    k_of = {lab: len(ds) for lab, ds in dig.items()}
     outs: dict[NodeId, list[int]] = {}
     ins: dict[NodeId, list[int]] = {}
     for nid in sorted(d.nodes):
@@ -489,147 +547,214 @@ def _net_side(diagram: Diagram, m: int, phases: list[Fraction]) -> tuple[_NetSid
         if node.generator_type.name not in names:
             raise PathSumUnsupported(f"node {nid!r} is a {node.generator_type.name}")
         n_o, n_i = len(node.legs(Direction.OUTPUT)), len(node.legs(Direction.INPUT))
-        o = [label[PortRef(nid, Direction.OUTPUT, j)] for j in range(n_o)]
-        i = [label[PortRef(nid, Direction.INPUT, j)] for j in range(n_i)]
-        if not o and not i:
+        outs[nid] = [label[PortRef(nid, Direction.OUTPUT, j)] for j in range(n_o)]
+        ins[nid] = [label[PortRef(nid, Direction.INPUT, j)] for j in range(n_i)]
+        if not outs[nid] and not ins[nid]:
             raise PathSumUnsupported(f"node {nid!r} has no legs")
-        outs[nid], ins[nid], legs[nid] = o, i, o + i
-    zs = [nid for nid in sorted(d.nodes) if d.nodes[nid].generator_type.name == Z_SPIDER.name]
-    on: dict[int, list[NodeId]] = {}
-    for nid in zs:
-        for lab in legs[nid]:
-            on.setdefault(lab, []).append(nid)
-    entry: dict[NodeId, int] = {}
+    # hyperedges over digit variables: ("z", nid, j) sets and binder pairs
+    edges: list[tuple[object, list[int]]] = []
+    pair_of: dict[NodeId, tuple[int, int, int]] = {}
+    for nid in sorted(d.nodes):
+        kind = names[d.nodes[nid].generator_type.name]
+        legs = outs[nid] + ins[nid]
+        if kind == ".Z":
+            ks = {k_of[lab] for lab in legs}
+            if len(ks) != 1:
+                raise PathSumUnsupported(f"node {nid!r} joins legs of different dimensions")
+            for j in range(ks.pop()):
+                edges.append((("z", nid, j), [dig[lab][j] for lab in legs]))
+        elif kind in (".B", ".S"):
+            whole, (a, b) = (outs[nid][0], ins[nid]) if kind == ".B" else (ins[nid][0], outs[nid])
+            pair_of[nid] = (whole, a, b)
+            for x, y in zip(dig[whole], dig[b] + dig[a], strict=True):
+                edges.append((("b", nid), [x, y]))
+    on: dict[int, list[int]] = {}
+    for e, (_key, vs) in enumerate(edges):
+        for x in vs:
+            on.setdefault(x, []).append(e)
+    entry: dict[int, int] = {}
     parent: dict[int, int] = {}
     reached: list[int] = []
-    for root in sorted({lab for lab, c in cls.items() if lab == c}):
+    for root in sorted({x for x, c in cls.items() if x == c}):
         seen, queue = {root}, [root]
         while queue:
             x = queue.pop(0)
-            for nid in on.get(x, []):
-                if nid in entry:
+            for e in on.get(x, []):
+                if e in entry:
                     continue
-                entry[nid] = x
-                for lab in legs[nid]:
-                    if lab not in seen:
-                        seen.add(lab)
-                        parent[lab] = x
-                        reached.append(lab)
-                        queue.append(lab)
-    if any(nid not in entry for nid in zs):
-        raise PathSumUnsupported("a Z spider not reached from its class's variable")
+                entry[e] = x
+                for y in edges[e][1]:
+                    if y not in seen:
+                        seen.add(y)
+                        parent[y] = x
+                        reached.append(y)
+                        queue.append(y)
+    if len(entry) != len(edges):
+        raise PathSumUnsupported("a digit constraint not reached from its class's variable")
+    anchor = {key: owner[entry[e]][0] for e, (key, _vs) in enumerate(edges)}
     nodes, frags, proofs = [], [], []
     k_inv = 0
+    common = "E σ ownL labsL digL hown hσ _ rfl"
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
         kind = names[node.generator_type.name]
-        ph = 0
-        t1 = 0
-        if kind != ".F" and node.phase is not None:
-            if node.phase.is_weighted:
-                raise PathSumUnsupported(f"node {nid!r} carries weights")
-            turn = _turns_table(nid, node, 2)[1] % 1
-            if (turn * m).denominator != 1:
-                raise PathSumUnsupported(f"node {nid!r} has a phase {turn} off the 1/{m} grid")
-            t1 = int(turn * m)
-            if turn:
-                phases.append(turn)
-                ph = len(phases)
-        nodes.append(f"⟨{kind}, {outs[nid]}, {ins[nid]}, 0, {ph}⟩")
-        common = "E σ hσ _ rfl (by simp [E, Δ])"
-        phs = "(by simp [E, Φ]) (by simp [E, Φ])"
-        if kind == ".Z":
-            frags.append(f"zFragAt {m} 0 {t1} {entry[nid]} {legs[nid]}")
+        os_, is_ = outs[nid], ins[nid]
+        legs = os_ + is_
+        if kind in (".B", ".S"):
+            whole, a, b = pair_of[nid]
+            p, q = k_of[a], k_of[b]
+            nodes.append(f"⟨{kind}, {os_}, {is_}, {p}, {q}⟩")
+            frags.append(f"bFrag digL {whole} {a} {b}")
+            lemma = "b_frag" if kind == ".B" else "s_frag"
             proofs.append(
-                f"z_frag_at {common} {m} 0 {t1} (by norm_num) (by norm_num) {phs} {entry[nid]} "
-                "(by decide)"
+                f"{lemma} {common} {p} {q} rfl rfl {whole} {a} {b} rfl rfl (by decide) "
+                f"(by decide) (by decide) rfl rfl rfl {m}"
             )
-        elif kind == ".X":
-            y = lay["fresh"][nid][0]
-            frags.append(f"xFrag {m} 0 {t1} {y} {legs[nid]}")
-            proofs.append(
-                f"x_frag {common} {m} {m // 2} 0 {t1} {y} (by norm_num) (by norm_num) "
-                f"(by norm_num) {phs} (by decide)"
-            )
-            k_inv += len(legs[nid])
-        else:
-            frags.append(f"fFrag {m} {outs[nid][0]} {ins[nid][0]}")
-            proofs.append(
-                f"f_frag {common} {m} (by norm_num) (by norm_num) {outs[nid][0]} {ins[nid][0]} "
-                "rfl rfl"
-            )
-            k_inv += 1
-    cur = [*summed, *(lay["fresh"][nid][0] for nid in sorted(lay["fresh"]))]
-    steps: list[str] = []
-    for lab in reversed(reached):
-        if lab < PIN_OFFSET:
             continue
-        cur.remove(lab)
-        steps += [f".perm {[lab, *cur]}", f".pin [[{parent[lab]}]]"]
+        k = k_of[legs[0]]
+        if kind == ".F":
+            nodes.append(f"⟨.F, {os_}, {is_}, {k}, 0⟩")
+            frags.append(f"fFragD {m} {1 << k} {k} digL {os_[0]} {is_[0]}")
+            proofs.append(
+                f"f_frag_dig {common} {k} rfl {os_[0]} {is_[0]} rfl rfl (by decide) (by decide) "
+                f"rfl rfl {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num)"
+            )
+            k_inv += k
+            continue
+        if node.phase is not None and node.phase.is_weighted:
+            raise PathSumUnsupported(f"node {nid!r} carries weights")
+        table = _turns_table(nid, node, 1 << k)
+        if kind == ".Z":
+            as_ = [anchor[("z", nid, j)] for j in range(k)]
+            anchor_vars = [dig[a][j] for j, a in enumerate(as_)]
+            poly, ts = _table_poly(anchor_vars, table, m)
+        else:
+            ys = lay["fresh"][nid]
+            poly, ts = _table_poly(ys, table, m)
+        ph = 0
+        if any(ts):
+            phases.append(f"(({ts} : List ℕ).getD v 0 : ℕ)")
+            ph = len(phases)
+        ts_text = f"({ts if ph else []} : List ℕ)"
+        nodes.append(f"⟨{kind}, {os_}, {is_}, {k}, {ph}⟩")
+        if kind == ".Z":
+            frags.append(f"zFragD digL {as_} {legs} {poly}")
+            proofs.append(
+                f"z_frag_dig {common} {k} rfl (by decide) (by decide) {as_} rfl (by decide) "
+                f"{legs[0]} (by decide) {m} (by norm_num) {poly} {ts_text} (fun v => rfl) "
+                "(by decide) (by decide) (by decide)"
+            )
+        else:
+            frags.append(f"xFragD {m} {1 << k} {k} digL {poly} {ys} {os_} {is_}")
+            proofs.append(
+                f"x_frag_dig {common} {k} rfl (by decide) (by decide) {ys} rfl (by decide) "
+                f"(by decide) {m} {1 << k} {m >> k} (by norm_num) (by norm_num) (by norm_num) "
+                f"{poly} {ts_text} (fun v => rfl) (by decide) (by decide)"
+            )
+            k_inv += k * len(legs)
+    cur = [x for lab in summed for x in dig[lab]]
+    cur += [y for nid in sorted(d.nodes) for y in lay["fresh"].get(nid, [])]
+    steps: list[str] = []
+    for x in reversed(reached):
+        if x < PIN_OFFSET:
+            continue
+        cur.remove(x)
+        steps += [f".perm {[x, *cur]}", f".pin [[{parent[x]}]]"]
     steps.append(".norm")
     if sorted(cur) != sorted(raw.path):
         raise PathSumUnsupported("the pinned network keeps other path variables")
     if cur:
         steps.append(f".perm {sorted(cur)}")
-    c, k = constant(d.scalar.to_sympy())
-    return (
-        _NetSide(raw, nodes, frags, proofs, summed, len(bnd), k_inv, steps, _const_model(c, k)),
+    c, kc = constant(d.scalar.to_sympy())
+    side = _NetSide(
         raw,
+        nodes,
+        frags,
+        proofs,
+        summed,
+        sorted(dig),
+        dig,
+        k_of,
+        len(bnd),
+        nb_vars,
+        k_inv,
+        steps,
+        _const_model(c, kc),
     )
+    return side, raw
 
 
 def _net_lines(tag: str, side: _NetSide, m: int) -> list[str]:
-    """The network, its fragments and the NetPS facts of one side."""
+    """The digit tables, the network, its fragments and the NetPSD facts of one side."""
     pairs = ", ".join(f"({n}, {f})" for n, f in zip(side.nodes, side.frags, strict=True))
     cases = " | ".join("rfl" for _ in side.nodes)
-    lines = [
+    own = [(x, (lab, j)) for lab in side.labels for j, x in enumerate(side.dig[lab])]
+    dig_tbl = [(lab, side.dig[lab]) for lab in side.labels]
+    proofs = [
+        p.replace("ownL", f"own{tag}").replace("labsL", f"labs{tag}").replace("digL", f"dig{tag}")
+        for p in side.proofs
+    ]
+    frags = pairs.replace("digL", f"dig{tag}")
+    return [
+        f"def own{tag} : Own := {own}",
+        f"def labs{tag} : List ℕ := {side.labels}",
+        f"def dig{tag} (l : ℕ) : List ℕ := ((({dig_tbl} : List (ℕ × List ℕ))).lookup l).getD []",
+        "",
+        f"theorem own{tag}OK : ownOK own{tag} labs{tag} dig{tag} = true := by decide",
+        "",
         (
             f"def N{tag} : Net := ⟨[{', '.join(side.nodes)}], {side.summed}, "
             f"{list(range(side.boundary))}⟩"
         ),
         "",
-        f"noncomputable def ps{tag} : List (Node × Frag) := [{pairs}]",
+        f"noncomputable def ps{tag} : List (Node × Frag) := [{frags}]",
         "",
-        f"theorem net{tag} : NetPS E N{tag} {m} ps{tag} where",
+        f"theorem net{tag} : NetPSD E N{tag} {m} own{tag} labs{tag} dig{tag} ps{tag} where",
+        f"  ownok := own{tag}OK",
         "  nodes := rfl",
         "  node := by",
         "    intro p hp σ hσ",
+        f"    have hown := own{tag}OK",
         f"    simp only [ps{tag}, List.mem_cons, List.not_mem_nil, or_false] at hp",
         f"    rcases hp with {cases}",
-        *(f"    · exact {pr}" for pr in side.proofs),
+        *(f"    · exact {pr}" for pr in proofs),
         "  disj := by decide",
-        "  int := by decide",
-        "  bnd := by decide",
+        "  dims := by decide",
         "  cover := by decide",
+        "  sub := by decide",
         "",
         f"theorem c{tag} : (joinAll (ps{tag}.map Prod.snd)).c = (rt 2)⁻¹ ^ {side.sqrt2_inv} := by",
         (
             f"  simp only [ps{tag}, List.map_cons, List.map_nil, joinAll, Frag.join, Frag.unit, "
-            "zFragAt, xFrag, fFrag, List.length_cons, List.length_nil, List.length_append]"
+            "zFragD, xFragD, fFragD, bFrag, List.length_cons, List.length_nil]"
         ),
         "  ring",
         "",
     ]
-    return lines
 
 
 def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
-    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two qubit diagrams with
-    Z, X and F nodes: each network's value is its fragments' path sum (NetPS.eval_eq), whose
-    pin steps reach from_diagram's variables, then each side's reduction steps and the final
-    comparison; raises :class:`PathSumUnsupported` outside that class or when the sums do not
-    reduce to one canonical form."""
+    """Lean 4 source proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X,
+    F, B and S nodes on dimensions 2^k: each network's value is its fragments' path sum over
+    digit variables (NetPSD.eval_eq), whose pin steps reach from_diagram's variables, then each
+    side's reduction steps, the two final sums matched on the boundary digits (val_agree) and
+    the final comparison; raises :class:`PathSumUnsupported` outside that class or when the sums
+    do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     if not isinstance(raw_l, PathSum) or not isinstance(raw_r, PathSum):
         raise PathSumUnsupported("the network export covers qubit path sums only")
-    if len(raw_l.boundary) != len(raw_r.boundary):
+    if raw_l.boundary != raw_r.boundary:
         raise PathSumUnsupported("the boundaries differ")
     red_l, red_r, _order, boolean, m, steps_l, steps_r = _plan(raw_l, raw_r)
-    phases: list[Fraction] = []
-    side_l, _ = _net_side(left, m, phases)
-    side_r, _ = _net_side(right, m, phases)
+    phases: list[str] = []
+    side_l, _ = _net_side(left, m, phases, 1 << 16)
+    side_r, _ = _net_side(right, m, phases, 1 << 17)
+    if [side_l.k_of[i] for i in range(side_l.boundary)] != [
+        side_r.k_of[i] for i in range(side_r.boundary)
+    ]:
+        raise PathSumUnsupported("the boundary ports carry different dimensions")
     side_l.steps += steps_l
     side_r.steps += steps_r
     f_l, f_r = _fac_model(side_l.steps, m), _fac_model(side_r.steps, m)
@@ -639,21 +764,20 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
     lhs = f_l * side_l.scalar * Inv(Rt(2)) ** side_l.sqrt2_inv * Om(m) ** k_l
     rhs = f_r * side_r.scalar * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
-    labs = sorted({*range(side_l.boundary), *side_l.summed, *side_r.summed})
-    phi = [
-        f"  | {i + 1} => fun k => if k = 1 then (({int(t * m)} : ℕ) : ℝ) / (({m} : ℕ) : ℝ) else 0"
-        for i, t in enumerate(phases)
-    ]
+    labs = sorted({**side_l.k_of, **side_r.k_of}.items())
+    phi = [f"  | {i + 1} => fun v => {body} / (({m} : ℕ) : ℝ)" for i, body in enumerate(phases)]
+    bnd = list(range(side_l.bnd_vars))
     ns = "ArchytasZX.PathSumNetProof"
+    run_l = f"(run {m} stepsL (netDataD digL NL (psL.map Prod.snd)))"
     lines = [
-        "import ArchytasZX.PathSumNet",
+        "import ArchytasZX.PathSumDigits",
         "",
         "/-!",
         f"# Path-sum proof `{name}` over the networks",
         "",
-        "Each network's value is its fragments' path sum; pin steps substitute the summed",
-        "labels of one class into one variable, the reduction steps follow, and the final",
-        "comparison gives `Equal`.",
+        "Each network's value is its fragments' path sum over digit variables; pin steps",
+        "substitute the summed digits of one class into one variable, the reduction steps",
+        "follow, and the final comparison gives `Equal`.",
         "-/",
         "",
         f"namespace {ns}",
@@ -665,17 +789,15 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "set_option linter.unusedSimpArgs false",
         "set_option linter.unusedTactic false",
         "",
-        "/-- Dimension values. -/",
-        "def Δ : ℕ → ℕ",
-        "  | 0 => 2",
-        "  | _ => 1",
+        "/-- Dimension values: index k is 2^k. -/",
+        "def Δ (k : ℕ) : ℕ := 2 ^ k",
         "",
         "/-- Phase vectors in turns. -/",
         "noncomputable def Φ : ℕ → ℕ → ℝ",
         *phi,
-        "  | _ => fun _ => 0",
+        f"  | _ => fun v => ((([] : List ℕ).getD v 0 : ℕ) : ℝ) / (({m} : ℕ) : ℝ)",
         "",
-        f"def labs : List (ℕ × ℕ) := {[(lab, 0) for lab in labs]}".replace("'", ""),
+        f"def labs : List (ℕ × ℕ) := {labs}",
         "",
         "noncomputable def E : Env := { dimv := Δ, phase := Φ, labs := labs }",
         "",
@@ -697,12 +819,20 @@ def export_net(left: Diagram, right: Diagram, name: str = "main") -> str:
         "",
         "/-- The two networks are equal. -/",
         f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
-        "  apply equal_ps _ _ netL netR rfl",
-        "  intro τ",
+        "  apply equal_psd2 _ _ netL netR rfl",
+        "  intro σ",
         "  rw [cL, cR, ← val_smul, ← val_smul,",
-        f"    run_sound {m} (by norm_num) stepsL (netData NL (psL.map Prod.snd)) _ τ (by decide),",
-        f"    run_sound {m} (by norm_num) stepsR (netData NR (psR.map Prod.snd)) _ τ (by decide)]",
-        f"  apply final_sound {m} (by norm_num) _ _ _ _ τ {k_l} {k_r} (by decide) (by decide)",
+        (
+            f"    run_sound {m} (by norm_num) stepsL (netDataD digL NL (psL.map Prod.snd)) _ _ "
+            "(by decide),"
+        ),
+        (
+            f"    run_sound {m} (by norm_num) stepsR (netDataD digR NR (psR.map Prod.snd)) _ _ "
+            "(by decide),"
+        ),
+        f"    val_agree {m} _ {run_l} {bnd} _ _ (by decide) (by decide)",
+        f"      (dbits_agree ownL ownR _ {bnd} (by decide))]",
+        f"  apply final_sound {m} (by norm_num) _ _ _ _ _ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide)",
         "  first | (rw [facL, facR]; exact consts) | rw [facL, facR]",
         "",

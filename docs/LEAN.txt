@@ -475,14 +475,26 @@ the fragments' paths) at the bits of sigma clamped to the boundary, and equal_ps
 s1 * val L tau = s2 * val R tau for every tau into Equal E s1 N1 s2 N2. PathSumRules adds the
 steps pin B (the head variable v with a constraint [v] + B, B free of v: v := B throughout,
 the constraint dropped, factor 1; pin_sound) and norm (phase, constraints and rows normalised;
-norm_sound), and val_smul. lean_pathsum.export_net(left, right) writes the networks of two
-qubit diagrams of Z, X and F nodes, labelled from from_diagram's numbering (boundary port i is
-label i, a summed wire is its class's variable when that is a path variable not yet taken,
-else a label from PIN_OFFSET; each Z fragment anchored at the label through which a search from
-its class's variable first reaches it), their fragments with NetPS proofs, the pin steps
-(deepest first, each pinned label to its search parent), norm, a perm to from_diagram's path
-and the reduction steps of export_proof, and main : Equal E sL NL sR NR by equal_ps, run_sound
-and final_sound. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
+norm_sound), and val_smul. ArchytasZX/PathSumDigits.lean reads a label of dimension 2^k as k Boolean digit variables:
+an owner table own lists each digit variable with its label and index (ownOK, checked by
+decide), dbits own sigma reads them from label values, sum_setBits and sumOver_dbits turn the
+network's sum over such labels into bsum over their digits, and the fragments are z_frag_dig
+(digit j of every leg equal to an anchor leg's digit j, the phase table interpolated over the
+anchor digits, tableOK by decide), b_frag and s_frag (the whole label's digits equal the low
+part's then the high part's), f_frag_dig and x_frag_dig (ex_prod_digits: ex (o j / 2^k) from the
+digit products with a + b < k; X's fresh digits summed by sum_setBits, its inputs through
+negP). NetPSD, NetPSD.eval_eq and equal_psd2 (one owner table per side, the final sums matched
+on the boundary digits by val_agree) give Equal from both sides' digit path sums.
+lean_pathsum.export_net(left, right) writes the networks of two diagrams of Z, X, F, B and S
+nodes on dimensions 2^k with their digit tables, numbered from from_diagram's: boundary port i
+is label i with its boundary digits, a summed wire's digit j is its class's variable when that
+is a path variable not yet taken, else a variable from PIN_OFFSET; each Z spider's digit j is
+anchored at the leg through which a search from its class's variable first reaches it. It then
+writes the pin steps (deepest first, each pinned digit to its search parent), norm, a perm to
+from_diagram's path and the reduction steps of export_proof, and main : Equal E sL NL sR NR by
+equal_psd2, run_sound, val_agree and final_sound. Checked end to end: Z fusion, F F, X fusion,
+hh_pivot, omega, omega_conj and rem on qubits, and through binders on dimensions 4 and 8 an
+hh_gen, hh_constraint trace and an hh_nl, hh_gen, hh_gen, rem, hh_constraint trace. certify_decision proves a path_sum EQUAL by export_net as a kernel.Symbolic.
 
 5. REFUTATIONS
 --------------
@@ -809,8 +821,7 @@ discard_merge and discard_spider for n > 1; a NATIVE certificate is not exported
 
 G15 Path-sum proofs. PathSumRules has no step for [Average] and there are no qudit
 semantics ([Gauss] and the Legendre form of G(a) included), so export_proof declines traces
-using them. PathSumNet covers Z, X and F at dimension 2 but not B, S or legs of 2^k digits,
-nor legless spiders, weighted spiders or a wire on two boundary ports; export_net raises for
-those and the path_sum EQUAL stays EQUAL_UNCERTIFIED.
-PathSum.lean, PathSumSem.lean, PathSumRules.lean and PathSumNet.lean check (no sorry) and are
-in the ArchytasZX root import list.
+using them. export_net covers Z, X, F, B and S on dimensions 2^k but not legless spiders,
+weighted spiders or a wire on two boundary ports; it raises for those and the path_sum EQUAL
+stays EQUAL_UNCERTIFIED. PathSum.lean, PathSumSem.lean, PathSumRules.lean, PathSumNet.lean and
+PathSumDigits.lean check (no sorry) and are in the ArchytasZX root import list.
