@@ -177,6 +177,31 @@ theorem rt_sub3 (M q : ℕ) (hM : 0 < M) (h : M = 12 * q) :
   push_cast
   ring
 
+theorem rt_sub5 (M q : ℕ) (hM : 0 < M) (h : M = 5 * q) :
+    rt 5 = 1 + 2 * om M ^ q + 2 * om M ^ (4 * q) := by
+  rw [pow_mul', ← om_sub M 5 q hM h]
+  have e : om 5 ^ 4 = (starRingEnd ℂ) (om 5) := by
+    rw [conj_om]; apply eq_inv_of_mul_eq_one_left
+    rw [← pow_succ]; exact om_pow_self 5 (by norm_num)
+  have hre : (om 5).re = Real.cos (2 * (Real.pi / 5)) := by
+    unfold om
+    rw [Complex.exp_re]
+    have h1 : (2 * (Real.pi : ℂ) * Complex.I / ((5 : ℕ) : ℂ)).re = 0 := by simp
+    have h2 : (2 * (Real.pi : ℂ) * Complex.I / ((5 : ℕ) : ℂ)).im = 2 * (Real.pi / 5) := by
+      simp; ring
+    rw [h1, h2, Real.exp_zero, one_mul]
+  have hc : Real.cos (2 * (Real.pi / 5)) = (Real.sqrt 5 - 1) / 4 := by
+    rw [Real.cos_two_mul, Real.cos_pi_div_five]
+    have h5 : Real.sqrt 5 ^ 2 = 5 := Real.sq_sqrt (by norm_num)
+    linear_combination (1 / 8 : ℝ) * h5
+  have hs : om 5 + (starRingEnd ℂ) (om 5) = ((2 * (om 5).re : ℝ) : ℂ) := by
+    rw [Complex.add_conj]
+  rw [e, show (1 : ℂ) + 2 * om 5 + 2 * (starRingEnd ℂ) (om 5) =
+    1 + 2 * (om 5 + (starRingEnd ℂ) (om 5)) by ring, hs, hre, hc]
+  simp only [rt]
+  push_cast
+  ring
+
 theorem rt_split (x k s : ℕ) (h : x = k ^ 2 * s) : rt x = k * rt s := by
   subst h
   simp only [rt]

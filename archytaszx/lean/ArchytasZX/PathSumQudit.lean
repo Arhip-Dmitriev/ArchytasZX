@@ -11,7 +11,7 @@ import Mathlib.NumberTheory.LegendreSymbol.QuadraticChar.Basic
 A path sum over `σ : ℕ → ZMod p` is `Data`: path variables, phase terms `(monomial, k)` worth
 `k / p` turns, constraints and support rows, each a polynomial over F_p whose monomials are
 (variable, exponent) lists. `val p c s σ` sums `summand` over the path variables, each over
-`ZMod p`. `elimS`, `hhConsS`, `hhPivotS`, `gaussS`, `canonS` and `normS` compute one rule step
+`ZMod p`. `elimS`, `hhConsS`, `hhPivotS`, `gaussS`, `canonS`, `pinS` and `normS` compute one step
 and each `*_sound` theorem says the value is unchanged up to the step's factor under a `Bool`
 side condition checked by `decide`. `qg_legendre` is the Legendre form of the quadratic Gauss
 sum `G(a) = Sum_y zeta_p^(a y^2) = (a/p) Sum_k (k/p) zeta_p^k`.
@@ -977,6 +977,83 @@ theorem final_sound (cL cR : ℂ) (sL sR : Data) (σ : ℕ → ZMod p) (kL kR : 
     linear_combination ψ p (qv σ (stripC sR.phase)) * hc
   · rfl
 
+/-! ### Pinning a path variable to another variable -/
+
+/-- Whether `q` is pivotable at `y` with value `x`. -/
+def pinTo (p y x : ℕ) (q : Poly) : Bool :=
+  pivOK p y q && decide (normQ p (pivVal p y q) = [([(x, 1)], 1)])
+
+/-- Whether the head path variable is not in the tail and some constraint sets it to `x`. -/
+def pinOK (p x : ℕ) (s : Data) : Bool :=
+  match s.path with
+  | [] => false
+  | y :: ys => !decide (y ∈ ys) && (s.cons.find? (pinTo p y x)).isSome
+
+/-- The head path variable summed against the first constraint setting it to `x`: that
+constraint dropped, the variable's value substituted into the phase, the other constraints and
+the rows. -/
+def pinS (p x : ℕ) (s : Data) : Data :=
+  match s.path with
+  | [] => s
+  | y :: ys =>
+    match s.cons.find? (pinTo p y x) with
+    | none => s
+    | some q =>
+      let B := pivVal p y q
+      { path := ys, phase := normQ p (substQ y B s.phase),
+        cons := (s.cons.erase q).map fun r => normQ p (substQ y B r),
+        rows := s.rows.map fun r => normQ p (substQ y B r) }
+
+theorem pin_sound [Fact p.Prime] (c : ℂ) (x : ℕ) (s : Data) (σ : ℕ → ZMod p)
+    (h : pinOK p x s = true) : val p c s σ = val p c (pinS p x s) σ := by
+  unfold val
+  rcases hp : s.path with _ | ⟨y, ys⟩
+  · simp [pinOK, hp] at h
+  · simp only [pinOK, hp, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+      Option.isSome_iff_exists] at h
+    obtain ⟨h1, ⟨q, hq⟩⟩ := h
+    have hiq : q ∈ s.cons := List.mem_of_find?_eq_some hq
+    have hpq : pivOK p y q = true := by
+      have := List.find?_some hq
+      simp only [pinTo, Bool.and_eq_true] at this
+      exact this.1
+    simp only [pinS, hp, hq]
+    rw [qsum_head _ y ys σ h1]
+    apply qsum_congr
+    intro τ
+    set B := pivVal p y q
+    set τB := Function.update τ y (qv τ B)
+    have hperm := List.perm_cons_erase hiq
+    have hsplit : ∀ τ' : ℕ → ZMod p, (∀ r ∈ s.cons ++ s.rows, qv τ' r = 0) ↔
+        (qv τ' q = 0 ∧ ∀ r ∈ s.cons.erase q ++ s.rows, qv τ' r = 0) := by
+      intro τ'
+      simp only [List.mem_append]
+      constructor
+      · intro H
+        refine ⟨H q (Or.inl hiq), fun r hr => ?_⟩
+        rcases hr with hr | hr
+        · exact H r (Or.inl (List.mem_of_mem_erase hr))
+        · exact H r (Or.inr hr)
+      · rintro ⟨H0, H⟩ r (hr | hr)
+        · rcases List.mem_cons.1 (hperm.mem_iff.1 hr) with e | hr'
+          · rw [e]; exact H0
+          · exact H r (Or.inl hr')
+        · exact H r (Or.inr hr)
+    have hnew : (∀ r ∈ (s.cons.erase q).map (fun r => normQ p (substQ y B r)) ++
+        s.rows.map (fun r => normQ p (substQ y B r)), qv τ r = 0) ↔
+        (∀ r ∈ s.cons.erase q ++ s.rows, qv τB r = 0) := by
+      rw [← List.map_append]
+      exact holds_map (fun r => normQ p (substQ y B r)) (fun r => by rw [qv_normQ, qv_substQ]) _
+    unfold summand
+    simp only [hsplit, piv_iff y q hpq τ]
+    rw [Finset.sum_eq_single (qv τ B)]
+    · simp only [hnew, qv_normQ, qv_substQ]
+      exact if_congr ⟨fun H => H.2, fun H => ⟨rfl, H⟩⟩ rfl rfl
+    · intro b _ hb
+      rw [if_neg (fun H => hb H.1)]
+    · intro hm
+      exact absurd (Finset.mem_univ _) hm
+
 /-! ## Step lists -/
 
 /-- One step of a replayed qudit reduction. -/
@@ -988,6 +1065,7 @@ inductive Step where
   | hhPivot
   | gauss (A : ℕ)
   | canon (v : ℕ)
+  | pin (x : ℕ)
 
 /-- A step's side condition. -/
 def stepOK (p : ℕ) : Step → Data → Bool
@@ -998,6 +1076,7 @@ def stepOK (p : ℕ) : Step → Data → Bool
   | .hhPivot, s => hhPivotOK p s
   | .gauss A, s => gaussOK p A s
   | .canon v, s => canonOK p v s
+  | .pin x, s => pinOK p x s
 
 /-- A step applied. -/
 def stepS (p : ℕ) : Step → Data → Data
@@ -1008,12 +1087,13 @@ def stepS (p : ℕ) : Step → Data → Data
   | .hhPivot, s => hhPivotS p s
   | .gauss A, s => gaussS p A s
   | .canon v, s => canonS p v s
+  | .pin x, s => pinS p x s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac (p : ℕ) [NeZero p] : Step → ℂ
   | .elim | .hhCons | .hhPivot => p
   | .gauss A => qg p A
-  | .perm _ | .norm | .canon _ => 1
+  | .perm _ | .norm | .canon _ | .pin _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (p : ℕ) : List Step → Data → Bool
@@ -1040,6 +1120,7 @@ theorem step_sound [Fact p.Prime] (st : Step) (s : Data) (c : ℂ) (σ : ℕ →
   | hhPivot => simpa [fac, stepS] using hhPivot_sound c s σ h
   | gauss A => simpa [fac, stepS] using gauss_sound A c s σ h
   | canon v => simpa [fac, stepS] using canon_sound c v s σ h
+  | pin x => simpa [fac, stepS] using pin_sound c x s σ h
 
 theorem run_sound [Fact p.Prime] :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod p), runOK p sts s = true →
