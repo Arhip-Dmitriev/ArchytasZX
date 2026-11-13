@@ -170,7 +170,8 @@ coq() {  # opam root with switches bench (Coq 8.20.1, why3), sqir23 (Coq 8.16.1)
          # build rejects non-ASCII paths). Every opam command names its switch (OPAMSWITCH).
     local C="${BENCH_COQ_HOME:-$HOME/.cache/archytaszx-bench/coq}"
     mkdir -p "$C/src"
-    export OPAMROOT="$C/opam" OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes
+    export OPAMROOT="$C/opam" OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OPAMNODEPEXTS=1  # system libraries
+                                                                                 # (gmp) from the host
     [ -d "$OPAMROOT" ] || { need_net "$OPAMROOT" && opam init --bare -n --disable-sandboxing; }
     local dl=()
     [ "$FETCH" = 1 ] && dl=(--download-only)
