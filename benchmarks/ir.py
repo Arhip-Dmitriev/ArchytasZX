@@ -239,6 +239,18 @@ class Pairs:
     pair_index: str = "m"
 
 
+@dataclass(frozen=True)
+class LowerMCX:
+    """For each copy k of register ``over`` (dimension 2), from the last copy down to the first
+    (up from the first with ``reverse``), the flip of copy k controlled on every copy j < k at
+    1 and on the single wires ``controls`` at ``values``."""
+
+    over: str
+    controls: tuple[str, ...] = ()
+    values: tuple[int, ...] = ()
+    reverse: bool = False
+
+
 Gate = Union[  # noqa: UP007
     Init,
     Post,
@@ -262,6 +274,7 @@ Gate = Union[  # noqa: UP007
     Chain,
     Pairs,
     Tree,
+    LowerMCX,
 ]
 
 
@@ -318,6 +331,8 @@ def gate_wires(g: Gate) -> tuple[str, ...]:
         return (g.over,)
     if isinstance(g, Tree):
         return (g.parent,)
+    if isinstance(g, LowerMCX):
+        return (*g.controls, g.over)
     return (g.q,)
 
 

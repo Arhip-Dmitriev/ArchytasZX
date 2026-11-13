@@ -22,6 +22,7 @@ from benchmarks.ir import (  # noqa: F401
     Discard,
     F,
     Init,
+    LowerMCX,
     Measure,
     Oracle,
     Pairs,

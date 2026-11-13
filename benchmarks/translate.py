@@ -43,7 +43,11 @@ Z(1 -> 1) there. A carry that ends in the copy takes the register's end, and the
 copy has no output. Gates on a chain's registers before or after it go in its box. Pairs puts
 Z(2 -> 1) (its in1 the right port) then Z(1 -> 2) (its out1 the left port) on the register's
 wire in the register's box, which takes the index, and the CZ's F nodes in a pair box with
-copy scalar D^(1/2).
+copy scalar D^(1/2). LowerMCX (D = 2) puts, per copy k in the register's box (index j), a
+Z(1 -> 2) fan on the wire (before the target, after it with ``reverse``), the target X(2 -> 1)
+(scalar 2^(1/2) per copy) fed by Ti after a Z AND spider, and one T per single control into
+the AND (through X(pi) for value 0); a pair box (index m) holds one T from copy j's fan leg to
+copy k's AND, so the AND reads T|0> + prod x |1> = T|prod x>.
 """
 
 from __future__ import annotations
@@ -564,7 +568,71 @@ def _gate(b: _Builder, g: ir.Gate) -> None:
     if isinstance(g, ir.Tree):
         _tree(b, g)
         return
+    if isinstance(g, ir.LowerMCX):
+        _lower_mcx(b, g)
+        return
     raise TypeError(f"unknown gate {g!r}")
+
+
+def _lower_mcx(b: _Builder, g: ir.LowerMCX) -> None:
+    """The fan, AND and target nodes of :class:`ir.LowerMCX` (see the module docstring)."""
+    q = g.over
+    if b.chain is not None or b.c.count(q) is None or q in b.chained:
+        raise Unsupported("a lower-copy MCX inside a loop or on a wire that is not a free register")
+    if any(b.ctx.concrete(b.c.dim(w)) != 2 for w in (q, *g.controls)):
+        raise Unsupported("a lower-copy MCX needs dimension 2")
+    if len(g.values) != len(g.controls) or any(v not in (0, 1) for v in g.values):
+        raise ValueError("a lower-copy MCX takes one value 0 or 1 per control")
+    key = str(b.c.count(q))
+    box = b.boxes.setdefault(key, _Box(key))
+    if box.name is None:
+        box.name = f"C{sum(1 for x in b.boxes.values() if x.name is not None)}"
+    if box.index not in (None, "j"):
+        raise Unsupported("a lower-copy MCX on a box reading another index")
+    box.index = "j"
+    dt = "literal 2"
+
+    def fan() -> str:
+        z = b.node(f"Z(1 -> 2, {dt})", key)
+        b.take(q, f"{z}.in0")
+        b.gives(q, f"{z}.out0")
+        return f"{z}.out1"
+
+    def target() -> str:
+        x = b.node(f"X(2 -> 1, {dt})", key)
+        b.take(q, f"{x}.in0")
+        b.gives(q, f"{x}.out0")
+        return f"{x}.in1"
+
+    if g.reverse:
+        flip = target()
+        left = fan()
+    else:
+        left = fan()
+        flip = target()
+    conj = b.node(f"Z({1 + len(g.controls)} -> 1, {dt})", key)
+    inverse = b.node(f"Ti({dt})", key)
+    b.wires += [f"{conj}.out0 -- {inverse}.in0", f"{inverse}.out0 -- {flip}"]
+    b.factor(sp.sqrt(2), key)
+    for i, (c, v) in enumerate(zip(g.controls, g.values, strict=True)):
+        z = b.node(f"Z(1 -> 2, {dt})", None)
+        b.take(c, f"{z}.in0")
+        b.gives(c, f"{z}.out0")
+        port = f"{z}.out1"
+        if v == 0:
+            n = b.node(f"X(1 -> 1, {dt}) phase{{1: 1/2}}", key)
+            b.wires.append(f"{port} -- {n}.in0")
+            port = f"{n}.out0"
+        t = b.node(f"T({dt})", key)
+        b.wires += [f"{port} -- {t}.in0", f"{t}.out0 -- {conj}.in{1 + i}"]
+    t = b.node(f"T({dt})", None)
+    b.wires += [f"{left} -- {t}.in0", f"{t}.out0 -- {conj}.in0"]
+    name = f"P{len(b.pair_lines)}"
+    b.pair_lines += [
+        f"pairs {name} of {box.name} index m: {t}",
+        f"left {name}: {left}",
+        f"right {name}: {conj}.in0",
+    ]
 
 
 def _tree(b: _Builder, g: ir.Tree) -> None:

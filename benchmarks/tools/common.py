@@ -132,6 +132,13 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
                         sub = {"left": own[j], "right": own[k]}
                         gates.append(_rename(ir.at_index(h, values), sub))
             continue
+        if isinstance(g, ir.LowerMCX):
+            own = copies[g.over]
+            order = range(len(own)) if g.reverse else reversed(range(len(own)))
+            for k in order:
+                cs = (*g.controls, *own[:k])
+                gates.append(ir.MCX(cs, own[k], (*g.values, *(1,) * k)))
+            continue
         if alias and not isinstance(g, (ir.Chain, ir.Pairs, ir.Tree)):
             g = _rename(g, {q: alias[q] for q in ir.gate_wires(g) if q in alias})
         qs = ir.gate_wires(g)
