@@ -53,3 +53,4 @@ import ArchytasZX.PathSumRules
 import ArchytasZX.PathSumNet
 import ArchytasZX.PathSumDigits
 import ArchytasZX.PathSumQudit
+import ArchytasZX.ChainInduct
