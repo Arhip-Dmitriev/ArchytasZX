@@ -1,0 +1,269 @@
+# Copyright 2026 Arkhip A. Dmitriev
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A library of stated lemmas: named identities between two diagrams over one symbol.
+
+Each lemma is proved once, with the symbol formal, by
+:func:`~archytaszx.semantics.decide.decide_equal` with no oracle sample, and kept with its
+kernel theorem (:func:`proved`). An instance at a value of the symbol (:func:`instance`) is a
+kernel theorem by symbolic contraction of the instantiated sides; :func:`rewrite` finds an
+instance's left side inside a larger diagram through cut wires and replaces it by the right
+side under :func:`~archytaszx.semantics.kernel.congr`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+from archytaszx.algebra.dimension import Dim, DimensionError
+from archytaszx.algebra.phase import INDEX, Phase, PhaseVector
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.generators import (
+    DIM_BINDER,
+    DIM_SPLITTER,
+    FOURIER_BOX,
+    X_SPIDER,
+    Z_SPIDER,
+)
+from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+
+
+class LemmaError(Exception):
+    """A lemma is unknown, unproved, or has no instance where one was asked for."""
+
+
+@dataclass(frozen=True, slots=True)
+class Lemma:
+    """A named identity ``build(e)[0] = build(e)[1]`` for every value ``e`` of ``symbol``."""
+
+    name: str
+    symbol: str
+    statement: str
+    build: Callable[[sp.Expr], tuple[Diagram, Diagram]]
+
+
+def _out(node: NodeId, index: int = 0) -> PortRef:
+    return PortRef(node, Direction.OUTPUT, index)
+
+
+def _in(node: NodeId, index: int = 0) -> PortRef:
+    return PortRef(node, Direction.INPUT, index)
+
+
+def _shift(d: Diagram, dim: Dim, sign: int) -> NodeId:
+    """An X(1 -> 1) over ``dim`` with phase ``-sign k / dim``: the shift by ``sign``."""
+    turns = -sign * INDEX / dim.to_sympy()
+    return d.add_node(X_SPIDER, [dim], [dim], phase=PhaseVector(dim, rule=Phase(turns)))
+
+
+def _carry_sides(p: sp.Expr) -> tuple[Diagram, Diagram]:
+    """Left: (top, low) bound by B(2, 2^p), shifted by one over 2^(p + 1), split by
+    S(2, 2^p). Right: F on top; the bound register shifted by one, weight -1 off index 0,
+    shifted back, scalar -1 (a sign at the all-ones index); F^3 on top; low shifted by one
+    over 2^p."""
+    two = Dim(2)
+    low = Dim.from_sympy(2**p)
+    reg = Dim.from_sympy(2 ** (p + 1))
+
+    left = Diagram()
+    b = left.add_node(DIM_BINDER, [two, low], [reg])
+    x = _shift(left, reg, 1)
+    s = left.add_node(DIM_SPLITTER, [reg], [two, low])
+    left.add_wire(_out(b), _in(x))
+    left.add_wire(_out(x), _in(s))
+    left.set_boundary_inputs([_in(b, 0), _in(b, 1)])
+    left.set_boundary_outputs([_out(s, 0), _out(s, 1)])
+
+    right = Diagram()
+    f = right.add_node(FOURIER_BOX, [two], [two])
+    rb = right.add_node(DIM_BINDER, [two, low], [reg])
+    u = _shift(right, reg, 1)
+    g = right.add_node(
+        Z_SPIDER, [reg], [reg], phase=PhaseVector(reg, weight_rule=Scalar(sp.Integer(-1)))
+    )
+    v = _shift(right, reg, -1)
+    rs = right.add_node(DIM_SPLITTER, [reg], [two, low])
+    f1, f2, f3 = (right.add_node(FOURIER_BOX, [two], [two]) for _ in range(3))
+    lx = _shift(right, low, 1)
+    for a, z in ((f, rb), (rb, u), (u, g), (g, v), (v, rs), (f1, f2), (f2, f3)):
+        right.add_wire(_out(a), _in(z))
+    right.add_wire(_out(rs, 0), _in(f1))
+    right.add_wire(_out(rs, 1), _in(lx))
+    right.set_boundary_inputs([_in(f), _in(rb, 1)])
+    right.set_boundary_outputs([_out(f3), _out(lx)])
+    right.set_scalar(Scalar(sp.Integer(-1)))
+    return left, right
+
+
+CARRY_SHIFT = Lemma(
+    name="carry_shift",
+    symbol="p",
+    statement=(
+        "the shift by one over 2^(p + 1), with the top bit and the low 2^p register bound by "
+        "B(2, 2^p), is the top bit flipped when the low register is all ones, then the low "
+        "register shifted by one over 2^p"
+    ),
+    build=_carry_sides,
+)
+
+LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT,)
+
+
+def lemma(name: str) -> Lemma:
+    """The library lemma called ``name``."""
+    for entry in LIBRARY:
+        if entry.name == name:
+            return entry
+    raise LemmaError(f"no lemma named {name!r}")
+
+
+def sides(entry: Lemma, value: sp.Expr | None = None) -> tuple[Diagram, Diagram]:
+    """Both sides of ``entry`` at ``value``, or with the symbol formal."""
+    symbol = Dim.symbol(entry.symbol).to_sympy()
+    return entry.build(symbol if value is None else sp.sympify(value))
+
+
+_PROVED: dict[str, object] = {}
+
+
+def proved(entry: Lemma) -> object:
+    """The kernel theorem of ``entry`` with its symbol formal, proved on first use by
+    :func:`~archytaszx.semantics.decide.decide_equal` with no oracle sample."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+
+    if entry.name not in _PROVED:
+        left, right = sides(entry)
+        decision = decide_equal(left, right, samples=[])
+        if decision.verdict is not EqualityVerdict.EQUAL:
+            raise LemmaError(f"lemma {entry.name} is not proved: {decision.verdict.value}")
+        _PROVED[entry.name] = kernel.from_decision(decision, left, right)
+    return _PROVED[entry.name]
+
+
+def instance(entry: Lemma, value: sp.Expr) -> object:
+    """The kernel theorem of ``entry`` at ``value``, by symbolic contraction of both sides, else
+    by a decision with no oracle sample."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+
+    proved(entry)
+    left, right = sides(entry, value)
+    try:
+        return kernel.contraction(left, right)
+    except kernel.KernelError as exc:
+        decision = decide_equal(left, right, samples=[])
+        if decision.verdict is not EqualityVerdict.EQUAL:
+            raise LemmaError(f"lemma {entry.name} at {value}: {exc}") from exc
+        try:
+            return kernel.from_decision(decision, left, right)
+        except kernel.KernelError as again:
+            raise LemmaError(f"lemma {entry.name} at {value}: {again}") from again
+
+
+def _values(diagram: Diagram, entry: Lemma) -> list[sp.Expr]:
+    """The symbolic values ``e`` and ``e - 1`` of ``entry``'s symbol for each dimension ``2^e``
+    of ``diagram``, in order of first appearance."""
+    found: list[sp.Expr] = []
+    for _node_id, node in sorted(diagram.nodes.items()):
+        for port in (*node.inputs, *node.outputs):
+            expr = port.dim.to_sympy()
+            if expr.is_Pow and expr.base == 2 and expr.exp.free_symbols:
+                for value in (expr.exp, sp.expand(expr.exp - 1)):
+                    if value not in found:
+                        found.append(value)
+    return found
+
+
+def _regions(diagram: Diagram, pattern: Diagram) -> Iterator[frozenset[NodeId]]:
+    """Node sets of ``diagram`` holding ``pattern``'s generator types in its counts and joined
+    by wires as ``pattern``'s nodes are."""
+    nodes = sorted(pattern.nodes)
+    candidates = [
+        [
+            n
+            for n in sorted(diagram.nodes)
+            if diagram.nodes[n].generator_type is pattern.nodes[p].generator_type
+        ]
+        for p in nodes
+    ]
+    adjacency = {(w.a.node_id, w.b.node_id) for w in diagram.wires}
+    adjacency |= {(b, a) for a, b in adjacency}
+    pattern_edges = {(w.a.node_id, w.b.node_id) for w in pattern.wires}
+    seen: set[frozenset[NodeId]] = set()
+
+    def extend(chosen: list[NodeId]) -> Iterator[list[NodeId]]:
+        if len(chosen) == len(nodes):
+            yield chosen
+            return
+        position = len(chosen)
+        for n in candidates[position]:
+            if n in chosen:
+                continue
+            ok = all(
+                (chosen[nodes.index(a)], n) in adjacency
+                for a, b in pattern_edges
+                if b == nodes[position] and a in nodes[:position]
+            ) and all(
+                (n, chosen[nodes.index(b)]) in adjacency
+                for a, b in pattern_edges
+                if a == nodes[position] and b in nodes[:position]
+            )
+            if ok:
+                yield from extend([*chosen, n])
+
+    for chosen in extend([]):
+        region = frozenset(chosen)
+        if region not in seen:
+            seen.add(region)
+            yield region
+
+
+def rewrite(diagram: Diagram, entry: Lemma) -> object | None:
+    """``diagram = diagram'`` by :func:`~archytaszx.semantics.kernel.congr` of an instance of
+    ``entry`` whose left side ``diagram`` holds through cut wires, ``diagram'`` holding its
+    right side there; None when no instance is found."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import find_cut_region
+
+    for value in _values(diagram, entry):
+        try:
+            left, _right = sides(entry, value)
+        except DimensionError:
+            continue
+        for region in _regions(diagram, left):
+            cut = find_cut_region(diagram, region, left)
+            if cut is None:
+                continue
+            theorem = instance(entry, value)
+            try:
+                return kernel.congr(theorem, diagram, cut)  # type: ignore[arg-type]
+            except kernel.KernelError:
+                continue
+    return None
+
+
+__all__ = [
+    "CARRY_SHIFT",
+    "LIBRARY",
+    "Lemma",
+    "LemmaError",
+    "instance",
+    "lemma",
+    "proved",
+    "rewrite",
+    "sides",
+]

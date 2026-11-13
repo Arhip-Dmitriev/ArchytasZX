@@ -855,15 +855,46 @@ def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr
     return sp.expand(least), sp.expand(greatest)
 
 
+def _extreme(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr], top: bool) -> sp.Expr | None:
+    """The product of index deltas holding the integer-linear ``expr`` at its greatest (``top``)
+    or least value over the indices sized in ``ranges``, else None."""
+    form = _linear_form(expr)
+    if not form:
+        return None
+    out: sp.Expr = sp.Integer(1)
+    for var, coefficient in sorted(form.items(), key=lambda item: str(item[0].name)):
+        size = ranges.get(var)
+        if size is None:
+            return None
+        value = sp.expand(size - 1) if (coefficient > 0) == top else sp.Integer(0)
+        out *= ModDelta(sp.expand(var - value), size)
+    return out
+
+
+def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
+    """The radix candidates of a symbolic ``modulus = a * S`` (``a`` its integer factor, ``S``
+    the rest): each non-integer factor, then ``c * S`` for each divisor ``c > 1`` of ``a`` below
+    ``a``."""
+    factors = sp.Mul.make_args(modulus)
+    out = [f for f in factors if not f.is_Integer]
+    whole = sp.Mul(*out)
+    integer = sp.Mul(*(f for f in factors if f.is_Integer))
+    if integer.is_Integer and int(integer) > 2:
+        a = int(integer)
+        out += [sp.Integer(c) * whole for c in range(2, a) if a % c == 0]
+    return out
+
+
 def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
     """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B|
-    < t``, else None."""
+    < t``; when ``B`` reaches ``t`` (or ``-t``) only at one corner ``E`` of the ranges, as
+    ``([B == 0 mod t] - E) * [A == 0 mod P] + E * [A +- 1 == 0 mod P]``; else None."""
     frequency, modulus = delta.args
     if modulus.is_Integer:
         return _radix_split_concrete(frequency, int(modulus), ranges)
     if len(sp.Mul.make_args(modulus)) < 2:
         return None
-    for t in (f for f in sp.Mul.make_args(modulus) if not f.is_Integer):
+    for t in _radix_moduli(modulus):
         carry: sp.Expr = sp.Integer(0)
         digit: sp.Expr = sp.Integer(0)
         for piece in sp.Add.make_args(sp.expand(frequency)):
@@ -871,17 +902,26 @@ def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
                 carry += sp.cancel(piece / t)
             else:
                 digit += piece
+        rest = sp.cancel(modulus / t)
         if digit != 0:
             bounds = _bounds(digit, ranges)
             if bounds is None:
                 continue
             least, greatest = bounds
-            if not (
-                sp.expand(t - greatest).is_positive is True
-                and sp.expand(t + least).is_positive is True
-            ):
-                continue
-        rest = sp.cancel(modulus / t)
+            above = sp.expand(t - greatest)
+            below = sp.expand(t + least)
+            if above.is_positive is not True or below.is_positive is not True:
+                top = above == 0 and below.is_positive is True
+                if not (top or (below == 0 and above.is_positive is True)):
+                    continue
+                corner = _extreme(digit, ranges, top)
+                if corner is None:
+                    continue
+                return cast(
+                    sp.Expr,
+                    (ModDelta(sp.expand(digit), t) - corner) * ModDelta(sp.expand(carry), rest)
+                    + corner * ModDelta(sp.expand(carry + (1 if top else -1)), rest),
+                )
         return cast(sp.Expr, ModDelta(sp.expand(digit), t) * ModDelta(sp.expand(carry), rest))
     return None
 
@@ -1043,6 +1083,10 @@ def _delta_step(
                     and sp.expand(size - 1 - bounds[1]).is_nonnegative is True
                 ):
                     wrapped = _wrap_pin(weight, var, coefficient, rest, modulus, size)
+                    if wrapped is None and bounds is not None:
+                        wrapped = _corner_pin(
+                            weight, var, sp.expand(-sign * rest), bounds, size, known
+                        )
                     if wrapped is None:
                         continue
                     return wrapped, _without(limits, index)
@@ -1085,6 +1129,34 @@ def _wrap_pin(
     if int(modulus) == int(size):
         return cast(sp.Expr, pinned)
     return cast(sp.Expr, pinned * ModDelta(sp.expand(coefficient * value + rest), modulus))
+
+
+def _corner_pin(
+    weight: sp.Expr,
+    var: sp.Symbol,
+    value: sp.Expr,
+    bounds: tuple[sp.Expr, sp.Expr],
+    size: sp.Expr,
+    ranges: Mapping[sp.Symbol, sp.Expr],
+) -> sp.Expr | None:
+    """``Sum_{var < size} [var == value mod size] * weight`` for ``value`` in ``[-1, size)`` or
+    ``[0, size]``, the out-of-range end one corner ``E`` of the ranges: ``(1 - E) * weight`` at
+    ``value`` plus ``E * weight`` at ``value`` moved by ``size``; else None."""
+    least, greatest = bounds
+    if sp.expand(least + 1) == 0 and sp.expand(size - 1 - greatest).is_nonnegative is True:
+        top, shift = False, size
+    elif least.is_nonnegative is True and sp.expand(greatest - size) == 0:
+        top, shift = True, -size
+    else:
+        return None
+    corner = _extreme(value, ranges, top)
+    if corner is None:
+        return None
+    return cast(
+        sp.Expr,
+        (1 - corner) * weight.xreplace({var: value})
+        + corner * weight.xreplace({var: sp.expand(value + shift)}),
+    )
 
 
 def _carried_frequency(term: sp.Expr, frequency: sp.Expr) -> tuple[sp.Expr, int] | None:
@@ -1330,11 +1402,28 @@ def _exact_pivot(
     )
 
 
+def _never(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> bool:
+    """Whether ``ranges`` hold the linear frequency of ``delta`` strictly between two consecutive
+    multiples of its modulus (0 and the modulus, or minus the modulus and 0)."""
+    frequency, modulus = delta.args
+    if not ranges or frequency.free_symbols - set(ranges):
+        return False
+    bounds = _bounds(frequency, ranges)
+    if bounds is None:
+        return False
+    least, greatest = bounds
+    if least.is_positive is True and sp.expand(modulus - greatest).is_positive is True:
+        return True
+    return greatest.is_negative is True and sp.expand(modulus + least).is_positive is True
+
+
 def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None = None) -> sp.Expr:
     """A product with its implied ModDelta factors dropped and its linear ModDelta factors in
     echelon form, each pivot substituted into the rest wherever that rest is periodic in it, or
     everywhere when ``ranges`` force the pivot exactly."""
     ranges = ranges or {}
+    if any(_never(d, ranges) for d in map(_delta_base, sp.Mul.make_args(term)) if d is not None):
+        return sp.Integer(0)
     term = _drop_implied(term)
     by_modulus: dict[sp.Expr, list[sp.Expr]] = {}
     others: list[sp.Expr] = []
