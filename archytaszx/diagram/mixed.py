@@ -224,6 +224,26 @@ def _add_to_box(diagram: Diagram, box: BangBoxId | None, node_ids: Iterable[Node
         box = b.parent
 
 
+def _move_link_port(diagram: Diagram, old: PortRef, new: PortRef) -> None:
+    """Every chain link, tree port and left or right port at ``old`` moved to ``new``."""
+    for box_id, box in sorted(diagram.bang_boxes.items()):
+        ports = {*(r for link in box.links for r in link), *box.tree, box.tree_parent}
+        if old not in ports and old not in box.left_ports | box.right_ports:
+            continue
+
+        def at(ref: PortRef) -> PortRef:
+            return new if ref == old else ref
+
+        diagram.set_bang_box_extension(
+            box_id,
+            links=tuple((at(p), at(q)) for p, q in box.links),
+            tree=tuple(at(r) for r in box.tree),
+            tree_parent=None if box.tree_parent is None else at(box.tree_parent),
+            left_ports=frozenset(at(r) for r in box.left_ports),
+            right_ports=frozenset(at(r) for r in box.right_ports),
+        )
+
+
 def conj_with_origin(diagram: Diagram) -> tuple[Diagram, dict[NodeId, NodeId]]:
     """``conj(diagram)`` and, for each of its nodes, the node of ``diagram`` it came from."""
     out = diagram.copy()
@@ -246,6 +266,9 @@ def conj_with_origin(diagram: Diagram) -> tuple[Diagram, dict[NodeId, NodeId]]:
             out.add_wire(PortRef(second, Direction.OUTPUT, 0), PortRef(third, Direction.INPUT, 0))
             origin[second] = origin[third] = node_id
             _add_to_box(out, _box_of(diagram, node_id), (second, third))
+            _move_link_port(
+                out, PortRef(node_id, Direction.OUTPUT, 0), PortRef(third, Direction.OUTPUT, 0)
+            )
     out.set_scalar(diagram.scalar.conjugate())
     return out, origin
 
@@ -344,6 +367,7 @@ def _copy_boxes(
     target: Diagram,
     maps: Sequence[Mapping[NodeId, NodeId]],
     extra: Mapping[NodeId, Sequence[NodeId]],
+    link_sources: Sequence[Diagram] | None = None,
 ) -> None:
     """Each node-scope box of ``source`` as one box over its images under every map, each
     port-scope box as one box per map, all sharing the source box's multiplicity; a port-scope
@@ -353,14 +377,35 @@ def _copy_boxes(
     port_ids: dict[BangBoxId, dict[int, BangBoxId]] = {}
     for box in order:
         parent = None if box.parent is None else new_id.get(box.parent)
+        if box.is_pair or box.is_tree:
+            raise MixedDomainError(f"bang box {box.id!r}: a pair or tree box has no doubling")
         if box.is_node_scope:
             scope: set[NodeId] = set()
             for m in maps:
                 scope |= {m[n] for n in box.node_scope if n in m}
             for n in box.node_scope:
                 scope |= set(extra.get(n, ()))
+            sources = link_sources or [source] * len(maps)
+            links = tuple(
+                (
+                    PortRef(m[p.node_id], p.direction, p.index),
+                    PortRef(m[q.node_id], q.direction, q.index),
+                )
+                for m, own in zip(maps, sources, strict=True)
+                for p, q in own.bang_boxes[box.id].links
+                if p.node_id in m and q.node_id in m
+            )
+            scalar = box.copy_scalar
+            if scalar is not None and len(maps) > 1:
+                scalar = scalar * scalar.conjugate()
             new_id[box.id] = target.add_bang_box(
-                box.multiplicity, node_scope=frozenset(scope), parent=parent
+                box.multiplicity,
+                node_scope=frozenset(scope),
+                parent=parent,
+                links=links,
+                cyclic=box.cyclic,
+                index=box.index,
+                copy_scalar=scalar,
             )
         else:
             port_ids[box.id] = {}
@@ -430,7 +475,7 @@ def double_with_origin(diagram: Diagram) -> Doubled:
     out.set_boundary_inputs(side(diagram.boundary_inputs, 0) + side(conjugate.boundary_inputs, 1))
     out.set_scalar(diagram.scalar * diagram.scalar.conjugate())
     out.set_parameters(dict(diagram.parameters))
-    _copy_boxes(conjugate, out, (ids0, ids1), extra)
+    _copy_boxes(conjugate, out, (ids0, ids1), extra, (diagram, conjugate))
     for box_id, box in list(out.bang_boxes.items()):
         if box.is_node_scope:
             out.set_bang_box_sheets(box_id, True)

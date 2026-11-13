@@ -18,7 +18,7 @@ corrected on the next; the channel is F^n."""
 from benchmarks.subjects._common import *
 
 
-def _circuit(n, d):
+def _unrolled(n, d):
     """n one-bit teleportations in a row."""
     q = ["q", *unrolled("a", n)]
     gates = []
@@ -35,13 +35,23 @@ def _circuit(n, d):
     return circuit(q, gates)
 
 
+def _circuit(n, d):
+    """Per copy one one-bit teleportation of the carried q onto a fresh a, which goes on."""
+    body = (
+        Init("a"),
+        F("a"),
+        CZ("q", "a"),
+        F("q", 3),
+        Measure("q"),
+        CX("q", "a", -1),
+        Discard("q"),
+    )
+    return circuit(["q", "a"], [Chain(n, body, carries=(("q", "a"),))], registers={"a": n})
+
+
 def _spec(c):
-    """F^n."""
-    if c.nv == 0:
-        return f"i = Z(1 -> 1, {c.D})"
-    if c.nv == 1:
-        return f"f = F({c.D})"
-    return " -> ".join(f"F({c.D})" for _ in range(c.nv))
+    """F^n, one F per copy."""
+    return f"repeat {c.N} as C: f = F({c.D})\nchain C: f.out0 -> f.in0"
 
 
 SUBJECT = Subject(
@@ -52,5 +62,5 @@ SUBJECT = Subject(
     size_parameter="cluster qudits",
     dimension="general",
     domain=Domain(n_min=0, d_min=1),
-    equations=(Equation("main", _circuit, _spec, form="unrolled"),),
+    equations=(Equation("main", _circuit, _spec, form="boxed"),),
 )

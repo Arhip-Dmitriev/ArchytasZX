@@ -105,15 +105,24 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
     flush()
     gates: list[ir.Gate] = []
     leaves: dict[str, list[str]] = {}
+    alias: dict[str, str] = {}
     tree_dims: dict[str, Any] = {}
     for g in c.gates:
         if isinstance(g, ir.Chain):
             for m in range(int(sp.sympify(g.count).subs(sp.Symbol("n"), n))):
                 values = {g.index: m} if g.index is not None else {}
+                ended: set[str] = set()
                 for h in g.body:
                     sub = {q: copies[q][m] for q in ir.gate_wires(h) if c.count(q) is not None}
+                    sub.update({q: alias[q] for q in ir.gate_wires(h) if q in alias})
                     gates.append(_rename(ir.at_index(h, values), sub))
-                gates.extend(ir.Swap(carry, copies[reg][m]) for carry, reg in g.carries)
+                    if isinstance(h, (ir.Post, ir.Discard)):
+                        ended.add(h.q)
+                for carry, reg in g.carries:
+                    if carry in ended:
+                        alias[carry] = copies[reg][m]
+                    else:
+                        gates.append(ir.Swap(alias.get(carry, carry), copies[reg][m]))
             continue
         if isinstance(g, ir.Tree):
             depth = int(sp.sympify(g.count).subs(sp.Symbol("n"), n))
@@ -144,6 +153,8 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
                         sub = {"left": own[j], "right": own[k]}
                         gates.append(_rename(ir.at_index(h, values), sub))
             continue
+        if alias and not isinstance(g, (ir.Chain, ir.Pairs, ir.Tree)):
+            g = _rename(g, {q: alias[q] for q in ir.gate_wires(g) if q in alias})
         qs = ir.gate_wires(g)
         reg = [q for q in qs if c.count(q) is not None]
         if not reg:
@@ -155,6 +166,8 @@ def expand(c: ir.Circuit, n: int) -> ir.Circuit:
     dims = {e: c.dim(q) for q in c.wires for e in copies[q]}
     dims.update(tree_dims)
     wires = [e for q in wires for e in leaves.get(q, [q])]
+    moved = set(alias.values())
+    wires = [x for q in wires if q not in moved for x in (q, *([alias[q]] if q in alias else []))]
     return ir.Circuit(tuple(wires), tuple(gates), {}, dims, c.scalar)
 
 
