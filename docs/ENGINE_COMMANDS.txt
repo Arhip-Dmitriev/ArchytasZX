@@ -413,7 +413,8 @@ Expressions (dimensions, multiplicities, phases, scalars) are built from integer
 + - * / ^ ** and parentheses, the constants I, pi (or π) and E, and the functions exp,
 sqrt, and cos and sin of a rational multiple of pi (taken exactly: cos(q pi) = (z + 1/z)/2 and
 sin(q pi) = (z - 1/z)/(2 I), z = exp(I q pi)). A scalar sympy builds with such a cos or sin (the
-conjugate of (-1)^(2/7), say) is normalised the same way.
+conjugate of (-1)^(2/7), say) is normalised the same way. A multiplicity subtracts integers
+only (n - 1, 2*n - 3); a copy count below 0 at an instance is an error there.
 
 An unknown node, generator, statement or rule is reported with the closest known name.
 

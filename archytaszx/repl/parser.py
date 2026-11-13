@@ -822,8 +822,12 @@ def _mult_expr(node: _Expr) -> sp.Expr:
         return sp.Integer(node.value)
     if isinstance(node, _Name | _Const):
         return Mult.symbol(node.name).to_sympy()
-    if isinstance(node, _Sum) and not any(negated for negated, _ in node.terms):
-        return _bounded(sp.Add(*(_mult_expr(term) for _, term in node.terms)))
+    if isinstance(node, _Sum) and all(
+        isinstance(term, _Num) for negated, term in node.terms if negated
+    ):
+        return _bounded(
+            sp.Add(*((-1 if negated else 1) * _mult_expr(term) for negated, term in node.terms))
+        )
     if isinstance(node, _Prod) and not any(divided for divided, _ in node.factors):
         return _product([_mult_expr(factor) for _, factor in node.factors])
     if isinstance(node, _Pow) and isinstance(node.base, _Num) and node.base.value >= 1:
@@ -832,14 +836,15 @@ def _mult_expr(node: _Expr) -> sp.Expr:
 
 
 def _mult_of(node: _Expr) -> Mult:
-    """A multiplicity: integers and names under ``+`` and ``*``."""
+    """A multiplicity: integers and names under ``+`` and ``*``, integers under ``-``."""
     expr = _mult_expr(node)
     try:
         return Mult._from_expr(expr)
     except BangBoxError as exc:
         raise ParseGrammarError(
             f"multiplicity {expr} is outside the multiplicity grammar: non-negative integers "
-            "and names under '+' and '*', no name repeated as a factor (n*n folds to n**2)"
+            "and names under '+' and '*', integers under '-', no name repeated as a factor "
+            "(n*n folds to n**2)"
         ) from exc
 
 

@@ -404,6 +404,15 @@ class TestBoxes:
         d = dsl("a = Z(0 -> 1, d); box p x n*m nodes a")
         assert d.bang_boxes[0].multiplicity == Mult("n") * Mult("m")  # type: ignore[index]
 
+    def test_affine_mult(self) -> None:
+        d = dsl("repeat n - 1: a = Z(0 -> 1, d)\nrepeat 2*n - 3 as V: b = Z(0 -> 1, d)")
+        assert [str(b.multiplicity) for b in d.bang_boxes.values()] == ["n - 1", "2*n - 3"]
+
+    @pytest.mark.parametrize("mult", ["n - m", "1 - 2", "n - n"])
+    def test_negated_names_and_negative_mults(self, mult: str) -> None:
+        with pytest.raises(PR.ParseError):
+            PR.parse_dsl(f"repeat {mult}: a = Z(0 -> 1, d)")
+
     @pytest.mark.parametrize(
         "src",
         [
