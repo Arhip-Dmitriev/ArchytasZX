@@ -307,6 +307,14 @@ and used as the step itself (or, for local_contraction, through net<i> from fam<
 teleportation_chain and repeater_chain (doubled, symbolic d): the contraction axiom becomes an
 induction whose step is a box-free local contraction proved as C1.main.
 
+An induction's base case whose two sides carry no free multiplicity is proved as a network
+theorem C<i>.main (the symbolic-sum normaliser or the path-sum network proof) carried by one
+net<i> axiom, in place of its rewrite-rule instance axioms; the base case of repeater_chain
+(doubled, symbolic d) is one net axiom over C1.main. The induction theorems of the rung are
+kept per pair (kernel._INDUCTED, the latest 16, failures too) and an INDUCTION decision's
+proof is kept when from_decision reads it, so a pair already settled is not decided again
+(the repeater_chain export: 58 s the first time, 0.1 s the second in one process).
+
 
 4.6 Mixed theorems
 

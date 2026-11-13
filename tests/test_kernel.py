@@ -193,3 +193,13 @@ def test_repl_reports_the_semantic_export() -> None:
     assert run(s, "load @l").ok and run(s, "prove against @r").ok
     lines = [b.text for b in run(s, "certificate lean").blocks]  # type: ignore[union-attr]
     assert "lean: tensor-network semantics, every step proved" in lines
+
+
+def test_a_kept_induction_pair_is_not_decided_again() -> None:
+    from archytaszx.repl.parser import parse_dsl
+
+    x = parse_dsl("a = Z(1 -> 1, literal 2)")
+    y = parse_dsl("a = Z(1 -> 1, literal 2) phase {1: 1/2}")
+    K._remember_induction(None, x, y)
+    assert K._recalled_induction(x, y) == (True, None)
+    assert K._induction_rung(x, y) is None

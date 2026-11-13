@@ -998,6 +998,7 @@ def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
         return from_decision(replace(decision, method=inner, inner_method=None), *pair)
     if decision.method is DecisionMethod.INDUCTION and decision.induction_proof is not None:
         proved = check(decision.induction_proof)
+        _remember_induction(proved)
         return trans(trans(iso(left, proved.lhs), proved), iso(proved.rhs, right))
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         to_l, to_r = (check(c) for c in decision.certificates)
@@ -1117,6 +1118,32 @@ class _Lean:
         x, y = cast("tuple[Diagram, Diagram]", t.inference.data.get("parts", (t.lhs, t.rhs)))
         if x.bang_boxes or y.bang_boxes or free_mult_symbols(x) or free_mult_symbols(y):
             return self.inducted(t, x, y, binders)
+        return self.networks(x, y, t.lhs, t.rhs, binders, "parts" in t.inference.data)
+
+    def base(self, t: Theorem) -> str:
+        """An induction's base case through a semantic proof of its two sides, free of
+        multiplicity symbols (:meth:`networks`), else its proof term."""
+        x, y = t.lhs, t.rhs
+        free = free_mult_symbols(x) or free_mult_symbols(y)
+        if self.semantic and t.inference.kind != "refl" and not free:
+            binders = [_var(v) for v in t.variables]
+            proved = self.networks(x, y, x, y, binders, False)
+            if proved is not None:
+                return proved
+        return self.term(t)
+
+    def networks(
+        self,
+        x: Diagram,
+        y: Diagram,
+        a: Diagram,
+        b: Diagram,
+        binders: Sequence[str],
+        local: bool,
+    ) -> str | None:
+        """``a = b`` through a sub-proof ``C<i>.main`` over the networks of ``x`` and ``y``
+        (the parts off the regions of ``a`` and ``b`` when ``local``) and the axiom ``net<i>``
+        from its statement; None when the pair has no semantic proof."""
         tag = f"C{len(self.subs) + 1}"
         source = _semantic_pair(x, y)
         if source is None:
@@ -1124,9 +1151,8 @@ class _Lean:
         body, imports, ns = _nest(source, tag)
         self.subs.append(body)
         self.imports += [i for i in imports if i not in self.imports]
-        lhs, rhs = self.call(t.lhs), self.call(t.rhs)
+        lhs, rhs = self.call(a), self.call(b)
         head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
-        local = "parts" in t.inference.data
         note = (
             "the diagrams are the parts off the two regions, plugged into one context, whose "
             f"networks {ns}.main proves equal"
@@ -1315,7 +1341,7 @@ class _Lean:
             f"({ctx} {self.call(other, at_k)})",
         )
         hyp = "ih" if side is InductionSide.START else "ih.symm"
-        zero = f"({inst_s}).trans (({self.term(base)}).trans ({inst_g}).symm)"
+        zero = f"({inst_s}).trans (({self.base(base)}).trans ({inst_g}).symm)"
         succ = (
             f"({succ_own}).trans (({self.term(expose)}).trans (({plug_own}).trans "
             f"((congrArg {ctx} {hyp}).trans (({plug_other}).symm.trans "
@@ -1489,11 +1515,50 @@ def _offset_index(x: Diagram, y: Diagram) -> tuple[str, int] | None:
     return (index, c) if c >= 1 else None
 
 
+INDUCTED_KEPT = 16
+"""How many induction theorems :data:`_INDUCTED` keeps, latest last."""
+
+_INDUCTED: list[tuple[Diagram, Diagram, Theorem | None]] = []
+"""Induction theorems by their sides: those of decisions read by :func:`from_decision` and
+those :func:`_induction_rung` built or failed to build."""
+
+
+def _remember_induction(
+    proof: Theorem | None, x: Diagram | None = None, y: Diagram | None = None
+) -> None:
+    """``proof`` kept under its sides (or ``x``, ``y``)."""
+    a = x if x is not None else proof.lhs if proof is not None else None
+    b = y if y is not None else proof.rhs if proof is not None else None
+    if a is None or b is None:
+        return
+    _INDUCTED.append((a, b, proof))
+    del _INDUCTED[:-INDUCTED_KEPT]
+
+
+def _recalled_induction(x: Diagram, y: Diagram) -> tuple[bool, Theorem | None]:
+    """Whether an induction theorem of ``x = y`` (or its failure) is kept, and that theorem."""
+    for a, b, proof in reversed(_INDUCTED):
+        if _same(a, x) and _same(b, y):
+            return True, proof
+    return False, None
+
+
 def _induction_rung(x: Diagram, y: Diagram) -> Theorem | None:
-    """``x = y`` by the induction rung of :func:`~archytaszx.semantics.decide.decide_equal`
-    (base case decided, step case by its step ladder, the kernel theorem built from both, the
-    other symbols held at the first of :data:`INDUCTED_SAMPLES` default samples the oracle
-    evaluates); None when the rung does not settle EQUAL with a kernel theorem of ``x = y``."""
+    """``x = y`` by the kept induction theorem of that pair (:data:`_INDUCTED`), else by the
+    induction rung of :func:`~archytaszx.semantics.decide.decide_equal` (base case decided,
+    step case by its step ladder, the kernel theorem built from both, the other symbols held at
+    the first of :data:`INDUCTED_SAMPLES` default samples the oracle evaluates); None when the
+    rung does not settle EQUAL with a kernel theorem of ``x = y``."""
+    kept, proof = _recalled_induction(x, y)
+    if kept:
+        return proof
+    proof = _induction_rung_run(x, y)
+    _remember_induction(proof, x, y)
+    return proof
+
+
+def _induction_rung_run(x: Diagram, y: Diagram) -> Theorem | None:
+    """:func:`_induction_rung` without the kept theorems."""
     from archytaszx.rewrite.engine import DEFAULT_GUARD
     from archytaszx.semantics import decide as dec
     from archytaszx.semantics.check import DEFAULT_TOLERANCE
