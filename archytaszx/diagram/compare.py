@@ -478,6 +478,21 @@ def canonical_key(diagram: Diagram, *, symmetric_legs: bool = False) -> str:
     return _digest(_profile(diagram, _refine(diagram, symmetric), symmetric))
 
 
+def canonical_form(
+    diagram: Diagram, *, symmetric_legs: bool = False
+) -> tuple[str, tuple[object, ...] | None]:
+    """:func:`canonical_key` of ``diagram`` and, when colour refinement gives every node its own
+    colour, the profile under those colours, else None. Two diagrams with profiles are
+    :func:`isomorphic` (same ``symmetric_legs``) exactly when their profiles are equal."""
+    if not isinstance(diagram, Diagram):
+        raise TypeError(f"canonical_form requires a Diagram, got {type(diagram).__name__}")
+    symmetric = _symmetric(diagram, symmetric_legs)
+    colours = _refine(diagram, symmetric)
+    profile = _profile(diagram, colours, symmetric)
+    discrete = len(set(colours.values())) == len(colours)
+    return _digest(profile), (profile if discrete else None)
+
+
 _Incidence = dict[NodeId, list[tuple[str, int, NodeId, str, int]]]
 
 

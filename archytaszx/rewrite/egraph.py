@@ -61,7 +61,7 @@ from archytaszx.diagram.graph import Diagram, GraphError
 from archytaszx.diagram.validate import ValidateError, ValidationReport, validate
 from archytaszx.rewrite.cache import CacheError, RewriteCache
 from archytaszx.rewrite.engine import RewriteResult, apply
-from archytaszx.rewrite.normal_form import comparison_view, view_key, views_isomorphic
+from archytaszx.rewrite.normal_form import comparison_view, view_form, views_isomorphic
 from archytaszx.rewrite.rule import Match, RewriteError, RewriteGrammarError, Rule
 from archytaszx.rewrite.rules_library import RULES
 
@@ -162,6 +162,19 @@ class _Backoff:
             times = self.bans.get(key, 0)
             self.until[key] = iteration + (self.limits.ban_length << times)
             self.bans[key] = times + 1
+
+
+def _exact_key(diagram: Diagram) -> tuple[object, ...]:
+    """``diagram`` itself, node ids included, as a hashable tuple."""
+    return (
+        tuple(sorted(diagram.nodes.items())),
+        tuple(sorted(wire.sort_key() for wire in diagram.wires)),
+        tuple(diagram.boundary_inputs),
+        tuple(diagram.boundary_outputs),
+        tuple(sorted(diagram.bang_boxes.items())),
+        diagram.scalar,
+        tuple(sorted(diagram.parameters.items())),
+    )
 
 
 def _same_rules(first: tuple[Rule, ...], second: tuple[Rule, ...]) -> bool:
@@ -407,6 +420,8 @@ class EGraph:
         self._stored = 0
         self._enode_cap: int | None = None
         self._views: list[Diagram] = []
+        self._profiles: list[tuple[object, ...] | None] = []
+        self._exact: dict[tuple[object, ...], int] = {}
         self._parent: list[int] = []
         self._buckets: dict[str, list[int]] = {}
         self._edges: list[EGraphEdge] = []
@@ -455,20 +470,35 @@ class EGraph:
             self._parent[index], index = root, self._parent[index]
         return root
 
-    def _find_view(self, view: Diagram) -> tuple[str, int | None]:
-        """``view``'s key and the e-node whose view is isomorphic to it, if any."""
-        key = view_key(view)
+    def _find_view(self, view: Diagram) -> tuple[tuple[str, tuple[object, ...] | None], int | None]:
+        """``view``'s key and profile (:func:`view_form`) and the e-node whose view is
+        isomorphic to it, if any: by profile equality when both profiles exist, none when one
+        does, else by :func:`views_isomorphic`."""
+        form = view_form(view)
+        key, profile = form
         for index in self._buckets.get(key, ()):
-            if views_isomorphic(view, self._views[index]):
-                return key, index
-        return key, None
+            other = self._profiles[index]
+            if profile is not None or other is not None:
+                if profile == other:
+                    return form, index
+            elif views_isomorphic(view, self._views[index]):
+                return form, index
+        return form, None
 
-    def _insert(self, diagram: Diagram, view: Diagram, key: str, eclass: int | None) -> int:
+    def _insert(
+        self,
+        diagram: Diagram,
+        view: Diagram,
+        form: tuple[str, tuple[object, ...] | None],
+        eclass: int | None,
+    ) -> int:
         """A new e-node for ``diagram``, in ``eclass`` or in a class of its own."""
+        key, profile = form
         index = len(self._reps)
         self._stored += len(diagram.nodes)
         self._reps.append(diagram)
         self._views.append(view)
+        self._profiles.append(profile)
         self._parent.append(index if eclass is None else eclass)
         self._buckets.setdefault(key, []).append(index)
         self._tree_edge.append(None)
@@ -479,10 +509,10 @@ class EGraph:
         """A root e-node holding a copy of ``diagram``, or the isomorphic e-node already held."""
         _require_diagram("EGraph.add: diagram", diagram)
         view = comparison_view(diagram)
-        key, found = self._find_view(view)
+        form, found = self._find_view(view)
         if found is not None:
             return ENodeId(found)
-        index = ENodeId(self._insert(diagram.copy(), view, key, None))
+        index = ENodeId(self._insert(diagram.copy(), view, form, None))
         self._roots.append(index)
         return index
 
@@ -673,12 +703,18 @@ class EGraph:
         bound: int,
         counts: dict[str, int],
     ) -> None:
-        """Insert ``result`` from e-node ``index`` as pruned, redundant, a merge or a new e-node."""
+        """Insert ``result`` from e-node ``index`` as pruned, redundant, a merge or a new e-node;
+        a result equal, node ids included, to an earlier recorded one takes that one's e-node."""
         if len(result.diagram.nodes) > bound:
             counts["pruned"] += 1
             return
-        view = comparison_view(result.diagram)
-        key, found = self._find_view(view)
+        exact = _exact_key(result.diagram)
+        found = self._exact.get(exact)
+        if found is None:
+            view = comparison_view(result.diagram)
+            form, found = self._find_view(view)
+            if found is not None:
+                self._exact[exact] = found
         parent = ENodeId(index)
         if found is None:
             if (
@@ -687,7 +723,8 @@ class EGraph:
                 or self._stored + len(result.diagram.nodes) > STORED_NODE_BUDGET
             ):
                 raise _Stop(SaturationStop.ENODE_LIMIT)
-            child = self._insert(result.diagram, view, key, self._root(index))
+            child = self._insert(result.diagram, view, form, self._root(index))
+            self._exact[exact] = child
             self._tree_edge[child] = len(self._edges)
             self._edges.append(EGraphEdge(parent, ENodeId(child), rule_name, result, EdgeKind.TREE))
             counts["enodes"] += 1

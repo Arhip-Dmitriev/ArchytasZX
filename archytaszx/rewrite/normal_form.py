@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from archytaszx.algebra.scalar import Scalar, ScalarError
-from archytaszx.diagram.compare import canonical_key, isomorphic
+from archytaszx.diagram.compare import canonical_form, canonical_key, isomorphic
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
 from archytaszx.rewrite.cache import IncrementalMatcher, RewriteCache, keyable
@@ -237,6 +237,12 @@ def view_key(view: Diagram) -> str:
     """The :func:`~archytaszx.diagram.compare.canonical_key` of a comparison view, up to spider
     leg order."""
     return canonical_key(view, symmetric_legs=True)
+
+
+def view_form(view: Diagram) -> tuple[str, tuple[object, ...] | None]:
+    """:func:`view_key` of a comparison view and its
+    :func:`~archytaszx.diagram.compare.canonical_form` profile up to spider leg order."""
+    return canonical_form(view, symmetric_legs=True)
 
 
 def views_isomorphic(a: Diagram, b: Diagram) -> bool:
