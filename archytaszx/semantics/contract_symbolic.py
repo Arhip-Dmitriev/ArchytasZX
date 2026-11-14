@@ -2381,6 +2381,117 @@ def _parity_expr(poly: frozenset[frozenset[int]], var: Mapping[int, sp.Expr]) ->
     return sp.Add(*(sp.Mul(*(var[v] for v in sorted(mono))) for mono in sorted(poly, key=sorted)))
 
 
+def _solved_rows(
+    constraints: Sequence[frozenset[frozenset[int]]], order: Sequence[int]
+) -> dict[int, frozenset[frozenset[int]]] | None:
+    """Pivot rows ``v = rest`` over the free variables equivalent to the F_2 constraints, or
+    None when a constraint keeps no degree-one pivot: the pivot earliest in ``order`` among all
+    constraints substituted out first, then a pivot swapped for an earlier free variable that
+    occurs in its row only as a degree-one monomial while one does."""
+    from archytaszx.algebra.pathsum import EMPTY, f2_substitute
+
+    rank = {v: i for i, v in enumerate(order)}
+    work = [c for c in constraints if c]
+    rows: dict[int, frozenset[frozenset[int]]] = {}
+    while work:
+        best: tuple[int, frozenset[frozenset[int]]] | None = None
+        for c in work:
+            for m in c:
+                if len(m) != 1:
+                    continue
+                (v,) = m
+                if v not in rank or (best is not None and rank[v] >= rank[best[0]]):
+                    continue
+                if not any(v in o for o in c if o != m):
+                    best = (v, c)
+        if best is None:
+            return None
+        v, c = best
+        work.remove(c)
+        rest = frozenset(c - {frozenset({v})})
+        work = [w for w in (f2_substitute(w, v, rest) for w in work) if w]
+        if any(w == frozenset({EMPTY}) for w in work):
+            return None
+        rows = {q: f2_substitute(r, v, rest) for q, r in rows.items()}
+        rows[v] = rest
+    swapped = True
+    while swapped:
+        swapped = False
+        for p in sorted(rows, key=lambda q: -rank[q]):
+            rest = rows[p]
+            free = [
+                u
+                for m in rest
+                if len(m) == 1
+                for u in m
+                if rank[u] < rank[p] and not any(u in o for o in rest if o != m)
+            ]
+            if not free:
+                continue
+            u = min(free, key=rank.__getitem__)
+            value = frozenset((rest - {frozenset({u})}) | {frozenset({p})})
+            del rows[p]
+            rows = {q: f2_substitute(r, u, value) for q, r in rows.items()}
+            rows[u] = value
+            swapped = True
+            break
+    return rows
+
+
+def _canon_entry(ps: object, var: Mapping[int, sp.Expr]) -> sp.Expr | None:
+    """The entry of a reduced path sum without path variables read from its canonical form
+    (pathsum.canonical): constant, the phase as one exponential, a mod-2 delta per pivot row
+    and for a residual support indicator, each amplitude atom as ``[F even] + a [F odd]``; None
+    when there is no canonical form."""
+    from archytaszx.algebra.pathsum import PathSum, PhasePoly, canonical
+
+    assert isinstance(ps, PathSum)
+    rows = _solved_rows(ps.constraints, ps.boundary)
+    if rows is not None:
+        pivots = sorted(rows, key=ps.boundary.index)
+        order = [*pivots, *(v for v in ps.boundary if v not in rows)]
+        new = {v: k for k, v in enumerate(order)}
+
+        def rename(p: frozenset[frozenset[int]]) -> frozenset[frozenset[int]]:
+            return frozenset(frozenset(new[v] for v in m) for m in p)
+
+        ps = PathSum(
+            tuple(new[v] for v in ps.boundary),
+            set(),
+            PhasePoly({frozenset(new[v] for v in m): c for m, c in ps.phase.terms.items()}),
+            ps.const,
+            ps.sqrt2,
+            [rename(rows[p] ^ {frozenset({p})}) for p in pivots],
+            [],
+            [(a, rename(f)) for a, f in ps.amps],
+        )
+        var = {new[v]: e for v, e in var.items()}
+    canon = canonical(ps)
+    if canon is None:
+        return None
+    if canon.zero:
+        return sp.Integer(0)
+
+    def poly(p: tuple[tuple[int, ...], ...]) -> frozenset[frozenset[int]]:
+        return frozenset(frozenset(m) for m in p)
+
+    phase = sp.Add(
+        *(
+            sp.Rational(c.numerator, c.denominator) * sp.Mul(*(var[v] for v in mono))
+            for mono, c in canon.phase
+        )
+    )
+    entry: sp.Expr = _cyclo_expr(canon.const) * sp.exp(2 * sp.pi * sp.I * phase)
+    for pivot, rest in canon.rows:
+        entry = entry * ModDelta(var[pivot] + _parity_expr(poly(rest), var), 2)
+    if canon.support:
+        entry = entry * ModDelta(_parity_expr(poly(canon.support), var) + 1, 2)
+    for expo, base in canon.amps:
+        even = ModDelta(_parity_expr(poly(expo), var), 2)
+        entry = entry * (even + _cyclo_expr(base) * (1 - even))
+    return entry
+
+
 def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     """The contraction of a diagram of Z, X, F, B and S nodes at concrete power-of-two
     dimensions with boundary legs of dimension at most 2, read from its reduced path sum:
@@ -2421,6 +2532,13 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     used |= {v for c in ps.constraints for m in c for v in m}
     if not used <= var.keys():
         return None
+    if not path:
+        canon_entry = _canon_entry(ps, var)
+        if canon_entry is not None:
+            try:
+                return SymbolicTensor(axes, Scalar(canon_entry).simplify(max_steps=max_steps))
+            except ScalarBudgetError:
+                return None
     phase = sp.Add(
         *(
             sp.Rational(c.numerator, c.denominator) * sp.Mul(*(var[v] for v in sorted(mono)))
