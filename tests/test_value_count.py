@@ -11,16 +11,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Boxed qram over a free value count N (79.5)."""
+"""Boxed qram over a free value count N (79.5) and aligned boxes in a cut (79.8)."""
 
 from __future__ import annotations
 
 import pytest
 
 from archytaszx.diagram.bangbox import instantiate_symbol
+from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import Z_SPIDER
 from archytaszx.repl.parser import parse_dsl
-from archytaszx.semantics import kernel
+from archytaszx.semantics import induction, kernel
 from archytaszx.semantics.valuecount import generalise, specialised
 
 NESTED = """
@@ -74,3 +75,23 @@ def test_a_theorem_over_the_value_count_specialises_to_the_power() -> None:
     assert "(fam" in kernel.lean(theorem, semantic=False)
     with pytest.raises(kernel.KernelError):
         kernel.instance(family, "n", found.power)
+
+
+def test_the_hypothesis_is_cut_out_through_an_aligned_partner_and_put_back_aligned() -> None:
+    nested = parse_dsl(NESTED)
+    ob = induction.build_obligation(nested, nested, index="N", base=0, base_proved=True)
+    successor, hypothesis = ob.left_at_successor, ob.left_at_k
+    peeled = induction._peel_step_index(successor, ob.step_symbol)
+    assert peeled is not None
+    candidates = induction.copy_candidates(peeled[0], frozenset(successor.nodes), peeled[1])
+    found = induction.expose_cut(peeled[0], candidates, hypothesis)
+    assert found is not None
+    exposed, cut, steps = found
+    assert [step.kind for step in steps] == ["split"]
+    (leaf,) = steps[0].copy_after - steps[0].copy_before
+    (home,) = [box for box in exposed.bang_boxes.values() if leaf in box.node_scope]
+    assert home.parent is None and home.align is not None and leaf not in cut.region
+    replaced = induction.replace_cut_region(exposed, cut, hypothesis, hypothesis)
+    moved = replaced.bang_boxes[home.id]
+    assert moved.align is not None and moved.align not in exposed.bang_boxes
+    assert isomorphic(replaced, exposed)

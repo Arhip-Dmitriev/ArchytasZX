@@ -946,12 +946,13 @@ def add_box_image(
     parent: BangBoxId | None,
     pair_of: BangBoxId | None = None,
     feed: BangBoxId | None = None,
+    align: BangBoxId | None = None,
 ) -> BangBoxId:
     """Add ``box`` to ``target`` over its nodes' images under ``id_map``, every field kept,
-    ``parent``, ``pair_of`` and ``feed`` naming boxes of ``target``."""
+    ``parent``, ``pair_of``, ``feed`` and ``align`` naming boxes of ``target``."""
     if box.feed is not None and feed is None:
         raise BangBoxGrammarError(f"fed box {box.id!r} is copied without its tree box")
-    if box.align is not None:
+    if box.align is not None and align is None:
         raise BangBoxGrammarError(f"aligned box {box.id!r} is copied without its partner")
     return target.add_bang_box(
         box.multiplicity,
@@ -974,6 +975,7 @@ def add_box_image(
         feed=None if box.feed is None else feed,
         feed_port=None if box.feed_port is None else _moved(box.feed_port, id_map),
         groups=tuple(frozenset(id_map[n] for n in g) for g in box.groups),
+        align=None if box.align is None else align,
     )
 
 

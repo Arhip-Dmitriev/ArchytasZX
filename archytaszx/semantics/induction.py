@@ -39,6 +39,7 @@ from archytaszx.diagram.bangbox import (
     _dim_at,
     _port_multiplicity,
     add_box_image,
+    aligned_members,
     fed_box,
     free_mult_symbols,
     index_owners,
@@ -620,9 +621,9 @@ def _box_footprint(box: BangBox) -> frozenset[NodeId]:
 
 def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool = False) -> Diagram:
     """The sub-diagram on ``node_ids``: their wires among themselves, their boundary refs in
-    the enclosing order, and with ``with_boxes`` every box lying wholly inside them and the
-    part inside of each plain straddling box; raises InductionDomainError for any other box
-    whose footprint meets ``node_ids``."""
+    the enclosing order, and with ``with_boxes`` every box lying wholly inside them (aligned
+    only to a box also inside) and the part inside of each plain straddling box; raises
+    InductionDomainError for any other box whose footprint meets ``node_ids``."""
     extracted = Diagram()
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(node_ids):
@@ -675,12 +676,15 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool 
                     continue
                 if box.pair_of is not None and box.pair_of not in box_map:
                     continue
+                if box.align in inside_ids and box.align not in box_map:
+                    continue
                 box_map[box_id] = add_box_image(
                     extracted,
-                    box,
+                    box if box.align in inside_ids else replace(box, align=None),
                     id_map,
                     None if parent is None else box_map[parent],
                     None if box.pair_of is None else box_map[box.pair_of],
+                    align=box_map.get(box.align) if box.align is not None else None,
                 )
     extracted.set_parameters(dict(diagram.parameters))
     return extracted
@@ -777,35 +781,7 @@ def replace_region(
         working.remove_bang_box(box_id)
     for node_id in sorted(region):
         working.remove_node(node_id)
-    id_map: dict[NodeId, NodeId] = {}
-    for old_id in sorted(replacement.nodes):
-        node = replacement.nodes[old_id]
-        id_map[old_id] = working.add_node(
-            node.generator_type,
-            [port.dim for port in node.inputs],
-            [port.dim for port in node.outputs],
-            phase=node.phase,
-        )
-    for wire in sorted(replacement.wires, key=lambda w: w.sort_key()):
-        working.add_wire(
-            PortRef(id_map[wire.a.node_id], wire.a.direction, wire.a.index),
-            PortRef(id_map[wire.b.node_id], wire.b.direction, wire.b.index),
-        )
-    box_map: dict[BangBoxId, BangBoxId] = {}
-    pending = sorted(replacement.bang_boxes.items())
-    while len(box_map) < len(pending):
-        for box_id, box in pending:
-            if box_id in box_map or (box.parent is not None and box.parent not in box_map):
-                continue
-            if box.pair_of is not None and box.pair_of not in box_map:
-                continue
-            box_map[box_id] = add_box_image(
-                working,
-                box,
-                id_map,
-                None if box.parent is None else box_map[box.parent],
-                None if box.pair_of is None else box_map[box.pair_of],
-            )
+    id_map = _graft(working, replacement)
 
     def refill(slots: list[PortRef], fresh: tuple[PortRef, ...]) -> list[PortRef]:
         queue = [PortRef(id_map[r.node_id], r.direction, r.index) for r in fresh]
@@ -1198,8 +1174,9 @@ def replace_cut_region(
 ) -> Diagram:
     """``diagram`` with ``cut``'s region swapped for ``replacement``: slot ``i`` of each of
     ``replacement``'s boundary lists takes slot ``i`` of ``cut``'s, a cut end's far port wired
-    to it, the scalar times ``replacement.scalar / hypothesis.scalar``; ``contiguous=False``
-    accepts a ``diagram`` whose box slots are not contiguous."""
+    to it, the scalar times ``replacement.scalar / hypothesis.scalar``, a box off the region
+    aligned to one in it aligned with the grafted box its cut wires reach (:func:`_realign`);
+    ``contiguous=False`` accepts a ``diagram`` whose box slots are not contiguous."""
     if (len(replacement.boundary_inputs), len(replacement.boundary_outputs)) != (
         len(cut.inputs),
         len(cut.outputs),
@@ -1219,6 +1196,10 @@ def replace_cut_region(
             if not _straddle_merges(working, box, cut.region):
                 raise InductionDomainError(f"bang box {box_id!r} straddles the replaced region")
             outside[box_id] = box
+    partners = _outside_partners(working, frozenset(inside))
+    for members, _root in partners:
+        for box_id in members:
+            working.set_bang_box_extension(box_id, align=None)
     for box_id in sorted(inside, reverse=True):
         working.remove_bang_box(box_id)
     slot_of: dict[PortRef, PortRef] = {}
@@ -1239,10 +1220,81 @@ def replace_cut_region(
         working.add_wire(slot_of[inside_end], far)
     for box in outside.values():
         _merge_straddle(working, box, cut, slot_of, grafted)
+    for members, root in partners:
+        _realign(working, members, root, cut, slot_of, grafted)
     working.set_boundary_inputs(inputs)
     working.set_boundary_outputs(outputs)
     working.multiply_scalar(replacement.scalar * hypothesis.scalar**-1)
     return working
+
+
+def _outside_partners(
+    diagram: Diagram, inside: frozenset[BangBoxId]
+) -> list[tuple[list[BangBoxId], BangBoxId | None]]:
+    """Per alignment group with boxes both in ``inside`` and off it: its boxes off ``inside``
+    and its root when that is off ``inside`` (else None)."""
+    out: dict[BangBoxId, tuple[list[BangBoxId], BangBoxId | None]] = {}
+    for box_id in sorted(inside):
+        group = aligned_members(diagram, box_id)
+        members = [b for b in group if b not in inside]
+        if len(group) > 1 and members:
+            out[group[0]] = (members, None if group[0] in inside else group[0])
+    return list(out.values())
+
+
+def _ancestors(diagram: Diagram, box_id: BangBoxId) -> frozenset[BangBoxId]:
+    """The boxes enclosing ``box_id``."""
+    out: set[BangBoxId] = set()
+    parent = diagram.bang_boxes[box_id].parent
+    while parent is not None:
+        out.add(parent)
+        parent = diagram.bang_boxes[parent].parent
+    return frozenset(out)
+
+
+def _realign(
+    working: Diagram,
+    members: Sequence[BangBoxId],
+    root: BangBoxId | None,
+    cut: CutRegion,
+    slot_of: Mapping[PortRef, PortRef],
+    grafted: Sequence[BangBoxId],
+) -> None:
+    """Align ``members`` (boxes off ``cut``'s region, ``root`` their old root when off it) with
+    the one grafted box their cut wires reach, and with its alignment group; with no such wire,
+    with each other only."""
+    scopes = {n for m in members for n in working.bang_boxes[m].node_scope}
+    targets: set[BangBoxId] = set()
+    for inside_end, far in cut.cuts.items():
+        if far.node_id not in scopes:
+            continue
+        end = slot_of[inside_end].node_id
+        owners = [b for b in grafted if end in working.bang_boxes[b].node_scope]
+        if len(owners) != 1:
+            raise InductionDomainError(f"aligned boxes {list(members)!r} meet no single box")
+        targets.add(owners[0])
+    if len(targets) > 1:
+        raise InductionDomainError(f"aligned boxes {list(members)!r} meet several boxes")
+    group = list(members)
+    new_root = root if root is not None else min(members)
+    if targets:
+        (target,) = targets
+        image = working.bang_boxes[target]
+        image_group = aligned_members(working, target if image.align is None else image.align)
+        group += image_group
+        if root is None:
+            new_root = image_group[0]
+    mult = working.bang_boxes[new_root].multiplicity
+    for box_id in group:
+        box = working.bang_boxes[box_id]
+        if box.multiplicity != mult or not _ancestors(working, new_root) <= _ancestors(
+            working, box_id
+        ):
+            raise InductionDomainError(f"bang box {box_id!r} cannot align with {new_root!r}")
+        if not box.is_node_scope or box.is_pair or box.is_tree or box.is_fed:
+            raise InductionDomainError(f"bang box {box_id!r} cannot align with {new_root!r}")
+    for box_id in group:
+        working.set_bang_box_extension(box_id, align=None if box_id == new_root else new_root)
 
 
 def _plain_straddle(diagram: Diagram, box: BangBox) -> bool:
@@ -1363,12 +1415,15 @@ def _graft(working: Diagram, replacement: Diagram) -> dict[NodeId, NodeId]:
                 continue
             if box.pair_of is not None and box.pair_of not in box_map:
                 continue
+            if box.align is not None and box.align not in box_map:
+                continue
             box_map[box_id] = add_box_image(
                 working,
                 box,
                 id_map,
                 None if box.parent is None else box_map[box.parent],
                 None if box.pair_of is None else box_map[box.pair_of],
+                align=None if box.align is None else box_map[box.align],
             )
     return id_map
 
@@ -1411,7 +1466,8 @@ def copy_candidates(
 ) -> list[frozenset[NodeId]]:
     """``copy``, then, when it differs, the nodes new to ``peeled`` (not in ``old``) in no box
     together with the new nodes of a box other than a pair box wired to one of them (a peeled
-    copy's pair nodes placed in the residual box)."""
+    copy's pair nodes placed in the residual box), then ``copy`` without its spiders wired to
+    a node of ``old`` off it."""
     new = frozenset(peeled.nodes) - old
     boxed = frozenset(n for box in peeled.bang_boxes.values() for n in box.node_scope)
     paired = frozenset(
@@ -1434,6 +1490,14 @@ def copy_candidates(
                 regrown.add(a)
     if extra and regrown:
         out.append((bare - frozenset(regrown)) | frozenset(extra))
+    hubs = frozenset(
+        a
+        for wire in peeled.wires
+        for a, b in ((wire.a.node_id, wire.b.node_id), (wire.b.node_id, wire.a.node_id))
+        if a in copy and b in old - copy and peeled.nodes[a].generator_type in (Z_SPIDER, X_SPIDER)
+    )
+    if hubs and copy - hubs not in out:
+        out.append(copy - hubs)
     return out
 
 
@@ -1453,8 +1517,8 @@ def expose_cut(
     peeled: Diagram, copies: Sequence[frozenset[NodeId]], hypothesis: Diagram
 ) -> tuple[Diagram, CutRegion, tuple[ExposeStep, ...]] | None:
     """The first of ``copies`` whose complement in ``peeled``, in a :func:`_fan_split` of it,
-    or after :func:`_greedy_steps`, reads as ``hypothesis`` through cut wires: that diagram,
-    the cut and the steps to it; else None."""
+    or after all :func:`_greedy_steps`, then after their shorter prefixes, reads as
+    ``hypothesis`` through cut wires: that diagram, the cut and the steps to it; else None."""
     for copy in copies:
         cut = find_cut_region(peeled, frozenset(peeled.nodes) - copy, hypothesis)
         if cut is not None:
@@ -1465,13 +1529,12 @@ def expose_cut(
                 return split, cut, (ExposeStep("split", peeled, split, copy, split_copy),)
     for copy in copies[1:]:
         steps = _greedy_steps(peeled, copy)
-        if not steps:
-            continue
-        last = steps[-1]
-        region = frozenset(last.after.nodes) - last.copy_after
-        cut = find_cut_region(last.after, region, hypothesis)
-        if cut is not None:
-            return last.after, cut, steps
+        for end in (len(steps), *range(1, len(steps))) if steps else ():
+            last = steps[end - 1]
+            region = frozenset(last.after.nodes) - last.copy_after
+            cut = find_cut_region(last.after, region, hypothesis)
+            if cut is not None:
+                return last.after, cut, steps[:end]
     return None
 
 
@@ -1626,10 +1689,11 @@ def _boxed_split(
     partner: Mapping[PortRef, PortRef],
     slots: Sequence[PortRef],
 ) -> Iterator[tuple[Diagram, frozenset[NodeId]]]:
-    """Per boxed spider off ``copy`` wired to a node of ``copy`` in one of its own boxes, and
-    per boundary slot it holds: ``diagram`` with a phaseless leaf split off the spider (the
-    slot and the legs into ``copy``, in the spider's boxes; the spider keeps its id, its other
-    legs and a connector in the slot's place), and ``copy`` with the leaf."""
+    """Per boxed spider off ``copy`` wired to nodes of ``copy`` in its own boxes, or in a box
+    aligned with its one box, per such home and per boundary slot it holds: ``diagram`` with
+    a phaseless leaf split off the spider (the slot and the legs into ``copy``, in the boxes
+    :func:`_leaf_home` names; the spider keeps its id, its other legs and a connector in the
+    slot's place), and ``copy`` with the leaf; its own boxes first."""
     for v in sorted(diagram.nodes):
         node = diagram.nodes[v]
         if v in copy or node.generator_type not in (Z_SPIDER, X_SPIDER):
@@ -1642,19 +1706,40 @@ def _boxed_split(
             for direction in (Direction.INPUT, Direction.OUTPUT)
             for i in range(len(node.legs(direction)))
         ]
-        inward = [
-            leg
-            for leg in legs
-            if (far := partner.get(leg)) is not None
-            and far.node_id in copy
-            and all(far.node_id in diagram.bang_boxes[b].node_scope for b in owners)
-        ]
-        if not inward:
-            continue
-        for slot in (leg for leg in legs if leg in slots):
-            split = _split_boxed_spider(diagram, v, slot, inward, owners)
-            if split is not None:
-                yield split[0], copy | {split[1]}
+        homes: dict[tuple[BangBoxId, ...], list[PortRef]] = {}
+        for leg in legs:
+            far = partner.get(leg)
+            if far is None or far.node_id not in copy:
+                continue
+            home = _leaf_home(diagram, owners, far.node_id)
+            other = diagram.nodes[far.node_id]
+            if home != tuple(owners) and other.generator_type is node.generator_type:
+                continue
+            if home is not None:
+                homes.setdefault(home, []).append(leg)
+        for home, inward in sorted(homes.items(), key=lambda item: item[0] != tuple(owners)):
+            for slot in (leg for leg in legs if leg in slots):
+                split = _split_boxed_spider(diagram, v, slot, inward, home)
+                if split is not None:
+                    yield split[0], copy | {split[1]}
+
+
+def _leaf_home(
+    diagram: Diagram, owners: Sequence[BangBoxId], far: NodeId
+) -> tuple[BangBoxId, ...] | None:
+    """The boxes a leaf split off a spider in ``owners`` toward ``far`` goes into: ``owners``
+    when ``far`` lies in all of them; the top-level box holding ``far`` when ``owners`` is one
+    top-level box it is aligned with and ``far`` lies in no other box; else None."""
+    if all(far in diagram.bang_boxes[b].node_scope for b in owners):
+        return tuple(owners)
+    holding = [b for b, box in diagram.bang_boxes.items() if far in box.node_scope]
+    if len(owners) != 1 or len(holding) != 1:
+        return None
+    (owner,), (partner,) = owners, holding
+    top = diagram.bang_boxes[owner].parent is None and diagram.bang_boxes[partner].parent is None
+    if not top or partner not in aligned_members(diagram, owner):
+        return None
+    return (partner,)
 
 
 def _split_boxed_spider(
@@ -1662,10 +1747,10 @@ def _split_boxed_spider(
     v: NodeId,
     slot: PortRef,
     inward: Sequence[PortRef],
-    owners: Sequence[BangBoxId],
+    into: Sequence[BangBoxId],
 ) -> tuple[Diagram, NodeId] | None:
-    """:func:`_boxed_split`'s split of ``v`` at ``slot`` and the leaf's id; None when an
-    ``inward`` leg precedes a kept leg of its direction."""
+    """:func:`_boxed_split`'s split of ``v`` at ``slot``, the leaf in the boxes ``into``, and
+    the leaf's id; None when an ``inward`` leg precedes a kept leg of its direction."""
     node = diagram.nodes[v]
     moved = frozenset(inward)
     for direction in (Direction.INPUT, Direction.OUTPUT):
@@ -1709,7 +1794,7 @@ def _split_boxed_spider(
     swap = {connector_end: leaf_of[slot]}
     working.set_boundary_inputs([swap.get(r, r) for r in working.boundary_inputs])
     working.set_boundary_outputs([swap.get(r, r) for r in working.boundary_outputs])
-    for box_id in owners:
+    for box_id in into:
         scope = working.bang_boxes[box_id].node_scope
         working.set_bang_box_node_scope(box_id, scope | {leaf})
     return working, leaf
