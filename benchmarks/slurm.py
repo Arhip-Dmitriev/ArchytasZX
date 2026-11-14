@@ -16,7 +16,8 @@ benchmarks/slurm/run.sbatch (submitted from the repository root; scavenger parti
 whole cores, one worker per core, one shard of the units per array task) and prints the sbatch
 command. The checkout must be at origin/dev's latest green commit (or slurm.commit): a
 clean checkout elsewhere is moved there, a dirty one is refused, and every array task checks
-the commit again before it runs."""
+the commit again before it runs; clean means no tracked change but in
+benchmarks/results/false_set.json (CLEAN_PATHS)."""
 
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+CLEAN_PATHS = (":(top)", ":(top,exclude)benchmarks/results/false_set.json")
+"""The pathspec of the clean-checkout checks: every tracked file but the false set."""
 
 
 def _git(*args: str) -> str:
@@ -56,7 +59,7 @@ def checkout(cfg: dict[str, Any]) -> str:
     sha = _git("rev-parse", "--verify", f"{target}^{{commit}}")
     if not sha:
         sys.exit(f"slurm: commit {target} not in this checkout")
-    dirty = bool(_git("status", "--porcelain", "--untracked-files=no"))
+    dirty = bool(_git("status", "--porcelain", "--untracked-files=no", "--", *CLEAN_PATHS))
     if dirty:
         sys.exit("slurm: checkout has local changes")
     if _git("rev-parse", "HEAD") != sha:
@@ -74,6 +77,9 @@ def script(cfg: dict[str, Any], sets: list[str], commit: str) -> str:
     extra = " ".join(f"--set {shlex.quote(s)}" for s in sets)
     account = f"#SBATCH --account={sc['account']}\n" if sc["account"] else ""
     setup = f"source {shlex.quote(str(sc['setup']))}\n" if sc.get("setup") else ""
+    status = "git status --porcelain --untracked-files=no -- " + " ".join(
+        shlex.quote(p) for p in CLEAN_PATHS
+    )
     return f"""#!/bin/bash
 #SBATCH --job-name=archytaszx-bench
 #SBATCH --partition=scavenger
@@ -89,7 +95,7 @@ def script(cfg: dict[str, Any], sets: list[str], commit: str) -> str:
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 [ "$(git rev-parse HEAD)" = "{commit}" ] || {{ echo "checkout is not at {commit}" >&2; exit 1; }}
-[ -z "$(git status --porcelain --untracked-files=no)" ] || {{ echo "dirty checkout" >&2; exit 1; }}
+[ -z "$({status})" ] || {{ echo "dirty checkout" >&2; exit 1; }}
 {setup}source {sc["venv"]}/bin/activate
 export PYTHONPATH="$SLURM_SUBMIT_DIR"
 python -m benchmarks run --profile cluster --shard ${{SLURM_ARRAY_TASK_ID}}/{int(sc["array"])} \\

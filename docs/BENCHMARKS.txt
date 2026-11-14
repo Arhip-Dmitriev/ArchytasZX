@@ -655,11 +655,28 @@ decide) three times; its median CPU is stored with every run and in the job's en
 record, which also holds the node, CPU model, frequency governor and memory. Reports give times
 scaled by the calibration beside the raw times; raw times are compared within one CPU model.
 
+The false set (benchmarks/results/false_set.json, tracked) is keyed by a fingerprint of the
+subjects and false_set sections and of the subject sources, ir.py, translate.py, breaks.py and
+subject.py; after an edit of any of them the stored set is stale, and the job's shard 0
+regenerates it while every other shard waits. To regenerate it before submitting instead, on
+the local machine (never on a cluster login node), at the commit the cluster will run and with
+the --set values of the run:
+
+    git checkout dev && git pull
+    python -m benchmarks false --profile cluster --set platform.jobs=J [--set KEY=VALUE ...]
+    git add benchmarks/results/false_set.json && git commit && git push origin dev
+
+It writes every F record with its differs_at table; the commit changes no fingerprinted file,
+so once its CI is green the slurm action picks it and the job loads the set as it is. The
+clean-checkout checks below ignore benchmarks/results/false_set.json, so a set rewritten by
+shard 0 leaves later and requeued array tasks runnable.
+
 The slurm action runs at one commit: slurm.commit when set, else the head of the latest
-successful CI run on dev (gh run list). A checkout with tracked local changes is refused; a
-clean one elsewhere is checked out (detached) at that commit. The sbatch file names the commit
-and each array task exits when the checkout is not at it or is dirty. Every run record carries
-git = {commit, dirty} of the job.
+successful CI run on dev (gh run list). A checkout with tracked local changes (other than in
+benchmarks/results/false_set.json) is refused; a clean one elsewhere is checked out (detached)
+at that commit. The sbatch file names the commit and each array task exits when the checkout is
+not at it or is dirty (the same exception). Every run record carries git = {commit, dirty} of
+the job.
 
 Before any unit runs, a preflight imports the harness's in-process modules (numpy, sympy,
 qiskit; the extra .[benchmarks], installed by setup_rivals.sh harness) and, for each enabled
