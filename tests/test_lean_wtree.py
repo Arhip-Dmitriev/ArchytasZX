@@ -33,7 +33,7 @@ COPY_WEIGHT = "(((1 : ℂ) / 2) * (rt 2)) * ex (Φ 9 v)"
 
 def _source() -> str:
     decision = decide_equal(parse_dsl(CIRCUIT), parse_dsl(SPEC))
-    return export_tree_theorem(decision.induction_proof, checks=())
+    return export_tree_theorem(decision.induction_proof)
 
 
 def test_the_w_state_copy_pair_takes_the_atom_form() -> None:
@@ -42,6 +42,15 @@ def test_the_w_state_copy_pair_takes_the_atom_form() -> None:
     for step in (".psup [1] [2]", ".aphase [2] 7 2", ".aflip 0 4 3"):
         assert step in source
     assert COPY_WEIGHT in source
+
+
+def test_the_depth_two_link_drops_atom_monomials_off_the_support() -> None:
+    """The grown fan tree's W pair constraints on pinned path variables; its atoms reduced on
+    the one-hot support (adropC) and its weighted copies on the copy's phase index."""
+    source = _source()
+    assert "namespace At2" in source
+    assert ".adropC" in source
+    assert "⟨.ZW, [65538], [65537], 1, 9⟩" in source
 
 
 def _mathlib() -> bool:
@@ -61,4 +70,14 @@ def test_lean_rejects_a_tampered_copy_weight(tmp_path: object) -> None:
     tampered = source.replace(COPY_WEIGHT, "((1 : ℂ) / 2) * ex (Φ 9 v)")
     assert tampered != source
     ok, _output = L.check(tampered, f"{tmp_path}/wtree_bad.lean")
+    assert not ok
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_rejects_the_link_without_its_atom_drop(tmp_path: object) -> None:
+    """Without adropC the grown tree's atoms are not the fan instance's."""
+    source = _source()
+    tampered = source.replace(".adropC, ", "")
+    assert tampered != source
+    ok, _output = L.check(tampered, f"{tmp_path}/wtree_nodrop.lean")
     assert not ok

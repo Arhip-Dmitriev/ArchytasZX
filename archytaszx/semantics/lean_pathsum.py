@@ -513,16 +513,25 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
     else:
         order = _elimination_order(red_l.constraints, red_l.boundary)
         canon_steps = [f".canon {v}" for v in order]
-    starts = []
     support_poly = frozenset(frozenset(m) for m in can_l.support) if can_l.support else ONE
-    for run, red, rows, can in ((run_l, red_l, rows_l, can_l), (run_r, red_r, rows_r, can_r)):
-        starts.append((list(run.cur), list(run.held), list(run.atoms)))
-        reduce_run(run, red.trace)
-        run.inner(canon_steps)
-        run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
-        if atom_form:
-            run.normalize([(frozenset(m), c) for m, c in can.phase], support_poly)
-    if run_l.final_key() != run_r.final_key():
+    saved = (run_l.snapshot(), run_r.snapshot(), len(run_l.coefs.values))
+    for drop in (False, True) if boolean and g_l != ONE else (False,):
+        starts = []
+        for run, red, rows, can in ((run_l, red_l, rows_l, can_l), (run_r, red_r, rows_r, can_r)):
+            run.support = g_l if drop else None
+            starts.append((list(run.cur), list(run.held), list(run.atoms)))
+            reduce_run(run, red.trace)
+            run.inner(canon_steps)
+            run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
+            if atom_form:
+                run.normalize([(frozenset(m), c) for m, c in can.phase], support_poly)
+        if run_l.final_key() == run_r.final_key():
+            break
+        if not drop:
+            run_l.restore(saved[0])
+            run_r.restore(saved[1])
+            del run_l.coefs.values[saved[2] :]
+    else:
         raise PathSumUnsupported("the reduced sums carry different amplitude atoms")
     m = run_l.coefs.m
     turns = (_const_turn(red_l, m, boolean), _const_turn(red_r, m, boolean))
@@ -916,6 +925,7 @@ class _NetSide:
     pins: list[tuple[int, int]] = field(default_factory=list)
     held0: list[int] = field(default_factory=list)
     cur0: list[int] = field(default_factory=list)
+    wpins: list[tuple[int, Any]] = field(default_factory=list)
 
 
 def _net_side(
@@ -926,6 +936,7 @@ def _net_side(
     coefs: dict[int, str] | None = None,
     amp: Any = None,
     tabs: dict[int, str] | None = None,
+    prefer: Mapping[Any, int] | None = None,
 ) -> tuple[_NetSide, PathSum]:
     """The network of ``diagram`` over digit variables numbered as from_diagram's: boundary port
     i is label i with its boundary digits, a summed wire is label ``label0 + w``, its digit j
@@ -938,7 +949,8 @@ def _net_side(
     weighted spider whose weights are 0 or sqrt(2) times the magnitude takes atoms on its anchor
     digits (Z with legs) or its own digits (X, legless Z) and its coefficient index table by
     phase index in ``tabs``; the side then holds every summed digit and fragment path variable
-    and keeps its pins and no steps."""
+    and keeps its pins and no steps. A node listed in ``prefer`` takes that phase index when
+    its phase vector, coefficient and index table equal the ones already there."""
     from archytaszx.algebra.pathsum import constant
     from archytaszx.diagram.generators import (
         DIM_BINDER,
@@ -1121,9 +1133,20 @@ def _net_side(
             anchor_vars = ys
             poly, ts = _table_poly(ys, table, m)
         ph = 0
+        shared = False
         if any(ts) or weighted:
-            phases.append((f"(({ts} : List ℕ).getD v 0 : ℕ)", m))
-            ph = len(phases)
+            vec = (f"(({ts} : List ℕ).getD v 0 : ℕ)", m)
+            want = (prefer or {}).get(nid)
+            if (
+                want is not None
+                and 0 < want <= len(phases)
+                and phases[want - 1] == vec
+                and (weighted or want not in (coefs or {}))
+            ):
+                ph, shared = want, True
+            else:
+                phases.append(vec)
+                ph = len(phases)
         ts_text = f"({ts if ph else []} : List ℕ)"
         nodes.append(f"⟨{kind}{'W' if weighted else ''}, {os_}, {is_}, {k}, {ph}⟩")
         if kind == ".Z" and legs:
@@ -1150,6 +1173,8 @@ def _net_side(
             c_text = sc.text(w)
             if coefs is None:
                 raise PathSumUnsupported(f"node {nid!r} carries weights and no coefficient table")
+            if shared and coefs.get(ph) != c_text:
+                raise PathSumUnsupported(f"node {nid!r} shares a phase index of another weight")
             coefs[ph] = c_text
             weights.append(w)
             lemma = "val_zw" if kind == ".Z" else "val_xw"
@@ -1167,6 +1192,8 @@ def _net_side(
                 ]
                 if tabs is None:
                     raise PathSumUnsupported(f"node {nid!r} carries atoms and no index table")
+                if shared and tabs.get(ph) != str(tbl):
+                    raise PathSumUnsupported(f"node {nid!r} shares a phase index of other atoms")
                 tabs[ph] = str(tbl)
                 frag = f"({frag}).scale ({c_text})"
                 if kind == ".Z" and legs:
@@ -1186,6 +1213,8 @@ def _net_side(
                     if legless:
                         proof = f"(val_zw_legless E σ _ rfl rfl rfl).trans ({proof})"
             else:
+                if shared and ph in (tabs or {}):
+                    raise PathSumUnsupported(f"node {nid!r} shares a phase index of other atoms")
                 frag = f"({frag}).scale ({c_text})"
                 proof = (
                     f"w_frag E σ _ _ _ _ _ ({c_text}) ({lemma} E σ _ rfl ({c_text}) "
@@ -1203,11 +1232,9 @@ def _net_side(
     if amp is not None:
         from archytaszx.semantics.lean_amp import atoms_text
 
-        if lay["wpins"]:
-            raise PathSumUnsupported("a W node pin in a network with atoms")
         held0 = list(cur)
         pins = [(x, parent[x]) for x in reversed(reached) if x >= PIN_OFFSET]
-        pinned = {x for x, _p in pins}
+        pinned = {x for x, _p in pins} | {x for x, _v in lay["wpins"]}
         if sorted(x for x in cur if x not in pinned) != sorted(raw.path):
             raise PathSumUnsupported("the pinned network keeps other path variables")
         c, kc = constant(d.scalar.to_sympy())
@@ -1231,6 +1258,7 @@ def _net_side(
             pins,
             held0,
             [],
+            list(lay["wpins"]),
         )
         return side, raw
     steps: list[str] = []
@@ -1448,12 +1476,14 @@ def net_body(
     phases: list[tuple[str, int]],
     m_min: int = 1,
     coefs: dict[int, str] | None = None,
+    prefer: Mapping[Any, int] | None = None,
 ) -> NetBody:
     """The lines proving ``Equal E sL NL sR NR`` for the networks of two diagrams of Z, X, F, B
     and S nodes on dimensions 2^k and W nodes on dimension 2, their phase vectors appended to
-    ``phases``, phases over a multiple of ``m_min`` (see :func:`export_net`), each side zero by
-    its scalar or by a constraint 1 = 0 included; raises :class:`PathSumUnsupported` outside
-    that class or when the sums do not reduce to one canonical form."""
+    ``phases`` (the left side's nodes in ``prefer`` on those phase indices, see
+    :func:`_net_side`), phases over a multiple of ``m_min`` (see :func:`export_net`), each side
+    zero by its scalar or by a constraint 1 = 0 included; raises :class:`PathSumUnsupported`
+    outside that class or when the sums do not reduce to one canonical form."""
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
     raw_l, raw_r = from_diagram(left, w_nodes=True), from_diagram(right, w_nodes=True)
@@ -1471,7 +1501,7 @@ def net_body(
         if zero is None:
             raise
         return _zero_body(left, right, name, phases, coefs, zero)
-    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, prefer=prefer)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
         side_r.k_of[i] for i in range(side_r.boundary)
@@ -1668,6 +1698,8 @@ def _net_run(side: _NetSide, coefs: Any) -> Any:
         run.inner([f".perm {[x, *rest]}", f".pin [[{p}]]"])
         run.cur = rest
     run.inner([".norm"])
+    for x, value in side.wpins:
+        run.pin(x, value)
     return run
 
 
@@ -1680,9 +1712,11 @@ def net_amp_body(
     tabs: dict[int, str],
     m_min: int = 1,
     shared: Any = None,
+    prefer: Mapping[Any, int] | None = None,
 ) -> tuple[NetBody, Any]:
     """The lines proving ``Equal E sL NL sR NR`` for two networks with amplitude atoms (see
-    :func:`export_net`), and the atoms' coefficients (a lean_amp.Coefs, ``shared`` when
+    :func:`export_net`), the left side's nodes in ``prefer`` on those phase indices (see
+    :func:`_net_side`), and the atoms' coefficients (a lean_amp.Coefs, ``shared`` when
     given)."""
     from archytaszx.semantics.lean_amp import Coefs, afac_lines, qreqs_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
@@ -1697,7 +1731,7 @@ def net_amp_body(
     amp = Coefs(m) if shared is None else shared
     if amp.m != m:
         raise PathSumUnsupported(f"the shared coefficients are over zeta_{amp.m}, not zeta_{m}")
-    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, amp, tabs)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, amp, tabs, prefer)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs, amp, tabs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
         side_r.k_of[i] for i in range(side_r.boundary)
@@ -1775,11 +1809,13 @@ def net_quarter_body(
     coefs: dict[int, str],
     m_min: int = 1,
     shared: Any = None,
+    prefer: Mapping[Any, int] | None = None,
 ) -> tuple[NetBody, Any]:
     """The lines proving ``Equal E sL NL sR NR`` for two networks without atoms whose
     reductions take [Quarter] steps (see :func:`export_net`): each side's pin steps on its
-    network's sum, then its reduction replayed with atoms from no held variable and no atom; and
-    the atoms' coefficients (a lean_amp.Coefs, ``shared`` when given)."""
+    network's sum, then its reduction replayed with atoms from no held variable and no atom; the
+    left side's nodes in ``prefer`` on those phase indices (see :func:`_net_side`); and the
+    atoms' coefficients (a lean_amp.Coefs, ``shared`` when given)."""
     from archytaszx.semantics.lean_amp import AmpRun, Coefs, afac_lines, qreqs_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
@@ -1793,7 +1829,7 @@ def net_quarter_body(
     amp = Coefs(m) if shared is None else shared
     if amp.m != m:
         raise PathSumUnsupported(f"the shared coefficients are over zeta_{amp.m}, not zeta_{m}")
-    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
+    side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, prefer=prefer)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
         side_r.k_of[i] for i in range(side_r.boundary)

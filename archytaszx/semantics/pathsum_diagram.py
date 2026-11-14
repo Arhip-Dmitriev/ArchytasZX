@@ -256,8 +256,8 @@ def from_diagram(
     variables (``digit``), each X spider's fresh digits (``fresh``) and each legless Z spider's
     digits (``zdigits``). With ``w_nodes``, a W node on dimension 2 adds the constraints: its
     input digit plus its output digits is 0, and each two output digits' product is 0 (on
-    boundary variables only); the first is pinned at its least path variable when it has one,
-    each pin listed in ``wpins`` of ``layout``."""
+    boundary variables once every pin is substituted); the first is pinned at its least path
+    variable when it has one, each pin listed in ``wpins`` of ``layout``."""
     if diagram.bang_boxes:
         diagram = expand_concrete_boxes(diagram)
         if diagram.bang_boxes:
@@ -427,9 +427,11 @@ def from_diagram(
         elif total:
             constraints.append(total)
         for pair in pairs:
-            if any(x in path for m in pair for x in m):
-                raise PathSumUnsupported("a W node's two outputs on path variables")
+            for v, value in pins:
+                pair = f2_substitute(pair, v, value)
             constraints.append(pair)
+    if any(x in path for con in constraints for m in con for x in m):
+        raise PathSumUnsupported("a W node's two outputs on path variables")
     if layout is not None:
         layout["wpins"] = pins
     return PathSum(tuple(boundary), path, phase, c, s2, constraints, [], amps)

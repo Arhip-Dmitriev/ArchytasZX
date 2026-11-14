@@ -34,6 +34,7 @@ from archytaszx.algebra.pathsum import (
     Mono,
     PathSumUnsupported,
     Step,
+    f2_mul,
     f2_substitute,
 )
 
@@ -108,6 +109,28 @@ class AmpRun:
     facs: list[sp.Expr] = field(default_factory=list)
     omega: bool = False
     qreqs: list[tuple[int, int, int]] = field(default_factory=list)
+    support: F2Poly | None = None
+
+    def snapshot(self) -> AmpRun:
+        """A copy of the run's state, the coefficients shared."""
+        return AmpRun(
+            self.coefs,
+            list(self.cur),
+            list(self.held),
+            list(self.atoms),
+            list(self.steps),
+            list(self.reqs),
+            list(self.facs),
+            self.omega,
+            list(self.qreqs),
+            self.support,
+        )
+
+    def restore(self, other: AmpRun) -> None:
+        """The state of ``other`` (a snapshot) taken back."""
+        self.cur, self.held, self.atoms = list(other.cur), list(other.held), list(other.atoms)
+        self.steps, self.reqs, self.facs = list(other.steps), list(other.reqs), list(other.facs)
+        self.omega, self.qreqs, self.support = other.omega, list(other.qreqs), other.support
 
     def avars(self) -> set[int]:
         """The variables the atoms read."""
@@ -289,12 +312,20 @@ class AmpRun:
         self.cur = rest
 
     def substitute(self, rows: Sequence[tuple[int, F2Poly]]) -> None:
-        """The atoms' pivots set by the rows, then every atom normalised and atoms on one
-        polynomial merged."""
+        """The atoms' pivots set by the rows, with ``support`` their monomials zero on it
+        dropped (adropC), then every atom normalised and atoms on one polynomial merged."""
         for pivot, rest in rows:
             if pivot in self.avars():
                 self.steps.append(f".asub {pivot}")
                 self.atoms = [(j, f2_substitute(f, pivot, rest)) for j, f in self.atoms]
+        if self.support is not None:
+            g = self.support
+            kept = [
+                (j, frozenset(m for m in f if f2_mul(frozenset({m}), g))) for j, f in self.atoms
+            ]
+            if kept != self.atoms:
+                self.steps.append(".adropC")
+                self.atoms = kept
         if self.atoms:
             self.steps.append(".anorm")
         self.fold(set(), True)

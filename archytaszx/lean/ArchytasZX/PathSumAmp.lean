@@ -17,8 +17,8 @@ constant, `average_sound` is [Average], `averageH_sound` is [Average] through a 
 `quarter_sound` sums a path variable with quarter coefficients into the atom `((1 + i) / 2)^B0`,
 `acomp_sound` moves two atoms of one index on complementary polynomials into the constant,
 `turn_sound` sums a path variable with coefficients `S / 2^k` into one atom per value of `S`
-other than `0` and `2^(k - 1)`, with the constraint `S ≠ 2^(k - 1)`, and
-`afinal_sound` compares two reduced sums with the
+other than `0` and `2^(k - 1)`, with the constraint `S ≠ 2^(k - 1)`, `adropC_sound` drops the
+atoms' monomials that are 0 where a constraint holds, and `afinal_sound` compares two reduced sums with the
 same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
 -/
 
@@ -1318,6 +1318,55 @@ theorem valA_nil (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (s : Data) (σ : ℕ → 
     valA M c A ⟨s, [], []⟩ σ = val M c s σ := by
   simp [valA, bsum, aval_nil]
 
+/-! ## Atom monomials off the constraints -/
+
+theorem fz_filter_zero (τ : ℕ → ZMod 2) (p : Mono → Bool)
+    (hp : ∀ m, p m = false → mz τ m = 0) : ∀ f : F2, fz τ (f.filter p) = fz τ f
+  | [] => rfl
+  | m :: f => by
+    by_cases h : p m = true
+    · simp only [List.filter_cons, h, ↓reduceIte, fz_cons, fz_filter_zero τ p hp f]
+    · have h' : p m = false := by simpa using h
+      simp only [List.filter_cons, h', Bool.false_eq_true, ↓reduceIte, fz_cons, hp m h',
+        zero_add, fz_filter_zero τ p hp f]
+
+theorem mz_of_dropT (τ : ℕ → ZMod 2) (C : List F2) (m : Mono) (ht : dropT C m = true)
+    (hC : ∀ q ∈ C, fz τ q = 0) : mz τ m = 0 := by
+  simp only [dropT, List.any_eq_true, decide_eq_true_eq] at ht
+  obtain ⟨q, hq, e⟩ := ht
+  have h0 : fz τ q = 0 := hC q hq
+  have e2 : fz τ [m] * (mz τ [] + fz τ q) = 0 := by
+    rw [← fz_cons, ← fz_f2mul, ← fz_normF, e]
+    rfl
+  rw [h0, show mz τ [] = 1 by simp [mz], add_zero, mul_one, fz_cons,
+    show fz τ ([] : F2) = 0 from rfl, add_zero] at e2
+  exact e2
+
+/-- Every atom's monomials that are 0 where some constraint holds dropped. -/
+def adropCS (t : AData) : AData :=
+  { t with atoms := t.atoms.map fun a => (a.1, a.2.filter fun m => !dropT t.s.cons m) }
+
+theorem adropC_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (t : AData) (σ : ℕ → ZMod 2)
+    (h : decide (t.s.path = []) = true) : valA M c A t σ = valA M c A (adropCS t) σ := by
+  have hp : t.s.path = [] := of_decide_eq_true h
+  unfold valA adropCS
+  apply bsum_congr
+  intro τ
+  dsimp only
+  by_cases hC : ∀ q ∈ t.s.cons ++ t.s.rows, fz τ q = 0
+  · congr 1
+    refine (aval_map A τ (fun f => f.filter fun m => !dropT t.s.cons m) (fun f =>
+      fz_filter_zero τ _ (fun m hm => ?_) f) t.atoms).symm
+    have ht : dropT t.s.cons m = true := by simpa using hm
+    exact mz_of_dropT τ t.s.cons m ht (fun q hq => hC q (List.mem_append_left _ hq))
+  · have h0 : val M c t.s τ = 0 := by
+      unfold val
+      rw [hp]
+      simp only [bsum]
+      unfold summand
+      simp only [hC, ite_false]
+    rw [h0, mul_zero, mul_zero]
+
 /-! ## Step lists -/
 
 /-- A step on a path sum with atoms. -/
@@ -1343,6 +1392,7 @@ inductive AStep where
   | psup (a b : Mono)
   | aphase (m : Mono) (e j : ℕ)
   | aflip (j j' o : ℕ)
+  | adropC
 
 /-- `(b + 1) * A j = b + om M ^ e` for the triple `(e, j, b)`. -/
 def qreqHolds (M : ℕ) (A : ℕ → ℂ) (p : ℕ × ℕ × ℕ) : Prop :=
@@ -1402,6 +1452,7 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .psup a b, t => psupOK a b t.s
   | .aphase m e _, t => aphaseOK m e t
   | .aflip j _ _, t => aflipOK j t
+  | .adropC, t => decide (t.s.path = [])
 
 /-- A step applied. -/
 def AStep.apply (M : ℕ) : AStep → AData → AData
@@ -1426,6 +1477,7 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .psup a b, t => { t with s := psupS a b t.s }
   | .aphase m e j, t => aphaseS m e j t
   | .aflip _ j' _, t => aflipS j' t
+  | .adropC, t => adropCS t
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
@@ -1554,6 +1606,7 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
     simpa [AStep.fac, AStep.apply] using amerge_sound M c A j j1 j2 t σ hreq h
   | apick i => simpa [AStep.fac, AStep.apply] using apick_sound M c A i t σ h
   | anorm => simpa [AStep.fac, AStep.apply] using anorm_sound M c A t σ
+  | adropC => simpa [AStep.fac, AStep.apply] using adropC_sound M c A t σ h
 
 theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     ∀ (sts : List AStep) (t : AData) (c : ℂ) (σ : ℕ → ZMod 2),

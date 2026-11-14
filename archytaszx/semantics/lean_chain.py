@@ -468,35 +468,42 @@ def _atom_bodies(
     tabs: dict[int, str],
     m_min: int,
     amp: object,
+    prefers: Sequence[Mapping[NodeId, int] | None] = (),
 ) -> list[NetBody]:
     """Qubit-digit bodies of ``pairs``: net_amp_body for a pair whose path sums carry atoms,
     net_quarter_body for one whose reductions take [Quarter] or [Turn] steps, both over the
-    coefficients ``amp`` when given, net_body otherwise."""
+    coefficients ``amp`` when given, net_body otherwise; pair i's left nodes on the phase
+    indices of ``prefers[i]`` when listed."""
     from archytaszx.algebra.pathsum import PathSum
     from archytaszx.semantics.lean_pathsum import _quartered, net_amp_body, net_quarter_body
     from archytaszx.semantics.pathsum_diagram import from_diagram
 
     out = []
-    for (a, b), n in zip(pairs, names, strict=True):
+    for i, ((a, b), n) in enumerate(zip(pairs, names, strict=True)):
+        pref = prefers[i] if i < len(prefers) else None
         raws = [from_diagram(a, w_nodes=True), from_diagram(b, w_nodes=True)]
         pss = [r for r in raws if isinstance(r, PathSum)]
         if any(r.amps for r in pss):
-            out.append(net_amp_body(a, b, n, phases, coefs, tabs, m_min, amp)[0])
+            out.append(net_amp_body(a, b, n, phases, coefs, tabs, m_min, amp, pref)[0])
         elif len(pss) == 2 and _quartered(*pss):
-            out.append(net_quarter_body(a, b, n, phases, coefs, m_min, amp)[0])
+            out.append(net_quarter_body(a, b, n, phases, coefs, m_min, amp, pref)[0])
         else:
-            out.append(net_body(a, b, n, phases, m_min, coefs))
+            out.append(net_body(a, b, n, phases, m_min, coefs, pref))
     return out
 
 
 def _bodies(
-    pairs: Sequence[tuple[Diagram, Diagram]], names: Sequence[str], atoms: bool = False
+    pairs: Sequence[tuple[Diagram, Diagram]],
+    names: Sequence[str],
+    atoms: bool = False,
+    prefers: Sequence[Mapping[NodeId, int] | None] = (),
 ) -> tuple[list[NetBody], list[tuple[str, int]], bool, dict[int, str]]:
     """The network proofs of ``pairs`` over one environment: qudit bodies on an odd prime, else
     qubit-digit bodies over one phase modulus; whether they are qudit bodies, and the weighted
     spiders' coefficients by phase index. With ``atoms``, pairs with amplitude atoms or
     [Quarter] and [Turn] steps take atom bodies over one coefficient vector ``A``, whose
-    definition is the first body's ``head`` and whose atom tables are its ``tabs``."""
+    definition is the first body's ``head`` and whose atom tables are its ``tabs``, pair i's
+    left nodes on the phase indices of ``prefers[i]`` when listed."""
     from archytaszx.algebra.pathsum import QuditPathSum
     from archytaszx.semantics.pathsum_diagram import from_diagram
 
@@ -510,11 +517,11 @@ def _bodies(
         from archytaszx.semantics.lean_amp import Coefs
 
         tabs: dict[int, str] = {}
-        first = _atom_bodies(pairs, names, phases, coefs, tabs, 1, None)
+        first = _atom_bodies(pairs, names, phases, coefs, tabs, 1, None, prefers)
         m = math.lcm(*(body.m for body in first))
         phases, coefs, tabs = [], {}, {}
         amp = Coefs(m)
-        bodies = _atom_bodies(pairs, names, phases, coefs, tabs, m, amp)
+        bodies = _atom_bodies(pairs, names, phases, coefs, tabs, m, amp, prefers)
         if any(body.m != m for body in bodies):
             raise PathSumUnsupported("the bodies take different phase moduli")
         if amp.values:
@@ -1270,9 +1277,10 @@ def _fused_tree(
     root: int,
     kids: Sequence[int],
     chk: TreeCheck,
-) -> Diagram:
+) -> tuple[Diagram, dict[NodeId, int]]:
     """The fan side's base with its copies grown to ``chk.depth``, its boundary ordered as the
-    tree side's instance orders the family's boundary labels."""
+    tree side's instance orders the family's boundary labels, and the phase index of the family
+    node each of its phased nodes matches."""
 
     def body_of(ph: int) -> str | None:
         return phases[ph - 1][0] if ph else None
@@ -1286,11 +1294,16 @@ def _fused_tree(
     side = 0 if chk.fan == "L" else 1
     grown = _grow_tree(bases[side], [c[side] for c in copies], leaf, root, kids, n)
     g_inst, _gs, g_nb = _instance_net(grown, phases, qudit, bodies[0].m)
-    fwd_g, _ = _iso(nets[chk.fan], g_inst, body_of)
+    fwd_g, match_g = _iso(nets[chk.fan], g_inst, body_of)
     if g_nb != nb or sorted(fwd_t[x] for x in nets[tree_tag][2]) != list(range(nb)):
         raise PathSumUnsupported("the tree family's boundary is not the instance's")
     back_g = {fwd_g[x]: x for x in nets[chk.fan][2]}
-    return _reorder(grown, [fwd_t[back_g[q]] for q in range(nb)])
+    prefer = {
+        nid: nets[chk.fan][0][j][4]
+        for nid, j in zip(sorted(grown.nodes), match_g, strict=True)
+        if nets[chk.fan][0][j][4]
+    }
+    return _reorder(grown, [fwd_t[back_g[q]] for q in range(nb)]), prefer
 
 
 @dataclass
@@ -1332,9 +1345,10 @@ def export_tree(
         for chk in checks
     ]
     if grown:
-        pairs += [(g, chk.right if chk.fan == "R" else chk.left) for chk, g in grown]
+        pairs += [(g, chk.right if chk.fan == "R" else chk.left) for chk, (g, _p) in grown]
         names += ["fuseEq" for _ in grown]
-        bodies, phases, qudit, coefs = _bodies(pairs, names, True)
+        prefers = [None] * (1 + len(copies)) + [p for _c, (_g, p) in grown]
+        bodies, phases, qudit, coefs = _bodies(pairs, names, True, prefers)
         base, cbodies = bodies[0], bodies[1 : 1 + len(copies)]
     fusions = bodies[1 + len(copies) :]
     if qudit:
@@ -1446,7 +1460,7 @@ def export_tree(
         "    Base.baseEq copyEq",
         "",
     ]
-    for (chk, grown_d), fusion in zip(grown, fusions, strict=True):
+    for (chk, (grown_d, _p)), fusion in zip(grown, fusions, strict=True):
         lines += _tree_link(
             chk, grown_d, fusion, bodies, bases, copies, phases, qudit, leaf, root, kids
         )
