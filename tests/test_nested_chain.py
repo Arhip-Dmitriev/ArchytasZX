@@ -213,6 +213,66 @@ def test_a_chain_with_a_boundary_end_peels(head: bool, tail: bool, reverse: bool
         assert compare(got, expected, at).matched
 
 
+BINDERS = """count n, l
+b = B(literal 2, literal 2^m)
+u = X(0 -> 1, literal 2)
+w = Z(1 -> 0, literal 2)
+wire u.out0 -- w.in0
+repeat n as R index m: b, u, w
+repeat l as C in R: b
+chain R: b.out0 -> b.in1
+inputs b.in1, b.in0
+outputs b.out0"""
+"""l binder chains B(2, 2^m) side by side, their dimension 1 heads and 2^n tails on the
+boundary."""
+
+
+def _binders(n: int, l: int, shift: int = 0) -> str:
+    lines = [f"b{r}_{c} = B(literal 2, literal {2**r})" for c in range(l) for r in range(n)]
+    wires, inputs, outputs = [], [], []
+    for r in range(n):
+        lines += [f"u{r} = X(0 -> 1, literal 2)", f"w{r} = Z(1 -> 0, literal 2)"]
+        wires.append(f"u{r}.out0 -- w{r}.in0")
+    for c in range(l):
+        if n == 0:
+            lines.append(f"i{c} = Z(1 -> 1, literal 1)")
+        inputs.append(f"b0_{c}.in1" if n else f"i{c}.in0")
+        outputs.append(f"b{n - 1}_{c}.out0" if n else f"i{c}.out0")
+    for r in range(n):
+        for c in range(l):
+            inputs.append(f"b{r}_{c}.in0")
+            if r + 1 < n:
+                wires.append(f"b{r}_{c}.out0 -- b{r + 1}_{(c + shift) % l}.in1")
+    if wires:
+        lines.append("wire " + ", ".join(wires))
+    lines += ["inputs " + ", ".join(inputs), "outputs " + ", ".join(outputs)]
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize("order", [("n", "l"), ("l", "n")])
+@pytest.mark.parametrize(("n", "l"), [(0, 1), (1, 2), (2, 1), (2, 2), (3, 2)])
+def test_boundary_chain_ends_reading_the_index_take_its_end_values(
+    order: tuple[str, str], n: int, l: int
+) -> None:
+    diagram = _at(BINDERS, order, n, l)
+    result = compare(diagram, parse_dsl(_binders(n, l)), {"n": n})
+    assert result.matched, result.reason
+    if n >= 2 and l >= 2:
+        assert not compare(diagram, parse_dsl(_binders(n, l, 1)), {"n": n}).matched
+
+
+def test_boundary_chain_ends_reading_the_index_peel() -> None:
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    diagram = rename_multiplicity(parse_dsl(BINDERS), "n", Mult("s") + 1)
+    row = next(box for box in diagram.bang_boxes.values() if box.parent is None and box.links)
+    peeled = peel_one(diagram, row.id).diagram
+    for k, l in [(0, 1), (1, 2), (2, 2)]:
+        got = instantiate_symbol(instantiate_symbol(peeled, "s", k), "l", l)
+        assert compare(got, parse_dsl(_binders(k + 1, l)), {"s": k}).matched
+
+
 def _grid_pair(s: int) -> tuple[Diagram, Diagram]:
     """Boxed cluster_state_2d's translation (vertical CZ^s) and its specification."""
     from pathlib import Path
