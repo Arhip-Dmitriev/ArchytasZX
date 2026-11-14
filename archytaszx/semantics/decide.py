@@ -2488,13 +2488,16 @@ def _decide_value_count(
     """EQUAL when the induction rung settles the pair with its power box count ``b^e`` counted
     by a free ``N`` (:func:`~archytaszx.semantics.valuecount.generalise`) EQUAL; its kernel
     theorem carried back at ``N = b^e`` (:func:`~archytaszx.semantics.valuecount.specialised`);
-    else why not."""
+    else why not. The base case is tried only after :func:`_value_count_step` proves the step."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.valuecount import generalise, specialised
 
     found = generalise(left, right)
     if found is None:
         return "no single power box count"
+    stepped = _value_count_step(found.left, found.right, found.symbol, options)
+    if stepped is not None:
+        return f"{found.power.to_sympy()} counted by {found.symbol}: {stepped}"
     power = found.power.to_sympy()
     points: list[Mapping[str, CheckAssignmentValue]] = []
     for point in evaluated:
@@ -2524,6 +2527,37 @@ def _decide_value_count(
         f"{label}: {reason}; kernel proof carried to {found.symbol} = {power} by instance",
         {**evidence, "induction_proof": carried},
     )
+
+
+def _value_count_step(
+    left: Diagram, right: Diagram, symbol: str, options: Mapping[str, Any]
+) -> str | None:
+    """None when the step case over ``symbol`` from 0 is proved in one direction with the base
+    taken as given (:func:`prove_by_induction`, ``base_proved``, no certificate); else why
+    neither direction proves it."""
+    reasons: list[str] = []
+    with _trace.span("decide.induction.value_count.step"):
+        for first, second in ((left, right), (right, left)):
+            try:
+                result = prove_by_induction(
+                    first,
+                    second,
+                    index=symbol,
+                    base=0,
+                    ladder=_STEP_LADDER,
+                    rules=options.get("rules"),
+                    certify_proof=False,
+                    tolerance=options["tolerance"],
+                    max_elements=options["max_elements"],
+                    base_proved=True,
+                )
+            except _INDUCTION_ERRORS as exc:
+                reasons.append(f"step case declined: {type(exc).__name__}: {exc}")
+                continue
+            if result.proved:
+                return None
+            reasons.append(f"step case over {symbol} not proved: {result.reason}")
+    return "; reversed: ".join(reasons)
 
 
 def _decide_shifted(
