@@ -1365,10 +1365,12 @@ def export_tree(
     ns = f"ArchytasZX.TreeProof.{name}"
     sem = "QSem" if qudit else "PSem"
     support = any("finalS" in ln for body in bodies for ln in body.lines)
+    chained = any(ln.startswith("run_chain ") for body in bodies for ln in body.lines)
     lines = [
         "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumNetW",
         *(["import ArchytasZX.PathSumNetAmp"] if base.head or base.tabs else []),
         *(["import ArchytasZX.PathSumSupport"] if support else []),
+        *(["import ArchytasZX.PathSumChain"] if chained else []),
         "import ArchytasZX.TreeInduct",
         "",
         "/-!",

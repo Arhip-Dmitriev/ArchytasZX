@@ -1805,6 +1805,9 @@ NET_OPTIONS = [
 ]
 """The options of a network proof file."""
 
+CHAIN_BLOCK = 20
+"""The steps between two checkpoints of run_chain and aruns_chain (ArchytasZX/PathSumChain)."""
+
 
 def net_quarter_body(
     left: Diagram,
@@ -1854,8 +1857,8 @@ def net_quarter_body(
     rhs = f_r * p_r * side_r.scalar * w_r * Inv(Rt(2)) ** side_r.sqrt2_inv * Om(m) ** k_r
     proof = sc.prove(lhs, rhs)
     bnd = list(range(side_l.bnd_vars))
-    t_l = f"⟨run {m} stepsL (netDataD digL NL (psL.map Prod.snd)), [], []⟩"
-    t_r = f"⟨run {m} stepsR (netDataD digR NR (psR.map Prod.snd)), [], []⟩"
+    d_l = "(netDataD digL NL (psL.map Prod.snd))"
+    d_r = "(netDataD digR NR (psR.map Prod.snd))"
     lines = [
         *_net_lines("L", side_l, m),
         *_net_lines("R", side_r, m),
@@ -1884,23 +1887,28 @@ def net_quarter_body(
         *("    " + ln for ln in proof.splitlines()),
         "  linear_combination key",
         "",
+        f"run_chain runL {m} stepsL {d_l} {CHAIN_BLOCK}",
+        f"run_chain runR {m} stepsR {d_r} {CHAIN_BLOCK}",
+        f"aruns_chain arunL {m} stepsAL ⟨runL, [], []⟩ {CHAIN_BLOCK}",
+        f"aruns_chain arunR {m} stepsAR ⟨runR, [], []⟩ {CHAIN_BLOCK}",
+        "",
         "/-- The two networks are equal. -/",
         f"theorem {name} : Equal E ({s_l}) NL ({s_r}) NR := by",
         "  apply equal_psd2 _ _ netL netR rfl",
         "  intro σ",
         "  rw [cL, cR, ← val_smul, ← val_smul,",
-        (
-            f"    run_sound {m} (by norm_num) stepsL (netDataD digL NL (psL.map Prod.snd)) _ _ "
-            "(by decide),"
-        ),
-        (
-            f"    run_sound {m} (by norm_num) stepsR (netDataD digR NR (psR.map Prod.snd)) _ _ "
-            "(by decide),"
-        ),
+        f"    run_sound {m} (by norm_num) stepsL {d_l} _ _ runL_ok, runL_eq,",
+        f"    run_sound {m} (by norm_num) stepsR {d_r} _ _ runR_ok, runR_eq,",
         f"    ← valA_nil {m} _ A, ← valA_nil {m} _ A,",
-        f"    aruns_sound {m} (by norm_num) A stepsAL {t_l} _ _ reqsAL qreqsAL (by decide),",
-        f"    aruns_sound {m} (by norm_num) A stepsAR {t_r} _ _ reqsAR qreqsAR (by decide),",
-        f"    valA_agree {m} _ A (aruns {m} stepsAL {t_l}) {bnd} _ _ (by decide) (by decide)",
+        (
+            f"    aruns_sound {m} (by norm_num) A stepsAL ⟨runL, [], []⟩ _ _ reqsAL qreqsAL "
+            "arunL_ok, arunL_eq,"
+        ),
+        (
+            f"    aruns_sound {m} (by norm_num) A stepsAR ⟨runR, [], []⟩ _ _ reqsAR qreqsAR "
+            "arunR_ok, arunR_eq,"
+        ),
+        f"    valA_agree {m} _ A arunL {bnd} _ _ (by decide) (by decide)",
         f"      (by decide) (by decide) (dbits_agree ownL ownR _ {bnd} (by decide))]",
         f"  apply {plan.final} {m} (by norm_num) _ _ A _ _ _ {k_l} {k_r} (by decide) (by decide)",
         "    (by decide) (by decide) (by decide) (by decide)",
@@ -1963,10 +1971,9 @@ def _export_quarter_net(left: Diagram, right: Diagram, name: str) -> str:
     coefs: dict[int, str] = {}
     body, amp = net_quarter_body(left, right, name, phases, coefs)
     sc = _scalars()
-    support = any("afinalS_perm" in ln for ln in body.lines)
     lines = [
         "import ArchytasZX.PathSumNetAmp",
-        *(["import ArchytasZX.PathSumSupport"] if support else []),
+        "import ArchytasZX.PathSumChain",
         "",
         "/-!",
         f"# Path-sum proof `{name}` over the networks through [Quarter]",
