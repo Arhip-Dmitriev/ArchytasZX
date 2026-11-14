@@ -442,3 +442,52 @@ def test_a_child_copy_scalar_is_taken_per_parent_copy_in_either_order() -> None:
         assert str(got.scalar) == "2304"
     assert str(instantiate(d, {"n": 2, "l": 2, "d": 2}).scalar) == "2304"
     assert str(instantiate(d, {"n": 2, "l": 3, "d": 2}).scalar) == str(9 * 2 ** (2 * 2 * 3))
+
+
+NESTED_PAIRS = (
+    """graph: 2 nodes, 2 wires, 0 inputs -> 1 output
+  scalar: 1
+  parameters: none
+  nodes:
+    n0  Z  in: []  out: [d, d, d]  boxes: !0 > !1
+    n1  F  in: [d]  out: [d]  boxes: !0 > !2
+  wires:
+    n0.out1 -- n1.in0
+    n0.out2 -- n1.out0
+  inputs: []
+  outputs: [n0.out0]
+  bang boxes:
+    !0  x l  nodes: n0, n1
+      !1  x n + 1  nodes: n0  index: j  copy scalar: 3^j
+      !2  x 1  nodes: n1  copy scalar: 2^(j + m)  pairs of: !1 index: m  left: n0.out1"""
+    "  right: n0.out2"
+)
+"""A pair box with a copy scalar over an indexed box, both under a live box."""
+
+
+def test_a_nested_pair_copy_scalar_is_taken_per_parent_copy_in_either_order() -> None:
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.validate import validate
+    from archytaszx.repl.parser import parse_listing
+    from archytaszx.semantics.check import instantiate
+
+    d = parse_listing(NESTED_PAIRS)
+    expected = str(2 ** (2 * 6) * 3 ** (2 * 3))
+    results = []
+    for order in [("n", "l"), ("l", "n")]:
+        got = d
+        for name in order:
+            got = instantiate_symbol(got, name, 2)
+        assert str(got.scalar) == expected
+        assert not validate(got).errors
+        assert len(got.nodes) == 12
+        results.append(got)
+    assert isomorphic(results[0], results[1])
+    assert str(instantiate(d, {"n": 2, "l": 2, "d": 2}).scalar) == expected
+    peeled = peel_one(d, 1).diagram
+    for order in [("n", "l"), ("l", "n")]:
+        got = peeled
+        for name in order:
+            got = instantiate_symbol(got, name, 2)
+        assert str(got.scalar) == expected
+        assert isomorphic(got, results[0])

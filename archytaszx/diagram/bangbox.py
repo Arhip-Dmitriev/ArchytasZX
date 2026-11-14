@@ -888,13 +888,22 @@ def _copy_subtree(
     diagram: Diagram, box_id: BangBoxId, id_map: Mapping[NodeId, NodeId], parent: BangBoxId | None
 ) -> None:
     """Add a remapped copy of every child of ``box_id`` (recursively) under ``parent``; a copied
-    box aligned to a box of the copied subtree is aligned to that box's copy."""
+    box aligned to, paired over or fed by a box of the copied subtree names that box's copy."""
     made: dict[BangBoxId, BangBoxId] = {}
     _copy_children(diagram, box_id, id_map, parent, made)
     for new_id in made.values():
-        target = diagram.bang_boxes[new_id].align
-        if target is not None and target in made:
-            diagram.set_bang_box_extension(new_id, align=made[target])
+        copied = diagram.bang_boxes[new_id]
+        fields = {
+            name: made[target]
+            for name, target in (
+                ("align", copied.align),
+                ("pair_of", copied.pair_of),
+                ("feed", copied.feed),
+            )
+            if target is not None and target in made
+        }
+        if fields:
+            diagram.set_bang_box_extension(new_id, **fields)
 
 
 def _copy_children(
@@ -916,6 +925,18 @@ def _copy_children(
                 cyclic=child.cyclic,
                 index=child.index,
                 copy_scalar=child.copy_scalar,
+                pair_of=child.pair_of,
+                pair_index=child.pair_index,
+                left_ports=frozenset(_moved(r, id_map) for r in child.left_ports),
+                right_ports=frozenset(_moved(r, id_map) for r in child.right_ports),
+                tree=tuple(_moved(r, id_map) for r in child.tree),
+                tree_parent=(
+                    None if child.tree_parent is None else _moved(child.tree_parent, id_map)
+                ),
+                level=child.level,
+                position=child.position,
+                feed=child.feed,
+                feed_port=None if child.feed_port is None else _moved(child.feed_port, id_map),
                 groups=tuple(frozenset(id_map[n] for n in g) for g in child.groups),
                 align=child.align,
             )
@@ -1708,7 +1729,18 @@ def _detach_pair(diagram: Diagram, pair: BangBox) -> _PairTemplate:
     for nid in sorted(scope):
         diagram.remove_node(nid)
     diagram.remove_bang_box(pair.id)
+    _rescope_ancestors(diagram, pair.parent, scope, frozenset())
     return _PairTemplate(pair, nodes, internal, tuple(attached))
+
+
+def _rescope_ancestors(
+    diagram: Diagram, holder: BangBoxId | None, removed: frozenset[NodeId], added: frozenset[NodeId]
+) -> None:
+    """Replace ``removed`` by ``added`` in the node scope of ``holder`` and of each ancestor."""
+    while holder is not None:
+        outer = diagram.bang_boxes[holder]
+        diagram.set_bang_box_node_scope(holder, (outer.node_scope - removed) | added)
+        holder = outer.parent
 
 
 def _place_pairs(
@@ -1764,13 +1796,14 @@ def _place_pairs(
                 subs[box.pair_index] = k
             if subs:
                 diagram.set_phase(new_id, phase.substitute(subs))  # type: ignore[arg-type]
+        _rescope_ancestors(diagram, box.parent, frozenset(), frozenset(node_map.values()))
         if box.copy_scalar is not None:
             factor = box.copy_scalar
             if parent.index is not None:
                 factor = _scalar_at(factor, parent.index, j)
             if box.pair_index is not None:
                 factor = _scalar_at(factor, box.pair_index, k)
-            diagram.multiply_scalar(factor)
+            _multiply_copy_factor(diagram, box, factor)
 
 
 def _plain(diagram: Diagram, box: BangBox) -> BangBox:
@@ -2424,6 +2457,7 @@ def _peel_pairs(
         left_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "left"),
         right_ports=frozenset(pair_ends[p] for _, p, s in template.attached if s == "right"),
     )
+    _rescope_ancestors(diagram, pair.parent, frozenset(), frozenset(pair_map.values()))
     copy_ends = {
         port: (tracked[("residual", port)][1] if side == "left" else tracked[("copy", port)][0])
         for _, port, side in template.attached
