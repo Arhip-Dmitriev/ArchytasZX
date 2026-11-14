@@ -810,8 +810,10 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           wires, the circuit then the inverse reference against the empty
                           circuit; full equivalence (not partial) by the decision-diagram
                           checkers only; equivalent / not
-                          equivalent / no information, up to global phase flagged (and answered
-                          equal); circuits of different input or output counts unsupported; up
+                          equivalent / no information, up to global phase answered equal and
+                          flagged when the phase of <0|B^-1 A|0> (decision-diagram simulation
+                          after the timed check, at most 30 s) exceeds 1e-9; circuits of
+                          different input or output counts unsupported; up
                           to a scalar (a dense reference is normalised)
   Qiskit 2.6.2  built     d = 2, at most 26 qubits for states and 13 for maps; Operator or
                           Statevector against the specification tensor; simulation, not proof;
