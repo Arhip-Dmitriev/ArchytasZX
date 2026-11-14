@@ -1511,3 +1511,29 @@ def test_planned_size_past_float_range_is_infinite() -> None:
 
     wide = parse_dsl("v = Z(0 -> 1000, 4)\noutputs " + ", ".join(f"v.out{i}" for i in range(1000)))
     assert decide_module._planned_size(wide, wide, {}) == float("inf")
+
+
+def test_xor_lift_matches_the_xor_on_every_assignment() -> None:
+    import itertools
+    import random
+    from fractions import Fraction
+
+    from archytaszx.algebra.pathsum import PhasePoly, _lift_terms, _mono_key, int_lift
+
+    rng = random.Random(7)
+    for _ in range(200):
+        nv = rng.randint(1, 6)
+        p = frozenset(
+            frozenset(v for v in range(nv) if rng.random() < 0.4) for _ in range(rng.randint(1, 9))
+        )
+        coeff = Fraction(rng.randint(1, 31), rng.choice([2, 3, 4, 8, 16, 12])) % 1 or Fraction(1, 2)
+        lift = dict(_lift_terms(sorted(p, key=_mono_key), coeff))
+        ints = int_lift(p, 16)
+        phase = PhasePoly({frozenset({nv}): coeff})
+        phase.substitute(nv, p)
+        for bits in itertools.product((0, 1), repeat=nv):
+            xor = sum(all(bits[v] for v in m) for m in p) % 2
+            for terms in (lift, phase.terms):
+                at = sum((c for m, c in terms.items() if all(bits[v] for v in m)), Fraction(0))
+                assert (at - coeff * xor) % 1 == 0
+            assert sum(c for m, c in ints.items() if all(bits[v] for v in m)) % 16 == xor

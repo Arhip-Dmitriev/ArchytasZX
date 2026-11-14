@@ -281,13 +281,14 @@ def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
         return expr
     if not all(coefficient.is_Integer for coefficient in poly.coeffs()):
         return expr
-    total: sp.Expr = sp.Integer(0)
+    terms: list[sp.Expr] = []
     for monomial, coefficient in poly.terms():
         residue = int(coefficient) % modulus
         if 2 * residue > modulus:
             residue -= modulus
-        total += residue * sp.Mul(*(s**e for s, e in zip(symbols, monomial)))
-    return cast(sp.Expr, sp.expand(total))
+        if residue:
+            terms.append(residue * sp.Mul(*(s**e for s, e in zip(symbols, monomial))))
+    return cast(sp.Expr, sp.expand(sp.Add(*terms)))
 
 
 def _reduce_symbolic_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:

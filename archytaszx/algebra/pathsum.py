@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
-from itertools import combinations, permutations, product
+from itertools import permutations, product
 from typing import Any, cast
 
 Mono = frozenset[int]
@@ -410,11 +410,17 @@ class PhasePoly:
         hit = [(m, c) for m, c in self.terms.items() if var in m]
         for m, _c in hit:
             del self.terms[m]
-        items = sorted(value, key=_mono_key)
+        if not hit:
+            return
+        dens = math.lcm(*(c.denominator for _m, c in hit))
+        lift = _xor_lift(sorted(value, key=_mono_key), dens)
         for m, c in hit:
             rest = m - {var}
-            for mono, coeff in _lift_terms(items, c):
-                self.add(rest | mono, coeff)
+            den, a = c.denominator, c.numerator
+            for mono, k in lift.items():
+                v = a * k % den
+                if v:
+                    self.add(rest | mono, Fraction(v, den))
 
     def assign(self, values: Mapping[int, int]) -> None:
         """Set each variable of ``values`` to its 0 or 1."""
@@ -430,20 +436,28 @@ def _mono_key(m: Mono) -> tuple[int, tuple[int, ...]]:
     return (len(m), tuple(sorted(m)))
 
 
+def _xor_lift(items: Sequence[Mono], modulus: int) -> dict[Mono, int]:
+    """The integer multilinear polynomial equal to the XOR of ``items`` on Booleans, coefficients
+    mod ``modulus``: ``T + m - 2 T m`` folded over the items, monomials as bitmasks."""
+    names = sorted({v for m in items for v in m})
+    bit = {v: 1 << i for i, v in enumerate(names)}
+    out: dict[int, int] = {}
+    for m in items:
+        mask = sum(bit[v] for v in m)
+        prev = [(k, b) for k, a in out.items() if (b := 2 * a % modulus)]
+        out[mask] = (out.get(mask, 0) + 1) % modulus
+        for k, b in prev:
+            key = k | mask
+            out[key] = (out.get(key, 0) - b) % modulus
+    return {frozenset(v for i, v in enumerate(names) if k >> i & 1): a for k, a in out.items() if a}
+
+
 def _lift_terms(items: Sequence[Mono], coeff: Fraction) -> list[tuple[Mono, Fraction]]:
     """``coeff`` times the Boolean lift of the XOR of ``items``, terms whose coefficient is an
-    integer dropped: ``Sum_{S nonempty} (-2)^(|S|-1) prod S``."""
-    out: list[tuple[Mono, Fraction]] = []
-    den = coeff.denominator
-    depth = den.bit_length() if den & (den - 1) == 0 else len(items)
-    for size in range(1, min(len(items), depth) + 1):
-        factor = coeff * (-2) ** (size - 1)
-        if factor.denominator == 1:
-            break
-        for group in combinations(items, size):
-            mono: frozenset[int] = frozenset().union(*group)
-            out.append((mono, factor))
-    return out
+    integer dropped."""
+    den, a = coeff.denominator, coeff.numerator
+    lift = _xor_lift(items, den)
+    return [(m, Fraction(a * k % den, den)) for m, k in lift.items() if a * k % den]
 
 
 def f2_add(a: F2Poly, b: F2Poly) -> F2Poly:
@@ -478,16 +492,8 @@ ONE: F2Poly = frozenset({EMPTY})
 
 def int_lift(p: F2Poly, modulus: int) -> dict[Mono, int]:
     """The integer multilinear polynomial equal to the F_2 polynomial ``p`` on Booleans,
-    coefficients mod ``modulus``: ``a xor b = a + b - 2ab`` folded over the monomials."""
-    out: dict[Mono, int] = {}
-    for m in sorted(p, key=_mono_key):
-        nxt = dict(out)
-        nxt[m] = nxt.get(m, 0) + 1
-        for m2, c in out.items():
-            key = m | m2
-            nxt[key] = nxt.get(key, 0) - 2 * c
-        out = {k: v % modulus for k, v in nxt.items() if v % modulus}
-    return out
+    coefficients mod ``modulus``."""
+    return _xor_lift(sorted(p, key=_mono_key), modulus)
 
 
 def f2_assign(p: F2Poly, values: Mapping[int, int]) -> F2Poly:
