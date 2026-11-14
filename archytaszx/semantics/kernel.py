@@ -1669,9 +1669,9 @@ class _Lean:
         if source is None:
             return None
         tail = (
-            "the last copy of the peeled box read at its copy, each boundary link port a link end "
-            "held by a phaseless Z(1 -> 1), the phaseless phase index {ns}.zero read as the zero "
-            "phase"
+            "the last copy of the peeled box read at its copy, each boundary link port the ghost "
+            "of its slot ({ns}.gsL, {ns}.gsL'), the phaseless phase index {ns}.zero read as the "
+            "zero phase"
         )
         return self.linked_net(source, "P", tail, binders, lhs, rhs)
 
@@ -1686,14 +1686,15 @@ class _Lean:
         if source is None:
             return None
         tail = (
-            "with box groups {ns}.G and {ns}.G', each flat boundary read through a slot layout of "
-            "its LDiagram.slotData, the phaseless phase index {ns}.zero read as the zero phase"
+            "each boundary link port the ghost of its slot ({ns}.gsL, {ns}.gsL'), with box groups "
+            "{ns}.G and {ns}.G', each flat boundary read through a slot layout of its "
+            "LDiagram.slotData, the phaseless phase index {ns}.zero read as the zero phase"
         )
         return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))
 
     def split(self, t: Theorem, binders: Sequence[str]) -> str | None:
-        """A power split of base 2 through :meth:`linked_net` of
-        :func:`lean_split.export_split`; None outside its form."""
+        """A power split through :meth:`linked_net` of :func:`lean_split.export_split`; None
+        outside its form."""
         from archytaszx.semantics import lean_split
 
         source = lean_split.export_split(t.lhs, t.rhs)
