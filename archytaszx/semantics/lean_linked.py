@@ -197,6 +197,20 @@ def _wire_in(ws: Sequence[tuple[Port, Port]], w: tuple[Port, Port]) -> bool:
     return w in ws or (w[1], w[0]) in ws
 
 
+def _same(L: LDiag, R: LDiag, lk: LLink, x: LLink) -> bool:
+    """``x`` of ``R`` has ``lk``'s ports, copy coordinate and multiplicity."""
+    return (
+        (x.l1, x.l2, x.e1, x.e2) == (lk.l1, lk.l2, lk.e1, lk.e2)
+        and R.depth(x.box, lk.l1[0]) == L.depth(lk.box, lk.l1[0])
+        and R.mult_of(x.box) == L.mult_of(lk.box)
+    )
+
+
+def _kept(L: LDiag, R: LDiag, lk: LLink) -> bool:
+    """Some link of ``R`` is :func:`_same` as ``lk``."""
+    return any(_same(L, R, lk, x) for x in R.links)
+
+
 def peel_ok(
     L: LDiag, R: LDiag, bid: int, mb: int, c: int, B: Sequence[int], cp: dict[int, int]
 ) -> bool:
@@ -274,9 +288,7 @@ def peel_ok(
             if not (
                 all(ins)
                 and dp >= 1
-                and lk in R.links
-                and R.depth(lk.box, lk.l1[0]) == dp
-                and R.mult_of(lk.box) == L.mult_of(lk.box)
+                and _kept(L, R, lk)
                 and any(
                     (x.l1, x.l2, x.e1, x.e2) == tuple(map(cpp, (lk.l1, lk.l2, lk.e1, lk.e2)))
                     and R.depth(x.box, cp.get(lk.l1[0], 0)) + 1 == dp
@@ -285,12 +297,7 @@ def peel_ok(
                 )
             ):
                 return False
-        elif not (
-            not any(ins)
-            and lk in R.links
-            and R.depth(lk.box, lk.l1[0]) == dp
-            and R.mult_of(lk.box) == L.mult_of(lk.box)
-        ):
+        elif not (not any(ins) and _kept(L, R, lk)):
             return False
     for x in R.links:
         ok = (
@@ -298,7 +305,7 @@ def peel_ok(
                 lk.box == bid and x == LLink(lk.box, lk.l1, lk.l2, cpp(lk.l2), lk.e2)
                 for lk in L.links
             )
-            or any(lk.box != bid and x == lk for lk in L.links)
+            or any(lk.box != bid and _same(L, R, lk, x) for lk in L.links)
             or any(
                 lk.box != bid
                 and lk.l1[0] in inB

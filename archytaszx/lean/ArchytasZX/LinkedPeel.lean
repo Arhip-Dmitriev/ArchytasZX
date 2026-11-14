@@ -246,16 +246,18 @@ structure PeelOK (L L' : LDiagram) (bid mb c : ℕ) (B : List ℕ) (cp : ℕ →
     { l with e1 := cpP cp l.l2 } ∈ L'.links ∧ L'.depth bid l.l1.node = 0 ∧ L'.multOf bid = c ∧
     WireIn L'.base.wires (cpP cp l.l1, l.e1)
   lin : ∀ l ∈ L.links, l.box ≠ bid → l.l1.node ∈ B → l.l2.node ∈ B ∧ l.e1.node ∈ B ∧
-    l.e2.node ∈ B ∧ 1 ≤ L.depth l.box l.l1.node ∧ l ∈ L'.links ∧
-    L'.depth l.box l.l1.node = L.depth l.box l.l1.node ∧ L'.multOf l.box = L.multOf l.box ∧
+    l.e2.node ∈ B ∧ 1 ≤ L.depth l.box l.l1.node ∧
+    (∃ l' ∈ L'.links, l'.l1 = l.l1 ∧ l'.l2 = l.l2 ∧ l'.e1 = l.e1 ∧ l'.e2 = l.e2 ∧
+      L'.depth l'.box l.l1.node = L.depth l.box l.l1.node ∧ L'.multOf l'.box = L.multOf l.box) ∧
     ∃ l' ∈ L'.links, l'.l1 = cpP cp l.l1 ∧ l'.l2 = cpP cp l.l2 ∧ l'.e1 = cpP cp l.e1 ∧
       l'.e2 = cpP cp l.e2 ∧ L'.depth l'.box (cp l.l1.node) + 1 = L.depth l.box l.l1.node ∧
       L'.multOf l'.box = L.multOf l.box
   lout : ∀ l ∈ L.links, l.box ≠ bid → l.l1.node ∉ B → l.l2.node ∉ B ∧ l.e1.node ∉ B ∧
-    l.e2.node ∉ B ∧ l ∈ L'.links ∧ L'.depth l.box l.l1.node = L.depth l.box l.l1.node ∧
-    L'.multOf l.box = L.multOf l.box
+    l.e2.node ∉ B ∧ ∃ l' ∈ L'.links, l'.l1 = l.l1 ∧ l'.l2 = l.l2 ∧ l'.e1 = l.e1 ∧ l'.e2 = l.e2 ∧
+      L'.depth l'.box l.l1.node = L.depth l.box l.l1.node ∧ L'.multOf l'.box = L.multOf l.box
   links' : ∀ l' ∈ L'.links, (∃ l ∈ L.links, l.box = bid ∧ l' = { l with e1 := cpP cp l.l2 }) ∨
-    (∃ l ∈ L.links, l.box ≠ bid ∧ l' = l) ∨
+    (∃ l ∈ L.links, l.box ≠ bid ∧ l'.l1 = l.l1 ∧ l'.l2 = l.l2 ∧ l'.e1 = l.e1 ∧ l'.e2 = l.e2 ∧
+      L'.depth l'.box l.l1.node = L.depth l.box l.l1.node ∧ L'.multOf l'.box = L.multOf l.box) ∨
     (∃ l ∈ L.links, l.box ≠ bid ∧ l.l1.node ∈ B ∧ l'.l1 = cpP cp l.l1 ∧ l'.l2 = cpP cp l.l2 ∧
       l'.e1 = cpP cp l.e1 ∧ l'.e2 = cpP cp l.e2 ∧
       L'.depth l'.box (cp l.l1.node) + 1 = L.depth l.box l.l1.node ∧
@@ -534,8 +536,8 @@ theorem PeelOK.fwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks m
             cons_mem_cidx ks c 0 _ u (by omega) hu, by simp, by simp⟩))))
       · omega
     · by_cases hin : l.l1.node ∈ B
-      · obtain ⟨hl2B, he1B, he2B, hd1, hlm, hd', hm', l', hl'm, q1, q2, q3, q4, hd'', hm''⟩ :=
-          h.lin l hl hb hin
+      · obtain ⟨hl2B, he1B, he2B, hd1, ⟨lt, hltm, r1, r2, r3, r4, hd', hm'⟩, l', hl'm, q1, q2, q3,
+          q4, hd'', hm''⟩ := h.lin l hl hb hin
         obtain ⟨c1, c1'⟩ := h.chB' l.l1 hl1 hin
         obtain ⟨d0, hd0⟩ : ∃ d0, L.depth l.box l.l1.node = d0 + 1 :=
           ⟨_, (Nat.succ_pred_eq_of_pos hd1).symm⟩
@@ -544,7 +546,8 @@ theorem PeelOK.fwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks m
         rcases (mem_lp_split ks d0 _ mb c _ l hk x).1 hx with hx | ⟨y, hy, rfl⟩
         · obtain ⟨⟨j1, u1, e1, hj1⟩, ⟨j2, u2, e2, hj2⟩⟩ := lp_heads ks d0 _ c _ l x hx
           rw [pmap_fix (ks c) x ⟨j1, u1, e1, by omega⟩ ⟨j2, u2, e2, by omega⟩]
-          exact link_mem_dpairs L' ks l hlm x (by rw [h.lp_eq', hd', hd0, hm', c1']; exact hx)
+          exact link_mem_dpairs L' ks lt hltm x (by
+            rw [h.lp_eq', r1, hd', hd0, hm', c1', lp_congr ks _ _ _ l lt r1 r2 r3 r4]; exact hx)
         · obtain ⟨p1, p2⟩ := lp_ports_in ks d0 _ _ l (· ∈ B) y hy hin hl2B he1B he2B
           rw [pmap_consS (ks c) y p1 p2]
           refine link_mem_dpairs L' ks l' hl'm _ ?_
@@ -554,11 +557,13 @@ theorem PeelOK.fwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks m
           have hc3 : L'.base.nodeChain (cpP cp l.l1).node = L'.base.nodeChain (cp l.l1.node) := rfl
           rw [hd3, hm'', hc3, lp_congr ks d0 _ _ (l.mapP (cpP cp)) l' q1 q2 q3 q4, lp_mapP]
           exact List.mem_map.2 ⟨y, hy, rfl⟩
-      · obtain ⟨hl2O, he1O, he2O, hlm, hd', hm'⟩ := h.lout l hl hb hin
+      · obtain ⟨hl2O, he1O, he2O, lt, hltm, r1, r2, r3, r4, hd', hm'⟩ := h.lout l hl hb hin
         left
         obtain ⟨p1, p2⟩ := lp_ports_in ks _ _ _ l (· ∉ B) x hx hin hl2O he1O he2O
         rw [pmap_out (ks c) x p1 p2]
-        exact link_mem_dpairs L' ks l hlm x (by rw [h.lp_eq', hd', hm', h.chO' l.l1 hl1 hin]; exact hx)
+        exact link_mem_dpairs L' ks lt hltm x (by
+          rw [h.lp_eq', r1, hd', hm', h.chO' l.l1 hl1 hin, lp_congr ks _ _ _ l lt r1 r2 r3 r4]
+          exact hx)
 
 /-- Every digit pair of `L'` comes from a digit pair of `L`. -/
 theorem PeelOK.bwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks mb = ks c + 1)
@@ -605,7 +610,7 @@ theorem PeelOK.bwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks m
         exact (mem_lp ks 0 _ _ l _).2 (Or.inr (Or.inl ⟨ks c :: u,
           cons_mem_cidx ks mb _ _ u (by omega) hu', by simp, by simp⟩))
       · simp only [pswap, pmap, peelφ_B (ks c) l.l1 hl1B u, peelφ_O (ks c) l.e1 he1B u]
-  · rcases h.links' l' hl' with ⟨l, hl, hb, rfl⟩ | ⟨l, hl, hb, el⟩ |
+  · rcases h.links' l' hl' with ⟨l, hl, hb, rfl⟩ | ⟨l, hl, hb, r1, r2, r3, r4, hd', hm'⟩ |
       ⟨l, hl, hb, hin, q1, q2, q3, q4, hd'', hm''⟩
     · obtain ⟨hl1B, hl2B, he1B, he2B, hd0, hm, -, hd0', hm', -⟩ := h.lb l hl hb
       obtain ⟨hl1, -, -, -, -, -, -, -, -⟩ := h.lwf l hl
@@ -646,20 +651,20 @@ theorem PeelOK.bwd (h : PeelOK L L' bid mb c B cp) (ks : ℕ → ℕ) (hk : ks m
         have e0 : (0 : ℕ) = ks c := h1.symm
         simp only [pmap, peelφ_O (ks c) l.e2 he2B u]
         rw [e0, peelφ_B (ks c) l.l2 hl2B u]
-    · rw [el] at hy
-      obtain ⟨hl1, -, -, -, -, -, -, -, -⟩ := h.lwf l hl
+    · obtain ⟨hl1, -, -, -, -, -, -, -, -⟩ := h.lwf l hl
+      rw [h.lp_eq', r1, hd', hm', lp_congr ks _ _ _ l l' r1 r2 r3 r4] at hy
       by_cases hin : l.l1.node ∈ B
-      · obtain ⟨-, -, -, hd1, -, hd', hm', -⟩ := h.lin l hl hb hin
+      · obtain ⟨-, -, -, hd1, -⟩ := h.lin l hl hb hin
         obtain ⟨c1, c1'⟩ := h.chB' l.l1 hl1 hin
         obtain ⟨d0, hd0⟩ : ∃ d0, L.depth l.box l.l1.node = d0 + 1 :=
           ⟨_, (Nat.succ_pred_eq_of_pos hd1).symm⟩
-        rw [h.lp_eq', hd', hd0, hm', c1'] at hy
+        rw [hd0, c1'] at hy
         refine ⟨y, link_mem_dpairs L ks l hl y ?_, Or.inl ?_⟩
         · rw [h.lp_eq, hd0, c1]; exact (mem_lp_split ks d0 _ mb c _ l hk y).2 (Or.inl hy)
         · obtain ⟨⟨j1, u1, e1, hj1⟩, ⟨j2, u2, e2, hj2⟩⟩ := lp_heads ks d0 _ c _ l y hy
           exact pmap_fix (ks c) y ⟨j1, u1, e1, by omega⟩ ⟨j2, u2, e2, by omega⟩
-      · obtain ⟨hl2O, he1O, he2O, -, hd', hm'⟩ := h.lout l hl hb hin
-        rw [h.lp_eq', hd', hm', h.chO' l.l1 hl1 hin] at hy
+      · obtain ⟨hl2O, he1O, he2O, -⟩ := h.lout l hl hb hin
+        rw [h.chO' l.l1 hl1 hin] at hy
         obtain ⟨p1, p2⟩ := lp_ports_in ks _ _ _ l (· ∉ B) y hy hin hl2O he1O he2O
         exact ⟨y, link_mem_dpairs L ks l hl y (by rw [h.lp_eq]; exact hy),
           Or.inl (pmap_out (ks c) y p1 p2)⟩
