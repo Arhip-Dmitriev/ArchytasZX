@@ -43,6 +43,8 @@ VERDICT_OUTCOMES = ("ok", "uncertified", "wrong", "wrong (uncertified)", "unknow
 EXACT_TOOLS = ("archytaszx", "pyzx", "quizx", "cirq", "qiskit")
 UP_TO_SCALAR_TOOLS = ("qcec", "dizx", "feynman", "autoq_para", "quantomatic")
 SCALAR_KINDS = ("scalar_small_one", "global_phase", "box_boundary")
+FLOAT_SIMS = ("qiskit", "cirq")
+BREAK_FLOOR = 1e-6
 ENGINE_STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check")
 
 UNSUPPORTED: dict[str, str] = {
@@ -102,6 +104,8 @@ UNSUPPORTED: dict[str, str] = {
 CAUSES: dict[str, str] = {
     "verdict": "verdict.<verdict>: the run's verdict (ok, uncertified, wrong)",
     "pair_equal_at_point": "the F pair is equal at this point (benchmarks.differs)",
+    "break_below_float_tolerance": "a float simulator (qiskit, cirq) measured the F break below "
+    "BREAK_FLOOR, 100 x its tolerance",
     "false_record_mismatch": "the F record's edit is not a variant of the equation's current form"
     " (benchmarks.breaks.mismatch)",
     "rival.no_verdict": "the rival returned no verdict",
@@ -439,6 +443,15 @@ def scalar_tag(false: dict[str, Any]) -> str | None:
     return "global_phase" if false.get("kind") == "global_phase" else "scalar_factor"
 
 
+def below_float_floor(rec: dict[str, Any], tool: str) -> bool:
+    """Whether a FLOAT_SIMS run's normalised gap (its check's max_rel_diff) is below
+    BREAK_FLOOR."""
+    if tool not in FLOAT_SIMS:
+        return False
+    diff = ((rec.get("stages") or {}).get("check") or {}).get("max_rel_diff")
+    return diff is not None and float(diff) < BREAK_FLOOR
+
+
 def classify(
     rec: dict[str, Any],
     false: dict[str, Any] | None = None,
@@ -449,7 +462,8 @@ def classify(
     (``raw_outcome`` keeps a replaced outcome); ``false`` is the F record of an F run. When its
     pair is equal on the run's region (its point and its ``free`` axes, :func:`free_axes`), a
     run with a verdict becomes invalid_point and any other run is flagged ``point_invalid``; so
-    does every run of a ``stale`` F record (benchmarks.breaks.mismatch)."""
+    does every run of a ``stale`` F record (benchmarks.breaks.mismatch); a FLOAT_SIMS run with a
+    verdict of an F equation whose measured gap is below BREAK_FLOOR becomes invalid_point."""
     tool = str(rec.get("tool") or "")
     oc = rec.get("outcome")
     if "killed_in" in rec and not rec.get("stages"):
@@ -473,6 +487,8 @@ def classify(
         oc2, cause = "invalid_point", "false_record_mismatch"
     elif invalid and oc2 in VERDICT_OUTCOMES:
         oc2, cause = "invalid_point", "pair_equal_at_point"
+    elif false is not None and oc2 in VERDICT_OUTCOMES and below_float_floor(rec, tool):
+        oc2, cause = "invalid_point", "break_below_float_tolerance"
     invalid = invalid or (stale and false is not None)
     out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
     tag = None if false is None else scalar_tag(false)
@@ -503,6 +519,7 @@ __all__ = [
     "STAGES",
     "UNSUPPORTED",
     "VERDICT_OUTCOMES",
+    "below_float_floor",
     "classify",
     "counted",
     "equal_region",

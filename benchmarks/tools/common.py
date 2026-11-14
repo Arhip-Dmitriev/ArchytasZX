@@ -49,6 +49,25 @@ def verdict_outcome(truth: bool, status: str, verdict: str | None) -> str:
     return "unknown"
 
 
+FLOAT_ATOL = 1e-8
+
+
+def rederive_float(rec: dict[str, Any]) -> dict[str, Any]:
+    """A logged Qiskit or Cirq run record with its verdict and outcome recomputed from its
+    check's max_rel_diff at FLOAT_ATOL (drivers/sim.py ATOL); records without it unchanged."""
+    check = (rec.get("stages") or {}).get("check") or {}
+    diff = check.get("max_rel_diff")
+    if (
+        diff is None
+        or check.get("status") != "ok"
+        or rec.get("verdict") not in ("equal", "unequal")
+    ):
+        return rec
+    verdict = "equal" if float(diff) <= FLOAT_ATOL else "unequal"
+    oc = verdict_outcome(bool(rec.get("truth")), "ok", verdict)
+    return {**rec, "verdict": verdict, "outcome": oc, "wrong": oc == "wrong"}
+
+
 def point(job: dict[str, Any]) -> tuple[int | None, int | None]:
     """(n, d) of the job, None where symbolic."""
     p = job.get("point")

@@ -83,3 +83,8 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     finally:
         os.unlink(path)
     return rival.finish(inst, res, prep, {PACKAGE: rival.version(ENV, PACKAGE)})
+
+
+def rederive(rec: dict[str, Any]) -> dict[str, Any]:
+    """The logged record re-judged at the float tolerance (common.rederive_float)."""
+    return common.rederive_float(rec)
