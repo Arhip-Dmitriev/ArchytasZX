@@ -251,9 +251,10 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
     if step.rule == "dyadic":
         rest = [v for v in cur if v not in step.group]
         poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)
+        bits = "[" + ", ".join(_f2(b) for b in step.values) + "]"
         return [
             f".perm {[*step.group, *rest]}",
-            f".dyadic {list(step.group)} [{poly}] {list(step.fresh)}",
+            f".dyadicB {list(step.group)} [{poly}] {list(step.fresh)} {bits}",
         ], [*step.fresh, *rest]
     if step.rule in _PAIR_STEP and z is not None:
         rest = [v for v in cur if v not in (y, z)]

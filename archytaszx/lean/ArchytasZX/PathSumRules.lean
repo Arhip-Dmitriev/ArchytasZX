@@ -1118,22 +1118,191 @@ theorem dyBits_length : ∀ (k : ℕ) (S : Poly) (bs : List F2), dyBits k S = so
     obtain ⟨bs', hbs', rfl⟩ := Option.map_eq_some_iff.1 h
     simp [dyBits_length k _ bs' hbs']
 
+/-- The number the digits' values spell, low digit first. -/
+def dnum (τ : ℕ → ZMod 2) : List F2 → ℕ
+  | [] => 0
+  | B :: Bs => (fz τ B).val + 2 * dnum τ Bs
+
+/-- `w 2^i` times the lift of the digit `B_i`, summed over the digits. -/
+def tLift (M : ℕ) : ℕ → List F2 → Poly
+  | _, [] => []
+  | w, B :: Bs => (lift M B).map (fun u => ([] ++ u.1, w * u.2)) ++ tLift M (2 * w) Bs
+
+theorem dnum_lt (τ : ℕ → ZMod 2) : ∀ Bs : List F2, dnum τ Bs < 2 ^ Bs.length
+  | [] => by simp [dnum]
+  | B :: Bs => by
+    have ih := dnum_lt τ Bs
+    have hv : (fz τ B).val < 2 := ZMod.val_lt _
+    simp only [dnum, List.length_cons, pow_succ]
+    omega
+
+theorem dnum_update_not (τ : ℕ → ZMod 2) (x : ℕ) (b : ZMod 2) :
+    ∀ Bs : List F2, (∀ B ∈ Bs, ∀ m ∈ B, x ∉ m) → dnum (Function.update τ x b) Bs = dnum τ Bs
+  | [] => fun _ => rfl
+  | B :: Bs => fun h => by
+    simp only [dnum]
+    rw [fz_update_not τ x b B (h B List.mem_cons_self),
+      dnum_update_not τ x b Bs (fun B' hB => h B' (List.mem_cons_of_mem _ hB))]
+
+theorem zq_val (x : ZMod 2) : zq x = (x.val : ℤ) := by
+  rcases z2_cases x with rfl | rfl <;> decide
+
+theorem pn_tLift (τ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
+    ∀ (Bs : List F2) (w : ℕ), peq M (pn τ (tLift M w Bs)) ((w : ℤ) * dnum τ Bs)
+  | [], w => ⟨0, by simp [tLift, pn, dnum]⟩
+  | B :: Bs, w => by
+    obtain ⟨n1, e1⟩ := pn_lift τ M hM B
+    obtain ⟨n2, e2⟩ := pn_tLift τ M hM Bs (2 * w)
+    simp only [tLift, dnum]
+    have hm1 : zq (mz τ []) = 1 := by simp [mz]; decide
+    rw [pn_append, pn_mapmul, hm1, e1, e2, zq_val]
+    refine ⟨w * n1 + n2, ?_⟩
+    push_cast
+    ring
+
+theorem peq_symm {M : ℕ} {a b : ℤ} (h : peq M a b) : peq M b a := by
+  obtain ⟨n, hn⟩ := h
+  exact ⟨-n, by rw [hn]; ring⟩
+
+theorem dnum_eq_zero (τ : ℕ → ZMod 2) :
+    ∀ bs : List F2, dnum τ bs = 0 ↔ ∀ b ∈ bs, fz τ b = 0
+  | [] => by simp [dnum]
+  | B :: Bs => by
+    have ih := dnum_eq_zero τ Bs
+    simp only [dnum, List.forall_mem_cons]
+    rw [← ih]
+    have v0 : (0 : ZMod 2).val = 0 := rfl
+    have v1 : (1 : ZMod 2).val = 1 := rfl
+    rcases z2_cases (fz τ B) with h | h <;> rw [h]
+    · rw [v0]
+      constructor
+      · intro e; exact ⟨rfl, by omega⟩
+      · rintro ⟨-, e⟩; omega
+    · rw [v1]
+      constructor
+      · intro e; omega
+      · rintro ⟨e, -⟩; exact absurd e (by decide)
+
+/-- The lift of `B` keeping the products of at most `d` of its monomials. -/
+def liftT (M : ℕ) : ℕ → F2 → Poly
+  | 0, _ => []
+  | _ + 1, [] => []
+  | d + 1, m :: B =>
+    (m, 1) :: (liftT M (d + 1) B ++ (liftT M d B).map fun t => (m ++ t.1, (M - 2) * t.2))
+
+theorem pn_liftT (τ : ℕ → ZMod 2) (M : ℕ) :
+    ∀ (d : ℕ) (B : F2), ∃ z : ℤ,
+      pn τ (lift M B) = pn τ (liftT M d B) + ((M - 2 : ℕ) : ℤ) ^ d * z
+  | 0, B => ⟨pn τ (lift M B), by simp [liftT, pn]⟩
+  | d + 1, [] => ⟨0, by simp [liftT, lift, pn]⟩
+  | d + 1, m :: B => by
+    obtain ⟨z1, h1⟩ := pn_liftT τ M (d + 1) B
+    obtain ⟨z2, h2⟩ := pn_liftT τ M d B
+    refine ⟨z1 + zq (mz τ m) * z2, ?_⟩
+    simp only [lift, liftT]
+    rw [pn_cons, pn_cons, pn_append, pn_append, pn_mapmul, pn_mapmul]
+    linear_combination (1 + ((M - 2 : ℕ) : ℤ) * zq (mz τ m)) * h1 -
+      (((M - 2 : ℕ) : ℤ) * zq (mz τ m)) * (h1.symm.trans h2).symm
+
+/-- `w 2^i` times the truncated lift of the digit `B_i`, keeping products of at most `d - i`
+monomials, summed over the digits. -/
+def bLift (M : ℕ) : ℕ → ℕ → List F2 → Poly
+  | _, _, [] => []
+  | w, d, B :: Bs => (liftT M d B).map (fun u => ([] ++ u.1, w * u.2)) ++ bLift M (2 * w) (d - 1) Bs
+
+theorem pn_bLift (τ : ℕ → ZMod 2) (k : ℕ) (hk : 1 ≤ k) :
+    ∀ (bs : List F2) (w d : ℕ), w * 2 ^ d = 2 ^ k → bs.length ≤ d →
+      peq (2 ^ k) (pn τ (bLift (2 ^ k) w d bs)) ((w : ℤ) * dnum τ bs)
+  | [], w, d, _, _ => ⟨0, by simp [bLift, pn, dnum]⟩
+  | B :: Bs, w, d, hw, hl => by
+    have hd : 1 ≤ d := by simp at hl; omega
+    have h2 : 2 ≤ 2 ^ k := by
+      calc 2 = 2 ^ 1 := by norm_num
+        _ ≤ 2 ^ k := Nat.pow_le_pow_right (by norm_num) hk
+    have hw' : 2 * w * 2 ^ (d - 1) = 2 ^ k := by
+      rw [← hw]
+      obtain ⟨e, rfl⟩ : ∃ e, d = e + 1 := ⟨d - 1, by omega⟩
+      simp only [Nat.add_sub_cancel, pow_succ]
+      ring
+    obtain ⟨n2, e2⟩ := pn_bLift τ k hk Bs (2 * w) (d - 1) hw' (by simp at hl; omega)
+    obtain ⟨z, ez⟩ := pn_liftT τ (2 ^ k) d B
+    obtain ⟨n1, e1⟩ := pn_lift τ (2 ^ k) h2 B
+    obtain ⟨j, hj⟩ : ∃ j, k = j + 1 := ⟨k - 1, by omega⟩
+    have hc : ((2 ^ k - 2 : ℕ) : ℤ) = 2 * ((2 ^ j - 1 : ℕ) : ℤ) := by
+      have h1 : 1 ≤ 2 ^ j := Nat.one_le_two_pow
+      rw [hj, pow_succ]
+      push_cast [Nat.cast_sub (show 2 ≤ 2 ^ j * 2 by omega), Nat.cast_sub h1]
+      ring
+    have hwz : ((w : ℕ) : ℤ) * 2 ^ d = ((2 ^ k : ℕ) : ℤ) := by exact_mod_cast hw
+    simp only [bLift, dnum]
+    have hm1 : zq (mz τ []) = 1 := by simp [mz]; decide
+    rw [pn_append, pn_mapmul, hm1, e2]
+    refine ⟨w * n1 - ((2 ^ j - 1 : ℕ) : ℤ) ^ d * z + n2, ?_⟩
+    have hL : pn τ (liftT (2 ^ k) d B) =
+        ((fz τ B).val : ℤ) + n1 * ((2 ^ k : ℕ) : ℤ) - ((2 ^ k - 2 : ℕ) : ℤ) ^ d * z := by
+      rw [← zq_val]; linarith
+    rw [hL, hc, mul_pow]
+    generalize ((2 ^ j - 1 : ℕ) : ℤ) = o
+    simp only [Nat.cast_mul, Nat.cast_add, Nat.cast_ofNat]
+    linear_combination (-(o ^ d * z)) * hwz
+
+/-- Whether `bs` are `k ≥ 1` binary digits of `S` modulo `2^k`, low digit first: `S` and
+`Sum_j 2^j bs_j` (bLift) agree after normalising modulo `2^k`. -/
+def bitsOK (k : ℕ) (S : Poly) (bs : List F2) : Bool :=
+  decide (1 ≤ k) && decide (bs.length = k) &&
+    decide (normP (2 ^ k) S = normP (2 ^ k) (bLift (2 ^ k) 1 k bs))
+
+theorem bits_iff (τ : ℕ → ZMod 2) (k : ℕ) (S : Poly) (bs : List F2)
+    (h : bitsOK k S bs = true) : (((2 ^ k : ℕ) : ℤ) ∣ pn τ S ↔ ∀ b ∈ bs, fz τ b = 0) := by
+  simp only [bitsOK, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨hk, hl⟩, hn⟩ := h
+  have e : peq (2 ^ k) (pn τ S) ((dnum τ bs : ℕ) : ℤ) := by
+    have h1 := pn_bLift τ k hk bs 1 k (by ring) (by omega)
+    refine peq_trans (peq_symm (pn_normP τ _ S)) ?_
+    rw [hn]
+    refine peq_trans (pn_normP τ _ _) ?_
+    simpa using h1
+  obtain ⟨n, hn'⟩ := e
+  have hlt := dnum_lt τ bs
+  rw [hl] at hlt
+  rw [← dnum_eq_zero τ bs]
+  have hK : (0 : ℤ) < ((2 ^ k : ℕ) : ℤ) := by positivity
+  have hD : ((dnum τ bs : ℕ) : ℤ) < ((2 ^ k : ℕ) : ℤ) := by exact_mod_cast hlt
+  have hD0 : (0 : ℤ) ≤ ((dnum τ bs : ℕ) : ℤ) := by positivity
+  constructor
+  · rintro ⟨q, hq⟩
+    have hx : ((dnum τ bs : ℕ) : ℤ) = ((2 ^ k : ℕ) : ℤ) * (q - n) := by
+      push_cast at hn' hq ⊢
+      linarith
+    rcases lt_trichotomy (q - n) 0 with hc | hc | hc
+    · nlinarith
+    · rw [hc, mul_zero] at hx; exact_mod_cast hx
+    · nlinarith
+  · intro h0
+    refine ⟨n, ?_⟩
+    rw [hn', h0]
+    push_cast
+    ring
+
+/-- The side conditions of [Dyadic] with the binary digits `bs` of `S`. -/
+def dyRest (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2) (s : Data) : Bool :=
+  decide (0 < M) && decide (M % (2 ^ ds.length) = 0) && decide (M % 2 = 0) &&
+    decide (s.path.take ds.length = ds) && decide s.path.Nodup &&
+    decide ((fs ++ s.path.drop ds.length).Nodup) && decide (fs.length = ds.length) &&
+    ds.all (fun d => !decide (d ∈ fvars (s.cons ++ s.rows))) &&
+    S.all (fun t => !hasAny ds t.1) &&
+    fs.all (fun f => !decide (f ∈ pvars s.phase) && !decide (f ∈ fvars (s.cons ++ s.rows)) &&
+      !decide (f ∈ fvars bs)) &&
+    decide (normP M (s.phase.filter fun t => hasAny ds t.1) =
+      normP M (dyTerms M (2 ^ ds.length) S ds 1))
+
 /-- Whether the head `k = ds.length` path variables are digits `ds` with phase `Y S / 2^k`
 (Y = Sum_a 2^a d_a, `S` free of them, `2^k ∣ M`), in no constraint or row, the fresh variables
 `fs` in no phase term, constraint or row of `S`'s digits, and `S`'s binary digits exist. -/
 def dyadicOK (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Bool :=
   match dyBits ds.length S with
   | none => false
-  | some bs =>
-    decide (0 < M) && decide (M % (2 ^ ds.length) = 0) && decide (M % 2 = 0) &&
-      decide (s.path.take ds.length = ds) && decide s.path.Nodup &&
-      decide ((fs ++ s.path.drop ds.length).Nodup) && decide (fs.length = ds.length) &&
-      ds.all (fun d => !decide (d ∈ fvars (s.cons ++ s.rows))) &&
-      S.all (fun t => !hasAny ds t.1) &&
-      fs.all (fun f => !decide (f ∈ pvars s.phase) && !decide (f ∈ fvars (s.cons ++ s.rows)) &&
-        !decide (f ∈ fvars bs)) &&
-      decide (normP M (s.phase.filter fun t => hasAny ds t.1) =
-        normP M (dyTerms M (2 ^ ds.length) S ds 1))
+  | some bs => dyRest M ds S fs bs s
 
 /-- The digits `ds` summed: their terms replaced by `f_j b_j / 2` over the fresh `fs`. -/
 def dyadicS (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data) : Data :=
@@ -1148,14 +1317,15 @@ theorem fvars_mem {q : F2} {C : List F2} {m : Mono} {f : ℕ} (hq : q ∈ C) (hm
     (hf : f ∈ m) : f ∈ fvars C :=
   List.mem_flatMap.2 ⟨q, hq, List.mem_flatMap.2 ⟨m, hm, hf⟩⟩
 
-theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data)
-    (σ : ℕ → ZMod 2) (h : dyadicOK M ds S fs s = true) :
-    val M c s σ = val M c (dyadicS M ds S fs s) σ := by
-  unfold dyadicOK at h
-  unfold dyadicS
-  rcases hb : dyBits ds.length S with _ | bs
-  · simp [hb] at h
-  simp only [hb, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.not_eq_true',
+/-- [Dyadic] with binary digits `bs` of `S` given by their divisibility fact. -/
+theorem dyadic_core (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
+    (s : Data) (σ : ℕ → ZMod 2) (hbl : bs.length = ds.length)
+    (hbits : ∀ τ : ℕ → ZMod 2, (((2 ^ ds.length : ℕ) : ℤ) ∣ pn τ S ↔ ∀ b ∈ bs, fz τ b = 0))
+    (h : dyRest M ds S fs bs s = true) :
+    val M c s σ = val M c ⟨fs ++ s.path.drop ds.length,
+      s.phase.filter (fun t => !hasAny ds t.1) ++ dyNew M fs bs, s.cons, s.rows⟩ σ := by
+  unfold dyRest at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, Bool.not_eq_true',
     decide_eq_false_iff_not] at h
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hM, hKM⟩, hM2⟩, htake⟩, hnd⟩, hnd2⟩, hfl⟩, hdc⟩, hSd⟩, hfs⟩, hP⟩ := h
   set k := ds.length with hk
@@ -1165,7 +1335,6 @@ theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List �
   have hK0 : 0 < K := by positivity
   obtain ⟨q, hq⟩ : ∃ q, M = K * q := ⟨M / K, (Nat.mul_div_cancel' (Nat.dvd_of_mod_eq_zero hKM)).symm⟩
   obtain ⟨r, hr⟩ : ∃ r, M = 2 * r := ⟨M / 2, by omega⟩
-  have hbl : bs.length = k := dyBits_length k S bs hb
   have hdsnd : ds.Nodup := by rw [hpath] at hnd; exact (List.nodup_append.1 hnd).1
   have hfsnd : fs.Nodup := (List.nodup_append.1 hnd2).1
   have hSfree : ∀ t ∈ S, ∀ d ∈ ds, d ∉ t.1 := fun t ht => not_hasAny (by simpa using hSd t ht)
@@ -1231,7 +1400,40 @@ theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List �
   rw [hL, bsum_dy M K q hM hK0 hq S ds 1 hdsnd hSfree τ, dyProd_geom,
     bsum_new M r hM hr fs bs hfsnd (by rw [hfl, hbl]) (fun f hf b hb m hm hfm =>
       (hfs f hf).2 (fvars_mem hb hm hfm)) τ, prod_ite, hbl]
-  simp only [dy_bits τ k S bs hb]
+  have h3 := hbits τ
+  rw [hK] at h3
+  simp only [h3]
+
+
+theorem dyadic_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (s : Data)
+    (σ : ℕ → ZMod 2) (h : dyadicOK M ds S fs s = true) :
+    val M c s σ = val M c (dyadicS M ds S fs s) σ := by
+  unfold dyadicOK at h
+  unfold dyadicS
+  rcases hb : dyBits ds.length S with _ | bs
+  · simp [hb] at h
+  simp only [hb] at h
+  exact dyadic_core M c ds S fs bs s σ (dyBits_length _ S bs hb) (fun τ => dy_bits τ _ S bs hb) h
+
+/-- Whether `bs` are the binary digits of `S` (bitsOK) and [Dyadic]'s side conditions hold. -/
+def dyadicBOK (M : ℕ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2) (s : Data) : Bool :=
+  bitsOK ds.length S bs && dyRest M ds S fs bs s
+
+/-- The digits `ds` summed with the given binary digits `bs`. -/
+def dyadicBS (M : ℕ) (ds : List ℕ) (fs : List ℕ) (bs : List F2) (s : Data) : Data :=
+  { path := fs ++ s.path.drop ds.length,
+    phase := s.phase.filter (fun t => !hasAny ds t.1) ++ dyNew M fs bs,
+    cons := s.cons, rows := s.rows }
+
+theorem dyadicB_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
+    (s : Data) (σ : ℕ → ZMod 2) (h : dyadicBOK M ds S fs bs s = true) :
+    val M c s σ = val M c (dyadicBS M ds fs bs s) σ := by
+  simp only [dyadicBOK, Bool.and_eq_true] at h
+  have hl : bs.length = ds.length := by
+    have := h.1
+    simp only [bitsOK, Bool.and_eq_true, decide_eq_true_eq] at this
+    exact this.1.2
+  exact dyadic_core M c ds S fs bs s σ hl (fun τ => bits_iff τ _ S bs h.1) h.2
 
 
 /-! ## Phase terms off the constraints -/
@@ -1284,6 +1486,7 @@ inductive Step where
   | norm
   | dyadic (ds : List ℕ) (S : Poly) (fs : List ℕ)
   | pdrop
+  | dyadicB (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1303,6 +1506,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .norm, _ => true
   | .dyadic ds S fs, s => dyadicOK M ds S fs s
   | .pdrop, _ => true
+  | .dyadicB ds S fs bs, s => dyadicBOK M ds S fs bs s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1322,6 +1526,7 @@ def stepS (M : ℕ) : Step → Data → Data
   | .norm, s => normS M s
   | .dyadic ds S fs, s => dyadicS M ds S fs s
   | .pdrop, s => pdropS s
+  | .dyadicB ds _ fs bs, s => dyadicBS M ds fs bs s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
@@ -1329,7 +1534,7 @@ noncomputable def fac : Step → ℂ
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
   | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
-    | .pdrop => 1
+    | .pdrop | .dyadicB _ _ _ _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -1365,6 +1570,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | norm => simpa [fac, stepS] using norm_sound M (by omega) c s σ
   | dyadic ds S fs => simpa [fac, stepS] using dyadic_sound M c ds S fs s σ h
   | pdrop => simpa [fac, stepS] using pdrop_sound M c s σ
+  | dyadicB ds S fs bs => simpa [fac, stepS] using dyadicB_sound M c ds S fs bs s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →

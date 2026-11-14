@@ -736,10 +736,6 @@ def quarterD (M : ℕ) (B0 B1 : F2) (s : Data) : Data :=
 def quarterS (M : ℕ) (B0 B1 : F2) (j : ℕ) (t : AData) : AData :=
   ⟨quarterD M B0 B1 t.s, t.held, t.atoms ++ [(j, B0)]⟩
 
-theorem peq_symm {M : ℕ} {a b : ℤ} (h : peq M a b) : peq M b a := by
-  obtain ⟨n, hn⟩ := h
-  exact ⟨-n, by rw [hn]; ring⟩
-
 theorem ex_quarter_sq : ex (1 / 4) * ex (1 / 4) = -1 := by
   rw [← ex_add, show (1 / 4 + 1 / 4 : ℝ) = 1 / 2 by norm_num, Sym.ex_half]
 
@@ -936,16 +932,6 @@ def tInd : List F2 → ℕ → F2
   | [], _ => [[]]
   | B :: Bs, s => f2mul (tBit (s % 2 == 1) B) (tInd Bs (s / 2))
 
-/-- The number the digits' values spell, low digit first. -/
-def dnum (τ : ℕ → ZMod 2) : List F2 → ℕ
-  | [] => 0
-  | B :: Bs => (fz τ B).val + 2 * dnum τ Bs
-
-/-- `w 2^i` times the lift of the digit `B_i`, summed over the digits. -/
-def tLift (M : ℕ) : ℕ → List F2 → Poly
-  | _, [] => []
-  | w, B :: Bs => (lift M B).map (fun u => ([] ++ u.1, w * u.2)) ++ tLift M (2 * w) Bs
-
 /-- The numbers in `[1, 2^k)` other than `2^(k - 1)`. -/
 def tList (k : ℕ) : List ℕ := (List.range (2 ^ k)).filter fun s => s != 0 && s != 2 ^ (k - 1)
 
@@ -956,22 +942,6 @@ def tAtoms (Bs : List F2) (ats : List (ℕ × ℕ)) : Atoms :=
 theorem fz_tBit (τ : ℕ → ZMod 2) (b : Bool) (B : F2) :
     fz τ (tBit b B) = if b then fz τ B else 1 + fz τ B := by
   cases b <;> simp [tBit, fz_cons, mz]
-
-theorem dnum_lt (τ : ℕ → ZMod 2) : ∀ Bs : List F2, dnum τ Bs < 2 ^ Bs.length
-  | [] => by simp [dnum]
-  | B :: Bs => by
-    have ih := dnum_lt τ Bs
-    have hv : (fz τ B).val < 2 := ZMod.val_lt _
-    simp only [dnum, List.length_cons, pow_succ]
-    omega
-
-theorem dnum_update_not (τ : ℕ → ZMod 2) (x : ℕ) (b : ZMod 2) :
-    ∀ Bs : List F2, (∀ B ∈ Bs, ∀ m ∈ B, x ∉ m) → dnum (Function.update τ x b) Bs = dnum τ Bs
-  | [] => fun _ => rfl
-  | B :: Bs => fun h => by
-    simp only [dnum]
-    rw [fz_update_not τ x b B (h B List.mem_cons_self),
-      dnum_update_not τ x b Bs (fun B' hB => h B' (List.mem_cons_of_mem _ hB))]
 
 set_option linter.unusedSimpArgs false in
 set_option linter.unusedTactic false in
@@ -1001,22 +971,6 @@ theorem fz_tInd (τ : ℕ → ZMod 2) :
         | (rw [if_neg (by omega)])
         | (simp only [show (s % 2 == 1) = false by simp [hb], Bool.false_eq_true, if_false,
             one_mul, zero_mul]; first | rw [if_pos (by omega)] | rw [if_neg (by omega)])
-
-theorem zq_val (x : ZMod 2) : zq x = (x.val : ℤ) := by
-  rcases z2_cases x with rfl | rfl <;> decide
-
-theorem pn_tLift (τ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
-    ∀ (Bs : List F2) (w : ℕ), peq M (pn τ (tLift M w Bs)) ((w : ℤ) * dnum τ Bs)
-  | [], w => ⟨0, by simp [tLift, pn, dnum]⟩
-  | B :: Bs, w => by
-    obtain ⟨n1, e1⟩ := pn_lift τ M hM B
-    obtain ⟨n2, e2⟩ := pn_tLift τ M hM Bs (2 * w)
-    simp only [tLift, dnum]
-    have hm1 : zq (mz τ []) = 1 := by simp [mz]; decide
-    rw [pn_append, pn_mapmul, hm1, e1, e2, zq_val]
-    refine ⟨w * n1 + n2, ?_⟩
-    push_cast
-    ring
 
 theorem tList_nodup (k : ℕ) : (tList k).Nodup :=
   (List.nodup_range).filter _
