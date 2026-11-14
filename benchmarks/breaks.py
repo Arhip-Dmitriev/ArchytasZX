@@ -133,17 +133,29 @@ def _e_phase(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> i
     return _append(c, gen(_wire(c, p), rule=p["rule"]))
 
 
+def _own_count(c: ir.Circuit) -> bool:
+    """Whether the boxed beyond_N gadget needs its own register of count n (no register of
+    ``c`` has count n)."""
+    return not any(str(c.count(q)).replace(" ", "") == "n" for q in c.registers)
+
+
 def _e_beyond_n(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
     big_n = p["N"]
-    if inst.equation.form == "unrolled":
+    unrolled = inst.equation.form == "unrolled"
+    if ("index" in p) != unrolled:
+        raise ValueError(f"beyond_N params {p} do not fit the {inst.equation.form} form")
+    if unrolled:
         q = _outputs(c)[p["index"]]
         return _append(c, ir.X(q, 1)) if nv is not None and nv > big_n else c
     m = big_n + 2
-    counts = [c.count(q) for q in c.registers if not str(c.count(q)).isdigit()]
-    if not counts:
-        return _times(c, "-1") if nv is not None and nv % m == big_n + 1 else c
-    count = counts[0]
-    last = max(i for i, q in enumerate(c.wires) if str(c.count(q)) == str(count))
+    concrete = not any(not str(c.count(q)).isdigit() for q in c.registers)
+    if concrete and nv is not None:
+        return _times(c, "-1") if nv % m == big_n + 1 else c
+    if _own_count(c):
+        last = len(c.wires) - 1
+    else:
+        last = max(i for i, q in enumerate(c.wires) if str(c.count(q)).replace(" ", "") == "n")
+    count = "n"
     wires = [*c.wires[: last + 1], "_cnt", *c.wires[last + 1 :], "_acc"]
     gates = (
         ir.Init("_cnt", 1),
@@ -192,8 +204,8 @@ def _entry_outputs(c: ir.Circuit) -> list[str]:
 
 def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
     outs = tuple(_entry_outputs(c))
-    if not outs:
-        return c
+    if not outs or any(c.count(q) is not None for q in _outputs(c)):
+        raise ValueError("single_entry needs single outputs only (no register output)")
 
     def f(x: tuple[int, ...]) -> Fraction:
         return Fraction(1, 2) if all(v == 1 for v in x) else Fraction(0)
@@ -396,7 +408,8 @@ def _variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
                     f"X on output -{i} beyond N", {"index": -i, "N": big_n}, probe, {"n_max": big_n}
                 )
         else:
-            yield Variant("sign at n = N + 1 mod N + 2", {"N": big_n}, probe, {"n_max": big_n})
+            params: dict[str, Any] = {"N": big_n, **({"own_count": True} if _own_count(c) else {})}
+            yield Variant("sign at n = N + 1 mod N + 2", params, probe, {"n_max": big_n})
     elif kind == "prime_only":
         if not gen_d:
             return
@@ -1114,6 +1127,38 @@ def fingerprint(cfg: dict[str, Any]) -> str:
     return h.hexdigest()[:16]
 
 
+_VARIANT_KEYS: dict[tuple[str, str, str], frozenset[tuple[str, str]]] = {}
+
+
+def _params_key(params: dict[str, Any]) -> str:
+    return json.dumps(params, sort_keys=True, default=str)
+
+
+def mismatch(rec: dict[str, Any], inst: Any) -> str | None:
+    """Why an F record's edit (label and params) is not among today's variants of its kind on
+    the S instance ``inst``, None when it is (or when ``rec`` has no kind)."""
+    kind = rec.get("kind")
+    if kind is None:
+        return None
+    params = rec.get("params") or {}
+    fs = {"beyond_N": params.get("N", 32), "tiny_k": params.get("k", 3)}
+    key = (inst.id, str(kind), _params_key(fs))
+    if key not in _VARIANT_KEYS:
+        try:
+            found = {
+                (v.label, _params_key(v.params)) for v in variants(kind, inst, {"false_set": fs})
+            }
+        except Exception:  # noqa: BLE001
+            found = set()
+        _VARIANT_KEYS[key] = frozenset(found)
+    if (rec.get("label"), _params_key(params)) in _VARIANT_KEYS[key]:
+        return None
+    return (
+        f"{kind} edit {rec.get('label')!r} {params} is not a variant of the "
+        f"{inst.equation.form} form of {inst.id}"
+    )
+
+
 def false_instance(rec: dict[str, Any], insts: dict[str, Any]) -> Any:
     """The F instance of an F record."""
     fe = FalseEquation.from_dict(rec)
@@ -1158,4 +1203,4 @@ def annotate_file(src: Path, dst: Path, cfg: dict[str, Any], jobs: int) -> None:
     )
 
 
-__all__ = ["KINDS", "Edit", "FalseEquation", "annotate", "generate", "product"]
+__all__ = ["KINDS", "Edit", "FalseEquation", "annotate", "generate", "mismatch", "product"]

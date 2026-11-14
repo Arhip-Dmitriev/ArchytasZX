@@ -102,6 +102,8 @@ UNSUPPORTED: dict[str, str] = {
 CAUSES: dict[str, str] = {
     "verdict": "verdict.<verdict>: the run's verdict (ok, uncertified, wrong)",
     "pair_equal_at_point": "the F pair is equal at this point (benchmarks.differs)",
+    "false_record_mismatch": "the F record's edit is not a variant of the equation's current form"
+    " (benchmarks.breaks.mismatch)",
     "rival.no_verdict": "the rival returned no verdict",
     "kill.stage_timer": "the runner's wall timer killed the worker",
     "kill.sigkill": "the worker died of SIGKILL or exit 137",
@@ -399,10 +401,14 @@ def reclassify_record(
 ) -> dict[str, Any]:
     """:func:`classify` of a logged run record, its F record and instance looked up by equation
     id (an F id ``EQ!`` uses EQ's instance); a run of an unknown instance has no free axis."""
+    from benchmarks.breaks import mismatch
+
     eq = str(rec.get("equation") or "")
     inst = insts.get(eq.removesuffix("!"))
     free = () if inst is None else free_axes(inst, rec)
-    return classify(rec, falses.get(eq), free)
+    false = falses.get(eq)
+    stale = false is not None and inst is not None and mismatch(false, inst) is not None
+    return classify(rec, false, free, stale)
 
 
 def scalar_only(false: dict[str, Any]) -> bool:
@@ -434,12 +440,16 @@ def scalar_tag(false: dict[str, Any]) -> str | None:
 
 
 def classify(
-    rec: dict[str, Any], false: dict[str, Any] | None = None, free: tuple[str, ...] = ()
+    rec: dict[str, Any],
+    false: dict[str, Any] | None = None,
+    free: tuple[str, ...] = (),
+    stale: bool = False,
 ) -> dict[str, Any]:
     """``rec`` with ``outcome``, ``stage``, ``cause`` and ``cause_message`` set from its fields
     (``raw_outcome`` keeps a replaced outcome); ``false`` is the F record of an F run. When its
     pair is equal on the run's region (its point and its ``free`` axes, :func:`free_axes`), a
-    run with a verdict becomes invalid_point and any other run is flagged ``point_invalid``."""
+    run with a verdict becomes invalid_point and any other run is flagged ``point_invalid``; so
+    does every run of a ``stale`` F record (benchmarks.breaks.mismatch)."""
     tool = str(rec.get("tool") or "")
     oc = rec.get("outcome")
     if "killed_in" in rec and not rec.get("stages"):
@@ -459,8 +469,11 @@ def classify(
     invalid = (
         false is not None and d is not None and equal_region(false, rec.get("n"), int(d), free)
     )
-    if invalid and oc2 in VERDICT_OUTCOMES:
+    if stale and false is not None and oc2 in VERDICT_OUTCOMES:
+        oc2, cause = "invalid_point", "false_record_mismatch"
+    elif invalid and oc2 in VERDICT_OUTCOMES:
         oc2, cause = "invalid_point", "pair_equal_at_point"
+    invalid = invalid or (stale and false is not None)
     out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
     tag = None if false is None else scalar_tag(false)
     if tag is not None:

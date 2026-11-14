@@ -380,7 +380,9 @@ diagram, both sides doubled when either is mixed) and where the pair stays equal
                           phase on a boxed equation, on an output wire       (d <= 4, n <= 3)
   beyond_N                unrolled: X on an output when n > N; boxed: a      n <= N
                           counting gadget of dimension N + 2 giving -1 at
-                          n = N + 1 (mod N + 2); rivals see the same sign
+                          n = N + 1 (mod N + 2), counting a register of
+                          count n (its own one, own_count, when the circuit
+                          has none); rivals see the same sign
   prime_only              phase (k^d - k)/d                                  prime d (and the
                                                                              Carmichael numbers)
   qubit_only              the antipode F^2 on an output                      d <= 2
@@ -393,7 +395,8 @@ diagram, both sides doubled when either is mixed) and where the pair stays equal
   box_boundary            scalar 1 + 0^(n - n_min)                           n > n_min
   state_not_map           Z at the start of an input wire                    on input 0
   single_entry            a phase table: -1 where every unmeasured single    elsewhere
-                          output is 1 (no variant when none is left)
+                          output is 1 (no variant when none is left, or
+                          when an output is a register)
   wrong_phase             one phase or amount changed                        nowhere
   missing_gate            one gate dropped                                   nowhere
   extra_gate              X appended on an output                            nowhere
@@ -720,7 +723,12 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      at a bound count and dimension. A failure there keeps its outcome and is
                      flagged point_invalid. equal_at is None, not
                      equal, for an F record whose
-                     witness pairs a pure boundary with the same boundary doubled.
+                     witness pairs a pure boundary with the same boundary doubled. Every run of
+                     an F record whose edit (label and params) is not among today's variants of
+                     its kind on the equation (breaks.mismatch: the equation's form or circuit
+                     changed since the record was made) is invalid_point with cause
+                     false_record_mismatch, or flagged point_invalid; the runner refuses such a
+                     record.
 
 The rung stop codes are the engine's Decision.stops, one (rung, code) per rung tried in ladder
 order, written RUNG.CODE (outcomes.stop_codes): normal_form.agree, .differ; oracle.mismatch,

@@ -704,6 +704,10 @@ def units_of(cfg: dict[str, Any], false_records: list[dict[str, Any]]) -> list[t
         for rec in false_records:
             if rec.get("kind") is None:
                 continue
+            why = breaks.mismatch(rec, insts[rec["equation"]])
+            if why is not None:
+                print(f"benchmarks: F record refused: {why}", flush=True)
+                continue
             fi = breaks.false_instance(rec, insts)
             for t in tool_names:
                 out.append((Unit(rec["equation"], t, rec, bool(fi.restriction)), fi))
