@@ -831,8 +831,11 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           circuit's global phase (Qiskit's, minus theta/2 per rz, since PyZX reads
                           rz(theta) as diag(1, e^(i theta))), the magnitude of a circuit scalar
                           of modulus other than 1 (the other rivals refuse such a circuit) and
-                          the specification's exact scalar (the engine diagram's) are applied. Maps: full_reduce of circuit .
-                          spec^dagger to the identity (else unknown) whose scalar is 1; states:
+                          the specification's exact scalar (the engine diagram's) are applied. Maps: full_reduce of
+                          spec^dagger . circuit and of spec^dagger . spec (and of circuit^dagger
+                          . circuit when the input and output counts differ) to multiples of the
+                          identity (else unknown); equal when the first scalar equals the second
+                          (for a non-square map also |first|^2 = second x third); states:
                           <s|c> = <c|c> = <s|s> (unknown when an inner product keeps vertices
                           after reduction). Values compare as complex numbers (relative 1e-9)
                           when every |log| is at most 600, else from the scalars' stored parts

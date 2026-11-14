@@ -1,14 +1,16 @@
 """ZX driver for PyZX and QuiZX, run as ``python -I zx.py PAYLOAD`` in the tool's environment.
 
 The circuit is read from QASM, its Init and Post wires plugged with basis states and effects,
-the specification read from PyZX JSON. A map is checked by full reduction of circuit . spec^dagger
-to the identity (every input meets its output by a plain wire; unknown otherwise); a state by
-the three closed inner products <s|c>, <c|c>, <s|s> (unknown when one does not reduce to a
-scalar). Both tests are exact: the circuit's global phase
+the specification read from PyZX JSON. A map is checked by full reduction of spec^dagger . circuit
+and spec^dagger . spec (and circuit^dagger . circuit when inputs and outputs differ in number) to
+multiples of the identity (every input meets its output by a plain wire; unknown otherwise); a
+state by the three closed inner products <s|c>, <c|c>, <s|s> (unknown when one does not reduce
+to a scalar). Both tests are exact: the circuit's global phase
 and the specification's scalar (payload "phase" and rhs "scalar") are applied, a state is equal
-when <s|c> = <c|c> = <s|s> (states_equal) and a map when the reduced identity's scalar is 1
-(map_scalar_one), each value compared from the scalars' stored parts (in log space beyond float
-range); equal_up_to_scalar records the comparison without them.
+when <s|c> = <c|c> = <s|s> (states_equal) and a map when the scalar of spec^dagger . circuit
+equals that of spec^dagger . spec (map_scalar_match, with gram_match for a non-square map), each
+value compared from the scalars' stored parts (in log space beyond float range);
+equal_up_to_scalar records the comparison without them.
 Prints one JSON line.
 """
 
@@ -65,15 +67,23 @@ def main() -> None:
             out["equal_up_to_scalar"] = norm_identity(s_cs, s_cc, s_ss)
             out["verdict"] = "equal" if states_equal(s_cs, s_cc, s_ss, p) else "unequal"
     else:
-        g = lhs.copy()
-        g.compose(rhs.adjoint())
-        reduce(g)
+        g, g_id = _gram(lhs, rhs, reduce)
         out["mode"] = "identity"
-        if not _identity(g):
+        r, r_id = _gram(rhs, rhs, reduce) if g_id else (None, False)
+        l_, l_id = _gram(lhs, lhs, reduce) if r_id and nin != nout else (None, True)
+        if not g_id:
             out["verdict"] = "unknown"
+        elif not r_id or r.scalar.is_zero:
+            out["verdict"] = "unknown"
+            out["reason"] = "spec^dagger . spec did not reduce to a nonzero identity multiple"
+        elif not l_id:
+            out["verdict"] = "unknown"
+            out["reason"] = "circuit^dagger . circuit did not reduce to a multiple of the identity"
         else:
-            out["equal_up_to_scalar"] = True
-            out["verdict"] = "equal" if map_scalar_one(g.scalar, p) else "unequal"
+            up = l_ is None or gram_match(g.scalar, r.scalar, l_.scalar)
+            out["equal_up_to_scalar"] = up
+            same = up and map_scalar_match(g.scalar, r.scalar, p)
+            out["verdict"] = "equal" if same else "unequal"
         lhs = g
     out["cpu"] = time.process_time() - c0
     out["wall"] = time.perf_counter() - w0
@@ -173,16 +183,34 @@ def states_equal(cs, cc, ss, p):
     return _same(a, b) and _same(b, c)
 
 
-def map_scalar_one(scalar, p):
-    """Whether the scalar of the reduced circuit . spec^dagger, times m e^(i phi) conj(lambda)
-    (m the circuit scalar's magnitude), is exactly 1."""
+def _gram(a, b, reduce):
+    """(b^dagger . a fully reduced, whether it is a plain-wire identity)."""
+    g = a.copy()
+    g.compose(b.adjoint())
+    reduce(g)
+    return g, _identity(g)
+
+
+def map_scalar_match(sigma, rho, p):
+    """Whether sigma m e^(i phi) conj(lambda) = |lambda|^2 rho, sigma the scalar of the reduced
+    spec^dagger . circuit, rho that of spec^dagger . spec (m the circuit scalar's magnitude)."""
     zero, lam_log, lam_arg = p["rhs"]["scalar"]
     c_zero, c_log = p.get("circuit_scalar", [False, 0.0])
     if zero or c_zero:
         return False
     phi = float(p.get("phase", 0.0))
-    shifted = _shift(scalar_parts(scalar), lam_log + c_log, phi - lam_arg)
-    return _same(shifted, (False, 0.0, 0.0))
+    left = _shift(scalar_parts(sigma), lam_log + c_log, phi - lam_arg)
+    right = _shift(scalar_parts(rho), 2 * lam_log, 0.0)
+    return _same(left, right)
+
+
+def gram_match(sigma, rho, tau):
+    """Whether tau rho = |sigma|^2 for the scalars of spec^dagger . circuit (sigma),
+    spec^dagger . spec (rho) and circuit^dagger . circuit (tau)."""
+    zs, ls, _ = scalar_parts(sigma)
+    zr, lr, ar = scalar_parts(rho)
+    left = _shift(scalar_parts(tau), lr, ar, zr)
+    return _same(left, (zs, 2 * ls, 0.0))
 
 
 def norm_identity(cs, cc, ss):
