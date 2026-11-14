@@ -472,7 +472,17 @@ def scalar_parts(value: Any) -> list[Any]:
     v = sp.sympify(value)
     if v.is_zero:
         return [True, 0.0, 0.0]
-    return [False, float(sp.N(sp.log(sp.Abs(v)), 30)), float(sp.N(sp.arg(v), 30))]
+    return [False, _real(sp.log(sp.Abs(v))), _real(sp.arg(v))]
+
+
+def _real(x: Any) -> float:
+    """A real sympy expression at 30 digits, an imaginary residue below 1e-20 dropped."""
+    import sympy as sp
+
+    re, im = (sp.Float(p, 30) for p in sp.N(x, 30).as_real_imag())
+    if abs(im) > 1e-20 * max(1, abs(re)):
+        raise ValueError(f"{x} is not real ({im} imaginary)")
+    return float(re)
 
 
 def reference_circuit(inst: Any, n: int | None, d: int) -> ir.Circuit:

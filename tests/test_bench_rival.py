@@ -80,3 +80,18 @@ def test_phase_functions_keep_exact_angles() -> None:
     back = qasm2.loads(text)
     back.global_phase = phase
     assert np.abs(Operator(back).data - want).max() < 1e-12
+
+
+def test_scalar_parts_drop_an_imaginary_residue() -> None:
+    """The qubitization_chebyshev scalar -(-1)^(1/4)/2 + (-1)^(3/4)/2 is -1/sqrt2."""
+    import math
+
+    import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+
+    from benchmarks.tools import rival
+
+    v = -((-1) ** sp.Rational(1, 4)) / 2 + (-1) ** sp.Rational(3, 4) / 2
+    zero, lg, arg = rival.scalar_parts(v)
+    assert not zero and abs(lg - math.log(0.5) / 2) < 1e-12 and abs(arg - math.pi) < 1e-12
+    with pytest.raises(ValueError, match="not real"):
+        rival._real(sp.I)
