@@ -1227,6 +1227,138 @@ theorem turn_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (A : ℕ → ℂ) (Bs : Li
     aval_tAtoms A τ Bs ats hlt, val_smul]
   ring
 
+/-! ## Phases on a support, phases into atoms and flipped atoms -/
+
+/-- Whether `m` holds every variable of `a`. -/
+def mHas (a m : Mono) : Bool := a.all fun v => decide (v ∈ m)
+
+/-- Every phase term whose monomial holds `a` times `b`. -/
+def psupP (a b : Mono) (P : Poly) : Poly :=
+  P.map fun t => if mHas a t.1 then (t.1 ++ b, t.2) else t
+
+/-- Whether some constraint normalises to `a + a b`. -/
+def psupOK (a b : Mono) (s : Data) : Bool :=
+  s.cons.any fun q => decide (normF q = normF [a, a ++ b])
+
+/-- `psupP a b` on the phase. -/
+def psupS (a b : Mono) (s : Data) : Data := { s with phase := psupP a b s.phase }
+
+theorem mz_of_mHas (τ : ℕ → ZMod 2) (a m : Mono) (h : mHas a m = true) (hm : mz τ m = 1) :
+    mz τ a = 1 := by
+  rcases z2_cases (mz τ a) with e | e
+  · obtain ⟨v, hv, hv0⟩ := mz_zero_mem τ a e
+    have hvm : v ∈ m := by simpa using List.all_eq_true.1 h v hv
+    rw [mz_zero_of_mem τ v hv0 m hvm] at hm
+    exact absurd hm (by decide)
+  · exact e
+
+theorem pn_psupP (τ : ℕ → ZMod 2) (a b : Mono) (h : mz τ a * (1 + mz τ b) = 0) :
+    ∀ P : Poly, pn τ (psupP a b P) = pn τ P
+  | [] => rfl
+  | t :: P => by
+    have ih := pn_psupP τ a b h P
+    simp only [psupP, List.map_cons] at ih ⊢
+    rw [pn_cons, pn_cons, ih]
+    by_cases ht : mHas a t.1 = true
+    · rw [if_pos ht]
+      dsimp only
+      rw [mz_append]
+      rcases z2_cases (mz τ t.1) with e | e
+      · rw [e, zero_mul]
+      · have ha := mz_of_mHas τ a t.1 ht e
+        rw [ha, one_mul] at h
+        have hb : mz τ b = 1 := by
+          rcases z2_cases (mz τ b) with e' | e'
+          · rw [e'] at h; exact absurd h (by decide)
+          · exact e'
+        rw [e, hb, one_mul]
+    · rw [if_neg ht]
+
+theorem psup_sound (M : ℕ) (c : ℂ) (a b : Mono) (s : Data) (σ : ℕ → ZMod 2)
+    (h : psupOK a b s = true) : val M c s σ = val M c (psupS a b s) σ := by
+  simp only [psupOK, List.any_eq_true, decide_eq_true_eq] at h
+  obtain ⟨q, hq, hn⟩ := h
+  unfold val psupS
+  apply bsum_congr
+  intro τ
+  unfold summand
+  dsimp only
+  split_ifs with hc
+  · have h0 : fz τ q = 0 := hc q (List.mem_append_left _ hq)
+    rw [← fz_normF, hn, fz_normF] at h0
+    simp only [fz, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero,
+      mz_append] at h0
+    have h' : mz τ a * (1 + mz τ b) = 0 := by rw [mul_add, mul_one]; exact h0
+    rw [pn_psupP τ a b h']
+  · rfl
+
+/-- Whether the inner path is empty and `(m, e)` is a phase term with `m` nonempty. -/
+def aphaseOK (m : Mono) (e : ℕ) (t : AData) : Bool :=
+  decide (t.s.path = []) && !decide (m = []) && decide ((m, e) ∈ t.s.phase)
+
+/-- The phase term `(m, e)` moved to the atom `(j, [m])`. -/
+def aphaseS (m : Mono) (e j : ℕ) (t : AData) : AData :=
+  ⟨{ t.s with phase := t.s.phase.erase (m, e) }, t.held, t.atoms ++ [(j, [m])]⟩
+
+theorem aphase_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (m : Mono) (e j : ℕ)
+    (t : AData) (σ : ℕ → ZMod 2) (h : aphaseOK m e t = true) (hA : A j = om M ^ e) :
+    valA M c A t σ = valA M c A (aphaseS m e j t) σ := by
+  simp only [aphaseOK, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true',
+    decide_eq_false_iff_not] at h
+  obtain ⟨⟨hp, -⟩, hm⟩ := h
+  simp only [valA, aphaseS]
+  apply bsum_congr
+  intro τ
+  rw [aval_append, aval_cons, aval_nil]
+  unfold val summand
+  simp only [hp, bsum]
+  have hfz : fz τ [m] = mz τ m := by simp [fz]
+  have hpn : pn τ t.s.phase = pn τ (t.s.phase.erase (m, e)) + (e : ℤ) * zq (mz τ m) := by
+    rw [pn_perm τ (List.perm_cons_erase hm), pn_cons]
+    ring
+  rw [hfz, hpn]
+  split_ifs with hc h0 h0
+  · rw [h0, zq0]
+    simp
+  · have h1 : mz τ m = 1 := by
+      rcases z2_cases (mz τ m) with e' | e'
+      · exact absurd e' h0
+      · exact e'
+    rw [h1, zq1, hA, om_eq_ex]
+    push_cast
+    rw [add_div, ex_add]
+    ring
+  · ring
+  · ring
+
+/-- Whether the head atom has index `j`. -/
+def aflipOK (j : ℕ) (t : AData) : Bool := aheadOK j t
+
+/-- The head atom `(j, f)` replaced by `(j', 1 + f)`. -/
+def aflipS (j' : ℕ) (t : AData) : AData :=
+  match t.atoms with
+  | [] => t
+  | a :: as => { t with atoms := (j', normF ([] :: a.2)) :: as }
+
+theorem aflip_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (j j' : ℕ) (t : AData) (σ : ℕ → ZMod 2)
+    (hA : A j * A j' = 1) (h : aflipOK j t = true) :
+    valA M c A t σ = valA M (A j * c) A (aflipS j' t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases as with _ | ⟨a, as⟩
+  · simp [aflipOK, aheadOK] at h
+  simp only [aflipOK, aheadOK, decide_eq_true_eq] at h
+  simp only [valA, aflipS]
+  apply bsum_congr
+  intro τ
+  rw [aval_cons, aval_cons, fz_normF, fz_cons, h, val_smul]
+  have hm : mz τ [] = 1 := by simp [mz]
+  rw [hm]
+  rcases z2_cases (fz τ a.2) with e | e
+  · rw [e, add_zero, if_pos rfl, if_neg (by decide)]
+    linear_combination (aval A as τ * val M c s τ) * hA.symm
+  · rw [e, show (1 + 1 : ZMod 2) = 0 by decide, if_neg (by decide), if_pos rfl]
+    ring
+
 /-- A path sum with no held variable and no atom. -/
 theorem valA_nil (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (s : Data) (σ : ℕ → ZMod 2) :
     valA M c A ⟨s, [], []⟩ σ = val M c s σ := by
@@ -1254,15 +1386,23 @@ inductive AStep where
   | quarter (B0 B1 : F2) (j : ℕ)
   | acomp (j : ℕ)
   | turn (Bs : List F2) (ats : List (ℕ × ℕ))
+  | psup (a b : Mono)
+  | aphase (m : Mono) (e j : ℕ)
+  | aflip (j j' o : ℕ)
 
-/-- The pairs `(e, j)` a step assumes `2 * A j = 1 + om M ^ e` of. -/
-def AStep.qreqs (M : ℕ) : AStep → List (ℕ × ℕ)
-  | .quarter _ _ j => [(M / 4, j)]
-  | .turn Bs ats => ats.map fun p => (p.1 * (M / 2 ^ Bs.length), p.2)
+/-- `(b + 1) * A j = b + om M ^ e` for the triple `(e, j, b)`. -/
+def qreqHolds (M : ℕ) (A : ℕ → ℂ) (p : ℕ × ℕ × ℕ) : Prop :=
+  ((p.2.2 : ℂ) + 1) * A p.2.1 = p.2.2 + om M ^ p.1
+
+/-- The triples a step assumes `qreqHolds` of. -/
+def AStep.qreqs (M : ℕ) : AStep → List (ℕ × ℕ × ℕ)
+  | .quarter _ _ j => [(M / 4, j, 1)]
+  | .turn Bs ats => ats.map fun p => (p.1 * (M / 2 ^ Bs.length), p.2, 1)
+  | .aphase _ e j => [(e, j, 0)]
   | _ => []
 
 /-- The `qreqs` of a step list. -/
-def aqreqs (M : ℕ) (sts : List AStep) : List (ℕ × ℕ) := sts.flatMap (AStep.qreqs M)
+def aqreqs (M : ℕ) (sts : List AStep) : List (ℕ × ℕ × ℕ) := sts.flatMap (AStep.qreqs M)
 
 /-- A coefficient identity `k * A j = Sum_ps Prod_{i in ps} A i`. -/
 abbrev Req := ℕ × ℕ × List (List ℕ)
@@ -1278,6 +1418,7 @@ def AStep.reqs : AStep → List Req
   | .azero j => [(1, j, [])]
   | .aone j => [(1, j, [[]])]
   | .amerge j j1 j2 => [(1, j, [[j1, j2]])]
+  | .aflip j j' o => [(1, o, [[]]), (1, o, [[j, j']])]
   | _ => []
 
 /-- A step's side condition. -/
@@ -1304,6 +1445,9 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .quarter B0 B1 _, t => quarterOK M B0 B1 t
   | .acomp j, t => acompOK j t
   | .turn Bs ats, t => turnOK M Bs ats t
+  | .psup a b, t => psupOK a b t.s
+  | .aphase m e _, t => aphaseOK m e t
+  | .aflip j _ _, t => aflipOK j t
 
 /-- A step applied. -/
 def AStep.apply (M : ℕ) : AStep → AData → AData
@@ -1325,6 +1469,9 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .quarter B0 B1 j, t => quarterS M B0 B1 j t
   | .acomp _, t => acompS t
   | .turn Bs ats, t => turnS M Bs ats t
+  | .psup a b, t => { t with s := psupS a b t.s }
+  | .aphase m e j, t => aphaseS m e j t
+  | .aflip _ j' _, t => aflipS j' t
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
@@ -1335,6 +1482,7 @@ noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
   | .quarter _ _ _ => 2
   | .acomp j => A j
   | .turn _ _ => 2
+  | .aflip j _ _ => A j
   | _ => 1
 
 /-- Every side condition along a step list. -/
@@ -1357,16 +1505,35 @@ def areqs (sts : List AStep) : List Req := sts.flatMap AStep.reqs
 
 theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t : AData) (c : ℂ)
     (σ : ℕ → ZMod 2) (hr : ∀ r ∈ st.reqs, reqHolds A r)
-    (hq : ∀ p ∈ st.qreqs M, 2 * A p.2 = 1 + om M ^ p.1) (h : st.ok M t = true) :
+    (hq : ∀ p ∈ st.qreqs M, qreqHolds M A p) (h : st.ok M t = true) :
     valA M c A t σ = valA M (st.fac A * c) A (st.apply M t) σ := by
   cases st with
   | quarter B0 B1 j =>
     simpa [AStep.fac, AStep.apply] using
-      quarter_sound M hM c A B0 B1 j t σ h (hq (M / 4, j) List.mem_cons_self)
+      quarter_sound M hM c A B0 B1 j t σ h (by
+        have := hq (M / 4, j, 1) List.mem_cons_self
+        simp only [qreqHolds, Nat.cast_one] at this
+        linear_combination this)
   | turn Bs ats =>
-    have hA : ∀ p ∈ ats, 2 * A p.2 = 1 + om M ^ (p.1 * (M / 2 ^ Bs.length)) := fun p hp =>
-      hq (p.1 * (M / 2 ^ Bs.length), p.2) (List.mem_map.2 ⟨p, hp, rfl⟩)
+    have hA : ∀ p ∈ ats, 2 * A p.2 = 1 + om M ^ (p.1 * (M / 2 ^ Bs.length)) := fun p hp => by
+      have := hq (p.1 * (M / 2 ^ Bs.length), p.2, 1) (List.mem_map.2 ⟨p, hp, rfl⟩)
+      simp only [qreqHolds, Nat.cast_one] at this
+      linear_combination this
     simpa [AStep.fac, AStep.apply] using turn_sound M hM c A Bs ats t σ h hA
+  | psup a b =>
+    simp only [AStep.fac, AStep.apply, one_mul]
+    unfold valA
+    exact bsum_congr _ _ (fun τ => by rw [psup_sound M c a b t.s τ h]) _ _
+  | aphase m e j =>
+    have := hq (e, j, 0) List.mem_cons_self
+    simp only [qreqHolds, Nat.cast_zero, zero_add, one_mul] at this
+    simpa [AStep.fac, AStep.apply] using aphase_sound M c A m e j t σ h this
+  | aflip j j' o =>
+    have r0 := hr _ List.mem_cons_self
+    have r1 := hr _ (List.mem_cons_of_mem _ List.mem_cons_self)
+    simp only [reqHolds, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil,
+      List.sum_cons, List.sum_nil, add_zero, Nat.cast_one, one_mul, mul_one] at r0 r1
+    simpa [AStep.fac, AStep.apply] using aflip_sound M c A j j' t σ (by rw [← r1, r0]) h
   | acomp j => simpa [AStep.fac, AStep.apply] using acomp_sound M c A j t σ h
   | inner st => simpa [AStep.fac, AStep.apply] using astep_sound M hM st t c A σ h
   | hperm l => simpa [AStep.fac, AStep.apply] using hperm_sound M c A l t σ h
@@ -1436,7 +1603,7 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
 
 theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     ∀ (sts : List AStep) (t : AData) (c : ℂ) (σ : ℕ → ZMod 2),
-      (∀ r ∈ areqs sts, reqHolds A r) → (∀ p ∈ aqreqs M sts, 2 * A p.2 = 1 + om M ^ p.1) →
+      (∀ r ∈ areqs sts, reqHolds A r) → (∀ p ∈ aqreqs M sts, qreqHolds M A p) →
       arunsOK M sts t = true →
       valA M c A t σ = valA M (afacs A sts * c) A (aruns M sts t) σ
   | [], t, c, σ, _, _, _ => by simp [afacs, aruns]
@@ -1447,9 +1614,9 @@ theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     have hr2 : ∀ r ∈ areqs sts, reqHolds A r := fun r hm => by
       obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
       exact hr r (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
-    have hq1 : ∀ p ∈ st.qreqs M, 2 * A p.2 = 1 + om M ^ p.1 :=
+    have hq1 : ∀ p ∈ st.qreqs M, qreqHolds M A p :=
       fun p hm => hq p (List.mem_flatMap.2 ⟨st, List.mem_cons_self, hm⟩)
-    have hq2 : ∀ p ∈ aqreqs M sts, 2 * A p.2 = 1 + om M ^ p.1 := fun p hm => by
+    have hq2 : ∀ p ∈ aqreqs M sts, qreqHolds M A p := fun p hm => by
       obtain ⟨st', hst', hm'⟩ := List.mem_flatMap.1 hm
       exact hq p (List.mem_flatMap.2 ⟨st', List.mem_cons_of_mem _ hst', hm'⟩)
     rw [AStep.sound M hM A st t c σ hr1 hq1 h.1, aruns_sound M hM A sts _ _ σ hr2 hq2 h.2]

@@ -31,6 +31,7 @@ from archytaszx.algebra.pathsum import (
     ONE,
     Cyclo,
     F2Poly,
+    Mono,
     PathSumUnsupported,
     Step,
     f2_substitute,
@@ -106,7 +107,7 @@ class AmpRun:
     reqs: list[Req] = field(default_factory=list)
     facs: list[sp.Expr] = field(default_factory=list)
     omega: bool = False
-    qreqs: list[tuple[int, int]] = field(default_factory=list)
+    qreqs: list[tuple[int, int, int]] = field(default_factory=list)
 
     def avars(self) -> set[int]:
         """The variables the atoms read."""
@@ -247,7 +248,7 @@ class AmpRun:
         self.cur = rest
         j = self.coefs.index(QUARTER_BASE)
         self.steps.append(f".quarter {f2_text(b0)} {f2_text(b1)} {j}")
-        self.qreqs.append((self.coefs.m // 4, j))
+        self.qreqs.append((self.coefs.m // 4, j, 1))
         self.facs.append(sp.Integer(2))
         self.atoms = [*self.atoms, (j, b0)]
 
@@ -266,7 +267,7 @@ class AmpRun:
         digits = "[" + ", ".join(f2_text(b) for b in bs) + "]"
         listed = "[" + ", ".join(f"({s}, {j})" for s, j in pairs) + "]"
         self.steps.append(f".turn {digits} {listed}")
-        self.qreqs += [(s * (self.coefs.m >> k), j) for s, j in pairs]
+        self.qreqs += [(s * (self.coefs.m >> k), j, 1) for s, j in pairs]
         self.facs.append(sp.Integer(2))
         self.atoms = [*self.atoms, *((j, turn_indicator(bs, s)) for s, j in pairs)]
 
@@ -340,9 +341,53 @@ class AmpRun:
             self.facs.append(self.coefs.model(j))
             self.atoms = self.atoms[2:]
 
+    def normalize(self, phase: Sequence[tuple[Mono, Fraction]], support: F2Poly) -> None:
+        """The final sum's phase ``phase`` and atoms in atom form: with the constraint ``a + a b``
+        (support_lift of ``support``) the phase monomials holding ``a`` times ``b`` (psup), every
+        nonconstant phase term moved to an atom (aphase), every atom on a polynomial with a
+        constant term ``x^(1 + g)`` written ``x (1 / x)^g`` (aflip), then atoms normalised,
+        merged and paired."""
+        from archytaszx.algebra.pathsum import EMPTY, support_lift
+
+        m = self.coefs.m
+        lift = support_lift(support)
+        terms = {mono: c % 1 for mono, c in phase if mono and c % 1}
+        if lift is not None:
+            a, b = lift
+            self.steps.append(f".psup {sorted(a)} {sorted(b)}")
+            terms = _lifted(terms, a, b)
+            self.inner([".norm"])
+        for mono, c in sorted(terms.items(), key=lambda t: sorted(t[0])):
+            j = self.coefs.index(Cyclo.root(c))
+            e = int(c * m) % m
+            self.steps.append(f".aphase {sorted(mono)} {e} {j}")
+            self.qreqs.append((e, j, 0))
+            self.atoms = [*self.atoms, (j, frozenset({mono}))]
+        one = self.coefs.index(Cyclo.rational(1))
+        for atom in list(self.atoms):
+            j, f = atom
+            if EMPTY not in f or f == ONE:
+                continue
+            self._pick(atom)
+            inv = self.coefs.index(self.coefs.values[j].inverse())
+            self.steps.append(f".aflip {j} {inv} {one}")
+            self.reqs += [(1, one, ((),)), (1, one, ((j, inv),))]
+            self.facs.append(self.coefs.model(j))
+            self.atoms = [(inv, frozenset(f ^ {EMPTY})), *self.atoms[1:]]
+        self.substitute([])
+
     def final_key(self) -> list[tuple[int, F2Poly]]:
         """The final atoms as a sorted multiset."""
         return sorted(self.atoms, key=lambda a: (a[0], sorted(sorted(m) for m in a[1])))
+
+
+def _lifted(terms: dict[Mono, Fraction], a: Mono, b: Mono) -> dict[Mono, Fraction]:
+    """Phase terms with every monomial holding ``a`` times ``b``, equal monomials added."""
+    out: dict[Mono, Fraction] = {}
+    for mono, c in terms.items():
+        key = mono | b if a <= mono else mono
+        out[key] = (out.get(key, Fraction(0)) + c) % 1
+    return {k: v for k, v in out.items() if v}
 
 
 def reduce_run(run: AmpRun, trace: Sequence[Step]) -> None:
@@ -418,39 +463,39 @@ def reqs_lines(tag: str, reqs: Sequence[Req], coefs: Coefs, sc: object, steps: s
 
 
 def qreqs_lines(tag: str, run: AmpRun, sc: object, steps: str) -> list[str]:
-    """The theorem that every pair ``(e, j)`` a [Quarter] or [Turn] step of a step list assumes
-    has ``2 * A j = 1 + om m ^ e``."""
+    """The theorem that every triple ``(e, j, b)`` a [Quarter], [Turn] or phase-atom step of a
+    step list assumes has ``(b + 1) * A j = b + om m ^ e``."""
     from archytaszx.semantics.lean_scalar import Om
 
     prove = sc.prove  # type: ignore[attr-defined]
     text = sc.text  # type: ignore[attr-defined]
     m = run.coefs.m
-    pairs = list(run.qreqs)
-    listed = "[" + ", ".join(f"({e}, {j})" for e, j in pairs) + "]"
+    triples = list(run.qreqs)
+    listed = "[" + ", ".join(f"({e}, {j}, {b})" for e, j, b in triples) + "]"
     head = [
-        f"theorem qreqs{tag} : ∀ p ∈ aqreqs {m} {steps}, 2 * A p.2 = 1 + om {m} ^ p.1 := by",
+        f"theorem qreqs{tag} : ∀ p ∈ aqreqs {m} {steps}, qreqHolds {m} A p := by",
         f"  have e : aqreqs {m} {steps} = {listed} := by decide",
         "  rw [e]",
         "  intro p hp",
     ]
-    if not pairs:
+    if not triples:
         return [*head, "  simp at hp", ""]
     lines: list[str] = []
-    for e, j in sorted(set(pairs)):
-        lhs = sp.expand(2 * run.coefs.model(j))
-        rhs = sp.expand(1 + Om(m) ** e)
+    for e, j, b in sorted(set(triples)):
+        lhs = sp.expand((b + 1) * run.coefs.model(j))
+        rhs = sp.expand(b + Om(m) ** e)
         lines += [
-            f"theorem qreq{tag}{j}e{e} : 2 * A {j} = 1 + om {m} ^ {e} := by",
+            f"theorem qreq{tag}{j}e{e}b{b} : qreqHolds {m} A ({e}, {j}, {b}) := by",
             f"  have key : ({text(lhs)} : ℂ) = {text(rhs)} :=",
             *("    " + ln for ln in prove(lhs, rhs).splitlines()),
-            "  simp only [A]",
+            "  simp only [qreqHolds, A]",
             "  all_goals norm_num",
             "  all_goals linear_combination key",
             "",
         ]
     cases = []
-    for e, j in pairs:
-        cases += ["  rcases List.mem_cons.1 hp with rfl | hp", f"  · exact qreq{tag}{j}e{e}"]
+    for e, j, b in triples:
+        cases += ["  rcases List.mem_cons.1 hp with rfl | hp", f"  · exact qreq{tag}{j}e{e}b{b}"]
     return [*lines, *head, *cases, "  simp at hp", ""]
 
 

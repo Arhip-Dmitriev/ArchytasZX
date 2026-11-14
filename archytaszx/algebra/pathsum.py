@@ -143,6 +143,25 @@ class Cyclo:
         """The complex conjugate."""
         return Cyclo(self.n, {-e: v for e, v in self.c.items()})
 
+    def inverse(self) -> Cyclo:
+        """The inverse of this nonzero number: ``x`` over ``zeta_n^0 .. zeta_n^(phi(n)-1)``
+        solving ``self * x = 1`` by Gaussian elimination."""
+        deg = len(cyclotomic(self.n)) - 1
+        cols = [(self * Cyclo(self.n, {i: Fraction(1)})).reduced() for i in range(deg)]
+        rows = [[cols[i][r] for i in range(deg)] + [Fraction(int(r == 0))] for r in range(deg)]
+        for c in range(deg):
+            p = next((r for r in range(c, deg) if rows[r][c]), None)
+            if p is None:
+                raise PathSumError("the inverse of zero")
+            rows[c], rows[p] = rows[p], rows[c]
+            lead = rows[c][c]
+            rows[c] = [x / lead for x in rows[c]]
+            for r in range(deg):
+                if r != c and rows[r][c]:
+                    f = rows[r][c]
+                    rows[r] = [x - f * y for x, y in zip(rows[r], rows[c], strict=True)]
+        return Cyclo(self.n, {i: rows[i][deg] for i in range(deg)})
+
     def reduced(self, m: int | None = None) -> tuple[Fraction, ...]:
         """The coefficients over zeta_m^0 .. zeta_m^(phi(m)-1) modulo Phi_m."""
         x = self if m is None else self.lift(m)
@@ -1314,6 +1333,15 @@ def canonical(ps: PathSum) -> Canon | None:
         () if support == ONE else tuple(sorted(tuple(sorted(m)) for m in support)),
         amp_key,
     )
+
+
+def support_lift(support: F2Poly) -> tuple[Mono, Mono] | None:
+    """``(a, b)`` with the constraint ``1 + support`` equal to ``a + a b``, ``b`` nonempty and
+    disjoint from ``a``; None otherwise."""
+    q = sorted(ONE ^ support, key=len)
+    if len(q) != 2 or not q[0] < q[1]:
+        return None
+    return q[0], q[1] - q[0]
 
 
 @dataclass(frozen=True)

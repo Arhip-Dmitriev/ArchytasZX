@@ -337,14 +337,16 @@ def _instance_net(
     wire_base: int | None = None,
 ) -> tuple[list[tuple[str, tuple[int, ...], tuple[int, ...], int, str | None]], list[int], int]:
     """The nodes of ``diagram`` (kind, output and input labels, dimension index, phase vector
-    body or None), boundary port i labelled i and wire w labelled by ``wire_base`` (the
-    boundary size when None) plus w, its summed labels and its boundary size."""
-    from archytaszx.diagram.generators import FOURIER_BOX, X_SPIDER, Z_SPIDER
-    from archytaszx.semantics.pathsum_diagram import _bits, _turns_table, diagram_base
+    body or None; a weighted spider's kind ends in W and its body is its weights' turns, a W
+    node's dimension index is 1), boundary port i labelled i and wire w labelled by
+    ``wire_base`` (the boundary size when None) plus w, its summed labels and its boundary
+    size."""
+    from archytaszx.diagram.generators import FOURIER_BOX, W_NODE, X_SPIDER, Z_SPIDER
+    from archytaszx.semantics.pathsum_diagram import _bits, _turns_table, _weights, diagram_base
 
     if diagram.bang_boxes:
         raise PathSumUnsupported("the instance keeps a bang box")
-    names = {Z_SPIDER.name: ".Z", X_SPIDER.name: ".X", FOURIER_BOX.name: ".F"}
+    names = {Z_SPIDER.name: ".Z", X_SPIDER.name: ".X", FOURIER_BOX.name: ".F", W_NODE.name: ".W"}
     base_d = diagram_base(diagram)
     bnd = [*diagram.boundary_outputs, *diagram.boundary_inputs]
     label = {ref: i for i, ref in enumerate(bnd)}
@@ -353,7 +355,7 @@ def _instance_net(
         first = len(bnd) if wire_base is None else wire_base
         label[wire.a] = label[wire.b] = first + w
         summed.append(first + w)
-    out = []
+    out: list[tuple[str, tuple[int, ...], tuple[int, ...], int, str | None]] = []
     for nid in sorted(diagram.nodes):
         node = diagram.nodes[nid]
         kind = names.get(node.generator_type.name)
@@ -365,11 +367,19 @@ def _instance_net(
             PortRef(nid, Direction.OUTPUT, 0) if node.outputs else PortRef(nid, Direction.INPUT, 0)
         )
         k = _bits(diagram, ref, base_d)
-        body = None
+        body: str | None = None
+        if kind == ".W":
+            if qudit:
+                raise PathSumUnsupported(f"node {nid!r} is a W on a qudit")
+            out.append((kind, os_, is_, 1, None))
+            continue
         if kind != ".F":
             size = base_d if qudit else 1 << k
-            ts = [int((t % 1) * m) for t in _turns_table(nid, node, size)]
-            body = f"(({ts} : List ℕ).getD v 0 : ℕ)" if any(ts) else None
+            weighted = node.phase is not None and node.phase.is_weighted
+            table = _weights(nid, node, size)[0] if weighted else _turns_table(nid, node, size)
+            ts = [int((t % 1) * m) for t in table]
+            body = f"(({ts} : List ℕ).getD v 0 : ℕ)" if any(ts) or weighted else None
+            kind += "W" if weighted else ""
         out.append((kind, os_, is_, 0 if qudit else k, body))
     return out, summed, len(bnd)
 
@@ -450,12 +460,43 @@ def _iso(
     return fwd, match
 
 
+def _atom_bodies(
+    pairs: Sequence[tuple[Diagram, Diagram]],
+    names: Sequence[str],
+    phases: list[tuple[str, int]],
+    coefs: dict[int, str],
+    tabs: dict[int, str],
+    m_min: int,
+    amp: object,
+) -> list[NetBody]:
+    """Qubit-digit bodies of ``pairs``: net_amp_body for a pair whose path sums carry atoms,
+    net_quarter_body for one whose reductions take [Quarter] or [Turn] steps, both over the
+    coefficients ``amp`` when given, net_body otherwise."""
+    from archytaszx.algebra.pathsum import PathSum
+    from archytaszx.semantics.lean_pathsum import _quartered, net_amp_body, net_quarter_body
+    from archytaszx.semantics.pathsum_diagram import from_diagram
+
+    out = []
+    for (a, b), n in zip(pairs, names, strict=True):
+        raws = [from_diagram(a, w_nodes=True), from_diagram(b, w_nodes=True)]
+        pss = [r for r in raws if isinstance(r, PathSum)]
+        if any(r.amps for r in pss):
+            out.append(net_amp_body(a, b, n, phases, coefs, tabs, m_min, amp)[0])
+        elif len(pss) == 2 and _quartered(*pss):
+            out.append(net_quarter_body(a, b, n, phases, coefs, m_min, amp)[0])
+        else:
+            out.append(net_body(a, b, n, phases, m_min, coefs))
+    return out
+
+
 def _bodies(
-    pairs: Sequence[tuple[Diagram, Diagram]], names: Sequence[str]
+    pairs: Sequence[tuple[Diagram, Diagram]], names: Sequence[str], atoms: bool = False
 ) -> tuple[list[NetBody], list[tuple[str, int]], bool, dict[int, str]]:
     """The network proofs of ``pairs`` over one environment: qudit bodies on an odd prime, else
     qubit-digit bodies over one phase modulus; whether they are qudit bodies, and the weighted
-    spiders' coefficients by phase index."""
+    spiders' coefficients by phase index. With ``atoms``, pairs with amplitude atoms or
+    [Quarter] and [Turn] steps take atom bodies over one coefficient vector ``A``, whose
+    definition is the first body's ``head`` and whose atom tables are its ``tabs``."""
     from archytaszx.algebra.pathsum import QuditPathSum
     from archytaszx.semantics.pathsum_diagram import from_diagram
 
@@ -465,6 +506,21 @@ def _bodies(
     if qudit:
         bodies = [qnet_body(a, b, n, phases) for (a, b), n in zip(pairs, names, strict=True)]
         return bodies, phases, True, coefs
+    if atoms:
+        from archytaszx.semantics.lean_amp import Coefs
+
+        tabs: dict[int, str] = {}
+        first = _atom_bodies(pairs, names, phases, coefs, tabs, 1, None)
+        m = math.lcm(*(body.m for body in first))
+        phases, coefs, tabs = [], {}, {}
+        amp = Coefs(m)
+        bodies = _atom_bodies(pairs, names, phases, coefs, tabs, m, amp)
+        if any(body.m != m for body in bodies):
+            raise PathSumUnsupported("the bodies take different phase moduli")
+        if amp.values:
+            bodies[0].head = amp.lean_def(_scalars())
+        bodies[0].tabs = tabs
+        return bodies, phases, False, coefs
     bodies = [
         net_body(a, b, n, phases, coefs=coefs) for (a, b), n in zip(pairs, names, strict=True)
     ]
@@ -1269,7 +1325,7 @@ def export_tree(
     :class:`PathSumUnsupported` outside that class."""
     names = ["baseEq", *("copyEq" for _ in copies)]
     pairs = [(bases[0], bases[1]), *copies]
-    bodies, phases, qudit, coefs = _bodies(pairs, names)
+    bodies, phases, qudit, coefs = _bodies(pairs, names, True)
     base, cbodies = bodies[0], bodies[1:]
     grown = [
         (chk, _fused_tree(bodies, phases, qudit, bases, copies, leaf, root, kids, chk))
@@ -1278,7 +1334,7 @@ def export_tree(
     if grown:
         pairs += [(g, chk.right if chk.fan == "R" else chk.left) for chk, g in grown]
         names += ["fuseEq" for _ in grown]
-        bodies, phases, qudit, coefs = _bodies(pairs, names)
+        bodies, phases, qudit, coefs = _bodies(pairs, names, True)
         base, cbodies = bodies[0], bodies[1 : 1 + len(copies)]
     fusions = bodies[1 + len(copies) :]
     if qudit:
@@ -1294,8 +1350,11 @@ def export_tree(
     period = len(copies)
     ns = f"ArchytasZX.TreeProof.{name}"
     sem = "QSem" if qudit else "PSem"
+    support = any("finalS" in ln for body in bodies for ln in body.lines)
     lines = [
         "import ArchytasZX.PathSumQuditNet" if qudit else "import ArchytasZX.PathSumNetW",
+        *(["import ArchytasZX.PathSumNetAmp"] if base.head or base.tabs else []),
+        *(["import ArchytasZX.PathSumSupport"] if support else []),
         "import ArchytasZX.TreeInduct",
         "",
         "/-!",
@@ -1313,7 +1372,8 @@ def export_tree(
         *(QNET_OPTIONS if qudit else NET_OPTIONS),
         "",
         *([f"instance : Fact (Nat.Prime {base.m}) := ⟨by norm_num⟩", ""] if qudit else []),
-        *net_env(phases, labs, dims, base.m, coefs),
+        *base.head,
+        *net_env(phases, labs, dims, base.m, coefs, base.tabs),
         "theorem hD : ∀ x y, labDim E x = labDim E y := fun _ _ => rfl",
         "",
         "namespace Base",

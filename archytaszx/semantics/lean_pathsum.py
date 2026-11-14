@@ -492,7 +492,12 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
     (raw_l, run_l), (raw_r, run_r) = sides
     red_l, red_r = reduce(raw_l), reduce(raw_r)
     can_l, can_r = canonical(red_l), canonical(red_r)
-    if can_l is None or can_r is None or not can_l.same(can_r) or can_l.zero:
+    if can_l is None or can_r is None or can_l.zero or can_r.zero:
+        raise PathSumUnsupported("the path sums do not reduce to one canonical form")
+    atom_form = not can_l.same(can_r)
+    if atom_form and (
+        (can_l.rows, can_l.support, can_l.boundary) != (can_r.rows, can_r.support, can_r.boundary)
+    ):
         raise PathSumUnsupported("the path sums do not reduce to one canonical form")
     rows_l = eliminate(red_l.constraints, red_l.boundary)
     rows_r = eliminate(red_r.constraints, red_r.boundary)
@@ -508,11 +513,14 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         order = _elimination_order(red_l.constraints, red_l.boundary)
         canon_steps = [f".canon {v}" for v in order]
     starts = []
-    for run, red, rows in ((run_l, red_l, rows_l), (run_r, red_r, rows_r)):
+    support_poly = frozenset(frozenset(m) for m in can_l.support) if can_l.support else ONE
+    for run, red, rows, can in ((run_l, red_l, rows_l, can_l), (run_r, red_r, rows_r, can_r)):
         starts.append((list(run.cur), list(run.held), list(run.atoms)))
         reduce_run(run, red.trace)
         run.inner(canon_steps)
         run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
+        if atom_form:
+            run.normalize([(frozenset(m), c) for m, c in can.phase], support_poly)
     if run_l.final_key() != run_r.final_key():
         raise PathSumUnsupported("the reduced sums carry different amplitude atoms")
     m = run_l.coefs.m
@@ -1354,6 +1362,8 @@ class NetBody:
     s_l: str
     s_r: str
     m: int
+    head: list[str] = field(default_factory=list)
+    tabs: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -1668,9 +1678,11 @@ def net_amp_body(
     coefs: dict[int, str],
     tabs: dict[int, str],
     m_min: int = 1,
+    shared: Any = None,
 ) -> tuple[NetBody, Any]:
     """The lines proving ``Equal E sL NL sR NR`` for two networks with amplitude atoms (see
-    :func:`export_net`), and the atoms' coefficients (a lean_amp.Coefs)."""
+    :func:`export_net`), and the atoms' coefficients (a lean_amp.Coefs, ``shared`` when
+    given)."""
     from archytaszx.semantics.lean_amp import Coefs, afac_lines, qreqs_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
@@ -1681,7 +1693,9 @@ def net_amp_body(
         raise PathSumUnsupported("the boundaries differ")
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
     m = amp_modulus((raw_l, raw_r), m_min)
-    amp = Coefs(m)
+    amp = Coefs(m) if shared is None else shared
+    if amp.m != m:
+        raise PathSumUnsupported(f"the shared coefficients are over zeta_{amp.m}, not zeta_{m}")
     side_l, _ = _net_side(left, m, phases, 1 << 16, coefs, amp, tabs)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs, amp, tabs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [
@@ -1759,11 +1773,12 @@ def net_quarter_body(
     phases: list[tuple[str, int]],
     coefs: dict[int, str],
     m_min: int = 1,
+    shared: Any = None,
 ) -> tuple[NetBody, Any]:
     """The lines proving ``Equal E sL NL sR NR`` for two networks without atoms whose
     reductions take [Quarter] steps (see :func:`export_net`): each side's pin steps on its
     network's sum, then its reduction replayed with atoms from no held variable and no atom; and
-    the atoms' coefficients (a lean_amp.Coefs)."""
+    the atoms' coefficients (a lean_amp.Coefs, ``shared`` when given)."""
     from archytaszx.semantics.lean_amp import AmpRun, Coefs, afac_lines, qreqs_lines, reqs_lines
     from archytaszx.semantics.lean_scalar import Inv, Om, Rt
 
@@ -1774,7 +1789,9 @@ def net_quarter_body(
         raise PathSumUnsupported("the boundaries differ")
     m_min = math.lcm(m_min, _table_modulus(left), _table_modulus(right))
     m = amp_modulus((raw_l, raw_r), m_min)
-    amp = Coefs(m)
+    amp = Coefs(m) if shared is None else shared
+    if amp.m != m:
+        raise PathSumUnsupported(f"the shared coefficients are over zeta_{amp.m}, not zeta_{m}")
     side_l, _ = _net_side(left, m, phases, 1 << 16, coefs)
     side_r, _ = _net_side(right, m, phases, 1 << 17, coefs)
     if [side_l.k_of[i] for i in range(side_l.boundary)] != [

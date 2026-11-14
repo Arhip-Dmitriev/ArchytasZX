@@ -94,7 +94,7 @@ def test_turn_sums_a_variable_with_eighth_coefficients(k: int) -> None:
 def test_turn_exports_an_astep() -> None:
     source = export_proof(parse_dsl(X8), parse_dsl(X8_SPLIT), "x8")
     assert TURN_X8 in source
-    assert "theorem qreqsL : ∀ p ∈ aqreqs 8 stepsL, 2 * A p.2 = 1 + om 8 ^ p.1" in source
+    assert "theorem qreqsL : ∀ p ∈ aqreqs 8 stepsL, qreqHolds 8 A p" in source
 
 
 def _mathlib() -> bool:
