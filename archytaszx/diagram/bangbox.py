@@ -1488,9 +1488,11 @@ def _instantiate_one(diagram: Diagram, box_id: BangBoxId, k: int) -> None:
     members = aligned_members(diagram, box_id) if box.is_node_scope else [box_id]
     chain = _zip_chain(diagram, box_id) if box.is_node_scope else None
     if len(members) > 1:
-        if any(_zip_chain(diagram, m) is not None for m in members):
-            raise BangBoxGrammarError(f"aligned boxes {members!r} take part in a zipped chain")
-        _expand_aligned(diagram, members, k)
+        chains = [c for m in members if (c := _zip_chain(diagram, m)) is not None]
+        if chains:
+            _expand_zipped(diagram, chains[0], k)
+        else:
+            _expand_aligned(diagram, members, k)
     elif chain is not None:
         _expand_zipped(diagram, chain, k)
     elif box.is_tree:
@@ -1885,8 +1887,12 @@ def _merge_zipped(diagram: Diagram, box_ids: list[BangBoxId]) -> None:
         for b in boxes
     ) or any(b.feed in ids for b in diagram.bang_boxes.values()):
         raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy hold pair or tree boxes")
-    if any(len(aligned_members(diagram, b.id)) > 1 for b in boxes):
-        raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy are aligned boxes")
+    partners = [
+        p for b in boxes for p in aligned_members(diagram, b.id) if p not in ids and p != b.id
+    ]
+    roots = {b.align for b in boxes if b.align is not None and b.align not in ids}
+    if len(roots) > 1:
+        raise BangBoxGrammarError(f"boxes {ids!r} wired copy to copy are aligned to two boxes")
     if len({b.cyclic for b in boxes if b.links}) > 1:
         raise BangBoxGrammarError(f"boxes {ids!r} mix cyclic and open chains")
     index = next((b.index for b in boxes if b.index is not None), None)
@@ -1917,6 +1923,11 @@ def _merge_zipped(diagram: Diagram, box_ids: list[BangBoxId]) -> None:
         copy_scalar=scalar,
         groups=tuple(groups),
     )
+    if partners:
+        root = next(iter(roots)) if roots else first.id
+        for box_id in dict.fromkeys([first.id, *partners]):
+            if box_id in diagram.bang_boxes:
+                diagram.set_bang_box_extension(box_id, align=None if box_id == root else root)
 
 
 def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> list[dict[NodeId, NodeId]]:
@@ -1993,26 +2004,49 @@ def _zip_members(diagram: Diagram, chain: BangBox) -> list[BangBoxId]:
 
 
 def _expand_zipped(diagram: Diagram, chain: BangBox, k: int) -> None:
-    """Instantiate ``chain``'s link child box and the boxes its open ends are wired to at ``k``
-    together, copy j of the child wired to copy j of each."""
-    child = zip_child(diagram, chain)
-    assert child is not None
-    zipped = _zip_ends(diagram, chain, child)
-    members = _zip_members(diagram, chain)
+    """Instantiate ``chain``'s link child box, the boxes its open ends are wired to and every box
+    aligned with one of them (closed under further such chains and alignments) at ``k``
+    together, copy j of each wired to copy j of the others."""
+    members: list[BangBoxId] = []
+    chains: list[BangBox] = []
+    pending = [chain]
+    while pending:
+        current = pending.pop()
+        if any(c.id == current.id for c in chains):
+            continue
+        chains.append(current)
+        for member in _zip_members(diagram, current):
+            for box_id in aligned_members(diagram, member):
+                if box_id not in members:
+                    members.append(box_id)
+                    other = _zip_chain(diagram, box_id)
+                    if other is not None:
+                        pending.append(other)
+    wires: list[tuple[Wire, BangBoxId, BangBoxId]] = []
+    for current in chains:
+        child = zip_child(diagram, current)
+        assert child is not None
+        wires += [(Wire(r, p), child.id, h) for r, p, h in _zip_ends(diagram, current, child)]
+    groups = {tuple(aligned_members(diagram, m)) for m in members}
+    for group in sorted(groups):
+        if len(group) > 1:
+            wires += _member_wires(diagram, list(group))
+    wires = list({w: (w, a, b) for w, a, b in wires}.values())
     if any(diagram.bang_boxes[m].multiplicity != Mult(k) for m in members):
         raise BangBoxGrammarError(f"boxes {members!r} wired copy to copy differ in count")
-    for ref, partner, _ in zipped:
-        diagram.remove_wire(ref, partner)
+    for wire, _, _ in wires:
+        diagram.remove_wire(wire.a, wire.b)
     maps: dict[BangBoxId, list[dict[NodeId, NodeId]]] = {}
     for member in members:
+        diagram.set_bang_box_extension(member, align=None)
         box = diagram.bang_boxes[member]
         if box.is_extended:
             maps[member] = _instantiate_extended(diagram, box, k)
         else:
             maps[member] = _instantiate_node_scope(diagram, box, k)
-    for ref, partner, holder in zipped:
+    for wire, a, b in wires:
         for j in range(k):
-            diagram.add_wire(_moved(ref, maps[child.id][j]), _moved(partner, maps[holder][j]))
+            diagram.add_wire(_moved(wire.a, maps[a][j]), _moved(wire.b, maps[b][j]))
 
 
 def _zip_chain(diagram: Diagram, box_id: BangBoxId) -> BangBox | None:
