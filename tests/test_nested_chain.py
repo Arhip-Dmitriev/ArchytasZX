@@ -311,3 +311,20 @@ def test_the_boxed_grid_cluster_state_is_its_graph_state(n: int) -> None:
         left, right = _grid_pair(-1)
         both = (instantiate(left, {"n": n, "d": 3}), instantiate(right, {"n": n, "d": 3}))
         assert not compare(*both, {}).matched
+
+
+def test_instantiating_a_count_fills_it_into_node_dimensions() -> None:
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    diagram = rename_multiplicity(parse_dsl(BINDERS), "n", Mult("s") + 1)
+    row = next(box for box in diagram.bang_boxes.values() if box.parent is None and box.links)
+    peeled = peel_one(diagram, row.id).diagram
+    for order in [("s", "l"), ("l", "s")]:
+        got = peeled
+        for name in order:
+            got = instantiate_symbol(got, name, 2)
+        for node in got.nodes.values():
+            assert all(not p.dim.free_symbols for p in (*node.inputs, *node.outputs))
+            assert node.phase is None or not node.phase.free_symbols
+

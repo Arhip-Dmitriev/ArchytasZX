@@ -2179,6 +2179,16 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
         raise BangBoxGrammarError(
             f"instantiating {name!r} did not settle within {_MAX_INSTANTIATE_ROUNDS} rounds"
         )
+    for node_id, node in sorted(working.nodes.items()):
+        if any(name in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+            working.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, name, value) for p in node.inputs],
+                [_dim_at(p.dim, name, value) for p in node.outputs],
+            )
+        phase = working.nodes[node_id].phase
+        if phase is not None and name in phase.free_symbols:
+            working.set_phase(node_id, phase.substitute({name: value}))
     if name in working.parameters:
         # Mirrors Diagram.substitute's "entries the mapping names are consumed from
         # parameters" contract: the symbol is now gone from every box, so a lingering
