@@ -156,7 +156,9 @@ def qiskit_circuit(
             vals = g.values if g.values is not None else (1,) * len(g.cs)
             state = "".join(str(v % 2) for v in reversed(vals))
             base = XGate() if isinstance(g, ir.MCX) else ZGate()
-            if g.a % 2:
+            if g.a % 2 and not g.cs:
+                qc.append(base, [idx[g.t]])
+            elif g.a % 2:
                 qc.append(
                     base.control(len(g.cs), ctrl_state=state), [*(idx[q] for q in g.cs), idx[g.t]]
                 )
