@@ -294,6 +294,25 @@ def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
     return cast(sp.Expr, min(preferred, key=sp.default_sort_key))
 
 
+def _off_factor(j: sp.Expr, m: sp.Expr) -> bool:
+    """True when a divisor ``g >= 2`` of the integer factor of the symbolic modulus ``m`` divides
+    every term of ``j`` but its integer constant, and not that constant."""
+    factor = sp.Mul(*(f for f in sp.Mul.make_args(m) if f.is_Integer))
+    constant, rest = j.as_coeff_Add()
+    if not (factor.is_Integer and constant.is_Integer):
+        return False
+    for g in range(2, min(int(factor), _OFF_FACTOR_MAX) + 1):
+        if int(factor) % g or int(constant) % g == 0:
+            continue
+        if rest == 0 or sp.cancel(rest / g).is_integer is True:
+            return True
+    return False
+
+
+_OFF_FACTOR_MAX = 64
+"""The largest divisor :func:`_off_factor` tries."""
+
+
 class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
     """``[j == 0 mod m]`` for an integer-valued ``j`` and a positive integer modulus ``m``."""
 
@@ -312,6 +331,8 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
             return sp.Integer(1 if int(j) % int(m) == 0 else 0)
         if not m.is_Integer and sp.cancel(j / m).is_integer is True:
             return sp.Integer(1)
+        if not m.is_Integer and _off_factor(j, m):
+            return sp.Integer(0)
         if not m.is_Integer and j.is_Add:
             kept = [t for t in j.args if sp.cancel(t / m).is_integer is not True]
             if len(kept) < len(j.args):
@@ -853,7 +874,9 @@ def _radix_step(term: sp.Expr, limits: list[_Limit]) -> tuple[sp.Expr, list[_Lim
 
 def _bounds(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> tuple[sp.Expr, sp.Expr] | None:
     """``(least, greatest)`` of an integer-linear ``expr`` over indices sized in ``ranges``, else
-    None."""
+    None; an integer ``expr`` free of those indices is its own bounds."""
+    if not expr.free_symbols & set(ranges) and expr.is_integer is True:
+        return sp.expand(expr), sp.expand(expr)
     form = _linear_form(expr)
     if form is None:
         form = _linear_over(expr, ranges)
@@ -923,7 +946,10 @@ def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
 def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
     """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B|
     < t``; when ``B`` reaches ``t`` (or ``-t``) only at one corner ``E`` of the ranges, as
-    ``([B == 0 mod t] - E) * [A == 0 mod P] + E * [A +- 1 == 0 mod P]``; else None."""
+    ``([B == 0 mod t] - E) * [A == 0 mod P] + E * [A +- 1 == 0 mod P]``; when ``B`` reaches
+    ``t`` only at a corner ``H`` and ``-t`` only at a corner ``L``, as
+    ``([B == 0 mod t] - H - L) * [A == 0 mod P] + H * [A + 1 == 0 mod P] + L * [A - 1 == 0 mod
+    P]``; else None."""
     frequency, modulus = delta.args
     if modulus.is_Integer:
         return _radix_split_concrete(frequency, int(modulus), ranges)
@@ -945,6 +971,16 @@ def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Exp
             least, greatest = bounds
             above = sp.expand(t - greatest)
             below = sp.expand(t + least)
+            if above == 0 and below == 0:
+                high, low = _extreme(digit, ranges, True), _extreme(digit, ranges, False)
+                if high is None or low is None:
+                    continue
+                return cast(
+                    sp.Expr,
+                    (ModDelta(sp.expand(digit), t) - high - low) * ModDelta(sp.expand(carry), rest)
+                    + high * ModDelta(sp.expand(carry + 1), rest)
+                    + low * ModDelta(sp.expand(carry - 1), rest),
+                )
             if above.is_positive is not True or below.is_positive is not True:
                 top = above == 0 and below.is_positive is True
                 if not (top or (below == 0 and above.is_positive is True)):
@@ -1171,6 +1207,30 @@ def _wrap_pin(
     return cast(sp.Expr, pinned * ModDelta(sp.expand(coefficient * value + rest), modulus))
 
 
+def _nonnegative(expr: sp.Expr) -> bool:
+    """True when sympy finds ``expr`` nonnegative, or ``expr`` with each power ``b^e`` (``b >= 2``
+    an integer, ``e`` symbolic and nonnegative) read as ``1 + y``, ``y >= 0``, is a polynomial
+    in those ``y`` with nonnegative coefficients."""
+    expr = sp.expand(expr)
+    if expr.is_nonnegative is True:
+        return True
+    powers = [
+        p
+        for p in expr.atoms(sp.Pow)
+        if p.base.is_Integer and int(p.base) >= 2 and p.exp.free_symbols
+        if p.exp.is_nonnegative is True
+    ]
+    if not powers:
+        return False
+    ys = {p: sp.Dummy(nonnegative=True) for p in powers}
+    relaxed = sp.expand(expr.xreplace({p: 1 + y for p, y in ys.items()}))
+    if relaxed.free_symbols - set(ys.values()):
+        return relaxed.is_nonnegative is True
+    if relaxed.is_Number:
+        return bool(relaxed >= 0)
+    return all(c >= 0 for c in sp.Poly(relaxed, *ys.values()).coeffs())
+
+
 def _window_pin(
     weight: sp.Expr,
     var: sp.Symbol,
@@ -1190,10 +1250,7 @@ def _window_pin(
     least, greatest = bounds
 
     def inside(lo: sp.Expr, hi: sp.Expr) -> bool:
-        return (
-            sp.expand(least - lo).is_nonnegative is True
-            and sp.expand(hi - 1 - greatest).is_nonnegative is True
-        )
+        return _nonnegative(least - lo) and _nonnegative(hi - 1 - greatest)
 
     if inside(sp.Integer(0), size):
         return cast(sp.Expr, weight.xreplace({var: value}))
@@ -1724,14 +1781,15 @@ def _split_cases(expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp
 def _simplify_expr(
     expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]
 ) -> sp.Expr:
-    """The fixpoint of radix splitting, :func:`_close_all` and canonicalisation, then residue cases
-    split."""
+    """The fixpoint of residue collapsing (:func:`_collapse_residues`, inside sums too), radix
+    splitting, :func:`_close_all` and canonicalisation, then residue cases split."""
     while True:
         budget[0] -= 1
         if budget[0] < 0:
             raise ScalarBudgetError(
                 "simplification exceeded its step budget; the expression is left unsimplified"
             )
+        expr = _collapse_residues(expr, ranges)
         split = _split_radix_deltas(expr, ranges)
         radix_changed = split != expr
         expr, changed = _close_all(split, budget, ranges)

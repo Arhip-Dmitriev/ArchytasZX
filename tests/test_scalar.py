@@ -376,3 +376,37 @@ class TestModDelta:
         assert pinned == Scalar(
             ModDelta(self.x - self.y, self.d) * sp.exp(2 * sp.pi * sp.I * self.x / self.d)
         )
+
+
+def _mixed_ranges() -> tuple[sp.Symbol, dict[str, Dim]]:
+    from archytaszx.diagram.bangbox import Mult
+
+    k = Mult.symbol("k").to_sympy()
+    sized = Dim.from_sympy(2 * 2**k)
+    return k, {"_i0": Dim(2), "_i1": Dim(2), "_i2": sized, "_i5": sized}
+
+
+def test_a_delta_off_a_factor_of_its_modulus_is_zero() -> None:
+    k, _ranges = _mixed_ranges()
+    assert ModDelta(2 * 2**k - 1, 4 * 2**k) == 0
+    assert ModDelta(2 * 2**k + 2, 4 * 2**k) != 0
+
+
+def test_mixed_power_of_two_moduli_close() -> None:
+    """A sum pinned through a residue and a delta over twice the summed range closes; a delta
+    whose low part reaches both ends of its radix splits at both corners."""
+    from archytaszx.algebra.scalar import ModResidue, _index_symbol
+
+    k, ranges = _mixed_ranges()
+    i0, i1, i2, i5, k0 = (_index_symbol(n) for n in ("_i0", "_i1", "_i2", "_i5", "_k0"))
+    p = 2 * 2**k
+    pinned = sp.Sum(
+        ModDelta(p + k0 + 2, 2 * p) * ModDelta(2 * ModResidue(i0, 2) - i2 + k0, p), (k0, 0, p - 1)
+    )
+    assert Scalar(pinned).simplify(ranges=ranges) == Scalar(ModDelta(-2 * i0 + i2 + 2, p))
+    whole = ModDelta(p * i1 + i2 - i5 - 2 * i0 + 1, 2 * p)
+    split = Scalar(whole).simplify(ranges=ranges).to_sympy()
+    assert not any(d.args[1] == 2 * p for d in split.atoms(ModDelta))
+    for values in ((0, 0, 1, 0), (1, 0, 0, 1), (0, 1, 0, 1), (1, 1, 1, 0), (0, 0, 0, 1)):
+        at = {**dict(zip((i0, i1, i2, i5), values, strict=True)), k: 0}
+        assert split.xreplace(at) == whole.xreplace(at)
