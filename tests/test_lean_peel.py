@@ -15,7 +15,9 @@
 cluster_state_2d peel proved by ``evalL_peel``, its reverse refused, the semantic export linking it
 by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy count; link ports on
 the boundary behind an identity spider (79.16e); identity slides through
-``evalL_slide`` (79.16d)."""
+``evalL_slide`` (79.16d); identities wired to a node leg dropped from the peeled side, the
+phaseless index stated as zero, slides read through the slot data of both sides' box groups
+(79.16f)."""
 
 from __future__ import annotations
 
@@ -96,6 +98,16 @@ def test_successor_peels_with_boundary_link_ports_export() -> None:
     assert "\naxiom peel" not in kernel.lean(theorem, "main", semantic=True)
 
 
+def test_peeled_boundary_identities_wired_to_a_leg_are_dropped() -> None:
+    for before, peeled in _succ_peels(_cluster()):
+        source = lean_linked.export_peel(before, peeled)
+        assert source is not None and "theorem drops" in source and "evalL_dropAt ok1" in source
+        kept = source.split("def L' ")[1].split("def zero")[0]
+        dropped = re.findall(r"def x\d+ : DNode := ⟨(\d+),", source)
+        assert dropped and all(f"⟨{x}, " not in kept for x in dropped)
+        assert "E.phase zero k = 0" in source
+
+
 @pytest.mark.skipif(
     not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
     reason="the ArchytasZX Lean project has no Mathlib",
@@ -166,7 +178,23 @@ def test_lean_checks_the_slide_and_refuses_a_phased_identity(tmp_path: object) -
     assert source is not None
     ok, output = check(source, f"{tmp_path}/slide.lean")
     assert ok and "error" not in output and "sorry" not in output, output
-    bad = re.sub(r"E\.phase (\d+) k = 0", lambda m: f"E.phase {int(m[1]) + 1} k = 0", source)
+    bad = re.sub(r"def zero : ℕ := (\d+)", lambda m: f"def zero : ℕ := {int(m[1]) + 1}", source)
     assert bad != source
     ok, output = check(bad, f"{tmp_path}/bad.lean")
     assert not ok
+    blocks = re.search(r"def G : List \(ℕ × List \(List ℕ\)\) := (.*)\n", source)
+    assert blocks is not None
+    merged = re.sub(
+        r"(def G' : List \(ℕ × List \(List ℕ\)\) := ).*\n", rf"\g<1>{blocks[1]}\n", source
+    )
+    assert merged != source
+    ok, output = check(merged, f"{tmp_path}/merged.lean")
+    assert not ok
+
+
+def test_a_slide_whose_slot_blocks_differ_is_not_exported() -> None:
+    (t, *_) = _slides(_cluster())
+    after = t.rhs.copy()
+    box = next(b for b, x in after.bang_boxes.items() if x.groups)
+    after.set_bang_box_extension(box, groups=())
+    assert lean_linked.export_slide(t.lhs, after) is None

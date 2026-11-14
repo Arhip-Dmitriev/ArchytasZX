@@ -332,7 +332,8 @@ theorem as their composition. This export records the structure of the proof but
 re-prove its steps; the shell reports it as "opaque diagrams, every step an axiom". A context
 step (congr) is congrArg of an opaque context hole<i> between two plug axioms; a regroup step
 is congrArg of one opaque slot layout slots<i> (a permutation of the instantiated boundary
-slots) between two layout axioms lay<j>; peel and identity_slide steps are axioms.
+slots) between two layout axioms lay<j>; peel and identity_slide steps outside the linked
+forms below are axioms.
 
 A symbolic contraction step is the exception when its two contracted diagrams (the whole sides,
 or for local_contraction the parts off the two regions, cut ends open) have no bang box and no
@@ -357,6 +358,18 @@ regroup_layout: layout ks G' is a permutation of layout ks G, lperm (a flat posi
 the position of its slot in G') is one to one and onto, and L read through G' (readAt) equals L
 read through G after lperm, for every Env, ks and flat assignment. lay<j> becomes net<j>
 applied to R<i>.main; slots<i> stays opaque.
+
+A peel and an identity slide are proved the same way over linked diagrams (ArchytasZX/Linked.lean,
+LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean). Both write zero, the phase index of the
+phaseless nodes, and hold for every Env whose phase at zero reads 0. A peel, namespace <N>.P<i>,
+writes L (before) and L' (after), each boundary link port a link end held by a phaseless
+Z(1 -> 1); when the peeled side needs an identity wired to a node leg to meet PeelOK, that side is
+Lk, and drops proves Lk and L' equal (evalL_dropAt: the identity moved last, then dropped by
+DropOK.evalL_drop). P<i>.main is evalL_peel, the box's last copy read at its copy. A slide,
+namespace <N>.S<i>, writes L, L', both sides' box groups G and G' and the spider x that both drop
+to one diagram (DropOK, evalL_slide); layout checks L'.slotData G' = L.slotData G (per box its
+group blocks of boundary slots), and S<i>.main is evalL_flat: the two digit sums read through any
+layout of their slot data agree.
 
 A power split of base 2 (kernel.power_split) is proved the same way when both sides are linked
 diagrams (ArchytasZX/LinkedSplit.lean): namespace <N>.Q<i> writes L (the box bid at mb copies),

@@ -19,8 +19,12 @@ boundary place). ``export_peel`` writes both sides of a peel of one outermost no
 the copy map ``cp`` from the box's nodes to the peeled copy's, the ``PeelOK`` conditions (checked
 here first on a mirror of the Lean definitions, then in Lean by ``decide +kernel``) and ``main``,
 the two linked digit sums equal through ``evalL_peel``; None when the peel is outside that form.
+A boundary identity of the peeled side wired to a node leg is dropped there (``evalL_dropAt``), so
+``L'`` is ``linked`` of the peeled diagram with identities only at link ends.
 ``export_slide`` writes both sides of an identity slide, each dropping the identity spider
-(``DropOK``, ``dropId``) to one diagram, and ``main`` through ``evalL_slide``.
+(``DropOK``, ``dropId``) to one diagram, both sides' box groups with equal ``slotData``, and
+``main`` through ``evalL_slide`` and ``evalL_flat``. Both exports assume the phaseless phase index
+``zero`` reads the zero phase.
 """
 
 from __future__ import annotations
@@ -430,26 +434,107 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     ]
     if not peel_ok(L, R, box.id, box.mult, c, B, cp):
         return None
+    D, steps = _drop_idents(R, set(ends_r.values()))
+    gone = {s[0].id for s in steps}
+    try:
+        T = linked(after, tables, {p: i for p, i in ends_r.items() if i not in gone})
+    except LinkedUnsupported:
+        return None
+    if not _same_up_to_order(T, D):
+        return None
+    zero = _Tables.index(tables.phases, repr(None))
     table = ", ".join(f"({x}, {y})" for x, y in cp.items())
     proof = ",\n    ".join(["by decide +kernel"] * _FIELDS)
+    k = "Lk" if steps else "L'"
     phi = f"peelφ {_lnat(B)} cp (ks {c})"
-    return (
+    head = (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
         "open ArchytasZX ArchytasZX.LDiagram\n\n"
         "/-- The diagram before the peel, as a linked diagram. -/\n"
         f"def L : LDiagram :=\n  {literal(L)}\n\n"
         "/-- The diagram after the peel, as a linked diagram. -/\n"
-        f"def L' : LDiagram :=\n  {literal(R)}\n\n"
-        "/-- Each node of the peeled box to its node in the copy. -/\n"
+        f"def L' : LDiagram :=\n  {literal(D)}\n\n"
+        f"/-- The phase index of the phaseless nodes. -/\ndef zero : ℕ := {zero}\n\n"
+    )
+    if steps:
+        head += (
+            "/-- `L'` with a phaseless Z(1 -> 1) behind each copied boundary link port. -/\n"
+            f"def Lk : LDiagram :=\n  {literal(R)}\n\n" + _drop_chain("Lk", "L'", steps)
+        )
+        drops, hE = "(drops E hE ks σ').symm.trans ", "hE"
+    else:
+        drops, hE = "", "_"
+    return (
+        head + "/-- Each node of the peeled box to its node in the copy. -/\n"
         f"def cp (x : ℕ) : ℕ := (([{table}] : List (ℕ × ℕ)).lookup x).getD 0\n\n"
-        f"theorem ok : PeelOK L L' {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
+        f"theorem ok : PeelOK L {k} {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
         f"  ⟨{proof}⟩\n\n"
         "/-- The linked digit sums agree, the box's last copy read at the copy's digits. -/\n"
-        f"theorem main : ∀ (E : Env) (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 →\n"
-        "    ∀ σ' : ℕ → List ℕ → ℕ,\n"
-        f"      L'.evalL E ks σ' = L.evalL E ks (bndMap L.base L'.base ({phi}) σ') :=\n"
-        "  fun E ks hk σ' => evalL_peel ok E ks hk σ'\n\n"
+        "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
+        f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 → ∀ σ' : ℕ → List ℕ → ℕ,\n"
+        f"      L'.evalL E ks σ' = L.evalL E ks (bndMap L.base {k}.base ({phi}) σ') :=\n"
+        f"  fun E {hE} ks hk σ' => {drops}(evalL_peel ok E ks hk σ')\n\n"
         "end ArchytasZX.Export\n"
+    )
+
+
+Step = tuple[LNode, tuple[Port, Port], Port, Port, Port]
+"""A drop: the identity, its wire, its wired leg, its other leg and the leg it meets."""
+
+
+def _drop_idents(D: LDiag, ids: set[int]) -> tuple[LDiag, list[Step]]:
+    """``D`` with each node of ``ids`` meeting :func:`drop_ok` dropped in turn (moved last
+    first), and the drops."""
+    steps: list[Step] = []
+    for x in [n for n in D.nodes if n.id in ids]:
+        found = _drops(D, x)
+        if found:
+            w, u, v, P, (nodes, wires, outs, ins, links) = found[0]
+            steps.append((x, w, u, v, P))
+            D = LDiag(nodes, wires, outs, ins, D.boxes, links)
+    return D, steps
+
+
+def _same_up_to_order(A: LDiag, B: LDiag) -> bool:
+    """``A`` and ``B`` alike but for the order of their nodes."""
+    key = sorted(A.nodes, key=lambda n: n.id) == sorted(B.nodes, key=lambda n: n.id)
+    return key and (A.wires, A.outs, A.ins, A.boxes, A.links) == (
+        B.wires,
+        B.outs,
+        B.ins,
+        B.boxes,
+        B.links,
+    )
+
+
+def _lnode(n: LNode) -> str:
+    return f"⟨{n.id}, .{n.kind}, {n.dim}, {n.ph}, {_lnat(n.outs)}, {_lnat(n.ins)}⟩"
+
+
+def _drop_chain(start: str, end: str, steps: Sequence[Step]) -> str:
+    """Lean source: the ``DropOK`` of each step (``x<j>``, ``ok<j>``) from ``start``, the last
+    diagram equal to ``end`` (``dropped``) and ``drops``, the digit sums of ``start`` and ``end``
+    equal when ``zero`` reads the zero phase."""
+    out, at, chain = "", start, []
+    proof = ",\n    ".join(["by decide +kernel"] * 18)
+    for j, (x, w, u, v, P) in enumerate(steps, 1):
+        wl = f"({_lport(w[0])}, {_lport(w[1])})"
+        out += (
+            f"/-- The identity dropped at step {j}. -/\ndef x{j} : DNode := {_lnode(x)}\n\n"
+            f"theorem ok{j} : DropOK ({at}.moveLast x{j}.id) x{j} {wl} {_lport(u)} {_lport(v)} "
+            f"{_lport(P)} :=\n  ⟨{proof}⟩\n\n"
+        )
+        chain.append(f"(evalL_dropAt ok{j} E hE ks σ)")
+        at = f"({at}.dropAt x{j} {wl} {_lport(v)} {_lport(P)})"
+    body = chain[-1]
+    for step in reversed(chain[:-1]):
+        body = f"{step}.trans ({body})"
+    return out + (
+        f"theorem dropped : {at} = {end} := by\n  decide +kernel\n\n"
+        "/-- Dropping the identities keeps the digit sum. -/\n"
+        "theorem drops : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
+        f"    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ), {start}.evalL E ks σ = {end}.evalL E ks σ :=\n"
+        f"  fun E hE ks σ => ({body}).trans (by rw [dropped])\n\n"
     )
 
 
@@ -538,6 +623,9 @@ def export_slide(before: Diagram, after: Diagram) -> str | None:
     x, sl, sr = found
     L.nodes = [n for n in L.nodes if n.id != x.id] + [x]
     R.nodes = [n for n in R.nodes if n.id != x.id] + [x]
+    gl, gr = groups(before), groups(after)
+    if slot_data(L, gl) != slot_data(R, gr):
+        return None
     proof = ",\n    ".join(["by decide +kernel"] * 18)
 
     def args(s: tuple[tuple[Port, Port], Port, Port, Port]) -> str:
@@ -556,15 +644,63 @@ def export_slide(before: Diagram, after: Diagram) -> str | None:
         f"def L : LDiagram :=\n  {literal(L)}\n\n"
         "/-- The diagram after the slide, as a linked diagram. -/\n"
         f"def L' : LDiagram :=\n  {literal(R)}\n\n"
+        "/-- The box groups before the slide, node lists by box. -/\n"
+        f"def G : List (ℕ × List (List ℕ)) := {_lgroups(gl)}\n\n"
+        "/-- The box groups after the slide, node lists by box. -/\n"
+        f"def G' : List (ℕ × List (List ℕ)) := {_lgroups(gr)}\n\n"
+        f"/-- The phase index of the phaseless nodes. -/\ndef zero : ℕ := {zero}\n\n"
         "/-- The identity spider that slides. -/\n"
-        f"def x : DNode := ⟨{x.id}, .Z, {x.dim}, {x.ph}, {_lnat(x.outs)}, {_lnat(x.ins)}⟩\n\n"
+        f"def x : DNode := {_lnode(x)}\n\n"
         f"theorem ok : DropOK L x {args(sl)} :=\n  ⟨{proof}⟩\n\n"
         f"theorem ok' : DropOK L' x {args(sr)} :=\n  ⟨{proof}⟩\n\n"
         f"theorem same : {drop('L', sl)} = {rhs} := by\n"
         "  decide +kernel\n\n"
-        "/-- The linked digit sums agree when the identity's phase index reads zero. -/\n"
-        f"theorem main : ∀ (E : Env), (∀ k, E.phase {x.ph} k = 0) →\n"
+        "theorem layout : L'.slotData G' = L.slotData G := by\n  decide +kernel\n\n"
+        "/-- The linked digit sums agree when the phaseless index reads zero. -/\n"
+        "theorem sums : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
         "    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ), L'.evalL E ks σ = L.evalL E ks σ :=\n"
         "  fun E hE ks σ => evalL_slide ok ok' same E hE ks σ\n\n"
+        "/-- The digit sums read through any layout of the two sides' slot data agree. -/\n"
+        "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
+        "    ∀ (ks : ℕ → ℕ) (lay : SlotData → (ℕ → ℕ) → List (ℕ × List ℕ)) (y : ℕ → ℕ),\n"
+        "      L'.evalL E ks (readAt (lay (L'.slotData G') ks) y) =\n"
+        "        L.evalL E ks (readAt (lay (L.slotData G) ks) y) :=\n"
+        "  fun E hE ks lay y => evalL_flat layout E ks (sums E hE ks) lay y\n\n"
         "end ArchytasZX.Export\n"
     )
+
+
+Groups = list[tuple[int, list[list[int]]]]
+"""Box groups: per box with groups, its id and each group's nodes."""
+
+
+def groups(d: Diagram) -> Groups:
+    """The box groups of ``d`` in box order."""
+    return [
+        (int(bid), [sorted(int(n) for n in g) for g in b.groups])
+        for bid, b in sorted(d.bang_boxes.items())
+        if b.groups
+    ]
+
+
+def _lgroups(gs: Groups) -> str:
+    return "[" + ", ".join(f"({b}, [{', '.join(map(_lnat, g))}])" for b, g in gs) + "]"
+
+
+SlotData = tuple[int, int, list[tuple[int, int, int | None, list[list[int]]]]]
+"""Output and input counts, then per box its id, multiplicity index, parent and slot blocks."""
+
+
+def slot_data(D: LDiag, gs: Groups) -> SlotData:
+    """The Lean ``slotData D gs``."""
+    bnd = D.bnd()
+    table = dict(reversed(gs))
+    out = []
+    for b in D.boxes:
+        g = table.get(b.id, [])
+        rest = [n for n in b.nodes if all(n not in h for h in g)]
+        parts = [
+            [i for i, p in enumerate(bnd) if p[0] in h and p[0] in b.nodes] for h in [*g, rest]
+        ]
+        out.append((b.id, b.mult, b.parent, [s for s in parts if s]))
+    return (len(D.outs), len(D.ins), out)

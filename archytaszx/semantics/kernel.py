@@ -1668,9 +1668,12 @@ class _Lean:
         source = lean_linked.export_peel(before, after)
         if source is None:
             return None
-        return self.linked_net(
-            source, "P", "the last copy of the peeled box read at its copy", binders, lhs, rhs
+        tail = (
+            "the last copy of the peeled box read at its copy, each boundary link port a link end "
+            "held by a phaseless Z(1 -> 1), the phaseless phase index {ns}.zero read as the zero "
+            "phase"
         )
+        return self.linked_net(source, "P", tail, binders, lhs, rhs)
 
     def slid(self, t: Theorem, binders: Sequence[str]) -> str | None:
         """An identity slide through :meth:`linked_net` of
@@ -1682,7 +1685,10 @@ class _Lean:
         source = lean_linked.export_slide(t.lhs, t.rhs)
         if source is None:
             return None
-        tail = "the sliding identity's phase index read as the zero phase"
+        tail = (
+            "with box groups {ns}.G and {ns}.G', each flat boundary read through a slot layout of "
+            "its LDiagram.slotData, the phaseless phase index {ns}.zero read as the zero phase"
+        )
         return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))
 
     def split(self, t: Theorem, binders: Sequence[str]) -> str | None:
@@ -1708,7 +1714,7 @@ class _Lean:
         head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
         note = (
             f"the diagrams are the linked diagrams {ns}.L and {ns}.L' times one scalar, whose "
-            f"digit sums {ns}.main proves equal, {tail}"
+            f"digit sums {ns}.main proves equal, {tail.format(ns=ns)}"
         )
         name = self.fresh("net")
         self.decls.append(
