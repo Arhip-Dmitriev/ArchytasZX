@@ -513,15 +513,20 @@ def current(cfg: dict[str, Any], recs: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def false_records(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The F record of every F equation id (``EQUATION!``) in results/false_set.json."""
+    """The F record of every F equation id (``EQUATION!``) in results/false_set.json, each with
+    a differs_at table (breaks.tabled, false_set.probe_seconds per point, platform.jobs
+    processes)."""
+    from benchmarks import breaks
+
     fs = config.path(cfg, "results") / "false_set.json"
     if not cfg["false_set"]["enabled"] or not fs.exists():
         return {}
-    return {
-        f"{r['equation']}!": r
-        for r in json.loads(fs.read_text(encoding="utf-8")).get("records", [])
-        if r.get("kind") is not None
-    }
+    records = breaks.tabled(
+        json.loads(fs.read_text(encoding="utf-8")).get("records", []),
+        float(cfg["false_set"].get("probe_seconds", 0)),
+        int(cfg["platform"]["jobs"]),
+    )
+    return {f"{r['equation']}!": r for r in records if r.get("kind") is not None}
 
 
 def classified(

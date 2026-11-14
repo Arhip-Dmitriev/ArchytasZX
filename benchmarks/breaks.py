@@ -299,7 +299,16 @@ def _e_off_by_one(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any)
         q: tuple(f"({x}) + 1" for x in v) if isinstance(v, tuple) else f"({v}) + 1"
         for q, v in c.registers.items()
     }
-    return replace(c, registers=regs)
+    counts = {"n"} | {
+        str(x) for v in c.registers.values() for x in (v if isinstance(v, tuple) else (v,))
+    }
+    gates = tuple(
+        replace(g, count=f"({g.count}) + 1")
+        if isinstance(g, (ir.Chain, ir.Tree)) and str(g.count) in counts
+        else g
+        for g in c.gates
+    )
+    return replace(c, registers=regs, gates=gates)
 
 
 def _e_dimension(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
@@ -464,7 +473,7 @@ def _variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
         big_n = int(cfg["false_set"].get("beyond_N", 32))
         probe = [(n, d) for n in _ns(inst, big_n + 1, 1) for d in _ds(inst, 2, 1)]
         if inst.equation.form == "unrolled":
-            for i in range(1, len(_outputs(c)) + 1):
+            for i in _beyond_outputs(inst, c):
                 yield Variant(
                     f"X on output -{i} beyond N", {"index": -i, "N": big_n}, probe, {"n_max": big_n}
                 )
@@ -584,6 +593,23 @@ def _variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
         for q in c.wires:
             if q not in ctrl and inst.subject.general_d:
                 yield Variant(f"dimension + 1 on {q}", {"wire": q}, small, {})
+
+
+def _beyond_outputs(inst: Any, c: ir.Circuit) -> list[int]:
+    """The i >= 1 whose output -i of the probe circuit ``c`` and of the circuits at the next
+    GATE_LATER domain n is a single wire of dimension d."""
+    pn, pd = _probe_n(inst), _probe_d(inst)
+    want = "d" if inst.subject.general_d else str(inst.subject.dimension)
+    circuits = [c, *(subject.circuit_at(inst, v, pd) for v in _ns(inst, (pn or 0) + 1, GATE_LATER))]
+
+    def fits(x: ir.Circuit, i: int) -> bool:
+        outs = _outputs(x)
+        if i > len(outs):
+            return False
+        q = outs[-i]
+        return x.count(q) is None and str(x.dim(q)).replace(" ", "") == want
+
+    return [i for i in range(1, len(_outputs(c)) + 1) if all(fits(x, i) for x in circuits)]
 
 
 def _probe_n(inst: Any) -> int | None:
@@ -1282,6 +1308,39 @@ def _annotate_job(job: tuple[dict[str, Any], dict[str, Any], float]) -> dict[str
     if rec.get("kind") is None or rec["equation"] not in insts:
         return rec
     return annotate(rec, insts, seconds)
+
+
+_TABLED_INSTS: dict[str, Any] = {}
+
+
+def _tabled_one(job: tuple[dict[str, Any], float]) -> dict[str, Any]:
+    """:func:`annotate` of one F record over the whole catalogue; an empty differs_at table when
+    its equation is unknown or the dense check raises."""
+    rec, seconds = job
+    if not _TABLED_INSTS:
+        _TABLED_INSTS.update({i.id: i for i in subject.instances(list(subject.catalogue()))})
+    try:
+        if rec["equation"] in _TABLED_INSTS:
+            return annotate(rec, _TABLED_INSTS, seconds)
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return {**rec, "differs_at": []}
+
+
+def tabled(records: list[dict[str, Any]], seconds: float, jobs: int) -> list[dict[str, Any]]:
+    """``records`` with a differs_at table on every F record (:func:`annotate` with ``seconds``
+    per point, in ``jobs`` processes, for each one without a table)."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    todo = [i for i, r in enumerate(records) if r.get("kind") and "differs_at" not in r]
+    if not todo:
+        return records
+    out = list(records)
+    work = [(records[i], seconds) for i in todo]
+    with ProcessPoolExecutor(max(1, jobs)) as pool:
+        for i, rec in zip(todo, pool.map(_tabled_one, work, chunksize=1)):
+            out[i] = rec
+    return out
 
 
 def annotate_file(src: Path, dst: Path, cfg: dict[str, Any], jobs: int) -> None:

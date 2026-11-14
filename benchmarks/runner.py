@@ -780,21 +780,23 @@ FALSE_SET_POLL = 30.0
 def false_set(
     cfg: dict[str, Any], results: Path, jobs: int, shard: tuple[int, int]
 ) -> list[dict[str, Any]]:
-    """The F records of results/false_set.json: shard 0 generates them under an exclusive lock
-    on false_set.lock when the file does not hold this config's set; every other shard waits,
+    """The F records of results/false_set.json, each with a differs_at table (breaks.tabled,
+    false_set.probe_seconds per point): shard 0 generates them under an exclusive lock on
+    false_set.lock when the file does not hold this config's set; every other shard waits,
     polling every FALSE_SET_POLL seconds, until it does."""
     import fcntl
 
     path = results / "false_set.json"
+    seconds = float(cfg["false_set"].get("probe_seconds", 0))
     if shard[0] == 0:
         with (results / "false_set.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            return breaks.generate(cfg, path, jobs)
+            return breaks.tabled(breaks.generate(cfg, path, jobs), seconds, jobs)
     waited = 0.0
     while True:
         records = breaks.load(cfg, path)
         if records is not None:
-            return records
+            return breaks.tabled(records, seconds, jobs)
         if waited % 600 == 0:
             print(f"benchmarks: shard {shard[0]} waits for {path}", flush=True)
         time.sleep(FALSE_SET_POLL)

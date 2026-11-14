@@ -18,14 +18,15 @@ Decided from the F record's kind and edit parameters by exact integer arithmetic
   beyond_oracle, prime_only, coincident_dims  equal iff the phase rule is an integer at every
                                               k < d
   scalar_small_one, box_boundary              equal iff the scalar factor is 1
-  beyond_N                                    unrolled: equal iff n <= N; boxed: equal unless
-                                              n = N + 1 mod N + 2
+  beyond_N                                    unrolled: equal iff n <= N or d = 1; boxed:
+                                              equal unless n = N + 1 mod N + 2
   qubit_only                                  equal iff d <= 2
 
 An F record's ``differs_at`` table (breaks.differs_table: [n, d, differs] by a dense check at
-small points) decides its own points first. Off the table, a kind without a rule above is
-equal where the table shows it equal along the whole line: at d = 1 when every tabled d = 1
-point is equal, at n = 0 when every tabled n = 0 point is, at every point when every tabled
+small points; required, breaks.tabled builds it) decides its own points first. Off the
+table, a kind without a rule above is equal where the table shows it equal along the whole
+line: at d = 1 when every tabled d = 1 point is equal, at n = 0 when every tabled n = 0
+point is equal, at every point when every tabled
 point is (a no-op edit), and beyond the largest tabled n (d) when the last TAIL tabled values
 of n (d) are equal at every tabled d (n), and at an n beyond the table where the tabled n line
 of its d repeats with a period p (at least PERIODS checks of v(m) = v(m + p)) and the tabled m
@@ -184,8 +185,15 @@ def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool
     """True when the F pair of ``false`` is equal at ``(n, d)`` by its differs_at table, its
     kind's closed-form rule or the table's lines, False when it differs there, None when only
     the F record's witness speaks (a witness that pairs a pure boundary with the same boundary
-    doubled); False for an S equation and a symbolic point (``d`` None)."""
-    if false is None or d is None:
+    doubled); False for an S equation and a symbolic point (``d`` None). Raises ValueError for
+    an F record without a differs_at key (breaks.tabled adds it)."""
+    if false is None:
+        return False
+    if false.get("kind") is not None and "differs_at" not in false:
+        raise ValueError(
+            f"F record {false.get('equation')} ({false.get('kind')}) has no differs_at table"
+        )
+    if d is None:
         return False
     table = _table_of(false)
     if table is not None and (n, d) in table:
@@ -199,7 +207,7 @@ def equal_at(false: dict[str, Any] | None, n: int | None, d: int | None) -> bool
     if kind == "beyond_N" and n is not None:
         big_n = int(params["N"])
         if "index" in params:
-            return n <= big_n
+            return n <= big_n or d == 1
         return n % (big_n + 2) != big_n + 1
     if kind == "qubit_only":
         return d <= 2

@@ -378,8 +378,8 @@ diagram, both sides doubled when either is mixed) and where the pair stays equal
   ----------------------  ------------------------------------------------  -------------------
   beyond_oracle           phase k (d-1)(d-2)(d-3)(d-4)/d, or a C(n,4)/d      the oracle grid
                           phase on a boxed equation, on an output wire       (d <= 4, n <= 3)
-  beyond_N                unrolled: X on an output when n > N; boxed: a      n <= N
-                          counting gadget of dimension N + 2 giving -1 at
+  beyond_N                unrolled: X on an output when n > N; boxed: a      n <= N (unrolled
+                          counting gadget of dimension N + 2 giving -1 at    also d = 1)
                           n = N + 1 (mod N + 2), counting a register of
                           count n (its own one, own_count, when the circuit
                           has none); rivals see the same sign
@@ -401,7 +401,9 @@ diagram, both sides doubled when either is mixed) and where the pair stays equal
   missing_gate            one gate dropped                                   nowhere
   extra_gate              X appended on an output                            nowhere
   swapped_control_target  one CX reversed                                    nowhere
-  off_by_one_n            the circuit at n + 1                               nowhere
+  off_by_one_n            the circuit at n + 1 (boxed: every register count, nowhere
+                          and every chain or tree count equal to n or to a
+                          register count, + 1)
   wrong_dimension         one wire's dimension + 1                           nowhere
 
 Witnesses are found densely when the tensor has at most 2^18 entries, else by plugging basis
@@ -428,8 +430,9 @@ those wires (occ of of), offered only when the next 3 domain n have as many such
 at a point with another count the edit raises breaks.NotApplicable (a harness error, never a
 tool's failure); missing_gate never drops an Init, Post, Discard, Measure or Swap, nor a gate
 whose removal changes the inputs or outputs. leg_order's "swap last two outputs" records output
-positions -2 and -1. Test 2 reports both reasons, and oracle-size overflows of its
-equal-where checks, as SKIP lines.
+positions -2 and -1. Unrolled beyond_N records output position -i, offered only when output -i
+is a single wire of dimension d at the probe n and the next 3 domain n. Test 2 reports both
+reasons, and oracle-size overflows of its equal-where checks, as SKIP lines.
 
 
 5. POINTS
@@ -465,11 +468,15 @@ carries differs_at, [n, d, differs] by a dense check of the broken pair (both si
 either is mixed; a boundary difference only in dimension-1 legs is no difference) at the domain
 points with d <= 4 and n <= 4 (n <= 12 at a fixed d), a d's line stopping at its first point
 past 2^18 entries or probe_seconds, plus the witness point; breaks.annotate adds it (generation
-does), and replaces a pure-against-doubled interface witness by a dense one on the doubled pair.
+does). The table is required: differs.equal_at raises ValueError on an F record without a
+differs_at key, and every reader of a stored false set (runner.false_set, aggregate.false_records,
+reclassify) first builds the missing tables in memory with breaks.tabled (annotate at
+false_set.probe_seconds per point, an empty table when the dense check raises); annotate also
+replaces a pure-against-doubled interface witness by a dense one on the doubled pair.
 A tabled point is decided by the table. Elsewhere the kind's rule decides: beyond_oracle, prime_only and coincident_dims are
 equal where the phase rule is an integer at every k < d (for the d rule also d = 6, 8, 12, 24;
 for the Fermat rule every prime and Carmichael d); scalar_small_one and box_boundary where the
-scalar factor is 1; beyond_N unrolled where n <= N, boxed except at n = N + 1 mod N + 2;
+scalar factor is 1; beyond_N unrolled where n <= N or d = 1, boxed except at n = N + 1 mod N + 2;
 qubit_only where d <= 2. Any other kind is equal off the table where the table shows it: at
 d = 1 when every tabled d = 1 point is equal, at n = 0 when every tabled n = 0 point is,
 everywhere when every tabled point is (a no-op edit), beyond the largest tabled n (d) when the
@@ -773,7 +780,7 @@ journal entry and records the kill as cgroup oom_kill. reclassify also recompute
 logged result through its rederive hook (published_proofs: the verdict from its files) and a
 CHECK_ONCE tool's units (K = 1, one success when a run of the unit is ok), and prints the units
 with K reached before and after. An F record of FALSE_SET without a differs_at table (a set
-made before the table existed) gets one in memory first, by breaks.annotate with S seconds per
+made before the table existed) gets one in memory first, by breaks.tabled with S seconds per
 point (default 10) in J processes (default 4); so the ghz/main off_by_one_n pair, equal at d = 1
 (every leg of dimension 1, scalar 1 on both sides), makes runs there invalid_point.
 
@@ -951,6 +958,13 @@ The suite's pass/fail checks are scripts (never pytest):
     python -m tests._bench_suite_script trace           7: tracing off equals on; nesting
 
 tests/_trust_mutations_script.py (the Lean mutation table) uses tests/trust_helpers.py.
+
+tests/test_bench_differs.py runs in CI (about 3 s): differs.equal_at against the dense tensors of
+both sides of F pairs built from today's variants, at small points: annotated
+swapped_control_target on bridge_gate/main and leg_order on deutsch/f11 at d = 1, 2 and 5 (past
+the table), off_by_one_n on bv_secret_pattern/main (boxed chain) and w_state/main (boxed tree),
+unrolled beyond_N on repetition_error_syndrome/main with N the first domain n at d = 1 and 2; an
+F record without differs_at is refused, and breaks.tabled fills the missing tables.
 
 
 14. ESTIMATED RUN TIMES
