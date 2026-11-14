@@ -17,6 +17,7 @@ slide refuse what they do not license; aligned boxes in a zipped chain instantia
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
@@ -26,6 +27,7 @@ from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import kernel
 from archytaszx.semantics.check import EqualityMode, compare
 from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+from archytaszx.semantics.lean_net import check, lean_project
 from tests.test_nested_chain import _grid_pair
 
 
@@ -44,6 +46,24 @@ def test_cluster_state_2d_is_equal_with_a_kernel_proof() -> None:
             depth += {"(": 1, ")": -1}.get(source[at], 0)
             at += 1
         assert source[at] == ")", source[found.start() : at + 1]
+
+
+def _cluster_state_2d_source(semantic: bool) -> str:
+    """The cluster_state_2d kernel proof's Lean export."""
+    left, right = _grid_pair(1)
+    decision = decide_equal(left, right, samples=[])
+    return kernel.lean(kernel.from_decision(decision, left, right), "main", semantic=semantic)
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_the_cluster_state_2d_export(tmp_path: object) -> None:
+    for semantic in (False, True):
+        ok, output = check(_cluster_state_2d_source(semantic), f"{tmp_path}/cluster{semantic}.lean")
+        assert ok, output
+        assert ": error" not in output and "sorry" not in output, output
 
 
 def test_the_inverse_cz_grid_is_not_proved() -> None:
