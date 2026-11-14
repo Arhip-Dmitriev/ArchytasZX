@@ -467,6 +467,7 @@ NESTED_PAIRS = (
 
 def test_a_nested_pair_copy_scalar_is_taken_per_parent_copy_in_either_order() -> None:
     from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.graph import BangBoxId
     from archytaszx.diagram.validate import validate
     from archytaszx.repl.parser import parse_listing
     from archytaszx.semantics.check import instantiate
@@ -484,7 +485,7 @@ def test_a_nested_pair_copy_scalar_is_taken_per_parent_copy_in_either_order() ->
         results.append(got)
     assert isomorphic(results[0], results[1])
     assert str(instantiate(d, {"n": 2, "l": 2, "d": 2}).scalar) == expected
-    peeled = peel_one(d, 1).diagram
+    peeled = peel_one(d, BangBoxId(1)).diagram
     for order in [("n", "l"), ("l", "n")]:
         got = peeled
         for name in order:
