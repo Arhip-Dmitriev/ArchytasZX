@@ -146,3 +146,24 @@ def test_beyond_n_unrolled_small_n() -> None:
         rec = {**_record(inst.id, "beyond_N", label, N=n0), "differs_at": []}
         pts = [(n, d) for d in (1, 2) for n in (n0, n0 + 1, n0 + 2)]
         assert _disagreements(rec, pts) == []
+
+
+def test_stale_positional_leg_order_is_refused() -> None:
+    from benchmarks import breaks, outcomes, subject
+
+    inst = _insts()["qram/main"]
+    rec = {
+        "equation": "qram/main",
+        "kind": "leg_order",
+        "label": "swap last two outputs",
+        "params": {"i": 2, "j": 3},
+        "witness": {},
+        "equal_where": {},
+        "differs_at": [],
+    }
+    assert breaks.mismatch(rec, inst) is not None
+    with pytest.raises(breaks.NotApplicable):
+        subject.circuit_at(breaks.false_instance(rec, _insts()), 1, 2)
+    run = {"tool": "qcec", "outcome": "ok", "verdict": "equal", "n": 3, "d": 2, "stages": {}}
+    out = outcomes.classify(run, false=rec, stale=True)
+    assert out["outcome"] == "invalid_point" and out["cause"] == "false_record_mismatch"

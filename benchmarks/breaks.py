@@ -188,6 +188,8 @@ def _e_swap(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir
         a, b = p["pair"]
     else:
         outs = _outputs(c)
+        if not all(-len(outs) <= p[k] < len(outs) for k in ("i", "j")):
+            raise NotApplicable(f"no outputs {p['i']}, {p['j']} among {len(outs)}")
         a, b = outs[p["i"]], outs[p["j"]]
     return _append(c, ir.Swap(a, b))
 
