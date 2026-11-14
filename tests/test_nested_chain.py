@@ -429,3 +429,16 @@ def test_instantiating_a_count_fills_it_into_the_scalar_and_copy_scalars() -> No
     assert str(got.scalar) == "27"
     assert [str(b.copy_scalar) for b in got.bang_boxes.values()] == ["8", "8", "8"]
     assert str(induction_base(d, "n").scalar) == "1"
+
+
+def test_a_child_copy_scalar_is_taken_per_parent_copy_in_either_order() -> None:
+    from archytaszx.semantics.check import instantiate
+
+    d = parse_dsl(SCALED)
+    for order in [("n", "l"), ("l", "n")]:
+        got = d
+        for name in order:
+            got = instantiate_symbol(got, name, 2)
+        assert str(got.scalar) == "2304"
+    assert str(instantiate(d, {"n": 2, "l": 2, "d": 2}).scalar) == "2304"
+    assert str(instantiate(d, {"n": 2, "l": 3, "d": 2}).scalar) == str(9 * 2 ** (2 * 2 * 3))

@@ -1297,7 +1297,7 @@ def _tree_copy(
     new_boxes: Iterable[BangBoxId],
 ) -> None:
     """Copy ``id_map``'s nodes and child boxes with each index of ``values`` set, and the copy
-    scalar at those values multiplied into the diagram scalar."""
+    scalar at those values multiplied in by :func:`_multiply_copy_factor`."""
     nodes = frozenset(id_map.values())
     for node_id in sorted(nodes):
         phase = diagram.nodes[node_id].phase
@@ -1321,7 +1321,7 @@ def _tree_copy(
         factor = box.copy_scalar
         for name, value in values.items():
             factor = _scalar_at(factor, name, value)
-        diagram.multiply_scalar(factor)
+        _multiply_copy_factor(diagram, box, factor)
 
 
 def _instantiate_tree(diagram: Diagram, box: BangBox, k: int) -> None:
@@ -1598,7 +1598,7 @@ def _index_copy(
     new_boxes: Iterable[BangBoxId],
 ) -> None:
     """Copy ``id_map``'s nodes and the child boxes over them with ``box.index`` := ``value``,
-    and the copy scalar at that value multiplied into the diagram scalar."""
+    and the copy scalar at that value multiplied in by :func:`_multiply_copy_factor`."""
     nodes = frozenset(id_map.values())
     if box.index is not None:
         sub = value if isinstance(value, int) else sp.sympify(value)
@@ -1631,7 +1631,18 @@ def _index_copy(
         factor = box.copy_scalar
         if box.index is not None:
             factor = _scalar_at(factor, box.index, value)
+        _multiply_copy_factor(diagram, box, factor)
+
+
+def _multiply_copy_factor(diagram: Diagram, box: BangBox, factor: Scalar) -> None:
+    """Multiply ``factor`` into the copy scalar of ``box``'s live node-scope parent, else into
+    the diagram scalar."""
+    parent = None if box.parent is None else diagram.bang_boxes.get(box.parent)
+    if parent is None or not parent.is_node_scope:
         diagram.multiply_scalar(factor)
+        return
+    scalar = factor if parent.copy_scalar is None else parent.copy_scalar * factor
+    diagram.set_bang_box_extension(parent.id, copy_scalar=scalar)
 
 
 def _dim_at(dim: Dim, name: str, value: int | sp.Expr) -> Dim:
