@@ -492,3 +492,30 @@ def test_a_nested_pair_copy_scalar_is_taken_per_parent_copy_in_either_order() ->
             got = instantiate_symbol(got, name, 2)
         assert str(got.scalar) == expected
         assert isomorphic(got, results[0])
+
+
+NESTED_PAIRS_DSL = """dim d
+count n, l
+a = Z(0 -> 3, d)
+f = F(d)
+wire a.out1 -- f.in0, a.out2 -- f.out0
+outputs a.out0
+repeat l as L: a, f
+repeat n + 1 as B index j in L: a
+pairs Q of B index m in L: f
+copy scalar B: 3^j
+copy scalar Q: 2^(j + m)
+left Q: a.out1
+right Q: a.out2"""
+"""NESTED_PAIRS in the DSL, the pair box nested by ``in L``."""
+
+
+def test_a_dsl_pair_box_takes_an_in_parent() -> None:
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.repl.parser import ParseDomainError, parse_listing
+
+    d = parse_dsl(NESTED_PAIRS_DSL)
+    assert isomorphic(d, parse_listing(NESTED_PAIRS))
+    assert [b.parent for b in d.bang_boxes.values()] == [None, 0, 0]
+    with pytest.raises(ParseDomainError, match="overlap"):
+        parse_dsl(NESTED_PAIRS_DSL.replace("index m in L", "index m"))

@@ -1510,7 +1510,7 @@ _DSL_CHAIN_RE = re.compile(
 )
 _DSL_PAIRS_RE = re.compile(
     rf"pairs\s+(?P<name>{_IDENTIFIER})\s+of\s+(?P<parent>{_IDENTIFIER})\s+index\s+"
-    rf"(?P<index>{_IDENTIFIER})\s*:\s*(?P<scope>.+)"
+    rf"(?P<index>{_IDENTIFIER})(?:\s+in\s+(?P<within>{_IDENTIFIER}))?\s*:\s*(?P<scope>.+)"
 )
 _DSL_TREE_RE = re.compile(
     rf"tree\s+(?P<name>{_IDENTIFIER})\s*:\s*(?P<parent>\S+)\s*<-\s*(?P<children>.+?)"
@@ -1926,7 +1926,7 @@ class _Dsl:
             Mult(1),
             "nodes",
             ", ".join(items),
-            None,
+            match["within"],
             pair_of=match["parent"],
             pair_index=match["index"],
         )

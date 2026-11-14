@@ -384,8 +384,10 @@ Bang boxes:
                                            links of box NAME: copy m's A.outI is wired to
                                            copy m + 1's B.inJ (DIAGRAM.txt 4.2)
     copy scalar NAME: EXPR                 a scalar multiplied in once per copy of box NAME
-    pairs NAME of B index K: STEP, ...     a pair box over indexed box B: one copy per pair
-                                           of B's copies j < k (B's index j, K = k)
+    pairs NAME of B index K [in P]: STEP, ...
+                                           a pair box over indexed box B: one copy per pair
+                                           of B's copies j < k (B's index j, K = k),
+                                           optionally nested in box P
     left NAME: A.outI, ...                 ports of B's scope pair box NAME meets in copy j
     right NAME: A.inJ, ...                 ports of B's scope pair box NAME meets in copy k
     tree NAME: A.inJ <- B.outI, C.outK [level L] [position P]
