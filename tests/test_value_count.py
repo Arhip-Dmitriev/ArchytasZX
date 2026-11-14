@@ -11,8 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Boxed qram over a free value count N (79.5), aligned boxes in a cut (79.8) and the spec
-step exposed by inserted identities (79.10)."""
+"""Boxed qram over a free value count N (79.5), aligned boxes in a cut (79.8), the spec
+step exposed by inserted identities (79.10) and the per-copy lemma (79.7)."""
 
 from __future__ import annotations
 
@@ -142,3 +142,30 @@ def test_the_qram_spec_step_over_the_value_count_is_exposed_by_inserted_identiti
     assert theorem.lhs is peeled[0] and not theorem.domain
     extracted = induction._cut_extract(theorem.rhs, cut)
     assert isomorphic(induction._bare(extracted), induction._bare(hypothesis))
+
+
+def test_the_qram_per_copy_lemma_is_a_kernel_induction_over_its_bit_count() -> None:
+    theorem = lemmas.proved(lemmas.QRAM_COPY)
+    assert isinstance(theorem, kernel.Theorem)
+    assert theorem.inference.kind == "induction" and not theorem.domain
+    assert theorem.statement() == "for all p"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("phase{3: 1/2}", "phase{2: 1/2}"),
+        ("g6 = X(1 -> 1, literal 2) phase{1: 1/2}", "g6 = X(1 -> 1, literal 2)"),
+    ],
+)
+def test_a_broken_per_copy_lemma_is_not_proved(old: str, new: str) -> None:
+    left, right = (t.replace(old, new) for t in (lemmas._COPY_LEFT, lemmas._COPY_RIGHT))
+    broken = lemmas.Lemma(
+        "broken_copy",
+        "p",
+        "broken",
+        lambda p: lemmas._dsl_sides(left, right, p),
+        prove=lemmas.induct_by_insertion,
+    )
+    with pytest.raises((lemmas.LemmaError, kernel.KernelError)):
+        lemmas.proved(broken)

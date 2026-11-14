@@ -53,12 +53,14 @@ class LemmaError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Lemma:
-    """A named identity ``build(e)[0] = build(e)[1]`` for every value ``e`` of ``symbol``."""
+    """A named identity ``build(e)[0] = build(e)[1]`` for every value ``e`` of ``symbol``,
+    proved by ``prove`` (both sides formal to a kernel theorem) when given."""
 
     name: str
     symbol: str
     statement: str
     build: Callable[[sp.Expr], tuple[Diagram, Diagram]]
+    prove: Callable[[Diagram, Diagram, str], object] | None = None
 
 
 def _out(node: NodeId, index: int = 0) -> PortRef:
@@ -331,8 +333,8 @@ INSERTIONS: tuple[Lemma, ...] = (SPLIT_BIND,)
 
 
 def lemma(name: str) -> Lemma:
-    """The library or insertion lemma called ``name``."""
-    for entry in (*LIBRARY, *INSERTIONS):
+    """The library, insertion or per-copy lemma called ``name``."""
+    for entry in (*LIBRARY, *INSERTIONS, *COPIES):
         if entry.name == name:
             return entry
     raise LemmaError(f"no lemma named {name!r}")
@@ -348,8 +350,9 @@ _PROVED: dict[str, object] = {}
 
 
 def proved(entry: Lemma) -> object:
-    """The kernel theorem of ``entry`` with its symbol formal, proved on first use by
-    :func:`~archytaszx.semantics.decide.decide_equal` with no oracle sample."""
+    """The kernel theorem of ``entry`` with its symbol formal, proved on first use by its
+    ``prove``, else by :func:`~archytaszx.semantics.decide.decide_equal` with no oracle
+    sample."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
@@ -359,10 +362,13 @@ def proved(entry: Lemma) -> object:
         _PROVING.add(entry.name)
         try:
             left, right = sides(entry)
-            decision = decide_equal(left, right, samples=[])
-            if decision.verdict is not EqualityVerdict.EQUAL:
-                raise LemmaError(f"lemma {entry.name} is not proved: {decision.verdict.value}")
-            _PROVED[entry.name] = kernel.from_decision(decision, left, right)
+            if entry.prove is not None:
+                _PROVED[entry.name] = entry.prove(left, right, entry.symbol)
+            else:
+                decision = decide_equal(left, right, samples=[])
+                if decision.verdict is not EqualityVerdict.EQUAL:
+                    raise LemmaError(f"lemma {entry.name} is not proved: {decision.verdict.value}")
+                _PROVED[entry.name] = kernel.from_decision(decision, left, right)
         finally:
             _PROVING.discard(entry.name)
     return _PROVED[entry.name]
@@ -710,12 +716,35 @@ def _fourier_identity(dim: Dim) -> object:
     raise LemmaError("no Fourier cancellation")
 
 
+def _triangle_identity(dim: Dim) -> object:
+    """A phaseless Z(1 -> 1) over ``dim`` = Ti, then a Z(1 -> 2) with one leg on a phaseless
+    Z effect, then T, by symbolic contraction."""
+    from archytaszx.diagram.generators import TRIANGLE, TRIANGLE_INVERSE
+    from archytaszx.semantics import kernel
+
+    plain = Diagram()
+    z = plain.add_node(Z_SPIDER, [dim], [dim])
+    plain.set_boundary_inputs([_in(z)])
+    plain.set_boundary_outputs([_out(z)])
+    pair = Diagram()
+    ti = pair.add_node(TRIANGLE_INVERSE, [dim], [dim])
+    c = pair.add_node(Z_SPIDER, [dim], [dim, dim])
+    e = pair.add_node(Z_SPIDER, [dim], [])
+    t = pair.add_node(TRIANGLE, [dim], [dim])
+    for a, b in ((_out(ti), _in(c)), (_out(c, 0), _in(e)), (_out(c, 1), _in(t))):
+        pair.add_wire(a, b)
+    pair.set_boundary_inputs([_in(ti)])
+    pair.set_boundary_outputs([_out(t)])
+    return kernel.contraction(plain, pair)
+
+
 def _inserted(
     diagram: Diagram, mid: NodeId, hub: NodeId, kind: str
-) -> tuple[object, frozenset[NodeId]]:
+) -> tuple[object, frozenset[NodeId], frozenset[NodeId]]:
     """``diagram = diagram'`` with the Z(1 -> 1) ``mid`` replaced by an identity of ``kind``
-    (``split_bind``: :data:`SPLIT_BIND`; ``fourier``: four F boxes), and the inserted nodes on
-    ``hub``'s side (the B chain; the last F box)."""
+    (``split_bind``: :data:`SPLIT_BIND`; ``fourier``: four F boxes; ``triangle``:
+    :func:`_triangle_identity`), the inserted nodes on ``hub``'s side (the B chain; the last F
+    box; T and the Z(1 -> 2)) and the other inserted nodes."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.induction import find_cut_region
 
@@ -725,6 +754,8 @@ def _inserted(
         if not (expr.is_Pow and expr.base == 2 and expr.exp.free_symbols):
             raise LemmaError("not a register of symbolic width")
         identity = kernel.symm(cast("kernel.Theorem", instance(SPLIT_BIND, expr.exp)))
+    elif kind == "triangle":
+        identity = cast("kernel.Theorem", _triangle_identity(dim))
     else:
         identity = kernel.symm(cast("kernel.Theorem", _fourier_identity(dim)))
     cut = find_cut_region(diagram, frozenset({mid}), identity.lhs)
@@ -750,7 +781,14 @@ def _inserted(
                 ):
                     inner.add(m)
                     todo.append(m)
-    return t, frozenset(inner)
+    elif kind == "triangle":
+        inner |= {
+            m
+            for n in inner
+            for m in neighbours[n]
+            if m in new and after.nodes[m].generator_type is Z_SPIDER
+        }
+    return t, frozenset(inner), new - frozenset(inner)
 
 
 def _insertion_options(
@@ -767,6 +805,8 @@ def _insertion_options(
         expr = diagram.nodes[v].legs(leg.direction)[leg.index].dim.to_sympy()
         if expr.is_Pow and expr.base == 2 and expr.exp.free_symbols:
             out.append((leg, "split_bind"))
+        if expr == 2:
+            out.append((leg, "triangle"))
         out.append((leg, "fourier"))
     return out
 
@@ -836,9 +876,9 @@ def _expose_with(
         )
         split, leaf, mid, hub = _split_off(current, v, moved, via)
         step = cast("kernel.Theorem", _split_theorem(current, split, leaf, mid, hub))
-        inserted, inner = _inserted(split, mid, hub, kind)
+        inserted, inner, outer = _inserted(split, mid, hub, kind)
         theorem = kernel.trans(theorem, kernel.trans(step, cast("kernel.Theorem", inserted)))
-        leaves.add(leaf)
+        leaves |= {leaf, *outer}
         blocked |= {hub, *inner}
     exposed = theorem.rhs
     neighbours: dict[NodeId, set[NodeId]] = {n: set() for n in exposed.nodes}
@@ -857,17 +897,169 @@ def _expose_with(
     return None if cut is None else (theorem, cut)
 
 
+def induct_by_insertion(left: Diagram, right: Diagram, index: str) -> object:
+    """``left = right`` for every value of ``index`` by
+    :func:`~archytaszx.semantics.kernel.induction`: the base by symbolic contraction, one
+    side's peeled successor exposed by :func:`expose_by_insertion` and its hypothesis replaced
+    by the other side's, the step closed by :func:`close_by_cores` on the other peeled
+    successor as it is or re-peeled at its chains' last copies; each side tried in turn."""
+    from archytaszx.diagram.bangbox import BangBoxError
+    from archytaszx.diagram.validate import ValidateError
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import (
+        InductionError,
+        _fresh_step_symbol,
+        copy_candidates,
+        replace_cut_region,
+    )
+    from archytaszx.semantics.prove import (
+        InductionSide,
+        induction_base,
+        induction_hypothesis,
+        induction_renamed,
+        induction_successor,
+    )
+
+    k = _fresh_step_symbol(left, right, index, "k")
+    base = kernel.contraction(induction_base(left, index), induction_base(right, index))
+    reasons: list[str] = []
+    for side, own, other in ((InductionSide.START, left, right), (InductionSide.GOAL, right, left)):
+        peeled = induction_successor(own, index, k)
+        other_peeled = induction_successor(other, index, k)
+        if peeled is None or other_peeled is None:
+            reasons.append(f"{side.value}: no single box to peel")
+            continue
+        own_k, other_k = (induction_hypothesis(d, index, k) for d in (own, other))
+        copy = frozenset(peeled.nodes) - frozenset(own_k.nodes)
+        candidates = copy_candidates(peeled, frozenset(own_k.nodes), copy)
+        found = expose_by_insertion(peeled, candidates, own_k)
+        if found is None:
+            reasons.append(f"{side.value}: no insertion exposes the hypothesis")
+            continue
+        expose, cut, _copy = found
+        errors = (kernel.KernelError, InductionError, BangBoxError, ValidateError)
+        try:
+            replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
+        except errors as exc:
+            reasons.append(f"{side.value}: {exc}")
+            continue
+        for back in _repeels(induction_renamed(other, index, k), other_peeled, k):
+            try:
+                there = cast("kernel.Theorem", close_by_cores(replaced, back.rhs, k))
+                step = kernel.trans(there, kernel.symm(back))
+                return kernel.induction(
+                    left, right, index, k, base, side, expose, cut.region, step, cut=cut
+                )
+            except errors as exc:
+                reasons.append(f"{side.value}: {exc}")
+    raise LemmaError("; ".join(reasons))
+
+
+def _repeels(source: Diagram, peeled: Diagram, index: str) -> list[Theorem]:
+    """``peeled = peeled`` and, when a chain box of ``source`` carrying ``index`` peels its
+    first copy, ``peeled = p'`` with every such box peeling its last copy
+    (:func:`~archytaszx.semantics.kernel.repeel`)."""
+    from archytaszx.diagram.bangbox import index_owners, peels_first
+    from archytaszx.semantics import kernel
+
+    out: list[Theorem] = [kernel.refl(peeled)]
+    firsts = frozenset(b for b in index_owners(source, index) if peels_first(source.bang_boxes[b]))
+    if firsts:
+        try:
+            moved = kernel.repeel(source, index, frozenset(), firsts)
+        except kernel.KernelError:
+            return out
+        if kernel._same(moved.lhs, peeled):
+            out.append(kernel.trans(kernel.iso(peeled, moved.lhs), moved))
+    return out
+
+
+_COPY_LEFT = """
+count p
+g0 = Z(1 -> 2, literal 2)
+g1 = Z(1 -> 2, literal 2)
+g5 = X(2 -> 1, literal 2)
+g6 = X(1 -> 1, literal 2) phase{1: 1/2}
+g7 = T(literal 2)
+g8 = Z(2 -> 1, literal 2)
+g9 = T(literal 2)
+g10 = Ti(literal 2)
+g11 = X(2 -> 1, literal 2)
+wire g0.out1 -- g5.in0, g5.out0 -- g6.in0, g6.out0 -- g7.in0, g7.out0 -- g8.in1
+wire g1.out1 -- g9.in0, g9.out0 -- g8.in0, g8.out0 -- g10.in0, g10.out0 -- g11.in1
+repeat p as C0: g0
+repeat p as C2 index j: g5, g6, g7
+align C2 with C0
+inputs g0.in0, g5.in1, g1.in0, g11.in0
+outputs g0.out0, g1.out0, g11.out0
+scalar sqrt(2)
+"""
+
+_COPY_RIGHT = """
+count p
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+z = Z(1 -> 2, literal 2^p)
+xs = X(1 -> 2, literal 2^p)
+cap = Z(2 -> 0, literal 2^p)
+hr = Z(0 -> 1, literal 1)
+br = B(literal 2, literal 2^m)
+c = Z(1 -> 2, literal 2)
+pb = B(literal 2^p, literal 2)
+qb = B(literal 2^(p + 1), literal 2)
+g = Z(1 -> 0, literal 2^(p + 2)) phase{3: 1/2}
+f0 = F(literal 2)
+y = Z(1 -> 2, literal 2)
+f1 = F(literal 2)
+f2 = F(literal 2)
+f3 = F(literal 2)
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+wire h.out0 -- b.in1, b.out0 -- z.in0, z.out0 -- s.in0, s.out1 -- e.in0
+wire hr.out0 -- br.in1, br.out0 -- cap.in1
+wire z.out1 -- xs.in0, xs.out0 -- pb.in0, xs.out1 -- cap.in0, c.out1 -- pb.in1, pb.out0 -- qb.in0
+wire y.out1 -- qb.in1, qb.out0 -- g.in0
+wire f0.out0 -- y.in0, y.out0 -- f1.in0, f1.out0 -- f2.in0, f2.out0 -- f3.in0
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+repeat p as Q index m: br
+chain Q: br.out0 -> br.in1
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+inputs b.in0, br.in0, c.in0, f0.in0
+outputs s.out0, c.out0, f3.out0
+"""
+
+QRAM_COPY = Lemma(
+    name="qram_copy",
+    symbol="p",
+    statement=(
+        "p address bits flipped where p value bits are 0, gathered with a data bit through "
+        "triangles into a controlled flip of the target, is the address bound into a 2^p "
+        "register less the value bits bound into one, tested for 0 with the data bit and the "
+        "Fourier-side target"
+    ),
+    build=lambda p: _dsl_sides(_COPY_LEFT, _COPY_RIGHT, p),
+    prove=induct_by_insertion,
+)
+
+COPIES: tuple[Lemma, ...] = (QRAM_COPY,)
+
+
 __all__ = [
     "AND_REGISTER",
     "CARRY_SHIFT",
+    "COPIES",
     "INSERTIONS",
     "LIBRARY",
+    "QRAM_COPY",
     "SPLIT_BIND",
     "Lemma",
     "LemmaError",
     "close_by_cores",
     "close_with_lemmas",
     "expose_by_insertion",
+    "induct_by_insertion",
     "instance",
     "lemma",
     "proved",
