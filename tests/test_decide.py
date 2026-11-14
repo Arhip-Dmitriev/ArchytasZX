@@ -1473,3 +1473,34 @@ class TestCopyScalarDimension:
         outer, wrong = self._pair("d^(-1)")
         decision = decide_equal(outer, wrong, restrict="d = 2, n = 2", family_first=False)
         assert decision.claims_unequal, decision.reason
+
+
+class TestDegenerateSamples:
+    """The default oracle reaches non-degenerate points with many degenerate ones planned."""
+
+    GRID = (
+        "dim d\ncount n, l\nv = Z(2 -> 3, d)\nhv = F(d)\nhh = F(d)\nhs = X(0 -> 1, d)\n"
+        "he = Z(1 -> 0, d)\nve = Z(1 -> 0, d)\n"
+        "wire hv.out0 -- v.in0, hh.out0 -- v.in1, hs.out0 -- hh.in0, v.out1 -- he.in0\n"
+        "wire v.out2 -- ve.in0\nrepeat n as R: v, hv, hh, hs, he\n"
+        "repeat l as C in R: v, hv, hh\nchain C: v.out1 -> hh.in0\nchain R: v.out2 -> hv.in0\n"
+        "repeat l as PT: ve\ninputs hv.in0\noutputs v.out0"
+    )
+
+    def test_a_grid_with_a_wrong_link_is_unequal(self) -> None:
+        from archytaszx.repl.parser import parse_dsl
+
+        left = parse_dsl(self.GRID)
+        right = parse_dsl(self.GRID.replace("hv = F(d)", "hv = Z(1 -> 1, d)"))
+        decision = decide_equal(left, right)
+        assert decision.verdict is EqualityVerdict.UNEQUAL, decision.reason
+        point = dict(decision.counterexample or {})
+        assert point["n"] >= 1 and point["l"] >= 1 and point["d"] >= 2
+
+    def test_degenerate_and_other_points_alternate(self) -> None:
+        from archytaszx.repl.parser import parse_dsl
+
+        grid = parse_dsl(self.GRID)
+        points = [{"d": 1, "l": 1, "n": 1}, {"d": 2, "l": 0, "n": 1}, {"d": 2, "l": 1, "n": 1}]
+        out = decide_module._interleave_degenerate(grid, grid, points)
+        assert out == [points[0], points[2], points[1]]

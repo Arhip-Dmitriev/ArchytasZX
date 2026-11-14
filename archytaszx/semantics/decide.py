@@ -810,6 +810,36 @@ def _planned_size(
     return float(size)
 
 
+def _interleave_degenerate(
+    left: Diagram, right: Diagram, ordered: Sequence[Mapping[str, CheckAssignmentValue]]
+) -> list[Mapping[str, CheckAssignmentValue]]:
+    """``ordered`` with its degenerate points (a multiplicity below 1 or a dimension below 2)
+    and the rest alternated, each kept in its given order, starting with the first point's
+    kind."""
+    dims_l, mults_l, _ = _free_symbols(left)
+    dims_r, mults_r, _ = _free_symbols(right)
+    mults = mults_l | mults_r
+    dims = (dims_l | dims_r) - mults
+
+    def degenerate(point: Mapping[str, CheckAssignmentValue]) -> bool:
+        for name, value in point.items():
+            if not isinstance(value, int) or isinstance(value, bool):
+                continue
+            if (name in mults and value < 1) or (name in dims and value < 2):
+                return True
+        return False
+
+    low = [p for p in ordered if degenerate(p)]
+    high = [p for p in ordered if not degenerate(p)]
+    if not low or not high:
+        return list(ordered)
+    first, second = (low, high) if degenerate(ordered[0]) else (high, low)
+    out: list[Mapping[str, CheckAssignmentValue]] = []
+    for pair in itertools.zip_longest(first, second):
+        out.extend(p for p in pair if p is not None)
+    return out
+
+
 @_trace.traced("decide.oracle")
 def _run_oracle(
     left: Diagram,
@@ -822,13 +852,14 @@ def _run_oracle(
     max_planned: float = math.inf,
     by_size: bool = False,
 ) -> _OracleRun:
-    """Compare ``left`` and ``right`` at each candidate (in increasing planned size with
-    ``by_size``, else in the given order) until ``max_samples`` evaluate or one mismatches; a
-    candidate the oracle refuses, that breaks an assumption, or that plans more than both 16
-    times the largest evaluated size and 2^20 elements is skipped, and
-    with ``fallback_point`` the smallest admissible point is queued after the first refusal;
-    a candidate planning more than ``max_planned`` elements is deferred unevaluated, and one
-    that does not instantiate goes to the oracle for its refusal."""
+    """Compare ``left`` and ``right`` at each candidate (with ``by_size``, degenerate and other
+    points alternated, each in increasing planned size; else in the given order) until
+    ``max_samples`` evaluate or one mismatches; a candidate the oracle refuses, that breaks an
+    assumption, or that plans more than both 16 times the largest evaluated size and 2^20
+    elements is skipped, and with ``fallback_point`` the smallest admissible point is queued
+    after the first refusal; a candidate planning more than ``max_planned`` elements is
+    deferred unevaluated, and one that does not instantiate goes to the oracle for its
+    refusal."""
     table = _symbol_table(left, right)
     evaluated: list[Mapping[str, CheckAssignmentValue]] = []
     refusals: list[str] = []
@@ -836,7 +867,8 @@ def _run_oracle(
     fallback = _smallest_admissible(left, right, table) if fallback_point else None
     if by_size:
         sizes = [_planned_size(left, right, c) for c in candidates]
-        queue = [c for _, c in sorted(zip(sizes, candidates), key=lambda pair: pair[0])]
+        ordered = [c for _, c in sorted(zip(sizes, candidates), key=lambda pair: pair[0])]
+        queue = _interleave_degenerate(left, right, ordered)
     else:
         queue = list(candidates)
     largest = 0.0
