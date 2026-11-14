@@ -441,7 +441,9 @@ when already used, to the next unused one (n raised first, then d). Steps run in
 first failure (timeout, error, out of memory, wrong or unknown result, unsupported) ends the
 ladder and is recorded; a harness_error, an invalid_point or a run flagged point_invalid (10.6)
 is neither a success nor a failure: it is recorded under the unit's skipped and the ladder goes
-on.
+on. The unit record lists every run it counted under succeeded, failures and skipped (point,
+outcome, stage, cause, cause message, run record key, phase), and the symbolic run under
+symbolic.
 
 Phase 2, the fill: draws are kept when not at least as large, in both n and d, as some failed
 point, and not used before. A success counts toward K; a failure joins the failed points (a

@@ -497,8 +497,10 @@ class UnitRun:
             )
             return
         pc = self.cfg["points"]
+        symbolic: dict[str, Any] | None = None
         if pc["symbolic"] and subject.has_symbolic(self.inst):
             rec = self.run(None, 0, trace, "symbolic")
+            symbolic = _row(None, rec, "symbolic")
             if _success(rec):
                 self.repeats(None, rec, "symbolic")
         dims = getattr(tools.adapter(tool), "DIMENSIONS", None)
@@ -520,6 +522,8 @@ class UnitRun:
         failed: list[Any] = []
         fails: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
+        succeeded: list[dict[str, Any]] = []
+        extra = {} if symbolic is None else {"symbolic": symbolic}
         succ = 0
         if size < k_target:
             for p in points.enumerate_domain(ax, k_target):
@@ -527,17 +531,20 @@ class UnitRun:
                 rec = self.run(p, 0, trace, "all")
                 if _success(rec):
                     succ += 1
+                    succeeded.append(_row(p, rec, None))
                     self.repeats(p, rec, "all")
                 elif outcomes.counted(rec):
-                    fails.append({"point": p, "outcome": rec.get("outcome")})
+                    fails.append(_row(p, rec, None))
                 else:
-                    skipped.append({"point": p, "outcome": rec.get("outcome")})
+                    skipped.append(_row(p, rec, None))
             self._finish(
                 unit_key,
                 {
                     "successes": succ,
                     "failures": fails,
                     "skipped": skipped,
+                    "succeeded": succeeded,
+                    **extra,
                     "domain": size,
                     "region_exhausted": False,
                 },
@@ -547,13 +554,14 @@ class UnitRun:
             used.add(p)
             rec = self.run(p, 0, trace, "ladder")
             if not _success(rec) and not outcomes.counted(rec):
-                skipped.append({"point": p, "outcome": rec.get("outcome"), "phase": 1})
+                skipped.append(_row(p, rec, 1))
                 continue
             if not _success(rec):
                 failed.append(p)
-                fails.append({"point": p, "outcome": rec.get("outcome"), "phase": 1})
+                fails.append(_row(p, rec, 1))
                 break
             succ += 1
+            succeeded.append(_row(p, rec, 1))
             self.repeats(p, rec, "ladder")
         exhausted = False
         if succ < k_target:
@@ -568,12 +576,13 @@ class UnitRun:
                 rec = self.run(p, 0, trace, "random")
                 if _success(rec):
                     succ += 1
+                    succeeded.append(_row(p, rec, 2))
                     self.repeats(p, rec, "random")
                 elif not outcomes.counted(rec):
-                    skipped.append({"point": p, "outcome": rec.get("outcome"), "phase": 2})
+                    skipped.append(_row(p, rec, 2))
                 else:
                     failed.append(p)
-                    fails.append({"point": p, "outcome": rec.get("outcome"), "phase": 2})
+                    fails.append(_row(p, rec, 2))
                     p2_fail += 1
                     if p2_fail >= int(pc["phase2_extra_failures"]):
                         exhausted = True
@@ -584,6 +593,8 @@ class UnitRun:
                 "successes": succ,
                 "failures": fails,
                 "skipped": skipped,
+                "succeeded": succeeded,
+                **extra,
                 "region_exhausted": exhausted,
             },
         )
@@ -617,7 +628,7 @@ class UnitRun:
         ok = _success(rec)
         if ok:
             self.repeats(p, rec, phase)
-        row = [{"point": p, "outcome": rec.get("outcome"), "phase": phase}]
+        row = [_row(p, rec, phase)]
         self._finish(
             unit_key,
             {
@@ -626,6 +637,7 @@ class UnitRun:
                 "successes": int(ok),
                 "failures": [] if ok or not outcomes.counted(rec) else row,
                 "skipped": [] if ok or outcomes.counted(rec) else row,
+                "succeeded": row if ok else [],
                 "region_exhausted": False,
             },
         )
@@ -649,6 +661,22 @@ class UnitRun:
         }
         self.ctx.writer().append(rec)
         self.ctx.done[unit_key] = rec
+
+
+def _row(p: Any, rec: dict[str, Any], phase: Any) -> dict[str, Any]:
+    """A unit record's line for one run: point, outcome, stage, cause, cause message, the run
+    record's key and the phase when given."""
+    out = {
+        "point": p,
+        "outcome": rec.get("outcome"),
+        "stage": rec.get("stage"),
+        "cause": rec.get("cause"),
+        "cause_message": rec.get("cause_message"),
+        "key": rec.get("key"),
+    }
+    if rec.get("point_invalid"):
+        out["point_invalid"] = True
+    return out if phase is None else {**out, "phase": phase}
 
 
 def calibrate(ctx_cfg: dict[str, Any], results: Path) -> dict[str, Any]:
