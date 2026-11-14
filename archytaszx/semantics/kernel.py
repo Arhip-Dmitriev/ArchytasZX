@@ -1472,6 +1472,7 @@ class _Lean:
         self.subs: list[str] = []
         self.imports: list[str] = []
         self.depth = 0
+        self.guards: dict[str, int] = {}
 
     def inducted(self, t: Theorem, x: Diagram, y: Diagram, binders: Sequence[str]) -> str | None:
         """A contraction step over boxed diagrams through the induction theorem of
@@ -1692,10 +1693,15 @@ class _Lean:
         proof = f"fun {' '.join(pb)} => {body}" if pb else body
         self.decls.append(f"theorem {lemma} : {head} :=\n  {proof}")
         at: dict[str, str] = {}
+        guard = (
+            clause.fresh if clause.c < 0 and clause.a == 1 and clause.fresh in self.guards else ""
+        )
         if clause.kind != DIMENSION:
             value = (
                 str(clause.c)
                 if clause.form == EQ
+                else f"({_var(guard)} - {-clause.c})"
+                if guard
                 else (f"({clause.a} * {_var(clause.fresh)} + {clause.c})")
             )
             at[clause.symbol] = value
@@ -1703,9 +1709,26 @@ class _Lean:
         applied = f"({lemma} {' '.join(args)})" if args else lemma
         binders = [_var(v) for v in t.variables]
         note = f"instantiation at {clause.text()}"
+        if guard:
+            inst_l = self.guarded(note, binders, guard, self.call(prem.lhs, at), self.call(t.lhs))
+            inst_r = self.guarded(note, binders, guard, self.call(prem.rhs, at), self.call(t.rhs))
+            return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
         inst_l = self.axiom("inst", note, binders, self.call(prem.lhs, at), self.call(t.lhs))
         inst_r = self.axiom("inst", note, binders, self.call(prem.rhs, at), self.call(t.rhs))
         return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
+
+    def guarded(self, note: str, binders: Sequence[str], v: str, lhs: str, rhs: str) -> str:
+        """An instantiation axiom over ``binders`` under the hypothesis ``lo <= v`` (``lo`` from
+        ``guards``), applied to the binders and ``h_v``."""
+        if lhs == rhs:
+            return "rfl"
+        statement = f"∀ ({' '.join(binders)} : Nat), {self.guards[v]} ≤ {_var(v)} → {lhs} = {rhs}"
+        name = self.stated.get(statement)
+        if name is None:
+            name = self.fresh("inst")
+            self.stated[statement] = name
+            self.decls.append(f"/-- {_comment(note)} -/\naxiom {name} : {statement}")
+        return f"({name} {' '.join(binders)} h_{_var(v)})"
 
     def congr(self, t: Theorem) -> str:
         """The premise under a context axiom, between plug axioms onto both sides."""
@@ -1826,9 +1849,12 @@ def lean(
     describe: Callable[[Diagram], str] | None = None,
     *,
     semantic: bool = True,
+    guards: Mapping[str, int] | None = None,
 ) -> str:
     """Lean 4 source stating and proving ``theorem`` (see the module docstring); ``describe``
-    gives each diagram's doc comment, ``semantic=False`` forces the opaque export."""
+    gives each diagram's doc comment, ``semantic=False`` forces the opaque export; ``guards``
+    (symbol to least value ``lo``) adds the hypotheses ``lo ≤ n`` to the opaque statement and to
+    the instantiation axioms of substitutions ``s = n - c``."""
     if isinstance(theorem, Symbolic):
         if name == "main":
             return theorem.source
@@ -1849,7 +1875,7 @@ def lean(
         raise KernelError(f"lean takes a Theorem, got {type(theorem).__name__}")
     if theorem.domain:
         return _lean_restricted(theorem, name, describe, semantic)
-    if semantic:
+    if semantic and not guards:
         source: str | None = None
         try:
             source = lean_net.export(theorem, name, describe)
@@ -1864,15 +1890,18 @@ def lean(
         if source is not None:
             return source
     out = _Lean(describe or _summary, semantic)
+    out.guards = dict(guards or {})
     if theorem.inference.kind == "induction":
         out.induction(theorem, name)
     else:
         binders = [_var(v) for v in theorem.variables]
         body = out.term(theorem)
         stmt = f"{out.call(theorem.lhs)} = {out.call(theorem.rhs)}"
+        hyps = "".join(f"{lo} ≤ {_var(v)} → " for v, lo in out.guards.items())
+        names = [f"h_{_var(v)}" for v in out.guards]
         if binders:
-            head = f"∀ ({' '.join(binders)} : Nat), {stmt}"
-            body = f"fun {' '.join(binders)} => {body}"
+            head = f"∀ ({' '.join(binders)} : Nat), {hyps}{stmt}"
+            body = f"fun {' '.join([*binders, *names])} => {body}"
         else:
             head = stmt
         out.decls.append(f"theorem {name} : {head} :=\n  {body}")
@@ -2097,6 +2126,15 @@ def _lean_restricted(
     the theorem about the restricted pair with the restriction in its header."""
     from archytaszx.semantics.lean_restrict import RestrictUnsupported, corollary, header
 
+    guards = _guards(theorem)
+    if guards is not None:
+        bare = Theorem(
+            _TOKEN, theorem.lhs, theorem.rhs, theorem.inference, theorem.assumptions, floors=False
+        )
+        held = ", ".join(f"{v} >= {lo}" for v, lo in guards.items())
+        text = ", ".join(c.text() for c in theorem.domain)
+        note = f"for {held}: {text} by instantiation axioms under the hypotheses {held}"
+        return header(lean(bare, name, describe, semantic=semantic, guards=guards), note)
     base = theorem
     while base.inference.kind == "subst":
         base = base.inference.premises[0]
@@ -2115,6 +2153,27 @@ def _lean_restricted(
     if shifted is not None:
         return header(shifted, _pair_note(restriction) + f"; {_lifted_note(restriction)}")
     return header(source, _pair_note(restriction) + _unlinked(restriction))
+
+
+def _guards(theorem: Theorem) -> dict[str, int] | None:
+    """Each fresh symbol ``n`` with its least value ``-c`` when the theorem has no restricted
+    pair and every clause of its domain is a multiplicity shift ``s = n + c`` with ``c < 0``,
+    ``n`` one of its variables; else None."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT
+
+    if theorem.origin is not None or not theorem.domain:
+        return None
+    out: dict[str, int] = {}
+    for c in theorem.domain:
+        if not (c.kind == MULTIPLICITY and c.form == SHIFT and c.a == 1 and c.c < 0):
+            return None
+        if c.fresh not in theorem.variables:
+            return None
+        low = int(-c.c)
+        if c.fresh_domain is not None and c.fresh_domain.lo is not None:
+            low = max(low, math.ceil(c.fresh_domain.lo))
+        out[c.fresh] = max(out.get(c.fresh, 0), low)
+    return out
 
 
 def _unlinked(restriction: Restriction) -> str:

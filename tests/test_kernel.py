@@ -363,3 +363,28 @@ def test_a_box_negative_at_zero_holds_from_its_floor() -> None:
         assert "n >= 1" in derived.statement()
     with pytest.raises(K.KernelError, match="n >= 1"):
         K._refuse_on("induction", (theorem,), frozenset({"n"}))
+
+
+def _shifted_source() -> str:
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.decide import decide_equal
+
+    left, right = parse_dsl(_SHORT), parse_dsl(_LONG)
+    decision = decide_equal(left, right, samples=[], use_symbolic=False)
+    return K.lean(K.from_decision(decision, left, right))
+
+
+def test_a_negative_offset_subst_is_stated_for_n_at_least_one() -> None:
+    """The n - 1 chain theorem exports over its own diagrams under 1 ≤ n, the family theorem
+    applied at n - 1 between instantiation axioms under that hypothesis."""
+    source = _shifted_source()
+    assert K.UNLINKED not in source
+    assert "theorem main : ∀ (n : Nat), 1 ≤ n → " in source
+    assert "fun n h_n =>" in source
+    assert "+ -1" not in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_checks_a_negative_offset_subst(tmp_path: object) -> None:
+    ok, output = check(_shifted_source(), f"{tmp_path}/shifted.lean")
+    assert ok, output
