@@ -17,8 +17,7 @@ export to Lean 4.
 A :class:`Theorem` states ``lhs = rhs`` for diagrams, every free multiplicity universally
 quantified over the naturals; for diagrams with a discard, equality of their CPMs. A box whose
 multiplicity is negative below ``x = v`` puts the side clause ``x >= v`` in the theorem's
-``domain``; one negative under every floor of one symbol is refused. Only the rules below
-construct one:
+``domain``; one negative under every floor of one symbol is refused. Only these rules build one:
 
 * :func:`refl` -- ``d = d``;
 * :func:`rule` -- ``d = d'`` for one recorded rewrite step, re-applied by the engine at a
