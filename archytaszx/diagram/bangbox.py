@@ -2541,6 +2541,111 @@ def peel_one(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> Peel
     return PeelResult(working, copy_node_ids, separable)
 
 
+def peel_aligned(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> PeelResult:
+    """Peel copy j off every box of ``box_id``'s alignment group: j the first copy when a chain
+    member :func:`peels_first` and ``last`` is False, else the last; the wires between the
+    residual boxes stay aligned and the peeled copies are wired copy to copy."""
+    working = diagram.copy()
+    members = aligned_members(working, box_id)
+    if len(members) < 2:
+        raise BangBoxGrammarError(f"box {box_id!r} is aligned to no other box")
+    boxes = [working.bang_boxes[m] for m in members]
+    for box in boxes:
+        if box.cyclic or box.is_tree or box.is_pair or box.is_fed or _pairs_of(working, box.id):
+            raise BangBoxGrammarError(f"aligned box {box.id!r} has no joint peel")
+        if box.links and zip_child(working, box) is not None:
+            raise BangBoxGrammarError(f"aligned box {box.id!r} has links through a child box")
+        if box.multiplicity != boxes[0].multiplicity:
+            raise BangBoxGrammarError(f"aligned boxes {members!r} differ in count")
+    chains = [b for b in boxes if b.links]
+    first = not last and bool(chains) and all(peels_first(b) for b in chains)
+    predecessor = _predecessor(boxes[0].multiplicity)
+    root = members[0]
+    wires = _member_wires(working, members)
+    for wire, _, _ in wires:
+        working.remove_wire(wire.a, wire.b)
+    before = frozenset(working.nodes)
+    maps: dict[BangBoxId, dict[NodeId, NodeId]] = {}
+    for box in boxes:
+        working.set_bang_box_extension(box.id, align=None)
+        box = working.bang_boxes[box.id]
+        if box.is_extended:
+            maps[box.id] = _peel_extended(
+                working, box, predecessor.to_sympy(), force_last=not first and peels_first(box)
+            )
+        else:
+            maps[box.id] = _peel_node_scope(working, box, first)
+        working.set_bang_box_multiplicity(box.id, predecessor)
+    for wire, a, b in wires:
+        working.add_wire(wire.a, wire.b)
+        working.add_wire(_moved(wire.a, maps[a]), _moved(wire.b, maps[b]))
+    for member in members[1:]:
+        working.set_bang_box_extension(member, align=root)
+    boxed = frozenset(n for m in members for n in working.bang_boxes[m].node_scope)
+    copies = frozenset(working.nodes) - before - boxed
+    return PeelResult(working, copies, True)
+
+
+def split_power(diagram: Diagram, box_id: BangBoxId) -> tuple[Diagram, tuple[BangBoxId, ...]]:
+    """A box of multiplicity ``b^(e + 1)`` with index ``v`` split into ``b`` boxes of
+    multiplicity ``b^e``, box c reading ``v`` as ``v_c + c b^e`` (``v_0 = v``), each with a
+    copy of the scope and the boxes below it; the boxes in order."""
+    working = diagram.copy()
+    box = working.bang_boxes.get(box_id)
+    if box is None:
+        raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
+    expr = sp.powsimp(sp.expand(box.multiplicity.to_sympy()), force=True)
+    if not (expr.is_Pow and expr.base.is_Integer and int(expr.base) >= 2):
+        raise BangBoxGrammarError(f"box {box_id!r} has no power multiplicity")
+    constant = sp.expand(expr.exp).as_coeff_Add()[0]
+    if not (constant.is_Integer and constant >= 1):
+        raise BangBoxGrammarError(f"box {box_id!r}: the exponent is not known to be at least 1")
+    if (
+        not box.is_node_scope
+        or box.links
+        or box.copy_scalar is not None
+        or box.align is not None
+        or box.is_tree
+        or box.is_fed
+        or box.is_pair
+        or _pairs_of(working, box_id)
+        or any(b.align == box_id or b.feed == box_id for b in working.bang_boxes.values())
+    ):
+        raise BangBoxGrammarError(f"box {box_id!r} is not a plain node-scope box")
+    below = _descendants_of(working, box_id)
+    if box.index is not None and any(box.index in b.multiplicity.free_symbols for b in below):
+        raise BangBoxGrammarError(f"a box below {box_id!r} reads its index in its multiplicity")
+    base = int(expr.base)
+    half = Mult._from_expr(sp.expand(expr.base ** (expr.exp - 1)))
+    sym = None
+    if box.index is not None:
+        sym = _symbol_in(working, box.node_scope, None, box.index)
+    taken = _existing_symbol_names(working) | set(index_symbols(working))
+    made: list[BangBoxId] = []
+    for c in range(base - 1, 0, -1):
+        before = set(working.bang_boxes)
+        plain = working.bang_boxes[box_id]
+        id_map = _peel_node_scope(working, plain, False)
+        copy = frozenset(id_map.values())
+        fresh = None
+        if box.index is not None:
+            fresh = _fresh_name(box.index, taken)
+            taken.add(fresh)
+            if sym is not None:
+                image = sp.Symbol(fresh, **sym.assumptions0) + c * half.to_sympy()
+                for node_id in sorted(copy):
+                    phase = working.nodes[node_id].phase
+                    if phase is not None and box.index in phase.free_symbols:
+                        working.set_phase(node_id, phase.substitute({box.index: image}))
+        new_id = working.add_bang_box(half, node_scope=copy, parent=box.parent, index=fresh)
+        for child in sorted(set(working.bang_boxes) - before - {new_id}):
+            if working.bang_boxes[child].parent == box.parent:
+                working.set_bang_box_extension(child, parent=new_id)
+        made.append(new_id)
+    working.set_bang_box_multiplicity(box_id, half)
+    return working, (box_id, *reversed(made))
+
+
 def index_owners(diagram: Diagram, name: str) -> tuple[BangBoxId, ...]:
     """The boxes whose multiplicity carries ``name``, by id; with more than one, the pair boxes
     of another such box are left out."""
@@ -2586,7 +2691,16 @@ def peel_owners(
                 )
             above = diagram.bang_boxes[above].parent
     working, copies, separable = diagram, frozenset[NodeId](), True
+    done: set[BangBoxId] = set()
     for box_id in owners:
+        if box_id in done:
+            continue
+        group = aligned_members(working, box_id) if working.bang_boxes[box_id].is_node_scope else []
+        if len(group) > 1 and set(group) <= set(owners):
+            done |= set(group)
+            result = peel_aligned(working, box_id, last=bool(set(group) & last))
+            working, copies = result.diagram, copies | result.copy_node_ids
+            continue
         result = peel_one(working, box_id, last=box_id in last)
         working, copies = result.diagram, copies | result.copy_node_ids
         separable = separable and result.separable

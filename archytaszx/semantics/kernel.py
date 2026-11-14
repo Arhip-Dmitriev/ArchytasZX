@@ -479,6 +479,23 @@ def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
     raise KernelError("box_split: the diagram is no boxed spider split of the other")
 
 
+@_trace.traced("kernel.power_split")
+def power_split(d: Diagram, split: Diagram) -> Theorem:
+    """``d = split`` when ``split`` is :func:`~archytaszx.diagram.bangbox.split_power` of one
+    box of ``d``: its ``b^(e + 1)`` copies as ``b`` boxes of ``b^e`` copies, box c reading the
+    copy index as ``index + c b^e``."""
+    from archytaszx.diagram.bangbox import BangBoxError, split_power
+
+    for box_id in sorted(d.bang_boxes):
+        try:
+            candidate, _boxes = split_power(d, box_id)
+        except BangBoxError:
+            continue
+        if _same(candidate, split):
+            return Theorem(_TOKEN, d, split, Inference("power_split", data={"box": box_id}))
+    raise KernelError("power_split: the diagram is no power box split of the other")
+
+
 @_trace.traced("kernel.leg_move")
 def leg_move(d: Diagram, moved: Diagram, copy: frozenset[NodeId]) -> Theorem:
     """``d = moved`` when ``moved`` is one of
@@ -1418,11 +1435,12 @@ class _Lean:
                 return proved
             note = "path sums reduce to one form"
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
-        if inf.kind in ("repeel", "box_split", "leg_move"):
+        if inf.kind in ("repeel", "box_split", "leg_move", "power_split"):
             note = {
                 "repeel": "two joint peels of one box family",
                 "box_split": "a boxed spider unfused in every copy",
                 "leg_move": "legs moved between two wired spiders of one type",
+                "power_split": "a box of b^(e + 1) copies split into b boxes of b^e copies",
             }[inf.kind]
             return self.axiom(inf.kind, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind in ("algebraic", "contraction"):
