@@ -1131,7 +1131,8 @@ def _next_copy_dim(dim: Dim, index: str | None) -> Dim | None:
 def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     """Every chain link joins two resolvable ports of equal dimension and opposite direction;
     an open chain's link ports are each wired outside the scope or a boundary slot, a cyclic
-    chain's ``p`` is wired to its ``q``; an index symbol is read only inside its box's scope."""
+    chain's ``p`` is wired to its ``q``; an index symbol is read only inside the scope of some box
+    binding it."""
     if not diagram.bang_boxes:
         return
     partner: dict[PortRef, PortRef] = {}
@@ -1139,6 +1140,17 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
         partner[wire.a] = wire.b
         partner[wire.b] = wire.a
     boundary = set(diagram.boundary_inputs) | set(diagram.boundary_outputs)
+    binders: dict[str, set[NodeId]] = {}
+    for bid, b in diagram.bang_boxes.items():
+        paired_scope = {
+            nid
+            for other in diagram.bang_boxes.values()
+            if other.pair_of == bid
+            for nid in other.node_scope
+        }
+        for name in (b.index, b.level, b.position):
+            if name is not None:
+                binders.setdefault(name, set()).update(b.node_scope, paired_scope)
     for problem in zip_wires(diagram)[1]:
         issues.append(ValidationIssue(kind=IssueKind.BANGBOX_LINK_INADMISSIBLE, message=problem))
     for box_id, box in sorted(diagram.bang_boxes.items()):
@@ -1187,14 +1199,8 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
         for name in (box.index, box.level, box.position):
             if name is None:
                 continue
-            paired = frozenset(
-                nid
-                for other in diagram.bang_boxes.values()
-                if other.pair_of == box_id
-                for nid in other.node_scope
-            )
             for node_id, node in sorted(diagram.nodes.items()):
-                if node_id in box.node_scope or node_id in paired or node.phase is None:
+                if node_id in binders[name] or node.phase is None:
                     continue
                 if name in node.phase.free_symbols:
                     refuse(

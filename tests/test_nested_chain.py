@@ -660,3 +660,42 @@ def test_a_fed_box_nested_under_a_live_box_agrees_in_either_order_and_with_a_pee
     _peel_agrees(d, int(parent), first, expected)
     with pytest.raises(BangBoxGrammarError):
         peel_one(d, tree_id)
+
+
+NESTED_INDEX = """graph: 2 nodes, 1 wires, 0 inputs -> 1 output
+  scalar: 1
+  parameters: none
+  nodes:
+    n0  Z  in: []  out: [d]  boxes: !0
+    n1  Z  in: [d]  out: [d]  phase[d]: {1: j/8} turns  boxes: !0 > !1
+  wires:
+    n0.out0 -- n1.in0
+  inputs: []
+  outputs: [n1.out0]
+  bang boxes:
+    !0  x l + 1  nodes: n0, n1
+      !1  x n + 1  nodes: n1  index: j"""
+"""An indexed box reading its index, under a live box."""
+
+
+def test_sibling_copies_of_an_indexed_box_share_its_index_name() -> None:
+    from archytaszx.diagram.graph import BangBoxId
+    from archytaszx.diagram.validate import IssueKind, validate
+    from archytaszx.repl.parser import ParseDomainError, parse_listing
+
+    d = parse_listing(NESTED_INDEX)
+    for got in (peel_one(d, BangBoxId(0)).diagram, instantiate_symbol(d, "l", 1)):
+        assert len([b for b in got.bang_boxes.values() if b.index == "j"]) == 2
+        assert not validate(got).errors
+        reader = next(n for n in got.nodes.values() if n.phase is not None)
+        stray = next(
+            nid
+            for nid in got.nodes
+            if all(nid not in b.node_scope for b in got.bang_boxes.values() if b.index == "j")
+        )
+        got.set_phase(stray, reader.phase)
+        kinds = [issue.kind for issue in validate(got).errors]
+        assert IssueKind.BANGBOX_INDEX_OUT_OF_SCOPE in kinds
+    stray_line = "out: [d]  phase[d]: {1: j/8} turns  boxes: !0\n"
+    with pytest.raises(ParseDomainError, match="outside its scope"):
+        parse_listing(NESTED_INDEX.replace("out: [d]  boxes: !0\n", stray_line))
