@@ -221,11 +221,29 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     tree (not just at the top level) is rejected outright, since this module tracks
     scalars exactly, never approximately.
     """
+    hit = _NORMALIZED.get(expr)
+    if hit is not None:
+        return hit
     if expr.atoms(sp.Float):
         raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
     normalized = _rename_indices(sp.powsimp(sp.expand(cyclotomic_trig(expr)), force=True))
     _check_scalar_domain(normalized)
+    if len(_NORMALIZED) >= _MEMO_CAP:
+        _NORMALIZED.clear()
+    _NORMALIZED[expr] = normalized
     return cast(sp.Expr, normalized)
+
+
+_NORMALIZED: dict[sp.Expr, sp.Expr] = {}
+"""Results of :func:`_normalize` keyed by its argument."""
+
+_SIMPLIFIED: dict[tuple[object, ...], object] = {}
+"""Results of :meth:`Scalar.simplify` (a Scalar, or the budget error's message) keyed by the
+expression, step budget, ranges and ``enumerate_concrete``."""
+
+_MEMO_CAP = 1 << 13
+"""The most entries :data:`_NORMALIZED` or :data:`_SIMPLIFIED` holds; a full table is emptied
+before the next entry."""
 
 
 _Limit = tuple[sp.Symbol, sp.Expr, sp.Expr]
@@ -526,12 +544,9 @@ def _rename_indices(expr: sp.Expr) -> sp.Expr:
                 body = body.xreplace({var: temp})
                 limits.append((temp, lower, upper))
             return sp.Sum(stage_a(body, level + len(node.limits)), *limits)
-        if not node.args:
+        if not node.args or not node.has(sp.Sum):
             return node
-        new_args = list(node.args)
-        for position in sorted(range(len(node.args)), key=lambda i: sp.srepr(node.args[i])):
-            new_args[position] = stage_a(node.args[position], level)
-        return cast(sp.Expr, node.func(*new_args))
+        return cast(sp.Expr, node.func(*(stage_a(arg, level) for arg in node.args)))
 
     staged = stage_a(expr, 0)
     free = [
@@ -1039,7 +1054,7 @@ def _split_radix_deltas(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> s
         return cast(sp.Expr, sp.Sum(_split_radix_deltas(expr.function, inner), *expr.limits))
     if isinstance(expr, ModDelta):
         return _radix_split(expr, ranges) or expr
-    if not expr.args:
+    if not expr.args or not expr.has(ModDelta):
         return expr
     return cast(sp.Expr, expr.func(*(_split_radix_deltas(arg, ranges) for arg in expr.args)))
 
@@ -1708,6 +1723,8 @@ def _close_all(
 ) -> tuple[sp.Expr, bool]:
     """Close every closable Sum bottom-up, sizing free indices by ``ranges``; reports whether
     anything changed."""
+    if not expr.has(sp.Sum):
+        return expr, False
     changed = False
     inner = ranges
     if isinstance(expr, sp.Sum):
@@ -1934,14 +1951,32 @@ class Scalar:
     ) -> Scalar:
         """Close every index sum the identities reach and put the remaining deltas in echelon form;
         ``ranges`` sizes free indices; ``enumerate_concrete`` False leaves a stuck concrete sum
-        unexpanded."""
+        unexpanded; memoised in :data:`_SIMPLIFIED`."""
         known = {_index_symbol(name): dim.to_sympy() for name, dim in (ranges or {}).items()}
+        key = (self._expr, max_steps, tuple(known.items()), enumerate_concrete)
+        hit = _SIMPLIFIED.get(key)
+        if isinstance(hit, Scalar):
+            return hit
+        if isinstance(hit, str):
+            raise ScalarBudgetError(hit)
         token = _ENUMERATE.set(enumerate_concrete)
         try:
             simplified = _simplify_expr(_rename_indices(self._expr), [max_steps], known)
+        except ScalarBudgetError as exc:
+            self._remember(key, str(exc))
+            raise
         finally:
             _ENUMERATE.reset(token)
-        return Scalar(_rename_indices(simplified))
+        result = Scalar(_rename_indices(simplified))
+        self._remember(key, result)
+        return result
+
+    @staticmethod
+    def _remember(key: tuple[object, ...], value: object) -> None:
+        """Store ``value`` in :data:`_SIMPLIFIED` under ``key``."""
+        if len(_SIMPLIFIED) >= _MEMO_CAP:
+            _SIMPLIFIED.clear()
+        _SIMPLIFIED[key] = value
 
     def with_dimension_floors(self, floors: Mapping[str, int]) -> Scalar:
         """This scalar with every ``[s | c]`` set to zero, ``c`` a nonzero integer and ``s`` a
