@@ -2175,17 +2175,19 @@ def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     _merge_zipped(diagram, [*holders, copy] if first else [copy, *holders])
 
 
-def _peel_extended(diagram: Diagram, box: BangBox, last: sp.Expr) -> dict[NodeId, NodeId]:
+def _peel_extended(
+    diagram: Diagram, box: BangBox, last: sp.Expr, force_last: bool = False
+) -> dict[NodeId, NodeId]:
     """Peel the last copy (index ``last``) off a chain, indexed or copy-scalar box: the residual
     box's ``p`` ports wired to the copy's ``q`` ports and the copy's ``p`` ports to the tail.
-    A chain that :func:`peels_first` loses its first copy instead (index 0, the residual
-    reading its index as ``index + 1``): the copy's ``q`` ports wired to the head and its ``p``
-    ports to the residual's ``q``. Returns the copy's node map."""
+    A chain that :func:`peels_first` loses its first copy instead, unless ``force_last`` (index
+    0, the residual reading its index as ``index + 1``): the copy's ``q`` ports wired to the
+    head and its ``p`` ports to the residual's ``q``. Returns the copy's node map."""
     if box.cyclic or box.is_tree:
         raise BangBoxGrammarError(f"cyclic chain or tree box {box.id!r} has no peel_one")
     if box.is_pair:
         raise BangBoxGrammarError(f"pair box {box.id!r} has no peel_one")
-    first = peels_first(box)
+    first = peels_first(box) and not force_last
     pairs = _pairs_of(diagram, box.id)
     if pairs and (first or any(_children_of(diagram, p.id) for p in pairs)):
         raise BangBoxGrammarError(f"box {box.id!r} with these pair boxes has no peel_one")
@@ -2484,19 +2486,22 @@ class PeelResult:
     separable: bool
 
 
-def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
+def peel_one(diagram: Diagram, box_id: BangBoxId, *, last: bool = False) -> PeelResult:
     """Split one copy off a bang box: multiplicity ``m`` becomes ``m - 1`` beside one bare copy.
 
     The peeled copy is laid out after the box's own boundary block, so instantiating the
     residual box at ``k`` reproduces exactly what instantiating the original at ``k + 1``
     would: :func:`instantiate_symbol` builds its copies copy-major from the same splice.
-    Requires a multiplicity whose constant term is at least one.
+    Requires a multiplicity whose constant term is at least one. With ``last``, a chain that
+    :func:`peels_first` loses its last copy instead.
     """
     working = diagram.copy()
     box = working.bang_boxes.get(box_id)
     if box is None:
         raise BangBoxGrammarError(f"no such bang box: {box_id!r}")
     zipped = box.is_node_scope and bool(box.links) and zip_child(working, box) is not None
+    if last and (zipped or box.is_tree or not box.is_extended):
+        raise BangBoxGrammarError(f"box {box_id!r} has no last-copy peel")
     if box.is_node_scope and (
         _zip_chain(working, box_id) is not None
         or (box.parent is not None and zip_child(working, working.bang_boxes[box.parent]))
@@ -2514,7 +2519,7 @@ def peel_one(diagram: Diagram, box_id: BangBoxId) -> PeelResult:
     elif zipped:
         _peel_zipped(working, box, predecessor.to_sympy())
     elif box.is_extended:
-        _peel_extended(working, box, predecessor.to_sympy())
+        _peel_extended(working, box, predecessor.to_sympy(), last)
     elif box.is_node_scope:
         _peel_node_scope(working, box)
     else:
@@ -2542,14 +2547,17 @@ def index_owners(diagram: Diagram, name: str) -> tuple[BangBoxId, ...]:
     return tuple(b for b in owners if diagram.bang_boxes[b].pair_of not in owners)
 
 
-def peel_owners(diagram: Diagram, name: str) -> PeelResult:
-    """:func:`peel_one` on every box of :func:`index_owners` in id order, the copies joined;
-    raises when there is none or one of them lies inside another."""
+def peel_owners(
+    diagram: Diagram, name: str, *, last: frozenset[BangBoxId] = frozenset()
+) -> PeelResult:
+    """:func:`peel_one` on every box of :func:`index_owners` in id order, the copies joined,
+    the boxes of ``last`` peeling their last copy; raises when there is none or one of them
+    lies inside another."""
     owners = index_owners(diagram, name)
     if not owners:
         raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
     if len(owners) == 1:
-        return peel_one(diagram, owners[0])
+        return peel_one(diagram, owners[0], last=owners[0] in last)
     for box_id in owners:
         above = diagram.bang_boxes[box_id].parent
         while above is not None:
@@ -2560,7 +2568,7 @@ def peel_owners(diagram: Diagram, name: str) -> PeelResult:
             above = diagram.bang_boxes[above].parent
     working, copies, separable = diagram, frozenset[NodeId](), True
     for box_id in owners:
-        result = peel_one(working, box_id)
+        result = peel_one(working, box_id, last=box_id in last)
         working, copies = result.diagram, copies | result.copy_node_ids
         separable = separable and result.separable
     return PeelResult(working, copies, separable)

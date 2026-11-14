@@ -395,6 +395,41 @@ def path_sum(a: Diagram, b: Diagram) -> Theorem:
     return Theorem(_TOKEN, a, b, Inference("path_sum"))
 
 
+@_trace.traced("kernel.repeel")
+def repeel(
+    source: Diagram,
+    index: str,
+    a_last: frozenset[BangBoxId] = frozenset(),
+    b_last: frozenset[BangBoxId] = frozenset(),
+) -> Theorem:
+    """``a = b`` for ``a`` and ``b`` two joint peels of ``source``'s boxes carrying ``index``
+    (:func:`~archytaszx.diagram.bangbox.peel_owners`), the boxes of ``a_last`` and of
+    ``b_last`` peeling their last copy."""
+    from archytaszx.diagram.bangbox import BangBoxError, peel_owners
+
+    try:
+        a = peel_owners(source, index, last=a_last).diagram
+        b = peel_owners(source, index, last=b_last).diagram
+    except BangBoxError as exc:
+        raise KernelError(f"repeel: {exc}") from exc
+    data: dict[str, object] = {"source": source, "index": index}
+    return Theorem(_TOKEN, a, b, Inference("repeel", data=data))
+
+
+@_trace.traced("kernel.box_split")
+def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
+    """``d = split`` when ``split`` is one of
+    :func:`~archytaszx.semantics.induction.boxed_splits` of ``d`` and ``copy``: a boxed spider
+    unfused, in each of its boxes, into itself and a phaseless leaf (spider fusion in every
+    copy)."""
+    from archytaszx.semantics.induction import boxed_splits
+
+    for candidate, _copy in boxed_splits(d, copy):
+        if _same(candidate, split):
+            return Theorem(_TOKEN, d, split, Inference("box_split"))
+    raise KernelError("box_split: the diagram is no boxed spider split of the other")
+
+
 @_trace.traced("kernel.w_fusion")
 def w_fusion(d: Diagram) -> Theorem:
     """``d = d'`` for ``d'`` the :func:`~archytaszx.semantics.induction.w_fused` image of ``d``:
@@ -1301,6 +1336,13 @@ class _Lean:
                 return proved
             note = "path sums reduce to one form"
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
+        if inf.kind in ("repeel", "box_split"):
+            note = (
+                "two joint peels of one box family"
+                if inf.kind == "repeel"
+                else "a boxed spider unfused in every copy"
+            )
+            return self.axiom(inf.kind, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind in ("algebraic", "contraction"):
             note = (
                 "equal values in a checked number field"

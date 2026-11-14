@@ -285,6 +285,12 @@ def induction_hypothesis(diagram: Diagram, index: str, step_symbol: str) -> Diag
     return _with_scalar_index(renamed, index, Mult(step_symbol))
 
 
+def induction_renamed(diagram: Diagram, index: str, step_symbol: str) -> Diagram:
+    """``diagram`` at ``step_symbol + 1``, unpeeled, scalar included."""
+    value = Mult(step_symbol) + 1
+    return _with_scalar_index(rename_multiplicity(diagram, index, value), index, value)
+
+
 def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagram | None:
     """``diagram`` at ``step_symbol + 1`` with one copy peeled off its one box carrying the
     index, unpeeled when that box's multiplicity has no positive constant term (``b^(k + 1)``)

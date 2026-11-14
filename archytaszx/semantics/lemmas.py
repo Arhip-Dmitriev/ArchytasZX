@@ -214,13 +214,22 @@ def proved(entry: Lemma) -> object:
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
+    if entry.name in _PROVING:
+        raise LemmaError(f"lemma {entry.name} is being proved")
     if entry.name not in _PROVED:
-        left, right = sides(entry)
-        decision = decide_equal(left, right, samples=[])
-        if decision.verdict is not EqualityVerdict.EQUAL:
-            raise LemmaError(f"lemma {entry.name} is not proved: {decision.verdict.value}")
-        _PROVED[entry.name] = kernel.from_decision(decision, left, right)
+        _PROVING.add(entry.name)
+        try:
+            left, right = sides(entry)
+            decision = decide_equal(left, right, samples=[])
+            if decision.verdict is not EqualityVerdict.EQUAL:
+                raise LemmaError(f"lemma {entry.name} is not proved: {decision.verdict.value}")
+            _PROVED[entry.name] = kernel.from_decision(decision, left, right)
+        finally:
+            _PROVING.discard(entry.name)
     return _PROVED[entry.name]
+
+
+_PROVING: set[str] = set()
 
 
 def _substituted(
@@ -360,14 +369,103 @@ def rewrite(diagram: Diagram, entry: Lemma) -> object | None:
     return None
 
 
+def rewrite_all(diagram: Diagram) -> object:
+    """``diagram = diagram'`` by :func:`rewrite` with each library lemma in turn, once each
+    (reflexivity when none applies)."""
+    from archytaszx.semantics import kernel
+
+    theorem = kernel.refl(diagram)
+    for entry in LIBRARY:
+        if entry.name in _PROVING:
+            continue
+        try:
+            step = cast("kernel.Theorem | None", rewrite(theorem.rhs, entry))
+        except LemmaError:
+            continue
+        if step is not None:
+            theorem = kernel.trans(theorem, step)
+    return theorem
+
+
+def _owner_cores(diagram: Diagram, index: str) -> frozenset[NodeId] | None:
+    """The union of the chain cores (scope, and the nodes off it reached from its link-in ends
+    without passing a scope node) of every chain box of ``diagram`` carrying ``index``; None
+    when there is none or a core's head meets its tail."""
+    from archytaszx.diagram.bangbox import index_owners
+    from archytaszx.semantics.induction import box_core
+
+    owners = [b for b in index_owners(diagram, index) if diagram.bang_boxes[b].links]
+    if not owners:
+        return None
+    region: frozenset[NodeId] = frozenset()
+    for owner in owners:
+        core = box_core(diagram, owner)
+        if core is None:
+            return None
+        region |= core
+    return region
+
+
+def close_by_cores(a: Diagram, b: Diagram, index: str) -> object:
+    """``a = b`` by an isomorphism, else by
+    :func:`~archytaszx.semantics.kernel.local_contraction` over the chain cores of the boxes
+    carrying ``index`` (:func:`_owner_cores`), read on ``a`` as an open diagram."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import _open_region
+
+    try:
+        return kernel.iso(a, b)
+    except kernel.KernelError:
+        pass
+    region_a, region_b = _owner_cores(a, index), _owner_cores(b, index)
+    if region_a is None or region_b is None:
+        raise kernel.KernelError("no chain cores carrying the index on both sides")
+    return kernel.local_contraction(a, region_a, b, region_b, _open_region(a, region_a))
+
+
+def close_with_lemmas(replaced: Diagram, target: Diagram, source: Diagram, index: str) -> object:
+    """``replaced = target`` (``target`` the joint peel of ``source``'s boxes carrying
+    ``index``): library lemmas rewritten on ``replaced`` (:func:`rewrite_all`), and on
+    ``target`` as it is or re-peeled with every first-peeling chain box peeling its last copy
+    (:func:`~archytaszx.semantics.kernel.repeel`), the two results closed by
+    :func:`close_by_cores`."""
+    from archytaszx.diagram.bangbox import index_owners, peels_first
+    from archytaszx.semantics import kernel
+
+    there = cast("kernel.Theorem", rewrite_all(replaced))
+    firsts = frozenset(b for b in index_owners(source, index) if peels_first(source.bang_boxes[b]))
+    starts = [kernel.refl(target)]
+    if firsts:
+        try:
+            moved = kernel.repeel(source, index, frozenset(), firsts)
+            if kernel._same(moved.lhs, target):
+                starts.insert(0, moved)
+        except kernel.KernelError:
+            pass
+    reasons: list[str] = []
+    for start in starts:
+        back = kernel.trans(start, cast("kernel.Theorem", rewrite_all(start.rhs)))
+        try:
+            middle = cast("kernel.Theorem", close_by_cores(there.rhs, back.rhs, index))
+        except kernel.KernelError as exc:
+            reasons.append(str(exc))
+            continue
+        return kernel.trans(there, kernel.trans(middle, kernel.symm(back)))
+    raise kernel.KernelError("lemma window: " + ("; ".join(reasons) or "no lemma applies"))
+
+
 __all__ = [
+    "AND_REGISTER",
     "CARRY_SHIFT",
     "LIBRARY",
     "Lemma",
     "LemmaError",
+    "close_by_cores",
+    "close_with_lemmas",
     "instance",
     "lemma",
     "proved",
     "rewrite",
+    "rewrite_all",
     "sides",
 ]

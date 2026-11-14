@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -56,6 +57,8 @@ from archytaszx.semantics.induction import (
     _copy_side,
     _extract,
     _fan_split,
+    copy_candidates,
+    expose_cut,
     fed_replacement,
     find_cut_region,
     lemma_decision,
@@ -69,6 +72,7 @@ from archytaszx.semantics.prove import (
     induction_base,
     induction_hypothesis,
     induction_offset,
+    induction_renamed,
     induction_successor,
     offset_symbol,
     peels_shifted,
@@ -321,6 +325,14 @@ def _windowed(
                         region = cut.region
                         break
                 if cut is None:
+                    later = copy_candidates(peeled, frozenset(own_k.nodes), copy)[1:]
+                    found = expose_cut(peeled, later, own_k) if later else None
+                    if found is not None:
+                        split, cut, base_copy, split_copy = found
+                        if split is not peeled:
+                            expose = _split_theorem(peeled, split, base_copy, split_copy)
+                        region = cut.region
+                if cut is None:
                     raise NoInductionTheorem("the residual is not the hypothesis through cut wires")
                 replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
             elif window == "region":
@@ -347,6 +359,22 @@ def _windowed(
                     replaced, other_peeled, rules, contract=contract, local=local, chain=chain
                 )
             except NoInductionTheorem as exc:
+                if tree_id is None and window == "cut":
+                    source = induction_renamed(other_s, index, k)
+                    step = _lemma_step(replaced, other_peeled, source, k, exc)
+                    return kernel.induction(
+                        start,
+                        goal,
+                        index,
+                        k,
+                        base,
+                        side,
+                        expose,
+                        region,
+                        step,
+                        cut=cut,
+                        offset=None if sym is None else str(sym),
+                    )
                 if tree_id is None:
                     raise
                 try:
@@ -374,11 +402,27 @@ def _windowed(
     raise NoInductionTheorem("; ".join(reasons))
 
 
+def _lemma_step(
+    replaced: Diagram, target: Diagram, source: Diagram, k: str, failed: NoInductionTheorem
+) -> kernel.Theorem:
+    """``replaced = target`` by :func:`~archytaszx.semantics.lemmas.close_with_lemmas`; raises
+    ``failed`` extended with why not."""
+    from archytaszx.semantics.lemmas import LemmaError, close_with_lemmas
+
+    try:
+        return cast("kernel.Theorem", close_with_lemmas(replaced, target, source, k))
+    except (kernel.KernelError, LemmaError, InductionDomainError) as exc:
+        raise NoInductionTheorem(f"{failed}; lemmas: {exc}") from exc
+
+
 def _split_theorem(
     peeled: Diagram, split: Diagram, copy: frozenset[NodeId], split_copy: frozenset[NodeId]
 ) -> kernel.Theorem:
     """``peeled = split`` for a :func:`~archytaszx.semantics.induction._fan_split` result: the
-    fusion of its two halves, reversed."""
+    fusion of its two halves, reversed; a boxed split by
+    :func:`~archytaszx.semantics.kernel.box_split`."""
+    if any(split_copy - copy <= box.node_scope for box in split.bang_boxes.values()):
+        return kernel.box_split(peeled, split, copy)
     (leaf,) = split_copy - copy
     (hub,) = frozenset(split.nodes) - frozenset(peeled.nodes) - {leaf}
     for match in SPIDER_FUSION.pattern.find_matches(split):
