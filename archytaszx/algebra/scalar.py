@@ -948,7 +948,7 @@ def _extreme(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr], top: bool) -> s
 def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
     """The radix candidates of a symbolic ``modulus = a * S`` (``a`` its integer factor, ``S``
     the rest): each non-integer factor, then ``c * S`` for each divisor ``c > 1`` of ``a`` below
-    ``a``."""
+    ``a``, then each divisor ``c > 1`` of ``a`` itself, largest first."""
     factors = sp.Mul.make_args(modulus)
     out = [f for f in factors if not f.is_Integer]
     whole = sp.Mul(*out)
@@ -956,14 +956,18 @@ def _radix_moduli(modulus: sp.Expr) -> list[sp.Expr]:
     if integer.is_Integer and int(integer) > 2:
         a = int(integer)
         out += [sp.Integer(c) * whole for c in range(2, a) if a % c == 0]
+    if integer.is_Integer and int(integer) > 1:
+        a = int(integer)
+        out += [sp.Integer(c) for c in range(a, 1, -1) if a % c == 0]
     return out
 
 
 def _radix_split(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr | None:
-    """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B|
-    < t``; when ``B`` reaches ``t`` (or ``-t``) only at one corner ``E`` of the ranges, as
-    ``([B == 0 mod t] - E) * [A == 0 mod P] + E * [A +- 1 == 0 mod P]``; when ``B`` reaches
-    ``t`` only at a corner ``H`` and ``-t`` only at a corner ``L``, as
+    """``[t*A + B == 0 mod P*t]`` (``t`` from :func:`_radix_moduli`, a symbolic factor or a
+    concrete low digit) as ``[B == 0 mod t] * [A == 0 mod P]`` when ``ranges`` keep ``|B| < t``;
+    when ``B`` reaches ``t`` (or ``-t``) only at one corner ``E`` of the ranges, as ``([B == 0
+    mod t] - E) * [A == 0 mod P] + E * [A +- 1 == 0 mod P]``; when ``B`` reaches ``t`` only at
+    a corner ``H`` and ``-t`` only at a corner ``L``, as
     ``([B == 0 mod t] - H - L) * [A == 0 mod P] + H * [A + 1 == 0 mod P] + L * [A - 1 == 0 mod
     P]``; else None."""
     frequency, modulus = delta.args

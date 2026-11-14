@@ -410,3 +410,17 @@ def test_mixed_power_of_two_moduli_close() -> None:
     for values in ((0, 0, 1, 0), (1, 0, 0, 1), (0, 1, 0, 1), (1, 1, 1, 0), (0, 0, 0, 1)):
         at = {**dict(zip((i0, i1, i2, i5), values, strict=True)), k: 0}
         assert split.xreplace(at) == whole.xreplace(at)
+
+
+def test_a_concrete_low_digit_splits_off_a_symbolic_modulus() -> None:
+    """``Sum_{k0 < 2^k} [i7 - k0 == 0 mod 2^(k+1)] [2*i0 + 4*i3 - 4*k0 - 2 == 0 mod 2^(k+2)]``
+    closes to ``[2*i0 + 2 == 0 mod 4] [i3 - i7 == 0 mod 2^(k+1)]``."""
+    from archytaszx.algebra.scalar import _index_symbol
+    from archytaszx.diagram.bangbox import Mult
+
+    k = Mult.symbol("k").to_sympy()
+    ranges = {"_i0": Dim(2), "_i3": Dim.from_sympy(2**k), "_i7": Dim.from_sympy(2 * 2**k)}
+    i0, i3, i7, k0 = (_index_symbol(n) for n in ("_i0", "_i3", "_i7", "_k0"))
+    body = ModDelta(i7 - k0, 2 * 2**k) * ModDelta(2 * i0 + 4 * i3 - 4 * k0 - 2, 4 * 2**k)
+    closed = Scalar(sp.Sum(body, (k0, 0, 2**k - 1))).simplify(ranges=ranges)
+    assert closed == Scalar(ModDelta(2 * i0 + 2, 4) * ModDelta(i3 - i7, 2 * 2**k))
