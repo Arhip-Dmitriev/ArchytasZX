@@ -217,7 +217,7 @@ def qasm_and_phase(qc: Any) -> tuple[str, float]:
     phase (QASM 2 has none)."""
     from qiskit import qasm2, transpile
 
-    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0)
+    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0, qubits_initially_zero=False)
     return exact_angles(qasm2.dumps(t)), float(t.global_phase)
 
 
@@ -229,7 +229,7 @@ def qasm_and_zx_phase(qc: Any) -> tuple[str, float]:
     theta)) (PyZX, QuiZX): Qiskit's global phase minus theta/2 for every rz."""
     from qiskit import qasm2, transpile
 
-    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0)
+    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0, qubits_initially_zero=False)
     shift = sum(float(ins.operation.params[0]) / 2 for ins in t.data if ins.operation.name == "rz")
     return exact_angles(qasm2.dumps(t)), float(t.global_phase) - shift
 
@@ -550,7 +550,7 @@ def transpiled(qc: Any, basis: list[str]) -> Any:
     from qiskit import transpile
 
     try:
-        return transpile(qc, basis_gates=basis, optimization_level=0)
+        return transpile(qc, basis_gates=basis, optimization_level=0, qubits_initially_zero=False)
     except Exception as exc:
         raise Unsupported(f"not expressible in the gate set {basis}: {str(exc)[:120]}") from exc
 
