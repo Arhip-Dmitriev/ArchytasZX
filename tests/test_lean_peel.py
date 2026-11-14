@@ -14,7 +14,8 @@
 """Kernel peel steps exported over linked diagrams (REMAINING_BUGS_SPEC 79.16a): the
 cluster_state_2d peel proved by ``evalL_peel``, its reverse refused, the semantic export linking it
 by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy count; link ports on
-the boundary behind an identity spider (79.16e); identity slides through ``evalL_slide`` (79.16d)."""
+the boundary behind an identity spider (79.16e); identity slides through
+``evalL_slide`` (79.16d)."""
 
 from __future__ import annotations
 
