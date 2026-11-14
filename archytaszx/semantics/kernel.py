@@ -585,6 +585,32 @@ def power_split(d: Diagram, split: Diagram) -> Theorem:
     raise KernelError("power_split: the diagram is no power box split of the other")
 
 
+@_trace.traced("kernel.instance")
+def instance(t: Theorem, symbol: str, value: object) -> Theorem:
+    """``t`` with the free multiplicity ``symbol`` replaced by ``value`` (a
+    :class:`~archytaszx.diagram.bangbox.Mult`) in boxes, scalar, phases and leg dimensions of
+    both sides (:func:`~archytaszx.semantics.induction.rename_multiplicity`)."""
+    from archytaszx.diagram.bangbox import BangBoxError, Mult, index_symbols
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    if not isinstance(value, Mult):
+        raise KernelError(f"instance: {value!r} is not a multiplicity")
+    if symbol not in free_mult_symbols(t.lhs) | free_mult_symbols(t.rhs):
+        raise KernelError(f"instance: {symbol!r} is not a free multiplicity")
+    bound = index_symbols(t.lhs) | index_symbols(t.rhs)
+    if symbol in bound or value.free_symbols & bound:
+        raise KernelError("instance: a symbol is a copy index")
+    _refuse_on("instance", (t,), frozenset({symbol}))
+    errors: tuple[type[Exception], ...] = (*_INDUCTION_ERRORS, BangBoxError)
+    try:
+        lhs, rhs = (rename_multiplicity(d, symbol, value) for d in (t.lhs, t.rhs))
+    except errors as exc:
+        raise KernelError(f"instance raised {type(exc).__name__}: {exc}") from exc
+    data: dict[str, object] = {"symbol": symbol, "value": value}
+    inference = Inference("instance", (t,), detail=f"{symbol} = {value}", data=data)
+    return Theorem(_TOKEN, lhs, rhs, inference, t.assumptions, _domain(t))
+
+
 @_trace.traced("kernel.leg_move")
 def leg_move(d: Diagram, moved: Diagram, copy: frozenset[NodeId]) -> Theorem:
     """``d = moved`` when ``moved`` is one of
@@ -1340,6 +1366,20 @@ def _var(name: str) -> str:
     return plain
 
 
+def _nat_expr(expr: sp.Expr) -> str:
+    """A multiplicity expression as a Lean ``Nat`` term."""
+    if expr.is_Integer and expr >= 0:
+        return str(int(expr))
+    if expr.is_Symbol:
+        return _var(str(expr.name))
+    if expr.is_Add or expr.is_Mul:
+        op = " + " if expr.is_Add else " * "
+        return "(" + op.join(_nat_expr(a) for a in expr.args) + ")"
+    if expr.is_Pow:
+        return f"({_nat_expr(expr.base)} ^ {_nat_expr(expr.exp)})"
+    raise KernelError(f"no Lean natural for {expr}")
+
+
 def _comment(text: str) -> str:
     return text.replace("-/", "- /").replace("/-", "/ -")
 
@@ -1550,6 +1590,8 @@ class _Lean:
             return b if a == "rfl" else a if b == "rfl" else f"({a}).trans ({b})"
         if inf.kind == "subst":
             return self.subst(t)
+        if inf.kind == "instance":
+            return self.instance(t)
         if inf.kind == "congr":
             return self.congr(t)
         if inf.kind == "shift":
@@ -1607,6 +1649,26 @@ class _Lean:
             f"({ctx} {self.call(prem.rhs)})",
         )
         return f"({plug_l}).trans ((congrArg {ctx} {self.term(prem)}).trans ({plug_r}).symm)"
+
+    def instance(self, t: Theorem) -> str:
+        """The premise stated as a lemma over its multiplicities, applied at the instance's
+        value, between instantiation axioms onto the instantiated sides."""
+        (prem,) = t.inference.premises
+        symbol = str(t.inference.data["symbol"])
+        value = cast("sp.Expr", t.inference.data["value"].to_sympy())  # type: ignore[attr-defined]
+        pb = [_var(v) for v in prem.variables]
+        stmt = f"{self.call(prem.lhs)} = {self.call(prem.rhs)}"
+        lemma = self.fresh("fam")
+        body = self.term(prem)
+        head = f"theorem {lemma} : ∀ ({' '.join(pb)} : Nat), {stmt}"
+        self.decls.append(f"{head} :=\n  fun {' '.join(pb)} => {body}")
+        at = {symbol: _nat_expr(value)}
+        applied = f"({lemma} {' '.join(at.get(v, _var(v)) for v in prem.variables)})"
+        binders = [_var(v) for v in t.variables]
+        note = f"instantiation at {symbol} = {value}"
+        inst_l = self.axiom("inst", note, binders, self.call(prem.lhs, at), self.call(t.lhs))
+        inst_r = self.axiom("inst", note, binders, self.call(prem.rhs, at), self.call(t.rhs))
+        return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
 
     def induction(self, t: Theorem, name: str | None = None) -> str:
         inf, data = t.inference, t.inference.data

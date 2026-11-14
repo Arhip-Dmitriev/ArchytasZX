@@ -15,9 +15,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from archytaszx.diagram.bangbox import instantiate_symbol
 from archytaszx.diagram.generators import Z_SPIDER
 from archytaszx.repl.parser import parse_dsl
+from archytaszx.semantics import kernel
+from archytaszx.semantics.valuecount import generalise, specialised
 
 NESTED = """
 count n
@@ -40,3 +44,33 @@ def test_a_parent_box_at_zero_keeps_the_partner_of_its_aligned_child() -> None:
     (spider,) = zero.nodes.values()
     assert spider.generator_type is Z_SPIDER
     assert (len(spider.inputs), len(spider.outputs)) == (1, 1)
+
+
+FANNED = """
+count n
+a = Z(1 -> 2, literal 2) phase{1: 1/4}
+e = Z(1 -> 0, literal 2)
+wire a.out1 -- e.in0
+repeat 2^n as W: e
+inputs a.in0
+outputs a.out0
+"""
+
+PLAIN = """
+count n
+a = Z(1 -> 1, literal 2) phase{1: 1/4}
+inputs a.in0
+outputs a.out0
+"""
+
+
+def test_a_theorem_over_the_value_count_specialises_to_the_power() -> None:
+    left, right = parse_dsl(FANNED), parse_dsl(PLAIN)
+    found = generalise(left, right)
+    assert found is not None and (found.symbol, str(found.power)) == ("N", "2**n")
+    family = kernel.contraction(found.left, found.right)
+    theorem = specialised(family, found, left, right)
+    assert theorem.lhs is left and theorem.rhs is right and theorem.variables == ("n",)
+    assert "(fam" in kernel.lean(theorem, semantic=False)
+    with pytest.raises(kernel.KernelError):
+        kernel.instance(family, "n", found.power)

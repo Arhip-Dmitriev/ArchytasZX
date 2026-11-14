@@ -2455,10 +2455,74 @@ def _induction_rung(
     )
     if not isinstance(periodic, str):
         return periodic
+    counted = _decide_value_count(
+        left,
+        right,
+        evaluated=evaluated,
+        rules=rules,
+        guard=guard,
+        max_samples=max_samples,
+        use_symbolic=use_symbolic,
+        max_depth=max_depth,
+        tolerance=tolerance,
+        max_elements=max_elements,
+        use_saturation=use_saturation,
+        saturation_limits=saturation_limits,
+    )
+    if not isinstance(counted, str):
+        return counted
     return _Unsettled(
         "; reversed: ".join(reasons)
-        + f"; carry open: {opened}; periodic: {periodic}{shift_reason}",
+        + f"; carry open: {opened}; periodic: {periodic}{shift_reason}; value count: {counted}",
         base_decision,
+    )
+
+
+def _decide_value_count(
+    left: Diagram,
+    right: Diagram,
+    *,
+    evaluated: Sequence[Mapping[str, CheckAssignmentValue]],
+    **options: Any,
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL when the induction rung settles the pair with its power box count ``b^e`` counted
+    by a free ``N`` (:func:`~archytaszx.semantics.valuecount.generalise`) EQUAL; its kernel
+    theorem carried back at ``N = b^e`` (:func:`~archytaszx.semantics.valuecount.specialised`);
+    else why not."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.valuecount import generalise, specialised
+
+    found = generalise(left, right)
+    if found is None:
+        return "no single power box count"
+    power = found.power.to_sympy()
+    points: list[Mapping[str, CheckAssignmentValue]] = []
+    for point in evaluated:
+        values = {s: point.get(str(s)) for s in power.free_symbols}
+        if all(isinstance(v, int) for v in values.values()):
+            points.append({**point, found.symbol: int(power.xreplace(values))})
+    with _trace.span("decide.induction.value_count"):
+        settled = _decide_by_induction(
+            found.left, found.right, evaluated=points, samples=None, **options
+        )
+    label = f"{power} counted by {found.symbol}"
+    if isinstance(settled, str):
+        return f"{label}: {settled}"
+    verdict, _method, reason, evidence = settled
+    if verdict is not EqualityVerdict.EQUAL:
+        return f"{label}: {verdict.value}: {reason}"
+    theorem = evidence.get("induction_proof")
+    if not isinstance(theorem, kernel.Theorem):
+        return f"{label}: equal with no kernel proof: {reason}"
+    try:
+        carried = specialised(theorem, found, left, right)
+    except kernel.KernelError as exc:
+        return f"{label}: the kernel refused {found.symbol} = {power}: {exc}"
+    return (
+        EqualityVerdict.EQUAL,
+        DecisionMethod.INDUCTION,
+        f"{label}: {reason}; kernel proof carried to {found.symbol} = {power} by instance",
+        {**evidence, "induction_proof": carried},
     )
 
 
