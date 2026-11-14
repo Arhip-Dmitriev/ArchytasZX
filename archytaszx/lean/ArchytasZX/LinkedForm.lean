@@ -14,9 +14,7 @@ the linked digit sum. `dropAt L x w v P`: `x` moved last, then dropped (`dropId`
 
 `slotData L gs`: the boundary sizes and, per box, its id, multiplicity index, parent and slot
 blocks, the box groups `gs` (box id, node lists) first, its ungrouped nodes last, each block the
-boundary slots of its nodes in the box, empty blocks left out. `evalL_flat`: two linked diagrams
-with equal digit sums at every slot assignment and equal slot data have equal digit sums read
-through any layout `lay` of their slot data.
+boundary slots of its nodes in the box, empty blocks left out.
 -/
 
 namespace ArchytasZX
@@ -166,15 +164,6 @@ instance : DecidableEq SlotData := fun a b => by
 def slotData (L : LDiagram) (gs : List (ℕ × List (List ℕ))) : SlotData :=
   (L.base.outs.length, L.base.ins.length,
     L.base.boxes.map fun b => (b.id, b.mult, b.parent, L.slotParts gs b))
-
-/-- Equal digit sums and equal slot data give equal digit sums read through any layout. -/
-theorem evalL_flat {L L' : LDiagram} {gs gs' : List (ℕ × List (List ℕ))}
-    (hs : L'.slotData gs' = L.slotData gs) (E : Env) (ks : ℕ → ℕ)
-    (h : ∀ σ, L'.evalL E ks σ = L.evalL E ks σ) (lay : SlotData → (ℕ → ℕ) → List (ℕ × List ℕ))
-    (x : ℕ → ℕ) :
-    L'.evalL E ks (readAt (lay (L'.slotData gs') ks) x) =
-      L.evalL E ks (readAt (lay (L.slotData gs) ks) x) := by
-  rw [hs, h]
 
 end LDiagram
 

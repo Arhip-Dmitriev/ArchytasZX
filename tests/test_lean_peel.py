@@ -15,9 +15,9 @@
 cluster_state_2d peel proved by ``evalL_peel``, its reverse refused, the semantic export linking it
 by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy count; link ports on
 the boundary behind an identity spider (79.16e); identity slides through
-``evalL_slide`` (79.16d); identities wired to a node leg dropped from the peeled side, the
-phaseless index stated as zero, slides read through the slot data of both sides' box groups
-(79.16f)."""
+``evalL_slide`` (79.16d); both sides of a peel or slide written with each boundary link port the
+ghost of its slot, proved equal to the identity forms, the phaseless index stated as zero, slides
+read through the slot data of both sides' box groups (79.16f)."""
 
 from __future__ import annotations
 
@@ -98,13 +98,15 @@ def test_successor_peels_with_boundary_link_ports_export() -> None:
     assert "\naxiom peel" not in kernel.lean(theorem, "main", semantic=True)
 
 
-def test_peeled_boundary_identities_wired_to_a_leg_are_dropped() -> None:
+def test_peel_sides_are_written_with_ghosts_not_identities() -> None:
     for before, peeled in _succ_peels(_cluster()):
         source = lean_linked.export_peel(before, peeled)
-        assert source is not None and "theorem drops" in source and "evalL_dropAt ok1" in source
-        kept = source.split("def L' ")[1].split("def zero")[0]
-        dropped = re.findall(r"def x\d+ : DNode := ⟨(\d+),", source)
-        assert dropped and all(f"⟨{x}, " not in kept for x in dropped)
+        assert source is not None
+        assert "evalL_dropAt okk1" in source and "evalG_ghostAt okb1" in source
+        sides = source.split("def L : ")[1].split("def zero")[0]
+        idents = re.findall(r"abbrev x\w+ : DNode := ⟨(\d+),", source)
+        assert idents and all(f"⟨{x}, " not in sides for x in idents)
+        assert re.search(r"abbrev gsL : Ghosts := \[\(", source)
         assert "E.phase zero k = 0" in source
 
 
@@ -156,13 +158,14 @@ def _slides(t: kernel.Theorem) -> list[kernel.Theorem]:
     return out
 
 
-def test_the_cluster_state_2d_identity_slide_exports_through_evalL_slide() -> None:
+def test_the_cluster_state_2d_identity_slide_exports_through_one_dropped_diagram() -> None:
     theorem = _cluster()
     slides = _slides(theorem)
     assert slides
     for t in slides:
         source = lean_linked.export_slide(t.lhs, t.rhs)
-        assert source is not None and "evalL_slide ok ok' same" in source
+        assert source is not None and "evalL_dropAt oksb1" in source
+        assert "evalL_dropAt oksk1" in source and "evalG_flat layout" in source
     source = kernel.lean(theorem, "main", semantic=True)
     assert "namespace ArchytasZX.Export.S" in source
     assert "a boxed identity spider moved" not in source

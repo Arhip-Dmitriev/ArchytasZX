@@ -571,14 +571,6 @@ theorem DropOK.evalL_drop (h : DropOK L x w u v P) (E : Env) (hE : ∀ k, E.phas
 
 end drop
 
-/-- Two linked diagrams that drop the same node `x` to one diagram have equal digit sums. -/
-theorem evalL_slide {L L' : LDiagram} {x : DNode} {w w' : Port × Port} {u v P u' v' P' : Port}
-    (h : DropOK L x w u v P) (h' : DropOK L' x w' u' v' P')
-    (he : L.dropId x.id w v P = L'.dropId x.id w' v' P') (E : Env)
-    (hE : ∀ k, E.phase x.ph k = 0) (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ) :
-    L'.evalL E ks σ = L.evalL E ks σ := by
-  rw [h.evalL_drop E hE, h'.evalL_drop E hE, he]
-
 end LDiagram
 
 end ArchytasZX
