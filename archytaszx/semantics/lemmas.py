@@ -179,21 +179,30 @@ def _and_sides(p: sp.Expr) -> tuple[Diagram, Diagram]:
 
 
 def _dsl_sides(left: str, right: str, p: sp.Expr) -> tuple[Diagram, Diagram]:
-    """The DSL texts ``left`` and ``right`` parsed, the count ``p`` renamed to ``p``'s value."""
+    """The DSL texts ``left`` and ``right`` parsed, the count ``p`` renamed to ``p``'s value;
+    fresh copies of the pair memoised in :data:`_PARSED`."""
     from archytaszx.diagram.bangbox import Mult
     from archytaszx.repl.parser import parse_dsl
     from archytaszx.semantics.induction import rename_multiplicity
 
-    out: list[Diagram] = []
-    for text in (left, right):
-        diagram = parse_dsl(text)
-        value = sp.sympify(p).xreplace(
-            {s: Mult.symbol(s.name).to_sympy() for s in sp.sympify(p).free_symbols}
-        )
-        if value != Mult.symbol("p").to_sympy():
-            diagram = rename_multiplicity(diagram, "p", Mult._from_expr(value))
-        out.append(diagram)
-    return out[0], out[1]
+    value = sp.sympify(p).xreplace(
+        {s: Mult.symbol(s.name).to_sympy() for s in sp.sympify(p).free_symbols}
+    )
+    key = (left, right, value)
+    if key not in _PARSED:
+        out: list[Diagram] = []
+        for text in (left, right):
+            diagram = parse_dsl(text)
+            if value != Mult.symbol("p").to_sympy():
+                diagram = rename_multiplicity(diagram, "p", Mult._from_expr(value))
+            out.append(diagram)
+        _PARSED[key] = (out[0], out[1])
+    a, b = _PARSED[key]
+    return a.copy(), b.copy()
+
+
+_PARSED: dict[tuple[str, str, sp.Expr], tuple[Diagram, Diagram]] = {}
+"""Both sides built by :func:`_dsl_sides`, keyed by the two texts and the count's value."""
 
 
 AND_REGISTER = Lemma(

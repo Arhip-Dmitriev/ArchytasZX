@@ -534,6 +534,10 @@ def _rename_indices(expr: sp.Expr) -> sp.Expr:
     sums that differ only in their bound name cancel; a counter running over the whole
     expression would give them different names and leave the difference standing.
     """
+    if not expr.has(sp.Sum):
+        return expr
+    if _named_by_depth(expr):
+        return expr
 
     def stage_a(node: sp.Expr, level: int) -> sp.Expr:
         if isinstance(node, sp.Sum):
@@ -561,6 +565,30 @@ def _rename_indices(expr: sp.Expr) -> sp.Expr:
         if str(symbol.name).startswith("_tmp")
     }
     return cast(sp.Expr, staged.xreplace(mapping) if mapping else staged)
+
+
+def _named_by_depth(expr: sp.Expr) -> bool:
+    """Whether every bound index of ``expr`` already has the name :func:`_rename_indices` gives
+    it."""
+    free = [
+        int(str(s.name)[2:])
+        for s in expr.free_symbols
+        if isinstance(s, sp.Symbol) and re.match(r"^_k[0-9]+$", str(s.name))
+    ]
+    offset = max(free) + 1 if free else 0
+
+    def named(node: sp.Expr, level: int) -> bool:
+        if isinstance(node, sp.Sum):
+            for position, (var, _lower, _upper) in enumerate(node.limits):
+                wanted = sp.Symbol(f"_k{level + position + offset}", integer=True, nonnegative=True)
+                if var != wanted:
+                    return False
+            return named(node.function, level + len(node.limits))
+        if not node.args or not node.has(sp.Sum):
+            return True
+        return all(named(arg, level) for arg in node.args)
+
+    return named(expr, 0)
 
 
 def _split_term(
@@ -1049,15 +1077,26 @@ def _radix_split_concrete(
     return None
 
 
+_RADIX: dict[tuple[object, ...], sp.Expr] = {}
+"""Results of :func:`_split_radix_deltas` on one ModDelta, keyed by the delta and the ranges of
+its symbols."""
+
+
 def _split_radix_deltas(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
-    """:func:`_radix_split` on every ModDelta, bound indices sized by their limits."""
+    """:func:`_radix_split` on every ModDelta, bound indices sized by their limits; memoised in
+    :data:`_RADIX`."""
     if isinstance(expr, sp.Sum):
         inner = dict(ranges)
         for var, _lower, upper in expr.limits:
             inner[var] = sp.expand(upper + 1)
         return cast(sp.Expr, sp.Sum(_split_radix_deltas(expr.function, inner), *expr.limits))
     if isinstance(expr, ModDelta):
-        return _radix_split(expr, ranges) or expr
+        key = (expr, frozenset((s, r) for s, r in ranges.items() if s in expr.free_symbols))
+        if key not in _RADIX:
+            if len(_RADIX) >= _MEMO_CAP:
+                _RADIX.clear()
+            _RADIX[key] = _radix_split(expr, ranges) or expr
+        return _RADIX[key]
     if not expr.args or not expr.has(ModDelta):
         return expr
     return cast(sp.Expr, expr.func(*(_split_radix_deltas(arg, ranges) for arg in expr.args)))
