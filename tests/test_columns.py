@@ -17,6 +17,8 @@ slide refuse what they do not license; aligned boxes in a zipped chain instantia
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from archytaszx.diagram.bangbox import instantiate_symbol
@@ -34,6 +36,14 @@ def test_cluster_state_2d_is_equal_with_a_kernel_proof() -> None:
     theorem = kernel.from_decision(decision, left, right)
     assert kernel._same(theorem.lhs, left) and kernel._same(theorem.rhs, right)
     assert [c.text() for c in theorem.domain] == ["s = -1 + n"]
+    source = kernel.lean(theorem, "main")
+    assert "axiom slots" in source
+    for found in re.finditer(r"congrArg \((?:hole|slots)\d+[^()]*\) \(", source):
+        depth, at = 1, found.end()
+        while depth:
+            depth += {"(": 1, ")": -1}.get(source[at], 0)
+            at += 1
+        assert source[at] == ")", source[found.start() : at + 1]
 
 
 def test_the_inverse_cz_grid_is_not_proved() -> None:
@@ -64,6 +74,8 @@ def test_regroup_refuses_a_change_on_one_side_only() -> None:
     with pytest.raises(kernel.KernelError, match="lay out their slots differently"):
         kernel.regroup(kernel.refl(d), grouped, d)
     assert kernel._same(kernel.regroup(kernel.refl(d), grouped, grouped).lhs, grouped)
+    source = kernel.lean(kernel.regroup(kernel.refl(d), grouped, grouped), "main")
+    assert "axiom slots" in source and "hole" not in source
 
 
 def test_identity_slide_refuses_a_diagram_that_is_no_slide() -> None:

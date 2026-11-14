@@ -1670,8 +1670,10 @@ class _Lean:
             return self.subst(t)
         if inf.kind == "instance":
             return self.instance(t)
-        if inf.kind in ("congr", "regroup"):
+        if inf.kind == "congr":
             return self.congr(t)
+        if inf.kind == "regroup":
+            return self.regroup(t)
         if inf.kind == "shift":
             raise KernelError("a shift has no opaque export")
         if inf.kind != "induction":
@@ -1748,7 +1750,33 @@ class _Lean:
             self.call(t.rhs),
             f"({ctx} {self.call(prem.rhs)})",
         )
-        return f"({plug_l}).trans ((congrArg {ctx} {self.term(prem)}).trans ({plug_r}).symm)"
+        return f"({plug_l}).trans ((congrArg {ctx} ({self.term(prem)})).trans ({plug_r}).symm)"
+
+    def regroup(self, t: Theorem) -> str:
+        """The premise under one slot layout axiom ``slots<i>``, between layout axioms onto
+        both sides."""
+        (prem,) = t.inference.premises
+        binders = [_var(v) for v in t.variables]
+        lay = self.fresh("slots")
+        arity = " → ".join(["Nat"] * len(binders) + ["Diagram", "Diagram"])
+        note = "one permutation of the instantiated boundary slots, from the box groups"
+        self.decls.append(f"/-- {note} -/\naxiom {lay} : {arity}")
+        ctx = f"({lay} {' '.join(binders)})" if binders else lay
+        lay_l = self.axiom(
+            "lay",
+            "the left side, its slots laid out by its box groups",
+            binders,
+            self.call(t.lhs),
+            f"({ctx} {self.call(prem.lhs)})",
+        )
+        lay_r = self.axiom(
+            "lay",
+            "the right side, its slots laid out by its box groups",
+            binders,
+            self.call(t.rhs),
+            f"({ctx} {self.call(prem.rhs)})",
+        )
+        return f"({lay_l}).trans ((congrArg {ctx} ({self.term(prem)})).trans ({lay_r}).symm)"
 
     def instance(self, t: Theorem) -> str:
         """The premise stated as a lemma over its multiplicities, applied at the instance's

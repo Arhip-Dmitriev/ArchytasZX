@@ -329,7 +329,10 @@ pending parameters, dangling ports, or a scalar the exporter cannot
 write) is exported without imports: an opaque Diagram type, one constant per diagram, one axiom
 per rule instance, isomorphism, instantiation, peeling and context the kernel checked, and the
 theorem as their composition. This export records the structure of the proof but does not
-re-prove its steps; the shell reports it as "opaque diagrams, every step an axiom".
+re-prove its steps; the shell reports it as "opaque diagrams, every step an axiom". A context
+step (congr) is congrArg of an opaque context hole<i> between two plug axioms; a regroup step
+is congrArg of one opaque slot layout slots<i> (a permutation of the instantiated boundary
+slots) between two layout axioms lay<j>; peel and identity_slide steps are axioms.
 
 A symbolic contraction step is the exception when its two contracted diagrams (the whole sides,
 or for local_contraction the parts off the two regions, cut ends open) have no bang box and no
