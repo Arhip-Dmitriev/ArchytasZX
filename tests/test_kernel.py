@@ -388,3 +388,30 @@ def test_a_negative_offset_subst_is_stated_for_n_at_least_one() -> None:
 def test_lean_checks_a_negative_offset_subst(tmp_path: object) -> None:
     ok, output = check(_shifted_source(), f"{tmp_path}/shifted.lean")
     assert ok, output
+
+
+def _floored_source(semantic: bool) -> str:
+    from archytaszx.repl.parser import parse_dsl
+
+    left = parse_dsl(_TWOS.replace("{count}", "n - 1"))
+    right = parse_dsl(_TWOS.replace("{count}", "n") + "scalar 1/2\n")
+    return K.lean(K.contraction(left, right), semantic=semantic)
+
+
+def test_a_box_floor_is_stated_in_the_lean_theorem() -> None:
+    """A theorem restricted only by its box floor n >= 1 states 1 ≤ n on main, on its step
+    axioms and on the lemma that writes n - 1."""
+    opaque = _floored_source(False)
+    assert "theorem main : ∀ (n : Nat), 1 ≤ n → " in opaque
+    assert "axiom contraction1 : ∀ (n : Nat), 1 ≤ n → " in opaque
+    source = _floored_source(True)
+    assert "theorem main : ∀ (n : Nat), 1 ≤ n → " in source
+    assert re.search(r"theorem fam\d+ : ∀ \(n : Nat\), 1 ≤ n → ", source)
+    assert "(n - 1)" in source and "+ -1" not in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_checks_a_box_floor(tmp_path: object) -> None:
+    for semantic in (False, True):
+        ok, output = check(_floored_source(semantic), f"{tmp_path}/floored{semantic}.lean")
+        assert ok, output

@@ -482,6 +482,15 @@ refutation under a floor is refuted at its in-floor point unchanged; a rewriting
 floor hypothesis (it holds for every d). An instance decided on its expanded pair (n = v) is a
 box-free theorem; its link to the boxed original at v is the expandK item of section 6.
 
+A kernel theorem whose domain holds only box floors n >= v (a box of n - c copies, kernel
+_with_box_floors) and multiplicity shifts s = n - c is exported opaquely with the hypotheses
+v ≤ n (kernel._guards): main is ∀ (n : Nat), v ≤ n → lhs = rhs. Inside, every lemma fam<i> or
+ind<i> whose theorem holds only from a floor takes that hypothesis (h_n) when the value it is
+applied at is linear in the enclosing variables and meets the floor from their hypotheses
+(_Lean.floors); it is applied with (by omega). Every step axiom of such a theorem takes the
+floors its scope holds (_Lean.step), and a substitution s = n - c writes (n - c) with
+instantiation axioms under c ≤ n.
+
 
 4.8 Path-sum certificates (archytaszx.semantics.lean_pathsum)
 

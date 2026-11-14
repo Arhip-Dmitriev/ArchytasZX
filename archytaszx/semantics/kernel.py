@@ -1459,6 +1459,37 @@ def _comment(text: str) -> str:
     return text.replace("-/", "- /").replace("/-", "/ -")
 
 
+def _hyps(floors: Mapping[str, int]) -> str:
+    """The hypotheses ``lo ≤ n → `` of ``floors``."""
+    return "".join(f"{lo} ≤ {_var(v)} → " for v, lo in floors.items())
+
+
+def _hyp_names(floors: Mapping[str, int]) -> list[str]:
+    """The binders ``h_n`` of the hypotheses of ``floors``."""
+    return [f"h_{_var(v)}" for v in floors]
+
+
+def _floors_of(domain: Sequence[Clause], variables: Sequence[str]) -> dict[str, int]:
+    """Each of ``variables`` with its least value above 0 under ``domain``: a multiplicity side
+    clause's lower bound, or ``-c`` for the fresh ``n`` of a shift ``s = n + c`` with ``c < 0``
+    (at least its range's lower bound)."""
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, SIDE
+
+    out: dict[str, int] = {}
+    for c in domain:
+        if c.kind != MULTIPLICITY:
+            continue
+        if c.form == SIDE and c.domain is not None and c.domain.lo is not None:
+            name, low = c.symbol, _lows([c]).get(c.symbol, 0)
+        elif c.form == SHIFT and c.a == 1 and c.c < 0 and c.fresh:
+            name, low = c.fresh, max(int(-c.c), _lows([c]).get(c.fresh, 0))
+        else:
+            continue
+        if name in variables and low > 0:
+            out[name] = max(out.get(name, 0), low)
+    return out
+
+
 class _Lean:
     """Accumulates declarations while proof terms are built."""
 
@@ -1473,6 +1504,27 @@ class _Lean:
         self.imports: list[str] = []
         self.depth = 0
         self.guards: dict[str, int] = {}
+        self.step: dict[str, int] = {}
+
+    def at_least(self, e: sp.Expr, lo: int) -> bool:
+        """Whether ``e``, linear with nonnegative coefficients, is at least ``lo`` at the floors
+        of ``guards``."""
+        e = sp.expand(sp.sympify(e))
+        syms = sorted(e.free_symbols, key=str)
+        if syms and (not e.is_polynomial(*syms) or sp.Poly(e, *syms).total_degree() > 1):
+            return False
+        if any(e.coeff(s) < 0 for s in syms):
+            return False
+        return bool(e.subs({s: self.guards.get(str(s), 0) for s in syms}) >= lo)
+
+    def floors(self, t: Theorem, values: Mapping[str, sp.Expr] | None = None) -> dict[str, int]:
+        """The floors of ``t``'s variables (:func:`_floors_of`) when each holds at its value
+        (``values``, default the variable) from those of ``guards``, else none."""
+        own = _floors_of(t.domain, t.variables)
+        for v, lo in own.items():
+            if not self.at_least((values or {}).get(v, sp.Symbol(v)), lo):
+                return {}
+        return own
 
     def inducted(self, t: Theorem, x: Diagram, y: Diagram, binders: Sequence[str]) -> str | None:
         """A contraction step over boxed diagrams through the induction theorem of
@@ -1487,28 +1539,41 @@ class _Lean:
         if found is None:
             return None
         proof, shift = found
-        self.depth += 1
+        saved = self.guards, self.step
+        if "parts" in t.inference.data and shift is not None:
+            self.guards, self.step = {}, {}
         try:
-            pb = [_var(v) for v in proof.variables]
-            body = self.term(proof)
+            values = {} if shift is None else {shift[1]: sp.Symbol(shift[0]) + shift[2]}
+            floors = self.floors(proof, values)
+            outer, self.guards = self.guards, floors
+            self.depth += 1
+            try:
+                pb = [_var(v) for v in proof.variables]
+                body = self.term(proof)
+            finally:
+                self.depth -= 1
+                self.guards = outer
+            lemma = self.fresh("fam")
+            stmt = f"{self.call(proof.lhs)} = {self.call(proof.rhs)}"
+            head = f"∀ ({' '.join(pb)} : Nat), {_hyps(floors)}{stmt}" if pb else stmt
+            value = f"fun {' '.join([*pb, *_hyp_names(floors)])} => {body}" if pb else body
+            self.decls.append(f"theorem {lemma} : {head} :=\n  {value}")
+            xb = [_var(v) for v in sorted(free_mult_symbols(x) | free_mult_symbols(y))]
+            held = " (by omega)" * len(floors)
+            if shift is None:
+                applied = f"({lemma} {' '.join(pb)}{held})" if pb else lemma
+            else:
+                index, fresh, c = shift
+                at = {fresh: f"({_var(index)} + {c})"}
+                args = [at.get(v, _var(v)) for v in proof.variables]
+                note = f"instantiation at {fresh} = {index} + {c}"
+                inst_l = self.axiom("inst", note, xb, self.call(proof.lhs, at), self.call(x))
+                inst_r = self.axiom("inst", note, xb, self.call(proof.rhs, at), self.call(y))
+                applied = (
+                    f"({inst_l}).symm.trans (({lemma} {' '.join(args)}{held}).trans ({inst_r}))"
+                )
         finally:
-            self.depth -= 1
-        lemma = self.fresh("fam")
-        stmt = f"{self.call(proof.lhs)} = {self.call(proof.rhs)}"
-        head = f"∀ ({' '.join(pb)} : Nat), {stmt}" if pb else stmt
-        value = f"fun {' '.join(pb)} => {body}" if pb else body
-        self.decls.append(f"theorem {lemma} : {head} :=\n  {value}")
-        xb = [_var(v) for v in sorted(free_mult_symbols(x) | free_mult_symbols(y))]
-        if shift is None:
-            applied = f"({lemma} {' '.join(pb)})" if pb else lemma
-        else:
-            index, fresh, c = shift
-            at = {fresh: f"({_var(index)} + {c})"}
-            args = [at.get(v, _var(v)) for v in proof.variables]
-            note = f"instantiation at {fresh} = {index} + {c}"
-            inst_l = self.axiom("inst", note, xb, self.call(proof.lhs, at), self.call(x))
-            inst_r = self.axiom("inst", note, xb, self.call(proof.rhs, at), self.call(y))
-            applied = f"({inst_l}).symm.trans (({lemma} {' '.join(args)}).trans ({inst_r}))"
+            self.guards, self.step = saved
         if "parts" not in t.inference.data:
             return applied
         if shift is not None:
@@ -1610,16 +1675,29 @@ class _Lean:
     def axiom(self, stem: str, note: str, binders: Sequence[str], lhs: str, rhs: str) -> str:
         if lhs == rhs:
             return "rfl"
-        head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
+        floors = {v: lo for v, lo in self.step.items() if _var(v) in binders}
+        head = f"∀ ({' '.join(binders)} : Nat), {_hyps(floors)}" if binders else ""
         statement = f"{head}{lhs} = {rhs}"
         name = self.stated.get(statement)
         if name is None:
             name = self.fresh(stem)
             self.stated[statement] = name
             self.decls.append(f"/-- {_comment(note)} -/\naxiom {name} : {statement}")
-        return name if not binders else f"({name} {' '.join(binders)})"
+        held = " (by omega)" * len(floors)
+        return name if not binders else f"({name} {' '.join(binders)}{held})"
 
-    def term(self, t: Theorem) -> str:
+    def term(self, t: Theorem, floors: Mapping[str, int] | None = None) -> str:
+        """``t``'s proof term; its step axioms carry the floors of ``t`` (or ``floors``) that
+        ``guards`` holds."""
+        saved = self.step
+        own = _floors_of(t.domain, t.variables) if floors is None else floors
+        self.step = {v: lo for v, lo in own.items() if self.guards.get(v, 0) >= lo}
+        try:
+            return self.inference_term(t)
+        finally:
+            self.step = saved
+
+    def inference_term(self, t: Theorem) -> str:
         inf = t.inference
         binders = [_var(v) for v in t.variables]
         if inf.kind == "refl":
@@ -1688,13 +1766,8 @@ class _Lean:
         (prem,) = t.inference.premises
         clause = cast("Clause", t.inference.data["clause"])
         pb = [_var(v) for v in prem.variables]
-        body = self.term(prem)
-        stmt = f"{self.call(prem.lhs)} = {self.call(prem.rhs)}"
-        lemma = self.fresh("fam")
-        head = f"∀ ({' '.join(pb)} : Nat), {stmt}" if pb else stmt
-        proof = f"fun {' '.join(pb)} => {body}" if pb else body
-        self.decls.append(f"theorem {lemma} : {head} :=\n  {proof}")
         at: dict[str, str] = {}
+        values: dict[str, sp.Expr] = {}
         guard = (
             clause.fresh if clause.c < 0 and clause.a == 1 and clause.fresh in self.guards else ""
         )
@@ -1707,8 +1780,25 @@ class _Lean:
                 else (f"({clause.a} * {_var(clause.fresh)} + {clause.c})")
             )
             at[clause.symbol] = value
+            values[clause.symbol] = (
+                sp.Integer(clause.c)
+                if clause.form == EQ
+                else clause.a * sp.Symbol(clause.fresh) + clause.c
+            )
+        floors = self.floors(prem, values)
+        outer, self.guards = self.guards, floors
+        try:
+            body = self.term(prem)
+        finally:
+            self.guards = outer
+        stmt = f"{self.call(prem.lhs)} = {self.call(prem.rhs)}"
+        lemma = self.fresh("fam")
+        head = f"∀ ({' '.join(pb)} : Nat), {_hyps(floors)}{stmt}" if pb else stmt
+        proof = f"fun {' '.join([*pb, *_hyp_names(floors)])} => {body}" if pb else body
+        self.decls.append(f"theorem {lemma} : {head} :=\n  {proof}")
         args = [at.get(v, _var(v)) for v in prem.variables]
-        applied = f"({lemma} {' '.join(args)})" if args else lemma
+        held = " (by omega)" * len(floors)
+        applied = f"({lemma} {' '.join(args)}{held})" if args else lemma
         binders = [_var(v) for v in t.variables]
         note = f"instantiation at {clause.text()}"
         if guard:
@@ -1787,11 +1877,17 @@ class _Lean:
         pb = [_var(v) for v in prem.variables]
         stmt = f"{self.call(prem.lhs)} = {self.call(prem.rhs)}"
         lemma = self.fresh("fam")
-        body = self.term(prem)
-        head = f"theorem {lemma} : ∀ ({' '.join(pb)} : Nat), {stmt}"
-        self.decls.append(f"{head} :=\n  fun {' '.join(pb)} => {body}")
+        floors = self.floors(prem, {symbol: value})
+        outer, self.guards = self.guards, floors
+        try:
+            body = self.term(prem)
+        finally:
+            self.guards = outer
+        head = f"theorem {lemma} : ∀ ({' '.join(pb)} : Nat), {_hyps(floors)}{stmt}"
+        self.decls.append(f"{head} :=\n  fun {' '.join([*pb, *_hyp_names(floors)])} => {body}")
         at = {symbol: _nat_expr(value)}
-        applied = f"({lemma} {' '.join(at.get(v, _var(v)) for v in prem.variables)})"
+        held = " (by omega)" * len(floors)
+        applied = f"({lemma} {' '.join(at.get(v, _var(v)) for v in prem.variables)}{held})"
         binders = [_var(v) for v in t.variables]
         note = f"instantiation at {symbol} = {value}"
         inst_l = self.axiom("inst", note, binders, self.call(prem.lhs, at), self.call(t.lhs))
@@ -1799,6 +1895,19 @@ class _Lean:
         return f"({inst_l}).symm.trans (({applied}).trans ({inst_r}))"
 
     def induction(self, t: Theorem, name: str | None = None) -> str:
+        """The induction theorem ``name`` (default ``ind<i>``) over the other variables and the
+        index, under the floors of the other variables (those of ``guards`` for a named one)."""
+        index = str(t.inference.data["index"])
+        own = dict(self.guards) if name is not None else self.floors(t)
+        floors = {v: lo for v, lo in own.items() if v != index and v in t.variables}
+        saved = self.guards, self.step
+        self.guards, self.step = floors, floors
+        try:
+            return self.induction_body(t, floors, name)
+        finally:
+            self.guards, self.step = saved
+
+    def induction_body(self, t: Theorem, floors: Mapping[str, int], name: str | None) -> str:
         inf, data = t.inference, t.inference.data
         base, expose, step = inf.premises
         index, k = str(data["index"]), str(data["step"])
@@ -1857,14 +1966,15 @@ class _Lean:
         if side is not InductionSide.START:
             succ = f"({succ}).symm"
         name = name or self.fresh("ind")
-        binders = f"∀ ({' '.join([*others, n])} : Nat), "
-        intro = " ".join([*others, n])
+        binders = f"∀ ({' '.join([*others, n])} : Nat), {_hyps(floors)}"
+        intro = " ".join([*others, n, *_hyp_names(floors)])
         self.decls.append(
             f"theorem {name} : {binders}{self.call(t.lhs)} = {self.call(t.rhs)} := by\n"
             f"  intro {intro}\n  induction {n} with\n  | zero => exact {zero}\n"
             f"  | succ {kv} ih => exact {succ}"
         )
-        return f"({name} {' '.join([*others, n])})"
+        held = " (by omega)" * len(floors)
+        return f"({name} {' '.join([*others, n])}{held})"
 
 
 def _summary(d: Diagram) -> str:
@@ -1881,8 +1991,10 @@ def lean(
 ) -> str:
     """Lean 4 source stating and proving ``theorem`` (see the module docstring); ``describe``
     gives each diagram's doc comment, ``semantic=False`` forces the opaque export; ``guards``
-    (symbol to least value ``lo``) adds the hypotheses ``lo ≤ n`` to the opaque statement and to
-    the instantiation axioms of substitutions ``s = n - c``."""
+    (symbol to least value ``lo``) adds the hypotheses ``lo ≤ n`` to the opaque statement, to
+    the instantiation axioms of substitutions ``s = n - c``, and to each lemma and step axiom
+    whose theorem holds only from a floor the enclosing hypotheses give (discharged by
+    ``omega``)."""
     if isinstance(theorem, Symbolic):
         if name == "main":
             return theorem.source
@@ -1923,7 +2035,7 @@ def lean(
         out.induction(theorem, name)
     else:
         binders = [_var(v) for v in theorem.variables]
-        body = out.term(theorem)
+        body = out.term(theorem, out.guards)
         stmt = f"{out.call(theorem.lhs)} = {out.call(theorem.rhs)}"
         hyps = "".join(f"{lo} ≤ {_var(v)} → " for v, lo in out.guards.items())
         names = [f"h_{_var(v)}" for v in out.guards]
@@ -2162,6 +2274,11 @@ def _lean_restricted(
         held = ", ".join(f"{v} >= {lo}" for v, lo in guards.items())
         text = ", ".join(c.text() for c in theorem.domain)
         note = f"for {held}: {text} by instantiation axioms under the hypotheses {held}"
+        if all(c.fresh not in guards for c in theorem.domain):
+            note = (
+                f"for {held}: the box floors, the hypotheses {held} of the theorem and of its "
+                "lemmas and steps that hold only from them"
+            )
         return header(lean(bare, name, describe, semantic=semantic, guards=guards), note)
     base = theorem
     while base.inference.kind == "subst":
@@ -2184,24 +2301,35 @@ def _lean_restricted(
 
 
 def _guards(theorem: Theorem) -> dict[str, int] | None:
-    """Each fresh symbol ``n`` with its least value ``-c`` when the theorem has no restricted
-    pair and every clause of its domain is a multiplicity shift ``s = n + c`` with ``c < 0``,
+    """Each fresh symbol ``n`` with its least value ``-c``, each floored symbol with its floor,
+    when the theorem has no restricted pair and every clause of its domain is a multiplicity
+    shift ``s = n + c`` with ``c < 0`` or a multiplicity side clause ``n >= v`` (a box floor),
     ``n`` one of its variables; else None."""
-    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, SIDE
 
     if theorem.origin is not None or not theorem.domain:
         return None
-    out: dict[str, int] = {}
     for c in theorem.domain:
-        if not (c.kind == MULTIPLICITY and c.form == SHIFT and c.a == 1 and c.c < 0):
+        shift = c.kind == MULTIPLICITY and c.form == SHIFT and c.a == 1 and c.c < 0
+        floor = c.kind == MULTIPLICITY and c.form == SIDE and _floor_only(c.domain)
+        if not (shift and c.fresh in theorem.variables) and not (
+            floor and c.symbol in theorem.variables
+        ):
             return None
-        if c.fresh not in theorem.variables:
-            return None
-        low = int(-c.c)
-        if c.fresh_domain is not None and c.fresh_domain.lo is not None:
-            low = max(low, math.ceil(c.fresh_domain.lo))
-        out[c.fresh] = max(out.get(c.fresh, 0), low)
-    return out
+    return _floors_of(theorem.domain, theorem.variables)
+
+
+def _floor_only(domain: object) -> bool:
+    """Whether a Domain is the integers from a positive lower bound."""
+    lo = getattr(domain, "lo", None)
+    return (
+        lo is not None
+        and lo > 0
+        and getattr(domain, "hi", None) is None
+        and getattr(domain, "q", 0) in (0, 1)
+        and getattr(domain, "step", None) is None
+        and not getattr(domain, "excluded", ())
+    )
 
 
 def _unlinked(restriction: Restriction) -> str:
