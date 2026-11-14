@@ -1979,9 +1979,7 @@ class _Lean:
         ok = [*others, kv]
         succ_own, succ_other = (
             self.succ_peel(side_d, index, k, peeled, ok)
-            or self.axiom(
-                "peel", f"{index} = {k} + 1", ok, self.call(side_d, s), self.call(peeled)
-            )
+            or self.axiom("peel", f"{index} = {k} + 1", ok, self.call(side_d, s), self.call(peeled))
             for side_d, peeled in (
                 (own, cast("Diagram", data["peeled"])),
                 (other, cast("Diagram", data["other_peeled"])),
