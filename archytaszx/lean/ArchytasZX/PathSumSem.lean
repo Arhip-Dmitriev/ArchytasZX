@@ -155,37 +155,102 @@ theorem fz_update_not (σ : ℕ → ZMod 2) (z : ℕ) (w : ZMod 2) (Q : F2)
   intro m hm
   exact mz_update_not σ z w m (h m hm)
 
-/-! ## Normalisation -/
+/-! ## Bitmask monomials -/
 
-/-- Adjacent duplicates removed. -/
-def squash : List ℕ → List ℕ
-  | a :: b :: l => if a = b then squash (b :: l) else a :: squash (b :: l)
-  | l => l
+/-- The mask of `m` over `vs`: bit `i` set when the `i`-th entry of `vs` is in `m`. -/
+def toM : List ℕ → Mono → ℕ
+  | [], _ => 0
+  | v :: vs, m => (if v ∈ m then 1 else 0) + 2 * toM vs m
 
-theorem mz_squash (σ : ℕ → ZMod 2) : ∀ l : List ℕ, mz σ (squash l) = mz σ l
+/-- The monomial of the mask `k` over `vs`: the entries of `vs` at the set bits of `k`. -/
+def ofM : List ℕ → ℕ → Mono
+  | [], _ => []
+  | v :: vs, k => if k % 2 = 1 then v :: ofM vs (k / 2) else ofM vs (k / 2)
+
+theorem mem_ofM_toM (w : ℕ) (m : Mono) : ∀ vs : List ℕ, w ∈ ofM vs (toM vs m) ↔ w ∈ vs ∧ w ∈ m
+  | [] => by simp [ofM]
+  | v :: vs => by
+    have ih := mem_ofM_toM w m vs
+    by_cases hv : v ∈ m
+    · have h1 : (1 + 2 * toM vs m) % 2 = 1 := by omega
+      have h2 : (1 + 2 * toM vs m) / 2 = toM vs m := by omega
+      simp only [toM, hv, ↓reduceIte, ofM, h1, h2, List.mem_cons, ih]
+      constructor
+      · rintro (rfl | ⟨a, b⟩)
+        · exact ⟨Or.inl rfl, hv⟩
+        · exact ⟨Or.inr a, b⟩
+      · rintro ⟨rfl | a, b⟩
+        · exact Or.inl rfl
+        · exact Or.inr ⟨a, b⟩
+    · have h1 : ¬ (0 + 2 * toM vs m) % 2 = 1 := by omega
+      have h2 : (0 + 2 * toM vs m) / 2 = toM vs m := by omega
+      simp only [toM, hv, ↓reduceIte, ofM, h1, h2, List.mem_cons, ih]
+      constructor
+      · rintro ⟨a, b⟩
+        exact ⟨Or.inr a, b⟩
+      · rintro ⟨rfl | a, b⟩
+        · exact absurd b hv
+        · exact ⟨a, b⟩
+
+theorem or_div_two (a b : ℕ) : (a ||| b) / 2 = a / 2 ||| b / 2 := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [← Nat.testBit_succ, Nat.testBit_or, Nat.testBit_or, Nat.testBit_succ, Nat.testBit_succ]
+
+theorem mem_ofM_or (w : ℕ) : ∀ (vs : List ℕ) (a b : ℕ),
+    w ∈ ofM vs (a ||| b) ↔ w ∈ ofM vs a ∨ w ∈ ofM vs b
+  | [], _, _ => by simp [ofM]
+  | v :: vs, a, b => by
+    have ih := mem_ofM_or w vs (a / 2) (b / 2)
+    simp only [ofM, or_div_two]
+    by_cases ha : a % 2 = 1 <;> by_cases hb : b % 2 = 1 <;>
+      simp [ha, hb, ih] <;> tauto
+
+theorem ofM_zero : ∀ vs : List ℕ, ofM vs 0 = []
   | [] => rfl
-  | [a] => rfl
-  | a :: b :: l => by
-    have ih := mz_squash σ (b :: l)
-    by_cases h : a = b
-    · subst h
-      simp only [squash, ↓reduceIte]
-      rw [ih]
-      show mz σ (a :: l) = σ a * (σ a * mz σ l)
-      show σ a * mz σ l = σ a * (σ a * mz σ l)
-      rw [← mul_assoc, z2_idem]
-    · simp only [squash, if_neg h]
-      show σ a * mz σ (squash (b :: l)) = σ a * mz σ (b :: l)
-      rw [ih]
+  | _ :: vs => by simp [ofM, ofM_zero vs]
 
-/-- A monomial sorted with duplicates removed. -/
-def mnorm (m : Mono) : Mono := squash (m.insertionSort (· ≤ ·))
+theorem mz_dedup (σ : ℕ → ZMod 2) : ∀ l : Mono, mz σ l.dedup = mz σ l
+  | [] => rfl
+  | a :: l => by
+    by_cases h : a ∈ l
+    · rw [List.dedup_cons_of_mem h, mz_dedup σ l]
+      show mz σ l = σ a * mz σ l
+      have hp : mz σ l = σ a * mz σ (l.erase a) := ((List.perm_cons_erase h).map σ).prod_eq
+      rw [hp, ← mul_assoc, z2_idem]
+    · rw [List.dedup_cons_of_notMem h]
+      show σ a * mz σ l.dedup = σ a * mz σ l
+      rw [mz_dedup σ l]
 
-theorem mz_mnorm (σ : ℕ → ZMod 2) (m : Mono) : mz σ (mnorm m) = mz σ m := by
-  unfold mnorm
-  rw [mz_squash]
-  unfold mz
-  exact ((List.perm_insertionSort (· ≤ ·) m).map σ).prod_eq
+theorem mz_congr (σ : ℕ → ZMod 2) {l l' : Mono} (h : ∀ v, v ∈ l ↔ v ∈ l') :
+    mz σ l = mz σ l' := by
+  rw [← mz_dedup σ l, ← mz_dedup σ l']
+  have hp : l.dedup.Perm l'.dedup :=
+    (List.perm_ext_iff_of_nodup (List.nodup_dedup _) (List.nodup_dedup _)).2
+      fun v => by rw [List.mem_dedup, List.mem_dedup]; exact h v
+  exact (hp.map σ).prod_eq
+
+theorem mz_ofM_toM (σ : ℕ → ZMod 2) {vs : List ℕ} {m : Mono} (h : ∀ v ∈ m, v ∈ vs) :
+    mz σ (ofM vs (toM vs m)) = mz σ m :=
+  mz_congr σ fun v => by
+    rw [mem_ofM_toM]
+    exact ⟨fun h' => h'.2, fun h' => ⟨h v h', h'⟩⟩
+
+theorem mz_ofM_or (σ : ℕ → ZMod 2) (vs : List ℕ) (a b : ℕ) :
+    mz σ (ofM vs (a ||| b)) = mz σ (ofM vs a) * mz σ (ofM vs b) := by
+  rw [← mz_append]
+  apply mz_congr
+  intro v
+  rw [mem_ofM_or, List.mem_append]
+
+/-- `mle` on the monomials of two masks over one ascending variable list. -/
+def mleM (a b : ℕ) : Bool :=
+  a == b ||
+    let d := a ^^^ b
+    let t := d &&& (d ^^^ (d - 1))
+    if a &&& t = 0 then decide (a < t) else decide (t ≤ b)
+
+/-! ## Normalisation -/
 
 /-- `t` merged into `P`: coefficients added mod M, zero terms dropped. -/
 def ins (M : ℕ) (t : Mono × ℕ) : Poly → Poly
@@ -294,6 +359,44 @@ def sortB {α : Type} (le : α → α → Bool) (l : List α) : List α := msort
 theorem sortB_perm {α : Type} (le : α → α → Bool) (l : List α) : (sortB le l).Perm l :=
   msortN_perm le _ l
 
+/-- `v` inserted into an ascending list without repeats. -/
+def insU (v : ℕ) : List ℕ → List ℕ
+  | [] => [v]
+  | a :: l => if v < a then v :: a :: l else if v = a then a :: l else a :: insU v l
+
+theorem mem_insU (w v : ℕ) : ∀ l : List ℕ, w ∈ insU v l ↔ w = v ∨ w ∈ l
+  | [] => by simp [insU]
+  | a :: l => by
+    have ih := mem_insU w v l
+    simp only [insU]
+    split_ifs with h1 h2
+    · simp
+    · subst h2
+      simp only [List.mem_cons]
+      tauto
+    · simp only [List.mem_cons, ih]
+      tauto
+
+theorem mem_foldr_insU (w : ℕ) (acc : List ℕ) : ∀ m : Mono,
+    w ∈ m.foldr insU acc ↔ w ∈ m ∨ w ∈ acc
+  | [] => by simp
+  | v :: m => by
+    rw [List.foldr_cons, mem_insU, mem_foldr_insU w acc m, List.mem_cons]
+    tauto
+
+/-- The variables of a list of monomials, ascending, without repeats. -/
+def vlist (ms : List Mono) : List ℕ := ms.foldr (fun m acc => m.foldr insU acc) []
+
+theorem mem_vlist {ms : List Mono} {m : Mono} (hm : m ∈ ms) : ∀ v ∈ m, v ∈ vlist ms := by
+  intro v hv
+  induction ms with
+  | nil => exact absurd hm List.not_mem_nil
+  | cons a ms ih =>
+    rw [vlist, List.foldr_cons, mem_foldr_insU]
+    rcases List.mem_cons.1 hm with rfl | hm
+    · exact Or.inl hv
+    · exact Or.inr (ih hm)
+
 /-- `t` added to the head term of `P` when their monomials agree, else consed; zero terms
 dropped. -/
 def insH (M : ℕ) (t : Mono × ℕ) : Poly → Poly
@@ -340,6 +443,118 @@ theorem pn_foldr_insH (σ : ℕ → ZMod 2) (M : ℕ) :
     rw [pn_cons]
     exact peq_add (peq_refl M _) (pn_foldr_insH σ M L)
 
+/-- A mask term over `vs` as a monomial term. -/
+def conv (vs : List ℕ) (t : ℕ × ℕ) : Mono × ℕ := (ofM vs t.1, t.2)
+
+/-- A phase polynomial over masks of `vs`, times M. -/
+def pnM (σ : ℕ → ZMod 2) (vs : List ℕ) (P : List (ℕ × ℕ)) : ℤ := pn σ (P.map (conv vs))
+
+theorem pnM_nil (σ : ℕ → ZMod 2) (vs : List ℕ) : pnM σ vs [] = 0 := rfl
+
+theorem pnM_cons (σ : ℕ → ZMod 2) (vs : List ℕ) (t : ℕ × ℕ) (P : List (ℕ × ℕ)) :
+    pnM σ vs (t :: P) = (t.2 : ℤ) * zq (mz σ (ofM vs t.1)) + pnM σ vs P := by
+  unfold pnM
+  rw [List.map_cons, pn_cons]
+  rfl
+
+theorem pnM_append (σ : ℕ → ZMod 2) (vs : List ℕ) (P R : List (ℕ × ℕ)) :
+    pnM σ vs (P ++ R) = pnM σ vs P + pnM σ vs R := by
+  unfold pnM
+  rw [List.map_append, pn_append]
+
+/-- `insH` on mask terms. -/
+def insHM (M : ℕ) (t : ℕ × ℕ) : List (ℕ × ℕ) → List (ℕ × ℕ)
+  | [] => if t.2 % M = 0 then [] else [(t.1, t.2 % M)]
+  | u :: P =>
+    if u.1 = t.1 then (if (u.2 + t.2) % M = 0 then P else (u.1, (u.2 + t.2) % M) :: P)
+    else if t.2 % M = 0 then u :: P else (t.1, t.2 % M) :: u :: P
+
+theorem pnM_insHM (σ : ℕ → ZMod 2) (vs : List ℕ) (M : ℕ) (t : ℕ × ℕ) :
+    ∀ P : List (ℕ × ℕ),
+      peq M (pnM σ vs (insHM M t P)) ((t.2 : ℤ) * zq (mz σ (ofM vs t.1)) + pnM σ vs P)
+  | [] => by
+    simp only [insHM]
+    obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ (ofM vs t.1)))
+    split_ifs with h
+    · rw [h] at hn
+      refine ⟨n, ?_⟩
+      rw [pnM_nil]
+      push_cast at hn
+      linear_combination hn
+    · refine ⟨n, ?_⟩
+      rw [pnM_cons, pnM_nil]
+      dsimp only
+      push_cast at hn ⊢
+      linear_combination hn
+  | u :: P => by
+    simp only [insHM]
+    split_ifs with h1 h2 h3
+    · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ (ofM vs t.1)))
+      rw [h2] at hn
+      refine ⟨n, ?_⟩
+      rw [pnM_cons, h1]
+      push_cast at hn
+      linear_combination hn
+    · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ (ofM vs t.1)))
+      refine ⟨n, ?_⟩
+      rw [pnM_cons, pnM_cons, h1]
+      push_cast at hn ⊢
+      linarith
+    · obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ (ofM vs t.1)))
+      rw [h3] at hn
+      refine ⟨n, ?_⟩
+      push_cast at hn
+      linear_combination hn
+    · obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ (ofM vs t.1)))
+      refine ⟨n, ?_⟩
+      rw [pnM_cons σ vs (t.1, t.2 % M)]
+      dsimp only
+      push_cast at hn ⊢
+      linear_combination hn
+
+theorem pnM_foldr_insHM (σ : ℕ → ZMod 2) (vs : List ℕ) (M : ℕ) :
+    ∀ L : List (ℕ × ℕ), peq M (pnM σ vs (L.foldr (insHM M) [])) (pnM σ vs L)
+  | [] => peq_refl M 0
+  | t :: L => by
+    rw [List.foldr_cons]
+    refine peq_trans (pnM_insHM σ vs M t _) ?_
+    rw [pnM_cons]
+    exact peq_add (peq_refl M _) (pnM_foldr_insHM σ vs M L)
+
+/-- A mask phase polynomial sorted by `mleM` (merge sort), terms of one mask merged mod M and
+zero terms dropped. -/
+def normPM (M : ℕ) (P : List (ℕ × ℕ)) : List (ℕ × ℕ) :=
+  (sortB (fun a b => mleM a.1 b.1) P).foldr (insHM M) []
+
+/-- Adjacent duplicates removed. -/
+def squash : List ℕ → List ℕ
+  | a :: b :: l => if a = b then squash (b :: l) else a :: squash (b :: l)
+  | l => l
+
+theorem mz_squash (σ : ℕ → ZMod 2) : ∀ l : List ℕ, mz σ (squash l) = mz σ l
+  | [] => rfl
+  | [a] => rfl
+  | a :: b :: l => by
+    have ih := mz_squash σ (b :: l)
+    by_cases h : a = b
+    · subst h
+      simp only [squash, ↓reduceIte]
+      rw [ih]
+      show σ a * mz σ l = σ a * (σ a * mz σ l)
+      rw [← mul_assoc, z2_idem]
+    · simp only [squash, if_neg h]
+      show σ a * mz σ (squash (b :: l)) = σ a * mz σ (b :: l)
+      rw [ih]
+
+/-- A monomial sorted with duplicates removed. -/
+def mnorm (m : Mono) : Mono := squash (m.insertionSort (· ≤ ·))
+
+theorem mz_mnorm (σ : ℕ → ZMod 2) (m : Mono) : mz σ (mnorm m) = mz σ m := by
+  unfold mnorm
+  rw [mz_squash]
+  unfold mz
+  exact ((List.perm_insertionSort (· ≤ ·) m).map σ).prod_eq
+
 /-- A phase polynomial with sorted monomials, sorted by `mle` (merge sort), terms of one
 monomial merged mod M and zero terms dropped. -/
 def normP (M : ℕ) (P : Poly) : Poly :=
@@ -347,6 +562,14 @@ def normP (M : ℕ) (P : Poly) : Poly :=
 
 theorem pn_perm (σ : ℕ → ZMod 2) {P R : Poly} (h : P.Perm R) : pn σ P = pn σ R :=
   (h.map _).sum_eq
+
+theorem pnM_normPM (σ : ℕ → ZMod 2) (vs : List ℕ) (M : ℕ) (P : List (ℕ × ℕ)) :
+    peq M (pnM σ vs (normPM M P)) (pnM σ vs P) := by
+  unfold normPM
+  refine peq_trans (pnM_foldr_insHM σ vs M _) ?_
+  unfold pnM
+  rw [pn_perm σ ((sortB_perm _ _).map (conv vs))]
+  exact peq_refl M _
 
 theorem pn_normP (σ : ℕ → ZMod 2) (M : ℕ) (P : Poly) : peq M (pn σ (normP M P)) (pn σ P) := by
   unfold normP
@@ -383,17 +606,147 @@ theorem fz_foldr_cancelH (σ : ℕ → ZMod 2) : ∀ Q : F2, fz σ (Q.foldr canc
   | [] => rfl
   | m :: Q => by rw [List.foldr_cons, fz_cancelH, fz_foldr_cancelH σ Q, fz_cons]
 
+/-- `cancelH` on masks. -/
+def cancelHM (m : ℕ) : List ℕ → List ℕ
+  | [] => [m]
+  | u :: Q => if u = m then Q else m :: u :: Q
+
+theorem fz_cancelHM (σ : ℕ → ZMod 2) (vs : List ℕ) (m : ℕ) : ∀ Q : List ℕ,
+    fz σ ((cancelHM m Q).map (ofM vs)) = mz σ (ofM vs m) + fz σ (Q.map (ofM vs))
+  | [] => by simp [cancelHM, fz]
+  | u :: Q => by
+    simp only [cancelHM]
+    split_ifs with h
+    · subst h
+      rw [List.map_cons, fz_cons, ← add_assoc, ← two_mul]
+      have : (2 : ZMod 2) = 0 := by decide
+      rw [this, zero_mul, zero_add]
+    · rw [List.map_cons, fz_cons]
+
+theorem fz_foldr_cancelHM (σ : ℕ → ZMod 2) (vs : List ℕ) : ∀ Q : List ℕ,
+    fz σ ((Q.foldr cancelHM []).map (ofM vs)) = fz σ (Q.map (ofM vs))
+  | [] => rfl
+  | m :: Q => by
+    rw [List.foldr_cons, fz_cancelHM, fz_foldr_cancelHM σ vs Q, List.map_cons, fz_cons]
+
+/-- The xor of `2 ^ k` over the masks `k` of `Q`. -/
+def xorF (Q : List ℕ) : ℕ := Q.foldr (fun k acc => acc ^^^ 2 ^ k) 0
+
+/-- The or of the masks of `Q`. -/
+def orF (Q : List ℕ) : ℕ := Q.foldr (fun k acc => k ||| acc) 0
+
+/-- The masks of odd multiplicity in `Q`: the set bits of `xorF Q` up to `orF Q`, sorted by
+`mleM`. -/
+def normFD (Q : List ℕ) : List ℕ :=
+  sortB mleM ((List.range (orF Q + 1)).filter fun k => (xorF Q).testBit k)
+
+/-- A mask F_2 polynomial sorted by `mleM`, equal pairs cancelled: through `xorF` when
+`orF Q` is below `4 * Q.length + 64`, else by merge sort. -/
+def normFM (Q : List ℕ) : List ℕ :=
+  if orF Q < 4 * Q.length + 64 then normFD Q else (sortB mleM Q).foldr cancelHM []
+
+theorem sum_filter_ite {f : ℕ → ZMod 2} (p : ℕ → Bool) : ∀ l : List ℕ,
+    ((l.filter p).map f).sum = (l.map fun x => if p x then f x else 0).sum
+  | [] => rfl
+  | a :: l => by
+    by_cases h : p a <;> simp [List.filter_cons, h, sum_filter_ite p l]
+
+theorem sum_ite_eq_none {f : ℕ → ZMod 2} (k : ℕ) : ∀ l : List ℕ, k ∉ l →
+    (l.map fun x => if x = k then f x else 0).sum = 0
+  | [], _ => rfl
+  | b :: l, hk => by
+    have hb : b ≠ k := fun e => hk (e ▸ List.mem_cons_self)
+    rw [List.map_cons, List.sum_cons, if_neg hb,
+      sum_ite_eq_none k l (fun e => hk (List.mem_cons_of_mem _ e)), add_zero]
+
+theorem sum_ite_eq_self {f : ℕ → ZMod 2} (k : ℕ) : ∀ l : List ℕ, l.Nodup → k ∈ l →
+    (l.map fun x => if x = k then f x else 0).sum = f k
+  | [], _, h => absurd h List.not_mem_nil
+  | a :: l, hn, h => by
+    rw [List.map_cons, List.sum_cons]
+    by_cases hak : a = k
+    · subst hak
+      rw [if_pos rfl, sum_ite_eq_none a l (List.nodup_cons.1 hn).1, add_zero]
+    · rw [if_neg hak, zero_add]
+      exact sum_ite_eq_self k l (List.nodup_cons.1 hn).2
+        ((List.mem_cons.1 h).resolve_left (Ne.symm hak))
+
+theorem testBit_xorF (k x : ℕ) (Q : List ℕ) :
+    (xorF (k :: Q)).testBit x = ((xorF Q).testBit x ^^ decide (k = x)) := by
+  simp only [xorF, List.foldr_cons, Nat.testBit_xor, Nat.testBit_two_pow]
+
+theorem sum_xorF {f : ℕ → ZMod 2} (cand : List ℕ) (hc : cand.Nodup) : ∀ Q : List ℕ,
+    (∀ k ∈ Q, k ∈ cand) →
+      ((cand.filter fun k => (xorF Q).testBit k).map f).sum = (Q.map f).sum
+  | [], _ => by simp [xorF]
+  | k :: Q, h => by
+    have ih := sum_xorF (f := f) cand hc Q (fun x hx => h x (List.mem_cons_of_mem _ hx))
+    rw [sum_filter_ite] at ih ⊢
+    have e : ∀ x, (if (xorF (k :: Q)).testBit x then f x else 0) =
+        (if (xorF Q).testBit x then f x else 0) + (if x = k then f x else 0) := by
+      intro x
+      rw [testBit_xorF]
+      by_cases h1 : (xorF Q).testBit x <;> by_cases h2 : x = k
+      · subst h2
+        simp only [h1, Bool.true_xor, decide_true, Bool.not_true, ↓reduceIte]
+        exact (show ∀ y : ZMod 2, 0 = y + y by decide) _
+      · simp [h1, h2, Ne.symm h2]
+      · subst h2
+        simp [h1]
+      · simp [h1, h2, Ne.symm h2]
+    simp only [e]
+    rw [List.sum_map_add, ih, sum_ite_eq_self k cand hc (h k List.mem_cons_self),
+      List.map_cons, List.sum_cons, add_comm]
+
+theorem le_orF : ∀ (Q : List ℕ) (k : ℕ), k ∈ Q → k ≤ orF Q
+  | [], _, h => absurd h List.not_mem_nil
+  | a :: Q, k, h => by
+    rw [orF, List.foldr_cons]
+    rcases List.mem_cons.1 h with rfl | h
+    · exact Nat.left_le_or
+    · exact le_trans (le_orF Q k h) Nat.right_le_or
+
 /-- An F_2 polynomial with sorted monomials, sorted by `mle` (merge sort), equal pairs
-cancelled. -/
+cancelled, on lists. -/
+def normFL (Q : F2) : F2 := (sortB (fun a b => mle a b) (Q.map mnorm)).foldr cancelH []
+
+/-- An F_2 polynomial with sorted monomials, sorted by `mle` order, equal pairs cancelled:
+`normFL` below 32 monomials, else on masks. -/
 def normF (Q : F2) : F2 :=
-  (sortB (fun a b => mle a b) (Q.map mnorm)).foldr cancelH []
+  if Q.length < 32 then normFL Q else
+    let vs := vlist Q
+    (normFM (Q.map (toM vs))).map (ofM vs)
+
+theorem fz_normFM (σ : ℕ → ZMod 2) (vs : List ℕ) (Q : List ℕ) :
+    fz σ ((normFM Q).map (ofM vs)) = fz σ (Q.map (ofM vs)) := by
+  unfold normFM
+  split_ifs
+  · unfold normFD
+    rw [fz_perm σ ((sortB_perm _ _).map (ofM vs))]
+    unfold fz
+    rw [List.map_map, List.map_map]
+    exact sum_xorF _ List.nodup_range Q
+      (fun k hk => List.mem_range.2 (Nat.lt_succ_of_le (le_orF Q k hk)))
+  · rw [fz_foldr_cancelHM, fz_perm σ ((sortB_perm _ _).map (ofM vs))]
+
+theorem fz_toM (σ : ℕ → ZMod 2) (vs : List ℕ) : ∀ Q : F2, (∀ m ∈ Q, ∀ v ∈ m, v ∈ vs) →
+    fz σ ((Q.map (toM vs)).map (ofM vs)) = fz σ Q
+  | [] => fun _ => rfl
+  | m :: Q => fun h => by
+    rw [List.map_cons, List.map_cons, fz_cons, fz_cons,
+      fz_toM σ vs Q (fun u hu => h u (List.mem_cons_of_mem _ hu)),
+      mz_ofM_toM σ (h m List.mem_cons_self)]
 
 theorem fz_normF (σ : ℕ → ZMod 2) (Q : F2) : fz σ (normF Q) = fz σ Q := by
   unfold normF
-  rw [fz_foldr_cancelH, fz_perm σ (sortB_perm _ _)]
-  induction Q with
-  | nil => rfl
-  | cons m Q ih => rw [List.map_cons, fz_cons, fz_cons, ih, mz_mnorm]
+  split_ifs with h
+  · clear h
+    unfold normFL
+    rw [fz_foldr_cancelH, fz_perm σ (sortB_perm _ _)]
+    induction Q with
+    | nil => rfl
+    | cons m Q ih => rw [List.map_cons, fz_cons, fz_cons, ih, mz_mnorm]
+  · rw [fz_normFM, fz_toM σ _ Q (fun m hm => mem_vlist hm)]
 
 /-! ## The Boolean lift and substitution -/
 
@@ -423,32 +776,69 @@ theorem pn_lift (σ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
     push_cast
     linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ m)) * hk
 
-/-- `lift M B` normalised after each monomial. -/
-def liftN (M : ℕ) : F2 → Poly
+/-- `c` times `lift M` of a mask polynomial, normalised mod M after each mask. -/
+def liftNM (M c : ℕ) : List ℕ → List (ℕ × ℕ)
   | [] => []
   | m :: B =>
-    let L := liftN M B
-    normP M ((m, 1) :: (L ++ L.map fun t => (m ++ t.1, (M - 2) * t.2)))
+    let L := liftNM M c B
+    normPM M ((m, c) :: (L ++ L.map fun t => (m ||| t.1, (M - 2) * t.2)))
 
-theorem pn_liftN (σ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
-    ∀ B : F2, peq M (pn σ (liftN M B)) (zq (fz σ B))
-  | [] => ⟨0, by simp [liftN, pn, fz, zq]⟩
+/-- `c` times `lift M B`, normalised mod M after each monomial. -/
+def liftN (M c : ℕ) (B : F2) : Poly :=
+  if 2 * c % M = 0 then B.map fun m => (m, c) else
+    let vs := vlist B
+    (liftNM M c (B.map (toM vs))).map (conv vs)
+
+theorem pn_linlift (σ : ℕ → ZMod 2) (M c : ℕ) (h : 2 * c % M = 0) :
+    ∀ B : F2, peq M (pn σ (B.map fun m => (m, c))) (c * zq (fz σ B))
+  | [] => ⟨0, by simp [pn, fz, zq]⟩
   | m :: B => by
-    obtain ⟨k, hk⟩ := pn_liftN σ M hM B
-    simp only [liftN]
-    refine peq_trans (pn_normP σ M _) ?_
-    rw [pn_cons, pn_append, pn_mapmul, fz_cons, zq_add]
+    obtain ⟨k, hk⟩ := pn_linlift σ M c h B
+    obtain ⟨j, hj⟩ := Nat.dvd_of_mod_eq_zero h
+    rw [List.map_cons, pn_cons, fz_cons, zq_add]
+    refine ⟨k + j * zq (mz σ m) * zq (fz σ B), ?_⟩
+    have hj2 : (2 : ℤ) * c = M * j := by exact_mod_cast hj
+    dsimp only
+    rw [hk]
+    linear_combination zq (mz σ m) * zq (fz σ B) * hj2
+
+theorem pnM_mapor (σ : ℕ → ZMod 2) (vs : List ℕ) (m c : ℕ) : ∀ L : List (ℕ × ℕ),
+    pnM σ vs (L.map fun t => (m ||| t.1, c * t.2)) =
+      (c : ℤ) * zq (mz σ (ofM vs m)) * pnM σ vs L
+  | [] => by simp [pnM, pn]
+  | t :: L => by
+    rw [List.map_cons, pnM_cons, pnM_cons, pnM_mapor σ vs m c L, mz_ofM_or, zq_mul]
+    push_cast
+    ring
+
+theorem pn_liftNM (σ : ℕ → ZMod 2) (vs : List ℕ) (M c : ℕ) (hM : 2 ≤ M) :
+    ∀ B : List ℕ, peq M (pnM σ vs (liftNM M c B)) (c * zq (fz σ (B.map (ofM vs))))
+  | [] => ⟨0, by simp [liftNM, pnM, pn, fz, zq]⟩
+  | m :: B => by
+    obtain ⟨k, hk⟩ := pn_liftNM σ vs M c hM B
+    simp only [liftNM]
+    refine peq_trans (pnM_normPM σ vs M _) ?_
+    rw [pnM_cons, pnM_append, pnM_mapor, List.map_cons, fz_cons, zq_add]
     have hc : ((M - 2 : ℕ) : ℤ) = (M : ℤ) - 2 := by push_cast [Nat.cast_sub hM]; ring
     rw [hc]
-    refine ⟨k + zq (mz σ m) * zq (fz σ B) + ((M : ℤ) - 2) * zq (mz σ m) * k, ?_⟩
+    refine ⟨c * zq (mz σ (ofM vs m)) * zq (fz σ (B.map (ofM vs))) + k +
+      ((M : ℤ) - 2) * zq (mz σ (ofM vs m)) * k, ?_⟩
     push_cast
-    linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ m)) * hk
+    linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ (ofM vs m))) * hk
+
+theorem pn_liftN (σ : ℕ → ZMod 2) (M c : ℕ) (hM : 2 ≤ M) (B : F2) :
+    peq M (pn σ (liftN M c B)) (c * zq (fz σ B)) := by
+  unfold liftN
+  split_ifs with hc
+  · exact pn_linlift σ M c hc B
+  have h := pn_liftNM σ (vlist B) M c hM (B.map (toM (vlist B)))
+  rw [fz_toM σ _ B (fun m hm => mem_vlist hm)] at h
+  exact h
 
 /-- `z` replaced by the F_2 polynomial `B` in a phase polynomial. -/
 def substP (M z : ℕ) (B : F2) (P : Poly) : Poly :=
-  let L := liftN M B
   P.flatMap fun t =>
-    if z ∈ t.1 then L.map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]
+    if z ∈ t.1 then (liftN M t.2 B).map fun u => (t.1.filter (· != z) ++ u.1, u.2) else [t]
 
 /-- `z` replaced by `B` in an F_2 polynomial. -/
 def substF (z : ℕ) (B : F2) (Q : F2) : F2 :=
@@ -459,19 +849,17 @@ theorem pn_substP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) :
   | [] => peq_refl M 0
   | t :: P => by
     have ih := pn_substP σ M z hM B P
-    have hsplit : substP M z B (t :: P) = (if z ∈ t.1 then (liftN M B).map fun u =>
-        (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]) ++ substP M z B P := by
+    have hsplit : substP M z B (t :: P) = (if z ∈ t.1 then (liftN M t.2 B).map fun u =>
+        (t.1.filter (· != z) ++ u.1, 1 * u.2) else [t]) ++ substP M z B P := by
       simp [substP, List.flatMap_cons]
     rw [hsplit, pn_append, pn_cons]
     apply peq_add _ ih
     by_cases hz : z ∈ t.1
     · rw [if_pos hz]
-      have hmap : ((liftN M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2)) =
-          (liftN M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) := rfl
-      rw [hmap, pn_mapmul, mz_update_in σ z _ t.1 hz, zq_mul]
-      have := peq_mul ((t.2 : ℤ) * zq (mz σ (t.1.filter (· != z)))) (pn_liftN σ M hM B)
+      rw [pn_mapmul, mz_update_in σ z _ t.1 hz, zq_mul]
+      have := peq_mul (zq (mz σ (t.1.filter (· != z)))) (pn_liftN σ M t.2 hM B)
       obtain ⟨n, hn⟩ := this
-      exact ⟨n, by rw [hn]; ring⟩
+      exact ⟨n, by push_cast; rw [one_mul, hn]; ring⟩
     · rw [if_neg hz, pn_cons, pn_nil, mz_update_not σ z _ t.1 hz]
       exact ⟨0, by ring⟩
 
@@ -496,6 +884,50 @@ theorem fz_substF (σ : ℕ → ZMod 2) (z : ℕ) (B : F2) :
       ring
     · rw [if_neg hz, fz_cons, mz_update_not σ z _ m hz]
       simp [fz]
+
+/-- `normF (substF z B Q)`, computed on masks. -/
+def substFN (z : ℕ) (B : F2) (Q : F2) : F2 :=
+  let vs := vlist (Q ++ B)
+  let Bm := B.map (toM vs)
+  (normFM (Q.flatMap fun m =>
+    if z ∈ m then Bm.map fun u => toM vs (m.filter (· != z)) ||| u else [toM vs m])).map (ofM vs)
+
+theorem fz_substFN (σ : ℕ → ZMod 2) (z : ℕ) (B : F2) (Q : F2) :
+    fz σ (substFN z B Q) = fz (Function.update σ z (fz σ B)) Q := by
+  unfold substFN
+  rw [fz_normFM]
+  have hB : ∀ m ∈ B, ∀ v ∈ m, v ∈ vlist (Q ++ B) :=
+    fun m hm => mem_vlist (List.mem_append_right _ hm)
+  have hBf : fz σ ((B.map (toM (vlist (Q ++ B)))).map (ofM (vlist (Q ++ B)))) = fz σ B :=
+    fz_toM σ _ B hB
+  have key : ∀ R : F2, (∀ m ∈ R, ∀ v ∈ m, v ∈ vlist (Q ++ B)) →
+      fz σ ((R.flatMap fun m => if z ∈ m then (B.map (toM (vlist (Q ++ B)))).map fun u =>
+        toM (vlist (Q ++ B)) (m.filter (· != z)) ||| u else [toM (vlist (Q ++ B)) m]).map
+          (ofM (vlist (Q ++ B)))) = fz (Function.update σ z (fz σ B)) R := by
+    intro R
+    induction R with
+    | nil => intro _; rfl
+    | cons m R ih =>
+      intro hR
+      have hm : ∀ v ∈ m, v ∈ vlist (Q ++ B) := hR m List.mem_cons_self
+      rw [List.flatMap_cons, List.map_append, fz_append,
+        ih (fun r hr => hR r (List.mem_cons_of_mem _ hr)), fz_cons]
+      congr 1
+      by_cases hz : z ∈ m
+      · rw [if_pos hz, mz_update_in σ z _ m hz, ← hBf]
+        have hf : ∀ v ∈ m.filter (· != z), v ∈ vlist (Q ++ B) :=
+          fun v hv => hm v (List.mem_of_mem_filter hv)
+        generalize B.map (toM (vlist (Q ++ B))) = L
+        induction L with
+        | nil => simp [fz]
+        | cons u L ihL =>
+          rw [List.map_cons, List.map_cons, List.map_cons, fz_cons, fz_cons, ihL, mz_ofM_or,
+            mz_ofM_toM σ hf]
+          ring
+      · rw [if_neg hz, List.map_cons, List.map_nil, fz_cons, mz_ofM_toM σ hm,
+          mz_update_not σ z _ m hz]
+        simp [fz]
+  exact key Q fun m hm => mem_vlist (List.mem_append_left _ hm)
 
 /-! ## Sums over path variables -/
 
@@ -1112,19 +1544,66 @@ theorem fz_f2mul (τ : ℕ → ZMod 2) (b : F2) : ∀ a : F2, fz τ (f2mul a b) 
     rw [hs, fz_append, fz_mapprefix, ih, fz_cons]
     ring
 
+/-- The product of two mask F_2 polynomials. -/
+def f2mulM (a b : List ℕ) : List ℕ := a.flatMap fun m => b.map fun u => m ||| u
+
+theorem fz_f2mulM (τ : ℕ → ZMod 2) (vs : List ℕ) (b : List ℕ) : ∀ a : List ℕ,
+    fz τ ((f2mulM a b).map (ofM vs)) = fz τ (a.map (ofM vs)) * fz τ (b.map (ofM vs))
+  | [] => by simp [f2mulM, fz]
+  | m :: a => by
+    have ih := fz_f2mulM τ vs b a
+    have hs : f2mulM (m :: a) b = (b.map fun u => m ||| u) ++ f2mulM a b := by
+      simp [f2mulM, List.flatMap_cons]
+    have hm : ∀ L : List ℕ, fz τ ((L.map fun u => m ||| u).map (ofM vs)) =
+        mz τ (ofM vs m) * fz τ (L.map (ofM vs)) := by
+      intro L
+      induction L with
+      | nil => simp [fz]
+      | cons u L ihL =>
+        rw [List.map_cons, List.map_cons, List.map_cons, fz_cons, fz_cons, ihL, mz_ofM_or]
+        ring
+    rw [hs, List.map_append, fz_append, hm, ih, List.map_cons, fz_cons]
+    ring
+
+/-- `normF (f2mul a b)`, computed on masks. -/
+def f2mulN (a b : F2) : F2 :=
+  let vs := vlist (a ++ b)
+  (normFM (f2mulM (a.map (toM vs)) (b.map (toM vs)))).map (ofM vs)
+
+theorem fz_f2mulN (τ : ℕ → ZMod 2) (a b : F2) : fz τ (f2mulN a b) = fz τ a * fz τ b := by
+  unfold f2mulN
+  rw [fz_normFM, fz_f2mulM,
+    fz_toM τ _ a (fun m hm => mem_vlist (List.mem_append_left _ hm)),
+    fz_toM τ _ b (fun m hm => mem_vlist (List.mem_append_right _ hm))]
+
+/-- The mask support indicator `Prod (1 + c)` over `vs` of a list of constraints, normalised
+after each factor. -/
+def gatherM (vs : List ℕ) (C : List F2) : List ℕ :=
+  C.foldr (fun c acc => normFM (f2mulM (0 :: c.map (toM vs)) acc)) [0]
+
 /-- The support indicator `Prod (1 + c)` of a list of constraints, normalised after each
 factor. -/
-def gatherPoly (C : List F2) : F2 := C.foldr (fun c acc => normF (f2mul ([] :: c) acc)) [[]]
+def gatherPoly (C : List F2) : F2 :=
+  let vs := vlist (C.flatMap id)
+  (gatherM vs C).map (ofM vs)
 
-theorem fz_gather (τ : ℕ → ZMod 2) :
-    ∀ C : List F2, (fz τ (gatherPoly C) = 1 ↔ ∀ q ∈ C, fz τ q = 0)
-  | [] => by simp [gatherPoly, fz, mz]
-  | c :: C => by
-    have ih := fz_gather τ C
-    have hs : gatherPoly (c :: C) = normF (f2mul ([] :: c) (gatherPoly C)) := rfl
-    rw [hs, fz_normF, fz_f2mul, fz_cons, show mz τ [] = 1 from rfl, List.forall_mem_cons, ← ih]
-    rcases z2_cases (fz τ c) with h | h <;> rcases z2_cases (fz τ (gatherPoly C)) with g | g <;>
-      simp [h, g] <;> decide
+theorem fz_gatherM (τ : ℕ → ZMod 2) (vs : List ℕ) :
+    ∀ C : List F2, (∀ q ∈ C, ∀ m ∈ q, ∀ v ∈ m, v ∈ vs) →
+      (fz τ ((gatherM vs C).map (ofM vs)) = 1 ↔ ∀ q ∈ C, fz τ q = 0)
+  | [], _ => by simp [gatherM, fz, ofM_zero, mz]
+  | c :: C, hC => by
+    have ih := fz_gatherM τ vs C (fun q hq => hC q (List.mem_cons_of_mem _ hq))
+    have hs : gatherM vs (c :: C) = normFM (f2mulM (0 :: c.map (toM vs)) (gatherM vs C)) := rfl
+    rw [hs, fz_normFM, fz_f2mulM, List.map_cons, fz_cons,
+      fz_toM τ vs c (hC c List.mem_cons_self), ofM_zero,
+      show mz τ [] = 1 from rfl, List.forall_mem_cons, ← ih]
+    rcases z2_cases (fz τ c) with h | h <;>
+      rcases z2_cases (fz τ ((gatherM vs C).map (ofM vs))) with g | g <;> simp [h, g]
+
+theorem fz_gather (τ : ℕ → ZMod 2) (C : List F2) :
+    fz τ (gatherPoly C) = 1 ↔ ∀ q ∈ C, fz τ q = 0 :=
+  fz_gatherM τ _ C fun q hq m hm =>
+    mem_vlist (List.mem_flatMap.2 ⟨q, hq, by simpa using hm⟩)
 
 /-- Whether there is a constraint to gather and no path variable. -/
 def gatherOK (s : Data) : Bool := decide (s.path = [])
@@ -1189,7 +1668,7 @@ def bcanonOK (v : ℕ) (s : Data) : Bool :=
   | [] => false
   | q :: _ =>
     let g := normF ([] :: q)
-    !decide (v ∈ s.path) && decide (normF (f2mul (splitAt v g).2 (detValue v q)) = [])
+    !decide (v ∈ s.path) && decide (f2mulN (splitAt v g).2 (detValue v q) = [])
 
 /-- The first constraint's determined variable `v` made a row `v + A + B`, substituted out of
 the phase, the constraints and the rows. -/
@@ -1199,8 +1678,8 @@ def bcanonS (M v : ℕ) (s : Data) : Data :=
   | q :: rest =>
     let val := detValue v q
     { path := s.path, phase := normP M (substP M v val s.phase),
-      cons := (q :: rest).map fun r => normF (substF v val r),
-      rows := (s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)] }
+      cons := (q :: rest).map fun r => substFN v val r,
+      rows := (s.rows.map fun r => substFN v val r) ++ [normF ([v] :: val)] }
 
 theorem z2_add_self : ∀ x : ZMod 2, x + x = 0 := by decide
 
@@ -1225,41 +1704,41 @@ theorem bcanon_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ
       simp only [val, detValue]; rw [fz_append]
     have hzero : fz τ (splitAt v g).2 * fz τ val = 0 := by
       have := congrArg (fz τ) hdet
-      rw [fz_normF, fz_f2mul] at this
+      rw [fz_f2mulN] at this
       simpa [fz] using this
     unfold summand
     simp only [hq]
     have hM0 : 0 < M := by omega
     by_cases hrow : τ v = fz τ val
     · have hτ : Function.update τ v (fz τ val) = τ := by rw [← hrow, Function.update_eq_self]
-      have hsub : ∀ r, fz τ (normF (substF v val r)) = fz τ r := by
-        intro r; rw [fz_normF, fz_substF, hτ]
+      have hsub : ∀ r, fz τ (substFN v val r) = fz τ r := by
+        intro r; rw [fz_substFN, hτ]
       have hrowz : fz τ (normF ([v] :: val)) = 0 := by
         have e : mz τ [v] = τ v := by simp [mz]
         rw [fz_normF, fz_cons, e, hrow]
         exact z2_add_self _
-      have hcond : (∀ r ∈ (q :: rest).map (fun r => normF (substF v val r)) ++
-          ((s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)]), fz τ r = 0) ↔
+      have hcond : (∀ r ∈ (q :: rest).map (fun r => substFN v val r) ++
+          ((s.rows.map fun r => substFN v val r) ++ [normF ([v] :: val)]), fz τ r = 0) ↔
           (∀ r ∈ (q :: rest) ++ s.rows, fz τ r = 0) := by
         simp only [List.mem_append, List.mem_map, List.mem_singleton]
         constructor
         · rintro H r (hr | hr)
           · have := H _ (Or.inl ⟨r, hr, rfl⟩); rwa [hsub] at this
           · have := H _ (Or.inr (Or.inl ⟨r, hr, rfl⟩)); rwa [hsub] at this
-        · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩ | rfl)
+        · rintro H r (⟨r', hr', rfl⟩ | ⟨r', hr', rfl⟩ | hr)
           · rw [hsub]; exact H r' (Or.inl hr')
           · rw [hsub]; exact H r' (Or.inr hr')
-          · exact hrowz
+          · rw [hr]; exact hrowz
       simp only [hcond]
       split_ifs
-      · congr 1
+      · refine congrArg (c * ·) ?_
         symm
         apply ex_peq hM0
         have := peq_trans (pn_normP τ M _) (pn_substP τ M v hM val s.phase)
         rwa [hτ] at this
       · rfl
-    · have hr : ¬ (∀ r ∈ (q :: rest).map (fun r => normF (substF v val r)) ++
-          ((s.rows.map fun r => normF (substF v val r)) ++ [normF ([v] :: val)]),
+    · have hr : ¬ (∀ r ∈ (q :: rest).map (fun r => substFN v val r) ++
+          ((s.rows.map fun r => substFN v val r) ++ [normF ([v] :: val)]),
             fz τ r = 0) := by
         intro H
         apply hrow

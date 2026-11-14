@@ -1438,9 +1438,46 @@ theorem dyadicB_sound (M : ℕ) (c : ℂ) (ds : List ℕ) (S : Poly) (fs : List 
 
 /-! ## Phase terms off the constraints -/
 
-/-- Whether `m (1 + q) = 0` for some constraint `q`. -/
-def dropT (C : List F2) (m : Mono) : Bool :=
-  C.any fun q => decide (normF (f2mul [m] ([] :: q)) = [])
+/-- Whether `m (1 + q) = 0` for some constraint `q`, on masks over the variables of `q`. -/
+def dropT (C : List F2) : Mono → Bool :=
+  let pre := C.map fun q => (vlist q, ([] :: q).map (toM (vlist q)))
+  fun m => pre.any fun p => decide (xorF (p.2.map fun u => toM p.1 m ||| u) = 0)
+
+theorem fz_xorF_zero (τ : ℕ → ZMod 2) (vs Q : List ℕ) (h : xorF Q = 0) :
+    fz τ (Q.map (ofM vs)) = 0 := by
+  have e := sum_xorF (f := fun k => mz τ (ofM vs k)) (List.range (orF Q + 1)) List.nodup_range Q
+    (fun k hk => List.mem_range.2 (Nat.lt_succ_of_le (le_orF Q k hk)))
+  rw [h] at e
+  simp only [Nat.zero_testBit, List.filter_false, List.map_nil, List.sum_nil] at e
+  unfold fz
+  rw [List.map_map]
+  exact e.symm
+
+theorem fz_mapor (τ : ℕ → ZMod 2) (vs : List ℕ) (k : ℕ) : ∀ L : List ℕ,
+    fz τ ((L.map fun u => k ||| u).map (ofM vs)) = mz τ (ofM vs k) * fz τ (L.map (ofM vs))
+  | [] => by simp [fz]
+  | u :: L => by
+    rw [List.map_cons, List.map_cons, List.map_cons, fz_cons, fz_cons, fz_mapor τ vs k L,
+      mz_ofM_or]
+    ring
+
+theorem dropT_zero (τ : ℕ → ZMod 2) (C : List F2) (m : Mono) (ht : dropT C m = true)
+    (hC : ∀ q ∈ C, fz τ q = 0) : mz τ m = 0 := by
+  simp only [dropT, List.any_eq_true, List.mem_map, decide_eq_true_eq] at ht
+  obtain ⟨_, ⟨q, hq, rfl⟩, e⟩ := ht
+  dsimp only at e
+  have h1 := fz_xorF_zero τ (vlist q) _ e
+  rw [fz_mapor, fz_toM τ _ ([] :: q) (fun u hu v hv => by
+      rcases List.mem_cons.1 hu with rfl | hu
+      · exact absurd hv List.not_mem_nil
+      · exact mem_vlist hu v hv), fz_cons, hC q hq, add_zero,
+    show mz τ [] = 1 by simp [mz], mul_one] at h1
+  have hm : mz τ m = mz τ (ofM (vlist q) (toM (vlist q) m) ++ m.filter (· ∉ vlist q)) := by
+    apply mz_congr
+    intro v
+    rw [List.mem_append, mem_ofM_toM, List.mem_filter, decide_eq_true_iff]
+    tauto
+  rw [hm, mz_append, h1, zero_mul]
 
 /-- The phase terms whose monomial is 0 where some constraint holds dropped. -/
 def pdropS (s : Data) : Data := { s with phase := s.phase.filter fun t => !dropT s.cons t.1 }
@@ -1455,15 +1492,8 @@ theorem pdrop_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
   split_ifs with hC
   · rw [pn_filter_zero τ _ s.phase]
     intro t _ ht
-    simp only [Bool.not_eq_false', dropT, List.any_eq_true, decide_eq_true_eq] at ht
-    obtain ⟨q, hq, e⟩ := ht
-    have h0 : fz τ q = 0 := hC q (List.mem_append_left _ hq)
-    have e2 : fz τ [t.1] * (mz τ [] + fz τ q) = 0 := by
-      rw [← fz_cons, ← fz_f2mul, ← fz_normF, e]
-      rfl
-    rw [h0, show mz τ [] = 1 by simp [mz], add_zero, mul_one, fz_cons,
-      show fz τ ([] : F2) = 0 from rfl, add_zero] at e2
-    exact e2
+    simp only [Bool.not_eq_false'] at ht
+    exact dropT_zero τ s.cons t.1 (by simpa using ht) (fun q hq => hC q (List.mem_append_left _ hq))
   · rfl
 
 /-! ## Step lists -/

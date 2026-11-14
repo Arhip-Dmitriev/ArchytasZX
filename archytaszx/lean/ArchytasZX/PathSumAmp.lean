@@ -1334,16 +1334,8 @@ theorem fz_filter_zero (τ : ℕ → ZMod 2) (p : Mono → Bool)
         zero_add, fz_filter_zero τ p hp f]
 
 theorem mz_of_dropT (τ : ℕ → ZMod 2) (C : List F2) (m : Mono) (ht : dropT C m = true)
-    (hC : ∀ q ∈ C, fz τ q = 0) : mz τ m = 0 := by
-  simp only [dropT, List.any_eq_true, decide_eq_true_eq] at ht
-  obtain ⟨q, hq, e⟩ := ht
-  have h0 : fz τ q = 0 := hC q hq
-  have e2 : fz τ [m] * (mz τ [] + fz τ q) = 0 := by
-    rw [← fz_cons, ← fz_f2mul, ← fz_normF, e]
-    rfl
-  rw [h0, show mz τ [] = 1 by simp [mz], add_zero, mul_one, fz_cons,
-    show fz τ ([] : F2) = 0 from rfl, add_zero] at e2
-  exact e2
+    (hC : ∀ q ∈ C, fz τ q = 0) : mz τ m = 0 :=
+  dropT_zero τ C m ht hC
 
 /-- Every atom's monomials that are 0 where some constraint holds dropped. -/
 def adropCS (t : AData) : AData :=
