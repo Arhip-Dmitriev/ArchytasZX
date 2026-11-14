@@ -30,6 +30,11 @@ rules below construct one:
 * :func:`congr` -- ``c = c'`` from ``a = b`` when a region of ``c`` reads as ``a`` through
   its cut wires and ``c'`` has it replaced by ``b``;
 * :func:`symm`, :func:`trans` -- ``trans`` needs the middle diagrams identical id for id;
+
+:func:`congr`, :func:`symm` and :func:`trans` keep each premise's restricting clauses
+(:func:`restricting`) in their theorem's ``domain``; :func:`induction` keeps those not on its
+index, step or offset symbol and refuses the rest; :func:`shift`, :func:`lift`, :func:`periodic`
+and :func:`subst` refuse a premise restricted on a symbol they quantify or substitute;
 * :func:`induction` -- ``start = goal`` from a base theorem at index 0, a theorem exposing
   one side's peeled successor at ``k + 1`` as a context around that side at ``k``, and a
   theorem from that context around the other side at ``k`` to the other peeled successor;
@@ -67,6 +72,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -256,6 +262,44 @@ def _merge(*groups: tuple[str, ...]) -> tuple[str, ...]:
 
 def _same(a: Diagram, b: Diagram) -> bool:
     return compare_structure(a, b).identical
+
+
+def _clause_symbols(c: Clause) -> frozenset[str]:
+    """The clause's symbol and its fresh symbol."""
+    return frozenset(s for s in (c.symbol, c.fresh) if s)
+
+
+def restricting(t: Theorem) -> tuple[Clause, ...]:
+    """The clauses of ``t.domain`` that constrain a symbol free in its sides: the clause's
+    symbol still free, or its fresh symbol free with a range narrower than the naturals (a
+    ``fresh_domain``, a negative constant or a non-positive scale)."""
+    from archytaszx.semantics.restrict import _all_symbols
+
+    if not t.domain:
+        return ()
+    names = _all_symbols(t.lhs, t.rhs) | free_mult_symbols(t.lhs) | free_mult_symbols(t.rhs)
+    out: list[Clause] = []
+    for c in t.domain:
+        narrow = c.fresh_domain is not None or c.c < 0 or c.a <= 0
+        if c.symbol in names or (c.fresh and c.fresh in names and narrow):
+            out.append(c)
+    return tuple(out)
+
+
+def _domain(*theorems: Theorem) -> tuple[Clause, ...]:
+    """The restricting clauses of every theorem, in order, repeats dropped."""
+    out: list[Clause] = []
+    for t in theorems:
+        out += [c for c in restricting(t) if c not in out]
+    return tuple(out)
+
+
+def _refuse_on(where: str, theorems: Sequence[Theorem], symbols: frozenset[str]) -> None:
+    """Raise when a restricting clause of one of ``theorems`` names one of ``symbols``."""
+    for t in theorems:
+        for c in restricting(t):
+            if _clause_symbols(c) & symbols:
+                raise KernelError(f"{where}: a premise holds only under {c.text() or c.symbol}")
 
 
 @_trace.traced("kernel.refl")
@@ -542,13 +586,14 @@ def congr(t: Theorem, context: Diagram, cut: CutRegion) -> Theorem:
     except _INDUCTION_ERRORS as exc:
         raise KernelError(f"congr raised {type(exc).__name__}: {exc}") from exc
     data: dict[str, object] = {"cut": cut}
-    return Theorem(_TOKEN, context, plugged, Inference("congr", (t,), data=data), t.assumptions)
+    inference = Inference("congr", (t,), data=data)
+    return Theorem(_TOKEN, context, plugged, inference, t.assumptions, _domain(t))
 
 
 @_trace.traced("kernel.symm")
 def symm(t: Theorem) -> Theorem:
     """``rhs = lhs`` from ``lhs = rhs``."""
-    return Theorem(_TOKEN, t.rhs, t.lhs, Inference("symm", (t,)), t.assumptions)
+    return Theorem(_TOKEN, t.rhs, t.lhs, Inference("symm", (t,)), t.assumptions, _domain(t))
 
 
 @_trace.traced("kernel.trans")
@@ -556,9 +601,8 @@ def trans(a: Theorem, b: Theorem) -> Theorem:
     """``a.lhs = b.rhs`` when ``a.rhs`` is ``b.lhs``."""
     if not _same(a.rhs, b.lhs):
         raise KernelError("trans: the middle diagrams differ")
-    return Theorem(
-        _TOKEN, a.lhs, b.rhs, Inference("trans", (a, b)), _merge(a.assumptions, b.assumptions)
-    )
+    assumptions = _merge(a.assumptions, b.assumptions)
+    return Theorem(_TOKEN, a.lhs, b.rhs, Inference("trans", (a, b)), assumptions, _domain(a, b))
 
 
 def chain(start: Diagram, steps: Sequence[RewriteStep]) -> Theorem:
@@ -598,6 +642,8 @@ def induction(
     if index not in live or step_symbol in live:
         raise KernelError(f"{index!r} is not a free multiplicity or {step_symbol!r} is not fresh")
     k = step_symbol
+    bound = frozenset(s for s in (index, k, offset) if s)
+    _refuse_on("induction", (base, expose, step), bound)
     try:
         if not (_same(base.lhs, induction_base(start, index))):
             raise KernelError("the base theorem does not start at the start side at 0")
@@ -661,9 +707,8 @@ def induction(
         data["offset"] = offset
         kind = "induction_offset"
     assumptions = _merge(base.assumptions, expose.assumptions, step.assumptions)
-    return Theorem(
-        _TOKEN, start, goal, Inference(kind, (base, expose, step), data=data), assumptions
-    )
+    inference = Inference(kind, (base, expose, step), data=data)
+    return Theorem(_TOKEN, start, goal, inference, assumptions, _domain(base, expose, step))
 
 
 @_trace.traced("kernel.periodic")
@@ -681,6 +726,7 @@ def periodic(start: Diagram, goal: Diagram, index: str, bases: Sequence[Theorem]
         raise KernelError(f"{index!r} is not a free multiplicity or there is no base theorem")
     if any(b.domain for b in bases):
         raise KernelError("a base theorem holds under a restriction")
+    _refuse_on("periodic", bases, frozenset({index}))
     step = len(bases)
     try:
         for value, base in enumerate(bases):
@@ -733,13 +779,22 @@ def subst(
 ) -> Theorem:
     """``lhs' = rhs'`` from ``t`` and one clause ``n = e`` or ``d = v``: both sides recomputed
     from ``t``'s by :func:`~archytaszx.semantics.restrict.apply_clause` and compared id for id
-    with ``lhs`` and ``rhs`` when stated."""
-    from archytaszx.semantics.restrict import _all_symbols, apply_clause
+    with ``lhs`` and ``rhs`` when stated. A multiplicity shift ``n = s - c`` (``c > 0``) holds
+    for ``s >= c``: the clause is kept with that ``fresh_domain``."""
+    from dataclasses import replace
+
+    from archytaszx.semantics.restrict import MULTIPLICITY, Domain, _all_symbols, apply_clause
 
     if not clause.substitutes:
         raise KernelError(f"subst: {clause.text()} substitutes nothing")
     if clause.fresh and clause.fresh in _all_symbols(t.lhs, t.rhs):
         raise KernelError(f"subst: {clause.fresh} is not fresh for the theorem")
+    _refuse_on("subst", (t,), frozenset({clause.symbol}))
+    if clause.kind == MULTIPLICITY and clause.fresh and clause.fresh_domain is None:
+        if clause.a < 1 or (clause.c < 0 and clause.a != 1):
+            raise KernelError(f"subst: {clause.text()} leaves the naturals")
+        if clause.c < 0:
+            clause = replace(clause, fresh_domain=Domain(lo=Fraction(-clause.c), q=1))
     try:
         new_l, new_r = apply_clause(t.lhs, clause), apply_clause(t.rhs, clause)
     except _INDUCTION_ERRORS as exc:
@@ -777,13 +832,14 @@ def restricted(
         ):
             raise KernelError("the theorem is not about the restricted pair")
     floors = _floors_used(restriction, used)
+    domain = (*restriction.clauses, *(c for c in _domain(t) if c not in restriction.clauses))
     return Theorem(
         _TOKEN,
         t.lhs,
         t.rhs,
         t.inference,
         _merge(t.assumptions, floors),
-        restriction.clauses,
+        domain,
         (left, right),
     )
 
@@ -822,6 +878,7 @@ def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
     except _INDUCTION_ERRORS as exc:
         raise KernelError(f"rebuilding the successor raised {type(exc).__name__}: {exc}") from exc
     body = _onto(t, peeled, other)
+    _refuse_on("shift", (body,), _clause_symbols(clause))
     data: dict[str, object] = {
         "index": clause.symbol,
         "step": clause.fresh,
@@ -830,7 +887,7 @@ def shift(t: Theorem, left: Diagram, right: Diagram, clause: Clause) -> Theorem:
         "peeled": peeled,
         "other_peeled": other,
     }
-    domain = (clause,)
+    domain = (clause, *(c for c in _domain(body) if c != clause))
     inference = Inference("shift", (body,), data=data)
     return Theorem(_TOKEN, left, right, inference, body.assumptions, domain, (left, right))
 
@@ -861,6 +918,7 @@ def lift(t: Theorem, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -
     except _INDUCTION_ERRORS as exc:
         raise KernelError(f"rebuilding the instance raised {type(exc).__name__}: {exc}") from exc
     body = _onto(t, peeled, other)
+    _refuse_on("lift", (body,), frozenset().union(*(_clause_symbols(c) for c in clauses)))
     data: dict[str, object] = {
         "index": clauses[0].symbol,
         "step": None,
@@ -875,7 +933,8 @@ def lift(t: Theorem, left: Diagram, right: Diagram, clauses: Sequence[Clause]) -
         "other_peeled": other,
     }
     inference = Inference("shift", (body,), data=data)
-    return Theorem(_TOKEN, left, right, inference, body.assumptions, tuple(clauses), (left, right))
+    domain = (*clauses, *(c for c in _domain(body) if c not in clauses))
+    return Theorem(_TOKEN, left, right, inference, body.assumptions, domain, (left, right))
 
 
 @dataclass(frozen=True, eq=False)
@@ -904,6 +963,8 @@ def check(artefact: object) -> Theorem:
             return restricted(
                 inner, artefact.left, artefact.right, artefact.restriction, artefact.floors_used
             )
+        if restricting(inner):
+            raise KernelError("a family proof holds only under a restriction")
         out = inner
         for clause in artefact.restriction.clauses:
             if clause.substitutes:

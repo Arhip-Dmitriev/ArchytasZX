@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import re
 import shutil
@@ -23,7 +24,8 @@ from dataclasses import replace
 
 import pytest
 
-from archytaszx.diagram.generators import X_SPIDER
+from archytaszx.diagram.generators import X_SPIDER, GeneratorType
+from archytaszx.diagram.graph import Diagram
 from archytaszx.repl.commands import Session, run
 from archytaszx.semantics import kernel as K
 from archytaszx.semantics.certificate import Certificate, Derivation, DerivationKind
@@ -204,3 +206,68 @@ def test_a_kept_induction_pair_is_not_decided_again() -> None:
     K._remember_induction(None, x, y)
     assert K._recalled_induction(x, y) == (True, None)
     assert K._induction_rung(x, y) is None
+
+
+_ZEROS = """
+count n
+z = Z(0 -> 0, literal 2) phase{k: k/2}
+repeat n as V index m: z
+"""
+
+
+def _zeros_from_one() -> tuple[K.Theorem, Diagram, Diagram]:
+    """n copies of a zero scalar = one zero scalar, true for n >= 1 only, by shift."""
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.restrict import GE, MULTIPLICITY, Clause, apply_clause
+
+    left = parse_dsl(_ZEROS)
+    right = parse_dsl("z = Z(0 -> 0, literal 2) phase{k: k/2}")
+    clause = Clause("n", MULTIPLICITY, GE, a=1, c=1, fresh="m")
+    body = K.contraction(apply_clause(left, clause), apply_clause(right, clause))
+    return K.shift(body, left, right, clause), left, right
+
+
+def test_trans_and_symm_keep_a_premise_restriction() -> None:
+    from archytaszx.semantics.check import compare
+
+    t, left, right = _zeros_from_one()
+    assert not compare(left, right, {"n": 0}).matched
+    for u in (K.trans(t, K.refl(right)), K.trans(K.refl(left), t), K.symm(t)):
+        assert [c.text() for c in u.domain] == ["n >= 1"]
+        assert "n >= 1" in u.statement()
+
+
+def test_congr_keeps_a_premise_restriction() -> None:
+    from archytaszx.algebra.dimension import Dim
+    from archytaszx.diagram.generators import Z_SPIDER
+    from archytaszx.diagram.graph import Direction, PortRef
+    from archytaszx.semantics.induction import find_cut_region
+    from archytaszx.semantics.restrict import DIMENSION, GE, Clause, Restriction
+
+    def line(*types: GeneratorType) -> Diagram:
+        g = Diagram()
+        ids = [g.add_node(ty, [Dim.symbol("d")], [Dim.symbol("d")]) for ty in types]
+        for a, b in itertools.pairwise(ids):
+            g.add_wire(PortRef(a, Direction.OUTPUT, 0), PortRef(b, Direction.INPUT, 0))
+        g.set_boundary_inputs([PortRef(ids[0], Direction.INPUT, 0)])
+        g.set_boundary_outputs([PortRef(ids[-1], Direction.OUTPUT, 0)])
+        return g
+
+    small = line(Z_SPIDER)
+    floor = Clause("d", DIMENSION, GE, c=3)
+    t = K.restricted(K.refl(small), small, small, Restriction((floor,)))
+    context = line(Z_SPIDER, X_SPIDER)
+    region = frozenset(n for n, v in context.nodes.items() if v.generator_type is Z_SPIDER)
+    cut = find_cut_region(context, region, small)
+    assert cut is not None
+    assert K.congr(t, context, cut).domain == (floor,)
+
+
+def test_subst_at_a_negative_offset_holds_from_the_offset() -> None:
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, Clause
+
+    t = K.subst(K.refl(parse_dsl(_ZEROS)), Clause("n", MULTIPLICITY, SHIFT, c=-1, fresh="s"))
+    assert "s >= 1" in K.trans(t, K.refl(t.rhs)).statement()
+    with pytest.raises(K.KernelError):
+        K.subst(t, Clause("s", MULTIPLICITY, SHIFT, c=0, fresh="r"))
