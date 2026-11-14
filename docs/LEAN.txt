@@ -360,7 +360,18 @@ read through G after lperm, for every Env, ks and flat assignment. lay<j> become
 applied to R<i>.main; slots<i> stays opaque.
 
 A peel and an identity slide are proved the same way over linked diagrams (ArchytasZX/Linked.lean,
-LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean). Both write zero, the phase
+LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean). Both
+read each side's digits at its flat boundary positions: the engine instantiates a box by
+splicing each of its slot blocks into one run at the place of the block's first leg,
+copy-major, outputs and inputs apart (bangbox._splice_box), and LinkedSplice.lean states the
+resulting order as a function of the slot data (slotData: per box its id, multiplicity index,
+parent and group blocks of boundary slots): slot i's anchors are, per box holding it outermost
+first, the least slot of its block on its side, then i; its digit t's key is the anchors
+interleaved with t, and fpos sd ks i t, the number of instantiated slots of smaller key, is its
+flat position (flatAt sd ks y reads the flat assignment y there). The exporter writes only slot
+data whose child blocks lie inside one block of the parent, where the engine's order does not
+depend on which box it instantiates first; tests/test_lean_peel.py compares fpos with the
+engine's instantiated boundary. Both write zero, the phase
 index of the phaseless nodes, and hold for every Env whose phase at zero reads 0. L (before) and
 L' (after) write each boundary link port as the ghost ⟨G, true, i⟩ of its slot i, its boundary
 place and its link end; evalG L gsL is the digit sum with each ghost's digit read as its slot's
@@ -368,12 +379,15 @@ place and its link end; evalG L gsL is the digit sum with each ghost's digit rea
 Z(1 -> 1) behind every boundary link port (and, for a peel, behind its copy), and chain_b, chain_k
 prove their linked digit sums equal to evalG of L and L': evalL_dropAt drops an identity wired to
 a node leg (moved last, then DropOK.evalL_drop), evalG_ghostAt one at a link end (GhostOK, the
-identity's digits summed out at its slot's). A peel, namespace <N>.P<i>: P<i>.main is evalL_peel
-on Lb and Lk between the two chains, the box's last copy read at its copy. A slide, namespace
-<N>.S<i>, writes both sides' box groups G and G' and C, the diagram both identity forms drop to
-(chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G (per box its group blocks of
-boundary slots), and S<i>.main is evalG_flat: the two digit sums read through any layout of their
-slot data agree.
+identity's digits summed out at its slot's). Both write the box groups G (before) and G'
+(after). A peel, namespace <N>.P<i>: PeelFlat (checked by decide +kernel) maps each slot digit of
+Lb to its own or, at the box's last copy, its copy's in Lk, one to one and onto, and keeps the
+order of their keys slot pair by slot pair (agree, copyVs, copyCopy on the anchors);
+evalL_peel_flat (evalL_peel, then evalL_congr: the digit sum reads only its boundary legs'
+copies) proves Lk and Lb read at their flat positions equal, and P<i>.main is that between the
+two chains. A slide, namespace <N>.S<i>, writes C, the diagram both identity forms drop to
+(chain_sb, chain_sk); layout checks L'.slotData G' = L.slotData G, and S<i>.main is
+evalG_flatAt: the two digit sums read at the flat positions of their slot data agree.
 
 A power split of base 2 (kernel.power_split) is proved the same way when both sides are linked
 diagrams (ArchytasZX/LinkedSplit.lean): namespace <N>.Q<i> writes L (the box bid at mb copies),

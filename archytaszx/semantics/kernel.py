@@ -1669,9 +1669,9 @@ class _Lean:
         if source is None:
             return None
         tail = (
-            "the last copy of the peeled box read at its copy, each boundary link port the ghost "
-            "of its slot ({ns}.gsL, {ns}.gsL'), the phaseless phase index {ns}.zero read as the "
-            "zero phase"
+            "each boundary link port the ghost of its slot ({ns}.gsL, {ns}.gsL'), with box groups "
+            "{ns}.G and {ns}.G', each flat boundary position read at LDiagram.flatAt of its "
+            "LDiagram.slotData, the phaseless phase index {ns}.zero read as the zero phase"
         )
         return self.linked_net(source, "P", tail, binders, lhs, rhs)
 
@@ -1687,7 +1687,7 @@ class _Lean:
             return None
         tail = (
             "each boundary link port the ghost of its slot ({ns}.gsL, {ns}.gsL'), with box groups "
-            "{ns}.G and {ns}.G', each flat boundary read through a slot layout of its "
+            "{ns}.G and {ns}.G', each flat boundary position read at LDiagram.flatAt of its "
             "LDiagram.slotData, the phaseless phase index {ns}.zero read as the zero phase"
         )
         return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))

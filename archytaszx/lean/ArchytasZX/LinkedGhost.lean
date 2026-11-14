@@ -17,9 +17,7 @@ A ghost `(g, i, k)` is a port `g` of no node standing for boundary slot `i`, of 
 is an unboxed Z(1 -> 1) without wires, its leg `a` only at link ends of links whose ends carry no
 copy index, its leg `c` only at boundary place `i`, `g` fresh. `GhostOK.evalG_ghost`: dropping `x`
 with the ghost `(g, i, x.dim)` keeps the digit sum when `x`'s phase index reads zero;
-`evalG_ghostAt`: the same with `x` moved last first (`evalG_withNodes`). `evalG_flat`: two
-diagrams with equal digit sums at every slot assignment and equal slot data have equal digit sums
-read through any layout `lay` of their slot data.
+`evalG_ghostAt`: the same with `x` moved last first (`evalG_withNodes`).
 -/
 
 namespace ArchytasZX
@@ -585,16 +583,6 @@ theorem evalG_withNodes (L : LDiagram) (ns : List DNode) (hp : ns.Perm L.base.no
   funext ν
   unfold integG
   rw [hP ν, pinsG_wn]
-
-/-- Equal digit sums with ghosts and equal slot data give equal digit sums read through any
-layout. -/
-theorem evalG_flat {L L' : LDiagram} {gs gs' : Ghosts} {G G' : List (ℕ × List (List ℕ))}
-    (hs : L'.slotData G' = L.slotData G) (E : Env) (ks : ℕ → ℕ)
-    (h : ∀ σ, L'.evalG gs' E ks σ = L.evalG gs E ks σ)
-    (lay : SlotData → (ℕ → ℕ) → List (ℕ × List ℕ)) (y : ℕ → ℕ) :
-    L'.evalG gs' E ks (readAt (lay (L'.slotData G') ks) y) =
-      L.evalG gs E ks (readAt (lay (L.slotData G) ks) y) := by
-  rw [hs, h]
 
 /-- `x` moved last, then dropped for the ghost `g`. -/
 def ghostAt (L : LDiagram) (x : DNode) (a c g : Port) : LDiagram :=

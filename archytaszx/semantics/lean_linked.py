@@ -12,7 +12,8 @@
 # limitations under the License.
 
 """Lean output for kernel peels and identity slides over linked diagrams (ArchytasZX/Linked.lean,
-LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean). A boxed diagram is written as
+LinkedPeel.lean, LinkedSlide.lean, LinkedForm.lean, LinkedGhost.lean, LinkedSplice.lean). A boxed
+diagram is written as
 an ``LDiagram``: its nodes, its wires without those at chain link ports, its boundary, its node
 boxes and its links, each link's ends the partners of its two ports; a link port on the boundary
 is the ghost ``(G, True, i)`` of its slot ``i``, its boundary place and its link end (``evalG``).
@@ -20,10 +21,12 @@ Each export also writes each side with a phaseless Z(1 -> 1) behind every bounda
 (``Lb``, ``Lk``) and proves its linked digit sum equal to the ghost form's (``chain_<tag>``:
 ``evalL_dropAt`` for an identity wired to a node leg, ``evalG_ghostAt`` for one at a link end,
 each step's conditions checked here on a mirror of the Lean definitions, then in Lean by
-``decide +kernel``). ``export_peel`` writes the copy map ``cp`` from the peeled box's nodes to the
-copy's, ``PeelOK`` and ``main`` through ``evalL_peel``. ``export_slide`` writes both sides' box
-groups with equal ``slotData`` and ``main`` through two chains to one diagram (``C``) and
-``evalG_flat``. Both exports assume the phaseless phase index ``zero`` reads the zero phase."""
+``decide +kernel``). Both exports write both sides' box groups and state ``main`` over each
+side's digits read at the flat positions of its ``slotData`` (``flatAt``, the engine's boundary
+splice). ``export_peel`` writes the copy map ``cp`` from the peeled box's nodes to the copy's,
+``PeelOK``, ``PeelFlat`` and ``main`` through ``evalL_peel_flat``. ``export_slide`` checks equal
+``slotData`` and proves ``main`` through two chains to one diagram (``C``) and ``evalG_flatAt``.
+Both exports assume the phaseless phase index ``zero`` reads the zero phase."""
 
 from __future__ import annotations
 
@@ -409,6 +412,9 @@ def literal(D: LDiag) -> str:
 _FIELDS = 21
 """The fields of ``PeelOK``."""
 
+_FLAT_FIELDS = 10
+"""The fields of ``PeelFlat``."""
+
 
 def export_peel(before: Diagram, after: Diagram) -> str | None:
     """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal,
@@ -458,10 +464,18 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         return None
     if not (_same_up_to_order(Tl, Dl) and _same_up_to_order(Tr, Dr)):
         return None
+    Gl, Gr = groups(before), groups(after)
+    sl_d, sr_d = slot_data(L, Gl), slot_data(R, Gr)
+    if (slot_data(Dl, Gl), slot_data(Dr, Gr)) != (sl_d, sr_d):
+        return None
+    if not (nested(sl_d) and nested(sr_d)):
+        return None
+    if not peel_flat_ok(L, R, B, cp, box.mult, c, sl_d, sr_d):
+        return None
     zero = _Tables.index(tables.phases, repr(None))
     table = ", ".join(f"({x}, {y})" for x, y in cp.items())
     proof = ",\n    ".join(["by decide +kernel"] * _FIELDS)
-    phi = f"peelφ {_lnat(B)} cp (ks {c})"
+    flat = ",\n    ".join(["by decide +kernel"] * _FLAT_FIELDS)
     return (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
         "open ArchytasZX ArchytasZX.LDiagram\n\n"
@@ -482,13 +496,23 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         f"def cp (x : ℕ) : ℕ := (([{table}] : List (ℕ × ℕ)).lookup x).getD 0\n\n"
         f"theorem ok : PeelOK Lb Lk {box.id} {box.mult} {c} {_lnat(B)} cp :=\n"
         f"  ⟨{proof}⟩\n\n"
-        "/-- The digit sums agree, the box's last copy read at the copy's digits. -/\n"
+        "/-- The box groups before the peel, node lists by box. -/\n"
+        f"def G : List (ℕ × List (List ℕ)) := {_lgroups(Gl)}\n\n"
+        "/-- The box groups after the peel, node lists by box. -/\n"
+        f"def G' : List (ℕ × List (List ℕ)) := {_lgroups(Gr)}\n\n"
+        "theorem sdb : Lb.slotData G = L.slotData G := by\n  decide +kernel\n\n"
+        "theorem sdk : Lk.slotData G' = L'.slotData G' := by\n  decide +kernel\n\n"
+        f"theorem flat : PeelFlat Lb Lk {_lnat(B)} cp {box.mult} {c} (Lb.slotData G)\n"
+        f"    (Lk.slotData G') :=\n  ⟨{flat}⟩\n\n"
+        "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
-        f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 → ∀ σ' : ℕ → List ℕ → ℕ,\n"
-        "      L'.evalG gsL' E ks σ' =\n"
-        f"        L.evalG gsL E ks (bndMap Lb.base Lk.base ({phi}) σ') :=\n"
-        "  fun E hE ks hk σ' => (chain_k E hE ks σ').symm.trans\n"
-        "    ((evalL_peel ok E ks hk σ').trans (chain_b E hE ks _))\n\n"
+        f"    ∀ (ks : ℕ → ℕ), ks {box.mult} = ks {c} + 1 → ∀ y : ℕ → ℕ,\n"
+        "      L'.evalG gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
+        "        L.evalG gsL E ks (flatAt (L.slotData G) ks y) := by\n"
+        "  intro E hE ks hk y\n"
+        "  rw [← sdb, ← sdk]\n"
+        "  exact (chain_k E hE ks _).symm.trans\n"
+        "    ((evalL_peel_flat ok flat E ks hk y).trans (chain_b E hE ks _))\n\n"
         "end ArchytasZX.Export\n"
     )
 
@@ -782,7 +806,7 @@ def export_slide(before: Diagram, after: Diagram) -> str | None:
         return None
     C, hc, ml, mr = found
     Gl, Gr = groups(before), groups(after)
-    if slot_data(Dl, Gl) != slot_data(Dr, Gr):
+    if slot_data(Dl, Gl) != slot_data(Dr, Gr) or not nested(slot_data(Dl, Gl)):
         return None
     return (
         "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
@@ -814,12 +838,12 @@ def export_slide(before: Diagram, after: Diagram) -> str | None:
         "    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ), L'.evalG gsL' E ks σ = L.evalG gsL E ks σ :=\n"
         "  fun E hE ks σ => (chain_k E hE ks σ).symm.trans ((chain_sk E hE ks σ).trans\n"
         "    ((chain_sb E hE ks σ).symm.trans (chain_b E hE ks σ)))\n\n"
-        "/-- The digit sums read through any layout of the two sides' slot data agree. -/\n"
+        "/-- The digit sums read at the flat positions of the two sides' slot data agree. -/\n"
         "theorem main : ∀ (E : Env), (∀ k, E.phase zero k = 0) →\n"
-        "    ∀ (ks : ℕ → ℕ) (lay : SlotData → (ℕ → ℕ) → List (ℕ × List ℕ)) (y : ℕ → ℕ),\n"
-        "      L'.evalG gsL' E ks (readAt (lay (L'.slotData G') ks) y) =\n"
-        "        L.evalG gsL E ks (readAt (lay (L.slotData G) ks) y) :=\n"
-        "  fun E hE ks lay y => evalG_flat layout E ks (sums E hE ks) lay y\n\n"
+        "    ∀ (ks : ℕ → ℕ) (y : ℕ → ℕ),\n"
+        "      L'.evalG gsL' E ks (flatAt (L'.slotData G') ks y) =\n"
+        "        L.evalG gsL E ks (flatAt (L.slotData G) ks y) :=\n"
+        "  fun E hE ks y => evalG_flatAt layout E ks (sums E hE ks) y\n\n"
         "end ArchytasZX.Export\n"
     )
 
@@ -858,3 +882,114 @@ def slot_data(D: LDiag, gs: Groups) -> SlotData:
         ]
         out.append((b.id, b.mult, b.parent, [s for s in parts if s]))
     return (len(D.outs), len(D.ins), out)
+
+
+def nested(sd: SlotData) -> bool:
+    """Whether every slot block of a box lies inside one slot block of its parent."""
+    blocks = {b[0]: b[3] for b in sd[2]}
+    return all(
+        b[2] is None or any(set(P) <= set(Q) for Q in blocks.get(b[2], []))
+        for b in sd[2]
+        for P in b[3]
+    )
+
+
+def anchors(sd: SlotData, i: int) -> tuple[list[int], list[int]]:
+    """The Lean ``(anch sd i, chainS sd i)``: per box holding slot ``i`` (outermost first) the
+    least slot of its block on ``i``'s side, then ``i``; and the boxes' multiplicity indices."""
+    no, _, bs = sd
+    anch, chain, parent = [], [], None
+    for _ in range(len(bs)):
+        box = next((b for b in bs if b[2] == parent and any(i in P for P in b[3])), None)
+        if box is None:
+            break
+        block = next(P for P in box[3] if i in P)
+        anch.append(min([i, *(j for j in block if (j < no) == (i < no))]))
+        chain.append(box[1])
+        parent = box[0]
+    return [*anch, i], chain
+
+
+def _leg_chain(D: LDiag, q: Port) -> list[int]:
+    """The Lean ``legChain`` of ``q`` in a diagram without port boxes."""
+    own = D.chain(q[0])
+    partner = next((w[1] if w[0] == q else w[0] for w in D.wires if q in w), None)
+    if partner is None:
+        return own
+    other = D.chain(partner[0])
+    return own + (other[len(own) :] if len(own) < len(other) else [])
+
+
+def _agree(A: Sequence[int], A2: Sequence[int], B: Sequence[int], B2: Sequence[int]) -> bool:
+    """The Lean ``agree A A2 B B2``."""
+    if not (A and A2 and B and B2):
+        return True
+    a, a2, b, b2 = A[0], A2[0], B[0], B2[0]
+    return (
+        (a < a2) == (b < b2)
+        and (a == a2) == (b == b2)
+        and (a != a2 or _agree(A[1:], A2[1:], B[1:], B2[1:]))
+    )
+
+
+def _head(A: Sequence[int]) -> int:
+    return A[0] if A else 0
+
+
+def _copy_vs(
+    A: Sequence[int], A2: Sequence[int], E: Sequence[int], F: Sequence[int], b: bool
+) -> bool:
+    """The Lean ``copyVs A A2 E F b``."""
+    if _head(A) == _head(A2):
+        return b and _head(F) < _head(E)
+    return (_head(A) < _head(A2)) == (_head(E) < _head(F)) and _head(E) != _head(F)
+
+
+def _copy_copy(A: Sequence[int], A2: Sequence[int], E: Sequence[int], E2: Sequence[int]) -> bool:
+    """The Lean ``copyCopy A A2 E E2``."""
+    if _head(A) == _head(A2):
+        return _agree(A[1:], A2[1:], E, E2)
+    return (_head(A) < _head(A2)) == (_head(E) < _head(E2)) and _head(E) != _head(E2)
+
+
+def peel_flat_ok(
+    L: LDiag,
+    R: LDiag,
+    B: Sequence[int],
+    cp: dict[int, int],
+    mb: int,
+    c: int,
+    sd: SlotData,
+    sd2: SlotData,
+) -> bool:
+    """The Lean ``PeelFlat L R B cp mb c sd sd2``, field by field."""
+    bl, br = L.bnd(), R.bnd()
+    n, n2 = len(bl), len(br)
+    if sd[0] + sd[1] != n or sd2[0] + sd2[1] != n2:
+        return False
+    inb = [p[0] in B for p in bl]
+    m = [br.index(p) if p in br else n2 for p in bl]
+    ci = [br.index(q) if (q := _cpp(cp, p)) in br else n2 for p in bl]
+    A = [anchors(sd, i) for i in range(n)]
+    A2 = [anchors(sd2, j) for j in range(n2 + 1)]
+    for i in range(n):
+        if A[i][1] != _leg_chain(L, bl[i]) or m[i] >= n2:
+            return False
+        if not inb[i] and A2[m[i]][1] != A[i][1]:
+            return False
+        if inb[i] and (
+            ci[i] >= n2 or A[i][1] != [mb, *A2[ci[i]][1]] or A2[m[i]][1] != [c, *A2[ci[i]][1]]
+        ):
+            return False
+    imgs = m + [ci[i] for i in range(n) if inb[i]]
+    if len(set(imgs)) != len(imgs) or not set(range(n2)) <= set(imgs):
+        return False
+    for i in range(n):
+        for j in range(n):
+            if not _agree(A[i][0], A[j][0], A2[m[i]][0], A2[m[j]][0]):
+                return False
+            if inb[i] and not _copy_vs(A[i][0], A[j][0], A2[ci[i]][0], A2[m[j]][0], inb[j]):
+                return False
+            if inb[i] and inb[j] and not _copy_copy(A[i][0], A[j][0], A2[ci[i]][0], A2[ci[j]][0]):
+                return False
+    return True

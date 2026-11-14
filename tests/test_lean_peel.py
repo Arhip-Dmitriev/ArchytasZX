@@ -17,19 +17,25 @@ by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy coun
 the boundary behind an identity spider (79.16e); identity slides through
 ``evalL_slide`` (79.16d); both sides of a peel or slide written with each boundary link port the
 ghost of its slot, proved equal to the identity forms, the phaseless index stated as zero, slides
-read through the slot data of both sides' box groups (79.16f)."""
+read through the slot data of both sides' box groups (79.16f); the engine's instantiated boundary
+in the key order of ``LinkedSplice.lean`` (``flatAt``), peels and slides read at those flat
+positions, a peel whose copy slots moved refused here and in Lean (79.16h, 79.16i)."""
 
 from __future__ import annotations
 
+import itertools
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from typing import cast
 
 import pytest
+import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
+from archytaszx.diagram import bangbox
 from archytaszx.diagram.bangbox import Mult
-from archytaszx.diagram.graph import Diagram
+from archytaszx.diagram.graph import Diagram, Direction, NodeId
+from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import kernel, lean_linked
 from archytaszx.semantics.decide import decide_equal
 from archytaszx.semantics.induction import rename_multiplicity
@@ -60,7 +66,7 @@ def test_the_cluster_state_2d_peel_exports_through_evalL_peel() -> None:
     assert peels
     for t in peels:
         source = lean_linked.export_peel(t.lhs, t.rhs)
-        assert source is not None and "evalL_peel ok" in source
+        assert source is not None and "evalL_peel_flat ok flat" in source
         assert lean_linked.export_peel(t.rhs, t.lhs) is None
     source = kernel.lean(theorem, "main", semantic=True)
     assert "namespace ArchytasZX.Export.P" in source
@@ -94,7 +100,7 @@ def test_successor_peels_with_boundary_link_ports_export() -> None:
     assert len(pairs) == 4
     for before, peeled in pairs:
         source = lean_linked.export_peel(before, peeled)
-        assert source is not None and "evalL_peel ok" in source
+        assert source is not None and "evalL_peel_flat ok flat" in source
     assert "\naxiom peel" not in kernel.lean(theorem, "main", semantic=True)
 
 
@@ -165,7 +171,7 @@ def test_the_cluster_state_2d_identity_slide_exports_through_one_dropped_diagram
     for t in slides:
         source = lean_linked.export_slide(t.lhs, t.rhs)
         assert source is not None and "evalL_dropAt oksb1" in source
-        assert "evalL_dropAt oksk1" in source and "evalG_flat layout" in source
+        assert "evalL_dropAt oksk1" in source and "evalG_flatAt layout" in source
     source = kernel.lean(theorem, "main", semantic=True)
     assert "namespace ArchytasZX.Export.S" in source
     assert "a boxed identity spider moved" not in source
@@ -201,3 +207,140 @@ def test_a_slide_whose_slot_blocks_differ_is_not_exported() -> None:
     box = next(b for b, x in after.bang_boxes.items() if x.groups)
     after.set_bang_box_extension(box, groups=())
     assert lean_linked.export_slide(t.lhs, after) is None
+
+
+NEST = """dim d
+count n
+count m
+a = Z(1 -> 1, d)
+b = Z(1 -> 1, d)
+e = Z(1 -> 1, d)
+f = Z(1 -> 1, d)
+repeat n as P: a, b, e
+repeat m as Q in P: b
+outputs b.out0, f.out0, a.out0, e.out0
+inputs e.in0, f.in0, b.in0, a.in0"""
+"""Three nodes in a box, one of them in a box within, beside an idle wire, legs on both sides."""
+
+Slot = tuple[int, tuple[int, ...]]
+
+
+def _engine_flat(d: Diagram, order: Sequence[str], values: Mapping[str, int]) -> list[Slot]:
+    """The instantiated boundary of ``d`` (symbols instantiated in ``order``) as slots of its
+    linked ghost form with copy indices outermost box first."""
+    prov: dict[NodeId, tuple[NodeId, dict[int, int]]] = {}
+    scopes = {int(b): set(x.node_scope) for b, x in d.bang_boxes.items()}
+    real = bangbox._instantiate_node_scope
+
+    def hooked(diagram: Diagram, box: bangbox.BangBox, k: int) -> list[dict[NodeId, NodeId]]:
+        held = {prov.get(y, (y, {}))[0] for y in box.node_scope}
+        maps = real(diagram, box, k)
+        for j, m in enumerate(maps):
+            for old, new in m.items():
+                o, c = prov.get(old, (old, {}))
+                top = max(
+                    (b for b, s in scopes.items() if o in s and s <= held),
+                    key=lambda b: len(scopes[b]),
+                    default=None,
+                )
+                prov[new] = (o, c if top is None else {**c, top: j})
+        return maps
+
+    bangbox._instantiate_node_scope = hooked
+    try:
+        w = d
+        for name in order:
+            w = bangbox.instantiate_symbol(w, name, values[name])
+        w = bangbox.expand_concrete_boxes(w)
+    finally:
+        bangbox._instantiate_node_scope = real
+    tables = lean_linked._Tables()
+    ghost = 1 + max(int(x) for x in d.nodes)
+    D = lean_linked.linked(d, tables, ghost=ghost)
+    ports = [lean_linked._port(r) for r in [*d.boundary_outputs, *d.boundary_inputs]]
+    out = []
+    for r in [*w.boundary_outputs, *w.boundary_inputs]:
+        o, c = prov.get(r.node_id, (r.node_id, {}))
+        i = ports.index((int(o), r.direction is Direction.OUTPUT, r.index))
+        ghosted = D.bnd()[i][0] == ghost
+        out.append((i, () if ghosted else tuple(c[b.id] for b in D.node_boxes(int(o)))))
+    return out
+
+
+def _model_flat(d: Diagram, values: Mapping[str, int]) -> list[Slot]:
+    """The slots of ``d``'s linked ghost form in increasing ``key`` (``LinkedSplice.lean``)."""
+    tables = lean_linked._Tables()
+    D = lean_linked.linked(d, tables, ghost=1 + max(int(x) for x in d.nodes))
+    sd = lean_linked.slot_data(D, lean_linked.groups(d))
+    ks = {m: int(sp.sympify(e).subs(values)) for e, m in tables.mults.items()}
+
+    def key(v: Slot) -> list[int]:
+        anch = lean_linked.anchors(sd, v[0])[0]
+        return [x for pair in itertools.zip_longest(anch, v[1]) for x in pair if x is not None]
+
+    return sorted(
+        (
+            (i, t)
+            for i in range(sd[0] + sd[1])
+            for t in itertools.product(*(range(ks[m]) for m in lean_linked.anchors(sd, i)[1]))
+        ),
+        key=key,
+    )
+
+
+def _nest_grouped(groups: Sequence[Sequence[int]]) -> Diagram:
+    d = parse_dsl(NEST)
+    box = next(b for b, x in d.bang_boxes.items() if x.parent is None)
+    nodes = sorted(d.bang_boxes[box].node_scope)
+    d.set_bang_box_extension(box, groups=tuple(frozenset(nodes[k] for k in g) for g in groups))
+    return d
+
+
+def test_the_flat_positions_are_the_engine_boundary_order() -> None:
+    theorem = _cluster()
+    sides = [(t.lhs, t.rhs) for t in [*_peels(theorem), *_slides(theorem)]]
+    cases = [d for pair in [*sides, *_succ_peels(theorem)] for d in pair]
+    cases.append(parse_dsl(NEST))
+    for d in cases:
+        names = sorted(bangbox.free_mult_symbols(d))
+        values = {s: 2 + j for j, s in enumerate(names)}
+        for order in itertools.permutations(names):
+            assert _engine_flat(d, order, values) == _model_flat(d, values), (names, order)
+    for groups in ([[0, 1], [2]], [[2], [0, 1]], [[0], [1, 2]], [[1], [2]]):
+        d = _nest_grouped(groups)
+        values = {"n": 2, "m": 3}
+        assert _engine_flat(d, ["n", "m"], values) == _model_flat(d, values), groups
+
+
+def _moved_copy_slots() -> tuple[Diagram, Diagram]:
+    """A successor peel whose peeled side has its first and last outputs swapped."""
+    before, after = next(_succ_peels(_cluster()))
+    outs = list(after.boundary_outputs)
+    outs[0], outs[-1] = outs[-1], outs[0]
+    moved = after.copy()
+    moved.set_boundary_outputs(outs)
+    return before, moved
+
+
+def test_peels_read_flat_positions_and_refuse_moved_copy_slots() -> None:
+    for before, after in _succ_peels(_cluster()):
+        source = lean_linked.export_peel(before, after)
+        assert source is not None and "evalL_peel_flat ok flat" in source
+        assert "flatAt (L'.slotData G') ks y" in source
+    assert lean_linked.export_peel(*_moved_copy_slots()) is None
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_refuses_a_peel_whose_copy_slots_moved(tmp_path: object) -> None:
+    real = lean_linked.peel_flat_ok
+    lean_linked.peel_flat_ok = lambda *_: True
+    try:
+        source = lean_linked.export_peel(*_moved_copy_slots())
+    finally:
+        lean_linked.peel_flat_ok = real
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/moved.lean")
+    assert not ok and "PeelFlat" in source, output
