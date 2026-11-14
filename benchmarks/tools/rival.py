@@ -52,7 +52,13 @@ ALLOC_FAILURES = (
     "memory allocation of",
     "std::bad_alloc",
     "MemoryError",
+    "OutOfMemoryError",
 )
+
+
+def allocation_failure(text: str) -> bool:
+    """Whether a tool's output reports a failed memory allocation (ALLOC_FAILURES)."""
+    return any(p in text for p in ALLOC_FAILURES)
 
 
 class Unsupported(Exception):
@@ -454,7 +460,9 @@ def run_driver(
             "timeout"
             if proc.returncode in (-24, 152)
             else (
-                "oom" if proc.returncode in (-9, 137) or "MemoryError" in proc.stderr else "error"
+                "oom"
+                if proc.returncode in (-9, 137) or allocation_failure(proc.stderr)
+                else "error"
             )
         )
         out = {
@@ -516,10 +524,11 @@ def run_binary(
         "wall": time.perf_counter() - w0,
         "peak_mb": round(after.ru_maxrss / 1024, 1),
     }
-    if proc.returncode not in (0, 1):
+    alloc_failed = proc.returncode == 1 and allocation_failure(proc.stderr or "")
+    if proc.returncode not in (0, 1) or alloc_failed:
         killed = proc.returncode in (-24, 152)
         text = (proc.stderr or "") + (proc.stdout or "")
-        oom = proc.returncode in (-9, 137) or any(p in text for p in ALLOC_FAILURES)
+        oom = proc.returncode in (-9, 137) or allocation_failure(text)
         out["status"] = "timeout" if killed else ("oom" if oom else "error")
         if killed:
             out["limit"] = "cpu"
