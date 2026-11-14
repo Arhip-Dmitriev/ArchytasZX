@@ -760,6 +760,7 @@ flagged point_invalid, are left out of the counts' points (harness_error and inv
 their own columns), and causes.* counts points per tool, version, set, outcome, stage and cause.
 
     python -m benchmarks.reclassify RAW_DIR FALSE_SET OUT_JSONL [--journal]
+        [--annotate-seconds S] [--jobs J]
 
 re-reads logged records without re-running them and writes them, classified afresh, to OUT_JSONL
 (outside RAW_DIR, which it never writes), printing the outcome counts per tool before and after.
@@ -771,7 +772,10 @@ with exit 143 and no kill source, waits up to 3 s for its own scope's (run-p<pid
 journal entry and records the kill as cgroup oom_kill. reclassify also recomputes an adapter's
 logged result through its rederive hook (published_proofs: the verdict from its files) and a
 CHECK_ONCE tool's units (K = 1, one success when a run of the unit is ok), and prints the units
-with K reached before and after.
+with K reached before and after. An F record of FALSE_SET without a differs_at table (a set
+made before the table existed) gets one in memory first, by breaks.annotate with S seconds per
+point (default 10) in J processes (default 4); so the ghz/main off_by_one_n pair, equal at d = 1
+(every leg of dimension 1, scalar 1 on both sides), makes runs there invalid_point.
 
 
 11. TOOLS

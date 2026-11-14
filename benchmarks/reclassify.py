@@ -12,11 +12,14 @@
 # limitations under the License.
 
 """Logged run records reclassified by benchmarks.outcomes, without re-running:
-``python -m benchmarks.reclassify RAW_DIR FALSE_SET OUT_JSONL [--journal]``.
+``python -m benchmarks.reclassify RAW_DIR FALSE_SET OUT_JSONL [--journal]
+[--annotate-seconds S] [--jobs J]``.
 
 Reads every RAW_DIR/*.jsonl (never writes there), gives each run record the classifier's
-fields (F records from FALSE_SET for invalid_point), writes all records to OUT_JSONL and prints
-the outcome counts per tool before and after, then the units with K reached. An adapter's
+fields (F records from FALSE_SET for invalid_point; an F record without a differs_at table
+gets one in memory, breaks.annotate with S seconds per point in J processes), writes all
+records to OUT_JSONL and prints the outcome counts per tool before and after, then the units
+with K reached. An adapter's
 ``rederive`` recomputes its logged result first; a CHECK_ONCE tool's units are recomputed from
 their runs (:func:`units`). ``--journal`` marks a worker that died with exit
 143 as ``journal_oom_kill`` when a systemd user-scope "Failed with result 'oom-kill'" journal
@@ -177,18 +180,56 @@ def counts(recs: list[dict[str, Any]], field: str = "outcome") -> dict[str, Coun
     return acc
 
 
+_INSTS: dict[str, Any] = {}
+
+
+def _annotate_one(job: tuple[dict[str, Any], float]) -> dict[str, Any]:
+    """breaks.annotate of one F record, unchanged when its equation is unknown or the dense
+    check raises."""
+    from benchmarks import breaks
+
+    rec, seconds = job
+    if not _INSTS:
+        _INSTS.update(outcomes.instances())
+    if rec["equation"] not in _INSTS:
+        return rec
+    try:
+        return breaks.annotate(rec, _INSTS, seconds)
+    except Exception:  # noqa: BLE001
+        return rec
+
+
+def annotated(records: list[dict[str, Any]], seconds: float, jobs: int) -> list[dict[str, Any]]:
+    """``records`` with a differs_at table added (breaks.annotate) to every F record that has
+    none, in ``jobs`` processes."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    todo = [i for i, r in enumerate(records) if r.get("kind") and "differs_at" not in r]
+    if not todo:
+        return records
+    out = list(records)
+    with ProcessPoolExecutor(max(1, jobs)) as pool:
+        work = [(records[i], seconds) for i in todo]
+        for i, rec in zip(todo, pool.map(_annotate_one, work, chunksize=1)):
+            out[i] = rec
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m benchmarks.reclassify")
     ap.add_argument("raw", type=Path)
     ap.add_argument("false_set", type=Path)
     ap.add_argument("out", type=Path)
     ap.add_argument("--journal", action="store_true")
+    ap.add_argument("--annotate-seconds", type=float, default=10.0)
+    ap.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
     if a.out.resolve().parent == a.raw.resolve():
         raise SystemExit("OUT_JSONL must lie outside RAW_DIR")
     recs = load(a.raw)
     data = json.loads(a.false_set.read_text(encoding="utf-8"))
-    falses = {f"{r['equation']}!": r for r in data.get("records", []) if r.get("kind")}
+    records = annotated(data.get("records", []), a.annotate_seconds, a.jobs)
+    falses = {f"{r['equation']}!": r for r in records if r.get("kind")}
     new = reclassify(recs, falses, journal_oom_times() if a.journal else None)
     with a.out.open("w", encoding="utf-8") as fh:
         for r in new:
