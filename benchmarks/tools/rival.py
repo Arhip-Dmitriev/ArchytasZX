@@ -103,12 +103,15 @@ def qiskit_circuit(
     magnitude then left to the caller, :func:`scalar_parts` of ``c.scalar``)."""
     import sympy as sp
     from qiskit import QuantumCircuit
-    from qiskit.circuit.library import DiagonalGate, UnitaryGate, XGate, ZGate
+    from qiskit.circuit.library import UnitaryGate, XGate, ZGate
 
     idx = {q: i for i, q in enumerate(c.wires)}
     qc = QuantumCircuit(len(c.wires))
+    exact: dict[float, Fraction | None] = {}
+    qc.metadata = {EXACT_RZ: exact}
     inits: dict[int, int] = {}
     posts: dict[int, int] = {}
+    extra = 0.0
     for g in c.gates:
         if isinstance(g, ir.Init):
             inits[idx[g.q]] = g.v % 2
@@ -163,13 +166,19 @@ def qiskit_circuit(
                     base.control(len(g.cs), ctrl_state=state), [*(idx[q] for q in g.cs), idx[g.t]]
                 )
         elif isinstance(g, ir.PhaseFn):
-            qs = list(g.qs)
-            m = len(qs)
-            diag = []
-            for k in range(2**m):
-                x = tuple(reversed([(k >> i) & 1 for i in range(m)]))
-                diag.append(complex(np.exp(2j * np.pi * float(sp.Rational(g.f(x))))))
-            qc.append(DiagonalGate(diag), [idx[q] for q in reversed(qs)])
+            ws = [idx[q] for q in g.qs]
+            const, parities = _parity_terms(g)
+            extra += 2 * math.pi * float(const)
+            for mask, a in parities.items():
+                on = [w for i, w in enumerate(ws) if mask >> i & 1]
+                theta = 2 * math.pi * float(a)
+                exact[theta] = a if exact.get(theta, a) == a else None
+                for w in on[:-1]:
+                    qc.cx(w, on[-1])
+                qc.rz(theta, on[-1])
+                for w in reversed(on[:-1]):
+                    qc.cx(w, on[-1])
+                extra += theta / 2
         elif isinstance(g, (ir.Perm, ir.Oracle)):
             from benchmarks.tools import dense
 
@@ -181,13 +190,88 @@ def qiskit_circuit(
             raise Unsupported(f"gate {type(g).__name__}")
     if not unit_scalar:
         zero, _, arg = scalar_parts(c.scalar)
-        qc.global_phase = 0.0 if zero else arg
+        qc.global_phase = (0.0 if zero else arg) + extra
         return qc, inits, posts
     val = complex(sp.N(sp.sympify(c.scalar)))
     if abs(abs(val) - 1) > 1e-12:
         raise Unsupported("a circuit scalar of modulus other than 1")
-    qc.global_phase = float(np.angle(val))
+    qc.global_phase = float(np.angle(val)) + extra
     return qc, inits, posts
+
+
+def _turns_mod(c: Fraction) -> Fraction:
+    """``c`` mod 1 in (-1/2, 1/2]."""
+    c -= math.floor(c)
+    return c - 1 if c > Fraction(1, 2) else c
+
+
+def _parity_terms(g: Any) -> tuple[Fraction, dict[int, Fraction]]:
+    """``g.f`` in turns as a constant plus a phase on the parity of each wire subset (bit i of
+    the mask for wire i), mod 1, zero terms dropped."""
+    import sympy as sp
+
+    m = len(g.qs)
+    coef = []
+    for mask in range(2**m):
+        r = sp.Rational(g.f(tuple(mask >> i & 1 for i in range(m))))
+        coef.append(Fraction(int(r.p), int(r.q)))
+    for i in range(m):
+        for mask in range(2**m):
+            if mask >> i & 1:
+                coef[mask] -= coef[mask ^ (1 << i)]
+    par: dict[int, Fraction] = {}
+    for mask in range(1, 2**m):
+        c = _turns_mod(coef[mask])
+        if not c:
+            continue
+        k = mask.bit_count()
+        sub = mask
+        while sub:
+            sign = 1 if sub.bit_count() % 2 else -1
+            par[sub] = par.get(sub, Fraction(0)) + sign * c / 2 ** (k - 1)
+            sub = (sub - 1) & mask
+    out = {mask: _turns_mod(a) for mask, a in sorted(par.items())}
+    return _turns_mod(coef[0]), {mask: a for mask, a in out.items() if a}
+
+
+EXACT_RZ = "exact_rz"
+
+
+def _pi_text(r: Fraction) -> str:
+    """``r`` pi as QASM text ``p*pi/q``."""
+    if r == 0:
+        return "0"
+    p, q = r.numerator, r.denominator
+    num = "pi" if abs(p) == 1 else f"{abs(p)}*pi"
+    return ("-" if p < 0 else "") + num + ("" if q == 1 else f"/{q}")
+
+
+def _dumps_exact(t: Any) -> str:
+    """OpenQASM 2 of a transpiled circuit, every rz whose angle is a key of its
+    ``metadata[EXACT_RZ]`` (the exact turns of the rz gates :func:`qiskit_circuit` wrote)
+    written as that exact multiple of pi, other numbers by :func:`exact_angles`."""
+    from qiskit import qasm2
+
+    text = qasm2.dumps(t)
+    exact = (t.metadata or {}).get(EXACT_RZ) or {}
+    if not exact:
+        return exact_angles(text)
+    gates = iter(t.data)
+    out = []
+    for line in text.splitlines(keepends=True):
+        head = line.lstrip()
+        if not head or head.startswith(("OPENQASM", "include", "qreg", "creg", "//")):
+            out.append(line)
+            continue
+        ins = next(gates)
+        if not head.startswith(ins.operation.name):
+            raise RuntimeError(f"QASM line {head.strip()!r} is not gate {ins.operation.name}")
+        turns = exact.get(float(ins.operation.params[0])) if ins.operation.name == "rz" else None
+        if turns is None:
+            out.append(exact_angles(line))
+        else:
+            out.append(re.sub(r"\([^()]*\)", "(" + _pi_text(2 * turns) + ")", line, count=1))
+    return "".join(out)
 
 
 def _basis_fn(g: Any, ds: list[int]) -> Any:
@@ -215,10 +299,8 @@ def qasm(qc: Any) -> str:
 def qasm_and_phase(qc: Any) -> tuple[str, float]:
     """OpenQASM 2 of ``qc`` transpiled to qelib1 gates, and the transpiled circuit's global
     phase (QASM 2 has none)."""
-    from qiskit import qasm2, transpile
-
-    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0, qubits_initially_zero=False)
-    return exact_angles(qasm2.dumps(t)), float(t.global_phase)
+    t = transpiled(qc, QELIB_BASIS)
+    return _dumps_exact(t), float(t.global_phase)
 
 
 QELIB_BASIS = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]
@@ -227,23 +309,20 @@ QELIB_BASIS = ["cx", "cz", "h", "x", "z", "s", "sdg", "t", "tdg", "rz", "ccx"]
 def qasm_and_zx_phase(qc: Any) -> tuple[str, float]:
     """As :func:`qasm_and_phase`, the phase for a reader taking rz(theta) as diag(1, e^(i
     theta)) (PyZX, QuiZX): Qiskit's global phase minus theta/2 for every rz."""
-    from qiskit import qasm2, transpile
-
-    t = transpile(qc, basis_gates=QELIB_BASIS, optimization_level=0, qubits_initially_zero=False)
+    t = transpiled(qc, QELIB_BASIS)
     shift = sum(float(ins.operation.params[0]) / 2 for ins in t.data if ins.operation.name == "rz")
-    return exact_angles(qasm2.dumps(t)), float(t.global_phase) - shift
+    return _dumps_exact(t), float(t.global_phase) - shift
 
 
 _FLOAT = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 _INT64 = 2**63
 
 
-def angle_text(a: float) -> str:
-    """``a`` radians as ``p*pi/q`` when a/pi has a convergent p/q within 2^-50 relative with
-    |p|, q < 2^63, else as a fixed-point decimal without exponent."""
+def _pi_fraction(a: float) -> Fraction | None:
+    """The convergent p/q of a/pi within 2^-50 relative with |p|, q < 2^63, else None."""
     r = Fraction(a / math.pi)
     if r == 0:
-        return "0"
+        return r
     h0, h1, k0, k1 = 0, 1, 1, 0
     x = r
     while True:
@@ -251,15 +330,28 @@ def angle_text(a: float) -> str:
         h0, h1 = h1, m * h1 + h0
         k0, k1 = k1, m * k1 + k0
         if abs(h1) >= _INT64 or k1 >= _INT64:
-            break
+            return None
         if abs(Fraction(h1, k1) - r) <= abs(r) * Fraction(1, 2**50):
-            p, q = h1, k1
-            num = "pi" if abs(p) == 1 else f"{abs(p)}*pi"
-            return ("-" if p < 0 else "") + num + ("" if q == 1 else f"/{q}")
+            return Fraction(h1, k1)
         if x == m:
-            break
+            return None
         x = 1 / (x - m)
-    return format(Decimal(repr(a)), "f")
+
+
+def angle_text(a: float) -> str:
+    """``a`` radians as ``p*pi/q`` by :func:`_pi_fraction`, else as a fixed-point decimal
+    without exponent."""
+    r = _pi_fraction(a)
+    return format(Decimal(repr(a)), "f") if r is None else _pi_text(r)
+
+
+def integers_below(text: str, bits: int, reader: str) -> None:
+    """:class:`Unsupported` when a gate parameter of QASM ``text`` holds an integer of 2^bits
+    or more."""
+    for par in re.findall(r"\(([^()]*)\)", text):
+        for num in re.findall(r"\d+", par):
+            if int(num).bit_length() > bits:
+                raise Unsupported(f"an angle integer of {int(num).bit_length()} bits ({reader})")
 
 
 def exact_angles(text: str) -> str:
@@ -546,13 +638,16 @@ def explicit_reference(inst: Any, n: int | None, d: int) -> ir.Circuit:
 
 
 def transpiled(qc: Any, basis: list[str]) -> Any:
-    """``qc`` transpiled to ``basis``; unsupported when it cannot be expressed exactly."""
+    """``qc`` transpiled to ``basis`` for any input state (no clean ancillas), its metadata
+    kept; unsupported when it cannot be expressed exactly."""
     from qiskit import transpile
 
     try:
-        return transpile(qc, basis_gates=basis, optimization_level=0, qubits_initially_zero=False)
+        t = transpile(qc, basis_gates=basis, optimization_level=0, qubits_initially_zero=False)
     except Exception as exc:
         raise Unsupported(f"not expressible in the gate set {basis}: {str(exc)[:120]}") from exc
+    t.metadata = {**(qc.metadata or {}), **(t.metadata or {})}
+    return t
 
 
 def finish(

@@ -46,3 +46,37 @@ def test_qasm_keeps_the_map() -> None:
     assert np.abs(Operator(back).data - want).max() < 1e-8
     t = rival.transpiled(qc, rival.QELIB_BASIS)
     assert np.abs(Operator(t).data - want).max() < 1e-8
+
+
+def test_phase_functions_keep_exact_angles() -> None:
+    """A PhaseFn on 3 wires is its diagonal, and its rz angles are exact multiples of pi down to
+    a turn of 2^-70."""
+    pytest.importorskip("qiskit")
+    from fractions import Fraction
+
+    from qiskit import qasm2
+    from qiskit.quantum_info import Operator
+
+    from benchmarks import ir
+    from benchmarks.tools import rival
+
+    vals = [Fraction(0), Fraction(1, 3), Fraction(2, 7), Fraction(1, 2**70), Fraction(5, 8)]
+
+    def f(x: tuple[int, ...]) -> Fraction:
+        return vals[(x[0] + 2 * x[1] + 3 * x[2]) % len(vals)] + Fraction(x[0] * x[2], 2**70)
+
+    c = ir.Circuit(("a", "b", "e"), (ir.PhaseFn(("a", "b", "e"), f),))
+    qc = rival.qiskit_circuit(c)[0]
+    diag = []
+    for k in range(8):
+        x = (k >> 2 & 1, k >> 1 & 1, k & 1)
+        diag.append(np.exp(2j * np.pi * float(f(x))))
+    want = rival._little(np.diag(diag), 3)
+    assert np.abs(Operator(qc).data - want).max() < 1e-12
+    text, phase = rival.qasm_and_phase(qc)
+    angles = [line.split("(")[1].split(")")[0] for line in text.splitlines() if "rz(" in line]
+    assert angles and all("pi" in a for a in angles)
+    assert any("/" in a and int(a.split("/")[1]) % 2**69 == 0 for a in angles)
+    back = qasm2.loads(text)
+    back.global_phase = phase
+    assert np.abs(Operator(back).data - want).max() < 1e-12

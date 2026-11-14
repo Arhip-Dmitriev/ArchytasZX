@@ -50,6 +50,8 @@ def zx_run(tool: str, env: str, package: str, inst: Any, job: dict[str, Any]) ->
         c = rival.qubit_ir(inst, n)
         qc, inits, posts = rival.qiskit_circuit(c, unit_scalar=False)
         text, phase = rival.qasm_and_zx_phase(qc)
+        if tool == "quizx":
+            rival.integers_below(text, 63, "QuiZX reads 64-bit signed integers")
         payload = {
             "tool": tool,
             "qasm": text,
