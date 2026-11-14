@@ -13,12 +13,18 @@
 
 """A library of stated lemmas: named identities between two diagrams over one symbol.
 
-Each lemma is proved once, with the symbol formal, by
+Each lemma is proved once, with the symbol formal, by its own prover or by
 :func:`~archytaszx.semantics.decide.decide_equal` with no oracle sample, and kept with its
 kernel theorem (:func:`proved`). An instance at a value of the symbol (:func:`instance`) is a
 kernel theorem by symbolic contraction of the instantiated sides; :func:`rewrite` finds an
 instance's left side inside a larger diagram through cut wires and replaces it by the right
 side under :func:`~archytaszx.semantics.kernel.congr`.
+
+:func:`expose_by_insertion` splits spiders off a peeled copy and inserts identities
+(:data:`SPLIT_BIND`, four F boxes, a triangle pair) until the hypothesis reads through cut
+wires; :func:`induct_by_insertion` proves a lemma by induction over such exposures, and
+:func:`induct_by_copies` a value-count family whose peeled copies meet by a :data:`COPIES`
+lemma (:func:`close_rests`).
 """
 
 from __future__ import annotations
@@ -307,7 +313,7 @@ repeat p as U index m: s
 chain U: s.in0 -> s.out1
 repeat p as V index m: b
 chain V: b.out0 -> b.in1
-align V with U
+align U with V
 inputs s.in0
 outputs b.out0
 """
@@ -405,10 +411,29 @@ def _substituted(
         return None
 
 
+def _renamed(
+    entry: Lemma, theorem: object, value: sp.Expr, left: Diagram, right: Diagram
+) -> object | None:
+    """``left = right`` by :func:`~archytaszx.semantics.kernel.instance` of ``theorem`` at
+    ``symbol = value`` between isomorphisms; else None."""
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics import kernel
+
+    t = cast("kernel.Theorem", theorem)
+    try:
+        moved = kernel.instance(t, entry.symbol, Mult._from_expr(value))
+        return kernel.trans(
+            kernel.iso(left, moved.lhs), kernel.trans(moved, kernel.iso(moved.rhs, right))
+        )
+    except kernel.KernelError:
+        return None
+
+
 def instance(entry: Lemma, value: sp.Expr) -> object:
     """The kernel theorem of ``entry`` at ``value``, by substitution into its proved theorem, by
-    symbolic contraction or path sums of both sides, else by a decision with no oracle sample;
-    at ``value = s - c`` it holds for ``s >= c``."""
+    symbolic contraction or path sums of both sides, for a lemma with its own prover by
+    :func:`~archytaszx.semantics.kernel.instance` of its proved theorem, else by a decision with
+    no oracle sample; at ``value = s - c`` it holds for ``s >= c``."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
@@ -424,6 +449,13 @@ def instance(entry: Lemma, value: sp.Expr) -> object:
             return kernel.path_sum(left, right)
         except kernel.KernelError:
             pass
+        renamed = (
+            None
+            if entry.prove is None
+            else _renamed(entry, theorem, sp.sympify(value), left, right)
+        )
+        if renamed is not None:
+            return renamed
         decision = decide_equal(left, right, samples=[])
         if decision.verdict is not EqualityVerdict.EQUAL:
             raise LemmaError(f"lemma {entry.name} at {value}: {exc}") from exc
@@ -818,8 +850,9 @@ def expose_by_insertion(
     first of ``copies`` that gives one: every unboxed Z spider off the copy wired into it and
     holding no boundary slot split (:func:`_split_off`) on a wire of
     :func:`_insertion_options`, its middle replaced by an identity (:func:`_inserted`), the
-    region every node not reached from the copy and the leaves without passing a hub or an
-    inner inserted node; None when no choice reads as ``hypothesis``."""
+    region every node off the copy not reached from the leaves and other inserted nodes
+    without passing the copy, a hub or an inner inserted node; None when no choice reads as
+    ``hypothesis``."""
     from itertools import product
 
     from archytaszx.semantics import kernel
@@ -886,7 +919,7 @@ def _expose_with(
         neighbours[wire.a.node_id].add(wire.b.node_id)
         neighbours[wire.b.node_id].add(wire.a.node_id)
     reached = set(copy) | leaves
-    todo = list(reached)
+    todo = list(leaves)
     while todo:
         n = todo.pop()
         for m in neighbours[n]:
@@ -900,9 +933,10 @@ def _expose_with(
 def induct_by_insertion(left: Diagram, right: Diagram, index: str) -> object:
     """``left = right`` for every value of ``index`` by
     :func:`~archytaszx.semantics.kernel.induction`: the base by symbolic contraction, one
-    side's peeled successor exposed by :func:`expose_by_insertion` and its hypothesis replaced
-    by the other side's, the step closed by :func:`close_by_cores` on the other peeled
-    successor as it is or re-peeled at its chains' last copies; each side tried in turn."""
+    side's peeled successor (as it is or re-peeled at its chains' last copies,
+    :func:`_repeels`) exposed by :func:`expose_by_insertion` and its hypothesis replaced by the
+    other side's, the step closed by :func:`close_by_cores` on the other peeled successor as it
+    is or re-peeled; each side tried in turn."""
     from archytaszx.diagram.bangbox import BangBoxError
     from archytaszx.diagram.validate import ValidateError
     from archytaszx.semantics import kernel
@@ -930,9 +964,14 @@ def induct_by_insertion(left: Diagram, right: Diagram, index: str) -> object:
             reasons.append(f"{side.value}: no single box to peel")
             continue
         own_k, other_k = (induction_hypothesis(d, index, k) for d in (own, other))
-        copy = frozenset(peeled.nodes) - frozenset(own_k.nodes)
-        candidates = copy_candidates(peeled, frozenset(own_k.nodes), copy)
-        found = expose_by_insertion(peeled, candidates, own_k)
+        found = None
+        for start in _repeels(induction_renamed(own, index, k), peeled, k):
+            copy = frozenset(start.rhs.nodes) - frozenset(own_k.nodes)
+            candidates = copy_candidates(start.rhs, frozenset(own_k.nodes), copy)
+            found = expose_by_insertion(start.rhs, candidates, own_k)
+            if found is not None:
+                found = (kernel.trans(start, found[0]), found[1], found[2])
+                break
         if found is None:
             reasons.append(f"{side.value}: no insertion exposes the hypothesis")
             continue
@@ -978,6 +1017,8 @@ _COPY_LEFT = """
 count p
 g0 = Z(1 -> 2, literal 2)
 g1 = Z(1 -> 2, literal 2)
+g3 = S(literal 2, literal 2^j)
+g4 = Z(1 -> 0, literal 1)
 g5 = X(2 -> 1, literal 2)
 g6 = X(1 -> 1, literal 2) phase{1: 1/2}
 g7 = T(literal 2)
@@ -985,13 +1026,13 @@ g8 = Z(2 -> 1, literal 2)
 g9 = T(literal 2)
 g10 = Ti(literal 2)
 g11 = X(2 -> 1, literal 2)
-wire g0.out1 -- g5.in0, g5.out0 -- g6.in0, g6.out0 -- g7.in0, g7.out0 -- g8.in1
-wire g1.out1 -- g9.in0, g9.out0 -- g8.in0, g8.out0 -- g10.in0, g10.out0 -- g11.in1
-repeat p as C0: g0
-repeat p as C2 index j: g5, g6, g7
-align C2 with C0
-inputs g0.in0, g5.in1, g1.in0, g11.in0
-outputs g0.out0, g1.out0, g11.out0
+wire g3.out1 -- g4.in0, g3.out0 -- g5.in1, g0.out1 -- g5.in0, g5.out0 -- g6.in0
+wire g6.out0 -- g7.in0, g7.out0 -- g8.in1, g1.out1 -- g9.in0, g9.out0 -- g8.in0
+wire g8.out0 -- g10.in0, g10.out0 -- g11.in1
+repeat p as C index j: g0, g3, g5, g6, g7
+chain C: g3.in0 -> g3.out1
+inputs g0.in0, g1.in0, g11.in0, g3.in0
+outputs g1.out0, g0.out0, g11.out0
 scalar sqrt(2)
 """
 
@@ -1002,6 +1043,8 @@ b = B(literal 2, literal 2^m)
 z = Z(1 -> 2, literal 2^p)
 xs = X(1 -> 2, literal 2^p)
 cap = Z(2 -> 0, literal 2^p)
+sr = S(literal 2, literal 2^m)
+er = Z(1 -> 0, literal 1)
 hr = Z(0 -> 1, literal 1)
 br = B(literal 2, literal 2^m)
 c = Z(1 -> 2, literal 2)
@@ -1016,34 +1059,162 @@ f3 = F(literal 2)
 s = S(literal 2, literal 2^m)
 e = Z(1 -> 0, literal 1)
 wire h.out0 -- b.in1, b.out0 -- z.in0, z.out0 -- s.in0, s.out1 -- e.in0
-wire hr.out0 -- br.in1, br.out0 -- cap.in1
+wire sr.out1 -- er.in0, sr.out0 -- br.in0, hr.out0 -- br.in1, br.out0 -- cap.in1
 wire z.out1 -- xs.in0, xs.out0 -- pb.in0, xs.out1 -- cap.in0, c.out1 -- pb.in1, pb.out0 -- qb.in0
 wire y.out1 -- qb.in1, qb.out0 -- g.in0
 wire f0.out0 -- y.in0, y.out0 -- f1.in0, f1.out0 -- f2.in0, f2.out0 -- f3.in0
 repeat p as V index m: b
 chain V: b.out0 -> b.in1
+repeat p as UR index m: sr
+chain UR: sr.in0 -> sr.out1
 repeat p as Q index m: br
 chain Q: br.out0 -> br.in1
+align UR with Q
 repeat p as U index m: s
 chain U: s.in0 -> s.out1
-inputs b.in0, br.in0, c.in0, f0.in0
-outputs s.out0, c.out0, f3.out0
+inputs b.in0, c.in0, f0.in0, sr.in0
+outputs c.out0, s.out0, f3.out0
 """
 
 QRAM_COPY = Lemma(
     name="qram_copy",
     symbol="p",
     statement=(
-        "p address bits flipped where p value bits are 0, gathered with a data bit through "
-        "triangles into a controlled flip of the target, is the address bound into a 2^p "
-        "register less the value bits bound into one, tested for 0 with the data bit and the "
-        "Fourier-side target"
+        "p address bits, each flipped unless it matches the bit of a 2^p register R split by an "
+        "S chain, gathered with a data bit through triangles into a controlled flip of the "
+        "target, is the address bound into a 2^p register less R (split and bound back), "
+        "tested for 0 with the data bit and the Fourier-side target"
     ),
     build=lambda p: _dsl_sides(_COPY_LEFT, _COPY_RIGHT, p),
     prove=induct_by_insertion,
 )
 
 COPIES: tuple[Lemma, ...] = (QRAM_COPY,)
+
+
+def close_rests(a: Diagram, b: Diagram) -> object:
+    """``a = b`` by an isomorphism, else by :func:`~archytaszx.semantics.kernel.congr` of a
+    :data:`COPIES` instance whose left side ``a`` holds through cut wires, :data:`SPLIT_BIND`
+    rewritten on the result as long as it applies, and :func:`close_by_cores` over a free
+    multiplicity's chain cores."""
+    from archytaszx.diagram.bangbox import free_mult_symbols
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import find_cut_region
+
+    try:
+        return kernel.iso(a, b)
+    except kernel.KernelError:
+        pass
+    reasons: list[str] = []
+    for entry in COPIES:
+        for value in _values(a, entry):
+            try:
+                lhs, _rhs = sides(entry, value)
+            except DimensionError:
+                continue
+            for region in _regions(a, lhs):
+                cut = find_cut_region(a, region, lhs)
+                if cut is None:
+                    continue
+                try:
+                    theorem = kernel.congr(cast("kernel.Theorem", instance(entry, value)), a, cut)
+                except (kernel.KernelError, LemmaError) as exc:
+                    reasons.append(str(exc))
+                    continue
+                for _ in range(_MAX_REWRITES):
+                    step = cast("kernel.Theorem | None", rewrite(theorem.rhs, SPLIT_BIND))
+                    if step is None:
+                        break
+                    theorem = kernel.trans(theorem, step)
+                for symbol in sorted(free_mult_symbols(theorem.rhs)):
+                    try:
+                        closed = cast("kernel.Theorem", close_by_cores(theorem.rhs, b, symbol))
+                    except kernel.KernelError as exc:
+                        reasons.append(str(exc))
+                        continue
+                    return kernel.trans(theorem, closed)
+    raise LemmaError("rests: " + ("; ".join(reasons) or "no copy lemma applies"))
+
+
+def induct_by_copies(left: Diagram, right: Diagram, index: str) -> Theorem:
+    """``left = right`` for every value of ``index`` by
+    :func:`~archytaszx.semantics.kernel.induction`: the base by a decision with no oracle
+    sample, one side's peeled successor exposed by :func:`expose_by_insertion` and its
+    hypothesis replaced by the other side's, the other side's peeled successor exposed by
+    :func:`~archytaszx.semantics.induction.expose_cut`, and the parts off the two hypothesis
+    regions met by :func:`close_rests`; each side tried in turn."""
+    from archytaszx.diagram.bangbox import BangBoxError
+    from archytaszx.diagram.validate import ValidateError
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+    from archytaszx.semantics.induction import (
+        InductionError,
+        _fresh_step_symbol,
+        _open_region,
+        copy_candidates,
+        expose_cut,
+        find_cut_region,
+        replace_cut_region,
+    )
+    from archytaszx.semantics.induction_kernel import NoInductionTheorem, _steps_theorem
+    from archytaszx.semantics.prove import (
+        InductionSide,
+        induction_base,
+        induction_hypothesis,
+        induction_successor,
+    )
+
+    k = _fresh_step_symbol(left, right, index, "k")
+    errors = (kernel.KernelError, LemmaError, InductionError, BangBoxError, ValidateError)
+    reasons: list[str] = []
+    base: kernel.Theorem | None = None
+    for side, own, other in ((InductionSide.START, left, right), (InductionSide.GOAL, right, left)):
+        peeled = induction_successor(own, index, k)
+        other_peeled = induction_successor(other, index, k)
+        if peeled is None or other_peeled is None:
+            reasons.append(f"{side.value}: no single box to peel")
+            continue
+        own_k, other_k = (induction_hypothesis(d, index, k) for d in (own, other))
+        copy = frozenset(peeled.nodes) - frozenset(own_k.nodes)
+        found = expose_by_insertion(
+            peeled, copy_candidates(peeled, frozenset(own_k.nodes), copy), own_k
+        )
+        held = frozenset(other_peeled.nodes) - frozenset(other_k.nodes)
+        there = expose_cut(
+            other_peeled, copy_candidates(other_peeled, frozenset(other_k.nodes), held), other_k
+        )
+        if found is None or there is None:
+            reasons.append(f"{side.value}: a hypothesis is not exposed")
+            continue
+        expose, cut, _copy = found
+        exposed, other_cut, steps = there
+        try:
+            replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
+            rest = frozenset(expose.rhs.nodes) - cut.region
+            other_rest = frozenset(exposed.nodes) - other_cut.region
+            rests = cast(
+                "kernel.Theorem",
+                close_rests(_open_region(exposed, other_rest), _open_region(replaced, rest)),
+            )
+            placed = find_cut_region(exposed, other_rest, rests.lhs)
+            if placed is None:
+                raise LemmaError("the other rest is not its open diagram")
+            moved = kernel.trans(
+                _steps_theorem(other_peeled, steps), kernel.congr(rests, exposed, placed)
+            )
+            step = kernel.trans(kernel.iso(replaced, moved.rhs), kernel.symm(moved))
+            if base is None:
+                at_left, at_right = induction_base(left, index), induction_base(right, index)
+                decision = decide_equal(at_left, at_right, samples=[])
+                if decision.verdict is not EqualityVerdict.EQUAL:
+                    raise LemmaError(f"base: {decision.verdict.value}")
+                base = kernel.from_decision(decision, at_left, at_right)
+            return kernel.induction(
+                left, right, index, k, base, side, expose, cut.region, step, cut=cut
+            )
+        except (*errors, NoInductionTheorem) as exc:
+            reasons.append(f"{side.value}: {exc}")
+    raise LemmaError("; ".join(reasons))
 
 
 __all__ = [
@@ -1057,8 +1228,10 @@ __all__ = [
     "Lemma",
     "LemmaError",
     "close_by_cores",
+    "close_rests",
     "close_with_lemmas",
     "expose_by_insertion",
+    "induct_by_copies",
     "induct_by_insertion",
     "instance",
     "lemma",

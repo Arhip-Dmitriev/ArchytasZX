@@ -12,7 +12,8 @@
 # limitations under the License.
 
 """Boxed qram over a free value count N (79.5), aligned boxes in a cut (79.8), the spec
-step exposed by inserted identities (79.10) and the per-copy lemma (79.7)."""
+step exposed by inserted identities (79.10), the per-copy lemma (79.7) and qram EQUAL over
+the value count."""
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from archytaszx.diagram.compare import isomorphic
 from archytaszx.diagram.generators import Z_SPIDER
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import induction, kernel, lemmas
+from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 from archytaszx.semantics.valuecount import generalise, specialised
 
 NESTED = """
@@ -169,3 +171,49 @@ def test_a_broken_per_copy_lemma_is_not_proved(old: str, new: str) -> None:
     )
     with pytest.raises((lemmas.LemmaError, kernel.KernelError)):
         lemmas.proved(broken)
+
+
+QRAM_CIRCUIT = """
+count n
+g0 = Z(1 -> 2, literal 2)
+g1 = Z(1 -> 2, literal 2)
+g2 = X(0 -> 1, literal 2^n) phase{k: -v*k/2^n}
+g3 = S(literal 2, literal 2^j)
+g4 = Z(1 -> 0, literal 1)
+g5 = X(2 -> 1, literal 2)
+g6 = X(1 -> 1, literal 2) phase{1: 1/2}
+g7 = T(literal 2)
+g8 = Z(2 -> 1, literal 2)
+g9 = T(literal 2)
+g10 = Ti(literal 2)
+g11 = X(2 -> 1, literal 2)
+wire g2.out0 -- g3.in0, g3.out1 -- g4.in0, g0.out1 -- g5.in0, g3.out0 -- g5.in1
+wire g5.out0 -- g6.in0, g6.out0 -- g7.in0, g7.out0 -- g8.in1, g1.out1 -- g9.in0
+wire g9.out0 -- g8.in0, g8.out0 -- g10.in0, g10.out0 -- g11.in1
+repeat n as C0: g0
+repeat 2^n as C1 index v: g1, g2, g3, g4, g5, g6, g7, g8, g9, g10
+repeat n as C2 index j in C1: g3, g5, g6, g7
+chain C2: g3.in0 -> g3.out1
+align C2 with C0
+inputs g0.in0, g1.in0, g11.in0
+outputs g0.out0, g1.out0, g11.out0
+scalar 2^(2^n*(n + 1)/2)*(2^(-n/2))^(2^n)
+"""
+
+
+def test_qram_is_equal_over_its_value_count_with_a_kernel_proof() -> None:
+    circuit = parse_dsl(QRAM_CIRCUIT)
+    spec = parse_dsl(QRAM_SPEC.replace("repeat N as W", "repeat 2^n as W"))
+    decision = decide_equal(circuit, spec, samples=[])
+    assert decision.verdict is EqualityVerdict.EQUAL
+    theorem = kernel.from_decision(decision, circuit, spec)
+    assert theorem.statement() == "for all n" and not theorem.domain
+
+
+def test_a_shifted_qram_spec_is_not_proved() -> None:
+    circuit = parse_dsl(QRAM_CIRCUIT)
+    shifted = QRAM_SPEC.replace("repeat N as W", "repeat 2^n as W").replace(
+        "phase{k: v*k/2^n}", "phase{k: (v + 1)*k/2^n}"
+    )
+    decision = decide_equal(circuit, parse_dsl(shifted), samples=[])
+    assert decision.verdict is not EqualityVerdict.EQUAL

@@ -130,6 +130,7 @@ from archytaszx.semantics.pathsum_diagram import PathSumComparison
 if TYPE_CHECKING:
     from archytaszx.semantics.kernel import Theorem
     from archytaszx.semantics.restrict import Restriction
+    from archytaszx.semantics.valuecount import Generalised
 
 
 class DecideError(Exception):
@@ -2497,7 +2498,10 @@ def _decide_value_count(
         return "no single power box count"
     stepped = _value_count_step(found.left, found.right, found.symbol, options)
     if stepped is not None:
-        return f"{found.power.to_sympy()} counted by {found.symbol}: {stepped}"
+        copied = _value_count_by_copies(found, left, right)
+        if not isinstance(copied, str):
+            return copied
+        return f"{found.power.to_sympy()} counted by {found.symbol}: {stepped}; copies: {copied}"
     power = found.power.to_sympy()
     points: list[Mapping[str, CheckAssignmentValue]] = []
     for point in evaluated:
@@ -2526,6 +2530,41 @@ def _decide_value_count(
         DecisionMethod.INDUCTION,
         f"{label}: {reason}; kernel proof carried to {found.symbol} = {power} by instance",
         {**evidence, "induction_proof": carried},
+    )
+
+
+def _value_count_by_copies(
+    found: Generalised, left: Diagram, right: Diagram
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL when :func:`~archytaszx.semantics.lemmas.induct_by_copies` proves ``found``'s pair
+    over its free count, the kernel theorem carried back at ``N = b^e``
+    (:func:`~archytaszx.semantics.valuecount.specialised`); else why not."""
+    from archytaszx.diagram.bangbox import BangBoxError
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.lemmas import LemmaError, induct_by_copies
+    from archytaszx.semantics.valuecount import specialised
+
+    errors: tuple[type[Exception], ...] = (
+        LemmaError,
+        kernel.KernelError,
+        BangBoxError,
+        *_INDUCTION_ERRORS,
+    )
+    with _trace.span("decide.induction.value_count.copies"):
+        try:
+            theorem = induct_by_copies(found.left, found.right, found.symbol)
+            carried = specialised(theorem, found, left, right)
+        except errors as exc:
+            return str(exc)
+    power = found.power.to_sympy()
+    return (
+        EqualityVerdict.EQUAL,
+        DecisionMethod.INDUCTION,
+        (
+            f"{power} counted by {found.symbol}: induction over {found.symbol} with a per-copy "
+            f"lemma; kernel proof carried to {found.symbol} = {power} by instance"
+        ),
+        {"induction_proof": carried},
     )
 
 
