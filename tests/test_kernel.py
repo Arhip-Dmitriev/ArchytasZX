@@ -271,3 +271,39 @@ def test_subst_at_a_negative_offset_holds_from_the_offset() -> None:
     assert "s >= 1" in K.trans(t, K.refl(t.rhs)).statement()
     with pytest.raises(K.KernelError):
         K.subst(t, Clause("s", MULTIPLICITY, SHIFT, c=0, fresh="r"))
+
+
+_CHAIN = """
+count n
+c = Z(1 -> 1, literal 2) phase{k: k/4}
+r = X(1 -> 1, literal 2) phase{k: k/2}
+wire c.out0 -- r.in0
+repeat n as V index m: c, r
+chain V: r.out0 -> c.in0
+inputs c.in0
+outputs r.out0
+"""
+
+
+def test_a_chain_box_partly_in_the_region_is_refused() -> None:
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.check import compare
+    from archytaszx.semantics.induction import (
+        CutRegion,
+        InductionDomainError,
+        _copy_side,
+        _open_region,
+    )
+
+    a = parse_dsl(_CHAIN)
+    b = parse_dsl(_CHAIN.replace("count n", "").split("repeat")[0] + "inputs c.in0\noutputs r.out0")
+    assert not compare(a, b, {"n": 2}).matched
+    ra, rb = (
+        frozenset(n for n, v in d.nodes.items() if v.generator_type is X_SPIDER) for d in (a, b)
+    )
+    with pytest.raises(K.KernelError):
+        K.local_contraction(a, ra, b, rb, _open_region(b, rb))
+    rest = frozenset(a.nodes) - ra
+    cut = CutRegion(rest, (), (), {})
+    with pytest.raises(InductionDomainError):
+        _copy_side(a, cut, a.scalar)

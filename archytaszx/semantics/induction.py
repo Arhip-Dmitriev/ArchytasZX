@@ -620,7 +620,9 @@ def _box_footprint(box: BangBox) -> frozenset[NodeId]:
 
 def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool = False) -> Diagram:
     """The sub-diagram on ``node_ids``: their wires among themselves, their boundary refs in
-    the enclosing order, and with ``with_boxes`` every box lying wholly inside them."""
+    the enclosing order, and with ``with_boxes`` every box lying wholly inside them and the
+    part inside of each plain straddling box; raises InductionDomainError for any other box
+    whose footprint meets ``node_ids``."""
     extracted = Diagram()
     id_map: dict[NodeId, NodeId] = {}
     for old_id in sorted(node_ids):
@@ -660,6 +662,9 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool 
             if _box_footprint(box) <= node_ids or (part and _plain_straddle(diagram, box))
         ]
         inside_ids = {box_id for box_id, _ in inside}
+        for box_id, box in diagram.bang_boxes.items():
+            if box_id not in inside_ids and _box_footprint(box) & node_ids:
+                raise InductionDomainError(f"bang box {box_id!r} lies partly inside the region")
         for _box_id, box in inside:
             if box.pair_of is not None and box.pair_of not in inside_ids:
                 raise InductionDomainError("a pair box lies inside a region its parent leaves")
@@ -736,7 +741,10 @@ def find_hypothesis_region(
             names = sorted(diagram.nodes[n].generator_type.name for n in region)
             if names != wanted:
                 continue
-            extracted = _bare(_extract(diagram, region, with_boxes=True))
+            try:
+                extracted = _bare(_extract(diagram, region, with_boxes=True))
+            except InductionDomainError:
+                continue
             if isomorphic(extracted, target, symmetric_legs=True):
                 return region
     return None
@@ -1171,7 +1179,11 @@ def find_cut_region(
     for inputs in per_list[0]:
         for outputs in per_list[1]:
             cut = CutRegion(region, inputs, outputs, MappingProxyType(cuts))
-            if isomorphic(_bare(_cut_extract(diagram, cut)), target):
+            try:
+                extracted = _cut_extract(diagram, cut)
+            except InductionDomainError:
+                return None
+            if isomorphic(_bare(extracted), target):
                 return cut
     return None
 
@@ -2778,7 +2790,12 @@ def _run_tier(
         return run(obligation, max_steps=max_steps)
     except InductionGrammarError as exc:
         return TierOutcome(discharge, False, f"tier refused the obligation: {exc}")
-    except (RewriteDomainError, SymbolicContractionDomainError, ContractDomainError) as exc:
+    except (
+        InductionDomainError,
+        RewriteDomainError,
+        SymbolicContractionDomainError,
+        ContractDomainError,
+    ) as exc:
         return TierOutcome(discharge, False, f"tier hit a domain error: {exc}")
 
 

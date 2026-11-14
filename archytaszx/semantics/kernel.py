@@ -515,7 +515,10 @@ def _plugged(d: Diagram, region: frozenset[NodeId], hypothesis: Diagram) -> tupl
     cut = find_cut_region(d, region, hypothesis)
     if cut is None:
         raise KernelError("the region is not the hypothesis diagram through cut wires")
-    copy, held = _copy_side(d, cut, d.scalar * hypothesis.scalar**-1)
+    try:
+        copy, held = _copy_side(d, cut, d.scalar * hypothesis.scalar**-1)
+    except _INDUCTION_ERRORS as exc:
+        raise KernelError(f"the part off the region: {exc}") from exc
     place = {r: (0, i) for i, r in enumerate(cut.inputs)}
     place.update({r: (1, i) for i, r in enumerate(cut.outputs)})
     slots = tuple(
