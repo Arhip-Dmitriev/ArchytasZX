@@ -519,3 +519,144 @@ def test_a_dsl_pair_box_takes_an_in_parent() -> None:
     assert [b.parent for b in d.bang_boxes.values()] == [None, 0, 0]
     with pytest.raises(ParseDomainError, match="overlap"):
         parse_dsl(NESTED_PAIRS_DSL.replace("index m in L", "index m"))
+
+
+TREE_BOX = "tree: n1.in0 <- n1.out0, n1.out1  level: L  position: P  copy scalar: 2^L*3^P"
+"""A binary tree box's fields, its copy scalar reading its level and position."""
+
+NESTED_TREE = f"""graph: 2 nodes, 1 wires, 0 inputs -> 2 outputs
+  scalar: 1
+  parameters: none
+  nodes:
+    n0  Z  in: []  out: [d]  boxes: !0
+    n1  Z  in: [d]  out: [d, d]  phase[d]: {{1: P/8 + L/16}} turns  boxes: !0 > !1
+  wires:
+    n0.out0 -- n1.in0
+  inputs: []
+  outputs: [n1.out0, n1.out1]
+  bang boxes:
+    !0  x l + 1  nodes: n0, n1
+      !1  x n + 1  nodes: n1  {TREE_BOX}"""
+"""A binary tree box reading its level and position, under a live box."""
+
+FED_TOP = f"""graph: 3 nodes, 1 wires, 0 inputs -> 1 output
+  scalar: 1
+  parameters: none
+  nodes:
+    n0  Z  in: []  out: [d, d]  boxes: !0
+    n1  Z  in: [d]  out: [d, d]  boxes: !1
+    n2  X  in: [d]  out: []  boxes: !2
+  wires:
+    n0.out0 -- n1.in0
+  inputs: []
+  outputs: [n0.out1]
+  bang boxes:
+    !0  x l + 1  nodes: n0
+    !1  x n + 1  nodes: n1  {TREE_BOX}
+    !2  x 2^(n + 1)  nodes: n2  index: m  copy scalar: 5^m  feed: !1 -> n2.in0"""
+"""A binary tree box feeding an indexed box, beside a live box."""
+
+TREE_FACTOR = 2 * (4 * 12)
+"""The tree copy scalar over depth 2."""
+
+
+def _both_orders(d: Diagram, expected: str) -> Diagram:
+    """``d`` at n = l = 1 in both instantiation orders, checked against ``expected``, validity
+    and each other; the first result."""
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.validate import validate
+
+    results = []
+    for order in [("n", "l"), ("l", "n")]:
+        got = d
+        for name in order:
+            got = instantiate_symbol(got, name, 1)
+        assert str(got.scalar) == expected
+        assert not validate(got).errors
+        results.append(got)
+    assert isomorphic(results[0], results[1])
+    return results[0]
+
+
+def _peel_agrees(d: Diagram, box_id: int, first: Diagram, expected: str) -> None:
+    """Peeling ``box_id`` off ``d`` then instantiating n = l = 1 in either order gives
+    ``first``."""
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.graph import BangBoxId
+
+    peeled = peel_one(d, BangBoxId(box_id)).diagram
+    for order in [("n", "l"), ("l", "n")]:
+        got = peeled
+        for name in order:
+            got = instantiate_symbol(got, name, 1)
+        assert str(got.scalar) == expected
+        assert isomorphic(got, first)
+
+
+def test_a_nested_tree_box_agrees_in_either_order_and_with_a_peel() -> None:
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.graph import BangBoxId
+    from archytaszx.repl.parser import parse_listing
+    from archytaszx.semantics.check import instantiate
+
+    d = parse_listing(NESTED_TREE)
+    expected = str(TREE_FACTOR**2)
+    first = _both_orders(d, expected)
+    assert len(first.nodes) == 8 and len(first.boundary_outputs) == 8
+    direct = instantiate(d, {"n": 1, "l": 1, "d": 2})
+    assert str(direct.scalar) == expected
+    assert isomorphic(direct, instantiate(first, {"d": 2}))
+    _peel_agrees(d, 0, first, expected)
+    with pytest.raises(BangBoxGrammarError):
+        peel_one(d, BangBoxId(1))
+
+
+def test_a_fed_box_nested_under_a_live_box_agrees_in_either_order_and_with_a_peel() -> None:
+    from archytaszx.diagram.compare import isomorphic
+    from archytaszx.diagram.graph import BangBoxId
+    from archytaszx.diagram.validate import validate
+    from archytaszx.repl.parser import ParseDomainError, parse_listing
+    from archytaszx.semantics.check import instantiate
+
+    top = parse_listing(FED_TOP)
+    nested = (
+        FED_TOP.replace("boxes: !1", "boxes: !0 > !1")
+        .replace("boxes: !2", "boxes: !0 > !2")
+        .replace("nodes: n0\n", "nodes: n0, n1, n2\n")
+        .replace("    !1", "      !1")
+        .replace("    !2", "      !2")
+    )
+    with pytest.raises(ParseDomainError, match="nested"):
+        parse_listing(nested)
+    d = top.copy()
+    for box_id in sorted(d.bang_boxes, reverse=True):
+        d.remove_bang_box(box_id)
+    live, tree, fed = (top.bang_boxes[BangBoxId(i)] for i in range(3))
+    parent = d.add_bang_box(live.multiplicity, node_scope=frozenset(top.nodes))
+    tree_id = d.add_bang_box(
+        tree.multiplicity,
+        node_scope=tree.node_scope,
+        parent=parent,
+        tree=tree.tree,
+        tree_parent=tree.tree_parent,
+        level=tree.level,
+        position=tree.position,
+        copy_scalar=tree.copy_scalar,
+    )
+    d.add_bang_box(
+        fed.multiplicity,
+        node_scope=fed.node_scope,
+        parent=parent,
+        index=fed.index,
+        copy_scalar=fed.copy_scalar,
+        feed=tree_id,
+        feed_port=fed.feed_port,
+    )
+    assert any("nested" in issue.message for issue in validate(d).errors)
+    expected = str((TREE_FACTOR * 5**6) ** 2)
+    first = _both_orders(d, expected)
+    assert len(first.nodes) == 16 and len(first.boundary_outputs) == 2
+    assert isomorphic(instantiate(d, {"n": 1, "l": 1, "d": 2}), instantiate(first, {"d": 2}))
+    _peel_agrees(d, int(parent), first, expected)
+    with pytest.raises(BangBoxGrammarError):
+        peel_one(d, tree_id)
