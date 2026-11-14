@@ -1,8 +1,9 @@
 """MQT QCEC driver, run as ``python -I qcec.py PAYLOAD``: both QASM circuits loaded as
-QuantumComputations, the listed wires marked ancillary, verify with partial equivalence;
+QuantumComputations, the listed wires marked ancillary, verify for full equivalence by the
+decision-diagram alternating and construction checkers only (no simulation or ZX checker);
 equivalent is equal, not_equivalent unequal, equivalent up to a global phase equal with
-up_to_global_phase_only set (QASM 2 carries no global phase), up to a relative phase unequal,
-anything else unknown. Prints one JSON line."""
+up_to_global_phase_only set, up to a relative phase unequal, anything else unknown. Prints one
+JSON line."""
 
 import json
 import sys
@@ -23,7 +24,13 @@ def main():
         a.set_circuit_qubit_ancillary(q)
     for q in p["reference_ancillary"]:
         b.set_circuit_qubit_ancillary(q)
-    res = verify(a, b, check_partial_equivalence=True)
+    res = verify(
+        a,
+        b,
+        check_partial_equivalence=False,
+        run_simulation_checker=False,
+        run_zx_checker=False,
+    )
     name = str(res.equivalence).split(".")[-1].lower()
     verdict = {
         "equivalent": "equal",

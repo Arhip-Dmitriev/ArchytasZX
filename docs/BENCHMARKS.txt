@@ -795,10 +795,12 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
                           triangle, binder, splitter or weighted spiders unsupported
   QuiZX 0.4.0   built     as PyZX, with full_simp
   QCEC 3.11.0   built     d = 2, concrete n; the circuit against the reference circuit (its own,
-                          else the specification as one dense Unitary or Prepare gate); equivalent /
-                          not equivalent / no information, up to global phase flagged; up to a
-                          scalar (QASM 2 carries no global phase and a dense reference is
-                          normalised)
+                          else the specification as one dense Unitary or Prepare gate), the
+                          global phase appended as u1, x, u1, x on q[0]; full equivalence (not
+                          partial) by the decision-diagram checkers only; equivalent / not
+                          equivalent / no information, up to global phase flagged (and answered
+                          equal); circuits of different input or output counts unsupported; up
+                          to a scalar (a dense reference is normalised)
   Qiskit 2.6.2  built     d = 2, at most 26 qubits for states and 13 for maps; Operator or
                           Statevector against the specification tensor; simulation, not proof;
                           exact and up-to-global-phase both recorded, entrywise within 1e-10
