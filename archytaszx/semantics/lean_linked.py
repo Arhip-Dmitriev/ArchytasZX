@@ -14,7 +14,8 @@
 """Lean output for a kernel peel over linked diagrams (ArchytasZX/Linked.lean,
 ArchytasZX/LinkedPeel.lean). A boxed diagram is written as an ``LDiagram``: its nodes, its wires
 without those at chain link ports, its boundary, its node boxes and its links, each link's ends the
-partners of its two ports. ``export_peel`` writes both sides of a peel of one outermost node box,
+partners of its two ports (a link port on the boundary meets a phaseless Z(1 -> 1) holding its
+boundary place). ``export_peel`` writes both sides of a peel of one outermost node box,
 the copy map ``cp`` from the box's nodes to the peeled copy's, the ``PeelOK`` conditions (checked
 here first on a mirror of the Lean definitions, then in Lean by ``decide +kernel``) and ``main``,
 the two linked digit sums equal through ``evalL_peel``; None when the peel is outside that form.
@@ -22,7 +23,7 @@ the two linked digit sums equal through ``evalL_peel``; None when the peel is ou
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -139,9 +140,10 @@ class _Tables:
         return table.setdefault(key, len(table))
 
 
-def linked(d: Diagram, tables: _Tables) -> LDiag:
-    """``d`` as a linked diagram; raises :class:`LinkedUnsupported` outside plain node boxes with
-    links whose ports are wired."""
+def linked(d: Diagram, tables: _Tables, idents: Mapping[Port, int] | None = None) -> LDiag:
+    """``d`` as a linked diagram, each boundary leg ``p`` of ``idents`` behind a phaseless
+    Z(1 -> 1) of id ``idents[p]`` (wired to ``p``, its other leg in ``p``'s boundary place); raises
+    :class:`LinkedUnsupported` outside plain node boxes with links whose ports are wired."""
     nodes = []
     for nid in sorted(d.nodes):
         node = d.nodes[nid]
@@ -155,6 +157,18 @@ def linked(d: Diagram, tables: _Tables) -> LDiag:
         ph = _Tables.index(tables.phases, repr(node.phase))
         nodes.append(LNode(int(nid), _KINDS[name], dim, ph, outs, ins))
     wires = [(_port(w.a), _port(w.b)) for w in sorted(d.wires, key=lambda w: w.sort_key())]
+    bouts = [_port(r) for r in d.boundary_outputs]
+    bins = [_port(r) for r in d.boundary_inputs]
+    for bp, iid in sorted((idents or {}).items()):
+        if bp not in bouts and bp not in bins:
+            raise LinkedUnsupported("an identity end off the boundary")
+        side = bouts if bp in bouts else bins
+        held = d.nodes[bp[0]]  # type: ignore[index]
+        leg = (held.outputs if bp[1] else held.inputs)[bp[2]]
+        k = _Tables.index(tables.dims, str(leg.dim))
+        nodes.append(LNode(iid, "Z", k, _Tables.index(tables.phases, repr(None)), (k,), (k,)))
+        side[side.index(bp)] = (iid, bp[1], 0)
+        wires.append((bp, (iid, not bp[1], 0)))
     boxes, links, used = [], [], set[int]()
     for bid, b in sorted(d.bang_boxes.items()):
         plain = (
@@ -184,9 +198,29 @@ def linked(d: Diagram, tables: _Tables) -> LDiag:
                 ends.append(w[1] if w[0] == _port(ref) else w[0])
             links.append(LLink(int(bid), _port(p), _port(q), ends[0], ends[1]))
     kept = [w for i, w in enumerate(wires) if i not in used]
-    bouts = [_port(r) for r in d.boundary_outputs]
-    bins = [_port(r) for r in d.boundary_inputs]
     return LDiag(nodes, kept, bouts, bins, boxes, links)
+
+
+def _boundary_ends(
+    before: Diagram, after: Diagram, bid: int, cp: dict[int, int]
+) -> tuple[dict[Port, int], dict[Port, int]]:
+    """The :func:`linked` identity ends of both sides of a peel of the box ``bid``: one fresh id
+    per link port on ``before``'s boundary, on ``after`` at the same leg, or at its copy's for a
+    first port of a link of ``bid``."""
+    bnd = {_port(r) for r in [*before.boundary_outputs, *before.boundary_inputs]}
+    nid = 1 + max((int(x) for x in [*before.nodes, *after.nodes]), default=0)
+    ends_l: dict[Port, int] = {}
+    ends_r: dict[Port, int] = {}
+    for b_id, b in sorted(before.bang_boxes.items()):
+        for p, q in b.links:
+            for ref in (p, q):
+                port = _port(ref)
+                if port not in bnd or port in ends_l:
+                    continue
+                ends_l[port] = nid
+                ends_r[_cpp(cp, port) if int(b_id) == bid and ref is p else port] = nid
+                nid += 1
+    return ends_l, ends_r
 
 
 def _cpp(cp: dict[int, int], p: Port) -> Port:
@@ -362,35 +396,30 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
     """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal,
     ``after`` peeling the last copy of one outermost node box of ``before``; None outside that
     form."""
-    tables = _Tables()
-    try:
-        L = linked(before, tables)
-        R = linked(after, tables)
-    except LinkedUnsupported:
-        return None
     shifted = [
-        b
-        for b in L.boxes
+        bid
+        for bid, b in before.bang_boxes.items()
         if b.parent is None
-        and any(
-            x.id == b.id
-            and sp.expand(
-                before.bang_boxes[b.id].multiplicity.to_sympy()  # type: ignore[index]
-                - after.bang_boxes[x.id].multiplicity.to_sympy()  # type: ignore[index]
-            )
-            == 1
-            for x in R.boxes
-        )
+        and bid in after.bang_boxes
+        and sp.expand(b.multiplicity.to_sympy() - after.bang_boxes[bid].multiplicity.to_sympy())
+        == 1
     ]
     if len(shifted) != 1:
         return None
-    box = shifted[0]
-    c = next(x.mult for x in R.boxes if x.id == box.id)
-    B = list(box.nodes)
-    fresh = sorted({n.id for n in R.nodes} - {n.id for n in L.nodes})
+    B = sorted(int(x) for x in before.bang_boxes[shifted[0]].node_scope)
+    fresh = sorted({int(x) for x in after.nodes} - {int(x) for x in before.nodes})
     if len(fresh) != len(B):
         return None
-    cp = dict(zip(sorted(B), fresh, strict=True))
+    cp = dict(zip(B, fresh, strict=True))
+    ends_l, ends_r = _boundary_ends(before, after, int(shifted[0]), cp)
+    tables = _Tables()
+    try:
+        L = linked(before, tables, ends_l)
+        R = linked(after, tables, ends_r)
+    except LinkedUnsupported:
+        return None
+    box = next(b for b in L.boxes if b.id == int(shifted[0]))
+    c = next(x.mult for x in R.boxes if x.id == box.id)
     order = {n.id: n for n in R.nodes}
     if set(order) != {n.id for n in L.nodes} | set(fresh):
         return None

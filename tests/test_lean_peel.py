@@ -18,13 +18,18 @@ by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy coun
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 
 import pytest
 
+from archytaszx.diagram.bangbox import Mult
+from archytaszx.diagram.graph import Diagram
 from archytaszx.semantics import kernel, lean_linked
 from archytaszx.semantics.decide import decide_equal
+from archytaszx.semantics.induction import rename_multiplicity
 from archytaszx.semantics.lean_net import check, lean_project
+from archytaszx.semantics.prove import _with_scalar_index
 from tests.test_nested_chain import _grid_pair
 
 
@@ -55,6 +60,57 @@ def test_the_cluster_state_2d_peel_exports_through_evalL_peel() -> None:
     source = kernel.lean(theorem, "main", semantic=True)
     assert "namespace ArchytasZX.Export.P" in source
     assert "a joint peel of one box family" not in source
+
+
+def _succ_peels(t: kernel.Theorem) -> Iterator[tuple[Diagram, Diagram]]:
+    """The successor peels over ``m`` of the induction steps under ``t``: ``d`` at
+    ``m = k + 1`` and its peel."""
+    seen: set[int] = set()
+    stack = [t]
+    while stack:
+        s = stack.pop()
+        if id(s) in seen:
+            continue
+        seen.add(id(s))
+        stack.extend(s.inference.premises)
+        data = s.inference.data
+        if s.inference.kind != "induction" or str(data["index"]) != "m":
+            continue
+        own, other = (
+            (s.lhs, s.rhs) if data["side"] is kernel.InductionSide.START else (s.rhs, s.lhs)
+        )
+        value = Mult(str(data["step"])) + 1
+        for d, peeled in ((own, data["peeled"]), (other, data["other_peeled"])):
+            before = rename_multiplicity(d, "m", value)
+            yield _with_scalar_index(before, "m", value), peeled
+
+
+def test_successor_peels_with_boundary_link_ports_export() -> None:
+    theorem = _cluster()
+    pairs = list(_succ_peels(theorem))
+    assert len(pairs) == 4
+    for before, peeled in pairs:
+        source = lean_linked.export_peel(before, peeled)
+        assert source is not None and "evalL_peel ok" in source
+    assert "\naxiom peel" not in kernel.lean(theorem, "main", semantic=True)
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_a_boundary_link_peel_and_refuses_a_moved_end(tmp_path: object) -> None:
+    before, peeled = next(_succ_peels(_cluster()))
+    source = lean_linked.export_peel(before, peeled)
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/peel.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    found = re.search(r"links := \[⟨0, (⟨[^⟩]*⟩, ){2}(⟨[^⟩]*⟩)", source.split("def L' ")[1])
+    assert found is not None
+    bad = source.replace(found[0], found[0].replace(found[2], "⟨0, false, 0⟩"))
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
 
 
 @pytest.mark.skipif(
