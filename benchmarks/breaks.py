@@ -213,6 +213,33 @@ def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> 
     return _append(c, ir.PhaseFn(outs, f, support=((1,) * len(outs),)))
 
 
+class NotApplicable(ValueError):
+    """The edit names no gate of the circuit at this point."""
+
+
+GATE_KINDS = ("wrong_phase", "missing_gate", "swapped_control_target")
+
+
+def _gate_id(g: ir.Gate) -> tuple[str, list[str]]:
+    return type(g).__name__, list(ir.gate_wires(g))
+
+
+def _same_gates(c: ir.Circuit, name: str, wires: list[str]) -> list[int]:
+    """The indices of the gates of type ``name`` on ``wires``."""
+    return [i for i, g in enumerate(c.gates) if _gate_id(g) == (name, wires)]
+
+
+def _index(c: ir.Circuit, p: dict[str, Any]) -> int:
+    """The gate an edit names: by type, wires and occurrence among ``of`` such gates when
+    recorded (unrolled equations), else by position."""
+    if "gate" not in p:
+        return int(p["index"])
+    hits = _same_gates(c, p["gate"], p["wires"])
+    if len(hits) != p["of"]:
+        raise NotApplicable(f"{len(hits)} gates {p['gate']} on {p['wires']}, not {p['of']}")
+    return hits[int(p["occ"])]
+
+
 def _gate_at(c: ir.Circuit, index: int, new: ir.Gate | None) -> ir.Circuit:
     gates = list(c.gates)
     if new is None:
@@ -223,23 +250,33 @@ def _gate_at(c: ir.Circuit, index: int, new: ir.Gate | None) -> ir.Circuit:
 
 
 def _e_wrong_phase(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
-    g = c.gates[p["index"]]
+    i = _index(c, p)
+    g = c.gates[i]
     if isinstance(g, (ir.X, ir.Z)):
-        return _gate_at(c, p["index"], replace(g, a=f"({g.a}) + 1"))
+        return _gate_at(c, i, replace(g, a=f"({g.a}) + 1"))
     if isinstance(g, (ir.ZPhase, ir.XPhase)):
         if g.rule is not None:
-            return _gate_at(c, p["index"], replace(g, rule=f"({g.rule}) + k/(3*d)"))
+            return _gate_at(c, i, replace(g, rule=f"({g.rule}) + k/(3*d)"))
         entries = dict(g.entries)
         key = min(entries) if entries else 1
         entries[key] = f"({entries.get(key, 0)}) + 1/3"
-        return _gate_at(c, p["index"], replace(g, entries=entries))
+        return _gate_at(c, i, replace(g, entries=entries))
     if isinstance(g, (ir.CX, ir.CZ)):
-        return _gate_at(c, p["index"], replace(g, s=-g.s))
-    raise ValueError("no phase at the index")
+        return _gate_at(c, i, replace(g, s=-g.s))
+    raise NotApplicable("no phase at the index")
+
+
+_FRAME = (ir.Init, ir.Post, ir.Discard, ir.Measure, ir.Swap)
 
 
 def _e_missing(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
-    return _gate_at(c, p["index"], None)
+    i = _index(c, p)
+    if isinstance(c.gates[i], _FRAME):
+        raise NotApplicable(f"gate {i} is a {type(c.gates[i]).__name__}")
+    out = _gate_at(c, i, None)
+    if (_inputs(out), _outputs(out)) != (_inputs(c), _outputs(c)):
+        raise NotApplicable(f"dropping gate {i} changes the interface")
+    return out
 
 
 def _e_extra(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
@@ -247,8 +284,11 @@ def _e_extra(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> i
 
 
 def _e_control(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
-    g = c.gates[p["index"]]
-    return _gate_at(c, p["index"], replace(g, c=g.t, t=g.c))
+    i = _index(c, p)
+    g = c.gates[i]
+    if not isinstance(g, ir.CX):
+        raise NotApplicable(f"gate {i} is a {type(g).__name__}")
+    return _gate_at(c, i, replace(g, c=g.t, t=g.c))
 
 
 def _e_off_by_one(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> ir.Circuit:
@@ -352,19 +392,40 @@ def _wires_for_phase(c: ir.Circuit) -> list[str]:
     return singles[::-1] + [q for q in outs if q not in singles]
 
 
+GATE_LATER = 3
+
+
 def variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
     """Every candidate edit of ``kind`` on ``inst``, in the order tried; on an unrolled
-    equation a named wire also carries its role list and slot."""
+    equation a named wire also carries its role list and slot, and a named gate its type,
+    wires and occurrence among ``of`` such gates, kept only when the next GATE_LATER domain n
+    have ``of`` such gates too."""
     raw = _variants(kind, inst, cfg)
     if inst.equation.form != "unrolled":
         yield from raw
         return
-    lists = _role_lists(subject.circuit_at(inst, _probe_n(inst), _probe_d(inst)))
+    pn, pd = _probe_n(inst), _probe_d(inst)
+    c = subject.circuit_at(inst, pn, pd)
+    lists = _role_lists(c)
+    later: list[ir.Circuit] | None = None
     for var in raw:
         q = var.params.get("wire")
         if q is not None:
             role = {"state_not_map": "inputs", "wrong_dimension": "all"}.get(kind, "phase")
             var = replace(var, params={**var.params, "role": role, "slot": lists[role].index(q)})
+        if kind in GATE_KINDS:
+            if later is None:
+                nexts = _ns(inst, (pn or 0) + 1, GATE_LATER)
+                later = [subject.circuit_at(inst, v, pd) for v in nexts]
+            i = var.params["index"]
+            name, wires = _gate_id(c.gates[i])
+            hits = _same_gates(c, name, wires)
+            if any(len(_same_gates(x, name, wires)) != len(hits) for x in later):
+                continue
+            params = {"gate": name, "wires": wires, "occ": hits.index(i), "of": len(hits)}
+            head = {"missing_gate": "drop ", "swapped_control_target": "reverse "}.get(kind, "")
+            label = f"{head}{name} {params['occ'] + 1} of {len(hits)} on {','.join(wires)}"
+            var = replace(var, label=label, params=params)
         yield var
 
 
@@ -475,12 +536,7 @@ def _variants(kind: str, inst: Any, cfg: dict[str, Any]) -> Iterator[Variant]:
             yield Variant(f"swap {a}, {b} per copy", {"pair": [a, b]}, small, {})
         outs = [q for q in _outputs(c) if c.count(q) is None]
         if inst.equation.form != "boxed" and len(outs) >= 2:
-            yield Variant(
-                "swap last two outputs",
-                {"i": len(_outputs(c)) - 2, "j": len(_outputs(c)) - 1},
-                small,
-                {},
-            )
+            yield Variant("swap last two outputs", {"i": -2, "j": -1}, small, {})
     elif kind == "box_boundary":
         if not has_n or inst.equation.form != "boxed":
             return
@@ -1134,6 +1190,44 @@ def _params_key(params: dict[str, Any]) -> str:
     return json.dumps(params, sort_keys=True, default=str)
 
 
+def _positional_ok(rec: dict[str, Any], inst: Any) -> bool:
+    """Whether a record stored by position names what today's variant names: "swap last two
+    outputs" with i, j the last two output positions on a fixed equation; a gate index on an
+    unrolled equation that is a variant of the probe circuit and holds a gate of the same
+    type, wires and occurrence at the next GATE_LATER domain n."""
+    kind, params = rec.get("kind"), rec.get("params") or {}
+    if kind == "leg_order" and set(params) == {"i", "j"} and inst.equation.form == "fixed":
+        try:
+            outs = len(_outputs(subject.circuit_at(inst, _probe_n(inst), _probe_d(inst))))
+        except Exception:  # noqa: BLE001
+            return False
+        return rec.get("label") == "swap last two outputs" and (params["i"], params["j"]) == (
+            outs - 2,
+            outs - 1,
+        )
+    if kind not in GATE_KINDS or inst.equation.form != "unrolled" or set(params) != {"index"}:
+        return False
+    i = params["index"]
+    try:
+        raw = {(v.label, _params_key(v.params)) for v in _variants(kind, inst, {"false_set": {}})}
+        if (rec.get("label"), _params_key(params)) not in raw:
+            return False
+        pn, pd = _probe_n(inst), _probe_d(inst)
+        c = subject.circuit_at(inst, pn, pd)
+        name, wires = _gate_id(c.gates[i])
+        at = (name, wires, _same_gates(c, name, wires).index(i))
+        for v in _ns(inst, (pn or 0) + 1, GATE_LATER):
+            x = subject.circuit_at(inst, v, pd)
+            if i >= len(x.gates):
+                return False
+            nm, ws = _gate_id(x.gates[i])
+            if (nm, ws, _same_gates(x, nm, ws).index(i)) != at:
+                return False
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 def mismatch(rec: dict[str, Any], inst: Any) -> str | None:
     """Why an F record's edit (label and params) is not among today's variants of its kind on
     the S instance ``inst``, None when it is (or when ``rec`` has no kind)."""
@@ -1152,6 +1246,8 @@ def mismatch(rec: dict[str, Any], inst: Any) -> str | None:
             found = set()
         _VARIANT_KEYS[key] = frozenset(found)
     if (rec.get("label"), _params_key(params)) in _VARIANT_KEYS[key]:
+        return None
+    if _positional_ok(rec, inst):
         return None
     return (
         f"{kind} edit {rec.get('label')!r} {params} is not a variant of the "

@@ -422,7 +422,13 @@ recorded with reason "time budget"; an equation whose every probe overflows the 
 contraction cap has none either, with reason "oracle size". The large fixed codes golay_code,
 tesseract_code and polynomial_code have no F partner. On an unrolled equation a break that names
 a wire records its role (open outputs, inputs, all wires) and position, and is applied to the
-wire in that position at each n. Test 2 reports both reasons, and oracle-size overflows of its
+wire in that position at each n; a break that names a gate (wrong_phase, missing_gate,
+swapped_control_target) records its type, wires and occurrence among the gates of that type on
+those wires (occ of of), offered only when the next 3 domain n have as many such gates, and
+at a point with another count the edit raises breaks.NotApplicable (a harness error, never a
+tool's failure); missing_gate never drops an Init, Post, Discard, Measure or Swap, nor a gate
+whose removal changes the inputs or outputs. leg_order's "swap last two outputs" records output
+positions -2 and -1. Test 2 reports both reasons, and oracle-size overflows of its
 equal-where checks, as SKIP lines.
 
 
@@ -730,7 +736,10 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      its kind on the equation (breaks.mismatch: the equation's form or circuit
                      changed since the record was made) is invalid_point with cause
                      false_record_mismatch, or flagged point_invalid; the runner refuses such a
-                     record.
+                     record. A record stored by position is kept when it names what today's
+                     variant names: "swap last two outputs" at the last two positions on a fixed
+                     equation, and a gate index on an unrolled equation holding a gate of the
+                     same type, wires and occurrence at the next 3 domain n.
 
 The rung stop codes are the engine's Decision.stops, one (rung, code) per rung tried in ladder
 order, written RUNG.CODE (outcomes.stop_codes): normal_form.agree, .differ; oracle.mismatch,
