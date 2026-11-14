@@ -16,12 +16,15 @@ copy is linked to copy j in the next, whichever count is instantiated first."""
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from archytaszx.diagram.bangbox import BangBoxGrammarError, instantiate_symbol, peel_one
 from archytaszx.diagram.graph import Diagram
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics.check import compare
+from archytaszx.semantics.lean_net import check, lean_project
 
 RING = """dim d
 count n, l
@@ -381,3 +384,22 @@ def test_an_identity_on_a_zipped_chain_link_is_removed(case: int) -> None:
     swapped = identity.replace("hv = F(d)", "hv = Z(1 -> 1, d)")
     if swapped != identity:
         assert decide_equal(parse_dsl(base), parse_dsl(swapped)).verdict.value != "equal"
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+@pytest.mark.parametrize("case", [4, 5])
+def test_lean_checks_the_link_identity_removal_export(case: int, tmp_path: object) -> None:
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.decide import decide_equal
+
+    base, identity, _ = _link_identity_pair(case)
+    left, right = parse_dsl(base), parse_dsl(identity)
+    theorem = kernel.from_decision(decide_equal(left, right, samples=[]), left, right)
+    for semantic in (False, True):
+        source = kernel.lean(theorem, "main", semantic=semantic)
+        ok, output = check(source, f"{tmp_path}/link{case}{semantic}.lean")
+        assert ok, output
+        assert ": error" not in output and "sorry" not in output, output
