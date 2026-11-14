@@ -641,7 +641,23 @@ def _rescope_boxes(
     removed = frozenset(consumed)
     for box_id, box in sorted(diagram.bang_boxes.items()):
         if box.is_node_scope and removed <= box.node_scope:
-            diagram.set_bang_box_node_scope(box_id, (box.node_scope - removed) | set(created))
+            scope = (box.node_scope - removed) | set(created)
+            if not box.groups:
+                diagram.set_bang_box_node_scope(box_id, scope)
+                continue
+            held = {i for i, g in enumerate(box.groups) if g & removed}
+            ungrouped = bool(removed - frozenset(n for g in box.groups for n in g))
+            if len(held) + ungrouped > 1:
+                raise RewriteDomainError(
+                    f"{context}: the matched nodes lie in different groups of bang box {box_id!r}"
+                )
+            groups = tuple(
+                (g - removed) | (set(created) if i in held else set())
+                for i, g in enumerate(box.groups)
+            )
+            diagram.set_bang_box_extension(
+                box_id, node_scope=scope, groups=tuple(g for g in groups if g)
+            )
 
 
 def _follow_port_scopes(diagram: Diagram, port_mapping: Mapping[PortRef, PortRef]) -> None:

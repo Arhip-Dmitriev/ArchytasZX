@@ -657,10 +657,21 @@ def _extract(diagram: Diagram, node_ids: frozenset[NodeId], *, with_boxes: bool 
     if with_boxes:
         box_map: dict[BangBoxId, BangBoxId] = {}
         inside = [
-            (box_id, box if _box_footprint(box) <= node_ids else box.with_node_scope(part))
+            (
+                box_id,
+                box
+                if _box_footprint(box) <= node_ids
+                else box.with_node_scope(part)
+                if _plain_straddle(diagram, box)
+                else _group_part(box, part),
+            )
             for box_id, box in sorted(diagram.bang_boxes.items())
             for part in (box.node_scope & node_ids,)
-            if _box_footprint(box) <= node_ids or (part and _plain_straddle(diagram, box))
+            if _box_footprint(box) <= node_ids
+            or (
+                part
+                and (_plain_straddle(diagram, box) or _grouped_straddle(diagram, box, node_ids))
+            )
         ]
         inside_ids = {box_id for box_id, _ in inside}
         for box_id, box in diagram.bang_boxes.items():
@@ -1193,7 +1204,10 @@ def replace_cut_region(
     for box_id in inside:
         box = working.bang_boxes[box_id]
         if not _box_footprint(box) <= cut.region:
-            if not _straddle_merges(working, box, cut.region):
+            if not (
+                _straddle_merges(working, box, cut.region)
+                or _grouped_straddle(working, box, cut.region)
+            ):
                 raise InductionDomainError(f"bang box {box_id!r} straddles the replaced region")
             outside[box_id] = box
     partners = _outside_partners(working, frozenset(inside))
@@ -1219,7 +1233,10 @@ def replace_cut_region(
     for inside_end, far in sorted(cut.cuts.items(), key=lambda item: item[0].sort_key()):
         working.add_wire(slot_of[inside_end], far)
     for box in outside.values():
-        _merge_straddle(working, box, cut, slot_of, grafted)
+        if box.groups:
+            _merge_grouped(working, box, cut, slot_of, grafted)
+        else:
+            _merge_straddle(working, box, cut, slot_of, grafted)
     for members, root in partners:
         _realign(working, members, root, cut, slot_of, grafted)
     working.set_boundary_inputs(inputs)
@@ -1311,6 +1328,104 @@ def _plain_straddle(diagram: Diagram, box: BangBox) -> bool:
         or box.align is not None
         or box.groups
         or any(other.align == box.id for other in diagram.bang_boxes.values())
+    )
+
+
+def _blocks(box: BangBox) -> list[frozenset[NodeId]]:
+    """``box``'s groups, then its ungrouped scope nodes when there are any."""
+    grouped = frozenset(n for g in box.groups for n in g)
+    rest = box.node_scope - grouped
+    return [*box.groups, *([rest] if rest else [])]
+
+
+def _grouped_straddle(diagram: Diagram, box: BangBox, region: frozenset[NodeId]) -> bool:
+    """Whether ``box``, partly in ``region``, is a top-level node-scope box with groups and no
+    child, index, copy scalar, tree, feed, pairing or alignment, each of its blocks
+    (:func:`_blocks`) wholly in or wholly off ``region``, and each link's two ports and the
+    ports they are wired to on one side."""
+    if not box.groups or not box.node_scope or box.parent is not None:
+        return False
+    if box.index is not None or box.copy_scalar is not None or box.align is not None:
+        return False
+    if box.is_tree or box.is_fed or box.is_pair or box.cyclic:
+        return False
+    for other in diagram.bang_boxes.values():
+        if other.id != box.id and box.id in (other.parent, other.align, other.pair_of, other.feed):
+            return False
+    if any(bool(g & region) and not g <= region for g in _blocks(box)):
+        return False
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    for link in box.links:
+        ends = [*link, *(partner[r] for r in link if r in partner)]
+        if len({r.node_id in region for r in ends}) != 1:
+            return False
+    return True
+
+
+def _group_part(box: BangBox, part: frozenset[NodeId]) -> BangBox:
+    """``box`` cut to ``part``: its links and groups within ``part``, no groups when one is
+    left."""
+    groups = tuple(g for g in box.groups if g <= part)
+    links = tuple(link for link in box.links if link[0].node_id in part)
+    return replace(box, node_scope=part, links=links, groups=groups if len(groups) > 1 else ())
+
+
+def _merge_grouped(
+    working: Diagram,
+    box: BangBox,
+    cut: CutRegion,
+    slot_of: Mapping[PortRef, PortRef],
+    grafted: Sequence[BangBoxId],
+) -> None:
+    """Put the part of grouped straddling ``box`` off ``cut``'s region (:func:`_grouped_straddle`)
+    into the one top-level grafted box of ``box``'s multiplicity, with no index, copy scalar,
+    alignment or child, that holds alone the slot of every cut wire from that part, each of
+    that part's cut wires ending in ``box``: its blocks, then that part's blocks as groups,
+    and that part's links."""
+    rest = box.node_scope - cut.region
+    targets: set[BangBoxId] = set()
+    for inside_end, far in cut.cuts.items():
+        if far.node_id not in rest:
+            continue
+        if inside_end.node_id not in box.node_scope:
+            raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+        end = slot_of[inside_end].node_id
+        owners = [b for b, other in working.bang_boxes.items() if end in other.node_scope]
+        if len(owners) != 1 or owners[0] not in grafted:
+            raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+        targets.add(owners[0])
+    if len(targets) != 1:
+        raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+    (target,) = targets
+    into = working.bang_boxes[target]
+    tied = any(
+        target in (other.parent, other.align, other.pair_of, other.feed)
+        for other in working.bang_boxes.values()
+        if other.id != target
+    )
+    if (
+        into.multiplicity != box.multiplicity
+        or into.parent is not None
+        or into.index is not None
+        or into.copy_scalar is not None
+        or into.align is not None
+        or into.is_tree
+        or into.is_fed
+        or into.is_pair
+        or into.cyclic
+        or into.sheets != box.sheets
+        or tied
+    ):
+        raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+    moved = [g for g in _blocks(box) if g <= rest]
+    links = tuple(link for link in box.links if link[0].node_id in rest)
+    working.set_bang_box_extension(
+        target,
+        node_scope=into.node_scope | rest,
+        links=(*into.links, *links),
+        groups=(*_blocks(into), *moved),
     )
 
 
@@ -1669,6 +1784,97 @@ def _move_legs(diagram: Diagram, v: NodeId, legs: Sequence[PortRef], w: NodeId) 
     working.set_boundary_outputs([port_map.get(r, r) for r in working.boundary_outputs])
     working.remove_node(v)
     working.remove_node(w)
+    return working
+
+
+def _box_ports(diagram: Diagram) -> frozenset[PortRef]:
+    """The ports a box names: links, pair, tree, feed and port-scope ports."""
+    out: set[PortRef] = set()
+    for box in diagram.bang_boxes.values():
+        out |= {*box.port_scope, *box.left_ports, *box.right_ports, *box.tree}
+        out |= {r for link in box.links for r in link}
+        out |= {r for r in (box.tree_parent, box.feed_port) if r is not None}
+    return frozenset(out)
+
+
+def _holders(diagram: Diagram, node_id: NodeId) -> frozenset[BangBoxId]:
+    """The node-scope boxes holding ``node_id``."""
+    return frozenset(b for b, box in diagram.bang_boxes.items() if node_id in box.node_scope)
+
+
+def identity_slides(diagram: Diagram, copy: frozenset[NodeId]) -> Iterator[Diagram]:
+    """Per phaseless Z(1 -> 1) ``v`` off ``copy`` with one leg a boundary slot and the other
+    wired to ``p`` held by the boxes holding ``v``, and per wire from off ``copy`` to a node
+    ``b`` of ``copy`` held by those boxes, no box naming ``p``'s or ``b``'s port on it nor,
+    other than as a link port, the far port: ``diagram`` with ``p``'s port in the slot, ``v``
+    on that wire beside ``b``, and ``p``, in each box where its group is not ``v``'s, in a
+    group of its own."""
+    named = _box_ports(diagram)
+    linked = {r for box in diagram.bang_boxes.values() for link in box.links for r in link}
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    slots = [*diagram.boundary_inputs, *diagram.boundary_outputs]
+    for v in sorted(diagram.nodes):
+        node = diagram.nodes[v]
+        if v in copy or node.generator_type is not Z_SPIDER:
+            continue
+        if len(node.inputs) != 1 or len(node.outputs) != 1:
+            continue
+        if node.inputs[0].dim != node.outputs[0].dim:
+            continue
+        if node.phase is not None and not node.phase.is_zero:
+            continue
+        legs = (PortRef(v, Direction.INPUT, 0), PortRef(v, Direction.OUTPUT, 0))
+        held = [leg for leg in legs if leg in slots]
+        if len(held) != 1 or any(leg in named for leg in legs):
+            continue
+        (slot,) = held
+        (inner,) = (leg for leg in legs if leg != slot)
+        pp = partner.get(inner)
+        boxes = _holders(diagram, v)
+        if pp is None or pp in named or pp in slots or _holders(diagram, pp.node_id) != boxes:
+            continue
+        for wire in sorted(diagram.wires, key=lambda w: w.sort_key()):
+            for b_ref, a_ref in ((wire.a, wire.b), (wire.b, wire.a)):
+                if b_ref.node_id not in copy or a_ref.node_id in copy or v == a_ref.node_id:
+                    continue
+                if b_ref in named or (a_ref in named and a_ref not in linked):
+                    continue
+                if _holders(diagram, b_ref.node_id) != boxes:
+                    continue
+                if diagram.nodes[b_ref.node_id].legs(b_ref.direction)[b_ref.index].dim != (
+                    node.inputs[0].dim
+                ):
+                    continue
+                yield _slide(diagram, v, slot, pp, a_ref, b_ref)
+
+
+def _slide(
+    diagram: Diagram, v: NodeId, slot: PortRef, pp: PortRef, a_ref: PortRef, b_ref: PortRef
+) -> Diagram:
+    """:func:`identity_slides`' result for ``v``, its slot leg, its partner port and the wire
+    ``a_ref`` -- ``b_ref``."""
+    working = diagram.copy()
+    for wire in list(working.wires):
+        if v in (wire.a.node_id, wire.b.node_id):
+            working.remove_wire(wire.a, wire.b)
+    working.remove_wire(a_ref, b_ref)
+    working.set_boundary_inputs([pp if r == slot else r for r in working.boundary_inputs])
+    working.set_boundary_outputs([pp if r == slot else r for r in working.boundary_outputs])
+    out_end, in_end = (a_ref, b_ref) if a_ref.direction is Direction.OUTPUT else (b_ref, a_ref)
+    working.add_wire(out_end, PortRef(v, Direction.INPUT, 0))
+    working.add_wire(PortRef(v, Direction.OUTPUT, 0), in_end)
+    p = pp.node_id
+    for box_id in sorted(_holders(working, v)):
+        box = working.bang_boxes[box_id]
+        if not box.groups:
+            continue
+        at = [next((i for i, g in enumerate(box.groups) if n in g), -1) for n in (p, v)]
+        if at[0] == at[1]:
+            continue
+        kept = tuple(g - {p} for g in box.groups if g - {p})
+        working.set_bang_box_extension(box_id, groups=(*kept, frozenset({p})))
     return working
 
 

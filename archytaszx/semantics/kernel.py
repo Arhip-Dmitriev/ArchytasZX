@@ -554,6 +554,81 @@ def repeel(
     return Theorem(_TOKEN, a, b, Inference("repeel", data=data))
 
 
+@_trace.traced("kernel.peel")
+def peel(d: Diagram, index: str, last: frozenset[BangBoxId] = frozenset()) -> Theorem:
+    """``d = d'`` for ``d'`` the joint peel of ``d``'s boxes carrying ``index``
+    (:func:`~archytaszx.diagram.bangbox.peel_owners`), each box's multiplicity's constant term
+    at least one; the boxes of ``last`` peel their last copy."""
+    from archytaszx.diagram.bangbox import BangBoxError, peel_owners
+
+    try:
+        after = peel_owners(d, index, last=last).diagram
+    except BangBoxError as exc:
+        raise KernelError(f"peel: {exc}") from exc
+    data: dict[str, object] = {"index": index, "last": last}
+    return Theorem(_TOKEN, d, after, Inference("peel", data=data))
+
+
+def _slot_pattern(d: Diagram) -> tuple[tuple[tuple[object, int | None], ...], ...] | None:
+    """Per boundary list, each slot's copy count and the first position of its box block
+    (``groups``; None off a box); None when a slot lies in more than one box or in a box with a
+    parent."""
+    out: list[tuple[tuple[object, int | None], ...]] = []
+    for refs in (d.boundary_inputs, d.boundary_outputs):
+        rows: list[tuple[object, int | None]] = []
+        first: dict[tuple[BangBoxId, int], int] = {}
+        for i, ref in enumerate(refs):
+            if any(box.port_scope for box in d.bang_boxes.values()):
+                return None
+            owners = [b for b, box in d.bang_boxes.items() if ref.node_id in box.node_scope]
+            if not owners:
+                rows.append((1, None))
+                continue
+            if len(owners) > 1 or d.bang_boxes[owners[0]].parent is not None:
+                return None
+            box = d.bang_boxes[owners[0]]
+            block = next((j for j, g in enumerate(box.groups) if ref.node_id in g), -1)
+            at = first.setdefault((box.id, block), i)
+            rows.append((sp.expand(box.multiplicity.to_sympy()), at))
+        out.append(tuple(rows))
+    return tuple(out)
+
+
+@_trace.traced("kernel.regroup")
+def regroup(t: Theorem, lhs: Diagram, rhs: Diagram) -> Theorem:
+    """``lhs = rhs`` from ``t`` when each is its side of ``t`` with only box groups changed and
+    both pairs of sides lay out their slots alike (:func:`_slot_pattern`), so one slot
+    permutation carries ``t``'s sides to ``lhs`` and ``rhs``."""
+    for old, new in ((t.lhs, lhs), (t.rhs, rhs)):
+        if set(old.bang_boxes) != set(new.bang_boxes):
+            raise KernelError("regroup: the boxes differ")
+        moved = old.copy()
+        for box_id, box in new.bang_boxes.items():
+            moved.set_bang_box_extension(box_id, groups=box.groups)
+        if not _same(moved, new):
+            raise KernelError("regroup: the sides differ beyond box groups")
+    before = [_slot_pattern(d) for d in (t.lhs, t.rhs)]
+    after = [_slot_pattern(d) for d in (lhs, rhs)]
+    if None in before or None in after or before[0] != before[1] or after[0] != after[1]:
+        raise KernelError("regroup: the sides lay out their slots differently")
+    inference = Inference("regroup", (t,))
+    return Theorem(_TOKEN, lhs, rhs, inference, t.assumptions, _domain(t))
+
+
+@_trace.traced("kernel.identity_slide")
+def identity_slide(d: Diagram, slid: Diagram, copy: frozenset[NodeId]) -> Theorem:
+    """``d = slid`` when ``slid`` is one of
+    :func:`~archytaszx.semantics.induction.identity_slides` of ``d`` and ``copy``: a phaseless
+    Z(1 -> 1) holding a boundary slot removed (identity) and put on a wire into ``copy``, in the
+    boxes of both its old neighbour and its new one."""
+    from archytaszx.semantics.induction import identity_slides
+
+    for candidate in identity_slides(d, copy):
+        if _same(candidate, slid):
+            return Theorem(_TOKEN, d, slid, Inference("identity_slide"))
+    raise KernelError("identity_slide: the diagram is no identity slide of the other")
+
+
 @_trace.traced("kernel.box_split")
 def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
     """``d = split`` when ``split`` is one of
@@ -1567,9 +1642,11 @@ class _Lean:
                 return proved
             note = "path sums reduce to one form"
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
-        if inf.kind in ("repeel", "box_split", "leg_move", "power_split"):
+        if inf.kind in ("repeel", "peel", "identity_slide", "box_split", "leg_move", "power_split"):
             note = {
                 "repeel": "two joint peels of one box family",
+                "peel": "a joint peel of one box family",
+                "identity_slide": "a boxed identity spider moved onto another wire",
                 "box_split": "a boxed spider unfused in every copy",
                 "leg_move": "legs moved between two wired spiders of one type",
                 "power_split": "a box of b^(e + 1) copies split into b boxes of b^e copies",
@@ -1592,7 +1669,7 @@ class _Lean:
             return self.subst(t)
         if inf.kind == "instance":
             return self.instance(t)
-        if inf.kind == "congr":
+        if inf.kind in ("congr", "regroup"):
             return self.congr(t)
         if inf.kind == "shift":
             raise KernelError("a shift has no opaque export")

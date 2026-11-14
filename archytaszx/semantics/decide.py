@@ -2472,10 +2472,75 @@ def _induction_rung(
     )
     if not isinstance(counted, str):
         return counted
+    columns = _decide_column_count(left, right)
+    if not isinstance(columns, str):
+        return columns
     return _Unsettled(
         "; reversed: ".join(reasons)
-        + f"; carry open: {opened}; periodic: {periodic}{shift_reason}; value count: {counted}",
+        + f"; carry open: {opened}; periodic: {periodic}{shift_reason}; value count: {counted}"
+        + f"; columns: {columns}",
         base_decision,
+    )
+
+
+def _decide_column_count(
+    left: Diagram, right: Diagram
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL when :func:`~archytaszx.semantics.columns.induct_rows` proves the pair with its
+    column boxes counted by a free ``m`` (:func:`~archytaszx.semantics.columns.generalise`) and
+    its rows index ``n`` renamed ``s + c``: the kernel theorem carried back by
+    :func:`~archytaszx.semantics.kernel.subst` at ``s = n - c`` and by
+    :func:`~archytaszx.semantics.kernel.instance` at ``m = n``; else why not."""
+    from archytaszx.diagram.bangbox import BangBoxError, Mult
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.columns import ColumnsError, generalise, induct_rows, specialised
+    from archytaszx.semantics.induction import (
+        _all_free_symbols,
+        _fresh_symbol_name,
+        rename_multiplicity,
+    )
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, Clause
+
+    found = generalise(left, right)
+    if found is None:
+        return "no rows box beside column boxes on both sides"
+    index = found.index
+    c = max(0, -_least_offset(found.left, found.right, index))
+    errors: tuple[type[Exception], ...] = (
+        ColumnsError,
+        kernel.KernelError,
+        BangBoxError,
+        *_INDUCTION_ERRORS,
+    )
+    with _trace.span("decide.induction.columns"):
+        try:
+            if c:
+                taken = _all_free_symbols(found.left) | _all_free_symbols(found.right)
+                s = _fresh_symbol_name("s", taken | {found.symbol})
+                pair = [
+                    rename_multiplicity(d, index, Mult(s) + c) for d in (found.left, found.right)
+                ]
+                inner = induct_rows(pair[0], pair[1], s)
+                back = kernel.subst(inner, Clause(s, MULTIPLICITY, SHIFT, a=1, c=-c, fresh=index))
+                theorem = kernel.trans(
+                    kernel.iso(found.left, back.lhs),
+                    kernel.trans(back, kernel.iso(back.rhs, found.right)),
+                )
+            else:
+                theorem = induct_rows(found.left, found.right, index)
+            carried = specialised(theorem, found, left, right)
+        except errors as exc:
+            return f"{index} rows, columns counted by {found.symbol}: {exc}"
+    shifted = f" ({index} = s + {c}, carried back by subst)" if c else ""
+    return (
+        EqualityVerdict.EQUAL,
+        DecisionMethod.INDUCTION,
+        (
+            f"columns counted by {found.symbol}: induction over the {index} rows{shifted}; "
+            f"holds for {index} >= {c}; kernel proof carried to {found.symbol} = {index} by "
+            "instance"
+        ),
+        {"induction_proof": carried},
     )
 
 
