@@ -74,13 +74,12 @@ from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
     BangBoxError,
-    _dim_at,
     boundary_arity,
     expand_concrete_boxes,
     free_mult_symbols,
     index_symbols,
     instantiate_symbol,
-    substitute_index_phases,
+    substitute_count,
 )
 from archytaszx.diagram.generators import GeneratorError
 from archytaszx.diagram.graph import Diagram, Direction, GraphError, PortRef
@@ -1331,22 +1330,12 @@ def _induction_assumptions(
 
 
 def _instantiate_index(diagram: Diagram, index: str, value: int) -> Diagram:
-    """``diagram`` with multiplicity ``index`` set to ``value`` in boxes, scalar, phases and leg
-    dimensions."""
+    """``diagram`` with multiplicity ``index`` set to ``value`` in boxes, scalar, copy scalars,
+    phases and leg dimensions."""
     if index in free_mult_symbols(diagram):
         diagram = instantiate_symbol(diagram, index, value)
     else:
-        diagram = diagram.copy()
-    if index in diagram.scalar.free_symbols:
-        diagram.set_scalar(diagram.scalar.substitute({index: value}))
-    diagram = substitute_index_phases(diagram, index, value)
-    for node_id, node in sorted(diagram.nodes.items()):
-        if any(index in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
-            diagram.set_port_dims(
-                node_id,
-                [_dim_at(p.dim, index, value) for p in node.inputs],
-                [_dim_at(p.dim, index, value) for p in node.outputs],
-            )
+        diagram = substitute_count(diagram, index, value)
     validate_or_raise(diagram)
     return diagram
 

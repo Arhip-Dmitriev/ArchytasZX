@@ -2129,6 +2129,26 @@ def substitute_index_phases(diagram: Diagram, name: str, value: int | Mult) -> D
     return working
 
 
+def substitute_count(diagram: Diagram, name: str, value: int) -> Diagram:
+    """``diagram`` with the count ``name`` replaced by ``value`` in its scalar, box copy
+    scalars, node phase vectors and leg dimensions."""
+    working = substitute_index_phases(diagram, name, value)
+    if name in working.scalar.free_symbols:
+        working.set_scalar(working.scalar.substitute({name: value}))
+    for box_id, box in sorted(working.bang_boxes.items()):
+        if box.copy_scalar is not None and name in box.copy_scalar.free_symbols:
+            scalar = _scalar_at(box.copy_scalar, name, value)
+            working.set_bang_box_extension(box_id, copy_scalar=scalar)
+    for node_id, node in sorted(working.nodes.items()):
+        if any(name in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+            working.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, name, value) for p in node.inputs],
+                [_dim_at(p.dim, name, value) for p in node.outputs],
+            )
+    return working
+
+
 def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
     """Substitute ``value`` for ``name`` in every live bang box's multiplicity, expanding
     each box whose multiplicity thereby becomes concrete.
@@ -2140,9 +2160,10 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
     (``2*k``, ``k + 1``, ``k1 + k2``) is substituted the same way; one still carrying
     another symbol afterwards keeps its box until that symbol is supplied too. Boxes are
     taken one at a time and the diagram rescanned, so copies a parent's expansion makes
-    of a child that also carries ``name`` are reached in turn. Raises BangBoxGrammarError
-    if no live box carries this symbol, and BangBoxDomainError if ``value`` is not a
-    non-negative int.
+    of a child that also carries ``name`` are reached in turn; then :func:`substitute_count`
+    fills ``value`` into the scalar, copy scalars, phases and leg dimensions. Raises
+    BangBoxGrammarError if no live box carries this symbol, and BangBoxDomainError if
+    ``value`` is not a non-negative int.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise BangBoxDomainError(f"instantiate_symbol requires a non-negative int, got {value!r}")
@@ -2179,16 +2200,7 @@ def instantiate_symbol(diagram: Diagram, name: str, value: int) -> Diagram:
         raise BangBoxGrammarError(
             f"instantiating {name!r} did not settle within {_MAX_INSTANTIATE_ROUNDS} rounds"
         )
-    for node_id, node in sorted(working.nodes.items()):
-        if any(name in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
-            working.set_port_dims(
-                node_id,
-                [_dim_at(p.dim, name, value) for p in node.inputs],
-                [_dim_at(p.dim, name, value) for p in node.outputs],
-            )
-        phase = working.nodes[node_id].phase
-        if phase is not None and name in phase.free_symbols:
-            working.set_phase(node_id, phase.substitute({name: value}))
+    working = substitute_count(working, name, value)
     if name in working.parameters:
         # Mirrors Diagram.substitute's "entries the mapping names are consumed from
         # parameters" contract: the symbol is now gone from every box, so a lingering

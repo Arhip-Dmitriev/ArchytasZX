@@ -403,3 +403,29 @@ def test_lean_checks_the_link_identity_removal_export(case: int, tmp_path: objec
         ok, output = check(source, f"{tmp_path}/link{case}{semantic}.lean")
         assert ok, output
         assert ": error" not in output and "sorry" not in output, output
+
+
+SCALED = """dim d
+count n, l
+v = Z(1 -> 1, d)
+u = Z(1 -> 1, d)
+repeat n as R index i: v, u
+repeat l as C in R: v
+copy scalar C: 2^n
+scalar 3^n"""
+"""Copies of a box whose copy scalar reads the parent count, under a diagram scalar reading it."""
+
+
+def test_instantiating_a_count_fills_it_into_the_scalar_and_copy_scalars() -> None:
+    from archytaszx.semantics.decide import _instantiate_index
+    from archytaszx.semantics.prove import induction_base
+
+    d = parse_dsl(SCALED)
+    got = instantiate_symbol(d, "n", 2)
+    assert str(got.scalar) == "9"
+    assert [str(b.copy_scalar) for b in got.bang_boxes.values()] == ["4", "4"]
+    assert str(instantiate_symbol(got, "l", 2).scalar) == "2304"
+    got = _instantiate_index(d, "n", 3)
+    assert str(got.scalar) == "27"
+    assert [str(b.copy_scalar) for b in got.bang_boxes.values()] == ["8", "8", "8"]
+    assert str(induction_base(d, "n").scalar) == "1"
