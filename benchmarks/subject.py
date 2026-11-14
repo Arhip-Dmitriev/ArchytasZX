@@ -204,6 +204,21 @@ def restrict_domain(dom: Domain, clause: str) -> Domain:
     return replace(dom, n_min=v, n_max=v)
 
 
+def clause_holds(clause: str, value: int) -> bool:
+    """Whether the clause's symbol at ``value`` satisfies one engine clause (forms of
+    :func:`restrict_domain`)."""
+    text = clause.replace(" ", "")
+    if text[1:3] == ">=":
+        return value >= int(text[3:])
+    rhs = text[2:]
+    if "m" in rhs:
+        a_part, _, c_part = rhs.partition("+")
+        a = int(a_part.replace("*m", "").replace("m", "") or 1)
+        c = int(c_part or 0)
+        return value >= c and (value - c) % a == 0
+    return value == int(rhs)
+
+
 @dataclass(frozen=True)
 class Script:
     """An engine script: the text, whether dimensions were written literally, the circuit's
@@ -325,7 +340,15 @@ def script(inst: Instance, nv: int | None, dv: int | None, *, command: str = "de
         "",
     ]
     point = _point_clauses(subject, eq, nv, dv, literal)
-    clauses = [*inst.restriction, *point]
+    pinned = {p[0]: int(p.split("=")[1]) for p in point}
+    kept = []
+    for r in inst.restriction:
+        sym = r.strip()[0]
+        if sym not in pinned:
+            kept.append(r)
+        elif not clause_holds(r, pinned[sym]):
+            raise translate.Unsupported(f"{sym} = {pinned[sym]} is outside the restriction {r}")
+    clauses = [*kept, *point]
     clause = f" for {', '.join(clauses)}" if clauses else ""
     blocks.append(f"{command} against @rhs{clause}")
     return Script("\n".join(blocks) + "\n", literal, tr.nodes, bool(point))
