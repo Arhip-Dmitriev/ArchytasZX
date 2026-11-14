@@ -45,6 +45,7 @@ from archytaszx.diagram.bangbox import (
     index_symbols,
     peel_one,
     peel_owners,
+    peels_first,
     substitute_index_phases,
 )
 from archytaszx.diagram.compare import isomorphic
@@ -1286,26 +1287,47 @@ def _merge_straddle(
     slot_of: Mapping[PortRef, PortRef],
     grafted: Sequence[BangBoxId],
 ) -> None:
-    """Put the nodes of ``box`` off ``cut``'s region into the one grafted box of ``box``'s
-    multiplicity that every cut wire from them reaches."""
+    """Put each wire-connected part of the nodes of ``box`` off ``cut``'s region into the one
+    grafted box of ``box``'s multiplicity that every cut wire from it reaches."""
     rest = box.node_scope - cut.region
-    targets: set[BangBoxId] = set()
-    for inside_end, far in cut.cuts.items():
-        if far.node_id not in rest:
-            continue
-        end = slot_of[inside_end].node_id
-        owners = [b for b in grafted if end in working.bang_boxes[b].node_scope]
-        top = [b for b in owners if working.bang_boxes[b].parent is None]
-        if len(owners) != 1 or len(top) != 1:
+    for part in _parts(working, rest):
+        targets: set[BangBoxId] = set()
+        for inside_end, far in cut.cuts.items():
+            if far.node_id not in part:
+                continue
+            end = slot_of[inside_end].node_id
+            owners = [b for b in grafted if end in working.bang_boxes[b].node_scope]
+            top = [b for b in owners if working.bang_boxes[b].parent is None]
+            if len(owners) != 1 or len(top) != 1:
+                raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+            targets.add(top[0])
+        if len(targets) != 1:
             raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
-        targets.add(top[0])
-    if len(targets) != 1:
-        raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
-    (target,) = targets
-    into = working.bang_boxes[target]
-    if into.multiplicity != box.multiplicity or into.is_tree or into.is_fed or into.is_pair:
-        raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
-    working.set_bang_box_node_scope(target, into.node_scope | rest)
+        (target,) = targets
+        into = working.bang_boxes[target]
+        if into.multiplicity != box.multiplicity or into.is_tree or into.is_fed or into.is_pair:
+            raise InductionDomainError(f"bang box {box.id!r} straddles the replaced region")
+        working.set_bang_box_node_scope(target, into.node_scope | part)
+
+
+def _parts(diagram: Diagram, nodes: frozenset[NodeId]) -> list[frozenset[NodeId]]:
+    """The parts of ``nodes`` connected by wires among them, smallest id first."""
+    parts: list[frozenset[NodeId]] = []
+    left = set(nodes)
+    while left:
+        todo, seen = [min(left)], set()
+        while todo:
+            n = todo.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            for wire in diagram.wires:
+                for a, b in ((wire.a.node_id, wire.b.node_id), (wire.b.node_id, wire.a.node_id)):
+                    if a == n and b in left and b not in seen:
+                        todo.append(b)
+        parts.append(frozenset(seen))
+        left -= seen
+    return parts
 
 
 def _graft(working: Diagram, replacement: Diagram) -> dict[NodeId, NodeId]:
@@ -1392,24 +1414,187 @@ def copy_candidates(
     out = [copy]
     if extra and bare | extra != copy:
         out.append(bare | frozenset(extra))
+    regrown = set()
+    for wire in peeled.wires:
+        for a, b in ((wire.a.node_id, wire.b.node_id), (wire.b.node_id, wire.a.node_id)):
+            spider = peeled.nodes[a].generator_type in (Z_SPIDER, X_SPIDER)
+            if a in bare and spider and b in old:
+                regrown.add(a)
+    if extra and regrown:
+        out.append((bare - frozenset(regrown)) | frozenset(extra))
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class ExposeStep:
+    """One exposing step: ``after`` from ``before`` by a :func:`_fan_split` split (kind split)
+    or by :func:`leg_moves` (kind move), with the copies before and after."""
+
+    kind: str
+    before: Diagram
+    after: Diagram
+    copy_before: frozenset[NodeId]
+    copy_after: frozenset[NodeId]
 
 
 def expose_cut(
     peeled: Diagram, copies: Sequence[frozenset[NodeId]], hypothesis: Diagram
-) -> tuple[Diagram, CutRegion, frozenset[NodeId], frozenset[NodeId]] | None:
-    """The first of ``copies`` whose complement in ``peeled``, or in a :func:`_fan_split` of
-    it, reads as ``hypothesis`` through cut wires: that diagram, the cut, the copy it was split
-    from and the split copy; else None."""
+) -> tuple[Diagram, CutRegion, tuple[ExposeStep, ...]] | None:
+    """The first of ``copies`` whose complement in ``peeled``, in a :func:`_fan_split` of it,
+    or after :func:`_greedy_steps`, reads as ``hypothesis`` through cut wires: that diagram,
+    the cut and the steps to it; else None."""
     for copy in copies:
         cut = find_cut_region(peeled, frozenset(peeled.nodes) - copy, hypothesis)
         if cut is not None:
-            return peeled, cut, copy, copy
+            return peeled, cut, ()
         for split, split_copy in _fan_split(peeled, copy):
             cut = find_cut_region(split, frozenset(split.nodes) - split_copy, hypothesis)
             if cut is not None:
-                return split, cut, copy, split_copy
+                return split, cut, (ExposeStep("split", peeled, split, copy, split_copy),)
+    for copy in copies[1:]:
+        steps = _greedy_steps(peeled, copy)
+        if not steps:
+            continue
+        last = steps[-1]
+        region = frozenset(last.after.nodes) - last.copy_after
+        cut = find_cut_region(last.after, region, hypothesis)
+        if cut is not None:
+            return last.after, cut, steps
     return None
+
+
+_MAX_GREEDY_STEPS = 16
+
+
+def _greedy_steps(peeled: Diagram, copy: frozenset[NodeId]) -> tuple[ExposeStep, ...]:
+    """Steps from ``peeled``: every boxed split (:func:`boxed_splits`) in turn, then every leg
+    move (:func:`leg_moves`), then every unboxed split at a slot (:func:`_gather_split`)."""
+    steps: list[ExposeStep] = []
+    current, held = peeled, copy
+    for stage in ("boxed", "move", "gather"):
+        while len(steps) < _MAX_GREEDY_STEPS:
+            if stage == "boxed":
+                found = next(boxed_splits(current, held), None)
+            elif stage == "move":
+                moved = next(leg_moves(current, held), None)
+                found = None if moved is None else (moved, held)
+            else:
+                found = next(_gather_splits(current, held), None)
+            if found is None:
+                break
+            kind = "move" if stage == "move" else "split"
+            steps.append(ExposeStep(kind, current, found[0], held, found[1]))
+            current, held = found
+    return tuple(steps)
+
+
+def _gather_splits(
+    diagram: Diagram, copy: frozenset[NodeId]
+) -> Iterator[tuple[Diagram, frozenset[NodeId]]]:
+    """:func:`_gather_split` of ``diagram`` and ``copy``."""
+    boxed = frozenset(n for box in diagram.bang_boxes.values() for n in box.node_scope)
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    slots = [*diagram.boundary_inputs, *diagram.boundary_outputs]
+    yield from _gather_split(diagram, copy, boxed, partner, slots)
+
+
+def _box_referenced(diagram: Diagram) -> frozenset[NodeId]:
+    """Nodes whose ports a box names (links, pair, tree, feed or port-scope ports) or that a
+    box holds."""
+    out: set[NodeId] = set()
+    for box in diagram.bang_boxes.values():
+        out |= box.node_scope
+        refs = [*box.port_scope, *box.left_ports, *box.right_ports, *box.tree]
+        refs += [r for link in box.links for r in link]
+        refs += [r for r in (box.tree_parent, box.feed_port) if r is not None]
+        out |= {r.node_id for r in refs}
+    return frozenset(out)
+
+
+def leg_moves(diagram: Diagram, copy: frozenset[NodeId]) -> Iterator[Diagram]:
+    """Per unboxed spider ``v`` off ``copy`` holding no boundary slot, with legs into ``copy``,
+    and per unboxed spider ``w`` of its type off ``copy`` holding a slot and wired to it:
+    ``diagram`` with those legs moved from ``v`` onto new legs of ``w`` (spider fusion and
+    unfusion along the wire)."""
+    fixed = _box_referenced(diagram)
+    slots = {r.node_id for r in (*diagram.boundary_inputs, *diagram.boundary_outputs)}
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    for v in sorted(diagram.nodes):
+        node = diagram.nodes[v]
+        if v in copy or v in fixed or v in slots or node.generator_type not in (Z_SPIDER, X_SPIDER):
+            continue
+        legs = [
+            PortRef(v, d, i)
+            for d in (Direction.INPUT, Direction.OUTPUT)
+            for i in range(len(node.legs(d)))
+        ]
+        inward = [leg for leg in legs if (f := partner.get(leg)) is not None and f.node_id in copy]
+        if not inward:
+            continue
+        for leg in legs:
+            far = partner.get(leg)
+            if far is None or far.node_id in copy or far.node_id in fixed:
+                continue
+            if far.node_id not in slots:
+                continue
+            other = diagram.nodes[far.node_id]
+            if far.node_id == v or other.generator_type is not node.generator_type:
+                continue
+            yield _move_legs(diagram, v, inward, far.node_id)
+
+
+def _move_legs(diagram: Diagram, v: NodeId, legs: Sequence[PortRef], w: NodeId) -> Diagram:
+    """``diagram`` with ``legs`` of ``v`` removed and added, in their directions, after
+    ``w``'s legs, each wired to the same far end."""
+    working = diagram.copy()
+    partner: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    gone = frozenset(legs)
+    for leg in legs:
+        working.remove_wire(leg, partner[leg])
+    node, target = diagram.nodes[v], diagram.nodes[w]
+    kept = {
+        d: [i for i in range(len(node.legs(d))) if PortRef(v, d, i) not in gone]
+        for d in (Direction.INPUT, Direction.OUTPUT)
+    }
+    new_v = working.add_node(
+        node.generator_type,
+        [node.inputs[i].dim for i in kept[Direction.INPUT]],
+        [node.outputs[i].dim for i in kept[Direction.OUTPUT]],
+        phase=node.phase,
+    )
+    port_map = {PortRef(v, d, i): PortRef(new_v, d, j) for d in kept for j, i in enumerate(kept[d])}
+    grown = {
+        d: [p.dim for p in target.legs(d)]
+        + [node.legs(d)[r.index].dim for r in legs if r.direction is d]
+        for d in (Direction.INPUT, Direction.OUTPUT)
+    }
+    new_w = working.add_node(
+        target.generator_type, grown[Direction.INPUT], grown[Direction.OUTPUT], phase=target.phase
+    )
+    for d in (Direction.INPUT, Direction.OUTPUT):
+        for i in range(len(target.legs(d))):
+            port_map[PortRef(w, d, i)] = PortRef(new_w, d, i)
+    added = {d: len(target.legs(d)) for d in (Direction.INPUT, Direction.OUTPUT)}
+    for leg in legs:
+        port_map[leg] = PortRef(new_w, leg.direction, added[leg.direction])
+        added[leg.direction] += 1
+    for wire in sorted(working.wires, key=lambda x: x.sort_key()):
+        if {wire.a.node_id, wire.b.node_id} & {v, w}:
+            working.remove_wire(wire.a, wire.b)
+            working.add_wire(port_map.get(wire.a, wire.a), port_map.get(wire.b, wire.b))
+    for leg in legs:
+        working.add_wire(port_map[leg], partner[leg])
+    working.set_boundary_inputs([port_map.get(r, r) for r in working.boundary_inputs])
+    working.set_boundary_outputs([port_map.get(r, r) for r in working.boundary_outputs])
+    working.remove_node(v)
+    working.remove_node(w)
+    return working
 
 
 def boxed_splits(
@@ -1754,32 +1939,66 @@ def _chain_window(obligation: InductionObligation, max_steps: int) -> tuple[bool
                     f"its cut wires, replaced by the other side's; {why}"
                 )
             reasons.append(why)
-    for own_successor, own_k, other_k, other_successor in sides:
+    for last, (own_successor, own_k, other_k, other_successor) in (
+        (False, sides[0]),
+        (False, sides[1]),
+        (True, sides[0]),
+        (True, sides[1]),
+    ):
         if not _chain_owned(other_successor, index):
             continue
-        replaced = _side_replaced(own_successor, own_k, other_k, index)
+        replaced = _side_replaced(own_successor, own_k, other_k, index, last=last)
         if isinstance(replaced, str):
             continue
-        try:
-            target = peel_owners(other_successor, index).diagram
-        except BangBoxError:
+        peeled_other = peel_peelable(other_successor, index)
+        if peeled_other is None:
             continue
-        settled, why = _close_by_lemmas(replaced, target, other_successor, index)
+        settled, why = _close_by_lemmas(replaced, peeled_other, other_successor, index)
         if settled:
             return True, (
-                "peeled one copy; the residual is the hypothesis diagram through its cut wires, "
-                f"replaced by the other side's; {why}"
+                f"peeled one copy{' (chains at their last copy)' if last else ''}; the residual "
+                f"is the hypothesis diagram through its cut wires, replaced by the other side's; "
+                f"{why}"
             )
         reasons.append(why)
     return False, "; ".join(reasons)
 
 
+def peel_peelable(diagram: Diagram, index: str) -> Diagram | None:
+    """:func:`peel_owners` of ``diagram``, else of its boxes carrying ``index`` whose
+    multiplicity has a positive constant term (the others kept); None when neither peels."""
+    try:
+        return peel_owners(diagram, index).diagram
+    except BangBoxError:
+        pass
+    try:
+        return peel_owners(diagram, index, partial=True).diagram
+    except BangBoxError:
+        return None
+
+
+def first_peelers(diagram: Diagram, index: str) -> frozenset[BangBoxId]:
+    """The boxes carrying ``index`` that peel their first copy."""
+    return frozenset(b for b in index_owners(diagram, index) if peels_first(diagram.bang_boxes[b]))
+
+
 def _side_replaced(
-    own_successor: Diagram, own_k: Diagram, other_k: Diagram, index: str
+    own_successor: Diagram, own_k: Diagram, other_k: Diagram, index: str, *, last: bool = False
 ) -> Diagram | str:
-    """``own_successor`` peeled (:func:`_peel_step_index`), its residual read as ``own_k``
-    through cut wires (:func:`expose_cut`) and replaced by ``other_k``; else why not."""
-    peeled = _peel_step_index(own_successor, index)
+    """``own_successor`` peeled (:func:`_peel_step_index`; with ``last``, every first-peeling
+    chain at its last copy), its residual read as ``own_k`` through cut wires
+    (:func:`expose_cut`) and replaced by ``other_k``; else why not."""
+    if last:
+        firsts = first_peelers(own_successor, index)
+        if not firsts:
+            return "no chain peels its first copy"
+        try:
+            result = peel_owners(own_successor, index, last=firsts)
+        except BangBoxError as exc:
+            return str(exc)
+        peeled = (result.diagram, result.copy_node_ids) if result.copy_node_ids else None
+    else:
+        peeled = _peel_step_index(own_successor, index)
     if peeled is None:
         return "the chain box does not peel"
     exposed, copy = peeled

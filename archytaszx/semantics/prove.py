@@ -263,9 +263,12 @@ def _with_scalar_index(diagram: Diagram, index: str, value: Mult) -> Diagram:
 def induction_base(diagram: Diagram, index: str) -> Diagram:
     """``diagram`` with the multiplicity ``index`` at 0 in boxes, scalar, phases and leg
     dimensions."""
-    from archytaszx.diagram.bangbox import _dim_at
+    from archytaszx.diagram.bangbox import _dim_at, free_mult_symbols
 
-    based = instantiate_symbol(diagram, index, 0)
+    if index in free_mult_symbols(diagram):
+        based = instantiate_symbol(diagram, index, 0)
+    else:
+        based = diagram.copy()
     if index in based.scalar.free_symbols:
         based.set_scalar(based.scalar.substitute({index: 0}))
     based = substitute_index_phases(based, index, 0)
@@ -296,12 +299,13 @@ def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagr
     index, unpeeled when that box's multiplicity has no positive constant term (``b^(k + 1)``)
     and it is no tree box; with several such boxes (:func:`index_owners`), none nested in
     another and each with a positive constant term, one copy peeled off each
-    (:func:`peel_owners`); else None."""
+    (:func:`peel_owners`), when only some have one, off those; unpeeled when no box carries
+    it; else None."""
     value = Mult(step_symbol) + 1
     renamed = _with_scalar_index(rename_multiplicity(diagram, index, value), index, value)
     owners = index_owners(renamed, step_symbol)
     if not owners:
-        return None
+        return renamed
     peelable = []
     for owner in owners:
         box = renamed.bang_boxes[owner]
@@ -310,7 +314,12 @@ def induction_successor(diagram: Diagram, index: str, step_symbol: str) -> Diagr
     if len(owners) == 1:
         return peel_one(renamed, owners[0]).diagram if peelable[0] else renamed
     if not all(peelable):
-        return None
+        if not any(peelable) or any(renamed.bang_boxes[o].is_tree for o in owners):
+            return None
+        try:
+            return peel_owners(renamed, step_symbol, partial=True).diagram
+        except BangBoxError:
+            return None
     try:
         return peel_owners(renamed, step_symbol).diagram
     except BangBoxError:

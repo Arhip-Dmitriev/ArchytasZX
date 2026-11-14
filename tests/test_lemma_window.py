@@ -20,6 +20,7 @@ import pytest
 from archytaszx.diagram.bangbox import index_owners, peel_owners, peels_first
 from archytaszx.repl.parser import parse_dsl
 from archytaszx.semantics import kernel
+from archytaszx.semantics import lemmas as L
 from archytaszx.semantics.check import compare
 from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 from archytaszx.semantics.prove import induction_renamed
@@ -73,6 +74,32 @@ def test_the_incrementer_is_equal_by_induction_with_a_kernel_theorem() -> None:
 def test_a_broken_incrementer_is_not_proved(old: str, new: str) -> None:
     left, right = parse_dsl(CIRCUIT.replace(old, new)), parse_dsl(SPEC.replace(old, new))
     assert decide_equal(left, right, samples=[]).verdict is not EqualityVerdict.EQUAL
+
+
+@pytest.mark.parametrize("name", ["zero_register", "and_gated", "and_split"])
+def test_a_coined_walk_lemma_is_proved_with_a_kernel_theorem(name: str) -> None:
+    entry = L.lemma(name)
+    left, right = L.sides(entry)
+    for value in (0, 1, 2):
+        assert compare(left, right, {"p": value}).matched
+    assert isinstance(L.proved(entry), kernel.Theorem)
+
+
+@pytest.mark.parametrize(
+    ("text", "old", "new"),
+    [
+        ("_ZERO_RIGHT", "zr = X(0 -> 1,", "zr = Z(0 -> 1,"),
+        ("_SPLIT_RIGHT", "tr = T(", "tr = Ti("),
+        ("_GATED_RIGHT", "scalar -1/sqrt(2)", "scalar 1/sqrt(2)"),
+    ],
+)
+def test_a_broken_coined_walk_lemma_is_not_proved(text: str, old: str, new: str) -> None:
+    left_text = {"_ZERO_RIGHT": L._ZERO_LEFT, "_SPLIT_RIGHT": L._SPLIT_LEFT}.get(
+        text, L._GATED_LEFT
+    )
+    right = parse_dsl(getattr(L, text).replace(old, new))
+    verdict = decide_equal(parse_dsl(left_text), right, samples=[]).verdict
+    assert verdict is not EqualityVerdict.EQUAL
 
 
 def test_the_spec_peeled_at_either_end_of_its_splitter_chain_is_one_diagram() -> None:

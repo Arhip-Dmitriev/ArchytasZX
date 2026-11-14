@@ -403,15 +403,20 @@ def repeel(
     b_last: frozenset[BangBoxId] = frozenset(),
 ) -> Theorem:
     """``a = b`` for ``a`` and ``b`` two joint peels of ``source``'s boxes carrying ``index``
-    (:func:`~archytaszx.diagram.bangbox.peel_owners`), the boxes of ``a_last`` and of
-    ``b_last`` peeling their last copy."""
+    (:func:`~archytaszx.diagram.bangbox.peel_owners`; when not all peel, of those whose
+    multiplicity has a positive constant term), the boxes of ``a_last`` and of ``b_last``
+    peeling their last copy."""
     from archytaszx.diagram.bangbox import BangBoxError, peel_owners
 
     try:
         a = peel_owners(source, index, last=a_last).diagram
         b = peel_owners(source, index, last=b_last).diagram
-    except BangBoxError as exc:
-        raise KernelError(f"repeel: {exc}") from exc
+    except BangBoxError:
+        try:
+            a = peel_owners(source, index, last=a_last, partial=True).diagram
+            b = peel_owners(source, index, last=b_last, partial=True).diagram
+        except BangBoxError as exc:
+            raise KernelError(f"repeel: {exc}") from exc
     data: dict[str, object] = {"source": source, "index": index}
     return Theorem(_TOKEN, a, b, Inference("repeel", data=data))
 
@@ -428,6 +433,19 @@ def box_split(d: Diagram, split: Diagram, copy: frozenset[NodeId]) -> Theorem:
         if _same(candidate, split):
             return Theorem(_TOKEN, d, split, Inference("box_split"))
     raise KernelError("box_split: the diagram is no boxed spider split of the other")
+
+
+@_trace.traced("kernel.leg_move")
+def leg_move(d: Diagram, moved: Diagram, copy: frozenset[NodeId]) -> Theorem:
+    """``d = moved`` when ``moved`` is one of
+    :func:`~archytaszx.semantics.induction.leg_moves` of ``d`` and ``copy``: legs moved between
+    two unboxed spiders of one type wired together (spider fusion, then unfusion)."""
+    from archytaszx.semantics.induction import leg_moves
+
+    for candidate in leg_moves(d, copy):
+        if _same(candidate, moved):
+            return Theorem(_TOKEN, d, moved, Inference("leg_move"))
+    raise KernelError("leg_move: the diagram is no leg move of the other")
 
 
 @_trace.traced("kernel.w_fusion")
@@ -1336,12 +1354,12 @@ class _Lean:
                 return proved
             note = "path sums reduce to one form"
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
-        if inf.kind in ("repeel", "box_split"):
-            note = (
-                "two joint peels of one box family"
-                if inf.kind == "repeel"
-                else "a boxed spider unfused in every copy"
-            )
+        if inf.kind in ("repeel", "box_split", "leg_move"):
+            note = {
+                "repeel": "two joint peels of one box family",
+                "box_split": "a boxed spider unfused in every copy",
+                "leg_move": "legs moved between two wired spiders of one type",
+            }[inf.kind]
             return self.axiom(inf.kind, note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind in ("algebraic", "contraction"):
             note = (

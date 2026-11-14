@@ -1928,6 +1928,11 @@ def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> list[dict[N
             continue
         assert head is not None and tail is not None
         if k == 0:
+            if box.index is not None:
+                for end, at in ((head, 0), (tail, -1)):
+                    dim = _dim_at(diagram.nodes[end.node_id].inputs[0].dim, box.index, at)
+                    diagram.set_port_dims(end.node_id, [dim], [dim])
+                    diagram.set_phase(end.node_id, PhaseVector(dim))
             diagram.add_wire(head, tail)
             continue
         diagram.add_wire(head, _moved(q_ref, id_maps[0]))
@@ -2548,12 +2553,26 @@ def index_owners(diagram: Diagram, name: str) -> tuple[BangBoxId, ...]:
 
 
 def peel_owners(
-    diagram: Diagram, name: str, *, last: frozenset[BangBoxId] = frozenset()
+    diagram: Diagram,
+    name: str,
+    *,
+    last: frozenset[BangBoxId] = frozenset(),
+    partial: bool = False,
 ) -> PeelResult:
     """:func:`peel_one` on every box of :func:`index_owners` in id order, the copies joined,
-    the boxes of ``last`` peeling their last copy; raises when there is none or one of them
-    lies inside another."""
+    the boxes of ``last`` peeling their last copy; with ``partial``, only the boxes whose
+    multiplicity has a positive constant term; raises when there is none or one of them lies
+    inside another."""
     owners = index_owners(diagram, name)
+    if partial:
+        owners = tuple(
+            b
+            for b in owners
+            if (
+                c := sp.expand(diagram.bang_boxes[b].multiplicity.to_sympy()).as_coeff_Add()[0]
+            ).is_Integer
+            and c >= 1
+        )
     if not owners:
         raise BangBoxGrammarError(f"no live bang box has multiplicity symbol {name!r}")
     if len(owners) == 1:

@@ -162,12 +162,17 @@ def _and_sides(p: sp.Expr) -> tuple[Diagram, Diagram]:
     (|0> + [register all ones] |1>) on the AND wire: the register bound under |+>, shifted by
     one over 2^(p + 1), sign -1 off index 0, shifted back, split, F then T on the top wire,
     scalar -1/sqrt(2)."""
+    return _dsl_sides(_AND_LEFT, _AND_RIGHT, p)
+
+
+def _dsl_sides(left: str, right: str, p: sp.Expr) -> tuple[Diagram, Diagram]:
+    """The DSL texts ``left`` and ``right`` parsed, the count ``p`` renamed to ``p``'s value."""
     from archytaszx.diagram.bangbox import Mult
     from archytaszx.repl.parser import parse_dsl
     from archytaszx.semantics.induction import rename_multiplicity
 
     out: list[Diagram] = []
-    for text in (_AND_LEFT, _AND_RIGHT):
+    for text in (left, right):
         diagram = parse_dsl(text)
         value = sp.sympify(p).xreplace(
             {s: Mult.symbol(s.name).to_sympy() for s in sp.sympify(p).free_symbols}
@@ -188,7 +193,101 @@ AND_REGISTER = Lemma(
     build=_and_sides,
 )
 
-LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT, AND_REGISTER)
+_GATED_LEFT = _AND_LEFT.replace("z = Z(1 -> 1, literal 2)", "z = Z(2 -> 1, literal 2)").replace(
+    "inputs c.in0", "inputs c.in0, z.in1"
+)
+
+_GATED_RIGHT = (
+    _AND_RIGHT.replace("tr = T(literal 2)", "tr = T(literal 2)\nzz = Z(2 -> 1, literal 2)")
+    .replace("f.out0 -- tr.in0", "f.out0 -- tr.in0, tr.out0 -- zz.in0")
+    .replace("inputs b.in0", "inputs b.in0, zz.in1")
+    .replace("outputs ss.out1, tr.out0", "outputs ss.out1, zz.out0")
+)
+
+AND_GATED = Lemma(
+    name="and_gated",
+    symbol="p",
+    statement=("and_register with the gathering Z spider taking one more input, on both sides"),
+    build=lambda p: _dsl_sides(_GATED_LEFT, _GATED_RIGHT, p),
+)
+
+_SPLIT_LEFT = """
+count p
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+c = Z(1 -> 2, literal 2)
+t = T(literal 2)
+z = Z(2 -> 1, literal 2)
+wire s.out0 -- c.in0, c.out1 -- t.in0, t.out0 -- z.in0, s.out1 -- e.in0
+repeat p as U index m: s, c, t
+chain U: s.in0 -> s.out1
+inputs s.in0, z.in1
+outputs c.out0, z.out0
+"""
+
+_SPLIT_RIGHT = """
+count p
+zt = Z(0 -> 1, literal 2)
+bb = B(literal 2, literal 2^p)
+u = X(1 -> 1, literal 2^(p + 1)) phase{k: -k/2^(p + 1)}
+g = Z(1 -> 1, literal 2^(p + 1)) weight{k: -1}
+v = X(1 -> 1, literal 2^(p + 1)) phase{k: k/2^(p + 1)}
+ss = S(literal 2, literal 2^p)
+f = F(literal 2)
+tr = T(literal 2)
+zz = Z(2 -> 1, literal 2)
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+wire zt.out0 -- bb.in0, bb.out0 -- u.in0, u.out0 -- g.in0, g.out0 -- v.in0, v.out0 -- ss.in0
+wire ss.out0 -- f.in0, f.out0 -- tr.in0, tr.out0 -- zz.in0, ss.out1 -- s.in0, s.out1 -- e.in0
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+inputs bb.in1, zz.in1
+outputs s.out0, zz.out0
+scalar -1/sqrt(2)
+"""
+
+AND_SPLIT = Lemma(
+    name="and_split",
+    symbol="p",
+    statement=(
+        "a 2^p register split by an S chain into p bits, each copied into a triangle gathered "
+        "with one more input by one Z spider, is the register tested for all ones as in "
+        "and_register, then split"
+    ),
+    build=lambda p: _dsl_sides(_SPLIT_LEFT, _SPLIT_RIGHT, p),
+)
+
+_ZERO_LEFT = """
+count p
+r = B(literal 2, literal 2^(m + 1))
+zr = X(0 -> 1, literal 2)
+wire zr.out0 -- r.in0
+repeat p as R index m: r, zr
+chain R: r.out0 -> r.in1
+inputs r.in1
+outputs r.out0
+"""
+
+_ZERO_RIGHT = """
+count p
+zr = X(0 -> 1, literal 2^p)
+r = B(literal 2^p, literal 2)
+wire zr.out0 -- r.in0
+inputs r.in1
+outputs r.out0
+"""
+
+ZERO_REGISTER = Lemma(
+    name="zero_register",
+    symbol="p",
+    statement=(
+        "a bit bound under p zero bits by a B chain is the bit bound under one zero 2^p register"
+    ),
+    build=lambda p: _dsl_sides(_ZERO_LEFT, _ZERO_RIGHT, p),
+)
+
+LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT, AND_REGISTER, AND_GATED, AND_SPLIT, ZERO_REGISTER)
 
 
 def lemma(name: str) -> Lemma:
@@ -288,14 +387,14 @@ def instance(entry: Lemma, value: sp.Expr) -> object:
 
 
 def _values(diagram: Diagram, entry: Lemma) -> list[sp.Expr]:
-    """The symbolic values ``e`` and ``e - 1`` of ``entry``'s symbol for each dimension ``2^e``
-    of ``diagram``, in order of first appearance."""
+    """The symbolic values ``e``, ``e - 1`` and ``e - 2`` of ``entry``'s symbol for each
+    dimension ``2^e`` of ``diagram``, in order of first appearance."""
     found: list[sp.Expr] = []
     for _node_id, node in sorted(diagram.nodes.items()):
         for port in (*node.inputs, *node.outputs):
             expr = port.dim.to_sympy()
             if expr.is_Pow and expr.base == 2 and expr.exp.free_symbols:
-                for value in (expr.exp, sp.expand(expr.exp - 1)):
+                for value in (expr.exp, sp.expand(expr.exp - 1), sp.expand(expr.exp - 2)):
                     if value not in found:
                         found.append(value)
     return found
@@ -370,21 +469,26 @@ def rewrite(diagram: Diagram, entry: Lemma) -> object | None:
 
 
 def rewrite_all(diagram: Diagram) -> object:
-    """``diagram = diagram'`` by :func:`rewrite` with each library lemma in turn, once each
-    (reflexivity when none applies)."""
+    """``diagram = diagram'`` by :func:`rewrite` with each library lemma in turn, each as long
+    as it applies, at most ``_MAX_REWRITES`` times (reflexivity when none applies)."""
     from archytaszx.semantics import kernel
 
     theorem = kernel.refl(diagram)
     for entry in LIBRARY:
-        if entry.name in _PROVING:
-            continue
-        try:
-            step = cast("kernel.Theorem | None", rewrite(theorem.rhs, entry))
-        except LemmaError:
-            continue
-        if step is not None:
+        for _ in range(_MAX_REWRITES):
+            if entry.name in _PROVING:
+                break
+            try:
+                step = cast("kernel.Theorem | None", rewrite(theorem.rhs, entry))
+            except LemmaError:
+                break
+            if step is None:
+                break
             theorem = kernel.trans(theorem, step)
     return theorem
+
+
+_MAX_REWRITES = 4
 
 
 def _owner_cores(diagram: Diagram, index: str) -> frozenset[NodeId] | None:

@@ -50,6 +50,7 @@ from archytaszx.semantics import kernel
 from archytaszx.semantics.certificate import compare_structure
 from archytaszx.semantics.induction import (
     CutRegion,
+    ExposeStep,
     InductionDomainError,
     InductionResult,
     StepDischarge,
@@ -61,6 +62,7 @@ from archytaszx.semantics.induction import (
     expose_cut,
     fed_replacement,
     find_cut_region,
+    first_peelers,
     lemma_decision,
     replace_cut_region,
     replace_region,
@@ -326,11 +328,10 @@ def _windowed(
                         break
                 if cut is None:
                     later = copy_candidates(peeled, frozenset(own_k.nodes), copy)[1:]
-                    found = expose_cut(peeled, later, own_k) if later else None
+                    found = expose_cut(peeled, [copy, *later], own_k) if later else None
                     if found is not None:
-                        split, cut, base_copy, split_copy = found
-                        if split is not peeled:
-                            expose = _split_theorem(peeled, split, base_copy, split_copy)
+                        _split, cut, moves = found
+                        expose = _steps_theorem(peeled, moves)
                         region = cut.region
                 if cut is None:
                     raise NoInductionTheorem("the residual is not the hypothesis through cut wires")
@@ -399,7 +400,55 @@ def _windowed(
             )
         except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
             reasons.append(f"{label}: {exc}")
+    if window == "cut":
+        for side in (InductionSide.START, InductionSide.GOAL):
+            try:
+                return _last_window(start, goal, index, k, base, side)
+            except (NoInductionTheorem, kernel.KernelError, InductionDomainError) as exc:
+                reasons.append(f"{side.value}, chains at their last copy: {exc}")
     raise NoInductionTheorem("; ".join(reasons))
+
+
+def _last_window(
+    start: Diagram,
+    goal: Diagram,
+    index: str,
+    k: str,
+    base: kernel.Theorem,
+    side: InductionSide,
+) -> kernel.Theorem:
+    """``start = goal`` by the kernel's induction rule over a cut region of ``side``'s successor
+    with every first-peeling chain re-peeled at its last copy
+    (:func:`~archytaszx.semantics.kernel.repeel`), the step by
+    :func:`~archytaszx.semantics.lemmas.close_with_lemmas`."""
+    own, other = (start, goal) if side is InductionSide.START else (goal, start)
+    source = induction_renamed(own, index, k)
+    firsts = first_peelers(source, k)
+    peeled = induction_successor(own, index, k)
+    other_peeled = induction_successor(other, index, k)
+    if not firsts or peeled is None or other_peeled is None:
+        raise NoInductionTheorem("no chain peels its first copy")
+    moved = kernel.repeel(source, k, frozenset(), firsts)
+    if not kernel._same(moved.lhs, peeled):
+        raise NoInductionTheorem("the re-peel does not start at the peeled successor")
+    exposed = moved.rhs
+    own_k = induction_hypothesis(own, index, k)
+    other_k = induction_hypothesis(other, index, k)
+    copy = frozenset(exposed.nodes) - frozenset(own_k.nodes)
+    found = expose_cut(exposed, copy_candidates(exposed, frozenset(own_k.nodes), copy), own_k)
+    if found is None:
+        raise NoInductionTheorem("the residual is not the hypothesis through cut wires")
+    _split, cut, steps = found
+    expose = kernel.trans(moved, _steps_theorem(exposed, steps))
+    replaced = replace_cut_region(expose.rhs, cut, own_k, other_k)
+    step = _lemma_step(
+        replaced,
+        other_peeled,
+        induction_renamed(other, index, k),
+        k,
+        NoInductionTheorem("chains at their last copy"),
+    )
+    return kernel.induction(start, goal, index, k, base, side, expose, cut.region, step, cut=cut)
 
 
 def _lemma_step(
@@ -413,6 +462,20 @@ def _lemma_step(
         return cast("kernel.Theorem", close_with_lemmas(replaced, target, source, k))
     except (kernel.KernelError, LemmaError, InductionDomainError) as exc:
         raise NoInductionTheorem(f"{failed}; lemmas: {exc}") from exc
+
+
+def _steps_theorem(peeled: Diagram, steps: Sequence[ExposeStep]) -> kernel.Theorem:
+    """``peeled = d`` through ``steps`` (:func:`~archytaszx.semantics.induction.expose_cut`):
+    each split by :func:`_split_theorem`, each leg move by
+    :func:`~archytaszx.semantics.kernel.leg_move`."""
+    theorem = kernel.refl(peeled)
+    for step in steps:
+        if step.kind == "move":
+            piece = kernel.leg_move(step.before, step.after, step.copy_before)
+        else:
+            piece = _split_theorem(step.before, step.after, step.copy_before, step.copy_after)
+        theorem = kernel.trans(theorem, piece)
+    return theorem
 
 
 def _split_theorem(
