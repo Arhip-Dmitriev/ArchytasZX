@@ -328,3 +328,56 @@ def test_instantiating_a_count_fills_it_into_node_dimensions() -> None:
             assert all(not p.dim.free_symbols for p in (*node.inputs, *node.outputs))
             assert node.phase is None or not node.phase.free_symbols
 
+
+def _link_identity(text: str, gen: str) -> str:
+    """``text`` (GRID or an open grid) with the node ``gen`` between the row link and hv.in0."""
+    text = text.replace("hv = F(d)\n", f"hv = F(d)\ni = {gen}\n")
+    text = text.replace("repeat n as R: v, hv, hh, hs, he", "repeat n as R: v, hv, hh, hs, he, i")
+    text = text.replace("repeat l as C in R: v, hv, hh", "repeat l as C in R: v, hv, hh, i")
+    text = text.replace("chain R: v.out2 -> hv.in0", "chain R: v.out2 -> i.in0")
+    text = text.replace("wire hv.out0 -- v.in0,", "wire i.out0 -- hv.in0, hv.out0 -- v.in0,")
+    text = text.replace("vs.out0 -- hv.in0", "vs.out0 -- i.in0")
+    return text.replace("inputs hv.in0", "inputs i.in0")
+
+
+def _binder_identity(gen: str, tail: bool = False) -> str:
+    """BINDERS with the node ``gen`` between the row link and b.in1 (b.out0 with ``tail``)."""
+    text = BINDERS.replace(
+        "b = B(literal 2, literal 2^m)\n", f"b = B(literal 2, literal 2^m)\ni = {gen}\n"
+    )
+    text = text.replace("index m: b, u, w", "index m: b, u, w, i")
+    text = text.replace("repeat l as C in R: b", "repeat l as C in R: b, i")
+    if tail:
+        text = text.replace("chain R: b.out0 -> b.in1", "chain R: i.out0 -> b.in1")
+        text = text.replace("wire u.out0 -- w.in0", "wire u.out0 -- w.in0, b.out0 -- i.in0")
+        return text.replace("outputs b.out0", "outputs i.out0")
+    text = text.replace("chain R: b.out0 -> b.in1", "chain R: b.out0 -> i.in0")
+    text = text.replace("wire u.out0 -- w.in0", "wire u.out0 -- w.in0, i.out0 -- b.in1")
+    return text.replace("inputs b.in1, b.in0", "inputs i.in0, b.in0")
+
+
+def _link_identity_pair(case: int) -> tuple[str, str, str]:
+    """A diagram, it with an identity on its zipped chain link, and with a non-identity there."""
+    if case >= 4:
+        dim = "2^m" if case == 4 else "2^(m+1)"
+        return (
+            BINDERS,
+            _binder_identity(f"Z(1 -> 1, literal {dim})", case == 5),
+            _binder_identity(f"F(literal {dim})", case == 5),
+        )
+    base = GRID if case == 0 else _open_grid(case != 2, case != 1)
+    return base, _link_identity(base, "Z(1 -> 1, d)"), _link_identity(base, "F(d)")
+
+
+@pytest.mark.parametrize("case", range(6))
+def test_an_identity_on_a_zipped_chain_link_is_removed(case: int) -> None:
+    from archytaszx.semantics.decide import decide_equal
+
+    base, identity, other = _link_identity_pair(case)
+    decision = decide_equal(parse_dsl(base), parse_dsl(identity), samples=[])
+    assert decision.verdict.value == "equal", decision.reason
+    assert decision.proof is not None
+    assert decide_equal(parse_dsl(base), parse_dsl(other), samples=[]).verdict.value != "equal"
+    swapped = identity.replace("hv = F(d)", "hv = Z(1 -> 1, d)")
+    if swapped != identity:
+        assert decide_equal(parse_dsl(base), parse_dsl(swapped)).verdict.value != "equal"

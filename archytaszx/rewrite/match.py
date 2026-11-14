@@ -1906,12 +1906,29 @@ def _splice_keeps_copies(
     node_id: NodeId,
     far: tuple[NodeId | None, NodeId | None],
     far_ports: tuple[PortRef | None, PortRef | None] | None = None,
+    own_ports: tuple[PortRef, PortRef] | None = None,
 ) -> bool:
     """True iff removing ``node_id`` keeps every copy of its legs paired: no neighbour sits in a
     deeper node-scope box, and some wired neighbour shares the node's boxes; a neighbour met at
-    a link port of a chain box counts as outside that box."""
+    a link port of a chain box counts as outside that box. When one of ``own_ports`` is a link
+    port, the other leg's neighbour must share the node's boxes exactly and meet it at no link
+    port, and the link port's neighbour is unconstrained."""
     mine = _node_boxes(diagram, node_id)
     ports = far_ports if far_ports is not None else (None, None)
+    if own_ports is not None:
+        own = [bool(_linking_boxes(diagram, p)) for p in own_ports]
+        if all(own):
+            return False
+        if any(own):
+            k = 1 - own.index(True)
+            other, port = far[k], ports[k]
+            return (
+                other is not None
+                and port is not None
+                and not _linking_boxes(diagram, port)
+                and not _linking_boxes(diagram, ports[1 - k])
+                and _node_boxes(diagram, other) == mine
+            )
     if _linking_boxes(diagram, ports[0]) & _linking_boxes(diagram, ports[1]):
         return False
     sides = [
@@ -2082,8 +2099,8 @@ def find_identity_matches(
 ) -> tuple[IdentityMatch, ...]:
     """Every phaseless one-in-one-out spider, ordered by node id.
 
-    The output leg's wire is the spliced one whenever it has one; otherwise the input
-    leg's.
+    The output leg's wire is the spliced one whenever it has one and the output leg is no
+    chain link port beside a wired input leg; otherwise the input leg's.
     """
     claims, boundary = _port_claims(diagram)
     by_port = _wire_by_port(diagram)
@@ -2110,7 +2127,7 @@ def find_identity_matches(
         wire_out = by_port.get(port_out)
         if wire_out is not None and wire_out == wire_in:
             continue
-        if wire_out is not None:
+        if wire_out is not None and (wire_in is None or not _linking_boxes(diagram, port_out)):
             wire, consumed_ref, surviving_ref = wire_out, port_out, port_in
         elif wire_in is not None:
             wire, consumed_ref, surviving_ref = wire_in, port_in, port_out
@@ -2145,6 +2162,7 @@ def find_identity_matches(
             node_id,
             tuple(None if p is None else p.node_id for p in far_ports),  # type: ignore[arg-type]
             far_ports,  # type: ignore[arg-type]
+            (port_in, port_out),
         ):
             continue
         matches.append(

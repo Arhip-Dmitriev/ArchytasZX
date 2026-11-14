@@ -405,7 +405,7 @@ def _check_far_link_ends(
     diagram: Diagram, working: Diagram, rule: Rule, consumed: Iterable[NodeId]
 ) -> None:
     """Raise RewriteDomainError when a link port whose far end the rewrite consumed is, in
-    ``working``, unwired or wired to a node of its own box."""
+    ``working``, neither a boundary slot nor wired to a node off its own box."""
     if not any(box.links for box in working.bang_boxes.values()):
         return
     gone = frozenset(consumed)
@@ -415,6 +415,7 @@ def _check_far_link_ends(
     after: dict[PortRef, PortRef] = {}
     for wire in working.wires:
         after[wire.a], after[wire.b] = wire.b, wire.a
+    slots = frozenset((*working.boundary_inputs, *working.boundary_outputs))
     for box_id, box in sorted(working.bang_boxes.items()):
         for link in box.links:
             for ref in link:
@@ -422,6 +423,8 @@ def _check_far_link_ends(
                 if far is None or far.node_id not in gone:
                     continue
                 now = after.get(ref)
+                if now is None and ref in slots:
+                    continue
                 if now is None or now.node_id in box.node_scope:
                     raise RewriteDomainError(
                         f"rule {rule.name!r}: the match consumes the far end of a link wire of "
