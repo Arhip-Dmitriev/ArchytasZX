@@ -385,8 +385,10 @@ def _scalars() -> Any:
 
 
 def _quartered(*raws: PathSum) -> bool:
-    """Whether the reduction of some path sum takes a [Quarter] or [Turn] step."""
-    return any(st.rule in ("quarter", "turn") for raw in raws for st in reduce(raw).trace)
+    """Whether the reduction of some path sum takes a [Quarter] or [Turn] step or [Average] on a
+    context."""
+    rules = ("quarter", "turn", "turn_held", "average_ctx")
+    return any(st.rule in rules for raw in raws for st in reduce(raw).trace)
 
 
 def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
@@ -515,7 +517,10 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
         canon_steps = [f".canon {v}" for v in order]
     support_poly = frozenset(frozenset(m) for m in can_l.support) if can_l.support else ONE
     saved = (run_l.snapshot(), run_r.snapshot(), len(run_l.coefs.values))
-    for drop in (False, True) if boolean and g_l != ONE else (False,):
+    modes = [(False, False)]
+    if boolean and g_l != ONE:
+        modes += [(True, False), (True, True)]
+    for drop, split in modes:
         starts = []
         for run, red, rows, can in ((run_l, red_l, rows_l, can_l), (run_r, red_r, rows_r, can_r)):
             run.support = g_l if drop else None
@@ -524,10 +529,10 @@ def amp_plan(sides: tuple[Any, Any]) -> tuple[AmpPlan, PathSum, PathSum]:
             run.inner(canon_steps)
             run.substitute(cast(list[tuple[int, frozenset[frozenset[int]]]], rows))
             if atom_form:
-                run.normalize([(frozenset(m), c) for m, c in can.phase], support_poly)
+                run.normalize([(frozenset(m), c) for m, c in can.phase], support_poly, split)
         if run_l.final_key() == run_r.final_key():
             break
-        if not drop:
+        if (drop, split) != modes[-1]:
             run_l.restore(saved[0])
             run_r.restore(saved[1])
             del run_l.coefs.values[saved[2] :]

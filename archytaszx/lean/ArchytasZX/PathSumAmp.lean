@@ -18,8 +18,11 @@ constant, `average_sound` is [Average], `averageH_sound` is [Average] through a 
 `acomp_sound` moves two atoms of one index on complementary polynomials into the constant,
 `turn_sound` sums a path variable with coefficients `S / 2^k` into one atom per value of `S`
 other than `0` and `2^(k - 1)`, with the constraint `S ≠ 2^(k - 1)`, `adropC_sound` drops the
-atoms' monomials that are 0 where a constraint holds, and `afinal_sound` compares two reduced sums with the
-same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
+atoms' monomials that are 0 where a constraint holds, `acons_sound` moves a constraint off the
+path to an atom of coefficient 0, `avctx_sound` sums a held variable whose atoms are 1 at `y = 0`
+and at `y = 1` where polynomials `Cs` spell numbers in given lists, into one atom per value of
+`Cs`, `asplit_sound` splits an atom into one atom per monomial where their pairwise products are
+0 on the constraints, and `afinal_sound` compares two reduced sums with the same atoms. `valA_flat` reads `valA` as one sum over `held ++ t.s.path`.
 -/
 
 namespace ArchytasZX
@@ -1367,6 +1370,273 @@ theorem adropC_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (t : AData) (σ : ℕ
       simp only [hC, ite_false]
     rw [h0, mul_zero, mul_zero]
 
+/-! ## A constraint as a zero atom -/
+
+/-- Whether the last constraint is off the path. -/
+def aconsOK (t : AData) : Bool :=
+  match t.s.cons.getLast? with
+  | none => false
+  | some q => offPath t.s q
+
+/-- The last constraint moved to the head atom `(j, q)`. -/
+def aconsS (j : ℕ) (t : AData) : AData :=
+  ⟨{ t.s with cons := t.s.cons.dropLast }, t.held, (j, t.s.cons.getLast?.getD []) :: t.atoms⟩
+
+theorem acons_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (j : ℕ) (t : AData) (σ : ℕ → ZMod 2)
+    (hA : A j = 0) (h : aconsOK t = true) : valA M c A t σ = valA M c A (aconsS j t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases hq : s.cons.getLast? with _ | q
+  · simp [aconsOK, hq] at h
+  simp only [aconsOK, hq] at h
+  have hc : s.cons.dropLast ++ [q] = s.cons := List.dropLast_append_getLast? q hq
+  have hz : azeroOK j (aconsS j ⟨s, held, as⟩) = true := by
+    simp only [azeroOK, aconsS, hq, Option.getD_some, decide_true, Bool.true_and]
+    exact h
+  have e : azeroS (aconsS j ⟨s, held, as⟩) = ⟨s, held, as⟩ := by
+    simp only [azeroS, aconsS, hq, Option.getD_some, hc]
+  calc valA M c A ⟨s, held, as⟩ σ = valA M c A (azeroS (aconsS j ⟨s, held, as⟩)) σ := by
+        rw [e]
+    _ = valA M c A (aconsS j ⟨s, held, as⟩) σ := (azero_sound M c A j _ σ hA hz).symm
+
+/-! ## [Average] on a context -/
+
+/-- The indicator that the polynomials `Cs`, low first, spell a number in `Z`. -/
+def tSel (Cs : List F2) (Z : List ℕ) : F2 :=
+  ((List.range (2 ^ Cs.length)).filter fun n => decide (n ∈ Z)).flatMap (tInd Cs)
+
+theorem fz_flatMap (τ : ℕ → ZMod 2) (g : ℕ → F2) :
+    ∀ L : List ℕ, fz τ (L.flatMap g) = (L.map fun n => fz τ (g n)).sum
+  | [] => rfl
+  | n :: L => by
+    rw [List.flatMap_cons, fz_append, fz_flatMap τ g L, List.map_cons, List.sum_cons]
+
+theorem sum_ind (N : ℕ) : ∀ L : List ℕ, L.Nodup →
+    (L.map fun n => if N = n then (1 : ZMod 2) else 0).sum = if N ∈ L then 1 else 0
+  | [] => fun _ => by simp
+  | n :: L => fun h => by
+    rw [List.nodup_cons] at h
+    rw [List.map_cons, List.sum_cons, sum_ind N L h.2]
+    by_cases hn : N = n
+    · subst hn
+      simp [h.1]
+    · by_cases hL : N ∈ L <;> simp [hn, hL]
+
+theorem fz_tSel (τ : ℕ → ZMod 2) (Cs : List F2) (Z : List ℕ) :
+    fz τ (tSel Cs Z) = if dnum τ Cs ∈ Z then 1 else 0 := by
+  unfold tSel
+  rw [fz_flatMap]
+  have hin : ∀ n ∈ (List.range (2 ^ Cs.length)).filter (fun n => decide (n ∈ Z)),
+      fz τ (tInd Cs n) = if dnum τ Cs = n then 1 else 0 := by
+    intro n hn
+    exact fz_tInd τ Cs n (List.mem_range.1 (List.mem_filter.1 hn).1)
+  rw [List.map_congr_left hin, sum_ind _ _ ((List.nodup_range).filter _)]
+  have hlt := dnum_lt τ Cs
+  simp [List.mem_filter, List.mem_range, hlt]
+
+/-- The indices of the triples whose first list holds `n`. -/
+def ctx0 (ats : List (ℕ × List ℕ × List ℕ)) (n : ℕ) : List ℕ :=
+  (ats.filter fun z => decide (n ∈ z.2.1)).map (·.1)
+
+/-- The indices of the triples whose second list holds `n`. -/
+def ctx1 (ats : List (ℕ × List ℕ × List ℕ)) (n : ℕ) : List ℕ :=
+  (ats.filter fun z => decide (n ∈ z.2.2)).map (·.1)
+
+/-- Whether the atoms and the triples `(j, Z0, Z1)` pair up: one index, the atom 1 at `y = 0`
+exactly where `Cs` spell a number in `Z0` and at `y = 1` in `Z1`. -/
+def ctxOK (y : ℕ) (Cs : List F2) : Atoms → List (ℕ × List ℕ × List ℕ) → Bool
+  | [], [] => true
+  | a :: as, z :: zs => decide (a.1 = z.1) &&
+      decide (normF (substF y [] a.2) = normF (tSel Cs z.2.1)) &&
+      decide (normF (substF y [[]] a.2) = normF (tSel Cs z.2.2)) && ctxOK y Cs as zs
+  | _, _ => false
+
+theorem fz_at (τ : ℕ → ZMod 2) (y : ℕ) (Cs : List F2) (f : F2) (Z : List ℕ) (B : F2)
+    (h : normF (substF y B f) = normF (tSel Cs Z)) :
+    fz (Function.update τ y (fz τ B)) f = if dnum τ Cs ∈ Z then 1 else 0 := by
+  rw [← fz_substF, ← fz_normF, h, fz_normF, fz_tSel]
+
+theorem aval_ctx (A : ℕ → ℂ) (y : ℕ) (Cs : List F2) (τ : ℕ → ZMod 2) :
+    ∀ (as : Atoms) (zs : List (ℕ × List ℕ × List ℕ)), ctxOK y Cs as zs = true →
+      aval A as (Function.update τ y 0) = ((ctx0 zs (dnum τ Cs)).map A).prod ∧
+        aval A as (Function.update τ y 1) = ((ctx1 zs (dnum τ Cs)).map A).prod
+  | [], [], _ => by simp [aval, ctx0, ctx1]
+  | [], _ :: _, h => by simp [ctxOK] at h
+  | _ :: _, [], h => by simp [ctxOK] at h
+  | a :: as, z :: zs, h => by
+    simp only [ctxOK, Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := h
+    obtain ⟨ih0, ih1⟩ := aval_ctx A y Cs τ as zs h4
+    have e0 := fz_at τ y Cs a.2 z.2.1 [] h2
+    have e1 := fz_at τ y Cs a.2 z.2.2 [[]] h3
+    have hz : fz τ ([] : F2) = 0 := rfl
+    have ho : fz τ ([[]] : F2) = 1 := by simp [fz, mz]
+    rw [hz] at e0
+    rw [ho] at e1
+    rw [aval_cons, aval_cons, ih0, ih1, e0, e1]
+    constructor
+    · by_cases hm : dnum τ Cs ∈ z.2.1 <;> simp [hm, ctx0, h1]
+    · by_cases hm : dnum τ Cs ∈ z.2.2 <;> simp [hm, ctx1, h1]
+
+theorem prod_range_hit (f : ℕ → ℂ) (N : ℕ) :
+    ∀ K, N < K → ((List.range K).map fun n => if N = n then f n else 1).prod = f N
+  | 0, h => absurd h (Nat.not_lt_zero _)
+  | K + 1, h => by
+    rw [List.range_succ, List.map_append, List.prod_append]
+    rcases Nat.lt_succ_iff_lt_or_eq.1 h with hK | hK
+    · rw [prod_range_hit f N K hK]
+      simp [show N ≠ K by omega]
+    · subst hK
+      rw [List.prod_eq_one]
+      · simp
+      · intro x hx
+        obtain ⟨n, hn, rfl⟩ := List.mem_map.1 hx
+        have := List.mem_range.1 hn
+        simp [show N ≠ n by omega]
+
+/-- Whether `y` is the head held variable, absent from the rest of `held`, the path, the
+constraints and the rows, its phase terms of coefficient `M / 2` with a quotient off the path
+that is 1 exactly where `Cs` spell a number in `Qs`, and the atoms reading it paired with `ats`
+by `ctxOK`. -/
+def avctxOK (M y : ℕ) (Cs : List F2) (ats : List (ℕ × List ℕ × List ℕ)) (Qs : List ℕ)
+    (t : AData) : Bool :=
+  decide (0 < M) && decide (t.held.head? = some y) && !decide (y ∈ t.held.tail) &&
+    !decide (y ∈ t.s.path) && !decide (y ∈ fvars (t.s.cons ++ t.s.rows)) &&
+    halfOK M y t.s.phase && offPath t.s (quot y t.s.phase) &&
+    decide (normF (quot y t.s.phase) = normF (tSel Cs Qs)) &&
+    ctxOK y Cs (t.atoms.filter (reads y)) ats
+
+/-- The held variable `y` summed on the context `Cs`: its phase terms dropped and the atoms
+reading it replaced by `(js n, [Cs spell n])` for each `n < 2 ^ Cs.length`. -/
+def avctxS (y : ℕ) (Cs : List F2) (js : List ℕ) (t : AData) : AData :=
+  ⟨{ t.s with phase := rest y t.s.phase }, t.held.tail,
+    t.atoms.filter (fun a => !reads y a) ++
+      (List.range (2 ^ Cs.length)).map fun n => (js.getD n 0, normF (tInd Cs n))⟩
+
+theorem avctx_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (y : ℕ) (Cs : List F2)
+    (ats : List (ℕ × List ℕ × List ℕ)) (Qs js : List ℕ) (t : AData) (σ : ℕ → ZMod 2)
+    (h : avctxOK M y Cs ats Qs t = true)
+    (hA : ∀ n < 2 ^ Cs.length, 2 * A (js.getD n 0) =
+      ((ctx0 ats n).map A).prod + (if n ∈ Qs then -1 else 1) * ((ctx1 ats n).map A).prod) :
+    valA M c A t σ = valA M (2 * c) A (avctxS y Cs js t) σ := by
+  rcases t with ⟨s, held, as⟩
+  simp only [avctxOK, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hM, hhd⟩, htl⟩, hpath⟩, hcons⟩, hh⟩, ho⟩, hq⟩, hok⟩ := h
+  rcases held with _ | ⟨z, hs⟩
+  · simp at hhd
+  simp only [List.head?_cons, Option.some.injEq] at hhd
+  subst hhd
+  simp only [List.tail_cons] at htl
+  simp only [valA, avctxS, List.tail_cons]
+  rw [bsum_head _ z hs σ htl]
+  apply bsum_congr
+  intro τ
+  obtain ⟨e0, e1⟩ := aval_ctx A z Cs τ _ ats hok
+  have hrest : ∀ b : ZMod 2, aval A (as.filter fun a => !reads z a) (Function.update τ z b) =
+      aval A (as.filter fun a => !reads z a) τ :=
+    fun b => aval_update_not A τ z b _ (avars_not_reads z as)
+  have hQ : fz τ (quot z s.phase) = if dnum τ Cs ∈ Qs then 1 else 0 := by
+    rw [← fz_normF, hq, fz_normF, fz_tSel]
+  have hnew : aval A ((List.range (2 ^ Cs.length)).map
+      fun n => (js.getD n 0, normF (tInd Cs n))) τ = A (js.getD (dnum τ Cs) 0) := by
+    unfold aval
+    rw [List.map_map, ← prod_range_hit (fun n => A (js.getD n 0)) (dnum τ Cs) _ (dnum_lt τ Cs)]
+    congr 1
+    apply List.map_congr_left
+    intro n hn
+    simp only [Function.comp_apply]
+    rw [fz_normF, fz_tInd τ Cs n (List.mem_range.1 hn)]
+    by_cases hd : dnum τ Cs = n <;> simp [hd]
+  have hN := hA _ (dnum_lt τ Cs)
+  rw [aval_split A z (Function.update τ z 0) as, aval_split A z (Function.update τ z 1) as,
+    e0, e1, hrest, hrest, val_half_held M hM c s z τ 0 hpath hcons hh ho,
+    val_half_held M hM c s z τ 1 hpath hcons hh ho, aval_append, hnew, val_smul, hQ]
+  by_cases hd : dnum τ Cs ∈ Qs
+  · simp only [hd, zero_mul, one_mul, one_ne_zero, ↓reduceIte] at hN ⊢
+    linear_combination (-(aval A (List.filter (fun a => !reads z a) as) τ *
+      val M c { s with phase := rest z s.phase } τ)) * hN
+  · simp only [hd, mul_zero, ↓reduceIte, one_mul] at hN ⊢
+    linear_combination (-(aval A (List.filter (fun a => !reads z a) as) τ *
+      val M c { s with phase := rest z s.phase } τ)) * hN
+
+/-- The coefficient identities of [Average] on a context of `k` polynomials: `A jn = -1`, and
+for each `n < 2 ^ k`, `2 A (js n)` the product over `ctx0 ats n` plus that over `ctx1 ats n`
+with `jn` when `n` is in `Qs`. -/
+def avctxReqs (k : ℕ) (ats : List (ℕ × List ℕ × List ℕ)) (Qs js : List ℕ) (jn : ℕ) :
+    List (ℕ × ℕ × List (List ℕ)) :=
+  (0, jn, [[], [jn]]) :: (List.range (2 ^ k)).map fun n =>
+    (2, js.getD n 0, [ctx0 ats n, ctx1 ats n ++ if n ∈ Qs then [jn] else []])
+
+/-! ## Atoms split on a support -/
+
+/-- Whether each product of two of the monomials is 0 where some constraint holds. -/
+def pairsOK (C : List F2) : F2 → Bool
+  | [] => true
+  | m :: f => f.all (fun u => dropT C (m ++ u)) && pairsOK C f
+
+/-- Whether the path is empty and the head atom's normalised monomials multiply pairwise to 0
+where some constraint holds. -/
+def asplitOK (t : AData) : Bool :=
+  decide (t.s.path = []) &&
+    match t.atoms with
+    | [] => false
+    | a :: _ => pairsOK t.s.cons (normF a.2)
+
+/-- The head atom `(j, f)` replaced by one atom `(j, [m])` per monomial `m` of `normF f`. -/
+def asplitS (t : AData) : AData :=
+  match t.atoms with
+  | [] => t
+  | a :: as => { t with atoms := (normF a.2).map (fun m => (a.1, [m])) ++ as }
+
+theorem fz_zero_of (τ : ℕ → ZMod 2) : ∀ f : F2, (∀ u ∈ f, mz τ u = 0) → fz τ f = 0
+  | [], _ => rfl
+  | u :: f, h => by
+    rw [fz_cons, h u List.mem_cons_self,
+      fz_zero_of τ f (fun v hv => h v (List.mem_cons_of_mem _ hv)), add_zero]
+
+theorem aval_split1 (A : ℕ → ℂ) (τ : ℕ → ZMod 2) (j : ℕ) (C : List F2)
+    (hC : ∀ q ∈ C, fz τ q = 0) :
+    ∀ f : F2, pairsOK C f = true →
+      aval A (f.map fun m => (j, [m])) τ = if fz τ f = 0 then 1 else A j
+  | [], _ => by simp [aval, fz]
+  | m :: f, h => by
+    simp only [pairsOK, Bool.and_eq_true, List.all_eq_true] at h
+    obtain ⟨hp, hf⟩ := h
+    rw [List.map_cons, aval_cons, aval_split1 A τ j C hC f hf]
+    have hm : fz τ [m] = mz τ m := by simp [fz]
+    dsimp only
+    rw [hm, fz_cons]
+    rcases z2_cases (mz τ m) with e | e
+    · rw [e, zero_add]
+      simp
+    · have h0 : fz τ f = 0 := fz_zero_of τ f (fun u hu => by
+        have := mz_of_dropT τ C _ (hp u hu) hC
+        rw [mz_append, e, one_mul] at this
+        exact this)
+      rw [e, h0]
+      simp
+
+theorem asplit_sound (M : ℕ) (c : ℂ) (A : ℕ → ℂ) (t : AData) (σ : ℕ → ZMod 2)
+    (h : asplitOK t = true) : valA M c A t σ = valA M c A (asplitS t) σ := by
+  rcases t with ⟨s, held, as⟩
+  rcases as with _ | ⟨a, as⟩
+  · simp [asplitOK] at h
+  simp only [asplitOK, Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨hp, hpr⟩ := h
+  simp only [valA, asplitS]
+  apply bsum_congr
+  intro τ
+  by_cases hC : ∀ q ∈ s.cons ++ s.rows, fz τ q = 0
+  · rw [aval_append, aval_split1 A τ a.1 s.cons
+      (fun q hq => hC q (List.mem_append_left _ hq)) _ hpr, aval_cons, fz_normF]
+  · have h0 : val M c s τ = 0 := by
+      unfold val
+      rw [hp]
+      simp only [bsum]
+      unfold summand
+      simp only [hC, ite_false]
+    rw [h0, mul_zero, mul_zero]
+
 /-! ## Step lists -/
 
 /-- A step on a path sum with atoms. -/
@@ -1393,6 +1663,9 @@ inductive AStep where
   | aphase (m : Mono) (e j : ℕ)
   | aflip (j j' o : ℕ)
   | adropC
+  | acons (j : ℕ)
+  | avctx (y : ℕ) (Cs : List F2) (ats : List (ℕ × List ℕ × List ℕ)) (Qs js : List ℕ) (jn : ℕ)
+  | asplit
 
 /-- `(b + 1) * A j = b + om M ^ e` for the triple `(e, j, b)`. -/
 def qreqHolds (M : ℕ) (A : ℕ → ℂ) (p : ℕ × ℕ × ℕ) : Prop :=
@@ -1423,6 +1696,8 @@ def AStep.reqs : AStep → List Req
   | .aone j => [(1, j, [[]])]
   | .amerge j j1 j2 => [(1, j, [[j1, j2]])]
   | .aflip j j' o => [(1, o, [[]]), (1, o, [[j, j']])]
+  | .acons j => [(1, j, [])]
+  | .avctx _ Cs ats Qs js jn => avctxReqs Cs.length ats Qs js jn
   | _ => []
 
 /-- A step's side condition. -/
@@ -1453,6 +1728,9 @@ def AStep.ok (M : ℕ) : AStep → AData → Bool
   | .aphase m e _, t => aphaseOK m e t
   | .aflip j _ _, t => aflipOK j t
   | .adropC, t => decide (t.s.path = [])
+  | .acons _, t => aconsOK t
+  | .avctx y Cs ats Qs _ _, t => avctxOK M y Cs ats Qs t
+  | .asplit, t => asplitOK t
 
 /-- A step applied. -/
 def AStep.apply (M : ℕ) : AStep → AData → AData
@@ -1478,6 +1756,9 @@ def AStep.apply (M : ℕ) : AStep → AData → AData
   | .aphase m e j, t => aphaseS m e j t
   | .aflip _ j' _, t => aflipS j' t
   | .adropC, t => adropCS t
+  | .acons j, t => aconsS j t
+  | .avctx y Cs _ _ js _, t => avctxS y Cs js t
+  | .asplit, t => asplitS t
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
@@ -1489,6 +1770,7 @@ noncomputable def AStep.fac (A : ℕ → ℂ) : AStep → ℂ
   | .acomp j => A j
   | .turn _ _ => 2
   | .aflip j _ _ => A j
+  | .avctx _ _ _ _ _ _ => 2
   | _ => 1
 
 /-- Every side condition along a step list. -/
@@ -1607,6 +1889,32 @@ theorem AStep.sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) (st : AStep) (t :
   | apick i => simpa [AStep.fac, AStep.apply] using apick_sound M c A i t σ h
   | anorm => simpa [AStep.fac, AStep.apply] using anorm_sound M c A t σ
   | adropC => simpa [AStep.fac, AStep.apply] using adropC_sound M c A t σ h
+  | acons j =>
+    have hreq := hr _ List.mem_cons_self
+    simp only [reqHolds, List.map_nil, List.sum_nil, Nat.cast_one, one_mul] at hreq
+    simpa [AStep.fac, AStep.apply] using acons_sound M c A j t σ hreq h
+  | avctx y Cs ats Qs js jn =>
+    have hr' : ∀ r ∈ avctxReqs Cs.length ats Qs js jn, reqHolds A r := hr
+    have r0 := hr' _ List.mem_cons_self
+    simp only [reqHolds, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil,
+      List.sum_cons, List.sum_nil, add_zero, mul_one] at r0
+    push_cast at r0
+    have hn : A jn = -1 := by linear_combination -r0
+    have hA : ∀ n < 2 ^ Cs.length, 2 * A (js.getD n 0) =
+        ((ctx0 ats n).map A).prod + (if n ∈ Qs then -1 else 1) * ((ctx1 ats n).map A).prod := by
+      intro n hn'
+      have r := hr' _ (List.mem_cons_of_mem _ (List.mem_map.2 ⟨n, List.mem_range.2 hn', rfl⟩))
+      simp only [reqHolds, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero,
+        List.map_append, List.prod_append] at r
+      push_cast at r
+      by_cases hq : n ∈ Qs
+      · simp only [hq, ↓reduceIte, List.map_cons, List.map_nil, List.prod_cons, List.prod_nil,
+          hn] at r ⊢
+        linear_combination r
+      · simp only [hq, ↓reduceIte, List.map_nil, List.prod_nil] at r ⊢
+        linear_combination r
+    simpa [AStep.fac, AStep.apply] using avctx_sound M c A y Cs ats Qs js t σ h hA
+  | asplit => simpa [AStep.fac, AStep.apply] using asplit_sound M c A t σ h
 
 theorem aruns_sound (M : ℕ) (hM : 2 ≤ M) (A : ℕ → ℂ) :
     ∀ (sts : List AStep) (t : AData) (c : ℂ) (σ : ℕ → ZMod 2),

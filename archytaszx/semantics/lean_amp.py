@@ -294,6 +294,73 @@ class AmpRun:
         self.facs.append(sp.Integer(2))
         self.atoms = [*self.atoms, *((j, turn_indicator(bs, s)) for s, j in pairs)]
 
+    def hold(self, vs: Iterable[int]) -> None:
+        """The inner path variables among ``vs`` held, lowest first."""
+        for v in sorted(set(vs) & set(self.cur)):
+            rest = [x for x in self.cur if x != v]
+            self.inner([f".perm {[v, *rest]}"])
+            self.steps.append(".hold")
+            self.cur, self.held = rest, [v, *self.held]
+
+    def turn_held(self, y: int, bs: Sequence[F2Poly]) -> None:
+        """[Turn] on ``y`` with digits ``bs`` reading path variables: those held first, then
+        [Turn], its constraint made the head zero atom when it reads a held or path variable."""
+        from archytaszx.algebra.pathsum import turn_indicator
+
+        self.hold(v for b in bs for m in b for v in m)
+        self.turn(y, bs)
+        zero = turn_indicator(bs, 1 << (len(bs) - 1))
+        live = set(self.cur) | set(self.held)
+        if any(v in live for m in zero for v in m):
+            j = self.coefs.index(Cyclo.rational(0))
+            self.steps.append(f".acons {j}")
+            self.reqs.append((1, j, ()))
+            self.atoms = [(j, zero), *self.atoms]
+
+    def average_ctx(self, y: int, q: F2Poly, ctx: Sequence[F2Poly]) -> None:
+        """[Average] on the context ``ctx`` of the held variable ``y`` with the half phase
+        ``y q / 2``: per atom reading ``y`` the values of ``ctx`` where it is 1 at ``y = 0`` and
+        at ``y = 1``, one atom per value of ``ctx``."""
+        from archytaszx.algebra.pathsum import ctx_value, f2_add, turn_indicator
+
+        size = 1 << len(ctx)
+        reading = [a for a in self.atoms if any(y in m for m in a[1])]
+        ats: list[tuple[int, list[int], list[int]]] = []
+        for j, f in reading:
+            f0 = frozenset(m for m in f if y not in m)
+            f1 = f2_add(f0, frozenset(m - {y} for m in f if y in m))
+            vals = [(ctx_value(f0, ctx, n), ctx_value(f1, ctx, n)) for n in range(size)]
+            if any(v is None for pair in vals for v in pair):
+                raise PathSumUnsupported(f"an atom on {y} off its context")
+            ats.append(
+                (j, [n for n in range(size) if vals[n][0]], [n for n in range(size) if vals[n][1]])
+            )
+        qs = [n for n in range(size) if ctx_value(q, ctx, n)]
+        jn = self.coefs.index(Cyclo.rational(-1))
+        js: list[int] = []
+        reqs: list[Req] = [(0, jn, ((), (jn,)))]
+        for n in range(size):
+            p0 = [j for j, z0, _z1 in ats if n in z0]
+            p1 = [j for j, _z0, z1 in ats if n in z1] + ([jn] if n in qs else [])
+            v0, v1 = Cyclo.rational(1), Cyclo.rational(1)
+            for j in p0:
+                v0 = v0 * self.coefs.values[j]
+            for j in p1:
+                v1 = v1 * self.coefs.values[j]
+            js.append(self.coefs.index((v0 + v1).scale(Fraction(1, 2))))
+            reqs.append((2, js[-1], (tuple(p0), tuple(p1))))
+        self._hfront(y)
+        self.inner([".norm"])
+        listed = "[" + ", ".join(f"({j}, {z0}, {z1})" for j, z0, z1 in ats) + "]"
+        cs = "[" + ", ".join(f2_text(c) for c in ctx) + "]"
+        self.steps.append(f".avctx {y} {cs} {listed} {qs} {js} {jn}")
+        self.reqs += reqs
+        self.facs.append(sp.Integer(2))
+        self.held = self.held[1:]
+        self.atoms = [a for a in self.atoms if not any(y in m for m in a[1])] + [
+            (js[n], turn_indicator(ctx, n)) for n in range(size)
+        ]
+
     def pin(self, y: int, value: F2Poly) -> None:
         """[Pin] of ``y`` along its constraint ``y + value``: when an atom reads ``y``, the
         path variables of ``value`` held and ``y`` substituted in the atoms first."""
@@ -372,12 +439,32 @@ class AmpRun:
             self.facs.append(self.coefs.model(j))
             self.atoms = self.atoms[2:]
 
-    def normalize(self, phase: Sequence[tuple[Mono, Fraction]], support: F2Poly) -> None:
+    def split(self) -> None:
+        """Every atom whose monomials multiply pairwise to 0 on ``support`` split into one atom
+        per monomial (asplit), then atoms normalised, merged and paired."""
+        g = self.support
+        if g is None:
+            return
+        for atom in list(self.atoms):
+            j, f = atom
+            monos = sorted(f, key=sorted)
+            if len(monos) < 2 or any(
+                f2_mul(frozenset({m | u}), g) for i, m in enumerate(monos) for u in monos[i + 1 :]
+            ):
+                continue
+            self._pick(atom)
+            self.steps.append(".asplit")
+            self.atoms = [*((j, frozenset({m})) for m in monos), *self.atoms[1:]]
+        self.substitute([])
+
+    def normalize(
+        self, phase: Sequence[tuple[Mono, Fraction]], support: F2Poly, split: bool = False
+    ) -> None:
         """The final sum's phase ``phase`` and atoms in atom form: with the constraint ``a + a b``
         (support_lift of ``support``) the phase monomials holding ``a`` times ``b`` (psup), every
         nonconstant phase term moved to an atom (aphase), every atom on a polynomial with a
         constant term ``x^(1 + g)`` written ``x (1 / x)^g`` (aflip), then atoms normalised,
-        merged and paired."""
+        merged and paired; with ``split`` then split on the support."""
         from archytaszx.algebra.pathsum import EMPTY, support_lift
 
         m = self.coefs.m
@@ -406,6 +493,8 @@ class AmpRun:
             self.facs.append(self.coefs.model(j))
             self.atoms = [(inv, frozenset(f ^ {EMPTY})), *self.atoms[1:]]
         self.substitute([])
+        if split:
+            self.split()
 
     def final_key(self) -> list[tuple[int, F2Poly]]:
         """The final atoms as a sorted multiset."""
@@ -446,6 +535,12 @@ def reduce_run(run: AmpRun, trace: Sequence[Step]) -> None:
             run.fold(set(run.cur) | set(run.held))
         elif step.rule == "turn":
             run.turn(step.var, step.values)
+            run.fold(set(run.cur) | set(run.held))
+        elif step.rule == "turn_held":
+            run.turn_held(step.var, step.values)
+            run.fold(set(run.cur) | set(run.held))
+        elif step.rule == "average_ctx":
+            run.average_ctx(step.var, step.value or frozenset(), step.values)
             run.fold(set(run.cur) | set(run.held))
         else:
             run.trace(step)

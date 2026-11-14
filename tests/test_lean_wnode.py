@@ -12,7 +12,8 @@
 # limitations under the License.
 
 """W nodes in the network export: w_state instances against the W node fed |1>, and the
-[Quarter] reduction of its CRy variables at n = 2."""
+[Quarter] reduction of its CRy variables at n = 2, and at n = 3 [Turn] on S reading path variables,
+[Average] on a context and atoms split on the one-hot support."""
 
 from __future__ import annotations
 
@@ -114,4 +115,40 @@ def test_lean_rejects_a_tampered_quarter_step(tmp_path: object) -> None:
     tampered = source.replace(QUARTER_Y, ".quarter [[0], [1]] [[0]] 0")
     assert tampered != source
     ok, _output = L.check(tampered, f"{tmp_path}/w2bad.lean")
+    assert not ok
+
+
+AVCTX = ".avctx 17 [[[4], [5]], [[5]]]"
+"""The first [Average] on a context at n = 3: y17 on the context x4 + x5, x5."""
+
+
+def test_w_state_at_three_reduces_by_held_turns_and_context_averages() -> None:
+    """At n = 3 [Turn] with S on path variables and [Average] on a context leave no path
+    variable, and the export splits atoms on the one-hot support."""
+    from archytaszx.semantics.pathsum_diagram import from_diagram
+
+    raw = from_diagram(_pair(3)[0], w_nodes=True)
+    assert isinstance(raw, PathSum)
+    red = reduce(raw)
+    assert not red.path
+    assert {"turn_held", "average_ctx"} <= {st.rule for st in red.trace}
+    source = export_net(*_pair(3))
+    assert AVCTX in source
+    assert ".asplit" in source
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_checks_w_state_at_three(tmp_path: object) -> None:
+    ok, output = L.check(export_net(*_pair(3)), f"{tmp_path}/w3.lean")
+    assert ok, output
+
+
+@pytest.mark.skipif(not _mathlib(), reason="the ArchytasZX Lean project has no Mathlib")
+def test_lean_rejects_a_tampered_context_average(tmp_path: object) -> None:
+    """The context x4 + x5, x5 of the first [Average] on a context changed to x4 + x5, x4 fails
+    avctxOK."""
+    source = export_net(*_pair(3))
+    tampered = source.replace(AVCTX, ".avctx 17 [[[4], [5]], [[4]]]", 1)
+    assert tampered != source
+    ok, _output = L.check(tampered, f"{tmp_path}/w3bad.lean")
     assert not ok

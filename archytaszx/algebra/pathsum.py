@@ -1010,12 +1010,117 @@ def _try_turn(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bo
     return False
 
 
+def _try_turn_held(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
+    """[Turn] with S reading path variables: y in no constraint or amplitude exponent, its phase
+    terms y S / 2^k (k >= 3), digits b_i: Sum_y = 2 0^[b = 2^(k-1)] Prod_s ((1 + zeta^s) /
+    2)^[b = s], s over turn_values(k); the zero atom a constraint when it reads only boundary
+    variables."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    for y in sorted(ps.path - cons_vars - ps.amp_vars()):
+        terms = occ.get(y, [])
+        if not terms:
+            continue
+        den = max(c.denominator for _m, c in terms)
+        if den < 8 or den & (den - 1):
+            continue
+        k = den.bit_length() - 1
+        bs = turn_digits({m - {y}: int(c * den) % den for m, c in terms}, k)
+        _drop_terms(ps, terms)
+        zero = turn_indicator(bs, 1 << (k - 1))
+        if all(v in ps.boundary for m in zero for v in m):
+            ps.constraints.append(zero)
+        else:
+            ps.amps.append((Cyclo.rational(0), zero))
+        for s in turn_values(k):
+            f = turn_indicator(bs, s)
+            if f == ONE:
+                ps.const = ps.const * turn_base(s, k)
+            elif f:
+                ps.amps.append((turn_base(s, k), f))
+        ps.path.discard(y)
+        ps.sqrt2 += 2
+        ps.trace.append(Step("turn_held", y, None, None, values=bs))
+        return True
+    return False
+
+
+def ctx_value(g: F2Poly, ctx: Sequence[F2Poly], n: int) -> int | None:
+    """The value of ``g`` where the polynomials ``ctx`` take the bits of ``n``, low bit first,
+    or None when ``g`` is not 0, 1, a ``ctx`` entry or one plus it."""
+    const = 1 if EMPTY in g else 0
+    rest = frozenset(m for m in g if m)
+    if not rest:
+        return const
+    if rest not in ctx:
+        return None
+    return const ^ ((n >> ctx.index(rest)) & 1)
+
+
+def _try_average_ctx(ps: PathSum) -> bool:
+    """[Average] on a context: y in no constraint, its phase terms y Q / 2 (or none), its atoms
+    alpha^(F0 + y F1), Q, F0, F1 free of path variables and each 0, 1, C_i or 1 + C_i for at most
+    four polynomials C_i: Sum_y = 2 Prod_N ((v0(N) + (-1)^Q(N) v1(N)) / 2)^[C = N], v_b(N) the
+    product of the atoms on 1 at y = b and C = N."""
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    occ = _occurrences(ps.phase)
+    for y in sorted(ps.path & ps.amp_vars() - cons_vars):
+        terms = occ.get(y, [])
+        q = _hh_quotient(y, terms) if terms else frozenset()
+        if q is None or any(v in ps.path for m in q for v in m):
+            continue
+        parts = []
+        for i, (a, f) in enumerate(ps.amps):
+            if any(y in m for m in f):
+                f0 = frozenset(m for m in f if y not in m)
+                parts.append((i, a, f0, f2_add(f0, frozenset(m - {y} for m in f if y in m))))
+        if any(v in ps.path for _i, _a, f0, f1 in parts for g in (f0, f1) for m in g for v in m):
+            continue
+        ctx: list[F2Poly] = []
+        for g in [q] + [g for _i, _a, f0, f1 in parts for g in (f0, f1)]:
+            rest = frozenset(m for m in g if m)
+            if rest and rest not in ctx:
+                ctx.append(rest)
+        if len(ctx) > 4:
+            continue
+        new: list[tuple[Cyclo, F2Poly]] = []
+        for n in range(1 << len(ctx)):
+            v0, v1 = Cyclo.rational(1), Cyclo.rational(1)
+            for _i, a, f0, f1 in parts:
+                if ctx_value(f0, ctx, n):
+                    v0 = v0 * a
+                if ctx_value(f1, ctx, n):
+                    v1 = v1 * a
+            tot = v0 - v1 if ctx_value(q, ctx, n) else v0 + v1
+            new.append((tot.scale(Fraction(1, 2)), turn_indicator(ctx, n)))
+        hit = {i for i, *_ in parts}
+        _drop_terms(ps, terms)
+        ps.amps = [t for i, t in enumerate(ps.amps) if i not in hit] + new
+        ps.path.discard(y)
+        ps.sqrt2 += 2
+        ps.trace.append(Step("average_ctx", y, None, q, values=tuple(ctx)))
+        _fold_amps(ps)
+        return True
+    return False
+
+
 def reduce(ps: PathSum) -> PathSum:
     """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
     boundary constraint, [HHnl], [Quarter] and [Average] applied to a fixpoint, in that order, the
     lowest variable first, and [Turn] when none applies; variables in an amplitude exponent take
     only [Pin], [Average] and [Average] through a half phase, and substitutions reach the
-    exponents."""
+    exponents. When path variables are left, the reduction again with [Turn] on S reading path
+    variables tried first and [Average] on a context, taken when it leaves none."""
+    out = _reduce(ps, False)
+    if out.path and not out.is_zero:
+        alt = _reduce(ps, True)
+        if not alt.path:
+            return alt
+    return out
+
+
+def _reduce(ps: PathSum, held: bool) -> PathSum:
+    """reduce's rules to a fixpoint, with ``held`` [Turn] on S reading path variables first and
+    [Average] on a context."""
     out = ps.copy()
     _fold_amps(out)
     while out.path and not out.is_zero:
@@ -1023,7 +1128,7 @@ def reduce(ps: PathSum) -> PathSum:
             blocked = out.path & out.amp_vars()
             out.path -= blocked
             before = (frozenset(out.path), len(out.trace))
-            _reduce_round(out)
+            _reduce_round(out, held)
             stepped = len(out.trace) != before[1]
             out.path |= blocked
             if stepped:
@@ -1037,10 +1142,12 @@ def reduce(ps: PathSum) -> PathSum:
                 continue
             if _try_pin(out) or _try_average(out) or _try_average_half(out):
                 continue
+            if held and _try_average_ctx(out):
+                continue
             if _turn_round(out):
                 continue
             break
-        if not _reduce_round(out) and not _turn_round(out):
+        if not _reduce_round(out, held) and not _turn_round(out):
             break
     return out
 
@@ -1056,13 +1163,15 @@ def _turn_round(out: PathSum) -> bool:
         out.path |= blocked
 
 
-def _reduce_round(out: PathSum) -> bool:
-    """One rule application of reduce's balanced rules, or False."""
+def _reduce_round(out: PathSum, held: bool = False) -> bool:
+    """One rule application of reduce's balanced rules, with ``held`` [Turn] on S reading path
+    variables first, or False."""
     if not out.path:
         return False
     occ = _occurrences(out.phase)
     return (
-        _try_elim(out, occ)
+        (held and _try_turn_held(out, occ))
+        or _try_elim(out, occ)
         or _try_hh_pivot(out, occ)
         or _try_hh_gen(out, occ)
         or _try_omega(out, occ)
