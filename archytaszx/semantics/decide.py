@@ -806,7 +806,10 @@ def _planned_size(
             size = max(size, product)
     except Exception:  # noqa: BLE001
         return math.inf
-    return float(size)
+    try:
+        return float(size)
+    except OverflowError:
+        return math.inf
 
 
 def _interleave_degenerate(

@@ -1504,3 +1504,10 @@ class TestDegenerateSamples:
         points = [{"d": 1, "l": 1, "n": 1}, {"d": 2, "l": 0, "n": 1}, {"d": 2, "l": 1, "n": 1}]
         out = decide_module._interleave_degenerate(grid, grid, points)
         assert out == [points[0], points[2], points[1]]
+
+
+def test_planned_size_past_float_range_is_infinite() -> None:
+    from archytaszx.repl.parser import parse_dsl
+
+    wide = parse_dsl("v = Z(0 -> 1000, 4)\noutputs " + ", ".join(f"v.out{i}" for i in range(1000)))
+    assert decide_module._planned_size(wide, wide, {}) == float("inf")
