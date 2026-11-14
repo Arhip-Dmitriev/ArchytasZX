@@ -22,8 +22,9 @@ A :class:`Restriction` is a set of :class:`Clause` values, at most one per symbo
 * ``d >= c``: a floor on ``d``, the diagrams unchanged.
 
 :func:`apply_clause` substitutes one clause into a diagram: a concrete multiplicity expands
-its boxes, an affine one is substituted into every box carrying the symbol and each box whose
-multiplicity keeps a constant term ``c >= 1`` is peeled ``c`` times. :func:`subst_pair`
+its boxes, an affine one is substituted into every box and scalar carrying the symbol (asked,
+into phases and leg dimensions too) and each box whose multiplicity keeps a constant term
+``c >= 1`` is peeled ``c`` times. :func:`subst_pair`
 applies every clause, in order, to both sides.
 
 Phase symbols (free in a phase vector only) and exponent symbols (free in a scalar, in no
@@ -1160,8 +1161,10 @@ def _drop_parameter(diagram: Diagram, name: str) -> Diagram:
     return out
 
 
-def apply_clause(diagram: Diagram, clause: Clause) -> Diagram:
-    """``diagram`` with one clause substituted (see the module docstring); a new Diagram."""
+def apply_clause(diagram: Diagram, clause: Clause, *, everywhere: bool = False) -> Diagram:
+    """``diagram`` with one clause substituted (see the module docstring); a new Diagram. With
+    ``everywhere`` an affine multiplicity clause also goes into phases, leg dimensions and copy
+    scalars."""
     if clause.form == FINITE:
         raise DecideGrammarError(
             f"clause {clause.text()!r}: {clause.symbol} takes finitely many values; the claim is "
@@ -1193,12 +1196,34 @@ def apply_clause(diagram: Diagram, clause: Clause) -> Diagram:
             working.set_bang_box_multiplicity(box_id, Mult._from_expr(expr))
     if clause.symbol in working.scalar.free_symbols:
         working.set_scalar(working.scalar.substitute({clause.symbol: Scalar(value)}))
+    if everywhere and clause.symbol in _all_symbols(working):
+        working = _substitute_rest(working, clause.symbol, value)
     if clause.symbol in _all_symbols(working):
         raise DecideGrammarError(
             f"clause {clause.text()!r}: {clause.symbol} occurs outside the bang boxes and the "
             "scalar"
         )
     return _settle(working)
+
+
+def _substitute_rest(diagram: Diagram, name: str, value: sp.Expr) -> Diagram:
+    """``diagram`` with ``name`` replaced by ``value`` in its node phases, leg dimensions and
+    copy scalars."""
+    from archytaszx.diagram.bangbox import _dim_at, substitute_index_phases
+
+    working = substitute_index_phases(diagram, name, Mult._from_expr(value))
+    for node_id, node in sorted(working.nodes.items()):
+        if any(name in p.dim.free_symbols for p in (*node.inputs, *node.outputs)):
+            working.set_port_dims(
+                node_id,
+                [_dim_at(p.dim, name, value) for p in node.inputs],
+                [_dim_at(p.dim, name, value) for p in node.outputs],
+            )
+    for box_id, box in sorted(working.bang_boxes.items()):
+        if box.copy_scalar is not None and name in box.copy_scalar.free_symbols:
+            scalar = box.copy_scalar.substitute({name: Scalar(value)})
+            working.set_bang_box_extension(box_id, copy_scalar=scalar)
+    return working
 
 
 def _apply_real(diagram: Diagram, clause: Clause) -> Diagram:

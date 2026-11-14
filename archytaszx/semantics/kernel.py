@@ -800,7 +800,8 @@ def subst(
     """``lhs' = rhs'`` from ``t`` and one clause ``n = e`` or ``d = v``: both sides recomputed
     from ``t``'s by :func:`~archytaszx.semantics.restrict.apply_clause` and compared id for id
     with ``lhs`` and ``rhs`` when stated. A multiplicity shift ``n = s - c`` (``c > 0``) holds
-    for ``s >= c``: the clause is kept with that ``fresh_domain``."""
+    for ``s >= c``: the clause is kept with that ``fresh_domain`` and substituted into
+    phases and leg dimensions too."""
     from dataclasses import replace
 
     from archytaszx.semantics.restrict import MULTIPLICITY, Domain, _all_symbols, apply_clause
@@ -816,7 +817,9 @@ def subst(
         if clause.c < 0:
             clause = replace(clause, fresh_domain=Domain(lo=Fraction(-clause.c), q=1))
     try:
-        new_l, new_r = apply_clause(t.lhs, clause), apply_clause(t.rhs, clause)
+        wide = clause.c < 0
+        new_l = apply_clause(t.lhs, clause, everywhere=wide)
+        new_r = apply_clause(t.rhs, clause, everywhere=wide)
     except _INDUCTION_ERRORS as exc:
         raise KernelError(f"subst raised {type(exc).__name__}: {exc}") from exc
     for stated, computed in ((lhs, new_l), (rhs, new_r)):

@@ -63,7 +63,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
@@ -121,6 +121,7 @@ from archytaszx.semantics.induction import (
     InductionResult,
     StepDischarge,
     Verdict,
+    _least_offset,
     choose_index,
     prove_by_induction,
 )
@@ -2226,9 +2227,26 @@ class _Unsettled(str):
 
 @_trace.traced("decide.induction")
 def _decide_by_induction(
+    left: Diagram, right: Diagram, **options: Any
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """:func:`_induction_rung` with the shifted route (:func:`_decide_shifted`) only when no
+    induction rung is running."""
+    outer = not _INDUCING.get()
+    token = _INDUCING.set(True)
+    try:
+        return _induction_rung(left, right, shift=outer, **options)
+    finally:
+        _INDUCING.reset(token)
+
+
+_INDUCING: contextvars.ContextVar[bool] = contextvars.ContextVar("decide_inducing", default=False)
+
+
+def _induction_rung(
     left: Diagram,
     right: Diagram,
     *,
+    shift: bool,
     evaluated: Sequence[Mapping[str, CheckAssignmentValue]],
     samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
     rules: Sequence[Rule] | None,
@@ -2243,7 +2261,8 @@ def _decide_by_induction(
     floors: Mapping[str, int] | None = None,
 ) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
     """The induction rung: a settled (verdict, method, reason, evidence), or why it did not
-    settle."""
+    settle; with ``shift``, a base of 1 from a box ``index - c`` first tries
+    :func:`_decide_shifted`."""
     try:
         index = choose_index(left, right)
     except InductionError as exc:
@@ -2262,6 +2281,28 @@ def _decide_by_induction(
         break
     if base is None or pair is None:
         return f"neither {index}=0 nor {index}=1 instantiates both sides"
+    shift_reason = ""
+    if shift and base != 0 and _least_offset(left, right, index) < 0:
+        shifted = _decide_shifted(
+            left,
+            right,
+            index,
+            -_least_offset(left, right, index),
+            evaluated=evaluated,
+            samples=samples,
+            rules=rules,
+            guard=guard,
+            max_samples=max_samples,
+            use_symbolic=use_symbolic,
+            max_depth=max_depth,
+            tolerance=tolerance,
+            max_elements=max_elements,
+            use_saturation=use_saturation,
+            saturation_limits=saturation_limits,
+        )
+        if not isinstance(shifted, str):
+            return shifted
+        shift_reason = f"; shifted: {shifted}"
     base_options: dict[str, object] = {
         "rules": rules,
         "guard": guard,
@@ -2415,9 +2456,84 @@ def _decide_by_induction(
     if not isinstance(periodic, str):
         return periodic
     return _Unsettled(
-        "; reversed: ".join(reasons) + f"; carry open: {opened}; periodic: {periodic}",
+        "; reversed: ".join(reasons)
+        + f"; carry open: {opened}; periodic: {periodic}{shift_reason}",
         base_decision,
     )
+
+
+def _decide_shifted(
+    left: Diagram,
+    right: Diagram,
+    index: str,
+    c: int,
+    *,
+    evaluated: Sequence[Mapping[str, CheckAssignmentValue]],
+    samples: Sequence[Mapping[str, CheckAssignmentValue]] | None,
+    **options: Any,
+) -> tuple[EqualityVerdict, DecisionMethod, str, dict[str, object]] | str:
+    """EQUAL for ``index >= c`` when the induction rung settles both sides with ``index``
+    renamed ``s + c`` (``s`` fresh) EQUAL; its kernel theorem carried back by
+    :func:`~archytaszx.semantics.kernel.subst` at ``s = index - c`` (domain ``index >= c``);
+    else why not."""
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import (
+        _all_free_symbols,
+        _fresh_symbol_name,
+        rename_multiplicity,
+    )
+    from archytaszx.semantics.restrict import MULTIPLICITY, SHIFT, Clause
+
+    s = _fresh_symbol_name("s", _all_free_symbols(left) | _all_free_symbols(right))
+
+    def moved(
+        points: Sequence[Mapping[str, CheckAssignmentValue]],
+    ) -> list[Mapping[str, CheckAssignmentValue]]:
+        out: list[Mapping[str, CheckAssignmentValue]] = []
+        for point in points:
+            rest = {k: v for k, v in point.items() if k != index}
+            value = point.get(index)
+            if value is None:
+                out.append(rest)
+            elif isinstance(value, int) and value >= c:
+                out.append({**rest, s: value - c})
+        return out
+
+    try:
+        pair = tuple(rename_multiplicity(d, index, Mult(s) + c) for d in (left, right))
+    except _INDUCTION_ERRORS as exc:
+        return f"{index} = {s} + {c}: {type(exc).__name__}: {exc}"
+    settled = _decide_by_induction(
+        pair[0],
+        pair[1],
+        evaluated=moved(evaluated),
+        samples=None if samples is None else moved(samples),
+        **options,
+    )
+    if isinstance(settled, str):
+        return f"{index} = {s} + {c}: {settled}"
+    verdict, method, reason, evidence = settled
+    if verdict is not EqualityVerdict.EQUAL:
+        return f"{index} = {s} + {c}: {verdict.value}: {reason}"
+    theorem = evidence.get("induction_proof")
+    built = ""
+    if isinstance(theorem, kernel.Theorem):
+        clause = Clause(s, MULTIPLICITY, SHIFT, a=1, c=-c, fresh=index)
+        try:
+            back = kernel.subst(theorem, clause)
+            theorem = kernel.trans(
+                kernel.iso(left, back.lhs),
+                kernel.trans(back, kernel.iso(back.rhs, right)),
+            )
+            built = f"; kernel proof carried to {index} >= {c} by subst at {s} = {index} - {c}"
+        except kernel.KernelError as exc:
+            theorem, built = None, f"; no kernel proof: subst at {s} = {index} - {c}: {exc}"
+    reason = (
+        f"with {index} = {s} + {c}: {reason}; holds for {index} >= {c} ({index} < {c} does not "
+        f"instantiate){built}"
+    )
+    return verdict, method, reason, {**evidence, "induction_proof": theorem}
 
 
 def _decide_periodic(

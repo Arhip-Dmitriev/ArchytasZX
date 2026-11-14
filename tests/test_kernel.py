@@ -307,3 +307,37 @@ def test_a_chain_box_partly_in_the_region_is_refused() -> None:
     cut = CutRegion(rest, (), (), {})
     with pytest.raises(InductionDomainError):
         _copy_side(a, cut, a.scalar)
+
+
+_SHORT = """
+count n
+x = X(1 -> 1, literal 2) phase{1: 1/2}
+y = X(1 -> 1, literal 2) phase{1: 1/2}
+wire x.out0 -- y.in0
+repeat n - 1 as V index m: x
+chain V: x.out0 -> x.in0
+inputs x.in0
+outputs y.out0
+"""
+
+_LONG = """
+count n
+x = X(1 -> 1, literal 2) phase{1: 1/2}
+repeat n as V index m: x
+chain V: x.out0 -> x.in0
+inputs x.in0
+outputs x.out0
+"""
+
+
+def test_an_n_minus_one_box_is_inducted_from_one() -> None:
+    from archytaszx.repl.parser import parse_dsl
+    from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+
+    left, right = parse_dsl(_SHORT), parse_dsl(_LONG)
+    decision = decide_equal(left, right, samples=[], use_symbolic=False)
+    assert decision.verdict is EqualityVerdict.EQUAL
+    theorem = K.from_decision(decision, left, right)
+    assert "n >= 1" in theorem.statement()
+    broken = parse_dsl(_LONG.replace("1/2}", "1/4}"))
+    assert decide_equal(left, broken, samples=[]).verdict is not EqualityVerdict.EQUAL
