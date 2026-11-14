@@ -15,8 +15,10 @@
 export to Lean 4.
 
 A :class:`Theorem` states ``lhs = rhs`` for diagrams, every free multiplicity universally
-quantified over the naturals; for diagrams with a discard, equality of their CPMs. Only the
-rules below construct one:
+quantified over the naturals; for diagrams with a discard, equality of their CPMs. A box whose
+multiplicity is negative below ``x = v`` puts the side clause ``x >= v`` in the theorem's
+``domain``; one negative under every floor of one symbol is refused. Only the rules below
+construct one:
 
 * :func:`refl` -- ``d = d``;
 * :func:`rule` -- ``d = d'`` for one recorded rewrite step, re-applied by the engine at a
@@ -69,6 +71,8 @@ diagrams are not equal for every parameter value.
 
 from __future__ import annotations
 
+import itertools
+import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -155,13 +159,15 @@ class Theorem:
         assumptions: tuple[str, ...] = (),
         domain: tuple[Clause, ...] = (),
         origin: tuple[Diagram, Diagram] | None = None,
+        *,
+        floors: bool = True,
     ) -> None:
         if token is not _TOKEN:
             raise KernelError("a Theorem is built only by the kernel's inference rules")
         self.lhs, self.rhs = lhs, rhs
         self.inference = inference
         self.assumptions = assumptions
-        self.domain = domain
+        self.domain = _with_box_floors(lhs, rhs, domain) if floors else domain
         self.origin = origin
 
     def statement(self) -> str:
@@ -300,6 +306,90 @@ def _refuse_on(where: str, theorems: Sequence[Theorem], symbols: frozenset[str])
         for c in restricting(t):
             if _clause_symbols(c) & symbols:
                 raise KernelError(f"{where}: a premise holds only under {c.text() or c.symbol}")
+
+
+def _lows(domain: Sequence[Clause]) -> dict[str, int]:
+    """The least integer each symbol takes under ``domain``: a shift's fresh symbol by its
+    range, a side condition's symbol by its own."""
+    from archytaszx.semantics.restrict import SIDE
+
+    out: dict[str, int] = {}
+    for c in domain:
+        side = c.symbol if c.form == SIDE else ""
+        for name, dom in ((c.fresh, c.fresh_domain), (side, c.domain)):
+            if not name or dom is None or dom.lo is None:
+                continue
+            low = math.ceil(dom.lo)
+            if dom.lo_strict and low == dom.lo:
+                low += 1
+            out[name] = max(out.get(name, 0), low)
+    return out
+
+
+_PROBE = 4
+_MAX_FLOOR = 64
+
+
+def _mult_floor(expr: sp.Expr, lows: Mapping[str, int]) -> tuple[str, int] | None:
+    """None when the multiplicity ``expr`` is non-negative at every point of
+    ``low .. low + _PROBE - 1`` per symbol and its top-degree coefficients are; else ``(x, v)``,
+    ``expr`` of one symbol ``x`` non-negative on ``v .. v + _PROBE - 1``. KernelError when no
+    such floor exists."""
+    symbols = sorted(expr.free_symbols, key=lambda s: str(s.name))
+    if expr.is_polynomial(*symbols):
+        poly = sp.Poly(expr, *symbols)
+        top = poly.total_degree()
+        if any(c < 0 for m, c in poly.terms() if sum(m) == top and top > 0):
+            raise KernelError(f"the box multiplicity {expr} is negative for large values")
+    starts = [lows.get(str(s.name), 0) for s in symbols]
+
+    def nonnegative(points: Sequence[Sequence[int]]) -> bool:
+        return all(
+            expr.xreplace(dict(zip(symbols, map(sp.Integer, p), strict=True))) >= 0 for p in points
+        )
+
+    grid = itertools.product(*(range(lo, lo + _PROBE) for lo in starts))
+    if nonnegative(list(grid)):
+        return None
+    if len(symbols) == 1:
+        for v in range(starts[0] + 1, starts[0] + _MAX_FLOOR):
+            if nonnegative([(v + i,) for i in range(_PROBE)]):
+                return str(symbols[0].name), v
+    raise KernelError(f"the box multiplicity {expr} is negative and no floor of one symbol helps")
+
+
+def _with_box_floors(lhs: Diagram, rhs: Diagram, domain: tuple[Clause, ...]) -> tuple[Clause, ...]:
+    """``domain`` with a side clause ``x >= v`` for each free multiplicity ``x`` whose boxes on
+    either side are negative below ``v`` (boxes reading a copy index left out); KernelError
+    when a box multiplicity is negative under every floor."""
+    from archytaszx.diagram.bangbox import index_symbols
+    from archytaszx.semantics.restrict import MULTIPLICITY, SIDE, Domain
+
+    def implied(c: Clause) -> bool:
+        return c.form == SIDE and c.kind == MULTIPLICITY and c.source.startswith(f"{c.symbol} >= ")
+
+    stated = _lows([c for c in domain if not implied(c)])
+    domain = tuple(
+        c for c in domain if not implied(c) or stated.get(c.symbol, 0) < _lows([c])[c.symbol]
+    )
+    lows = _lows(domain)
+    needed: dict[str, int] = {}
+    for d in (lhs, rhs):
+        indices = index_symbols(d) if d.bang_boxes else frozenset()
+        for box in d.bang_boxes.values():
+            names = box.multiplicity.free_symbols
+            if not names or names & indices:
+                continue
+            found = _mult_floor(box.multiplicity.to_sympy(), {**lows, **needed})
+            if found is not None:
+                needed[found[0]] = max(needed.get(found[0], 0), found[1])
+    if not needed:
+        return domain
+    extra = tuple(
+        Clause(x, MULTIPLICITY, SIDE, source=f"{x} >= {v}", domain=Domain(lo=Fraction(v), q=1))
+        for x, v in sorted(needed.items())
+    )
+    return (*domain, *extra)
 
 
 @_trace.traced("kernel.refl")
@@ -1872,7 +1962,7 @@ def _lean_restricted(
     base = theorem
     while base.inference.kind == "subst":
         base = base.inference.premises[0]
-    plain = Theorem(_TOKEN, base.lhs, base.rhs, base.inference, base.assumptions)
+    plain = Theorem(_TOKEN, base.lhs, base.rhs, base.inference, base.assumptions, floors=False)
     source = lean(plain, name, describe, semantic=semantic)
     origin = theorem.origin
     text = ", ".join(c.text() for c in theorem.domain)

@@ -341,3 +341,25 @@ def test_an_n_minus_one_box_is_inducted_from_one() -> None:
     assert "n >= 1" in theorem.statement()
     broken = parse_dsl(_LONG.replace("1/2}", "1/4}"))
     assert decide_equal(left, broken, samples=[]).verdict is not EqualityVerdict.EQUAL
+
+
+_TWOS = """
+count n
+z = Z(0 -> 0, literal 2) phase{1: 0}
+repeat {count} as V index m: z
+"""
+
+
+def test_a_box_negative_at_zero_holds_from_its_floor() -> None:
+    """n - 1 copies of 2 = n copies of 2 halved: no side has a box at n = 0, so the theorem
+    holds for n >= 1 and no induction over n takes it."""
+    from archytaszx.repl.parser import parse_dsl
+
+    left = parse_dsl(_TWOS.replace("{count}", "n - 1"))
+    right = parse_dsl(_TWOS.replace("{count}", "n") + "scalar 1/2\n")
+    theorem = K.contraction(left, right)
+    assert [c.text() for c in theorem.domain] == ["n >= 1"]
+    for derived in (K.symm(theorem), K.trans(theorem, K.refl(right))):
+        assert "n >= 1" in derived.statement()
+    with pytest.raises(K.KernelError, match="n >= 1"):
+        K._refuse_on("induction", (theorem,), frozenset({"n"}))

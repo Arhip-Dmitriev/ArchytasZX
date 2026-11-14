@@ -336,7 +336,7 @@ def _substituted(
 ) -> object | None:
     """``left = right`` by :func:`~archytaszx.semantics.kernel.subst` of ``theorem`` at
     ``symbol = s + c`` (``value`` one symbol plus an integer, the symbol a box multiplicity of
-    ``theorem``) between isomorphisms; else None."""
+    ``theorem``; a negative ``c`` holds for ``s >= -c``) between isomorphisms; else None."""
     from archytaszx.diagram.bangbox import free_mult_symbols
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import DecideGrammarError
@@ -347,7 +347,7 @@ def _substituted(
     if len(symbols) != 1 or entry.symbol not in free_mult_symbols(t.lhs):
         return None
     offset = sp.expand(value - symbols[0])
-    if not offset.is_Integer or int(offset) < 0:
+    if not offset.is_Integer:
         return None
     clause = Clause(entry.symbol, MULTIPLICITY, SHIFT, a=1, c=int(offset), fresh=symbols[0].name)
     try:
@@ -361,7 +361,8 @@ def _substituted(
 
 def instance(entry: Lemma, value: sp.Expr) -> object:
     """The kernel theorem of ``entry`` at ``value``, by substitution into its proved theorem, by
-    symbolic contraction or path sums of both sides, else by a decision with no oracle sample."""
+    symbolic contraction or path sums of both sides, else by a decision with no oracle sample;
+    at ``value = s - c`` it holds for ``s >= c``."""
     from archytaszx.semantics import kernel
     from archytaszx.semantics.decide import EqualityVerdict, decide_equal
 
