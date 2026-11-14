@@ -1185,6 +1185,7 @@ def _instantiate_node_scope(diagram: Diagram, box: BangBox, k: int) -> list[dict
         for child in children:
             if child.id not in diagram.bang_boxes:
                 continue
+            _unalign_outside(diagram, child.id, box.id)
             _kill_one(diagram, diagram.bang_boxes[child.id])
         for name in nested_symbols:
             _purge_symbol_if_dead(diagram, name)
@@ -1443,6 +1444,18 @@ def _expand_aligned(diagram: Diagram, members: list[BangBoxId], k: int) -> None:
     for wire, a, b in wires:
         for j in range(k):
             diagram.add_wire(_moved(wire.a, maps[a][j]), _moved(wire.b, maps[b][j]))
+
+
+def _unalign_outside(diagram: Diagram, box_id: BangBoxId, ancestor: BangBoxId) -> None:
+    """Drop the alignment between ``box_id`` and every box of its group outside ``ancestor``'s
+    subtree, on both ends."""
+    inside = {ancestor, *(b.id for b in _descendants_of(diagram, ancestor))}
+    box = diagram.bang_boxes[box_id]
+    if box.align is not None and box.align not in inside:
+        diagram.set_bang_box_extension(box_id, align=None)
+    for other_id, other in sorted(diagram.bang_boxes.items()):
+        if other.align == box_id and other_id not in inside:
+            diagram.set_bang_box_extension(other_id, align=None)
 
 
 def _kill_one(diagram: Diagram, box: BangBox) -> None:
