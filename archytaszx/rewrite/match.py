@@ -71,7 +71,7 @@ hash-independent key.
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -1401,9 +1401,12 @@ def find_matches(
 
     matches: list[FusionMatch] = []
     index = _wire_index(diagram) if wire_candidates else None
+    nodes = diagram.nodes
     for wire in wire_candidates:
         a_id, b_id = _ordered_pair(wire)
         if not _seed_meets_anchors(anchors, None, (a_id, b_id), 0):
+            continue
+        if not _fusable_pair(nodes[a_id], nodes[b_id]):
             continue
 
         # Conditions 2 and 4-7 are decided by exactly this call -- the same function
@@ -1438,6 +1441,16 @@ def find_matches(
         )
     )
     return tuple(matches)
+
+
+def _fusable_pair(node_a: Node, node_b: Node) -> bool:
+    """Whether both nodes carry one registered fusable generator type."""
+    gen = node_a.generator_type
+    return (
+        gen.name in _FUSABLE_GENERATOR_NAMES
+        and node_b.generator_type == gen
+        and REGISTRY.is_registered(gen)
+    )
 
 
 def _ordered_pair(wire: Wire) -> tuple[NodeId, NodeId]:
@@ -1517,13 +1530,35 @@ class FourierMatch:
         return _support_ids(*self.node_ids)
 
 
-def _wire_by_port(diagram: Diagram) -> dict[PortRef, Wire]:
-    """Map every wired port to the wire carrying it."""
+_WIRE_DERIVED: dict[str, tuple[frozenset[Wire], object]] = {}
+"""Per kind, the last wire set an index was built from and that index."""
+
+
+def _per_wires(
+    kind: str, wires: frozenset[Wire], build: Callable[[frozenset[Wire]], object]
+) -> object:
+    """``build(wires)``, reused while :data:`_WIRE_DERIVED` holds ``kind`` for this very
+    frozenset."""
+    held = _WIRE_DERIVED.get(kind)
+    if held is not None and held[0] is wires:
+        return held[1]
+    value = build(wires)
+    _WIRE_DERIVED[kind] = (wires, value)
+    return value
+
+
+def _ports_to_wires(wires: frozenset[Wire]) -> dict[PortRef, Wire]:
+    """Every port of ``wires`` mapped to the wire carrying it."""
     mapping: dict[PortRef, Wire] = {}
-    for wire in diagram.wires:
+    for wire in wires:
         mapping[wire.a] = wire
         mapping[wire.b] = wire
     return mapping
+
+
+def _wire_by_port(diagram: Diagram) -> dict[PortRef, Wire]:
+    """Map every wired port to the wire carrying it."""
+    return cast(dict[PortRef, Wire], _per_wires("by_port", diagram.wires, _ports_to_wires))
 
 
 def _fourier_successor(
@@ -1546,14 +1581,17 @@ def find_fourier_matches(
     diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
 ) -> tuple[FourierMatch, ...]:
     """Every chain of four Fourier boxes in series, ordered by the chain's first node id."""
-    by_port = _wire_by_port(diagram)
+    nodes = diagram.nodes
+    by_port: dict[PortRef, Wire] | None = None
     matches: list[FourierMatch] = []
     for start in sorted(diagram.nodes):
-        node = diagram.nodes[start]
-        if not REGISTRY.is_registered(node.generator_type):
-            continue
+        node = nodes[start]
         if node.generator_type.name != FOURIER_BOX.name:
             continue
+        if not REGISTRY.is_registered(node.generator_type):
+            continue
+        if by_port is None:
+            by_port = _wire_by_port(diagram)
         chain = [start]
         wires: list[Wire] = []
         while len(chain) < FOURIER_CHAIN_LENGTH:
@@ -1568,7 +1606,7 @@ def find_fourier_matches(
         if len(chain) != FOURIER_CHAIN_LENGTH:
             continue
         dims = [
-            diagram.nodes[node_id].legs(direction)[0].dim
+            nodes[node_id].legs(direction)[0].dim
             for node_id in chain
             for direction in (Direction.OUTPUT, Direction.INPUT)
         ]
@@ -1783,12 +1821,18 @@ class CapPattern(Pattern):
         return (int(cap.state_id), int(cap.effect_id))
 
 
-def _port_claims(diagram: Diagram) -> tuple[dict[PortRef, int], frozenset[PortRef]]:
-    """How many wires claim each port, and every port listed on either boundary list."""
+def _wire_claims(wires: frozenset[Wire]) -> dict[PortRef, int]:
+    """How many of ``wires`` claim each port."""
     claims: dict[PortRef, int] = {}
-    for wire in diagram.wires:
+    for wire in wires:
         claims[wire.a] = claims.get(wire.a, 0) + 1
         claims[wire.b] = claims.get(wire.b, 0) + 1
+    return claims
+
+
+def _port_claims(diagram: Diagram) -> tuple[dict[PortRef, int], frozenset[PortRef]]:
+    """How many wires claim each port, and every port listed on either boundary list."""
+    claims = cast(dict[PortRef, int], _per_wires("claims", diagram.wires, _wire_claims))
     return claims, frozenset(diagram.boundary_inputs) | frozenset(diagram.boundary_outputs)
 
 
@@ -1821,10 +1865,10 @@ def _all_passed(conditions: tuple[SideCondition, ...]) -> tuple[SideConditionOut
 
 def _is_spider(node: Node) -> bool:
     """True iff ``node`` is a registered Z or X spider."""
-    return REGISTRY.is_registered(node.generator_type) and node.generator_type.name in (
+    return node.generator_type.name in (
         Z_SPIDER.name,
         X_SPIDER.name,
-    )
+    ) and REGISTRY.is_registered(node.generator_type)
 
 
 def _exhausts_a_node_scope_box(diagram: Diagram, node_ids: tuple[NodeId, ...]) -> bool:
@@ -2865,6 +2909,7 @@ def find_fourier_state_matches(
 ) -> tuple[FourierStateMatch, ...]:
     """Every F box in series with a phaseless Z state or Z effect (X when ``swapped``), by
     spider node id."""
+    nodes = diagram.nodes
     spider_name = colour_pair(swapped)[0]
     conditions = FOURIER_STATE_SWAPPED_SIDE_CONDITIONS if swapped else FOURIER_STATE_SIDE_CONDITIONS
     claims, boundary = _port_claims(diagram)
@@ -2873,17 +2918,17 @@ def find_fourier_state_matches(
         if not _seed_meets_anchors(anchors, None, (wire.a.node_id, wire.b.node_id), 0):
             continue
         for spider_ref, fourier_ref in ((wire.a, wire.b), (wire.b, wire.a)):
-            spider = diagram.nodes.get(spider_ref.node_id)
-            fourier = diagram.nodes.get(fourier_ref.node_id)
+            spider = nodes.get(spider_ref.node_id)
+            fourier = nodes.get(fourier_ref.node_id)
             if spider is None or fourier is None or spider.id == fourier.id:
-                continue
-            if not REGISTRY.is_registered(spider.generator_type):
-                continue
-            if not REGISTRY.is_registered(fourier.generator_type):
                 continue
             if spider.generator_type.name != spider_name:
                 continue
             if fourier.generator_type.name != FOURIER_BOX.name:
+                continue
+            if not REGISTRY.is_registered(spider.generator_type):
+                continue
+            if not REGISTRY.is_registered(fourier.generator_type):
                 continue
             if (fourier.num_inputs, fourier.num_outputs) != (1, 1):
                 continue

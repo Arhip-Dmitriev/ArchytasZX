@@ -48,6 +48,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
+from typing import cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -63,7 +64,7 @@ from archytaszx.diagram.generators import (
     GeneratorType,
 )
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef, Wire
-from archytaszx.rewrite.match import _spliced_constraint, _wire_by_port
+from archytaszx.rewrite.match import _per_wires, _spliced_constraint, _wire_by_port
 from archytaszx.rewrite.rule import (
     BuildResult,
     DimensionConstraint,
@@ -518,12 +519,17 @@ def _boxed_nodes(diagram: Diagram) -> frozenset[NodeId]:
     return frozenset(boxed)
 
 
-def _partner_map(diagram: Diagram) -> dict[PortRef, PortRef]:
+def _partners(wires: frozenset[Wire]) -> dict[PortRef, PortRef]:
+    """Every port of ``wires`` mapped to the far end of its wire."""
     partner: dict[PortRef, PortRef] = {}
-    for wire in diagram.wires:
+    for wire in wires:
         partner[wire.a] = wire.b
         partner[wire.b] = wire.a
     return partner
+
+
+def _partner_map(diagram: Diagram) -> dict[PortRef, PortRef]:
+    return cast(dict[PortRef, PortRef], _per_wires("partner", diagram.wires, _partners))
 
 
 def _node_dim(diagram: Diagram, node_id: NodeId) -> Dim | None:
@@ -844,7 +850,7 @@ class TemplatePattern(Pattern):
         templates: dict[object, Template | None] = {}
         for anchor in sorted(diagram.nodes, key=int):
             dim = _node_dim(diagram, anchor)
-            host_dim = _node_dim(host, anchor)
+            host_dim = dim if diagram is host else _node_dim(host, anchor)
             if dim is None or host_dim is None:
                 continue
             if self.axiom.concrete_only and not dim.is_concrete:
@@ -1544,6 +1550,8 @@ def resolved_view(diagram: Diagram) -> Diagram:
 
 def _resolved_view(diagram: Diagram) -> Diagram:
     """resolved_view without the memo."""
+    if not diagram.parameters:
+        return diagram
     names: set[str] = set()
     for node in diagram.nodes.values():
         for port in (*node.inputs, *node.outputs):

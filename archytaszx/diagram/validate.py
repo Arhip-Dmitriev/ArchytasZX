@@ -89,7 +89,8 @@ from archytaszx.algebra.dimension import (
     unify_all,
 )
 from archytaszx.algebra.phase import INDEX
-from archytaszx.diagram.bangbox import BangBox, aligned_members, outside_crossings, zip_wires
+from archytaszx.algebra.scalar import Scalar
+from archytaszx.diagram.bangbox import BangBox, Mult, aligned_members, outside_crossings, zip_wires
 from archytaszx.diagram.generators import DimensionPolicy, PhaseSchema
 from archytaszx.diagram.graph import (
     BangBoxId,
@@ -228,17 +229,39 @@ def _resolve(diagram: Diagram, ref: PortRef, issues: list[ValidationIssue]) -> P
     return legs[ref.index]
 
 
-def _check_wire_dimensions(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+def _port_of(nodes: Mapping[NodeId, Node], ref: PortRef) -> Port | None:
+    """The port ``ref`` names, or None when its node or index is absent."""
+    node = nodes.get(ref.node_id)
+    if node is None:
+        return None
+    legs = node.inputs if ref.direction is Direction.INPUT else node.outputs
+    return legs[ref.index] if ref.index < len(legs) else None
+
+
+def _wire_ports(diagram: Diagram) -> list[tuple[Wire, Port | None, Port | None]]:
+    """Each wire in ``Wire.sort_key`` order with the ports its two ends name, None for an
+    absent one."""
+    nodes = diagram.nodes
+    return [
+        (wire, _port_of(nodes, wire.a), _port_of(nodes, wire.b)) for wire in diagram.sorted_wires()
+    ]
+
+
+def _check_wire_dimensions(
+    diagram: Diagram,
+    issues: list[ValidationIssue],
+    wired: list[tuple[Wire, Port | None, Port | None]],
+) -> None:
     # Sorted by the hash-independent Wire.sort_key(): diagram.wires is a frozenset whose
     # hash folds in Direction's member-name hash, so iterating it directly would append
     # issues in a PYTHONHASHSEED-dependent order, breaking the "first in validate order"
     # selection archytaszx.rewrite.engine relies on.
-    for wire in diagram.sorted_wires():
-        port_a = _resolve(diagram, wire.a, issues)
-        port_b = _resolve(diagram, wire.b, issues)
+    for wire, port_a, port_b in wired:
         if port_a is None or port_b is None:
+            _resolve(diagram, wire.a, issues)
+            _resolve(diagram, wire.b, issues)
             continue
-        if port_a.dim == port_b.dim:
+        if port_a.dim is port_b.dim or port_a.dim == port_b.dim:
             continue
         resolved_a = diagram.resolve_dim(port_a.dim)
         resolved_b = diagram.resolve_dim(port_b.dim)
@@ -305,8 +328,10 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
     for wire in diagram.sorted_wires():
         wired_refs.append(wire.a)
         wired_refs.append(wire.b)
-    wired_counts = Counter(wired_refs)
-    twice = [(ref, count) for ref, count in wired_counts.items() if count > 1]
+    wired_set = set(wired_refs)
+    twice: list[tuple[PortRef, int]] = []
+    if len(wired_set) != len(wired_refs):
+        twice = [(ref, count) for ref, count in Counter(wired_refs).items() if count > 1]
     for ref, count in sorted(twice, key=lambda item: item[0].sort_key()):
         if count > 1:
             issues.append(
@@ -317,7 +342,6 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
                 )
             )
 
-    wired_set = set(wired_refs)
     # No sort needed: boundary_inputs/boundary_outputs are ordered tuples, and Counter
     # iteration order is insertion order.
     boundary_counts = Counter(diagram.boundary_inputs) + Counter(diagram.boundary_outputs)
@@ -376,18 +400,23 @@ def _check_port_usage(diagram: Diagram, issues: list[ValidationIssue]) -> None:
         tree = diagram.bang_boxes.get(box.feed) if box.feed is not None else None
         if tree is not None and box.feed_port is not None:
             fed_ports |= {box.feed_port, *tree.tree}
-    used = {
-        (ref.node_id, ref.direction is Direction.OUTPUT, ref.index)
-        for refs in (wired_set, boundary_set, fed_ports)
-        for ref in refs
-    }
+    used: dict[NodeId, set[int]] = {}
+    for refs in (wired_set, boundary_set, fed_ports):
+        for ref in refs:
+            used.setdefault(ref.node_id, set()).add(
+                2 * ref.index + (ref.direction is Direction.OUTPUT)
+            )
+    no_legs: set[int] = set()
     for node_id, node in diagram.nodes.items():
         if node_id in broken_node_ids:
             continue
-        for direction in (Direction.INPUT, Direction.OUTPUT):
-            output = direction is Direction.OUTPUT
-            for index in range(len(node.legs(direction))):
-                if (node_id, output, index) in used:
+        own = used.get(node_id, no_legs)
+        for direction, output, legs in (
+            (Direction.INPUT, 0, node.inputs),
+            (Direction.OUTPUT, 1, node.outputs),
+        ):
+            for index in range(len(legs)):
+                if 2 * index + output in own:
                     continue
                 ref = PortRef(node_id, direction, index)
                 issues.append(
@@ -449,21 +478,48 @@ def _symbol_roles(diagram: Diagram) -> dict[str, dict[str, sp.Symbol]]:
     The same role twice under one name records one entry, so a name in legitimate reuse
     (two ports sharing a dimension symbol, a root-of-unity entry over its own node's
     dimension symbol) never reaches ``len(by_role) > 1``. Shared by
-    :func:`_check_symbol_role_collisions` and :func:`_check_parameter_environment`.
+    :func:`_check_symbol_role_collisions` and :func:`_check_parameter_environment`. Memoised
+    per set of symbols in :data:`_ROLE_TABLES`.
     """
     roles: dict[str, dict[str, sp.Symbol]] = {}
     symbols: set[sp.Symbol] = set()
     for node in diagram.nodes.values():
         symbols |= _node_symbols(node)
-    symbols |= diagram.scalar.to_sympy().free_symbols
+    symbols |= _free_symbols_of(diagram.scalar)
     for box in diagram.bang_boxes.values():
-        symbols |= box.multiplicity.to_sympy().free_symbols
+        symbols |= _free_symbols_of(box.multiplicity)
+    key = frozenset(symbols)
+    held = _ROLE_TABLES.get(key)
+    if held is not None:
+        return held
     for symbol in sorted(symbols, key=sp.default_sort_key):
         role = _symbol_role(symbol)
         if role is None:
             continue
         roles.setdefault(str(symbol.name), {}).setdefault(role, symbol)
+    if len(_ROLE_TABLES) >= _CACHE_LIMIT:
+        _ROLE_TABLES.clear()
+    _ROLE_TABLES[key] = roles
     return roles
+
+
+_ROLE_TABLES: dict[frozenset[sp.Symbol], dict[str, dict[str, sp.Symbol]]] = {}
+""":func:`_symbol_roles` per set of symbols."""
+
+_FREE_SYMBOLS: dict[int, tuple[object, frozenset[sp.Symbol]]] = {}
+""":func:`_free_symbols_of` per value object."""
+
+
+def _free_symbols_of(value: Scalar | Mult) -> frozenset[sp.Symbol]:
+    """The free symbols of ``value.to_sympy()``, memoised per object in :data:`_FREE_SYMBOLS`."""
+    hit = _FREE_SYMBOLS.get(id(value))
+    if hit is not None and hit[0] is value:
+        return hit[1]
+    found = frozenset(value.to_sympy().free_symbols)
+    if len(_FREE_SYMBOLS) >= _CACHE_LIMIT:
+        _FREE_SYMBOLS.clear()
+    _FREE_SYMBOLS[id(value)] = (value, found)
+    return found
 
 
 _NODE_SYMBOLS: dict[int, tuple[Node, frozenset[sp.Symbol]]] = {}
@@ -825,43 +881,72 @@ def _check_product_policy(node: Node, issues: list[ValidationIssue]) -> None:
         )
 
 
-def _gather_dimension_constraints(diagram: Diagram) -> list[tuple[Dim, Dim]]:
-    """Every dimension equality the diagram asserts: wire endpoints (by ``Wire.sort_key``),
-    then each node's policy and phase equalities (by node id)."""
+def _node_constraints(node: Node) -> list[tuple[Dim, Dim]]:
+    """``node``'s policy and phase dimension equalities."""
     constraints: list[tuple[Dim, Dim]] = []
-    for wire in diagram.sorted_wires():
-        node_a = diagram.nodes.get(wire.a.node_id)
-        node_b = diagram.nodes.get(wire.b.node_id)
-        if node_a is None or node_b is None:
-            continue
-        legs_a = node_a.legs(wire.a.direction)
-        legs_b = node_b.legs(wire.b.direction)
-        if wire.a.index >= len(legs_a) or wire.b.index >= len(legs_b):
-            continue
-        constraints.append((legs_a[wire.a.index].dim, legs_b[wire.b.index].dim))
-    for node_id in sorted(diagram.nodes):
-        node = diagram.nodes[node_id]
-        gen = node.generator_type
-        all_ports = (*node.inputs, *node.outputs)
-        if gen.dimension_policy is DimensionPolicy.PRODUCT_OF_LEGS_EQUAL:
-            constraints.append(
-                (
-                    _dim_product(port.dim for port in node.inputs),
-                    _dim_product(port.dim for port in node.outputs),
-                )
+    gen = node.generator_type
+    all_ports = (*node.inputs, *node.outputs)
+    if gen.dimension_policy is DimensionPolicy.PRODUCT_OF_LEGS_EQUAL:
+        constraints.append(
+            (
+                _dim_product(port.dim for port in node.inputs),
+                _dim_product(port.dim for port in node.outputs),
             )
-            continue
-        if gen.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
-            continue
-        for left, right in itertools.pairwise(all_ports):
-            constraints.append((left.dim, right.dim))
-        tied = gen.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
-        if node.phase is not None and tied and all_ports:
-            constraints.append((node.phase.dim, all_ports[0].dim))
+        )
+        return constraints
+    if gen.dimension_policy is not DimensionPolicy.ALL_LEGS_EQUAL:
+        return constraints
+    for left, right in itertools.pairwise(all_ports):
+        constraints.append((left.dim, right.dim))
+    tied = gen.phase_schema is PhaseSchema.TIED_TO_LEG_DIM
+    if node.phase is not None and tied and all_ports:
+        constraints.append((node.phase.dim, all_ports[0].dim))
     return constraints
 
 
-def _check_dimension_consistency(diagram: Diagram, issues: list[ValidationIssue]) -> None:
+_NODE_CONSTRAINTS: dict[int, tuple[Node, int, tuple[tuple[Dim, Dim], ...]]] = {}
+"""Per Node object: the number of its :func:`_node_constraints` and those whose sides differ."""
+
+
+def _node_constraint_split(node: Node) -> tuple[int, tuple[tuple[Dim, Dim], ...]]:
+    """The :data:`_NODE_CONSTRAINTS` entry of ``node`` without the node, computed on a miss."""
+    hit = _NODE_CONSTRAINTS.get(id(node))
+    if hit is not None and hit[0] is node:
+        return hit[1], hit[2]
+    constraints = _node_constraints(node)
+    differing = tuple((a, b) for a, b in constraints if a != b)
+    if len(_NODE_CONSTRAINTS) >= _CACHE_LIMIT:
+        _NODE_CONSTRAINTS.clear()
+    _NODE_CONSTRAINTS[id(node)] = (node, len(constraints), differing)
+    return len(constraints), differing
+
+
+def _gather_dimension_constraints(
+    diagram: Diagram, wired: list[tuple[Wire, Port | None, Port | None]]
+) -> tuple[int, list[tuple[Dim, Dim]]]:
+    """The number of dimension equalities the diagram asserts (wire endpoints, then each node's
+    policy and phase equalities) and, in that order, those whose two sides differ."""
+    count = 0
+    differing: list[tuple[Dim, Dim]] = []
+    for _wire, port_a, port_b in wired:
+        if port_a is None or port_b is None:
+            continue
+        count += 1
+        if port_a.dim is not port_b.dim and port_a.dim != port_b.dim:
+            differing.append((port_a.dim, port_b.dim))
+    nodes = diagram.nodes
+    for node_id in sorted(nodes):
+        own, own_differing = _node_constraint_split(nodes[node_id])
+        count += own
+        differing.extend(own_differing)
+    return count, differing
+
+
+def _check_dimension_consistency(
+    diagram: Diagram,
+    issues: list[ValidationIssue],
+    wired: list[tuple[Wire, Port | None, Port | None]],
+) -> None:
     """Solve every dimension equality the diagram asserts as one system.
 
     Emits :attr:`IssueKind.DIMENSION_GLOBALLY_INCONSISTENT` on FAILURE and
@@ -874,16 +959,16 @@ def _check_dimension_consistency(diagram: Diagram, issues: list[ValidationIssue]
         for issue in issues
     ):
         return
-    constraints = _gather_dimension_constraints(diagram)
-    if not constraints:
+    count, differing = _gather_dimension_constraints(diagram, wired)
+    if not count:
         return
-    result = solve(constraints)
+    result = solve(differing)
     if result.is_failure:
         issues.append(
             ValidationIssue(
                 kind=IssueKind.DIMENSION_GLOBALLY_INCONSISTENT,
                 message=(
-                    f"the diagram's {len(constraints)} dimension equality assertion(s) have no "
+                    f"the diagram's {count} dimension equality assertion(s) have no "
                     "simultaneous solution"
                 ),
             )
@@ -893,7 +978,7 @@ def _check_dimension_consistency(diagram: Diagram, issues: list[ValidationIssue]
             ValidationIssue(
                 kind=IssueKind.DIMENSION_GLOBAL_RESOLUTION_EXHAUSTED,
                 message=(
-                    f"diagram-global dimension resolution over {len(constraints)} assertion(s) "
+                    f"diagram-global dimension resolution over {count} assertion(s) "
                     "ran out of solve's pass budget before its bindings stabilised, leaving "
                     f"{len(result.residual_pairs)} pair(s) unresolved and "
                     f"{len(result.bindings)} binding(s) reached on the final pass -- nothing "
@@ -1047,6 +1132,8 @@ def _check_bangbox_links(diagram: Diagram, issues: list[ValidationIssue]) -> Non
     """Every chain link joins two resolvable ports of equal dimension and opposite direction;
     an open chain's link ports are each wired outside the scope or a boundary slot, a cyclic
     chain's ``p`` is wired to its ``q``; an index symbol is read only inside its box's scope."""
+    if not diagram.bang_boxes:
+        return
     partner: dict[PortRef, PortRef] = {}
     for wire in diagram.wires:
         partner[wire.a] = wire.b
@@ -1426,10 +1513,44 @@ def validate(diagram: Diagram) -> ValidationReport:
     """Run every well-formedness check against ``diagram`` and return the full report.
 
     Pure: never mutates ``diagram``. See the module docstring for what is checked and
-    the layering of hard-failure versus deferred dimension issues.
+    the layering of hard-failure versus deferred dimension issues. Memoised in
+    :data:`_REPORTS` by the node, bang-box and scalar objects, the wires in iteration order,
+    the boundaries and the parameters.
     """
+    held = (tuple(diagram.nodes.values()), tuple(diagram.bang_boxes.values()), diagram.scalar)
+    key = (
+        tuple(map(id, held[0])),
+        tuple(map(id, held[1])),
+        id(held[2]),
+        tuple(diagram.nodes),
+        tuple(diagram.bang_boxes),
+        tuple(diagram.wires),
+        diagram.boundary_inputs,
+        diagram.boundary_outputs,
+        tuple(diagram.parameters.items()),
+    )
+    hit = _REPORTS.get(key)
+    if hit is not None:
+        return hit[1]
+    report = _validate(diagram)
+    if len(_REPORTS) >= _REPORTS_LIMIT:
+        _REPORTS.clear()
+    _REPORTS[key] = (held, report)
+    return report
+
+
+_REPORTS: dict[tuple[object, ...], tuple[object, ValidationReport]] = {}
+""":func:`validate` reports with the objects their keys name by id."""
+
+_REPORTS_LIMIT = 1 << 12
+"""The most entries :data:`_REPORTS` holds; a full table is emptied before the next entry."""
+
+
+def _validate(diagram: Diagram) -> ValidationReport:
+    """:func:`validate` without the table."""
     issues: list[ValidationIssue] = []
-    _check_wire_dimensions(diagram, issues)
+    wired = _wire_ports(diagram)
+    _check_wire_dimensions(diagram, issues, wired)
     _check_port_usage(diagram, issues)
     for node in diagram.nodes.values():
         issues.extend(_node_issues(node))
@@ -1441,7 +1562,7 @@ def validate(diagram: Diagram) -> ValidationReport:
     roles = _symbol_roles(diagram)
     _check_symbol_role_collisions(diagram, issues, roles)
     _check_parameter_environment(diagram, issues, roles)
-    _check_dimension_consistency(diagram, issues)
+    _check_dimension_consistency(diagram, issues, wired)
     return ValidationReport(tuple(issues))
 
 

@@ -342,8 +342,9 @@ def _follow_links(
     ``diagram``, links rewritten in ``working``."""
     gone = frozenset(consumed)
     partner: dict[PortRef, PortRef] = {}
-    for wire in diagram.wires:
-        partner[wire.a], partner[wire.b] = wire.b, wire.a
+    if any(box.links or box.tree_parent is not None for box in diagram.bang_boxes.values()):
+        for wire in diagram.wires:
+            partner[wire.a], partner[wire.b] = wire.b, wire.a
     for box_id, box in sorted(diagram.bang_boxes.items()):
         touched = bool(box.node_scope & gone)
         after = working.bang_boxes.get(box_id)
@@ -405,6 +406,8 @@ def _check_far_link_ends(
 ) -> None:
     """Raise RewriteDomainError when a link port whose far end the rewrite consumed is, in
     ``working``, unwired or wired to a node of its own box."""
+    if not any(box.links for box in working.bang_boxes.values()):
+        return
     gone = frozenset(consumed)
     before: dict[PortRef, PortRef] = {}
     for wire in diagram.wires:
@@ -599,12 +602,14 @@ def apply(
 
     # A builder reports every change through BuildResult; an in-place edit of a node that
     # outlives the rewrite is invisible to steps 5 to 8 and to the certificate.
+    before_nodes, after_nodes = diagram.nodes, working.nodes
     edited_existing_nodes = tuple(
         node_id
-        for node_id in sorted(diagram.nodes)
+        for node_id in sorted(before_nodes)
         if node_id not in consumed_node_ids
-        and node_id in working.nodes
-        and working.nodes[node_id] != diagram.nodes[node_id]
+        and node_id in after_nodes
+        and after_nodes[node_id] is not before_nodes[node_id]
+        and after_nodes[node_id] != before_nodes[node_id]
     )
     if edited_existing_nodes:
         raise RewriteGrammarError(

@@ -36,6 +36,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.compare import canonical_form, canonical_key, isomorphic
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
@@ -134,12 +135,42 @@ def _simplified(scalar: Scalar) -> Scalar:
     return out
 
 
-def _leg_key(diagram: Diagram, ref: PortRef, partner: PortRef | None) -> tuple[object, ...]:
-    """A node-id-free sort key for one spider leg: boundary position, else its partner's shape."""
-    dim = str(diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim)
-    for side, refs in ((0, diagram.boundary_inputs), (1, diagram.boundary_outputs)):
-        if ref in refs:
-            return (0, side, refs.index(ref), dim)
+_DIM_TEXT: dict[Dim, str] = {}
+"""``str`` of each dimension :func:`_leg_key` has read."""
+
+
+def _dim_text(dim: Dim) -> str:
+    """``str(dim)``, memoised in :data:`_DIM_TEXT`."""
+    text = _DIM_TEXT.get(dim)
+    if text is None:
+        text = str(dim)
+        if len(_DIM_TEXT) >= _SIMPLIFIED_CAP:
+            _DIM_TEXT.clear()
+        _DIM_TEXT[dim] = text
+    return text
+
+
+def _first_positions(refs: Sequence[PortRef]) -> dict[PortRef, int]:
+    """Each ref's first position in ``refs``."""
+    positions: dict[PortRef, int] = {}
+    for position, ref in enumerate(refs):
+        positions.setdefault(ref, position)
+    return positions
+
+
+def _leg_key(
+    diagram: Diagram,
+    ref: PortRef,
+    partner: PortRef | None,
+    boundary: tuple[dict[PortRef, int], dict[PortRef, int]],
+) -> tuple[object, ...]:
+    """A node-id-free sort key for one spider leg: boundary position, else its partner's shape;
+    ``boundary`` holds :func:`_first_positions` of the input and output lists."""
+    dim = _dim_text(diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim)
+    for side, positions in enumerate(boundary):
+        position = positions.get(ref)
+        if position is not None:
+            return (0, side, position, dim)
     if partner is None:
         return (2, dim, ref.index)
     node = diagram.nodes[partner.node_id]
@@ -162,34 +193,55 @@ def _canonical_legs(diagram: Diagram) -> Diagram:
     :func:`_leg_key`; ``diagram`` itself when it carries a bang box."""
     if diagram.bang_boxes:
         return diagram
+    nodes = diagram.nodes
     partner: dict[PortRef, PortRef] = {}
     for wire in diagram.wires:
         partner[wire.a] = wire.b
         partner[wire.b] = wire.a
+    boundary = (
+        _first_positions(diagram.boundary_inputs),
+        _first_positions(diagram.boundary_outputs),
+    )
     order: dict[tuple[NodeId, Direction], list[PortRef]] = {}
     new_index: dict[PortRef, int] = {}
-    for node_id in sorted(diagram.nodes):
-        node = diagram.nodes[node_id]
-        for direction in (Direction.INPUT, Direction.OUTPUT):
-            refs = [PortRef(node_id, direction, i) for i in range(len(node.legs(direction)))]
-            if node.generator_type in (Z_SPIDER, X_SPIDER):
-                refs.sort(key=lambda ref: _leg_key(diagram, ref, partner.get(ref)))
+    ids = sorted(nodes)
+    for node_id in ids:
+        node = nodes[node_id]
+        if node.generator_type not in (Z_SPIDER, X_SPIDER):
+            continue
+        for direction, legs in ((Direction.INPUT, node.inputs), (Direction.OUTPUT, node.outputs)):
+            if len(legs) < 2:
+                continue
+            refs = [PortRef(node_id, direction, i) for i in range(len(legs))]
+            refs.sort(key=lambda ref: _leg_key(diagram, ref, partner.get(ref), boundary))
             order[(node_id, direction)] = refs
             for position, ref in enumerate(refs):
                 new_index[ref] = position
     view = Diagram()
     new_id: dict[NodeId, NodeId] = {}
-    for node_id in sorted(diagram.nodes):
-        node = diagram.nodes[node_id]
+    for node_id in ids:
+        node = nodes[node_id]
+        ins = order.get((node_id, Direction.INPUT))
+        outs = order.get((node_id, Direction.OUTPUT))
         new_id[node_id] = view.add_node(
             node.generator_type,
-            [node.inputs[ref.index].dim for ref in order[(node_id, Direction.INPUT)]],
-            [node.outputs[ref.index].dim for ref in order[(node_id, Direction.OUTPUT)]],
+            [port.dim for port in node.inputs]
+            if ins is None
+            else [node.inputs[ref.index].dim for ref in ins],
+            [port.dim for port in node.outputs]
+            if outs is None
+            else [node.outputs[ref.index].dim for ref in outs],
             phase=node.phase,
         )
 
     def moved(ref: PortRef) -> PortRef:
-        return PortRef(new_id[ref.node_id], ref.direction, new_index[ref])
+        node_id = new_id[ref.node_id]
+        position = new_index.get(ref)
+        if position is None:
+            if ref.index >= len(nodes[ref.node_id].legs(ref.direction)):
+                raise KeyError(ref)
+            position = ref.index
+        return PortRef(node_id, ref.direction, position)
 
     for wire in diagram.sorted_wires():
         view.add_wire(moved(wire.a), moved(wire.b))
@@ -206,7 +258,9 @@ def comparison_view(diagram: Diagram) -> Diagram:
     from archytaszx.diagram.mixed import is_pure  # local: mixed imports bangbox
 
     _require_diagram("comparison_view: diagram", diagram)
-    view = _canonical_legs(diagram).copy()
+    view = _canonical_legs(diagram)
+    if view is diagram:
+        view = diagram.copy()
     view.set_parameters({})
     scalar = view.scalar if is_pure(view) else view.scalar * view.scalar.conjugate()
     view.set_scalar(_simplified(scalar))

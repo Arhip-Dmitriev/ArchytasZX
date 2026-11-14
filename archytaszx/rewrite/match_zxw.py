@@ -81,8 +81,8 @@ from archytaszx.rewrite.rule import (
 
 def _is(node: Node, generator: GeneratorType) -> bool:
     """True iff ``node`` carries the registered ``generator``."""
-    return (
-        REGISTRY.is_registered(node.generator_type) and node.generator_type.name == generator.name
+    return node.generator_type.name == generator.name and REGISTRY.is_registered(
+        node.generator_type
     )
 
 
@@ -143,6 +143,7 @@ def find_w_fusion_matches(
     diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
 ) -> tuple[WFusionMatch, ...]:
     """Every W output wired into another W's input, by (first, second) node id."""
+    nodes = diagram.nodes
     claims, boundary = _port_claims(diagram)
     matches: list[WFusionMatch] = []
     for wire in diagram.sorted_wires():
@@ -151,8 +152,8 @@ def find_w_fusion_matches(
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
                 continue
-            first = diagram.nodes.get(out_ref.node_id)
-            second = diagram.nodes.get(in_ref.node_id)
+            first = nodes.get(out_ref.node_id)
+            second = nodes.get(in_ref.node_id)
             if first is None or second is None or first.id == second.id:
                 continue
             if not _is(first, W_NODE) or not _is(second, W_NODE):
@@ -496,6 +497,7 @@ def find_triangle_effect_matches(
     diagram: Diagram, *, anchors: frozenset[NodeId] | None = None
 ) -> tuple[TriangleEffectMatch, ...]:
     """Every T whose output feeds a phaseless X effect, by triangle id."""
+    nodes = diagram.nodes
     claims, boundary = _port_claims(diagram)
     matches: list[TriangleEffectMatch] = []
     for wire in diagram.sorted_wires():
@@ -504,8 +506,8 @@ def find_triangle_effect_matches(
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
                 continue
-            triangle = diagram.nodes.get(out_ref.node_id)
-            effect = diagram.nodes.get(in_ref.node_id)
+            triangle = nodes.get(out_ref.node_id)
+            effect = nodes.get(in_ref.node_id)
             if triangle is None or effect is None or triangle.id == effect.id:
                 continue
             if not _is(triangle, TRIANGLE) or (triangle.num_inputs, triangle.num_outputs) != (1, 1):
@@ -1076,6 +1078,7 @@ def find_w_effect_matches(
 
     A Z effect needs at least two W outputs, so that a W remains after the T.
     """
+    nodes = diagram.nodes
     colour = X_SPIDER if zero else Z_SPIDER
     conditions = W_ZERO_EFFECT_SIDE_CONDITIONS if zero else W_Z_EFFECT_SIDE_CONDITIONS
     least_outputs = 1 if zero else 2
@@ -1087,8 +1090,8 @@ def find_w_effect_matches(
         for out_ref, in_ref in ((wire.a, wire.b), (wire.b, wire.a)):
             if out_ref.direction is not Direction.OUTPUT or in_ref.direction is not Direction.INPUT:
                 continue
-            w = diagram.nodes.get(out_ref.node_id)
-            effect = diagram.nodes.get(in_ref.node_id)
+            w = nodes.get(out_ref.node_id)
+            effect = nodes.get(in_ref.node_id)
             if w is None or effect is None or w.id == effect.id:
                 continue
             if not _is(w, W_NODE) or w.num_inputs != 1 or w.num_outputs < least_outputs:

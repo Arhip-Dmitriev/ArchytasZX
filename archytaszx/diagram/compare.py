@@ -20,6 +20,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from archytaszx import trace as _trace
+from archytaszx.algebra.dimension import Dim
 from archytaszx.algebra.phase import PhaseVector
 from archytaszx.diagram.bangbox import BangBox
 from archytaszx.diagram.generators import X_SPIDER, Z_SPIDER
@@ -189,11 +190,47 @@ def compare_structure(a: Diagram, b: Diagram) -> StructuralComparison:
 
 def _digest(payload: object) -> str:
     """A hash of ``payload``'s ``repr``, stable across processes."""
-    return hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()[:32]
+    return _digest_text(repr(payload))
+
+
+def _digest_text(text: str) -> str:
+    """The sha256 of ``text``, as 32 hex digits."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
+_BOX_TAGS: dict[tuple[object, ...], str] = {}
+""":func:`_box_tag` per tuple of the box fields it reads."""
 
 
 def _box_tag(box: BangBox) -> str:
-    """A box's multiplicity with its sheets, cyclic, index, copy-scalar and group marks."""
+    """A box's multiplicity with its sheets, cyclic, index, copy-scalar and group marks,
+    memoised in :data:`_BOX_TAGS`."""
+    key = (
+        box.multiplicity,
+        box.sheets,
+        bool(box.links),
+        box.cyclic,
+        box.index,
+        box.copy_scalar,
+        box.pair_index,
+        len(box.tree),
+        box.level,
+        box.position,
+        box.feed is not None,
+        box.align is not None,
+        len(box.groups),
+    )
+    tag = _BOX_TAGS.get(key)
+    if tag is None:
+        tag = _box_tag_of(box)
+        if len(_BOX_TAGS) >= _MEMO_LIMIT:
+            _BOX_TAGS.clear()
+        _BOX_TAGS[key] = tag
+    return tag
+
+
+def _box_tag_of(box: BangBox) -> str:
+    """:func:`_box_tag` without the table."""
     tag = repr(box.multiplicity) + ("|sheets" if box.sheets else "")
     if box.links:
         tag += "|cyclic" if box.cyclic else "|chain"
@@ -272,13 +309,58 @@ def _dir(diagram: Diagram, ref: PortRef, symmetric: bool) -> str:
     return ref.direction.value
 
 
+_ZERO_PHASE_KEYS: dict[Dim, str] = {}
+"""The digest of the zero phase vector, per leg dimension."""
+
+_NODE_COLOURS: dict[tuple[object, ...], tuple[str, str]] = {}
+"""Per (generator name, input ports, output ports, phase digest, symmetric): the ``repr`` of a
+node's
+colour payload without its boundary and membership entries and its trailing ``)``, and the
+colour of a node with neither."""
+
+_MEMO_LIMIT = 1 << 16
+"""The most entries :data:`_BOX_TAGS`, :data:`_ZERO_PHASE_KEYS` and :data:`_NODE_COLOURS` hold;
+a full table is emptied before the next entry."""
+
+
 def _phase_key(node: Node) -> str:
     """A node's phase as a string, a Z or X spider's absent phase read as the zero phase vector
     at its leg dimension."""
-    ports = (*node.inputs, *node.outputs)
-    if node.phase is None and ports and node.generator_type.name in _SYMMETRIC_GENERATORS:
-        return PhaseVector(ports[0].dim).digest()
-    return "None" if node.phase is None else node.phase.digest()
+    if node.phase is not None:
+        return node.phase.digest()
+    ports = node.inputs or node.outputs
+    if ports and node.generator_type.name in _SYMMETRIC_GENERATORS:
+        dim = ports[0].dim
+        key = _ZERO_PHASE_KEYS.get(dim)
+        if key is None:
+            key = PhaseVector(dim).digest()
+            if len(_ZERO_PHASE_KEYS) >= _MEMO_LIMIT:
+                _ZERO_PHASE_KEYS.clear()
+            _ZERO_PHASE_KEYS[dim] = key
+        return key
+    return "None"
+
+
+def _node_colour(node: Node, symmetric: bool) -> tuple[str, str]:
+    """The :data:`_NODE_COLOURS` entry of ``node``, computed on a miss."""
+    name = node.generator_type.name
+    phase = None if node.phase is None else node.phase.digest()
+    key = (name, node.inputs, node.outputs, phase, symmetric)
+    hit = _NODE_COLOURS.get(key)
+    if hit is not None:
+        return hit
+    inputs = [repr(port.dim) for port in node.inputs]
+    outputs = [repr(port.dim) for port in node.outputs]
+    if symmetric and name in _FLEXSYMMETRIC_GENERATORS:
+        inputs, outputs = sorted(inputs + outputs), []
+    elif symmetric and name in _SYMMETRIC_GENERATORS:
+        inputs, outputs = sorted(inputs), sorted(outputs)
+    head = repr((name, tuple(inputs), tuple(outputs), _phase_key(node)))[:-1]
+    hit = (head, _digest_text(f"{head}, (), ())"))
+    if len(_NODE_COLOURS) >= _MEMO_LIMIT:
+        _NODE_COLOURS.clear()
+    _NODE_COLOURS[key] = hit
+    return hit
 
 
 def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
@@ -309,25 +391,27 @@ def _initial_colours(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, 
                 )
 
     colours: dict[NodeId, str] = {}
-    for nid in sorted(diagram.nodes):
-        node = diagram.nodes[nid]
-        inputs = [repr(port.dim) for port in node.inputs]
-        outputs = [repr(port.dim) for port in node.outputs]
-        if symmetric and node.generator_type.name in _FLEXSYMMETRIC_GENERATORS:
-            inputs, outputs = sorted(inputs + outputs), []
-        elif symmetric and node.generator_type.name in _SYMMETRIC_GENERATORS:
-            inputs, outputs = sorted(inputs), sorted(outputs)
-        colours[nid] = _digest(
-            (
-                node.generator_type.name,
-                tuple(inputs),
-                tuple(outputs),
-                _phase_key(node),
-                tuple(sorted(boundary[nid])),
-                tuple(sorted(membership[nid])),
-            )
-        )
+    nodes = diagram.nodes
+    for nid in sorted(nodes):
+        head, plain = _node_colour(nodes[nid], symmetric)
+        slots, boxes = boundary[nid], membership[nid]
+        if not slots and not boxes:
+            colours[nid] = plain
+            continue
+        key = (head, tuple(sorted(slots)), tuple(sorted(boxes)))
+        colour = _PLACED_COLOURS.get(key)
+        if colour is None:
+            colour = _digest_text(f"{head}, {key[1]!r}, {key[2]!r})")
+            if len(_PLACED_COLOURS) >= _MEMO_LIMIT:
+                _PLACED_COLOURS.clear()
+            _PLACED_COLOURS[key] = colour
+        colours[nid] = colour
     return colours
+
+
+_PLACED_COLOURS: dict[tuple[str, tuple[object, ...], tuple[object, ...]], str] = {}
+"""The colour of a node with boundary or membership entries, per (payload head, sorted boundary
+entries, sorted membership entries)."""
 
 
 def _incidence(
@@ -368,7 +452,9 @@ def _refine(diagram: Diagram, symmetric: bool = False) -> dict[NodeId, str]:
 def _refine_jointly(parts: tuple[tuple[Diagram, bool], ...]) -> list[dict[NodeId, str]]:
     """:func:`_refine` over the disjoint union of ``parts``: each round ranks the nodes'
     ``(rank, sorted neighbour ranks)`` signatures in sorted order, until the class count stops
-    growing; a node's colour is its initial colour and its final rank."""
+    growing; a node's colour is its initial colour and its final rank. Each wire end enters a
+    signature as one int ordered as ``(own direction, own index, far rank, far direction, far
+    index)``."""
     initial = [_initial_colours(d, sym) for d, sym in parts]
     nodes = [(p, nid) for p, colours in enumerate(initial) for nid in sorted(colours)]
     index = {key: i for i, key in enumerate(nodes)}
@@ -381,10 +467,19 @@ def _refine_jointly(parts: tuple[tuple[Diagram, bool], ...]) -> list[dict[NodeId
     order = {c: r for r, c in enumerate(sorted({initial[p][nid] for p, nid in nodes}))}
     rank = [order[initial[p][nid]] for p, nid in nodes]
     classes = len(order)
+    near = {k: r for r, k in enumerate(sorted({(e[0], e[1]) for own in ends for e in own}))}
+    far = {k: r for r, k in enumerate(sorted({(e[3], e[4]) for own in ends for e in own}))}
+    span = max(len(far), 1)
+    stride = (len(nodes) + 1) * span
+    packed = [
+        [(near[(od, oi)] * stride + far[(fd, fi)], o) for od, oi, o, fd, fi in own] for own in ends
+    ]
     for _round in range(len(nodes) + 1):
+        if classes == len(nodes):
+            break
         sigs = [
-            (rank[i], tuple(sorted((od, oi, rank[o], fd, fi) for od, oi, o, fd, fi in ends[i])))
-            for i in range(len(nodes))
+            (rank[i], tuple(sorted([base + rank[o] * span for base, o in own])))
+            for i, own in enumerate(packed)
         ]
         ranked = {sig: r for r, sig in enumerate(sorted(set(sigs)))}
         if len(ranked) == classes:

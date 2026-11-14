@@ -128,16 +128,16 @@ class PortRef:
     def __post_init__(self) -> None:
         """Validate that ``direction`` is a Direction and ``index`` a non-negative int, then
         store the hash."""
-        if not isinstance(self.direction, Direction):
-            raise GraphGrammarError(
-                f"PortRef direction must be a Direction, got {self.direction!r}"
-            )
-        if isinstance(self.index, bool) or not isinstance(self.index, int):
-            raise GraphGrammarError(f"PortRef index must be an int, got {self.index!r}")
-        if self.index < 0:
-            raise GraphDomainError(f"PortRef index must be >= 0, got {self.index}")
-        output = self.direction is Direction.OUTPUT
-        object.__setattr__(self, "_hash", hash((self.node_id, output, self.index)))
+        direction, index = self.direction, self.index
+        if direction.__class__ is not Direction and not isinstance(direction, Direction):
+            raise GraphGrammarError(f"PortRef direction must be a Direction, got {direction!r}")
+        if index.__class__ is not int and (isinstance(index, bool) or not isinstance(index, int)):
+            raise GraphGrammarError(f"PortRef index must be an int, got {index!r}")
+        if index < 0:
+            raise GraphDomainError(f"PortRef index must be >= 0, got {index}")
+        object.__setattr__(
+            self, "_hash", hash((self.node_id, direction is Direction.OUTPUT, index))
+        )
 
     def __hash__(self) -> int:
         """The stored hash of ``(node_id, direction is OUTPUT, index)``, agreeing with the
@@ -187,11 +187,14 @@ class Wire:
 
     a: PortRef
     b: PortRef
+    _hash: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Reject a wire that names the same port at both ends."""
+        """Reject a wire that names the same port at both ends, then store the hash."""
         if self.a == self.b:
             raise GraphDomainError(f"a wire cannot connect port {self.a} to itself")
+        ha, hb = hash(self.a), hash(self.b)
+        object.__setattr__(self, "_hash", hash((ha, hb) if ha <= hb else (hb, ha)))
 
     def endpoints(self) -> frozenset[PortRef]:
         """The two ports this wire joins, as an unordered pair."""
@@ -205,9 +208,19 @@ class Wire:
         return (a == other.a and b == other.b) or (a == other.b and b == other.a)
 
     def __hash__(self) -> int:
-        """Hash agrees with __eq__: order-independent."""
+        """The stored order-independent hash, agreeing with __eq__."""
+        return self._hash
+
+    def __getstate__(self) -> list[PortRef]:
+        """The two endpoints."""
+        return [self.a, self.b]
+
+    def __setstate__(self, state: Sequence[PortRef]) -> None:
+        """Restore the two endpoints from ``state`` and recompute the hash."""
+        object.__setattr__(self, "a", state[0])
+        object.__setattr__(self, "b", state[1])
         ha, hb = hash(self.a), hash(self.b)
-        return hash((ha, hb) if ha <= hb else (hb, ha))
+        object.__setattr__(self, "_hash", hash((ha, hb) if ha <= hb else (hb, ha)))
 
     def __repr__(self) -> str:
         return f"Wire({self.a!r}, {self.b!r})"

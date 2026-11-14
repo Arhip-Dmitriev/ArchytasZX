@@ -210,7 +210,9 @@ class GeneratorRegistry:
         type whose other fields differ.
         """
         registered = self._types.get(generator_type.name)
-        return registered is not None and registered == generator_type
+        return registered is generator_type or (
+            registered is not None and registered == generator_type
+        )
 
     def names(self) -> frozenset[str]:
         """The set of all registered generator type names."""
