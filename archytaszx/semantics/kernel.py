@@ -1685,6 +1685,17 @@ class _Lean:
         tail = "the sliding identity's phase index read as the zero phase"
         return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))
 
+    def split(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """A power split of base 2 through :meth:`linked_net` of
+        :func:`lean_split.export_split`; None outside its form."""
+        from archytaszx.semantics import lean_split
+
+        source = lean_split.export_split(t.lhs, t.rhs)
+        if source is None:
+            return None
+        tail = "the box's copies from the first box's copy count on read at the copy's digits"
+        return self.linked_net(source, "Q", tail, binders, self.call(t.lhs), self.call(t.rhs))
+
     def linked_net(
         self, source: str, stem: str, tail: str, binders: Sequence[str], lhs: str, rhs: str
     ) -> str:
@@ -1799,6 +1810,10 @@ class _Lean:
                 return proved
         if inf.kind == "identity_slide" and self.semantic:
             proved = self.slid(t, binders)
+            if proved is not None:
+                return proved
+        if inf.kind == "power_split" and self.semantic:
+            proved = self.split(t, binders)
             if proved is not None:
                 return proved
         if inf.kind in ("repeel", "peel", "identity_slide", "box_split", "leg_move", "power_split"):

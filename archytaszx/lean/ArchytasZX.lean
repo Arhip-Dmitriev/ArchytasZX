@@ -52,6 +52,7 @@ import ArchytasZX.Linked
 import ArchytasZX.LinkedPeel
 import ArchytasZX.LinkedSlide
 import ArchytasZX.LinkedRegroup
+import ArchytasZX.LinkedSplit
 import ArchytasZX.Mixed
 import ArchytasZX.NumField
 import ArchytasZX.PathSum
