@@ -46,6 +46,7 @@ layer, where :class:`~archytaszx.semantics.check.EqualityMode` now carries it, n
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 from collections.abc import Callable, Mapping
@@ -1222,7 +1223,9 @@ def _nonnegative(expr: sp.Expr) -> bool:
     ]
     if not powers:
         return False
-    ys = {p: sp.Dummy(nonnegative=True) for p in powers}
+    taken = {str(s.name) for s in expr.free_symbols}
+    names = (f"_y{n}" for n in itertools.count() if f"_y{n}" not in taken)
+    ys = {p: sp.Symbol(next(names), nonnegative=True) for p in powers}
     relaxed = sp.expand(expr.xreplace({p: 1 + y for p, y in ys.items()}))
     if relaxed.free_symbols - set(ys.values()):
         return relaxed.is_nonnegative is True
