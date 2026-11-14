@@ -280,6 +280,28 @@ def test_a_theorem_falls_back_to_the_normaliser(monkeypatch: pytest.MonkeyPatch)
     assert "verified normaliser" in K.lean(theorem).split("-/")[0]
 
 
+def test_a_long_chain_translates_without_recursion() -> None:
+    k = 1500
+    spiders = "; ".join(f"a{i} = Z(1 -> 1, d)" for i in range(k))
+    wires = "; ".join(f"wire a{i}.out0 -- a{i + 1}.in0" for i in range(k - 1))
+    g = parse_diagram(f"{spiders}; {wires}")
+    assert "theorem" in S.export_symbolic(g, g.copy())
+
+
+def test_a_failing_proof_builder_leaves_the_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.semantics import certify_decision
+    from archytaszx.semantics.decide import EqualityVerdict, decide_equal
+
+    def deep(*_args: object, **_kw: object) -> None:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(certify_decision, "decision_proof", deep)
+    left, right = _pair("phase_fusion")
+    decision = decide_equal(left, right)
+    assert decision.verdict is EqualityVerdict.EQUAL_UNCERTIFIED
+    assert "RecursionError" in decision.reason
+
+
 def test_integer_phase_symbols_drop_whole_turns() -> None:
     source = _source("integer_phase")
     assert "(p_j : ℤ)" in source and "phC_den_int" in source

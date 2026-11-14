@@ -909,23 +909,27 @@ def tr_nodes(
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
     budget: list[int] | None = None,
 ) -> list[STm] | None:
-    """``trNodesB``; :class:`NetUnsupported` once the terms normalised exceed ``budget[0]``."""
-    if not nodes:
-        return [(of_q(1), (), (), ())]
-    _kind, os, is_, _dim, _ph = nodes[0]
-    legs = (*os, *is_)
-    a = tr_node(dt, pt, OFF + i, *nodes[0])
-    b = tr_nodes(fl, dt, pt, labs, internal, pre + tuple(legs), i + 1, nodes[1:], budget)
-    if a is None or b is None or not ex_mul_ok(a, b):
-        return None
-    if budget is not None:
-        budget[0] -= len(a) * len(b)
-        if budget[0] < 0:
-            raise NetUnsupported(f"the normaliser's expansion exceeds {NORM_TERMS} terms")
-    first = tuple(
-        (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in pre
-    )
-    return list(nf_ex(fl, [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]))
+    """``trNodesB``, iterated from the last node; :class:`NetUnsupported` once the terms
+    normalised exceed ``budget[0]``."""
+    steps: list[tuple[list[STm] | None, tuple[int, ...], tuple[int, ...]]] = []
+    for k, node in enumerate(nodes):
+        _kind, os, is_, _dim, _ph = node
+        legs = (*os, *is_)
+        steps.append((tr_node(dt, pt, OFF + i + k, *node), legs, pre))
+        pre = pre + tuple(legs)
+    b: list[STm] | None = [(of_q(1), (), (), ())]
+    for a, legs, before in reversed(steps):
+        if a is None or b is None or not ex_mul_ok(a, b):
+            return None
+        if budget is not None:
+            budget[0] -= len(a) * len(b)
+            if budget[0] < 0:
+                raise NetUnsupported(f"the normaliser's expansion exceeds {NORM_TERMS} terms")
+        first = tuple(
+            (lab, lab_dm(dt, labs, lab)) for lab in internal if lab in legs and lab not in before
+        )
+        b = list(nf_ex(fl, [(t[0], first + t[1], t[2], t[3]) for t in ex_mul(a, b)]))
+    return b
 
 
 def tr_nodes_full(
@@ -934,14 +938,14 @@ def tr_nodes_full(
     i: int,
     nodes: Sequence[tuple[str, Sequence[int], Sequence[int], int, int]],
 ) -> list[STm] | None:
-    """``trNodesF``."""
-    if not nodes:
-        return [(of_q(1), (), (), ())]
-    a = tr_node(dt, pt, OFF + i, *nodes[0])
-    b = tr_nodes_full(dt, pt, i + 1, nodes[1:])
-    if a is None or b is None or not ex_mul_ok(a, b):
-        return None
-    return ex_mul(a, b)
+    """``trNodesF``, iterated from the last node."""
+    parts = [tr_node(dt, pt, OFF + i + k, *node) for k, node in enumerate(nodes)]
+    b: list[STm] | None = [(of_q(1), (), (), ())]
+    for a in reversed(parts):
+        if a is None or b is None or not ex_mul_ok(a, b):
+            return None
+        b = ex_mul(a, b)
+    return b
 
 
 def tr_net_full(

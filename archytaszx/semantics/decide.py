@@ -1582,8 +1582,11 @@ def _certify(
             return decision
         from archytaszx.semantics.certify_decision import decision_proof
 
-        with _trace.span("decide.proof"):
-            proof, why = decision_proof(decision, left, right, describe)
+        try:
+            with _trace.span("decide.proof"):
+                proof, why = decision_proof(decision, left, right, describe)
+        except RecursionError as exc:
+            proof, why = None, f"proof builder: {type(exc).__name__}: {exc}"
         if proof is None:
             return replace(
                 decision,
