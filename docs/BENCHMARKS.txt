@@ -796,8 +796,10 @@ unsupported, checked before any entry count, since at d = 1 the entry count stay
   QuiZX 0.4.0   built     as PyZX, with full_simp
   QCEC 3.11.0   built     d = 2, concrete n; the circuit against the reference circuit (its own,
                           else the specification as one dense Unitary or Prepare gate), the
-                          global phase appended as u1, x, u1, x on q[0]; full equivalence (not
-                          partial) by the decision-diagram checkers only; equivalent / not
+                          global phase appended as u1, x, u1, x on q[0]; with ancillary (Init)
+                          wires, the circuit then the inverse reference against the empty
+                          circuit; full equivalence (not partial) by the decision-diagram
+                          checkers only; equivalent / not
                           equivalent / no information, up to global phase flagged (and answered
                           equal); circuits of different input or output counts unsupported; up
                           to a scalar (a dense reference is normalised)
