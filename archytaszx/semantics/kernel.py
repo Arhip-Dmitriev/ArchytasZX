@@ -1650,6 +1650,55 @@ class _Lean:
         applied = f"{name} @{ns}.main"
         return f"({applied} {' '.join(binders)})" if binders else f"({applied})"
 
+    def peeled(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """A peel step through :meth:`peel_net`."""
+        return self.peel_net(t.lhs, t.rhs, binders, self.call(t.lhs), self.call(t.rhs))
+
+    def peel_net(
+        self, before: Diagram, after: Diagram, binders: Sequence[str], lhs: str, rhs: str
+    ) -> str | None:
+        """``lhs = rhs`` (the opaque forms of ``before`` and ``after``) through a proof
+        ``P<i>.main`` that the two, written as linked diagrams, have equal digit sums
+        (``evalL_peel``), and the axiom ``net<i>`` from its statement; None outside the form of
+        :func:`lean_linked.export_peel` or when the scalars differ."""
+        from archytaszx.semantics import lean_linked
+
+        if not self.semantic or before.scalar != after.scalar:
+            return None
+        source = lean_linked.export_peel(before, after)
+        if source is None:
+            return None
+        body, imports, ns = _nest(source, f"P{len(self.subs) + 1}")
+        self.subs.append(body)
+        self.imports += [i for i in imports if i not in self.imports]
+        head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
+        note = (
+            f"the diagrams are the linked diagrams {ns}.L and {ns}.L' times one scalar, whose "
+            f"digit sums {ns}.main proves equal, the last copy of the peeled box read at its copy"
+        )
+        name = self.fresh("net")
+        self.decls.append(
+            f"/-- {_comment(note)} -/\naxiom {name} : (type_of% @{ns}.main) → {head}{lhs} = {rhs}"
+        )
+        applied = f"{name} @{ns}.main"
+        return f"({applied} {' '.join(binders)})" if binders else f"({applied})"
+
+    def succ_peel(
+        self, d: Diagram, index: str, k: str, peeled: Diagram, binders: Sequence[str]
+    ) -> str | None:
+        """``d`` at ``index = k + 1`` equal to ``peeled`` through :meth:`peel_net`, with no
+        floors on ``binders``."""
+        from archytaszx.diagram.bangbox import Mult
+        from archytaszx.semantics.induction import rename_multiplicity
+        from archytaszx.semantics.prove import _with_scalar_index
+
+        if any(v in binders for v in map(_var, self.step)):
+            return None
+        value = Mult(k) + 1
+        before = _with_scalar_index(rename_multiplicity(d, index, value), index, value)
+        s = {index: f"({_var(k)} + 1)"}
+        return self.peel_net(before, peeled, binders, self.call(d, s), self.call(peeled))
+
     def fresh(self, stem: str) -> str:
         self.count += 1
         return f"{stem}{self.count}"
@@ -1721,6 +1770,10 @@ class _Lean:
                 return proved
             note = "path sums reduce to one form"
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
+        if inf.kind == "peel" and self.semantic:
+            proved = self.peeled(t, binders)
+            if proved is not None:
+                return proved
         if inf.kind in ("repeel", "peel", "identity_slide", "box_split", "leg_move", "power_split"):
             note = {
                 "repeel": "two joint peels of one box family",
@@ -1924,19 +1977,15 @@ class _Lean:
             "inst", f"{index} = 0", others, self.call(t.rhs, z), self.call(base.rhs)
         )
         ok = [*others, kv]
-        succ_own = self.axiom(
-            "peel",
-            f"{index} = {k} + 1",
-            ok,
-            self.call(own, s),
-            self.call(data["peeled"]),  # type: ignore[arg-type]
-        )
-        succ_other = self.axiom(
-            "peel",
-            f"{index} = {k} + 1",
-            ok,
-            self.call(other, s),
-            self.call(data["other_peeled"]),  # type: ignore[arg-type]
+        succ_own, succ_other = (
+            self.succ_peel(side_d, index, k, peeled, ok)
+            or self.axiom(
+                "peel", f"{index} = {k} + 1", ok, self.call(side_d, s), self.call(peeled)
+            )
+            for side_d, peeled in (
+                (own, cast("Diagram", data["peeled"])),
+                (other, cast("Diagram", data["other_peeled"])),
+            )
         )
         hole = self.fresh("hole")
         arity = " → ".join(["Nat"] * len(ok) + ["Diagram", "Diagram"])

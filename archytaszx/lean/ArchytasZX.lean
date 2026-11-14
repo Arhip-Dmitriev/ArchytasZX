@@ -48,6 +48,8 @@ import ArchytasZX.FamCheck
 import ArchytasZX.Order
 import ArchytasZX.OrderK
 import ArchytasZX.FamK
+import ArchytasZX.Linked
+import ArchytasZX.LinkedPeel
 import ArchytasZX.Mixed
 import ArchytasZX.NumField
 import ArchytasZX.PathSum
