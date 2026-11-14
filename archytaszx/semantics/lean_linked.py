@@ -19,6 +19,8 @@ boundary place). ``export_peel`` writes both sides of a peel of one outermost no
 the copy map ``cp`` from the box's nodes to the peeled copy's, the ``PeelOK`` conditions (checked
 here first on a mirror of the Lean definitions, then in Lean by ``decide +kernel``) and ``main``,
 the two linked digit sums equal through ``evalL_peel``; None when the peel is outside that form.
+``export_slide`` writes both sides of an identity slide, each dropping the identity spider
+(``DropOK``, ``dropId``) to one diagram, and ``main`` through ``evalL_slide``.
 """
 
 from __future__ import annotations
@@ -447,5 +449,122 @@ def export_peel(before: Diagram, after: Diagram) -> str | None:
         "    ∀ σ' : ℕ → List ℕ → ℕ,\n"
         f"      L'.evalL E ks σ' = L.evalL E ks (bndMap L.base L'.base ({phi}) σ') :=\n"
         "  fun E ks hk σ' => evalL_peel ok E ks hk σ'\n\n"
+        "end ArchytasZX.Export\n"
+    )
+
+
+def _subst(v: Port, P: Port, p: Port) -> Port:
+    return P if p == v else p
+
+
+Dropped = tuple[list[LNode], list[tuple[Port, Port]], list[Port], list[Port], list[LLink]]
+"""A dropped diagram's nodes, wires, outputs, inputs and links."""
+
+
+def drop_id(D: LDiag, x: int, w: tuple[Port, Port], v: Port, P: Port) -> Dropped:
+    """The Lean ``dropId`` of ``D``: nodes, wires, boundary and links (the boxes kept)."""
+    wires = list(D.wires)
+    wires.remove(w)
+    s: Callable[[Port], Port] = lambda p: _subst(v, P, p)
+    return (
+        [n for n in D.nodes if n.id != x],
+        [(s(a), s(b)) for a, b in wires],
+        [s(p) for p in D.outs],
+        [s(p) for p in D.ins],
+        [LLink(lk.box, s(lk.l1), s(lk.l2), s(lk.e1), s(lk.e2)) for lk in D.links],
+    )
+
+
+def drop_ok(D: LDiag, x: LNode, w: tuple[Port, Port], u: Port, v: Port, P: Port) -> bool:
+    """The Lean ``DropOK D x w u v P``, field by field."""
+    rest = list(D.wires)
+    rest.remove(w)
+    return (
+        all(D.chain(a[0]) == D.chain(b[0]) for a, b in D.wires)
+        and len({n.id for n in D.nodes}) == len(D.nodes)
+        and D.nodes[-1] == x
+        and x.kind == "Z"
+        and x.outs == (x.dim,)
+        and x.ins == (x.dim,)
+        and {u, v} == {(x.id, True, 0), (x.id, False, 0)}
+        and w in ((u, P), (P, u))
+        and P[0] != x.id
+        and P in D.legs()
+        and all(u not in e for e in rest)
+        and u not in D.bnd()
+        and all(u not in (lk.l1, lk.l2, lk.e1, lk.e2) for lk in D.links)
+        and all(v not in (lk.l1, lk.l2) for lk in D.links)
+    )
+
+
+def _drops(D: LDiag, x: LNode) -> list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]]:
+    """Each ``(w, u, v, P, dropped)`` of ``x`` in ``D`` meeting :func:`drop_ok`."""
+    D = LDiag([n for n in D.nodes if n.id != x.id] + [x], D.wires, D.outs, D.ins, D.boxes, D.links)
+    out: list[tuple[tuple[Port, Port], Port, Port, Port, Dropped]] = []
+    legs = [(x.id, True, 0), (x.id, False, 0)]
+    for u in legs:
+        v = legs[1 - legs.index(u)]
+        for w in D.wires:
+            if u in w and w[0] != w[1]:
+                P = w[1] if w[0] == u else w[0]
+                if drop_ok(D, x, w, u, v, P):
+                    out.append((w, u, v, P, drop_id(D, x.id, w, v, P)))
+    return out
+
+
+def export_slide(before: Diagram, after: Diagram) -> str | None:
+    """Lean source whose ``main`` proves the linked digit sums of ``before`` and ``after`` equal
+    (``evalL_slide``), both dropping one phaseless Z(1 -> 1) to one diagram; None outside that
+    form."""
+    tables = _Tables()
+    try:
+        L = linked(before, tables)
+        R = linked(after, tables)
+    except LinkedUnsupported:
+        return None
+    if L.boxes != R.boxes:
+        return None
+    zero = _Tables.index(tables.phases, repr(None))
+    found = None
+    for x in L.nodes:
+        if x not in R.nodes or x.kind != "Z" or x.ph != zero:
+            continue
+        for wl, ul, vl, Pl, dl in _drops(L, x):
+            for wr, ur, vr, Pr, dr in _drops(R, x):
+                if dl == dr and found is None:
+                    found = (x, (wl, ul, vl, Pl), (wr, ur, vr, Pr))
+    if found is None:
+        return None
+    x, sl, sr = found
+    L.nodes = [n for n in L.nodes if n.id != x.id] + [x]
+    R.nodes = [n for n in R.nodes if n.id != x.id] + [x]
+    proof = ",\n    ".join(["by decide +kernel"] * 18)
+
+    def args(s: tuple[tuple[Port, Port], Port, Port, Port]) -> str:
+        w, u, v, P = s
+        return f"({_lport(w[0])}, {_lport(w[1])}) {_lport(u)} {_lport(v)} {_lport(P)}"
+
+    def drop(name: str, s: tuple[tuple[Port, Port], Port, Port, Port]) -> str:
+        w, _u, v, P = s
+        return f"{name}.dropId x.id ({_lport(w[0])}, {_lport(w[1])}) {_lport(v)} {_lport(P)}"
+
+    rhs = drop("L'", sr)
+    return (
+        "import ArchytasZX\n\nnamespace ArchytasZX.Export\n\n"
+        "open ArchytasZX ArchytasZX.LDiagram\n\n"
+        "/-- The diagram before the slide, as a linked diagram. -/\n"
+        f"def L : LDiagram :=\n  {literal(L)}\n\n"
+        "/-- The diagram after the slide, as a linked diagram. -/\n"
+        f"def L' : LDiagram :=\n  {literal(R)}\n\n"
+        "/-- The identity spider that slides. -/\n"
+        f"def x : DNode := ⟨{x.id}, .Z, {x.dim}, {x.ph}, {_lnat(x.outs)}, {_lnat(x.ins)}⟩\n\n"
+        f"theorem ok : DropOK L x {args(sl)} :=\n  ⟨{proof}⟩\n\n"
+        f"theorem ok' : DropOK L' x {args(sr)} :=\n  ⟨{proof}⟩\n\n"
+        f"theorem same : {drop('L', sl)} = {rhs} := by\n"
+        "  decide +kernel\n\n"
+        "/-- The linked digit sums agree when the identity's phase index reads zero. -/\n"
+        f"theorem main : ∀ (E : Env), (∀ k, E.phase {x.ph} k = 0) →\n"
+        "    ∀ (ks : ℕ → ℕ) (σ : ℕ → List ℕ → ℕ), L'.evalL E ks σ = L.evalL E ks σ :=\n"
+        "  fun E hE ks σ => evalL_slide ok ok' same E hE ks σ\n\n"
         "end ArchytasZX.Export\n"
     )

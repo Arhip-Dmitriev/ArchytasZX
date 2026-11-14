@@ -1668,13 +1668,36 @@ class _Lean:
         source = lean_linked.export_peel(before, after)
         if source is None:
             return None
-        body, imports, ns = _nest(source, f"P{len(self.subs) + 1}")
+        return self.linked_net(
+            source, "P", "the last copy of the peeled box read at its copy", binders, lhs, rhs
+        )
+
+    def slid(self, t: Theorem, binders: Sequence[str]) -> str | None:
+        """An identity slide through :meth:`linked_net` of
+        :func:`lean_linked.export_slide`; None outside its form or when the scalars differ."""
+        from archytaszx.semantics import lean_linked
+
+        if not self.semantic or t.lhs.scalar != t.rhs.scalar:
+            return None
+        source = lean_linked.export_slide(t.lhs, t.rhs)
+        if source is None:
+            return None
+        tail = "the sliding identity's phase index read as the zero phase"
+        return self.linked_net(source, "S", tail, binders, self.call(t.lhs), self.call(t.rhs))
+
+    def linked_net(
+        self, source: str, stem: str, tail: str, binders: Sequence[str], lhs: str, rhs: str
+    ) -> str:
+        """``lhs = rhs`` through the proof ``<stem><i>.main`` of ``source`` that the linked
+        diagrams ``L`` and ``L'`` have equal digit sums, and the axiom ``net<i>`` from its
+        statement."""
+        body, imports, ns = _nest(source, f"{stem}{len(self.subs) + 1}")
         self.subs.append(body)
         self.imports += [i for i in imports if i not in self.imports]
         head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
         note = (
             f"the diagrams are the linked diagrams {ns}.L and {ns}.L' times one scalar, whose "
-            f"digit sums {ns}.main proves equal, the last copy of the peeled box read at its copy"
+            f"digit sums {ns}.main proves equal, {tail}"
         )
         name = self.fresh("net")
         self.decls.append(
@@ -1772,6 +1795,10 @@ class _Lean:
             return self.axiom("path_sum", note, binders, self.call(t.lhs), self.call(t.rhs))
         if inf.kind == "peel" and self.semantic:
             proved = self.peeled(t, binders)
+            if proved is not None:
+                return proved
+        if inf.kind == "identity_slide" and self.semantic:
+            proved = self.slid(t, binders)
             if proved is not None:
                 return proved
         if inf.kind in ("repeel", "peel", "identity_slide", "box_split", "leg_move", "power_split"):

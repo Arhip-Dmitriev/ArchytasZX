@@ -13,13 +13,15 @@
 
 """Kernel peel steps exported over linked diagrams (REMAINING_BUGS_SPEC 79.16a): the
 cluster_state_2d peel proved by ``evalL_peel``, its reverse refused, the semantic export linking it
-by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy count."""
+by a ``net`` axiom, and Lean accepting the proof and rejecting a wrong copy count; link ports on
+the boundary behind an identity spider (79.16e); identity slides through ``evalL_slide`` (79.16d)."""
 
 from __future__ import annotations
 
 import os
 import re
 from collections.abc import Iterator
+from typing import cast
 
 import pytest
 
@@ -29,7 +31,7 @@ from archytaszx.semantics import kernel, lean_linked
 from archytaszx.semantics.decide import decide_equal
 from archytaszx.semantics.induction import rename_multiplicity
 from archytaszx.semantics.lean_net import check, lean_project
-from archytaszx.semantics.prove import _with_scalar_index
+from archytaszx.semantics.prove import InductionSide, _with_scalar_index
 from tests.test_nested_chain import _grid_pair
 
 
@@ -76,13 +78,11 @@ def _succ_peels(t: kernel.Theorem) -> Iterator[tuple[Diagram, Diagram]]:
         data = s.inference.data
         if s.inference.kind != "induction" or str(data["index"]) != "m":
             continue
-        own, other = (
-            (s.lhs, s.rhs) if data["side"] is kernel.InductionSide.START else (s.rhs, s.lhs)
-        )
+        own, other = (s.lhs, s.rhs) if data["side"] is InductionSide.START else (s.rhs, s.lhs)
         value = Mult(str(data["step"])) + 1
         for d, peeled in ((own, data["peeled"]), (other, data["other_peeled"])):
             before = rename_multiplicity(d, "m", value)
-            yield _with_scalar_index(before, "m", value), peeled
+            yield _with_scalar_index(before, "m", value), cast(Diagram, peeled)
 
 
 def test_successor_peels_with_boundary_link_ports_export() -> None:
@@ -124,6 +124,48 @@ def test_lean_checks_the_peel_and_refuses_a_wrong_copy_count(tmp_path: object) -
     ok, output = check(source, f"{tmp_path}/peel.lean")
     assert ok and "error" not in output and "sorry" not in output, output
     bad = source.replace("+ 1 →", "+ 2 →")
+    assert bad != source
+    ok, output = check(bad, f"{tmp_path}/bad.lean")
+    assert not ok
+
+
+def _slides(t: kernel.Theorem) -> list[kernel.Theorem]:
+    """The identity slide steps under ``t``."""
+    seen: set[int] = set()
+    out, stack = [], [t]
+    while stack:
+        s = stack.pop()
+        if id(s) not in seen:
+            seen.add(id(s))
+            stack.extend(s.inference.premises)
+            if s.inference.kind == "identity_slide":
+                out.append(s)
+    return out
+
+
+def test_the_cluster_state_2d_identity_slide_exports_through_evalL_slide() -> None:
+    theorem = _cluster()
+    slides = _slides(theorem)
+    assert slides
+    for t in slides:
+        source = lean_linked.export_slide(t.lhs, t.rhs)
+        assert source is not None and "evalL_slide ok ok' same" in source
+    source = kernel.lean(theorem, "main", semantic=True)
+    assert "namespace ArchytasZX.Export.S" in source
+    assert "a boxed identity spider moved" not in source
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(os.path.join(lean_project(), ".lake", "packages", "mathlib")),
+    reason="the ArchytasZX Lean project has no Mathlib",
+)
+def test_lean_checks_the_slide_and_refuses_a_phased_identity(tmp_path: object) -> None:
+    (t, *_) = _slides(_cluster())
+    source = lean_linked.export_slide(t.lhs, t.rhs)
+    assert source is not None
+    ok, output = check(source, f"{tmp_path}/slide.lean")
+    assert ok and "error" not in output and "sorry" not in output, output
+    bad = re.sub(r"E\.phase (\d+) k = 0", lambda m: f"E.phase {int(m[1]) + 1} k = 0", source)
     assert bad != source
     ok, output = check(bad, f"{tmp_path}/bad.lean")
     assert not ok
