@@ -1802,8 +1802,9 @@ def zip_child(diagram: Diagram, box: BangBox) -> BangBox | None:
 def _zip_ends(
     diagram: Diagram, box: BangBox, child: BangBox
 ) -> list[tuple[PortRef, PortRef, BangBoxId]]:
-    """Per open link port of ``box`` in ``child``: the port, its partner outside ``box`` and
-    the partner's box, which holds the copies the child's copies are wired to one to one."""
+    """Per open link port of ``box`` in ``child`` that is not a boundary slot: the port, its
+    partner outside ``box`` and the partner's box, which holds the copies the child's copies
+    are wired to one to one."""
     if box.cyclic:
         return []
     found: list[tuple[PortRef, PortRef, BangBoxId]] = []
@@ -1812,6 +1813,8 @@ def _zip_ends(
             continue
         for ref in (q_ref, p_ref):
             partner = _partner(diagram, ref)
+            if partner is None and _on_boundary(diagram, ref):
+                continue
             holder = None if partner is None else _innermost(diagram, partner.node_id)
             if (
                 partner is None
@@ -1829,6 +1832,46 @@ def _zip_ends(
                 )
             found.append((ref, partner, holder.id))
     return found
+
+
+def _on_boundary(diagram: Diagram, ref: PortRef) -> bool:
+    """Whether ``ref`` is a boundary slot."""
+    if ref.direction is Direction.INPUT:
+        return ref in diagram.boundary_inputs
+    return ref in diagram.boundary_outputs
+
+
+def _box_boundary_ends(diagram: Diagram, box: BangBox, child: BangBox) -> None:
+    """Move each boundary slot at an open link port of ``box`` in ``child`` onto a fresh
+    identity wired to that port, the identity alone in a new box of ``child``'s multiplicity
+    beside ``box``."""
+    if box.cyclic:
+        return
+    for p_ref, q_ref in box.links:
+        if p_ref.node_id not in child.node_scope:
+            continue
+        for ref in (q_ref, p_ref):
+            if _partner(diagram, ref) is not None or not _on_boundary(diagram, ref):
+                continue
+            dim = diagram.nodes[ref.node_id].legs(ref.direction)[ref.index].dim
+            if box.index is not None and box.index in dim.free_symbols:
+                raise BangBoxGrammarError(
+                    f"chain box {box.id!r}: boundary link port {ref!r} reads the chain index"
+                )
+            temps: list[NodeId] = []
+            diagram.add_wire(ref, _detach(diagram, ref, temps))
+            diagram.add_bang_box(
+                child.multiplicity,
+                node_scope=frozenset(temps),
+                parent=box.parent,
+                sheets=child.sheets,
+            )
+            ancestor = box.parent
+            while ancestor is not None:
+                outer = diagram.bang_boxes[ancestor]
+                if outer.is_node_scope:
+                    diagram.set_bang_box_node_scope(ancestor, outer.node_scope | frozenset(temps))
+                ancestor = outer.parent
 
 
 def _index_symbol(diagram: Diagram, box: BangBox, name: str) -> sp.Symbol:
@@ -1938,6 +1981,8 @@ def _instantiate_extended(diagram: Diagram, box: BangBox, k: int) -> list[dict[N
     copies and the boxes the chain's ends are wired to are then merged into one box, one group
     per merged box."""
     child = zip_child(diagram, box)
+    if child is not None:
+        _box_boundary_ends(diagram, box, child)
     zipped = [] if child is None else _zip_ends(diagram, box, child)
     temps: list[NodeId] = []
     ends = _detach_links(diagram, box, temps)
@@ -2221,6 +2266,7 @@ def _peel_zipped(diagram: Diagram, box: BangBox, last: sp.Expr) -> None:
     if box.cyclic:
         raise BangBoxGrammarError(f"cyclic chain {box.id!r} has no peel_one")
     first = peels_first(box)
+    _box_boundary_ends(diagram, box, child)
     ends = [p for p, _ in box.links] if not first else [q for _, q in box.links]
     holders = [b for ref, _, b in _zip_ends(diagram, box, child) if ref in ends]
     id_map = _peel_extended(diagram, box, last)

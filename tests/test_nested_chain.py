@@ -70,23 +70,44 @@ def _ring(n: int, l: int) -> str:
     return "\n".join(lines)
 
 
-def _grid(n: int, l: int, shift: int = 0) -> str:
+def _grid(n: int, l: int, shift: int = 0, head: bool = False, tail: bool = False) -> str:
+    """The flat n x l grid; with ``head`` (``tail``) the top (bottom) vertical legs are
+    boundary inputs (outputs)."""
     lines = ["dim d"]
-    wires = []
+    wires, inputs, ends = [], [], []
     for r in range(n):
         lines += [f"hs{r} = X(0 -> 1, d)", f"he{r} = Z(1 -> 0, d)"]
         for c in range(l):
             lines += [f"v{r}_{c} = Z(2 -> 3, d)", f"hv{r}_{c} = F(d)", f"hh{r}_{c} = F(d)"]
             wires += [f"hv{r}_{c}.out0 -- v{r}_{c}.in0", f"hh{r}_{c}.out0 -- v{r}_{c}.in1"]
             wires.append(f"{f'hs{r}.out0' if c == 0 else f'v{r}_{c - 1}.out1'} -- hh{r}_{c}.in0")
+            if r == 0 and head:
+                inputs.append(f"hv0_{c}.in0")
+                continue
             up = f"vs{c}.out0" if r == 0 else f"v{r - 1}_{(c + shift) % l}.out2"
             wires.append(f"{up} -- hv{r}_{c}.in0")
         wires.append(f"v{r}_{l - 1}.out1 -- he{r}.in0")
     for c in range(l):
-        lines += [f"vs{c} = X(0 -> 1, d)", f"ve{c} = Z(1 -> 0, d)"]
-        wires.append(f"v{n - 1}_{c}.out2 -- ve{c}.in0")
-    lines.append("wire " + ", ".join(wires))
-    lines.append("outputs " + ", ".join(f"v{r}_{c}.out0" for r in range(n) for c in range(l)))
+        lines += [] if head else [f"vs{c} = X(0 -> 1, d)"]
+        lines += [] if tail else [f"ve{c} = Z(1 -> 0, d)"]
+        top = f"v{n - 1}_{c}.out2" if n else (None if head else f"vs{c}.out0")
+        bottom = None if tail else f"ve{c}.in0"
+        if top is None and bottom is None:
+            lines.append(f"id{c} = Z(1 -> 1, d)")
+            inputs.append(f"id{c}.in0")
+            ends.append(f"id{c}.out0")
+        elif top is None:
+            inputs.append(f"{bottom}")
+        elif bottom is None:
+            ends.append(top)
+        else:
+            wires.append(f"{top} -- {bottom}")
+    if wires:
+        lines.append("wire " + ", ".join(wires))
+    if inputs:
+        lines.append("inputs " + ", ".join(inputs))
+    outputs = [f"v{r}_{c}.out0" for r in range(n) for c in range(l)]
+    lines.append("outputs " + ", ".join(outputs + ends))
     return "\n".join(lines)
 
 
@@ -144,12 +165,52 @@ def test_the_row_chain_peels_through_its_child(reverse: bool, k: int, l: int) ->
         assert compare(expected, parse_dsl(_grid(k + 1, l)), at).matched
 
 
-def test_a_chain_end_at_a_boundary_slot_is_refused() -> None:
-    text = GRID.replace("repeat l as PH: vs\n", "").replace("vs = X(0 -> 1, d)\n", "")
-    text = text.replace("vs.out0 -- hv.in0, ", "")
-    text = text.replace("outputs v.out0", "inputs hv.in0\noutputs v.out0")
-    with pytest.raises(Exception, match="not wired to a box of multiplicity"):
-        parse_dsl(text)
+def _open_grid(head: bool, tail: bool) -> str:
+    """GRID with the top (``head``) or bottom (``tail``) vertical legs on the boundary."""
+    text = GRID
+    inputs, outputs = "", ["v.out0"]
+    if head:
+        text = text.replace("repeat l as PH: vs\n", "").replace("vs = X(0 -> 1, d)\n", "")
+        text = text.replace("vs.out0 -- hv.in0, ", "")
+        inputs = "inputs hv.in0\n"
+    if tail:
+        text = text.replace("repeat l as PT: ve\n", "").replace("ve = Z(1 -> 0, d)\n", "")
+        text = text.replace(", v.out2 -- ve.in0", "").replace("wire v.out2 -- ve.in0\n", "")
+        outputs.append("v.out2")
+    return text.replace("outputs v.out0", inputs + "outputs " + ", ".join(outputs))
+
+
+@pytest.mark.parametrize(("head", "tail"), [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("order", [("n", "l"), ("l", "n")])
+@pytest.mark.parametrize(("n", "l"), [(0, 2), (1, 1), (2, 3)])
+def test_a_chain_end_at_a_boundary_slot_is_the_open_grid(
+    head: bool, tail: bool, order: tuple[str, str], n: int, l: int
+) -> None:
+    diagram = _at(_open_grid(head, tail), order, n, l)
+    result = compare(diagram, parse_dsl(_grid(n, l, head=head, tail=tail)), {"d": 2})
+    assert result.matched, result.reason
+    if n >= 2:
+        shifted = parse_dsl(_grid(n, l, 1, head=head, tail=tail))
+        assert not compare(diagram, shifted, {"d": 2}).matched
+
+
+@pytest.mark.parametrize(("head", "tail"), [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_a_chain_with_a_boundary_end_peels(head: bool, tail: bool, reverse: bool) -> None:
+    from archytaszx.diagram.bangbox import Mult
+    from archytaszx.semantics.induction import rename_multiplicity
+
+    text = _open_grid(head, tail)
+    if reverse:
+        text = text.replace("chain R: v.out2 -> hv.in0", "chain R: hv.in0 -> v.out2")
+    diagram = rename_multiplicity(parse_dsl(text), "n", Mult("s") + 1)
+    row = next(box for box in diagram.bang_boxes.values() if box.parent is None and box.links)
+    peeled = peel_one(diagram, row.id).diagram
+    for k, l in [(0, 1), (2, 3)]:
+        at = {"s": k, "l": l, "d": 2}
+        got = instantiate_symbol(instantiate_symbol(peeled, "s", k), "l", l)
+        expected = instantiate_symbol(instantiate_symbol(diagram, "s", k), "l", l)
+        assert compare(got, expected, at).matched
 
 
 def _grid_pair(s: int) -> tuple[Diagram, Diagram]:
