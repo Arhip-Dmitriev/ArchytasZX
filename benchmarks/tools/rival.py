@@ -46,6 +46,13 @@ VENVS = Path(os.environ.get("BENCH_VENVS") or Path(__file__).resolve().parent.pa
 DRIVERS = Path(__file__).resolve().parent / "drivers"
 DENSE_CAP = 1 << 24
 MAX_AXES = 64
+ALLOC_FAILURES = (
+    "out of memory",
+    "Heap exhausted",
+    "memory allocation of",
+    "std::bad_alloc",
+    "MemoryError",
+)
 
 
 class Unsupported(Exception):
@@ -511,7 +518,8 @@ def run_binary(
     }
     if proc.returncode not in (0, 1):
         killed = proc.returncode in (-24, 152)
-        oom = proc.returncode in (-9, 137)
+        text = (proc.stderr or "") + (proc.stdout or "")
+        oom = proc.returncode in (-9, 137) or any(p in text for p in ALLOC_FAILURES)
         out["status"] = "timeout" if killed else ("oom" if oom else "error")
         if killed:
             out["limit"] = "cpu"

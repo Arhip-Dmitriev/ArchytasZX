@@ -75,6 +75,8 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     c0 = time.process_time()
     try:
         c = rival.qubit_ir(inst, n)
+        if not c.wires:
+            raise rival.Unsupported("no wires")
         qc, inits, posts = rival.qiskit_circuit(c)
         m = len(c.wires)
         if len(inits) != m or posts:
