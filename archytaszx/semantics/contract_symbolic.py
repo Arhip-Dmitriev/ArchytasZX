@@ -2443,6 +2443,10 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
         return None
 
 
+_NESTED_INDICES = 24
+"""The most summed indices a symbolic-dimension contraction sums as one nested sum."""
+
+
 def _sum_out(
     head: sp.Expr,
     parts: Sequence[sp.Expr],
@@ -2454,8 +2458,9 @@ def _sum_out(
     dimensions one index at a time over only the parts it occurs in, the index whose parts
     carry the fewest other summed indices first, each partial sum simplified with the
     ``boundary`` indices and the summed indices still open sized; otherwise one nested sum
-    simplified once."""
-    if not all(dim.is_concrete for _symbol, dim in summed):
+    simplified once, or index by index as at concrete dimensions over more than
+    :data:`_NESTED_INDICES` indices."""
+    if not all(dim.is_concrete for _symbol, dim in summed) and len(summed) <= _NESTED_INDICES:
         entry = head * sp.Mul(*parts)
         for symbol, dim in reversed(summed):
             entry = sp.Sum(entry, (symbol, 0, dim.to_sympy() - 1))
