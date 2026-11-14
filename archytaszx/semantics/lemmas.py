@@ -23,9 +23,10 @@ side under :func:`~archytaszx.semantics.kernel.congr`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import cast
+from itertools import pairwise
+from typing import TYPE_CHECKING, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -40,6 +41,10 @@ from archytaszx.diagram.generators import (
     Z_SPIDER,
 )
 from archytaszx.diagram.graph import Diagram, Direction, NodeId, PortRef
+
+if TYPE_CHECKING:
+    from archytaszx.semantics.induction import CutRegion
+    from archytaszx.semantics.kernel import Theorem
 
 
 class LemmaError(Exception):
@@ -289,10 +294,45 @@ ZERO_REGISTER = Lemma(
 
 LIBRARY: tuple[Lemma, ...] = (CARRY_SHIFT, AND_REGISTER, AND_GATED, AND_SPLIT, ZERO_REGISTER)
 
+_SPLIT_BIND_LEFT = """
+count p
+s = S(literal 2, literal 2^m)
+e = Z(1 -> 0, literal 1)
+h = Z(0 -> 1, literal 1)
+b = B(literal 2, literal 2^m)
+wire s.out1 -- e.in0, h.out0 -- b.in1, s.out0 -- b.in0
+repeat p as U index m: s
+chain U: s.in0 -> s.out1
+repeat p as V index m: b
+chain V: b.out0 -> b.in1
+align V with U
+inputs s.in0
+outputs b.out0
+"""
+
+_SPLIT_BIND_RIGHT = """
+count p
+z = Z(1 -> 1, literal 2^p)
+inputs z.in0
+outputs z.out0
+"""
+
+SPLIT_BIND = Lemma(
+    name="split_bind",
+    symbol="p",
+    statement=(
+        "a 2^p register split by an S chain into p bits and bound back by an aligned B chain is "
+        "the identity"
+    ),
+    build=lambda p: _dsl_sides(_SPLIT_BIND_LEFT, _SPLIT_BIND_RIGHT, p),
+)
+
+INSERTIONS: tuple[Lemma, ...] = (SPLIT_BIND,)
+
 
 def lemma(name: str) -> Lemma:
-    """The library lemma called ``name``."""
-    for entry in LIBRARY:
+    """The library or insertion lemma called ``name``."""
+    for entry in (*LIBRARY, *INSERTIONS):
         if entry.name == name:
             return entry
     raise LemmaError(f"no lemma named {name!r}")
@@ -559,14 +599,275 @@ def close_with_lemmas(replaced: Diagram, target: Diagram, source: Diagram, index
     raise kernel.KernelError("lemma window: " + ("; ".join(reasons) or "no lemma applies"))
 
 
+def _partners(diagram: Diagram) -> dict[PortRef, PortRef]:
+    """Each wired port of ``diagram`` mapped to the port at the wire's other end."""
+    out: dict[PortRef, PortRef] = {}
+    for wire in diagram.wires:
+        out[wire.a], out[wire.b] = wire.b, wire.a
+    return out
+
+
+def _wire(diagram: Diagram, a: PortRef, b: PortRef) -> None:
+    """``a`` and ``b`` wired, the output end first."""
+    if a.direction is Direction.INPUT:
+        a, b = b, a
+    diagram.add_wire(a, b)
+
+
+def _split_off(
+    diagram: Diagram, v: NodeId, moved: frozenset[PortRef], via: PortRef
+) -> tuple[Diagram, NodeId, NodeId, NodeId]:
+    """``diagram`` with spider ``v`` as three spiders of its type in series: a phaseless leaf
+    holding ``via``'s wire and the legs ``moved``, a phaseless 1 -> 1 middle, and a hub with
+    ``v``'s phase and other legs, ``via``'s place wired to the middle; and leaf, middle, hub."""
+    if any(v in box.node_scope for box in diagram.bang_boxes.values()):
+        raise LemmaError("a boxed spider")
+    node = diagram.nodes[v]
+    partner = _partners(diagram)
+    out = diagram.copy()
+    dirs = (Direction.INPUT, Direction.OUTPUT)
+    keep = {d: [i for i in range(len(node.legs(d))) if PortRef(v, d, i) not in moved] for d in dirs}
+    hub = out.add_node(
+        node.generator_type,
+        [node.inputs[i].dim for i in keep[Direction.INPUT]],
+        [node.outputs[i].dim for i in keep[Direction.OUTPUT]],
+        phase=node.phase,
+    )
+    hub_of = {PortRef(v, d, i): PortRef(hub, d, j) for d in dirs for j, i in enumerate(keep[d])}
+    legs = {
+        d: [r for r in (via, *sorted(moved, key=PortRef.sort_key)) if r.direction is d]
+        for d in dirs
+    }
+    dim = node.legs(via.direction)[via.index].dim
+    toward = Direction.OUTPUT if via.direction is Direction.INPUT else Direction.INPUT
+    leaf = out.add_node(
+        node.generator_type,
+        [node.inputs[r.index].dim for r in legs[Direction.INPUT]]
+        + [dim] * (toward is Direction.INPUT),
+        [node.outputs[r.index].dim for r in legs[Direction.OUTPUT]]
+        + [dim] * (toward is Direction.OUTPUT),
+    )
+    leaf_of = {r: PortRef(leaf, d, j) for d in dirs for j, r in enumerate(legs[d])}
+    mid = out.add_node(node.generator_type, [dim], [dim])
+    for wire in list(out.wires):
+        if v in (wire.a.node_id, wire.b.node_id):
+            out.remove_wire(wire.a, wire.b)
+    for leg, far in sorted(partner.items(), key=lambda item: item[0].sort_key()):
+        if leg.node_id == v:
+            if far.node_id == v:
+                raise LemmaError("a spider with a self-loop")
+            _wire(out, leaf_of.get(leg) or hub_of[leg], far)
+    _wire(out, PortRef(leaf, toward, len(legs[toward])), PortRef(mid, via.direction, 0))
+    _wire(out, PortRef(mid, toward, 0), hub_of[via])
+    out.set_boundary_inputs([leaf_of.get(r) or hub_of.get(r, r) for r in diagram.boundary_inputs])
+    out.set_boundary_outputs([leaf_of.get(r) or hub_of.get(r, r) for r in diagram.boundary_outputs])
+    out.remove_node(v)
+    return out, leaf, mid, hub
+
+
+def _fusion(diagram: Diagram, a: NodeId, b: NodeId) -> tuple[object, NodeId]:
+    """``diagram = diagram'`` by spider fusion of ``a`` and ``b``, and the fused node."""
+    from archytaszx.rewrite.engine import apply
+    from archytaszx.rewrite.match import FusionMatch
+    from archytaszx.rewrite.rules_library import SPIDER_FUSION
+    from archytaszx.semantics import kernel
+
+    for match in SPIDER_FUSION.pattern.find_matches(diagram):
+        if isinstance(match, FusionMatch) and {match.a_id, match.b_id} == {a, b}:
+            step = apply(diagram, SPIDER_FUSION, match).step
+            (fused,) = step.new_node_ids
+            return kernel.rule(diagram, step), fused
+    raise LemmaError("the spiders do not fuse")
+
+
+def _split_theorem(
+    diagram: Diagram, split: Diagram, leaf: NodeId, mid: NodeId, hub: NodeId
+) -> object:
+    """``diagram = split`` for a :func:`_split_off` result: two spider fusions, reversed."""
+    from archytaszx.semantics import kernel
+
+    first, fused = _fusion(split, mid, hub)
+    t = cast("kernel.Theorem", first)
+    second, _ = _fusion(t.rhs, leaf, fused)
+    whole = kernel.trans(t, cast("kernel.Theorem", second))
+    return kernel.symm(kernel.trans(whole, kernel.iso(whole.rhs, diagram)))
+
+
+def _fourier_identity(dim: Dim) -> object:
+    """Four F boxes over ``dim`` in series = a phaseless Z(1 -> 1), by Fourier cancellation."""
+    from archytaszx.rewrite.engine import apply
+    from archytaszx.rewrite.rules_library import FOURIER_CANCELLATION
+    from archytaszx.semantics import kernel
+
+    chain = Diagram()
+    boxes = [chain.add_node(FOURIER_BOX, [dim], [dim]) for _ in range(4)]
+    for a, b in pairwise(boxes):
+        chain.add_wire(_out(a), _in(b))
+    chain.set_boundary_inputs([_in(boxes[0])])
+    chain.set_boundary_outputs([_out(boxes[-1])])
+    for match in FOURIER_CANCELLATION.pattern.find_matches(chain):
+        return kernel.rule(chain, apply(chain, FOURIER_CANCELLATION, match).step)
+    raise LemmaError("no Fourier cancellation")
+
+
+def _inserted(
+    diagram: Diagram, mid: NodeId, hub: NodeId, kind: str
+) -> tuple[object, frozenset[NodeId]]:
+    """``diagram = diagram'`` with the Z(1 -> 1) ``mid`` replaced by an identity of ``kind``
+    (``split_bind``: :data:`SPLIT_BIND`; ``fourier``: four F boxes), and the inserted nodes on
+    ``hub``'s side (the B chain; the last F box)."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import find_cut_region
+
+    dim = diagram.nodes[mid].inputs[0].dim
+    if kind == "split_bind":
+        expr = dim.to_sympy()
+        if not (expr.is_Pow and expr.base == 2 and expr.exp.free_symbols):
+            raise LemmaError("not a register of symbolic width")
+        identity = kernel.symm(cast("kernel.Theorem", instance(SPLIT_BIND, expr.exp)))
+    else:
+        identity = kernel.symm(cast("kernel.Theorem", _fourier_identity(dim)))
+    cut = find_cut_region(diagram, frozenset({mid}), identity.lhs)
+    if cut is None:
+        raise LemmaError("the middle spider is not the identity")
+    t = kernel.congr(identity, diagram, cut)
+    after = t.rhs
+    new = frozenset(after.nodes) - frozenset(diagram.nodes)
+    neighbours: dict[NodeId, set[NodeId]] = {n: set() for n in after.nodes}
+    for wire in after.wires:
+        neighbours[wire.a.node_id].add(wire.b.node_id)
+        neighbours[wire.b.node_id].add(wire.a.node_id)
+    inner = {n for n in neighbours[hub] if n in new}
+    if kind == "split_bind":
+        todo = list(inner)
+        while todo:
+            n = todo.pop()
+            for m in neighbours[n]:
+                if (
+                    m in new
+                    and m not in inner
+                    and after.nodes[m].generator_type is not DIM_SPLITTER
+                ):
+                    inner.add(m)
+                    todo.append(m)
+    return t, frozenset(inner)
+
+
+def _insertion_options(
+    diagram: Diagram, v: NodeId, copy: frozenset[NodeId]
+) -> list[tuple[PortRef, str]]:
+    """Per leg of ``v`` wired off ``copy`` to an unboxed node or a chain end: that leg with
+    each identity kind fitting its dimension (:func:`_inserted`)."""
+    boxed = frozenset(n for box in diagram.bang_boxes.values() for n in box.node_scope)
+    ends = frozenset(p for box in diagram.bang_boxes.values() for link in box.links for p in link)
+    out: list[tuple[PortRef, str]] = []
+    for leg, far in sorted(_partners(diagram).items(), key=lambda item: item[0].sort_key()):
+        if leg.node_id != v or far.node_id in copy or (far.node_id in boxed and far not in ends):
+            continue
+        expr = diagram.nodes[v].legs(leg.direction)[leg.index].dim.to_sympy()
+        if expr.is_Pow and expr.base == 2 and expr.exp.free_symbols:
+            out.append((leg, "split_bind"))
+        out.append((leg, "fourier"))
+    return out
+
+
+def expose_by_insertion(
+    peeled: Diagram, copies: Sequence[frozenset[NodeId]], hypothesis: Diagram
+) -> tuple[Theorem, CutRegion, frozenset[NodeId]] | None:
+    """``peeled = exposed``, the cut reading ``hypothesis`` in ``exposed`` and the copy, for the
+    first of ``copies`` that gives one: every unboxed Z spider off the copy wired into it and
+    holding no boundary slot split (:func:`_split_off`) on a wire of
+    :func:`_insertion_options`, its middle replaced by an identity (:func:`_inserted`), the
+    region every node not reached from the copy and the leaves without passing a hub or an
+    inner inserted node; None when no choice reads as ``hypothesis``."""
+    from itertools import product
+
+    from archytaszx.semantics import kernel
+
+    boxed = frozenset(n for box in peeled.bang_boxes.values() for n in box.node_scope)
+    slots = frozenset(r.node_id for r in (*peeled.boundary_inputs, *peeled.boundary_outputs))
+    partner = _partners(peeled)
+    for copy in copies:
+        spiders = [
+            v
+            for v in sorted(peeled.nodes)
+            if v not in copy
+            and v not in boxed
+            and v not in slots
+            and peeled.nodes[v].generator_type is Z_SPIDER
+            and any(leg.node_id == v and far.node_id in copy for leg, far in partner.items())
+        ]
+        if not spiders or len(spiders) > _MAX_INSERTED:
+            continue
+        choices = [_insertion_options(peeled, v, copy) for v in spiders]
+        for combo in product(*choices):
+            try:
+                found = _expose_with(peeled, copy, hypothesis, spiders, combo)
+            except (kernel.KernelError, LemmaError, DimensionError):
+                continue
+            if found is not None:
+                return (*found, copy)
+    return None
+
+
+_MAX_INSERTED = 3
+
+
+def _expose_with(
+    peeled: Diagram,
+    copy: frozenset[NodeId],
+    hypothesis: Diagram,
+    spiders: list[NodeId],
+    combo: tuple[tuple[PortRef, str], ...],
+) -> tuple[Theorem, CutRegion] | None:
+    """:func:`expose_by_insertion` at one choice of wire and identity per spider."""
+    from archytaszx.semantics import kernel
+    from archytaszx.semantics.induction import find_cut_region
+
+    theorem = kernel.refl(peeled)
+    leaves: set[NodeId] = set()
+    blocked: set[NodeId] = set()
+    for v, (via, kind) in zip(spiders, combo, strict=True):
+        current = theorem.rhs
+        moved = frozenset(
+            leg
+            for leg, far in _partners(current).items()
+            if leg.node_id == v and far.node_id in copy
+        )
+        split, leaf, mid, hub = _split_off(current, v, moved, via)
+        step = cast("kernel.Theorem", _split_theorem(current, split, leaf, mid, hub))
+        inserted, inner = _inserted(split, mid, hub, kind)
+        theorem = kernel.trans(theorem, kernel.trans(step, cast("kernel.Theorem", inserted)))
+        leaves.add(leaf)
+        blocked |= {hub, *inner}
+    exposed = theorem.rhs
+    neighbours: dict[NodeId, set[NodeId]] = {n: set() for n in exposed.nodes}
+    for wire in exposed.wires:
+        neighbours[wire.a.node_id].add(wire.b.node_id)
+        neighbours[wire.b.node_id].add(wire.a.node_id)
+    reached = set(copy) | leaves
+    todo = list(reached)
+    while todo:
+        n = todo.pop()
+        for m in neighbours[n]:
+            if m not in reached and m not in blocked:
+                reached.add(m)
+                todo.append(m)
+    cut = find_cut_region(exposed, frozenset(exposed.nodes) - frozenset(reached), hypothesis)
+    return None if cut is None else (theorem, cut)
+
+
 __all__ = [
     "AND_REGISTER",
     "CARRY_SHIFT",
+    "INSERTIONS",
     "LIBRARY",
+    "SPLIT_BIND",
     "Lemma",
     "LemmaError",
     "close_by_cores",
     "close_with_lemmas",
+    "expose_by_insertion",
     "instance",
     "lemma",
     "proved",
