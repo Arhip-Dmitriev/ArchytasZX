@@ -155,86 +155,6 @@ theorem fz_update_not (σ : ℕ → ZMod 2) (z : ℕ) (w : ZMod 2) (Q : F2)
   intro m hm
   exact mz_update_not σ z w m (h m hm)
 
-/-! ## The Boolean lift and substitution -/
-
-/-- The integer polynomial of an F_2 polynomial, `-2` written as `M - 2`. -/
-def lift (M : ℕ) : F2 → Poly
-  | [] => []
-  | m :: B => (m, 1) :: (lift M B ++ (lift M B).map fun t => (m ++ t.1, (M - 2) * t.2))
-
-theorem pn_mapmul (σ : ℕ → ZMod 2) (m : Mono) (c : ℕ) :
-    ∀ L : Poly, pn σ (L.map fun t => (m ++ t.1, c * t.2)) = (c : ℤ) * zq (mz σ m) * pn σ L
-  | [] => by simp [pn]
-  | t :: L => by
-    rw [List.map_cons, pn_cons, pn_cons, pn_mapmul σ m c L, mz_append, zq_mul]
-    push_cast
-    ring
-
-theorem pn_lift (σ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
-    ∀ B : F2, peq M (pn σ (lift M B)) (zq (fz σ B))
-  | [] => ⟨0, by simp [lift, pn, fz, zq]⟩
-  | m :: B => by
-    obtain ⟨k, hk⟩ := pn_lift σ M hM B
-    simp only [lift]
-    rw [pn_cons, pn_append, pn_mapmul, fz_cons, zq_add]
-    have hc : ((M - 2 : ℕ) : ℤ) = (M : ℤ) - 2 := by push_cast [Nat.cast_sub hM]; ring
-    rw [hc]
-    refine ⟨k + zq (mz σ m) * zq (fz σ B) + ((M : ℤ) - 2) * zq (mz σ m) * k, ?_⟩
-    push_cast
-    linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ m)) * hk
-
-/-- `z` replaced by the F_2 polynomial `B` in a phase polynomial. -/
-def substP (M z : ℕ) (B : F2) (P : Poly) : Poly :=
-  P.flatMap fun t =>
-    if z ∈ t.1 then (lift M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]
-
-/-- `z` replaced by `B` in an F_2 polynomial. -/
-def substF (z : ℕ) (B : F2) (Q : F2) : F2 :=
-  Q.flatMap fun m => if z ∈ m then B.map fun u => m.filter (· != z) ++ u else [m]
-
-theorem pn_substP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) :
-    ∀ P : Poly, peq M (pn σ (substP M z B P)) (pn (Function.update σ z (fz σ B)) P)
-  | [] => peq_refl M 0
-  | t :: P => by
-    have ih := pn_substP σ M z hM B P
-    have hsplit : substP M z B (t :: P) = (if z ∈ t.1 then (lift M B).map fun u =>
-        (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]) ++ substP M z B P := by
-      simp [substP, List.flatMap_cons]
-    rw [hsplit, pn_append, pn_cons]
-    apply peq_add _ ih
-    by_cases hz : z ∈ t.1
-    · rw [if_pos hz]
-      have hmap : ((lift M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2)) =
-          (lift M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) := rfl
-      rw [hmap, pn_mapmul, mz_update_in σ z _ t.1 hz, zq_mul]
-      have := peq_mul ((t.2 : ℤ) * zq (mz σ (t.1.filter (· != z)))) (pn_lift σ M hM B)
-      obtain ⟨n, hn⟩ := this
-      exact ⟨n, by rw [hn]; ring⟩
-    · rw [if_neg hz, pn_cons, pn_nil, mz_update_not σ z _ t.1 hz]
-      exact ⟨0, by ring⟩
-
-theorem fz_mapprefix (σ : ℕ → ZMod 2) (m : Mono) :
-    ∀ B : F2, fz σ (B.map fun u => m ++ u) = mz σ m * fz σ B
-  | [] => by simp [fz]
-  | u :: B => by
-    rw [List.map_cons, fz_cons, fz_cons, fz_mapprefix σ m B, mz_append]
-    ring
-
-theorem fz_substF (σ : ℕ → ZMod 2) (z : ℕ) (B : F2) :
-    ∀ Q : F2, fz σ (substF z B Q) = fz (Function.update σ z (fz σ B)) Q
-  | [] => rfl
-  | m :: Q => by
-    have hsplit : substF z B (m :: Q) =
-        (if z ∈ m then B.map fun u => m.filter (· != z) ++ u else [m]) ++ substF z B Q := by
-      simp [substF, List.flatMap_cons]
-    rw [hsplit, fz_append, fz_cons, fz_substF σ z B Q]
-    congr 1
-    by_cases hz : z ∈ m
-    · rw [if_pos hz, fz_mapprefix, mz_update_in σ z _ m hz]
-      ring
-    · rw [if_neg hz, fz_cons, mz_update_not σ z _ m hz]
-      simp [fz]
-
 /-! ## Normalisation -/
 
 /-- Adjacent duplicates removed. -/
@@ -317,46 +237,265 @@ def mle : Mono → Mono → Bool
   | _ :: _, [] => false
   | a :: l, b :: r => a < b || (a = b && mle l r)
 
-/-- A phase polynomial with sorted monomials, terms merged mod M and sorted. -/
+/-- `xs` and `ys` merged by `le`, at most `n` heads compared, the rest appended. -/
+def mergeN {α : Type} (le : α → α → Bool) : ℕ → List α → List α → List α
+  | 0, xs, ys => xs ++ ys
+  | _ + 1, [], ys => ys
+  | _ + 1, x :: xs, [] => x :: xs
+  | n + 1, x :: xs, y :: ys =>
+    if le x y then x :: mergeN le n xs (y :: ys) else y :: mergeN le n (x :: xs) ys
+
+theorem mergeN_perm {α : Type} (le : α → α → Bool) :
+    ∀ (n : ℕ) (xs ys : List α), (mergeN le n xs ys).Perm (xs ++ ys)
+  | 0, _, _ => List.Perm.refl _
+  | _ + 1, [], _ => List.Perm.refl _
+  | _ + 1, _ :: _, [] => by simp [mergeN]
+  | n + 1, x :: xs, y :: ys => by
+    simp only [mergeN]
+    split
+    · exact (mergeN_perm le n xs (y :: ys)).cons x
+    · exact ((mergeN_perm le n (x :: xs) ys).cons y).trans List.perm_middle.symm
+
+/-- The entries at even and at odd positions. -/
+def halve {α : Type} : List α → List α × List α
+  | [] => ([], [])
+  | [a] => ([a], [])
+  | a :: b :: l => (a :: (halve l).1, b :: (halve l).2)
+
+theorem halve_perm {α : Type} : ∀ l : List α, ((halve l).1 ++ (halve l).2).Perm l
+  | [] => List.Perm.refl _
+  | [_] => by simp [halve]
+  | a :: b :: l => by
+    simp only [halve, List.cons_append]
+    exact (List.perm_middle.trans ((halve_perm l).cons b)).cons a
+
+/-- Merge sort by `le`, at most `n` levels deep. -/
+def msortN {α : Type} (le : α → α → Bool) : ℕ → List α → List α
+  | 0, l => l
+  | _ + 1, [] => []
+  | _ + 1, [a] => [a]
+  | n + 1, a :: b :: l =>
+    mergeN le (l.length + 2) (msortN le n (halve (a :: b :: l)).1)
+      (msortN le n (halve (a :: b :: l)).2)
+
+theorem msortN_perm {α : Type} (le : α → α → Bool) :
+    ∀ (n : ℕ) (l : List α), (msortN le n l).Perm l
+  | 0, _ => List.Perm.refl _
+  | _ + 1, [] => List.Perm.refl _
+  | _ + 1, [_] => List.Perm.refl _
+  | n + 1, a :: b :: l => by
+    simp only [msortN]
+    exact (mergeN_perm le _ _ _).trans
+      (((msortN_perm le n _).append (msortN_perm le n _)).trans (halve_perm _))
+
+/-- Merge sort by `le`. -/
+def sortB {α : Type} (le : α → α → Bool) (l : List α) : List α := msortN le l.length l
+
+theorem sortB_perm {α : Type} (le : α → α → Bool) (l : List α) : (sortB le l).Perm l :=
+  msortN_perm le _ l
+
+/-- `t` added to the head term of `P` when their monomials agree, else consed; zero terms
+dropped. -/
+def insH (M : ℕ) (t : Mono × ℕ) : Poly → Poly
+  | [] => if t.2 % M = 0 then [] else [(t.1, t.2 % M)]
+  | u :: P =>
+    if u.1 = t.1 then (if (u.2 + t.2) % M = 0 then P else (u.1, (u.2 + t.2) % M) :: P)
+    else if t.2 % M = 0 then u :: P else (t.1, t.2 % M) :: u :: P
+
+theorem pn_insH (σ : ℕ → ZMod 2) (M : ℕ) (t : Mono × ℕ) :
+    ∀ P : Poly, peq M (pn σ (insH M t P)) ((t.2 : ℤ) * zq (mz σ t.1) + pn σ P)
+  | [] => pn_ins σ M t []
+  | u :: P => by
+    simp only [insH]
+    split_ifs with h1 h2 h3
+    · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ t.1))
+      rw [h2] at hn
+      refine ⟨n, ?_⟩
+      rw [pn_cons, h1]
+      push_cast at hn
+      linear_combination hn
+    · obtain ⟨n, hn⟩ := peq_mod M (u.2 + t.2) (zq (mz σ t.1))
+      refine ⟨n, ?_⟩
+      rw [pn_cons, pn_cons, h1]
+      push_cast at hn ⊢
+      linarith
+    · obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ t.1))
+      rw [h3] at hn
+      refine ⟨n, ?_⟩
+      push_cast at hn
+      linear_combination hn
+    · obtain ⟨n, hn⟩ := peq_mod M t.2 (zq (mz σ t.1))
+      refine ⟨n, ?_⟩
+      rw [pn_cons (t := (t.1, t.2 % M))]
+      dsimp only
+      push_cast at hn ⊢
+      linear_combination hn
+
+theorem pn_foldr_insH (σ : ℕ → ZMod 2) (M : ℕ) :
+    ∀ L : Poly, peq M (pn σ (L.foldr (insH M) [])) (pn σ L)
+  | [] => peq_refl M 0
+  | t :: L => by
+    rw [List.foldr_cons]
+    refine peq_trans (pn_insH σ M t _) ?_
+    rw [pn_cons]
+    exact peq_add (peq_refl M _) (pn_foldr_insH σ M L)
+
+/-- A phase polynomial with sorted monomials, sorted by `mle` (merge sort), terms of one
+monomial merged mod M and zero terms dropped. -/
 def normP (M : ℕ) (P : Poly) : Poly :=
-  (P.foldr (fun t acc => ins M (mnorm t.1, t.2) acc) []).insertionSort fun a b => mle a.1 b.1
+  (sortB (fun a b => mle a.1 b.1) (P.map fun t => (mnorm t.1, t.2))).foldr (insH M) []
 
 theorem pn_perm (σ : ℕ → ZMod 2) {P R : Poly} (h : P.Perm R) : pn σ P = pn σ R :=
   (h.map _).sum_eq
 
 theorem pn_normP (σ : ℕ → ZMod 2) (M : ℕ) (P : Poly) : peq M (pn σ (normP M P)) (pn σ P) := by
   unfold normP
-  rw [pn_perm σ (List.perm_insertionSort _ _)]
-  induction P with
-  | nil => exact peq_refl M 0
-  | cons t P ih =>
-    simp only [List.foldr_cons]
-    refine peq_trans (pn_ins σ M _ _) ?_
-    rw [pn_cons, mz_mnorm]
-    exact peq_add (peq_refl M _) ih
+  refine peq_trans (pn_foldr_insH σ M _) ?_
+  rw [pn_perm σ (sortB_perm _ _)]
+  have hm : pn σ (P.map fun t => (mnorm t.1, t.2)) = pn σ P := by
+    induction P with
+    | nil => rfl
+    | cons t P ih => rw [List.map_cons, pn_cons, pn_cons, ih, mz_mnorm]
+  rw [hm]
+  exact peq_refl M _
 
-/-- An F_2 polynomial with sorted monomials, equal pairs cancelled, sorted. -/
-def normF (Q : F2) : F2 :=
-  (Q.foldr (fun m acc => let k := mnorm m; if k ∈ acc then acc.erase k else k :: acc) []
-    ).insertionSort fun a b => mle a b
+/-- `m` cancelled against the head monomial of `Q` when equal, else consed. -/
+def cancelH (m : Mono) : F2 → F2
+  | [] => [m]
+  | u :: Q => if u = m then Q else m :: u :: Q
 
 theorem fz_perm (σ : ℕ → ZMod 2) {P Q : F2} (h : P.Perm Q) : fz σ P = fz σ Q :=
   (h.map _).sum_eq
 
-theorem fz_normF (σ : ℕ → ZMod 2) (Q : F2) : fz σ (normF Q) = fz σ Q := by
-  unfold normF
-  rw [fz_perm σ (List.perm_insertionSort _ _)]
-  induction Q with
-  | nil => rfl
-  | cons m Q ih =>
-    simp only [List.foldr_cons]
+theorem fz_cancelH (σ : ℕ → ZMod 2) (m : Mono) :
+    ∀ Q : F2, fz σ (cancelH m Q) = mz σ m + fz σ Q
+  | [] => by simp [cancelH, fz]
+  | u :: Q => by
+    simp only [cancelH]
     split_ifs with h
-    · have hp := List.perm_cons_erase h
-      rw [fz_perm σ hp, fz_cons] at ih
-      rw [fz_cons, ← ih, mz_mnorm, ← add_assoc, ← two_mul]
+    · subst h
+      rw [fz_cons, ← add_assoc, ← two_mul]
       have : (2 : ZMod 2) = 0 := by decide
       rw [this, zero_mul, zero_add]
-    · rw [fz_cons, fz_cons, ih, mz_mnorm]
+    · rw [fz_cons]
+
+theorem fz_foldr_cancelH (σ : ℕ → ZMod 2) : ∀ Q : F2, fz σ (Q.foldr cancelH []) = fz σ Q
+  | [] => rfl
+  | m :: Q => by rw [List.foldr_cons, fz_cancelH, fz_foldr_cancelH σ Q, fz_cons]
+
+/-- An F_2 polynomial with sorted monomials, sorted by `mle` (merge sort), equal pairs
+cancelled. -/
+def normF (Q : F2) : F2 :=
+  (sortB (fun a b => mle a b) (Q.map mnorm)).foldr cancelH []
+
+theorem fz_normF (σ : ℕ → ZMod 2) (Q : F2) : fz σ (normF Q) = fz σ Q := by
+  unfold normF
+  rw [fz_foldr_cancelH, fz_perm σ (sortB_perm _ _)]
+  induction Q with
+  | nil => rfl
+  | cons m Q ih => rw [List.map_cons, fz_cons, fz_cons, ih, mz_mnorm]
+
+/-! ## The Boolean lift and substitution -/
+
+/-- The integer polynomial of an F_2 polynomial, `-2` written as `M - 2`. -/
+def lift (M : ℕ) : F2 → Poly
+  | [] => []
+  | m :: B => (m, 1) :: (lift M B ++ (lift M B).map fun t => (m ++ t.1, (M - 2) * t.2))
+
+theorem pn_mapmul (σ : ℕ → ZMod 2) (m : Mono) (c : ℕ) :
+    ∀ L : Poly, pn σ (L.map fun t => (m ++ t.1, c * t.2)) = (c : ℤ) * zq (mz σ m) * pn σ L
+  | [] => by simp [pn]
+  | t :: L => by
+    rw [List.map_cons, pn_cons, pn_cons, pn_mapmul σ m c L, mz_append, zq_mul]
+    push_cast
+    ring
+
+theorem pn_lift (σ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
+    ∀ B : F2, peq M (pn σ (lift M B)) (zq (fz σ B))
+  | [] => ⟨0, by simp [lift, pn, fz, zq]⟩
+  | m :: B => by
+    obtain ⟨k, hk⟩ := pn_lift σ M hM B
+    simp only [lift]
+    rw [pn_cons, pn_append, pn_mapmul, fz_cons, zq_add]
+    have hc : ((M - 2 : ℕ) : ℤ) = (M : ℤ) - 2 := by push_cast [Nat.cast_sub hM]; ring
+    rw [hc]
+    refine ⟨k + zq (mz σ m) * zq (fz σ B) + ((M : ℤ) - 2) * zq (mz σ m) * k, ?_⟩
+    push_cast
+    linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ m)) * hk
+
+/-- `lift M B` normalised after each monomial. -/
+def liftN (M : ℕ) : F2 → Poly
+  | [] => []
+  | m :: B =>
+    let L := liftN M B
+    normP M ((m, 1) :: (L ++ L.map fun t => (m ++ t.1, (M - 2) * t.2)))
+
+theorem pn_liftN (σ : ℕ → ZMod 2) (M : ℕ) (hM : 2 ≤ M) :
+    ∀ B : F2, peq M (pn σ (liftN M B)) (zq (fz σ B))
+  | [] => ⟨0, by simp [liftN, pn, fz, zq]⟩
+  | m :: B => by
+    obtain ⟨k, hk⟩ := pn_liftN σ M hM B
+    simp only [liftN]
+    refine peq_trans (pn_normP σ M _) ?_
+    rw [pn_cons, pn_append, pn_mapmul, fz_cons, zq_add]
+    have hc : ((M - 2 : ℕ) : ℤ) = (M : ℤ) - 2 := by push_cast [Nat.cast_sub hM]; ring
+    rw [hc]
+    refine ⟨k + zq (mz σ m) * zq (fz σ B) + ((M : ℤ) - 2) * zq (mz σ m) * k, ?_⟩
+    push_cast
+    linear_combination (1 + ((M : ℤ) - 2) * zq (mz σ m)) * hk
+
+/-- `z` replaced by the F_2 polynomial `B` in a phase polynomial. -/
+def substP (M z : ℕ) (B : F2) (P : Poly) : Poly :=
+  let L := liftN M B
+  P.flatMap fun t =>
+    if z ∈ t.1 then L.map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]
+
+/-- `z` replaced by `B` in an F_2 polynomial. -/
+def substF (z : ℕ) (B : F2) (Q : F2) : F2 :=
+  Q.flatMap fun m => if z ∈ m then B.map fun u => m.filter (· != z) ++ u else [m]
+
+theorem pn_substP (σ : ℕ → ZMod 2) (M z : ℕ) (hM : 2 ≤ M) (B : F2) :
+    ∀ P : Poly, peq M (pn σ (substP M z B P)) (pn (Function.update σ z (fz σ B)) P)
+  | [] => peq_refl M 0
+  | t :: P => by
+    have ih := pn_substP σ M z hM B P
+    have hsplit : substP M z B (t :: P) = (if z ∈ t.1 then (liftN M B).map fun u =>
+        (t.1.filter (· != z) ++ u.1, t.2 * u.2) else [t]) ++ substP M z B P := by
+      simp [substP, List.flatMap_cons]
+    rw [hsplit, pn_append, pn_cons]
+    apply peq_add _ ih
+    by_cases hz : z ∈ t.1
+    · rw [if_pos hz]
+      have hmap : ((liftN M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2)) =
+          (liftN M B).map fun u => (t.1.filter (· != z) ++ u.1, t.2 * u.2) := rfl
+      rw [hmap, pn_mapmul, mz_update_in σ z _ t.1 hz, zq_mul]
+      have := peq_mul ((t.2 : ℤ) * zq (mz σ (t.1.filter (· != z)))) (pn_liftN σ M hM B)
+      obtain ⟨n, hn⟩ := this
+      exact ⟨n, by rw [hn]; ring⟩
+    · rw [if_neg hz, pn_cons, pn_nil, mz_update_not σ z _ t.1 hz]
+      exact ⟨0, by ring⟩
+
+theorem fz_mapprefix (σ : ℕ → ZMod 2) (m : Mono) :
+    ∀ B : F2, fz σ (B.map fun u => m ++ u) = mz σ m * fz σ B
+  | [] => by simp [fz]
+  | u :: B => by
+    rw [List.map_cons, fz_cons, fz_cons, fz_mapprefix σ m B, mz_append]
+    ring
+
+theorem fz_substF (σ : ℕ → ZMod 2) (z : ℕ) (B : F2) :
+    ∀ Q : F2, fz σ (substF z B Q) = fz (Function.update σ z (fz σ B)) Q
+  | [] => rfl
+  | m :: Q => by
+    have hsplit : substF z B (m :: Q) =
+        (if z ∈ m then B.map fun u => m.filter (· != z) ++ u else [m]) ++ substF z B Q := by
+      simp [substF, List.flatMap_cons]
+    rw [hsplit, fz_append, fz_cons, fz_substF σ z B Q]
+    congr 1
+    by_cases hz : z ∈ m
+    · rw [if_pos hz, fz_mapprefix, mz_update_in σ z _ m hz]
+      ring
+    · rw [if_neg hz, fz_cons, mz_update_not σ z _ m hz]
+      simp [fz]
 
 /-! ## Sums over path variables -/
 
@@ -973,16 +1112,17 @@ theorem fz_f2mul (τ : ℕ → ZMod 2) (b : F2) : ∀ a : F2, fz τ (f2mul a b) 
     rw [hs, fz_append, fz_mapprefix, ih, fz_cons]
     ring
 
-/-- The support indicator `Prod (1 + c)` of a list of constraints. -/
-def gatherPoly (C : List F2) : F2 := C.foldr (fun c acc => f2mul ([] :: c) acc) [[]]
+/-- The support indicator `Prod (1 + c)` of a list of constraints, normalised after each
+factor. -/
+def gatherPoly (C : List F2) : F2 := C.foldr (fun c acc => normF (f2mul ([] :: c) acc)) [[]]
 
 theorem fz_gather (τ : ℕ → ZMod 2) :
     ∀ C : List F2, (fz τ (gatherPoly C) = 1 ↔ ∀ q ∈ C, fz τ q = 0)
   | [] => by simp [gatherPoly, fz, mz]
   | c :: C => by
     have ih := fz_gather τ C
-    have hs : gatherPoly (c :: C) = f2mul ([] :: c) (gatherPoly C) := rfl
-    rw [hs, fz_f2mul, fz_cons, show mz τ [] = 1 from rfl, List.forall_mem_cons, ← ih]
+    have hs : gatherPoly (c :: C) = normF (f2mul ([] :: c) (gatherPoly C)) := rfl
+    rw [hs, fz_normF, fz_f2mul, fz_cons, show mz τ [] = 1 from rfl, List.forall_mem_cons, ← ih]
     rcases z2_cases (fz τ c) with h | h <;> rcases z2_cases (fz τ (gatherPoly C)) with g | g <;>
       simp [h, g] <;> decide
 
