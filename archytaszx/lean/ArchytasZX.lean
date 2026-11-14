@@ -50,6 +50,7 @@ import ArchytasZX.OrderK
 import ArchytasZX.FamK
 import ArchytasZX.Linked
 import ArchytasZX.LinkedPeel
+import ArchytasZX.LinkedRegroup
 import ArchytasZX.Mixed
 import ArchytasZX.NumField
 import ArchytasZX.PathSum

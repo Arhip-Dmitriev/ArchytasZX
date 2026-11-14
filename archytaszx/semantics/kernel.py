@@ -1905,21 +1905,43 @@ class _Lean:
         note = "one permutation of the instantiated boundary slots, from the box groups"
         self.decls.append(f"/-- {note} -/\naxiom {lay} : {arity}")
         ctx = f"({lay} {' '.join(binders)})" if binders else lay
-        lay_l = self.axiom(
-            "lay",
-            "the left side, its slots laid out by its box groups",
-            binders,
-            self.call(t.lhs),
-            f"({ctx} {self.call(prem.lhs)})",
-        )
-        lay_r = self.axiom(
-            "lay",
-            "the right side, its slots laid out by its box groups",
-            binders,
-            self.call(t.rhs),
-            f"({ctx} {self.call(prem.rhs)})",
-        )
+        sides = []
+        for side, new, old in (("left", t.lhs, prem.lhs), ("right", t.rhs, prem.rhs)):
+            lhs, rhs = self.call(new), f"({ctx} {self.call(old)})"
+            proved = self.layout_net(new, old, binders, lhs, rhs, lay)
+            note = f"the {side} side, its slots laid out by its box groups"
+            sides.append(proved or self.axiom("lay", note, binders, lhs, rhs))
+        lay_l, lay_r = sides
         return f"({lay_l}).trans ((congrArg {ctx} ({self.term(prem)})).trans ({lay_r}).symm)"
+
+    def layout_net(
+        self, new: Diagram, old: Diagram, binders: Sequence[str], lhs: str, rhs: str, lay: str
+    ) -> str | None:
+        """``lhs = rhs`` (``new`` and ``old`` under ``lay``) through a proof ``R<i>.main`` that
+        ``new``'s slot layout permutes ``old``'s (``regroup_layout``) and the axiom ``net<i>``
+        from its statement; None outside :func:`lean_regroup.export_regroup`."""
+        from archytaszx.semantics import lean_regroup
+
+        if not self.semantic:
+            return None
+        source = lean_regroup.export_regroup(new, old)
+        if source is None:
+            return None
+        body, imports, ns = _nest(source, f"R{len(self.subs) + 1}")
+        self.subs.append(body)
+        self.imports += [i for i in imports if i not in self.imports]
+        head = f"∀ ({' '.join(binders)} : Nat), " if binders else ""
+        note = (
+            f"the diagrams are the linked diagram {ns}.L times one scalar under the slot layouts "
+            f"{ns}.G' and {ns}.G, and {lay} reads a flat boundary position through the lperm "
+            f"{ns}.main proves one to one and onto"
+        )
+        name = self.fresh("net")
+        self.decls.append(
+            f"/-- {_comment(note)} -/\naxiom {name} : (type_of% @{ns}.main) → {head}{lhs} = {rhs}"
+        )
+        applied = f"{name} @{ns}.main"
+        return f"({applied} {' '.join(binders)})" if binders else f"({applied})"
 
     def instance(self, t: Theorem) -> str:
         """The premise stated as a lemma over its multiplicities, applied at the instance's
