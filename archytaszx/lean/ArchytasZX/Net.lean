@@ -2,7 +2,49 @@
 Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
-import Mathlib
+import Mathlib.Algebra.BigOperators.Field
+import Mathlib.Algebra.Field.ZMod
+import Mathlib.Algebra.Order.Star.Real
+import Mathlib.Analysis.CStarAlgebra.Classes
+import Mathlib.Analysis.Real.Sqrt
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+import Mathlib.Data.LawfulXor.Basic
+import Mathlib.Data.List.GetD
+import Mathlib.Data.Nat.Bitwise
+import Mathlib.Data.Nat.Digits.Defs
+import Mathlib.Data.Nat.Size
+import Mathlib.RingTheory.SimpleRing.Principal
+import Mathlib.Tactic.Bound
+import Mathlib.Tactic.Common
+import Mathlib.Tactic.FieldSimp
+import Mathlib.Tactic.FinCases
+import Mathlib.Tactic.IntervalCases
+import Mathlib.Tactic.Lift
+import Mathlib.Tactic.Linarith
+import Mathlib.Tactic.LinearCombination
+import Mathlib.Tactic.ModCases
+import Mathlib.Tactic.Module
+import Mathlib.Tactic.NormNum
+import Mathlib.Tactic.NormNum.Abs
+import Mathlib.Tactic.NormNum.BigOperators
+import Mathlib.Tactic.NormNum.DivMod
+import Mathlib.Tactic.NormNum.GCD
+import Mathlib.Tactic.NormNum.IsCoprime
+import Mathlib.Tactic.NormNum.IsSquare
+import Mathlib.Tactic.NormNum.ModEq
+import Mathlib.Tactic.NormNum.NatFib
+import Mathlib.Tactic.NormNum.NatLog
+import Mathlib.Tactic.NormNum.NatSqrt
+import Mathlib.Tactic.NormNum.Parity
+import Mathlib.Tactic.NormNum.PowMod
+import Mathlib.Tactic.NormNum.Prime
+import Mathlib.Tactic.NormNum.RealSqrt
+import Mathlib.Tactic.Peel
+import Mathlib.Tactic.Positivity
+import Mathlib.Tactic.Ring
+import Mathlib.Tactic.SplitIfs
+import Mathlib.Tactic.Tauto
+import Mathlib.Tactic.Zify
 
 /-!
 # Diagrams as labelled tensor networks over ℂ

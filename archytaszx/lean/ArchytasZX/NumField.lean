@@ -3,6 +3,10 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.Weights
+import Mathlib.Analysis.Calculus.Deriv.MeanValue
+import Mathlib.Analysis.InnerProductSpace.Basic
+import Mathlib.Analysis.LocallyConvex.AbsConvexOpen
+import Mathlib.Topology.Algebra.Module.ModuleTopology
 
 /-!
 # One real root of an integer polynomial, and networks equal up to spider coefficients

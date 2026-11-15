@@ -3,6 +3,7 @@ Copyright 2026 Arkhip A. Dmitriev
 Licensed under the Apache License, Version 2.0.
 -/
 import ArchytasZX.Bundle
+import Mathlib.RingTheory.Polynomial.Cyclotomic.Roots
 
 /-!
 # Exact arithmetic in `ℚ(ζ)`
