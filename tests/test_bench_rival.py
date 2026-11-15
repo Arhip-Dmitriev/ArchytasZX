@@ -134,3 +134,15 @@ def test_allocation_failures_are_oom() -> None:
     msg = "ImportError: /x/mtrand.so: failed to map segment from shared object"
     rec = {"tool": "autoq_para", "outcome": "harness_error", "reason": f"prepare: {msg}"}
     assert outcomes.classify({**rec, "detail": msg})["outcome"] == "oom"
+
+
+def test_feynman_refuses_a_boundary_mismatch() -> None:
+    """feynman._interface tells a 3-wire state from a 2-wire one and an input from an Init."""
+    from benchmarks import ir
+    from benchmarks.tools import feynman
+
+    two = ir.Circuit(("a", "b"), (ir.Init("a", 0), ir.Init("b", 0)))
+    three = ir.Circuit(("a", "b", "c"), (ir.Init("a", 0), ir.Init("b", 0), ir.Init("c", 0)))
+    half = ir.Circuit(("a", "b"), (ir.Init("a", 0),))
+    assert feynman._interface(two) == (2, frozenset({0, 1}))
+    assert feynman._interface(three) != feynman._interface(two) != feynman._interface(half)

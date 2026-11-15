@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from benchmarks import ir
 from benchmarks.tools import common, rival
 
 ENV = "feynman"
@@ -97,6 +98,19 @@ def qc_text(c: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _interface(c: Any) -> tuple[int, frozenset[int]]:
+    """The wire count and the indices of the initialised (non-input) wires of a qubit IR
+    circuit."""
+    idx = {q: i for i, q in enumerate(c.wires)}
+    inits = frozenset(
+        idx[q]
+        for g in c.gates
+        if isinstance(g, (ir.Init, ir.Prepare))
+        for q in (g.qs if isinstance(g, ir.Prepare) else (g.q,))
+    )
+    return len(c.wires), inits
+
+
 def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     """One feynver equivalence check."""
     n, d = common.point(job)
@@ -107,8 +121,10 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         return common.unsupported(why or "qubits only (d = 2)")
     c0 = time.process_time()
     try:
-        a = qc_text(rival.qubit_ir(inst, n))
-        b = qc_text(rival.explicit_reference(inst, n, 2))
+        ca, cb = rival.qubit_ir(inst, n), rival.explicit_reference(inst, n, 2)
+        if _interface(ca) != _interface(cb):
+            raise rival.Unsupported("circuit and reference differ in width or inputs")
+        a, b = qc_text(ca), qc_text(cb)
     except rival.Unsupported as exc:
         return common.unsupported(str(exc))
     prep = time.process_time() - c0
