@@ -12,7 +12,7 @@
 # limitations under the License.
 
 """[Dyadic] with given binary digits (Step.dyadicB, bitsOK over the truncated lift): the
-kernel path_sum export of carry_shift at p = 3."""
+kernel path_sum export of carry_shift at p = 3, reduced without pathsum._try_low_digit."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ import os
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
 
+from archytaszx.algebra import pathsum
 from archytaszx.semantics import kernel
 from archytaszx.semantics import lean_net as L
 from archytaszx.semantics import lemmas as LM
@@ -30,9 +31,14 @@ LOW_BITS = ".dyadicB [8, 9, 10, 11] "
 
 
 def _source() -> str:
-    theorem = LM.instance(LM.CARRY_SHIFT, sp.Integer(3))
-    assert isinstance(theorem, kernel.Theorem)
-    return kernel.lean(theorem, "p3")
+    low = pathsum._try_low_digit
+    pathsum._try_low_digit = lambda *_a: False
+    try:
+        theorem = LM.instance(LM.CARRY_SHIFT, sp.Integer(3))
+        assert isinstance(theorem, kernel.Theorem)
+        return kernel.lean(theorem, "p3")
+    finally:
+        pathsum._try_low_digit = low
 
 
 def test_the_dyadic_step_carries_its_bits() -> None:

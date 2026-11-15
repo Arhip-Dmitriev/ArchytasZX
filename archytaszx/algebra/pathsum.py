@@ -734,14 +734,68 @@ def _dyadic_group(
     return digits, s0, k
 
 
+def _boundary_pivot(ps: PathSum, b0: F2Poly) -> int | None:
+    """The lowest boundary variable that is a monomial of ``b0``, in no other monomial of it,
+    no constraint and no amplitude exponent, or None."""
+    taken = {v for c in ps.constraints for m in c for v in m} | ps.amp_vars()
+    taken |= {v for m in b0 if len(m) > 1 for v in m}
+    return next((v for v in sorted(ps.boundary) if frozenset({v}) in b0 and v not in taken), None)
+
+
+def _try_low_digit(
+    ps: PathSum,
+    occ: Mapping[int, list[tuple[Mono, Fraction]]],
+    digits: Sequence[int],
+    s: Mapping[Mono, int],
+) -> bool:
+    """For a dyadic group whose S mod 2 (b0) reads only boundary variables: [BSub] (a boundary
+    variable u replaced in the phase by c + u, c a constraint) on each u of S in exactly one
+    constraint, as its pivot, c + u reading only boundary variables above u; when there is
+    none, [HH] on the top digit and [BSub] on a boundary pivot of b0."""
+    b0 = frozenset(m for m, c in s.items() if c % 2)
+    cons_vars = {v for c in ps.constraints for m in c for v in m}
+    if any(v in ps.path for m in b0 for v in m) or cons_vars & set(digits):
+        return False
+    pre: list[tuple[int, F2Poly]] = []
+    for u in sorted({u for m in s for u in m} & set(ps.boundary)):
+        single = frozenset({u})
+        held = [c for c in ps.constraints if any(u in m for m in c)]
+        if len(held) != 1 or single not in held[0] or any(u in m for m in held[0] - {single}):
+            continue
+        value = frozenset(held[0] - {single})
+        if all(w not in ps.path and w > u for m in value for w in m):
+            pre.append((u, value))
+    pre = [(u, b) for u, b in pre if not any(w in {x for x, _b in pre} for m in b for w in m)]
+    if pre:
+        for u, value in pre:
+            ps.phase.substitute(u, value)
+            ps.trace.append(Step("bsub", u, None, value))
+        return True
+    v = _boundary_pivot(ps, b0)
+    if v is None:
+        return False
+    top = digits[-1]
+    _drop_terms(ps, occ[top])
+    ps.constraints.append(b0)
+    ps.path.discard(top)
+    ps.sqrt2 += 2
+    ps.trace.append(Step("hh_constraint", top, None, b0))
+    value = frozenset(b0 - {frozenset({v})})
+    ps.phase.substitute(v, value)
+    ps.trace.append(Step("bsub", v, None, value))
+    return True
+
+
 def _try_dyadic(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
     """[Dyadic]: Sum_{Y in Z_2^k} exp(2 pi i Y S / 2^k) = Sum_{y' in Z_2^k} (-1)^(Sum_j y'_j
-    b_j), b_j the j-th binary digit of S as an F_2 polynomial."""
+    b_j), b_j the j-th binary digit of S as an F_2 polynomial; :func:`_try_low_digit` first."""
     for y in sorted(ps.path):
         found = _dyadic_group(y, ps, occ)
         if found is None:
             continue
         digits, s, k = found
+        if _try_low_digit(ps, occ, digits, s):
+            return True
         poly = tuple(sorted((tuple((v, 1) for v in sorted(m)), c) for m, c in s.items() if c))
         bits: list[F2Poly] = []
         for j in range(k):
@@ -1185,12 +1239,13 @@ def _try_average_ctx(ps: PathSum) -> bool:
 
 
 def reduce(ps: PathSum) -> PathSum:
-    """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic], [Rem], [HH] on a
-    boundary constraint, [HHnl], [Quarter] and [Average] applied to a fixpoint, in that order, the
-    lowest variable first, and [Turn] when none applies; variables in an amplitude exponent take
-    only [Pin], [Average] and [Average] through a half phase, and substitutions reach the
-    exponents. When path variables are left, the reduction again with [Turn] on S reading path
-    variables tried first and [Average] on a context, taken when it leaves none."""
+    """``ps`` with [Elim], [HH] on a path pivot, [HHgen], [omega], [Dyadic] (or [BSub] and [HH]
+    for a boundary low digit), [Rem], [HH] on a boundary constraint, [HHnl], [Quarter] and
+    [Average] applied to a fixpoint, in that order, the lowest variable first, and [Turn] when
+    none applies; variables in an amplitude exponent take only [Pin], [Average] and [Average]
+    through a half phase, and substitutions reach the exponents. When path variables are left,
+    the reduction again with [Turn] on S reading path variables tried first and [Average] on a
+    context, taken when it leaves none."""
     out = _reduce(ps, False)
     if out.path and not out.is_zero:
         alt = _reduce(ps, True)

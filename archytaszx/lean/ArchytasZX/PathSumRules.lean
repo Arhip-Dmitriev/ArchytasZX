@@ -1496,6 +1496,47 @@ theorem pdrop_sound (M : ℕ) (c : ℂ) (s : Data) (σ : ℕ → ZMod 2) :
     exact dropT_zero τ s.cons t.1 (by simpa using ht) (fun q hq => hC q (List.mem_append_left _ hq))
   · rfl
 
+/-! ## Boundary substitution -/
+
+/-- `v` replaced in the phase by the rest of the first constraint pivotable at `v`; the
+constraints and rows kept. -/
+def bsubS (M v : ℕ) (s : Data) : Data :=
+  match s.cons.find? (pivotable v) with
+  | none => s
+  | some q =>
+    { path := s.path, phase := normP M (substP M v (q.erase [v]) s.phase), cons := s.cons,
+      rows := s.rows }
+
+theorem bsub_sound (M : ℕ) (hM : 2 ≤ M) (c : ℂ) (v : ℕ) (s : Data) (σ : ℕ → ZMod 2)
+    (h : canonOK v s = true) : val M c s σ = val M c (bsubS M v s) σ := by
+  unfold val
+  simp only [canonOK, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    Option.isSome_iff_exists] at h
+  obtain ⟨⟨q, hq⟩, _⟩ := h
+  have hiq : q ∈ s.cons := List.mem_of_find?_eq_some hq
+  have hpq : pivotable v q = true := List.find?_some hq
+  simp only [pivotable, Bool.and_eq_true, Bool.not_eq_true', decide_eq_false_iff_not,
+    decide_eq_true_eq] at hpq
+  have hM0 : 0 < M := by omega
+  simp only [bsubS, hq]
+  apply bsum_congr
+  intro τ
+  set B := q.erase [v]
+  have hqv : fz τ q = τ v + fz τ B := by
+    rw [fz_perm _ (List.perm_cons_erase hpq.1), fz_cons]
+    simp [mz, B]
+  unfold summand
+  split_ifs with hC
+  · have h0 : fz τ q = 0 := hC q (List.mem_append_left _ hiq)
+    have hv : fz τ B = τ v := (z2_eq_of_add _ _ (by rw [← hqv]; exact h0)).symm
+    have hτ : Function.update τ v (fz τ B) = τ := by rw [hv, Function.update_eq_self]
+    congr 1
+    symm
+    apply ex_peq hM0
+    have := peq_trans (pn_normP τ M _) (pn_substP τ M v hM B s.phase)
+    rwa [hτ] at this
+  · rfl
+
 /-! ## Step lists -/
 
 /-- One step of a replayed reduction. -/
@@ -1517,6 +1558,7 @@ inductive Step where
   | dyadic (ds : List ℕ) (S : Poly) (fs : List ℕ)
   | pdrop
   | dyadicB (ds : List ℕ) (S : Poly) (fs : List ℕ) (bs : List F2)
+  | bsub (v : ℕ)
 
 /-- A step's side condition. -/
 def stepOK (M : ℕ) : Step → Data → Bool
@@ -1537,6 +1579,7 @@ def stepOK (M : ℕ) : Step → Data → Bool
   | .dyadic ds S fs, s => dyadicOK M ds S fs s
   | .pdrop, _ => true
   | .dyadicB ds S fs bs, s => dyadicBOK M ds S fs bs s
+  | .bsub v, s => canonOK v s
 
 /-- A step applied. -/
 def stepS (M : ℕ) : Step → Data → Data
@@ -1557,6 +1600,7 @@ def stepS (M : ℕ) : Step → Data → Data
   | .dyadic ds S fs, s => dyadicS M ds S fs s
   | .pdrop, s => pdropS s
   | .dyadicB ds _ fs bs, s => dyadicBS M ds fs bs s
+  | .bsub v, s => bsubS M v s
 
 /-- The factor a step multiplies the constant by. -/
 noncomputable def fac : Step → ℂ
@@ -1564,7 +1608,7 @@ noncomputable def fac : Step → ℂ
   | .omega => rt 2 * om 8
   | .omegaConj => rt 2 * om 8 ^ 7
   | .perm _ | .canon _ | .gather | .bcanon _ | .hhGen | .rem | .pin _ | .norm | .dyadic _ _ _
-    | .pdrop | .dyadicB _ _ _ _ => 1
+    | .pdrop | .dyadicB _ _ _ _ | .bsub _ => 1
 
 /-- Every side condition along a step list. -/
 def runOK (M : ℕ) : List Step → Data → Bool
@@ -1601,6 +1645,7 @@ theorem step_sound (M : ℕ) (hM : 2 ≤ M) (st : Step) (s : Data) (c : ℂ) (σ
   | dyadic ds S fs => simpa [fac, stepS] using dyadic_sound M c ds S fs s σ h
   | pdrop => simpa [fac, stepS] using pdrop_sound M c s σ
   | dyadicB ds S fs bs => simpa [fac, stepS] using dyadicB_sound M c ds S fs bs s σ h
+  | bsub v => simpa [fac, stepS] using bsub_sound M hM c v s σ h
 
 theorem run_sound (M : ℕ) (hM : 2 ≤ M) :
     ∀ (sts : List Step) (s : Data) (c : ℂ) (σ : ℕ → ZMod 2), runOK M sts s = true →

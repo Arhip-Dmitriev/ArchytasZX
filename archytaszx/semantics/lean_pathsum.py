@@ -248,6 +248,8 @@ def trace_step(step: Step, cur: list[int]) -> tuple[list[str], list[int]]:
     if step.rule == "rem":
         cur = [y, *(v for v in cur if v != y)]
         return [f".perm {cur}", ".rem"], cur
+    if step.rule == "bsub":
+        return [f".bsub {y}"], cur
     if step.rule == "dyadic":
         rest = [v for v in cur if v not in step.group]
         poly = ", ".join(f"({[v for v, _e in m]}, {c})" for m, c in step.poly)

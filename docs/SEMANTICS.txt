@@ -355,6 +355,17 @@ variable first; each application is recorded in PathSum.trace:
                    variables y'_j with terms y'_j b_j / 2, b_j the j-th binary digit of S as
                    an F_2 polynomial (b_0 = S mod 2, S_(j+1) = (S_j - lift(b_j)) / 2). The
                    identity is Sum_Y omega_(2^k)^(Y S) = 2^k [S = 0 mod 2^k].
+                   When b_0 reads only boundary variables, [Dyadic] is replaced by [BSub] on
+                   each variable u of S in exactly one constraint c, as its pivot, with c + u
+                   over boundary variables above u; when there is none, by [HH] constraint
+                   on Y_(k-1) (its terms are Y_(k-1) b_0 / 2) and [BSub] on the lowest
+                   boundary variable v that is a monomial of b_0, in no other monomial of it
+                   and in no constraint or exponent. The next round finds the group
+                   Y_0 .. Y_(k-2) with S / 2. For out - a - b this gives the rows
+                   out_j = a_j + b_j + carry_j without the digits of the difference.
+  [BSub]           a boundary variable v that is a degree-one monomial of a constraint c and
+                   in no other monomial of c: substitute v := c + v in the phase (its
+                   Boolean lift), constraints kept. On the support of [c = 0], v = c + v.
   [Rem]            y Q / 2 with Q one monomial m: drop every other term divisible by m.
   [HH] constraint  as [HH] with Q over boundary variables only: keep [Q = 0], drop y, factor 2;
                    Q = 1 + m for a monomial m of degree above one is kept as one constraint
@@ -372,7 +383,8 @@ not confluent (Lemma 5.4), so it has no normal form; [omega] covers (sqrt 2). [D
 from the paper. Every rule strictly decreases (number of path variables, number of path
 variables carrying a coefficient other than 1/2, number of phase terms) lexicographically:
 [Dyadic] keeps the first and lowers the second, [Rem] keeps both and lowers the third, every
-other rule lowers the first.
+other rule lowers the first. [BSub] keeps the path variables and removes a boundary variable
+from the phase for good (it brings in only variables above it, or none in a constraint).
 
 Canonical form. A reduced sum with no path variable is put in canonical form by Gauss-Jordan
 elimination of its constraints over F_2 polynomials (eliminate): the variables are taken in
