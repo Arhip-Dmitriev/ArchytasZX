@@ -1092,7 +1092,8 @@ def _limit(seconds: float) -> Iterator[None]:
 def try_kind(
     kind: str, inst: Any, cfg: dict[str, Any], rng: random.Random, deadline: float = math.inf
 ) -> FalseEquation | None:
-    """The first variant of ``kind`` with a witness, as an F record; each probe is limited to
+    """The first variant of ``kind`` with a witness, as an F record; a tiny_phase variant whose
+    witness is proportional (a scalar-only break) is skipped; each probe is limited to
     false_set.probe_seconds, and :class:`_Overrun` is raised past ``deadline``."""
     probe_seconds = float(cfg["false_set"].get("probe_seconds", 0))
     for var in variants(kind, inst, cfg):
@@ -1114,6 +1115,8 @@ def try_kind(
                 if type(exc).__name__ in ("ContractSizeError", "MemoryError"):
                     _OVERFLOWS.append(inst.id)
                 continue
+            if w is not None and kind == "tiny_phase" and w.proportional:
+                break
             if w is not None:
                 return FalseEquation(inst.id, edit, w.to_dict(), var.equal_where)
     return None

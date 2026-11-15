@@ -190,3 +190,20 @@ def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     with pytest.raises(translate.Unsupported) as exc:
         subject.circuit_at(inst, 6, 2)
     assert outcomes.unsupported_code(str(exc.value)) == "phase_table_bound"
+
+
+def test_scalar_only_tiny_phase_is_skipped() -> None:
+    """tiny_phase on bernstein_vazirani_phase/main (x holds |1>, the phase is global) yields no
+    variant; on cx_inverse/main the first variant stands, not proportional."""
+    import random
+
+    from benchmarks import breaks, config
+
+    cfg = config.load(None, [], "laptop")
+    insts = _insts()
+    assert (
+        breaks.try_kind("tiny_phase", insts["bernstein_vazirani_phase/main"], cfg, random.Random(1))
+        is None
+    )
+    rec = breaks.try_kind("tiny_phase", insts["cx_inverse/main"], cfg, random.Random(1))
+    assert rec is not None and rec.witness["proportional"] is False

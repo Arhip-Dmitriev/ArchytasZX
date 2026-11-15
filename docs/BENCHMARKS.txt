@@ -415,7 +415,9 @@ gadget's closed form is tested at N = 1, 2, 3 (section 13). Each witness records
 whether the pair differs only by a scalar at the witness point (true when the dense tensors are
 one scalar times each other, and for the factored witness; false for an interface difference;
 null when the witness was found without the dense tensors). F has the same three versions as S.
-Kinds tiny_phase and single_entry raise the F equation's d floor to 2. A single_entry point
+Kinds tiny_phase and single_entry raise the F equation's d floor to 2. A tiny_phase variant
+whose witness is proportional (the phase lands on a basis state, so the break is a global
+phase, as global_phase already tests) is skipped. A single_entry point
 whose phase table dimension (the product of the output dimensions) has more digits than the
 engine loader reads (18) is unsupported for every tool (unsupported.phase_table_bound).
 
