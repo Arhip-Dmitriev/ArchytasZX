@@ -1941,10 +1941,10 @@ class _SymExport:
             f"    (show {form[0]} = {stated[0]} by qscal) (show {form[1]} = {stated[1]} by qscal)"
         )
         out.decls += [*decls, theorem]
-        bridged: dict[str, str] = {}
         plain = out.diagram_literal
 
         def literal(d: Diagram, net: Any, nm: str, own: bool = False) -> tuple[str, int] | None:
+            start = len(out.decls)
             got = plain(d, net, nm, own)
             dname = f"D{nm[1:]}"
             if got is None or own or got[0] != dname:
@@ -1966,7 +1966,8 @@ class _SymExport:
             bits = max([1, *(Q.pkey(width, *p).bit_length() for p in ends)])
             wb = Q.pack_w(width, bits, wires)
             args = f"{width} {bits} {off} {top} WB{nm[1:]} {dname} {nm}"
-            out.decls.pop()
+            del out.decls[start + 1 :]
+            out.checked.add(dname)
             out.decls += [
                 f"/-- {dname}'s wires, packed. -/\ndef WB{nm[1:]} : ℕ := 0x{wb:x}",
                 f"theorem {dname}_bq : bridgeQ {args} = true := by decide +kernel",
@@ -1979,7 +1980,6 @@ class _SymExport:
                     f"(bridge_ok {args} {dname}_bq).1"
                 ),
             ]
-            bridged[dname] = f"{dname}_chk"
             return got
 
         out.diagram_literal = literal  # type: ignore[method-assign,assignment]
@@ -1987,10 +1987,6 @@ class _SymExport:
             out.diagram_theorem(name, "", "", stated[0], self.a, stated[1], self.b, env="E")
         finally:
             del out.diagram_literal
-        decided = "(by decide +kernel) (by decide +kernel)"
-        if len(bridged) == 2 and out.decls[-1].count(decided) == 1:
-            c0, c1 = bridged.values()
-            out.decls[-1] = out.decls[-1].replace(decided, f"{c0} {c1}")
         lead = "  equality of qubit networks by the verified normaliser over F_2 (ArchytasZX.SymF2)"
         src = out.source(lead=lead)
         return re.sub(

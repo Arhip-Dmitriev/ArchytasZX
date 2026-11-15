@@ -234,6 +234,28 @@ def test_rule_without_a_translator_exports_without_axioms(name: str) -> None:
         assert "\naxiom " not in source, name
 
 
+def test_diagrams_are_bridged_in_linear_time() -> None:
+    source = L.export(_one_step("zx_cap", cap_diagram(3)))
+    for d in ("D0", "D1"):
+        assert f"theorem {d}_bd : DBridge.bridgeD " in source
+        assert f"theorem {d}_net : {d}.toNet 0 = N{d[1]} := (DBridge.bridgeD_ok " in source
+    assert "rfl D0_chk D1_chk, D0_net, D1_net]" in source
+    assert "toNet 0 = N0 := by decide" not in source
+
+
+def test_the_bridge_mirror_refuses_a_misplaced_leg() -> None:
+    d = cap_diagram(3)
+    lab = L._Export(lambda _: "").labelled(d)
+    legs = [([0] * len(d.nodes[n].outputs), [0] * len(d.nodes[n].inputs)) for n in sorted(d.nodes)]
+    off = lab.net.summed[0] if lab.net.summed else len(lab.net.bnd)
+    labs = dict.fromkeys([*lab.net.bnd, *lab.net.summed], 0)
+    assert L._bridge_plan(d, lab.net, off, legs, labs) is not None
+    first = lab.net.nodes[0]
+    moved = L.LNode(first.kind, tuple(x + 1 for x in first.outs), first.ins, first.dim, first.ph)
+    bad = L.LNet((moved, *lab.net.nodes[1:]), lab.net.summed, lab.net.bnd)
+    assert L._bridge_plan(d, bad, off, legs, labs) is None
+
+
 def test_rule_without_a_lemma_is_an_unproved_axiom(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(L._RULES, "wz_bialgebra")
     monkeypatch.delitem(L._RULES, "wz_bialgebra_converse")

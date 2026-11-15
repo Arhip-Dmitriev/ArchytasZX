@@ -329,6 +329,7 @@ class _Export:
         self.raw_ix: dict[str, int] = {}
         self.raw_pairs: dict[int, int] = {}
         self.decls: list[str] = []
+        self.checked: set[str] = set()
         self.count = 0
         self.unproved: list[str] = []
         self.scalar_gap = ""
@@ -857,10 +858,16 @@ class _Export:
         return labelled
 
     def diagram_literal(
-        self, d: Diagram, net: LNet, name: str, own: bool = False
+        self,
+        d: Diagram,
+        net: LNet,
+        name: str,
+        own: bool = False,
+        labs: tuple[str, Mapping[int, int]] | None = None,
     ) -> tuple[str, int] | None:
         """``d`` as a Lean ``Diagram`` named after ``name``, with the offset of ``net``'s wire
-        labels; ``None`` when they are not consecutive."""
+        labels and its translation and check against ``labs`` (Lean name and table, the
+        export's ``labs`` by default); ``None`` when the labels are not consecutive."""
         nb = len(d.boundary_outputs) + len(d.boundary_inputs)
         off = net.summed[0] if net.summed else nb
         if net.summed != tuple(range(off, off + len(net.summed))):
@@ -903,9 +910,41 @@ class _Export:
             f"    ins := [{', '.join(map(port, d.boundary_inputs))}] }}"
         )
         dexpr = self.dim_ids(dname)
-        self.decls.append(
-            f"theorem {dname}_net : {dexpr}.toNet {off} = {name} := by decide +kernel"
-        )
+        lname, ltab = labs or ("labs", self.labs)
+        pairs = self.raw_pairs if self.raw_ix else {}
+        leg_dims = [
+            (
+                [pairs.get(dimfn(p.dim), dimfn(p.dim)) for p in d.nodes[nid].outputs],
+                [pairs.get(dimfn(p.dim), dimfn(p.dim)) for p in d.nodes[nid].inputs],
+            )
+            for nid in sorted(d.nodes)
+        ]
+        plan = _bridge_plan(d, net, off, leg_dims, ltab)
+        if plan is None:
+            self.decls.append(
+                f"theorem {dname}_net : {dexpr}.toNet {off} = {name} := by decide +kernel"
+            )
+            return dexpr, off
+        width, bits, wb, b, table = plan
+        tag = name[1:]
+        args = f"{width} {bits} {b} {off} WB{tag} LT{tag} {dexpr} {name} {lname}"
+        self.decls += [
+            f"/-- {dname}'s wires, packed. -/\ndef WB{tag} : ℕ := 0x{wb:x}",
+            (
+                f"/-- {dname}'s dimension index at each label, {b} bits each. -/\n"
+                f"def LT{tag} : ℕ := 0x{table:x}"
+            ),
+            f"theorem {dname}_bd : DBridge.bridgeD {args} = true := by decide +kernel",
+            (
+                f"theorem {dname}_net : {dexpr}.toNet {off} = {name} := "
+                f"(DBridge.bridgeD_ok {args} {dname}_bd).2"
+            ),
+            (
+                f"theorem {dname}_chk : {dexpr}.check {lname} {off} = true := "
+                f"(DBridge.bridgeD_ok {args} {dname}_bd).1"
+            ),
+        ]
+        self.checked.add(dname)
         return dexpr, off
 
     def original_block(self) -> str:
@@ -1286,6 +1325,10 @@ class _Export:
             f"    {stmt} := {body}"
         )
 
+    def chk(self, dname: str) -> str:
+        """The proof of ``dname``'s ``Diagram.check``: its ``_chk`` lemma, else by decide."""
+        return f"{dname}_chk" if dname in self.checked else "(by decide +kernel)"
+
     def diagram_theorem(
         self,
         name: str,
@@ -1311,8 +1354,8 @@ class _Export:
         na, nbt = _dname(da), _dname(db)
         stmt = f"DEqual {env or self.env} {_paren(sl)} {da} {_paren(sr)} {db}"
         rw = (
-            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labs) rfl (by decide +kernel) "
-            "(by decide +kernel), "
+            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labs) rfl {self.chk(na)} "
+            f"{self.chk(nbt)}, "
             f"{', '.join(dict.fromkeys((f'{na}_net', f'{nbt}_net')))}]"
         )
         intro = [f"  intro {args}"] if args else []
@@ -1970,11 +2013,12 @@ class _Export:
             finally:
                 self.wire_alias = False
             return
-        lit_a = self.diagram_literal(theorem.lhs, fa, f"{start.name}F", own=True)
+        own_labs = ("labsF", labs_f)
+        lit_a = self.diagram_literal(theorem.lhs, fa, f"{start.name}F", True, own_labs)
         lit_b = (
             lit_a
             if goal.name == start.name
-            else self.diagram_literal(theorem.rhs, fb, f"{goal.name}F", own=True)
+            else self.diagram_literal(theorem.rhs, fb, f"{goal.name}F", True, own_labs)
         )
         if lit_a is None or lit_b is None:
             return
@@ -1983,8 +2027,8 @@ class _Export:
         args = _join(self.args, self.hyp_args, " ".join(f"hc{k}" for k in range(len(pairs))))
         head = f"∀ {binders}, " if binders else ""
         rw = (
-            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labsF) rfl (by decide +kernel) "
-            f"(by decide +kernel), "
+            f"rw [DEqual_iff (o₁ := {oa}) (o₂ := {ob}) (L := labsF) rfl {self.chk(_dname(da))} "
+            f"{self.chk(_dname(db))}, "
             f"{', '.join(dict.fromkeys((f'{_dname(da)}_net', f'{_dname(db)}_net')))}]"
         )
         intro = f"  intro {args}\n" if args else ""
@@ -7970,6 +8014,74 @@ def _box_syms(t: object) -> set[str]:
 
 RAW_OFFSET = 1000000
 """The first dimension index of a dimension a wire identifies with another."""
+
+
+def _pkey(width: int, port: tuple[int, bool, int]) -> int:
+    """``DBridge.pkey``."""
+    node, out, pos = port
+    return (2 * node + (0 if out else 1)) * width + pos
+
+
+def _bridge_plan(
+    d: Diagram,
+    net: LNet,
+    off: int,
+    legs: Sequence[tuple[Sequence[int], Sequence[int]]],
+    labs: Mapping[int, int],
+) -> tuple[int, int, int, int, int] | None:
+    """Python mirror of ``DBridge.bridgeD`` on ``d`` (its nodes in id order with the leg
+    dimension indices ``legs``) and ``net`` against the label table ``labs``: the port width,
+    key bits, packed wires, table entry bits and packed table, or ``None`` when it fails."""
+
+    def key(r: PortRef) -> tuple[int, bool, int]:
+        return (int(r.node_id), r.direction is Direction.OUTPUT, r.index)
+
+    bnd = [key(r) for r in (*d.boundary_outputs, *d.boundary_inputs)]
+    wires = [(key(w.a), key(w.b)) for w in sorted(d.wires, key=lambda w: w.sort_key())]
+    nb, nw = len(bnd), len(wires)
+    ids = [int(n) for n in sorted(d.nodes)]
+    if (
+        nb > off
+        or any(a >= b for a, b in pairwise(ids))
+        or net.summed != tuple(range(off, off + nw))
+        or net.bnd != tuple(range(nb))
+        or len(net.nodes) != len(ids)
+    ):
+        return None
+    ends = [*bnd, *(p for w in wires for p in w)]
+    if len(set(ends)) != len(ends):
+        return None
+    slot = {p: i for i, p in enumerate(bnd)}
+    wire_of = {p: j for j, w in enumerate(wires) for p in w}
+    table: dict[int, int] = {}
+    count = 0
+    for nid, n, (dos, dis) in zip(ids, net.nodes, legs, strict=True):
+        for out, dl, labels in ((True, dos, n.outs), (False, dis, n.ins)):
+            if len(dl) != len(labels):
+                return None
+            for k, (dim, lab) in enumerate(zip(dl, labels, strict=True)):
+                p = (nid, out, k)
+                count += 1
+                at = slot.get(p) if lab < off else wire_of.get(p)
+                if at != (lab if lab < off else lab - off) or table.setdefault(lab, dim) != dim:
+                    return None
+    if count != len(ends):
+        return None
+
+    def inq(lab: int) -> bool:
+        return lab < nb or off <= lab < off + nw
+
+    inside = [lab for lab in labs if inq(lab)]
+    if len(inside) != nb + nw or any(labs[lab] != table.get(lab, 0) for lab in inside):
+        return None
+    width = max([1, *(max(len(a), len(b)) for a, b in legs)])
+    bits = max([1, *(_pkey(width, p).bit_length() for p in ends)])
+    packed = 0
+    for a, b in reversed(wires):
+        packed = _pkey(width, a) + (_pkey(width, b) << bits) + (packed << (2 * bits))
+    eb = max([1, *(v.bit_length() for v in table.values())])
+    tab = sum(v << (eb * lab) for lab, v in table.items())
+    return width, bits, packed, eb, tab
 
 
 def _dname(expr: str) -> str:
