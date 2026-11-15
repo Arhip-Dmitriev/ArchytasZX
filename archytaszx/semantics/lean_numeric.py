@@ -39,6 +39,7 @@ from archytaszx.semantics.lean_net import NetUnsupported, _head, _join, _paren
 from archytaszx.semantics.lean_refute import (
     _Z,
     MAX_ASSIGNMENTS,
+    MAX_TERMS,
     _ints,
     _ktrim,
     _list_pairs,
@@ -180,6 +181,8 @@ class _NumRefuter(_Refuter):
                 d = self.dimv(n.dim)
                 if d <= 0:
                     raise NetUnsupported("a node of dimension 0")
+                if d > MAX_TERMS:
+                    raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
                 for j in range(d):
                     if (n.ph, j) not in self.values:
                         self.keys.append((n.ph, j))

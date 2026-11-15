@@ -344,7 +344,8 @@ class _Refuter:
             if str(s) not in self.point:
                 raise NetUnsupported(f"the counterexample gives no value for {s}")
             subs[s] = self.point[str(s)]
-        return sp.nsimplify(e.xreplace(subs))
+        value = e.xreplace(subs)
+        return value if value.is_Rational else sp.nsimplify(value)
 
     def nat(self, expr: object) -> int:
         v = self.val(expr)
@@ -711,6 +712,7 @@ class _Refuter:
     def choose_m(self) -> None:
         needs = {1}
         self.keys: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
         dens: list[sp.Rational] = []
         for net in (self.a.net, self.b.net):
             for n in net.nodes:
@@ -719,9 +721,12 @@ class _Refuter:
                 d = self.dimv(n.dim)
                 if d <= 0:
                     raise NetUnsupported("a node of dimension 0")
+                if d > MAX_TERMS:
+                    raise NetUnsupported(f"a node of dimension {d}, above {MAX_TERMS}")
                 needs.add(d)
                 for j in range(d):
-                    if (n.ph, j) not in self.keys:
+                    if (n.ph, j) not in seen:
+                        seen.add((n.ph, j))
                         self.keys.append((n.ph, j))
                         dens.append(self.phase(n.ph, j))
         for t in dens:
