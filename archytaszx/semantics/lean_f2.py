@@ -26,7 +26,10 @@ from fractions import Fraction
 from typing import Any
 
 CHAIN = 40
-"""Steps per ``qchain`` block."""
+"""Steps per ``qchain`` block at most."""
+
+BLOCK_WORK = 6000
+"""Forms visited per ``qchain`` block at most, past its first step."""
 
 QTm = tuple[int, int, list[int], list[tuple[int, int]]]
 St = tuple[int, QTm | None]
@@ -143,18 +146,42 @@ def mask_of(labs: Sequence[int]) -> int:
 
 
 def run_q(nodes: Sequence[QNode], internal: Sequence[int], hs: Sequence[Sequence[int]]) -> Any:
-    """The final term after ``runQ`` and ``finQ``; ``False`` when a check fails."""
+    """``(final term, block sizes, forms visited)`` after ``runQ`` and ``finQ``, the blocks cut at
+    :data:`CHAIN` steps or :data:`BLOCK_WORK` forms; ``False`` when a check fails."""
     mask = mask_of(internal)
     s: St | None = (0, (1, 0, [], []))
+    sizes: list[int] = []
+    size = work = total = 0
     for node, h in zip(nodes, hs, strict=True):
         assert s is not None
+        t = s[1]
+        w = 1 + (0 if t is None else (len(t[2]) + len(t[3])) * max(1, len(h)))
+        if size and (size == CHAIN or work + w > BLOCK_WORK):
+            sizes.append(size)
+            size = work = 0
+        size, work, total = size + 1, work + w, total + w
         s = step_q(mask, node, h, s)
         if s is None:
             return False
+    if size:
+        sizes.append(size)
     assert s is not None
     rest = [lab for lab in internal if not tb(s[0], lab)]
     fin = sum_ls(mask, rest, s)
-    return False if fin is None else fin[1]
+    return False if fin is None else (fin[1], sizes, total)
+
+
+def plan(nodes: Sequence[QNode], internal: Sequence[int]) -> Any:
+    """``(reversed, hints, run_q result)`` for the order of the nodes, as listed or reversed, that
+    visits fewer forms; None when neither run passes."""
+    best: Any = None
+    for rev in (False, True):
+        order = list(reversed(nodes)) if rev else list(nodes)
+        hs = hints(order, internal)
+        got = run_q(order, internal, hs)
+        if got is not False and (best is None or got[2] < best[2][2]):
+            best = (rev, hs, got)
+    return best
 
 
 def piv(r: int) -> int:

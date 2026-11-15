@@ -1499,8 +1499,8 @@ class _SymExport:
 
     def q_plan(self) -> bool:
         """Whether the F_2 checker of ``ArchytasZX.SymF2`` proves the pair: every dimension 2,
-        no phase, Z, X and F nodes only, scalars ``a / b √2^K``, equal final terms; its hints
-        and scalars in ``self.q``."""
+        no phase, Z, X and F nodes only, scalars ``a / b √2^K``, equal final terms; each side's
+        order, hints and blocks, and the scalars, in ``self.q``."""
         from archytaszx.semantics import lean_f2 as Q
 
         out = self.out
@@ -1524,11 +1524,12 @@ class _SymExport:
         s0, s1 = Q.scalar_of(self.m0), Q.scalar_of(self.m1)
         if s0 is None or s1 is None:
             return False
-        hs = [Q.hints(n[0], n[1]) for n in nets]
-        fins = [Q.run_q(n[0], n[1], h) for n, h in zip(nets, hs, strict=True)]
-        if any(f is False for f in fins) or not Q.cmp_q(s0, s1, fins[0], fins[1]):
+        plans = [Q.plan(n[0], n[1]) for n in nets]
+        if plans[0] is None or plans[1] is None:
             return False
-        self.q = (hs, (s0, s1))
+        if not Q.cmp_q(s0, s1, plans[0][2][0], plans[1][2][0]):
+            return False
+        self.q = ([(p[0], p[1], p[2][1]) for p in plans], (s0, s1))
         return True
 
     def check(self) -> bool:
@@ -1884,22 +1885,32 @@ class _SymExport:
         from archytaszx.semantics import lean_f2 as Q
 
         out = self.out
-        hs, scal = self.q
+        sides, scal = self.q
         nets = (self.a, self.b)
         labels = [lab for lb in nets for lab in (*lb.net.summed, *lb.net.bnd)]
         labels += [lab for lb in nets for n in lb.net.nodes for lab in (*n.outs, *n.ins)]
         top = max([*labels, *out.labs, 0]) + 1
         decls = ["open ArchytasZX.SymF2"]
-        for tag, lb, h in zip("01", nets, hs, strict=True):
+        revs = []
+        for tag, lb, (rev, h, sizes) in zip("01", nets, sides, strict=True):
             n = lb.name
+            revs.append("true" if rev else "false")
             decls += [
                 (
                     f"/-- Each node's labels summed after it. -/\ndef H{tag} : List (List ℕ) := "
                     f"{Q.lean_hints(h)}"
                 ),
-                f"/-- The steps. -/\ndef R{tag} : List (Node × List ℕ) := {n}.nodes.zip H{tag}",
-                f"/-- The summed labels as a mask. -/\ndef IM{tag} : ℕ := maskL {n}.int",
-                f"set_option maxHeartbeats 0 in\nqchain q{tag} IM{tag} R{tag} {Q.CHAIN}",
+                (
+                    f"/-- The steps. -/\ndef R{tag} : List (Node × List ℕ) := "
+                    f"(ordQ {revs[-1]} {n}).zip H{tag}"
+                ),
+                (
+                    f"/-- The summed labels as a mask. -/\ndef IM{tag} : ℕ := "
+                    f"0x{Q.mask_of(lb.net.summed):x}"
+                ),
+                f"theorem IM{tag}_eq : maskL {n}.int = IM{tag} := by decide +kernel",
+                f"/-- The blocks' sizes. -/\ndef KS{tag} : List ℕ := {_lean_ints(sizes)}",
+                f"set_option maxHeartbeats 0 in\nqchain q{tag} IM{tag} R{tag} KS{tag}",
             ]
         nr = len(out.phases)
         cases = " | ".join(["_"] * (nr + 1))
@@ -1925,7 +1936,8 @@ class _SymExport:
         theorem = (
             "/-- The diagrams are equal. -/\n"
             f"theorem {name} :\n    Equal E {stated[0]} {A} {stated[1]} {B} :=\n"
-            f"  Equal.congr_s (equal_q E rfl hph hL {A} {B} H0 H1 _ _ {sc} q0 q1 qc)\n"
+            f"  Equal.congr_s (equal_q E rfl hph hL {A} {B} {revs[0]} {revs[1]} H0 H1\n"
+            f"    q0_fin q1_fin {sc} (by rw [IM0_eq]; exact q0) (by rw [IM1_eq]; exact q1) qc)\n"
             f"    (show {form[0]} = {stated[0]} by qscal) (show {form[1]} = {stated[1]} by qscal)"
         )
         out.decls += [*decls, theorem]

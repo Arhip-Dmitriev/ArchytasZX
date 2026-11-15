@@ -204,16 +204,45 @@ theorem dval_eq (ν : ℕ → ZMod 2) (ds : List ℕ) :
 
 /-! ## Summing a variable -/
 
+/-- Bit `i` of `m` as a number. -/
+def bitOf (m i : ℕ) : ℕ := (m >>> i) % 2
+
+theorem bitOf_eq (m i : ℕ) : bitOf m i = if m.testBit i then 1 else 0 := by
+  unfold bitOf
+  rw [Nat.shiftRight_eq_div_pow, Nat.testBit_eq_decide_div_mod_eq]
+  rcases Nat.mod_two_eq_zero_or_one (m / 2 ^ i) with h | h <;> simp [h]
+
+/-- `m + w` when `m` reads `x`, else `m`. -/
+def subW (x w m : ℕ) : ℕ :=
+  match bitOf m (x + 1) with
+  | 0 => m
+  | _ + 1 => m ^^^ w
+
+theorem subW_eq (x v m : ℕ) : subW x (vb x ^^^ v) m = sub x v m := by
+  unfold subW sub
+  rw [bitOf_eq]
+  by_cases h : m.testBit (x + 1)
+  · simp only [h, if_true, Nat.xor_assoc]
+  · simp [h]
+
 /-- The first delta reading `x` and the others. -/
 def pickD (x : ℕ) : List ℕ → Option (ℕ × List ℕ)
   | [] => none
-  | d :: ds => if d.testBit (x + 1) then some (d, ds) else (pickD x ds).map fun p => (p.1, d :: p.2)
+  | d :: ds =>
+    match bitOf d (x + 1) with
+    | 0 => (pickD x ds).map fun p => (p.1, d :: p.2)
+    | _ + 1 => some (d, ds)
+
+theorem pickD_cons (x d : ℕ) (ds : List ℕ) : pickD x (d :: ds) =
+    if d.testBit (x + 1) then some (d, ds) else (pickD x ds).map fun p => (p.1, d :: p.2) := by
+  rw [pickD, bitOf_eq]
+  split_ifs <;> rfl
 
 theorem pickD_some (x : ℕ) : ∀ (l : List ℕ) (d : ℕ) (r : List ℕ), pickD x l = some (d, r) →
     d.testBit (x + 1) = true ∧ l.Perm (d :: r)
   | [], _, _, h => by simp [pickD] at h
   | e :: l, d, r, h => by
-    unfold pickD at h
+    rw [pickD_cons] at h
     split_ifs at h with he
     · simp only [Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
@@ -230,7 +259,7 @@ theorem pickD_some (x : ℕ) : ∀ (l : List ℕ) (d : ℕ) (r : List ℕ), pick
 theorem pickD_none (x : ℕ) : ∀ (l : List ℕ), pickD x l = none → ∀ d ∈ l, d.testBit (x + 1) = false
   | [], _, d, hd => by simp at hd
   | e :: l, h, d, hd => by
-    unfold pickD at h
+    rw [pickD_cons] at h
     split_ifs at h with he
     cases hp : pickD x l with
     | some p => rw [hp] at h; simp at h
@@ -248,25 +277,25 @@ noncomputable def odv (ν : ℕ → ZMod 2) : Option (List ℕ) → ℂ
 
 @[simp] theorem odv_some (ν : ℕ → ZMod 2) (R : List ℕ) : odv ν (some R) = dval ν R := rfl
 
-/-- The deltas `ds` with `x` replaced by `v` onto `acc` in reverse, those now `0 = 0` dropped;
-none when one is `1 = 0`. -/
-def subDels (x v : ℕ) : List ℕ → List ℕ → Option (List ℕ)
+/-- The deltas `ds` with `x` replaced through `w` onto `acc` in reverse, those now `0 = 0`
+dropped; none when one is `1 = 0`. -/
+def subDels (x w : ℕ) : List ℕ → List ℕ → Option (List ℕ)
   | acc, [] => some acc
   | acc, d :: ds =>
-    match sub x v d with
-    | 0 => subDels x v acc ds
+    match subW x w d with
+    | 0 => subDels x w acc ds
     | 1 => none
-    | e + 2 => subDels x v ((e + 2) :: acc) ds
+    | e + 2 => subDels x w ((e + 2) :: acc) ds
 
 theorem subDels_ok (ν : ℕ → ZMod 2) (x v : ℕ) : ∀ acc ds : List ℕ,
-    dval (Function.update ν x (par ν v)) ds * dval ν acc = odv ν (subDels x v acc ds)
+    dval (Function.update ν x (par ν v)) ds * dval ν acc = odv ν (subDels x (vb x ^^^ v) acc ds)
   | acc, [] => by simp [subDels, dval]
   | acc, d :: ds => by
-    rw [dval_cons, ← par_sub]
+    rw [dval_cons, ← par_sub, ← subW_eq]
     have h := subDels_ok ν x v acc ds
     have h' := fun e => subDels_ok ν x v ((e + 2) :: acc) ds
     rw [subDels]
-    generalize sub x v d = m
+    generalize subW x (vb x ^^^ v) d = m
     rcases m with _ | _ | e
     · rw [par_zero, ← h]; simp [dlt]
     · rw [par_one]; simp [dlt]
@@ -291,26 +320,26 @@ def scons (e : ℕ) (l : List ℕ) : List ℕ :=
 
 theorem scons_eq (e : ℕ) (l : List ℕ) : scons e l = e :: l := by cases e <;> rfl
 
-/-- The phases with `x` replaced by `v`. -/
-def subPhs (x v : ℕ) : List (ℕ × ℕ) → List (ℕ × ℕ)
+/-- The phases with `x` replaced through `w`. -/
+def subPhs (x w : ℕ) : List (ℕ × ℕ) → List (ℕ × ℕ)
   | [] => []
-  | p :: ps => pcons (sub x v p.1) (sub x v p.2) (subPhs x v ps)
+  | p :: ps => pcons (subW x w p.1) (subW x w p.2) (subPhs x w ps)
 
 theorem subPhs_eq (x v : ℕ) (ps : List (ℕ × ℕ)) :
-    subPhs x v ps = ps.map fun p => (sub x v p.1, sub x v p.2) := by
+    subPhs x (vb x ^^^ v) ps = ps.map fun p => (sub x v p.1, sub x v p.2) := by
   induction ps with
   | nil => rfl
-  | cons p ps ih => rw [subPhs, pcons_eq, ih, List.map_cons]
+  | cons p ps ih => rw [subPhs, pcons_eq, ih, List.map_cons, subW_eq, subW_eq]
 
 theorem subPhs_ok (ν : ℕ → ZMod 2) (x v : ℕ) (ps : List (ℕ × ℕ)) :
-    pval (Function.update ν x (par ν v)) ps = pval ν (subPhs x v ps) := by
+    pval (Function.update ν x (par ν v)) ps = pval ν (subPhs x (vb x ^^^ v) ps) := by
   rw [subPhs_eq]
   simp only [pval, List.map_map, Function.comp_def, par_sub]
 
-/-- The sum over `x` through the delta `d` reading it, the others `ds`. -/
+/-- The sum over `x` through the delta `d` reading it, the others `ds`: each form reading `x`
+plus `d`. -/
 def elimD (x d : ℕ) (ds : List ℕ) (t : QTm) : Option QTm :=
-  let v := d ^^^ vb x
-  (subDels x v [] ds).map fun r => ⟨t.q, t.k, r, subPhs x v t.phs⟩
+  (subDels x d [] ds).map fun r => ⟨t.q, t.k, r, subPhs x d t.phs⟩
 
 /-- One phase's part of the character: the coefficient of `x`. -/
 def cA (x : ℕ) (p : ℕ × ℕ) : ℕ :=
@@ -363,12 +392,15 @@ theorem elimD_ok (ν : ℕ → ZMod 2) (x d : ℕ) (ds : List ℕ) (t : QTm)
       (t.q : ℂ) * rt 2 ^ t.k * dval (Function.update ν x (par ν v)) ds *
         pval (Function.update ν x (par ν v)) t.phs := by
     rcases zmod2_cases (par ν v) with h | h <;> rw [h] <;> simp
-  have he : elimD x d ds t =
-      (subDels x v [] ds).map fun r => ⟨t.q, t.k, r, subPhs x v t.phs⟩ := rfl
+  have hw : vb x ^^^ v = d := by
+    simp only [v]; rw [← Nat.xor_assoc, Nat.xor_comm (vb x) d, Nat.xor_assoc, Nat.xor_self,
+      Nat.xor_zero]
+  have he : elimD x d ds t = (subDels x (vb x ^^^ v) [] ds).map fun r =>
+      ⟨t.q, t.k, r, subPhs x (vb x ^^^ v) t.phs⟩ := by rw [hw]; rfl
   have hs := subDels_ok ν x v [] ds
   rw [show dval ν [] = 1 from rfl, mul_one] at hs
   rw [hy, hs, subPhs_ok, he]
-  cases subDels x v [] ds with
+  cases subDels x (vb x ^^^ v) [] ds with
   | none => simp
   | some r => simp [QTm.val]
 
@@ -787,16 +819,43 @@ theorem nodupM_ok : ∀ (ls : List ℕ) (m : ℕ), nodupM ls m = true →
       · have := h2 l' hl'
         rw [Nat.testBit_lor] at this; simp only [Bool.or_eq_false_iff] at this; exact this.1
 
+/-- No label twice, none of the mask `m`; each mask reduced before its next use. -/
+def nodupS : List ℕ → ℕ → Bool
+  | [], _ => true
+  | l :: ls, m => !m.testBit l && match m ||| 2 ^ l with
+    | 0 => nodupS ls 0
+    | m' + 1 => nodupS ls (m' + 1)
+
+theorem nodupS_eq : ∀ (ls : List ℕ) (m : ℕ), nodupS ls m = nodupM ls m
+  | [], _ => rfl
+  | l :: ls, m => by
+    simp only [nodupS, nodupM]
+    congr 1
+    generalize m ||| 2 ^ l = m'
+    cases m' <;> exact nodupS_eq ls _
+
+/-- `netQ` with the masks `IM` and `BM` of the summed and boundary labels. -/
+def netQM (N : Net) (H : List (List ℕ)) (IM BM : ℕ) : Bool :=
+  H.length == N.nodes.length && nodupS N.int 0 &&
+    N.nodes.all fun n => n.dim == 0 && (n.outs ++ n.ins).all fun l => IM.testBit l || BM.testBit l
+
+/-- `f n`, `n` reduced to a numeral first. -/
+def withNat {α : Type} (n : ℕ) (f : ℕ → α) : α :=
+  match n with
+  | 0 => f 0
+  | k + 1 => f (k + 1)
+
+theorem withNat_eq {α : Type} (n : ℕ) (f : ℕ → α) : withNat n f = f n := by cases n <;> rfl
+
 /-- The checks on a network and its step labels: as many label lists as nodes, every node of
 dimension index `0`, every leg a boundary or summed label, no summed label twice. -/
 def netQ (N : Net) (H : List (List ℕ)) : Bool :=
-  H.length == N.nodes.length && nodupM N.int 0 &&
-    N.nodes.all fun n => n.dim == 0 && (n.outs ++ n.ins).all fun l =>
-      (maskL N.int).testBit l || (maskL N.bnd).testBit l
+  withNat (maskL N.int) fun IM => withNat (maskL N.bnd) fun BM => netQM N H IM BM
 
 /-- The final term: the steps run from the empty sum, then the labels no step sums. -/
 def finQ (N : Net) (s : St) : Option (Option QTm) :=
-  (sumLs (maskL N.int) (N.int.filter fun l => !s.1.testBit l) s).map Prod.snd
+  withNat (maskL N.int) fun IM =>
+    (sumLs IM (N.int.filter fun l => !s.1.testBit l) s).map Prod.snd
 
 theorem labDim_two (E : Env) (hdim : E.dimv 0 = 2) (hL : E.labs.all (fun p => p.2 == 0) = true)
     (l : ℕ) : labDim E l = 2 := by
@@ -822,22 +881,36 @@ def trunc (σ : ℕ → ℕ) : ℕ → ℕ := fun l => if σ l < 2 then σ l els
 theorem trunc_lt (σ : ℕ → ℕ) (l : ℕ) : trunc σ l < 2 := by
   unfold trunc; split_ifs with h <;> omega
 
+/-- The nodes in the order the steps take them: reversed when `rev`. -/
+def ordQ (rev : Bool) (N : Net) : List Node := if rev then N.nodes.reverse else N.nodes
+
+theorem prodVal_ordQ (E : Env) (rev : Bool) (N : Net) (σ : ℕ → ℕ) :
+    prodVal E (ordQ rev N) σ = prodVal E N.nodes σ := by
+  unfold ordQ prodVal
+  cases rev
+  · rfl
+  · simp only [if_true, List.map_reverse, List.prod_reverse]
+
 theorem eval_q (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 0)
-    (hL : E.labs.all (fun p => p.2 == 0) = true) (N : Net) (H : List (List ℕ)) (s : St)
-    (t : Option QTm) (hc : netQ N H = true)
-    (hr : runQ (maskL N.int) (N.nodes.zip H) (0, some ⟨1, 0, [], []⟩) = some s)
+    (hL : E.labs.all (fun p => p.2 == 0) = true) (N : Net) (rev : Bool) (H : List (List ℕ))
+    (s : St) (t : Option QTm) (hc : netQ N H = true)
+    (hr : runQ (maskL N.int) ((ordQ rev N).zip H) (0, some ⟨1, 0, [], []⟩) = some s)
     (hf : finQ N s = some t) (σ : ℕ → ℕ) (hσ : InRange E N.bnd σ) :
     eval E N σ = oval t (bits (trunc σ)) := by
-  simp only [netQ, Bool.and_eq_true, beq_iff_eq, List.all_eq_true, Bool.or_eq_true] at hc
+  simp only [netQ, withNat_eq, netQM, Bool.and_eq_true, beq_iff_eq, List.all_eq_true, Bool.or_eq_true] at hc
   obtain ⟨⟨hlen, hnd⟩, hnodes⟩ := hc
+  rw [nodupS_eq] at hnd
   obtain ⟨hnd, -⟩ := nodupM_ok N.int 0 hnd
   have hld := labDim_two E hdim hL
   have hIM : ∀ l, (maskL N.int).testBit l = true → labDim E l = 2 := fun l _ => hld l
-  have hfst : (N.nodes.zip H).map Prod.fst = N.nodes := List.map_fst_zip (by omega)
-  have hok : NodesOK E ((N.nodes.zip H).map Prod.fst) := by
+  have hmem : ∀ n, n ∈ ordQ rev N ↔ n ∈ N.nodes := fun n => by
+    unfold ordQ; cases rev <;> simp
+  have hlo : (ordQ rev N).length = N.nodes.length := by unfold ordQ; cases rev <;> simp
+  have hfst : ((ordQ rev N).zip H).map Prod.fst = ordQ rev N := List.map_fst_zip (by omega)
+  have hok : NodesOK E (((ordQ rev N).zip H).map Prod.fst) := by
     rw [hfst]
     intro n hn
-    have := (hnodes n hn).1
+    have := (hnodes n ((hmem n).1 hn)).1
     rw [this]
     exact ⟨hdim, hph n.ph⟩
   have hI0 : Inv E (maskL N.int) [] [] (0, some ⟨1, 0, [], []⟩) := by
@@ -845,14 +918,20 @@ theorem eval_q (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 0
     simp [oval, QTm.val, dval, pval, sumOver, prodVal]
   obtain ⟨Ls, hI⟩ := runQ_ok E _ hIM _ [] [] _ _ hok hI0 hr
   rw [List.nil_append, hfst] at hI
-  unfold finQ at hf
+  simp only [finQ, withNat_eq] at hf
   cases hs : sumLs (maskL N.int) (N.int.filter fun l => !s.1.testBit l) s with
   | none => rw [hs] at hf; simp at hf
   | some s' =>
     rw [hs] at hf
     simp only [Option.map_some, Option.some.injEq] at hf
     subst hf
-    obtain ⟨hm, hn, hi, hv⟩ := sumLs_ok E _ hIM N.nodes _ Ls s s' hI hs
+    obtain ⟨hm, hn, hi, hv0⟩ := sumLs_ok E _ hIM (ordQ rev N) _ Ls s s' hI hs
+    have hv : ∀ σ : ℕ → ℕ, (∀ l, σ l < 2) → oval s'.2 (bits σ) = sumOver (labDim E)
+        ((N.int.filter fun l => !s.1.testBit l).reverse ++ Ls) (prodVal E N.nodes) σ := by
+      intro σ hσ'
+      rw [hv0 σ hσ']
+      congr 1
+      exact funext fun τ => prodVal_ordQ E rev N τ
     have hperm : N.int.Perm ((N.int.filter fun l => !s.1.testBit l).reverse ++ Ls) := by
       refine (List.perm_ext_iff_of_nodup hnd hn).2 fun l => ?_
       constructor
@@ -884,24 +963,37 @@ theorem eval_q (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 0
 def piv (r : ℕ) : ℕ := Nat.log2 r
 
 /-- `m` with each row of `R` added where `m` holds its pivot. -/
-def redR (R : List ℕ) (m : ℕ) : ℕ := R.foldl (fun m r => if m.testBit (piv r) then m ^^^ r else m) m
+def redR : List ℕ → ℕ → ℕ
+  | [], m => m
+  | r :: R, m => withNat (if m.testBit (piv r) then m ^^^ r else m) (redR R)
 
 theorem redR_par (ν : ℕ → ZMod 2) : ∀ (R : List ℕ) (m : ℕ), (∀ r ∈ R, par ν r = 0) →
     par ν (redR R m) = par ν m
   | [], _, _ => rfl
   | r :: R, m, h => by
-    show par ν (redR R (if m.testBit (piv r) then m ^^^ r else m)) = par ν m
+    rw [redR, withNat_eq]
     rw [redR_par ν R _ (fun r' hr' => h r' (List.mem_cons_of_mem _ hr'))]
     split_ifs
     · rw [par_xor, h r List.mem_cons_self, add_zero]
     · rfl
 
+/-- The rows with the row `a` of pivot `p` added where they hold `p`. -/
+def rowsX (a p : ℕ) : List ℕ → List ℕ
+  | [] => []
+  | r :: R => scons (if r.testBit p then r ^^^ a else r) (rowsX a p R)
+
+theorem rowsX_eq (a p : ℕ) (R : List ℕ) :
+    rowsX a p R = R.map fun r => if r.testBit p then r ^^^ a else r := by
+  induction R with
+  | nil => rfl
+  | cons r R ih => rw [rowsX, scons_eq, ih, List.map_cons]
+
 /-- The rows `R` with the row `a` added, reduced; none when it reads `1 = 0`. -/
 def insR (R : List ℕ) (a : ℕ) : Option (List ℕ) :=
-  let a' := redR R a
-  if a' = 0 then some R
-  else if a' = 1 then none
-  else some (a' :: R.map fun r => if r.testBit (piv a') then r ^^^ a' else r)
+  withNat (redR R a) fun a' =>
+    if a' = 0 then some R
+    else if a' = 1 then none
+    else withNat (piv a') fun p => some (a' :: rowsX a' p R)
 
 /-- The deltas in reduced echelon form; none when inconsistent. -/
 def echR : List ℕ → Option (List ℕ)
@@ -911,7 +1003,7 @@ def echR : List ℕ → Option (List ℕ)
 theorem insR_ok (ν : ℕ → ZMod 2) (R : List ℕ) (a : ℕ) :
     dval ν R * dlt (par ν a) = odv ν (insR R a) := by
   unfold insR
-  simp only
+  simp only [withNat_eq, rowsX_eq]
   by_cases hz : ∀ r ∈ R, par ν r = 0
   · have hred := redR_par ν R a hz
     have h1 : dval ν R = 1 := by rw [dval_eq, if_pos hz]
@@ -1117,10 +1209,10 @@ def qCheck (N0 N1 : Net) (H0 H1 : List (List ℕ)) (s0 s1 : St) (a0 : ℤ) (b0 :
 def st0 : St := (0, some ⟨1, 0, [], []⟩)
 
 theorem equal_q (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 0)
-    (hL : E.labs.all (fun p => p.2 == 0) = true) (N0 N1 : Net) (H0 H1 : List (List ℕ))
-    (s0 s1 : St) (a0 : ℤ) (b0 : ℕ) (K0 : ℤ) (a1 : ℤ) (b1 : ℕ) (K1 : ℤ)
-    (hr0 : runQ (maskL N0.int) (N0.nodes.zip H0) st0 = some s0)
-    (hr1 : runQ (maskL N1.int) (N1.nodes.zip H1) st0 = some s1)
+    (hL : E.labs.all (fun p => p.2 == 0) = true) (N0 N1 : Net) (v0 v1 : Bool)
+    (H0 H1 : List (List ℕ)) (s0 s1 : St) (a0 : ℤ) (b0 : ℕ) (K0 : ℤ) (a1 : ℤ) (b1 : ℕ) (K1 : ℤ)
+    (hr0 : runQ (maskL N0.int) ((ordQ v0 N0).zip H0) st0 = some s0)
+    (hr1 : runQ (maskL N1.int) ((ordQ v1 N1).zip H1) st0 = some s1)
     (h : qCheck N0 N1 H0 H1 s0 s1 a0 b0 K0 a1 b1 K1 = true) :
     Equal E ((a0 : ℂ) / b0 * rt 2 ^ K0) N0 ((a1 : ℂ) / b1 * rt 2 ^ K1) N1 := by
   unfold qCheck at h
@@ -1130,26 +1222,9 @@ theorem equal_q (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 
   · next t0 t1 hf0 hf1 =>
     refine ⟨List.isPerm_iff.1 hp, fun σ hσ => ?_⟩
     have hσ1 : InRange E N1.bnd σ := hσ.perm (List.isPerm_iff.1 hp)
-    rw [eval_q E hdim hph hL N0 H0 s0 t0 hc0 hr0 hf0 σ hσ,
-      eval_q E hdim hph hL N1 H1 s1 t1 hc1 hr1 hf1 σ hσ1]
+    rw [eval_q E hdim hph hL N0 v0 H0 s0 t0 hc0 hr0 hf0 σ hσ,
+      eval_q E hdim hph hL N1 v1 H1 s1 t1 hc1 hr1 hf1 σ hσ1]
     exact cmpQ_ok a0 b0 K0 a1 b1 K1 t0 t1 h _
-  · simp at h
-
-/-- Both runs and `qCheck` on their final states. -/
-def qAll (N0 N1 : Net) (H0 H1 : List (List ℕ)) (a0 : ℤ) (b0 : ℕ) (K0 : ℤ) (a1 : ℤ) (b1 : ℕ)
-    (K1 : ℤ) : Bool :=
-  match runQ (maskL N0.int) (N0.nodes.zip H0) st0, runQ (maskL N1.int) (N1.nodes.zip H1) st0 with
-  | some s0, some s1 => qCheck N0 N1 H0 H1 s0 s1 a0 b0 K0 a1 b1 K1
-  | _, _ => false
-
-theorem equal_qAll (E : Env) (hdim : E.dimv 0 = 2) (hph : ∀ ph j, E.phase ph j = 0)
-    (hL : E.labs.all (fun p => p.2 == 0) = true) (N0 N1 : Net) (H0 H1 : List (List ℕ))
-    (a0 : ℤ) (b0 : ℕ) (K0 : ℤ) (a1 : ℤ) (b1 : ℕ) (K1 : ℤ)
-    (h : qAll N0 N1 H0 H1 a0 b0 K0 a1 b1 K1 = true) :
-    Equal E ((a0 : ℂ) / b0 * rt 2 ^ K0) N0 ((a1 : ℂ) / b1 * rt 2 ^ K1) N1 := by
-  unfold qAll at h
-  split at h
-  · next s0 s1 h0 h1 => exact equal_q E hdim hph hL N0 N1 H0 H1 s0 s1 a0 b0 K0 a1 b1 K1 h0 h1 h
   · simp at h
 
 end SymF2

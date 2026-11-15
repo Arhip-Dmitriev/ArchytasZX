@@ -7,9 +7,10 @@ import ArchytasZX.SymF2
 /-!
 # Checkpoints for `runQ`
 
-`qchain n IM R k` runs `runQ IM` over the steps `R` with compiled code, states the value after
-every `k` steps as a literal definition `n_s<i>` of raw numerals, proves each block by `decide`
-in its own declaration `n_h<i>`, and composes the blocks into `n : runQ IM R st0 = some n_fin`.
+`qchain n IM R ks` runs `runQ IM` over the steps `R` with compiled code, states the value after
+each block of steps (the blocks' sizes the list `ks`) as a literal definition `n_s<i>` of raw
+numerals, proves each block by `decide` in its own declaration `n_h<i>`, and composes the
+blocks into `n : runQ IM R st0 = some n_fin`.
 `qscal` proves a scalar `a / b * √2^K` equal to its stated form.
 -/
 
@@ -45,24 +46,25 @@ def qStE (s : St) : Expr :=
           (qListE nat (t.dels.map mkRawNatLit)) (qListE pairT (t.phs.map pair)))
   mkApp4 (mkConst ``Prod.mk [Level.zero, Level.zero]) nat oT (mkRawNatLit s.1) t
 
-/-- The states after each block of `k` steps of `runQ IM` over `R` from `st0`. -/
-unsafe def qStatesImpl (IM k : ℕ) (R : Expr) : MetaM (Array St) := do
+/-- The states after each block of `runQ IM` over `R` from `st0`, the blocks' sizes `ks`. -/
+unsafe def qStatesImpl (IM : ℕ) (ks : List ℕ) (R : Expr) : MetaM (Array St) := do
   let stepT := mkApp2 (mkConst ``Prod [Level.zero, Level.zero]) (mkConst ``Node)
     (mkApp (mkConst ``List [Level.zero]) (mkConst ``Nat))
   let l ← evalExpr (List (Node × List ℕ)) (mkApp (mkConst ``List [Level.zero]) stepT) R
   let mut out := #[]
   let mut cur := st0
   let mut rest := l
-  while !rest.isEmpty do
+  for k in ks do
     match runQ IM (rest.take k) cur with
     | some s => cur := s
     | none => throwError "qchain: a block of steps fails"
     out := out.push cur
     rest := rest.drop k
+  unless rest.isEmpty do throwError "qchain: the blocks do not cover the steps"
   return out
 
 @[implemented_by qStatesImpl]
-def qStates (_IM _k : ℕ) (_R : Expr) : MetaM (Array St) := pure #[]
+def qStates (_IM : ℕ) (_ks : List ℕ) (_R : Expr) : MetaM (Array St) := pure #[]
 
 /-- A number's value. -/
 unsafe def qNatImpl (e : Expr) : MetaM ℕ := evalExpr ℕ (mkConst ``Nat) e
@@ -70,22 +72,29 @@ unsafe def qNatImpl (e : Expr) : MetaM ℕ := evalExpr ℕ (mkConst ``Nat) e
 @[implemented_by qNatImpl]
 def qNat (_e : Expr) : MetaM ℕ := pure 0
 
+/-- A list of numbers' value. -/
+unsafe def qNatsImpl (e : Expr) : MetaM (List ℕ) :=
+  evalExpr (List ℕ) (mkApp (mkConst ``List [Level.zero]) (mkConst ``Nat)) e
+
+@[implemented_by qNatsImpl]
+def qNats (_e : Expr) : MetaM (List ℕ) := pure []
+
 /-- `type` added as a theorem with proof `value`, checked by the kernel at once. -/
 def qAddThm (n : Name) (type value : Expr) : MetaM Unit :=
   withOptions (fun o => o.setBool `Elab.async false) do
     addDecl (.thmDecl { name := n, levelParams := [], type, value })
 
-/-- `n : runQ IM R st0 = some n_fin`, through a literal state `n_s<i>` after every `k` steps,
-each block a theorem `n_h<i>` proved by `decide`. -/
-elab "qchain " n:ident im:ident r:ident k:num : command =>
+/-- `n : runQ IM R st0 = some n_fin`, through a literal state `n_s<i>` after each block of
+steps, the blocks' sizes the list `ks`, each block a theorem `n_h<i>` proved by `decide`. -/
+elab "qchain " n:ident im:ident r:ident ks:ident : command =>
   liftTermElabM do
     let imE := mkConst (← resolveGlobalConstNoOverload im)
     let rE := mkConst (← resolveGlobalConstNoOverload r)
     let base := (← getCurrNamespace) ++ n.getId
     let name := fun (s : String) => base.appendAfter s
     let IM ← qNat imE
-    let k := k.getNat
-    let vals ← qStates IM k rE
+    let sizes ← qNats (mkConst (← resolveGlobalConstNoOverload ks))
+    let vals ← qStates IM sizes rE
     let stT := mkConst ``St
     let someE := fun e => mkApp2 (mkConst ``Option.some [Level.zero]) stT e
     let runE := fun R s => mkApp3 (mkConst ``runQ) imE R s
@@ -97,6 +106,7 @@ elab "qchain " n:ident im:ident r:ident k:num : command =>
     let mut pf ← mkEqRefl (runE rE prev)
     let mut i := 0
     for j in [0:vals.size] do
+      let k := sizes.getD j 0
       let sn := name s!"_s{j + 1}"
       addDecl (.defnDecl (mkDefinitionValEx sn [] stT (qStE vals[j]!) .abbrev .safe [sn]))
       let cur := mkConst sn

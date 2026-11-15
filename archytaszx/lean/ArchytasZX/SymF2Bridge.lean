@@ -78,21 +78,6 @@ theorem wireHas_ok (P K WB : ℕ) (ws : List (Port × Port)) (hW : packW P K ws 
     Nat.div_eq_of_lt h1, Nat.zero_add] at h
   simpa using h
 
-/-- No key twice, none of the mask `m`; each mask reduced before its next use. -/
-def nodupS : List ℕ → ℕ → Bool
-  | [], _ => true
-  | l :: ls, m => !m.testBit l && match m ||| 2 ^ l with
-    | 0 => nodupS ls 0
-    | m' + 1 => nodupS ls (m' + 1)
-
-theorem nodupS_eq : ∀ (ls : List ℕ) (m : ℕ), nodupS ls m = nodupM ls m
-  | [], _ => rfl
-  | l :: ls, m => by
-    simp only [nodupS, nodupM]
-    congr 1
-    generalize m ||| 2 ^ l = m'
-    cases m' <;> exact nodupS_eq ls _
-
 /-- The boundary ports and wire ends. -/
 def ends (D : Diagram) : List Port := D.bnd ++ D.wires.flatMap fun w => [w.1, w.2]
 

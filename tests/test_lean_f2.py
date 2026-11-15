@@ -109,13 +109,16 @@ def test_the_final_term_is_the_network(name: str) -> None:
     ex = S._SymExport(left, right, None, {})
     for lnet in (ex.a.net, ex.b.net):
         nodes, internal, bnd = ex.net(lnet)
-        t = Q.run_q(nodes, internal, Q.hints(nodes, internal))
-        assert t is not False
-        for bits in itertools.product((0, 1), repeat=len(bnd)):
-            nu = dict(zip(bnd, bits, strict=True))
-            assert abs(_term(t, nu) - _net(nodes, internal, nu)) < 1e-9
-            u = None if t is None else Q.canon_q(t)
-            assert abs(_term(u, nu) - _term(t, nu)) < 1e-9
+        for order in (nodes, nodes[::-1]):
+            got = Q.run_q(order, internal, Q.hints(order, internal))
+            assert got is not False
+            t, sizes, _ = got
+            assert sum(sizes) == len(nodes) and all(0 < k <= Q.CHAIN for k in sizes)
+            for bits in itertools.product((0, 1), repeat=len(bnd)):
+                nu = dict(zip(bnd, bits, strict=True))
+                assert abs(_term(t, nu) - _net(nodes, internal, nu)) < 1e-9
+                u = None if t is None else Q.canon_q(t)
+                assert abs(_term(u, nu) - _term(t, nu)) < 1e-9
 
 
 def test_an_unequal_qubit_pair_has_no_f2_proof() -> None:
