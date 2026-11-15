@@ -2044,7 +2044,7 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
     frees = _FreeSymbols()
     summed = bool(_bound_symbols(rest))
     emitted: list[sp.Expr] = []
-    substitutions: list[tuple[sp.Symbol, sp.Expr, sp.Expr, bool]] = []
+    substitutions: list[tuple[sp.Symbol, sp.Expr, sp.Expr, bool, sp.Expr]] = []
     for modulus in sorted(by_modulus, key=sp.default_sort_key):
         pivots, residual = _echelon(by_modulus[modulus], modulus)
         for var in sorted(pivots, key=lambda symbol: str(symbol.name)):
@@ -2062,11 +2062,14 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
                 )
             ):
                 rest = _xreplace_symbol(rest, var, value, frees)
-            emitted.append(ModDelta(var - value, modulus))
-            substitutions.append((var, value, modulus, exact))
+            defining = ModDelta(var - value, modulus)
+            emitted.append(defining)
+            substitutions.append((var, value, modulus, exact, defining))
         emitted.extend(ModDelta(row, modulus) for row in residual)
     if len(by_modulus) > 1:
-        for var, value, modulus, exact in substitutions:
+        for var, value, modulus, exact, defining in substitutions:
+            if defining not in emitted:
+                continue
             emitted = [
                 _xreplace_symbol(delta, var, value, frees)
                 if isinstance(delta, ModDelta)

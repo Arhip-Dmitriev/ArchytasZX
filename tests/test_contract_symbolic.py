@@ -740,3 +740,28 @@ class TestOpenTensorsCloseToDeltas:
             symbolic = contract_symbolic(diagram).substitute({"d": value})
             numeric = score(diagram, {"d": value}).tensor
             assert np.allclose(np.asarray(symbolic.to_dense()), numeric)
+
+
+def test_measured_inverse_fourier_of_four_bound_qutrits() -> None:
+    """Four qutrits bound to 81, F^3, split and each measured: the doubled diagram's symbolic
+    entry at the zero index is 1/81 (semiclassical_qft n = 4, d = 3)."""
+    from archytaszx.diagram.mixed import double
+    from archytaszx.repl.parser import parse_dsl
+
+    lines = [f"b{k} = B(literal {3 ** (k + 1)}, literal 3)" for k in range(3)]
+    lines += [f"f{k} = F(literal 81)" for k in range(3)]
+    lines += [f"s{k} = S(literal {3 ** (3 - k)}, literal 3)" for k in range(3)]
+    lines += [f"m{j} = Z(1 -> 2, literal 3)\ng{j} = G(1 -> 0, literal 3)" for j in range(4)]
+    wires = ["b0.out0 -- b1.in0", "b1.out0 -- b2.in0", "b2.out0 -- f0.in0"]
+    wires += ["f0.out0 -- f1.in0", "f1.out0 -- f2.in0", "f2.out0 -- s0.in0"]
+    wires += ["s0.out0 -- s1.in0", "s1.out0 -- s2.in0"]
+    legs = ["s0.out1", "s1.out1", "s2.out1", "s2.out0"]
+    wires += [f"{leg} -- m{j}.in0" for j, leg in enumerate(legs)]
+    wires += [f"m{j}.out1 -- g{j}.in0" for j in range(4)]
+    lines.append("wire " + ", ".join(wires))
+    lines.append("inputs b0.in0, b0.in1, b1.in1, b2.in1")
+    lines.append("outputs " + ", ".join(f"m{j}.out0" for j in range(4)))
+    doubled = double(parse_dsl("\n".join(lines)))
+    symbolic = contract_symbolic(doubled)
+    zero = symbolic.value_at([0] * len(symbolic.axes))
+    assert zero == Scalar(sp.Rational(1, 81))

@@ -424,3 +424,23 @@ def test_a_concrete_low_digit_splits_off_a_symbolic_modulus() -> None:
     body = ModDelta(i7 - k0, 2 * 2**k) * ModDelta(2 * i0 + 4 * i3 - 4 * k0 - 2, 4 * 2**k)
     closed = Scalar(sp.Sum(body, (k0, 0, 2**k - 1))).simplify(ranges=ranges)
     assert closed == Scalar(ModDelta(2 * i0 + 2, 4) * ModDelta(i3 - i7, 2 * 2**k))
+
+
+def test_a_pivot_pinned_under_two_moduli_keeps_a_delta() -> None:
+    """``[i2 - k30 == 0 mod 3] [k27 - k30 - 3*i3 == 0 mod 9]`` with ``i2, i3, k30 < 3`` and
+    ``k27 < 9`` keeps a delta on ``k30`` and agrees with the product at every point; summed
+    over ``k30`` it is ``[i2 + 3*i3 - k27 == 0 mod 9]``."""
+    from itertools import product
+
+    from archytaszx.algebra.scalar import _index_symbol
+
+    ranges = {"_i2": Dim(3), "_i3": Dim(3), "_k30": Dim(3), "_k27": Dim(9)}
+    i2, i3, k27, k30 = (_index_symbol(n) for n in ("_i2", "_i3", "_k27", "_k30"))
+    body = ModDelta(i2 - k30, 3) * ModDelta(k27 - k30 - 3 * i3, 9)
+    out = Scalar(body).simplify(ranges=ranges).to_sympy()
+    assert k30 in out.free_symbols
+    for a, b, c, e in product(range(3), range(3), range(9), range(3)):
+        at = {i2: a, i3: b, k27: c, k30: e}
+        assert out.xreplace(at) == body.xreplace(at)
+    summed = Scalar(sp.Sum(body, (k30, 0, 2))).simplify(ranges=ranges)
+    assert summed == Scalar(ModDelta(i2 + 3 * i3 - k27, 9))
