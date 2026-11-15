@@ -2088,13 +2088,18 @@ class _SymExport:
             f"{cases} <;> simp [flv, FL, ρ] <;> omega"
         )
         nix = len(self.ix)
-        decls.append(
-            f"theorem envD {_join(bh, kb)} : ∀ i ∈ IX, {env}.dimv i = (DT i).den {rho}.dv := by\n"
-            "  intro i hi\n  simp only [IX, List.mem_cons, List.not_mem_nil, or_false] at hi\n"
-            f"  obtain {' | '.join(['rfl'] * nix)} := hi <;> "
+        cases_d = (
+            f"\n  obtain {' | '.join(['rfl'] * nix)} := hi <;> "
             f"simp [{unfold}, Δ, DT, ρ, DMon.den, npow"
             + "".join(f", hc{j}" for j in range(len(self.constraints)))
             + "]"
+            if nix
+            else ""
+        )
+        decls.append(
+            f"theorem envD {_join(bh, kb)} : ∀ i ∈ IX, {env}.dimv i = (DT i).den {rho}.dv := by\n"
+            "  intro i hi\n  simp only [IX, List.mem_cons, List.not_mem_nil, or_false] at hi"
+            + cases_d
         )
         nr = len(self.pt)
         ph_lines = [
