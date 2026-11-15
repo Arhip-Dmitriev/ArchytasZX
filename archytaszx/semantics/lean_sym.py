@@ -2803,7 +2803,7 @@ class _SymExport:
             f"mul_one, CMon.den_mul {rho} hρ, ofQ_den, exQ_den, rtD_den, dP_den, "
             f"phC_den {rho} _ hg] <;> "
             f"simp [DMon.den, npow, ρ, zpow_neg, inv_pow] <;> push_cast <;> ring_nf <;> "
-            "try simp"
+            "(try simp) <;> (try (simp only [om_eq_ex]; norm_num))"
         )
 
 
