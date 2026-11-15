@@ -132,10 +132,10 @@ CAUSES: dict[str, str] = {
     "kill.exit": "the worker died with another exit code",
     "limit.stage_cpu": "a stage used up its CPU limit",
     "limit.generate_cpu": "ArchytasZX script generation (the harness's translator) used up its CPU "
-    "limit (harness_error)",
+    "limit (timeout)",
     "kill.generate_oom": "a memory kill while generating the ArchytasZX script outside the "
     "engine's input spans (harness_error)",
-    "limit.prepare_cpu": "a rival's preparation used up its CPU limit (harness_error)",
+    "limit.prepare_cpu": "a rival's preparation used up its CPU limit (timeout)",
     "limit.rival_cpu": "the rival used up its CPU limit",
     "limit.rival_wall": "the rival used up its wall limit",
     "memory.error": "MemoryError or a failed allocation in the worker",
@@ -300,10 +300,10 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
     kill = rec.get("kill")
     code = rec.get("exit")
     if rec.get("limit") == "prepare_cpu":
-        return "harness_error", "prepare", "limit.prepare_cpu"
+        return "timeout", "prepare", "limit.prepare_cpu"
     if kill == "stage timer" or (kill is None and oc == "timeout"):
         if stage == "generate" and not _engine_input(rec.get("open_span")):
-            return "harness_error", stage, "limit.generate_cpu"
+            return "timeout", stage, "limit.generate_cpu"
         return "timeout", stage, "kill.stage_timer"
     span = rec.get("open_span")
     memory = kill in ("cgroup oom_kill", "SIGKILL") or rec.get("journal_oom_kill")
@@ -358,7 +358,7 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
         if failed.get("open_span"):
             detail = f"open span {failed['open_span']}" + (f"; {detail}" if detail else "")
         if s == "generate" and not _engine_input(failed.get("open_span")):
-            return "harness_error", s, "limit.generate_cpu", detail
+            return "timeout", s, "limit.generate_cpu", detail
         return "timeout", s, "limit.stage_cpu", detail
     if status == "oom":
         return "oom", s, "memory.lean" if s == "lean_check" else "memory.error", detail

@@ -202,6 +202,26 @@ def test_every_wrong_outcome_sets_wrong() -> None:
     )
 
 
+def test_stage_cpu_limits_are_timeouts() -> None:
+    """A rival preparation over its CPU limit and an ArchytasZX generate stage over its CPU limit
+    outside input.* are timeouts."""
+    from benchmarks import outcomes, worker
+
+    prep = outcomes.classify({**worker.PREPARE_TIMEOUT, "tool": "quizx", "n": 3, "d": 2})
+    assert (prep["outcome"], prep["stage"], prep["cause"]) == (
+        "timeout",
+        "prepare",
+        "limit.prepare_cpu",
+    )
+    gen = {"status": "timeout", "open_span": "generate.script"}
+    run = {"tool": "archytaszx", "outcome": "timeout", "n": 99999, "d": 2, "stages": {}}
+    out = outcomes.classify({**run, "stages": {"generate": gen}})
+    assert (out["outcome"], out["cause"]) == ("timeout", "limit.generate_cpu")
+    killed = {**run, "killed_in": "generate", "kill": "stage timer"}
+    out = outcomes.classify({**killed, "open_span": "generate.script"})
+    assert (out["outcome"], out["cause"]) == ("timeout", "limit.generate_cpu")
+
+
 def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     """quantum_hamming_family/encoding single_entry: n = 6 (63 outputs, 2^63) is unsupported,
     unsupported.phase_table_bound; n = 3 builds."""

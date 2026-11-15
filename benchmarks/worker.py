@@ -36,7 +36,7 @@ _reserve: list[bytearray] = []
 _oom_start: int | None = None
 _prepare: dict[str, Any] = {"on": False, "expired": False, "limit": 0.0, "used": 0.0, "t0": 0.0}
 PREPARE_TIMEOUT = {
-    "outcome": "harness_error",
+    "outcome": "timeout",
     "killed_in": "prepare",
     "limit": "prepare_cpu",
     "reason": "prepare: CPU limit",
