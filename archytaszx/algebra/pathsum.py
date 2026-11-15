@@ -17,8 +17,9 @@ reduction rules [Elim], [HH] and [omega], and the canonical form of a reduced su
 A :class:`PathSum` denotes ``E(i) = c * sqrt(2)^k * [constraints(i) = 0] * Sum_{y in Z_2^m}
 exp(2 pi i P(i, y))`` over its boundary variables ``i`` and path variables ``y``. ``P`` is a
 :class:`PhasePoly`, a multilinear polynomial with coefficients in Q/Z (turns); every constraint
-is a polynomial over F_2, a set of monomials read as their XOR. Pure Python integers and
-Fractions throughout; no sum is ever enumerated.
+is a polynomial over F_2, a set of monomials read as their XOR. Python integers and Fractions,
+long XOR lifts and substitutions over integer numpy arrays of bitmask monomials; no sum is ever
+enumerated.
 """
 
 from __future__ import annotations
@@ -443,14 +444,13 @@ class PhasePoly:
             return
         dens = math.lcm(*(c.denominator for _m, c in hit))
         names, raw = _xor_lift_masks(sorted(value, key=_mono_key), dens)
-        lift = [(_decode(k, names), k, a) for k, a in raw.items() if a]
+        lift = _decode_all(raw, names)
         for m, _c in hit:
             del terms[m]
         g = math.lcm(dens, *{c.denominator for c in terms.values()})
         bit = {v: 1 << i for i, v in enumerate(names)}
         top = len(names)
-        num: dict[int, list[Any]] = {}
-        zero = Fraction(0)
+        rows: list[tuple[Mono, int, int, int]] = []
         kept: dict[int, list[tuple[Mono, int, int]]] = {}
         for m, c in hit:
             rest = m - {var}
@@ -462,10 +462,17 @@ class PhasePoly:
                     top += 1
                 rmask |= b
             den = c.denominator
-            a = c.numerator * (g // den)
-            items = kept.get(den)
-            if items is None:
-                items = kept[den] = [t for t in lift if t[2] % den]
+            rows.append((rest, rmask, den, c.numerator * (g // den)))
+            if den not in kept:
+                kept[den] = [t for t in lift if t[2] % den]
+        pairs = sum(len(kept[den]) for _r, _m, den, _a in rows)
+        if pairs >= SUBSTITUTE_ARRAY_PAIRS and top < 63 and g < 1 << 31 and all(terms.values()):
+            _substitute_array(terms, rows, kept, g)
+            return
+        num: dict[int, list[Any]] = {}
+        zero = Fraction(0)
+        for rest, rmask, den, a in rows:
+            items = kept[den]
             for mono, mmask, k in items:
                 slot = num.get(rmask | mmask)
                 if slot is None:
@@ -509,13 +516,24 @@ def _xor_lift(items: Sequence[Mono], modulus: int) -> dict[Mono, int]:
 
 def _xor_lift_masks(items: Sequence[Mono], modulus: int) -> tuple[list[int], dict[int, int]]:
     """:func:`_xor_lift` over bitmask monomials (bit i the i-th variable of the sorted names),
-    zero coefficients kept: ``T + m - 2 T m`` folded over the items."""
+    zero coefficients kept: ``T + m - 2 T m`` folded over the items; a long fold by
+    :func:`_xor_fold_array`, recent ones read from :data:`_FOLDS`."""
     names = sorted({v for m in items for v in m})
     bit = {v: 1 << i for i, v in enumerate(names)}
+    masks = [sum(bit[v] for v in m) for m in items]
+    if len(masks) >= LIFT_ARRAY_ITEMS and len(names) < 63 and modulus < 1 << 31:
+        seq = (tuple(masks), modulus)
+        folded = _FOLDS.get(seq)
+        if folded is None:
+            folded = _xor_fold_array(masks, modulus)
+            if len(folded) <= FOLD_CACHE_TERMS:
+                while _FOLDS and sum(map(len, _FOLDS.values())) + len(folded) > FOLD_CACHE_TERMS:
+                    del _FOLDS[next(iter(_FOLDS))]
+                _FOLDS[seq] = folded
+        return names, folded
     out: dict[int, int] = {}
     get = out.get
-    for m in items:
-        mask = sum(bit[v] for v in m)
+    for mask in masks:
         prev = [(k, b) for k, a in out.items() if (b := 2 * a % modulus)]
         out[mask] = (get(mask, 0) + 1) % modulus
         for k, b in prev:
@@ -524,6 +542,219 @@ def _xor_lift_masks(items: Sequence[Mono], modulus: int) -> tuple[list[int], dic
         if len(out) > XOR_LIFT_TERMS:
             raise PathSumUnsupported(f"an XOR lift of more than {XOR_LIFT_TERMS} terms")
     return names, out
+
+
+LIFT_ARRAY_ITEMS = 48
+"""The fewest items :func:`_xor_lift_masks` folds with :func:`_xor_fold_array`."""
+
+FOLD_CACHE_TERMS = 1 << 20
+"""The most terms the folds :func:`_xor_lift_masks` keeps in :data:`_FOLDS` hold together."""
+
+_FOLDS: dict[tuple[tuple[int, ...], int], dict[int, int]] = {}
+"""Recent :func:`_xor_fold_array` results by (bitmask sequence, modulus), oldest first."""
+
+
+def _xor_fold_array(masks: Sequence[int], modulus: int) -> dict[int, int]:
+    """The fold of :func:`_xor_lift_masks` over bitmasks below 2^63 in numpy arrays: terms in
+    insertion order, sorted copies of their keys for lookup (a large one and a small one merged
+    into it as it grows); each step adds ``-2 a`` at ``k | mask`` for every term with ``2 a``
+    nonzero, new keys appended in first-touch order."""
+    import numpy as np
+
+    size = 0
+    keys = np.zeros(1024, dtype=np.int64)
+    vals = np.zeros(1024, dtype=np.int64)
+    live = np.zeros(1024, dtype=bool)
+    index = [np.zeros(0, dtype=np.int64) for _ in range(4)]
+    one = np.ones(1, dtype=np.int64)
+    for mask in masks:
+        at_live = np.flatnonzero(live[:size])
+        touched = np.concatenate((np.array([mask], dtype=np.int64), keys[at_live] | mask))
+        delta = np.concatenate((one, -(2 * vals[at_live] % modulus)))
+        hit = np.full(len(touched), -1, dtype=np.int64)
+        for sorted_keys, sorted_at in (index[0:2], index[2:4]):
+            if len(sorted_keys):
+                pos = np.searchsorted(sorted_keys, touched)
+                found = pos < len(sorted_keys)
+                found[found] = sorted_keys[pos[found]] == touched[found]
+                hit[found] = sorted_at[pos[found]]
+        found = hit >= 0
+        if found.any():
+            at_hit = hit[found]
+            np.add.at(vals, at_hit, delta[found])
+            vals[at_hit] %= modulus
+            live[at_hit] = 2 * vals[at_hit] % modulus != 0
+        fresh = ~found
+        if fresh.any():
+            fresh_keys = touched[fresh]
+            by_key = np.argsort(fresh_keys, kind="stable")
+            grouped = fresh_keys[by_key]
+            starts = np.flatnonzero(np.concatenate(([True], grouped[1:] != grouped[:-1])))
+            new = grouped[starts]
+            sums = np.add.reduceat(delta[fresh][by_key], starts)
+            order = np.argsort(by_key[starts])
+            at = np.empty(len(new), dtype=np.int64)
+            at[order] = np.arange(size, size + len(new))
+            sums = sums[order] % modulus
+            end = size + len(new)
+            if end > len(keys):
+                grow = max(end, 2 * len(keys)) - len(keys)
+                keys = np.concatenate((keys, np.zeros(grow, dtype=np.int64)))
+                vals = np.concatenate((vals, np.zeros(grow, dtype=np.int64)))
+                live = np.concatenate((live, np.zeros(grow, dtype=bool)))
+            keys[size:end] = new[order]
+            vals[size:end] = sums
+            live[size:end] = 2 * sums % modulus != 0
+            size = end
+            slots = np.searchsorted(index[2], new)
+            index[2] = np.insert(index[2], slots, new)
+            index[3] = np.insert(index[3], slots, at)
+            if len(index[2]) > max(1024, len(index[0]) >> 3):
+                slots = np.searchsorted(index[0], index[2])
+                index[0] = np.insert(index[0], slots, index[2])
+                index[1] = np.insert(index[1], slots, index[3])
+                index[2] = index[3] = np.zeros(0, dtype=np.int64)
+        if size > XOR_LIFT_TERMS:
+            raise PathSumUnsupported(f"an XOR lift of more than {XOR_LIFT_TERMS} terms")
+    return dict(zip(keys[:size].tolist(), vals[:size].tolist(), strict=True))
+
+
+SUBSTITUTE_ARRAY_PAIRS = 1 << 15
+"""The fewest (hit term, lift term) pairs :meth:`PhasePoly.substitute` adds with
+:func:`_substitute_array`."""
+
+SUBSTITUTE_CHUNK = 1 << 21
+"""The most pairs :func:`_substitute_array` holds in one array."""
+
+
+def _substitute_array(
+    terms: dict[Mono, Fraction],
+    rows: Sequence[tuple[Mono, int, int, int]],
+    kept: Mapping[int, Sequence[tuple[Mono, int, int]]],
+    g: int,
+) -> None:
+    """The pair loop of :meth:`PhasePoly.substitute` in numpy arrays, by chunks of hit terms:
+    each key's running numerator mod ``g`` is a cumulative sum over its pairs in loop order; a
+    key keeps its place when it never reaches zero, else it is (re)inserted at the pair after
+    its last zero, the keys moved or new appended in that order."""
+    import numpy as np
+
+    arrays = {
+        den: (
+            np.array([t[1] for t in items], dtype=np.int64),
+            np.array([t[2] for t in items], dtype=np.int64),
+        )
+        for den, items in kept.items()
+    }
+    monos: dict[int, Mono] = {}
+    skeys = np.zeros(0, dtype=np.int64)
+    sval = np.zeros(0, dtype=np.int64)
+    sins = np.zeros(0, dtype=np.int64)
+    base = 0
+    i = 0
+    while i < len(rows):
+        key_parts: list[Any] = []
+        inc_parts: list[Any] = []
+        first_row = i
+        offsets = [0]
+        while i < len(rows) and (
+            offsets[-1] == 0 or offsets[-1] + len(kept[rows[i][2]]) <= SUBSTITUTE_CHUNK
+        ):
+            _rest, rmask, den, a = rows[i]
+            mm, ks = arrays[den]
+            key_parts.append(mm | rmask)
+            inc_parts.append(a * ks % g)
+            offsets.append(offsets[-1] + len(mm))
+            i += 1
+        keys = np.concatenate(key_parts)
+        inc = np.concatenate(inc_parts)
+        order = np.argsort(keys, kind="stable")
+        grouped = keys[order]
+        start = np.flatnonzero(np.concatenate(([True], grouped[1:] != grouped[:-1])))
+        uk = grouped[start]
+        first = order[start]
+        counts = np.diff(np.append(start, len(keys)))
+        at = np.searchsorted(skeys, uk)
+        known = at < len(skeys)
+        known[known] = skeys[at[known]] == uk[known]
+        if not known.all():
+            new = uk[~known]
+            new_first = first[~known]
+            new_row = np.searchsorted(np.array(offsets), new_first, side="right") - 1
+            cur = np.zeros(len(new), dtype=np.int64)
+            ins = np.full(len(new), -2, dtype=np.int64)
+            for j, (k, p, r) in enumerate(
+                zip(new.tolist(), new_first.tolist(), new_row.tolist(), strict=True)
+            ):
+                rest, _rmask, den, _a = rows[first_row + r]
+                mono = monos[k] = rest | kept[den][p - offsets[r]][0]
+                old = terms.get(mono)
+                if old is not None:
+                    cur[j] = old.numerator * (g // old.denominator)
+                    ins[j] = -1
+            slots = np.searchsorted(skeys, new)
+            skeys = np.insert(skeys, slots, new)
+            sval = np.insert(sval, slots, cur)
+            sins = np.insert(sins, slots, ins)
+            at = np.searchsorted(skeys, uk)
+        inc_s = inc[order]
+        pos_s = order + base
+        end = start + counts - 1
+        total = np.cumsum(inc_s)
+        before = total[start] - inc_s[start]
+        s0 = sval[at]
+        run = (np.repeat(s0 - before, counts) + total) % g
+        index = np.arange(len(run))
+        last_zero = np.maximum.reduceat(np.where(run == 0, index, -1), start)
+        after = np.minimum(last_zero + 1, end)
+        ins = np.where(
+            last_zero >= 0,
+            np.where(last_zero < end, pos_s[after], -2),
+            np.where(s0 == 0, pos_s[start], sins[at]),
+        )
+        sval[at] = run[end]
+        sins[at] = ins
+        base += len(keys)
+    moved: list[tuple[int, Mono, int]] = []
+    for k, v, t in zip(skeys.tolist(), sval.tolist(), sins.tolist(), strict=True):
+        mono = monos[k]
+        if v == 0:
+            terms.pop(mono, None)
+        elif t == -1:
+            terms[mono] = Fraction(v, g)
+        else:
+            terms.pop(mono, None)
+            moved.append((t, mono, v))
+    moved.sort(key=lambda item: item[0])
+    for _t, mono, v in moved:
+        terms[mono] = Fraction(v, g)
+
+
+def _decode_all(raw: Mapping[int, int], names: Sequence[int]) -> list[tuple[Mono, int, int]]:
+    """(monomial, bitmask, coefficient) of each nonzero term of ``raw``, as :func:`_decode`
+    builds it, read a byte of the bitmask at a time from tables."""
+    if len(raw) < 1024:
+        return [(_decode(k, names), k, a) for k, a in raw.items() if a]
+    tables = [
+        [
+            tuple(names[8 * j + i] for i in range(8) if b >> i & 1 and 8 * j + i < len(names))
+            for b in range(256)
+        ]
+        for j in range((len(names) + 7) // 8)
+    ]
+    out = []
+    for k, a in raw.items():
+        if not a:
+            continue
+        found: tuple[int, ...] = ()
+        rest = k
+        for table in tables:
+            if not rest:
+                break
+            found += table[rest & 255]
+            rest >>= 8
+        out.append((frozenset(found), k, a))
+    return out
 
 
 def _decode(k: int, names: Sequence[int]) -> Mono:

@@ -16,6 +16,8 @@ against sympy expansion."""
 
 from __future__ import annotations
 
+import random
+
 import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -25,6 +27,7 @@ from archytaszx.algebra.scalar import (
     _integer_terms,
     _linear_form,
     _reduce_mod,
+    _terms_expr,
 )
 
 A, B, C, E = (sp.Symbol(f"_i{k}", integer=True, nonnegative=True) for k in range(4))
@@ -79,3 +82,58 @@ def test_linear_form_and_slope() -> None:
     assert _integer_slope(CARRY, A) is True
     assert _integer_slope(A * X + B, A) is False
     assert _integer_slope(A / 2 + B, A) is False
+
+
+def reference_canonical(expr: sp.Expr, modulus: int) -> sp.Expr:
+    """The residue of ``+-expr`` ModDelta keeps: both built, a sign-free one first, then the
+    least by sort key."""
+    candidates = [reference_reduce(expr, modulus), reference_reduce(-expr, modulus)]
+    preferred = [c for c in candidates if not c.could_extract_minus_sign()] or candidates
+    return min(preferred, key=sp.default_sort_key)
+
+
+def test_moddelta_sign_choice_is_the_built_one() -> None:
+    rng = random.Random(31)
+    symbols = [A, B, C, E]
+    for _ in range(400):
+        expr = sp.Integer(rng.randint(-5, 5))
+        for _t in range(rng.randint(1, 6)):
+            mono = sp.Mul(
+                *(s ** rng.choice((1, 1, 2)) for s in rng.sample(symbols, rng.randint(1, 3)))
+            )
+            expr += rng.randint(-9, 9) * mono
+        if not expr.free_symbols:
+            continue
+        modulus = rng.choice((2, 3, 4, 5, 6, 8, 12))
+        want = reference_canonical(expr, modulus)
+        got = ModDelta(expr, modulus)
+        if want.free_symbols:
+            assert sp.srepr(got) == sp.srepr(ModDelta(want, modulus, evaluate=False))
+        else:
+            assert got == (1 if int(want) % modulus == 0 else 0)
+
+
+def same_tree(a: sp.Expr, b: sp.Expr) -> bool:
+    """Same class, hash, srepr and arguments in the same order, recursively."""
+    if type(a) is not type(b) or hash(a) != hash(b) or sp.srepr(a) != sp.srepr(b):
+        return False
+    return len(a.args) == len(b.args) and all(same_tree(x, y) for x, y in zip(a.args, b.args))
+
+
+def test_terms_expr_is_the_flattened_sum() -> None:
+    rng = random.Random(41)
+    symbols = [A, B, C, E, X, sp.Symbol("d", integer=True, positive=True)]
+    for _ in range(400):
+        terms = {}
+        for _t in range(rng.randint(0, 10)):
+            mono = frozenset(
+                (s, rng.choice((1, 1, 2, 3))) for s in rng.sample(symbols, rng.randint(0, 4))
+            )
+            terms[mono] = rng.choice((1, -1, 2, -2, 3, -7))
+        want = sp.Add(
+            *(
+                c * sp.Mul(*(s**e for s, e in sorted(mono, key=lambda item: str(item[0].name))))
+                for mono, c in terms.items()
+            )
+        )
+        assert same_tree(_terms_expr(terms), want)

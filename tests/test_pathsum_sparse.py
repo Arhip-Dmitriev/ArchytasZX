@@ -19,6 +19,7 @@ import random
 import types
 from fractions import Fraction
 
+import pytest
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
 from archytaszx.algebra.dimension import Dim
@@ -135,6 +136,68 @@ def test_xor_lift_is_the_frozenset_fold_in_order() -> None:
                 want[k | m] = (want.get(k | m, 0) - b) % modulus
         got = _xor_lift(items, modulus)
         assert list(got.items()) == [(k, a) for k, a in want.items() if a]
+
+
+def test_xor_lift_array_fold_is_the_dict_fold_in_order() -> None:
+    from archytaszx.algebra.pathsum import LIFT_ARRAY_ITEMS, _mono_key, _xor_lift_masks
+
+    rng = random.Random(19)
+    for _ in range(60):
+        nv = rng.randint(4, 12)
+        items = [
+            frozenset(rng.sample(range(nv), rng.randint(0, min(nv, 4))))
+            for _m in range(rng.randint(LIFT_ARRAY_ITEMS, 2 * LIFT_ARRAY_ITEMS))
+        ]
+        if rng.random() < 0.7:
+            items = sorted(set(items), key=_mono_key)
+        modulus = rng.choice((2, 4, 8, 16, 6, 12, 840))
+        names = sorted({v for m in items for v in m})
+        want: dict[int, int] = {}
+        for m in items:
+            mask = sum(1 << names.index(v) for v in m)
+            prev = [(k, 2 * a % modulus) for k, a in want.items() if 2 * a % modulus]
+            want[mask] = (want.get(mask, 0) + 1) % modulus
+            for k, b in prev:
+                want[k | mask] = (want.get(k | mask, 0) - b) % modulus
+        got_names, got = _xor_lift_masks(items, modulus)
+        assert got_names == names
+        assert list(got.items()) == list(want.items())
+
+
+def test_table_decode_is_the_bit_decode_in_order() -> None:
+    from archytaszx.algebra.pathsum import _decode, _decode_all
+
+    rng = random.Random(37)
+    for _ in range(12):
+        count = rng.randint(1, 62)
+        names = sorted(rng.sample(range(500), count))
+        raw = {rng.getrandbits(count): rng.randint(0, 3) for _k in range(rng.choice((10, 2000)))}
+        want = [(tuple(_decode(k, names)), k, a) for k, a in raw.items() if a]
+        assert [(tuple(m), k, a) for m, k, a in _decode_all(raw, names)] == want
+
+
+def test_substitute_array_path_is_the_dict_loop_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.algebra import pathsum
+
+    rng = random.Random(29)
+    for _ in range(400):
+        nv = rng.randint(2, 9)
+        p = PhasePoly()
+        for _t in range(rng.randint(1, 60)):
+            mono = frozenset(rng.sample(range(nv), rng.randint(0, min(nv, 4))))
+            p.add(mono, Fraction(rng.randint(1, 15), rng.choice((2, 4, 8, 3, 6, 16))))
+        var = rng.randrange(nv)
+        value = frozenset(
+            frozenset(rng.sample([v for v in range(nv + 3) if v != var], rng.randint(0, 3)))
+            for _m in range(rng.randint(1, 8))
+        )
+        want, got = p.copy(), p.copy()
+        monkeypatch.setattr(pathsum, "SUBSTITUTE_ARRAY_PAIRS", 1 << 40)
+        want.substitute(var, value)
+        monkeypatch.setattr(pathsum, "SUBSTITUTE_ARRAY_PAIRS", 0)
+        monkeypatch.setattr(pathsum, "SUBSTITUTE_CHUNK", rng.choice((1, 3, 7, 1 << 21)))
+        got.substitute(var, value)
+        assert list(got.terms.items()) == list(want.terms.items())
 
 
 def test_occurrences_on_the_path_are_the_full_ones() -> None:

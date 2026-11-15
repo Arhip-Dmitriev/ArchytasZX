@@ -54,6 +54,8 @@ from contextvars import ContextVar
 from typing import Union, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
+from sympy.core.add import _unevaluated_Add  # type: ignore[import-untyped]
+from sympy.core.mul import _unevaluated_Mul  # type: ignore[import-untyped]
 
 from archytaszx.algebra.dimension import Dim, DimensionError
 from archytaszx.algebra.phase import Phase
@@ -345,17 +347,17 @@ def _residue_terms(terms: _Terms, modulus: int) -> _Terms:
 
 
 def _terms_expr(terms: _Terms) -> sp.Expr:
-    """The sympy sum of :func:`_integer_terms` polynomial ``terms``, each monomial's symbols in
-    name order."""
-    return cast(
-        sp.Expr,
-        sp.Add(
-            *(
-                c * sp.Mul(*(s**e for s, e in sorted(mono, key=lambda item: str(item[0].name))))
-                for mono, c in terms.items()
-            )
-        ),
-    )
+    """The sympy sum of :func:`_integer_terms` polynomial ``terms``, built from its canonically
+    sorted arguments (sympy's unevaluated Add and Mul) without flattening."""
+    args: list[sp.Expr] = []
+    constant = 0
+    for mono, c in terms.items():
+        if not mono:
+            constant += c
+            continue
+        factors = [s if e == 1 else s**e for s, e in mono]
+        args.append(_unevaluated_Mul(sp.Integer(c), *factors))
+    return cast(sp.Expr, _unevaluated_Add(sp.Integer(constant), *args))
 
 
 def _fast_reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr | None:
@@ -429,13 +431,37 @@ def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
 def _canonical_terms(terms: _Terms, modulus: int) -> tuple[_Terms, sp.Expr]:
     """:func:`_canonical_residue` of the polynomial ``terms`` at a concrete ``modulus``, as its
     terms and its expression."""
-    plus = _residue_terms(terms, modulus)
-    minus = _residue_terms({mono: -c for mono, c in terms.items()}, modulus)
-    if plus == minus:
-        return plus, _terms_expr(plus)
+    plus, minus, chosen = _canonical_choice(terms, modulus)
+    if chosen is not None:
+        return chosen, _terms_expr(chosen)
     candidates = [(plus, _terms_expr(plus)), (minus, _terms_expr(minus))]
     preferred = [c for c in candidates if not c[1].could_extract_minus_sign()] or candidates
     return min(preferred, key=lambda c: sp.default_sort_key(c[1]))
+
+
+def _canonical_choice(terms: _Terms, modulus: int) -> tuple[_Terms, _Terms, _Terms | None]:
+    """The residues of ``+-terms`` and the one :func:`_canonical_terms` keeps when the signs of
+    the coefficients decide it (sympy's ``could_extract_minus_sign`` of a sum counts its negative
+    terms), else None."""
+    plus = _residue_terms(terms, modulus)
+    minus = _residue_terms({mono: -c for mono, c in terms.items()}, modulus)
+    if plus == minus:
+        return plus, minus, plus
+    signs = [_extracts_minus(plus), _extracts_minus(minus)]
+    if None in signs or signs[0] == signs[1]:
+        return plus, minus, None
+    return plus, minus, minus if signs[0] else plus
+
+
+def _extracts_minus(terms: _Terms) -> bool | None:
+    """``could_extract_minus_sign`` of :func:`_terms_expr` of nonempty ``terms``, or None when
+    sympy breaks a tie by sort keys."""
+    negative = sum(1 for c in terms.values() if c < 0)
+    if len(terms) == 1:
+        return negative == 1
+    if 2 * negative == len(terms):
+        return None
+    return 2 * negative > len(terms)
 
 
 def _off_factor(j: sp.Expr, m: sp.Expr) -> bool:
@@ -474,8 +500,16 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
                     return sp.Integer(1)
                 if set(terms) == {frozenset()}:
                     return sp.Integer(1 if terms[frozenset()] % int(m) == 0 else 0)
-                chosen, canonical = _canonical_terms(terms, int(m))
-                return cast(sp.Expr, cls(canonical, m)) if chosen != terms else None
+                chosen = _canonical_choice(terms, int(m))[2]
+                if chosen is None:
+                    chosen, canonical = _canonical_terms(terms, int(m))
+                    return cast(sp.Expr, cls(canonical, m)) if chosen != terms else None
+                if chosen == terms:
+                    return None
+                canonical = _terms_expr(chosen)
+                if any(chosen):
+                    return cast(sp.Expr, cls(canonical, m, evaluate=False))
+                return cast(sp.Expr, cls(canonical, m))
         args_j = j
         j = sp.expand(j)
         if j == 0 or m == 1:
