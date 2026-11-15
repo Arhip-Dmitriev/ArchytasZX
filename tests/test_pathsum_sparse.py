@@ -118,3 +118,32 @@ def test_substitute_matches_term_by_term_adds_in_value_and_order() -> None:
         _substitute_by_adds(want, var, value)
         p.substitute(var, value)
         assert list(p.terms.items()) == list(want.terms.items())
+
+
+def test_xor_lift_is_the_frozenset_fold_in_order() -> None:
+    from archytaszx.algebra.pathsum import _xor_lift
+
+    rng = random.Random(11)
+    for _ in range(200):
+        items = [frozenset(rng.sample(range(40, 48), rng.randint(0, 3))) for _m in range(5)]
+        modulus = rng.choice((2, 4, 8, 6, 512))
+        want: dict[frozenset[int], int] = {}
+        for m in items:
+            prev = [(k, 2 * a % modulus) for k, a in want.items() if 2 * a % modulus]
+            want[m] = (want.get(m, 0) + 1) % modulus
+            for k, b in prev:
+                want[k | m] = (want.get(k | m, 0) - b) % modulus
+        got = _xor_lift(items, modulus)
+        assert list(got.items()) == [(k, a) for k, a in want.items() if a]
+
+
+def test_occurrences_on_the_path_are_the_full_ones() -> None:
+    from archytaszx.algebra.pathsum import _occurrences
+
+    rng = random.Random(13)
+    p = PhasePoly()
+    for _t in range(60):
+        p.add(frozenset(rng.sample(range(10), rng.randint(1, 3))), Fraction(rng.randint(1, 7), 8))
+    path = {1, 4, 7}
+    full, some = _occurrences(p), _occurrences(p, path)
+    assert some == {v: full[v] for v in full if v in path}

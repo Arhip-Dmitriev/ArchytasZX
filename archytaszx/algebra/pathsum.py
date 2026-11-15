@@ -442,34 +442,47 @@ class PhasePoly:
         if not hit:
             return
         dens = math.lcm(*(c.denominator for _m, c in hit))
-        lift = list(_xor_lift(sorted(value, key=_mono_key), dens).items())
+        names, raw = _xor_lift_masks(sorted(value, key=_mono_key), dens)
+        lift = [(_decode(k, names), k, a) for k, a in raw.items() if a]
         for m, _c in hit:
             del terms[m]
         g = math.lcm(dens, *{c.denominator for c in terms.values()})
-        num: dict[Mono, int] = {}
+        bit = {v: 1 << i for i, v in enumerate(names)}
+        top = len(names)
+        num: dict[int, list[Any]] = {}
         zero = Fraction(0)
-        kept: dict[int, list[tuple[Mono, int]]] = {}
+        kept: dict[int, list[tuple[Mono, int, int]]] = {}
         for m, c in hit:
             rest = m - {var}
+            rmask = 0
+            for v in rest:
+                b = bit.get(v)
+                if b is None:
+                    b = bit[v] = 1 << top
+                    top += 1
+                rmask |= b
             den = c.denominator
             a = c.numerator * (g // den)
             items = kept.get(den)
             if items is None:
-                items = kept[den] = [(mono, k) for mono, k in lift if k % den]
-            for mono, k in items:
-                key = rest | mono
-                cur = num.get(key)
-                if cur is None:
+                items = kept[den] = [t for t in lift if t[2] % den]
+            for mono, mmask, k in items:
+                slot = num.get(rmask | mmask)
+                if slot is None:
+                    key = rest | mono
                     old = terms.get(key)
                     cur = 0 if old is None else old.numerator * (g // old.denominator)
+                    slot = num[rmask | mmask] = [key, cur]
+                else:
+                    key, cur = slot
                 v = (cur + a * k) % g
-                num[key] = v
+                slot[1] = v
                 if v:
-                    if key not in terms:
+                    if not cur:
                         terms[key] = zero
                 elif cur:
                     del terms[key]
-        for key, v in num.items():
+        for key, v in num.values():
             if v:
                 terms[key] = Fraction(v, g)
 
@@ -489,20 +502,38 @@ def _mono_key(m: Mono) -> tuple[int, tuple[int, ...]]:
 
 def _xor_lift(items: Sequence[Mono], modulus: int) -> dict[Mono, int]:
     """The integer multilinear polynomial equal to the XOR of ``items`` on Booleans, coefficients
-    mod ``modulus``: ``T + m - 2 T m`` folded over the items, monomials as bitmasks."""
+    mod ``modulus``."""
+    names, out = _xor_lift_masks(items, modulus)
+    return {_decode(k, names): a for k, a in out.items() if a}
+
+
+def _xor_lift_masks(items: Sequence[Mono], modulus: int) -> tuple[list[int], dict[int, int]]:
+    """:func:`_xor_lift` over bitmask monomials (bit i the i-th variable of the sorted names),
+    zero coefficients kept: ``T + m - 2 T m`` folded over the items."""
     names = sorted({v for m in items for v in m})
     bit = {v: 1 << i for i, v in enumerate(names)}
     out: dict[int, int] = {}
+    get = out.get
     for m in items:
         mask = sum(bit[v] for v in m)
         prev = [(k, b) for k, a in out.items() if (b := 2 * a % modulus)]
-        out[mask] = (out.get(mask, 0) + 1) % modulus
+        out[mask] = (get(mask, 0) + 1) % modulus
         for k, b in prev:
             key = k | mask
-            out[key] = (out.get(key, 0) - b) % modulus
+            out[key] = (get(key, 0) - b) % modulus
         if len(out) > XOR_LIFT_TERMS:
             raise PathSumUnsupported(f"an XOR lift of more than {XOR_LIFT_TERMS} terms")
-    return {frozenset(v for i, v in enumerate(names) if k >> i & 1): a for k, a in out.items() if a}
+    return names, out
+
+
+def _decode(k: int, names: Sequence[int]) -> Mono:
+    """The monomial of the bitmask ``k`` over ``names``, variables ascending."""
+    out = []
+    while k:
+        low = k & -k
+        out.append(names[low.bit_length() - 1])
+        k ^= low
+    return frozenset(out)
 
 
 XOR_LIFT_TERMS = 1 << 20
@@ -628,11 +659,15 @@ class PathSum:
         return self.const.is_zero or any(c == frozenset({EMPTY}) for c in self.constraints)
 
 
-def _occurrences(phase: PhasePoly) -> dict[int, list[tuple[Mono, Fraction]]]:
+def _occurrences(
+    phase: PhasePoly, path: set[int] | None = None
+) -> dict[int, list[tuple[Mono, Fraction]]]:
+    """Each variable's terms in term order; with ``path``, the path variables' only."""
     out: dict[int, list[tuple[Mono, Fraction]]] = {}
     for m, c in phase.terms.items():
         for v in m:
-            out.setdefault(v, []).append((m, c))
+            if path is None or v in path:
+                out.setdefault(v, []).append((m, c))
     return out
 
 
@@ -1007,7 +1042,7 @@ def _try_average_half(ps: PathSum) -> bool:
     of path variables, its atoms alpha^(1 + y) and beta^y: Sum_y = 2 ((alpha + beta) /
     2)^(1 + Q) ((alpha - beta) / 2)^Q."""
     cons_vars = {v for c in ps.constraints for m in c for v in m}
-    occ = _occurrences(ps.phase)
+    occ = _occurrences(ps.phase, ps.path)
     for y in sorted(ps.path & ps.amp_vars() - cons_vars):
         q = _hh_quotient(y, occ.get(y, []))
         if not q or any(v in ps.path for m in q for v in m):
@@ -1239,7 +1274,7 @@ def _try_average_ctx(ps: PathSum) -> bool:
     four polynomials C_i: Sum_y = 2 Prod_N ((v0(N) + (-1)^Q(N) v1(N)) / 2)^[C = N], v_b(N) the
     product of the atoms on 1 at y = b and C = N."""
     cons_vars = {v for c in ps.constraints for m in c for v in m}
-    occ = _occurrences(ps.phase)
+    occ = _occurrences(ps.phase, ps.path)
     for y in sorted(ps.path & ps.amp_vars() - cons_vars):
         terms = occ.get(y, [])
         q = _hh_quotient(y, terms) if terms else frozenset()
@@ -1336,7 +1371,7 @@ def _turn_round(out: PathSum) -> bool:
     blocked = out.path & out.amp_vars()
     out.path -= blocked
     try:
-        return bool(out.path) and _try_turn(out, _occurrences(out.phase))
+        return bool(out.path) and _try_turn(out, _occurrences(out.phase, out.path))
     finally:
         out.path |= blocked
 
@@ -1346,7 +1381,7 @@ def _reduce_round(out: PathSum, held: bool = False) -> bool:
     variables first, or False."""
     if not out.path:
         return False
-    occ = _occurrences(out.phase)
+    occ = _occurrences(out.phase, out.path)
     return (
         (held and _try_turn_held(out, occ))
         or _try_elim(out, occ)
