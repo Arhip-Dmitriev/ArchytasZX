@@ -40,5 +40,5 @@ def test_the_corollary_states_the_last_final_theorem() -> None:
     clauses = parse_restriction("n = 3").clauses
     out = corollary(_OPAQUE, clauses)
     tail = out.split("namespace ArchytasZX.Opaque")[1]
-    assert "theorem main_at :\n    (d0 3) = (d2 3) :=\n  main 3" in tail
+    assert "theorem main_at :\n    (d0 (3 : ℕ)) = (d2 (3 : ℕ)) :=\n  main (3 : ℕ)" in tail
     assert "main_diagrams" not in tail

@@ -180,7 +180,8 @@ def corollary(
             after.setdefault(v, []).extend(hyps)
             continue
         if clause.form == EQ:
-            values[v] = str(clause.c)
+            nat = any(v in b.names and b.type in ("ℕ", "Nat") for b in binders)
+            values[v] = f"({clause.c} : ℕ)" if nat else str(clause.c)
         elif clause.kind != DIMENSION and clause.form == GE:
             after[v] = [_Binder("(", (f"h_{v}_ge",), f"{clause.c} ≤ {v}")]
         else:
