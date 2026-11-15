@@ -538,7 +538,8 @@ def _rival_call(fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, An
 def run_driver(
     env: str, driver: str, payload: dict[str, Any], limit: float, wall_factor: float = 4.0
 ) -> dict[str, Any]:
-    """The driver's JSON result, or a status: timeout, oom, error."""
+    """The driver's JSON result, or a status: timeout, oom, error; ``peak_mb`` the peak
+    resident memory of the worker's children."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
         json.dump(payload, fh)
         path = fh.name
@@ -562,6 +563,7 @@ def run_driver(
         return {"status": "timeout", "limit": "wall", "wall": time.perf_counter() - w0}
     finally:
         os.unlink(path)
+    peak = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1)
     if proc.returncode != 0:
         status = (
             "timeout"
@@ -576,11 +578,12 @@ def run_driver(
             "status": status,
             "detail": proc.stderr.strip()[-2000:],
             "wall": time.perf_counter() - w0,
+            "peak_mb": peak,
         }
         if status == "timeout":
             out["limit"] = "cpu"
         return out
-    return {"status": "ok", **json.loads(proc.stdout.strip().splitlines()[-1])}
+    return {"status": "ok", "peak_mb": peak, **json.loads(proc.stdout.strip().splitlines()[-1])}
 
 
 def binary(env: str, name: str) -> Path:

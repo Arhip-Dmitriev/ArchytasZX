@@ -191,6 +191,23 @@ def test_remaining_error_groups_classify() -> None:
     assert (out["outcome"], out["cause"]) == ("oom", "memory.error")
 
 
+def test_a_driver_run_records_its_peak(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """run_driver records peak_mb on a driver's crash and on its result."""
+    import sys
+    from pathlib import Path
+
+    from benchmarks.tools import rival
+
+    monkeypatch.setattr(rival, "python", lambda env: Path(sys.executable))
+    monkeypatch.setattr(rival, "DRIVERS", tmp_path)
+    (tmp_path / "crash.py").write_text("raise SystemError('error return without exception set')")
+    (tmp_path / "fine.py").write_text("print('{\"x\": 1}')")
+    crash = rival.run_driver("env", "crash", {}, 30)
+    fine = rival.run_driver("env", "fine", {}, 30)
+    assert crash["status"] == "error" and crash["peak_mb"] > 0
+    assert fine["status"] == "ok" and fine["x"] == 1 and fine["peak_mb"] > 0
+
+
 def test_feynman_refuses_a_boundary_mismatch() -> None:
     """feynman._interface tells a 3-wire state from a 2-wire one and an input from an Init."""
     from benchmarks import ir
