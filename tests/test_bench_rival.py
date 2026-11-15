@@ -167,6 +167,29 @@ def test_engine_memory_errors_are_oom() -> None:
     assert run("RuntimeError: load: error: bad token") == ("error", "engine.load_refused")
 
 
+def test_null_return_near_the_cap_is_oom() -> None:
+    """An ArchytasZX decide stage failing with "error return without exception set" is oom when
+    its peak is within 10% of the worker cap (the record's, else 3481 MiB), else an error."""
+    from benchmarks import outcomes
+
+    def run(peak: float, cap: int | None) -> tuple[str, str]:
+        rec: dict[str, Any] = {"tool": "archytaszx", "outcome": "error"}
+        if cap is not None:
+            rec["memory_cap_mb"] = cap
+        detail = "RuntimeError: error: error return without exception set\n(detail)"
+        rec["stages"] = {
+            "generate": {"status": "ok"},
+            "decide": {"status": "error", "detail": detail, "peak_mb": peak},
+        }
+        out = outcomes.classify(rec)
+        return out["outcome"], out["cause"]
+
+    assert run(3305.8, None) == ("oom", "memory.error")
+    assert run(1200.0, None) == ("error", "engine.exception")
+    assert run(1900.0, 2000) == ("oom", "memory.error")
+    assert run(3305.8, 8000) == ("error", "engine.exception")
+
+
 def test_dizx_amounts_take_the_point_n() -> None:
     """DiZX Clifford ops of Z^(n(n+1)/2) X^n at n = 4, d = 3: Z^1, and X^1 as HAD, Z, HAD^3."""
     from benchmarks import ir

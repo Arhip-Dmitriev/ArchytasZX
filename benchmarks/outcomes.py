@@ -317,6 +317,22 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
     return "error", stage, "kill.exit"
 
 
+NULL_RETURN = "error return without exception set"
+"""The SystemError text of a C extension returning NULL with no exception set."""
+
+DEFAULT_CAP_MB = 3481
+"""The worker memory cap (MiB) of a record that carries no ``memory_cap_mb``."""
+
+NEAR_CAP = 0.9
+"""The fraction of the worker memory cap from which a peak counts as at the cap."""
+
+
+def near_cap(peak_mb: object, rec: dict[str, Any]) -> bool:
+    """Whether ``peak_mb`` is at least NEAR_CAP of the record's worker memory cap."""
+    cap = rec.get("memory_cap_mb") or DEFAULT_CAP_MB
+    return isinstance(peak_mb, (int, float)) and peak_mb >= NEAR_CAP * float(cap)
+
+
 def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
     st = rec.get("stages") or {}
     oc = rec.get("outcome") or "error"
@@ -345,6 +361,8 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
     if s == "lean_check":
         return "error", s, "lean.rejected", detail
     if re.match(r"RuntimeError: [^\n]*?error: MemoryError\b", detail):
+        return "oom", s, "memory.error", detail
+    if NULL_RETURN in detail and near_cap(failed.get("peak_mb"), rec):
         return "oom", s, "memory.error", detail
     if s == "decide" and re.match(r"RuntimeError: [^\n]*?(?:load|@\w+ =): error:", detail):
         return "error", s, "engine.load_refused", detail
