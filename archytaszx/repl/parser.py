@@ -1028,12 +1028,17 @@ def _weight_vector_parts(
 def _phase_vector_of(
     dim: Dim, phase_text: str, weight_text: str | None, table: Mapping[str, sp.Symbol]
 ) -> PhaseVector:
-    """The phase vector a phase text and an optional weight text declare over ``dim``."""
+    """The phase vector a phase text and an optional weight text declare over ``dim``; a rule
+    over a concrete dimension above _EXPAND_MAX is kept as a rule."""
     entries, rule = _phase_vector_parts(phase_text, table)
+    expand = not (dim.is_concrete and dim.to_int() > _EXPAND_MAX)
     if weight_text is None:
-        return PhaseVector(dim, entries, rule)
+        return PhaseVector(dim, entries, rule, expand=expand)
     weights, weight_rule = _weight_vector_parts(weight_text, table)
-    return PhaseVector(dim, entries, rule, weights=weights, weight_rule=weight_rule)
+    return PhaseVector(dim, entries, rule, expand=expand, weights=weights, weight_rule=weight_rule)
+
+
+_EXPAND_MAX = 1 << 16
 
 
 def _carried(diagram: Diagram) -> frozenset[str]:
@@ -2202,9 +2207,9 @@ def _dsl_prepass(statements: Sequence[str]) -> _Prepass:
 
 def _check_phase_range(diagram: Diagram) -> Diagram:
     """``diagram``, once every phase index is below its dimension where the parameters make
-    that dimension concrete."""
+    that dimension concrete; a concrete dimension is skipped, PhaseVector bounding its indices."""
     for node_id, node in sorted(diagram.nodes.items()):
-        if node.phase is None or not node.phase.entries():
+        if node.phase is None or node.phase.dim.is_concrete or not node.phase.entries():
             continue
         value = _resolved(node.phase.dim, diagram.parameters)
         top = max(node.phase.entries())
