@@ -94,16 +94,14 @@ def _split_proof(text: str) -> str:
 
 def _final(source: str, name: str) -> tuple[str, list[_Binder], str]:
     """The final theorem's name, all its binders (signature, then a leading ``∀``) and its
-    statement body."""
-    for candidate in (f"{name}_diagrams_original", f"{name}_diagrams", name):
-        match = re.search(
-            rf"^theorem {re.escape(candidate)}\b(.*)", source, re.MULTILINE | re.DOTALL
-        )
-        if match is not None:
-            break
-    else:
+    statement body: the last declared of ``name_diagrams_original``, ``name_diagrams`` and
+    ``name``."""
+    names = "|".join(re.escape(c) for c in (f"{name}_diagrams_original", f"{name}_diagrams", name))
+    found = list(re.finditer(rf"^theorem ({names})(?![\w'])", source, re.MULTILINE))
+    if not found:
         raise RestrictUnsupported(f"no theorem {name} in the export")
-    head = _split_proof(match[1])
+    candidate = found[-1][1]
+    head = _split_proof(source[found[-1].end() :])
     binders, rest = _binders(head)
     if not rest.startswith(":"):
         raise RestrictUnsupported("the theorem's statement does not follow its binders")
