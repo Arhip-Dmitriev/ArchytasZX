@@ -74,19 +74,7 @@ def pair_proof(
                 "",
             )
     if decision.method is DecisionMethod.PATH_SUM:
-        from archytaszx.algebra.pathsum import PathSumError
-        from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
-
-        try:
-            with _trace.span("decide.proof.path_sum"):
-                return kernel.Symbolic(left, right, export_net(left, right)), ""
-        except (PathSumError, ScalarUnsupported) as exc:
-            why_net = f"path_sum network export: {exc}"
-        try:
-            with _trace.span("decide.proof.path_sum_qudit"):
-                return kernel.Symbolic(left, right, export_qudit_net(left, right)), ""
-        except (PathSumError, ScalarUnsupported) as exc:
-            return None, f"{why_net}; qudit network export: {exc}"
+        return path_sum_proof(left, right)
     contracted = decision.method is DecisionMethod.SYMBOLIC_CONTRACTION
     why_kernel = ""
     if not contracted:
@@ -100,6 +88,11 @@ def pair_proof(
             return kernel.symbolic(left, right, describe=describe), ""
     except kernel.KernelError as exc:
         why_symbolic = str(exc)
+    if contracted:
+        found, why_path = path_sum_proof(left, right)
+        if found is not None:
+            return found, ""
+        why_symbolic += f"; {why_path}"
     with _trace.span("decide.proof.search"):
         outcome = prove(left, right)
     if outcome.proved:
@@ -111,6 +104,24 @@ def pair_proof(
         except kernel.KernelError as exc:
             why_kernel = str(exc)
     return None, f"kernel: {why_kernel}; normaliser: {why_symbolic}; search: {outcome.reason}"
+
+
+def path_sum_proof(left: Diagram, right: Diagram) -> tuple[kernel.Symbolic | None, str]:
+    """The Lean network export of the path sums of ``left = right``, qubit then qudit, or None
+    and both reasons."""
+    from archytaszx.algebra.pathsum import PathSumError
+    from archytaszx.semantics.lean_pathsum import export_net, export_qudit_net
+
+    try:
+        with _trace.span("decide.proof.path_sum"):
+            return kernel.Symbolic(left, right, export_net(left, right)), ""
+    except (PathSumError, ScalarUnsupported) as exc:
+        why_net = f"path_sum network export: {exc}"
+    try:
+        with _trace.span("decide.proof.path_sum_qudit"):
+            return kernel.Symbolic(left, right, export_qudit_net(left, right)), ""
+    except (PathSumError, ScalarUnsupported) as exc:
+        return None, f"{why_net}; qudit network export: {exc}"
 
 
 def restricted_proof(
