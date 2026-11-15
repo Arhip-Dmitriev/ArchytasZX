@@ -255,6 +255,14 @@ def _dangling_boundary(diagram: Diagram) -> tuple[tuple[str, int, tuple[int, str
     return tuple(dangling)
 
 
+_ENTRY_DIGESTS: dict[tuple[object, ...], tuple[Node, str]] = {}
+"""Node entry digests of :func:`fingerprint` per (node object id, boundary slots, membership,
+incidence), each with the node it was computed for."""
+
+_ENTRY_MEMO_LIMIT = 1 << 16
+"""The most entries :data:`_ENTRY_DIGESTS` holds before it is emptied."""
+
+
 def fingerprint(diagram: Diagram) -> DiagramFingerprint:
     """Fingerprint ``diagram`` in one pass over its nodes, wires and bang boxes."""
     diagram = _require_diagram(diagram, "fingerprint")
@@ -262,14 +270,22 @@ def fingerprint(diagram: Diagram) -> DiagramFingerprint:
     membership = _membership(diagram)
     incidence = _incidence(diagram)
 
+    if len(_ENTRY_DIGESTS) > _ENTRY_MEMO_LIMIT:
+        _ENTRY_DIGESTS.clear()
     entries: dict[NodeId, str] = {}
     for nid in sorted(diagram.nodes):
-        entries[nid] = _digest(
-            (
-                _digest(_node_payload(diagram.nodes[nid], boundary[nid], membership[nid])),
-                _digest(tuple(sorted(incidence[nid]))),
+        node = diagram.nodes[nid]
+        key = (id(node), tuple(boundary[nid]), tuple(membership[nid]), tuple(incidence[nid]))
+        held = _ENTRY_DIGESTS.get(key)
+        if held is None or held[0] is not node:
+            entry = _digest(
+                (
+                    _digest(_node_payload(node, boundary[nid], membership[nid])),
+                    _digest(tuple(sorted(incidence[nid]))),
+                )
             )
-        )
+            held = _ENTRY_DIGESTS[key] = (node, entry)
+        entries[nid] = held[1]
 
     boundary_key = _digest(
         (
