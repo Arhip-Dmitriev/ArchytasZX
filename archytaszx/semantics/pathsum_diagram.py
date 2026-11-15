@@ -184,6 +184,36 @@ def _interpolate(
                 phase.add((*(digits[j] for j in subset), *extra), coeff)
 
 
+def _phase_terms(phase: PhasePoly, digits: list[int], node_id: NodeId, node: Node) -> None:
+    """:func:`_interpolate` of the node's phase table over ``digits``; a vector without a rule
+    whose entries span fewer supersets than the table has values is read from its entries, each
+    entry t at the digit set T adding (-1)^(|S|-|T|) t to every S above T, in the same order."""
+    k = len(digits)
+    vec = node.phase
+    if vec is None or vec.stored_rule is not None:
+        _interpolate(phase, digits, _turns_table(node_id, node, 1 << k))
+        return
+    entries = {v: p for v, p in vec.entries().items() if v and not p.is_zero}
+    if sum(1 << (k - v.bit_count()) for v in entries) >= 1 << k:
+        _interpolate(phase, digits, _turns_table(node_id, node, 1 << k))
+        return
+    coeff: dict[tuple[int, ...], Fraction] = {}
+    for v, p in sorted(entries.items()):
+        t = p.to_sympy_turns()
+        if not t.is_Rational:
+            raise PathSumUnsupported(f"node {node_id!r} has a phase {t} that is not rational")
+        value = Fraction(int(t.p), int(t.q))
+        low = [j for j in range(k) if v >> j & 1]
+        free = [j for j in range(k) if not v >> j & 1]
+        for size in range(len(free) + 1):
+            for extra in combinations(free, size):
+                key = tuple(sorted((*low, *extra)))
+                coeff[key] = coeff.get(key, Fraction(0)) + (-1) ** size * value
+    for key in sorted(coeff, key=lambda s: (len(s), s)):
+        if coeff[key] % 1:
+            phase.add(tuple(digits[j] for j in key), coeff[key])
+
+
 def _f2_indicator(digits: list[int], table: list[int]) -> F2Poly:
     """The F_2 polynomial over ``digits`` with the 0/1 values ``table`` (Moebius mod 2)."""
     k = len(digits)
@@ -365,7 +395,7 @@ def from_diagram(
             k = bits[legs[0][0]] if legs else _phase_bits(node_id, node)
             digits = [var_of[uf.find(("z", node_id, j))] for j in range(k)]
             if node.phase is None or not node.phase.is_weighted:
-                _interpolate(phase, digits, _turns_table(node_id, node, 1 << k))
+                _phase_terms(phase, digits, node_id, node)
                 continue
             turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
             _interpolate(phase, digits, turns)
@@ -384,7 +414,7 @@ def from_diagram(
                         phase.add((ys[a], digit(ref, b)), Fraction(sign * (1 << (a + b)), 1 << k))
             s2 -= k * len(legs)
             if node.phase is None or not node.phase.is_weighted:
-                _interpolate(phase, ys, _turns_table(node_id, node, 1 << k))
+                _phase_terms(phase, ys, node_id, node)
                 continue
             turns, zero, root2, mag, mag_k = _weights(node_id, node, 1 << k)
             _interpolate(phase, ys, turns)
