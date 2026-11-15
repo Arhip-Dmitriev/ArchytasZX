@@ -55,6 +55,8 @@ ALLOC_FAILURES = (
     "MemoryError",
     "OutOfMemoryError",
     "failed to map segment from shared object",
+    "cannot allocate memory",
+    "Cannot allocate memory",
 )
 
 
@@ -417,7 +419,7 @@ def _rival(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str, str]:
         cause = check.get("limit") or ("wall" if "detail" not in check else "cpu")
         code = "limit.stage_cpu" if cause == "stage_cpu" else f"limit.rival_{cause}"
         return "timeout", "rival", code, detail
-    if status == "oom":
+    if status == "oom" or (status == "error" and allocation_failure(detail)):
         return "oom", "rival", "memory.rival", detail
     cause = _frame_cause(tool, detail)
     oc = "harness_error" if cause.startswith("harness.") else "error"

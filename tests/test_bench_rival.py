@@ -136,6 +136,28 @@ def test_allocation_failures_are_oom() -> None:
     assert outcomes.classify({**rec, "detail": msg})["outcome"] == "oom"
 
 
+def test_a_rival_exit_on_a_failed_allocation_is_oom() -> None:
+    """A rival check ending in error with glibc's TLS allocation abort is oom (memory.rival);
+    a binary exiting 1 with an allocation failure on stdout is oom; a plain exit stays error."""
+    import sys
+
+    from benchmarks import outcomes
+    from benchmarks.tools import rival
+
+    def cause(detail: str) -> tuple[str, str]:
+        check = {"status": "error", "detail": detail}
+        out = outcomes.classify({"tool": "tket", "outcome": "error", "stages": {"check": check}})
+        return out["outcome"], out["cause"]
+
+    assert cause("cannot allocate memory for thread-local data: ABORT") == ("oom", "memory.rival")
+    assert cause("std::bad_alloc") == ("oom", "memory.rival")
+    assert cause("segmentation fault") == ("error", "rival.exit")
+    script = "import sys; print('Cannot allocate memory'); sys.exit(1)"
+    assert rival.run_binary([sys.executable, "-c", script], 30)["status"] == "oom"
+    plain = rival.run_binary([sys.executable, "-c", "import sys; sys.exit(3)"], 30)
+    assert plain["status"] == "error"
+
+
 def test_feynman_refuses_a_boundary_mismatch() -> None:
     """feynman._interface tells a 3-wire state from a 2-wire one and an input from an Init."""
     from benchmarks import ir

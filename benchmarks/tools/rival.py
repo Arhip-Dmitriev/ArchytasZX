@@ -568,7 +568,7 @@ def run_driver(
             if proc.returncode in (-24, 152)
             else (
                 "oom"
-                if proc.returncode in (-9, 137) or allocation_failure(proc.stderr)
+                if proc.returncode in (-9, 137) or allocation_failure(proc.stderr + proc.stdout)
                 else "error"
             )
         )
@@ -631,10 +631,10 @@ def run_binary(
         "wall": time.perf_counter() - w0,
         "peak_mb": round(after.ru_maxrss / 1024, 1),
     }
-    alloc_failed = proc.returncode == 1 and allocation_failure(proc.stderr or "")
+    text = (proc.stderr or "") + (proc.stdout or "")
+    alloc_failed = proc.returncode == 1 and allocation_failure(text)
     if proc.returncode not in (0, 1) or alloc_failed:
         killed = proc.returncode in (-24, 152)
-        text = (proc.stderr or "") + (proc.stdout or "")
         oom = proc.returncode in (-9, 137) or allocation_failure(text)
         out["status"] = "timeout" if killed else ("oom" if oom else "error")
         if killed:
