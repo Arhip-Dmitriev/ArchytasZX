@@ -154,7 +154,7 @@ def test_engine_memory_errors_are_oom() -> None:
     from benchmarks import outcomes
 
     def run(detail: str) -> tuple[str, str]:
-        rec = {"tool": "archytaszx", "outcome": "error"}
+        rec: dict[str, Any] = {"tool": "archytaszx", "outcome": "error"}
         rec["stages"] = {
             "generate": {"status": "ok"},
             "decide": {"status": "error", "detail": detail},
