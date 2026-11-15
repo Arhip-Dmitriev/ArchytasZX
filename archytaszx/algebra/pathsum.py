@@ -990,9 +990,15 @@ def turn_indicator(bs: Sequence[F2Poly], s: int) -> F2Poly:
 
 
 def turn_indicators(bs: Sequence[F2Poly]) -> list[F2Poly]:
-    """``turn_indicator(bs, s)`` for every ``s`` in ``[0, 2^len(bs))``, indexed by ``s``: the
-    products over each prefix of the digits taken largest polynomial first shared, monomials as
-    bitmasks."""
+    """``turn_indicator(bs, s)`` for every ``s`` in ``[0, 2^len(bs))``, indexed by ``s``, the
+    last few digit lists memoised."""
+    return list(_turn_table(tuple(bs)))
+
+
+@lru_cache(maxsize=8)
+def _turn_table(bs: tuple[F2Poly, ...]) -> tuple[F2Poly, ...]:
+    """The table of :func:`turn_indicators`: the products over each prefix of the digits taken
+    largest polynomial first shared, monomials as bitmasks."""
     names = sorted({v for b in bs for m in b for v in m})
     bit = {v: 1 << i for i, v in enumerate(names)}
 
@@ -1018,7 +1024,7 @@ def turn_indicators(bs: Sequence[F2Poly]) -> list[F2Poly]:
             mono = decoded[k] = frozenset(v for i, v in enumerate(names) if k >> i & 1)
         return mono
 
-    return [frozenset(dec(k) for k in prods[s]) for s in range(1 << len(bs))]
+    return tuple(frozenset(dec(k) for k in prods[s]) for s in range(1 << len(bs)))
 
 
 def _try_turn(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
@@ -1348,6 +1354,40 @@ def _bmul(a: set[int], b: set[int]) -> set[int]:
     return out
 
 
+def _f2_substitute_all(
+    polys: Sequence[F2Poly], pivots: Sequence[tuple[int, F2Poly]]
+) -> list[F2Poly]:
+    """Each of ``polys`` with every pivot replaced by its polynomial in turn, over bitmask
+    monomials."""
+    if not polys or not pivots:
+        return list(polys)
+    names = sorted(
+        {v for p in polys for m in p for v in m}
+        | {v for q, r in pivots for v in (q, *(u for m in r for u in m))}
+    )
+    bit = {v: 1 << i for i, v in enumerate(names)}
+
+    def enc(p: F2Poly) -> set[int]:
+        out: set[int] = set()
+        for m in p:
+            out ^= {sum(bit[v] for v in m)}
+        return out
+
+    work = [enc(p) for p in polys]
+    for q, r in pivots:
+        b, value = bit[q], enc(r)
+        work = [_bsub(p, b, value) if any(x & b for x in p) else p for p in work]
+    decoded: dict[int, Mono] = {}
+
+    def dec(k: int) -> Mono:
+        mono = decoded.get(k)
+        if mono is None:
+            mono = decoded[k] = frozenset(v for i, v in enumerate(names) if k >> i & 1)
+        return mono
+
+    return [frozenset(dec(k) for k in p) for p in work]
+
+
 def _bsub(p: set[int], bit: int, value: set[int]) -> set[int]:
     """``p`` with the variable at ``bit`` replaced by ``value``, over bitmask monomials."""
     out: set[int] = set()
@@ -1434,10 +1474,9 @@ def canonical(ps: PathSum) -> Canon | None:
     pivots = cast(list[tuple[int, F2Poly]], rows)
 
     phase = ps.phase.copy()
-    amps = list(ps.amps)
     for pivot, rest in pivots:
         phase.substitute(pivot, rest)
-        amps = [(a, f2_substitute(f, pivot, rest)) for a, f in amps]
+    amps = list(zip((a for a, _f in ps.amps), _f2_substitute_all([f for _a, f in ps.amps], pivots)))
     const = with_sqrt2(ps.const, ps.sqrt2)
     merged: dict[F2Poly, Cyclo] = {}
     for a, f in amps:
