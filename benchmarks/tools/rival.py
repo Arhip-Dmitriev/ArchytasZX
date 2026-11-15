@@ -85,13 +85,27 @@ def qubit_ir(inst: Any, n: int | None) -> ir.Circuit:
             raise Unsupported("measurement or discard (a channel, not a pure map)")
     if any(str(c.dim(q)) not in ("d", "2") for q in c.wires):
         raise Unsupported("a wire of dimension other than d")
-    return c
+    return _at_n(c, n)
 
 
-def _num(expr: Any) -> float:
+def _at_n(c: ir.Circuit, n: int | None) -> ir.Circuit:
+    """``c`` with the point's n substituted into every X/Z amount and ZPhase/XPhase rule and
+    entry (ir.at_index)."""
+    if n is None:
+        return c
+    from dataclasses import replace
+
+    return replace(c, gates=tuple(ir.at_index(g, {"n": n}) for g in c.gates))
+
+
+def _num(expr: Any, k: int | None = None) -> float:
+    """``expr`` at d = 2 (and ``k`` when given) as a float."""
     import sympy as sp
 
-    return float(sp.N(sp.sympify(expr).subs({sp.Symbol("d"): 2})))
+    subs = {sp.Symbol("d"): 2}
+    if k is not None:
+        subs[sp.Symbol("k")] = k
+    return float(sp.N(sp.sympify(expr).subs(subs)))
 
 
 def qiskit_circuit(
@@ -143,10 +157,11 @@ def qiskit_circuit(
             for _ in range(g.p % 4):
                 qc.h(idx[g.q])
         elif isinstance(g, (ir.ZPhase, ir.XPhase)):
-            t = _num(g.rule.replace("k", "1") if g.rule else g.entries.get(1, 0))
+            t0, t1 = (_num(g.rule, k) if g.rule else _num(g.entries.get(k, 0)) for k in (0, 1))
+            extra += 2 * math.pi * t0
             if isinstance(g, ir.XPhase):
                 qc.h(idx[g.q])
-            qc.p(2 * math.pi * t, idx[g.q])
+            qc.p(2 * math.pi * (t1 - t0), idx[g.q])
             if isinstance(g, ir.XPhase):
                 qc.h(idx[g.q])
         elif isinstance(g, ir.CX):

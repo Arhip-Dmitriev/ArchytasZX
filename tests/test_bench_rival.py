@@ -95,3 +95,24 @@ def test_scalar_parts_drop_an_imaginary_residue() -> None:
     assert not zero and abs(lg - math.log(0.5) / 2) < 1e-12 and abs(arg - math.pi) < 1e-12
     with pytest.raises(ValueError, match="not real"):
         rival._real(sp.I)
+
+
+def test_phase_rules_take_the_point_n() -> None:
+    """A ZPhase rule in n and k at n = 4 is diag(1, -1); ZPhase/XPhase entries keep the k = 0
+    phase as a global phase."""
+    pytest.importorskip("qiskit")
+    from qiskit.quantum_info import Operator
+
+    from benchmarks import ir
+    from benchmarks.tools import rival
+
+    rule = ir.ZPhase("a", rule="k*n*(n-1)*(n-2)*(n-3)/(24*d)")
+    qc = rival.qiskit_circuit(rival._at_n(ir.Circuit(("a",), (rule,)), 4))[0]
+    assert np.abs(Operator(qc).data - np.diag([1, -1])).max() < 1e-12
+    ent = ir.Circuit(("a",), (ir.ZPhase("a", entries={0: "1/4", 1: "1/2"}),))
+    qc = rival.qiskit_circuit(ent)[0]
+    assert np.abs(Operator(qc).data - np.diag([1j, -1])).max() < 1e-12
+    xent = ir.Circuit(("a",), (ir.XPhase("a", entries={0: "1/4", 1: "1/2"}),))
+    h = np.array([[1, 1], [1, -1]]) / np.sqrt(2)
+    qc = rival.qiskit_circuit(xent)[0]
+    assert np.abs(Operator(qc).data - h @ np.diag([1j, -1]) @ h).max() < 1e-12
