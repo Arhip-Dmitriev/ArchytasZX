@@ -1010,12 +1010,18 @@ class IncrementalMatcher:
 
         dirty = self._dirty(diagram, fp)
         adjacency = _adjacency(diagram)
-        closure = _expand(dirty, (self._adjacency, adjacency), self._radius)
+        closures = {
+            radius: _expand(dirty, (self._adjacency, adjacency), radius)
+            for radius in sorted({p.locality_radius for p in self._patterns} | {self._radius})
+        }
+        closure = closures[self._radius]
         found: dict[str, tuple[Match, ...]] = {}
         retained_total = 0
         fresh_total = 0
         for pattern, key in zip(self._patterns, self._keys, strict=True):
-            local = self._locally_rematched(pattern, key, diagram, fp, closure)
+            local = self._locally_rematched(
+                pattern, key, diagram, fp, closures[pattern.locality_radius]
+            )
             if local is None:
                 scanned = self._scan_one(pattern, diagram, fp)
                 found[key] = scanned
