@@ -1315,11 +1315,26 @@ def find_entry_witness(
         extents = tuple(dim.to_int() for dim in dims)
         for point in support_points(difference, names, extents):
             try:
-                value_l = at_l.value_at(point, max_steps=max_steps).to_complex()
-                value_r = at_r.value_at(point, max_steps=max_steps).to_complex()
+                exact_l = at_l.value_at(point, max_steps=max_steps)
+                exact_r = at_r.value_at(point, max_steps=max_steps)
+                value_l, value_r = exact_l.to_complex(), exact_r.to_complex()
             except (SymbolicContractionError, ScalarError, TypeError, ValueError):
                 continue
             scale = max(1.0, abs(value_l), abs(value_r))
-            if abs(value_l - value_r) > tolerance * scale:
+            if abs(value_l - value_r) > tolerance * scale or _exactly_nonzero(exact_l - exact_r):
                 return EntryWitness(MappingProxyType(dict(assignment)), point, value_l, value_r)
     return None
+
+
+def _exactly_nonzero(value: Scalar) -> bool:
+    """Whether a concrete scalar is provably nonzero: as a cyclotomic number times a power of
+    sqrt 2 (pathsum.constant) when it is one, else by Scalar.is_provably_nonzero."""
+    from archytaszx.algebra.pathsum import PathSumError, constant, with_sqrt2
+
+    if not value.is_concrete:
+        return False
+    try:
+        base, power = constant(value.to_sympy())
+    except (PathSumError, TypeError, ValueError, ZeroDivisionError):
+        return value.is_provably_nonzero
+    return not with_sqrt2(base, power).is_zero

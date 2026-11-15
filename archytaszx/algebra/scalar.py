@@ -2059,6 +2059,18 @@ class Scalar:
         return bool(self._expr == 0)
 
     @property
+    def is_provably_nonzero(self) -> bool:
+        """True iff this concrete scalar evaluates to a nonzero number at 30 significant digits
+        under ``evalf(strict=True)``; False when symbolic or when that accuracy is not reached."""
+        if not self.is_concrete:
+            return False
+        try:
+            value = sp.N(self._expr, 30, strict=True)
+        except (sp.core.evalf.PrecisionExhausted, TypeError, ValueError):
+            return False
+        return bool(value != 0)
+
+    @property
     def is_one(self) -> bool:
         """True iff this scalar is provably one. Conservative: False if unverified."""
         return bool(self._expr == 1)

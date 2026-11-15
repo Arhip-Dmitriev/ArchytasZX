@@ -1565,3 +1565,19 @@ def test_xor_lift_past_its_term_budget_is_refused(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(pathsum, "XOR_LIFT_TERMS", 64)
     with pytest.raises(pathsum.PathSumUnsupported):
         pathsum._xor_lift(items, 512)
+
+
+def test_an_entry_difference_below_the_tolerance_is_still_exactly_nonzero() -> None:
+    from archytaszx.semantics.check import _exactly_nonzero
+
+    half = sp.sqrt(231) / 462
+    tiny = Scalar(half * (-1) ** sp.Rational(1, 394444512) - half)
+    assert abs(tiny.to_complex()) < 1e-9
+    assert _exactly_nonzero(tiny)
+    assert tiny.is_provably_nonzero
+    for zero in (
+        sp.sqrt(2) * sp.sqrt(3) - sp.sqrt(6),
+        1 + sp.exp(2 * sp.pi * sp.I / 3) + sp.exp(4 * sp.pi * sp.I / 3),
+    ):
+        assert not _exactly_nonzero(Scalar(zero))
+        assert not Scalar(zero).is_provably_nonzero
