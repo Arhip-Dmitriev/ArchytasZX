@@ -57,6 +57,8 @@ ALLOC_FAILURES = (
     "failed to map segment from shared object",
     "cannot allocate memory",
     "Cannot allocate memory",
+    "Memory allocation still failed",
+    "Unable to allocate",
 )
 
 
@@ -119,6 +121,7 @@ UNSUPPORTED: dict[str, str] = {
     "stated_outside": "the published proof's stated size lies outside the domain",
     "proof_file_missing": " proof file ",
     "not_installed": "not installed",
+    "qubit_cap": "Requested too many qubits from package",
 }
 
 CAUSES: dict[str, str] = {
@@ -302,7 +305,7 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
     stage = None if stage in (None, "start") else stage
     kill = rec.get("kill")
     code = rec.get("exit")
-    if rec.get("limit") == "prepare_cpu":
+    if rec.get("limit") == "prepare_cpu" or "PrepareTimeout" in str(rec.get("detail") or ""):
         return "timeout", "prepare", "limit.prepare_cpu"
     if kill == "stage timer" or (kill is None and oc == "timeout"):
         if stage == "generate" and not _engine_input(rec.get("open_span")):
@@ -383,7 +386,7 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
         return "harness_error", s, "harness.generate", detail
     if s == "lean_check":
         return "error", s, "lean.rejected", detail
-    if re.match(r"RuntimeError: [^\n]*?error: MemoryError\b", detail):
+    if re.match(r"RuntimeError: [^\n]*?error: (?:MemoryError\b|Unable to allocate )", detail):
         return "oom", s, "memory.error", detail
     if NULL_RETURN in detail and near_cap(failed.get("peak_mb"), rec):
         return "oom", s, "memory.error", detail
@@ -421,6 +424,10 @@ def _rival(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str, str]:
         return "timeout", "rival", code, detail
     if status == "oom" or (status == "error" and allocation_failure(detail)):
         return "oom", "rival", "memory.rival", detail
+    if status == "error" and NULL_RETURN in detail and near_cap(check.get("peak_mb"), rec):
+        return "oom", "rival", "memory.rival", detail
+    if status == "error" and UNSUPPORTED["qubit_cap"] in detail:
+        return "unsupported", "rival", "unsupported.qubit_cap", detail
     cause = _frame_cause(tool, detail)
     oc = "harness_error" if cause.startswith("harness.") else "error"
     return oc, "rival", cause, detail

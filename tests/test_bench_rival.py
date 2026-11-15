@@ -158,6 +158,39 @@ def test_a_rival_exit_on_a_failed_allocation_is_oom() -> None:
     assert plain["status"] == "error"
 
 
+def test_remaining_error_groups_classify() -> None:
+    """qcec's qubit cap is unsupported; a numpy allocation failure in decide, an OpenBLAS
+    allocation failure at a worker exit and a rival null return near the cap are oom; a worker
+    exiting on PrepareTimeout is a timeout."""
+    from benchmarks import outcomes
+
+    def rival(tool: str, detail: str, peak: float | None = None) -> tuple[str, str]:
+        check: dict[str, Any] = {"status": "error", "detail": detail}
+        if peak is not None:
+            check["peak_mb"] = peak
+        out = outcomes.classify({"tool": tool, "outcome": "error", "stages": {"check": check}})
+        return out["outcome"], out["cause"]
+
+    def killed(tool: str, detail: str) -> tuple[str, str]:
+        rec = {"tool": tool, "outcome": "error", "killed_in": "prepare", "exit": 1}
+        out = outcomes.classify({**rec, "kill": "exit 1", "detail": detail})
+        return out["outcome"], out["cause"]
+
+    cap = "ValueError: Requested too many qubits from package. Qubit datatype only allows up to"
+    assert rival("qcec", cap) == ("unsupported", "unsupported.qubit_cap")
+    null = "SystemError: error return without exception set"
+    assert rival("tket", null, 3300.0) == ("oom", "memory.rival")
+    assert rival("tket", null, 100.0)[0] == "error"
+    blas = "OpenBLAS error: Memory allocation still failed after 10 retries, giving up."
+    assert killed("qcec", blas) == ("oom", "memory.error")
+    assert killed("quizx", "PrepareTimeout") == ("timeout", "limit.prepare_cpu")
+    rec: dict[str, Any] = {"tool": "archytaszx", "outcome": "error"}
+    numpy = "RuntimeError: error: Unable to allocate 64.0 GiB for an array with shape (2, 2)"
+    rec["stages"] = {"generate": {"status": "ok"}, "decide": {"status": "error", "detail": numpy}}
+    out = outcomes.classify(rec)
+    assert (out["outcome"], out["cause"]) == ("oom", "memory.error")
+
+
 def test_feynman_refuses_a_boundary_mismatch() -> None:
     """feynman._interface tells a 3-wire state from a 2-wire one and an input from an Init."""
     from benchmarks import ir
