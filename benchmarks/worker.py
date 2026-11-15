@@ -31,6 +31,8 @@ RESULT = "@@RESULT "
 OOMKILL = "@@OOMKILL "
 SPANS = "@@SPANS "
 SNAPSHOT_SECONDS = 30.0
+RESERVE_BYTES = 32 << 20
+_reserve: list[bytearray] = []
 _oom_start: int | None = None
 _prepare: dict[str, Any] = {"on": False, "expired": False, "limit": 0.0, "used": 0.0, "t0": 0.0}
 PREPARE_TIMEOUT = {
@@ -197,8 +199,41 @@ def failure(tool: str, exc: BaseException) -> dict[str, Any]:
     return {"outcome": "harness_error", "reason": f"prepare: {msg}", "detail": msg}
 
 
+def encode_result(out: dict[str, Any]) -> str:
+    """The @@RESULT line of ``out``: the memory reserve released first; on a MemoryError while
+    encoding, ``out`` without its span trees, else only its fields whose JSON is under 4 KB,
+    either with ``result_encode: MemoryError``."""
+    import gc
+
+    def bare(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: bare(x) for k, x in v.items() if k not in ("spans", "spans_at_timeout")}
+        return v
+
+    _reserve.clear()
+    gc.collect()
+    try:
+        return RESULT + json.dumps(out, default=str)
+    except MemoryError:
+        gc.collect()
+    try:
+        return RESULT + json.dumps({**bare(out), "result_encode": "MemoryError"}, default=str)
+    except MemoryError:
+        gc.collect()
+        small: dict[str, Any] = {"result_encode": "MemoryError"}
+        for k, v in out.items():
+            try:
+                text = json.dumps(v, default=str)
+            except MemoryError:
+                continue
+            if len(text) < 4096:
+                small[k] = v
+        return RESULT + json.dumps(small, default=str)
+
+
 def main() -> None:
     global _oom_start
+    _reserve.append(bytearray(RESERVE_BYTES))
     sys.set_int_max_str_digits(0)
     if not os.environ.get("BENCH_MEMORY_MB"):
         _oom_start = oom_kills()
@@ -239,7 +274,7 @@ def main() -> None:
         signal.setitimer(signal.ITIMER_PROF, 0)
     if rival and _prepare["expired"]:
         out = dict(PREPARE_TIMEOUT)
-    print(RESULT + json.dumps(out, default=str), flush=True)
+    print(encode_result(out), flush=True)
 
 
 if __name__ == "__main__":

@@ -175,3 +175,28 @@ def test_dizx_amounts_take_the_point_n() -> None:
     c = ir.Circuit(("a",), (ir.Z("a", "n*(n+1)/2"), ir.X("a", "n")))
     ops = dizx.clifford_ops(rival._at_n(c, 4), 3)
     assert ops == [["Z", [0], 1], ["HAD", [0], 1], ["Z", [0], 1], ["HAD", [0], 3]]
+
+
+def test_result_encoding_survives_a_memory_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """worker.encode_result drops the span trees when encoding the whole record raises
+    MemoryError; an ArchytasZX worker dying of a MemoryError traceback is oom."""
+    import json
+
+    from benchmarks import outcomes, worker
+
+    real = json.dumps
+
+    def dumps(obj: Any, **kw: Any) -> str:
+        if "spans" in real(obj, **kw):
+            raise MemoryError
+        return real(obj, **kw)
+
+    monkeypatch.setattr(json, "dumps", dumps)
+    out = {"outcome": "timeout", "stages": {"decide": {"status": "timeout", "spans": [1] * 9}}}
+    rec = json.loads(worker.encode_result(out)[len(worker.RESULT) :])
+    assert rec["result_encode"] == "MemoryError"
+    assert rec["stages"] == {"decide": {"status": "timeout"}}
+    killed = {"tool": "archytaszx", "outcome": "error", "killed_in": "decide", "exit": 1}
+    detail = 'File "json/encoder.py", line 258, in iterencode\nMemoryError'
+    out2 = outcomes.classify({**killed, "kill": "exit 1", "detail": detail})
+    assert (out2["outcome"], out2["cause"]) == ("oom", "memory.error")
