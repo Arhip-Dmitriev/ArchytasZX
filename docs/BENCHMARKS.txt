@@ -723,7 +723,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      kill.stage_timer (the runner's wall timer killed the worker)
   oom                kill.sigkill (SIGKILL or exit 137), kill.cgroup_oom_kill (a rise of the
                      systemd scope's memory.events oom_kill counter, reported by the worker on
-                     the scope's SIGTERM), memory.error (MemoryError in the worker),
+                     the scope's SIGTERM), memory.error (MemoryError in the worker, or a
+                     worker that died or failed in prepare on a failed allocation: a Rust
+                     "memory allocation of" abort, an mmap "failed to map segment" ImportError),
                      memory.rival, memory.lean
   error              the tool failed: rival.exception (a driver traceback whose frame is the
                      rival's library or a driver line calling the rival), rival.exit (a binary or

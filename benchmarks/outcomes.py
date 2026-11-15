@@ -46,6 +46,21 @@ SCALAR_KINDS = ("scalar_small_one", "global_phase", "box_boundary")
 FLOAT_SIMS = ("qiskit", "cirq")
 BREAK_FLOOR = 1e-6
 ENGINE_STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check")
+ALLOC_FAILURES = (
+    "out of memory",
+    "Heap exhausted",
+    "memory allocation of",
+    "std::bad_alloc",
+    "MemoryError",
+    "OutOfMemoryError",
+    "failed to map segment from shared object",
+)
+
+
+def allocation_failure(text: str) -> bool:
+    """Whether a tool's or worker's output reports a failed memory allocation (ALLOC_FAILURES)."""
+    return any(p in text for p in ALLOC_FAILURES)
+
 
 UNSUPPORTED: dict[str, str] = {
     "register_count_mismatch": "gate across registers of different counts",
@@ -121,7 +136,7 @@ CAUSES: dict[str, str] = {
     "limit.prepare_cpu": "a rival's preparation used up its CPU limit (harness_error)",
     "limit.rival_cpu": "the rival used up its CPU limit",
     "limit.rival_wall": "the rival used up its wall limit",
-    "memory.error": "MemoryError in the worker",
+    "memory.error": "MemoryError or a failed allocation in the worker",
     "memory.rival": "the rival was killed for memory or raised MemoryError",
     "memory.lean": "Lean was killed for memory",
     "rival.exception": "an exception raised in the rival's library",
@@ -290,7 +305,7 @@ def _killed(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str]:
         return "oom", stage, "kill.cgroup_oom_kill"
     if kill == "SIGKILL" or code in (-9, 137):
         return "oom", stage, "kill.sigkill"
-    if oc == "oom":
+    if oc == "oom" or allocation_failure(str(rec.get("detail") or "")):
         return "oom", stage, "memory.error"
     return "error", stage, "kill.exit"
 
@@ -336,7 +351,9 @@ def _rival(rec: dict[str, Any], tool: str) -> tuple[str, str | None, str, str]:
         if oc == "oom":
             return "oom", "prepare", "memory.error", detail
         if oc in ("error", "harness_error"):
-            if "MemoryError" in detail.split(":", 1)[0]:
+            head = detail.split(":", 1)[0]
+            mapped = head in ("ImportError", "OSError") and allocation_failure(detail)
+            if "MemoryError" in head or mapped:
                 return "oom", "prepare", "memory.error", detail
             if rec.get("harness_cause") == "spec_bound":
                 return "harness_error", "prepare", "harness.spec_bound", detail

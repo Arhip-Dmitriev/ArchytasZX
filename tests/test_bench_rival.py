@@ -116,3 +116,21 @@ def test_phase_rules_take_the_point_n() -> None:
     h = np.array([[1, 1], [1, -1]]) / np.sqrt(2)
     qc = rival.qiskit_circuit(xent)[0]
     assert np.abs(Operator(qc).data - h @ np.diag([1j, -1]) @ h).max() < 1e-12
+
+
+def test_allocation_failures_are_oom() -> None:
+    """A worker abort on a failed Rust allocation, a worker MemoryError chain and an mmap
+    ImportError in prepare classify as oom; an exit without such text stays error."""
+    from benchmarks import outcomes
+
+    def killed(detail: str, code: int) -> dict[str, Any]:
+        rec = {"tool": "quizx", "outcome": "error", "killed_in": "prepare", "exit": code}
+        return outcomes.classify({**rec, "kill": f"exit {code}", "detail": detail})
+
+    rust = killed("memory allocation of 32768 bytes failed\nnote: run with RUST_BACKTRACE=1", -6)
+    chain = killed("Error\n\nDuring handling of the above exception:\n\nMemoryError", 1)
+    assert (rust["outcome"], chain["outcome"]) == ("oom", "oom")
+    assert killed("", -11)["outcome"] == "error"
+    msg = "ImportError: /x/mtrand.so: failed to map segment from shared object"
+    rec = {"tool": "autoq_para", "outcome": "harness_error", "reason": f"prepare: {msg}"}
+    assert outcomes.classify({**rec, "detail": msg})["outcome"] == "oom"

@@ -40,25 +40,13 @@ from typing import Any
 import numpy as np
 
 from benchmarks import ir, stages, subject
+from benchmarks.outcomes import allocation_failure
 from benchmarks.tools import common
 
 VENVS = Path(os.environ.get("BENCH_VENVS") or Path(__file__).resolve().parent.parent / ".venvs")
 DRIVERS = Path(__file__).resolve().parent / "drivers"
 DENSE_CAP = 1 << 24
 MAX_AXES = 64
-ALLOC_FAILURES = (
-    "out of memory",
-    "Heap exhausted",
-    "memory allocation of",
-    "std::bad_alloc",
-    "MemoryError",
-    "OutOfMemoryError",
-)
-
-
-def allocation_failure(text: str) -> bool:
-    """Whether a tool's output reports a failed memory allocation (ALLOC_FAILURES)."""
-    return any(p in text for p in ALLOC_FAILURES)
 
 
 class Unsupported(Exception):
