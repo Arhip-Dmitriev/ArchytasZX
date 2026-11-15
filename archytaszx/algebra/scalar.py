@@ -264,8 +264,116 @@ def _freeze(*exprs: sp.Expr) -> tuple[list[sp.Expr], dict[sp.Symbol, sp.Expr]]:
     return [expr.xreplace(forward) for expr in exprs], {v: k for k, v in forward.items()}
 
 
+_Terms = dict[frozenset[tuple[sp.Symbol, int]], int]
+
+
+def _integer_terms(expr: sp.Expr) -> _Terms | None:
+    """The nonzero integer coefficient of each monomial (a set of ``(symbol, exponent)``) of a
+    polynomial ``expr`` built from symbols and integers by sums, products and nonnegative
+    integer powers, or None for any other ``expr``."""
+    if expr.is_Symbol:
+        return {frozenset({(expr, 1)}): 1}
+    if expr.is_Integer:
+        return {frozenset(): int(expr)} if expr != 0 else {}
+    if expr.is_Add:
+        out: _Terms = {}
+        for arg in expr.args:
+            part = _integer_terms(arg)
+            if part is None:
+                return None
+            for mono, c in part.items():
+                total = out.get(mono, 0) + c
+                if total:
+                    out[mono] = total
+                else:
+                    out.pop(mono, None)
+        return out
+    if expr.is_Mul:
+        product: _Terms = {frozenset(): 1}
+        for arg in expr.args:
+            part = _integer_terms(arg)
+            if part is None:
+                return None
+            product = _times(product, part)
+        return product
+    if expr.is_Pow and expr.exp.is_Integer and int(expr.exp) >= 0:
+        if expr.base.is_Symbol and int(expr.exp) > 0:
+            return {frozenset({(expr.base, int(expr.exp))}): 1}
+        base = _integer_terms(expr.base)
+        if base is None:
+            return None
+        power: _Terms = {frozenset(): 1}
+        for _ in range(int(expr.exp)):
+            power = _times(power, base)
+        return power
+    return None
+
+
+def _times(left: _Terms, right: _Terms) -> _Terms:
+    """The product of two :func:`_integer_terms` polynomials."""
+    out: _Terms = {}
+    for m1, c1 in left.items():
+        powers1 = dict(m1)
+        for m2, c2 in right.items():
+            if not m1:
+                mono = m2
+            elif not m2:
+                mono = m1
+            else:
+                powers = dict(powers1)
+                for s, e in m2:
+                    powers[s] = powers.get(s, 0) + e
+                mono = frozenset(powers.items())
+            total = out.get(mono, 0) + c1 * c2
+            if total:
+                out[mono] = total
+            else:
+                out.pop(mono, None)
+    return out
+
+
+def _residue_terms(terms: _Terms, modulus: int) -> _Terms:
+    """``terms`` with every coefficient taken into ``(-modulus/2, modulus/2]``, zeros dropped."""
+    out: _Terms = {}
+    for mono, c in terms.items():
+        residue = c % modulus
+        if 2 * residue > modulus:
+            residue -= modulus
+        if residue:
+            out[mono] = residue
+    return out
+
+
+def _terms_expr(terms: _Terms) -> sp.Expr:
+    """The sympy sum of :func:`_integer_terms` polynomial ``terms``, each monomial's symbols in
+    name order."""
+    return cast(
+        sp.Expr,
+        sp.Add(
+            *(
+                c * sp.Mul(*(s**e for s, e in sorted(mono, key=lambda item: str(item[0].name))))
+                for mono, c in terms.items()
+            )
+        ),
+    )
+
+
+def _fast_reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr | None:
+    """:func:`_reduce_mod` read from :func:`_integer_terms`, or None when ``expr`` is not such a
+    polynomial in symbols."""
+    if not expr.free_symbols:
+        return None
+    terms = _integer_terms(expr)
+    if terms is None:
+        return None
+    return _terms_expr(_residue_terms(terms, modulus))
+
+
 def _reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr:
     """``expr`` with every integer coefficient taken into ``(-modulus/2, modulus/2]``."""
+    fast = _fast_reduce_mod(expr, modulus)
+    if fast is not None:
+        return fast
     if expr.has(ModResidue):
         (frozen,), back = _freeze(expr)
         return cast(sp.Expr, _reduce_mod(frozen, modulus).xreplace(back))
@@ -305,6 +413,10 @@ def _reduce_symbolic_mod(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
 
 def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
     """The representative of ``+-expr`` (reduced when ``modulus`` is concrete) a ModDelta keeps."""
+    if modulus.is_Integer and expr.free_symbols:
+        terms = _integer_terms(expr)
+        if terms is not None:
+            return _canonical_terms(terms, int(modulus))[1]
     candidates = [sp.expand(expr), sp.expand(-expr)]
     if modulus.is_Integer:
         candidates = [_reduce_mod(candidate, int(modulus)) for candidate in candidates]
@@ -312,6 +424,18 @@ def _canonical_residue(expr: sp.Expr, modulus: sp.Expr) -> sp.Expr:
         candidates = [_reduce_symbolic_mod(candidate, modulus) for candidate in candidates]
     preferred = [c for c in candidates if not c.could_extract_minus_sign()] or candidates
     return cast(sp.Expr, min(preferred, key=sp.default_sort_key))
+
+
+def _canonical_terms(terms: _Terms, modulus: int) -> tuple[_Terms, sp.Expr]:
+    """:func:`_canonical_residue` of the polynomial ``terms`` at a concrete ``modulus``, as its
+    terms and its expression."""
+    plus = _residue_terms(terms, modulus)
+    minus = _residue_terms({mono: -c for mono, c in terms.items()}, modulus)
+    if plus == minus:
+        return plus, _terms_expr(plus)
+    candidates = [(plus, _terms_expr(plus)), (minus, _terms_expr(minus))]
+    preferred = [c for c in candidates if not c[1].could_extract_minus_sign()] or candidates
+    return min(preferred, key=lambda c: sp.default_sort_key(c[1]))
 
 
 def _off_factor(j: sp.Expr, m: sp.Expr) -> bool:
@@ -343,6 +467,15 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
     @classmethod
     def eval(cls, j: sp.Expr, m: sp.Expr) -> sp.Expr | None:
         """The value when decidable, else ``j`` moved to its canonical residue."""
+        if m.is_Integer and m != 1 and j.free_symbols:
+            terms = _integer_terms(j)
+            if terms is not None:
+                if not terms:
+                    return sp.Integer(1)
+                if set(terms) == {frozenset()}:
+                    return sp.Integer(1 if terms[frozenset()] % int(m) == 0 else 0)
+                chosen, canonical = _canonical_terms(terms, int(m))
+                return cast(sp.Expr, cls(canonical, m)) if chosen != terms else None
         args_j = j
         j = sp.expand(j)
         if j == 0 or m == 1:
@@ -717,6 +850,14 @@ def _linear_in(expr: sp.Expr, var: sp.Symbol) -> tuple[int, sp.Expr] | None:
 
 def _integer_slope(expr: sp.Expr, var: sp.Symbol) -> bool:
     """Whether ``expr`` is a polynomial in ``var`` whose var-dependent coefficients are integers."""
+    terms = _integer_terms(expr) if expr.free_symbols else None
+    if terms is not None and all(
+        s.is_integer is True
+        for mono in terms
+        if any(symbol == var for symbol, _ in mono)
+        for s, _e in mono
+    ):
+        return True
     try:
         polynomial = sp.Poly(sp.expand(expr), var)
     except sp.PolynomialError:
@@ -1510,6 +1651,11 @@ def _linear_form(expr: sp.Expr) -> dict[sp.Symbol, int] | None:
         return None
     if not symbols:
         return {} if expr.is_Integer else None
+    terms = _integer_terms(expr)
+    if terms is not None:
+        if any(sum(e for _s, e in mono) > 1 for mono in terms):
+            return None
+        return {symbol: terms.get(frozenset({(symbol, 1)}), 0) for symbol in symbols}
     try:
         polynomial = sp.Poly(expr, *symbols)
     except sp.PolynomialError:
