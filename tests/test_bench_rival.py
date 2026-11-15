@@ -225,6 +225,36 @@ def test_a_native_panic_is_the_rivals_error() -> None:
     assert cause(tail + "KeyError: 'x'") == ("harness_error", "harness.driver")
 
 
+def test_a_long_traceback_keeps_its_exception() -> None:
+    """A rival traceback longer than a cause_message keeps its tail (the exception); a long
+    decide reason keeps its head."""
+    from benchmarks import outcomes
+
+    frame = '  File "/r/site-packages/cirq/x.py", line 1, in f\n    g()\n'
+    detail = "Traceback (most recent call last):\n" + frame * 40 + "IndexError: string index"
+    check = {"status": "error", "detail": detail}
+    out = outcomes.classify({"tool": "cirq", "outcome": "error", "stages": {"check": check}})
+    assert out["cause"] == "rival.exception"
+    assert out["cause_message"].endswith("IndexError: string index")
+    assert len(out["cause_message"]) == outcomes.MESSAGE_CHARS
+    reason = "normal forms differ; " + "x" * 400
+    assert outcomes.clip(reason) == reason[: outcomes.MESSAGE_CHARS]
+
+
+def test_cirq_past_einsum_subscripts_is_unsupported() -> None:
+    """Cirq at d = 1 on a unitary of more einsum subscripts than numpy names (cyclic_shift
+    n = 29: 60 axes and a 2-qudit gate) is unsupported before its driver runs."""
+    from benchmarks import subject
+    from benchmarks.tools import cirq
+
+    inst = next(
+        i for i in subject.instances(list(subject.catalogue())) if i.id == "cyclic_shift/main"
+    )
+    out = cirq.run(inst, {"point": (29, 1), "config": {"stages": {"timeout_seconds": 1}}})
+    assert out["outcome"] == "unsupported"
+    assert out["unsupported_code"] == "einsum_subscripts"
+
+
 def test_result_encoding_survives_a_memory_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """worker.encode_result drops the span trees when encoding the whole record raises
     MemoryError; an ArchytasZX worker dying of a MemoryError traceback is oom."""

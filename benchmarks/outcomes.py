@@ -99,6 +99,7 @@ UNSUPPORTED: dict[str, str] = {
     "no_reference": "no gate-level reference circuit for this equation",
     "gate_set": "not expressible in the gate set",
     "tensor_axes": " tensor axes: above numpy's",
+    "einsum_subscripts": "-qudit gate: above numpy.einsum's",
     "too_large_to_simulate": ": too large to simulate",
     "post_selected": "post-selected wires",
     "phase_not_pi4": "a phase that is not a multiple of pi/4",
@@ -328,6 +329,20 @@ NEAR_CAP = 0.9
 """The fraction of the worker memory cap from which a peak counts as at the cap."""
 
 
+MESSAGE_CHARS = 300
+"""The most characters of a cause_message."""
+
+
+def clip(message: str) -> str:
+    """``message`` cut to MESSAGE_CHARS: its tail when it holds a traceback frame, else its
+    head."""
+    if len(message) <= MESSAGE_CHARS:
+        return message
+    if _FRAME.search(message):
+        return message[-MESSAGE_CHARS:]
+    return message[:MESSAGE_CHARS]
+
+
 def is_wrong(outcome: object) -> bool:
     """Whether ``outcome`` is a wrong verdict, certified or not (WRONG_OUTCOMES)."""
     return outcome in WRONG_OUTCOMES
@@ -540,7 +555,7 @@ def classify(
     elif false is not None and oc2 in VERDICT_OUTCOMES and below_float_floor(rec, tool):
         oc2, cause = "invalid_point", "break_below_float_tolerance"
     invalid = invalid or (stale and false is not None)
-    out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": msg[:300]}
+    out = {**rec, "outcome": oc2, "stage": stage, "cause": cause, "cause_message": clip(msg)}
     tag = None if false is None else scalar_tag(false)
     if tag is not None:
         out["tags"] = sorted({*(rec.get("tags") or ()), tag})

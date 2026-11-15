@@ -31,6 +31,14 @@ ENV = "cirq"
 PACKAGE = "cirq-core"
 PROBE = ("cirq", "numpy")
 MAX_ENTRIES = 1 << 26
+EINSUM_LETTERS = 52
+"""The subscripts numpy.einsum names (a-z, A-Z); Cirq applies each gate with one einsum over the
+target tensor's axes and the gate's."""
+
+
+def _applied(g: Any) -> bool:
+    """Whether the gate is applied as a matrix (not an Init or a Post)."""
+    return not isinstance(g, (ir.Init, ir.Post))
 
 
 def supports(inst: Any, point: Any) -> str | None:
@@ -60,11 +68,17 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         axes = m if state else 2 * m
         if axes > rival.MAX_AXES:
             raise rival.Unsupported(f"{axes} tensor axes: above numpy's {rival.MAX_AXES}")
+        arity = max((len(ir.gate_wires(g)) for g in c.gates if _applied(g)), default=0)
+        if axes + arity > EINSUM_LETTERS:
+            raise rival.Unsupported(
+                f"{axes} tensor axes and a {arity}-qudit gate: above numpy.einsum's "
+                f"{EINSUM_LETTERS} subscripts"
+            )
         if d**axes > MAX_ENTRIES:
             raise rival.Unsupported(f"{m} qudits of dimension {d}: too large to simulate")
         gates = []
         for g in c.gates:
-            if isinstance(g, (ir.Init, ir.Post)):
+            if not _applied(g):
                 continue
             if isinstance(g, ir.Swap):
                 op = np.eye(d * d).reshape(d, d, d, d).transpose(1, 0, 2, 3)

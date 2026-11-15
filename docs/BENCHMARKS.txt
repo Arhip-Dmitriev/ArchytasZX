@@ -738,7 +738,8 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                   (a rival's input, in the worker), rival (the rival's own call); none when a
                   killed worker had not announced one
   cause           a short stable code (below)
-  cause_message   the message behind the code, at most 300 characters
+  cause_message   the message behind the code, at most 300 characters (the last 300 of a
+                  message holding a traceback, else the first)
   raw_outcome     the outcome before classification, when classify replaced it
 
   ok, uncertified    the expected verdict, certified or not; cause verdict.VERDICT
