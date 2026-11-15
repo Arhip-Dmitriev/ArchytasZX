@@ -190,8 +190,14 @@ def ip_pow(r: IPoly, k: int) -> IPoly:
     return out
 
 
+@functools.lru_cache(maxsize=1 << 18)
+def ip_varset(p: IPoly) -> frozenset[int]:
+    """The variables of ``p``."""
+    return frozenset(x for m, _ in p for x in m)
+
+
 def ip_subst(x: int, r: IPoly, p: IPoly) -> IPoly:
-    if not any(x in m for m, _ in p):
+    if x not in ip_varset(p):
         return p
     acc: IPoly = ()
     for m, c in reversed(p):
@@ -201,7 +207,7 @@ def ip_subst(x: int, r: IPoly, p: IPoly) -> IPoly:
 
 
 def ip_has(x: int, p: IPoly) -> bool:
-    return any(x in m for m, _ in p)
+    return x in ip_varset(p)
 
 
 def ip_lin(x: int, p: IPoly) -> tuple[IPoly, IPoly] | None:
@@ -525,10 +531,12 @@ def _pick(p: IPoly, ok: Callable[[int], bool]) -> tuple[int, int, IPoly] | None:
     return acc
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def pivot_of(p: IPoly) -> tuple[int, int, IPoly] | None:
     return _pick(p, lambda c: c in (1, -1))
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def div_of(p: IPoly) -> tuple[int, int, IPoly] | None:
     return _pick(p, lambda c: c != 0)
 
@@ -549,34 +557,69 @@ def div_sub(m: DMon, x: int, c: int, b: IPoly, g: Fac) -> Fac:
     return g
 
 
-def step_of(f: Fac) -> Callable[[Fac], Fac] | None:
+@functools.lru_cache(maxsize=1 << 16)
+def _step(f: Fac) -> tuple[Any, ...] | None:
+    """``stepOf f`` as data: ``(True, m, x, v)`` for a pivot, ``(False, m, x, c, b)`` for a
+    division."""
     q = pivot_of(f[1])
     if q is not None:
-        v = pin_val(q[1], q[2])
-        return lambda g: piv_sub(f[0], q[0], v, g)
+        return (True, f[0], q[0], pin_val(q[1], q[2]))
     q2 = div_of(f[1])
     if q2 is not None:
-        return lambda g: div_sub(f[0], q2[0], q2[1], q2[2], g)
+        return (False, f[0], q2[0], q2[1], q2[2])
     return None
+
+
+def _apply(st: tuple[Any, ...], g: Fac) -> Fac:
+    """:func:`piv_sub` or :func:`div_sub` of a :func:`_step`; a pivot leaves a factor without
+    its variable as it is."""
+    if st[0]:
+        if st[2] not in ip_varset(g[1]):
+            return g
+        return piv_sub(st[1], st[2], st[3], g)
+    return div_sub(st[1], st[2], st[3], st[4], g)
+
+
+def step_of(f: Fac) -> Callable[[Fac], Fac] | None:
+    st = _step(f)
+    return None if st is None else functools.partial(_apply, st)
 
 
 def piv_pass(
     n: int, a: tuple[Fac, ...], b: tuple[Fac, ...], ps: tuple[Fac, ...]
 ) -> tuple[tuple[Fac, ...], tuple[Fac, ...]]:
+    """``pivPass``, on lists with each factor's variable set alongside; a pivot rewrites only
+    the factors holding its variable."""
+    la, lb, lp = list(a), list(b), list(ps)
+    va = [ip_varset(g[1]) for g in la]
+    vb = [ip_varset(g[1]) for g in lb]
+    vp = [ip_varset(g[1]) for g in lp]
+
+    def run(st: tuple[Any, ...], fs: list[Fac], vs: list[frozenset[int]], start: int) -> None:
+        for j in range(start, len(fs)):
+            if st[0] and st[2] not in vs[j]:
+                continue
+            g = _apply(st, fs[j])
+            if g is not fs[j]:
+                fs[j] = g
+                vs[j] = ip_varset(g[1])
+
+    i = 0
     while True:
         if n == 0:
-            return a + b, ps
-        if not b:
-            return a, ps
+            return tuple(la) + tuple(lb[i:]), tuple(lp)
+        if i == len(lb):
+            return tuple(la), tuple(lp)
         n -= 1
-        f, b = b[0], b[1:]
-        st = step_of(f)
-        if st is None:
-            a = a + (f,)
-        else:
-            a = tuple(st(g) for g in a) + (f,)
-            b = tuple(st(g) for g in b)
-            ps = tuple(st(g) for g in ps)
+        f, vf = lb[i], vb[i]
+        i += 1
+        st = _step(f)
+        if st is not None:
+            run(st, la, va, 0)
+            run(st, lb, vb, i)
+            run(st, lp, vp, 0)
+        la.append(f)
+        va.append(vf)
 
 
 def flv(fl: Sequence[int], i: int) -> int:
