@@ -108,14 +108,14 @@ def test_moddelta_sign_choice_is_the_built_one() -> None:
         want = reference_canonical(expr, modulus)
         got = ModDelta(expr, modulus)
         if want.free_symbols:
-            assert sp.srepr(got) == sp.srepr(ModDelta(want, modulus, evaluate=False))
+            assert same_tree(got, ModDelta(want, modulus, evaluate=False))
         else:
             assert got == (1 if int(want) % modulus == 0 else 0)
 
 
 def same_tree(a: sp.Expr, b: sp.Expr) -> bool:
-    """Same class, hash, srepr and arguments in the same order, recursively."""
-    if type(a) is not type(b) or hash(a) != hash(b) or sp.srepr(a) != sp.srepr(b):
+    """Same class, value, hash and arguments in the same order, recursively."""
+    if type(a) is not type(b) or a != b or hash(a) != hash(b) or str(a) != str(b):
         return False
     return len(a.args) == len(b.args) and all(same_tree(x, y) for x, y in zip(a.args, b.args))
 

@@ -347,15 +347,18 @@ def _residue_terms(terms: _Terms, modulus: int) -> _Terms:
 
 
 def _terms_expr(terms: _Terms) -> sp.Expr:
-    """The sympy sum of :func:`_integer_terms` polynomial ``terms``, built from its canonically
-    sorted arguments (sympy's unevaluated Add and Mul) without flattening."""
+    """The sympy sum of :func:`_integer_terms` polynomial ``terms``, each monomial's symbols in
+    name order, built from its canonically sorted arguments (sympy's unevaluated Add and Mul)
+    without flattening."""
     args: list[sp.Expr] = []
     constant = 0
     for mono, c in terms.items():
         if not mono:
             constant += c
             continue
-        factors = [s if e == 1 else s**e for s, e in mono]
+        factors = [
+            s if e == 1 else s**e for s, e in sorted(mono, key=lambda item: str(item[0].name))
+        ]
         args.append(_unevaluated_Mul(sp.Integer(c), *factors))
     return cast(sp.Expr, _unevaluated_Add(sp.Integer(constant), *args))
 
