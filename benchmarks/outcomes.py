@@ -338,6 +338,8 @@ def _archytaszx(rec: dict[str, Any]) -> tuple[str, str | None, str, str]:
         return "harness_error", s, "harness.generate", detail
     if s == "lean_check":
         return "error", s, "lean.rejected", detail
+    if re.match(r"RuntimeError: [^\n]*?error: MemoryError\b", detail):
+        return "oom", s, "memory.error", detail
     if s == "decide" and re.match(r"RuntimeError: [^\n]*?(?:load|@\w+ =): error:", detail):
         return "error", s, "engine.load_refused", detail
     return "error", s, "engine.exception", detail

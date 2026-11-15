@@ -146,3 +146,22 @@ def test_feynman_refuses_a_boundary_mismatch() -> None:
     half = ir.Circuit(("a", "b"), (ir.Init("a", 0),))
     assert feynman._interface(two) == (2, frozenset({0, 1}))
     assert feynman._interface(three) != feynman._interface(two) != feynman._interface(half)
+
+
+def test_engine_memory_errors_are_oom() -> None:
+    """An ArchytasZX decide stage failing with the engine's RuntimeError around a MemoryError
+    (plain, in a load line, in an @rhs line) is oom; another load error stays load_refused."""
+    from benchmarks import outcomes
+
+    def run(detail: str) -> tuple[str, str]:
+        rec = {"tool": "archytaszx", "outcome": "error"}
+        rec["stages"] = {
+            "generate": {"status": "ok"},
+            "decide": {"status": "error", "detail": detail},
+        }
+        out = outcomes.classify(rec)
+        return out["outcome"], out["cause"]
+
+    for text in ("error: MemoryError", "load: error: MemoryError", "@rhs =: error: MemoryError:"):
+        assert run(f"RuntimeError: {text}\n(detail)") == ("oom", "memory.error")
+    assert run("RuntimeError: load: error: bad token") == ("error", "engine.load_refused")
