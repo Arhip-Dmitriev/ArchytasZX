@@ -213,6 +213,9 @@ class Decision:
     """One (rung, stop code) per rung tried, in ladder order."""
     base_case: Decision | None = None
     """The induction rung's base-case Decision, when the rung reached it."""
+    contracted: tuple[Diagram, Diagram, SymbolicTensor, SymbolicTensor] | None = None
+    """The pair a SYMBOLIC_CONTRACTION verdict decided (without parameters) and its two
+    contractions."""
 
     def __post_init__(self) -> None:
         """Validate the enum and text fields' types."""
@@ -2084,6 +2087,11 @@ def _decide(
                 assumptions=(),
                 samples_checked=checked,
                 floors_used=symbolic.floors_used,
+                contracted=(
+                    None
+                    if symbolic.tensors is None or left.parameters or right.parameters
+                    else (left, right, *symbolic.tensors)
+                ),
             )
         extra: tuple[Mapping[str, CheckAssignmentValue], ...] = ()
         if symbolic.difference is not None:

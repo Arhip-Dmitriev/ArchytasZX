@@ -76,7 +76,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed marker
 
@@ -121,6 +121,9 @@ from archytaszx.semantics.prove import (
     induction_successor,
 )
 from archytaszx.semantics.restrict import Clause, Restriction
+
+if TYPE_CHECKING:
+    from archytaszx.semantics.contract_symbolic import SymbolicTensor
 
 
 class KernelError(Exception):
@@ -487,10 +490,17 @@ def algebraic(a: Diagram, b: Diagram, cert: numfield.FieldCertificate | None = N
 
 
 @_trace.traced("kernel.contraction")
-def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
+def contraction(
+    a: Diagram,
+    b: Diagram,
+    max_steps: int = 64,
+    contracted: tuple[Diagram, Diagram, SymbolicTensor, SymbolicTensor] | None = None,
+) -> Theorem:
     """``a = b`` when the symbolic contractions of both (both doubled when either has a
-    discard), every symbol formal, agree."""
+    discard), every symbol formal, agree; ``contracted`` (a decision's ``(a, b, tensor_a,
+    tensor_b)``) supplies them when it names these very diagrams, both pure."""
     from archytaszx.algebra.scalar import ScalarBudgetError
+    from archytaszx.diagram.mixed import is_pure
     from archytaszx.semantics.check import compare_symbolic
     from archytaszx.semantics.contract_symbolic import (
         SymbolicContractionDomainError,
@@ -499,7 +509,16 @@ def contraction(a: Diagram, b: Diagram, max_steps: int = 64) -> Theorem:
     )
 
     try:
-        left, right = contract_symbolic_pair(a, b, max_steps=max_steps)
+        if (
+            contracted is not None
+            and contracted[0] is a
+            and contracted[1] is b
+            and is_pure(a)
+            and is_pure(b)
+        ):
+            left, right = contracted[2], contracted[3]
+        else:
+            left, right = contract_symbolic_pair(a, b, max_steps=max_steps)
     except (
         SymbolicContractionUnsupportedError,
         SymbolicContractionDomainError,
@@ -1421,7 +1440,7 @@ def from_decision(decision: object, left: Diagram, right: Diagram) -> Theorem:
                 raise KernelError("a saturation edge does not continue the path")
         return trans(out, iso(out.rhs, right))
     if decision.method is DecisionMethod.SYMBOLIC_CONTRACTION:
-        return contraction(left, right)
+        return contraction(left, right, contracted=decision.contracted)
     if decision.method is DecisionMethod.PATH_SUM:
         return path_sum(left, right)
     raise KernelError(f"a {decision.method.value} verdict carries no re-checkable proof")
