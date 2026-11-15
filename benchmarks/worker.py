@@ -162,8 +162,9 @@ def _terminate(signum: int, frame: Any) -> None:
     if now is not None and _oom_start is not None:
         os.write(1, f"{OOMKILL}{now - _oom_start}\n".encode())
     spans = _spans()
-    if spans is not None:
-        data = (SPANS + json.dumps(spans) + "\n").encode()
+    line = None if spans is None else encode_spans(spans)
+    if line is not None:
+        data = (line + "\n").encode()
         while data:
             data = data[os.write(1, data) :]
     lean = sys.modules.get("benchmarks.lean")
@@ -197,6 +198,19 @@ def failure(tool: str, exc: BaseException) -> dict[str, Any]:
             "detail": msg,
         }
     return {"outcome": "harness_error", "reason": f"prepare: {msg}", "detail": msg}
+
+
+def encode_spans(spans: list[Any]) -> str | None:
+    """The @@SPANS line of ``spans``, the memory reserve released first; None on a MemoryError
+    while encoding (the runner then reads the snapshot file)."""
+    import gc
+
+    _reserve.clear()
+    gc.collect()
+    try:
+        return SPANS + json.dumps(spans)
+    except MemoryError:
+        return None
 
 
 def encode_result(out: dict[str, Any]) -> str:

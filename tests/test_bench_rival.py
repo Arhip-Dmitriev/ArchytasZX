@@ -196,6 +196,8 @@ def test_result_encoding_survives_a_memory_error(monkeypatch: pytest.MonkeyPatch
     rec = json.loads(worker.encode_result(out)[len(worker.RESULT) :])
     assert rec["result_encode"] == "MemoryError"
     assert rec["stages"] == {"decide": {"status": "timeout"}}
+    assert worker.encode_spans([{"name": "spans"}]) is None
+    assert worker.encode_spans([{"name": "x"}]) == worker.SPANS + '[{"name": "x"}]'
     killed = {"tool": "archytaszx", "outcome": "error", "killed_in": "decide", "exit": 1}
     detail = 'File "json/encoder.py", line 258, in iterencode\nMemoryError'
     out2 = outcomes.classify({**killed, "kill": "exit 1", "detail": detail})
