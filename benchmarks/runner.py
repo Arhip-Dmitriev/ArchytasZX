@@ -105,6 +105,8 @@ class Context:
     writers: dict[int, log.Writer] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     stale: set[str] = field(default_factory=set)
+    lean_slots: int = 1
+    lean_budget_mb: int = 0
 
     def writer(self) -> log.Writer:
         tid = threading.get_ident()
@@ -269,6 +271,9 @@ def launch(job: dict[str, Any], ctx: Context) -> dict[str, Any]:
         "BENCH_MEMORY_MB": "" if ctx.cgroup else str(ctx.mem_mb),
         "BENCH_SPAN_FILE": job_path + ".spans",
     }
+    if ctx.lean_budget_mb:
+        env["BENCH_LEAN_SLOTS"] = str(ctx.lean_slots)
+        env["BENCH_LEAN_BUDGET_MB"] = str(ctx.lean_budget_mb)
 
     w0 = time.perf_counter()
     proc = subprocess.Popen(
@@ -434,6 +439,7 @@ class UnitRun:
             "machine": self.ctx.machine,
             "calibration": self.ctx.calibration,
             "git": self.ctx.git,
+            "memory_cap_mb": self.ctx.mem_mb,
             **res,
         }
         rec = self.classify(rec)
@@ -844,6 +850,7 @@ def run(
         lean.cgroups(),
         {"commit": env["git_commit"], "dirty": env["git_dirty"]},
     )
+    ctx.lean_slots, ctx.lean_budget_mb = lean.slots(jobs), lean.budget_mb(jobs)
     ctx.stale = stale_units(ctx.done, false_records)
     units = units_of(cfg, false_records)
     i, total = shard
@@ -857,6 +864,7 @@ def run(
     print(
         f"benchmarks: {len(units)} units, config {cfg_hash}, {jobs} workers, "
         f"{ctx.mem_mb} MiB each, "
+        f"{ctx.lean_slots} Lean slots of {ctx.lean_budget_mb} MiB, "
         f"{len(ctx.done)} runs already logged",
         flush=True,
     )

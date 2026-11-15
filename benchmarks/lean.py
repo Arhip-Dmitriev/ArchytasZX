@@ -11,8 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lean runner: ``lake env lean FILE`` in archytaszx/lean, in a systemd scope of its own capped
-at a fraction of the total memory, at most :func:`slots` at a time across every worker.
+"""Lean runner: ``lake env lean FILE`` in archytaszx/lean, at most :func:`slots` at a time across
+every worker of a job, each check killed when its anonymous memory passes :func:`budget_mb` (and
+in a systemd scope of its own capped at OLEAN_MB plus that budget where systemd is available).
 
 The file is checked as a probe copy with ``set_option profiler true``, a ``#print`` marker
 before every declaration and ``#print axioms`` of the final theorem appended. The runner
@@ -42,9 +43,17 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 LEAN_DIR = ROOT / "archytaszx" / "lean"
-LEAN_PEAK_MB = 7000
+OLEAN_MB = 5120
+"""The memory-mapped .olean files of one check (file pages, shared by concurrent checks)."""
+LEAN_WORK_MB = 8192
+"""The smallest anonymous-memory budget of one check."""
+WORKER_RESERVE_MB = 1024
+"""The memory kept per worker outside the Lean slots."""
 MAX_SLOTS = 5
-SLOT_DIR = Path(tempfile.gettempdir())
+WATCH_SECONDS = 0.25
+SHM = Path("/dev/shm")
+SLOT_DIR = SHM if SHM.is_dir() and os.access(SHM, os.W_OK) else Path(tempfile.gettempdir())
+_OOM_TEXT = re.compile(r"out of memory|std::bad_alloc|Cannot allocate memory")
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 _DECL = re.compile(r"^(?:private\s+)?(?:theorem|lemma)\s+([^\s(:{\[]+)", re.MULTILINE)
 _ANY_DECL = re.compile(
@@ -87,20 +96,58 @@ def slurm_memory_mb() -> float | None:
     return float(per_cpu) * int(cpus) if per_cpu and cpus else None
 
 
+def cgroup_memory_mb(
+    root: Path = Path("/sys/fs/cgroup"), proc: Path = Path("/proc/self/cgroup")
+) -> float | None:
+    """The smallest memory limit in MiB of this process's memory cgroup and its ancestors
+    (cgroup v2 memory.max, v1 memory.limit_in_bytes), None when there is none."""
+    try:
+        lines = proc.read_text(encoding="ascii").splitlines()
+    except OSError:
+        return None
+    best: float | None = None
+    for ln in lines:
+        parts = ln.split(":", 2)
+        if len(parts) != 3:
+            continue
+        _, ctrl, rel = parts
+        if ctrl == "":
+            base, name = root, "memory.max"
+        elif "memory" in ctrl.split(","):
+            base, name = root / "memory", "memory.limit_in_bytes"
+        else:
+            continue
+        path = Path(rel.lstrip("/"))
+        for anc in (path, *path.parents):
+            try:
+                text = (base / anc / name).read_text(encoding="ascii").strip()
+            except OSError:
+                continue
+            if text.isdigit() and int(text) < 2**60:
+                mb = int(text) / 2**20
+                best = mb if best is None else min(best, mb)
+    return best
+
+
 def total_memory_mb() -> float:
-    """MemTotal in MiB, at most the Slurm allocation."""
+    """MemTotal in MiB, at most the Slurm allocation and the cgroup memory limit."""
     with open("/proc/meminfo", encoding="ascii") as fh:
         total = next(int(ln.split()[1]) for ln in fh if ln.startswith("MemTotal:")) / 1024
-    alloc = slurm_memory_mb()
-    return min(total, alloc) if alloc else total
+    for cap in (slurm_memory_mb(), cgroup_memory_mb()):
+        if cap:
+            total = min(total, cap)
+    return total
 
 
-def scoped(cmd: list[str], fraction: float) -> list[str]:
-    """``cmd`` in a systemd scope of its own capped at ``fraction`` of the total memory, outside
-    the calling worker's scope; ``cmd`` itself without systemd."""
+def scoped(cmd: list[str], fraction: float, budget: float | None = None) -> list[str]:
+    """``cmd`` in a systemd scope of its own capped at ``fraction`` of the total memory and at
+    OLEAN_MB plus ``budget``, outside the calling worker's scope; ``cmd`` itself without
+    systemd."""
     if not cgroups():
         return cmd
     cap = int(fraction * total_memory_mb())
+    if budget is not None:
+        cap = min(cap, int(OLEAN_MB + budget))
     return [
         "systemd-run",
         "--user",
@@ -132,6 +179,58 @@ def _child_limits(cpu: float | None) -> Callable[[], None]:
     return apply
 
 
+def _children(pid: int) -> list[int]:
+    """The child pids of every thread of ``pid`` (/proc/PID/task/TID/children)."""
+    out: list[int] = []
+    try:
+        tids = os.listdir(f"/proc/{pid}/task")
+    except OSError:
+        return out
+    for tid in tids:
+        try:
+            with open(f"/proc/{pid}/task/{tid}/children", encoding="ascii") as fh:
+                out.extend(int(c) for c in fh.read().split())
+        except OSError:
+            continue
+    return out
+
+
+def tree_anon_mb(pid: int) -> float:
+    """RssAnon in MiB summed over ``pid`` and its descendants."""
+    total, stack, seen = 0, [pid], set()
+    while stack:
+        p = stack.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        try:
+            with open(f"/proc/{p}/status", encoding="ascii", errors="replace") as fh:
+                total += next((int(ln.split()[1]) for ln in fh if ln.startswith("RssAnon:")), 0)
+        except OSError:
+            continue
+        stack.extend(_children(p))
+    return total / 1024
+
+
+def watch(
+    pid: int, limit_mb: float, done: threading.Event, kill: Callable[[], None]
+) -> threading.Event:
+    """A daemon thread that calls ``kill`` once :func:`tree_anon_mb` of ``pid`` passes
+    ``limit_mb``, polled every WATCH_SECONDS until ``done``; the returned event is set on
+    that kill."""
+    over = threading.Event()
+
+    def loop() -> None:
+        while not done.wait(WATCH_SECONDS):
+            if tree_anon_mb(pid) > limit_mb:
+                over.set()
+                kill()
+                return
+
+    threading.Thread(target=loop, daemon=True).start()
+    return over
+
+
 def kill_active() -> None:
     """SIGKILL to the process group of every running Lean check."""
     for pg in list(_ACTIVE):
@@ -146,13 +245,37 @@ def lake() -> str:
     return shutil.which("lake") or str(Path.home() / ".elan" / "bin" / "lake")
 
 
-@functools.cache
-def slots() -> int:
-    """Concurrent Lean checks: the checks of LEAN_PEAK_MB that fit in 85 % of the total memory,
-    between 1 and MAX_SLOTS (BENCH_LEAN_SLOTS overrides)."""
-    if os.environ.get("BENCH_LEAN_SLOTS"):
-        return max(1, int(os.environ["BENCH_LEAN_SLOTS"]))
-    return max(1, min(MAX_SLOTS, int(0.85 * total_memory_mb() // LEAN_PEAK_MB)))
+def plan(total_mb: float, jobs: int, fixed: int | None = None) -> tuple[int, int]:
+    """(slots, per-check budget in MiB): the pool is ``total_mb`` less OLEAN_MB and
+    WORKER_RESERVE_MB per worker; slots = floor(pool / LEAN_WORK_MB) between 1 and MAX_SLOTS
+    (``fixed`` when given), budget = max(LEAN_WORK_MB, floor(pool / slots))."""
+    pool = total_mb - OLEAN_MB - max(1, jobs) * WORKER_RESERVE_MB
+    n = max(1, fixed) if fixed else max(1, min(MAX_SLOTS, int(pool // LEAN_WORK_MB)))
+    return n, max(LEAN_WORK_MB, int(pool // n))
+
+
+def _env_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    return int(value) if value else None
+
+
+def slots(jobs: int | None = None) -> int:
+    """Concurrent Lean checks per job: :func:`plan` of the total memory and ``jobs`` workers
+    (BENCH_JOBS, else 1); BENCH_LEAN_SLOTS overrides."""
+    fixed = _env_int("BENCH_LEAN_SLOTS")
+    if fixed:
+        return max(1, fixed)
+    return plan(total_memory_mb(), jobs or _env_int("BENCH_JOBS") or 1)[0]
+
+
+def budget_mb(jobs: int | None = None) -> int:
+    """The anonymous-memory budget in MiB of one Lean check: :func:`plan`'s for :func:`slots`
+    slots; BENCH_LEAN_BUDGET_MB overrides."""
+    fixed = _env_int("BENCH_LEAN_BUDGET_MB")
+    if fixed:
+        return fixed
+    n_jobs = jobs or _env_int("BENCH_JOBS") or 1
+    return plan(total_memory_mb(), n_jobs, slots(n_jobs))[1]
 
 
 def _slot_scope() -> str:
@@ -162,11 +285,17 @@ def _slot_scope() -> str:
     return f"{job}-{os.environ.get('SLURM_ARRAY_TASK_ID', '0')}" if job else "local"
 
 
+def slot_path(k: int) -> Path:
+    """The lock file of slot ``k`` of this job's pool."""
+    return SLOT_DIR / f"archytaszx-bench-lean-{_slot_scope()}-{k}.lock"
+
+
 def _slot() -> Any:
     """An exclusive lock on one of :func:`slots` slot files, waited for."""
+    n = slots()
     while True:
-        for k in range(slots()):
-            fh = open(SLOT_DIR / f"archytaszx-bench-lean-{_slot_scope()}-{k}.lock", "w")  # noqa: SIM115
+        for k in range(n):
+            fh = open(slot_path(k), "w")  # noqa: SIM115
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
@@ -296,12 +425,15 @@ def check(
     }
     probe = path.with_name(path.stem + "_probe.lean")
     probe.write_text(instrument(source, name), encoding="utf-8")
+    budget = budget_mb()
+    out["lean_budget_mb"] = budget
     slot = _slot()
     proc: subprocess.Popen[str] | None = None
+    done = threading.Event()
     try:
         w0 = time.perf_counter()
         proc = subprocess.Popen(
-            scoped([lake(), "env", "lean", str(probe)], memory_fraction),
+            scoped([lake(), "env", "lean", str(probe)], memory_fraction, budget),
             cwd=LEAN_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -313,13 +445,17 @@ def check(
         _ACTIVE.add(pgid)
         killed = threading.Event()
 
-        def kill() -> None:
-            killed.set()
+        def killpg() -> None:
             try:
                 os.killpg(pgid, signal.SIGKILL)
             except OSError:
                 pass
 
+        def kill() -> None:
+            killed.set()
+            killpg()
+
+        over = watch(pgid, budget, done, killpg)
         timer = threading.Timer(timeout, kill) if timeout else None
         if timer is not None:
             timer.start()
@@ -329,6 +465,7 @@ def check(
             timer.cancel()
         wall = time.perf_counter() - w0
     finally:
+        done.set()
         if proc is not None:
             _ACTIVE.discard(proc.pid)
         slot.close()
@@ -339,12 +476,18 @@ def check(
         "lean_peak_mb": round(usage.ru_maxrss / 1024, 1),
         "decl_ms": declaration_times(text),
     }
-    if killed.is_set() or code in (-signal.SIGXCPU, 128 + signal.SIGXCPU):
+    if over.is_set():
+        out["lean_status"] = "oom"
+        out["lean_kill"] = "budget"
+    elif killed.is_set() or code in (-signal.SIGXCPU, 128 + signal.SIGXCPU):
         out["lean_status"] = "timeout"
     elif code in (-signal.SIGKILL, 128 + signal.SIGKILL):
         out["lean_status"] = "oom"
     elif code == 0 and not re.search(r"(^|\s)error:", text):
         out["lean_status"] = "accepted"
+    elif _OOM_TEXT.search(text):
+        out["lean_status"] = "oom"
+        out["lean_detail"] = text.strip()[-300:]
     else:
         out["lean_status"] = "rejected"
         errors = [ln for ln in text.splitlines() if "error" in ln]

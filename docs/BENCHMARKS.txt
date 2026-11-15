@@ -625,7 +625,7 @@ benchmarks/config.toml.
 Units run platform.jobs at a time; a unit's runs go in order. Every run is a fresh worker process
 (python -m benchmarks.worker) under a memory cap of memory_fraction of the available memory
 (at most the Slurm allocation) divided by the workers (a systemd scope without swap, unloaded on exit even when it failed (--collect), else a soft RLIMIT_AS, which Lean and
-the Quantomatic JVM lift: they are bounded by the Lean slots and -Xmx2g). The worker announces each
+the Quantomatic JVM lift: they are bounded by the Lean slot budget (10.4) and -Xmx2g). The worker announces each
 stage, so a killed run records the stage it died in. The worker and every driver lift Python's
 integer string conversion limit (sys.set_int_max_str_digits(0)) at start.
 
@@ -689,11 +689,37 @@ stops the run with the list of problems.
 
 10.4 Memory
 
-Lean runs in a systemd scope of its own capped at memory_fraction of the total memory, outside
-the worker's scope (whose cap would evict the memory-mapped Mathlib files). At most
-floor(0.85 x total memory / 7000 MiB) checks run at a time across workers (one Lean check peaks
-near 6.7 GiB), between 1 and 5, per Slurm task (else per machine); BENCH_LEAN_SLOTS overrides.
-Peak memory is recorded per stage.
+Lean checks run in slots, per job. The total memory T is the smallest of MemTotal, the Slurm
+allocation (SLURM_MEM_PER_NODE, else SLURM_MEM_PER_CPU x SLURM_CPUS_PER_TASK) and the memory
+limit of the process's cgroup and its ancestors (v2 memory.max, v1 memory.limit_in_bytes). With
+J workers, the pool is
+
+    P = T - 5120 MiB (the memory-mapped .olean files, file pages shared by concurrent checks)
+          - J x 1024 MiB (per worker outside Lean)
+
+and the runner fixes
+
+    slots  = floor(P / 8192 MiB), between 1 and 5
+    budget = max(8192 MiB, floor(P / slots))
+
+and passes both to every worker (BENCH_LEAN_SLOTS, BENCH_LEAN_BUDGET_MB; either set beforehand
+overrides). A 32 GiB Zaratan job with 8 workers has P = 19456 MiB: 2 slots of 9728 MiB; a
+15.4 GiB laptop with 6 workers has 1 slot of 8192 MiB. The minimum budget covers the accepted
+checks measured (peak RSS 4.9 to 10.3 GiB, median 6.7 GiB, of which about 5 GiB are .olean
+pages). A slot is an flock on /dev/shm/archytaszx-bench-lean-SCOPE-K.lock (the temporary
+directory when /dev/shm is not writable), SCOPE the Slurm job and array task (else local), so
+every worker of a job shares the pool on cgroup v1 and v2 alike and two jobs on one node do not.
+
+Each check is bounded by its budget: a watcher thread sums RssAnon over the Lean process tree
+every 0.25 s and SIGKILLs its process group above the budget; the check records lean_status
+oom, lean_kill budget and lean_budget_mb, and the worker goes on with its run. Where systemd
+scopes are available Lean also runs in a scope of its own, outside the worker's scope (whose cap
+would evict the memory-mapped Mathlib files), capped at the smaller of memory_fraction of T and
+5120 MiB plus the budget. No RLIMIT bounds Lean: it reserves about 1 GiB of private writable
+address space per thread (VmData 4.5 GiB with 4 threads and 36 MiB RssAnon), which both
+RLIMIT_AS and RLIMIT_DATA count, so the worker's soft RLIMIT_AS is raised to its hard limit for
+Lean. Lean's own out-of-memory exits (out of memory, std::bad_alloc) are oom too. Every run
+record carries memory_cap_mb, the worker cap. Peak memory is recorded per stage.
 
 10.5 Laptop
 
