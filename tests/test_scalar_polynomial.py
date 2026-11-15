@@ -23,11 +23,14 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx.algebra.scalar import (
     ModDelta,
+    _expand,
+    _FreeSymbols,
     _integer_slope,
     _integer_terms,
     _linear_form,
     _reduce_mod,
     _terms_expr,
+    _xreplace_symbol,
 )
 
 A, B, C, E = (sp.Symbol(f"_i{k}", integer=True, nonnegative=True) for k in range(4))
@@ -137,3 +140,40 @@ def test_terms_expr_is_the_flattened_sum() -> None:
             )
         )
         assert same_tree(_terms_expr(terms), want)
+
+
+def random_polynomial(rng: random.Random, symbols: list[sp.Symbol]) -> sp.Expr:
+    """An expanded integer polynomial of up to six terms in ``symbols``."""
+    expr = sp.Integer(rng.randint(-3, 3))
+    for _t in range(rng.randint(1, 6)):
+        mono = sp.Mul(*(s ** rng.choice((1, 1, 2)) for s in rng.sample(symbols, rng.randint(1, 3))))
+        expr += rng.randint(-5, 5) * mono
+    return sp.expand(expr)
+
+
+def test_delta_substitution_is_xreplace() -> None:
+    rng = random.Random(53)
+    symbols = [A, B, C, E]
+    frees = _FreeSymbols()
+    for _ in range(300):
+        modulus = rng.choice((2, 3, 4, 6))
+        factors = [ModDelta(random_polynomial(rng, symbols), modulus) for _f in range(3)]
+        product = sp.Mul(*factors, sp.exp(sp.I * sp.pi * A / 3))
+        var = rng.choice(symbols)
+        value = random_polynomial(rng, [s for s in symbols if s != var])
+        got = _xreplace_symbol(product, var, value, frees)
+        assert same_tree(got, product.xreplace({var: value}))
+
+
+def test_fixed_expand_is_sympy_expand() -> None:
+    rng = random.Random(59)
+    symbols = [A, B, C, E]
+    for _ in range(200):
+        deltas = [ModDelta(random_polynomial(rng, symbols), 2) for _f in range(3)]
+        for expr in (
+            sp.Mul(*deltas),
+            deltas[0] ** 2 * deltas[1] - 3 * deltas[2] * A,
+            deltas[0] * (deltas[1] + 1),
+            sp.exp(sp.I * sp.pi * (A + B) / 2) * deltas[0],
+        ):
+            assert same_tree(_expand(expr), sp.expand(expr))

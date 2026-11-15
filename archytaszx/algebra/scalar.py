@@ -162,6 +162,14 @@ def _check_scalar_domain(expr: sp.Expr) -> None:
         _check_sum_structure(expr)
         _check_scalar_domain(expr.function)
         return
+    if isinstance(expr, ModDelta):
+        if expr not in _DOMAIN_OK:
+            for arg in expr.args:
+                _check_scalar_domain(arg)
+            if len(_DOMAIN_OK) >= _MEMO_CAP:
+                _DOMAIN_OK.clear()
+            _DOMAIN_OK.add(expr)
+        return
     if (
         expr.is_Add
         or expr.is_Mul
@@ -184,7 +192,7 @@ def _is_pi_rational(arg: sp.Expr) -> bool:
 def cyclotomic_trig(expr: sp.Expr) -> sp.Expr:
     """``expr`` with every cos(q pi) and sin(q pi), q rational, as (z + 1/z)/2 and
     (z - 1/z)/(2 I) for z = exp(I q pi)."""
-    if not expr.has(sp.cos, sp.sin):
+    if not _has_outside_flat(expr, sp.cos, sp.sin):
         return expr
 
     def exact(e: sp.Expr) -> sp.Expr:
@@ -226,9 +234,9 @@ def _normalize(expr: sp.Expr) -> sp.Expr:
     hit = _NORMALIZED.get(expr)
     if hit is not None:
         return hit
-    if expr.atoms(sp.Float):
+    if _has_outside_flat(expr, sp.Float):
         raise ScalarGrammarError(f"Scalar requires an exact expression, got a float in {expr!r}")
-    normalized = _rename_indices(sp.powsimp(sp.expand(cyclotomic_trig(expr)), force=True))
+    normalized = _rename_indices(sp.powsimp(_expand(cyclotomic_trig(expr)), force=True))
     _check_scalar_domain(normalized)
     if len(_NORMALIZED) >= _MEMO_CAP:
         _NORMALIZED.clear()
@@ -242,6 +250,9 @@ _NORMALIZED: dict[sp.Expr, sp.Expr] = {}
 _SIMPLIFIED: dict[tuple[object, ...], object] = {}
 """Results of :meth:`Scalar.simplify` (a Scalar, or the budget error's message) keyed by the
 expression, step budget, ranges and ``enumerate_concrete``."""
+
+_DOMAIN_OK: set[sp.Expr] = set()
+"""ModDelta nodes :func:`_check_scalar_domain` accepted."""
 
 _MEMO_CAP = 1 << 13
 """The most entries :data:`_NORMALIZED` or :data:`_SIMPLIFIED` holds; a full table is emptied
@@ -268,6 +279,118 @@ def _freeze(*exprs: sp.Expr) -> tuple[list[sp.Expr], dict[sp.Symbol, sp.Expr]]:
 
 _Terms = dict[frozenset[tuple[sp.Symbol, int]], int]
 
+_TERMS: dict[sp.Expr, _Terms] = {}
+"""Results of :func:`_integer_terms` on sums, keyed by the sum; never mutated."""
+
+
+def _remember_terms(expr: sp.Expr, terms: _Terms) -> None:
+    """Store ``terms`` as :func:`_integer_terms` of the sum ``expr`` in :data:`_TERMS`."""
+    if len(_TERMS) >= _MEMO_CAP:
+        _TERMS.clear()
+    _TERMS[expr] = terms
+
+
+_FLAT: dict[sp.Expr, bool] = {}
+"""Results of :func:`_flat_polynomial` on sums, keyed by the sum."""
+
+
+def _flat_monomial(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is an integer, a symbol, a positive integer power of a symbol, or a product
+    of these."""
+    if expr.is_Symbol or expr.is_Integer:
+        return True
+    if expr.is_Pow:
+        return bool(expr.base.is_Symbol and expr.exp.is_Integer and int(expr.exp) > 0)
+    if expr.is_Mul:
+        return all(
+            a.is_Symbol
+            or a.is_Integer
+            or (a.is_Pow and a.base.is_Symbol and a.exp.is_Integer and int(a.exp) > 0)
+            for a in expr.args
+        )
+    return False
+
+
+def _flat_polynomial(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is a :func:`_flat_monomial` or a sum of them; memoised in :data:`_FLAT`."""
+    if not expr.is_Add:
+        return _flat_monomial(expr)
+    hit = _FLAT.get(expr)
+    if hit is None:
+        hit = all(_flat_monomial(a) for a in expr.args)
+        if len(_FLAT) >= _MEMO_CAP:
+            _FLAT.clear()
+        _FLAT[expr] = hit
+    return hit
+
+
+def _flat_delta(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is a ModDelta with an integer modulus and a :func:`_flat_polynomial`
+    frequency."""
+    return isinstance(expr, ModDelta) and expr.args[1].is_Integer and _flat_polynomial(expr.args[0])
+
+
+def _fixed_factor(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is an integer, a symbol, a :func:`_flat_delta`, or a positive integer
+    power of a symbol or of a flat delta."""
+    if expr.is_Symbol or expr.is_Integer:
+        return True
+    if expr.is_Pow:
+        return bool(
+            expr.exp.is_Integer
+            and int(expr.exp) > 0
+            and (expr.base.is_Symbol or _flat_delta(expr.base))
+        )
+    return _flat_delta(expr)
+
+
+def _expand_fixed(expr: sp.Expr) -> bool:
+    """Whether ``expr`` is a :func:`_fixed_factor`, a product of them, or a sum of such products
+    (sympy's expand returns it unchanged)."""
+    terms = expr.args if expr.is_Add else (expr,)
+    return all(
+        all(_fixed_factor(f) for f in t.args) if t.is_Mul else _fixed_factor(t) for t in terms
+    )
+
+
+def _expand(expr: sp.Expr) -> sp.Expr:
+    """``sympy.expand(expr)``, returning ``expr`` itself when :func:`_expand_fixed`."""
+    if _expand_fixed(expr):
+        return expr
+    return cast(sp.Expr, sp.expand(expr))
+
+
+def _outside_flat(expr: sp.Expr, test: Callable[[sp.Expr], bool]) -> bool:
+    """Whether a node of ``expr`` passes ``test``, reading no node inside the frequency of a
+    :func:`_flat_delta`."""
+    stack = [expr]
+    while stack:
+        node = stack.pop()
+        if test(node):
+            return True
+        if not _flat_delta(node):
+            stack.extend(node.args)
+    return False
+
+
+def _delta_atoms(expr: sp.Expr) -> list[sp.Expr]:
+    """The distinct ModDelta nodes of ``expr`` (``expr.atoms(ModDelta)``) in first-visit order,
+    reading no node inside the frequency of a :func:`_flat_delta`."""
+    found: dict[sp.Expr, None] = {}
+    stack = [expr]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ModDelta):
+            found[node] = None
+        if not _flat_delta(node):
+            stack.extend(node.args)
+    return list(found)
+
+
+def _has_outside_flat(expr: sp.Expr, *types: type) -> bool:
+    """``expr.has(*types)`` for classes ``types`` that no flat polynomial holds."""
+    return _outside_flat(expr, lambda node: isinstance(node, types))
+
 
 def _integer_terms(expr: sp.Expr) -> _Terms | None:
     """The nonzero integer coefficient of each monomial (a set of ``(symbol, exponent)``) of a
@@ -278,6 +401,9 @@ def _integer_terms(expr: sp.Expr) -> _Terms | None:
     if expr.is_Integer:
         return {frozenset(): int(expr)} if expr != 0 else {}
     if expr.is_Add:
+        hit = _TERMS.get(expr)
+        if hit is not None:
+            return hit
         out: _Terms = {}
         for arg in expr.args:
             part = _integer_terms(arg)
@@ -289,6 +415,7 @@ def _integer_terms(expr: sp.Expr) -> _Terms | None:
                     out[mono] = total
                 else:
                     out.pop(mono, None)
+        _remember_terms(expr, out)
         return out
     if expr.is_Mul:
         product: _Terms = {frozenset(): 1}
@@ -360,7 +487,10 @@ def _terms_expr(terms: _Terms) -> sp.Expr:
             s if e == 1 else s**e for s, e in sorted(mono, key=lambda item: str(item[0].name))
         ]
         args.append(_unevaluated_Mul(sp.Integer(c), *factors))
-    return cast(sp.Expr, _unevaluated_Add(sp.Integer(constant), *args))
+    out = cast(sp.Expr, _unevaluated_Add(sp.Integer(constant), *args))
+    if out.is_Add and all(terms.values()):
+        _remember_terms(out, terms)
+    return out
 
 
 def _fast_reduce_mod(expr: sp.Expr, modulus: int) -> sp.Expr | None:
@@ -486,6 +616,50 @@ _OFF_FACTOR_MAX = 64
 """The largest divisor :func:`_off_factor` tries."""
 
 
+def _delta_of_terms(terms: _Terms, m: sp.Expr) -> sp.Expr | None:
+    """:meth:`ModDelta.eval` of a frequency whose :func:`_integer_terms` are ``terms`` at an
+    integer modulus ``m != 1``: the value, the canonical delta, or None for the frequency kept."""
+    if not terms:
+        return sp.Integer(1)
+    if set(terms) == {frozenset()}:
+        return sp.Integer(1 if terms[frozenset()] % int(m) == 0 else 0)
+    chosen = _canonical_choice(terms, int(m))[2]
+    if chosen is None:
+        chosen, canonical = _canonical_terms(terms, int(m))
+        return cast(sp.Expr, ModDelta(canonical, m)) if chosen != terms else None
+    if chosen == terms:
+        return None
+    canonical = _terms_expr(chosen)
+    if any(chosen):
+        return cast(sp.Expr, ModDelta(canonical, m, evaluate=False))
+    return cast(sp.Expr, ModDelta(canonical, m))
+
+
+def _substitute_terms(terms: _Terms, var: sp.Symbol, value: _Terms) -> _Terms:
+    """The :func:`_integer_terms` polynomial ``terms`` with ``var`` replaced by the polynomial
+    ``value``."""
+    out: _Terms = {}
+    powers: dict[int, _Terms] = {1: value}
+    for mono, c in terms.items():
+        e = next((e for s, e in mono if s == var), 0)
+        if not e:
+            part: _Terms = {mono: c}
+        else:
+            if e not in powers:
+                power: _Terms = {frozenset(): 1}
+                for _ in range(e):
+                    power = _times(power, value)
+                powers[e] = power
+            part = _times({frozenset(p for p in mono if p[0] != var): c}, powers[e])
+        for m2, c2 in part.items():
+            total = out.get(m2, 0) + c2
+            if total:
+                out[m2] = total
+            else:
+                out.pop(m2, None)
+    return out
+
+
 class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
     """``[j == 0 mod m]`` for an integer-valued ``j`` and a positive integer modulus ``m``."""
 
@@ -499,20 +673,7 @@ class ModDelta(sp.Function):  # type: ignore[misc]  # sympy is untyped
         if m.is_Integer and m != 1 and j.free_symbols:
             terms = _integer_terms(j)
             if terms is not None:
-                if not terms:
-                    return sp.Integer(1)
-                if set(terms) == {frozenset()}:
-                    return sp.Integer(1 if terms[frozenset()] % int(m) == 0 else 0)
-                chosen = _canonical_choice(terms, int(m))[2]
-                if chosen is None:
-                    chosen, canonical = _canonical_terms(terms, int(m))
-                    return cast(sp.Expr, cls(canonical, m)) if chosen != terms else None
-                if chosen == terms:
-                    return None
-                canonical = _terms_expr(chosen)
-                if any(chosen):
-                    return cast(sp.Expr, cls(canonical, m, evaluate=False))
-                return cast(sp.Expr, cls(canonical, m))
+                return _delta_of_terms(terms, m)
         args_j = j
         j = sp.expand(j)
         if j == 0 or m == 1:
@@ -624,7 +785,7 @@ def _collapse_residues(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp
     """``expr`` with each ``x mod m`` read as ``x`` where only ``x mod m`` matters: an exponent
     ``2 pi i a (x mod m)`` with ``a*m`` an integer, a delta ``[a (x mod m) + r == 0 mod M]`` with
     ``a*m/M`` an integer, or ``x`` bounded in ``[0, m)`` by ``ranges``."""
-    if not expr.has(ModResidue):
+    if not _has_outside_flat(expr, ModResidue):
         return expr
 
     def phase(node: sp.Expr) -> sp.Expr:
@@ -663,6 +824,8 @@ def _collapse_residues(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp
 def _pin_residues(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
     """``term`` with each free ``x mod m`` replaced by an index ``v`` of range ``m`` that a delta
     factor ``[c*v + L == 0 mod M]`` of the term, ``m | M``, ``c`` a unit, pins to ``x mod m``."""
+    if not _has_outside_flat(term, ModResidue):
+        return term
     bound = _bound_symbols(term)
     atoms = [
         a for a in term.atoms(ModResidue) if a.args[1].is_Integer and not a.free_symbols & bound
@@ -705,7 +868,7 @@ def _rename_indices(expr: sp.Expr) -> sp.Expr:
     sums that differ only in their bound name cancel; a counter running over the whole
     expression would give them different names and leave the difference standing.
     """
-    if not expr.has(sp.Sum):
+    if not _has_outside_flat(expr, sp.Sum):
         return expr
     if _named_by_depth(expr):
         return expr
@@ -1230,7 +1393,9 @@ def _radix_split_concrete(
     """``[t*A + B == 0 mod P*t]`` as ``[B == 0 mod t] * [A == 0 mod P]`` for a divisor ``t`` of the
     concrete ``modulus`` splitting ``frequency``'s integer terms, when ``ranges`` keep
     ``|B| < t``, else None."""
-    pieces = sp.Add.make_args(sp.expand(frequency))
+    if modulus < 4 or not any(modulus % t == 0 for t in range(2, math.isqrt(modulus) + 1)):
+        return None
+    pieces = sp.Add.make_args(_expand(frequency))
     for t in range(2, modulus):
         if modulus % t:
             continue
@@ -1817,6 +1982,46 @@ def _never(delta: ModDelta, ranges: Mapping[sp.Symbol, sp.Expr]) -> bool:
     return greatest.is_negative is True and sp.expand(modulus + least).is_positive is True
 
 
+class _FreeSymbols:
+    """``expr.free_symbols`` remembered per expression object."""
+
+    def __init__(self) -> None:
+        self._seen: dict[int, tuple[sp.Expr, set[sp.Symbol]]] = {}
+
+    def __call__(self, expr: sp.Expr) -> set[sp.Symbol]:
+        hit = self._seen.get(id(expr))
+        if hit is None or hit[0] is not expr:
+            hit = (expr, expr.free_symbols)
+            self._seen[id(expr)] = hit
+        return hit[1]
+
+
+def _xreplace_symbol(expr: sp.Expr, var: sp.Symbol, value: sp.Expr, frees: _FreeSymbols) -> sp.Expr:
+    """``expr.xreplace({var: value})``, each ModDelta factor with an integer modulus and an integer
+    polynomial frequency rebuilt from its substituted :func:`_integer_terms`."""
+    if not expr.is_Mul:
+        return _xreplace_factor(expr, var, value, frees)
+    if not any(var in frees(f) for f in expr.args):
+        return expr
+    return cast(sp.Expr, expr.func(*(_xreplace_factor(f, var, value, frees) for f in expr.args)))
+
+
+def _xreplace_factor(
+    factor: sp.Expr, var: sp.Symbol, value: sp.Expr, frees: _FreeSymbols
+) -> sp.Expr:
+    """``factor.xreplace({var: value})`` for one factor of :func:`_xreplace_symbol`."""
+    if var not in frees(factor):
+        return factor
+    if isinstance(factor, ModDelta) and factor.args[1].is_Integer and factor.args[1] != 1:
+        terms = _integer_terms(factor.args[0])
+        lift = _integer_terms(value)
+        if terms is not None and lift is not None:
+            out = _delta_of_terms(_substitute_terms(terms, var, lift), factor.args[1])
+            if out is not None:
+                return out
+    return cast(sp.Expr, factor.xreplace({var: value}))
+
+
 def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None = None) -> sp.Expr:
     """A product with its implied ModDelta factors dropped and its linear ModDelta factors in
     echelon form, each pivot substituted into the rest wherever that rest is periodic in it, or
@@ -1836,6 +2041,8 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
     if not by_modulus:
         return term
     rest = cast(sp.Expr, sp.Mul(*others))
+    frees = _FreeSymbols()
+    summed = bool(_bound_symbols(rest))
     emitted: list[sp.Expr] = []
     substitutions: list[tuple[sp.Symbol, sp.Expr, sp.Expr, bool]] = []
     for modulus in sorted(by_modulus, key=sp.default_sort_key):
@@ -1843,23 +2050,28 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
         for var in sorted(pivots, key=lambda symbol: str(symbol.name)):
             value = pivots[var]
             exact = _exact_pivot(var, value, modulus, ranges)
+            factors = sp.Mul.make_args(rest)
+            bound = _bound_symbols(rest) if summed else set()
             if (
-                var in rest.free_symbols
-                and var not in _bound_symbols(rest)
-                and not _bound_symbols(rest) & value.free_symbols
-                and (exact or _is_periodic_in(rest, var, modulus))
+                any(var in frees(f) for f in factors)
+                and var not in bound
+                and not bound & value.free_symbols
+                and (
+                    exact
+                    or all(var not in frees(f) or _is_periodic_in(f, var, modulus) for f in factors)
+                )
             ):
-                rest = rest.xreplace({var: value})
+                rest = _xreplace_symbol(rest, var, value, frees)
             emitted.append(ModDelta(var - value, modulus))
             substitutions.append((var, value, modulus, exact))
         emitted.extend(ModDelta(row, modulus) for row in residual)
     if len(by_modulus) > 1:
         for var, value, modulus, exact in substitutions:
             emitted = [
-                delta.xreplace({var: value})
+                _xreplace_symbol(delta, var, value, frees)
                 if isinstance(delta, ModDelta)
                 and delta.args[1] != modulus
-                and var in delta.free_symbols
+                and var in frees(delta)
                 and (exact or _is_periodic_in(delta, var, modulus))
                 else delta
                 for delta in emitted
@@ -1870,13 +2082,19 @@ def _canonical_deltas(term: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr] | None 
 
 def _canonical_top(expr: sp.Expr, ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
     """:func:`_pin_residues` and :func:`_canonical_deltas` over every top-level term of ``expr``."""
-    collapsed = expr.replace(
-        lambda node: _delta_base(node) is not None and node.is_Pow,
-        lambda node: node.base,
+    collapsed = (
+        expr.replace(_is_delta_power, lambda node: node.base)
+        if _outside_flat(expr, _is_delta_power)
+        else expr
     )
-    terms = sp.Add.make_args(sp.expand(collapsed))
+    terms = sp.Add.make_args(_expand(collapsed))
     pinned = (_collapse_residues(_pin_residues(t, ranges), ranges) for t in terms)
-    return cast(sp.Expr, sp.expand(sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
+    return _expand(cast(sp.Expr, sp.Add(*(_canonical_deltas(t, ranges) for t in pinned))))
+
+
+def _is_delta_power(node: sp.Expr) -> bool:
+    """Whether ``node`` is a positive integer power of a ModDelta."""
+    return _delta_base(node) is not None and bool(node.is_Pow)
 
 
 def _pull_constants(expr: sp.Expr) -> sp.Expr:
@@ -1885,7 +2103,7 @@ def _pull_constants(expr: sp.Expr) -> sp.Expr:
     Canonical placement: an index-free factor always sits outside, so two expressions
     differing only in whether a constant was carried into the summand compare equal.
     """
-    if expr.args:
+    if expr.args and not _flat_delta(expr):
         new_args = list(expr.args)
         for position, arg in enumerate(expr.args):
             if isinstance(expr, sp.Sum) and position != 0:
@@ -1936,6 +2154,8 @@ def _reduce_integer_phase(arg: sp.Expr) -> sp.Expr:
 
 def _reduce_integer_phases(expr: sp.Expr) -> sp.Expr:
     """Apply :func:`_reduce_integer_phase` to every exponential's argument in ``expr``."""
+    if not _has_outside_flat(expr, sp.exp):
+        return expr
     return cast(
         sp.Expr,
         expr.replace(
@@ -1950,7 +2170,7 @@ def _close_all(
 ) -> tuple[sp.Expr, bool]:
     """Close every closable Sum bottom-up, sizing free indices by ``ranges``; reports whether
     anything changed."""
-    if not expr.has(sp.Sum):
+    if not _has_outside_flat(expr, sp.Sum):
         return expr, False
     changed = False
     inner = ranges
@@ -2001,7 +2221,7 @@ def _case_delta_symbol(node: sp.Expr) -> tuple[sp.Symbol, int] | None:
 def _split_cases(expr: sp.Expr, budget: list[int], ranges: Mapping[sp.Symbol, sp.Expr]) -> sp.Expr:
     """``expr`` as ``Sum_rho [d == rho mod L] * expr|_{d = L*q + rho}``, each case simplified."""
     moduli: dict[sp.Symbol, int] = {}
-    for node in expr.atoms(ModDelta):
+    for node in _delta_atoms(expr):
         found = _case_delta_symbol(node)
         if found is not None:
             symbol, modulus = found
@@ -2042,7 +2262,7 @@ def _simplify_expr(
         expr, changed = _close_all(split, budget, ranges)
         changed = changed or radix_changed
         expr = _canonical_top(_reduce_integer_phases(expr), ranges)
-        expr = _pull_constants(sp.powsimp(sp.expand(expr), force=True))
+        expr = _pull_constants(sp.powsimp(_expand(expr), force=True))
         if not changed:
             break
     return _split_cases(expr, budget, ranges)
