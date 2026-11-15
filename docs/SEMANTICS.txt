@@ -409,6 +409,19 @@ ascending with g = v A + B and B (A + B) = 0, v is determined on the support as 
 substituted out of g and the earlier rows. The rows and the residual g (the Canon's support,
 empty when g = 1) replace the eliminated constraints; g = 0 is the zero form. Monomials are
 bitmasks inside boolean_eliminate.
+Parity terms. A Boolean lift has at most XOR_LIFT_TERMS = 2^20 terms (_xor_lift raises past
+it; PhasePoly.substitute then leaves the phase as it was, and [BSub] for a low digit is not
+taken). For compare_path_sums, canonical(ps, parity=True) stops substituting at the first
+pivot whose lift raises and keeps every term on that pivot or a later one as a parity term
+c [g] (Canon.parity), g read at a support point through the rows; an atom whose lift raises is
+kept the same way. Such forms are compared by parity_difference: the phase of the left form
+minus that of the right, both sides' parity terms included, so equal terms cancel before any
+lift; the shared rows' pivots are then substituted into what is left. A difference equal to the
+ratio of the constants is EQUAL; otherwise the entries are evaluated exactly at the indicator
+point of each monomial of the difference and at the witness points, each free-variable set
+once, at most PARITY_POINTS = 4096 points, and UNEQUAL is reported at the first that differs.
+The path-sum Lean export and the symbolic contraction read canonical(ps) without parity terms
+and keep refusing such sums.
 
 Residual form (residual_form). A reduced, nonzero sum without a canonical form gets its
 constraints eliminated as above (kept as raw sorted constraints when they have no pivots),

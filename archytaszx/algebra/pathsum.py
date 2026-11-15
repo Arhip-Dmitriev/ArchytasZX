@@ -24,8 +24,8 @@ Fractions throughout; no sum is ever enumerated.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from functools import lru_cache
 from itertools import permutations, product
@@ -435,15 +435,16 @@ class PhasePoly:
         return out
 
     def substitute(self, var: int, value: F2Poly) -> None:
-        """Replace ``var`` by the Boolean lift of the F_2 polynomial ``value``."""
+        """Replace ``var`` by the Boolean lift of the F_2 polynomial ``value``; unchanged when
+        the lift raises."""
         terms = self.terms
         hit = [(m, c) for m, c in terms.items() if var in m]
-        for m, _c in hit:
-            del terms[m]
         if not hit:
             return
         dens = math.lcm(*(c.denominator for _m, c in hit))
         lift = list(_xor_lift(sorted(value, key=_mono_key), dens).items())
+        for m, _c in hit:
+            del terms[m]
         g = math.lcm(dens, *{c.denominator for c in terms.values()})
         num: dict[Mono, int] = {}
         zero = Fraction(0)
@@ -506,6 +507,15 @@ def _xor_lift(items: Sequence[Mono], modulus: int) -> dict[Mono, int]:
 
 XOR_LIFT_TERMS = 1 << 20
 """The most terms :func:`_xor_lift` holds before it refuses the lift."""
+
+
+def _lift_bound(items: int, modulus: int) -> int:
+    """An upper bound on the terms of the XOR lift of ``items`` monomials mod ``modulus``: the
+    unions of at most j of them, j the products whose coefficient (-2)^(j-1) is nonzero."""
+    two = (modulus & -modulus).bit_length() - 1
+    if modulus >> two != 1 or two >= items:
+        return 1 << items
+    return sum(math.comb(items, j) for j in range(1, two + 1))
 
 
 def _lift_terms(items: Sequence[Mono], coeff: Fraction) -> list[tuple[Mono, Fraction]]:
@@ -788,14 +798,25 @@ def _try_low_digit(
             pre.append((u, value))
     pre = [(u, b) for u, b in pre if not any(w in {x for x, _b in pre} for m in b for w in m)]
     if pre:
+        done = 0
         for u, value in pre:
-            ps.phase.substitute(u, value)
+            try:
+                ps.phase.substitute(u, value)
+            except PathSumUnsupported:
+                break
             ps.trace.append(Step("bsub", u, None, value))
-        return True
+            done += 1
+        return done > 0
     v = _boundary_pivot(ps, b0)
     if v is None:
         return False
     top = digits[-1]
+    hit = [c.denominator for m, c in ps.phase.terms.items() if v in m and top not in m]
+    if hit and _lift_bound(len(b0) - 1, math.lcm(*hit)) > XOR_LIFT_TERMS:
+        try:
+            _xor_lift(sorted(b0 - {frozenset({v})}, key=_mono_key), math.lcm(*hit))
+        except PathSumUnsupported:
+            return False
     _drop_terms(ps, occ[top])
     ps.constraints.append(b0)
     ps.path.discard(top)
@@ -1348,7 +1369,9 @@ class Canon:
     """A reduced path sum with no path variable: ``const * exp(2 pi i phase) * [rows]``. Each
     row sets a pivot boundary variable to an F_2 polynomial (monomials, XOR) of the free
     variables; the phase is over the free variables; ``support``, when not empty, is the
-    indicator (an F_2 polynomial) the free variables must satisfy."""
+    indicator (an F_2 polynomial) the free variables must satisfy; ``parity`` holds phase terms
+    ``c [g]`` kept unlifted, g an F_2 polynomial of boundary variables, pivots read through the
+    rows."""
 
     zero: bool
     rows: tuple[tuple[int, tuple[tuple[int, ...], ...]], ...]
@@ -1357,6 +1380,7 @@ class Canon:
     boundary: tuple[int, ...]
     support: tuple[tuple[int, ...], ...] = ()
     amps: tuple[tuple[tuple[tuple[int, ...], ...], Cyclo], ...] = ()
+    parity: tuple[tuple[tuple[tuple[int, ...], ...], Fraction], ...] = ()
 
     def same(self, other: Canon) -> bool:
         """Whether both forms carry the same data, so denote one function."""
@@ -1371,6 +1395,7 @@ class Canon:
                 a[0] == b[0] and a[1] == b[1] for a, b in zip(self.amps, other.amps, strict=True)
             )
             and self.phase == other.phase
+            and self.parity == other.parity
             and self.const == other.const
         )
 
@@ -1391,6 +1416,9 @@ class Canon:
             (c for m, c in self.phase if all(values[v] for v in m)),
             Fraction(0),
         )
+        for g, c in self.parity:
+            if _f2_eval(g, values):
+                turns += c
         return scale * self.const * Cyclo.root(turns)
 
     def support_point(self) -> dict[int, int]:
@@ -1561,10 +1589,12 @@ def _zero_canon(boundary: tuple[int, ...]) -> Canon:
     return Canon(True, (), (), Cyclo.rational(0), boundary)
 
 
-def canonical(ps: PathSum) -> Canon | None:
+def canonical(ps: PathSum, parity: bool = False) -> Canon | None:
     """The canonical form of a reduced path sum; None when a path variable remains. Constraints
     without a degree-one pivot go through boolean_eliminate; atoms of one base on complementary
-    exponents go into the constant, and phase monomials zero on the support are dropped."""
+    exponents go into the constant, and phase monomials zero on the support are dropped. With
+    ``parity``, once a pivot's XOR lift raises, every term on that pivot or a later one is kept
+    unsubstituted as a parity term, and so is an atom whose lift raises."""
     if ps.is_zero:
         return _zero_canon(ps.boundary)
     if ps.path:
@@ -1585,8 +1615,19 @@ def canonical(ps: PathSum) -> Canon | None:
     pivots = cast(list[tuple[int, F2Poly]], rows)
 
     phase = ps.phase.copy()
-    for pivot, rest in pivots:
-        phase.substitute(pivot, rest)
+    held: dict[F2Poly, Fraction] = {}
+    for i, (pivot, rest) in enumerate(pivots):
+        if not parity:
+            phase.substitute(pivot, rest)
+            continue
+        try:
+            phase.substitute(pivot, rest)
+        except PathSumUnsupported:
+            raw = {p for p, _r in pivots[i:]}
+            for m, c in [(m, c) for m, c in phase.terms.items() if m & raw]:
+                del phase.terms[m]
+                _parity_add(held, frozenset({m}), c)
+            break
     amps = list(zip((a for a, _f in ps.amps), _f2_substitute_all([f for _a, f in ps.amps], pivots)))
     const = with_sqrt2(ps.const, ps.sqrt2)
     merged: dict[F2Poly, Cyclo] = {}
@@ -1600,7 +1641,14 @@ def canonical(ps: PathSum) -> Canon | None:
         if len(terms) == 1 and abs(terms[0][1]) == 1:
             ((e, q),) = terms
             turns = (Fraction(e, a.n) + (Fraction(1, 2) if q < 0 else 0)) % 1
-            for mono, coeff in _lift_terms(sorted(f, key=_mono_key), turns):
+            try:
+                lifted = _lift_terms(sorted(f, key=_mono_key), turns)
+            except PathSumUnsupported:
+                if not parity:
+                    raise
+                _parity_add(held, f, turns)
+                continue
+            for mono, coeff in lifted:
                 phase.add(mono, coeff)
             continue
         merged[f] = merged[f] * a if f in merged else a
@@ -1612,7 +1660,7 @@ def canonical(ps: PathSum) -> Canon | None:
     if support != ONE:
         for mono in [m for m in phase.terms if m and not f2_mul(frozenset({m}), support)]:
             del phase.terms[mono]
-    c0 = phase.terms.pop(EMPTY, Fraction(0))
+    c0 = phase.terms.pop(EMPTY, Fraction(0)) + held.pop(ONE, Fraction(0))
     if c0:
         const = const * Cyclo.root(c0)
     if const.is_zero:
@@ -1631,7 +1679,26 @@ def canonical(ps: PathSum) -> Canon | None:
         ps.boundary,
         () if support == ONE else tuple(sorted(tuple(sorted(m)) for m in support)),
         amp_key,
+        _parity_key(held),
     )
+
+
+def _parity_add(held: dict[F2Poly, Fraction], g: F2Poly, c: Fraction) -> None:
+    """Add the parity term ``c [g]`` to ``held``, coefficients mod 1."""
+    if not g:
+        return
+    v = _mod1(held.get(g, Fraction(0)) + c)
+    if v:
+        held[g] = v
+    else:
+        held.pop(g, None)
+
+
+def _parity_key(
+    held: Mapping[F2Poly, Fraction],
+) -> tuple[tuple[tuple[tuple[int, ...], ...], Fraction], ...]:
+    """Parity terms as sorted (sorted monomials, coefficient) pairs."""
+    return tuple(sorted((tuple(sorted(tuple(sorted(m)) for m in g)), c) for g, c in held.items()))
 
 
 def support_lift(support: F2Poly) -> tuple[Mono, Mono] | None:
@@ -1857,6 +1924,98 @@ def _solve(
     return values
 
 
+def parity_difference(a: Canon, b: Canon) -> PhasePoly | None:
+    """The phase of ``a`` minus that of ``b``, parity terms included (equal terms cancel first),
+    the shared rows' pivots substituted and monomials zero on the support dropped; None when the
+    forms differ in rows, support or atoms, or a lift raises."""
+    if a.zero or b.zero or (a.rows, a.support, a.amps) != (b.rows, b.support, b.amps):
+        return None
+    diff = PhasePoly()
+    for x, sign in ((a, 1), (b, -1)):
+        for m, c in x.phase:
+            diff.add(m, sign * c)
+        for g, c in x.parity:
+            if len(g) == 1:
+                diff.add(g[0], sign * c)
+                continue
+            try:
+                items = sorted((frozenset(m) for m in g), key=_mono_key)
+                lifted = _lift_terms(items, _mod1(sign * c))
+            except PathSumUnsupported:
+                return None
+            for mono, coeff in lifted:
+                diff.add(mono, coeff)
+    try:
+        for pivot, rest in a.rows:
+            diff.substitute(pivot, frozenset(frozenset(m) for m in rest))
+    except PathSumUnsupported:
+        return None
+    if a.support:
+        support = frozenset(frozenset(m) for m in a.support)
+        for mono in [m for m in diff.terms if m and not f2_mul(frozenset({m}), support)]:
+            del diff.terms[mono]
+    return diff
+
+
+PARITY_POINTS = 4096
+"""The most boundary points :func:`parity_points` yields."""
+
+
+def parity_points(a: Canon, b: Canon, diff: PhasePoly | None) -> Iterator[dict[int, int]]:
+    """Boundary points for forms with parity terms, each free-variable set once per form: the
+    indicator of each monomial of ``diff`` by degree, then those of :func:`witness_points`;
+    at most PARITY_POINTS."""
+    seen: set[tuple[bool, Mono]] = set()
+
+    def indicators(x: Canon, monos: Iterable[Iterable[int]]) -> Iterator[dict[int, int]]:
+        pivots = {p for p, _r in x.rows}
+        for m in sorted((frozenset(m) - pivots for m in monos), key=_mono_key):
+            if (x is a, m) not in seen:
+                seen.add((x is a, m))
+                yield x.complete({v: 1 for v in m})
+
+    def points() -> Iterator[dict[int, int]]:
+        x = b if a.zero else a
+        if diff is not None and not x.zero:
+            yield from indicators(x, diff.terms)
+        for x, y in ((a, b), (b, a)):
+            if x.zero:
+                continue
+            yield from indicators(x, [()])
+            if x.affine and not y.zero and y.affine:
+                for p, rest in y.rows:
+                    row = ({p} ^ {m[0] for m in rest if m}, (sum(1 for m in rest if not m) + 1) % 2)
+                    got = _solve(x.rows, x.boundary, row)
+                    if got is not None:
+                        yield got
+            yield from indicators(x, [m for m, _c in x.phase])
+            yield from indicators(x, [m for _p, rest in x.rows for m in rest])
+            yield from indicators(x, [m for g, _c in x.parity for m in g])
+
+    for count, point in enumerate(points(), 1):
+        yield point
+        if count >= PARITY_POINTS:
+            return
+
+
+def canon_evaluator(x: Canon) -> Callable[[Mapping[int, int]], Cyclo]:
+    """:meth:`Canon.value` with each monomial a frozenset read against the point's ones."""
+    stripped = replace(x, phase=(), parity=())
+    phase = [(frozenset(m), c) for m, c in x.phase]
+    parity = [([frozenset(m) for m in g], c) for g, c in x.parity]
+
+    def value(values: Mapping[int, int]) -> Cyclo:
+        base = stripped.value(values)
+        if base.is_zero:
+            return base
+        ones = frozenset(v for v, bit in values.items() if bit)
+        turns = sum((c for m, c in phase if m <= ones), Fraction(0))
+        turns += sum((c for g, c in parity if sum(1 for m in g if m <= ones) % 2), Fraction(0))
+        return base * Cyclo.root(turns)
+
+    return value
+
+
 def witness_points(a: Canon, b: Canon) -> list[dict[int, int]]:
     """Boundary points to evaluate when two canonical forms differ: support points of each, a
     point of each affine support outside the other, and the indicator of each free monomial."""
@@ -1872,6 +2031,7 @@ def witness_points(a: Canon, b: Canon) -> list[dict[int, int]]:
                 if got is not None:
                     points.append(got)
         monos = {m for m, _c in x.phase} | {m for _p, rest in x.rows for m in rest}
+        monos |= {m for g, _c in x.parity for m in g}
         for mono in sorted(monos, key=lambda t: (len(t), t)):
             points.append(x.complete({v: 1 for v in mono}))
     return points
@@ -2882,6 +3042,7 @@ __all__ = [
     "Residual",
     "Step",
     "boolean_eliminate",
+    "canon_evaluator",
     "canonical",
     "canonical_qudit",
     "constant",
@@ -2894,6 +3055,8 @@ __all__ = [
     "entry_enumerated_qudit",
     "gauss_sum",
     "legendre",
+    "parity_difference",
+    "parity_points",
     "reduce",
     "reduce_qudit",
     "residual_form",

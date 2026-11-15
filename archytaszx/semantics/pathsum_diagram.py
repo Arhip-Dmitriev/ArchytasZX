@@ -29,6 +29,7 @@ from itertools import combinations, islice, product
 
 from archytaszx.algebra.pathsum import (
     SQRT2,
+    Canon,
     Cyclo,
     F2Poly,
     ModPoly,
@@ -36,6 +37,7 @@ from archytaszx.algebra.pathsum import (
     PathSumUnsupported,
     PhasePoly,
     QuditPathSum,
+    canon_evaluator,
     canonical,
     canonical_qudit,
     constant,
@@ -43,6 +45,8 @@ from archytaszx.algebra.pathsum import (
     entry_enumerated_qudit,
     f2_add,
     f2_substitute,
+    parity_difference,
+    parity_points,
     reduce,
     reduce_qudit,
     residual_form,
@@ -632,7 +636,7 @@ def compare_path_sums(
     raw_l, raw_r = from_diagram(left), from_diagram(right)
     assert isinstance(raw_l, PathSum) and isinstance(raw_r, PathSum)
     ps_l, ps_r = reduce(raw_l), reduce(raw_r)
-    canon_l, canon_r = canonical(ps_l), canonical(ps_r)
+    canon_l, canon_r = canonical(ps_l, parity=True), canonical(ps_r, parity=True)
     if canon_l is None or canon_r is None:
         left_n = len(ps_l.path)
         right_n = len(ps_r.path)
@@ -658,6 +662,8 @@ def compare_path_sums(
             f"path sums reduce to one canonical form ({len(ps_l.trace)} and "
             f"{len(ps_r.trace)} rule steps)",
         )
+    if canon_l.parity or canon_r.parity:
+        return _compare_parity(canon_l, canon_r, ps_l, ps_r, bits_l)
     for point in witness_points(canon_l, canon_r):
         a, b = canon_l.value(point), canon_r.value(point)
         if a != b:
@@ -669,6 +675,40 @@ def compare_path_sums(
                 b,
             )
     return PathSumComparison("unknown", "path_sum: the canonical forms differ at no tried point")
+
+
+def _compare_parity(
+    canon_l: Canon, canon_r: Canon, ps_l: PathSum, ps_r: PathSum, bits: list[int]
+) -> PathSumComparison:
+    """Canonical forms with parity terms: ``equal`` when their phase difference
+    (:func:`parity_difference`) is the constants' ratio, else ``unequal`` at the first of
+    :func:`parity_points` where the entries differ, else ``unknown``."""
+    diff = parity_difference(canon_l, canon_r)
+    if diff is not None and not set(diff.terms) - {frozenset()}:
+        c0 = diff.terms.get(frozenset(), Fraction(0))
+        if canon_l.const * Cyclo.root(c0) == canon_r.const:
+            return PathSumComparison(
+                "equal",
+                f"path sums reduce to canonical forms whose phases differ by zero, with "
+                f"{len(canon_l.parity)} and {len(canon_r.parity)} unlifted parity terms "
+                f"({len(ps_l.trace)} and {len(ps_r.trace)} rule steps)",
+            )
+    eval_l, eval_r = canon_evaluator(canon_l), canon_evaluator(canon_r)
+    tried = 0
+    for point in parity_points(canon_l, canon_r, diff):
+        tried += 1
+        if eval_l(point) != eval_r(point):
+            return PathSumComparison(
+                "unequal",
+                "path sums reduce to different canonical forms (with unlifted parity terms)",
+                index_tuple(bits, point),
+                canon_l.value(point),
+                canon_r.value(point),
+            )
+    return PathSumComparison(
+        "unknown",
+        f"path_sum: the canonical forms with parity terms differ at none of {tried} tried points",
+    )
 
 
 _RESIDUAL_POINTS = 64
