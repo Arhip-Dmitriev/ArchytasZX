@@ -167,3 +167,26 @@ def test_stale_positional_leg_order_is_refused() -> None:
     run = {"tool": "qcec", "outcome": "ok", "verdict": "equal", "n": 3, "d": 2, "stages": {}}
     out = outcomes.classify(run, false=rec, stale=True)
     assert out["outcome"] == "invalid_point" and out["cause"] == "false_record_mismatch"
+
+
+def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
+    """quantum_hamming_family/encoding single_entry: n = 6 (63 outputs, 2^63) is unsupported,
+    unsupported.phase_table_bound; n = 3 builds."""
+    from benchmarks import breaks, outcomes, subject, translate
+
+    recs = [
+        {
+            "equation": "quantum_hamming_family/encoding",
+            "kind": "single_entry",
+            "label": "phase where every output is 1",
+            "params": {"d_min": 2},
+            "witness": {},
+            "equal_where": {"outputs_not_all": 1},
+            "differs_at": [],
+        }
+    ]
+    inst = breaks.false_instance(recs[0], _insts())
+    assert subject.circuit_at(inst, 3, 2) is not None
+    with pytest.raises(translate.Unsupported) as exc:
+        subject.circuit_at(inst, 6, 2)
+    assert outcomes.unsupported_code(str(exc.value)) == "phase_table_bound"

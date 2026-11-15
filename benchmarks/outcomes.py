@@ -66,6 +66,7 @@ UNSUPPORTED: dict[str, str] = {
     "register_count_mismatch": "gate across registers of different counts",
     "phase_table_on_register": "a phase table on a register",
     "phase_table_dims": "a phase table needs literal concrete dimensions",
+    "phase_table_bound": "above the engine loader's bound of",
     "phase_table_irrational": "a phase table entry is not a rational number of turns",
     "controlled_mixed_dims": "a controlled gate between wires of different dimensions",
     "multi_controlled_dims": "a multi-controlled gate needs literal concrete dimensions",

@@ -40,7 +40,7 @@ from typing import Any
 import numpy as np
 import sympy as sp
 
-from benchmarks import ir, subject
+from benchmarks import ir, subject, translate
 
 TOL = 1e-8
 DENSE_LIMIT = 1 << 18
@@ -209,6 +209,18 @@ def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> 
     if not outs or any(c.count(q) is not None for q in _outputs(c)):
         raise ValueError("single_entry needs single outputs only (no register output)")
 
+    from archytaszx.repl.parser import _MAX_NUMERAL_DIGITS
+
+    total = 1
+    for q in outs:
+        v = sp.sympify(str(c.dim(q))).subs({sp.Symbol("d"): dv, sp.Symbol("n"): nv})
+        total *= int(v) if v.is_Integer else 0
+    if len(str(total)) > _MAX_NUMERAL_DIGITS:
+        raise TableUnsupported(
+            f"a phase table of {len(str(total))} digits on {len(outs)} outputs: above the "
+            f"engine loader's bound of {_MAX_NUMERAL_DIGITS} digits"
+        )
+
     def f(x: tuple[int, ...]) -> Fraction:
         return Fraction(1, 2) if all(v == 1 for v in x) else Fraction(0)
 
@@ -217,6 +229,11 @@ def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> 
 
 class NotApplicable(ValueError):
     """The edit names no gate of the circuit at this point."""
+
+
+class TableUnsupported(NotApplicable, translate.Unsupported):
+    """The single_entry phase table's dimension at this point has more digits than the engine
+    loader reads; every tool records the point unsupported."""
 
 
 GATE_KINDS = ("wrong_phase", "missing_gate", "swapped_control_target")
