@@ -192,6 +192,19 @@ def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     assert outcomes.unsupported_code(str(exc.value)) == "phase_table_bound"
 
 
+def test_single_entry_at_a_symbolic_probe() -> None:
+    """single_entry on amplitude_amplification/main at the probe n = None, d = 2 builds and has
+    a witness."""
+    import random
+
+    from benchmarks import breaks, config
+
+    cfg = config.load(None, [], "laptop")
+    inst = _insts()["amplitude_amplification/main"]
+    rec = breaks.try_kind("single_entry", inst, cfg, random.Random(1))
+    assert rec is not None and rec.witness["n"] is None and rec.witness["d"] == 2
+
+
 def test_scalar_only_tiny_phase_is_skipped() -> None:
     """tiny_phase on bernstein_vazirani_phase/main (x holds |1>, the phase is global) yields no
     variant; on cx_inverse/main the first variant stands, not proportional."""

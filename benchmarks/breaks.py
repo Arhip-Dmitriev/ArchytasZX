@@ -211,9 +211,10 @@ def _e_common(c: ir.Circuit, p: dict[str, Any], inst: Any, nv: Any, dv: Any) -> 
 
     from archytaszx.repl.parser import _MAX_NUMERAL_DIGITS
 
+    known = {sp.Symbol(k): v for k, v in (("d", dv), ("n", nv)) if v is not None}
     total = 1
     for q in outs:
-        v = sp.sympify(str(c.dim(q))).subs({sp.Symbol("d"): dv, sp.Symbol("n"): nv})
+        v = sp.sympify(str(c.dim(q))).subs(known)
         total *= int(v) if v.is_Integer else 0
     if len(str(total)) > _MAX_NUMERAL_DIGITS:
         raise TableUnsupported(
