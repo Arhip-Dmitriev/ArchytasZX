@@ -84,3 +84,37 @@ def test_a_root_of_huge_order_is_compared_without_its_cyclotomic() -> None:
     assert (one + Cyclo(1400, {700: Fraction(1)})).is_zero
     assert Cyclo.root(Fraction(1, n)) != Cyclo.root(Fraction(2, n))
     assert Cyclo.root(Fraction(3, n)) == Cyclo.root(Fraction(3, n) + 1)
+
+
+def _substitute_by_adds(p: PhasePoly, var: int, value: frozenset[frozenset[int]]) -> None:
+    from archytaszx.algebra.pathsum import _mono_key, _xor_lift
+
+    hit = [(m, c) for m, c in p.terms.items() if var in m]
+    for m, _c in hit:
+        del p.terms[m]
+    if not hit:
+        return
+    lift = _xor_lift(sorted(value, key=_mono_key), 840)
+    for m, c in hit:
+        for mono, k in lift.items():
+            if c.numerator * k % c.denominator:
+                p.add((m - {var}) | mono, Fraction(c.numerator * k % c.denominator, c.denominator))
+
+
+def test_substitute_matches_term_by_term_adds_in_value_and_order() -> None:
+    rng = random.Random(7)
+    dens = (2, 4, 8, 3, 6)
+    for _ in range(300):
+        p = PhasePoly()
+        for _t in range(rng.randint(1, 25)):
+            mono = frozenset(rng.sample(range(6), rng.randint(0, 3)))
+            p.add(mono, Fraction(rng.randint(1, 7), rng.choice(dens)))
+        var = rng.randrange(6)
+        value = frozenset(
+            frozenset(rng.sample([v for v in range(6) if v != var], rng.randint(0, 2)))
+            for _m in range(rng.randint(1, 4))
+        )
+        want = p.copy()
+        _substitute_by_adds(want, var, value)
+        p.substitute(var, value)
+        assert list(p.terms.items()) == list(want.terms.items())

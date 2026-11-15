@@ -436,20 +436,41 @@ class PhasePoly:
 
     def substitute(self, var: int, value: F2Poly) -> None:
         """Replace ``var`` by the Boolean lift of the F_2 polynomial ``value``."""
-        hit = [(m, c) for m, c in self.terms.items() if var in m]
+        terms = self.terms
+        hit = [(m, c) for m, c in terms.items() if var in m]
         for m, _c in hit:
-            del self.terms[m]
+            del terms[m]
         if not hit:
             return
         dens = math.lcm(*(c.denominator for _m, c in hit))
-        lift = _xor_lift(sorted(value, key=_mono_key), dens)
+        lift = list(_xor_lift(sorted(value, key=_mono_key), dens).items())
+        g = math.lcm(dens, *{c.denominator for c in terms.values()})
+        num: dict[Mono, int] = {}
+        zero = Fraction(0)
+        kept: dict[int, list[tuple[Mono, int]]] = {}
         for m, c in hit:
             rest = m - {var}
-            den, a = c.denominator, c.numerator
-            for mono, k in lift.items():
-                v = a * k % den
+            den = c.denominator
+            a = c.numerator * (g // den)
+            items = kept.get(den)
+            if items is None:
+                items = kept[den] = [(mono, k) for mono, k in lift if k % den]
+            for mono, k in items:
+                key = rest | mono
+                cur = num.get(key)
+                if cur is None:
+                    old = terms.get(key)
+                    cur = 0 if old is None else old.numerator * (g // old.denominator)
+                v = (cur + a * k) % g
+                num[key] = v
                 if v:
-                    self.add(rest | mono, Fraction(v, den))
+                    if key not in terms:
+                        terms[key] = zero
+                elif cur:
+                    del terms[key]
+        for key, v in num.items():
+            if v:
+                terms[key] = Fraction(v, g)
 
     def assign(self, values: Mapping[int, int]) -> None:
         """Set each variable of ``values`` to its 0 or 1."""
