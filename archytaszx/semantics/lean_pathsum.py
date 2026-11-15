@@ -393,6 +393,10 @@ def _quartered(*raws: PathSum) -> bool:
     return any(st.rule in rules for raw in raws for st in reduce(raw).trace)
 
 
+PROOF_OPTIONS = ["set_option maxRecDepth 100000", "set_option maxHeartbeats 0"]
+"""The options of an :func:`export_proof` file."""
+
+
 def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
     """The Lean file proving that both diagrams' path sums agree at every boundary assignment;
     raises :class:`PathSumUnsupported` when they do not reduce to one canonical form or a
@@ -429,7 +433,8 @@ def export_proof(left: Diagram, right: Diagram, name: str = "pair") -> str:
         "",
         "open ArchytasZX ArchytasZX.PSem",
         "",
-        *(["set_option maxRecDepth 100000", ""] if support else []),
+        *PROOF_OPTIONS,
+        "",
         f"def sL : Data := {_data_term(raw_l, m)}",
         f"def sR : Data := {_data_term(raw_r, m)}",
         f"def stepsL : List Step := [{', '.join(steps_l)}]",

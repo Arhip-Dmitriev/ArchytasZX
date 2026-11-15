@@ -186,6 +186,13 @@ def test_qubit_sums_are_refused() -> None:
         export_qudit_proof(wire, wire)
 
 
+def test_a_qubit_proof_sets_its_lean_options() -> None:
+    wire = parse_dsl("a = Z(1 -> 1, literal 2)")
+    lines = export_proof(wire, wire).splitlines()
+    assert "set_option maxRecDepth 100000" in lines
+    assert "set_option maxHeartbeats 0" in lines
+
+
 def _mathlib() -> bool:
     return os.path.isdir(os.path.join(L.lean_project(), ".lake", "packages", "mathlib"))
 
