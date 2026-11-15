@@ -63,6 +63,7 @@ import enum
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from types import MappingProxyType
 from typing import TypeAlias, cast
 
@@ -717,7 +718,11 @@ def compare_symbolic(
         )
     ranges = left.ranges() if left.ranges() == right.ranges() else None
     difference = (left.entry - right.entry).simplify(max_steps=max_steps, ranges=ranges)
-    if difference.is_zero or _vanishes(difference.to_sympy(), ranges):
+    if (
+        difference.is_zero
+        or _vanishes(difference.to_sympy(), ranges)
+        or _vanishes(difference.to_sympy(), ranges, resum=True)
+    ):
         return ComparisonResult(mode, True, "entries are exactly equal with d formal", 0.0)
     if dimension_floors:
         difference = difference.with_dimension_floors(dimension_floors).simplify(
@@ -768,12 +773,14 @@ class EntryWitness:
 _MAX_CASES = 4096
 
 
-def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int = 1) -> bool:
+def _vanishes(
+    expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int = 1, resum: bool = False
+) -> bool:
     """Whether ``expr`` is zero once powers are written through exp, exponentials split and
     reduced mod one turn, every complete set of residue deltas mod a concrete modulus with one
-    coefficient is replaced by that coefficient, or, over one symbol, by :func:`_uw_zero`, and,
-    failing that, in each case of an index whose concrete range equals the modulus of a delta it
-    appears in alone."""
+    coefficient is replaced by that coefficient, with ``resum`` also :func:`_resummed`, or,
+    over one symbol, by :func:`_uw_zero`, and, failing that, in each case of an index whose
+    concrete range equals the modulus of a delta it appears in alone."""
     if expr.atoms(sp.Sum):
         return False
     single = {
@@ -788,6 +795,8 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     expr = _square_moduli(_constant_bases(expr))
     folded = _fold_residues(_reduce_exponents(sp.expand(expr.rewrite(sp.exp), power_exp=True)))
     folded = sp.expand(folded)
+    if resum and folded != 0:
+        folded = _resummed(folded)
     if folded == 0:
         return True
     if not folded.free_symbols:
@@ -803,7 +812,7 @@ def _vanishes(expr: sp.Expr, ranges: Mapping[str, Dim] | None = None, cases: int
     if cases * size > _MAX_CASES:
         return False
     return all(
-        _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size)
+        _vanishes(folded.xreplace({symbol: sp.Integer(v)}), ranges, cases * size, resum)
         for v in range(size)
     )
 
@@ -1226,6 +1235,335 @@ def _fold_residues(expr: sp.Expr) -> sp.Expr:
         else:
             out.extend(by_residue.values())
     return sp.Add(*out)
+
+
+_TurnPoly: TypeAlias = "dict[tuple[int, ...], Fraction]"
+_LATTICE_MAX = 4096
+_ORBIT_MAX = 4096
+_RESUM_ROUNDS = 4
+
+
+def _resummed(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with deltas in :func:`_normal_delta` form, each character orbit
+    ``c sum_k e(b + k g)`` replaced by ``c r e(b) [r g == 0 mod r]`` (:func:`_resum_orbits`),
+    complete residue sets folded (:func:`_fold_residue_sets`) and implied deltas dropped
+    (:func:`_absorb_deltas`), repeated to a fixed point."""
+    gens = tuple(sorted((s for s in expr.free_symbols if s.is_integer), key=lambda s: str(s.name)))
+    if not gens:
+        return expr
+    for _ in range(_RESUM_ROUNDS):
+        step = sp.expand(_normal_deltas(expr))
+        step = _reduce_exponents(step)
+        step = sp.expand(_resum_orbits(step, gens))
+        step = sp.expand(_absorb_deltas(_normal_deltas(_fold_residue_sets(step))))
+        if step == expr:
+            break
+        expr = step
+    return expr
+
+
+def _normal_delta(argument: sp.Expr, modulus: int) -> sp.Expr | None:
+    """``[argument == 0 mod modulus]`` with the common divisor of the coefficients and the
+    modulus divided out, 0 when the non-constant coefficients share a divisor of the modulus
+    the constant lacks, else times the inverse of its first unit coefficient (linear monomials
+    by symbol name, then the rest) with coefficients reduced mod the modulus; None when the
+    argument is not an integer polynomial over integer symbols."""
+    gens = tuple(sorted(argument.free_symbols, key=lambda s: str(s.name)))
+    if not gens or not all(s.is_integer for s in gens):
+        return None
+    try:
+        poly = sp.Poly(argument, *gens)
+    except sp.PolynomialError:
+        return None
+    terms = poly.terms()
+    if not all(c.is_Integer for _m, c in terms):
+        return None
+    coeffs = {m: int(c) for m, c in terms}
+    zero = (0,) * len(gens)
+    g = math.gcd(modulus, *coeffs.values())
+    modulus //= g
+    coeffs = {m: c // g for m, c in coeffs.items()}
+    if modulus == 1:
+        return sp.Integer(1)
+    if math.gcd(modulus, *(c for m, c in coeffs.items() if m != zero)) > 1:
+        return sp.Integer(0)
+    order = sorted(
+        (m for m in coeffs if m != zero),
+        key=lambda m: (sum(m) != 1, tuple(-e for e in m)),
+    )
+    unit = next((coeffs[m] for m in order if math.gcd(coeffs[m], modulus) == 1), 1)
+    inverse = pow(unit, -1, modulus)
+    expr = sp.Add(
+        *(
+            ((c * inverse) % modulus) * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True)))
+            for m, c in coeffs.items()
+        )
+    )
+    return cast(sp.Expr, ModDelta(expr, sp.Integer(modulus)))
+
+
+def _normal_deltas(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each power of a delta read as the delta and each delta at an integer
+    modulus in :func:`_normal_delta` form."""
+
+    def normal(delta: sp.Expr) -> sp.Expr:
+        argument, modulus = delta.args
+        if not modulus.is_Integer or int(modulus) < 2:
+            return delta
+        found = _normal_delta(argument, int(modulus))
+        return delta if found is None else found
+
+    expr = expr.replace(
+        lambda e: isinstance(e, sp.Pow) and isinstance(e.base, ModDelta) and e.exp.is_positive,
+        lambda e: e.base,
+    )
+    return expr.replace(lambda e: isinstance(e, ModDelta), normal)
+
+
+def _absorb_deltas(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each delta mod m of a term dropped when another delta of the term, mod a
+    multiple of m, read mod m (:func:`_normal_delta`) is that delta."""
+
+    def absorb(term: sp.Expr) -> sp.Expr:
+        factors = list(sp.Mul.make_args(term))
+        deltas = [f for f in factors if isinstance(f, ModDelta) and f.args[1].is_Integer]
+        if len(deltas) < 2:
+            return term
+        for small in deltas:
+            m = int(small.args[1])
+            for big in deltas:
+                if big is small or int(big.args[1]) % m or int(big.args[1]) == m:
+                    continue
+                if _normal_delta(big.args[0], m) == small:
+                    factors.remove(small)
+                    return absorb(sp.Mul(*factors))
+        return term
+
+    return sp.Add(*(absorb(t) for t in sp.Add.make_args(expr)))
+
+
+def _fold_residue_sets(expr: sp.Expr) -> sp.Expr:
+    """``expr`` with each sum ``c [x + r_0] + ... + c [x + r_(m-1)]`` over all residues mod a
+    concrete m replaced by ``c``, ``c`` possibly holding other deltas; groups taken in order of
+    their text, each term in at most one."""
+    terms = list(sp.Add.make_args(expr))
+    groups: dict[tuple[sp.Expr, sp.Symbol, int], dict[int, int]] = {}
+    for index, term in enumerate(terms):
+        factors = sp.Mul.make_args(term)
+        for delta in factors:
+            if not isinstance(delta, ModDelta) or not delta.args[1].is_Integer:
+                continue
+            argument, modulus = delta.args
+            free = sorted(argument.free_symbols, key=lambda x: str(x))
+            if len(free) != 1 or sp.expand(argument).coeff(free[0]) != 1:
+                continue
+            offset = sp.expand(argument - free[0])
+            if not offset.is_Integer:
+                continue
+            rest = sp.Mul(*(f for f in factors if f is not delta))
+            groups.setdefault((rest, free[0], int(modulus)), {}).setdefault(
+                int(offset) % int(modulus), index
+            )
+    used: set[int] = set()
+    out: list[sp.Expr] = []
+    for key in sorted(groups, key=str):
+        rest, _symbol, modulus = key
+        members = groups[key]
+        if len(members) != modulus or any(i in used for i in members.values()):
+            continue
+        used.update(members.values())
+        out.append(rest)
+    out.extend(t for i, t in enumerate(terms) if i not in used)
+    return sp.Add(*out)
+
+
+def _turns(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> _TurnPoly | None:
+    """``expr`` as a polynomial over ``gens`` with rational coefficients reduced mod 1; None
+    when it is not one."""
+    try:
+        poly = sp.Poly(expr, *gens)
+    except sp.PolynomialError:
+        return None
+    out: _TurnPoly = {}
+    for monomial, c in poly.terms():
+        if not c.is_Rational:
+            return None
+        out[monomial] = Fraction(int(c.p), int(c.q))
+    return _mod_one(out)
+
+
+def _mod_one(p: _TurnPoly) -> _TurnPoly:
+    """``p`` with each coefficient reduced to [0, 1), zero coefficients dropped."""
+    out: _TurnPoly = {}
+    for m, c in p.items():
+        r = c - math.floor(c)
+        if r:
+            out[m] = r
+    return out
+
+
+def _combine(p: _TurnPoly, q: _TurnPoly, k: int = 1) -> _TurnPoly:
+    """``p + k q`` reduced mod 1."""
+    out = dict(p)
+    for m, c in q.items():
+        out[m] = out.get(m, Fraction(0)) + k * c
+    return _mod_one(out)
+
+
+def _turn_key(p: _TurnPoly) -> frozenset[tuple[tuple[int, ...], Fraction]]:
+    """A hashable form of a reduced ``p``."""
+    return frozenset(p.items())
+
+
+def _turn_expr(p: _TurnPoly, gens: tuple[sp.Symbol, ...]) -> sp.Expr:
+    """``p`` as a sympy polynomial."""
+    return sp.Add(
+        *(
+            sp.Rational(c.numerator, c.denominator)
+            * sp.Mul(*(s**e for s, e in zip(gens, m, strict=True)))
+            for m, c in p.items()
+        )
+    )
+
+
+def _phase_split(term: sp.Expr, gens: tuple[sp.Symbol, ...]) -> tuple[sp.Expr, _TurnPoly] | None:
+    """``term`` as ``c e(T)``: ``c`` a positive rational times the factors that are not unit
+    constants or exponentials of polynomials over ``gens``, ``T`` their turns mod 1."""
+    numeric, rest = term.as_coeff_Mul()
+    if not numeric.is_Rational:
+        return None
+    phase: _TurnPoly = {}
+    zero = (0,) * len(gens)
+    if numeric < 0:
+        numeric = -numeric
+        phase = _combine(phase, {zero: Fraction(1, 2)})
+    kept: list[sp.Expr] = []
+    for factor in sp.Mul.make_args(rest):
+        if factor == sp.I:
+            phase = _combine(phase, {zero: Fraction(1, 4)})
+            continue
+        if isinstance(factor, sp.exp):
+            turns = sp.expand(factor.args[0] / (2 * sp.pi * sp.I))
+            if turns.free_symbols <= set(gens):
+                found = _turns(turns, gens)
+                if found is not None:
+                    phase = _combine(phase, found)
+                    continue
+        kept.append(factor)
+    return numeric * sp.Mul(*kept), phase
+
+
+def _lattice(
+    coefficient: sp.Expr, gens: tuple[sp.Symbol, ...]
+) -> dict[frozenset[tuple[tuple[int, ...], Fraction]], _TurnPoly]:
+    """The turns ``sum_j t_j A_j / m_j`` mod 1, by key, for the deltas ``[A_j == 0 mod m_j]``
+    of ``coefficient``: integers wherever ``coefficient`` is nonzero; only 0 past
+    _LATTICE_MAX."""
+    gensets: list[tuple[_TurnPoly, int]] = []
+    for f in sp.Mul.make_args(coefficient):
+        if not isinstance(f, ModDelta) or not f.args[1].is_Integer:
+            continue
+        if not f.args[0].free_symbols <= set(gens):
+            continue
+        m = int(f.args[1])
+        found = _turns(f.args[0] / m, gens)
+        if found is not None:
+            gensets.append((found, m))
+    elements: list[_TurnPoly] = [{}]
+    size = 1
+    for g, m in gensets:
+        size *= m
+        if size > _LATTICE_MAX:
+            return {_turn_key({}): {}}
+        elements = [_combine(e, g, t) for e in elements for t in range(m)]
+    out: dict[frozenset[tuple[tuple[int, ...], Fraction]], _TurnPoly] = {}
+    for e in elements:
+        out.setdefault(_turn_key(e), e)
+    return out
+
+
+def _resum_orbits(expr: sp.Expr, gens: tuple[sp.Symbol, ...]) -> sp.Expr:
+    """``expr`` with each set of terms ``c e(b + k g + l_k)``, k = 0..r-1, ``l_k`` in the
+    :func:`_lattice` of ``c`` and ``r`` the least with ``r g`` in it, replaced by
+    ``c r e(b) [M r g == 0 mod M r]``, ``M`` the least making ``M r g`` integral; groups of
+    equal ``c`` in order of their text, generators by decreasing ``r``."""
+    groups: dict[sp.Expr, list[tuple[_TurnPoly, sp.Expr]]] = {}
+    out: list[sp.Expr] = []
+    for term in sp.Add.make_args(expr):
+        split = _phase_split(term, gens)
+        if split is None:
+            out.append(term)
+            continue
+        groups.setdefault(split[0], []).append((split[1], term))
+    for coefficient in sorted(groups, key=str):
+        members = sorted(groups[coefficient], key=lambda e: str(e[1]))
+        if len(members) < 2:
+            out.extend(t for _p, t in members)
+            continue
+        out.extend(_orbits(coefficient, members, gens))
+    return sp.Add(*out)
+
+
+def _orbits(
+    coefficient: sp.Expr,
+    members: list[tuple[_TurnPoly, sp.Expr]],
+    gens: tuple[sp.Symbol, ...],
+) -> list[sp.Expr]:
+    """The terms of one :func:`_resum_orbits` group after resumming its orbits."""
+    lattice = _lattice(coefficient, gens)
+    shifts = [{}, *(e for k, e in lattice.items() if k)]
+    by_key: dict[frozenset[tuple[tuple[int, ...], Fraction]], list[int]] = {}
+    for i, (p, _t) in enumerate(members):
+        by_key.setdefault(_turn_key(p), []).append(i)
+    used = [False] * len(members)
+    out: list[sp.Expr] = []
+
+    def find(target: _TurnPoly, taken: set[int]) -> int | None:
+        for shift in shifts:
+            for i in by_key.get(_turn_key(_combine(target, shift)), ()):
+                if not used[i] and i not in taken:
+                    return i
+        return None
+
+    for j, (base, _term) in enumerate(members):
+        if used[j]:
+            continue
+        candidates: list[tuple[int, str, _TurnPoly]] = []
+        for i, (p, _t) in enumerate(members):
+            if i == j or used[i]:
+                continue
+            g = _combine(p, base, -1)
+            if not g:
+                continue
+            bound = math.lcm(*(c.denominator for c in g.values()))
+            if bound > _ORBIT_MAX:
+                continue
+            r = next(r for r in range(2, bound + 1) if _turn_key(_combine({}, g, r)) in lattice)
+            candidates.append((r, str(sorted(g.items())), g))
+        candidates.sort(key=lambda c: (-c[0], c[1]))
+        for r, _text, g in candidates:
+            taken = {j}
+            for k in range(1, r):
+                hit = find(_combine(base, g, k), taken)
+                if hit is None:
+                    break
+                taken.add(hit)
+            if len(taken) != r:
+                continue
+            for i in taken:
+                used[i] = True
+            scaled = {m: r * c for m, c in g.items()}
+            big = math.lcm(*(c.denominator for c in scaled.values()))
+            argument = _turn_expr({m: big * c for m, c in scaled.items()}, gens)
+            out.append(
+                coefficient
+                * r
+                * sp.exp(2 * sp.pi * sp.I * _turn_expr(base, gens))
+                * ModDelta(argument, sp.Integer(big * r))
+            )
+            break
+    out.extend(t for i, (_p, t) in enumerate(members) if not used[i])
+    return out
 
 
 def _pin(delta: ModDelta, pins: Mapping[sp.Symbol, int]) -> tuple[sp.Symbol, int] | None:
