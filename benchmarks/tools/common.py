@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from benchmarks import ir, subject
+from benchmarks.outcomes import is_wrong
 
 
 def expected(inst: Any) -> str:
@@ -65,7 +66,7 @@ def rederive_float(rec: dict[str, Any]) -> dict[str, Any]:
         return rec
     verdict = "equal" if float(diff) <= FLOAT_ATOL else "unequal"
     oc = verdict_outcome(bool(rec.get("truth")), "ok", verdict)
-    return {**rec, "verdict": verdict, "outcome": oc, "wrong": oc == "wrong"}
+    return {**rec, "verdict": verdict, "outcome": oc, "wrong": is_wrong(oc)}
 
 
 def point(job: dict[str, Any]) -> tuple[int | None, int | None]:

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks import config, log, stats
-from benchmarks.outcomes import NOT_SCORED
+from benchmarks.outcomes import NOT_SCORED, is_wrong
 
 B3_ONLY = ("tket",)
 STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check", "check")
@@ -91,7 +91,7 @@ def upgrade(rec: dict[str, Any]) -> dict[str, Any]:
         "verdict": verdict,
         "certified": certified,
         "outcome": oc,
-        "wrong": oc == "wrong",
+        "wrong": is_wrong(oc),
     }
 
 
@@ -196,7 +196,7 @@ def points_table(runs: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[s
             "phase": first.get("phase"),
             "outcome": first.get("outcome"),
             "verdict": first.get("verdict"),
-            "wrong": first.get("outcome") == "wrong",
+            "wrong": is_wrong(first.get("outcome")),
             "runs": len(rs),
             "unstable": first.get("outcome") == "ok" and len(ok) < len(rs),
             "noisy": rc["mode"] == "adaptive" and len(rs) >= int(rc["max_runs"]),
@@ -279,7 +279,7 @@ def counts_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             slot["points"] += 1
         if oc == "ok":
             slot["proved" if r["truth"] else "refuted"] += 1
-        elif oc == "wrong":
+        elif is_wrong(oc):
             slot["wrongly_refuted" if r["truth"] else "wrongly_accepted"] += 1
         else:
             slot[oc or "none"] += 1
@@ -327,7 +327,7 @@ def equations_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         acc[key]["all"].add(r["equation"])
         if r["outcome"] == "ok":
             acc[key]["settled"].add(r["equation"])
-        if r["outcome"] == "wrong":
+        if is_wrong(r["outcome"]):
             acc[key]["wrong"].add(r["equation"])
     return [
         {
@@ -616,8 +616,8 @@ def main(cfg: dict[str, Any]) -> None:
         f"-> {out}"
     )
     for r in rows:
-        if r["tool"] == "archytaszx" and r["outcome"] in ("wrong", "wrong (uncertified)"):
-            tag = "" if r["wrong"] else " (uncertified)"
+        if r["tool"] == "archytaszx" and is_wrong(r["outcome"]):
+            tag = "" if r["outcome"] == "wrong" else " (uncertified)"
             print(
                 f"  ENGINE WRONG VERDICT{tag}: {r['equation']} {r['version']} "
                 f"n={r['n']} d={r['d']}: {r['verdict']}"

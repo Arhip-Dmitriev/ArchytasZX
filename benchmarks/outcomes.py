@@ -40,6 +40,7 @@ OUTCOMES = (
 STAGES = ("generate", "decide", "certificate", "lean_export", "lean_check", "prepare", "rival")
 NOT_SCORED = ("harness_error", "invalid_point")
 VERDICT_OUTCOMES = ("ok", "uncertified", "wrong", "wrong (uncertified)", "unknown")
+WRONG_OUTCOMES = ("wrong", "wrong (uncertified)")
 EXACT_TOOLS = ("archytaszx", "pyzx", "quizx", "cirq", "qiskit")
 UP_TO_SCALAR_TOOLS = ("qcec", "dizx", "feynman", "autoq_para", "quantomatic")
 SCALAR_KINDS = ("scalar_small_one", "global_phase", "box_boundary")
@@ -327,6 +328,11 @@ NEAR_CAP = 0.9
 """The fraction of the worker memory cap from which a peak counts as at the cap."""
 
 
+def is_wrong(outcome: object) -> bool:
+    """Whether ``outcome`` is a wrong verdict, certified or not (WRONG_OUTCOMES)."""
+    return outcome in WRONG_OUTCOMES
+
+
 def near_cap(peak_mb: object, rec: dict[str, Any]) -> bool:
     """Whether ``peak_mb`` is at least NEAR_CAP of the record's worker memory cap."""
     cap = rec.get("memory_cap_mb") or DEFAULT_CAP_MB
@@ -542,10 +548,8 @@ def classify(
         out["point_invalid"] = True
     if oc2 != oc and "raw_outcome" not in rec:
         out["raw_outcome"] = oc
-    if oc2 in ("wrong", "wrong (uncertified)"):
-        out["wrong"] = oc2 == "wrong"
-    elif "wrong" in rec:
-        out["wrong"] = False
+    if "wrong" in rec or is_wrong(oc2):
+        out["wrong"] = is_wrong(oc2)
     return out
 
 
@@ -563,12 +567,14 @@ __all__ = [
     "STAGES",
     "UNSUPPORTED",
     "VERDICT_OUTCOMES",
+    "WRONG_OUTCOMES",
     "below_float_floor",
     "classify",
     "counted",
     "equal_region",
     "free_axes",
     "instances",
+    "is_wrong",
     "reclassify_record",
     "rung_codes",
     "scalar_only",

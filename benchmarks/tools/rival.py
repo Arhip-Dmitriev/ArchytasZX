@@ -40,7 +40,7 @@ from typing import Any
 import numpy as np
 
 from benchmarks import ir, stages, subject
-from benchmarks.outcomes import allocation_failure
+from benchmarks.outcomes import allocation_failure, is_wrong
 from benchmarks.tools import common
 
 VENVS = Path(os.environ.get("BENCH_VENVS") or Path(__file__).resolve().parent.parent / ".venvs")
@@ -675,7 +675,7 @@ def finish(
         "expected": common.expected(inst),
         "verdict": verdict,
         "outcome": common.outcome(inst, res["status"], verdict),
-        "wrong": common.outcome(inst, res["status"], verdict) == "wrong",
+        "wrong": is_wrong(common.outcome(inst, res["status"], verdict)),
         "stages": {"prepare": {"status": "ok", "cpu": prep_cpu, "wall": prep_cpu}, "check": stage},
         "tool_version": versions,
     }

@@ -169,6 +169,39 @@ def test_stale_positional_leg_order_is_refused() -> None:
     assert out["outcome"] == "invalid_point" and out["cause"] == "false_record_mismatch"
 
 
+def test_every_wrong_outcome_sets_wrong() -> None:
+    """An uncertified wrong verdict, archytaszx or rival, is classified with ``wrong`` True; a
+    reclassified non-wrong outcome sets it False."""
+    from benchmarks import outcomes
+    from benchmarks.tools import common
+
+    assert common.verdict_outcome(True, "ok", "unequal_uncertified") == "wrong (uncertified)"
+    base = {"n": 4, "d": 30, "truth": True, "wrong": False}
+    engine = {
+        **base,
+        "tool": "archytaszx",
+        "outcome": "wrong (uncertified)",
+        "verdict": "unequal_uncertified",
+        "stages": {"decide": {"status": "ok", "method": "doubled"}},
+    }
+    rival = {
+        **base,
+        "tool": "qcec",
+        "outcome": "wrong (uncertified)",
+        "verdict": "unequal_uncertified",
+        "stages": {"check": {"status": "ok"}},
+    }
+    for run in (engine, rival):
+        out = outcomes.classify(run)
+        assert out["outcome"] == "wrong (uncertified)" and out["wrong"] is True
+    fixed = outcomes.classify({**engine, "outcome": "ok", "verdict": "equal", "wrong": True})
+    assert fixed["wrong"] is False
+    assert all(outcomes.is_wrong(o) for o in outcomes.WRONG_OUTCOMES)
+    assert not any(
+        outcomes.is_wrong(o) for o in outcomes.OUTCOMES if o not in outcomes.WRONG_OUTCOMES
+    )
+
+
 def test_single_entry_table_above_the_loader_bound_is_unsupported() -> None:
     """quantum_hamming_family/encoding single_entry: n = 6 (63 outputs, 2^63) is unsupported,
     unsupported.phase_table_bound; n = 3 builds."""

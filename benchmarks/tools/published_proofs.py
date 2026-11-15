@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks import points
+from benchmarks.outcomes import is_wrong
 from benchmarks.tools import common, rival
 
 COQ_HOME = Path(
@@ -119,7 +120,7 @@ def rederive(rec: dict[str, Any]) -> dict[str, Any]:
         "stages": {**rec["stages"], "check": check},
         "verdict": verdict,
         "outcome": oc,
-        "wrong": oc == "wrong",
+        "wrong": is_wrong(oc),
     }
 
 

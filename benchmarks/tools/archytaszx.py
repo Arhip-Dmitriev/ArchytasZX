@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks import stages, subject, translate
+from benchmarks.outcomes import is_wrong
 from benchmarks.tools import common
 
 
@@ -73,7 +74,7 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
     out["verdict"] = verdict
     out["certified"] = dec.get("certified")
     out["outcome"] = common.outcome(inst, dec["status"], verdict)
-    out["wrong"] = out["outcome"] == "wrong"
+    out["wrong"] = is_wrong(out["outcome"])
     if dec["status"] == "ok" and verdict == "equal" and inst.truth:
         try:
             out["b3"] = _b3(run_)
