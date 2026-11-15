@@ -76,6 +76,19 @@ def cyclotomic(n: int) -> tuple[int, ...]:
     return tuple(poly)
 
 
+@lru_cache(maxsize=256)
+def _radical(n: int) -> int:
+    """The product of the distinct primes dividing ``n``."""
+    out, p = 1, 2
+    while p * p <= n:
+        if n % p == 0:
+            out *= p
+            while n % p == 0:
+                n //= p
+        p += 1
+    return out * n if n > 1 else out
+
+
 class Cyclo:
     """An element of Q(zeta_n) as rational coefficients over zeta_n^0 .. zeta_n^(n-1)."""
 
@@ -177,16 +190,32 @@ class Cyclo:
                     poly[i - deg + j] -= c * p
         return tuple(poly[:deg])
 
+    def sparse_reduced(self) -> dict[int, tuple[Fraction, ...]]:
+        """The nonzero coordinates over the basis zeta_n^s zeta_r^j (r the radical of n,
+        0 <= s < n / r, j < phi(r)): per s, the exponents e = q (n / r) + s read as zeta_r^q and
+        reduced modulo Phi_r."""
+        r = _radical(self.n)
+        m = self.n // r
+        groups: dict[int, dict[int, Fraction]] = {}
+        for e, v in self.c.items():
+            groups.setdefault(e % m, {})[e // m] = v
+        out = {}
+        for s, g in groups.items():
+            red = Cyclo(r, g).reduced()
+            if any(red):
+                out[s] = red
+        return out
+
     @property
     def is_zero(self) -> bool:
         """Whether this number is zero."""
-        return not any(self.reduced())
+        return not self.sparse_reduced()
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Cyclo):
             return NotImplemented
         a, b = self._common(other)
-        return a.reduced() == b.reduced()
+        return a.sparse_reduced() == b.sparse_reduced()
 
     def __hash__(self) -> int:
         return hash(self.n)

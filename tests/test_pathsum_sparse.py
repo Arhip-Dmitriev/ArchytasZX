@@ -57,3 +57,30 @@ def test_one_entry_on_many_digits_is_one_monomial() -> None:
     poly = PhasePoly()
     P._phase_terms(poly, list(range(k)), "n", node)  # type: ignore[arg-type]
     assert poly.terms == {frozenset(range(k)): Fraction(1, 2)}
+
+
+def test_sparse_cyclotomic_reduction_is_the_dense_one() -> None:
+    from archytaszx.algebra.pathsum import Cyclo
+
+    rng = random.Random(3)
+    ns = [*range(1, 61), 64, 81, 125, 210, 128]
+    for _ in range(300):
+        n = rng.choice(ns)
+        p = next(q for q in range(2, n + 1) if n % q == 0) if n > 1 else 1
+        x = Cyclo(n, {rng.randrange(n): Fraction(rng.randint(-3, 3)) for _ in range(3)})
+        if p > 1 and rng.random() < 0.5:
+            k, c = rng.randrange(n), Fraction(rng.randint(1, 4))
+            x = x + Cyclo(n, {k + j * (n // p): c for j in range(p)})
+        assert x.is_zero == (not any(x.reduced()))
+        y = x + Cyclo(n, {0: Fraction(rng.randint(0, 1))})
+        assert (x == y) == (x.reduced() == y.reduced())
+
+
+def test_a_root_of_huge_order_is_compared_without_its_cyclotomic() -> None:
+    from archytaszx.algebra.pathsum import Cyclo
+
+    n = 1400**3
+    one = Cyclo(n, {0: Fraction(1)})
+    assert (one + Cyclo(1400, {700: Fraction(1)})).is_zero
+    assert Cyclo.root(Fraction(1, n)) != Cyclo.root(Fraction(2, n))
+    assert Cyclo.root(Fraction(3, n)) == Cyclo.root(Fraction(3, n) + 1)
