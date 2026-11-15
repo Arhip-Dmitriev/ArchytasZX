@@ -733,7 +733,9 @@ The runner gives every run record, as it is written, the fields of outcomes.clas
                      "memory allocation of" abort, an mmap "failed to map segment" ImportError),
                      memory.rival, memory.lean
   error              the tool failed: rival.exception (a driver traceback whose frame is the
-                     rival's library or a driver line calling the rival), rival.exit (a binary or
+                     rival's library or a driver line calling the rival, or any traceback
+                     carrying a panic of the rival's native code: a Rust "thread ... panicked
+                     at" message or pyo3's PanicException), rival.exit (a binary or
                      driver exiting nonzero without a traceback), engine.load_refused (a load
                      line of the script failed), engine.exception (another exception in an
                      ArchytasZX stage), lean.rejected, kill.exit (a worker that died otherwise)

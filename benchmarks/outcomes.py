@@ -187,6 +187,9 @@ _RUNG_HEAD = re.compile(r"(?:doubled, \w+: )?([a-z_]+):")
 _DOUBLED = re.compile(r"doubled, \w+: ")
 _AFTER_INDUCTION = ("induction", "induction_reversed", "refutation", "reversed")
 _FRAME = re.compile(r'(?:File ")?([^"\n]*)", line \d+, in ([^\n]+)\n\s*([^\n]*)')
+_PANIC = re.compile(
+    r"pyo3_runtime\.PanicException|^thread '[^\n]*' (?:\(\d+\) )?panicked at", re.MULTILINE
+)
 DRIVER_OWN = ("number", "_build", "_identity", "add", "scalar_parts", "norm_identity")
 RIVAL_PACKAGES: dict[str, tuple[str, ...]] = {
     "pyzx": ("pyzx",),
@@ -255,11 +258,14 @@ def unsupported_code(message: str) -> str:
 
 
 def _frame_cause(tool: str, detail: str) -> str:
-    """harness.driver or rival.exception from a driver traceback: harness.driver when the
-    deepest driver frame is a DRIVER_OWN helper (the harness's own use of the rival's objects),
-    or is the deepest frame and its line calls none of the rival's names; rival.exception
-    otherwise; rival.exit without a traceback."""
+    """harness.driver or rival.exception from a driver traceback: rival.exception for a panic
+    of the rival's native code (_PANIC: a Rust panic message or pyo3's PanicException), wherever
+    it surfaced; else harness.driver when the deepest driver frame is a DRIVER_OWN helper (the
+    harness's own use of the rival's objects), or is the deepest frame and its line calls none
+    of the rival's names; rival.exception otherwise; rival.exit without a traceback."""
     frames = _FRAME.findall(detail or "")
+    if _PANIC.search(detail or ""):
+        return "rival.exception"
     if not frames:
         return "rival.exit"
     ours = [f for f in frames if "/tools/drivers/" in f[0]]

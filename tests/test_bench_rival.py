@@ -177,6 +177,31 @@ def test_dizx_amounts_take_the_point_n() -> None:
     assert ops == [["Z", [0], 1], ["HAD", [0], 1], ["Z", [0], 1], ["HAD", [0], 3]]
 
 
+def test_a_native_panic_is_the_rivals_error() -> None:
+    """A QuiZX panic surfacing at a driver line that names no QuiZX call is rival.exception; a
+    plain driver exception there stays harness.driver."""
+    from benchmarks import outcomes
+
+    tail = (
+        'Traceback (most recent call last):\n  File "/r/benchmarks/tools/drivers/zx.py", '
+        "line 122, in _ip\n    return g.scalar if g.num_vertices() == 0 else None\n"
+    )
+    panic = (
+        "thread '<unnamed>' (3263347) panicked at quizx/src/scalar.rs:94:25:\n"
+        + tail
+        + "pyo3_runtime.PanicException: DyadicExponentOverflowError"
+    )
+
+    def cause(detail: str) -> tuple[str, str]:
+        check = {"status": "error", "detail": detail}
+        rec = {"tool": "quizx", "outcome": "error", "stages": {"check": check}}
+        out = outcomes.classify(rec)
+        return out["outcome"], out["cause"]
+
+    assert cause(panic) == ("error", "rival.exception")
+    assert cause(tail + "KeyError: 'x'") == ("harness_error", "harness.driver")
+
+
 def test_result_encoding_survives_a_memory_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """worker.encode_result drops the span trees when encoding the whole record raises
     MemoryError; an ArchytasZX worker dying of a MemoryError traceback is oom."""
