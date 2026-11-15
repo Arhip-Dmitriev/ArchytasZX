@@ -1457,6 +1457,7 @@ class _SymExport:
         self.shifted: Any = None
         self.fixed: Sequence[tuple[str, int] | tuple[str, int, bool]] | None = None
         self.fixed_steps: Any = None
+        self.q: Any = None
 
     # tables as Python
 
@@ -1496,9 +1497,45 @@ class _SymExport:
             nodes.append((n.kind, n.outs, n.ins, n.dim, n.ph))
         return nodes, lnet.summed, lnet.bnd
 
+    def q_plan(self) -> bool:
+        """Whether the F_2 checker of ``ArchytasZX.SymF2`` proves the pair: every dimension 2,
+        no phase, Z, X and F nodes only, scalars ``a / b √2^K``, equal final terms; its hints
+        and scalars in ``self.q``."""
+        from archytaszx.semantics import lean_f2 as Q
+
+        out = self.out
+        if self.mults or self.constraints or self.params or self.common is not None:
+            return False
+        if out.sc.opaques:
+            return False
+        if self.dt != [(2, ())] or any(self.pt) or any(r is not None for r in self.rules):
+            return False
+        if any(v != 0 for v in out.labs.values()):
+            return False
+        try:
+            nets = [self.net(self.a.net), self.net(self.b.net)]
+        except NetUnsupported:
+            return False
+        if sorted(nets[0][2]) != sorted(nets[1][2]):
+            return False
+        for nodes, _, _ in nets:
+            if any(nd[3] != 0 or Q.tr_q(nd[0], nd[1], nd[2]) is None for nd in nodes):
+                return False
+        s0, s1 = Q.scalar_of(self.m0), Q.scalar_of(self.m1)
+        if s0 is None or s1 is None:
+            return False
+        hs = [Q.hints(n[0], n[1]) for n in nets]
+        fins = [Q.run_q(n[0], n[1], h) for n, h in zip(nets, hs, strict=True)]
+        if any(f is False for f in fins) or not Q.cmp_q(s0, s1, fins[0], fins[1]):
+            return False
+        self.q = (hs, (s0, s1))
+        return True
+
     def check(self) -> bool:
         if not self.mults:
             assert self.s0 is not None and self.s1 is not None
+            if self.q_plan():
+                return True
             return sym_check(
                 self.fl,
                 self.dtf,
@@ -1840,9 +1877,122 @@ class _SymExport:
             f"{self.call(l0)} {self.call(l1)} {chk}"
         )
 
+    def q_source(self, name: str) -> str:
+        """The proof by the F_2 checker: the runs through ``qchain`` checkpoints, ``qCheck`` on
+        the final states, and the diagrams bridged by ``bridge_ok``."""
+        from archytaszx.diagram.graph import Direction
+        from archytaszx.semantics import lean_f2 as Q
+
+        out = self.out
+        hs, scal = self.q
+        nets = (self.a, self.b)
+        labels = [lab for lb in nets for lab in (*lb.net.summed, *lb.net.bnd)]
+        labels += [lab for lb in nets for n in lb.net.nodes for lab in (*n.outs, *n.ins)]
+        top = max([*labels, *out.labs, 0]) + 1
+        decls = ["open ArchytasZX.SymF2"]
+        for tag, lb, h in zip("01", nets, hs, strict=True):
+            n = lb.name
+            decls += [
+                (
+                    f"/-- Each node's labels summed after it. -/\ndef H{tag} : List (List ℕ) := "
+                    f"{Q.lean_hints(h)}"
+                ),
+                f"/-- The steps. -/\ndef R{tag} : List (Node × List ℕ) := {n}.nodes.zip H{tag}",
+                f"/-- The summed labels as a mask. -/\ndef IM{tag} : ℕ := maskL {n}.int",
+                f"set_option maxHeartbeats 0 in\nqchain q{tag} IM{tag} R{tag} {Q.CHAIN}",
+            ]
+        nr = len(out.phases)
+        cases = " | ".join(["_"] * (nr + 1))
+        (a0, b0, k0), (a1, b1, k1) = scal
+        sc = f"({a0} : ℤ) {b0} ({k0} : ℤ) ({a1} : ℤ) {b1} ({k1} : ℤ)"
+        decls += [
+            (
+                "/-- Every phase is zero. -/\ntheorem hph : ∀ ph j, E.phase ph j = 0 := by\n"
+                f"  intro ph j\n  rcases ph with {cases} <;> first | rfl | simp [E, Φ]"
+            ),
+            (
+                "/-- Every label has dimension index 0. -/\n"
+                "theorem hL : E.labs.all (fun p => p.2 == 0) = true := by decide +kernel"
+            ),
+            (
+                "set_option maxHeartbeats 0 in\n/-- The final terms agree. -/\n"
+                f"theorem qc : qCheck N0 N1 H0 H1 q0_fin q1_fin {sc} = true := by decide +kernel"
+            ),
+        ]
+        A, B = self.a.name, self.b.name
+        stated = [self.stated_s(0), self.stated_s(1)]
+        form = [f"((({a} : ℤ) : ℂ) / (({b} : ℕ) : ℂ) * rt 2 ^ ({k} : ℤ))" for a, b, k in scal]
+        theorem = (
+            "/-- The diagrams are equal. -/\n"
+            f"theorem {name} :\n    Equal E {stated[0]} {A} {stated[1]} {B} :=\n"
+            f"  Equal.congr_s (equal_q E rfl hph hL {A} {B} H0 H1 _ _ {sc} q0 q1 qc)\n"
+            f"    (show {form[0]} = {stated[0]} by qscal) (show {form[1]} = {stated[1]} by qscal)"
+        )
+        out.decls += [*decls, theorem]
+        bridged: dict[str, str] = {}
+        plain = out.diagram_literal
+
+        def literal(d: Diagram, net: Any, nm: str, own: bool = False) -> tuple[str, int] | None:
+            got = plain(d, net, nm, own)
+            dname = f"D{nm[1:]}"
+            if got is None or own or got[0] != dname:
+                return got
+            off = got[1]
+            ports = [
+                (int(r.node_id), r.direction is Direction.OUTPUT, r.index)
+                for r in [*d.boundary_outputs, *d.boundary_inputs]
+            ]
+            wires = [
+                (
+                    (int(w.a.node_id), w.a.direction is Direction.OUTPUT, w.a.index),
+                    (int(w.b.node_id), w.b.direction is Direction.OUTPUT, w.b.index),
+                )
+                for w in sorted(d.wires, key=lambda w: w.sort_key())
+            ]
+            width = max([1, *(max(len(n.outputs), len(n.inputs)) for n in d.nodes.values())])
+            ends = [*ports, *(p for w in wires for p in w)]
+            bits = max([1, *(Q.pkey(width, *p).bit_length() for p in ends)])
+            wb = Q.pack_w(width, bits, wires)
+            args = f"{width} {bits} {off} {top} WB{nm[1:]} {dname} {nm}"
+            out.decls.pop()
+            out.decls += [
+                f"/-- {dname}'s wires, packed. -/\ndef WB{nm[1:]} : ℕ := 0x{wb:x}",
+                f"theorem {dname}_bq : bridgeQ {args} = true := by decide +kernel",
+                (
+                    f"theorem {dname}_net : {dname}.toNet {off} = {nm} := "
+                    f"(bridge_ok {args} {dname}_bq).2"
+                ),
+                (
+                    f"theorem {dname}_chk : {dname}.check labs {off} = true := "
+                    f"(bridge_ok {args} {dname}_bq).1"
+                ),
+            ]
+            bridged[dname] = f"{dname}_chk"
+            return got
+
+        out.diagram_literal = literal  # type: ignore[method-assign,assignment]
+        try:
+            out.diagram_theorem(name, "", "", stated[0], self.a, stated[1], self.b, env="E")
+        finally:
+            del out.diagram_literal
+        decided = "(by decide +kernel) (by decide +kernel)"
+        if len(bridged) == 2 and out.decls[-1].count(decided) == 1:
+            c0, c1 = bridged.values()
+            out.decls[-1] = out.decls[-1].replace(decided, f"{c0} {c1}")
+        lead = "  equality of qubit networks by the verified normaliser over F_2 (ArchytasZX.SymF2)"
+        src = out.source(lead=lead)
+        return re.sub(
+            r"def labs : List \(ℕ × ℕ\) := \[[^\n]*\]",
+            f"def labs : List (ℕ × ℕ) := (List.range {top}).map fun l => (l, 0)",
+            src,
+            count=1,
+        )
+
     def source(self, name: str) -> str:
         out = self.out
         self.texts()
+        if self.q is not None:
+            return self.q_source(name)
         bh, args, rho = self.bh, self.args, self.rho
         dims = "[" + ", ".join(self.dnames) + "]"
         gs = [

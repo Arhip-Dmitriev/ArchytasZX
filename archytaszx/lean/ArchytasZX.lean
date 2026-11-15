@@ -18,6 +18,9 @@ import ArchytasZX.Refute
 import ArchytasZX.Ball
 import ArchytasZX.Contract
 import ArchytasZX.SymNet
+import ArchytasZX.SymF2
+import ArchytasZX.SymF2Chain
+import ArchytasZX.SymF2Bridge
 import ArchytasZX.Port
 import ArchytasZX.Assume
 import ArchytasZX.Paper
