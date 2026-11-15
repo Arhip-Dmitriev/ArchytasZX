@@ -57,8 +57,8 @@ def pair_proof(
 ) -> tuple[ProofCertificate | ProofOutcome | kernel.Theorem | kernel.Symbolic | None, str]:
     """A Lean-checkable proof of ``left = right`` from ``decision``: its own certificates, else
     the normaliser of symbolic sums, else a search; None and the three reasons when all fail. A
-    symbolic-contraction verdict tries the normaliser and the search before the kernel's
-    :func:`~archytaszx.semantics.kernel.contraction`."""
+    symbolic-contraction verdict tries the normaliser, the kernel's
+    :func:`~archytaszx.semantics.kernel.contraction`, the path-sum export, then the search."""
     if decision.method is DecisionMethod.NORMAL_FORM and len(decision.certificates) == 2:
         forward, backward = decision.certificates
         if forward.initial is left and backward.initial is right:
@@ -89,6 +89,11 @@ def pair_proof(
     except kernel.KernelError as exc:
         why_symbolic = str(exc)
     if contracted:
+        try:
+            with _trace.span("decide.proof.kernel"):
+                return kernel.from_decision(decision, left, right), ""
+        except kernel.KernelError as exc:
+            why_kernel = str(exc)
         found, why_path = path_sum_proof(left, right)
         if found is not None:
             return found, ""
@@ -97,12 +102,6 @@ def pair_proof(
         outcome = prove(left, right)
     if outcome.proved:
         return outcome, ""
-    if contracted:
-        try:
-            with _trace.span("decide.proof.kernel"):
-                return kernel.from_decision(decision, left, right), ""
-        except kernel.KernelError as exc:
-            why_kernel = str(exc)
     return None, f"kernel: {why_kernel}; normaliser: {why_symbolic}; search: {outcome.reason}"
 
 
