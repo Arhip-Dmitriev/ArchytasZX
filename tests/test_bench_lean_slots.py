@@ -193,3 +193,38 @@ def test_scope_cap_is_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     assert f"MemoryMax={lean.OLEAN_MB + 9728}M" in cmd and cmd[-2:] == ["lean", "x"]
     cmd = lean.scoped(["lean", "x"], 0.25, 9728)
     assert "MemoryMax=8192M" in cmd
+
+
+PROFILED = r"""
+import sys
+out, err = sys.stdout.buffer, sys.stderr.buffer
+out.write(b"@@DECL theorem t\nelaboration took 2ms\nerror: Tactic ")
+out.flush()
+err.write(b"parsing took 0.5ms\n\xcc")
+err.flush()
+out.write(b"`decide` failed \xcc\n@@DECL end _\n")
+out.flush()
+sys.exit(1)
+"""
+
+
+def test_profiler_stderr_and_bad_bytes_stay_out_of_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check whose Lean writes profiler lines to stderr mid-message and invalid UTF-8 keeps the
+    message whole and its declaration time."""
+    monkeypatch.setattr(lean, "SLOT_DIR", tmp_path)
+    monkeypatch.setattr(lean, "cgroups", lambda: False)
+    monkeypatch.setattr(lean, "LEAN_DIR", tmp_path)
+    monkeypatch.setattr(lean, "lake", lambda: sys.executable)
+    monkeypatch.setenv("BENCH_LEAN_SLOTS", "1")
+    monkeypatch.setenv("BENCH_LEAN_BUDGET_MB", "120")
+    (tmp_path / "env").write_text(PROFILED)
+    src = tmp_path / "t.lean"
+    src.write_text("theorem t : True := trivial\n")
+    out = lean.check(src, timeout=60)
+    assert out["lean_status"] == "rejected"
+    assert out["lean_detail"] == "error: Tactic `decide` failed �"
+    assert out["decl_ms"] == [
+        {"kind": "theorem", "name": "t", "ms": 2.0, "by": {"elaboration": 2.0}}
+    ]

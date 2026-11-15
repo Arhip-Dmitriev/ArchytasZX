@@ -409,6 +409,18 @@ def declaration_times(output: str) -> list[dict[str, Any]]:
     return out
 
 
+def _decode(data: bytes) -> str:
+    """``data`` as UTF-8, each invalid byte replaced."""
+    return data.decode("utf-8", errors="replace")
+
+
+def _drain(stream: Any, chunks: list[bytes]) -> None:
+    """Appends every chunk read from ``stream`` to ``chunks`` until its end."""
+    if stream is None:
+        return
+    chunks.extend(iter(lambda: stream.read(65536), b""))
+
+
 def check(
     path: Path, *, timeout: float | None = None, memory_fraction: float = 0.85
 ) -> dict[str, Any]:
@@ -428,7 +440,7 @@ def check(
     budget = budget_mb()
     out["lean_budget_mb"] = budget
     slot = _slot()
-    proc: subprocess.Popen[str] | None = None
+    proc: subprocess.Popen[bytes] | None = None
     done = threading.Event()
     try:
         w0 = time.perf_counter()
@@ -436,11 +448,13 @@ def check(
             scoped([lake(), "env", "lean", str(probe)], memory_fraction, budget),
             cwd=LEAN_DIR,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+            stderr=subprocess.PIPE,
             start_new_session=True,
             preexec_fn=_child_limits(timeout),  # noqa: PLW1509
         )
+        err_chunks: list[bytes] = []
+        err_reader = threading.Thread(target=_drain, args=(proc.stderr, err_chunks), daemon=True)
+        err_reader.start()
         pgid = proc.pid
         _ACTIVE.add(pgid)
         killed = threading.Event()
@@ -459,8 +473,11 @@ def check(
         timer = threading.Timer(timeout, kill) if timeout else None
         if timer is not None:
             timer.start()
-        text = proc.stdout.read() if proc.stdout is not None else ""
+        messages = _decode(proc.stdout.read() if proc.stdout is not None else b"")
         _, status, usage = os.wait4(proc.pid, 0)
+        err_reader.join()
+        errors_text = _decode(b"".join(err_chunks))
+        text = messages + ("\n" + errors_text if errors_text else "")
         if timer is not None:
             timer.cancel()
         wall = time.perf_counter() - w0
@@ -474,7 +491,7 @@ def check(
         "lean_cpu": usage.ru_utime + usage.ru_stime,
         "lean_wall": wall,
         "lean_peak_mb": round(usage.ru_maxrss / 1024, 1),
-        "decl_ms": declaration_times(text),
+        "decl_ms": declaration_times(messages),
     }
     if over.is_set():
         out["lean_status"] = "oom"
