@@ -165,3 +165,13 @@ def test_engine_memory_errors_are_oom() -> None:
     for text in ("error: MemoryError", "load: error: MemoryError", "@rhs =: error: MemoryError:"):
         assert run(f"RuntimeError: {text}\n(detail)") == ("oom", "memory.error")
     assert run("RuntimeError: load: error: bad token") == ("error", "engine.load_refused")
+
+
+def test_dizx_amounts_take_the_point_n() -> None:
+    """DiZX Clifford ops of Z^(n(n+1)/2) X^n at n = 4, d = 3: Z^1, and X^1 as HAD, Z, HAD^3."""
+    from benchmarks import ir
+    from benchmarks.tools import dizx, rival
+
+    c = ir.Circuit(("a",), (ir.Z("a", "n*(n+1)/2"), ir.X("a", "n")))
+    ops = dizx.clifford_ops(rival._at_n(c, 4), 3)
+    assert ops == [["Z", [0], 1], ["HAD", [0], 1], ["Z", [0], 1], ["HAD", [0], 3]]

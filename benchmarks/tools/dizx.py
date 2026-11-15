@@ -73,8 +73,8 @@ def run(inst: Any, job: dict[str, Any]) -> dict[str, Any]:
         return common.unsupported(why or "odd prime d only")
     c0 = time.process_time()
     try:
-        a = common.concrete_circuit(inst, n, d)
-        b = rival.explicit_reference(inst, n, d)
+        a = rival._at_n(common.concrete_circuit(inst, n, d), n)
+        b = rival._at_n(rival.explicit_reference(inst, n, d), n)
         if len(a.wires) != len(b.wires):
             raise rival.Unsupported("circuit and reference differ in width")
         ops_a, ops_b = clifford_ops(a, d), clifford_ops(b, d)
