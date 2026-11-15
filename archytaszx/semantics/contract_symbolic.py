@@ -2497,8 +2497,8 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     dimensions with boundary legs of dimension at most 2, read from its reduced path sum:
     constant, sqrt 2 power, a mod-2 delta per support constraint, a sum over each path variable
     left, the phase as one exponential and each amplitude atom ``a^F`` as
-    ``[F even] + a [F odd]``; None outside that class or when the simplifier exceeds its
-    budget."""
+    ``[F even] + a [F odd]``; None outside that class, when its reduction or canonical form is
+    refused, or when the simplifier exceeds its budget."""
     from archytaszx.algebra.pathsum import PathSum, PathSumUnsupported, reduce
     from archytaszx.semantics.pathsum_diagram import diagram_base, from_diagram
 
@@ -2514,7 +2514,10 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
         return None
     if not isinstance(raw, PathSum):
         return None
-    ps = reduce(raw)
+    try:
+        ps = reduce(raw)
+    except PathSumUnsupported:
+        return None
     axes = tuple(
         SymbolicAxis(ref, dim, f"_i{k}")
         for k, (ref, dim) in enumerate(zip(refs, dims, strict=True))
@@ -2533,7 +2536,10 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     if not used <= var.keys():
         return None
     if not path and len(ps.constraints) > 1:
-        canon_entry = _canon_entry(ps, var)
+        try:
+            canon_entry = _canon_entry(ps, var)
+        except PathSumUnsupported:
+            return None
         if canon_entry is not None:
             try:
                 return SymbolicTensor(axes, Scalar(canon_entry).simplify(max_steps=max_steps))
