@@ -14,15 +14,16 @@
 // Headless Quantomatic driver: java -cp quanto.jar quanto.bench.QuantoBench PAYLOAD. The payload
 // names the theory, the shared rule file and the two graphs. Each graph is rewritten to a
 // fixpoint with the size-reducing rules of the rule file (lhs larger than rhs), first match
-// first; equal when each normal form matches the other and their vertex and edge counts agree,
-// unknown otherwise. Prints one JSON line.
+// first; equal when each normal form matches the other by a match fixing every boundary vertex
+// (i0, o0, ... by name) and their vertex and edge counts agree, unknown otherwise. Prints one
+// JSON line.
 
 package quanto.bench
 
 import java.io.File
 
 import quanto.data._
-import quanto.rewrite.{Matcher, Rewriter}
+import quanto.rewrite.{Match, Matcher, Rewriter}
 import quanto.util.json._
 
 object QuantoBench {
@@ -47,9 +48,14 @@ object QuantoBench {
     (g, steps)
   }
 
+  // Whether the match sends every boundary vertex of its pattern to the vertex of the same name.
+  private def fixesBoundary(m: Match, pattern: Graph): Boolean =
+    pattern.verts.filter(pattern.isBoundary).forall(v => m.map.v.get(v).contains(v))
+
   private def same(a: Graph, b: Graph): Boolean =
     a.verts.size == b.verts.size && a.edges.size == b.edges.size &&
-      Matcher.findMatches(a, b).nonEmpty && Matcher.findMatches(b, a).nonEmpty
+      Matcher.findMatches(a, b).exists(m => fixesBoundary(m, a)) &&
+      Matcher.findMatches(b, a).exists(m => fixesBoundary(m, b))
 
   def main(args: Array[String]): Unit = {
     val p = Json.parse(new File(args(0)))
