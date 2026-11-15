@@ -2532,7 +2532,7 @@ def _path_sum_tensor(diagram: Diagram, max_steps: int) -> SymbolicTensor | None:
     used |= {v for c in ps.constraints for m in c for v in m}
     if not used <= var.keys():
         return None
-    if not path:
+    if not path and len(ps.constraints) > 1:
         canon_entry = _canon_entry(ps, var)
         if canon_entry is not None:
             try:
