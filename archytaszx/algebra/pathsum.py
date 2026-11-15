@@ -449,7 +449,13 @@ def _xor_lift(items: Sequence[Mono], modulus: int) -> dict[Mono, int]:
         for k, b in prev:
             key = k | mask
             out[key] = (out.get(key, 0) - b) % modulus
+        if len(out) > XOR_LIFT_TERMS:
+            raise PathSumUnsupported(f"an XOR lift of more than {XOR_LIFT_TERMS} terms")
     return {frozenset(v for i, v in enumerate(names) if k >> i & 1): a for k, a in out.items() if a}
+
+
+XOR_LIFT_TERMS = 1 << 20
+"""The most terms :func:`_xor_lift` holds before it refuses the lift."""
 
 
 def _lift_terms(items: Sequence[Mono], coeff: Fraction) -> list[tuple[Mono, Fraction]]:

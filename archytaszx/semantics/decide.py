@@ -70,6 +70,7 @@ import sympy as sp  # type: ignore[import-untyped]  # sympy ships no py.typed ma
 
 from archytaszx import trace as _trace
 from archytaszx.algebra.dimension import Dim, DimensionError, UnifyStatus
+from archytaszx.algebra.pathsum import PathSumError
 from archytaszx.algebra.phase import INDEX, PhaseError
 from archytaszx.algebra.scalar import Scalar, ScalarError
 from archytaszx.diagram.bangbox import (
@@ -312,6 +313,7 @@ _SYMBOLIC_ERRORS: tuple[type[Exception], ...] = (
     *_DOMAIN_ERRORS,
     CheckError,
     DenoteError,
+    PathSumError,
     SymbolicContractionError,
 )
 _INDUCTION_ERRORS: tuple[type[Exception], ...] = (

@@ -1555,3 +1555,13 @@ def test_turn_indicators_match_each_turn_indicator() -> None:
             for _ in range(k)
         ]
         assert turn_indicators(bs) == [turn_indicator(bs, s) for s in range(1 << k)]
+
+
+def test_xor_lift_past_its_term_budget_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from archytaszx.algebra import pathsum
+
+    items = [frozenset({i, i + 1}) for i in range(12)]
+    assert len(pathsum._xor_lift(items, 512)) > 64
+    monkeypatch.setattr(pathsum, "XOR_LIFT_TERMS", 64)
+    with pytest.raises(pathsum.PathSumUnsupported):
+        pathsum._xor_lift(items, 512)
