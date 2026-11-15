@@ -1581,3 +1581,28 @@ def test_an_entry_difference_below_the_tolerance_is_still_exactly_nonzero() -> N
     ):
         assert not _exactly_nonzero(Scalar(zero))
         assert not Scalar(zero).is_provably_nonzero
+
+
+def test_a_large_canonical_phase_is_left_to_the_path_sum_rung() -> None:
+    import itertools
+    from fractions import Fraction
+
+    from archytaszx.algebra.pathsum import Cyclo, PathSum, PhasePoly
+    from archytaszx.semantics import contract_symbolic as cs
+
+    names = range(14)
+    terms = {
+        frozenset(m): Fraction(1, 2)
+        for k in range(1, 5)
+        for m in itertools.combinations(names, k)
+        if 0 not in m and 1 not in m
+    }
+    assert len(terms) > cs.CANON_PHASE_TERMS
+    cons = [
+        frozenset({frozenset({0}), frozenset({2})}),
+        frozenset({frozenset({1}), frozenset({3})}),
+    ]
+    ps = PathSum(tuple(names), set(), PhasePoly(terms), Cyclo.rational(1), 0, cons)
+    var = {v: sp.Symbol(f"x{v}") for v in names}
+    with pytest.raises(cs.SymbolicContractionUnsupportedError):
+        cs._canon_entry(ps, var)

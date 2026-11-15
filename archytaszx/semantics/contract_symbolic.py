@@ -2438,6 +2438,11 @@ def _solved_rows(
     return rows
 
 
+CANON_PHASE_TERMS = 512
+"""The most phase terms of a canonical path sum :func:`_canon_entry` reads as a sympy entry;
+a larger one leaves the pair to the path-sum rung."""
+
+
 def _canon_entry(ps: object, var: Mapping[int, sp.Expr]) -> sp.Expr | None:
     """The entry of a reduced path sum without path variables read from its canonical form
     (pathsum.canonical): constant, the phase as one exponential, a mod-2 delta per pivot row
@@ -2471,6 +2476,11 @@ def _canon_entry(ps: object, var: Mapping[int, sp.Expr]) -> sp.Expr | None:
         return None
     if canon.zero:
         return sp.Integer(0)
+    if len(canon.phase) > CANON_PHASE_TERMS:
+        raise SymbolicContractionUnsupportedError(
+            f"a canonical path-sum phase of {len(canon.phase)} terms (above "
+            f"{CANON_PHASE_TERMS}) is compared by the path-sum rung"
+        )
 
     def poly(p: tuple[tuple[int, ...], ...]) -> frozenset[frozenset[int]]:
         return frozenset(frozenset(m) for m in p)
