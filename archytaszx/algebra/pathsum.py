@@ -989,6 +989,38 @@ def turn_indicator(bs: Sequence[F2Poly], s: int) -> F2Poly:
     return out
 
 
+def turn_indicators(bs: Sequence[F2Poly]) -> list[F2Poly]:
+    """``turn_indicator(bs, s)`` for every ``s`` in ``[0, 2^len(bs))``, indexed by ``s``: the
+    products over each prefix of the digits taken largest polynomial first shared, monomials as
+    bitmasks."""
+    names = sorted({v for b in bs for m in b for v in m})
+    bit = {v: 1 << i for i, v in enumerate(names)}
+
+    def enc(p: F2Poly) -> set[int]:
+        out: set[int] = set()
+        for m in p:
+            out ^= {sum(bit[v] for v in m)}
+        return out
+
+    prods: dict[int, set[int]] = {0: {0}}
+    for i in sorted(range(len(bs)), key=lambda i: (-len(bs[i]), i)):
+        one, zero = enc(bs[i]), enc(f2_add(ONE, bs[i]))
+        nxt: dict[int, set[int]] = {}
+        for s, prod in prods.items():
+            nxt[s] = _bmul(prod, zero) if prod else set()
+            nxt[s | 1 << i] = _bmul(prod, one) if prod else set()
+        prods = nxt
+    decoded: dict[int, Mono] = {}
+
+    def dec(k: int) -> Mono:
+        mono = decoded.get(k)
+        if mono is None:
+            mono = decoded[k] = frozenset(v for i, v in enumerate(names) if k >> i & 1)
+        return mono
+
+    return [frozenset(dec(k) for k in prods[s]) for s in range(1 << len(bs))]
+
+
 def _try_turn(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bool:
     """[Turn]: y in no constraint, its phase terms y S / 2^k (k >= 3) with S free of path
     variables, digits b_i: Sum_y = 2 Prod_s ((1 + zeta^s) / 2)^[b = s] [b != 2^(k-1)], s over
@@ -1006,8 +1038,9 @@ def _try_turn(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) -> bo
         k = den.bit_length() - 1
         bs = turn_digits({m - {y}: int(c * den) % den for m, c in terms}, k)
         _drop_terms(ps, terms)
-        ps.constraints.append(turn_indicator(bs, 1 << (k - 1)))
-        ps.amps.extend((turn_base(s, k), turn_indicator(bs, s)) for s in turn_values(k))
+        table = turn_indicators(bs)
+        ps.constraints.append(table[1 << (k - 1)])
+        ps.amps.extend((turn_base(s, k), table[s]) for s in turn_values(k))
         ps.path.discard(y)
         ps.sqrt2 += 2
         ps.trace.append(Step("turn", y, None, None, values=bs))
@@ -1032,13 +1065,14 @@ def _try_turn_held(ps: PathSum, occ: Mapping[int, list[tuple[Mono, Fraction]]]) 
         k = den.bit_length() - 1
         bs = turn_digits({m - {y}: int(c * den) % den for m, c in terms}, k)
         _drop_terms(ps, terms)
-        zero = turn_indicator(bs, 1 << (k - 1))
+        table = turn_indicators(bs)
+        zero = table[1 << (k - 1)]
         if all(v in ps.boundary for m in zero for v in m):
             ps.constraints.append(zero)
         else:
             ps.amps.append((Cyclo.rational(0), zero))
         for s in turn_values(k):
-            f = turn_indicator(bs, s)
+            f = table[s]
             if f == ONE:
                 ps.const = ps.const * turn_base(s, k)
             elif f:

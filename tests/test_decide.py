@@ -1537,3 +1537,21 @@ def test_xor_lift_matches_the_xor_on_every_assignment() -> None:
                 at = sum((c for m, c in terms.items() if all(bits[v] for v in m)), Fraction(0))
                 assert (at - coeff * xor) % 1 == 0
             assert sum(c for m, c in ints.items() if all(bits[v] for v in m)) % 16 == xor
+
+
+def test_turn_indicators_match_each_turn_indicator() -> None:
+    import random
+
+    from archytaszx.algebra.pathsum import turn_indicator, turn_indicators
+
+    rng = random.Random(3)
+    for _ in range(200):
+        k, nv = rng.randint(1, 5), rng.randint(1, 6)
+        bs = [
+            frozenset(
+                frozenset(v for v in range(nv) if rng.random() < 0.4)
+                for _ in range(rng.randint(0, 6))
+            )
+            for _ in range(k)
+        ]
+        assert turn_indicators(bs) == [turn_indicator(bs, s) for s in range(1 << k)]
